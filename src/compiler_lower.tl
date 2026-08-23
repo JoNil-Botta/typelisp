@@ -68,21 +68,15 @@
   (Bind i64 i64 i64 LowerNameEnv))
 
 (define (lower-name-store-new) : LowerNameStore
-  (begin
-    (cfg
-      compile-profile
-      (set!
-        compiler-lower-profile-name-env-stores
-        (+ compiler-lower-profile-name-env-stores 1)))
-    (let
-      [segments : (__tl_dyn-array (__tl_dyn-array LowerNameBinding))
-        (__tl_make-array (__tl_dyn-array LowerNameBinding) 4)]
-      [first : (__tl_dyn-array LowerNameBinding)
-        (__tl_make-array LowerNameBinding 16)]
-      [owner : i64 (arena.tl_arena_current)]
-      (begin
-        (set! (array-ref segments 0) first)
-        (LowerNameStore segments 1 0 owner)))))
+  (let
+    [segments : (__tl_dyn-array (__tl_dyn-array LowerNameBinding))
+      (__tl_make-array (__tl_dyn-array LowerNameBinding) 4)]
+    [first : (__tl_dyn-array LowerNameBinding)
+      (__tl_make-array LowerNameBinding 16)]
+    [owner : i64 (arena.tl_arena_current)]
+    (begin
+      (set! (array-ref segments 0) first)
+      (LowerNameStore segments 1 0 owner))))
 
 (define (lower-name-store-segments-copy-range!
   [dst : (&mut dst (__tl_dyn-array (__tl_dyn-array LowerNameBinding)))]
@@ -100,34 +94,28 @@
     [count : i64 store.segment-count]
     [capacity : i64 (array-length store.segments)]
     [owner : i64 store.arena]
-    (begin
-      (cfg
-        compile-profile
+    (in-arena
+      (arena.Arena owner)
+      (begin
+        (if (< count capacity)
+          unit
+          (let
+            [bigger : (__tl_dyn-array (__tl_dyn-array LowerNameBinding))
+              (__tl_make-array
+                (__tl_dyn-array LowerNameBinding)
+                (if (< capacity 1)
+                  4
+                  (* capacity 2)))]
+            (begin
+              (lower-name-store-segments-copy-range!
+                (&mut bigger)
+                (& store.segments)
+                count)
+              (set! store.segments bigger))))
         (set!
-          compiler-lower-profile-name-env-store-grows
-          (+ compiler-lower-profile-name-env-store-grows 1)))
-      (in-arena
-        (arena.Arena owner)
-        (begin
-          (if (< count capacity)
-            unit
-            (let
-              [bigger : (__tl_dyn-array (__tl_dyn-array LowerNameBinding))
-                (__tl_make-array
-                  (__tl_dyn-array LowerNameBinding)
-                  (if (< capacity 1)
-                    4
-                    (* capacity 2)))]
-              (begin
-                (lower-name-store-segments-copy-range!
-                  (&mut bigger)
-                  (& store.segments)
-                  count)
-                (set! store.segments bigger))))
-          (set!
-            (array-ref store.segments count)
-            (__tl_make-array LowerNameBinding 16))
-          (set! store.segment-count (+ count 1)))))))
+          (array-ref store.segments count)
+          (__tl_make-array LowerNameBinding 16))
+        (set! store.segment-count (+ count 1))))))
 
 (define (lower-name-store-ensure-index!
   [store : (&mut store LowerNameStore)]
@@ -208,13 +196,7 @@
   [logical-id : i64]
   [symbol-id : i64]
   [rest : LowerNameEnv]) : LowerNameEnv
-  (begin
-    (cfg
-      compile-profile
-      (set!
-        compiler-lower-profile-name-env-binds
-        (+ compiler-lower-profile-name-env-binds 1)))
-    (lower-name-env-bind-ids-raw source-id logical-id symbol-id rest)))
+  (lower-name-env-bind-ids-raw source-id logical-id symbol-id rest))
 
 (define (lower-name-env-view [names : LowerNameEnv]) : LowerNameEnvView
   (match names
@@ -890,9 +872,9 @@
 
 (cfg
   (any compile-profile test)
-  (define (compiler-lower-state-profile [state : CompilerLowerState]) : profile_state.CompilerProfileState
-    (compiler-lower-state-read
-      state
+  (defmacro (compiler-lower-state-profile [state : Expr]) : Expr
+    `(compiler-lower-state-read
+      ,state
       profile_state.CompilerProfileState
       profile-owner)))
 
@@ -2490,80 +2472,80 @@
     59))
 (cfg
   (any compile-profile test)
-  (define compiler-lower-profile-metric-end : i64
+  (define compiler-lower-profile-name-env-binds-metric : i64
     60))
 (cfg
-  compile-profile
-  (define compiler-lower-profile-name-env-binds : i64
-    0))
+  (any compile-profile test)
+  (define compiler-lower-profile-name-env-lookups-metric : i64
+    61))
 (cfg
-  compile-profile
-  (define compiler-lower-profile-name-env-lookups : i64
-    0))
+  (any compile-profile test)
+  (define compiler-lower-profile-name-env-lookup-steps-metric : i64
+    62))
 (cfg
-  compile-profile
-  (define compiler-lower-profile-name-env-lookup-steps : i64
-    0))
+  (any compile-profile test)
+  (define compiler-lower-profile-name-env-stores-metric : i64
+    63))
 (cfg
-  compile-profile
-  (define compiler-lower-profile-name-env-stores : i64
-    0))
+  (any compile-profile test)
+  (define compiler-lower-profile-name-env-store-grows-metric : i64
+    64))
 (cfg
-  compile-profile
-  (define compiler-lower-profile-name-env-store-grows : i64
-    0))
+  (any compile-profile test)
+  (define compiler-lower-profile-name-env-materializations-metric : i64
+    65))
 (cfg
-  compile-profile
-  (define compiler-lower-profile-name-env-materializations : i64
-    0))
+  (any compile-profile test)
+  (define compiler-lower-profile-name-env-materialized-entries-metric : i64
+    66))
 (cfg
-  compile-profile
-  (define compiler-lower-profile-name-env-materialized-entries : i64
-    0))
+  (any compile-profile test)
+  (define compiler-lower-profile-name-cache-builds-metric : i64
+    67))
 (cfg
-  compile-profile
-  (define compiler-lower-profile-name-cache-builds : i64
-    0))
+  (any compile-profile test)
+  (define compiler-lower-profile-name-cache-entries-metric : i64
+    68))
 (cfg
-  compile-profile
-  (define compiler-lower-profile-name-cache-entries : i64
-    0))
+  (any compile-profile test)
+  (define compiler-lower-profile-name-cache-lookups-metric : i64
+    69))
 (cfg
-  compile-profile
-  (define compiler-lower-profile-name-cache-lookups : i64
-    0))
+  (any compile-profile test)
+  (define compiler-lower-profile-name-cache-local-hits-metric : i64
+    70))
 (cfg
-  compile-profile
-  (define compiler-lower-profile-name-cache-local-hits : i64
-    0))
+  (any compile-profile test)
+  (define compiler-lower-profile-name-cache-local-misses-metric : i64
+    71))
 (cfg
-  compile-profile
-  (define compiler-lower-profile-name-cache-local-misses : i64
-    0))
+  (any compile-profile test)
+  (define compiler-lower-profile-module-name-cache-lookups-metric : i64
+    72))
 (cfg
-  compile-profile
-  (define compiler-lower-profile-module-name-cache-lookups : i64
-    0))
+  (any compile-profile test)
+  (define compiler-lower-profile-module-name-cache-hits-metric : i64
+    73))
 (cfg
-  compile-profile
-  (define compiler-lower-profile-module-name-cache-hits : i64
-    0))
+  (any compile-profile test)
+  (define compiler-lower-profile-module-name-cache-entries-metric : i64
+    74))
 (cfg
-  compile-profile
-  (define compiler-lower-profile-module-name-cache-entries : i64
-    0))
+  (any compile-profile test)
+  (define compiler-lower-profile-module-local-view-lookups-metric : i64
+    75))
 (cfg
-  compile-profile
-  (define compiler-lower-profile-module-local-view-lookups : i64
-    0))
+  (any compile-profile test)
+  (define compiler-lower-profile-module-local-view-hits-metric : i64
+    76))
 (cfg
-  compile-profile
-  (define compiler-lower-profile-module-local-view-hits : i64
-    0))
+  (any compile-profile test)
+  (define compiler-lower-profile-module-local-view-entries-metric : i64
+    77))
 (cfg
-  compile-profile
-  (define compiler-lower-profile-module-local-view-entries : i64
-    0))
+  (any compile-profile test)
+  (define compiler-lower-profile-metric-end : i64
+    78))
 
 ;; Non-resetting stage snapshots inside lower.typecheck: the checked-program
 ;; build's retention decomposes across the walk / clone augmentation / context
@@ -2613,6 +2595,10 @@
       _metric
       _value)
     unit))
+
+(defmacro (compiler-lower-profile-metrics-view [_state : Expr]) : Expr
+  `(profile_state.compiler-profile-state-metrics
+    (compiler-lower-state-profile ,_state)))
 
 (cfg
   compile-profile
@@ -3093,101 +3079,330 @@
           compiler-lower-profile-string-concat-runtime-calls-metric)))))
 
 (cfg
-  compile-profile
-  (define (compiler-lower-profile-name-reset) : unit
-    (begin
-      (set! compiler-lower-profile-name-env-binds 0)
-      (set! compiler-lower-profile-name-env-lookups 0)
-      (set! compiler-lower-profile-name-env-lookup-steps 0)
-      (set! compiler-lower-profile-name-env-stores 0)
-      (set! compiler-lower-profile-name-env-store-grows 0)
-      (set! compiler-lower-profile-name-env-materializations 0)
-      (set! compiler-lower-profile-name-env-materialized-entries 0)
-      (set! compiler-lower-profile-name-cache-builds 0)
-      (set! compiler-lower-profile-name-cache-entries 0)
-      (set! compiler-lower-profile-name-cache-lookups 0)
-      (set! compiler-lower-profile-name-cache-local-hits 0)
-      (set! compiler-lower-profile-name-cache-local-misses 0)
-      (set! compiler-lower-profile-module-name-cache-lookups 0)
-      (set! compiler-lower-profile-module-name-cache-hits 0)
-      (set! compiler-lower-profile-module-name-cache-entries 0)
-      (set! compiler-lower-profile-module-local-view-lookups 0)
-      (set! compiler-lower-profile-module-local-view-hits 0)
-      (set! compiler-lower-profile-module-local-view-entries 0))))
+  (any compile-profile test)
+  (define (compiler-lower-profile-name-reset [state : CompilerLowerState]) : unit
+    (profile_state.compiler-profile-state-metric-reset-range!
+      (compiler-lower-state-profile state)
+      compiler-lower-profile-name-env-binds-metric
+      compiler-lower-profile-metric-end)))
+
+(cfg
+  test
+  (define (compiler-lower-name-profile-job-isolation-tests-ok?) : bool
+    (let
+      [left-profile : profile_state.CompilerProfileState
+        (profile_state.compiler-profile-state-new)]
+      [right-profile : profile_state.CompilerProfileState
+        (profile_state.compiler-profile-state-new)]
+      [left : CompilerLowerState
+        (compiler-lower-state-new-with-intern-state-and-profile-state
+          (ci.intern-compat-state-new)
+          left-profile)]
+      [right : CompilerLowerState
+        (compiler-lower-state-new-with-intern-state-and-profile-state
+          (ci.intern-compat-state-new)
+          right-profile)]
+      [left-names : LowerNameEnv LowerNameEnv.Nil]
+      [bind-id : i64 0]
+      (begin
+        (compiler-lower-profile-name-reset left)
+        (compiler-lower-profile-name-reset right)
+        ;; Equal IDs deliberately flow through two owners. A reset is allowed to
+        ;; affect only the exact profile state passed to it.
+        (while (< bind-id 17)
+          (begin
+            (set!
+              left-names
+              (lower-name-env-bind-ids-profile
+                left
+                bind-id
+                bind-id
+                bind-id
+                left-names))
+            (set! bind-id (+ bind-id 1))))
+        (let
+          [_left-env-hit : i64
+            (lower-name-env-lookup-symbol-id-profile left left-names 0 -1)]
+          [_copy : LowerNameEnv
+            (lower-name-env-materialize-two-profile
+              left
+              left-names
+              LowerNameEnv.Nil)]
+          [left-cache : LowerNameCache
+            (lower-name-cache-from-env left left-names)]
+          [_left-name-hit : i64
+            (lower-name-cache-lookup-symbol-id (& left-cache) 0 -1)]
+          [_left-module-miss : LowerMaybeModuleNameCache
+            (lower-active-module-name-cache-lookup left 7)]
+          [_left-module-insert : unit
+            (lower-active-module-name-cache-insert! left 7 left-cache)]
+          [_left-module-hit : LowerMaybeModuleNameCache
+            (lower-active-module-name-cache-lookup left 7)]
+          [left-view : LowerModuleLocalView
+            (LowerModuleLocalView
+              (tc_core.tc-empty-env)
+              left-cache
+              (LowerTypeCache.No))]
+          [_left-view-miss : LowerMaybeModuleLocalView
+            (lower-active-module-local-view-lookup left 7)]
+          [_left-view-insert : unit
+            (lower-active-module-local-view-insert! left 7 left-view)]
+          [_left-view-hit : LowerMaybeModuleLocalView
+            (lower-active-module-local-view-lookup left 7)]
+          [right-names : LowerNameEnv
+            (lower-name-env-bind-ids-profile right 0 0 0 LowerNameEnv.Nil)]
+          [_right-env-hit : i64
+            (lower-name-env-lookup-symbol-id-profile right right-names 0 -1)]
+          [right-cache : LowerNameCache
+            (lower-name-cache-from-env right right-names)]
+          [_right-name-miss : i64
+            (lower-name-cache-lookup-symbol-id (& right-cache) 1 -1)]
+          [_right-module-insert : unit
+            (lower-active-module-name-cache-insert! right 7 right-cache)]
+          [right-view : LowerModuleLocalView
+            (LowerModuleLocalView
+              (tc_core.tc-empty-env)
+              right-cache
+              (LowerTypeCache.No))]
+          [_right-view-insert : unit
+            (lower-active-module-local-view-insert! right 7 right-view)]
+          [right-recorded : bool
+            (and
+              (=
+                (compiler-lower-profile-value
+                  right
+                  compiler-lower-profile-name-env-binds-metric)
+                1)
+              (=
+                (compiler-lower-profile-value
+                  right
+                  compiler-lower-profile-module-name-cache-entries-metric)
+                1)
+              (=
+                (compiler-lower-profile-value
+                  right
+                  compiler-lower-profile-module-local-view-entries-metric)
+                1))]
+          (begin
+            (compiler-lower-profile-name-reset right)
+            (let
+              [metric : i64 compiler-lower-profile-name-env-binds-metric]
+              [right-reset : bool true]
+              (begin
+                (while (< metric compiler-lower-profile-metric-end)
+                  (begin
+                    (when
+                      (not (= (compiler-lower-profile-value right metric) 0))
+                      (set! right-reset false))
+                    (set! metric (+ metric 1))))
+                (and
+                  right-recorded
+                  right-reset
+                  (=
+                    (compiler-lower-profile-value
+                      left
+                      compiler-lower-profile-name-env-binds-metric)
+                    17)
+                  (=
+                    (compiler-lower-profile-value
+                      left
+                      compiler-lower-profile-name-env-lookups-metric)
+                    1)
+                  (=
+                    (compiler-lower-profile-value
+                      left
+                      compiler-lower-profile-name-env-lookup-steps-metric)
+                    17)
+                  (=
+                    (compiler-lower-profile-value
+                      left
+                      compiler-lower-profile-name-env-stores-metric)
+                    2)
+                  (=
+                    (compiler-lower-profile-value
+                      left
+                      compiler-lower-profile-name-env-store-grows-metric)
+                    2)
+                  (=
+                    (compiler-lower-profile-value
+                      left
+                      compiler-lower-profile-name-env-materializations-metric)
+                    1)
+                  (=
+                    (compiler-lower-profile-value
+                      left
+                      compiler-lower-profile-name-env-materialized-entries-metric)
+                    17)
+                  (=
+                    (compiler-lower-profile-value
+                      left
+                      compiler-lower-profile-name-cache-builds-metric)
+                    1)
+                  (=
+                    (compiler-lower-profile-value
+                      left
+                      compiler-lower-profile-name-cache-entries-metric)
+                    17)
+                  (=
+                    (compiler-lower-profile-value
+                      left
+                      compiler-lower-profile-name-cache-lookups-metric)
+                    1)
+                  (=
+                    (compiler-lower-profile-value
+                      left
+                      compiler-lower-profile-name-cache-local-hits-metric)
+                    1)
+                  (=
+                    (compiler-lower-profile-value
+                      left
+                      compiler-lower-profile-name-cache-local-misses-metric)
+                    0)
+                  (=
+                    (compiler-lower-profile-value
+                      left
+                      compiler-lower-profile-module-name-cache-lookups-metric)
+                    2)
+                  (=
+                    (compiler-lower-profile-value
+                      left
+                      compiler-lower-profile-module-name-cache-hits-metric)
+                    1)
+                  (=
+                    (compiler-lower-profile-value
+                      left
+                      compiler-lower-profile-module-name-cache-entries-metric)
+                    1)
+                  (=
+                    (compiler-lower-profile-value
+                      left
+                      compiler-lower-profile-module-local-view-lookups-metric)
+                    2)
+                  (=
+                    (compiler-lower-profile-value
+                      left
+                      compiler-lower-profile-module-local-view-hits-metric)
+                    1)
+                  (=
+                    (compiler-lower-profile-value
+                      left
+                      compiler-lower-profile-module-local-view-entries-metric)
+                    1))))))))))
 
 (cfg
   compile-profile
-  (define (compiler-lower-profile-name-finish) : unit
+  (define (compiler-lower-profile-name-finish [state : CompilerLowerState]) : unit
     (begin
       (compiler-lower-profile-counter
         "name_env.binds"
-        compiler-lower-profile-name-env-binds)
+        (compiler-lower-profile-value
+          state
+          compiler-lower-profile-name-env-binds-metric))
       (compiler-lower-profile-counter
         "name_env.lookups"
-        compiler-lower-profile-name-env-lookups)
+        (compiler-lower-profile-value
+          state
+          compiler-lower-profile-name-env-lookups-metric))
       (compiler-lower-profile-counter
         "name_env.lookup_steps"
-        compiler-lower-profile-name-env-lookup-steps)
+        (compiler-lower-profile-value
+          state
+          compiler-lower-profile-name-env-lookup-steps-metric))
       (compiler-lower-profile-counter
         "name_env.stores"
-        compiler-lower-profile-name-env-stores)
+        (compiler-lower-profile-value
+          state
+          compiler-lower-profile-name-env-stores-metric))
       (compiler-lower-profile-counter
         "name_env.store_grows"
-        compiler-lower-profile-name-env-store-grows)
+        (compiler-lower-profile-value
+          state
+          compiler-lower-profile-name-env-store-grows-metric))
       (compiler-lower-profile-counter
         "name_env.materializations"
-        compiler-lower-profile-name-env-materializations)
+        (compiler-lower-profile-value
+          state
+          compiler-lower-profile-name-env-materializations-metric))
       (compiler-lower-profile-counter
         "name_env.materialized_entries"
-        compiler-lower-profile-name-env-materialized-entries)
+        (compiler-lower-profile-value
+          state
+          compiler-lower-profile-name-env-materialized-entries-metric))
       (compiler-lower-profile-counter
         "name_cache.builds"
-        compiler-lower-profile-name-cache-builds)
+        (compiler-lower-profile-value
+          state
+          compiler-lower-profile-name-cache-builds-metric))
       (compiler-lower-profile-counter
         "name_cache.entries"
-        compiler-lower-profile-name-cache-entries)
+        (compiler-lower-profile-value
+          state
+          compiler-lower-profile-name-cache-entries-metric))
       (compiler-lower-profile-counter
         "name_cache.lookups"
-        compiler-lower-profile-name-cache-lookups)
+        (compiler-lower-profile-value
+          state
+          compiler-lower-profile-name-cache-lookups-metric))
       (compiler-lower-profile-counter
         "name_cache.local_hits"
-        compiler-lower-profile-name-cache-local-hits)
+        (compiler-lower-profile-value
+          state
+          compiler-lower-profile-name-cache-local-hits-metric))
       (compiler-lower-profile-counter
         "name_cache.local_misses"
-        compiler-lower-profile-name-cache-local-misses)
+        (compiler-lower-profile-value
+          state
+          compiler-lower-profile-name-cache-local-misses-metric))
       (compiler-lower-profile-counter
         "module_name_cache.lookups"
-        compiler-lower-profile-module-name-cache-lookups)
+        (compiler-lower-profile-value
+          state
+          compiler-lower-profile-module-name-cache-lookups-metric))
       (compiler-lower-profile-counter
         "module_name_cache.hits"
-        compiler-lower-profile-module-name-cache-hits)
+        (compiler-lower-profile-value
+          state
+          compiler-lower-profile-module-name-cache-hits-metric))
       (compiler-lower-profile-counter
         "module_name_cache.entries"
-        compiler-lower-profile-module-name-cache-entries)
+        (compiler-lower-profile-value
+          state
+          compiler-lower-profile-module-name-cache-entries-metric))
       (compiler-lower-profile-counter
         "module_local_view.lookups"
-        compiler-lower-profile-module-local-view-lookups)
+        (compiler-lower-profile-value
+          state
+          compiler-lower-profile-module-local-view-lookups-metric))
       (compiler-lower-profile-counter
         "module_local_view.hits"
-        compiler-lower-profile-module-local-view-hits)
+        (compiler-lower-profile-value
+          state
+          compiler-lower-profile-module-local-view-hits-metric))
       (compiler-lower-profile-counter
         "module_local_view.entries"
-        compiler-lower-profile-module-local-view-entries))))
+        (compiler-lower-profile-value
+          state
+          compiler-lower-profile-module-local-view-entries-metric)))))
 
 (cfg
-  compile-profile
-  (define (compiler-lower-profile-name-cache-lookup [hit : bool]) : unit
+  (any compile-profile test)
+  (define (compiler-lower-profile-name-cache-lookup
+    [metrics : profile_state.CompilerProfileMetrics]
+    [hit : bool]) : unit
     (begin
-      (set!
-        compiler-lower-profile-name-cache-lookups
-        (+ compiler-lower-profile-name-cache-lookups 1))
+      (profile_state.compiler-profile-metrics-add!
+        metrics
+        compiler-lower-profile-name-cache-lookups-metric
+        1)
       (if hit
-        (set!
-          compiler-lower-profile-name-cache-local-hits
-          (+ compiler-lower-profile-name-cache-local-hits 1))
-        (set!
-          compiler-lower-profile-name-cache-local-misses
-          (+ compiler-lower-profile-name-cache-local-misses 1))))))
+        (profile_state.compiler-profile-metrics-add!
+          metrics
+          compiler-lower-profile-name-cache-local-hits-metric
+          1)
+        (profile_state.compiler-profile-metrics-add!
+          metrics
+          compiler-lower-profile-name-cache-local-misses-metric
+          1)))))
 
 (cfg
   compile-profile
@@ -3574,46 +3789,28 @@
   [names : LowerNameEnv]
   [source-id : i64]
   [fallback : i64]) : i64
-  (begin
-    (cfg
-      compile-profile
-      (set!
-        compiler-lower-profile-name-env-lookups
-        (+ compiler-lower-profile-name-env-lookups 1)))
-    (if (< source-id 0)
-      fallback
-      (match names
-        [(LowerNameEnv.Nil) fallback]
-        [(LowerNameEnv.Inline bind-id _ symbol-id)
+  (if (< source-id 0)
+    fallback
+    (match names
+      [(LowerNameEnv.Nil) fallback]
+      [(LowerNameEnv.Inline bind-id _ symbol-id)
+        (if (= bind-id source-id)
+          symbol-id
+          fallback)]
+      [(LowerNameEnv.Dense store head _)
+        (let
+          [cursor : i64 head]
           (begin
-            (cfg
-              compile-profile
-              (set!
-                compiler-lower-profile-name-env-lookup-steps
-                (+ compiler-lower-profile-name-env-lookup-steps 1)))
-            (if (= bind-id source-id)
-              symbol-id
-              fallback))]
-        [(LowerNameEnv.Dense store head _)
-          (let
-            [cursor : i64 head]
-            (begin
-              (while (>= cursor 0)
-                (let
-                  [binding : LowerNameBinding
-                    (lower-name-store-binding-at
-                      (& (__tl-box-place store))
-                      cursor)]
-                  (begin
-                    (cfg
-                      compile-profile
-                      (set!
-                        compiler-lower-profile-name-env-lookup-steps
-                        (+ compiler-lower-profile-name-env-lookup-steps 1)))
-                    (if (= binding.source-id source-id)
-                      (return binding.symbol-id)
-                      (set! cursor binding.parent)))))
-              fallback))]))))
+            (while (>= cursor 0)
+              (let
+                [binding : LowerNameBinding
+                  (lower-name-store-binding-at
+                    (& (__tl-box-place store))
+                    cursor)]
+                (if (= binding.source-id source-id)
+                  (return binding.symbol-id)
+                  (set! cursor binding.parent))))
+            fallback))])))
 
 (define (lower-name-env-lookup-logical-id
   [names : LowerNameEnv]
@@ -3696,16 +3893,6 @@
     (if (< count 1)
       LowerNameEnv.Nil
       (let
-        [_profile : unit
-          (cfg
-            compile-profile
-            (begin
-              (set!
-                compiler-lower-profile-name-env-materializations
-                (+ compiler-lower-profile-name-env-materializations 1))
-              (set!
-                compiler-lower-profile-name-env-materialized-entries
-                (+ compiler-lower-profile-name-env-materialized-entries count))))]
         [last-index : i64
           (if (< count 1)
             0
@@ -3775,6 +3962,291 @@
         [(LowerNameEnv.Nil)
           (lower-name-env-materialize-two left LowerNameEnv.Nil)]
         [_ (lower-name-env-rebuild-over left right)])]))
+
+;; Profile builds route name-environment operations through the exact lowering
+;; job owner. Ordinary builds expand the macros below to the original raw calls,
+;; so they neither pass an extra hot-path argument nor allocate metrics storage.
+(cfg
+  (any compile-profile test)
+  (define (lower-name-env-bind-ids-profile-storage-note!
+    [metrics : profile_state.CompilerProfileMetrics]
+    [rest : LowerNameEnv]) : unit
+    (match rest
+      [(LowerNameEnv.Nil) unit]
+      [(LowerNameEnv.Inline _ _ _)
+        (profile_state.compiler-profile-metrics-add!
+          metrics
+          compiler-lower-profile-name-env-stores-metric
+          1)]
+      [(LowerNameEnv.Dense store _ _)
+        (let
+          [storage : LowerNameStore (__tl-box-place store)]
+          (when
+            (>= storage.len (* storage.segment-count 16))
+            (profile_state.compiler-profile-metrics-add!
+              metrics
+              compiler-lower-profile-name-env-store-grows-metric
+              1)))])))
+
+(cfg
+  (any compile-profile test)
+  (define (lower-name-env-bind-ids-profile-storage
+    [metrics : profile_state.CompilerProfileMetrics]
+    [source-id : i64]
+    [logical-id : i64]
+    [symbol-id : i64]
+    [rest : LowerNameEnv]) : LowerNameEnv
+    (begin
+      (lower-name-env-bind-ids-profile-storage-note! metrics rest)
+      (lower-name-env-bind-ids-raw source-id logical-id symbol-id rest))))
+
+(cfg
+  (any compile-profile test)
+  (define (lower-name-env-bind-ids-profile
+    [state : CompilerLowerState]
+    [source-id : i64]
+    [logical-id : i64]
+    [symbol-id : i64]
+    [rest : LowerNameEnv]) : LowerNameEnv
+    (let
+      [metrics : profile_state.CompilerProfileMetrics
+        (compiler-lower-profile-metrics-view state)]
+      (begin
+        (profile_state.compiler-profile-metrics-add!
+          metrics
+          compiler-lower-profile-name-env-binds-metric
+          1)
+        (lower-name-env-bind-ids-profile-storage
+          metrics
+          source-id
+          logical-id
+          symbol-id
+          rest)))))
+
+(cfg
+  (any compile-profile test)
+  (define (lower-name-env-lookup-symbol-id-profile
+    [state : CompilerLowerState]
+    [names : LowerNameEnv]
+    [source-id : i64]
+    [fallback : i64]) : i64
+    (let
+      [metrics : profile_state.CompilerProfileMetrics
+        (compiler-lower-profile-metrics-view state)]
+      (begin
+        (profile_state.compiler-profile-metrics-add!
+          metrics
+          compiler-lower-profile-name-env-lookups-metric
+          1)
+        (if (< source-id 0)
+          fallback
+          (match names
+            [(LowerNameEnv.Nil) fallback]
+            [(LowerNameEnv.Inline bind-id _ symbol-id)
+              (begin
+                (profile_state.compiler-profile-metrics-add!
+                  metrics
+                  compiler-lower-profile-name-env-lookup-steps-metric
+                  1)
+                (if (= bind-id source-id)
+                  symbol-id
+                  fallback))]
+            [(LowerNameEnv.Dense store head _)
+              (let
+                [cursor : i64 head]
+                (begin
+                  (while (>= cursor 0)
+                    (let
+                      [binding : LowerNameBinding
+                        (lower-name-store-binding-at
+                          (& (__tl-box-place store))
+                          cursor)]
+                      (begin
+                        (profile_state.compiler-profile-metrics-add!
+                          metrics
+                          compiler-lower-profile-name-env-lookup-steps-metric
+                          1)
+                        (if (= binding.source-id source-id)
+                          (return binding.symbol-id)
+                          (set! cursor binding.parent)))))
+                  fallback))]))))))
+
+(cfg
+  (any compile-profile test)
+  (define (lower-name-env-lookup-with-id-profile
+    [state : CompilerLowerState]
+    [names : LowerNameEnv]
+    [source-id : i64]) : tc_core.TcMaybeString
+    (let
+      [symbol-id : i64
+        (lower-name-env-lookup-symbol-id-profile state names source-id -1)]
+      (if (>= symbol-id 0)
+        (tc_core.TcMaybeString.Some (ir.compiler-ir-symbol-text symbol-id))
+        (tc_core.TcMaybeString.No)))))
+
+(cfg
+  (any compile-profile test)
+  (define (lower-name-env-materialize-two-profile
+    [state : CompilerLowerState]
+    [left : LowerNameEnv]
+    [right : LowerNameEnv]) : LowerNameEnv
+    (let
+      [count : i64 (+ (lower-name-env-count left) (lower-name-env-count right))]
+      [metrics : profile_state.CompilerProfileMetrics
+        (compiler-lower-profile-metrics-view state)]
+      (begin
+        (when
+          (> count 0)
+          (begin
+            (profile_state.compiler-profile-metrics-add!
+              metrics
+              compiler-lower-profile-name-env-materializations-metric
+              1)
+            (profile_state.compiler-profile-metrics-add!
+              metrics
+              compiler-lower-profile-name-env-materialized-entries-metric
+              count)
+            (profile_state.compiler-profile-metrics-add!
+              metrics
+              compiler-lower-profile-name-env-stores-metric
+              1)
+            (profile_state.compiler-profile-metrics-add!
+              metrics
+              compiler-lower-profile-name-env-store-grows-metric
+              (/ (- count 1) 16))))
+        (lower-name-env-materialize-two left right)))))
+
+(cfg
+  (any compile-profile test)
+  (define (lower-name-env-rebuild-over-profile
+    [state : CompilerLowerState]
+    [left : LowerNameEnv]
+    [right : LowerNameEnv]) : LowerNameEnv
+    (let
+      [append-count : i64 (lower-name-env-count left)]
+      [metrics : profile_state.CompilerProfileMetrics
+        (compiler-lower-profile-metrics-view state)]
+      (begin
+        (match right
+          [(LowerNameEnv.Nil) unit]
+          [(LowerNameEnv.Inline _ _ _)
+            (begin
+              (profile_state.compiler-profile-metrics-add!
+                metrics
+                compiler-lower-profile-name-env-stores-metric
+                1)
+              (profile_state.compiler-profile-metrics-add!
+                metrics
+                compiler-lower-profile-name-env-store-grows-metric
+                (/ append-count 16)))]
+          [(LowerNameEnv.Dense store _ _)
+            (let
+              [storage : LowerNameStore (__tl-box-place store)]
+              [needed : i64 (+ storage.len append-count)]
+              [needed-segments : i64
+                (if (< needed 1)
+                  0
+                  (+ (/ (- needed 1) 16) 1))]
+              (when
+                (> needed-segments storage.segment-count)
+                (profile_state.compiler-profile-metrics-add!
+                  metrics
+                  compiler-lower-profile-name-env-store-grows-metric
+                  (- needed-segments storage.segment-count))))])
+        (lower-name-env-rebuild-over left right)))))
+
+(cfg
+  (any compile-profile test)
+  (define (lower-name-env-append-profile
+    [state : CompilerLowerState]
+    [left : LowerNameEnv]
+    [right : LowerNameEnv]) : LowerNameEnv
+    (match left
+      [(LowerNameEnv.Nil) right]
+      [_
+        (match right
+          [(LowerNameEnv.Nil)
+            (lower-name-env-materialize-two-profile state left LowerNameEnv.Nil)]
+          [_ (lower-name-env-rebuild-over-profile state left right)])])))
+
+(defmacro (lower-name-env-bind-ids-owned
+  [_state : Expr]
+  [source-id : Expr]
+  [logical-id : Expr]
+  [symbol-id : Expr]
+  [rest : Expr]) : Expr
+  (cfg
+    (any compile-profile test)
+    `(lower-name-env-bind-ids-profile
+      ,_state
+      ,source-id
+      ,logical-id
+      ,symbol-id
+      ,rest)
+    `(lower-name-env-bind-ids ,source-id ,logical-id ,symbol-id ,rest)))
+
+(defmacro (lower-name-env-lookup-symbol-id-owned
+  [_state : Expr]
+  [names : Expr]
+  [source-id : Expr]
+  [fallback : Expr]) : Expr
+  (cfg
+    (any compile-profile test)
+    `(lower-name-env-lookup-symbol-id-profile
+      ,_state
+      ,names
+      ,source-id
+      ,fallback)
+    `(lower-name-env-lookup-symbol-id ,names ,source-id ,fallback)))
+
+(defmacro (lower-name-env-lookup-with-id-owned
+  [_state : Expr]
+  [names : Expr]
+  [source-id : Expr]) : Expr
+  (cfg
+    (any compile-profile test)
+    `(lower-name-env-lookup-with-id-profile ,_state ,names ,source-id)
+    `(lower-name-env-lookup-with-id ,names ,source-id)))
+
+(defmacro (lower-name-env-append-owned
+  [_state : Expr]
+  [left : Expr]
+  [right : Expr]) : Expr
+  (cfg
+    (any compile-profile test)
+    `(lower-name-env-append-profile ,_state ,left ,right)
+    `(lower-name-env-append ,left ,right)))
+
+(cfg
+  (any compile-profile test)
+  (define (lower-name-env-copy-active-profile
+    [state : CompilerLowerState]
+    [names : LowerNameEnv]) : LowerNameEnv
+    (match names
+      [(LowerNameEnv.Nil) LowerNameEnv.Nil]
+      [(LowerNameEnv.Inline source-id logical-id symbol-id)
+        (LowerNameEnv.Inline source-id logical-id symbol-id)]
+      [_ (lower-name-env-materialize-two-profile state names LowerNameEnv.Nil)])))
+
+(cfg
+  (any compile-profile test)
+  (define (lower-name-env-copy-into-pools-profile
+    [state : CompilerLowerState]
+    [names : LowerNameEnv]
+    [pools : ast.AstNodePoolContext]) : LowerNameEnv
+    (let
+      [base-arena : arena.Arena
+        (arena.Arena (ast.ast-node-pool-context-base-arena pools))]
+      (in-arena base-arena (lower-name-env-copy-active-profile state names)))))
+
+(defmacro (lower-name-env-copy-into-pools-owned
+  [_state : Expr]
+  [names : Expr]
+  [pools : Expr]) : Expr
+  (cfg
+    (any compile-profile test)
+    `(lower-name-env-copy-into-pools-profile ,_state ,names ,pools)
+    `(lower-name-env-copy-into-pools ,names ,pools)))
 
 (define (lower-name-cache-capacity [count : i64]) : i64
   (if (< count 4)
@@ -3896,6 +4368,67 @@
   [rest : LowerNameEnv]) : LowerNameEnv
   (lower-name-env-bind-ids source-id logical-id symbol-id rest))
 
+(cfg
+  (any compile-profile test)
+  (define (lower-name-env-bind-logical-id-profile
+    [state : CompilerLowerState]
+    [source-id : i64]
+    [logical-name : String]
+    [logical-id : i64]
+    [rest : LowerNameEnv]) : LowerNameEnv
+    (lower-name-env-bind-ids-profile
+      state
+      source-id
+      logical-id
+      (lower-derived-symbol-id logical-name)
+      rest)))
+
+(cfg
+  (any compile-profile test)
+  (define (lower-name-env-bind-logical-symbol-id-profile
+    [state : CompilerLowerState]
+    [source-id : i64]
+    [logical-id : i64]
+    [symbol-id : i64]
+    [rest : LowerNameEnv]) : LowerNameEnv
+    (lower-name-env-bind-ids-profile state source-id logical-id symbol-id rest)))
+
+(defmacro (lower-name-env-bind-logical-id-owned
+  [_state : Expr]
+  [source-id : Expr]
+  [logical-name : Expr]
+  [logical-id : Expr]
+  [rest : Expr]) : Expr
+  (cfg
+    (any compile-profile test)
+    `(lower-name-env-bind-logical-id-profile
+      ,_state
+      ,source-id
+      ,logical-name
+      ,logical-id
+      ,rest)
+    `(lower-name-env-bind-logical-id ,source-id ,logical-name ,logical-id ,rest)))
+
+(defmacro (lower-name-env-bind-logical-symbol-id-owned
+  [_state : Expr]
+  [source-id : Expr]
+  [logical-id : Expr]
+  [symbol-id : Expr]
+  [rest : Expr]) : Expr
+  (cfg
+    (any compile-profile test)
+    `(lower-name-env-bind-logical-symbol-id-profile
+      ,_state
+      ,source-id
+      ,logical-id
+      ,symbol-id
+      ,rest)
+    `(lower-name-env-bind-logical-symbol-id
+      ,source-id
+      ,logical-id
+      ,symbol-id
+      ,rest)))
+
 (define (lower-extern-logical-symbol-id
   [logical-id : i64]
   [logical-name : String]
@@ -3995,10 +4528,12 @@
                           -1)]))))]
             (begin
               (cfg
-                compile-profile
-                (set!
-                  compiler-lower-profile-name-cache-entries
-                  (+ compiler-lower-profile-name-cache-entries 1)))
+                (any compile-profile test)
+                (profile_state.compiler-profile-metrics-add!
+                  (compiler-lower-profile-metrics-view
+                    (lower-name-cache-owner-state cache))
+                  compiler-lower-profile-name-cache-entries-metric
+                  1))
               (when (< symbol-id 0) (set! symbol-id fallback-symbol-id))
               (set! (array-ref logical-ids next) logical-id)
               (set! (array-ref symbol-ids next) symbol-id)
@@ -4046,10 +4581,11 @@
   [names : LowerNameEnv]) : LowerNameCache
   (begin
     (cfg
-      compile-profile
-      (set!
-        compiler-lower-profile-name-cache-builds
-        (+ compiler-lower-profile-name-cache-builds 1)))
+      (any compile-profile test)
+      (profile_state.compiler-profile-metrics-add!
+        (compiler-lower-profile-metrics-view lower-state)
+        compiler-lower-profile-name-cache-builds-metric
+        1))
     (let
       [count : i64 (lower-name-env-count names)]
       (lower-name-cache-from-env-into
@@ -4074,10 +4610,11 @@
   [module-id : i64]) : LowerNameCache
   (begin
     (cfg
-      compile-profile
-      (set!
-        compiler-lower-profile-name-cache-builds
-        (+ compiler-lower-profile-name-cache-builds 1)))
+      (any compile-profile test)
+      (profile_state.compiler-profile-metrics-add!
+        (compiler-lower-profile-metrics-view lower-state)
+        compiler-lower-profile-name-cache-builds-metric
+        1))
     (let
       [count : i64 (lower-name-env-count names)]
       (lower-name-cache-from-env-into
@@ -4149,10 +4686,12 @@
           (set! (array-ref ready.values slot) cache)
           (lower_i64_i64_map.insert-ref! (&mut modules) module-id slot)
           (cfg
-            compile-profile
-            (set!
-              compiler-lower-profile-module-name-cache-entries
-              (+ compiler-lower-profile-module-name-cache-entries 1)))
+            (any compile-profile test)
+            (profile_state.compiler-profile-metrics-add!
+              (compiler-lower-profile-metrics-view
+                (lower-name-cache-owner-state (& cache)))
+              compiler-lower-profile-module-name-cache-entries-metric
+              1))
           (LowerModuleNameCacheStore modules ready.values (+ slot 1))))]))
 
 (define (lower-active-module-name-cache-lookup
@@ -4168,16 +4707,18 @@
         module-id)]
     (begin
       (cfg
-        compile-profile
+        (any compile-profile test)
         (begin
-          (set!
-            compiler-lower-profile-module-name-cache-lookups
-            (+ compiler-lower-profile-module-name-cache-lookups 1))
+          (profile_state.compiler-profile-metrics-add!
+            (compiler-lower-profile-metrics-view lower-state)
+            compiler-lower-profile-module-name-cache-lookups-metric
+            1)
           (match result
             [(LowerMaybeModuleNameCache.Some _)
-              (set!
-                compiler-lower-profile-module-name-cache-hits
-                (+ compiler-lower-profile-module-name-cache-hits 1))]
+              (profile_state.compiler-profile-metrics-add!
+                (compiler-lower-profile-metrics-view lower-state)
+                compiler-lower-profile-module-name-cache-hits-metric
+                1)]
             [(LowerMaybeModuleNameCache.No) unit])))
       result)))
 
@@ -4268,8 +4809,11 @@
     [index : i64 (lower_i64_i64_map.get-value-or (& cache.ids) source-id -1)]
     (begin
       (cfg
-        compile-profile
-        (compiler-lower-profile-name-cache-lookup (>= index 0)))
+        (any compile-profile test)
+        (compiler-lower-profile-name-cache-lookup
+          (compiler-lower-profile-metrics-view
+            (lower-name-cache-owner-state (& cache)))
+          (>= index 0)))
       (if (>= index 0)
         (tc_core.TcMaybeString.Some
           (ir.compiler-ir-symbol-text (array-ref cache.symbol-ids index)))
@@ -4288,8 +4832,11 @@
     [index : i64 (lower_i64_i64_map.get-value-or (& cache.ids) source-id -1)]
     (begin
       (cfg
-        compile-profile
-        (compiler-lower-profile-name-cache-lookup (>= index 0)))
+        (any compile-profile test)
+        (compiler-lower-profile-name-cache-lookup
+          (compiler-lower-profile-metrics-view
+            (lower-name-cache-owner-state cache))
+          (>= index 0)))
       (if (>= index 0)
         (array-ref cache.logical-ids index)
         (match cache.parent
@@ -4305,8 +4852,11 @@
     [index : i64 (lower_i64_i64_map.get-value-or (& cache.ids) source-id -1)]
     (begin
       (cfg
-        compile-profile
-        (compiler-lower-profile-name-cache-lookup (>= index 0)))
+        (any compile-profile test)
+        (compiler-lower-profile-name-cache-lookup
+          (compiler-lower-profile-metrics-view
+            (lower-name-cache-owner-state cache))
+          (>= index 0)))
       (if (>= index 0)
         (array-ref cache.symbol-ids index)
         (let
@@ -5148,7 +5698,8 @@
           (return names))
         (lower-alias-overlay-record! lower-state source-id logical-id))
       (return
-        (lower-name-env-bind-logical-symbol-id
+        (lower-name-env-bind-logical-symbol-id-owned
+          lower-state
           source-id
           logical-id
           symbol-id
@@ -5158,10 +5709,11 @@
     (when
       (not (compiler-lower-state-read lower-state bool alias-overlay-valid))
       (return
-        (match (lower-name-env-lookup-with-id names source-id)
+        (match (lower-name-env-lookup-with-id-owned lower-state names source-id)
           [(tc_core.TcMaybeString.Some _) names]
           [(tc_core.TcMaybeString.No)
-            (lower-name-env-bind-logical-symbol-id
+            (lower-name-env-bind-logical-symbol-id-owned
+              lower-state
               source-id
               logical-id
               symbol-id
@@ -5170,7 +5722,12 @@
     ;; same accept decision as scanning `names`.
     (when (lower-alias-overlay-contains? lower-state source-id) (return names))
     (lower-alias-overlay-record! lower-state source-id logical-id)
-    (lower-name-env-bind-logical-symbol-id source-id logical-id symbol-id names)))
+    (lower-name-env-bind-logical-symbol-id-owned
+      lower-state
+      source-id
+      logical-id
+      symbol-id
+      names)))
 
 (define (lower-name-env-add-decl-import-alias-binding-base-id
   [lower-state : CompilerLowerState]
@@ -5297,7 +5854,8 @@
             (return names))
           (lower-alias-overlay-record! lower-state source-id logical-id))
         (return
-          (lower-name-env-bind-logical-symbol-id
+          (lower-name-env-bind-logical-symbol-id-owned
+            lower-state
             source-id
             logical-id
             symbol-id
@@ -5313,10 +5871,14 @@
       (when
         (not (compiler-lower-state-read lower-state bool alias-overlay-valid))
         (return
-          (match (lower-name-env-lookup-with-id names source-id)
+          (match (lower-name-env-lookup-with-id-owned
+            lower-state
+            names
+            source-id)
             [(tc_core.TcMaybeString.Some _) names]
             [(tc_core.TcMaybeString.No)
-              (lower-name-env-bind-logical-symbol-id
+              (lower-name-env-bind-logical-symbol-id-owned
+                lower-state
                 source-id
                 logical-id
                 symbol-id
@@ -5326,7 +5888,8 @@
         (lower-alias-overlay-contains? lower-state source-id)
         (return names))
       (lower-alias-overlay-record! lower-state source-id logical-id)
-      (lower-name-env-bind-logical-symbol-id
+      (lower-name-env-bind-logical-symbol-id-owned
+        lower-state
         source-id
         logical-id
         symbol-id
@@ -5423,6 +5986,72 @@
         symbol-id
         names))))
 
+(cfg
+  (any compile-profile test)
+  (define (lower-name-env-add-module-binding-id-profile
+    [state : CompilerLowerState]
+    [names : LowerNameEnv]
+    [_module : String]
+    [module-id : i64]
+    [_ : String]
+    [source-id : i64]
+    [logical-name : String]
+    [logical-id : i64]
+    [direct : bool]) : LowerNameEnv
+    (let
+      [symbol-id : i64
+        (lower-logical-symbol-id-select
+          logical-name
+          (if direct
+            source-id
+            logical-id)
+          direct)]
+      (if (csym.compiler-symbol-root-module-id? module-id)
+        (lower-name-env-bind-logical-symbol-id-profile
+          state
+          source-id
+          logical-id
+          symbol-id
+          names)
+        (lower-name-env-bind-logical-symbol-id-profile
+          state
+          logical-id
+          logical-id
+          symbol-id
+          names)))))
+
+(defmacro (lower-name-env-add-module-binding-id-owned
+  [_state : Expr]
+  [names : Expr]
+  [module : Expr]
+  [module-id : Expr]
+  [source-name : Expr]
+  [source-id : Expr]
+  [logical-name : Expr]
+  [logical-id : Expr]
+  [direct : Expr]) : Expr
+  (cfg
+    (any compile-profile test)
+    `(lower-name-env-add-module-binding-id-profile
+      ,_state
+      ,names
+      ,module
+      ,module-id
+      ,source-name
+      ,source-id
+      ,logical-name
+      ,logical-id
+      ,direct)
+    `(lower-name-env-add-module-binding-id
+      ,names
+      ,module
+      ,module-id
+      ,source-name
+      ,source-id
+      ,logical-name
+      ,logical-id
+      ,direct)))
+
 (define (lower-name-env-add-decl-module-binding-id
   [lower-state : CompilerLowerState]
   [names : LowerNameEnv]
@@ -5442,7 +6071,8 @@
         module-id
         source-id
         source-name)]
-    (lower-name-env-add-module-binding-id
+    (lower-name-env-add-module-binding-id-owned
+      lower-state
       names
       module
       module-id
@@ -5481,6 +6111,59 @@
       logical-id
       symbol-id
       names)))
+
+(cfg
+  (any compile-profile test)
+  (define (lower-name-env-add-module-extern-binding-id-profile
+    [state : CompilerLowerState]
+    [names : LowerNameEnv]
+    [_module : String]
+    [module-id : i64]
+    [source-name : String]
+    [source-id : i64]
+    [metadata : ast.AstExternMetadata]) : LowerNameEnv
+    (let
+      [logical-id : i64 (lower-module-name-key-id-by-id module-id source-id)]
+      [symbol-id : i64
+        (lower-extern-logical-symbol-id
+          logical-id
+          source-name
+          source-id
+          metadata)]
+      (lower-name-env-bind-ids-profile
+        state
+        (if (csym.compiler-symbol-root-module-id? module-id)
+          source-id
+          logical-id)
+        logical-id
+        symbol-id
+        names))))
+
+(defmacro (lower-name-env-add-module-extern-binding-id-owned
+  [_state : Expr]
+  [names : Expr]
+  [module : Expr]
+  [module-id : Expr]
+  [source-name : Expr]
+  [source-id : Expr]
+  [metadata : Expr]) : Expr
+  (cfg
+    (any compile-profile test)
+    `(lower-name-env-add-module-extern-binding-id-profile
+      ,_state
+      ,names
+      ,module
+      ,module-id
+      ,source-name
+      ,source-id
+      ,metadata)
+    `(lower-name-env-add-module-extern-binding-id
+      ,names
+      ,module
+      ,module-id
+      ,source-name
+      ,source-id
+      ,metadata)))
 
 (define (lower-name-env-add-struct-cleanup-in-module
   [lower-state : CompilerLowerState]
@@ -6445,7 +7128,8 @@
       ;; the exact external linker symbol.
       (let
         [name-str : String (tc_core.tc-env-key-name-text name)]
-        (lower-name-env-add-module-extern-binding-id
+        (lower-name-env-add-module-extern-binding-id-owned
+          lower-state
           names
           module
           module-id
@@ -6545,6 +7229,34 @@
           (lower-name-env-bind-ids source-id logical-id symbol-id names)]
         [(LowerNameEnvView.Nil) names])]))
 
+(cfg
+  (any compile-profile test)
+  (define (lower-name-env-add-root-alias-from-latest-profile
+    [state : CompilerLowerState]
+    [names : LowerNameEnv]
+    [decl : ast.AstDecl]) : LowerNameEnv
+    (match (lower-decl-lexical-binding-id decl)
+      [(LowerNameCacheMaybeId.No) names]
+      [(LowerNameCacheMaybeId.Some source-id)
+        (match (lower-name-env-view names)
+          [(LowerNameEnvView.Bind _ logical-id symbol-id _)
+            (lower-name-env-bind-ids-profile
+              state
+              source-id
+              logical-id
+              symbol-id
+              names)]
+          [(LowerNameEnvView.Nil) names])])))
+
+(defmacro (lower-name-env-add-root-alias-from-latest-owned
+  [_state : Expr]
+  [names : Expr]
+  [decl : Expr]) : Expr
+  (cfg
+    (any compile-profile test)
+    `(lower-name-env-add-root-alias-from-latest-profile ,_state ,names ,decl)
+    `(lower-name-env-add-root-alias-from-latest ,names ,decl)))
+
 (define (lower-name-env-from-decls-with-state
   [lower-state : CompilerLowerState]
   [decls : ast.AstDeclList]
@@ -6634,7 +7346,8 @@
                       (csym.compiler-symbol-root-module-id? cur-module-id)
                       (not
                         (csym.compiler-symbol-root-module-id? logical-module-id)))
-                      (lower-name-env-add-root-alias-from-latest
+                      (lower-name-env-add-root-alias-from-latest-owned
+                        lower-state
                         owner-names
                         decl)
                       owner-names)))])
@@ -6728,7 +7441,8 @@
                       syntax-key-id
                       -1)]
                   [symbol-id : i64
-                    (lower-name-env-lookup-symbol-id
+                    (lower-name-env-lookup-symbol-id-owned
+                      lower-state
                       with-syntax-id
                       syntax-key-id
                       -1)]
@@ -6736,7 +7450,8 @@
                   ;; logical/symbol identity. Recomputing from helper-id would
                   ;; create a second IR symbol for the same helper.
                   (if (and (>= logical-id 0) (>= symbol-id 0))
-                    (lower-name-env-bind-logical-symbol-id
+                    (lower-name-env-bind-logical-symbol-id-owned
+                      lower-state
                       (lower-module-name-key-id-by-id module-id helper-id)
                       logical-id
                       symbol-id
@@ -7557,7 +8272,8 @@
     [alias-key : i64
       (lower-module-name-key-id-by-id importer-module-id alias-id)]
     [logical-id : i64 (lower-name-env-lookup-logical-id names target-key -1)]
-    [symbol-id : i64 (lower-name-env-lookup-symbol-id names target-key -1)]
+    [symbol-id : i64
+      (lower-name-env-lookup-symbol-id-owned lower-state names target-key -1)]
     (if (or (< logical-id 0) (< symbol-id 0))
       names
       (lower-name-env-add-import-alias-binding-symbol-id
@@ -7804,7 +8520,11 @@
         cbi.compiler-builtin-id-fix-empty)]
     (match names
       [(LowerNameEnv.Nil) overlay]
-      [_ (lower-name-env-append overlay names)])))
+      [_
+        (lower-name-env-append-owned
+          (compiler-lower-state-from-name-cache base-cache)
+          overlay
+          names)])))
 
 (define (lower-module-local-type-envs-bind-qualified
   [top-env : tc_core.TcTypeEnv]
@@ -8182,10 +8902,12 @@
           (set! (array-ref ready.values slot) view)
           (lower_i64_i64_map.insert-ref! (&mut modules) module-id slot)
           (cfg
-            compile-profile
-            (set!
-              compiler-lower-profile-module-local-view-entries
-              (+ compiler-lower-profile-module-local-view-entries 1)))
+            (any compile-profile test)
+            (profile_state.compiler-profile-metrics-add!
+              (compiler-lower-profile-metrics-view
+                (compiler-lower-state-from-name-cache view.name-cache))
+              compiler-lower-profile-module-local-view-entries-metric
+              1))
           (LowerModuleLocalViewStore modules ready.values (+ slot 1))))]))
 
 (define (lower-active-module-local-view-lookup
@@ -8201,16 +8923,18 @@
         module-id)]
     (begin
       (cfg
-        compile-profile
+        (any compile-profile test)
         (begin
-          (set!
-            compiler-lower-profile-module-local-view-lookups
-            (+ compiler-lower-profile-module-local-view-lookups 1))
+          (profile_state.compiler-profile-metrics-add!
+            (compiler-lower-profile-metrics-view lower-state)
+            compiler-lower-profile-module-local-view-lookups-metric
+            1)
           (match result
             [(LowerMaybeModuleLocalView.Some _)
-              (set!
-                compiler-lower-profile-module-local-view-hits
-                (+ compiler-lower-profile-module-local-view-hits 1))]
+              (profile_state.compiler-profile-metrics-add!
+                (compiler-lower-profile-metrics-view lower-state)
+                compiler-lower-profile-module-local-view-hits-metric
+                1)]
             [(LowerMaybeModuleLocalView.No) unit])))
       result)))
 
@@ -70355,7 +71079,7 @@
                                   lower-state))
                               (cfg
                                 compile-profile
-                                (compiler-lower-profile-name-finish))
+                                (compiler-lower-profile-name-finish lower-state))
                               (cfg
                                 compile-profile
                                 (compiler-lower-profile-finish
@@ -70378,7 +71102,7 @@
                                   lower-state))
                               (cfg
                                 compile-profile
-                                (compiler-lower-profile-name-finish))
+                                (compiler-lower-profile-name-finish lower-state))
                               (cfg
                                 compile-profile
                                 (compiler-lower-profile-finish
@@ -70529,7 +71253,7 @@
       (any compile-profile test)
       (compiler-lower-profile-reset! lower-state)
       unit)
-    (cfg compile-profile (compiler-lower-profile-name-reset))
+    (cfg compile-profile (compiler-lower-profile-name-reset lower-state))
     (cfg
       (any compile-profile test)
       (spec.spec-profile-reset! (compiler-lower-state-profile lower-state))
@@ -70671,7 +71395,10 @@
                             reach-keep-plan)]
                         [escaped-names : LowerNameEnv
                           (if (and detach-source? needs-specialization)
-                            (lower-name-env-copy-into-pools names source-pools)
+                            (lower-name-env-copy-into-pools-owned
+                              lower-state
+                              names
+                              source-pools)
                             names)]
                         [_clear-source-derived-caches : unit
                           (if detach-source?

@@ -15935,6 +15935,12 @@
     "lower profile reset and observations stay isolated per job"))
 
 (test
+  compiler-lower-name-profile-job-isolation
+  (test.assert-true
+    (compiler_lower.compiler-lower-name-profile-job-isolation-tests-ok?)
+    "lower name metrics stay isolated across equal-ID jobs and owner reset"))
+
+(test
   compiler-lower-spmd-structural-profile
   (test.assert-true
     (compiler-lower-spmd-structural-profile-ok?)

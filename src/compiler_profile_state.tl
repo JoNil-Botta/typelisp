@@ -9,7 +9,7 @@
 (cfg test (import stdlib.test))
 
 (define compiler-profile-state-metric-capacity : i64
-  (cfg (any compile-profile test) 64 0))
+  (cfg (any compile-profile test) 78 0))
 (define compiler-profile-state-summary-row-capacity : i64
   (cfg (any compile-profile-summary test) 40 0))
 (define compiler-profile-state-summary-scope-capacity : i64
@@ -111,38 +111,41 @@
   (define (compiler-profile-state-storage [state : CompilerProfileState]) : CompilerProfileStateStorage
     (array-ref state.storage 0)))
 
-(define (compiler-profile-state-metrics [_state : CompilerProfileState]) : CompilerProfileMetrics
+(defmacro (compiler-profile-state-metrics [_state : Expr]) : Expr
   (cfg
     (any compile-profile test)
-    (CompilerProfileMetrics
-      (__tl-project-field (compiler-profile-state-storage _state) metrics))
-    (CompilerProfileMetrics 0)))
+    `(CompilerProfileMetrics
+      (__tl-project-field
+        (array-ref ,(comptime.expr-struct-get _state "storage") 0)
+        metrics))
+    `(CompilerProfileMetrics 0)))
 
 (cfg
   (any compile-profile test)
-  (define (compiler-profile-metrics-value
-    [metrics : CompilerProfileMetrics]
-    [metric : i64]) : i64
-    (array-ref metrics.values metric)))
+  (defmacro (compiler-profile-metrics-value [metrics : Expr] [metric : Expr]) : Expr
+    `(array-ref ,(comptime.expr-struct-get metrics "values") ,metric)))
 
 (cfg
   (any compile-profile test)
-  (define (compiler-profile-metrics-set!
-    [metrics : CompilerProfileMetrics]
-    [metric : i64]
-    [value : i64]) : unit
-    (set! (array-ref metrics.values metric) value)))
+  (defmacro (compiler-profile-metrics-set!
+    [metrics : Expr]
+    [metric : Expr]
+    [value : Expr]) : Expr
+    `(set!
+      (array-ref ,(comptime.expr-struct-get metrics "values") ,metric)
+      ,value)))
 
 (cfg
   (any compile-profile test)
-  (define (compiler-profile-metrics-add!
-    [metrics : CompilerProfileMetrics]
-    [metric : i64]
-    [value : i64]) : unit
-    (compiler-profile-metrics-set!
-      metrics
-      metric
-      (+ (compiler-profile-metrics-value metrics metric) value))))
+  (defmacro (compiler-profile-metrics-add!
+    [metrics : Expr]
+    [metric : Expr]
+    [value : Expr]) : Expr
+    `(let
+      [values : (__tl_dyn-array i64)
+        ,(comptime.expr-struct-get metrics "values")]
+      [index : i64 ,metric]
+      (set! (array-ref values index) (+ (array-ref values index) ,value)))))
 
 (cfg
   (any compile-profile test)

@@ -58,7 +58,7 @@
 
 (define (underflow-trap) : i64
   (let
-    [items : (__tl_dyn-array i64) (make-array i64 8)]
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 8)]
     (offset-sum (& items) 0 1)))
 
 (define (main) : i64

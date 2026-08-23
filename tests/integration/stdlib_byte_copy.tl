@@ -80,10 +80,10 @@
     [dst : (__tl_dyn-array u8) (array.make-array u8 4)]
     [src-base : (MutPtr u8)
       (unsafe
-        (array-data src))]
+        (__tl_array-data src))]
     [dst-base : (MutPtr u8)
       (unsafe
-        (array-data dst))]
+        (__tl_array-data dst))]
     (begin
       (byte-copy-fill! (&mut src) 4 10)
       (byte-copy-fill-constant! (&mut dst) 4 77)
@@ -101,10 +101,10 @@
     [dst : (__tl_dyn-array u8) (array.make-array u8 20)]
     [src-base : (MutPtr u8)
       (unsafe
-        (array-data src))]
+        (__tl_array-data src))]
     [dst-base : (MutPtr u8)
       (unsafe
-        (array-data dst))]
+        (__tl_array-data dst))]
     [n : i64 11]
     (begin
       (byte-copy-fill! (&mut src) 20 20)
@@ -120,10 +120,10 @@
     [dst : (__tl_dyn-array u8) (array.make-array u8 12)]
     [src-base : (MutPtr u8)
       (unsafe
-        (array-data src))]
+        (__tl_array-data src))]
     [dst-base : (MutPtr u8)
       (unsafe
-        (array-data dst))]
+        (__tl_array-data dst))]
     (begin
       (byte-copy-fill! (&mut src) 12 40)
       (byte-copy-fill-constant! (&mut dst) 12 88)
@@ -146,10 +146,10 @@
     [dst : (__tl_dyn-array u8) (array.make-array u8 96)]
     [src-base : (MutPtr u8)
       (unsafe
-        (array-data src))]
+        (__tl_array-data src))]
     [dst-base : (MutPtr u8)
       (unsafe
-        (array-data dst))]
+        (__tl_array-data dst))]
     [n : i64 (+ 64 9)]
     (begin
       (byte-copy-fill! (&mut src) 96 3)
@@ -164,7 +164,7 @@
     [buf : (__tl_dyn-array u8) (array.make-array u8 20)]
     [base : (MutPtr u8)
       (unsafe
-        (array-data buf))]
+        (__tl_array-data buf))]
     (begin
       (byte-copy-fill! (&mut buf) 20 0)
       (string.str-copy-bytes-into (byte-copy-source-at base 0) base 3 10)
@@ -177,7 +177,7 @@
     [buf : (__tl_dyn-array u8) (array.make-array u8 160)]
     [base : (MutPtr u8)
       (unsafe
-        (array-data buf))]
+        (__tl_array-data buf))]
     (begin
       (byte-copy-fill! (&mut buf) 160 0)
       (string.str-copy-bytes-into (byte-copy-source-at base 0) base 17 120)
@@ -190,7 +190,7 @@
     [buf : (__tl_dyn-array u8) (array.make-array u8 160)]
     [base : (MutPtr u8)
       (unsafe
-        (array-data buf))]
+        (__tl_array-data buf))]
     (begin
       (byte-copy-fill! (&mut buf) 160 0)
       (string.str-copy-bytes-into (byte-copy-source-at base 17) base 0 120)

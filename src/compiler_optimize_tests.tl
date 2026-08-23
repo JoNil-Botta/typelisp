@@ -16032,9 +16032,13 @@
 (define (opt-inline-pack-words-are-vars-1-2?
   [words : compiler_ir_types.CompilerIrValueSeq]) : bool
   (if (= words.len 2)
-    (match (compiler_ir_types.compiler-ir-value-seq-ref words 0)
+    (match (compiler_ir_types.compiler-ir-value-seq-ref
+      (compiler_ir_types.compiler-ir-global-shared-view words)
+      0)
       [(compiler_ir_types.CompilerIrValue.Var av)
-        (match (compiler_ir_types.compiler-ir-value-seq-ref words 1)
+        (match (compiler_ir_types.compiler-ir-value-seq-ref
+          (compiler_ir_types.compiler-ir-global-shared-view words)
+          1)
           [(compiler_ir_types.CompilerIrValue.Var bv) (and (= av 1) (= bv 2))]
           [_ false])]
       [_ false])
@@ -16049,19 +16053,24 @@
   [pack-dst : i64]
   [pack-ok : bool]
   [word-ok : bool]) : bool
-  (if (>= index (compiler_ir_types.compiler-ir-instr-seq-count instrs))
+  (if (>=
+    index
+    (compiler_ir_types.compiler-ir-instr-seq-count
+      (compiler_ir_types.compiler-ir-global-shared-view instrs)))
     (and pack-ok word-ok)
-    (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
+    (match (compiler_ir_types.compiler-ir-instr-seq-ref
+      (compiler_ir_types.compiler-ir-global-shared-view instrs)
+      index)
       [(compiler_ir_types.CompilerIrInstr.Pack dst words _)
         (opt-inline-pack-word-remap-ok-scan-from
-          instrs
+          (compiler_ir_types.compiler-ir-global-shared-view instrs)
           (+ index 1)
           dst
           (opt-inline-pack-words-are-vars-1-2? words)
           word-ok)]
       [(compiler_ir_types.CompilerIrInstr.Word _ src _ _)
         (opt-inline-pack-word-remap-ok-scan-from
-          instrs
+          (compiler_ir_types.compiler-ir-global-shared-view instrs)
           (+ index 1)
           pack-dst
           pack-ok
@@ -16070,7 +16079,7 @@
             [_ false]))]
       [_
         (opt-inline-pack-word-remap-ok-scan-from
-          instrs
+          (compiler_ir_types.compiler-ir-global-shared-view instrs)
           (+ index 1)
           pack-dst
           pack-ok
@@ -29293,47 +29302,73 @@
     [blocks : compiler_ir_types.CompilerIrBlockList
       (opt-licm-hot-use-test-blocks)]
     [context : compiler_optimize.OptCfgContext
-      (compiler_optimize.opt-cfg-context-build blocks)]
+      (compiler_optimize.opt-cfg-context-build
+        (compiler_optimize.compiler-opt-global-shared-view blocks))]
     [loops : compiler_optimize.OptNaturalLoopList
-      (compiler_optimize.opt-cfg-natural-loops-with-context blocks context)]
+      (compiler_optimize.opt-cfg-natural-loops-with-context
+        (compiler_optimize.compiler-opt-global-shared-view blocks)
+        (compiler_optimize.compiler-opt-global-shared-view context))]
     (match (compiler_optimize.opt-natural-loop-find
-      loops
+      (compiler_optimize.compiler-opt-global-shared-view loops)
       (compiler_ir_types.compiler-ir-label "outer")
       (compiler_ir_types.compiler-ir-label "outer-latch"))
       [(compiler_optimize.OptMaybeNaturalLoop.No) 1]
       [(compiler_optimize.OptMaybeNaturalLoop.Some outer)
         (match (compiler_optimize.opt-cfg-index-id
-          context.index
+          (compiler_optimize.compiler-opt-global-shared-view context.index)
           (compiler_ir_types.compiler-ir-label "outer-latch"))
           [(option_i64.None) 2]
           [(option_i64.Some latch-id)
             (let
               [hot : opt_i64_i64_map.Map
                 (compiler_optimize.opt-licm-hot-use-vars
-                  context
+                  (compiler_optimize.compiler-opt-global-shared-view context)
                   latch-id
-                  loops
-                  (compiler_optimize.opt-natural-loop-header outer)
-                  (compiler_optimize.opt-natural-loop-body outer)
+                  (compiler_optimize.compiler-opt-global-shared-view loops)
+                  (compiler_optimize.opt-natural-loop-header
+                    (compiler_optimize.compiler-opt-global-shared-view outer))
+                  (compiler_optimize.opt-natural-loop-body
+                    (compiler_optimize.compiler-opt-global-shared-view outer))
                   true
-                  blocks
+                  (compiler_optimize.compiler-opt-global-shared-view blocks)
                   (opt_i64_i64_map.with-capacity 16))]
               [ungated : opt_i64_i64_map.Map
                 (compiler_optimize.opt-licm-hot-use-vars
-                  context
+                  (compiler_optimize.compiler-opt-global-shared-view context)
                   latch-id
-                  loops
-                  (compiler_optimize.opt-natural-loop-header outer)
-                  (compiler_optimize.opt-natural-loop-body outer)
+                  (compiler_optimize.compiler-opt-global-shared-view loops)
+                  (compiler_optimize.opt-natural-loop-header
+                    (compiler_optimize.compiler-opt-global-shared-view outer))
+                  (compiler_optimize.opt-natural-loop-body
+                    (compiler_optimize.compiler-opt-global-shared-view outer))
                   false
-                  blocks
+                  (compiler_optimize.compiler-opt-global-shared-view blocks)
                   (opt_i64_i64_map.with-capacity 16))]
               (cond
-                [(compiler_optimize.opt-used-contains hot 10) 3]
-                [(not (compiler_optimize.opt-used-contains hot 11)) 4]
-                [(not (compiler_optimize.opt-used-contains hot 12)) 5]
-                [(not (compiler_optimize.opt-used-contains hot 13)) 6]
-                [(not (compiler_optimize.opt-used-contains hot 14)) 7]
+                [(compiler_optimize.opt-used-contains
+                    (compiler_optimize.compiler-opt-global-shared-view hot)
+                    10)
+                  3]
+                [(not
+                    (compiler_optimize.opt-used-contains
+                      (compiler_optimize.compiler-opt-global-shared-view hot)
+                      11))
+                  4]
+                [(not
+                    (compiler_optimize.opt-used-contains
+                      (compiler_optimize.compiler-opt-global-shared-view hot)
+                      12))
+                  5]
+                [(not
+                    (compiler_optimize.opt-used-contains
+                      (compiler_optimize.compiler-opt-global-shared-view hot)
+                      13))
+                  6]
+                [(not
+                    (compiler_optimize.opt-used-contains
+                      (compiler_optimize.compiler-opt-global-shared-view hot)
+                      14))
+                  7]
                 [(not (compiler_optimize.opt-used-contains ungated 10)) 8]
                 [else 42]))])])))
 
@@ -29342,67 +29377,71 @@
     [entry-func : compiler_ir_types.CompilerIrFunction
       (opt-licm-optimized-function (opt-licm-profitability-blocks false))]
     [entry : compiler_ir_types.CompilerIrBlockList
-      (compiler_optimize.opt-function-blocks entry-func)]
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view entry-func))]
     [non-entry-func : compiler_ir_types.CompilerIrFunction
       (opt-licm-optimized-function (opt-licm-profitability-blocks true))]
     [non-entry : compiler_ir_types.CompilerIrBlockList
-      (compiler_optimize.opt-function-blocks non-entry-func)]
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view non-entry-func))]
     (cond
       [(not (= (opt-licm-hot-use-self-test) 42)) 1]
       [(not
           (compiler_optimize.opt-verify-ok?
-            (compiler_optimize.opt-verify-function entry-func)))
+            (compiler_optimize.opt-verify-function
+              (compiler_optimize.compiler-opt-global-shared-view entry-func))))
         2]
       [(not
           (=
             (opt-count-arith-label-blocks
-              entry
+              (compiler_optimize.compiler-opt-global-shared-view entry)
               (compiler_ir_types.compiler-ir-label "loop"))
             2))
         3]
       [(not
           (=
             (opt-count-arith-label-blocks
-              entry
+              (compiler_optimize.compiler-opt-global-shared-view entry)
               (compiler_ir_types.compiler-ir-label "cold"))
             2))
         4]
       [(not
           (=
             (opt-count-gep-label-blocks
-              entry
+              (compiler_optimize.compiler-opt-global-shared-view entry)
               (compiler_ir_types.compiler-ir-label "entry"))
             1))
         5]
       [(not
           (=
             (opt-count-load-label-blocks
-              entry
+              (compiler_optimize.compiler-opt-global-shared-view entry)
               (compiler_ir_types.compiler-ir-label "entry"))
             1))
         6]
       [(not
           (compiler_optimize.opt-verify-ok?
-            (compiler_optimize.opt-verify-function non-entry-func)))
+            (compiler_optimize.opt-verify-function
+              (compiler_optimize.compiler-opt-global-shared-view non-entry-func))))
         7]
       [(not
           (=
             (opt-count-arith-label-blocks
-              non-entry
+              (compiler_optimize.compiler-opt-global-shared-view non-entry)
               (compiler_ir_types.compiler-ir-label "pre"))
             4))
         8]
       [(not
           (=
             (opt-count-arith-label-blocks
-              non-entry
+              (compiler_optimize.compiler-opt-global-shared-view non-entry)
               (compiler_ir_types.compiler-ir-label "loop"))
             0))
         9]
       [(not
           (=
             (opt-count-arith-label-blocks
-              non-entry
+              (compiler_optimize.compiler-opt-global-shared-view non-entry)
               (compiler_ir_types.compiler-ir-label "cold"))
             0))
         10]
@@ -40629,7 +40668,10 @@
       (compiler_optimize.opt-function-blocks
         (compiler_optimize.compiler-opt-global-shared-view again-fn))]
     (cond
-      [(not (opt-bce-fuse-test-verify-ok? read-only-fn)) 1]
+      [(not
+          (opt-bce-fuse-test-verify-ok?
+            (compiler_optimize.compiler-opt-global-shared-view read-only-fn)))
+        1]
       ;; (a) one guard for the whole region, on the loop entry edge
       [(not
           (opt-bce-fuse-test-has-block?
@@ -40670,7 +40712,10 @@
         7]
       ;; The fused checks rely on this sentinel before the anchor. It cannot be
       ;; folded from their later, path-conditional proof.
-      [(not (opt-bce-fuse-test-branch-terminated? read-only "body__bce_fast"))
+      [(not
+          (opt-bce-fuse-test-branch-terminated?
+            (compiler_optimize.compiler-opt-global-shared-view read-only)
+            "body__bce_fast"))
         8]
       ;; (d) the slow region keeps every check at its original site
       [(not
@@ -40683,7 +40728,7 @@
       [(not
           (=
             (opt-bce-version-test-block-checks
-              read-only
+              (compiler_optimize.compiler-opt-global-shared-view read-only)
               (compiler_ir_types.compiler-ir-label "anchor"))
             1))
         10]
@@ -40695,7 +40740,10 @@
             2))
         11]
       ;; (b) the covered store derives exactly like the covered read
-      [(not (opt-bce-fuse-test-verify-ok? stored-fn)) 12]
+      [(not
+          (opt-bce-fuse-test-verify-ok?
+            (compiler_optimize.compiler-opt-global-shared-view stored-fn)))
+        12]
       [(not
           (=
             (opt-bce-version-test-block-checks
@@ -40706,26 +40754,34 @@
       [(not
           (=
             (opt-bce-version-test-block-checks
-              stored
+              (compiler_optimize.compiler-opt-global-shared-view stored)
               (compiler_ir_types.compiler-ir-label "then"))
             2))
         14]
       ;; (c) an escaping index has no anchor: both dominated checks stay in the
       ;; clone, exactly as any underivable index does
-      [(not (opt-bce-fuse-test-verify-ok? escaping-fn)) 15]
+      [(not
+          (opt-bce-fuse-test-verify-ok?
+            (compiler_optimize.compiler-opt-global-shared-view escaping-fn)))
+        15]
       [(not
           (=
             (opt-bce-version-test-block-checks
-              escaping
+              (compiler_optimize.compiler-opt-global-shared-view escaping)
               (compiler_ir_types.compiler-ir-label "then__bce_fast"))
             2))
         16]
       ;; (f) idempotence: a converted region is not offered a second time
-      [(not (opt-bce-fuse-test-verify-ok? again-fn)) 17]
+      [(not
+          (opt-bce-fuse-test-verify-ok?
+            (compiler_optimize.compiler-opt-global-shared-view again-fn)))
+        17]
       [(not
           (=
-            (compiler_ir_types.compiler-ir-block-list-count again)
-            (compiler_ir_types.compiler-ir-block-list-count read-only)))
+            (compiler_ir_types.compiler-ir-block-list-count
+              (compiler_optimize.compiler-opt-global-shared-view again))
+            (compiler_ir_types.compiler-ir-block-list-count
+              (compiler_optimize.compiler-opt-global-shared-view read-only))))
         18]
       [else 42])))
 
@@ -48637,9 +48693,13 @@
               (compiler_optimize.opt-function-blocks
                 (compiler_optimize.compiler-opt-global-shared-view constructed)))]
           (if (= values.len 2)
-            (match (compiler_ir_types.compiler-ir-value-seq-ref values 0)
+            (match (compiler_ir_types.compiler-ir-value-seq-ref
+              (compiler_ir_types.compiler-ir-global-shared-view values)
+              0)
               [(compiler_ir_types.CompilerIrValue.Var av)
-                (match (compiler_ir_types.compiler-ir-value-seq-ref values 1)
+                (match (compiler_ir_types.compiler-ir-value-seq-ref
+                  (compiler_ir_types.compiler-ir-global-shared-view values)
+                  1)
                   [(compiler_ir_types.CompilerIrValue.Var bv) (= av bv)]
                   [_ true])]
               [_ true])

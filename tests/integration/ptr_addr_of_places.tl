@@ -50,7 +50,7 @@
 
 (define (dynamic-array-slot-read-score) : i64
   (let
-    [items : (__tl_dyn-array i64) (make-array 40 2)]
+    [items : (__tl_dyn-array i64) (__tl_make-array 40 40)]
     [slot : (MutPtr (__tl_dyn-array i64))
       (unsafe
         (ptr-addr-of items))]

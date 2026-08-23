@@ -815,12 +815,12 @@
       (compiler_ir_types.compiler-ir-type-render
         (cis.InternStructuralSessionHandle 0)
         bases
-        borrowed)]
+        (compiler_ir_types.compiler-ir-global-shared-view borrowed))]
     [render-original-again : String
       (compiler_ir_types.compiler-ir-type-render
         (cis.InternStructuralSessionHandle 0)
         bases
-        borrowed)]
+        (compiler_ir_types.compiler-ir-global-shared-view borrowed))]
     [name-original : String
       (compiler_ir_types.compiler-ir-type-name
         bases
@@ -833,8 +833,11 @@
       (compiler_ir_types.compiler-ir-type-render
         (cis.InternStructuralSessionHandle 0)
         bases
-        clone)]
-    [name-clone : String (compiler_ir_types.compiler-ir-type-name bases clone)]
+        (compiler_ir_types.compiler-ir-global-shared-view clone))]
+    [name-clone : String
+      (compiler_ir_types.compiler-ir-type-name
+        bases
+        (compiler_ir_types.compiler-ir-global-shared-view clone))]
     (and
       (string.eq render-original "(& ir-slice (Slice i64))")
       (string.eq render-original-again render-original)
@@ -846,9 +849,11 @@
         [(ast.AstType.Ref cloned-lifetime cloned-inner)
           (and
             (= cloned-lifetime lifetime)
-            (match (ast.ast-node-pool-context-type-get pools cloned-inner)
+            (match (ast.ast-node-pool-context-type-get (& pools) cloned-inner)
               [(ast.AstType.Slice cloned-elem)
-                (match (ast.ast-node-pool-context-type-get pools cloned-elem)
+                (match (ast.ast-node-pool-context-type-get
+                  (& pools)
+                  cloned-elem)
                   [(ast.AstType.I64) true]
                   [_ false])]
               [_ false]))]
@@ -861,10 +866,11 @@
     [source : i64 (ci.intern "macro-local-life")]
     [module-id : i64 (ci.intern "macro-local-module")]
     [macro-name-id : i64 (ci.intern "macro-local-definition")]
+    [active-intern : ci.InternCompatState
+      (ci.intern-compat-state-capture-active)]
     [session : cis.InternStructuralSessionHandle
       (cis.intern-structural-session-handle-from-source-names
-        (ci.intern-source-name-session-handle-from-state
-          (ci.intern-compat-state-capture-active)))]
+        (ci.intern-source-name-session-handle-from-state (& active-intern)))]
     [definition : cis.InternMacroDefinitionIdentity
       (cis.intern-structural-session-macro-definition-identity
         session
@@ -878,16 +884,19 @@
           7
           source))]
     [borrowed : ast.AstType
-      (ast.ast-ty-ref-with-pools pools lifetime ast.AstType.I64)]
+      (ast.ast-ty-ref-with-pools
+        (compiler_ir_types.compiler-ir-global-shared-view pools)
+        lifetime
+        ast.AstType.I64)]
     [arithmetic-borrowed : ast.AstType
       (ast.ast-ty-ref-with-pools
-        pools
+        (compiler_ir_types.compiler-ir-global-shared-view pools)
         (ci.intern-structural-local-id 8 source)
         ast.AstType.I64)]
+    [other-intern : ci.InternCompatState (ci.intern-compat-state-new)]
     [other-session : cis.InternStructuralSessionHandle
       (cis.intern-structural-session-handle-from-source-names
-        (ci.intern-source-name-session-handle-from-state
-          (ci.intern-compat-state-new)))]
+        (ci.intern-source-name-session-handle-from-state (& other-intern)))]
     [invalid : ast.AstType
       (ast.ast-ty-ref-with-pools
         (compiler_ir_types.compiler-ir-global-shared-view pools)
@@ -896,7 +905,10 @@
     [bases : i64 (ast.ast-node-pool-context-type-segment-bases (& pools))]
     (and
       (string.eq
-        (compiler_ir_types.compiler-ir-type-render session bases borrowed)
+        (compiler_ir_types.compiler-ir-type-render
+          session
+          bases
+          (compiler_ir_types.compiler-ir-global-shared-view borrowed))
         "(& macro-local-life i64)")
       (string.eq
         (compiler_ir_types.compiler-ir-type-name bases arithmetic-borrowed)
@@ -904,7 +916,10 @@
       ;; Equal-looking record indexes from another owner never decode this
       ;; compile's table-backed lifetime.
       (string.eq
-        (compiler_ir_types.compiler-ir-type-render other-session bases borrowed)
+        (compiler_ir_types.compiler-ir-type-render
+          other-session
+          bases
+          (compiler_ir_types.compiler-ir-global-shared-view borrowed))
         (str_cat.str-cat "(& <id:" (string.int->string lifetime) "> i64)"))
       (string.eq
         (compiler_ir_types.compiler-ir-type-render session bases invalid)

@@ -5,6 +5,7 @@
 (import compiler_diagnostic)
 (import compiler_intern as ci)
 (import compiler_intern_state as cis)
+(import compiler_owned_view as owned_view)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 

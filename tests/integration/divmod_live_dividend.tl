@@ -60,7 +60,7 @@
     ;; both loops out of the constant folder.
     [n : i64 (+ 7 (io.arg-count))]
     [w : i64 (walk n 1)]
-    [out : (__tl_dyn-array i64) (make-array i64 8)]
+    [out : (__tl_dyn-array i64) (__tl_make-array i64 8)]
     [s : i64 (walk-store (&mut out) n 1)]
     [t : i64 (+ (array-ref out 0) (+ (array-ref out 4) (array-ref out 7)))]
     ;; One bit per reference value, so a failing exit code names which shape

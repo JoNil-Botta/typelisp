@@ -1163,10 +1163,12 @@
                 (= actual target)]
               [(compiler_typecheck_core.TcMaybeNameId.No) false])))))))
 
-;; The lowered-result boundary must reset the job that produced the IR. Before
-;; the job traveled with ResultCompilerDriverLowered, this helper initialized
-;; and reset the unrelated serial adapter instead, retaining a second 2.16 MiB
-;; lazy-import table in every state-owned batch process.
+;; The lowered-result boundary must reset the job that produced the IR while
+;; retaining its compact definition-site alias handoff for package surface
+;; emission. Before the job traveled with ResultCompilerDriverLowered, this
+;; helper initialized and reset the unrelated serial adapter instead. Keep both
+;; owners' aliases distinct while proving that the producing job is the one
+;; reset at this boundary.
 (define (compiler-driver-post-lower-typecheck-owner-ok?) : bool
   (let
     [state-a : compiler_driver_core.CompilerDriverState
@@ -1196,6 +1198,8 @@
         12
         13
         true)
+      (compiler_typecheck_core.tc-lazy-import-summary-macro-force-record-for-state!
+        macro-a)
       (compiler_driver_core.compiler-driver-state-install-pools!
         (owned_view.compiler-owned-shared-view state-b))
       (compiler_driver_core.compiler-driver-state-install-interns!
@@ -1208,15 +1212,37 @@
         12
         14
         false)
+      (compiler_typecheck_core.tc-lazy-import-summary-macro-force-record-for-state!
+        macro-b)
       (compiler_driver_core.compiler-driver-release-typecheck-caches-after-lower-for-job!
         job-a)
       (and
         (=
-          (compiler_typecheck_core.tc-lazy-import-stub-count-for-state macro-a)
+          (compiler_typecheck_core.tc-lazy-import-summary-macro-force-count-for-state
+            macro-a)
           0)
         (=
+          (compiler_typecheck_core.tc-lazy-import-summary-macro-force-count-for-state
+            macro-b)
+          1)
+        (=
+          (compiler_typecheck_core.tc-lazy-import-stub-count-for-state macro-a)
+          1)
+        (=
           (compiler_typecheck_core.tc-lazy-import-stub-count-for-state macro-b)
-          1)))))
+          1)
+        (match (compiler_typecheck_core.tc-lazy-import-stub-target-id-for-state
+          macro-a
+          11
+          12)
+          [(compiler_typecheck_core.TcMaybeNameId.Some target) (= target 13)]
+          [(compiler_typecheck_core.TcMaybeNameId.No) false])
+        (match (compiler_typecheck_core.tc-lazy-import-stub-target-id-for-state
+          macro-b
+          11
+          12)
+          [(compiler_typecheck_core.TcMaybeNameId.Some target) (= target 14)]
+          [(compiler_typecheck_core.TcMaybeNameId.No) false])))))
 
 (define (compiler-driver-typecheck-cache-owner-smoke-ok?) : bool
   (let

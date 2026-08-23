@@ -22,7 +22,7 @@
 (define (alias-view [items : (__tl_dyn-array i64)]) : AliasView
   (unsafe
     (AliasView
-      (ptr-cast (array-data items) : (MutPtr i64))
+      (ptr-cast (__tl_array-data items) : (MutPtr i64))
       (array.length items))))
 
 (define (alias-ref [items : AliasView] [index : i64]) : i64

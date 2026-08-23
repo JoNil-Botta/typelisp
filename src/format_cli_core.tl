@@ -312,7 +312,7 @@
 (define (fmt-split-lines-into
   [source : String]
   [start : i64]
-  [lines : fmt_svec.Vec]) : fmt_svec.Vec
+  [lines : (&mut lines fmt_svec.Vec)]) : unit
   (let
     [len : i64 (string.string-length source)]
     [cursor : i64 start]
@@ -323,15 +323,15 @@
           (if (< nl 0)
             (begin
               (fmt_svec.push-ref!
-                (&mut lines)
+                lines
                 (string.substring source cursor (- len cursor)))
               (set! cursor (+ len 1)))
             (begin
               (fmt_svec.push-ref!
-                (&mut lines)
+                lines
                 (string.substring source cursor (- nl cursor)))
               (set! cursor (+ nl 1))))))
-      lines)))
+      unit)))
 
 (define (fmt-diff-line-eq?
   [src : (& source fmt_svec.Vec)]
@@ -660,8 +660,10 @@
   [source : String]
   [formatted : String]) : String
   (let
-    [src : fmt_svec.Vec (fmt-split-lines-into source 0 (fmt_svec.new))]
-    [dst : fmt_svec.Vec (fmt-split-lines-into formatted 0 (fmt_svec.new))]
+    [src : fmt_svec.Vec (fmt_svec.new)]
+    [_src-lines : unit (fmt-split-lines-into source 0 (&mut src))]
+    [dst : fmt_svec.Vec (fmt_svec.new)]
+    [_dst-lines : unit (fmt-split-lines-into formatted 0 (&mut dst))]
     [scan-src : i64 0]
     [scan-dst : i64 0]
     [finished : bool false]

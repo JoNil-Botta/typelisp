@@ -66299,17 +66299,20 @@
 
 (define (opt-bce-version-and-chain-array
   [cell : (__tl_dyn-array i64)]
-  [builder : (&mut builder ir.CompilerIrInstrBuilder)]
+  [builder : ir.CompilerIrInstrBuilder]
   [current : ir.CompilerIrValue]
   [values : ir.CompilerIrValueSeq]
-  [index : i64]) : ir.CompilerIrValue
+  [index : i64]) : OptBceVersionGuardResult
   (if (>= index values.len)
-    current
+    (OptBceVersionGuardResult.Some
+      (ir.compiler-ir-instr-builder-to-seq builder)
+      current)
     (let
       [dst : i64
         (opt-bce-version-alloc-var (compiler-opt-global-shared-view cell))]
-      (begin
-        (ir.compiler-ir-instr-builder-push!
+      (opt-bce-version-and-chain-array
+        cell
+        (opt-bce-version-builder-push
           builder
           (ir.CompilerIrInstr.BinOp
             dst
@@ -66317,12 +66320,9 @@
             current
             (compiler-opt-global-array-element-shared-view values.slots index)
             (ast.AstType.Bool)))
-        (opt-bce-version-and-chain-array
-          cell
-          builder
-          (ir.CompilerIrValue.Var dst)
-          values
-          (+ index 1))))))
+        (ir.CompilerIrValue.Var dst)
+        values
+        (+ index 1)))))
 
 (define (opt-bce-version-build-guard
   [cell : (__tl_dyn-array i64)]
@@ -66333,19 +66333,14 @@
       (ir.compiler-ir-value-seq-count (compiler-opt-global-shared-view values))]
     (if (= value-count 0)
       (OptBceVersionGuardResult.No)
-      (let
-        [guard-value : ir.CompilerIrValue
-          (opt-bce-version-and-chain-array
-            cell
-            (&mut instrs)
-            (ir.compiler-ir-value-seq-ref
-              (compiler-opt-global-shared-view values)
-              0)
-            (compiler-opt-global-shared-view values)
-            1)]
-        (OptBceVersionGuardResult.Some
-          (ir.compiler-ir-instr-builder-to-seq instrs)
-          guard-value)))))
+      (opt-bce-version-and-chain-array
+        cell
+        instrs
+        (ir.compiler-ir-value-seq-ref
+          (compiler-opt-global-shared-view values)
+          0)
+        (compiler-opt-global-shared-view values)
+        1))))
 
 ;; Assemble the guard from the derived per-check conditions: the once-only
 ;; `seed < bound` and `seed >= 0` when any counter-cased check needs them (a

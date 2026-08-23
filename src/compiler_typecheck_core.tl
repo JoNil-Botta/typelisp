@@ -119789,18 +119789,20 @@
       (ast.ast-node-pool-context-new-with-capacities 8 8)]
     [literal-a : i64
       (ast.ast-node-pool-context-expr-push
-        pools-a
+        (tc-global-shared-view pools-a)
         (ast.AstExpr.Literal (ast.AstLiteral.Int 7 "7")))]
     [macro-a : i64
       (ast.ast-node-pool-context-expr-push
-        pools-a
+        (tc-global-shared-view pools-a)
         (ast.AstExpr.Literal (ast.AstLiteral.Int 8 "8")))]
     [literal-b : i64
       (ast.ast-node-pool-context-expr-push
-        pools-b
+        (tc-global-shared-view pools-b)
         (ast.AstExpr.Unsafe (ast.ast-expr-list-new)))]
     [macro-b : i64
-      (ast.ast-node-pool-context-expr-push pools-b (ast.AstExpr.Quasiquote 0))]
+      (ast.ast-node-pool-context-expr-push
+        (tc-global-shared-view pools-b)
+        (ast.AstExpr.Quasiquote 0))]
     [ctx-a : TcContext
       (tc-context-new
         (ast.ast-program (ast.ast-decl-list-new))
@@ -119808,15 +119810,17 @@
         (csym.compiler-registries-empty)
         ""
         cbi.compiler-builtin-id-fix-empty
-        pools-a)]
-    [_install-decoy : unit (ast.ast-node-pool-context-install! pools-b)]
-    [expr-bases-a : i64 (tc-context-expr-bases ctx-a)]
-    [expr-bases-b : i64 (ast.ast-node-pool-context-expr-segment-bases pools-b)]
+        (tc-global-shared-view pools-a))]
+    [_install-decoy : unit
+      (ast.ast-node-pool-context-install! (tc-global-shared-view pools-b))]
+    [expr-bases-a : i64 (tc-context-expr-bases (tc-global-shared-view ctx-a))]
+    [expr-bases-b : i64
+      (ast.ast-node-pool-context-expr-segment-bases (& pools-b))]
     [env : TcTypeEnv (tc-type-env-new)]
     [decls : ast.AstDeclList (ast.ast-decl-list-new)]
     [literal-a-ok? : bool
       (match (tc-integer-literal-expr-with-expected-with-bases
-        ctx-a
+        (tc-global-shared-view ctx-a)
         expr-bases-a
         (ast.AstExpr.Spanned literal-a (ast.ast-source-span 1 1 1 2))
         (ast.AstType.I64))
@@ -119824,7 +119828,7 @@
         [_ false])]
     [literal-b-differs? : bool
       (match (tc-integer-literal-expr-with-expected-with-bases
-        ctx-a
+        (tc-global-shared-view ctx-a)
         expr-bases-b
         (ast.AstExpr.Spanned literal-b (ast.ast-source-span 1 1 1 2))
         (ast.AstType.I64))
@@ -119832,9 +119836,9 @@
         [_ false])]
     [purity-a-ok? : bool
       (match (tc-comptime-purity-node-mode
-        ctx-a
+        (tc-global-shared-view ctx-a)
         expr-bases-a
-        env
+        (tc-global-shared-view env)
         TcStringList.Nil
         TcStringList.Nil
         TcStringList.Nil
@@ -119844,9 +119848,9 @@
         [_ false])]
     [purity-b-differs? : bool
       (match (tc-comptime-purity-node-mode
-        ctx-a
+        (tc-global-shared-view ctx-a)
         expr-bases-b
-        env
+        (tc-global-shared-view env)
         TcStringList.Nil
         TcStringList.Nil
         TcStringList.Nil
@@ -119855,11 +119859,21 @@
         [(ResultTcUnit.Err _) true]
         [_ false])]
     [macro-a-ok? : bool
-      (not (macro-node-uses-macro? ctx-a expr-bases-a decls macro-a))]
+      (not
+        (macro-node-uses-macro?
+          (tc-global-shared-view ctx-a)
+          expr-bases-a
+          (tc-global-shared-view decls)
+          macro-a))]
     [macro-b-differs? : bool
-      (macro-node-uses-macro? ctx-a expr-bases-b decls macro-b)]
+      (macro-node-uses-macro?
+        (tc-global-shared-view ctx-a)
+        expr-bases-b
+        (tc-global-shared-view decls)
+        macro-b)]
     [decoy-still-installed? : bool
-      (ast.ast-node-pool-context-expr-installed? pools-b)]
+      (ast.ast-node-pool-context-expr-installed?
+        (tc-global-shared-view pools-b))]
     (begin
       (ast.ast-node-pool-context-install! installed)
       (if (and

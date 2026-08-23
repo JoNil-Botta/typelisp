@@ -386,7 +386,7 @@
               (set! b (+ b 1))))
           unit)))
     (define (chunks-render-array-range
-      [items : (__tl_dyn-array String)]
+      [items : (& items (__tl_dyn-array String))]
       [lo : i64]
       [hi : i64]) : String
       (if (>= lo hi)
@@ -397,11 +397,9 @@
           (begin
             (while (< index hi)
               (let
-                [chunk : String
-                  (unsafe
-                    (ptr-read (ptr-offset (array-data items) index)))]
+                [chunk : (& items str) (& (array-ref items index))]
                 (begin
-                  (set! total (+ total (string-length (& chunk))))
+                  (set! total (+ total (string-length chunk)))
                   (set! index (+ index 1)))))
             (if (= total 0)
               ""
@@ -415,12 +413,10 @@
                 (begin
                   (while (< cursor hi)
                     (let
-                      [chunk : String
-                        (unsafe
-                          (ptr-read (ptr-offset (array-data items) cursor)))]
-                      [chunk-len : i64 (string-length (& chunk))]
+                      [chunk : (& items str) (& (array-ref items cursor))]
+                      [chunk-len : i64 (string-length chunk)]
                       (begin
-                        (stdlib.text_buf.copy-chunk-into (& chunk) dst pos)
+                        (stdlib.text_buf.copy-chunk-into chunk dst pos)
                         (set! pos (+ pos chunk-len))
                         (set! cursor (+ cursor 1)))))
                   (unsafe
@@ -535,7 +531,7 @@
       1048576)
     (define (write-array-batches
       [raw : i64]
-      [items : (__tl_dyn-array String)]
+      [items : (& items (__tl_dyn-array String))]
       [count : i64]
       [batch-limit : i64]) : i64
       (let
@@ -550,10 +546,8 @@
               (begin
                 (while (and (not done) (< index count))
                   (let
-                    [chunk : String
-                      (unsafe
-                        (ptr-read (ptr-offset (array-data items) index)))]
-                    [chunk-len : i64 (string-length (& chunk))]
+                    [chunk : (& items str) (& (array-ref items index))]
+                    [chunk-len : i64 (string-length chunk)]
                     (if (and (> bytes 0) (> (+ bytes chunk-len) batch-limit))
                       (set! done true)
                       (begin
@@ -561,19 +555,14 @@
                         (set! index (+ index 1))))))
                 (if (and (= (- index start) 1) (> bytes batch-limit))
                   (let
-                    [chunk : String
-                      (unsafe
-                        (ptr-read (ptr-offset (array-data items) start)))]
+                    [chunk : (& items str) (& (array-ref items start))]
                     (set!
                       status
-                      (io.file-write-status
-                        raw
-                        (byte_buf.str-as-bytes (& chunk)))))
+                      (io.file-write-status raw (byte_buf.str-as-bytes chunk))))
                   (let
                     [rendered : String
                       (stdlib.text_buf.chunks-render-array-range
-                        (unsafe
-                          (ptr-read (ptr-addr-of items)))
+                        items
                         start
                         index)]
                     (set!
@@ -599,7 +588,7 @@
             (- count 1))
           (stdlib.text_buf.write-array-batches
             raw
-            items
+            (& items)
             count
             (stdlib.text_buf.batched-write-threshold)))))
     (define (write-file [path : (& path str)] [buf : (& buf TextBuf)]) : i64

@@ -20216,13 +20216,34 @@
           tail
           (OptLicmPtrEnv.Cons id kind (box tail))))]))
 
+;; Read-only membership probe for the env above. Unbinding an absent variable
+;; rebuilt the whole chain into a structurally identical copy -- one Cons and
+;; one box per live binding on every fresh-SSA rebind -- so callers probe first
+;; and keep the original env when nothing would be removed.
+(define (opt-licm-ptr-env-bound? [env : OptLicmPtrEnv] [var : i64]) : bool
+  (match env
+    [(OptLicmPtrEnv.Nil) false]
+    [(OptLicmPtrEnv.Cons id _ rest)
+      (if (= id var)
+        true
+        (opt-licm-ptr-env-bound? (__tl-box-place rest) var))]))
+
+(define (opt-licm-ptr-unbind-bound [env : OptLicmPtrEnv] [var : i64]) : OptLicmPtrEnv
+  (if (opt-licm-ptr-env-bound? env var)
+    (opt-licm-ptr-unbind env var)
+    env))
+
 (define (opt-licm-ptr-bind
   [env : OptLicmPtrEnv]
   [var : i64]
   [kind : OptLicmPtrKind]) : OptLicmPtrEnv
-  (match kind
-    [(OptLicmPtrKind.Unknown) (opt-licm-ptr-unbind env var)]
-    [_ (OptLicmPtrEnv.Cons var kind (box (opt-licm-ptr-unbind env var)))]))
+  (if (opt-licm-ptr-env-bound? env var)
+    (match kind
+      [(OptLicmPtrKind.Unknown) (opt-licm-ptr-unbind env var)]
+      [_ (OptLicmPtrEnv.Cons var kind (box (opt-licm-ptr-unbind env var)))])
+    (match kind
+      [(OptLicmPtrKind.Unknown) env]
+      [_ (OptLicmPtrEnv.Cons var kind (box env))])))
 
 (define (opt-licm-ptr-lookup [env : OptLicmPtrEnv] [var : i64]) : OptLicmPtrKind
   (match env
@@ -21107,7 +21128,7 @@
   (OptLicmStoreState
     state.summary
     state.rooted-summary
-    (opt-licm-ptr-unbind state.ptrs var)
+    (opt-licm-ptr-unbind-bound state.ptrs var)
     state.roots
     state.store-roots
     state.any-call?
@@ -23097,6 +23118,18 @@
           (+ count 1)
           count))]))
 
+;; The frozen-chain hoist's own live-in budget, twice the shared promotion one
+;; (opt-licm-global-promote-live-in-budget, whose "WHY SIX" note prices a
+;; promotion at loop-entry frequency). A frozen chain is not a promotion: the
+;; loads it hoists are of values that cannot change, so the preheader pays them
+;; once and the loop's register pressure is the only thing traded. Now that the
+;; register allocator keeps an over-arity call's arguments in registers, the
+;; chains this admits stop turning into whole-range spills -- measured, doubling
+;; the budget is -0.14% on cfg_domloops, -0.05% on gvn_table and -0.002% on
+;; peephole_lines with every other benchmark row unchanged.
+(define (opt-licm-frozen-chain-live-in-budget) : i64
+  12)
+
 (define (opt-licm-frozen-chain-hoist?
   [cells : OptGlobalCellSummary]
   [late? : bool]
@@ -23122,7 +23155,7 @@
           (+
             (opt-unroll-mb-live-in-count body-blocks)
             (* count (opt-licm-frozen-chain-words)))
-          (opt-licm-global-promote-live-in-budget))))))
+          (opt-licm-frozen-chain-live-in-budget))))))
 
 ;; Preheader instruction list: the hoisted instructions followed by the
 ;; promotion's cell loads. No promotion means the hoisted list is handed back
@@ -32254,10 +32287,11 @@
         (ir.compiler-ir-block-seq-to-list seq))]))
 
 ;; `OptBoolBranchDef.No` is the fieldless tag-0 variant, so its representation is
-;; all-zero bytes and `make-array` already produces it for every slot -- see
+;; all-zero bytes and `array.make-array` already produces it for every slot -- see
 ;; `lower-make-array-zero-fill-enum-supported?`, which admits exactly the enums
-;; whose first variant carries no fields. Every `(Array E)` in this file built
-;; by `make-array` for such an `E` therefore starts out uniformly tag-0, and a
+;; whose first variant carries no fields. Every private `(__tl_dyn-array E)` in
+;; this file built by `array.make-array` for such an `E` therefore starts out
+;; uniformly tag-0, and a
 ;; pass that writes that same variant over the whole array is a pure repeat of
 ;; the allocation's own fill.
 (define (opt-bool-branch-defs [frame : i64] [blocks : ir.CompilerIrBlockList]) : (__tl_dyn-array

@@ -578,14 +578,14 @@
 (import a)
 (define (main) : i64 a.x)")
 
-;; This source intentionally keeps the legacy public `(Array T)` spelling as
-;; compatibility coverage until the final #3581 removal.
+;; The qualified stdlib.array macro remains until #3992, but its backing type
+;; is compiler-private now that public Array is fixed-size only.
 (define (compiler-check-implicit-core-prelude-source) : String
   "(import stdlib.array as arr)
 (define (main) : i64
   (let
     [value : i64 0]
-    [items : (Array i64) (arr.make-array i64 1)]
+    [items : (__tl_dyn-array i64) (arr.make-array i64 1)]
     (begin
       (when (and (> 5 3) (< 2 4) (= 1 1)) (set! value (+ value 10)))
       (unless (or false false false) (set! value (+ value 20)))
@@ -643,12 +643,12 @@
       (i64vec.push-ref! (&mut items) 1)
       (i64vec.len (& items)))))")
 
-;; Compatibility alias fixture for the __tl_dyn-array alias. The qualified stdlib.array path is
+;; Private dynamic-buffer parser coverage. The qualified stdlib.array path is
 ;; covered by compiler-check-implicit-core-prelude-source above.
-(define (compiler-check-private-dynamic-buffer-public-source) : String
+(define (compiler-check-private-dynamic-buffer-source) : String
   "(define (main) : i64
   (let
-    [items : (__tl_dyn-array i64) (make-array i64 2)]
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 2)]
     (array-length items)))")
 
 (define (compiler-check-virtual-import-ok?) : bool
@@ -845,10 +845,10 @@
     "tests/private_dynamic_buffer_vector.tl"
     (compiler-check-private-dynamic-buffer-vector-source)))
 
-(define (compiler-check-private-dynamic-buffer-public-accepted-ok?) : bool
+(define (compiler-check-private-dynamic-buffer-accepted-ok?) : bool
   (compiler-check-source-ok?
     "tests/private_dynamic_buffer_public.tl"
-    (compiler-check-private-dynamic-buffer-public-source)))
+    (compiler-check-private-dynamic-buffer-source)))
 
 (define (compiler-check-implicit-core-prelude-ok?) : bool
   (compiler-check-source-ok?
@@ -951,7 +951,7 @@
         (io.panic
           "compiler-check: private dynamic-buffer vector smoke mismatch")))
     (unless
-      (compiler-check-private-dynamic-buffer-public-accepted-ok?)
+      (compiler-check-private-dynamic-buffer-accepted-ok?)
       (return
         (io.panic
           "compiler-check: private dynamic-buffer public smoke mismatch")))

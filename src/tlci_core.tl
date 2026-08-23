@@ -1007,7 +1007,7 @@
 ;; Composite type templates (refs #5605). `embedded-native-template-type-ops`
 ;; rendered only `AstType.Var` and scalars, which is what actually kept the
 ;; `stdlib.text_buf_family` generators and generated vector modules on the
-;; interpreted route -- their annotations are `(Array String)`, `(Ptr u8)`,
+;; interpreted route -- their annotations are `(__tl_dyn-array String)`, `(Ptr u8)`,
 ;; `(MutPtr i64)`, `(& text str)` and `(&mut buf TextBuf)`, not any missing
 ;; expression node kind. Each callback pops the element/inner type value and
 ;; pushes the wrapper, so a nested annotation builds bottom-up like an

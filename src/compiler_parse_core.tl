@@ -2097,6 +2097,15 @@
 (define (compiler-parse-tag-expr-retired-struct-set) : i64
   313)
 
+(define (compiler-parse-tag-expr-retired-make-array) : i64
+  315)
+
+(define (compiler-parse-tag-expr-retired-array-push) : i64
+  316)
+
+(define (compiler-parse-tag-expr-retired-array-data) : i64
+  317)
+
 ;; Legacy nodes remain available while parsing quoted seed templates. They are
 ;; not accepted as ordinary source expressions at depth zero.
 (define compiler-parse-quote-depth : i64
@@ -2788,7 +2797,7 @@
         (compiler-parse-dispatch-bind
           out
           "make-array"
-          (compiler-parse-tag-expr-make-array)))
+          (compiler-parse-tag-expr-retired-make-array)))
       (set!
         out
         (compiler-parse-dispatch-bind
@@ -2824,7 +2833,7 @@
         (compiler-parse-dispatch-bind
           out
           "array-push!"
-          (compiler-parse-tag-expr-array-push)))
+          (compiler-parse-tag-expr-retired-array-push)))
       (set!
         out
         (compiler-parse-dispatch-bind
@@ -3098,7 +3107,7 @@
         (compiler-parse-dispatch-bind
           out
           "array-data"
-          (compiler-parse-tag-expr-array-data)))
+          (compiler-parse-tag-expr-retired-array-data)))
       (set!
         out
         (compiler-parse-dispatch-bind
@@ -3830,12 +3839,8 @@
                   [(reader.SexprView.Cons elem tail)
                     (match (reader.sexpr-view tail)
                       [(reader.SexprView.Nil)
-                        (match (parse-ast-type dispatch pools elem)
-                          [(ResultAstType.Ok elem-ty)
-                            (ResultAstType.Ok
-                              (ast.ast-ty-dyn-array-with-pools pools elem-ty))]
-                          [(ResultAstType.Err message)
-                            (ResultAstType.Err message)])]
+                        (ResultAstType.Err
+                          "parse: unsized (Array T) was removed; use (Array T N), stdlib.vector, or a borrowed Slice")]
                       [(reader.SexprView.Cons size-node end)
                         (match (reader.sexpr-view end)
                           [(reader.SexprView.Nil)
@@ -6591,9 +6596,9 @@
                           parsed-value))]
                     [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])]
                 [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])]
-            [_ (ResultAstExpr.Err "parse: malformed array-push!")])]
-        [_ (ResultAstExpr.Err "parse: malformed array-push!")])]
-    [_ (ResultAstExpr.Err "parse: malformed array-push!")]))
+            [_ (ResultAstExpr.Err "parse: malformed __tl_array-push!")])]
+        [_ (ResultAstExpr.Err "parse: malformed __tl_array-push!")])]
+    [_ (ResultAstExpr.Err "parse: malformed __tl_array-push!")]))
 
 (define (parse-ast-private-array-take
   [dispatch : sym_i64_env.SymI64Env]
@@ -7661,7 +7666,7 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [rest : reader.SpannedSexpr]) : ResultAstExpr
-  (match (parse-ast-one-expr dispatch pools rest "array-data")
+  (match (parse-ast-one-expr dispatch pools rest "__tl_array-data")
     [(ResultAstExpr.Ok expr)
       (ResultAstExpr.Ok (ast.ast-expr-array-data-with-pools pools expr))]
     [(ResultAstExpr.Err message) (ResultAstExpr.Err message)]))
@@ -8334,6 +8339,15 @@
     [(= tag (compiler-parse-tag-expr-retired-struct-set))
       (ResultAstExpr.Err
         "parse: struct-set/struct-set! was removed; use (set! value.field replacement)")]
+    [(= tag (compiler-parse-tag-expr-retired-make-array))
+      (ResultAstExpr.Err
+        "parse: bare make-array was removed; use stdlib.vector or qualified stdlib.array.make-array during the transition")]
+    [(= tag (compiler-parse-tag-expr-retired-array-push))
+      (ResultAstExpr.Err
+        "parse: bare array-push! was removed; use a vector mutator or qualified stdlib.array.push! during the transition")]
+    [(= tag (compiler-parse-tag-expr-retired-array-data))
+      (ResultAstExpr.Err
+        "parse: array-data was removed; raw dynamic-buffer storage is compiler-private")]
     [(= tag (compiler-parse-tag-expr-struct-get))
       (parse-ast-struct-get dispatch pools rest)]
     [(= tag (compiler-parse-tag-expr-comptime))
@@ -13453,19 +13467,17 @@
 (define (compiler-parse-array-data-ok?) : bool
   (and
     (compiler-parse-ok?
-      "(define (data [items : (Array i64)]) : (MutPtr i64) (unsafe (array-data items)))")
-    (compiler-parse-ok?
-      "(define (data [items : (Array i64)]) : (MutPtr i64) (unsafe (__tl_array-data items)))")
+      "(define (data [items : (__tl_dyn-array i64)]) : (MutPtr i64) (unsafe (__tl_array-data items)))")
     (compiler-parse-error-ok?
-      "(define (data [items : (Array i64)]) : (MutPtr i64) (unsafe (__tl_array-data items items)))"
-      "parse: array-data expects exactly one expression")))
+      "(define (data [items : (__tl_dyn-array i64)]) : (MutPtr i64) (unsafe (__tl_array-data items items)))"
+      "parse: __tl_array-data expects exactly one expression")))
 
 (define (compiler-parse-array-take-ok?) : bool
   (and
     (compiler-parse-ok?
       "(define (main [items : (Array i64 1)]) : i64 (array-take! items 0))")
     (compiler-parse-ok?
-      "(define (main [items : (Array i64)] [live : (Array bool)]) : (Tuple bool i64) (__tl_array-take! items live 0))")
+      "(define (main [items : (__tl_dyn-array i64)] [live : (__tl_dyn-array bool)]) : (Tuple bool i64) (__tl_array-take! items live 0))")
     ;; Keep the neighboring parser tag distinct: a previous collision caused
     ;; every dereference to dispatch to the two-operand array-take parser.
     (compiler-parse-ok? "(define (main [item : (Box i64)]) : i64 (deref item))")
@@ -14269,6 +14281,27 @@
       "(define (main [b : (Box i64)]) : i64 (box-take b))"
       "parse: box-take was removed; use (deref box)")))
 
+(define (compiler-parse-public-dynamic-array-removal-tests-ok?) : bool
+  (and
+    (compiler-parse-error-ok?
+      "(define (main [items : (Array i64)]) : i64 0)"
+      "parse: unsized (Array T) was removed; use (Array T N), stdlib.vector, or a borrowed Slice")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (array-length (make-array i64 1)))"
+      "parse: bare make-array was removed; use stdlib.vector or qualified stdlib.array.make-array during the transition")
+    (compiler-parse-error-ok?
+      "(define (main [items : (__tl_dyn-array i64)]) : unit (array-push! items 1))"
+      "parse: bare array-push! was removed; use a vector mutator or qualified stdlib.array.push! during the transition")
+    (compiler-parse-error-ok?
+      "(define (main [items : (__tl_dyn-array i64)]) : (MutPtr i64) (unsafe (array-data items)))"
+      "parse: array-data was removed; raw dynamic-buffer storage is compiler-private")
+    (compiler-parse-ok?
+      "(define (main) : i64 (array-length (__tl_make-array i64 1)))")
+    (compiler-parse-ok?
+      "(define (main [items : (__tl_dyn-array i64)]) : unit (__tl_array-push! items 1))")
+    (compiler-parse-ok?
+      "(define (main [items : (__tl_dyn-array i64)]) : (MutPtr i64) (unsafe (__tl_array-data items)))")))
+
 (define (compiler-parse-extern-metadata-error-tests-ok?) : bool
   (let
     [ok : bool true]
@@ -14817,14 +14850,16 @@
       "(define (main [a : i64] [b : i64] [c : i64]) : i64 (shl a b c))"
       "parse: malformed binary expression")))
 
-;; Keep the paired public/private dynamic-buffer spellings as explicit alias
-;; compatibility coverage until the final #3581 public-Array removal.
+;; Public Array is fixed-size only; the dynamic-buffer spelling is private.
 (define (compiler-parse-type-literal-tests-ok?) : bool
   (and
     (compiler-parse-ok? "(define (main) : i64 (begin (type i64) 0))")
-    (compiler-parse-ok? "(define (main) : i64 (begin (type (Array i64)) 0))")
+    (compiler-parse-ok? "(define (main) : i64 (begin (type (Array i64 4)) 0))")
     (compiler-parse-ok?
       "(define (main) : i64 (begin (type (__tl_dyn-array i64)) 0))")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (begin (type (Array i64)) 0))"
+      "parse: unsized (Array T) was removed; use (Array T N), stdlib.vector, or a borrowed Slice")
     (compiler-parse-ok? "(define (main) : i64 (begin (type (Slice i64)) 0))")
     (compiler-parse-ok?
       "(define (main) : i64 (begin (type (Slice (Array i64 2))) 0))")
@@ -15076,7 +15111,7 @@
     (compiler-parse-first-fn-has-comptime-param?
       "(define (scale [comptime n : i64] [x : i64]) : i64 (* n x))")
     (compiler-parse-first-fn-has-comptime-param?
-      "(define (alloc [comptime T : type] [n : i64]) : (__tl_dyn-array i64) (make-array T n))")
+      "(define (alloc [comptime T : type] [n : i64]) : (__tl_dyn-array i64) (__tl_make-array T n))")
     (compiler-parse-error-ok?
       "(define (main) : i64 ((lambda ([comptime n : i64]) n) 1))"
       "comptime parameters are only supported on top-level function definitions")))
@@ -15567,6 +15602,7 @@
           (compiler-parse-resource-with-tests-ok?)
           (compiler-parse-quote-syntax-tests-ok?)
           (compiler-parse-place-migration-error-tests-ok?)
+          (compiler-parse-public-dynamic-array-removal-tests-ok?)
           (compiler-parse-dotted-import-errors-ok?)
           (compiler-parse-cfg-tests-ok?))
           42

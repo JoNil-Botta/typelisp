@@ -303,19 +303,18 @@ unbound unless a program declares such names.
   mutate through `&mut`. Mutating collection operations update storage in
   place instead of returning copied whole collections.
 
-Unsized `(Array T)` — written without a size — is a compiler-internal
-compatibility buffer, not a public source type. The compiler and stdlib use it
-only for vector backing storage, SPMD lane and result buffers behind the
-vector/slice surface, FFI/runtime buffers, and compiler-internal pools. Where
-it appears internally, its value is a pointer to inline fat storage
+Unsized public `(Array T)` — written without a size — is rejected. Compiler
+and stdlib implementation code names the corresponding private dynamic buffer
+`(__tl_dyn-array T)` for vector backing storage, SPMD lane and result
+buffers behind the vector/slice surface, FFI/runtime buffers, and
+compiler-internal pools. Its value is a pointer to inline fat storage
 `(data_ptr : u64, length : i64)`; the stored length is always non-negative;
 allocation rejects negative lengths, traps if `length * sizeof(type)` would
 overflow an `i64` byte count, and initializes every live element according to
 the ZII `init` rules in section 5.12.1. It is not valid as a global
 initializer, and public APIs must not expose it as a growable collection
-type. Its internal spelling `__tl_dyn-array` names the same compatibility
-buffer and is accepted unconditionally in compiler and stdlib sources; it is
-not a public source type in either form.
+type. `__tl_dyn-array` is accepted only as the private transitional spelling;
+there is no public unsized `Array` alias.
 
 **Borrowed Slice referent:** `(Slice T)`
 - `Slice` is an unsized borrowed referent. A bare `(Slice T)` is rejected in
@@ -751,9 +750,9 @@ macro-name or declaration-identity exception in parser, expansion, or
 typechecking; a renamed copy of the declaration has the same semantics.
 
 Macro bodies can build expression literals with `expr-bool`, `expr-int`,
-`expr-string`, and `expr-var`. `expr-binary-data` builds an opaque `(Array u8)`
-static payload from a compile-time string, without materializing array-literal
-syntax. `expr-struct-get` builds a field access whose
+`expr-string`, and `expr-var`. `expr-binary-data` builds an opaque
+`(__tl_dyn-array u8)` static payload from a compile-time string, without
+materializing array-literal syntax. `expr-struct-get` builds a field access whose
 field token is computed during macro CTFE, `expr-tuple-ref` builds a tuple
 element access whose index is computed during macro CTFE, and
 `expr-struct-set` builds the matching field assignment expression.
@@ -1526,7 +1525,7 @@ can be created inside a region scope:
 - `String`
 - `ByteBuf` - owned mutable byte buffers
 - `(Box T)` - arena-owned boxed storage
-- `(Array T)` - runtime-sized dynamic buffer storage
+- `(__tl_dyn-array T)` - private runtime-sized dynamic buffer storage
 - Enum and struct values returned from functions inside the region
 - Tuple values
 
@@ -1575,8 +1574,9 @@ Reference types are lifetime-bearing:
   The same exclusivity rules apply to direct mutation of a borrowed global.
   Borrows end at their last use under the non-lexical lifetime rule below.
 - Array operations accept reference receivers: `array-ref` reads through an
-  immutable or mutable array reference, and `array-set!` / `array-push!` write
-  through an owned array or a mutable array reference. Borrowed `str` source
+  immutable or mutable array reference, and `array-set!` writes through an
+  owned fixed array or a mutable array reference. Private
+  `__tl_array-push!` mutates private dynamic buffers. Borrowed `str` source
   semantics are specified in section 3.11.
 
 In function signatures, the ordinary spelling elides the lifetime name:
@@ -1628,8 +1628,8 @@ for a fixed-array borrow at that boundary; there is no bare-array auto-borrow,
 and no cross-mutability strengthening or weakening.
 
 **Checked Slice subviews.** `slice-view source start len` and
-`slice-mut-view source start len` accept a fixed array, a compatibility dynamic
-array, a suitable reference to either, or an existing borrowed Slice view.
+`slice-mut-view source start len` accept a fixed array, a private dynamic
+buffer, a suitable reference to either, or an existing borrowed Slice view.
 The source, `start`, and `len` expressions are evaluated exactly once from
 left to right. The result is a no-copy borrowed Slice view whose lifetime and
 provenance remain tied to the originating owner; nested child views therefore
@@ -2658,8 +2658,8 @@ source checker; the runtime representation does not retain aliasing state.
 
 Declares a global variable with a typed or inferred initializer. Scalar constant
 initializers can be emitted directly as static data. `String` and aggregate
-initializers, including struct, enum, tuple, fixed-array, and compatibility
-dynamic-array values, are lowered through generated runtime initializer
+initializers, including struct, enum, tuple, fixed-array, and private
+dynamic-buffer values, are lowered through generated runtime initializer
 functions when static data emission is not sufficient. Those initializer
 functions run before the selected `main`.
 
@@ -2748,13 +2748,13 @@ escaped consistently. Ordinary TypeLisp declarations use module-prefixed
 
 Extern signatures may use backend-supported scalar values, `unit`, function
 pointers, raw pointers, and pointer-sized TypeLisp runtime handles such as
-`String`, compatibility dynamic arrays, structs, and enums. Tuple values, fixed
+`String`, private dynamic buffers, structs, and enums. Tuple values, fixed
 arrays, references (including shared or mutable borrowed Slice references),
 regions, and unsupported aggregate forms are rejected for extern parameters and
 returns. A C-facing Slice contract must instead use an explicit `(Ptr T)` or
 `(MutPtr T)` plus a scalar length; obtaining storage from an owner with
-`array-data` or pointer casts is an `unsafe` operation. There is no `array-data`
-operation that extracts storage from a borrowed Slice itself.
+`__tl_array-data` or pointer casts is an `unsafe` operation. There is no raw
+storage operation that extracts storage from a borrowed Slice itself.
 
 Raw pointer signatures do not make the pointer safe: nullability, validity,
 aliasing, lifetime, mutability, and target ABI correctness remain the caller and
@@ -3068,8 +3068,9 @@ stages only ever see a normal global.
 
 #### 4.4.7 `(include-bin name "path")` - embed a binary file
 
-Embeds the exact byte contents of `path` as a global `name : (Array u8)`. This
-is the binary sibling of `include-str`: the module loader resolves and reads
+Embeds the exact byte contents of `path` as a global
+`name : (__tl_dyn-array u8)`. This is the binary sibling of `include-str`: the
+module loader resolves and reads
 the file during compilation, then expands the directive into a generated global
 definition before typechecking, lowering, and codegen.
 
@@ -3085,7 +3086,7 @@ The compiler-owned `(include-str-lzss name "path")` form is the compressed
 runtime-static sibling of `include-str` and `include-bin`. It uses the same
 explicit input and path-resolution rules, deterministically LZSS-compresses
 the file's exact bytes at the loader boundary, and defines an opaque static
-`name : (Array u8)`. The bounded binary-data payload starts with the
+`name : (__tl_dyn-array u8)`. The bounded binary-data payload starts with the
 compiler-owned `__typelisp_embedded_stdlib_lzss_v1__` marker, the decimal
 uncompressed byte length and a newline, followed by the token stream. Like
 `include-bin`, and unlike `include-str`, the input is never decoded or
@@ -3106,8 +3107,8 @@ literal with `comptime.expr-string-value`, transform its bytes at compile time,
 and emit the result with `comptime.expr-binary-data`.
 
 `comptime.expr-binary-data(bytes)` constructs an opaque expression of type
-`(Array u8)` from a compile-time `String`. It lowers directly to static binary
-data; the bytes are not represented as source syntax or an array literal.
+`(__tl_dyn-array u8)` from a compile-time `String`. It lowers directly to static
+binary data; the bytes are not represented as source syntax or an array literal.
 
 #### 4.4.9 `(cfg predicate declaration)` - conditional compilation
 
@@ -3643,11 +3644,11 @@ all of its fields or payloads would otherwise be copyable.
 
 **Move-only leaves and poison.** The following are move-only regardless of
 their element or referent types: `String`, `ByteBuf`, borrowed `str`/`bytes`
-values, compatibility dynamic arrays `(Array T)`, `Slice`, `(Box T)`, and
+values, private dynamic buffers `(__tl_dyn-array T)`, `Slice`, `(Box T)`, and
 mutable references. An aggregate containing any such value is move-only, as
 are unresolved/invalid type variables. A concrete capturing closure is Copy
 iff every captured value is recursively Copy. Capturing `String`, `ByteBuf`,
-`Box`, a compatibility dynamic array, a mutable reference, a cleanup owner, or
+`Box`, a private dynamic buffer, a mutable reference, a cleanup owner, or
 an aggregate containing any non-Copy part makes the closure non-Copy. Lambda
 creation moves each non-Copy capture into its environment and copies each Copy
 capture. Nested closure captures consult the captured closure's concrete fact,
@@ -3765,7 +3766,7 @@ ownership model:
 | Fixed-array literal `(array value ...)` | A `Copyable` initializer is copied. A move-only initializer is consumed only when the closed transition predicate recognizes its type: `Box`, a recognized thread-safe runtime handle, or a cleanup-owning struct. An ordinary move-only handle such as `String` is still copied at the representation level, so its source remains usable. |
 | Ordinary `(array-ref items index)` value use | A `Copyable` element is copied. In a non-consuming compatibility context, a move-only element is also representation-copied and its slot remains initialized. This can create an owning-handle alias; it is transitional behavior, not an implicit deep `clone`. The separate rule for non-Copy global places still rejects a by-value read from a global array. |
 | Consuming `(array-ref items literal-index)` use | A consuming context, including a `(:consume)` parameter or a type in the closed transition set, moves the exact literal-index path. Reusing that element is rejected, while disjoint literal elements remain usable. A later literal-index store reinitializes that exact path after its receiver, index, and value have been checked. |
-| Consuming `(array-ref items computed-index)` use | Rejected because the checker cannot identify one exact moved path. Consuming a compatibility dynamic-array element is likewise rejected. Use the checked fixed-array `array-take!` operation when immediate `init` replacement is suitable. |
+| Consuming `(array-ref items computed-index)` use | Rejected because the checker cannot identify one exact moved path. Consuming a private dynamic-buffer element is likewise rejected. Use the checked fixed-array `array-take!` operation when immediate `init` replacement is suitable. |
 | `(set! (array-ref items index) value)` | Non-`Copyable` elements are accepted, but the current store compatibility-copies its right-hand-side representation instead of consuming it. This includes cleanup-owning values, so the source can remain usable and alias the stored owner. Literal-index stores still update exact-path reinitialization facts. |
 
 The target semantics are intentionally stricter. #6215 makes structural
@@ -3823,10 +3824,10 @@ without moving it. In v1 these are limited to:
   reference. This rule is identical for stdlib, compiler-owned, user-defined,
   qualified, indirect, lambda, and generated callees: only the resolved
   signature determines whether the argument is borrowed.
-- `(set! (array-ref place index) value)` and `array-push!` on an owned array
-  receiver or mutable
-  reference receiver. These operations mutate the array storage and do not
-  move the array handle; immutable-reference receivers are rejected.
+- `(set! (array-ref place index) value)` on an owned fixed array or mutable
+  reference receiver, and private `__tl_array-push!` on a private dynamic
+  buffer. These operations mutate array storage and do not move the owner;
+  immutable-reference receivers are rejected.
 - Struct field-place assignment `(set! place.field value)` on an owned struct
   receiver or mutable-reference receiver. This mutates only the selected
   field; immutable-reference receivers are rejected.
@@ -3904,7 +3905,7 @@ move-out continues to use `(array-ref place literal-index)`.
 - Assigning over an initialized cleanup-owning slot. Ordinary non-Copy
   arena-owned values may be overwritten; their old storage becomes unreachable
   until arena reclamation.
-- Moving out of an unsupported path such as a compatibility dynamic-array
+- Moving out of an unsupported path such as a private dynamic-buffer
   element, non-literal fixed-array index, box projection, or unsupported
   aggregate path.
 - Storing, capturing, or returning a move-only value where the destination
@@ -4322,7 +4323,8 @@ There are two source forms:
 - `(init)` is contextual. It is accepted only where an expected type is known,
   such as an annotated `define`, annotated `let`, declared function return,
   function argument, struct/enum constructor field, fixed or dynamic array
-  literal element, `array-set!`, or `array-push!` position. Ambiguous `(init)`
+  literal element, `array-set!`, or private `__tl_array-push!` position.
+  Ambiguous `(init)`
   is rejected with a diagnostic asking for `(init : T)` or an annotation.
 
 `init` is compatible with ordinary functions named `init`: `(init)` and
@@ -4340,7 +4342,7 @@ ZII eligibility:
 | `unit` | `unit` |
 | `(Ptr T)`, `(MutPtr T)` | typed null raw pointer |
 | `String` | valid empty string |
-| `(Array T)` | valid empty compatibility dynamic array; `make-array` uses the same element rules for live elements |
+| `(__tl_dyn-array T)` | valid empty private dynamic buffer; `__tl_make-array` uses the same element rules for live elements |
 | `(Tuple T0 T1 ...)` | tuple of recursively initialized elements |
 | `(Array T N)` | fixed array of `N` recursively initialized elements; `N` must be non-negative |
 | Default-layout `defstruct` without cleanup | constructor with every field recursively initialized |
@@ -4350,7 +4352,7 @@ ZII eligibility:
 Unsupported or ambiguous cases are rejected rather than producing invalid
 values. Rejected cases include function/closure values, references, `never`,
 `Expr`/`ExprList`, `(:repr c)` structs, cleanup-owning structs/enums, empty
-enums, negative fixed-array lengths, unsupported compatibility dynamic-array
+enums, negative fixed-array lengths, unsupported private dynamic-buffer
 element types, and recursive aggregate layouts that fail finite-layout
 analysis.
 
@@ -4439,13 +4441,13 @@ fully typed replacement; unlike `array-take!`, it never synthesizes one.
   and evaluate to static closure descriptor values.
 - Capturing lambdas snapshot their captures by value into heap-allocated
   closure environments. Capturable values are integer widths, `bool`, `char`,
-  `f64`, raw pointers, function values, `String`, compatibility dynamic arrays,
+  `f64`, raw pointers, function values, `String`, private dynamic buffers,
   tuples/structs/enums (including ones with nested aggregate fields), and a
   directly-captured fixed `(Array T N)` of scalar elements.
-- `String` and compatibility dynamic-array captures snapshot their fat
+- `String` and private dynamic-buffer captures snapshot their fat
   `{ ptr, len }` value onto the heap so the environment can outlive the frame
   that created the handle without dangling; the underlying buffer (`.rodata`
-  for string literals, `tl_alloc` for compatibility dynamic arrays) is shared,
+  for string literals, `tl_alloc` for private dynamic buffers) is shared,
   matching aggregate-handle reference semantics. A tuple/struct/enum capture
   shallow-copies its inline storage onto the heap and then recursively
   re-snapshots any nested aggregate fields/payloads so they cannot dangle. A
@@ -4456,7 +4458,7 @@ fully typed replacement; unlike `array-take!`, it never synthesizes one.
   rather than as pointer-sized handles, so a by-value snapshot would require
   per-element deep copies that the capture model does not perform.
 - Lambda literals can return the same value categories as named function
-  returns, including `String`, enums, structs, compatibility dynamic arrays,
+  returns, including `String`, enums, structs, private dynamic buffers,
   tuples, and fixed arrays.
 - `set!` to captured names is rejected by design. A lambda may assign its own
   parameters and locals, including a local that shadows an outer name, but it
@@ -4498,11 +4500,10 @@ APIs specified in section 6.5.
 Syntax:
 
 ```lisp test=ignore name=spmd-foreach-map reason="illustrative function; integration tests cover executable foreach programs"
-(import stdlib.array)
 
-(define (add-arrays [a : (Array i64)]
-                    [b : (Array i64)]
-                    [out : (Array i64)]
+(define (add-arrays [a : (& (Slice i64))]
+                    [b : (& (Slice i64))]
+                    [out : (&mut (Slice i64))]
                     [n : i64]) : unit
   (foreach ([i : i64 0 n])
     (set! (array-ref out i) (+ (array-ref a i) (array-ref b i)))))
@@ -4558,8 +4559,8 @@ runtime-sized buffers, reading through `array-ref` and writing through
   Numeric `=`, `!=`, `<`, `<=`, `>`, and `>=` maps produce private masks that
   are stored through `bool` array lanes.
 
-Runtime-sized SPMD inputs and outputs need not use compatibility `(Array T)`
-parameters. Native `(& owner (Slice T))` and `(&mut owner (Slice T))` values
+Runtime-sized public SPMD inputs and outputs use native `(& owner (Slice T))`
+and `(&mut owner (Slice T))` values
 are first-class contiguous SPMD sources and destinations, including checked
 subviews of fixed arrays and generated vectors. A Slice's data pointer is the
 start of its logical zero-based range, and its length supplies the bounds for
@@ -4632,10 +4633,9 @@ Lane identity forms:
   reduced result may differ between scalar and SIMD backend modes.
 
 ```lisp test=check name=spmd-program-index-foreach
-(import stdlib.array)
 
-(define (write-lane-ids [idxs : (Array i64)]
-                        [counts : (Array i64)]
+(define (write-lane-ids [idxs : (&mut (Slice i64))]
+                        [counts : (&mut (Slice i64))]
                         [n : i64]) : unit
   (foreach ([i : i64 0 n])
     (begin
@@ -4649,17 +4649,15 @@ each full gang stores indexes `0` through `W - 1` and count `W`; a
 non-divisible tail stores only the active prefix of those lane indexes.
 
 ```lisp test=check name=spmd-program-index-empty-range
-(import stdlib.array)
 
-(define (empty-lane-ids [out : (Array i64)]) : unit
+(define (empty-lane-ids [out : (&mut (Slice i64))]) : unit
   (foreach ([i : i64 0 0])
     (set! (array-ref out i) (+ (program-index) (program-count)))))
 ```
 
 ```lisp test=check name=spmd-program-index-tail
-(import stdlib.array)
 
-(define (write-tail-lane-ids [out : (Array i64)]) : unit
+(define (write-tail-lane-ids [out : (&mut (Slice i64))]) : unit
   (foreach ([i : i64 0 13])
     (set! (array-ref out i) (+ (* (program-count) 100) (program-index)))))
 ```
@@ -4814,9 +4812,8 @@ Explicit SPMD atomic scatter:
   rejected there along with other function calls and side effects.
 
 ```lisp test=check name=spmd-masked-if-scalar-fallback
-(import stdlib.array)
 
-(define (clamp-positive [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
+(define (clamp-positive [xs : (& (Slice i64))] [out : (&mut (Slice i64))] [n : i64]) : unit
   (foreach ([i : i64 0 n])
     (if (< (array-ref xs i) 0)
         (set! (array-ref out i) 0)
@@ -4824,9 +4821,8 @@ Explicit SPMD atomic scatter:
 ```
 
 ```lisp test=check name=spmd-masked-if-tail
-(import stdlib.array)
 
-(define (copy-even-tail [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
+(define (copy-even-tail [xs : (& (Slice i64))] [out : (&mut (Slice i64))] [n : i64]) : unit
   (foreach ([i : i64 0 n])
     (if (= (% i 2) 0)
         (set! (array-ref out i) (array-ref xs i))
@@ -4834,9 +4830,8 @@ Explicit SPMD atomic scatter:
 ```
 
 ```lisp test=check name=spmd-masked-if-nested
-(import stdlib.array)
 
-(define (classify [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
+(define (classify [xs : (& (Slice i64))] [out : (&mut (Slice i64))] [n : i64]) : unit
   (foreach ([i : i64 0 n])
     (let
       [x : i64 (array-ref xs i)]
@@ -4852,30 +4847,26 @@ SPMD reductions and scans:
 Reductions and scans are explicit expression forms.
 
 ```lisp test=check name=spmd-reduce-sum-i64
-(import stdlib.array)
 
-(define (sum-i64 [xs : (Array i64)] [n : i64]) : i64
+(define (sum-i64 [xs : (& (Slice i64))] [n : i64]) : i64
   (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs i)))
 ```
 
 ```lisp test=check name=spmd-reduce-any-bool
-(import stdlib.array)
 
-(define (contains-zero [xs : (Array i64)] [n : i64]) : bool
+(define (contains-zero [xs : (& (Slice i64))] [n : i64]) : bool
   (spmd-reduce any ([i : i64 0 n]) false (= (array-ref xs i) 0)))
 ```
 
 ```lisp test=check name=spmd-reduce-max-seeded
-(import stdlib.array)
 
-(define (max-i64-seeded [xs : (Array i64)] [n : i64] [seed : i64]) : i64
+(define (max-i64-seeded [xs : (& (Slice i64))] [n : i64] [seed : i64]) : i64
   (spmd-reduce max ([i : i64 0 n]) seed (array-ref xs i)))
 ```
 
 ```lisp test=check name=spmd-scan-sum-i64
-(import stdlib.array)
 
-(define (scan-prefix-sum [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
+(define (scan-prefix-sum [xs : (& (Slice i64))] [out : (&mut (Slice i64))] [n : i64]) : unit
   (spmd-scan
     sum
     ([i : i64 0 n] [prefix : i64 0])
@@ -4956,7 +4947,7 @@ plans.
 Purity and varying rules:
 
 - The `value` expression may use the varying index, `(program-index)`,
-  `(program-count)`, compatibility dynamic-array reads (including pure
+  `(program-count)`, private dynamic-buffer reads (including pure
   gather-only reads such as `values[indexes[i]]` and
   `values[i + offsets[program-index]]`),
   arithmetic/comparison/boolean operators over supported types,
@@ -5009,25 +5000,24 @@ name is the callable API; each variant names an ordinary top-level function
 compiled for one backend mode.
 
 ```lisp test=ignore name=simd-dispatch-declaration reason="illustrative dispatch declaration; integration tests cover executable dispatch programs"
-(import stdlib.array)
 
-(define (add-arrays-scalar [a : (Array i64)]
-                           [b : (Array i64)]
-                           [out : (Array i64)]
+(define (add-arrays-scalar [a : (& (Slice i64))]
+                           [b : (& (Slice i64))]
+                           [out : (&mut (Slice i64))]
                            [n : i64]) : unit
   (foreach ([i : i64 0 n])
     (set! (array-ref out i) (+ (array-ref a i) (array-ref b i)))))
 
-(define (add-arrays-avx2 [a : (Array i64)]
-                         [b : (Array i64)]
-                         [out : (Array i64)]
+(define (add-arrays-avx2 [a : (& (Slice i64))]
+                         [b : (& (Slice i64))]
+                         [out : (&mut (Slice i64))]
                          [n : i64]) : unit
   (foreach ([i : i64 0 n])
     (set! (array-ref out i) (+ (array-ref a i) (array-ref b i)))))
 
-(define (add-arrays-avx512 [a : (Array i64)]
-                           [b : (Array i64)]
-                           [out : (Array i64)]
+(define (add-arrays-avx512 [a : (& (Slice i64))]
+                           [b : (& (Slice i64))]
+                           [out : (&mut (Slice i64))]
                            [n : i64]) : unit
   (foreach ([i : i64 0 n])
     (set! (array-ref out i) (+ (array-ref a i) (array-ref b i)))))
@@ -5037,9 +5027,9 @@ compiled for one backend mode.
   (avx2 add-arrays-avx2)
   (avx512 add-arrays-avx512))
 
-(define (main [a : (Array i64)]
-              [b : (Array i64)]
-              [out : (Array i64)]
+(define (main [a : (& (Slice i64))]
+              [b : (& (Slice i64))]
+              [out : (&mut (Slice i64))]
               [n : i64]) : unit
   (add-arrays a b out n))
 ```
@@ -5105,9 +5095,8 @@ Reserved and deferred surface:
 Negative examples:
 
 ```lisp test=ignore name=spmd-reject-uniform-masked-while reason="uniform while inside masked branches is rejected"
-(import stdlib.array)
 
-(define (clear-prefix [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
+(define (clear-prefix [xs : (& (Slice i64))] [out : (&mut (Slice i64))] [n : i64]) : unit
   (foreach ([i : i64 0 n])
     (if (< (array-ref xs i) 0)
       (while (> n 0)
@@ -5116,11 +5105,10 @@ Negative examples:
 ```
 
 ```lisp test=ignore name=spmd-reject-non-atomic-scatter reason="non-atomic scatter writes are rejected"
-(import stdlib.array)
 
-(define (permute [xs : (Array i64)]
-                 [index : (Array i64)]
-                 [out : (Array i64)]
+(define (permute [xs : (& (Slice i64))]
+                 [index : (& (Slice i64))]
+                 [out : (&mut (Slice i64))]
                  [n : i64]) : unit
   (foreach ([i : i64 0 n])
     (let
@@ -5129,9 +5117,8 @@ Negative examples:
 ```
 
 ```lisp test=ignore name=spmd-reject-mutation-reduction reason="covered by tests/safety/spmd_outer_mutation_reject.tl"
-(import stdlib.array)
 
-(define (sum-array [xs : (Array i64)] [n : i64]) : i64
+(define (sum-array [xs : (& (Slice i64))] [n : i64]) : i64
   (let
     [sum : i64 0]
     (begin
@@ -5141,25 +5128,22 @@ Negative examples:
 ```
 
 ```lisp test=ignore name=spmd-reject-f64-min reason="covered by tests/safety/spmd_reduce_f64_min_reject.tl"
-(import stdlib.array)
 
-(define (min-f64 [xs : (Array f64)] [n : i64] [seed : f64]) : f64
+(define (min-f64 [xs : (& (Slice f64))] [n : i64] [seed : f64]) : f64
   (spmd-reduce min ([i : i64 0 n]) seed (array-ref xs i)))
 ```
 
 ```lisp test=ignore name=spmd-reject-shuffle reason="rejected by the parser; the spec example harness only asserts positive check/compile/run"
-(import stdlib.array)
 
-(define (bad-cross-lane [xs : (Array i64)] [n : i64]) : i64
+(define (bad-cross-lane [xs : (& (Slice i64))] [n : i64]) : i64
   (spmd-reduce shuffle ([i : i64 0 n]) 0 (array-ref xs i)))
 ```
 
 ```lisp test=ignore name=spmd-reject-indirect-varying-call reason="covered by tests/safety/spmd_varying_call_reject.tl"
-(import stdlib.array)
 
 (define (inc [x : i64]) : i64 (+ x 1))
 
-(define (map-inc [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
+(define (map-inc [xs : (& (Slice i64))] [out : (&mut (Slice i64))] [n : i64]) : unit
   (let
     [f : (-> i64 i64) inc]
     (foreach ([i : i64 0 n])
@@ -5231,7 +5215,7 @@ active allocation target. On exit, the result is cloned into the enclosing
 active arena when needed, the scratch arena is rewound to its entry mark, and
 the active arena is restored. The result surface follows `clone` lowering:
 copyable values are returned as-is, `String` values are copied, and cloneable
-tuples, fixed arrays, compatibility dynamic arrays, boxes, and named aggregates
+tuples, fixed arrays, private dynamic buffers, boxes, and named aggregates
 are cloned recursively when their elements or fields are clone-supported.
 Unsupported result shapes such as function values are rejected. Typechecking
 returns the body result type with source-region tags stripped, matching the
@@ -5335,11 +5319,11 @@ Primitive names and signatures are fixed as follows:
 | `(enum-variant-name type-expr index-expr)` | `String` | Zero-based variant constructor name. |
 | `(enum-variant-payload-count type-expr index-expr)` | `i64` | Number of payload fields for that variant. |
 | `(enum-variant-payload-type type-expr variant-index-expr payload-index-expr)` | `type` | Zero-based payload type. |
-| `(array-element-type type-expr)` | `type` | Requires a fixed array, compatibility dynamic array, or Slice shape; returns its element type. |
+| `(array-element-type type-expr)` | `type` | Requires a fixed array, private dynamic buffer, or Slice shape; returns its element type. |
 | `(box-element-type type-expr)` | `type` | Requires `Box`; returns its element type. |
 | `(reference-element-type type-expr)` | `type` | Requires `(& region T)` or `(&mut region T)`; returns `T` with the operand's resolved lifetime substitutions. |
 | `(array-length type-expr)` | `i64` | Requires fixed array. Compatibility dynamic arrays reject this. |
-| `(array-dynamic? type-expr)` | `bool` | True for `(Array T)`, false for `(Array T n)`. |
+| `(array-dynamic? type-expr)` | `bool` | True for private `(__tl_dyn-array T)`, false for `(Array T n)`. |
 | `(tuple-element-count type-expr)` | `i64` | Requires tuple type. |
 | `(tuple-element-type type-expr index-expr)` | `type` | Zero-based tuple element type. |
 | `(function-param-count type-expr)` | `i64` | Requires function type. |
@@ -6127,7 +6111,7 @@ input slice's lifetime. The `ffi-c-string-*` compatibility wrappers borrow their
   global storage, written with dotted projection such as `place.field`.
 - A fixed-array element path rooted in addressable storage, written as
   `(array-ref place index)`. The root must have fixed-array type
-  `(Array T N)` at that projection; compatibility dynamic `(Array T)` element
+  `(Array T N)` at that projection; private dynamic-buffer element
   sugar is not addressable in v1. The element index is checked with the same
   bounds policy as fixed-array element access before the pointer is returned.
 
@@ -6150,7 +6134,7 @@ is address-of the root storage slot followed by target-layout field offsets or
 element-size address derivation.
 
 Outside the raw-pointer surface: address-of globals, temporaries, enum payload
-projection, tuple projection, box projection, compatibility dynamic-array
+projection, tuple projection, box projection, private dynamic-buffer
 element sugar, slice views, provenance tracking, pointer
 comparisons beyond `ptr-null?`, pointer-to-function casts, and any
 borrow-checked reference surface. Pointer-to-aggregate-field or
@@ -6271,13 +6255,13 @@ borrowed Slice reference forms described in section 3.2:
 
 | Builtin | Signature | Description |
 |---------|-----------|-------------|
-| `length` | `(Array T N) → i64` / `(Array T) → i64` / `(& r (Slice T)) → i64` / `(&mut r (Slice T)) → i64` / `String → i64` | Fixed/dynamic-array count, borrowed Slice length, or string byte length |
-| `array-length` | `(Array T N) → i64` / `(Array T) → i64` / `(& r (Slice T)) → i64` / `(&mut r (Slice T)) → i64` | Alias for array `length`, including borrowed Slice length |
+| `length` | `(Array T N) → i64` / `(__tl_dyn-array T) → i64` (private) / `(& r (Slice T)) → i64` / `(&mut r (Slice T)) → i64` / `String → i64` | Fixed/private-dynamic count, borrowed Slice length, or string byte length |
+| `array-length` | `(Array T N) → i64` / `(__tl_dyn-array T) → i64` (private) / `(& r (Slice T)) → i64` / `(&mut r (Slice T)) → i64` | Alias for array `length`, including borrowed Slice length |
 | `array-ref` | `(Array T N) i64 → T` / `(& r (Slice T)) i64 → T` / `(&mut r (Slice T)) i64 → T` | Bounds-checked read through an owned array, an immutable or mutable array reference, or a borrowed Slice receiver |
 | `array-set!` | `(Array T N) i64 T → unit` / `(&mut r (Slice T)) i64 T → unit` | Bounds-checked write through an owned array, mutable array reference, or mutable Slice receiver; shared Slice writes are rejected |
 | `array-take!` | `(Array T N) i64 → T` / `(&mut r (Array T N)) i64 → T` | Bounds-check, return the old fixed-array element, and immediately replace its slot with `(init : T)`; requires an owned storage place or mutable reference and an `init`-eligible, non-cleanup-owning `T` |
 | `replace!` | `place T → T` | Evaluate and reserve initialized writable storage once, return its old value by copy/move, and commit a caller-supplied `T` without an uninitialized interval |
-| `slice-view` | `source i64 i64 → (& r (Slice T))` | Checked, allocation-free view over a fixed array, compatibility dynamic array, suitable reference, or borrowed Slice; source and indices evaluate once left-to-right |
+| `slice-view` | `source i64 i64 → (& r (Slice T))` | Checked, allocation-free view over a fixed array, private dynamic buffer, suitable reference, or borrowed Slice; source and indices evaluate once left-to-right |
 | `slice-mut-view` | `source i64 i64 → (&mut r (Slice T))` | Checked, allocation-free exclusive view over a mutable fixed/dynamic array, suitable mutable reference, or mutable Slice; no shared-to-mutable strengthening |
 | `slice-split-at` | `(& r (Slice T)) i64 → (Tuple (& r (Slice T)) (& r (Slice T)))` | Checked, allocation-free shared split into `[0, mid)` and `[mid, len)`; a mutable Slice input may be shared for this operation |
 | `slice-split-at-mut` | `(&mut r (Slice T)) i64 → (Tuple (&mut r (Slice T)) (&mut r (Slice T)))` | Checked compiler-trusted disjoint split; both mutable halves may remain live while the parent and originating owner remain borrowed |
@@ -6412,24 +6396,27 @@ stdlib/language surface, not implicit compiler builtins. There is no
 implicit conversion from text, arrays, or raw pointers to byte buffers;
 binary APIs use explicit borrow/copy helpers.
 
-**Internal array compatibility.** Unsized `(Array T)` and the `make-array`,
-`array-push!`, and `array-data` forms are an internal compatibility surface,
-not a public growable-collection API. Public growable collections route
-through `stdlib.vector`, take `&` / `&mut` receivers where possible, and
-mutate storage in place. The compatibility forms keep their runtime
-contracts:
+**Private dynamic buffers.** `__tl_dyn-array`,
+`__tl_make-array`, `__tl_array-push!`, and `__tl_array-data` are a private
+compiler/runtime surface, not a public growable-collection API. The former bare
+`(Array T)`, `make-array`, `array-push!`, and `array-data` aliases are rejected.
+Public growable collections route through `stdlib.vector`, take `&` / `&mut`
+receivers where possible, and mutate storage in place. The qualified
+`stdlib.array` macros remain a transitional implementation wrapper until the
+fixed-array core migration removes that module. The private forms keep their
+runtime contracts:
 
-- `make-array` checks the runtime length before allocation: a negative
+- `__tl_make-array` checks the runtime length before allocation: a negative
   length or `length * sizeof(type)` overflow calls the same `tl_oob_abort`
   trap used by bounds checks. For positive lengths every live element is
   initialized per the `init` eligibility rules in section 5.12.1; bulk
   zero/fill helpers are implementation details, and safe code observes
   initialized source values.
-- `array-data` and its compiler-private `__tl_array-data` spelling return a raw
+- `__tl_array-data` returns a raw
   `(MutPtr T)` to element storage, require an enclosing `(unsafe ...)`
-  expression, and exist only for runtime, FFI, and internal compatibility code
-  that must pass raw storage pointers. They share one AST, typecheck, and
-  lowering route, operate on array owner storage, and do not accept a borrowed
+  expression, and exist only for runtime, FFI, and internal code
+  that must pass raw storage pointers. It operates on private buffer owner
+  storage and does not accept a borrowed
   Slice receiver or extract a Slice's pointer/length pair.
 - `__tl_array-take!` is the private three-operand compatibility primitive used
   by generated vector internals: `(__tl_array-take! items live index)` returns
@@ -6771,8 +6758,8 @@ The accepted safe spawn shape is closure based:
   lifetime depended on that worker. Resetting or destroying such an arena
   before all users have joined remains unsafe or rejected.
 
-Typed join does not launder ownership: returning a `String`, compatibility
-dynamic array, `Box`, tuple, struct, or enum from a worker is accepted only
+Typed join does not launder ownership: returning a `String`, private dynamic
+buffer, `Box`, tuple, struct, or enum from a worker is accepted only
 when its reachable storage is already in a spanning owner or when the join
 API performs an explicit, specified clone/move into a caller-selected
 spanning owner. Returning a value allocated in the worker's default arena is
@@ -6842,7 +6829,7 @@ mutable ordinary data must use mutex guards, channel ownership transfer, an
 accepted atomic helper for that exact field, or `(unsafe ...)`.
 
 `stdlib.atomic` is the first accepted safe atomic helper surface. It is
-limited to one indexed compatibility dynamic-array element of type `i32` or
+limited to one indexed private dynamic-buffer element of type `i32` or
 `i64` and exposes only load, store, add, and fetch-add operations with
 sequentially consistent ordering; it has no public relaxed/acquire/release
 ordering parameter and does not protect unrelated non-atomic locations.
@@ -6975,7 +6962,7 @@ Allocation sites inside a `with-arena` scope target the active region:
 
 - String operations that create fresh storage (`substring`, `str-cat`,
   low-level concat primitives, `read-file`, `int->string`, `arg`), buffer and
-  collection constructors (`make-array`, `box`), `ByteBuf`
+  collection constructors (`array.make-array`, `box`), `ByteBuf`
   construction/growth/copy-result helpers, and returned aggregate storage
   from calls inside the region.
 - The body result must be region-free (scalars, or aggregates allocated
@@ -7052,7 +7039,7 @@ from escaping.
 | Category | Members | Arena behavior |
 |----------|---------|----------------|
 | Non-allocating inspection | `length`/`array-length`; `stdlib.string` helpers `string-length`, `string-ref`/`char-at`, `string-eq`/`string=?`, `string.>int`, and string predicates such as `string-contains` | Reads caller-provided handles and returns scalars. |
-| Returns active-arena owned data | `make-array`, `box`, `arg`, `read-file`, `file-read-chunk`, `read-stdin-line`, `read-stdin-bytes`, `str-cat`/low-level concat primitives, `substring`/`string-slice`, `int->string`, `ByteBuf` construction/growth/copy-result helpers, stdlib trimming/replacement helpers when they build a new string | Fresh storage is allocated in the active arena and cannot escape a scoped arena. |
+| Returns active-arena owned data | `array.make-array`, `box`, `arg`, `read-file`, `file-read-chunk`, `read-stdin-line`, `read-stdin-bytes`, `str-cat`/low-level concat primitives, `substring`/`string-slice`, `int->string`, `ByteBuf` construction/growth/copy-result helpers, stdlib trimming/replacement helpers when they build a new string | Fresh storage is allocated in the active arena and cannot escape a scoped arena. |
 | Returns caller-provided data | `stdlib.string` `string-replace` when no match is found; `stdlib.io` `read-file-or` when the path is missing | Returns the caller-provided aggregate unchanged. Reference-typed signatures express the caller-owned result; without lifetime information in the signature, the conservative arena-tagging rule above applies inside a scoped arena. |
 | Mutates caller-provided storage | `array-set!`, `byte-buf-set!`/`bytes-set!` mutation helpers | Mutates storage named by the caller; it does not allocate unless an owned-buffer growth operation is explicitly requested. Region checks reject storing shorter-lived aggregate handles into longer-lived containers, and borrowed `bytes` mutation requires an exclusive mutable view. |
 | Host/runtime IO | `print-format`/`println`, `stdout-write`/`stderr-write`, `panic`/`error`, `flush-stdout`, `write-file`, `file-exists?`, stdlib IO helpers | Performs target IO. Format macros allocate one active-arena result string; binary writes borrow `bytes` directly. |
@@ -7355,9 +7342,9 @@ and not a general manual memory management feature.
 - Dynamic buffers are mutable heap storage. `array-set!` mutates the buffer
   named by the live owner handle under the mutation rules in section 4.7.2.
   Explicit shared mutable aliases require reference/borrow semantics rather
-  than copying the buffer handle. Unsized `(Array T)` is an internal
-  compatibility representation, not a public collection surface; the public
-  `Array` form is fixed-size `(Array T N)`.
+  than copying the buffer handle. `(__tl_dyn-array T)` is a private
+  dynamic-buffer representation, not a public collection surface; public
+  `Array` is fixed-size `(Array T N)` and unsized `(Array T)` is rejected.
 - Struct and enum values are pointer-sized aggregate handles internally.
   Struct field-place assignment mutates selected fields in place through
   owned storage places or mutable references. Enum payloads are consumed by a
@@ -7536,7 +7523,7 @@ scalarized extensions.
 | Public vector/mask/varying source value types | Deferred by design. |
 | Fact-erasing closure flows; mutation of captured names | Rejected by design: closure captures are by-value snapshots. All-Copy closures may copy while preserving reference provenance; non-Copy closures may move through checker-known local facts; mutable/consuming capabilities and required lifetime/ownership facts fail closed when erased. |
 | Dotted module imports everywhere | Implemented: imports accept dotted module identities only. |
-| Fixed-size-only public `Array` | Migration in progress: unsized `(Array T)` remains a compatibility surface. |
+| Fixed-size-only public `Array` | Implemented: unsized `(Array T)` is rejected; private compiler/runtime buffers use `__tl_dyn-array`. |
 | Qualified short stdlib names | Migration in progress: module-name-prefixed helpers remain during the rename. |
 | Compiled comptime execution from embedded/package `tlci` images | Implemented for trusted local/source-built images on Linux and Windows. Published compilers use trusted embedded-stdlib and dependency-package catalogs; exact embedded or byte-identical source provenance admits stdlib entries, while dependency catalogs require exact package/source and host admission plus physical defining-provenance selection. Generation/key-bound capabilities are revalidated immediately before mapped dispatch. Compiled entries commit `Expr`, `Module`, and `Decls` results transactionally; dependency expressions reuse direct checked operands with zero rebinding, and declaration/module results reuse the exact bound environment. Registration shells and uncataloged, metadata-only, unavailable, or untrusted identities retain counted deterministic CTFE fallback. Required two-host differential, sustained reset/remap stress, bootstrap fixpoint, focused stale-source/rebuild, and package native/source gates require route activity plus byte-identical assembly and equivalent diagnostics. The embedded tier additionally derives an inventory-exact 107-entry declaration census and requires reviewed native/forced-source fixture evidence for every identity and result kind with byte-identical assembly. The package differential uses a two-parent dependency diamond to prove package-qualified catalog selection, one canonical mapping per package, native `Expr`/`Module`/`Decls` results, shell reuse, ordered/repeated generated output, zero-map forced-source parity, and authored/fuel diagnostic attribution. The isolated same-commit mutation gate additionally proves an interpreted producer consumes a changed transformer body, its successor executes that package-qualified identity from the newly embedded image, and later compiler/image/envelope/source-hash/provenance outputs converge. Metadata-only catalogs remain zero-entry/no-map and cross-host portable; stale source stands down before mapping, invalidates old capabilities, and resumes changed native execution only after rebuild. Content and exact-source hashes are deterministic integrity/rebuild identities, not publisher signatures; distributed/prebuilt authenticity remains a separate future trust layer. |
 | Package registry, semantic-version solving, workspaces | Deferred by design: deterministic git-pinned dependencies with lockfile replay. |
@@ -8017,7 +8004,7 @@ storage. Target C ABI call/return lowering is a separate backend contract.
   padding minimization; fields are placed in declaration order.
 - Enums: tag word (8 bytes) plus max payload storage. Each variant payload is
   laid out from offset 8 using natural alignment for each payload position.
-- `String` and compatibility dynamic-array source values are handle-sized in
+- `String` and private dynamic-buffer source values are handle-sized in
   this layout; their backing storage is larger implementation-owned data.
 - Ordinary references remain one pointer word (8/8). A borrowed Slice
   reference is two words, pointer first and signed `i64` length second (16/8),
@@ -8294,8 +8281,6 @@ expr          ::= literal
                 | "(" "size-of" expr ")"
                 | "(" "align-of" expr ")"
                 | "(" "offset-of" expr ident ")"
-                | "(" "make-array" type expr ")" ; compatibility allocation
-                | "(" "make-array" expr* ")"     ; dynamic-buffer literal
                 | "(" expr call-operand* ")"  ; function or macro call
 
 macro-call    ::= "(" qualified-name call-operand* ")"
@@ -8327,7 +8312,7 @@ addr-of-place ::= ident
 ;; `ptr-addr-of` is unsafe and narrower than `borrow-place`: the root `ident`
 ;; must resolve to local or parameter storage, `array-ref` projections must be
 ;; fixed-array elements, and temporaries, globals, tuple/box/enum projections,
-;; and compatibility dynamic-array elements are rejected. Local dotted-field
+;; and private dynamic-buffer elements are rejected. Local dotted-field
 ;; sugar follows the same leading-local rule as borrow places.
 
 binding       ::= "[" ident [":" type] expr "]"

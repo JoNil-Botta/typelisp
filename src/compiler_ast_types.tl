@@ -724,7 +724,7 @@
   (MakeArray i64 i64)
   (ArrayRef i64 i64)
   (ArraySet i64 i64 i64)
-  ;; Private checked move-out from compatibility dynamic-array storage. The
+  ;; Private checked move-out from private dynamic-buffer storage. The
   ;; second operand is a parallel bool liveness bitmap; the result is `(Tuple
   ;; bool T)` whose payload is meaningful only when its leading flag is true.
   (ArrayTake i64 i64 i64)
@@ -823,7 +823,8 @@
   (StringFromBytes i64 i64)
   (ArrayData i64)
   ;; Loader-generated payload for `(include-bin name "path")`. This is not a
-  ;; source expression; it typechecks as `(Array u8)` and lowers to static data.
+  ;; source expression; it typechecks as `(__tl_dyn-array u8)` and lowers to
+  ;; static data.
   (BinaryData String)
   (ProgramArgc)
   (ProgramArgv)
@@ -3351,7 +3352,7 @@
 
 ;; Shared zero-length backing store for the empty i64-slot lists below.
 ;;
-;; `(make-array i64 0)` is not free: it still runs `tl_alloc` and the
+;; `(__tl_make-array i64 0)` is not free: it still runs `tl_alloc` and the
 ;; `tl_array_zero` call the make-array lowering emits for a non-literal length,
 ;; and the self-compile builds millions of empty lists (`ast-variant-def-fallback`
 ;; alone builds one type list and one cleanup list per call). A zero-length array

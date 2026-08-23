@@ -514,8 +514,8 @@
     [(compiler_ast_types.AstExpr.BracketClause _) "bracket-clause"]
     [(compiler_ast_types.AstExpr.ArrayRef _ _) "array-ref"]
     [(compiler_ast_types.AstExpr.ArraySet _ _ _) "array-set!"]
-    [(compiler_ast_types.AstExpr.ArrayPush _ _) "array-push!"]
-    [(compiler_ast_types.AstExpr.ArrayData _) "array-data"]
+    [(compiler_ast_types.AstExpr.ArrayPush _ _) "__tl_array-push!"]
+    [(compiler_ast_types.AstExpr.ArrayData _) "__tl_array-data"]
     [(compiler_ast_types.AstExpr.StringData _) "string-data"]
     [(compiler_ast_types.AstExpr.Box _) "box"]
     [(compiler_ast_types.AstExpr.BoxGet _) "box-get"]
@@ -523,7 +523,7 @@
     [(compiler_ast_types.AstExpr.PtrWrite _ _) "ptr-write!"]
     [(compiler_ast_types.AstExpr.PtrOffset _ _) "ptr-offset"]
     [(compiler_ast_types.AstExpr.PtrToInt _) "ptr->int"]
-    [(compiler_ast_types.AstExpr.MakeArray _ _) "make-array"]
+    [(compiler_ast_types.AstExpr.MakeArray _ _) "__tl_make-array"]
     [_ "unclassified"]))
 
 (define embedded-stdlib-tlci-native-report-partial-count : (__tl_dyn-array i64)

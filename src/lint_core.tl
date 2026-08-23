@@ -211,7 +211,7 @@
   "prefer-dynamic-array-literal")
 
 (define (lint-rule-prefer-dynamic-array-literal-message) : String
-  "hand-filled dynamic array: prefer (make-array v0 v1 ...)")
+  "hand-filled private dynamic buffer: prefer (__tl_make-array v0 v1 ...)")
 
 (define (lint-rule-prefer-dynamic-array-literal-suggestion) : String
   "replace the allocation and consecutive array element assignments with a dynamic array literal")
@@ -1003,9 +1003,9 @@
   [span : ast.AstSourceSpan]) : LintFinding
   (LintFinding
     (str_cat.str-cat
-      "hand-filled dynamic array: "
+      "hand-filled private dynamic buffer: "
       name
-      " is initialized by consecutive array-set! calls; prefer (make-array v0 v1 ...)")
+      " is initialized by consecutive array-set! calls; prefer (__tl_make-array v0 v1 ...)")
     (lint-rule-prefer-dynamic-array-literal-id)
     0
     span))
@@ -5338,7 +5338,6 @@
 
 (define (lint-single-element-array-make-array-callee? [name : String]) : bool
   (or
-    (string.eq name "make-array")
     (string.eq name "__tl_make-array")
     (string.eq name "array.make-array")
     (string.eq name "array/make-array")

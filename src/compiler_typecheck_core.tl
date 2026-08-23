@@ -14277,7 +14277,10 @@
         (string.int->string count)
         ")")]
     [(ast.AstType.DynArray elem)
-      (str_cat.str-cat "(Array " (tc-type-render (ast.ty-node-get elem)) ")")]
+      (str_cat.str-cat
+        "(__tl_dyn-array "
+        (tc-type-render (ast.ty-node-get elem))
+        ")")]
     [(ast.AstType.Slice elem)
       (str_cat.str-cat "(Slice " (tc-type-render (ast.ty-node-get elem)) ")")]
     [(ast.AstType.Box elem)
@@ -15006,7 +15009,7 @@
         ")")]
     [(TcStdlibTypeSpec.ArrayName name)
       (str_cat.str-cat
-        "(Array "
+        "(__tl_dyn-array "
         (tc-env-key-name-text-for-session
           (tc-context-structural-session ctx)
           name)
@@ -29854,7 +29857,7 @@
                       (ResultTcType.Ok (ast.ty-node-get elem-ty))]
                     [(ast.AstType.DynArray _)
                       (ResultTcType.Err
-                        "typecheck: ptr-addr-of dynamic array elements are not addressable; use array-data plus ptr-offset")]
+                        "typecheck: ptr-addr-of dynamic array elements are not addressable; use __tl_array-data plus ptr-offset")]
                     [_
                       (ResultTcType.Err
                         "typecheck: ptr-addr-of requires a local/parameter, dotted field, or fixed-array array-ref place")])]
@@ -59327,7 +59330,7 @@
         "struct field assignment is not allowed inside a spmd-reduce value expression; the value expression must be free of writes and other side effects (SPEC.md 5.15)")]
     [(ast.AstExpr.ArrayPush _ _)
       (ResultTcUnit.Err
-        "`array-push!` is not allowed inside a spmd-reduce value expression; the value expression must be free of writes and other side effects (SPEC.md 5.15)")]
+        "`__tl_array-push!` is not allowed inside a spmd-reduce value expression; the value expression must be free of writes and other side effects (SPEC.md 5.15)")]
     [(ast.AstExpr.Call _ _)
       (ResultTcUnit.Err
         "function calls are not allowed inside a spmd-reduce value expression; side-effecting builtins and user calls with varying arguments are deferred in the first slice (SPEC.md 5.15)")]
@@ -59735,7 +59738,7 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [array : ast.AstExpr]) : ResultTcType
-  (match (tc-require-unsafe ctx env "array-data")
+  (match (tc-require-unsafe ctx env "__tl_array-data")
     [(ResultTcUnit.Ok)
       (match (tc-expr ctx env array)
         [(ResultTcType.Ok array-ty)
@@ -59744,7 +59747,8 @@
               (ResultTcType.Ok (ast.ast-ty-mut-ptr (ast.ty-node-get elem-ty)))]
             [(ast.AstType.DynArray elem-ty)
               (ResultTcType.Ok (ast.ast-ty-mut-ptr (ast.ty-node-get elem-ty)))]
-            [_ (ResultTcType.Err "typecheck: array-data requires an array")])]
+            [_
+              (ResultTcType.Err "typecheck: __tl_array-data requires an array")])]
         [(ResultTcType.Err message) (ResultTcType.Err message)])]
     [(ResultTcUnit.Err message) (ResultTcType.Err message)]))
 
@@ -61186,15 +61190,15 @@
         (TcArrayReceiver receiver-ty (ast.ty-node-get elem-ty)))]
     [(ast.AstType.Array _ _)
       (ResultTcArrayReceiver.Err
-        "typecheck: array-push! requires dynamic array type")]
+        "typecheck: __tl_array-push! requires dynamic array type")]
     [(ast.AstType.MutRef _ referent-ty)
       (tc-array-push-receiver ctx (ast.ty-node-get referent-ty))]
     [(ast.AstType.Ref _ _)
       (ResultTcArrayReceiver.Err
-        "typecheck: array-push! requires mutable dynamic array access")]
+        "typecheck: __tl_array-push! requires mutable dynamic array access")]
     [_
       (ResultTcArrayReceiver.Err
-        "typecheck: array-push! requires dynamic array type")]))
+        "typecheck: __tl_array-push! requires dynamic array type")]))
 
 (define (tc-array-mutation-value
   [ctx : TcContext]
@@ -61803,10 +61807,10 @@
             (cond
               [(not (tc-integer-type? len-ty))
                 (ResultTcType.Err
-                  "typecheck: make-array length must be integer")]
+                  "typecheck: __tl_make-array length must be integer")]
               [(not (tc-dyn-array-elem-supported? env elem))
                 (ResultTcType.Err
-                  "typecheck: make-array element type is not supported")]
+                  "typecheck: __tl_make-array element type is not supported")]
               [(not (tc-make-array-requires-element-init? elem len))
                 (ResultTcType.Ok
                   (tc-tag-active-region env (ast.ast-ty-dyn-array elem)))]
@@ -61954,7 +61958,7 @@
                       container-ty
                       elem-ty
                       value
-                      "typecheck: array-push! value type mismatch")])]
+                      "typecheck: __tl_array-push! value type mismatch")])]
               [(ResultTcArrayReceiver.Err message) (ResultTcType.Err message)])]
           [(ResultTcType.Err message) (ResultTcType.Err message)]))]
     [(ast.AstExpr.StringRef str-box index-box)
@@ -64276,7 +64280,7 @@
         seen
         template?
         expr
-        "array-data"
+        "__tl_array-data"
         "unsafe FFI bridge"
         array)]
     [(ast.AstExpr.BinaryData _) ResultTcUnit.Ok]
@@ -93420,7 +93424,7 @@
     [(ast.AstType.DynArray elem)
       (macro-type-unary-sexpr-id
         session
-        (cbi.compiler-builtin-ctfe-ref 109)
+        (ci.intern "__tl_dyn-array")
         elem
         span
         origin)]
@@ -94010,7 +94014,9 @@
             source-id)]
         (ResultMacroSexpr.Ok
           (macro-spanned-symbol-id
-            (if (= tag (parser.compiler-parse-tag-unknown))
+            (if (or
+              (= tag (parser.compiler-parse-tag-unknown))
+              (macro-hygiene-global-id? session name-id))
               (macro-output-source-identity-id-at session name-id "call-head")
               source-id)
             span)))]
@@ -94120,7 +94126,7 @@
     [(ast.AstExpr.DynArray exprs)
       (macro-expr-list-with-head-symbol-id
         session
-        (cbi.compiler-builtin-ctfe-ref 114)
+        (ci.intern "__tl_make-array")
         exprs
         span
         origin)]
@@ -94243,11 +94249,7 @@
           (match (macro-child-to-spanned-sexpr session len-id span origin)
             [(ResultMacroSexpr.Ok slen)
               (ResultMacroSexpr.Ok
-                (macro-form2-id
-                  (cbi.compiler-builtin-ctfe-ref 114)
-                  sty
-                  slen
-                  span))]
+                (macro-form2-id (ci.intern "__tl_make-array") sty slen span))]
             [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.ArrayRef array-id index-id)
@@ -94334,7 +94336,7 @@
             [(ResultMacroSexpr.Ok svalue)
               (ResultMacroSexpr.Ok
                 (macro-form2-id
-                  (cbi.compiler-builtin-ctfe-ref 116)
+                  (ci.intern "__tl_array-push!")
                   sarray
                   svalue
                   span))]
@@ -94628,7 +94630,7 @@
     [(ast.AstExpr.ArrayData value-id)
       (macro-child-form1-id
         session
-        (cbi.compiler-builtin-ctfe-ref 199)
+        (ci.intern "__tl_array-data")
         value-id
         span
         origin)]

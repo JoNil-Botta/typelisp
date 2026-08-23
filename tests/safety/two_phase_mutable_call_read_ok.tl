@@ -1,4 +1,4 @@
-;: SPEC safe-code contract: compatibility dynamic-array mutable borrows reserve
+;: SPEC safe-code contract: private dynamic-buffer mutable borrows reserve
 ;: before activation (#3581 keeps this surface staged).
 (import stdlib.array)
 

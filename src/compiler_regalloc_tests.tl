@@ -715,12 +715,12 @@
 ;; The PRED_CALL discount and the two things that bound it. `cold` is a depth-0
 ;; side arm with a call, bypassed by an empty edge: the function can reach its
 ;; `Return` without it and the bypass does no work it skips, so it is discounted
-;; to a quarter. `body` and `arm` both call from INSIDE the loop, and both keep
-;; their full depth weight whatever their shape -- what a discount buys is a
-;; saving at the entry frequency, and an in-loop arm's carriers run per
-;; iteration, so a misprediction there is unbounded. Blocks with no call are
-;; never discounted, and neither is the entry block itself (it post-dominates
-;; itself).
+;; to a quarter and marked `cold`. `body` and `arm` both call from INSIDE the
+;; loop and are separated by the in-loop rule instead: `body` sits on EVERY
+;; header->latch path and keeps its full depth weight, while `arm` is bypassed
+;; by `body -> latch` and is halved -- and neither is marked `cold`, so the csr
+;; class still reads both crossings at full price. Blocks with no call are never
+;; discounted, and neither is the entry block itself (it post-dominates itself).
 (cfg
   test
   (define (compiler-reg-call-hole-cold-arm-function) : ir.CompilerIrFunction
@@ -837,14 +837,17 @@
             (not (array-ref cold 3))
             (= (array-ref weights 6) 32)
             (not (array-ref cold 6))
-            ;; body and arm: depth-1 calls, never discounted
+            ;; body: an in-loop call on every header->latch path, full weight
             (= (array-ref weights 4) 32)
             (not (array-ref cold 4))
-            (= (array-ref weights 5) 32)
+            ;; arm: an in-loop call arm the body bypasses, halved, never `cold`
+            (= (array-ref weights 5) 16)
             (not (array-ref cold 5))
             ;; exit: depth 0, no call
             (= (array-ref weights 7) 4)
             (not (array-ref cold 7))
+            (= (reg.compiler-reg-call-hole-loop-arm-weight 32) 16)
+            (= (reg.compiler-reg-call-hole-loop-arm-weight 1) 1)
             (compiler-reg-call-hole-bypass-loop-ok?)))])))
 
 ;; The second bound: a depth-0 call arm whose BYPASS runs a loop the arm skips
@@ -918,6 +921,161 @@
             (not (array-ref arms.cold 1))
             (= (array-ref arms.weights 2) 32)
             (= (array-ref arms.weights 3) 4)))])))
+
+;; --- P30 in-loop arm discount ------------------------------------------------
+;; The versioned-region exclusion, moved inside a loop. `fast` is an in-loop arm
+;; that calls, and `body -> slow -> join -> latch` bypasses it -- but that bypass
+;; RUNS the inner loop `slow`, which `fast` skips, so `fast` is the cheap arm of
+;; a versioned region and not a detour. It keeps its full depth weight.
+;;
+;; Note what makes the question answerable at all inside a loop: the from-arm
+;; set stops AT the header, so "the work this iteration still does after the
+;; arm" is `join`/`latch` and not, via the back edge, every block of the loop.
+(cfg
+  test
+  (define (compiler-reg-call-hole-loop-arm-bypass-loop-function) : ir.CompilerIrFunction
+    (ir.CompilerIrFunction.Function
+      (ir.compiler-ir-test-symbol "call_hole_loop_arm_bypass_loop")
+      ir.CompilerIrParamList.Nil
+      (ast.AstType.I64)
+      1
+      (ir.compiler-ir-block-cons
+        (ir.compiler-ir-block
+          (ir.compiler-ir-label "entry")
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "header"))
+            ir.CompilerIrInstrList.Nil))
+        (ir.compiler-ir-block-cons
+          (ir.compiler-ir-block
+            (ir.compiler-ir-label "header")
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.Branch
+                (ir.CompilerIrValue.Bool false)
+                (ir.compiler-ir-label "body")
+                (ir.compiler-ir-label "exit"))
+              ir.CompilerIrInstrList.Nil))
+          (ir.compiler-ir-block-cons
+            (ir.compiler-ir-block
+              (ir.compiler-ir-label "body")
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.Branch
+                  (ir.CompilerIrValue.Bool false)
+                  (ir.compiler-ir-label "fast")
+                  (ir.compiler-ir-label "slow"))
+                ir.CompilerIrInstrList.Nil))
+            (ir.compiler-ir-block-cons
+              (ir.compiler-ir-block
+                (ir.compiler-ir-label "fast")
+                (ir.compiler-ir-instr-cons
+                  (ir.CompilerIrInstr.Call
+                    0
+                    (ir.compiler-ir-test-symbol "bulk")
+                    (ir.CompilerIrCallArgs.Nil)
+                    (compiler-reg-i64-ty))
+                  (ir.compiler-ir-instr-cons
+                    (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "join"))
+                    ir.CompilerIrInstrList.Nil)))
+              (ir.compiler-ir-block-cons
+                (ir.compiler-ir-block
+                  (ir.compiler-ir-label "slow")
+                  (ir.compiler-ir-instr-cons
+                    (ir.CompilerIrInstr.Branch
+                      (ir.CompilerIrValue.Bool false)
+                      (ir.compiler-ir-label "slow")
+                      (ir.compiler-ir-label "join"))
+                    ir.CompilerIrInstrList.Nil))
+                (ir.compiler-ir-block-cons
+                  (ir.compiler-ir-block
+                    (ir.compiler-ir-label "join")
+                    (ir.compiler-ir-instr-cons
+                      (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "latch"))
+                      ir.CompilerIrInstrList.Nil))
+                  (ir.compiler-ir-block-cons
+                    (ir.compiler-ir-block
+                      (ir.compiler-ir-label "latch")
+                      (ir.compiler-ir-instr-cons
+                        (ir.CompilerIrInstr.Jump
+                          (ir.compiler-ir-label "header"))
+                        ir.CompilerIrInstrList.Nil))
+                    (ir.compiler-ir-block-cons
+                      (ir.compiler-ir-block
+                        (ir.compiler-ir-label "exit")
+                        (ir.compiler-ir-instr-cons
+                          (ir.CompilerIrInstr.Return
+                            (ir.CompilerIrMaybeValue.Some
+                              (ir.CompilerIrValue.I64 0)))
+                          ir.CompilerIrInstrList.Nil))
+                      ir.CompilerIrBlockList.Nil)))))))))))
+
+;; What the in-loop discount is FOR: a memory-class value whose references sit
+;; on the loop body and whose only crossing sits on a halved arm now satisfies
+;; "crossings colder than references" and is relocated, while the SAME numbers
+;; in the csr class are refused -- the arm is not `cold`, so the crossing is
+;; priced at the halved in-loop weight and a store plus a reload there cannot be
+;; bought back by one push/pop pair at the entry weight.
+(cfg
+  test
+  (define (compiler-reg-call-hole-loop-arm-weight-ok?) : bool
+    (match (compiler-reg-call-hole-loop-arm-bypass-loop-function)
+      [(ir.CompilerIrFunction.Function self-name _ _ _ blocks)
+        (let
+          [arms : reg.CompilerRegCallHoleWeights
+            (reg.compiler-reg-call-hole-cold-arm-weights
+              (ast.ast-node-pool-reader-type-segment-bases)
+              self-name
+              (live.compiler-live-ir-block-list-to-seq blocks))]
+          [vars : i64 2]
+          [flags : (__tl_dyn-array bool) (array.make-array bool vars)]
+          [csr : (__tl_dyn-array bool) (array.make-array bool vars)]
+          [dropped : (__tl_dyn-array bool) (array.make-array bool vars)]
+          [benefit : (__tl_dyn-array i64) (array.make-array i64 vars)]
+          [cost : (__tl_dyn-array i64) (array.make-array i64 vars)]
+          [max-ref : (__tl_dyn-array i64) (array.make-array i64 vars)]
+          [max-clobber : (__tl_dyn-array i64) (array.make-array i64 vars)]
+          [max-clobber-hot : (__tl_dyn-array i64) (array.make-array i64 vars)]
+          [scores : reg.CompilerRegCallHoleScores
+            (reg.CompilerRegCallHoleScores
+              flags
+              csr
+              dropped
+              benefit
+              cost
+              max-ref
+              max-clobber
+              max-clobber-hot
+              8)]
+          (begin
+            ;; 0: memory class, refs on the body (32), one crossing on a halved
+            ;;    arm (16). 1: the same crossing in the csr class.
+            (set! (array-ref flags 0) true)
+            (set! (array-ref flags 1) true)
+            (set! (array-ref csr 1) true)
+            (set! (array-ref benefit 0) 64)
+            (set! (array-ref cost 0) 32)
+            (set! (array-ref max-ref 0) 32)
+            (set! (array-ref max-clobber 0) 16)
+            (set! (array-ref benefit 1) 64)
+            (set! (array-ref cost 1) 32)
+            (set! (array-ref max-ref 1) 32)
+            (set! (array-ref max-clobber 1) 16)
+            (set! (array-ref max-clobber-hot 1) 16)
+            (and
+              (= (array-length arms.weights) 8)
+              ;; entry / exit: depth 0
+              (= (array-ref arms.weights 0) 4)
+              (= (array-ref arms.weights 7) 4)
+              ;; header / body / join / latch: depth 1, no call
+              (= (array-ref arms.weights 1) 32)
+              (= (array-ref arms.weights 2) 32)
+              (= (array-ref arms.weights 5) 32)
+              (= (array-ref arms.weights 6) 32)
+              ;; `slow` is the inner loop, so `fast` -- the arm that skips it --
+              ;; keeps its full depth-1 weight
+              (= (array-ref arms.weights 4) 256)
+              (= (array-ref arms.weights 3) 32)
+              (not (array-ref arms.cold 3))
+              (reg.compiler-reg-call-hole-qualifies? scores 0)
+              (not (reg.compiler-reg-call-hole-qualifies? scores 1)))))])))
 
 ;; Candidate selection. The three refusals are independent: an ineligible value
 ;; (no flag), a value the previous round dropped, and a value whose cost is not
@@ -17941,6 +18099,9 @@
     (compiler-regalloc-self-test-require!
       "compiler-reg-call-hole-cold-arm-weight-ok?"
       (cfg test (compiler-reg-call-hole-cold-arm-weight-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-call-hole-loop-arm-weight-ok?"
+      (cfg test (compiler-reg-call-hole-loop-arm-weight-ok?) true))
     (compiler-regalloc-self-test-require!
       "compiler-reg-call-hole-csr-qualify-ok?"
       (cfg test (compiler-reg-call-hole-csr-qualify-ok?) true))

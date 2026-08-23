@@ -67515,11 +67515,16 @@
               guard-value
               dr.keep
               (OptBceFoldFacts
-                (opt-bce-fold-collect
-                  guard-instrs
-                  guard-value
-                  (opt-bce-fold-conjunct-fuel)
-                  (opt-bce-fold-cond-list-new))
+                (opt-bce-fold-proven-nonnegative
+                  shape.body-blocks
+                  shape.body-blocks
+                  shape.iphi
+                  dr.keep
+                  (opt-bce-fold-collect
+                    guard-instrs
+                    guard-value
+                    (opt-bce-fold-conjunct-fuel)
+                    (opt-bce-fold-cond-list-new)))
                 all-blocks
                 shape.body-blocks
                 shape.iphi
@@ -67538,7 +67543,7 @@
 ;; arm the fact selects, and the round-end DCE fixpoint retires the compare and
 ;; any arm that lost its last predecessor.
 ;;
-;; Exactly two implication rules, both EXACT -- no range analysis, no interval
+;; Exactly three implication rules, all EXACT -- no range analysis, no interval
 ;; join, no transitive chaining. Anything else refuses.
 ;;
 ;; R1 RANGE FLOOR. `counter <op> k` with a literal `k`, on the loop's OWN
@@ -67575,6 +67580,18 @@
 ;; runtime values. Guard-local temporaries are freshly allocated ids that
 ;; appear in no original block, so a loop compare can never match a conjunct
 ;; over them.
+;;
+;; R3 REMOVED COUNTER-OFFSET FLOOR. A removed BoundsCheck whose exact index is
+;; the loop's own counter plus a positive literal belongs to the scale-1 fan.
+;; The fan's minimum extremum and the counter finisher independently establish
+;; that exact index's signed floor on the fast edge, while its maximum extremum
+;; establishes the upper bound and no-wrap conditions. Record `index >= 0` and
+;; apply R1's literal-floor verdict to an ordinary compare of that SAME value.
+;; This covers the sentinel an inlined safe accessor repeats next to a removed
+;; `counter + k` check. It deliberately excludes invariant, masked, variable-
+;; base, and data-dependent indices: cross-array fusion may remove one of those
+;; by relying on an earlier in-loop sentinel, so using the removed check to fold
+;; that sentinel would be circular.
 ;;
 ;; The single-block pass shares the guard finisher but needs no folding hook:
 ;; its clonable whitelist has no Branch, so its fast clone's only conditional
@@ -67729,15 +67746,87 @@
                 (opt-value-eq rhs (ir.CompilerIrValue.I64 18))
                 "BCE fold condition newest prior rhs is preserved"))])))))
 
-;; What the guard establishes for the whole fast clone: its conjunct compares,
-;; the blocks the fold inspects (every block for successor phis, the clone
-;; group for definitions), and the counter's proven lower bound.
+;; What the guard establishes for the whole fast clone: its conjunct compares
+;; (including the exact `counter + k >= 0` facts established for eligible
+;; removed checks), the blocks the fold inspects (every block for successor
+;; phis, the clone group for definitions), and the counter's proven lower bound.
 (defstruct OptBceFoldFacts
   (conds OptBceFoldCondList)
   (blocks ir.CompilerIrBlockList)
   (body-blocks ir.CompilerIrBlockList)
   (iphi i64)
   (counter-nonneg? bool))
+
+;; Collect the canonical index of each dropped check in R3's narrow
+;; `counter + positive-literal` family. `keep` is the derivation's complete
+;; complement, so absence means the guard proved the check. The derivation
+;; itself resolves 64-bit signed/unsigned reinterpret casts before proving an
+;; index; use that identical spelling here so a source `i64` sentinel matches
+;; its lowered `u64` BoundsCheck operand.
+(define (opt-bce-fold-proven-nonnegative-instrs
+  [body-blocks : ir.CompilerIrBlockList]
+  [iphi : i64]
+  [label : i64]
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [keep : OptBceMbKeep]
+  [acc : OptBceFoldCondList (:consume)]) : OptBceFoldCondList
+  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
+    acc
+    (opt-bce-fold-proven-nonnegative-instrs
+      body-blocks
+      iphi
+      label
+      instrs
+      (+ index 1)
+      keep
+      (match (ir.compiler-ir-instr-seq-ref instrs index)
+        [(ir.CompilerIrInstr.BoundsCheck checked-index _ _)
+          (if (or (opt-bce-mb-keep-contains? keep label index) (< iphi 0))
+            acc
+            (match (opt-bce-mb-counter-affine body-blocks iphi checked-index 16)
+              [(OptBceCounterAffine.Some scale offset)
+                (if (and (= scale 1) (> offset 0))
+                  (opt-bce-fold-cond-list-prepend
+                    acc
+                    (ir.CompilerIrBinOp.Ge)
+                    (opt-bce-mb-canon-value body-blocks checked-index)
+                    (ir.CompilerIrValue.I64 0))
+                  acc)]
+              [(OptBceCounterAffine.No) acc]))]
+        [_ acc]))))
+
+(define (opt-bce-fold-proven-nonnegative
+  [remaining : ir.CompilerIrBlockList]
+  [body-blocks : ir.CompilerIrBlockList]
+  [iphi : i64]
+  [keep : OptBceMbKeep]
+  [acc : OptBceFoldCondList (:consume)]) : OptBceFoldCondList
+  (match remaining
+    [(ir.CompilerIrBlockList.Nil) acc]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-bce-fold-proven-nonnegative
+        (ir.compiler-ir-block-seq-to-list seq)
+        body-blocks
+        iphi
+        keep
+        acc)]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block label instrs)
+          (opt-bce-fold-proven-nonnegative
+            (__tl-box-place rest)
+            body-blocks
+            iphi
+            keep
+            (opt-bce-fold-proven-nonnegative-instrs
+              body-blocks
+              iphi
+              label
+              instrs
+              0
+              keep
+              acc))])]))
 
 (defenum OptBceFoldVerdict
   (Unknown)
@@ -67909,6 +67998,16 @@
       (= (opt-bce-mb-resolve body-blocks raw 16) iphi)]
     [_ false]))
 
+(define (opt-bce-fold-nonnegative-operand?
+  [body-blocks : ir.CompilerIrBlockList]
+  [conds : OptBceFoldCondList]
+  [value : ir.CompilerIrValue]) : bool
+  (opt-bce-fold-cond-holds?
+    conds
+    (ir.CompilerIrBinOp.Ge)
+    (opt-bce-mb-canon-value body-blocks value)
+    (ir.CompilerIrValue.I64 0)))
+
 ;; A compare operand's canonical spelling for R2: a literal, or a var that no
 ;; loop block defines once in-loop copies are resolved away. Anything the loop
 ;; itself computes is not invariant and never matches a guard conjunct.
@@ -67962,6 +68061,15 @@
             [(ir.CompilerIrValue.I64 k) (opt-bce-fold-counter-verdict op k)]
             [_ (OptBceFoldVerdict.Unknown)])]
         [(and monotone? (opt-bce-fold-counter-operand? body-blocks iphi rhs))
+          (match lhs
+            [(ir.CompilerIrValue.I64 k)
+              (opt-bce-fold-counter-verdict (opt-bce-fold-mirror-op op) k)]
+            [_ (OptBceFoldVerdict.Unknown)])]
+        [(opt-bce-fold-nonnegative-operand? body-blocks facts.conds lhs)
+          (match rhs
+            [(ir.CompilerIrValue.I64 k) (opt-bce-fold-counter-verdict op k)]
+            [_ (OptBceFoldVerdict.Unknown)])]
+        [(opt-bce-fold-nonnegative-operand? body-blocks facts.conds rhs)
           (match lhs
             [(ir.CompilerIrValue.I64 k)
               (opt-bce-fold-counter-verdict (opt-bce-fold-mirror-op op) k)]

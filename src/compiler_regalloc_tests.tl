@@ -940,71 +940,71 @@
       (ast.AstType.I64)
       1
       (ir.compiler-ir-block-cons
-        (ir.compiler-ir-block
+        (ir.CompilerIrBlock.Block
           (ir.compiler-ir-label "entry")
-          (ir.compiler-ir-instr-cons
+          (compiler-reg-test-instr-seq-prepend
             (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "header"))
-            ir.CompilerIrInstrList.Nil))
+            (ir.compiler-ir-instr-seq-empty)))
         (ir.compiler-ir-block-cons
-          (ir.compiler-ir-block
+          (ir.CompilerIrBlock.Block
             (ir.compiler-ir-label "header")
-            (ir.compiler-ir-instr-cons
+            (compiler-reg-test-instr-seq-prepend
               (ir.CompilerIrInstr.Branch
                 (ir.CompilerIrValue.Bool false)
                 (ir.compiler-ir-label "body")
                 (ir.compiler-ir-label "exit"))
-              ir.CompilerIrInstrList.Nil))
+              (ir.compiler-ir-instr-seq-empty)))
           (ir.compiler-ir-block-cons
-            (ir.compiler-ir-block
+            (ir.CompilerIrBlock.Block
               (ir.compiler-ir-label "body")
-              (ir.compiler-ir-instr-cons
+              (compiler-reg-test-instr-seq-prepend
                 (ir.CompilerIrInstr.Branch
                   (ir.CompilerIrValue.Bool false)
                   (ir.compiler-ir-label "fast")
                   (ir.compiler-ir-label "slow"))
-                ir.CompilerIrInstrList.Nil))
+                (ir.compiler-ir-instr-seq-empty)))
             (ir.compiler-ir-block-cons
-              (ir.compiler-ir-block
+              (ir.CompilerIrBlock.Block
                 (ir.compiler-ir-label "fast")
-                (ir.compiler-ir-instr-cons
+                (compiler-reg-test-instr-seq-prepend
                   (ir.CompilerIrInstr.Call
                     0
                     (ir.compiler-ir-test-symbol "bulk")
                     (ir.CompilerIrCallArgs.Nil)
                     (compiler-reg-i64-ty))
-                  (ir.compiler-ir-instr-cons
+                  (compiler-reg-test-instr-seq-prepend
                     (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "join"))
-                    ir.CompilerIrInstrList.Nil)))
+                    (ir.compiler-ir-instr-seq-empty))))
               (ir.compiler-ir-block-cons
-                (ir.compiler-ir-block
+                (ir.CompilerIrBlock.Block
                   (ir.compiler-ir-label "slow")
-                  (ir.compiler-ir-instr-cons
+                  (compiler-reg-test-instr-seq-prepend
                     (ir.CompilerIrInstr.Branch
                       (ir.CompilerIrValue.Bool false)
                       (ir.compiler-ir-label "slow")
                       (ir.compiler-ir-label "join"))
-                    ir.CompilerIrInstrList.Nil))
+                    (ir.compiler-ir-instr-seq-empty)))
                 (ir.compiler-ir-block-cons
-                  (ir.compiler-ir-block
+                  (ir.CompilerIrBlock.Block
                     (ir.compiler-ir-label "join")
-                    (ir.compiler-ir-instr-cons
+                    (compiler-reg-test-instr-seq-prepend
                       (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "latch"))
-                      ir.CompilerIrInstrList.Nil))
+                      (ir.compiler-ir-instr-seq-empty)))
                   (ir.compiler-ir-block-cons
-                    (ir.compiler-ir-block
+                    (ir.CompilerIrBlock.Block
                       (ir.compiler-ir-label "latch")
-                      (ir.compiler-ir-instr-cons
+                      (compiler-reg-test-instr-seq-prepend
                         (ir.CompilerIrInstr.Jump
                           (ir.compiler-ir-label "header"))
-                        ir.CompilerIrInstrList.Nil))
+                        (ir.compiler-ir-instr-seq-empty)))
                     (ir.compiler-ir-block-cons
-                      (ir.compiler-ir-block
+                      (ir.CompilerIrBlock.Block
                         (ir.compiler-ir-label "exit")
-                        (ir.compiler-ir-instr-cons
+                        (compiler-reg-test-instr-seq-prepend
                           (ir.CompilerIrInstr.Return
                             (ir.CompilerIrMaybeValue.Some
                               (ir.CompilerIrValue.I64 0)))
-                          ir.CompilerIrInstrList.Nil))
+                          (ir.compiler-ir-instr-seq-empty)))
                       ir.CompilerIrBlockList.Nil)))))))))))
 
 ;; What the in-loop discount is FOR: a memory-class value whose references sit

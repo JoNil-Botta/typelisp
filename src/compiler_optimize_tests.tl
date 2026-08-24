@@ -27394,6 +27394,905 @@
     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
     (opt-thread-test-function name blocks)))
 
+;; --- widened jump-threading fixtures ----------------------------------------
+;;
+;; These drive `opt-thread-const-branch-blocks` directly rather than the whole
+;; opt2 pipeline, so what they assert is the pass's own rewrite: which edges it
+;; redirects, which value each redirected predecessor takes over, and which
+;; shapes it still refuses.
+(define (opt-thread-pass-result
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [fuel : i64]) : compiler_optimize.OptBlockListPassResult
+  (compiler_optimize.opt-thread-const-branch-blocks
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    blocks
+    16
+    fuel))
+
+(define (opt-thread-pass-blocks
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [fuel : i64]) : compiler_ir_types.CompilerIrBlockList
+  (match (opt-thread-pass-result blocks fuel)
+    [(compiler_optimize.OptBlockListPassResult.Result next _) next]))
+
+(define (opt-thread-pass-changed?
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [fuel : i64]) : bool
+  (match (opt-thread-pass-result blocks fuel)
+    [(compiler_optimize.OptBlockListPassResult.Result _ changed) changed]))
+
+(define (opt-thread-pass-verified?
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : bool
+  (compiler_optimize.opt-verify-ok?
+    (compiler_optimize.opt-verify-function
+      (opt-thread-test-function "thread-pass" blocks))))
+
+(define (opt-thread-first-phi-input
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [block-label : i64]
+  [pred-label : i64]) : compiler_ir_types.CompilerIrMaybeValue
+  (match (compiler_optimize.opt-cfg-find-block blocks block-label)
+    [(compiler_optimize.OptMaybeBlock.No)
+      (compiler_ir_types.CompilerIrMaybeValue.No)]
+    [(compiler_optimize.OptMaybeBlock.Some block)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (if (= (compiler_ir_types.compiler-ir-instr-seq-count instrs) 0)
+            (compiler_ir_types.CompilerIrMaybeValue.No)
+            (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs 0)
+              [(compiler_ir_types.CompilerIrInstr.Phi _ inputs _)
+                (compiler_optimize.opt-thread-phi-input-value inputs pred-label)]
+              [_ (compiler_ir_types.CompilerIrMaybeValue.No)]))])]))
+
+(define (opt-thread-first-phi-input-i64?
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [block-label : i64]
+  [pred-label : i64]
+  [want : i64]) : bool
+  (match (opt-thread-first-phi-input blocks block-label pred-label)
+    [(compiler_ir_types.CompilerIrMaybeValue.No) false]
+    [(compiler_ir_types.CompilerIrMaybeValue.Some value)
+      (match value
+        [(compiler_ir_types.CompilerIrValue.I64 got) (= got want)]
+        [_ false])]))
+
+(define (opt-thread-first-phi-input-bool?
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [block-label : i64]
+  [pred-label : i64]
+  [want : bool]) : bool
+  (match (opt-thread-first-phi-input blocks block-label pred-label)
+    [(compiler_ir_types.CompilerIrMaybeValue.No) false]
+    [(compiler_ir_types.CompilerIrMaybeValue.Some value)
+      (match value
+        [(compiler_ir_types.CompilerIrValue.Bool got)
+          (if want
+            got
+            (not got))]
+        [_ false])]))
+
+(define (opt-thread-first-phi-has-input?
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [block-label : i64]
+  [pred-label : i64]) : bool
+  (match (opt-thread-first-phi-input blocks block-label pred-label)
+    [(compiler_ir_types.CompilerIrMaybeValue.No) false]
+    [(compiler_ir_types.CompilerIrMaybeValue.Some _) true]))
+
+;; D1 -- three phis ahead of the branch. Only `%6` decides it; `%4` and `%5`
+;; are read solely across the merge's own out-edges, so each redirected
+;; predecessor takes over the value its own input carried and the merge's phis
+;; lose that input. `tp-alt` keeps both destinations multi-entry so the repaired
+;; phis survive the round's cleanup.
+(define (opt-thread-multi-phi-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.compiler-ir-label "tp-alt")
+          (compiler_ir_types.compiler-ir-label "tp-guard"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "tp-alt")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            (compiler_ir_types.compiler-ir-label "tp-yes")
+            (compiler_ir_types.compiler-ir-label "tp-no"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "tp-guard")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              (compiler_ir_types.compiler-ir-label "tp-a")
+              (compiler_ir_types.compiler-ir-label "tp-b"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "tp-a")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "tp-merge"))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "tp-b")
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "tp-merge"))))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.CompilerIrBlock.Block
+                (compiler_ir_types.compiler-ir-label "tp-merge")
+                (opt-test-instrs
+                  (compiler_ir_types.CompilerIrInstr.Phi
+                    4
+                    (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.CompilerIrValue.I64 10)
+                      (compiler_ir_types.compiler-ir-label "tp-a")
+                      (compiler_ir_types.compiler-ir-phi-input-cons
+                        (compiler_ir_types.CompilerIrValue.I64 20)
+                        (compiler_ir_types.compiler-ir-label "tp-b")
+                        (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                    (compiler_ast_types.AstType.I64))
+                  (compiler_ir_types.CompilerIrInstr.Phi
+                    5
+                    (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.CompilerIrValue.I64 11)
+                      (compiler_ir_types.compiler-ir-label "tp-a")
+                      (compiler_ir_types.compiler-ir-phi-input-cons
+                        (compiler_ir_types.CompilerIrValue.I64 21)
+                        (compiler_ir_types.compiler-ir-label "tp-b")
+                        (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                    (compiler_ast_types.AstType.I64))
+                  (compiler_ir_types.CompilerIrInstr.Phi
+                    6
+                    (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.CompilerIrValue.Bool true)
+                      (compiler_ir_types.compiler-ir-label "tp-a")
+                      (compiler_ir_types.compiler-ir-phi-input-cons
+                        (compiler_ir_types.CompilerIrValue.Bool false)
+                        (compiler_ir_types.compiler-ir-label "tp-b")
+                        (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                    (compiler_ast_types.AstType.Bool))
+                  (compiler_ir_types.CompilerIrInstr.Branch
+                    (compiler_ir_types.CompilerIrValue.Var 6)
+                    (compiler_ir_types.compiler-ir-label "tp-yes")
+                    (compiler_ir_types.compiler-ir-label "tp-no"))))
+              (compiler_ir_types.compiler-ir-block-cons
+                (compiler_ir_types.CompilerIrBlock.Block
+                  (compiler_ir_types.compiler-ir-label "tp-yes")
+                  (opt-test-instrs
+                    (compiler_ir_types.CompilerIrInstr.Phi
+                      7
+                      (compiler_ir_types.compiler-ir-phi-input-cons
+                        (compiler_ir_types.CompilerIrValue.Var 4)
+                        (compiler_ir_types.compiler-ir-label "tp-merge")
+                        (compiler_ir_types.compiler-ir-phi-input-cons
+                          (compiler_ir_types.CompilerIrValue.I64 30)
+                          (compiler_ir_types.compiler-ir-label "tp-alt")
+                          (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                      (compiler_ast_types.AstType.I64))
+                    (compiler_ir_types.CompilerIrInstr.Return
+                      (compiler_ir_types.CompilerIrMaybeValue.Some
+                        (compiler_ir_types.CompilerIrValue.Var 7)))))
+                (compiler_ir_types.compiler-ir-block-cons
+                  (compiler_ir_types.CompilerIrBlock.Block
+                    (compiler_ir_types.compiler-ir-label "tp-no")
+                    (opt-test-instrs
+                      (compiler_ir_types.CompilerIrInstr.Phi
+                        8
+                        (compiler_ir_types.compiler-ir-phi-input-cons
+                          (compiler_ir_types.CompilerIrValue.Var 5)
+                          (compiler_ir_types.compiler-ir-label "tp-merge")
+                          (compiler_ir_types.compiler-ir-phi-input-cons
+                            (compiler_ir_types.CompilerIrValue.I64 31)
+                            (compiler_ir_types.compiler-ir-label "tp-alt")
+                            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                        (compiler_ast_types.AstType.I64))
+                      (compiler_ir_types.CompilerIrInstr.Return
+                        (compiler_ir_types.CompilerIrMaybeValue.Some
+                          (compiler_ir_types.CompilerIrValue.Var 8)))))
+                  (compiler_ir_types.CompilerIrBlockList.Nil))))))))))
+
+;; D1 rail -- `%4` is read by an ordinary instruction in a successor, not by a
+;; phi on the merge edge. Threading a predecessor past the merge would reach
+;; that read without passing the definition, so the whole block is refused.
+(define (opt-thread-live-out-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.compiler-ir-label "tv-alt")
+          (compiler_ir_types.compiler-ir-label "tv-guard"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "tv-alt")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "tv-no"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "tv-guard")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              (compiler_ir_types.compiler-ir-label "tv-a")
+              (compiler_ir_types.compiler-ir-label "tv-b"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "tv-a")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "tv-merge"))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "tv-b")
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "tv-merge"))))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.CompilerIrBlock.Block
+                (compiler_ir_types.compiler-ir-label "tv-merge")
+                (opt-test-instrs
+                  (compiler_ir_types.CompilerIrInstr.Phi
+                    4
+                    (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.CompilerIrValue.I64 10)
+                      (compiler_ir_types.compiler-ir-label "tv-a")
+                      (compiler_ir_types.compiler-ir-phi-input-cons
+                        (compiler_ir_types.CompilerIrValue.I64 20)
+                        (compiler_ir_types.compiler-ir-label "tv-b")
+                        (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                    (compiler_ast_types.AstType.I64))
+                  (compiler_ir_types.CompilerIrInstr.Phi
+                    5
+                    (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.CompilerIrValue.Bool true)
+                      (compiler_ir_types.compiler-ir-label "tv-a")
+                      (compiler_ir_types.compiler-ir-phi-input-cons
+                        (compiler_ir_types.CompilerIrValue.Bool false)
+                        (compiler_ir_types.compiler-ir-label "tv-b")
+                        (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                    (compiler_ast_types.AstType.Bool))
+                  (compiler_ir_types.CompilerIrInstr.Branch
+                    (compiler_ir_types.CompilerIrValue.Var 5)
+                    (compiler_ir_types.compiler-ir-label "tv-yes")
+                    (compiler_ir_types.compiler-ir-label "tv-no"))))
+              (compiler_ir_types.compiler-ir-block-cons
+                (compiler_ir_types.CompilerIrBlock.Block
+                  (compiler_ir_types.compiler-ir-label "tv-yes")
+                  (opt-test-instrs
+                    (compiler_ir_types.CompilerIrInstr.BinOp
+                      6
+                      (compiler_ir_types.CompilerIrBinOp.Add)
+                      (compiler_ir_types.CompilerIrValue.Var 4)
+                      (compiler_ir_types.CompilerIrValue.I64 1)
+                      (compiler_ast_types.AstType.I64))
+                    (compiler_ir_types.CompilerIrInstr.Return
+                      (compiler_ir_types.CompilerIrMaybeValue.Some
+                        (compiler_ir_types.CompilerIrValue.Var 6)))))
+                (compiler_ir_types.compiler-ir-block-cons
+                  (compiler_ir_types.CompilerIrBlock.Block
+                    (compiler_ir_types.compiler-ir-label "tv-no")
+                    (opt-test-instrs
+                      (compiler_ir_types.CompilerIrInstr.Return
+                        (compiler_ir_types.CompilerIrMaybeValue.Some
+                          (compiler_ir_types.CompilerIrValue.I64 40)))))
+                  (compiler_ir_types.CompilerIrBlockList.Nil))))))))))
+
+;; D1 -- only `tx-a` decides the branch. `tx-b` carries a parameter, so its
+;; edge stays exactly where it is and the merge survives holding it.
+(define (opt-thread-mixed-edge-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.compiler-ir-label "tx-alt")
+          (compiler_ir_types.compiler-ir-label "tx-guard"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "tx-alt")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            (compiler_ir_types.compiler-ir-label "tx-yes")
+            (compiler_ir_types.compiler-ir-label "tx-no"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "tx-guard")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              (compiler_ir_types.compiler-ir-label "tx-a")
+              (compiler_ir_types.compiler-ir-label "tx-b"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "tx-a")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "tx-merge"))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "tx-b")
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "tx-merge"))))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.CompilerIrBlock.Block
+                (compiler_ir_types.compiler-ir-label "tx-merge")
+                (opt-test-instrs
+                  (compiler_ir_types.CompilerIrInstr.Phi
+                    4
+                    (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.CompilerIrValue.I64 10)
+                      (compiler_ir_types.compiler-ir-label "tx-a")
+                      (compiler_ir_types.compiler-ir-phi-input-cons
+                        (compiler_ir_types.CompilerIrValue.I64 20)
+                        (compiler_ir_types.compiler-ir-label "tx-b")
+                        (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                    (compiler_ast_types.AstType.I64))
+                  (compiler_ir_types.CompilerIrInstr.Phi
+                    5
+                    (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.CompilerIrValue.Bool true)
+                      (compiler_ir_types.compiler-ir-label "tx-a")
+                      (compiler_ir_types.compiler-ir-phi-input-cons
+                        (compiler_ir_types.CompilerIrValue.Var 2)
+                        (compiler_ir_types.compiler-ir-label "tx-b")
+                        (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                    (compiler_ast_types.AstType.Bool))
+                  (compiler_ir_types.CompilerIrInstr.Branch
+                    (compiler_ir_types.CompilerIrValue.Var 5)
+                    (compiler_ir_types.compiler-ir-label "tx-yes")
+                    (compiler_ir_types.compiler-ir-label "tx-no"))))
+              (compiler_ir_types.compiler-ir-block-cons
+                (compiler_ir_types.CompilerIrBlock.Block
+                  (compiler_ir_types.compiler-ir-label "tx-yes")
+                  (opt-test-instrs
+                    (compiler_ir_types.CompilerIrInstr.Phi
+                      6
+                      (compiler_ir_types.compiler-ir-phi-input-cons
+                        (compiler_ir_types.CompilerIrValue.Var 4)
+                        (compiler_ir_types.compiler-ir-label "tx-merge")
+                        (compiler_ir_types.compiler-ir-phi-input-cons
+                          (compiler_ir_types.CompilerIrValue.I64 30)
+                          (compiler_ir_types.compiler-ir-label "tx-alt")
+                          (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                      (compiler_ast_types.AstType.I64))
+                    (compiler_ir_types.CompilerIrInstr.Return
+                      (compiler_ir_types.CompilerIrMaybeValue.Some
+                        (compiler_ir_types.CompilerIrValue.Var 6)))))
+                (compiler_ir_types.compiler-ir-block-cons
+                  (compiler_ir_types.CompilerIrBlock.Block
+                    (compiler_ir_types.compiler-ir-label "tx-no")
+                    (opt-test-instrs
+                      (compiler_ir_types.CompilerIrInstr.Return
+                        (compiler_ir_types.CompilerIrMaybeValue.Some
+                          (compiler_ir_types.CompilerIrValue.I64 40)))))
+                  (compiler_ir_types.CompilerIrBlockList.Nil))))))))))
+
+;; The D2 fixtures need an `i64` parameter for the edge that must not fold, so
+;; they carry their own signature.
+(define (opt-thread-cmp-params) : compiler_ir_types.CompilerIrParamList
+  (compiler_ir_types.compiler-ir-param-cons
+    (compiler_ir_types.CompilerIrParam.Param
+      "outer"
+      (compiler_ast_types.AstType.Bool)
+      0)
+    (compiler_ir_types.compiler-ir-param-cons
+      (compiler_ir_types.CompilerIrParam.Param
+        "left"
+        (compiler_ast_types.AstType.Bool)
+        1)
+      (compiler_ir_types.compiler-ir-param-cons
+        (compiler_ir_types.CompilerIrParam.Param
+          "right"
+          (compiler_ast_types.AstType.Bool)
+          2)
+        (compiler_ir_types.compiler-ir-param-cons
+          (compiler_ir_types.CompilerIrParam.Param
+            "n"
+            (compiler_ast_types.AstType.I64)
+            3)
+          (compiler_ir_types.CompilerIrParamList.Nil))))))
+
+(define (opt-thread-cmp-test-function
+  [name : String]
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol name)
+    (opt-thread-cmp-params)
+    (compiler_ast_types.AstType.I64)
+    16
+    blocks))
+
+(define (opt-thread-cmp-verified?
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : bool
+  (compiler_optimize.opt-verify-ok?
+    (compiler_optimize.opt-verify-function
+      (opt-thread-cmp-test-function "thread-cmp" blocks))))
+
+;; D2 -- the branch reads a comparison over the block's own `i64` phi. `tq-a`
+;; carries `5` and `tq-b` carries `-1`, so both decide the comparison and both
+;; are redirected, `tq-a` to `tq-yes` carrying the `5` the successor phi asked
+;; for and `tq-b` to `tq-no`. `tq-c` and `tq-d` carry a parameter and never
+;; decide, so the merge survives holding exactly those two -- which is also the
+;; floor `opt-thread-compare-min-preds` would have stopped at.
+(define (opt-thread-compare-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.compiler-ir-label "tq-alt")
+          (compiler_ir_types.compiler-ir-label "tq-guard"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "tq-alt")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            (compiler_ir_types.compiler-ir-label "tq-yes")
+            (compiler_ir_types.compiler-ir-label "tq-no"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "tq-guard")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              (compiler_ir_types.compiler-ir-label "tq-g1")
+              (compiler_ir_types.compiler-ir-label "tq-g2"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "tq-g1")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Branch
+                (compiler_ir_types.CompilerIrValue.Var 2)
+                (compiler_ir_types.compiler-ir-label "tq-a")
+                (compiler_ir_types.compiler-ir-label "tq-b"))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "tq-g2")
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.Branch
+                  (compiler_ir_types.CompilerIrValue.Var 2)
+                  (compiler_ir_types.compiler-ir-label "tq-c")
+                  (compiler_ir_types.compiler-ir-label "tq-d"))))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.CompilerIrBlock.Block
+                (compiler_ir_types.compiler-ir-label "tq-a")
+                (opt-test-instrs
+                  (compiler_ir_types.CompilerIrInstr.Jump
+                    (compiler_ir_types.compiler-ir-label "tq-merge"))))
+              (compiler_ir_types.compiler-ir-block-cons
+                (compiler_ir_types.CompilerIrBlock.Block
+                  (compiler_ir_types.compiler-ir-label "tq-b")
+                  (opt-test-instrs
+                    (compiler_ir_types.CompilerIrInstr.Jump
+                      (compiler_ir_types.compiler-ir-label "tq-merge"))))
+                (compiler_ir_types.compiler-ir-block-cons
+                  (compiler_ir_types.CompilerIrBlock.Block
+                    (compiler_ir_types.compiler-ir-label "tq-c")
+                    (opt-test-instrs
+                      (compiler_ir_types.CompilerIrInstr.Jump
+                        (compiler_ir_types.compiler-ir-label "tq-merge"))))
+                  (compiler_ir_types.compiler-ir-block-cons
+                    (compiler_ir_types.CompilerIrBlock.Block
+                      (compiler_ir_types.compiler-ir-label "tq-d")
+                      (opt-test-instrs
+                        (compiler_ir_types.CompilerIrInstr.Jump
+                          (compiler_ir_types.compiler-ir-label "tq-merge"))))
+                    (compiler_ir_types.compiler-ir-block-cons
+                      (compiler_ir_types.CompilerIrBlock.Block
+                        (compiler_ir_types.compiler-ir-label "tq-merge")
+                        (opt-test-instrs
+                          (compiler_ir_types.CompilerIrInstr.Phi
+                            5
+                            (compiler_ir_types.compiler-ir-phi-input-cons
+                              (compiler_ir_types.CompilerIrValue.I64 5)
+                              (compiler_ir_types.compiler-ir-label "tq-a")
+                              (compiler_ir_types.compiler-ir-phi-input-cons
+                                (compiler_ir_types.CompilerIrValue.I64 (- 0 1))
+                                (compiler_ir_types.compiler-ir-label "tq-b")
+                                (compiler_ir_types.compiler-ir-phi-input-cons
+                                  (compiler_ir_types.CompilerIrValue.Var 3)
+                                  (compiler_ir_types.compiler-ir-label "tq-c")
+                                  (compiler_ir_types.compiler-ir-phi-input-cons
+                                    (compiler_ir_types.CompilerIrValue.Var 3)
+                                    (compiler_ir_types.compiler-ir-label "tq-d")
+                                    (compiler_ir_types.CompilerIrPhiInputList.Nil)))))
+                            (compiler_ast_types.AstType.I64))
+                          (compiler_ir_types.CompilerIrInstr.BinOp
+                            6
+                            (compiler_ir_types.CompilerIrBinOp.Ge)
+                            (compiler_ir_types.CompilerIrValue.Var 5)
+                            (compiler_ir_types.CompilerIrValue.I64 0)
+                            (compiler_ast_types.AstType.I64))
+                          (compiler_ir_types.CompilerIrInstr.Branch
+                            (compiler_ir_types.CompilerIrValue.Var 6)
+                            (compiler_ir_types.compiler-ir-label "tq-yes")
+                            (compiler_ir_types.compiler-ir-label "tq-no"))))
+                      (compiler_ir_types.compiler-ir-block-cons
+                        (compiler_ir_types.CompilerIrBlock.Block
+                          (compiler_ir_types.compiler-ir-label "tq-yes")
+                          (opt-test-instrs
+                            (compiler_ir_types.CompilerIrInstr.Phi
+                              7
+                              (compiler_ir_types.compiler-ir-phi-input-cons
+                                (compiler_ir_types.CompilerIrValue.Var 5)
+                                (compiler_ir_types.compiler-ir-label "tq-merge")
+                                (compiler_ir_types.compiler-ir-phi-input-cons
+                                  (compiler_ir_types.CompilerIrValue.I64 30)
+                                  (compiler_ir_types.compiler-ir-label "tq-alt")
+                                  (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                              (compiler_ast_types.AstType.I64))
+                            (compiler_ir_types.CompilerIrInstr.Return
+                              (compiler_ir_types.CompilerIrMaybeValue.Some
+                                (compiler_ir_types.CompilerIrValue.Var 7)))))
+                        (compiler_ir_types.compiler-ir-block-cons
+                          (compiler_ir_types.CompilerIrBlock.Block
+                            (compiler_ir_types.compiler-ir-label "tq-no")
+                            (opt-test-instrs
+                              (compiler_ir_types.CompilerIrInstr.Phi
+                                8
+                                (compiler_ir_types.compiler-ir-phi-input-cons
+                                  (compiler_ir_types.CompilerIrValue.I64 41)
+                                  (compiler_ir_types.compiler-ir-label
+                                    "tq-merge")
+                                  (compiler_ir_types.compiler-ir-phi-input-cons
+                                    (compiler_ir_types.CompilerIrValue.I64 31)
+                                    (compiler_ir_types.compiler-ir-label
+                                      "tq-alt")
+                                    (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                                (compiler_ast_types.AstType.I64))
+                              (compiler_ir_types.CompilerIrInstr.Return
+                                (compiler_ir_types.CompilerIrMaybeValue.Some
+                                  (compiler_ir_types.CompilerIrValue.Var 8)))))
+                          (compiler_ir_types.CompilerIrBlockList.Nil))))))))))))))
+
+;; D2 rail -- the same shape with an equality comparison. `tr-a` carries `5`
+;; and would decide `eq %5, 5`, but only the ordering comparisons are threaded,
+;; so the pass reports no change at all.
+(define (opt-thread-compare-open-edge-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.compiler-ir-label "tr-alt")
+          (compiler_ir_types.compiler-ir-label "tr-guard"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "tr-alt")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            (compiler_ir_types.compiler-ir-label "tr-yes")
+            (compiler_ir_types.compiler-ir-label "tr-no"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "tr-guard")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              (compiler_ir_types.compiler-ir-label "tr-a")
+              (compiler_ir_types.compiler-ir-label "tr-b"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "tr-a")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "tr-merge"))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "tr-b")
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "tr-merge"))))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.CompilerIrBlock.Block
+                (compiler_ir_types.compiler-ir-label "tr-merge")
+                (opt-test-instrs
+                  (compiler_ir_types.CompilerIrInstr.Phi
+                    5
+                    (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.CompilerIrValue.I64 5)
+                      (compiler_ir_types.compiler-ir-label "tr-a")
+                      (compiler_ir_types.compiler-ir-phi-input-cons
+                        (compiler_ir_types.CompilerIrValue.Var 3)
+                        (compiler_ir_types.compiler-ir-label "tr-b")
+                        (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                    (compiler_ast_types.AstType.I64))
+                  (compiler_ir_types.CompilerIrInstr.BinOp
+                    6
+                    (compiler_ir_types.CompilerIrBinOp.Eq)
+                    (compiler_ir_types.CompilerIrValue.Var 5)
+                    (compiler_ir_types.CompilerIrValue.I64 5)
+                    (compiler_ast_types.AstType.I64))
+                  (compiler_ir_types.CompilerIrInstr.Branch
+                    (compiler_ir_types.CompilerIrValue.Var 6)
+                    (compiler_ir_types.compiler-ir-label "tr-yes")
+                    (compiler_ir_types.compiler-ir-label "tr-no"))))
+              (compiler_ir_types.compiler-ir-block-cons
+                (compiler_ir_types.CompilerIrBlock.Block
+                  (compiler_ir_types.compiler-ir-label "tr-yes")
+                  (opt-test-instrs
+                    (compiler_ir_types.CompilerIrInstr.Phi
+                      7
+                      (compiler_ir_types.compiler-ir-phi-input-cons
+                        (compiler_ir_types.CompilerIrValue.I64 40)
+                        (compiler_ir_types.compiler-ir-label "tr-merge")
+                        (compiler_ir_types.compiler-ir-phi-input-cons
+                          (compiler_ir_types.CompilerIrValue.I64 30)
+                          (compiler_ir_types.compiler-ir-label "tr-alt")
+                          (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                      (compiler_ast_types.AstType.I64))
+                    (compiler_ir_types.CompilerIrInstr.Return
+                      (compiler_ir_types.CompilerIrMaybeValue.Some
+                        (compiler_ir_types.CompilerIrValue.Var 7)))))
+                (compiler_ir_types.compiler-ir-block-cons
+                  (compiler_ir_types.CompilerIrBlock.Block
+                    (compiler_ir_types.compiler-ir-label "tr-no")
+                    (opt-test-instrs
+                      (compiler_ir_types.CompilerIrInstr.Phi
+                        8
+                        (compiler_ir_types.compiler-ir-phi-input-cons
+                          (compiler_ir_types.CompilerIrValue.I64 41)
+                          (compiler_ir_types.compiler-ir-label "tr-merge")
+                          (compiler_ir_types.compiler-ir-phi-input-cons
+                            (compiler_ir_types.CompilerIrValue.I64 31)
+                            (compiler_ir_types.compiler-ir-label "tr-alt")
+                            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                        (compiler_ast_types.AstType.I64))
+                      (compiler_ir_types.CompilerIrInstr.Return
+                        (compiler_ir_types.CompilerIrMaybeValue.Some
+                          (compiler_ir_types.CompilerIrValue.Var 8)))))
+                  (compiler_ir_types.CompilerIrBlockList.Nil))))))))))
+
+;; D3 -- `%4` decides the merge's branch AND is read again by `td-yes`'s phi on
+;; the merge edge. The single-use gate refused that; the live-out rule admits it,
+;; because the extra reader is exactly one of the merge's own out-edges and the
+;; repair re-expresses it at the threaded origin.
+(define (opt-thread-multi-use-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.compiler-ir-label "td-alt")
+          (compiler_ir_types.compiler-ir-label "td-guard"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "td-alt")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            (compiler_ir_types.compiler-ir-label "td-yes")
+            (compiler_ir_types.compiler-ir-label "td-no"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "td-guard")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              (compiler_ir_types.compiler-ir-label "td-a")
+              (compiler_ir_types.compiler-ir-label "td-b"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "td-a")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "td-merge"))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "td-b")
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "td-merge"))))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.CompilerIrBlock.Block
+                (compiler_ir_types.compiler-ir-label "td-merge")
+                (opt-test-instrs
+                  (compiler_ir_types.CompilerIrInstr.Phi
+                    4
+                    (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.CompilerIrValue.Bool true)
+                      (compiler_ir_types.compiler-ir-label "td-a")
+                      (compiler_ir_types.compiler-ir-phi-input-cons
+                        (compiler_ir_types.CompilerIrValue.Bool false)
+                        (compiler_ir_types.compiler-ir-label "td-b")
+                        (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                    (compiler_ast_types.AstType.Bool))
+                  (compiler_ir_types.CompilerIrInstr.Branch
+                    (compiler_ir_types.CompilerIrValue.Var 4)
+                    (compiler_ir_types.compiler-ir-label "td-yes")
+                    (compiler_ir_types.compiler-ir-label "td-no"))))
+              (compiler_ir_types.compiler-ir-block-cons
+                (compiler_ir_types.CompilerIrBlock.Block
+                  (compiler_ir_types.compiler-ir-label "td-yes")
+                  (opt-test-instrs
+                    (compiler_ir_types.CompilerIrInstr.Phi
+                      5
+                      (compiler_ir_types.compiler-ir-phi-input-cons
+                        (compiler_ir_types.CompilerIrValue.Var 4)
+                        (compiler_ir_types.compiler-ir-label "td-merge")
+                        (compiler_ir_types.compiler-ir-phi-input-cons
+                          (compiler_ir_types.CompilerIrValue.Bool false)
+                          (compiler_ir_types.compiler-ir-label "td-alt")
+                          (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                      (compiler_ast_types.AstType.Bool))
+                    (compiler_ir_types.CompilerIrInstr.Branch
+                      (compiler_ir_types.CompilerIrValue.Var 5)
+                      (compiler_ir_types.compiler-ir-label "td-y1")
+                      (compiler_ir_types.compiler-ir-label "td-y2"))))
+                (compiler_ir_types.compiler-ir-block-cons
+                  (compiler_ir_types.CompilerIrBlock.Block
+                    (compiler_ir_types.compiler-ir-label "td-y1")
+                    (opt-test-instrs
+                      (compiler_ir_types.CompilerIrInstr.Return
+                        (compiler_ir_types.CompilerIrMaybeValue.Some
+                          (compiler_ir_types.CompilerIrValue.I64 1)))))
+                  (compiler_ir_types.compiler-ir-block-cons
+                    (compiler_ir_types.CompilerIrBlock.Block
+                      (compiler_ir_types.compiler-ir-label "td-y2")
+                      (opt-test-instrs
+                        (compiler_ir_types.CompilerIrInstr.Return
+                          (compiler_ir_types.CompilerIrMaybeValue.Some
+                            (compiler_ir_types.CompilerIrValue.I64 2)))))
+                    (compiler_ir_types.compiler-ir-block-cons
+                      (compiler_ir_types.CompilerIrBlock.Block
+                        (compiler_ir_types.compiler-ir-label "td-no")
+                        (opt-test-instrs
+                          (compiler_ir_types.CompilerIrInstr.Return
+                            (compiler_ir_types.CompilerIrMaybeValue.Some
+                              (compiler_ir_types.CompilerIrValue.I64 40)))))
+                      (compiler_ir_types.CompilerIrBlockList.Nil))))))))))))
+
+;; D3 -- six decided predecessors on one merge. A round redirects at most
+;; `opt-thread-pred-budget` of them, so one round leaves two behind and the
+;; fixpoint picks those up on the next: the cap bounds the phi-web growth per
+;; round without costing the rewrite.
+(define (opt-thread-wide-merge-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.compiler-ir-label "tk-g1")
+          (compiler_ir_types.compiler-ir-label "tk-g2"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "tk-g1")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            (compiler_ir_types.compiler-ir-label "tk-p0")
+            (compiler_ir_types.compiler-ir-label "tk-p1"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "tk-g2")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              (compiler_ir_types.compiler-ir-label "tk-g3")
+              (compiler_ir_types.compiler-ir-label "tk-g4"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "tk-g3")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Branch
+                (compiler_ir_types.CompilerIrValue.Var 2)
+                (compiler_ir_types.compiler-ir-label "tk-p2")
+                (compiler_ir_types.compiler-ir-label "tk-p3"))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "tk-g4")
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.Branch
+                  (compiler_ir_types.CompilerIrValue.Var 2)
+                  (compiler_ir_types.compiler-ir-label "tk-p4")
+                  (compiler_ir_types.compiler-ir-label "tk-p5"))))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.CompilerIrBlock.Block
+                (compiler_ir_types.compiler-ir-label "tk-p0")
+                (opt-test-instrs
+                  (compiler_ir_types.CompilerIrInstr.Jump
+                    (compiler_ir_types.compiler-ir-label "tk-merge"))))
+              (compiler_ir_types.compiler-ir-block-cons
+                (compiler_ir_types.CompilerIrBlock.Block
+                  (compiler_ir_types.compiler-ir-label "tk-p1")
+                  (opt-test-instrs
+                    (compiler_ir_types.CompilerIrInstr.Jump
+                      (compiler_ir_types.compiler-ir-label "tk-merge"))))
+                (compiler_ir_types.compiler-ir-block-cons
+                  (compiler_ir_types.CompilerIrBlock.Block
+                    (compiler_ir_types.compiler-ir-label "tk-p2")
+                    (opt-test-instrs
+                      (compiler_ir_types.CompilerIrInstr.Jump
+                        (compiler_ir_types.compiler-ir-label "tk-merge"))))
+                  (compiler_ir_types.compiler-ir-block-cons
+                    (compiler_ir_types.CompilerIrBlock.Block
+                      (compiler_ir_types.compiler-ir-label "tk-p3")
+                      (opt-test-instrs
+                        (compiler_ir_types.CompilerIrInstr.Jump
+                          (compiler_ir_types.compiler-ir-label "tk-merge"))))
+                    (compiler_ir_types.compiler-ir-block-cons
+                      (compiler_ir_types.CompilerIrBlock.Block
+                        (compiler_ir_types.compiler-ir-label "tk-p4")
+                        (opt-test-instrs
+                          (compiler_ir_types.CompilerIrInstr.Jump
+                            (compiler_ir_types.compiler-ir-label "tk-merge"))))
+                      (compiler_ir_types.compiler-ir-block-cons
+                        (compiler_ir_types.CompilerIrBlock.Block
+                          (compiler_ir_types.compiler-ir-label "tk-p5")
+                          (opt-test-instrs
+                            (compiler_ir_types.CompilerIrInstr.Jump
+                              (compiler_ir_types.compiler-ir-label "tk-merge"))))
+                        (compiler_ir_types.compiler-ir-block-cons
+                          (compiler_ir_types.CompilerIrBlock.Block
+                            (compiler_ir_types.compiler-ir-label "tk-merge")
+                            (opt-test-instrs
+                              (compiler_ir_types.CompilerIrInstr.Phi
+                                4
+                                (compiler_ir_types.compiler-ir-phi-input-cons
+                                  (compiler_ir_types.CompilerIrValue.Bool true)
+                                  (compiler_ir_types.compiler-ir-label "tk-p0")
+                                  (compiler_ir_types.compiler-ir-phi-input-cons
+                                    (compiler_ir_types.CompilerIrValue.Bool
+                                      false)
+                                    (compiler_ir_types.compiler-ir-label
+                                      "tk-p1")
+                                    (compiler_ir_types.compiler-ir-phi-input-cons
+                                      (compiler_ir_types.CompilerIrValue.Bool
+                                        true)
+                                      (compiler_ir_types.compiler-ir-label
+                                        "tk-p2")
+                                      (compiler_ir_types.compiler-ir-phi-input-cons
+                                        (compiler_ir_types.CompilerIrValue.Bool
+                                          false)
+                                        (compiler_ir_types.compiler-ir-label
+                                          "tk-p3")
+                                        (compiler_ir_types.compiler-ir-phi-input-cons
+                                          (compiler_ir_types.CompilerIrValue.Bool
+                                            true)
+                                          (compiler_ir_types.compiler-ir-label
+                                            "tk-p4")
+                                          (compiler_ir_types.compiler-ir-phi-input-cons
+                                            (compiler_ir_types.CompilerIrValue.Bool
+                                              false)
+                                            (compiler_ir_types.compiler-ir-label
+                                              "tk-p5")
+                                            (compiler_ir_types.CompilerIrPhiInputList.Nil)))))))
+                                (compiler_ast_types.AstType.Bool))
+                              (compiler_ir_types.CompilerIrInstr.Branch
+                                (compiler_ir_types.CompilerIrValue.Var 4)
+                                (compiler_ir_types.compiler-ir-label "tk-yes")
+                                (compiler_ir_types.compiler-ir-label "tk-no"))))
+                          (compiler_ir_types.compiler-ir-block-cons
+                            (compiler_ir_types.CompilerIrBlock.Block
+                              (compiler_ir_types.compiler-ir-label "tk-yes")
+                              (opt-test-instrs
+                                (compiler_ir_types.CompilerIrInstr.Return
+                                  (compiler_ir_types.CompilerIrMaybeValue.Some
+                                    (compiler_ir_types.CompilerIrValue.I64 1)))))
+                            (compiler_ir_types.compiler-ir-block-cons
+                              (compiler_ir_types.CompilerIrBlock.Block
+                                (compiler_ir_types.compiler-ir-label "tk-no")
+                                (opt-test-instrs
+                                  (compiler_ir_types.CompilerIrInstr.Return
+                                    (compiler_ir_types.CompilerIrMaybeValue.Some
+                                      (compiler_ir_types.CompilerIrValue.I64 0)))))
+                              (compiler_ir_types.CompilerIrBlockList.Nil))))))))))))))))
+
 ;; --- forwarding-block straightening ----------------------------------------
 ;; Both arms are trampolines and neither destination carries a phi, so both
 ;; edges thread. The `true` arm goes through two of them, which is the chain
@@ -50949,6 +51848,42 @@
         (opt-thread-successor-phi-blocks))]
     [thread-successor-blocks : compiler_ir_types.CompilerIrBlockList
       (compiler_optimize.opt-function-blocks thread-successor-function)]
+    [thread-multi-phi-blocks : compiler_ir_types.CompilerIrBlockList
+      (opt-thread-pass-blocks (opt-thread-multi-phi-blocks) 64)]
+    [thread-live-out-blocks : compiler_ir_types.CompilerIrBlockList
+      (opt-thread-pass-blocks (opt-thread-live-out-blocks) 64)]
+    [thread-live-out-changed : bool
+      (opt-thread-pass-changed? (opt-thread-live-out-blocks) 64)]
+    [thread-mixed-edge-blocks : compiler_ir_types.CompilerIrBlockList
+      (opt-thread-pass-blocks (opt-thread-mixed-edge-blocks) 64)]
+    [thread-compare-blocks : compiler_ir_types.CompilerIrBlockList
+      (opt-thread-pass-blocks (opt-thread-compare-blocks) 64)]
+    [thread-compare-open-blocks : compiler_ir_types.CompilerIrBlockList
+      (opt-thread-pass-blocks (opt-thread-compare-open-edge-blocks) 64)]
+    [thread-compare-open-changed : bool
+      (opt-thread-pass-changed? (opt-thread-compare-open-edge-blocks) 64)]
+    [thread-multi-use-blocks : compiler_ir_types.CompilerIrBlockList
+      (opt-thread-pass-blocks (opt-thread-multi-use-blocks) 1)]
+    [thread-multi-use-settled-blocks : compiler_ir_types.CompilerIrBlockList
+      (opt-thread-pass-blocks (opt-thread-multi-use-blocks) 64)]
+    [thread-wide-one-round-blocks : compiler_ir_types.CompilerIrBlockList
+      (opt-thread-pass-blocks (opt-thread-wide-merge-blocks) 1)]
+    [thread-wide-blocks : compiler_ir_types.CompilerIrBlockList
+      (opt-thread-pass-blocks (opt-thread-wide-merge-blocks) 64)]
+    [thread-wide-two-round-blocks : compiler_ir_types.CompilerIrBlockList
+      (opt-thread-pass-blocks (opt-thread-wide-merge-blocks) 2)]
+    [thread-wide-settled? : bool
+      (opt-thread-pass-changed?
+        (opt-thread-pass-blocks (opt-thread-wide-merge-blocks) 64)
+        64)]
+    [thread-multi-phi-settled? : bool
+      (opt-thread-pass-changed?
+        (opt-thread-pass-blocks (opt-thread-multi-phi-blocks) 64)
+        64)]
+    [thread-compare-settled? : bool
+      (opt-thread-pass-changed?
+        (opt-thread-pass-blocks (opt-thread-compare-blocks) 64)
+        64)]
     [straighten-plain-result : compiler_optimize.OptFunctionPassResult
       (opt-cfg-straighten-run (opt-cfg-straighten-plain-blocks))]
     [straighten-plain-function : compiler_ir_types.CompilerIrFunction
@@ -51600,6 +52535,189 @@
           (compiler_optimize.opt-verify-ok?
             (compiler_optimize.opt-verify-function straighten-switch-function)))
         (return 68))
+      ;; D1: a merge holding three phis threads on the bool phi's constant
+      ;; edges. Each redirected predecessor takes over the value the successor
+      ;; phi carried for the merge, resolved through the merge's own phi for
+      ;; that edge -- `tp-a` brings `10` into `tp-yes` and `tp-b` brings `21`
+      ;; into `tp-no` -- and the merge, having lost both predecessors, is gone.
+      (unless
+        (and
+          (not
+            (opt-block-list-has-label?
+              thread-multi-phi-blocks
+              (compiler_ir_types.compiler-ir-label "tp-merge")))
+          (opt-thread-first-phi-input-i64?
+            thread-multi-phi-blocks
+            (compiler_ir_types.compiler-ir-label "tp-yes")
+            (compiler_ir_types.compiler-ir-label "tp-a")
+            10)
+          (opt-thread-first-phi-input-i64?
+            thread-multi-phi-blocks
+            (compiler_ir_types.compiler-ir-label "tp-no")
+            (compiler_ir_types.compiler-ir-label "tp-b")
+            21)
+          (opt-thread-first-phi-input-i64?
+            thread-multi-phi-blocks
+            (compiler_ir_types.compiler-ir-label "tp-yes")
+            (compiler_ir_types.compiler-ir-label "tp-alt")
+            30)
+          (not
+            (opt-thread-first-phi-has-input?
+              thread-multi-phi-blocks
+              (compiler_ir_types.compiler-ir-label "tp-yes")
+              (compiler_ir_types.compiler-ir-label "tp-merge")))
+          (opt-thread-pass-verified? thread-multi-phi-blocks))
+        (return 69))
+      ;; D1 rail: `%4` is read by an ordinary instruction in `tv-yes`, so no
+      ;; predecessor may be redirected past its definition and the pass reports
+      ;; no change at all.
+      (unless
+        (and
+          (not thread-live-out-changed)
+          (opt-block-list-has-label?
+            thread-live-out-blocks
+            (compiler_ir_types.compiler-ir-label "tv-merge"))
+          (=
+            (opt-count-jump-to-blocks
+              thread-live-out-blocks
+              (compiler_ir_types.compiler-ir-label "tv-merge"))
+            2)
+          (opt-thread-pass-verified? thread-live-out-blocks))
+        (return 70))
+      ;; D1: a non-constant edge is untouched. `tx-a` decides the branch and
+      ;; threads; `tx-b` carries a parameter, so the merge stays and keeps it.
+      (unless
+        (and
+          (opt-block-list-has-label?
+            thread-mixed-edge-blocks
+            (compiler_ir_types.compiler-ir-label "tx-merge"))
+          (=
+            (opt-count-jump-to-blocks
+              thread-mixed-edge-blocks
+              (compiler_ir_types.compiler-ir-label "tx-merge"))
+            1)
+          (opt-thread-first-phi-input-i64?
+            thread-mixed-edge-blocks
+            (compiler_ir_types.compiler-ir-label "tx-yes")
+            (compiler_ir_types.compiler-ir-label "tx-a")
+            10)
+          (opt-thread-first-phi-has-input?
+            thread-mixed-edge-blocks
+            (compiler_ir_types.compiler-ir-label "tx-yes")
+            (compiler_ir_types.compiler-ir-label "tx-merge"))
+          (opt-thread-pass-verified? thread-mixed-edge-blocks))
+        (return 71))
+      ;; D2: the branch reads a comparison over the merge's own `i64` phi.
+      ;; `5 >= 0` decides `tq-a` and `-1 >= 0` decides `tq-b`; both are
+      ;; redirected, `tq-a` carrying the `5` the successor phi asked for.
+      ;; `tq-c` and `tq-d` never decide, so the merge survives holding exactly
+      ;; those two.
+      (unless
+        (and
+          (opt-block-list-has-label?
+            thread-compare-blocks
+            (compiler_ir_types.compiler-ir-label "tq-merge"))
+          (=
+            (opt-count-jump-to-blocks
+              thread-compare-blocks
+              (compiler_ir_types.compiler-ir-label "tq-merge"))
+            2)
+          (opt-thread-first-phi-input-i64?
+            thread-compare-blocks
+            (compiler_ir_types.compiler-ir-label "tq-yes")
+            (compiler_ir_types.compiler-ir-label "tq-a")
+            5)
+          (opt-thread-first-phi-input-i64?
+            thread-compare-blocks
+            (compiler_ir_types.compiler-ir-label "tq-no")
+            (compiler_ir_types.compiler-ir-label "tq-b")
+            41)
+          (opt-thread-first-phi-has-input?
+            thread-compare-blocks
+            (compiler_ir_types.compiler-ir-label "tq-yes")
+            (compiler_ir_types.compiler-ir-label "tq-merge"))
+          (opt-thread-cmp-verified? thread-compare-blocks))
+        (return 72))
+      ;; D2 rail: the same shape with an equality comparison. `tr-a` carries the
+      ;; `5` that decides `eq %5, 5`, but only the ordering comparisons are
+      ;; threaded, so nothing moves.
+      (unless
+        (and
+          (not thread-compare-open-changed)
+          (opt-block-list-has-label?
+            thread-compare-open-blocks
+            (compiler_ir_types.compiler-ir-label "tr-merge"))
+          (=
+            (opt-count-jump-to-blocks
+              thread-compare-open-blocks
+              (compiler_ir_types.compiler-ir-label "tr-merge"))
+            2)
+          (opt-thread-cmp-verified? thread-compare-open-blocks))
+        (return 73))
+      ;; D3: the condition phi has a second reader -- `td-yes`'s phi on the
+      ;; merge edge. The old single-use gate refused the block outright; the
+      ;; live-out rule admits it and the repair hands `td-a` the `true` the
+      ;; condition phi carried for that edge.
+      (unless
+        (and
+          (not
+            (opt-block-list-has-label?
+              thread-multi-use-blocks
+              (compiler_ir_types.compiler-ir-label "td-merge")))
+          (opt-thread-first-phi-input-bool?
+            thread-multi-use-blocks
+            (compiler_ir_types.compiler-ir-label "td-yes")
+            (compiler_ir_types.compiler-ir-label "td-a")
+            true)
+          (opt-thread-first-phi-input-bool?
+            thread-multi-use-blocks
+            (compiler_ir_types.compiler-ir-label "td-yes")
+            (compiler_ir_types.compiler-ir-label "td-alt")
+            false)
+          (opt-thread-pass-verified? thread-multi-use-blocks)
+          ;; A further round then decides `td-yes` itself on the edge the
+          ;; repair rewrote: `td-a` leaves it for `td-y1` directly, while
+          ;; `td-alt` keeps its conditional edge and the block stays.
+          (=
+            (opt-count-jump-to-blocks
+              thread-multi-use-settled-blocks
+              (compiler_ir_types.compiler-ir-label "td-yes"))
+            0)
+          (opt-thread-pass-verified? thread-multi-use-settled-blocks))
+        (return 74))
+      ;; D3: six decided predecessors, `opt-thread-pred-budget` of them per
+      ;; round. One round leaves two behind, two rounds finish the block, and
+      ;; the production fuel converges.
+      (unless
+        (and
+          (opt-block-list-has-label?
+            thread-wide-one-round-blocks
+            (compiler_ir_types.compiler-ir-label "tk-merge"))
+          (=
+            (opt-count-jump-to-blocks
+              thread-wide-one-round-blocks
+              (compiler_ir_types.compiler-ir-label "tk-merge"))
+            2)
+          (opt-thread-pass-verified? thread-wide-one-round-blocks)
+          (not
+            (opt-block-list-has-label?
+              thread-wide-two-round-blocks
+              (compiler_ir_types.compiler-ir-label "tk-merge")))
+          (not
+            (opt-block-list-has-label?
+              thread-wide-blocks
+              (compiler_ir_types.compiler-ir-label "tk-merge")))
+          (opt-thread-pass-verified? thread-wide-blocks))
+        (return 75))
+      ;; Fuel: at the production round cap the pass reaches a fixpoint -- a
+      ;; second run over its own output finds nothing left to thread, for the
+      ;; multi-round wide merge and for both widened shapes.
+      (unless
+        (and
+          (not thread-wide-settled?)
+          (not thread-multi-phi-settled?)
+          (not thread-compare-settled?))
+        (return 76))
       42)))
 
 (define (compiler-optimize-fixed-point-self-test) : i64

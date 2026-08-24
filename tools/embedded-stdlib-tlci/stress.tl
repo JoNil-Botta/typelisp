@@ -159,14 +159,14 @@
   (let
     [place-node : i64
       (compiler_ast_types.ast-expr-spanned-with-pools
-        (compiler_ast_types.ast-node-pool-context-shared-view (& pools))
+        pools
         (compiler_ast_types.ast-node-pool-context-expr-push
           (compiler_ast_types.ast-node-pool-context-shared-view (& pools))
           (compiler_ast_types.AstExpr.Var (ci.intern "buf")))
         (compiler_ast_types.ast-source-span 900 7 900 10))]
     [chunk-node : i64
       (compiler_ast_types.ast-expr-spanned-with-pools
-        (compiler_ast_types.ast-node-pool-context-shared-view (& pools))
+        pools
         (compiler_ast_types.ast-node-pool-context-expr-push
           (compiler_ast_types.ast-node-pool-context-shared-view (& pools))
           (compiler_ast_types.AstExpr.Literal
@@ -297,7 +297,7 @@
 ;; origin and the argument stays the very node passed in.
 (define (stress-operand-node [pools : compiler_ast_types.AstNodePoolContext]) : i64
   (compiler_ast_types.ast-expr-spanned-with-pools
-    (compiler_ast_types.ast-node-pool-context-shared-view (& pools))
+    pools
     (compiler_ast_types.ast-node-pool-context-expr-push
       (compiler_ast_types.ast-node-pool-context-shared-view (& pools))
       (compiler_ast_types.AstExpr.Var (ci.intern "xs")))

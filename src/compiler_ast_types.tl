@@ -7466,12 +7466,10 @@
   (ast-node-push (AstExpr.Syscall args)))
 
 (define (ast-expr-spanned-with-pools
-  [pools : AstNodePoolContext]
+  [pools : (& pools AstNodePoolContext)]
   [inner : i64]
   [span : AstSourceSpan]) : i64
-  (ast-node-pool-context-expr-push-borrowed
-    (& pools)
-    (AstExpr.Spanned inner span)))
+  (ast-node-pool-context-expr-push-borrowed pools (AstExpr.Spanned inner span)))
 
 ;; Transitional per-use source view.  The legacy wrapper remains observable for
 ;; #6329's dual-read migration, while the pool push records either the first

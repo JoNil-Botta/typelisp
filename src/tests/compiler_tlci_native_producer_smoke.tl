@@ -104,7 +104,7 @@
   [line : i64]
   [col : i64]) : i64
   (ast.ast-expr-spanned-with-pools
-    (owned_view.compiler-owned-reference-shared-view pools)
+    pools
     node
     (ast.ast-source-span line col line (+ col 1))))
 
@@ -1206,7 +1206,7 @@
                       0))))]
             (if (= check 3)
               (ast.ast-expr-spanned-with-pools
-                (owned_view.compiler-owned-shared-view pools)
+                pools
                 (producer-test-push-spanned
                   (& pools)
                   (ast.AstExpr.MacroExpansion literal 17 23))

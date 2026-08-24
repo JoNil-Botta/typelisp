@@ -5657,12 +5657,11 @@
           templates
           (spec-place-shared-view state))
           [(ResultSpecExpr.Ok rewritten rewritten-state)
-            (ResultSpecExpr.Ok
-              (ast.ast-expr-spanned-with-pools
-                (spec-state-pools state)
-                rewritten
-                span)
-              rewritten-state)]
+            (let
+              [pools : ast.AstNodePoolContext (spec-state-pools state)]
+              (ResultSpecExpr.Ok
+                (ast.ast-expr-spanned-with-pools pools rewritten span)
+                rewritten-state))]
           [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))]
     [(ast.AstExpr.MacroExpansion inner-box provenance-id macro-name-id)
       (match (spec-rewrite-expr
@@ -6968,11 +6967,10 @@
         [inner : ast.AstExpr (spec-owner-expr-get owner inner-box)]
         (match (spec-substitute-values-expr-with-owner owner inner subs)
           [(ResultSpecSubExpr.Ok rewritten)
-            (ResultSpecSubExpr.Ok
-              (ast.ast-expr-spanned-with-pools
-                (spec-owner-pools owner)
-                rewritten
-                span))]
+            (let
+              [pools : ast.AstNodePoolContext (spec-owner-pools owner)]
+              (ResultSpecSubExpr.Ok
+                (ast.ast-expr-spanned-with-pools pools rewritten span)))]
           [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(ast.AstExpr.MacroExpansion inner-box provenance-id macro-name-id)
       (match (spec-substitute-values-expr-with-owner
@@ -8233,11 +8231,10 @@
         [inner : ast.AstExpr (spec-owner-expr-get owner inner-box)]
         (match (spec-substitute-types-expr-with-owner owner inner subs)
           [(ResultSpecSubExpr.Ok rewritten)
-            (ResultSpecSubExpr.Ok
-              (ast.ast-expr-spanned-with-pools
-                (spec-owner-pools owner)
-                rewritten
-                span))]
+            (let
+              [pools : ast.AstNodePoolContext (spec-owner-pools owner)]
+              (ResultSpecSubExpr.Ok
+                (ast.ast-expr-spanned-with-pools pools rewritten span)))]
           [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(ast.AstExpr.MacroExpansion inner-box provenance-id macro-name-id)
       (match (spec-substitute-types-expr-with-owner

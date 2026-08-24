@@ -6354,7 +6354,7 @@
                           target-span)
                         (ResultAstExpr.Ok
                           (ast.ast-expr-spanned-with-pools
-                            (compiler-parse-place-shared-view pools)
+                            pools
                             (ast.ast-expr-set-id-with-pools
                               (compiler-parse-place-shared-view pools)
                               (ci.intern-syntax-id-value name)

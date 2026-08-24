@@ -105808,8 +105808,10 @@
     [(ast.AstExpr.Spanned inner-box span)
       (let
         [inner : i64 inner-box]
+        [pools : ast.AstNodePoolContext
+          (macro-hygiene-env-pools-shared-view env)]
         (ast.ast-expr-spanned-with-pools
-          (macro-hygiene-env-pools-shared-view env)
+          pools
           (macro-hygiene-expr
             expr-bases
             inner

@@ -1856,7 +1856,7 @@
 (cfg
   compiler-surface-selftest
   (define (surface-ast-int-node-value?
-    [pools : ast.AstNodePoolContext]
+    [pools : (& pools ast.AstNodePoolContext)]
     [id : i64]
     [expected : i64]) : bool
     (match (ast.ast-node-pool-context-expr-get pools id)

@@ -10723,15 +10723,18 @@
           (lower-global-shared-view subst)
           shadowed)
           [(ResultLowerAstExpr.Ok rewritten)
-            (ResultLowerAstExpr.Ok
-              (lower-context-expr-get
-                (lower-global-shared-view ctx)
-                (ast.ast-expr-spanned-with-pools
-                  (tc_core.tc-context-pools (lower-global-shared-view ctx))
-                  (lower-context-expr-push
-                    (lower-global-shared-view ctx)
-                    rewritten)
-                  span)))]
+            (let
+              [pools : ast.AstNodePoolContext
+                (tc_core.tc-context-pools (lower-global-shared-view ctx))]
+              (ResultLowerAstExpr.Ok
+                (lower-context-expr-get
+                  (lower-global-shared-view ctx)
+                  (ast.ast-expr-spanned-with-pools
+                    pools
+                    (lower-context-expr-push
+                      (lower-global-shared-view ctx)
+                      rewritten)
+                    span))))]
           [(ResultLowerAstExpr.Err diag) (ResultLowerAstExpr.Err diag)]))]
     [(ast.AstExpr.Var name)
       (match (lower-spmd-inline-subst-lookup

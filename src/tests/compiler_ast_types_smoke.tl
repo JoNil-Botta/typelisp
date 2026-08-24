@@ -1358,24 +1358,15 @@
     [inner-span : ast.AstSourceSpan (ast.ast-source-span 2 3 2 8)]
     [outer-span : ast.AstSourceSpan (ast.ast-source-span 9 1 9 6)]
     [inner-view : i64
-      (ast.ast-expr-spanned-with-pools
-        (owned_view.compiler-owned-shared-view pools)
-        literal
-        inner-span)]
+      (ast.ast-expr-spanned-with-pools pools literal inner-span)]
     [same-view : i64
-      (ast.ast-expr-spanned-with-pools
-        (owned_view.compiler-owned-shared-view pools)
-        inner-view
-        inner-span)]
+      (ast.ast-expr-spanned-with-pools pools inner-view inner-span)]
     [outer-view : i64
-      (ast.ast-expr-spanned-with-pools
-        (owned_view.compiler-owned-shared-view pools)
-        same-view
-        outer-span)]
+      (ast.ast-expr-spanned-with-pools pools same-view outer-span)]
     [mark : i64 (ast.ast-node-pool-context-expr-len pools)]
     [later-view : i64
       (ast.ast-expr-spanned-with-pools
-        (owned_view.compiler-owned-shared-view pools)
+        pools
         outer-view
         (ast.ast-source-span 12 1 12 2))]
     [_reset-suffix : unit
@@ -1446,7 +1437,7 @@
               (ast.AstExpr.Literal (ast.ast-lit-int 13)))]
           [new-view : i64
             (ast.ast-expr-spanned-with-pools
-              (owned_view.compiler-owned-shared-view pools)
+              pools
               new-literal
               (ast.ast-source-span 20 1 20 3))]
           (and
@@ -1520,7 +1511,7 @@
       (let
         [a-growth-view : i64
           (ast.ast-expr-spanned-with-pools
-            (owned_view.compiler-owned-shared-view a)
+            a
             a-last-expr
             (ast.ast-source-span 31 1 31 4))]
         [a-dupe-type : i64

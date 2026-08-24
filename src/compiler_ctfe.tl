@@ -1182,7 +1182,7 @@
       (match (ast.ast-node-pool-context-expr-get pools node)
         [(ast.AstExpr.Spanned inner span)
           (ast.ast-expr-spanned-with-pools
-            (ast.ast-place-shared-view pools)
+            pools
             (ast.ast-node-pool-context-expr-push
               (ast.ast-place-shared-view pools)
               (ast.AstExpr.MacroExpansion
@@ -15775,7 +15775,8 @@
           (ast.ast-expr-cons
             name-expr
             (ast.ast-expr-cons clause.init (ast.ast-expr-list-new)))))]
-    (ast.ast-expr-spanned-with-pools (ctfe-env-pools env) bracket clause.span)))
+    [span-pools : ast.AstNodePoolContext (ctfe-env-pools env)]
+    (ast.ast-expr-spanned-with-pools span-pools bracket clause.span)))
 
 (define (ctfe-expr-binding-clause-list->expr-list-in-env
   [env : CtfeEnv]

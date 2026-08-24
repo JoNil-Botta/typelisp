@@ -16025,6 +16025,15 @@
           (tc-fn1 expr expr)))
       (set!
         out
+        (tc-bind-id out (cbi.compiler-builtin-ctfe-ref 289) (tc-fn1 expr expr)))
+      (set!
+        out
+        (tc-bind-comptime-helper-aliases
+          out
+          (cbi.compiler-builtin-ctfe-ref 289)
+          (tc-fn1 expr expr)))
+      (set!
+        out
         (tc-bind-comptime-helper-aliases
           out
           (cbi.compiler-builtin-ctfe-ref 34)
@@ -42179,6 +42188,27 @@
       name
       " is compile-time only; wrap it in (comptime ...)")))
 
+(define (tc-reflection-runtime-call-id?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : String]
+  [name-id : i64]) : bool
+  (let
+    [helper-id : i64 (ctfe_support.ctfe-comptime-helper-call-name-id name-id)]
+    [helper-name : String (ctfe_support.ctfe-comptime-helper-lookup-name name)]
+    (and
+      (ctfe_support.ctfe-builtin-reflection-id? helper-id)
+      ;; Macro transformer checking installs the bare helper ID in its private
+      ;; environment. Runtime checking does not, even when a qualified wrapper
+      ;; declaration is visible through an imported module.
+      (not (tc-source-value-bound-id? ctx env helper-id))
+      (or
+        (not (tc-source-value-bound-id? ctx env name-id))
+        ;; A real stdlib.comptime wrapper is source-bound, but its qualified
+        ;; spelling still denotes the compile-time primitive. Preserve local
+        ;; bare shadowing and unrelated `other.type-expr` functions.
+        (not (string.eq helper-name name))))))
+
 ;; The clone-able type set is a whole-program fixpoint (O(types*fields) plus a
 ;; type-name map build). It is invariant across a compile, but `tc-clone-able-
 ;; type?` is invoked once per `(clone ...)` / `with-escape` body in the program,
@@ -43056,10 +43086,9 @@
                     func
                     cbi.compiler-builtin-id-tl-private-string-to-int
                     args)]
-                [(and
-                    (ctfe_support.ctfe-builtin-reflection-id? name-id)
-                    (not (tc-source-value-bound-id? ctx env name-id)))
-                  (tc-reflection-query-runtime-call name)]
+                [(tc-reflection-runtime-call-id? ctx env name name-id)
+                  (tc-reflection-query-runtime-call
+                    (ctfe_support.ctfe-comptime-helper-lookup-name name))]
                 [(and
                     (ctfe_support.ctfe-builtin-module-value-id? name-id)
                     (not (tc-source-value-bound-id? ctx env name-id)))
@@ -68160,7 +68189,8 @@
         (= call-id (cbi.compiler-builtin-ctfe-ref 46))
         (= call-id (cbi.compiler-builtin-ctfe-ref 71))
         (= call-id (cbi.compiler-builtin-ctfe-ref 72))
-        (= call-id (cbi.compiler-builtin-ctfe-ref 210)))
+        (= call-id (cbi.compiler-builtin-ctfe-ref 210))
+        (= call-id (cbi.compiler-builtin-ctfe-ref 289)))
       true]
     [(or
         (= call-id (cbi.compiler-builtin-ctfe-ref 73))

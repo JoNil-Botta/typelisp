@@ -108,7 +108,7 @@ Vec bang place macros as available yet.
   `MatchArm`, `MatchArmList`, `TypeInfo`, and dense sequence wrappers), plus
   exported compile-time helper signatures such as `expr-int`,
   `expr-binary-data`, `expr-string?`,
-  `expr-string-value`, `string-slice`,
+  `expr-string-value`, `string-slice`, `type-expr`,
   `expr-list-nth`, `expr-list-type-nth`, `expr-list-fold-if`,
   `expr-clause-list-fold-if`,
   `expr-clause-list->expr-list`, `pattern-variant`,
@@ -121,7 +121,9 @@ Vec bang place macros as available yet.
   ownership-safe families. `module-value?` and `module-value-type` query public
   signatures by canonical module identity, while `reference-element-type`
   returns the referent of a shared or mutable reference. `expr-type` returns
-  the produced type of a captured expression for macro-time reflection. Dense
+  the produced type of a captured expression for macro-time reflection, while
+  `type-expr` converts a reflected type value back into opaque resolved
+  type-literal syntax for dense generator worklists. Dense
   sequence accessors use the public `items` and `len` fields in ordinary stdlib
   source; remaining compiler intrinsics are syntax constructors, reflection
   helpers, and provenance-preserving sequence conversions such as

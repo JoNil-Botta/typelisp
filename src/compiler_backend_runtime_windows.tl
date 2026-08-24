@@ -1329,6 +1329,12 @@ tl_thread_entry_ptr:
 ;; without proving the ranges disjoint; see the Linux runtime for the full case
 ;; analysis. Win64 passes %rcx = dst, %rdx = src, %r8 = count, and %rdi/%rsi are
 ;; callee-saved, so they are shuttled through %rax/%r10 exactly as tl_memcpy does.
+;;
+;; `tl_mem_copy8_fwd` is the same helper for EIGHT-BYTE elements, with the count
+;; in SLOTS: wide `rep movsq` when `dst <= src` or the ranges are disjoint, and
+;; a scalar eight-byte forward loop for the propagating overlap, which a
+;; byte-granular copy does not reproduce unless `dst - src` is a multiple of
+;; eight. See the Linux runtime for the full case analysis.
 (define (compiler-backend-runtime-memcpy-functions) : String
   "    .globl tl_memcpy
 tl_memcpy:
@@ -1460,6 +1466,35 @@ tl_mem_copy_fwd:
     movq %rax, %rdi
     movq %r10, %rsi
 .Ltl_mem_copy_fwd_done:
+    ret
+    .globl tl_mem_copy8_fwd
+tl_mem_copy8_fwd:
+    testq %r8, %r8
+    jle .Ltl_mem_copy8_fwd_done
+    movq %rdi, %rax
+    movq %rsi, %r10
+    movq %rcx, %rdi
+    movq %rdx, %rsi
+    movq %r8, %rcx
+    cmpq %rsi, %rdi
+    jbe .Ltl_mem_copy8_fwd_wide
+    leaq (%rsi,%r8,8), %rdx
+    cmpq %rdx, %rdi
+    jae .Ltl_mem_copy8_fwd_wide
+.Ltl_mem_copy8_fwd_loop:
+    movq (%rsi), %r9
+    movq %r9, (%rdi)
+    addq $8, %rsi
+    addq $8, %rdi
+    subq $1, %rcx
+    jne .Ltl_mem_copy8_fwd_loop
+    jmp .Ltl_mem_copy8_fwd_restore
+.Ltl_mem_copy8_fwd_wide:
+    rep movsq
+.Ltl_mem_copy8_fwd_restore:
+    movq %rax, %rdi
+    movq %r10, %rsi
+.Ltl_mem_copy8_fwd_done:
     ret
 ")
 

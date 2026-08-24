@@ -717,6 +717,30 @@ tl_mem_copy_fwd:
 .Ltl_mem_copy_fwd_done:
     ret
     .size tl_mem_copy_fwd, . - tl_mem_copy_fwd
+    .globl tl_mem_copy8_fwd
+    .type tl_mem_copy8_fwd,@function
+tl_mem_copy8_fwd:
+    testq %rdx, %rdx
+    jle .Ltl_mem_copy8_fwd_done
+    movq %rdx, %rcx
+    cmpq %rsi, %rdi
+    jbe .Ltl_mem_copy8_fwd_wide
+    leaq (%rsi,%rdx,8), %rax
+    cmpq %rax, %rdi
+    jae .Ltl_mem_copy8_fwd_wide
+.Ltl_mem_copy8_fwd_loop:
+    movq (%rsi), %rax
+    movq %rax, (%rdi)
+    addq $8, %rsi
+    addq $8, %rdi
+    subq $1, %rcx
+    jne .Ltl_mem_copy8_fwd_loop
+    ret
+.Ltl_mem_copy8_fwd_wide:
+    rep movsq
+.Ltl_mem_copy8_fwd_done:
+    ret
+    .size tl_mem_copy8_fwd, . - tl_mem_copy8_fwd
     .globl tl_memchr
     .type tl_memchr,@function
 tl_memchr:

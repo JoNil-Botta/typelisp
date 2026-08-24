@@ -886,6 +886,23 @@ tl_region_reset:
 ;; A non-positive count writes nothing: `rep movsb` reads %rcx as UNSIGNED, so
 ;; a negative count would run ~2^64 copies; the explicit `jle` is load-bearing.
 ;; Arguments are SysV: %rdi = dst, %rsi = src, %rdx = count (bytes).
+;;
+;; `tl_mem_copy8_fwd` is the same helper one element width up: it is the exact
+;; machine equivalent of the forward EIGHT-BYTE loop
+;; `for (i = 0; i < n; i += 1) dst[i] = src[i]` over i64/u64 elements, and its
+;; count is SLOTS, not bytes (%rdx = slots; the window is 8*%rdx bytes wide).
+;; It is a separate symbol rather than `tl_mem_copy_fwd` with the byte count
+;; 8*n because the two disagree on exactly one case: when the ranges overlap
+;; in the propagating direction (`src < dst < src + 8n`) the source loop copies
+;; each EIGHT-BYTE element atomically, which a byte-granular forward copy does
+;; not reproduce unless `dst - src` happens to be a multiple of eight. So the
+;; wide `rep movsq` runs only on the two cases where reading ahead of the write
+;; cannot matter -- `dst <= src`, and disjoint -- and the propagating case gets
+;; a scalar eight-byte forward loop that IS the source loop, instruction for
+;; instruction. The scalar arm also keeps the helper independent of whether
+;; `rep movsq` preserves element granularity under fast-string operation, which
+;; the architecture does not promise for overlapping regions.
+;; Arguments are SysV: %rdi = dst, %rsi = src, %rdx = count (8-byte slots).
 (define (compiler-backend-runtime-memcpy-functions) : String
   "    .globl tl_memcpy
     .type tl_memcpy,@function
@@ -934,6 +951,30 @@ tl_mem_copy_fwd:
 .Ltl_mem_copy_fwd_done:
     ret
     .size tl_mem_copy_fwd, . - tl_mem_copy_fwd
+    .globl tl_mem_copy8_fwd
+    .type tl_mem_copy8_fwd,@function
+tl_mem_copy8_fwd:
+    testq %rdx, %rdx
+    jle .Ltl_mem_copy8_fwd_done
+    movq %rdx, %rcx
+    cmpq %rsi, %rdi
+    jbe .Ltl_mem_copy8_fwd_wide
+    leaq (%rsi,%rdx,8), %rax
+    cmpq %rax, %rdi
+    jae .Ltl_mem_copy8_fwd_wide
+.Ltl_mem_copy8_fwd_loop:
+    movq (%rsi), %rax
+    movq %rax, (%rdi)
+    addq $8, %rsi
+    addq $8, %rdi
+    subq $1, %rcx
+    jne .Ltl_mem_copy8_fwd_loop
+    ret
+.Ltl_mem_copy8_fwd_wide:
+    rep movsq
+.Ltl_mem_copy8_fwd_done:
+    ret
+    .size tl_mem_copy8_fwd, . - tl_mem_copy8_fwd
 ")
 
 (define (compiler-backend-runtime-memchr-functions) : String

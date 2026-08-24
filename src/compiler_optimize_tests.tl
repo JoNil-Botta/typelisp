@@ -6124,18 +6124,34 @@
 ;; store and across an operand redefinition (still 2 arithmetic instrs each).
 ;; It also CSEs identical CPU probes while preserving probes with different
 ;; register indices or operands.
-;; Self-test: const-global propagation. Verifies the immutability proof
-;; (literal-init globals enter the table; stored, non-literal, address-taken, and
-;; zero-valued globals are excluded) and the binop-operand rewrite (uses of a
-;; proven constant global -- both ordinary operands and div/mod divisors -- become
-;; literals; excluded globals are left as hidden loads).
+;; Self-test: const-global propagation. Verifies the immutability proof and the
+;; operand rewrite it feeds.
+;;
+;; ADMITTED: a global with a literal `I64` initialiser that the program never
+;; stores to and never takes the address of, whose value fits a signed 32-bit
+;; immediate. `zero` (value 0) is a member like any other value -- the exclusion
+;; that used to keep it out was a divisor-position rule, not an immutability one.
+;;
+;; REFUSED: `mut` (a `Store` anywhere in the program), `borrowed` (a `GlobalAddr`
+;; anywhere), `uninit` and `runtime` (no literal initialiser -- `runtime` carries
+;; the `CompilerIrValue.RuntimeGlobal` form that lowering gives a global whose
+;; initialiser is evaluated by a startup `__global_init_*` function, so a
+;; startup-initialised global can never be folded), and `big` (wider than an
+;; imm32: `global_cell` already keeps such a constant in one hoisted register,
+;; which beats a per-use `movabs` -- see opt-const-globals-imm32-fits?).
+;;
+;; REWRITE: every use of an admitted global becomes its literal, EXCEPT a div/mod
+;; divisor whose constant is zero, which keeps its trapping global-load form.
+;; A bounds check whose index is an admitted global becomes a literal check,
+;; which is what lets SCCP discharge it -- the intern_table P6 shape.
 (defstruct OptConstDivisorTestSymbols
   (konst i64)
   (mutable i64)
   (uninit i64)
   (borrowed i64)
   (zero i64)
-  (big i64))
+  (big i64)
+  (runtime i64))
 
 (define (opt-const-divisor-test-symbols) : OptConstDivisorTestSymbols
   (OptConstDivisorTestSymbols
@@ -6144,12 +6160,13 @@
     (opt-test-symbol "uninit")
     (opt-test-symbol "borrowed")
     (opt-test-symbol "zero")
-    (opt-test-symbol "big")))
+    (opt-test-symbol "big")
+    (opt-test-symbol "runtime")))
 
 (define (opt-const-divisor-test-globals [symbols : OptConstDivisorTestSymbols]) : compiler_ir_types.CompilerIrGlobalSeq
   (let
     [builder : compiler_ir_types.CompilerIrGlobalBuilder
-      (compiler_ir_types.compiler-ir-global-builder-with-capacity 6)]
+      (compiler_ir_types.compiler-ir-global-builder-with-capacity 7)]
     (begin
       (opt-test-global-builder-push!
         (&mut builder)
@@ -6181,6 +6198,15 @@
         symbols.big
         (compiler_ast_types.AstType.I64)
         (compiler_ir_types.CompilerIrValue.I64 4294967295))
+      ;; The shape lowering gives a global whose initialiser is not a
+      ;; compile-time constant: the value is the startup initialiser function,
+      ;; not a literal, so the table can never see a value to fold.
+      (opt-test-global-builder-push!
+        (&mut builder)
+        symbols.runtime
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.CompilerIrValue.RuntimeGlobal
+          (opt-test-symbol "__global_init_runtime")))
       (compiler_ir_types.compiler-ir-global-builder-to-seq builder))))
 
 (define (opt-const-divisor-test-blocks [symbols : OptConstDivisorTestSymbols]) : compiler_ir_types.CompilerIrBlockList
@@ -6249,6 +6275,27 @@
           (compiler_ir_types.CompilerIrBinOp.Lt)
           (compiler_ir_types.CompilerIrValue.Var 0)
           (compiler_ir_types.CompilerIrValue.Var 19)
+          (compiler_ast_types.AstType.I64))
+        ;; A zero-valued constant global in a DIVISOR position keeps its load.
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          22
+          (compiler_ir_types.CompilerIrBinOp.Mod)
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.CompilerIrValue.Global symbols.zero)
+          (compiler_ast_types.AstType.I64))
+        ;; A wide constant global is refused on profitability, everywhere.
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          23
+          (compiler_ir_types.CompilerIrBinOp.Div)
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.CompilerIrValue.Global symbols.big)
+          (compiler_ast_types.AstType.I64))
+        ;; A startup-initialised global is not foldable in any position.
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          24
+          (compiler_ir_types.CompilerIrBinOp.BitAnd)
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.CompilerIrValue.Global symbols.runtime)
           (compiler_ast_types.AstType.I64))
         (compiler_ir_types.CompilerIrInstr.Mov
           20
@@ -6329,6 +6376,114 @@
         (compiler_ir_types.compiler-ir-block-seq-to-list seq)
         dst)]))
 
+;; The intern_table P6 shape end to end: a never-written literal global read as
+;; an ordinary operand of a compare, and the SAME global standing as the index
+;; operand of a bounds check. Once the const-global rewrite has turned both into
+;; literals, SCCP must fold the compare to a constant (the BinOp becomes a Mov of
+;; the decided value) and discharge the in-range check outright.
+(define (opt-const-divisor-test-sccp-blocks
+  [symbols : OptConstDivisorTestSymbols]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Mov
+          30
+          (compiler_ir_types.CompilerIrValue.Global symbols.konst)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          31
+          (compiler_ir_types.CompilerIrBinOp.Lt)
+          (compiler_ir_types.CompilerIrValue.Var 30)
+          (compiler_ir_types.CompilerIrValue.I64 2000000000)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.BoundsCheck
+          (compiler_ir_types.CompilerIrValue.Global symbols.zero)
+          (compiler_ir_types.CompilerIrValue.I64 3)
+          (compiler_ir_types.compiler-ir-label "bounds_ok"))
+        (compiler_ir_types.CompilerIrInstr.Return
+          (compiler_ir_types.CompilerIrMaybeValue.Some
+            (compiler_ir_types.CompilerIrValue.Var 31)))))
+    (compiler_ir_types.CompilerIrBlockList.Nil)))
+
+(define (opt-const-divisor-test-binop-dst-in-seq?
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]
+  [count : i64]
+  [dst : i64]) : bool
+  (if (>= index count)
+    false
+    (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
+      [(compiler_ir_types.CompilerIrInstr.BinOp found _ _ _ _)
+        (if (= found dst)
+          true
+          (opt-const-divisor-test-binop-dst-in-seq?
+            instrs
+            (+ index 1)
+            count
+            dst))]
+      [_
+        (opt-const-divisor-test-binop-dst-in-seq? instrs (+ index 1) count dst)])))
+
+(define (opt-const-divisor-test-binop-dst?
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [dst : i64]) : bool
+  (match blocks
+    [(compiler_ir_types.CompilerIrBlockList.Nil) false]
+    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (if (opt-const-divisor-test-binop-dst-in-seq?
+            instrs
+            0
+            (compiler_ir_types.compiler-ir-instr-seq-count instrs)
+            dst)
+            true
+            (opt-const-divisor-test-binop-dst? (__tl-box-place rest) dst))])]
+    [(compiler_ir_types.CompilerIrBlockList.Array seq)
+      (opt-const-divisor-test-binop-dst?
+        (compiler_ir_types.compiler-ir-block-seq-to-list seq)
+        dst)]))
+
+(define (opt-const-divisor-test-bounds-index-in-seq
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]
+  [count : i64]) : compiler_ir_types.CompilerIrValue
+  (if (>= index count)
+    (compiler_ir_types.CompilerIrValue.Unit)
+    (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
+      [(compiler_ir_types.CompilerIrInstr.BoundsCheck idx _ _) idx]
+      [_ (opt-const-divisor-test-bounds-index-in-seq instrs (+ index 1) count)])))
+
+(define (opt-const-divisor-test-is-unit?
+  [v : compiler_ir_types.CompilerIrValue]) : bool
+  (match v
+    [(compiler_ir_types.CompilerIrValue.Unit) true]
+    [_ false]))
+
+;; `Unit` when the blocks carry no bounds check at all, which is how the SCCP
+;; leg asserts the check was discharged rather than merely rewritten.
+(define (opt-const-divisor-test-bounds-index
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrValue
+  (match blocks
+    [(compiler_ir_types.CompilerIrBlockList.Nil)
+      (compiler_ir_types.CompilerIrValue.Unit)]
+    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
+      (let
+        [found : compiler_ir_types.CompilerIrValue
+          (match block
+            [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+              (opt-const-divisor-test-bounds-index-in-seq
+                instrs
+                0
+                (compiler_ir_types.compiler-ir-instr-seq-count instrs))])]
+        (if (opt-const-divisor-test-is-unit? found)
+          (opt-const-divisor-test-bounds-index (__tl-box-place rest))
+          found))]
+    [(compiler_ir_types.CompilerIrBlockList.Array seq)
+      (opt-const-divisor-test-bounds-index
+        (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
+
 (define (opt-const-divisor-test-is-i64?
   [v : compiler_ir_types.CompilerIrValue]
   [n : i64]) : bool
@@ -6371,6 +6526,18 @@
           (opt_i64_i64_map.with-capacity 8)
           blocks)
         blocks)]
+    ;; The P6 leg: run the same rewrite the pipeline runs at the top of the
+    ;; level-2 iteration, then hand the result to SCCP exactly as the pipeline's
+    ;; sccp slot does.
+    [sccp-input : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-const-divisor-rewrite-blocks
+        table
+        (opt-const-divisor-test-sccp-blocks symbols))]
+    [sccp-folded : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-sccp-blocks
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        compiler_ir_types.CompilerIrParamList.Nil
+        sccp-input)]
     (cond
       [(not (opt_i64_i64_map.contains? (& table) symbols.konst)) 1]
       [(not
@@ -6381,7 +6548,11 @@
       [(opt_i64_i64_map.contains? (& table) symbols.mutable) 3]
       [(opt_i64_i64_map.contains? (& table) symbols.uninit) 4]
       [(opt_i64_i64_map.contains? (& table) symbols.borrowed) 5]
-      [(opt_i64_i64_map.contains? (& table) symbols.zero) 6]
+      [(not
+          (match (opt_i64_i64_map.get (& table) symbols.zero)
+            [(opt_i64_i64_map.LookupFound n) (= n 0)]
+            [(opt_i64_i64_map.LookupMissing) false]))
+        6]
       [(not
           (opt-const-divisor-test-is-i64?
             (opt-const-divisor-test-rhs rewritten 10)
@@ -6408,9 +6579,9 @@
             "borrowed"))
         11]
       [(not
-          (opt-const-divisor-test-is-global?
+          (opt-const-divisor-test-is-i64?
             (opt-const-divisor-test-rhs rewritten 15)
-            "zero"))
+            0))
         12]
       [(opt_i64_i64_map.contains?
           (& table)
@@ -6431,6 +6602,44 @@
             (opt-const-divisor-test-mov-src move-rewritten 19)
             "konst"))
         16]
+      ;; A zero divisor is the one position an admitted global is NOT
+      ;; substituted into.
+      [(not
+          (opt-const-divisor-test-is-global?
+            (opt-const-divisor-test-rhs rewritten 22)
+            "zero"))
+        17]
+      ;; ... and so is a wide constant, in a divisor position like any other.
+      [(not
+          (opt-const-divisor-test-is-global?
+            (opt-const-divisor-test-rhs rewritten 23)
+            "big"))
+        18]
+      ;; A startup-initialised global never enters the table ...
+      [(opt_i64_i64_map.contains?
+          (& table)
+          (compiler_ir_types.compiler-ir-symbol-id symbols.runtime))
+        19]
+      ;; ... and so keeps its hidden-load form at every use.
+      [(not
+          (opt-const-divisor-test-is-global?
+            (opt-const-divisor-test-rhs rewritten 24)
+            "runtime"))
+        20]
+      ;; P6, before SCCP: the bounds check's INDEX operand is now the literal.
+      [(not
+          (opt-const-divisor-test-is-i64?
+            (opt-const-divisor-test-bounds-index sccp-input)
+            0))
+        21]
+      ;; P6, after SCCP: the in-range check is discharged outright ...
+      [(not
+          (opt-const-divisor-test-is-unit?
+            (opt-const-divisor-test-bounds-index sccp-folded)))
+        22]
+      ;; ... and the dependent compare folded to a constant, so no BinOp
+      ;; computes it any more.
+      [(opt-const-divisor-test-binop-dst? sccp-folded 31) 23]
       [else 42])))
 
 (define (compiler-optimize-cse-self-test) : i64

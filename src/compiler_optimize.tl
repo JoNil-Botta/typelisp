@@ -96309,21 +96309,43 @@
 
 ;; A constant only earns substitution when it fits a signed 32-bit immediate, so
 ;; the backend can fold it directly into the instruction (`and reg, $imm32`)
-;; instead of loading it. A larger constant cannot be an immediate operand and
-;; must be materialized with `movabs` at every use, which is no cheaper than --
-;; and, when the original global load was hoisted/CSEd to a single load feeding
-;; many uses, strictly worse than -- leaving the global alone. Restricting to
-;; imm32 keeps the transform a pure win (it never adds instructions) and is what
-;; kept the opt1 self-compile metric from regressing on the compiler's own large
-;; constant globals.
+;; instead of loading it. A wider constant has to be materialized into a
+;; register with `movabs` at every use, and -- decisively -- the global form it
+;; would replace is NOT a per-use load: `global_cell` already loads such a
+;; global ONCE in the entry block and keeps the value in a register across the
+;; loop, which is the optimum. Substituting the literal takes that away, because
+;; this rewrite runs BEFORE `global_cell` in the iteration and leaves it no
+;; global to hoist. Measured on this tree: admitting wide constants moved the
+;; benchmarks' FNV hash constants (`1469598103934665603` / `1099511628211`) out
+;; of their hoisted register and back into the hash-loop body, costing
+;; peephole_lines +1,863,046 Ir and gvn_table +260,613 Ir against the same tree
+;; with wide constants refused. The imm32 rule is therefore a PROFITABILITY
+;; rule, not a soundness one, and it stays.
 (define (opt-const-globals-imm32-fits? [n : i64]) : bool
   (and (>= n (- 0 2147483648)) (<= n 2147483647)))
 
 ;; Build the constant table: literal `CompilerIrValue.I64` globals that are not
-;; disqualified (stored / address-taken), are imm32-encodable, and are nonzero.
-;; Zero is excluded so a substituted divisor can never become a literal `0` (the
-;; backend's magic-multiply path assumes a nonzero divisor; an actual `% 0` keeps
-;; its original trapping global-load form).
+;; disqualified (stored anywhere / address-taken anywhere) and are
+;; imm32-encodable. ZERO is a member like any other value. It used to be
+;; excluded here so a substituted divisor could never become a literal `0`, but
+;; that is a property of the DIVISOR POSITION and not of the global, so the
+;; refusal now lives at the substitution site
+;; (`opt-const-global-subst-divisor-value`): a `% G` keeps its original trapping
+;; global-load form while every OTHER use of the same G folds. Admitting zero is
+;; what lets a zero-valued index constant discharge the bounds check it stands
+;; in -- `bounds_check @G, %len` becomes `bounds_check 0, %len`, which `sccp`
+;; folds once the length is also known -- and collapse `gep %data, @G` to a
+;; base-only address. That is intern_table's `it-state-capacity`: -6,878,931 Ir
+;; on that row, none of it reachable by the per-function passes, because none of
+;; them can prove a global is never written ANYWHERE in the program.
+;;
+;; Startup-initialised globals cannot reach this table BY CONSTRUCTION, so the
+;; initialiser-ordering question never arises: a global whose initializer is not
+;; a compile-time constant lowers to `CompilerIrValue.RuntimeGlobal <init-fn>`
+;; (compiler_lower.tl's `__global_init_<name>` path), which is not the `I64` arm
+;; matched below. Only true literal initialisers are ever admitted, and the
+;; `disq` walk (opt-const-globals-disq-instr) has already removed every global
+;; the program stores to or takes the address of.
 (define (opt-const-globals-from-globals
   [globals : ir.CompilerIrGlobalSeq]
   [disq : opt_i64_i64_map.Map]
@@ -96346,7 +96368,6 @@
           (match value
             [(ir.CompilerIrValue.I64 n)
               (if (or
-                (= n 0)
                 (not (opt-const-globals-imm32-fits? n))
                 (opt_i64_i64_map.contains?
                   (& disq)
@@ -96675,6 +96696,45 @@
         [(opt_i64_i64_map.LookupMissing) v])]
     [_ v]))
 
+;; The div/mod DIVISOR is the one operand position the table's members are not
+;; unconditionally substitutable into. A zero divisor is declined by the
+;; backend's constant-divmod lowering and by the optimizer's constant fold, so
+;; folding the global there would replace a trapping load with a trapping
+;; literal and buy nothing; leave the global's load form in place instead. Every
+;; other use of the same global -- including the dividend of the very same
+;; instruction -- still folds. Non-zero divisors are unaffected and keep the
+;; magic-multiply strength reduction this table was originally built for.
+(define (opt-const-global-divisor-op? [op : ir.CompilerIrBinOp]) : bool
+  (match op
+    [(ir.CompilerIrBinOp.Div) true]
+    [(ir.CompilerIrBinOp.Mod) true]
+    [(ir.CompilerIrBinOp.SafeDiv) true]
+    [(ir.CompilerIrBinOp.SafeMod) true]
+    [_ false]))
+
+(define (opt-const-global-subst-divisor-value
+  [const-divisors : opt_i64_i64_map.Map]
+  [v : ir.CompilerIrValue]) : ir.CompilerIrValue
+  (let
+    [substituted : ir.CompilerIrValue
+      (opt-const-global-subst-value const-divisors v)]
+    (match substituted
+      [(ir.CompilerIrValue.I64 n)
+        (if (= n 0)
+          v
+          substituted)]
+      [_ substituted])))
+
+;; Pick the operand rule for a BinOp's RHS: the divisor rule for div/mod, the
+;; ordinary rule everywhere else.
+(define (opt-const-global-subst-rhs-value
+  [const-divisors : opt_i64_i64_map.Map]
+  [op : ir.CompilerIrBinOp]
+  [v : ir.CompilerIrValue]) : ir.CompilerIrValue
+  (if (opt-const-global-divisor-op? op)
+    (opt-const-global-subst-divisor-value const-divisors v)
+    (opt-const-global-subst-value const-divisors v)))
+
 ;; The early rewrite substitutes every scalar operand position whose literal
 ;; the round-1 local fold and the loop passes can both consume: BinOp operands
 ;; (compare operands feeding branches included), UnOp sources, Cast/Bitcast
@@ -96702,7 +96762,7 @@
         dst
         op
         (opt-const-global-subst-value const-divisors lhs)
-        (opt-const-global-subst-value const-divisors rhs)
+        (opt-const-global-subst-rhs-value const-divisors op rhs)
         ty)]
     [(ir.CompilerIrInstr.Mov dst src ty)
       (ir.CompilerIrInstr.Mov

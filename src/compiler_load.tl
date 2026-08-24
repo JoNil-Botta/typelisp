@@ -2511,6 +2511,9 @@
       compiler-load-active-session-state
       (compiler-load-standalone-session-state-new))
     (compiler-load-session-reset-pools!)
+    ;; Fresh sessions retire every cached AST owner, so no declaration-origin
+    ;; sidecar keyed by a retired storage address may survive into the next run.
+    (reader.sp-node-pool-reset!)
     (compiler-load-session-reset-interns!)
     (ci.intern-persistent-arena-reset!)
     (compiler-load-session-floors-set! 0 0 0)
@@ -9960,10 +9963,11 @@
   [expected-module : ast.AstMaybeModuleName]
   [alias : ast.AstMaybeImportAlias]
   [span : ast.AstSourceSpan]
+  [source : ast.AstDeclList]
   [rest : ast.AstDeclList]) : ast.AstDeclList
   (match alias
     [(ast.AstMaybeImportAlias.Some _)
-      (compiler-load-decl-list-prepend
+      (compiler-load-decl-list-prepend-from-source
         (ast.AstDecl.Import
           (ast.ast-decl-meta-runtime-shared-view)
           (ast.AstImportSpec.Spec
@@ -9972,6 +9976,7 @@
             expected-module
             alias
             (box span)))
+        source
         rest)]
     [(ast.AstMaybeImportAlias.No) rest]))
 
@@ -10009,6 +10014,7 @@
   [span : ast.AstSourceSpan]
   [_importer-source-module : String]
   [importer-source-module-id : i64]
+  [source : ast.AstDeclList]
   [imported-decls : ast.AstDeclList]
   [rest : ast.AstDeclList]) : ast.AstDeclList
   (let
@@ -10019,6 +10025,7 @@
         expected-module
         alias
         span
+        source
         rest)]
     (if (compiler-load-decl-list-has-module? imported-decls)
       (compiler-load-decl-list-prepend
@@ -10403,6 +10410,7 @@
                                           (__tl-box-place span)
                                           importer-source-module
                                           importer-source-module-id
+                                          decls
                                           (ast.ast-decl-list-new)
                                           rest-decls)
                                         (compiler-load-paths-after-import
@@ -10429,6 +10437,7 @@
                                           (__tl-box-place span)
                                           importer-source-module
                                           importer-source-module-id
+                                          (ast.ast-place-shared-view decls)
                                           (ast.ast-place-shared-view
                                             imported-decls)
                                           rest-decls)]
@@ -13749,6 +13758,7 @@
                                           (__tl-box-place span)
                                           importer-source-module
                                           importer-source-module-id
+                                          decls
                                           (ast.ast-decl-list-new)
                                           rest-decls)
                                         (compiler-load-paths-after-import
@@ -13776,6 +13786,7 @@
                                           (__tl-box-place span)
                                           importer-source-module
                                           importer-source-module-id
+                                          (ast.ast-place-shared-view decls)
                                           (ast.ast-place-shared-view
                                             imported-decls)
                                           rest-decls)]

@@ -1118,28 +1118,130 @@
 ;; Capability for rendering an id retained across an intern-state boundary.
 ;; It is captured by the few consumers that outlive the currently installed
 ;; table rather than adding ownership metadata to every AST name.
-(defstruct InternCompatState
-  (table-id (__tl_dyn-array i64))
-  (pool-slots (__tl_dyn-array String))
-  (pool-qualified-slots (__tl_dyn-array bool))
-  (pool-last-slash-slots (__tl_dyn-array i32))
-  (pool-first-dot-slots (__tl_dyn-array i32))
-  (pool-leading-dot-id-slots (__tl_dyn-array InternSlotId))
-  (pool-dotted-prefix-id-slots (__tl_dyn-array InternSlotId))
-  (pool-module-id-slots (__tl_dyn-array InternSlotId))
-  (pool-base-id-slots (__tl_dyn-array InternSlotId))
-  (pool-macro-prefix-class-slots (__tl_dyn-array u8))
-  (pool-count (__tl_dyn-array i64))
-  (generated-next-id (__tl_dyn-array i64))
-  (map-id-slots (__tl_dyn-array InternSlotId))
-  (map-hash-slots (__tl_dyn-array i64))
-  (generated-map-id-slots (__tl_dyn-array InternSlotId))
-  (generated-map-hash-slots (__tl_dyn-array i64))
-  (map-ready (__tl_dyn-array bool))
-  (reset-generation (__tl_dyn-array i64))
-  (persistent-arena (__tl_dyn-array i64))
-  (persistent-arena-floor-mark (__tl_dyn-array i64))
-  (structural-table-cell (__tl_dyn-array InternStructuralTable)))
+(cfg
+  (any compile-profile test)
+  (defstruct InternCompatState
+    (table-id (__tl_dyn-array i64))
+    (pool-slots (__tl_dyn-array String))
+    (pool-qualified-slots (__tl_dyn-array bool))
+    (pool-last-slash-slots (__tl_dyn-array i32))
+    (pool-first-dot-slots (__tl_dyn-array i32))
+    (pool-leading-dot-id-slots (__tl_dyn-array InternSlotId))
+    (pool-dotted-prefix-id-slots (__tl_dyn-array InternSlotId))
+    (pool-module-id-slots (__tl_dyn-array InternSlotId))
+    (pool-base-id-slots (__tl_dyn-array InternSlotId))
+    (pool-macro-prefix-class-slots (__tl_dyn-array u8))
+    (pool-count (__tl_dyn-array i64))
+    (generated-next-id (__tl_dyn-array i64))
+    (map-id-slots (__tl_dyn-array InternSlotId))
+    (map-hash-slots (__tl_dyn-array i64))
+    (generated-map-id-slots (__tl_dyn-array InternSlotId))
+    (generated-map-hash-slots (__tl_dyn-array i64))
+    (map-ready (__tl_dyn-array bool))
+    (reset-generation (__tl_dyn-array i64))
+    (persistent-arena (__tl_dyn-array i64))
+    (persistent-arena-floor-mark (__tl_dyn-array i64))
+    (structural-table-cell (__tl_dyn-array InternStructuralTable))
+    ;; Raw view into the owning compile job's fixed CompilerProfileState metric
+    ;; array. The field does not exist in ordinary builds, preserving the exact
+    ;; disabled owner layout and all wide-owner copy paths.
+    (profile-metrics-address u64)))
+
+(cfg
+  (not (any compile-profile test))
+  (defstruct InternCompatState
+    (table-id (__tl_dyn-array i64))
+    (pool-slots (__tl_dyn-array String))
+    (pool-qualified-slots (__tl_dyn-array bool))
+    (pool-last-slash-slots (__tl_dyn-array i32))
+    (pool-first-dot-slots (__tl_dyn-array i32))
+    (pool-leading-dot-id-slots (__tl_dyn-array InternSlotId))
+    (pool-dotted-prefix-id-slots (__tl_dyn-array InternSlotId))
+    (pool-module-id-slots (__tl_dyn-array InternSlotId))
+    (pool-base-id-slots (__tl_dyn-array InternSlotId))
+    (pool-macro-prefix-class-slots (__tl_dyn-array u8))
+    (pool-count (__tl_dyn-array i64))
+    (generated-next-id (__tl_dyn-array i64))
+    (map-id-slots (__tl_dyn-array InternSlotId))
+    (map-hash-slots (__tl_dyn-array i64))
+    (generated-map-id-slots (__tl_dyn-array InternSlotId))
+    (generated-map-hash-slots (__tl_dyn-array i64))
+    (map-ready (__tl_dyn-array bool))
+    (reset-generation (__tl_dyn-array i64))
+    (persistent-arena (__tl_dyn-array i64))
+    (persistent-arena-floor-mark (__tl_dyn-array i64))
+    (structural-table-cell (__tl_dyn-array InternStructuralTable))))
+
+(defmacro (intern-compat-state-make
+  [table-id : Expr]
+  [pool-slots : Expr]
+  [pool-qualified-slots : Expr]
+  [pool-last-slash-slots : Expr]
+  [pool-first-dot-slots : Expr]
+  [pool-leading-dot-id-slots : Expr]
+  [pool-dotted-prefix-id-slots : Expr]
+  [pool-module-id-slots : Expr]
+  [pool-base-id-slots : Expr]
+  [pool-macro-prefix-class-slots : Expr]
+  [pool-count : Expr]
+  [generated-next-id : Expr]
+  [map-id-slots : Expr]
+  [map-hash-slots : Expr]
+  [generated-map-id-slots : Expr]
+  [generated-map-hash-slots : Expr]
+  [map-ready : Expr]
+  [reset-generation : Expr]
+  [persistent-arena : Expr]
+  [persistent-arena-floor-mark : Expr]
+  [structural-table-cell : Expr]
+  [profile-metrics-address : Expr]) : Expr
+  (cfg
+    (any compile-profile test)
+    `(InternCompatState
+      ,table-id
+      ,pool-slots
+      ,pool-qualified-slots
+      ,pool-last-slash-slots
+      ,pool-first-dot-slots
+      ,pool-leading-dot-id-slots
+      ,pool-dotted-prefix-id-slots
+      ,pool-module-id-slots
+      ,pool-base-id-slots
+      ,pool-macro-prefix-class-slots
+      ,pool-count
+      ,generated-next-id
+      ,map-id-slots
+      ,map-hash-slots
+      ,generated-map-id-slots
+      ,generated-map-hash-slots
+      ,map-ready
+      ,reset-generation
+      ,persistent-arena
+      ,persistent-arena-floor-mark
+      ,structural-table-cell
+      ,profile-metrics-address)
+    `(InternCompatState
+      ,table-id
+      ,pool-slots
+      ,pool-qualified-slots
+      ,pool-last-slash-slots
+      ,pool-first-dot-slots
+      ,pool-leading-dot-id-slots
+      ,pool-dotted-prefix-id-slots
+      ,pool-module-id-slots
+      ,pool-base-id-slots
+      ,pool-macro-prefix-class-slots
+      ,pool-count
+      ,generated-next-id
+      ,map-id-slots
+      ,map-hash-slots
+      ,generated-map-id-slots
+      ,generated-map-hash-slots
+      ,map-ready
+      ,reset-generation
+      ,persistent-arena
+      ,persistent-arena-floor-mark
+      ,structural-table-cell)))
 
 ;; Read-only subset used while the parser records exact semantic name spans.
 ;; Capture it once per top-level form instead of copying the full intern owner
@@ -1249,8 +1351,8 @@
   (StaleGeneration)
   (InvalidIdentity))
 
-(define (intern-compat-state-new) : InternCompatState
-  (let
+(defmacro (intern-compat-state-new-expr [profile-metrics-address : Expr]) : Expr
+  `(let
     [table-id : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     [pool-count : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     [generated-next-id : (__tl_dyn-array i64) (__tl_make-array i64 1)]
@@ -1269,7 +1371,7 @@
       (set! (array-ref reset-generation 0) (intern-generation-allocate!))
       (set! (array-ref persistent-arena 0) persistent-arena-handle)
       (set! (array-ref persistent-arena-floor-mark 0) 0)
-      (InternCompatState
+      (intern-compat-state-make
         table-id
         (__tl_make-array String (intern-capacity))
         (__tl_make-array bool (intern-capacity))
@@ -1290,7 +1392,20 @@
         reset-generation
         persistent-arena
         persistent-arena-floor-mark
-        structural-table-cell))))
+        structural-table-cell
+        ,profile-metrics-address))))
+
+(cfg
+  (any compile-profile test)
+  (define (intern-compat-state-new-with-profile-metrics-address
+    [profile-metrics-address : u64]) : InternCompatState
+    (intern-compat-state-new-expr profile-metrics-address)))
+
+(define (intern-compat-state-new) : InternCompatState
+  (cfg
+    (any compile-profile test)
+    (intern-compat-state-new-with-profile-metrics-address (cast 0 : u64))
+    (intern-compat-state-new-expr (cast 0 : u64))))
 
 ;; Capture the currently installed compatibility table as a serial/test view.
 ;; The arrays (including the persistent structural table and arena) are shared
@@ -1317,7 +1432,7 @@
       (set!
         (array-ref persistent-arena-floor-mark 0)
         intern-persistent-arena-floor-mark)
-      (InternCompatState
+      (intern-compat-state-make
         table-id
         (intern-global-shared-view intern-pool-slots)
         (intern-global-shared-view intern-pool-qualified-slots)
@@ -1338,7 +1453,11 @@
         reset-generation
         persistent-arena
         persistent-arena-floor-mark
-        (intern-global-shared-view intern-structural-table-cell)))))
+        (intern-global-shared-view intern-structural-table-cell)
+        (cfg
+          (any compile-profile test)
+          intern-active-profile-metrics-address
+          (cast 0 : u64))))))
 
 (define (intern-compat-state-pool-len [state : InternCompatState]) : i64
   (array-ref state.pool-count 0))
@@ -1348,6 +1467,12 @@
 
 (define (intern-compat-state-table-id [state : InternCompatState]) : i64
   (array-ref state.table-id 0))
+
+(cfg
+  (any compile-profile test)
+  (define (intern-compat-state-profile-metrics-address-ref
+    [state : (& state InternCompatState)]) : u64
+    state.profile-metrics-address))
 
 (define (intern-compat-state-persistent-arena [state : InternCompatState]) : i64
   (array-ref state.persistent-arena 0))
@@ -1483,7 +1608,11 @@
   [id : i64]) : unit
   (let
     [name : String (array-ref state.pool-slots id)]
-    [hash : i64 (intern-hash name)]
+    [hash : i64
+      (cfg
+        compile-profile
+        (intern-compat-state-hash-ref (& state) (& name))
+        (intern-hash name))]
     [capacity : i64 (array-length state.map-id-slots)]
     (intern-compat-state-map-insert-existing-from!
       state
@@ -1648,7 +1777,11 @@
   [name : String]) : i64
   (let
     [capacity : i64 (array-length state.map-id-slots)]
-    [hash : i64 (intern-hash name)]
+    [hash : i64
+      (cfg
+        compile-profile
+        (intern-compat-state-hash-ref state (& name))
+        (intern-hash name))]
     [cursor : i64 (intern-bucket hash capacity)]
     [steps : i64 0]
     [out : i64 -1]
@@ -1714,10 +1847,16 @@
   [start : i64]
   [len : i64]) : i64
   (begin
-    (cfg compile-profile (intern-profile-note-slice len))
+    (cfg
+      compile-profile
+      (intern-profile-note-slice state.profile-metrics-address len))
     (let
       [capacity : i64 (array-length state.map-id-slots)]
-      [hash : i64 (intern-hash-slice text start len)]
+      [hash : i64
+        (cfg
+          compile-profile
+          (intern-compat-state-hash-slice-ref state text start len)
+          (intern-hash-slice text start len))]
       [cursor : i64 (intern-bucket hash capacity)]
       [steps : i64 0]
       [out : i64 -1]
@@ -1741,9 +1880,10 @@
                     (begin
                       (cfg
                         compile-profile
-                        (set!
-                          intern-profile-slice-miss-count
-                          (+ intern-profile-slice-miss-count 1)))
+                        (intern-profile-add!
+                          state.profile-metrics-address
+                          intern-profile-slice-miss-metric
+                          1))
                       (set! (array-ref state.pool-slots id) persistent-name)
                       (set!
                         (array-ref state.map-id-slots cursor)
@@ -1769,9 +1909,10 @@
                   (begin
                     (cfg
                       compile-profile
-                      (set!
-                        intern-profile-slice-hit-count
-                        (+ intern-profile-slice-hit-count 1)))
+                      (intern-profile-add!
+                        state.profile-metrics-address
+                        intern-profile-slice-hit-metric
+                        1))
                     (set! out slot-id)
                     (set! done true))
                   (begin
@@ -1788,12 +1929,14 @@
     (cfg
       compile-profile
       (begin
-        (set!
-          intern-profile-source-symbol-count
-          (+ intern-profile-source-symbol-count 1))
-        (set!
-          intern-profile-source-symbol-bytes-count
-          (+ intern-profile-source-symbol-bytes-count len))))
+        (intern-profile-add!
+          state.profile-metrics-address
+          intern-profile-source-symbol-metric
+          1)
+        (intern-profile-add!
+          state.profile-metrics-address
+          intern-profile-source-symbol-bytes-metric
+          len)))
     (intern-id-from-renderable
       (intern-compat-state-intern-slice-ready-ref state text start len))))
 
@@ -1810,7 +1953,11 @@
   (if (array-ref state.map-ready 0)
     (let
       [capacity : i64 (array-length state.map-id-slots)]
-      [hash : i64 (intern-hash name)]
+      [hash : i64
+        (cfg
+          compile-profile
+          (intern-compat-state-hash-ref (& state) (& name))
+          (intern-hash name))]
       [cursor : i64 (intern-bucket hash capacity)]
       [steps : i64 0]
       [out : InternLookup InternLookupMissing]
@@ -1966,6 +2113,12 @@
         intern-persistent-arena-floor-mark
         (array-ref state.persistent-arena-floor-mark 0))
       (set! intern-structural-table-cell state.structural-table-cell)
+      (cfg
+        (any compile-profile test)
+        (set!
+          intern-active-profile-metrics-address
+          state.profile-metrics-address)
+        unit)
       (intern-active-structural-sync!
         (intern-global-shared-view intern-structural-table-cell)))))
 
@@ -2048,307 +2201,402 @@
 ;; `compiler_intern` has no formatting dependency, so it only exposes reset and
 ;; value accessors; the driver (which owns `io`) prints them at compile end.
 (cfg
-  compile-profile
-  (define intern-profile-hash-words-count : i64
-    0))
+  (any compile-profile test)
+  (define intern-profile-hash-words-metric : i64
+    78))
 (cfg
-  compile-profile
-  (define intern-profile-intern-count : i64
-    0))
+  (any compile-profile test)
+  (define intern-profile-intern-metric : i64
+    79))
 (cfg
-  compile-profile
-  (define intern-profile-slice-count : i64
-    0))
+  (any compile-profile test)
+  (define intern-profile-slice-metric : i64
+    80))
 (cfg
-  compile-profile
-  (define intern-profile-lookup-count : i64
-    0))
+  (any compile-profile test)
+  (define intern-profile-lookup-metric : i64
+    81))
 (cfg
-  compile-profile
-  (define intern-profile-generated-count : i64
-    0))
+  (any compile-profile test)
+  (define intern-profile-generated-metric : i64
+    82))
 (cfg
-  compile-profile
-  (define intern-profile-render-count : i64
-    0))
+  (any compile-profile test)
+  (define intern-profile-render-metric : i64
+    83))
 (cfg
-  compile-profile
-  (define intern-profile-invalid-str-count : i64
-    0))
+  (any compile-profile test)
+  (define intern-profile-invalid-str-metric : i64
+    84))
 (cfg
-  compile-profile
-  (define intern-profile-invalid-str-last-id : i64
-    0))
+  (any compile-profile test)
+  (define intern-profile-invalid-str-last-id-metric : i64
+    85))
 (cfg
-  compile-profile
-  (define intern-profile-source-bytes-count : i64
-    0))
+  (any compile-profile test)
+  (define intern-profile-source-bytes-metric : i64
+    86))
 (cfg
-  compile-profile
-  (define intern-profile-source-symbol-count : i64
-    0))
+  (any compile-profile test)
+  (define intern-profile-source-symbol-metric : i64
+    87))
 (cfg
-  compile-profile
-  (define intern-profile-source-symbol-bytes-count : i64
-    0))
+  (any compile-profile test)
+  (define intern-profile-source-symbol-bytes-metric : i64
+    88))
 (cfg
-  compile-profile
-  (define intern-profile-slice-bytes-count : i64
-    0))
+  (any compile-profile test)
+  (define intern-profile-slice-bytes-metric : i64
+    89))
 (cfg
-  compile-profile
-  (define intern-profile-slice-hit-count : i64
-    0))
+  (any compile-profile test)
+  (define intern-profile-slice-hit-metric : i64
+    90))
 (cfg
-  compile-profile
-  (define intern-profile-slice-miss-count : i64
-    0))
+  (any compile-profile test)
+  (define intern-profile-slice-miss-metric : i64
+    91))
 (cfg
-  compile-profile
-  (define intern-profile-generated-role-create-counts : (__tl_dyn-array i64)
-    (__tl_make-array i64 16)))
+  (any compile-profile test)
+  (define intern-profile-generated-role-create-start-metric : i64
+    92))
 (cfg
-  compile-profile
-  (define intern-profile-generated-role-reuse-counts : (__tl_dyn-array i64)
-    (__tl_make-array i64 16)))
+  (any compile-profile test)
+  (define intern-profile-generated-role-reuse-start-metric : i64
+    108))
 (cfg
-  compile-profile
-  (define intern-profile-generated-role-render-counts : (__tl_dyn-array i64)
-    (__tl_make-array i64 16)))
+  (any compile-profile test)
+  (define intern-profile-generated-role-render-start-metric : i64
+    124))
+(cfg
+  (any compile-profile test)
+  (define intern-profile-metric-end : i64
+    140))
+
+;; Installed compatibility calls select the metrics belonging to the installed
+;; intern owner. Counter storage itself is never process-global; explicit-state
+;; operations use `InternCompatState.profile-metrics-address` directly.
+(cfg
+  (any compile-profile test)
+  (define intern-active-profile-metrics-address : u64
+    (cast 0 : u64)))
+
+(cfg
+  (any compile-profile test)
+  (define (intern-profile-value [metrics-address : u64] [metric : i64]) : i64
+    (if (= metrics-address (cast 0 : u64))
+      0
+      (intern-active-i64-ref metrics-address metric))))
+
+(cfg
+  (any compile-profile test)
+  (define (intern-profile-set!
+    [metrics-address : u64]
+    [metric : i64]
+    [value : i64]) : unit
+    (if (= metrics-address (cast 0 : u64))
+      unit
+      (intern-active-i64-set! metrics-address metric value))))
+
+(cfg
+  (any compile-profile test)
+  (define (intern-profile-add!
+    [metrics-address : u64]
+    [metric : i64]
+    [value : i64]) : unit
+    (if (= metrics-address (cast 0 : u64))
+      unit
+      (intern-active-i64-set!
+        metrics-address
+        metric
+        (+ (intern-active-i64-ref metrics-address metric) value)))))
+
+(cfg
+  (any compile-profile test)
+  (define (intern-profile-reset! [metrics-address : u64]) : unit
+    (let
+      [metric : i64 intern-profile-hash-words-metric]
+      (while (< metric intern-profile-metric-end)
+        (begin
+          (intern-profile-set! metrics-address metric 0)
+          (set! metric (+ metric 1)))))))
 
 (cfg
   compile-profile
-  (define (intern-profile-reset!) : unit
+  (define (intern-profile-hash-words-value [metrics-address : u64]) : i64
+    (intern-profile-value metrics-address intern-profile-hash-words-metric)))
+
+(cfg
+  compile-profile
+  (define (intern-profile-intern-value [metrics-address : u64]) : i64
+    (intern-profile-value metrics-address intern-profile-intern-metric)))
+
+(cfg
+  compile-profile
+  (define (intern-profile-slice-value [metrics-address : u64]) : i64
+    (intern-profile-value metrics-address intern-profile-slice-metric)))
+
+(cfg
+  compile-profile
+  (define (intern-profile-lookup-value [metrics-address : u64]) : i64
+    (intern-profile-value metrics-address intern-profile-lookup-metric)))
+
+(cfg
+  compile-profile
+  (define (intern-profile-generated-value [metrics-address : u64]) : i64
+    (intern-profile-value metrics-address intern-profile-generated-metric)))
+
+(cfg
+  compile-profile
+  (define (intern-profile-render-value [metrics-address : u64]) : i64
+    (intern-profile-value metrics-address intern-profile-render-metric)))
+
+(cfg
+  compile-profile
+  (define (intern-profile-invalid-str-value [metrics-address : u64]) : i64
+    (intern-profile-value metrics-address intern-profile-invalid-str-metric)))
+
+(cfg
+  compile-profile
+  (define (intern-profile-source-bytes-value [metrics-address : u64]) : i64
+    (intern-profile-value metrics-address intern-profile-source-bytes-metric)))
+
+(cfg
+  compile-profile
+  (define (intern-profile-source-symbol-value [metrics-address : u64]) : i64
+    (intern-profile-value metrics-address intern-profile-source-symbol-metric)))
+
+(cfg
+  compile-profile
+  (define (intern-profile-source-symbol-bytes-value [metrics-address : u64]) : i64
+    (intern-profile-value
+      metrics-address
+      intern-profile-source-symbol-bytes-metric)))
+
+(cfg
+  compile-profile
+  (define (intern-profile-slice-bytes-value [metrics-address : u64]) : i64
+    (intern-profile-value metrics-address intern-profile-slice-bytes-metric)))
+
+(cfg
+  compile-profile
+  (define (intern-profile-slice-hit-value [metrics-address : u64]) : i64
+    (intern-profile-value metrics-address intern-profile-slice-hit-metric)))
+
+(cfg
+  compile-profile
+  (define (intern-profile-slice-miss-value [metrics-address : u64]) : i64
+    (intern-profile-value metrics-address intern-profile-slice-miss-metric)))
+
+(cfg
+  compile-profile
+  (define (intern-profile-generated-role-value
+    [metrics-address : u64]
+    [start-metric : i64]
+    [role : i64]) : i64
+    (let
+      [index : i64 (intern-generated-symbol-role-index role)]
+      (if (< index 0)
+        (tl_oob_abort)
+        (intern-profile-value metrics-address (+ start-metric index))))))
+
+(cfg
+  compile-profile
+  (define (intern-profile-generated-role-create-value
+    [metrics-address : u64]
+    [role : i64]) : i64
+    (intern-profile-generated-role-value
+      metrics-address
+      intern-profile-generated-role-create-start-metric
+      role)))
+
+(cfg
+  compile-profile
+  (define (intern-profile-generated-role-reuse-value
+    [metrics-address : u64]
+    [role : i64]) : i64
+    (intern-profile-generated-role-value
+      metrics-address
+      intern-profile-generated-role-reuse-start-metric
+      role)))
+
+(cfg
+  compile-profile
+  (define (intern-profile-generated-role-render-value
+    [metrics-address : u64]
+    [role : i64]) : i64
+    (intern-profile-generated-role-value
+      metrics-address
+      intern-profile-generated-role-render-start-metric
+      role)))
+
+(cfg
+  (any compile-profile test)
+  (define (intern-profile-note-generated-role
+    [metrics-address : u64]
+    [start-metric : i64]
+    [role : i64]) : unit
+    (let
+      [index : i64 (intern-generated-symbol-role-index role)]
+      (if (< index 0)
+        (tl_oob_abort)
+        (intern-profile-add! metrics-address (+ start-metric index) 1)))))
+
+(cfg
+  (any compile-profile test)
+  (define (intern-profile-note-intern [metrics-address : u64]) : unit
+    (intern-profile-add! metrics-address intern-profile-intern-metric 1)))
+
+(cfg
+  (any compile-profile test)
+  (define (intern-profile-note-generated [metrics-address : u64]) : unit
+    (intern-profile-add! metrics-address intern-profile-generated-metric 1)))
+
+(cfg
+  (any compile-profile test)
+  (define (intern-profile-note-generated-role-create
+    [metrics-address : u64]
+    [role : i64]) : unit
+    (intern-profile-note-generated-role
+      metrics-address
+      intern-profile-generated-role-create-start-metric
+      role)))
+
+(cfg
+  (any compile-profile test)
+  (define (intern-profile-note-generated-role-reuse
+    [metrics-address : u64]
+    [role : i64]) : unit
+    (intern-profile-note-generated-role
+      metrics-address
+      intern-profile-generated-role-reuse-start-metric
+      role)))
+
+(cfg
+  (any compile-profile test)
+  (define (intern-profile-note-generated-role-render
+    [metrics-address : u64]
+    [role : i64]) : unit
+    (intern-profile-note-generated-role
+      metrics-address
+      intern-profile-generated-role-render-start-metric
+      role)))
+
+(cfg
+  (any compile-profile test)
+  (define (intern-profile-note-source-bytes [metrics-address : u64] [len : i64]) : unit
+    (intern-profile-add! metrics-address intern-profile-source-bytes-metric len)))
+
+(cfg
+  compile-profile
+  (define (intern-profile-note-active-source-bytes [len : i64]) : unit
+    (intern-profile-note-source-bytes intern-active-profile-metrics-address len)))
+
+(cfg
+  (any compile-profile test)
+  (define (intern-profile-note-slice [metrics-address : u64] [len : i64]) : unit
     (begin
-      (set! intern-profile-hash-words-count 0)
-      (set! intern-profile-intern-count 0)
-      (set! intern-profile-slice-count 0)
-      (set! intern-profile-lookup-count 0)
-      (set! intern-profile-generated-count 0)
-      (set! intern-profile-render-count 0)
-      (set! intern-profile-invalid-str-count 0)
-      (set! intern-profile-invalid-str-last-id 0)
-      (set! intern-profile-source-bytes-count 0)
-      (set! intern-profile-source-symbol-count 0)
-      (set! intern-profile-source-symbol-bytes-count 0)
-      (set! intern-profile-slice-bytes-count 0)
-      (set! intern-profile-slice-hit-count 0)
-      (set! intern-profile-slice-miss-count 0)
-      (let
-        [index : i64 0]
-        (while (< index 16)
+      (intern-profile-add! metrics-address intern-profile-slice-metric 1)
+      (intern-profile-add!
+        metrics-address
+        intern-profile-slice-bytes-metric
+        len))))
+
+(cfg
+  (any compile-profile test)
+  (define (intern-profile-note-lookup [metrics-address : u64]) : unit
+    (intern-profile-add! metrics-address intern-profile-lookup-metric 1)))
+
+(cfg
+  compile-profile
+  (define (intern-hash-words-with-profile
+    [metrics-address : u64]
+    [src : (Ptr u8)]
+    [start : i64]
+    [len : i64]) : i64
+    (let
+      [h : i64 (+ 5381 len)]
+      [i : i64 0]
+      [words : i64 (- len 7)]
+      (begin
+        (intern-profile-add!
+          metrics-address
+          intern-profile-hash-words-metric
+          (+
+            (/ len 8)
+            (if (= (% len 8) 0)
+              0
+              1)))
+        (while (< i words)
           (begin
             (set!
-              (array-ref intern-profile-generated-role-create-counts index)
-              0)
-            (set!
-              (array-ref intern-profile-generated-role-reuse-counts index)
-              0)
-            (set!
-              (array-ref intern-profile-generated-role-render-counts index)
-              0)
-            (set! index (+ index 1))))))))
-
-(cfg
-  compile-profile
-  (define (intern-profile-hash-words-value) : i64
-    intern-profile-hash-words-count))
-
-(cfg
-  compile-profile
-  (define (intern-profile-intern-value) : i64
-    intern-profile-intern-count))
-
-(cfg
-  compile-profile
-  (define (intern-profile-slice-value) : i64
-    intern-profile-slice-count))
-
-(cfg
-  compile-profile
-  (define (intern-profile-lookup-value) : i64
-    intern-profile-lookup-count))
-
-(cfg
-  compile-profile
-  (define (intern-profile-generated-value) : i64
-    intern-profile-generated-count))
-
-(cfg
-  compile-profile
-  (define (intern-profile-render-value) : i64
-    intern-profile-render-count))
-
-(cfg
-  compile-profile
-  (define (intern-profile-invalid-str-value) : i64
-    intern-profile-invalid-str-count))
-
-(cfg
-  compile-profile
-  (define (intern-profile-source-bytes-value) : i64
-    intern-profile-source-bytes-count))
-
-(cfg
-  compile-profile
-  (define (intern-profile-source-symbol-value) : i64
-    intern-profile-source-symbol-count))
-
-(cfg
-  compile-profile
-  (define (intern-profile-source-symbol-bytes-value) : i64
-    intern-profile-source-symbol-bytes-count))
-
-(cfg
-  compile-profile
-  (define (intern-profile-slice-bytes-value) : i64
-    intern-profile-slice-bytes-count))
-
-(cfg
-  compile-profile
-  (define (intern-profile-slice-hit-value) : i64
-    intern-profile-slice-hit-count))
-
-(cfg
-  compile-profile
-  (define (intern-profile-slice-miss-value) : i64
-    intern-profile-slice-miss-count))
-
-(cfg
-  compile-profile
-  (define (intern-profile-generated-role-create-value [role : i64]) : i64
-    (let
-      [index : i64 (intern-generated-symbol-role-index role)]
-      (if (< index 0)
-        (tl_oob_abort)
-        (array-ref intern-profile-generated-role-create-counts index)))))
-
-(cfg
-  compile-profile
-  (define (intern-profile-generated-role-reuse-value [role : i64]) : i64
-    (let
-      [index : i64 (intern-generated-symbol-role-index role)]
-      (if (< index 0)
-        (tl_oob_abort)
-        (array-ref intern-profile-generated-role-reuse-counts index)))))
-
-(cfg
-  compile-profile
-  (define (intern-profile-generated-role-render-value [role : i64]) : i64
-    (let
-      [index : i64 (intern-generated-symbol-role-index role)]
-      (if (< index 0)
-        (tl_oob_abort)
-        (array-ref intern-profile-generated-role-render-counts index)))))
-
-(cfg
-  compile-profile
-  (define (intern-profile-note-intern) : unit
-    (set! intern-profile-intern-count (+ intern-profile-intern-count 1))))
-
-(cfg
-  compile-profile
-  (define (intern-profile-note-generated) : unit
-    (set! intern-profile-generated-count (+ intern-profile-generated-count 1))))
-
-(cfg
-  compile-profile
-  (define (intern-profile-note-generated-role-create [role : i64]) : unit
-    (let
-      [index : i64 (intern-generated-symbol-role-index role)]
-      (if (< index 0)
-        (tl_oob_abort)
-        (set!
-          (array-ref intern-profile-generated-role-create-counts index)
-          (+ (array-ref intern-profile-generated-role-create-counts index) 1))))))
-
-(cfg
-  compile-profile
-  (define (intern-profile-note-generated-role-reuse [role : i64]) : unit
-    (let
-      [index : i64 (intern-generated-symbol-role-index role)]
-      (if (< index 0)
-        (tl_oob_abort)
-        (set!
-          (array-ref intern-profile-generated-role-reuse-counts index)
-          (+ (array-ref intern-profile-generated-role-reuse-counts index) 1))))))
-
-(cfg
-  compile-profile
-  (define (intern-profile-note-generated-role-render [role : i64]) : unit
-    (let
-      [index : i64 (intern-generated-symbol-role-index role)]
-      (if (< index 0)
-        (tl_oob_abort)
-        (set!
-          (array-ref intern-profile-generated-role-render-counts index)
-          (+ (array-ref intern-profile-generated-role-render-counts index) 1))))))
-
-(cfg
-  compile-profile
-  (define (intern-profile-note-source-bytes [len : i64]) : unit
-    (set!
-      intern-profile-source-bytes-count
-      (+ intern-profile-source-bytes-count len))))
-
-(cfg
-  compile-profile
-  (define (intern-profile-note-slice [len : i64]) : unit
-    (begin
-      (set! intern-profile-slice-count (+ intern-profile-slice-count 1))
-      (set!
-        intern-profile-slice-bytes-count
-        (+ intern-profile-slice-bytes-count len)))))
-
-(cfg
-  compile-profile
-  (define (intern-profile-note-lookup) : unit
-    (set! intern-profile-lookup-count (+ intern-profile-lookup-count 1))))
+              h
+              (*
+                (bit-xor
+                  h
+                  (unsafe
+                    (ptr-read
+                      (ptr-cast (ptr-offset src (+ start i)) : (Ptr i64)))))
+                -7046029254386353131))
+            (set! i (+ i 8))))
+        (let
+          [tail : i64 0]
+          (begin
+            (while (< i len)
+              (begin
+                (set!
+                  tail
+                  (+
+                    (* tail 256)
+                    (cast
+                      (unsafe
+                        (ptr-read (ptr-offset src (+ start i))))
+                      : i64)))
+                (set! i (+ i 1))))
+            (set! h (* (bit-xor h tail) -7046029254386353131))
+            (bit-xor h (cast (shr (cast h : u64) 29) : i64))))))))
 
 (define (intern-hash-words [src : (Ptr u8)] [start : i64] [len : i64]) : i64
-  (let
-    [h : i64 (+ 5381 len)]
-    [i : i64 0]
-    [words : i64 (- len 7)]
-    (begin
-      (cfg
-        compile-profile
-        (set!
-          intern-profile-hash-words-count
-          (+
-            intern-profile-hash-words-count
-            (+
-              (/ len 8)
-              (if (= (% len 8) 0)
-                0
-                1)))))
-      (while (< i words)
-        (begin
-          (set!
-            h
-            (*
-              (bit-xor
-                h
-                (unsafe
-                  (ptr-read (ptr-cast (ptr-offset src (+ start i)) : (Ptr i64)))))
-              -7046029254386353131))
-          (set! i (+ i 8))))
-      (let
-        [tail : i64 0]
-        (begin
-          (while (< i len)
-            (begin
-              (set!
-                tail
-                (+
-                  (* tail 256)
-                  (cast
-                    (unsafe
-                      (ptr-read (ptr-offset src (+ start i))))
-                    : i64)))
-              (set! i (+ i 1))))
-          (set! h (* (bit-xor h tail) -7046029254386353131))
-          (bit-xor h (cast (shr (cast h : u64) 29) : i64)))))))
+  (cfg
+    compile-profile
+    (intern-hash-words-with-profile
+      intern-active-profile-metrics-address
+      src
+      start
+      len)
+    (let
+      [h : i64 (+ 5381 len)]
+      [i : i64 0]
+      [words : i64 (- len 7)]
+      (begin
+        (while (< i words)
+          (begin
+            (set!
+              h
+              (*
+                (bit-xor
+                  h
+                  (unsafe
+                    (ptr-read
+                      (ptr-cast (ptr-offset src (+ start i)) : (Ptr i64)))))
+                -7046029254386353131))
+            (set! i (+ i 8))))
+        (let
+          [tail : i64 0]
+          (begin
+            (while (< i len)
+              (begin
+                (set!
+                  tail
+                  (+
+                    (* tail 256)
+                    (cast
+                      (unsafe
+                        (ptr-read (ptr-offset src (+ start i))))
+                      : i64)))
+                (set! i (+ i 1))))
+            (set! h (* (bit-xor h tail) -7046029254386353131))
+            (bit-xor h (cast (shr (cast h : u64) 29) : i64))))))))
 
 (define (intern-hash [s : (& s str)]) : i64
   (intern-hash-words
@@ -2357,6 +2605,18 @@
     0
     (__tl_string_length s)))
 
+(cfg
+  compile-profile
+  (define (intern-compat-state-hash-ref
+    [state : (& state InternCompatState)]
+    [s : (& s str)]) : i64
+    (intern-hash-words-with-profile
+      state.profile-metrics-address
+      (unsafe
+        (string-data s))
+      0
+      (__tl_string_length s))))
+
 ;: Hash over a source slice without first allocating a substring.
 (define (intern-hash-slice [s : String] [start : i64] [len : i64]) : i64
   (intern-hash-words
@@ -2364,6 +2624,20 @@
       (string-data (& s)))
     start
     len))
+
+(cfg
+  compile-profile
+  (define (intern-compat-state-hash-slice-ref
+    [state : (& state InternCompatState)]
+    [s : String]
+    [start : i64]
+    [len : i64]) : i64
+    (intern-hash-words-with-profile
+      state.profile-metrics-address
+      (unsafe
+        (string-data (& s)))
+      start
+      len)))
 
 ;: Mask `hash` into `[0, capacity)`; capacity is a power of two.
 (define (intern-bucket [hash : i64] [capacity : i64]) : i64
@@ -2478,7 +2752,9 @@
     (if (array-ref state.map-ready 0)
       unit
       (intern-compat-state-reset! state))
-    (cfg compile-profile (intern-profile-note-generated))
+    (cfg
+      compile-profile
+      (intern-profile-note-generated state.profile-metrics-address))
     (let
       [next-id : i64 (array-ref state.generated-next-id 0)]
       (if (< next-id (intern-compat-state-pool-len state))
@@ -2608,7 +2884,10 @@
       [capacity : i64 (array-length state.generated-map-id-slots)]
       [hash : i64
         (bit-xor
-          (intern-hash name)
+          (cfg
+            compile-profile
+            (intern-compat-state-hash-ref (& state) (& name))
+            (intern-hash name))
           (bit-xor
             4611686018427387904
             (bit-xor (shl module-id 1) (shl base-id 18))))]
@@ -2979,7 +3258,11 @@
           (if (intern-compat-state-generated-id-active? state id)
             unit
             (tl_oob_abort))
-          (cfg compile-profile (intern-profile-note-generated-role-reuse role))
+          (cfg
+            compile-profile
+            (intern-profile-note-generated-role-reuse
+              state.profile-metrics-address
+              role))
           id))
       (let
         [_refresh-active : unit
@@ -3010,7 +3293,11 @@
                 generated-symbol-handles)
               index)
             (intern-id-slot-encode id))
-          (cfg compile-profile (intern-profile-note-generated-role-create role))
+          (cfg
+            compile-profile
+            (intern-profile-note-generated-role-create
+              state.profile-metrics-address
+              role))
           id)))))
 
 (define (intern-compat-state-generated-role-symbol-id
@@ -3088,7 +3375,9 @@
               unit)
             (cfg
               compile-profile
-              (intern-profile-note-generated-role-render role)))
+              (intern-profile-note-generated-role-render
+                state.profile-metrics-address
+                role)))
           unit)
         rendered))))
 
@@ -3142,7 +3431,11 @@
     [existing : InternSlotId (array-ref table.generated-symbol-handles index)]
     (if (not (intern-id-slot-empty? existing))
       (begin
-        (cfg compile-profile (intern-profile-note-generated-role-reuse role))
+        (cfg
+          compile-profile
+          (intern-profile-note-generated-role-reuse
+            intern-active-profile-metrics-address
+            role))
         (intern-id-slot-decode existing))
       (let
         [id : i64 (intern-generated-role-symbol-handle)]
@@ -3167,7 +3460,11 @@
                 generated-symbol-handles)
               index)
             (intern-id-slot-encode id))
-          (cfg compile-profile (intern-profile-note-generated-role-create role))
+          (cfg
+            compile-profile
+            (intern-profile-note-generated-role-create
+              intern-active-profile-metrics-address
+              role))
           id)))))
 
 (define (intern-generated-role-symbol-id [role : i64] [components : i64]) : i64
@@ -3206,7 +3503,9 @@
               unit)
             (cfg
               compile-profile
-              (intern-profile-note-generated-role-render role))
+              (intern-profile-note-generated-role-render
+                intern-active-profile-metrics-address
+                role))
             rendered))))))
 
 (define (intern-compat-state-generated-role-symbol?
@@ -3292,7 +3591,9 @@
     (if intern-map-ready
       unit
       (intern-reset!))
-    (cfg compile-profile (intern-profile-note-generated))
+    (cfg
+      compile-profile
+      (intern-profile-note-generated intern-active-profile-metrics-address))
     (let
       [persistent-name : String (intern-persistent-copy name)]
       [id : i64 (intern-generated-id-allocate!)]
@@ -3825,7 +4126,9 @@
           (& (array-ref intern-pool-slots intern-name-cache-id))
           (& name)))
       (return intern-name-cache-id))
-    (cfg compile-profile (intern-profile-note-intern))
+    (cfg
+      compile-profile
+      (intern-profile-note-intern intern-active-profile-metrics-address))
     (let
       [capacity : i64 (array-length intern-map-id-slots)]
       [hash : i64 (intern-hash name)]
@@ -3873,7 +4176,9 @@
     (if intern-map-ready
       unit
       (intern-reset!))
-    (cfg compile-profile (intern-profile-note-slice len))
+    (cfg
+      compile-profile
+      (intern-profile-note-slice intern-active-profile-metrics-address len))
     (let
       [capacity : i64 (array-length intern-map-id-slots)]
       [hash : i64 (intern-hash-slice text start len)]
@@ -3894,9 +4199,10 @@
                 (begin
                   (cfg
                     compile-profile
-                    (set!
-                      intern-profile-slice-miss-count
-                      (+ intern-profile-slice-miss-count 1)))
+                    (intern-profile-add!
+                      intern-active-profile-metrics-address
+                      intern-profile-slice-miss-metric
+                      1))
                   (set! (array-ref intern-pool-slots id) name)
                   (intern-record-qualified-metadata id name)
                   (intern-map-insert-existing-from id hash cursor 0 capacity)
@@ -3915,9 +4221,10 @@
                   (begin
                     (cfg
                       compile-profile
-                      (set!
-                        intern-profile-slice-hit-count
-                        (+ intern-profile-slice-hit-count 1)))
+                      (intern-profile-add!
+                        intern-active-profile-metrics-address
+                        intern-profile-slice-hit-metric
+                        1))
                     (set! out source-id)
                     (set! done true))
                   (begin
@@ -3932,12 +4239,14 @@
     (cfg
       compile-profile
       (begin
-        (set!
-          intern-profile-source-symbol-count
-          (+ intern-profile-source-symbol-count 1))
-        (set!
-          intern-profile-source-symbol-bytes-count
-          (+ intern-profile-source-symbol-bytes-count len))))
+        (intern-profile-add!
+          intern-active-profile-metrics-address
+          intern-profile-source-symbol-metric
+          1)
+        (intern-profile-add!
+          intern-active-profile-metrics-address
+          intern-profile-source-symbol-bytes-metric
+          len)))
     (intern-slice text start len)))
 
 ;; Typed lexer boundary. Parser tokens can carry only renderable source names;
@@ -3951,7 +4260,9 @@
 ;: probe strings as a side effect.
 (define (intern-lookup-content [name : String]) : InternLookup
   (begin
-    (cfg compile-profile (intern-profile-note-lookup))
+    (cfg
+      compile-profile
+      (intern-profile-note-lookup intern-active-profile-metrics-address))
     (if intern-map-ready
       (let
         [capacity : i64 (array-length intern-map-id-slots)]
@@ -4158,13 +4469,20 @@
     compile-profile
     (if (or (< id 0) (>= id (intern-capacity)))
       (begin
-        (set!
-          intern-profile-invalid-str-count
-          (+ intern-profile-invalid-str-count 1))
-        (set! intern-profile-invalid-str-last-id id)
+        (intern-profile-add!
+          intern-active-profile-metrics-address
+          intern-profile-invalid-str-metric
+          1)
+        (intern-profile-set!
+          intern-active-profile-metrics-address
+          intern-profile-invalid-str-last-id-metric
+          id)
         "<invalid-intern-id>")
       (begin
-        (set! intern-profile-render-count (+ intern-profile-render-count 1))
+        (intern-profile-add!
+          intern-active-profile-metrics-address
+          intern-profile-render-metric
+          1)
         (intern-pool-string-shared-view id)))
     (intern-pool-string-shared-view id)))
 

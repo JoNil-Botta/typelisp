@@ -74,6 +74,20 @@
         (cast 4 : i64)
         "b"
         (format.named width (cast 3 : i64)))]
+    [inline-precision : String (format.format "{:.3}" seven)]
+    [dollar-precision : String (format.format "{0:.1$}:{1}" seven two)]
+    [star-precision : String (format.format "{:.*}:{0}" two seven)]
+    [named-precision : String
+      (format.format
+        "{value:.precision$}"
+        (format.named value seven)
+        (format.named precision two))]
+    [rust-counter-one : String
+      (format.format "Hello {} is {:.*}" "world" two seven)]
+    [rust-counter-two : String
+      (format.format "Hello {1} is {2:.*}" two "world" seven)]
+    [rust-counter-three : String
+      (format.format "Hello {} is {2:.*}" "world" two seven)]
     (and
       (string.eq empty-template "")
       (string.eq no-holes "plain text")
@@ -95,6 +109,13 @@
       (string.eq aligned "a----|  b  |    c")
       (string.eq signed-zero "+0012")
       (string.eq dynamic-width "a   :b  ")
+      (string.eq inline-precision "7")
+      (string.eq dollar-precision "7:2")
+      (string.eq star-precision "7:2")
+      (string.eq named-precision "7")
+      (string.eq rust-counter-one "Hello world is 7")
+      (string.eq rust-counter-two "Hello world is 7")
+      (string.eq rust-counter-three "Hello world is 7")
       (= state.value 123))))
 
 ;; The same scanner drives `println`/`print-format`, which reach it through

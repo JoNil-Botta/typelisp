@@ -38,10 +38,20 @@
     [width : i64 5]
     (format.format "{:width$}" value)))
 
+(define (format-captured-precision [value : i64]) : String
+  (let
+    ;; Referenced by generated call-site capture syntax.
+    ;; lint-allow: unused-variable
+    [precision : i64 5]
+    (format.format "{:.precision$}" value)))
+
 (define (main) : i64
   (let
     [state : FormatEvalState (FormatEvalState 0)]
     [width-state : FormatEvalState (FormatEvalState 0)]
+    [precision-state : FormatEvalState (FormatEvalState 0)]
+    [repeated-precision-state : FormatEvalState (FormatEvalState 0)]
+    [star-state : FormatEvalState (FormatEvalState 0)]
     [name : String "Ada"]
     [score : i64 -7]
     [enabled : bool true]
@@ -113,6 +123,66 @@
         (format-counted (&mut width-state) 5))]
     [repeated-count : String
       (format.format "{0:1$}|{2:1$}|{1}" "a" (cast 3 : i64) "b")]
+    [inline-precision : String (format.format "{:.0005}" (cast 17 : i64))]
+    [dynamic-precision : String
+      (format.format "{0:.1$}" (cast 18 : i64) (cast 5 : i64))]
+    [named-precision : String
+      (format.format
+        "{value:.precision$}"
+        (format.named value (cast 19 : i64))
+        (format.named precision (cast 5 : i64)))]
+    [captured-precision : String (format-captured-precision 20)]
+    [star-implicit : String
+      (format.format "{:.*}" (cast 5 : i64) (cast 21 : i64))]
+    [star-indexed : String
+      (format.format "{1:.*}" (cast 5 : i64) (cast 22 : i64))]
+    [star-named : String
+      (format.format
+        "{value:.*}"
+        (cast 5 : i64)
+        (format.named value (cast 23 : i64)))]
+    [precision-no-advance : String
+      (format.format
+        "{:.2$}:{}:{}"
+        (cast 24 : i64)
+        (cast 25 : i64)
+        (cast 5 : i64))]
+    [repeated-precision-count : String
+      (format.format
+        "{0:.1$}|{2:.1$}|{1}"
+        (cast 26 : i64)
+        (cast 5 : i64)
+        (cast 27 : i64))]
+    [precision-eval : String
+      (format.format
+        "{0:.1$}:{1}"
+        (format-counted (&mut precision-state) 1)
+        (format-counted (&mut precision-state) 2))]
+    [repeated-precision-eval : String
+      (format.format
+        "{0:.1$}|{2:.1$}|{1}"
+        (format-counted (&mut repeated-precision-state) 1)
+        (format-counted (&mut repeated-precision-state) 2)
+        (format-counted (&mut repeated-precision-state) 3))]
+    [star-eval : String
+      (format.format
+        "{:.*}"
+        (format-counted (&mut star-state) 3)
+        (format-counted (&mut star-state) 4))]
+    [rust-counter-one : String
+      (format.format "Hello {} is {:.*}" "world" (cast 5 : i64) (cast 28 : i64))]
+    [rust-counter-two : String
+      (format.format
+        "Hello {1} is {2:.*}"
+        (cast 5 : i64)
+        "world"
+        (cast 29 : i64))]
+    [rust-counter-three : String
+      (format.format
+        "Hello {} is {2:.*}"
+        "world"
+        (cast 5 : i64)
+        (cast 30 : i64))]
     (if (and
       (string.eq got "Ada:-7:true:x:1.5:root=9 {ok}")
       (string.eq indexed "c/a/b/c")
@@ -147,6 +217,24 @@
       (string.eq owner-padded "  root=9")
       (string.eq dynamic-eval "    1:5")
       (= width-state.value 15)
-      (string.eq repeated-count "a  |b  |3"))
+      (string.eq repeated-count "a  |b  |3")
+      (string.eq inline-precision "17")
+      (string.eq dynamic-precision "18")
+      (string.eq named-precision "19")
+      (string.eq captured-precision "20")
+      (string.eq star-implicit "21")
+      (string.eq star-indexed "22")
+      (string.eq star-named "23")
+      (string.eq precision-no-advance "24:25:5")
+      (string.eq repeated-precision-count "26|27|5")
+      (string.eq precision-eval "1:2")
+      (= precision-state.value 12)
+      (string.eq repeated-precision-eval "1|3|2")
+      (= repeated-precision-state.value 123)
+      (string.eq star-eval "4")
+      (= star-state.value 34)
+      (string.eq rust-counter-one "Hello world is 28")
+      (string.eq rust-counter-two "Hello world is 29")
+      (string.eq rust-counter-three "Hello world is 30"))
       42
       1)))

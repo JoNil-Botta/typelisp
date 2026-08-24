@@ -6363,16 +6363,30 @@ count must have exact source type `i64` and traps before allocation when
 negative. Count references count as argument uses but do not advance the
 implicit value iterator.
 
+Precision may be an inline nonnegative signed-`i64` decimal, a positional or
+named count reference written `N$` or `name$`, or `*`. Dollar references obey
+the width rules and do not advance the implicit iterator. Star takes its count
+from the current implicit positional argument and advances that iterator once;
+an implicit value therefore follows the count, while an indexed or named value
+does not advance the iterator itself. Thus `{:.*}` consumes count then value,
+whereas `{2:.*}` and `{name:.*}` consume only the implicit count. Dynamic
+precision requires exact source type `i64` and traps with the precision-count
+diagnostic before rendering or allocation when negative. An omitted precision
+remains distinct from explicit zero in the shared options value. Ordinary
+integral Display and radix rendering accepts and ignores precision. Text,
+bool, char, owner Display, and float precision consumers are separate formatter
+features and produce category-specific unsupported diagnostics until present.
+
 The `+` sign emits a plus for nonnegative `i64`/`f64`/`f32` values and is
 rejected for nonnumeric values; `-` is accepted as the Rust-compatible no-op.
 The `0` flag performs numeric sign-aware zero padding, inserting zeroes after an
 existing or requested sign and after a base prefix when a type-specific
 renderer supplies one; it overrides fill/alignment for that numeric value. `#`
 is retained in the common option plan for type-specific renderers and does not
-change default Display output. Precision forms and the selectors `?`, `x?`,
-`X?`, `o`, `x`, `X`, `p`, `b`, `e`, and `E` are parsed into that same plan, but
-currently produce focused unsupported-semantics diagnostics. Malformed,
-duplicated, or out-of-order options are rejected during macro expansion.
+change default Display output. The selectors `?`, `x?`, `X?`, `o`, `x`, `X`,
+`p`, `b`, `e`, and `E` are parsed into that same plan, but currently produce
+focused unsupported-semantics diagnostics. Malformed, duplicated, or
+out-of-order options are rejected during macro expansion.
 
 The built-in placeholder types are `String`, `i64`, `bool`, `char`, `f64`, and
 `f32`. A struct or enum instead delegates to a function in the type's canonical

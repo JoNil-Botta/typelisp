@@ -79,12 +79,12 @@
     [state : profile_state.CompilerProfileState]) : unit
     (begin
       (cps.compiler-profile-summary-emit
-        state
+        (profile_state.compiler-profile-state-shared-view state)
         cps.compiler-profile-summary-backend-function
         "backend"
         "function")
       (cps.compiler-profile-summary-emit
-        state
+        (profile_state.compiler-profile-state-shared-view state)
         cps.compiler-profile-summary-backend-module
         "backend"
         "module"))))
@@ -173,21 +173,21 @@
         (-
           (profile.now-ms)
           (profile_state.compiler-profile-state-metric-value
-            state
+            (profile_state.compiler-profile-state-shared-view state)
             compiler-backend-profile-detail-start-ms-metric))]
       (cfg
         compile-profile-summary
         (if (string.eq phase "function")
           (begin
             (cps.compiler-profile-summary-note!
-              state
+              (profile_state.compiler-profile-state-shared-view state)
               cps.compiler-profile-summary-backend-function
-              name
+              (owned_view.compiler-owned-shared-view name)
               elapsed)
             (cps.compiler-profile-summary-note-module!
-              state
+              (profile_state.compiler-profile-state-shared-view state)
               cps.compiler-profile-summary-backend-module
-              name
+              (owned_view.compiler-owned-shared-view name)
               elapsed))
           unit)
         (if (>= elapsed 1)

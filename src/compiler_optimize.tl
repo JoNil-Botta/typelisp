@@ -380,17 +380,17 @@
     [state : profile_state.CompilerProfileState]) : unit
     (begin
       (cps.compiler-profile-summary-emit
-        state
+        (profile_state.compiler-profile-state-shared-view state)
         cps.compiler-profile-summary-optimizer-pass
         "optimizer"
         "pass")
       (cps.compiler-profile-summary-emit
-        state
+        (profile_state.compiler-profile-state-shared-view state)
         cps.compiler-profile-summary-optimizer-function
         "optimizer"
         "function")
       (cps.compiler-profile-summary-emit
-        state
+        (profile_state.compiler-profile-state-shared-view state)
         cps.compiler-profile-summary-optimizer-module
         "optimizer"
         "module"))))
@@ -757,21 +757,21 @@
         (-
           (profile.now-ms)
           (profile_state.compiler-profile-state-metric-value
-            state
+            (profile_state.compiler-profile-state-shared-view state)
             compiler-opt-profile-detail-start-ms-metric))]
       (cfg
         compile-profile-summary
         (if (string.eq phase "function")
           (begin
             (cps.compiler-profile-summary-note!
-              state
+              (profile_state.compiler-profile-state-shared-view state)
               cps.compiler-profile-summary-optimizer-function
-              name
+              (owned_view.compiler-owned-shared-view name)
               elapsed)
             (cps.compiler-profile-summary-note-module!
-              state
+              (profile_state.compiler-profile-state-shared-view state)
               cps.compiler-profile-summary-optimizer-module
-              name
+              (owned_view.compiler-owned-shared-view name)
               elapsed))
           unit)
         (if (>= elapsed 1)
@@ -800,7 +800,7 @@
         (cps.compiler-profile-summary-note!
           state
           cps.compiler-profile-summary-optimizer-pass
-          pass
+          (owned_view.compiler-owned-shared-view pass)
           elapsed)
         (if (>= elapsed 1)
           (io.print-error

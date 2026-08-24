@@ -1,5 +1,6 @@
 ;; compiler_profile_summary.tl - bounded deterministic job-owned reports.
 (import stdlib.str_cat_runtime as str_cat)
+(import compiler_owned_view as owned_view)
 (import compiler_profile_state as profile_state)
 (import stdlib.hash)
 (import stdlib.io)
@@ -494,7 +495,7 @@
     name
     elapsed))
 
-(define (compiler-profile-summary-module [name : String]) : String
+(define (compiler-profile-summary-module [name : (& name str)]) : String
   (let
     [length : i64 (string.string-length name)]
     [index : i64 0]
@@ -697,8 +698,8 @@
                 (array-ref call-values index))]
             (begin
               (compiler-profile-summary-line
-                scope-name
-                kind
+                (owned_view.compiler-owned-shared-view scope-name)
+                (owned_view.compiler-owned-shared-view kind)
                 (+ rank 1)
                 (if (compiler-profile-summary-exact-scope? scope)
                   (if (string.eq kind "module")
@@ -712,8 +713,8 @@
               (set! shown-calls (+ shown-calls calls))
               (set! rank (+ rank 1)))))
         (compiler-profile-summary-line
-          scope-name
-          kind
+          (owned_view.compiler-owned-shared-view scope-name)
+          (owned_view.compiler-owned-shared-view kind)
           0
           "<remainder>"
           (- (array-ref total-elapsed scope) shown-elapsed)

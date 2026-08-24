@@ -96133,8 +96133,6 @@
   (let
     [left-len : i64 (ast.ast-decl-list-len (& left))]
     [right-len : i64 (ast.ast-decl-list-len (& right))]
-    [right-slots : (__tl_dyn-array ast.AstDecl)
-      (tc-global-shared-view right.slots)]
     (if (and
       (<= left-len right.offset)
       right.prependable
@@ -96145,12 +96143,7 @@
             (ptr->int (ptr-cast (__tl_array-data right.slots) : (Ptr u8)))))))
       (let
         [new-offset : i64 (- right.offset left-len)]
-        [out : ast.AstDeclList
-          (ast.AstDeclList
-            (tc-global-shared-view right-slots)
-            new-offset
-            (+ left-len right-len)
-            true)]
+        [right-slots : (__tl_dyn-array ast.AstDecl) right.slots]
         (begin
           ;; Macro expansion walks a suffix of the current whole-program vector.
           ;; Its consumed prefix is dead after the splice context is rebuilt, so
@@ -96164,11 +96157,19 @@
             new-offset
             0
             left-len)
-          (parser.compiler-parse-decl-origin-register-list-aliases!
-            (& out)
-            0
-            left)
-          out))
+          (let
+            [out : ast.AstDeclList
+              (ast.AstDeclList
+                right-slots
+                new-offset
+                (+ left-len right-len)
+                true)]
+            (begin
+              (parser.compiler-parse-decl-origin-register-list-aliases!
+                (& out)
+                0
+                left)
+              out))))
       (let
         [out : ast.AstDeclList
           (ast.ast-decl-list-with-capacity (+ left-len right-len))]
@@ -96394,8 +96395,6 @@
   (let
     [left-len : i64 (ast.ast-decl-path-list-len (& left))]
     [right-len : i64 (ast.ast-decl-path-list-len (& right))]
-    [right-slots : (__tl_dyn-array String) (tc-global-shared-view right.slots)]
-    [right-owner-ids : (__tl_dyn-array i64) right.owner-ids]
     [left-capacity : i64 (array-length left.slots)]
     [right-capacity : i64 (array-length right.slots)]
     (if (and
@@ -96408,6 +96407,8 @@
             (ptr->int (ptr-cast (__tl_array-data right.slots) : (Ptr u8)))))))
       (let
         [new-offset : i64 (- right.offset left-len)]
+        [right-slots : (__tl_dyn-array String) right.slots]
+        [right-owner-ids : (__tl_dyn-array i64) right.owner-ids]
         (begin
           (ast.ast-decl-path-list-copy-to
             (&mut right-slots)

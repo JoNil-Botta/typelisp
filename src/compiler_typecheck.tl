@@ -8294,10 +8294,11 @@
             [(csym.ResultCompilerSymbols.Ok symbols)
               (match (csym.build-compiler-registries program)
                 [(csym.ResultCompilerRegistries.Ok registries)
-                  (match program
+                  (match (ast.ast-global-shared-view program)
                     [(ast.AstProgram.Program decls-box)
                       (let
-                        [decls : ast.AstDeclList (__tl-box-place decls-box)]
+                        [decls : ast.AstDeclList
+                          (ast.ast-decl-list-box-shared-view decls-box)]
                         [decl : ast.AstDecl
                           (ast.ast-decl-list-get
                             (& decls)
@@ -8305,7 +8306,7 @@
                             (ast.ast-decl-fallback))]
                         [ctx : tc_core.TcContext
                           (tc_core.tc-context-new
-                            program
+                            (ast.ast-global-shared-view program)
                             symbols
                             registries
                             ""

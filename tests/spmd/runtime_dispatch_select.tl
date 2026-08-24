@@ -17,8 +17,8 @@
 
 ;; lint-allow: function-name-case -- assembly dispatch symbol fixture
 (define (dispatch_fill_inputs
-  [a : (__tl_dyn-array i64)]
-  [b : (__tl_dyn-array i64)]
+  [a : (&mut a (__tl_dyn-array i64))]
+  [b : (&mut b (__tl_dyn-array i64))]
   [n : i64]) : unit
   (let
     [i : i64 0]
@@ -48,7 +48,7 @@
     [out : (__tl_dyn-array i64) (array.make-array i64 n)]
     [acc : i64 0]
     (begin
-      (dispatch_fill_inputs a b n)
+      (dispatch_fill_inputs (&mut a) (&mut b) n)
       (foreach
         ([i : i64 0 n])
         (set! (array-ref out i) (+ (array-ref a i) (array-ref b i))))
@@ -65,7 +65,7 @@
     [out : (__tl_dyn-array i64) (array.make-array i64 n)]
     [acc : i64 0]
     (begin
-      (dispatch_fill_inputs a b n)
+      (dispatch_fill_inputs (&mut a) (&mut b) n)
       (foreach
         ([i : i64 0 n])
         (set! (array-ref out i) (+ (array-ref a i) (array-ref b i))))
@@ -82,7 +82,7 @@
     [out : (__tl_dyn-array i64) (array.make-array i64 n)]
     [acc : i64 0]
     (begin
-      (dispatch_fill_inputs a b n)
+      (dispatch_fill_inputs (&mut a) (&mut b) n)
       (foreach
         ([i : i64 0 n])
         (set! (array-ref out i) (+ (array-ref a i) (array-ref b i))))

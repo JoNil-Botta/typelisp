@@ -3,6 +3,22 @@
 (import stdlib.arena)
 (import stdlib.string)
 (import compiler_ir_types)
+
+(define (compiler-ir-types-smoke-instr-seq-prepend
+  [instr : compiler_ir_types.CompilerIrInstr]
+  [rest : compiler_ir_types.CompilerIrInstrSeq]) : compiler_ir_types.CompilerIrInstrSeq
+  (let
+    [builder : compiler_ir_types.CompilerIrInstrBuilder
+      (compiler_ir_types.compiler-ir-instr-builder-with-capacity (+ rest.len 1))]
+    (begin
+      (compiler_ir_types.compiler-ir-instr-builder-push! (&mut builder) instr)
+      (compiler_ir_types.compiler-ir-instr-builder-append-seq-range!
+        (&mut builder)
+        (compiler_ir_types.compiler-ir-global-shared-view rest)
+        0
+        rest.len)
+      (compiler_ir_types.compiler-ir-instr-builder-to-seq builder))))
+
 (import compiler_ast_types as ast)
 (import compiler_intern as ci)
 (import compiler_intern_state as cis)
@@ -416,21 +432,21 @@
 
 (define (compiler-ir-smoke-function-seq-roundtrip-ok?) : bool
   (let
-    [entry-instrs : compiler_ir_types.CompilerIrInstrList
-      (compiler_ir_types.compiler-ir-instr-cons
+    [entry-instrs : compiler_ir_types.CompilerIrInstrSeq
+      (compiler-ir-types-smoke-instr-seq-prepend
         (compiler_ir_types.CompilerIrInstr.Mov
           1
           (compiler_ir_types.CompilerIrValue.I64 10)
           (ast.AstType.I64))
-        (compiler_ir_types.compiler-ir-instr-cons
+        (compiler-ir-types-smoke-instr-seq-prepend
           (compiler_ir_types.CompilerIrInstr.Return
             (compiler_ir_types.CompilerIrMaybeValue.Some
               (compiler_ir_types.CompilerIrValue.Var 1)))
-          compiler_ir_types.CompilerIrInstrList.Nil))]
+          (compiler_ir_types.compiler-ir-instr-seq-empty)))]
     [blocks : compiler_ir_types.CompilerIrBlockList
       (compiler_ir_types.compiler-ir-block-list-compact
         (compiler_ir_types.compiler-ir-block-cons
-          (compiler_ir_types.compiler-ir-block
+          (compiler_ir_types.CompilerIrBlock.Block
             (compiler_ir_types.compiler-ir-label "entry")
             entry-instrs)
           compiler_ir_types.CompilerIrBlockList.Nil))]
@@ -498,17 +514,17 @@
 (define (compiler-ir-smoke-reversed-compaction-ok?) : bool
   (let
     [first-block : compiler_ir_types.CompilerIrBlock
-      (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.CompilerIrBlock.Block
         (compiler_ir_types.compiler-ir-label "first")
-        compiler_ir_types.CompilerIrInstrList.Nil)]
+        (compiler_ir_types.compiler-ir-instr-seq-empty))]
     [second-block : compiler_ir_types.CompilerIrBlock
-      (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.CompilerIrBlock.Block
         (compiler_ir_types.compiler-ir-label "second")
-        compiler_ir_types.CompilerIrInstrList.Nil)]
+        (compiler_ir_types.compiler-ir-instr-seq-empty))]
     [third-block : compiler_ir_types.CompilerIrBlock
-      (compiler_ir_types.compiler-ir-block
+      (compiler_ir_types.CompilerIrBlock.Block
         (compiler_ir_types.compiler-ir-label "third")
-        compiler_ir_types.CompilerIrInstrList.Nil)]
+        (compiler_ir_types.compiler-ir-instr-seq-empty))]
     [reversed-blocks : compiler_ir_types.CompilerIrBlockList
       (compiler_ir_types.compiler-ir-block-cons
         third-block
@@ -707,33 +723,31 @@
         (compiler_ir_types.CompilerIrValue.Var 1)
         compiler_ir_types.CompilerIrCallArgs.Nil
         (ast.AstType.I64))]
-    [instrs : compiler_ir_types.CompilerIrInstrList
-      (compiler_ir_types.compiler-ir-instr-cons
+    [instrs : compiler_ir_types.CompilerIrInstrSeq
+      (compiler-ir-types-smoke-instr-seq-prepend
         (compiler_ir_types.CompilerIrInstr.Mov
           7
           (compiler_ir_types.CompilerIrValue.I64 10)
           (ast.AstType.I64))
-        (compiler_ir_types.compiler-ir-instr-cons
+        (compiler-ir-types-smoke-instr-seq-prepend
           (compiler_ir_types.CompilerIrInstr.BoundsCheck
             (compiler_ir_types.CompilerIrValue.Var 7)
             (compiler_ir_types.CompilerIrValue.I64 10)
             (compiler_ir_types.compiler-ir-label "ok"))
-          (compiler_ir_types.compiler-ir-instr-cons
+          (compiler-ir-types-smoke-instr-seq-prepend
             (compiler_ir_types.CompilerIrInstr.BinOp
               8
               (compiler_ir_types.CompilerIrBinOp.Add)
               (compiler_ir_types.CompilerIrValue.Var 7)
               (compiler_ir_types.CompilerIrValue.I64 1)
               (ast.AstType.I64))
-            (compiler_ir_types.compiler-ir-instr-cons
+            (compiler-ir-types-smoke-instr-seq-prepend
               (compiler_ir_types.CompilerIrInstr.Return
                 (compiler_ir_types.CompilerIrMaybeValue.Some
                   (compiler_ir_types.CompilerIrValue.Var 8)))
-              compiler_ir_types.CompilerIrInstrList.Nil))))]
-    [seq : compiler_ir_types.CompilerIrInstrSeq
-      (compiler_ir_types.compiler-ir-instr-seq-from-list instrs)]
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-      (compiler_ir_types.compiler-ir-global-shared-view seq.slots)]
+              (compiler_ir_types.compiler-ir-instr-seq-empty)))))]
+    [seq : compiler_ir_types.CompilerIrInstrSeq instrs]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) seq.slots]
     (and
       (=
         (compiler_ir_types.compiler-ir-instr-loop-dst-or call-indirect (- 0 1))
@@ -1216,44 +1230,43 @@
           (compiler_ir_types.CompilerIrValue.I64 2)
           (compiler_ir_types.compiler-ir-value-seq-empty)))]
     [instrs : compiler_ir_types.CompilerIrInstrSeq
-      (compiler_ir_types.compiler-ir-instr-seq-from-list
-        (compiler_ir_types.compiler-ir-instr-cons
-          (compiler_ir_types.CompilerIrInstr.Pack
-            1
-            words-gp-sse
-            (ast.ast-global-shared-view group-ty))
-          (compiler_ir_types.compiler-ir-instr-cons
-            (compiler_ir_types.CompilerIrInstr.Mov
-              2
-              (compiler_ir_types.CompilerIrValue.I64 0)
-              (ast.ast-global-shared-view one-ty))
-            (compiler_ir_types.compiler-ir-instr-cons
+      (compiler-ir-types-smoke-instr-seq-prepend
+        (compiler_ir_types.CompilerIrInstr.Pack
+          1
+          words-gp-sse
+          (ast.ast-global-shared-view group-ty))
+        (compiler-ir-types-smoke-instr-seq-prepend
+          (compiler_ir_types.CompilerIrInstr.Mov
+            2
+            (compiler_ir_types.CompilerIrValue.I64 0)
+            (ast.ast-global-shared-view one-ty))
+          (compiler-ir-types-smoke-instr-seq-prepend
+            (compiler_ir_types.CompilerIrInstr.Pack
+              3
+              words-gp-gp
+              (ast.ast-global-shared-view conflict-ty))
+            (compiler-ir-types-smoke-instr-seq-prepend
               (compiler_ir_types.CompilerIrInstr.Pack
-                3
-                words-gp-gp
+                4
+                words-sse-gp
                 (ast.ast-global-shared-view conflict-ty))
-              (compiler_ir_types.compiler-ir-instr-cons
-                (compiler_ir_types.CompilerIrInstr.Pack
-                  4
-                  words-sse-gp
-                  (ast.ast-global-shared-view conflict-ty))
-                (compiler_ir_types.compiler-ir-instr-cons
+              (compiler-ir-types-smoke-instr-seq-prepend
+                (compiler_ir_types.CompilerIrInstr.Mov
+                  5
+                  (compiler_ir_types.CompilerIrValue.I64 0)
+                  (ast.ast-global-shared-view private-ty))
+                (compiler-ir-types-smoke-instr-seq-prepend
                   (compiler_ir_types.CompilerIrInstr.Mov
-                    5
+                    6
                     (compiler_ir_types.CompilerIrValue.I64 0)
-                    (ast.ast-global-shared-view private-ty))
-                  (compiler_ir_types.compiler-ir-instr-cons
-                    (compiler_ir_types.CompilerIrInstr.Mov
-                      6
+                    (ast.ast-global-shared-view malformed-ty))
+                  (compiler-ir-types-smoke-instr-seq-prepend
+                    (compiler_ir_types.ir-instr-descriptor-pair-pack
+                      7
                       (compiler_ir_types.CompilerIrValue.I64 0)
-                      (ast.ast-global-shared-view malformed-ty))
-                    (compiler_ir_types.compiler-ir-instr-cons
-                      (compiler_ir_types.ir-instr-descriptor-pair-pack
-                        7
-                        (compiler_ir_types.CompilerIrValue.I64 0)
-                        (compiler_ir_types.CompilerIrValue.I64 0)
-                        (compiler_ir_types.CompilerIrDescriptorPairKind.OwnedString))
-                      compiler_ir_types.CompilerIrInstrList.Nil))))))))]
+                      (compiler_ir_types.CompilerIrValue.I64 0)
+                      (compiler_ir_types.CompilerIrDescriptorPairKind.OwnedString))
+                    (compiler_ir_types.compiler-ir-instr-seq-empty))))))))]
     [params : compiler_ir_types.CompilerIrParamList
       (compiler_ir_types.compiler-ir-param-cons
         (compiler_ir_types.CompilerIrParam.Param

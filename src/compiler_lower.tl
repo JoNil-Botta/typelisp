@@ -46602,7 +46602,10 @@
                 (lower-simd-lanes-for-elem mode (ast.AstType.I32)))
               (=
                 operand-lanes
-                (lower-simd-lanes-for-elem mode (ast.AstType.I16)))))]
+                (lower-simd-lanes-for-elem mode (ast.AstType.I16)))
+              (=
+                operand-lanes
+                (lower-simd-lanes-for-elem mode (ast.AstType.I8)))))]
         (if (or (lower-masked-vector-binop-supported? op) vector-mul-width)
           operand-lanes
           -1))]
@@ -49995,10 +49998,7 @@
     [(ast.AstBinOp.BitXor) true]
     [(ast.AstBinOp.Shl) (lower-spmd-shift-lane-supported? elem-ty)]
     [(ast.AstBinOp.Shr) (lower-spmd-shift-lane-supported? elem-ty)]
-    [(ast.AstBinOp.Mul)
-      (and
-        (> (lower-simd-lanes-for-elem mode elem-ty) 0)
-        (not (lower-spmd-byte-lane-type? elem-ty)))]
+    [(ast.AstBinOp.Mul) (> (lower-simd-lanes-for-elem mode elem-ty) 0)]
     [_ false]))
 
 (define (lower-spmd-shift-lane-supported? [ty : ast.AstType]) : bool
@@ -50024,15 +50024,6 @@
     [(ast.AstType.I64) 64]
     [(ast.AstType.U64) 64]
     [_ 0]))
-
-(define (lower-spmd-byte-lane-type? [ty : ast.AstType]) : bool
-  (match (tc_core.tc-type-without-regions ty)
-    [(ast.AstType.I8) true]
-    [(ast.AstType.U8) true]
-    [_ false]))
-
-(define (lower-spmd-byte-mul-diagnostic) : String
-  "lower: SPMD foreach SIMD lowering does not support 8-bit lane multiplication; use scalar or widen before multiplying")
 
 (define (lower-spmd-map-shift-diagnostic
   [op-name : String]
@@ -50175,119 +50166,6 @@
         want-left
         bindings
         (+ binding-index 1)))))
-
-(define (lower-spmd-expr-has-mul?
-  [ctx : tc_core.TcContext]
-  [expr : ast.AstExpr]) : bool
-  (match expr
-    [(ast.AstExpr.Spanned inner-box _)
-      (let
-        [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-spmd-expr-has-mul? ctx inner))]
-    [(ast.AstExpr.Ann inner-box _)
-      (let
-        [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-spmd-expr-has-mul? ctx inner))]
-    [(ast.AstExpr.Cast inner-box _)
-      (let
-        [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-spmd-expr-has-mul? ctx inner))]
-    [(ast.AstExpr.Binary op lhs-box rhs-box)
-      (match op
-        [(ast.AstBinOp.Mul) true]
-        [_
-          (or
-            (lower-spmd-expr-has-mul? ctx (lower-context-expr-get ctx lhs-box))
-            (lower-spmd-expr-has-mul? ctx (lower-context-expr-get ctx rhs-box)))])]
-    [(ast.AstExpr.ArraySet arr-box index-box value-box)
-      (or
-        (lower-spmd-expr-has-mul? ctx (lower-context-expr-get ctx arr-box))
-        (lower-spmd-expr-has-mul? ctx (lower-context-expr-get ctx index-box))
-        (lower-spmd-expr-has-mul? ctx (lower-context-expr-get ctx value-box)))]
-    [(ast.AstExpr.Begin exprs) (lower-spmd-expr-list-has-mul? ctx exprs)]
-    [(ast.AstExpr.Let let-box)
-      (match (__tl-box-place let-box)
-        [(ast.AstLet.Let bindings body-box)
-          (or
-            (lower-spmd-let-bindings-have-mul? ctx bindings)
-            (lower-spmd-expr-has-mul? ctx (lower-context-expr-get ctx body-box)))])]
-    [(ast.AstExpr.If cond-box then-box else-box)
-      (or
-        (lower-spmd-expr-has-mul? ctx (lower-context-expr-get ctx cond-box))
-        (lower-spmd-expr-has-mul? ctx (lower-context-expr-get ctx then-box))
-        (lower-spmd-expr-has-mul? ctx (lower-context-expr-get ctx else-box)))]
-    [_ false]))
-
-(define (lower-spmd-expr-list-has-mul?
-  [ctx : tc_core.TcContext]
-  [exprs : ast.AstExprList]) : bool
-  (lower-spmd-expr-list-has-mul-at? ctx (& exprs) 0))
-
-(define (lower-spmd-expr-list-has-mul-at?
-  [ctx : tc_core.TcContext]
-  [exprs : (& exprs ast.AstExprList)]
-  [index : i64]) : bool
-  (if (>= index exprs.len)
-    false
-    (or
-      (lower-spmd-expr-has-mul?
-        ctx
-        (lower-context-expr-get ctx (ast.ast-expr-list-get exprs index 0)))
-      (lower-spmd-expr-list-has-mul-at? ctx exprs (+ index 1)))))
-
-(define (lower-spmd-let-bindings-have-mul?
-  [ctx : tc_core.TcContext]
-  [bindings : ast.AstLetBindingList]) : bool
-  (lower-spmd-let-bindings-have-mul-at? ctx (& bindings) 0))
-
-(define (lower-spmd-let-bindings-have-mul-at?
-  [ctx : tc_core.TcContext]
-  [bindings : (& bindings ast.AstLetBindingList)]
-  [binding-index : i64]) : bool
-  (if (>= binding-index (ast.ast-let-binding-list-len bindings))
-    false
-    (or
-      (match (ast.ast-let-binding-list-get
-        bindings
-        binding-index
-        (ast.ast-let-binding-fallback))
-        [(ast.AstLetBinding.Binding _ _ init-box)
-          (lower-spmd-expr-has-mul? ctx (lower-context-expr-get ctx init-box))])
-      (lower-spmd-let-bindings-have-mul-at? ctx bindings (+ binding-index 1)))))
-
-(define (lower-simple-vector-map-has-unsupported-byte-mul?
-  [ctx : tc_core.TcContext]
-  [mode : CompilerLowerMode]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [index : String]
-  [body : ast.AstExpr]) : bool
-  (match body
-    [(ast.AstExpr.Spanned inner-box _)
-      (let
-        [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-simple-vector-map-has-unsupported-byte-mul?
-          ctx
-          mode
-          env
-          type-env
-          index
-          inner))]
-    [(ast.AstExpr.ArraySet arr-box set-index-box value-box)
-      (let
-        [arr : ast.AstExpr (lower-context-expr-get ctx arr-box)]
-        [set-index : ast.AstExpr (lower-context-expr-get ctx set-index-box)]
-        [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
-        (if (lower-expr-is-var? ctx set-index index)
-          (match (lower-contiguous-sequence-var ctx env type-env arr)
-            [(LowerMaybeArrayVar.Some _ dst-elem)
-              (and
-                (> (lower-simd-lanes-for-elem mode dst-elem) 0)
-                (lower-spmd-byte-lane-type? dst-elem)
-                (lower-spmd-expr-has-mul? ctx value))]
-            [(LowerMaybeArrayVar.No) false])
-          false))]
-    [_ false]))
 
 (define (lower-simple-vector-map-unsupported-shift-lane
   [ctx : tc_core.TcContext]
@@ -62314,59 +62192,47 @@
                         body
                         (lower-spmd-shuffle-diagnostic))))]
                 [(lower-vector-body-has-array-read? ctx body)
-                  (if (lower-simple-vector-map-has-unsupported-byte-mul?
+                  (match (lower-simple-vector-map-unsupported-shift-lane
                     ctx
                     (lower-state-mode state)
                     env
                     type-env
                     index
+                    true
                     body)
-                    (ResultLowerExpr.Err
-                      (box
-                        (lower-diagnostic-at-expr
-                          body
-                          (lower-spmd-byte-mul-diagnostic))))
-                    (match (lower-simple-vector-map-unsupported-shift-lane
-                      ctx
-                      (lower-state-mode state)
-                      env
-                      type-env
-                      index
-                      true
-                      body)
-                      [(LowerMaybeAstType.Some lane-ty)
-                        (ResultLowerExpr.Err
-                          (box
-                            (lower-diagnostic-at-expr
-                              body
-                              (lower-spmd-map-shift-diagnostic
-                                "shl"
-                                lane-ty
-                                (lower-state-mode state)))))]
-                      [(LowerMaybeAstType.No)
-                        (match (lower-simple-vector-map-unsupported-shift-lane
-                          ctx
-                          (lower-state-mode state)
-                          env
-                          type-env
-                          index
-                          false
-                          body)
-                          [(LowerMaybeAstType.Some lane-ty)
-                            (ResultLowerExpr.Err
-                              (box
-                                (lower-diagnostic-at-expr
-                                  body
-                                  (lower-spmd-map-shift-diagnostic
-                                    "shr"
-                                    lane-ty
-                                    (lower-state-mode state)))))]
-                          [(LowerMaybeAstType.No)
-                            (ResultLowerExpr.Err
-                              (box
-                                (lower-diagnostic-at-expr
-                                  body
-                                  (lower-simd-foreach-fallback-diagnostic))))])]))]
+                    [(LowerMaybeAstType.Some lane-ty)
+                      (ResultLowerExpr.Err
+                        (box
+                          (lower-diagnostic-at-expr
+                            body
+                            (lower-spmd-map-shift-diagnostic
+                              "shl"
+                              lane-ty
+                              (lower-state-mode state)))))]
+                    [(LowerMaybeAstType.No)
+                      (match (lower-simple-vector-map-unsupported-shift-lane
+                        ctx
+                        (lower-state-mode state)
+                        env
+                        type-env
+                        index
+                        false
+                        body)
+                        [(LowerMaybeAstType.Some lane-ty)
+                          (ResultLowerExpr.Err
+                            (box
+                              (lower-diagnostic-at-expr
+                                body
+                                (lower-spmd-map-shift-diagnostic
+                                  "shr"
+                                  lane-ty
+                                  (lower-state-mode state)))))]
+                        [(LowerMaybeAstType.No)
+                          (ResultLowerExpr.Err
+                            (box
+                              (lower-diagnostic-at-expr
+                                body
+                                (lower-simd-foreach-fallback-diagnostic))))])])]
                 [else
                   (lower-scalar-foreach-lowered
                     ctx

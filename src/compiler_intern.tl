@@ -447,6 +447,11 @@
 (defstruct InternId
   (value u32))
 
+(cfg
+  test
+  (define (intern-id-size) : i64
+    (comptime (size-of (type InternId)))))
+
 (defmacro (intern-id-value [id : Expr]) : i64
   `(cast (__tl-project-field-name ,id "value") : i64))
 

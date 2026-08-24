@@ -2755,7 +2755,8 @@
         [_ false])]
     [(ast.AstFnMetadata.Export a-symbol)
       (match b
-        [(ast.AstFnMetadata.Export b-symbol) (= a-symbol b-symbol)]
+        [(ast.AstFnMetadata.Export b-symbol)
+          (spec_ci.intern-id-eq? a-symbol b-symbol)]
         [_ false])]
     [(ast.AstFnMetadata.SpmdCallable a-items)
       (match b
@@ -3203,7 +3204,8 @@
         [_ false])]
     [(ast.AstFnMetadata.Export a-symbol)
       (match b
-        [(ast.AstFnMetadata.Export b-symbol) (= a-symbol b-symbol)]
+        [(ast.AstFnMetadata.Export b-symbol)
+          (spec_ci.intern-id-eq? a-symbol b-symbol)]
         [_ false])]
     [(ast.AstFnMetadata.SpmdCallable a-items)
       (match b

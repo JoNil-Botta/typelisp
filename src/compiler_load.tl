@@ -12116,13 +12116,18 @@
             (ast.ast-imported-spmd-specialization-list-push
               (&mut out)
               (ast.AstImportedSpmdSpecialization
-                (ci.intern-generated-canonical-name item.abi)
-                (ci.intern-generated-canonical-name item.backend)
+                (ci.intern-id-from-renderable
+                  (ci.intern-generated-canonical-name item.abi))
+                (ci.intern-id-from-renderable
+                  (ci.intern-generated-canonical-name item.backend))
                 item.lanes
-                (ci.intern-generated-canonical-name item.args)
-                (ci.intern-generated-canonical-name item.result)
+                (ci.intern-id-from-renderable
+                  (ci.intern-generated-canonical-name item.args))
+                (ci.intern-id-from-renderable
+                  (ci.intern-generated-canonical-name item.result))
                 item.index-param
-                (ci.intern-generated-canonical-name item.symbol)))
+                (ci.intern-id-from-renderable
+                  (ci.intern-generated-canonical-name item.symbol))))
             (set! index (+ index 1)))))
       out)))
 
@@ -12144,7 +12149,8 @@
               (ast.ast-imported-spmd-callable-list-push
                 (&mut out)
                 (ast.AstImportedSpmdCallable
-                  (ci.intern-generated-canonical-name item.signature)
+                  (ci.intern-id-from-renderable
+                    (ci.intern-generated-canonical-name item.signature))
                   (compiler-load-imported-spmd-specializations
                     item.specializations)))
               unit)
@@ -12170,7 +12176,8 @@
         [(CompilerLoadPackageSpmdInterface.Available items)
           (compiler-load-imported-spmd-callables-for canonical-name items)])]
     (ast.AstImportedSpmdMetadata.Package
-      (ci.intern-generated-canonical-name canonical-name)
+      (ci.intern-id-from-renderable
+        (ci.intern-generated-canonical-name canonical-name))
       (box callables))))
 
 (define (compiler-load-package-def-fn-extern
@@ -12201,7 +12208,8 @@
       (box
         (ast.AstExternMetadata.Metadata
           (ast.AstExternAbi.C)
-          (ci.intern-generated-canonical-name link-name)
+          (ci.intern-id-from-renderable
+            (ci.intern-generated-canonical-name link-name))
           (ast.ast-extern-link-input-list-new)
           (ast.ast-extern-metadata-flags false (string.eq link-name logical))
           (compiler-load-imported-spmd-metadata
@@ -18627,17 +18635,17 @@
               0
               (ast.ast-imported-spmd-specialization-fallback))]
           (and
-            (string.eq (ci.intern-str canonical-name) "spmd_fixture/helper")
+            (string.eq (ci.intern-id-str canonical-name) "spmd_fixture/helper")
             (= (ast.ast-imported-spmd-callable-list-len (& callables)) 1)
             (string.eq
-              (ci.intern-str copied-callable.signature)
+              (ci.intern-id-str copied-callable.signature)
               "(-> i64 i64 i64)")
             (=
               (ast.ast-imported-spmd-specialization-list-len
                 (& specializations))
               1)
             (string.eq
-              (ci.intern-str copied-specialization.symbol)
+              (ci.intern-id-str copied-specialization.symbol)
               "_tl___tl_spmd_fixture_helper")))])))
 
 (define (compiler-load-module-list-slots-address

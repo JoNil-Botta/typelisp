@@ -1258,7 +1258,7 @@
 (defenum LowerSpmdInlineHelper
   (No)
   (Some i64 ast.AstParamList ast.AstType ast.AstExpr)
-  (Imported i64 ast.AstType (Box ast.AstImportedSpmdCallableList)))
+  (Imported ci.InternId ast.AstType (Box ast.AstImportedSpmdCallableList)))
 
 (defstruct LowerFunctionBodyIndex
   (ids lower_i64_i64_map.Map)
@@ -4465,11 +4465,12 @@
   ;; the exact linker symbol independently, per SPEC 4.4.5.
   (match (ast.ast-extern-metadata-imported-spmd metadata)
     [(ast.AstImportedSpmdMetadata.Package canonical-name _)
-      (lower-derived-symbol-id (ci.intern-str canonical-name))]
+      (lower-derived-symbol-id (ci.intern-id-str canonical-name))]
     [(ast.AstImportedSpmdMetadata.No)
       (let
         [direct : bool (lower-logical-symbol-id-direct? logical-id source-id)]
-        [link-id : i64 (ast.ast-extern-metadata-symbol-id metadata)]
+        [link-id : i64
+          (ci.intern-id-value (ast.ast-extern-metadata-symbol-id metadata))]
         (if (and
           (ast.ast-extern-metadata-symbol-matches-source? metadata)
           direct)
@@ -15720,7 +15721,9 @@
         [export-state : LowerReachState
           (match (ast.ast-fn-metadata-export metadata)
             [(ast.AstFnExport.Export symbol)
-              (if (lower-runtime-prelude-selective-export-id? module-id symbol)
+              (if (lower-runtime-prelude-selective-export-id?
+                module-id
+                (ci.intern-id-value symbol))
                 state
                 (lower-reach-add-logical all-functions state logical-name-id))]
             [(ast.AstFnExport.No) state])]
@@ -15734,7 +15737,8 @@
           (lower-reach-add-runtime-prelude-string-helper-id
             all-functions
             state
-            (ast.ast-extern-metadata-symbol-id (__tl-box-place metadata)))]
+            (ci.intern-id-value
+              (ast.ast-extern-metadata-symbol-id (__tl-box-place metadata))))]
         [(ast.AstExternKind.Value) state])]
     [(ast.AstDecl.Unsafe inner-box)
       (let
@@ -37698,7 +37702,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [index : String]
-  [canonical-name : i64]
+  [canonical-name : ci.InternId]
   [fn-ty : ast.AstType]
   [callables : ast.AstImportedSpmdCallableList]
   [args : ast.AstExprList]
@@ -46292,7 +46296,7 @@
   [lane-locals : lower_i64_i64_map.Map]
   [func : ast.AstExpr]
   [args : ast.AstExprList]
-  [canonical-name : i64]
+  [canonical-name : ci.InternId]
   [fn-ty : ast.AstType]
   [callables : ast.AstImportedSpmdCallableList]) : i64
   (match fn-ty
@@ -58768,15 +58772,15 @@
 (define (lower-imported-spmd-ir-symbol
   [item : ast.AstImportedSpmdSpecialization]) : i64
   (let
-    [link-symbol-id : i64 item.symbol]
-    [link-symbol : String (ci.intern-str link-symbol-id)]
+    [link-symbol-id : ci.InternId item.symbol]
+    [link-symbol : String (ci.intern-id-str link-symbol-id)]
     [link-symbol-len : i64 (string.string-length link-symbol)]
     (if (and
       (> link-symbol-len 4)
       (lower-string-prefix-at? link-symbol "_tl_" 0))
       (ci.intern-generated-canonical-name
         (string.substring link-symbol 4 (- link-symbol-len 4)))
-      link-symbol-id)))
+      (ci.intern-id-value link-symbol-id))))
 
 (define (lower-imported-spmd-backend-name [backend : ir.CompilerIrSpmdBackend]) : String
   (match backend
@@ -58791,16 +58795,16 @@
   [args-code : String]
   [index-param : i64]) : bool
   (and
-    (string.eq (ci.intern-str item.backend) backend)
+    (string.eq (ci.intern-id-str item.backend) backend)
     (= item.lanes lanes)
-    (string.eq (ci.intern-str item.args) args-code)
+    (string.eq (ci.intern-id-str item.args) args-code)
     (= item.index-param index-param)))
 
 (define (lower-imported-spmd-result-compatible?
   [item : ast.AstImportedSpmdSpecialization]
   [ret : ast.AstType]) : bool
   (let
-    [result : String (ci.intern-str item.result)]
+    [result : String (ci.intern-id-str item.result)]
     (if (tc_core.tc-type-eq
       (tc_core.tc-type-without-regions ret)
       (ast.AstType.Unit))
@@ -58847,8 +58851,9 @@
           specializations
           index
           (ast.ast-imported-spmd-specialization-fallback))]
-      [abi-id : i64 item.abi]
-      [abi : String (ci.intern-str abi-id)]
+      [abi-id : ci.InternId item.abi]
+      [abi : String (ci.intern-id-str abi-id)]
+      [abi-raw : i64 (ci.intern-id-value abi-id)]
       [key-matches : bool
         (and
           (lower-imported-spmd-specialization-key-matches?
@@ -58875,10 +58880,10 @@
             scan.signature-count
             scan.supported-abi-count
             (if (< scan.unsupported-abi-id 0)
-              abi-id
+              abi-raw
               scan.unsupported-abi-id)
             (if (and key-matches (< scan.unsupported-key-abi-id 0))
-              abi-id
+              abi-raw
               scan.unsupported-key-abi-id)
             scan.selected-count
             scan.selected))]
@@ -58911,7 +58916,7 @@
           index
           (ast.ast-imported-spmd-callable-fallback))]
       [matches-signature : bool
-        (string.eq (ci.intern-str callable.signature) signature)]
+        (string.eq (ci.intern-id-str callable.signature) signature)]
       [signature-scan : LowerImportedSpmdSelectionScan
         (if matches-signature
           (LowerImportedSpmdSelectionScan
@@ -58948,7 +58953,7 @@
         next))))
 
 (define (lower-imported-spmd-select
-  [canonical-name-id : i64]
+  [canonical-name-id : ci.InternId]
   [callables : (& callables ast.AstImportedSpmdCallableList)]
   [signature : String]
   [backend : ir.CompilerIrSpmdBackend]
@@ -58958,7 +58963,7 @@
   [ret : ast.AstType]
   [origin : ast.AstExpr]) : ResultLowerImportedSpmdSpecialization
   (let
-    [canonical-name : String (ci.intern-str canonical-name-id)]
+    [canonical-name : String (ci.intern-id-str canonical-name-id)]
     [backend-name : String (lower-imported-spmd-backend-name backend)]
     [callable-count : i64 (ast.ast-imported-spmd-callable-list-len callables)]
     [scan : LowerImportedSpmdSelectionScan
@@ -59039,7 +59044,7 @@
 
 (define (lower-imported-spmd-result-varying?
   [item : ast.AstImportedSpmdSpecialization]) : bool
-  (string.eq (ci.intern-str item.result) "v"))
+  (string.eq (ci.intern-id-str item.result) "v"))
 
 (define (lower-imported-spmd-index-param-at
   [ctx : tc_core.TcContext]
@@ -60551,7 +60556,7 @@
   [expr : ast.AstExpr]
   [func : ast.AstExpr]
   [args : ast.AstExprList]
-  [canonical-name : i64]
+  [canonical-name : ci.InternId]
   [fn-ty : ast.AstType]
   [callables : ast.AstImportedSpmdCallableList]) : ResultLowerExpr
   (match fn-ty
@@ -60821,7 +60826,7 @@
                   expr
                   (str_cat.str-cat
                     "lower: imported SPMD helper `"
-                    (ci.intern-str canonical-name)
+                    (ci.intern-id-str canonical-name)
                     "` is not supported in AVX2 backend mode"))))
             (lower-imported-spmd-avx512-call
               ctx
@@ -70239,8 +70244,9 @@
                             (tc_core.tc-type-without-regions resolved-ty)
                             (ast.ast-extern-metadata-abi
                               (__tl-box-place metadata))
-                            (ast.ast-extern-metadata-symbol-id
-                              (__tl-box-place metadata))
+                            (ci.intern-id-value
+                              (ast.ast-extern-metadata-symbol-id
+                                (__tl-box-place metadata)))
                             (ast.ast-extern-metadata-link-inputs
                               (__tl-box-place metadata))
                             false))
@@ -70357,7 +70363,7 @@
                                                   decl-ctx
                                                   ret)))
                                             (ast.AstExternAbi.C)
-                                            symbol
+                                            (ci.intern-id-value symbol)
                                             (ast.ast-extern-link-input-list-new)
                                             true))])]
                                   (begin

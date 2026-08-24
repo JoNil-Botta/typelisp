@@ -165,6 +165,34 @@
         "Linux forward byte copy guards a non-positive count before rep movsb")
       (test.assert-true
         (compiler-backend-runtime-test-contains?
+          (& linux-min-functions)
+          ".globl tl_mem_copy8_fwd")
+        "minimal Linux functions keep the forward slot copy")
+      (test.assert-true
+        (compiler-backend-runtime-test-contains?
+          (& windows-min-functions)
+          ".globl tl_mem_copy8_fwd")
+        "minimal Windows functions keep the forward slot copy")
+      (test.assert-true
+        (compiler-backend-runtime-test-contains?
+          (& linux-min-functions)
+          "tl_mem_copy8_fwd:\n    testq %rdx, %rdx")
+        "Linux forward slot copy guards a non-positive count before rep movsq")
+      ;; The word helper's whole reason to exist: the propagating overlap gets a
+      ;; scalar eight-byte loop, not the wide `rep movsq`. Losing that arm is
+      ;; the silent miscompile copy_call's word tier would ride on.
+      (test.assert-true
+        (compiler-backend-runtime-test-contains?
+          (& linux-min-functions)
+          ".Ltl_mem_copy8_fwd_loop:\n    movq (%rsi), %rax\n    movq %rax, (%rdi)")
+        "Linux forward slot copy keeps a scalar eight-byte propagating loop")
+      (test.assert-true
+        (compiler-backend-runtime-test-contains?
+          (& windows-min-functions)
+          ".Ltl_mem_copy8_fwd_loop:\n    movq (%rsi), %r9\n    movq %r9, (%rdi)")
+        "Windows forward slot copy keeps a scalar eight-byte propagating loop")
+      (test.assert-true
+        (compiler-backend-runtime-test-contains?
           (& windows-min-functions)
           ".globl tl_tlci_call_image_entry")
         "minimal Windows functions keep the TLCI image bridge")

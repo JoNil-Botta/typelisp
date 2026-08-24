@@ -17666,6 +17666,7 @@
         (string.eq name "tl_array_zero")
         (string.eq name "tl_mem_fill8")
         (string.eq name "tl_mem_copy_fwd")
+        (string.eq name "tl_mem_copy8_fwd")
         (string.eq name "tl_abort_string")
         (string.eq name "tl_tlci_call_image_entry")
         (string.eq name "tl_tlci_call_macro_entry")))))
@@ -28173,6 +28174,61 @@
         "(%rip)")]
     [_ (compiler-backend-value-stack-address assignments value backend-state)]))
 
+;; M6-I: the rip-relative memory operand of a scalar GLOBAL read.
+;;
+;; A global read is `movq g(%rip), %r` on both targets, and x86 lets a compare
+;; read that cell through its own memory operand instead -- `cmpq g(%rip), %r`
+;; is the whole of `movq g(%rip), %r8 ; cmpq %r8, %r`. The cell is read at the
+;; same point in the program either way, because the materialising `movq` the
+;; fold removes was emitted immediately in front of the compare it fed and
+;; nothing between them writes memory.
+;;
+;; "" declines. Only a full-word integer global takes the operand: a narrow
+;; global read carries the load's own extension into the register (the M6-C
+;; width table's business, and not proved here), and a float compare moves
+;; through the SSE path, which spells its operands differently.
+(define (compiler-backend-value-global-memory-operand
+  [backend-state : CompilerBackendState]
+  [type-segment-bases : i64]
+  [value : compiler_ir_types.CompilerIrValue]
+  [ty : compiler_ast_types.AstType]) : String
+  (match (compiler-backend-global-shared-view value)
+    [(compiler_ir_types.CompilerIrValue.Global name)
+      (if (or
+        (compiler-backend-float-type? (compiler-backend-global-shared-view ty))
+        (not (= (compiler-backend-type-size type-segment-bases ty) 8)))
+        ""
+        (let
+          [symbol : String
+            (compiler-backend-state-user-symbol-id backend-state name)]
+          (if (string.eq symbol "")
+            ""
+            (str_cat.str-cat symbol "(%rip)"))))]
+    [_ ""]))
+
+;; The memory operand a compare may spell for `value` at width `ty`: this
+;; function's own frame slot for a spilled var, or the rip-relative cell for a
+;; scalar global read. Exactly one side of a compare may use it.
+(define (compiler-backend-compare-memory-operand
+  [type-segment-bases : i64]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [value : compiler_ir_types.CompilerIrValue]
+  [ty : compiler_ast_types.AstType]
+  [backend-state : CompilerBackendState]) : String
+  (let
+    [stack : String
+      (compiler-backend-value-stack-address
+        (compiler-backend-global-shared-view assignments)
+        (compiler-backend-global-shared-view value)
+        (compiler-backend-global-shared-view backend-state))]
+    (if (string.eq (compiler-backend-global-shared-view stack) "")
+      (compiler-backend-value-global-memory-operand
+        backend-state
+        type-segment-bases
+        value
+        ty)
+      stack)))
+
 (define (compiler-backend-immediate-displacement [imm : String]) : String
   (string.substring imm 1 (- (string.string-length imm) 1)))
 
@@ -32258,10 +32314,17 @@
           ;; %rsp -- emergency saves write fixed slots, never push -- which is
           ;; the same assumption the lhs-address arm already runs on.
           (let
+            ;; M6-I extends this arm from a frame slot to a scalar GLOBAL read:
+            ;; `cmpq g(%rip), %r` replaces `movq g(%rip), %scratch ; cmpq
+            ;; %scratch, %r`, on the same terms -- the lhs holds the
+            ;; destination slot as a register, so the compare still names
+            ;; exactly one memory operand.
             [rhs-address : String
-              (compiler-backend-value-scalar-memory-operand
+              (compiler-backend-compare-memory-operand
+                type-segment-bases
                 (compiler-backend-global-shared-view assignments)
                 (compiler-backend-global-shared-view rhs)
+                (compiler-backend-global-shared-view ty)
                 backend-state)]
             (if (and
               lhs-register?
@@ -32432,11 +32495,47 @@
             (compiler-backend-global-shared-view backend-state)
             (compiler-backend-global-shared-view assignments)
             (compiler-backend-global-shared-view lhs))]
+        ;; M6-I: a scalar GLOBAL read is a legal compare DESTINATION operand
+        ;; too, exactly as a spilled lhs already was -- but only when the OTHER
+        ;; operand needs no staging register of its own.
+        ;;
+        ;; The scratch plan sizes this compare through
+        ;; `compiler-reg-scratch-compare-lhs-direct?`, which calls a global lhs
+        ;; NOT direct and therefore hands ordinal 0 to the lhs stage and only
+        ;; ordinal 1 to an rhs stage -- and it reserves that second ordinal
+        ;; only when the rhs is not directly addressable either. A spilled rhs
+        ;; IS directly addressable, so today the plan carries one ordinal: the
+        ;; lhs stage, after which the spilled rhs reaches the compare as its
+        ;; memory operand. Spelling the global into the destination slot
+        ;; instead would leave that spilled rhs with nowhere to go but a stage
+        ;; the plan never reserved. So the arm is admitted only for an
+        ;; immediate or register-homed rhs -- exactly the cases that consume no
+        ;; scratch at all, which is always within the plan's inventory. Every
+        ;; other rhs keeps the pre-M6-I shape and its modelled ordinal.
+        [rhs-needs-no-stage? : bool
+          (or
+            (not (string.eq rhs-home ""))
+            (match (compiler-backend-immediate-operand
+              (compiler-backend-global-shared-view backend-state)
+              (compiler-backend-global-shared-view rhs))
+              [(CompilerBackendMaybeImmediate.Some _) true]
+              [(CompilerBackendMaybeImmediate.No) false]))]
         [lhs-address : String
-          (compiler-backend-value-stack-address
-            (compiler-backend-global-shared-view assignments)
-            (compiler-backend-global-shared-view lhs)
-            (compiler-backend-global-shared-view backend-state))]
+          (let
+            [stack : String
+              (compiler-backend-value-stack-address
+                (compiler-backend-global-shared-view assignments)
+                (compiler-backend-global-shared-view lhs)
+                (compiler-backend-global-shared-view backend-state))]
+            (if (string.eq (compiler-backend-global-shared-view stack) "")
+              (if rhs-needs-no-stage?
+                (compiler-backend-value-global-memory-operand
+                  (compiler-backend-global-shared-view backend-state)
+                  type-segment-bases
+                  (compiler-backend-global-shared-view lhs)
+                  (compiler-backend-global-shared-view ty))
+                "")
+              stack))]
         [lhs-immediate? : bool
           (match (compiler-backend-immediate-operand
             (compiler-backend-global-shared-view backend-state)
@@ -40035,6 +40134,14 @@
             (compiler_ast_types.AstType.U64)
             (compiler_ast_types.ast-type-list-new))))]
     [(cbi.compiler-builtin-backend-tl-mem-copy-fwd-id? name-id)
+      (compiler_ast_types.ast-type-cons
+        (compiler_ast_types.ast-ty-mut-ptr (compiler_ast_types.AstType.U8))
+        (compiler_ast_types.ast-type-cons
+          (compiler_ast_types.ast-ty-ptr (compiler_ast_types.AstType.U8))
+          (compiler_ast_types.ast-type-cons
+            (compiler_ast_types.AstType.I64)
+            (compiler_ast_types.ast-type-list-new))))]
+    [(cbi.compiler-builtin-backend-tl-mem-copy8-fwd-id? name-id)
       (compiler_ast_types.ast-type-cons
         (compiler_ast_types.ast-ty-mut-ptr (compiler_ast_types.AstType.U8))
         (compiler_ast_types.ast-type-cons
@@ -57747,13 +57854,21 @@
 ;; is what makes dropping the load (and the cast the load already performed)
 ;; unobservable; the instructions are consumed as a contiguous run, so nothing
 ;; can write memory, the address registers or the flags in between.
+;;
+;; `head-ahead` is how many instructions separate the one being EMITTED from
+;; `index`, the first instruction the walk looks at. The Gep+Load cluster
+;; enters from the `Gep` with the `Load` fused behind it, so its head is two
+;; instructions back (2); M6-I enters from a single `Mov` of a global, so its
+;; head is one back (1). Only the branch's scratch-plan lookahead reads it, and
+;; that plan is indexed from the emitted instruction.
 (define (compiler-backend-gep-load-cmp-branch-probe
   [ctx : CompilerBackendEmissionContext]
   [addr : String]
   [load-dst : i64]
   [load-ty : compiler_ast_types.AstType]
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
-  [index : i64]) : CompilerBackendGepLoadCmpBranchFold
+  [index : i64]
+  [head-ahead : i64]) : CompilerBackendGepLoadCmpBranchFold
   (match (compiler-backend-cmp-fold-walk
     (compiler-backend-global-shared-view ctx)
     (compiler-backend-global-shared-view instrs)
@@ -57770,7 +57885,8 @@
         value-var
         (compiler-backend-global-shared-view instrs)
         index
-        stop)]))
+        stop
+        head-ahead)]))
 
 (define (compiler-backend-gep-load-cmp-branch-probe-at
   [ctx : CompilerBackendEmissionContext]
@@ -57783,7 +57899,8 @@
   ;; Its distance from the compare determines where the branch's scratch-plan
   ;; entry lives when M6-E threads phi-edge copies around the folded compare.
   [origin : i64]
-  [index : i64]) : CompilerBackendGepLoadCmpBranchFold
+  [index : i64]
+  [head-ahead : i64]) : CompilerBackendGepLoadCmpBranchFold
   (let
     [maybe-cast : compiler_ir_types.CompilerIrInstr
       (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
@@ -57927,11 +58044,12 @@
                         false-jcc
                         true-label
                         false-label
-                        ;; The current instruction is Gep: Load is +1, the
-                        ;; first walked instruction is +2, and Branch follows
-                        ;; the compare. Wide shapes therefore use 3; a narrow
-                        ;; widening cast makes it 4.
-                        (+ (- cmp-index origin) 3)
+                        ;; `origin` is the first walked instruction, sitting
+                        ;; `head-ahead` behind the one being emitted, and the
+                        ;; Branch follows the compare. A Gep+Load head with a
+                        ;; wide compare therefore uses 3; a narrow widening
+                        ;; cast makes it 4; a bare `Mov` head is one less.
+                        (+ (- cmp-index origin) (+ head-ahead 1))
                         (+ cmp-index 2))
                       (CompilerBackendGepLoadCmpBranchFold.No)))]
                 [_ (CompilerBackendGepLoadCmpBranchFold.No)])
@@ -58205,7 +58323,8 @@
           load-dst
           (compiler-backend-global-shared-view load-ty)
           (compiler-backend-global-shared-view instrs)
-          index)
+          index
+          2)
           [(CompilerBackendGepLoadCmpBranchFold.Some
               cmp-asm
               true-jcc
@@ -63016,7 +63135,161 @@
       index
       out)))
 
+;; ============================================================================
+;; M6-I: memory-operand compare for a scalar GLOBAL read.
+;;
+;; A scalar global read lowers to `Mov dst @g` and renders as
+;; `movq g(%rip), %r`. When that register's ONLY reader is the compare right
+;; behind it, x86 reads the cell through the compare itself:
+;;
+;;     movq g(%rip), %r8 ; cmpq %rax, %r8 ; jne L
+;;  -> cmpq g(%rip), %rax ; jne L
+;;
+;; This is the M6-B wide arm with a rip-relative `addr` in place of a SIB
+;; triple, and every rail it runs on is one M6-B already owns:
+;;
+;;   * the moved var must be single-use, so dropping the `Mov` leaves nothing
+;;     observing its home -- the same condition that retires the fused load in
+;;     the Gep+Load arm;
+;;   * `compiler-backend-cmp-fold-walk` admits only size-preserving casts
+;;     between the read and the compare, so no store, call or flag write can
+;;     land inside the window and the cell is read at the same point in the
+;;     program it was read at before. A store to the global (or anywhere) ends
+;;     the walk at itself and the probe then finds no compare, so it declines;
+;;   * the compare's OTHER operand must be an immediate or a register home
+;;     (`compiler-backend-gep-load-cmp-other-operand`), because `cmp mem, mem`
+;;     is illegal -- a spilled operand declines;
+;;   * the compare and its branch are consumed as one contiguous run, so the
+;;     flags the jcc reads are the ones this `cmp` set, and the operand order
+;;     (and the condition-swap an equality compare permits) is decided by
+;;     `compiler-backend-gep-load-wide-cmp-asm`, unchanged.
+;;
+;; A rip-relative operand names no base and no index register, so none of
+;; M6-D's staging and none of M6-H's scavenging applies: the address is always
+;; spellable, and the fold retires one instruction and one register write with
+;; nothing added. `head-ahead` is 1 because the emitted instruction is the
+;; `Mov` itself, one ahead of where the walk starts.
+;;
+;; Only a full-word non-group global takes this path. A narrow global read
+;; carries the load's own extension into the register, which is the M6-C width
+;; table's business and not this arm's; a group-typed move is two words and
+;; never a compare operand.
+;;
+;; Windows spells a global read identically -- the `Global` arm of
+;; `compiler-backend-emit-load-value-with-plan-into` is target-independent --
+;; so the fold needs no target split. The streaming peephole reads the emitted
+;; `cmpq g(%rip), %rax` through `compiler-backend-peephole-cmp-or-test-token?`,
+;; which classifies compares as flag-only and leaves the reload-elision owner
+;; map untouched; the `movq` that used to publish a global owner for the
+;; destination register is simply gone, which can only make that map more
+;; conservative.
+(define (compiler-backend-mov-global-cmp-address
+  [ctx : CompilerBackendEmissionContext]
+  [src : compiler_ir_types.CompilerIrValue]
+  [ty : compiler_ast_types.AstType]) : String
+  (compiler-backend-value-global-memory-operand
+    (compiler-backend-global-shared-view ctx.backend-state)
+    ctx.type-segment-bases
+    src
+    ty))
+
+(define (compiler-backend-emit-mov-global-cmp-step
+  [ctx : CompilerBackendEmissionContext]
+  [fallthrough : CompilerBackendMaybeLabel]
+  [dst : i64]
+  [src : compiler_ir_types.CompilerIrValue]
+  [ty : compiler_ast_types.AstType]
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]
+  [out : (&mut out CompilerBackendAsmBuf)]) : CompilerBackendMaybeGepLoadCmpEmission
+  (let
+    [addr : String
+      (compiler-backend-mov-global-cmp-address
+        (compiler-backend-global-shared-view ctx)
+        (compiler-backend-global-shared-view src)
+        (compiler-backend-global-shared-view ty))]
+    (if (or
+      (string.eq (compiler-backend-global-shared-view addr) "")
+      (>= index instrs.len)
+      (compiler-backend-copy-group?
+        ctx.type-segment-bases
+        ctx.program-index
+        (compiler-backend-global-shared-view ty)
+        dst
+        src)
+      (not (compiler-backend-var-single-use? ctx.use-counts dst)))
+      (CompilerBackendMaybeGepLoadCmpEmission.No)
+      (match (compiler-backend-gep-load-cmp-branch-probe
+        (compiler-backend-global-shared-view ctx)
+        (compiler-backend-global-shared-view addr)
+        dst
+        ty
+        (compiler-backend-global-shared-view instrs)
+        index
+        1)
+        [(CompilerBackendGepLoadCmpBranchFold.Some
+            cmp-asm
+            true-jcc
+            false-jcc
+            true-label
+            false-label
+            branch-plan-ahead
+            after-branch)
+          (CompilerBackendMaybeGepLoadCmpEmission.Some
+            (compiler-backend-emit-fused-result-rest
+              (compiler-backend-global-shared-view ctx)
+              (compiler-backend-global-shared-view fallthrough)
+              (compiler-backend-gep-load-cmp-branch-emit
+                (compiler-backend-global-shared-view ctx)
+                cmp-asm
+                true-jcc
+                false-jcc
+                true-label
+                false-label
+                branch-plan-ahead
+                (compiler-backend-fused-compare-fallthrough
+                  (compiler-backend-global-shared-view instrs)
+                  after-branch
+                  (compiler-backend-global-shared-view fallthrough)))
+              (compiler-backend-global-shared-view instrs)
+              after-branch
+              out))]
+        [(CompilerBackendGepLoadCmpBranchFold.No)
+          (CompilerBackendMaybeGepLoadCmpEmission.No)]))))
+
 (define (compiler-backend-emit-mov-step
+  [ctx : CompilerBackendEmissionContext]
+  [fallthrough : CompilerBackendMaybeLabel]
+  [instr : compiler_ir_types.CompilerIrInstr]
+  [dst : i64]
+  [src : compiler_ir_types.CompilerIrValue]
+  [ty : compiler_ast_types.AstType]
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]
+  [out : (&mut out CompilerBackendAsmBuf)]) : ResultCompilerBackend
+  (match (compiler-backend-emit-mov-global-cmp-step
+    (compiler-backend-global-shared-view ctx)
+    (compiler-backend-global-shared-view fallthrough)
+    dst
+    (compiler-backend-global-shared-view src)
+    (compiler-backend-global-shared-view ty)
+    (compiler-backend-global-shared-view instrs)
+    index
+    out)
+    [(CompilerBackendMaybeGepLoadCmpEmission.Some result) result]
+    [(CompilerBackendMaybeGepLoadCmpEmission.No)
+      (compiler-backend-emit-mov-step-tail
+        ctx
+        fallthrough
+        instr
+        dst
+        src
+        ty
+        instrs
+        index
+        out)]))
+
+(define (compiler-backend-emit-mov-step-tail
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [instr : compiler_ir_types.CompilerIrInstr]

@@ -140,10 +140,12 @@ switch_dispatch_scavenge|tests/integration/switch_dispatch_scavenge.tl|42|-|-|st
 total_switch_runtime|tests/integration/total_switch_runtime.tl|42|-|-|stdlib/array.tl
 gap_switch_runtime|tests/integration/gap_switch_runtime.tl|42|-|-|stdlib/array.tl
 cmp_fold_load|tests/integration/cmp_fold_load.tl|42|-|-|stdlib/io.tl stdlib/array.tl
+global_cmp_mem_fold|tests/integration/global_cmp_mem_fold.tl|42|-|-|-
 load_widen_cast_fold|tests/integration/load_widen_cast_fold.tl|42|-|-|stdlib/array.tl
 gep_load_cmp_spilled_stage|tests/integration/gep_load_cmp_spilled_stage.tl|42|-|-|stdlib/array.tl
 alu_mem_operand_tie|tests/integration/alu_mem_operand_tie.tl|42|-|-|
 mem_dest_rmw_fold|tests/integration/mem_dest_rmw_fold.tl|42|-|-|-
+copy_call_word|tests/integration/copy_call_word.tl|42|-|-|-
 load_sink_trap_parity|tests/integration/load_sink_trap_parity.tl|134|rows\n|-|stdlib/io.tl|expected-stderr:tl: target/integration-verify/linux/load_sink_trap_parity/load_sink_trap_parity.tl:33:37: array index out of bounds: index=4 length=4\n
 mem_dest_rmw_trap_parity|tests/integration/mem_dest_rmw_trap_parity.tl|134|rows\n|-|stdlib/io.tl|expected-stderr:tl: target/integration-verify/linux/mem_dest_rmw_trap_parity/mem_dest_rmw_trap_parity.tl:27:68: array index out of bounds: index=4 length=4\n
 

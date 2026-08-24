@@ -89246,6 +89246,35 @@
       (csym.compiler-symbol-name-id-key
         (macro-output-syntax-id-at session name-id site))]))
 
+(define (macro-decl-list-prepend-from-source
+  [head : ast.AstDecl]
+  [source : ast.AstDeclList]
+  [source-index : i64]
+  [rest : ast.AstDeclList]) : ast.AstDeclList
+  (let
+    [rest-key : i64 (parser.compiler-parse-decl-list-storage-key (& rest))]
+    [source-key : i64 (parser.compiler-parse-decl-list-storage-key (& source))]
+    [source-slot : i64 (+ source.offset source-index)]
+    [out : ast.AstDeclList (ast.ast-decl-list-prepend-builder head rest)]
+    [out-key : i64 (parser.compiler-parse-decl-list-storage-key (& out))]
+    (begin
+      (if (or (!= out-key source-key) (!= out.offset source-slot))
+        (parser.compiler-parse-decl-origin-register-alias-record!
+          (& out)
+          0
+          1
+          source-key
+          source-slot
+          false)
+        unit)
+      (if (!= out-key rest-key)
+        (parser.compiler-parse-decl-origin-register-list-aliases!
+          (& out)
+          1
+          rest)
+        unit)
+      out)))
+
 (define (macro-decl-list-reverse-into
   [items : ast.AstDeclList]
   [out : ast.AstDeclList]) : ast.AstDeclList
@@ -89258,8 +89287,10 @@
         (begin
           (set!
             result
-            (ast.ast-decl-list-prepend-builder
+            (macro-decl-list-prepend-from-source
               (ast.ast-decl-list-ref items index)
+              items
+              index
               result))
           (set! index (+ index 1))))
       result)))
@@ -89278,7 +89309,14 @@
           (ast.ast-decl-list-push-from
             (&mut out)
             (& items.slots)
-            (+ item-offset index))))
+            (+ item-offset index))
+          (parser.compiler-parse-decl-origin-register-alias-record!
+            (& out)
+            (- (ast.ast-decl-list-len (& out)) 1)
+            1
+            (parser.compiler-parse-decl-list-storage-key (& items))
+            (+ item-offset index)
+            false)))
       out)))
 
 (define (macro-decl-list-with-prefix-reserve
@@ -89336,6 +89374,8 @@
             (ptr->int (ptr-cast (__tl_array-data right.slots) : (Ptr u8)))))))
       (let
         [new-offset : i64 (- right.offset left-len)]
+        [out : ast.AstDeclList
+          (ast.AstDeclList right-slots new-offset (+ left-len right-len) true)]
         (begin
           ;; Macro expansion walks a suffix of the current whole-program vector.
           ;; Its consumed prefix is dead after the splice context is rebuilt, so
@@ -89349,13 +89389,25 @@
             new-offset
             0
             left-len)
-          (ast.AstDeclList right-slots new-offset (+ left-len right-len) true)))
+          (parser.compiler-parse-decl-origin-register-list-aliases!
+            (& out)
+            0
+            left)
+          out))
       (let
         [out : ast.AstDeclList
           (ast.ast-decl-list-with-capacity (+ left-len right-len))]
         (begin
           (macro-decl-list-append-from (&mut out) (& left))
           (macro-decl-list-append-from (&mut out) (& right))
+          (parser.compiler-parse-decl-origin-register-list-aliases!
+            (& out)
+            0
+            left)
+          (parser.compiler-parse-decl-origin-register-list-aliases!
+            (& out)
+            left-len
+            right)
           out)))))
 
 (define (macro-flatten-module-body-decls-into-with-origins
@@ -90033,6 +90085,37 @@
     [node : MacroProgramSegmentNodeData
       (macro-program-segment-node-data data.head)]
     (ast.ast-decl-list-ref node.decls data.cursor)))
+
+(define (macro-segmented-program-prepend-current
+  [state : TcJobState]
+  [rest : ast.AstDeclList]) : ast.AstDeclList
+  (let
+    [data : MacroSegmentedProgramViewData
+      (macro-segmented-program-normalize-head! state)]
+    [node : MacroProgramSegmentNodeData
+      (macro-program-segment-node-data data.head)]
+    (macro-decl-list-prepend-from-source
+      (ast.ast-decl-list-ref node.decls data.cursor)
+      node.decls
+      data.cursor
+      rest)))
+
+(define (macro-segmented-program-register-current-origin!
+  [state : TcJobState]
+  [expanded : (& expanded ast.AstDeclList)]) : unit
+  (let
+    [data : MacroSegmentedProgramViewData
+      (macro-segmented-program-normalize-head! state)]
+    [node : MacroProgramSegmentNodeData
+      (macro-program-segment-node-data data.head)]
+    [count : i64 (ast.ast-decl-list-len expanded)]
+    (parser.compiler-parse-decl-origin-register-alias-record!
+      expanded
+      0
+      count
+      (parser.compiler-parse-decl-list-storage-key (& node.decls))
+      (+ node.decls.offset data.cursor)
+      (!= count 1))))
 
 (define (macro-segmented-program-current-path [state : TcJobState]) : String
   (let
@@ -112524,7 +112607,9 @@
                         (compiler-tc-walk-decl-sample-note! 1))
                       (set!
                         out-rev
-                        (ast.ast-decl-list-prepend-builder decl out-rev))
+                        (macro-segmented-program-prepend-current
+                          walk-state
+                          out-rev))
                       (set!
                         out-paths-rev
                         (ast.ast-decl-path-list-prepend-builder-with-owner-and-provenance-id
@@ -113111,7 +113196,9 @@
                             (compiler-tc-walk-decl-sample-note! 1))
                           (set!
                             out-rev
-                            (ast.ast-decl-list-prepend-builder decl out-rev))
+                            (macro-segmented-program-prepend-current
+                              walk-state
+                              out-rev))
                           (set!
                             out-paths-rev
                             (ast.ast-decl-path-list-prepend-builder-with-owner-and-provenance-id
@@ -113158,6 +113245,9 @@
                                 expanded
                                 expanded-paths)
                               (begin
+                                (macro-segmented-program-register-current-origin!
+                                  walk-state
+                                  (& expanded))
                                 (set!
                                   out-rev
                                   (macro-decl-list-reverse-into
@@ -113994,6 +114084,8 @@
                       expected
                       alias
                       imported-decls)]
+                  [source-import : ast.AstDeclList
+                    (ast.ast-decl-cons decl (ast.ast-decl-list-new))]
                   [tail-decls : ast.AstDeclList
                     (cload.compiler-load-decls-after-import
                       kind
@@ -114003,6 +114095,7 @@
                       span
                       module
                       module-id
+                      source-import
                       imported-decls
                       (ast.ast-decl-list-new))]
                   [tail-paths : ast.AstDeclPathList

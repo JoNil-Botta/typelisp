@@ -72,46 +72,42 @@
           (begin
             (match kind
               ["struct"
-                (begin
-                  (while (< index (struct-field-count current))
-                    (begin
-                      (set!
-                        children
-                        (comptime.expr-list-cons
-                          (comptime.type-expr (struct-field-type current index))
-                          children))
-                      (set! index (+ index 1)))))]
+                (while (< index (struct-field-count current))
+                  (begin
+                    (set!
+                      children
+                      (comptime.expr-list-cons
+                        (comptime.type-expr (struct-field-type current index))
+                        children))
+                    (set! index (+ index 1))))]
               ["enum"
-                (begin
-                  (while (< variant-index (enum-variant-count current))
-                    (begin
-                      (set! payload-index 0)
-                      (while (<
-                        payload-index
-                        (enum-variant-payload-count current variant-index))
-                        (begin
-                          (set!
-                            children
-                            (comptime.expr-list-cons
-                              (comptime.type-expr
-                                (enum-variant-payload-type
-                                  current
-                                  variant-index
-                                  payload-index))
-                              children))
-                          (set! payload-index (+ payload-index 1))))
-                      (set! variant-index (+ variant-index 1)))))]
+                (while (< variant-index (enum-variant-count current))
+                  (begin
+                    (set! payload-index 0)
+                    (while (<
+                      payload-index
+                      (enum-variant-payload-count current variant-index))
+                      (begin
+                        (set!
+                          children
+                          (comptime.expr-list-cons
+                            (comptime.type-expr
+                              (enum-variant-payload-type
+                                current
+                                variant-index
+                                payload-index))
+                            children))
+                        (set! payload-index (+ payload-index 1))))
+                    (set! variant-index (+ variant-index 1))))]
               ["tuple"
-                (begin
-                  (while (< index (tuple-element-count current))
-                    (begin
-                      (set!
-                        children
-                        (comptime.expr-list-cons
-                          (comptime.type-expr
-                            (tuple-element-type current index))
-                          children))
-                      (set! index (+ index 1)))))]
+                (while (< index (tuple-element-count current))
+                  (begin
+                    (set!
+                      children
+                      (comptime.expr-list-cons
+                        (comptime.type-expr (tuple-element-type current index))
+                        children))
+                    (set! index (+ index 1))))]
               ["function"
                 (begin
                   (while (< index (function-param-count current))

@@ -12,7 +12,8 @@
 ;; Address-taken sink: keeps sum8 an emitted out-of-line body at every opt
 ;; level (see functions.tl) - the target-parity checker reads its stack-arg
 ;; marshalling.
-(define keep-sum8 : (-> i64 i64 i64 i64 i64 i64 i64 i64 i64) sum8)
+(define keep-sum8 : (-> i64 i64 i64 i64 i64 i64 i64 i64 i64)
+  sum8)
 
 (define (main) : i64
   (sum8 1 2 3 4 5 6 7 8))

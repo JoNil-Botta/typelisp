@@ -10852,6 +10852,646 @@
       [(not (compiler_optimize.opt-cfg-successor-targets-known? after)) 5]
       [else 42])))
 
+;; --- unsigned range-check merge ----------------------------------------------
+;;
+;; `(and (>= i 0) (< i n))` is one unsigned compare when `n` is non-negative.
+;; The fixture is the short-circuit diamond the front end emits: a lower-bound
+;; block branching into a two-instruction upper-bound block, both false edges on
+;; one failure arm. Knobs cover the four lower spellings, both upper operand
+;; orders, whether the bound is provably non-negative, an extra consumer of the
+;; lower compare, and a split failure arm.
+;;
+;; Params: idx = %0, len = %1, probe = %2. Fresh casts start at the frame, 16.
+(define (opt-range-merge-params) : compiler_ir_types.CompilerIrParamList
+  (compiler_ir_types.compiler-ir-param-cons
+    (compiler_ir_types.CompilerIrParam.Param
+      "idx"
+      (compiler_ast_types.AstType.I64)
+      0)
+    (compiler_ir_types.compiler-ir-param-cons
+      (compiler_ir_types.CompilerIrParam.Param
+        "len"
+        (compiler_ast_types.AstType.I64)
+        1)
+      (compiler_ir_types.compiler-ir-param-cons
+        (compiler_ir_types.CompilerIrParam.Param
+          "probe"
+          (compiler_ast_types.AstType.I64)
+          2)
+        (compiler_ir_types.CompilerIrParamList.Nil)))))
+
+;; 0 `ge i 0`, 1 `gt i -1`, 2 `le 0 i`, 3 `lt -1 i`.
+(define (opt-range-merge-low-instr [kind : i64]) : compiler_ir_types.CompilerIrInstr
+  (cond
+    [(= kind 0)
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        3
+        (compiler_ir_types.CompilerIrBinOp.Ge)
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ir_types.CompilerIrValue.I64 0)
+        (compiler_ast_types.AstType.I64))]
+    [(= kind 1)
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        3
+        (compiler_ir_types.CompilerIrBinOp.Gt)
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ir_types.CompilerIrValue.I64 (- 0 1))
+        (compiler_ast_types.AstType.I64))]
+    [(= kind 2)
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        3
+        (compiler_ir_types.CompilerIrBinOp.Le)
+        (compiler_ir_types.CompilerIrValue.I64 0)
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ast_types.AstType.I64))]
+    [else
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        3
+        (compiler_ir_types.CompilerIrBinOp.Lt)
+        (compiler_ir_types.CompilerIrValue.I64 (- 0 1))
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ast_types.AstType.I64))]))
+
+;; 0 `lt i bound`, 1 `gt bound i`. `bound` is `len` (%1), which the true arm
+;; bounds-checks against, or `probe` (%2), which nothing ever checks -- the
+;; negative case for the non-negativity gate.
+(define (opt-range-merge-high-instr [kind : i64] [bound : i64]) : compiler_ir_types.CompilerIrInstr
+  (if (= kind 0)
+    (compiler_ir_types.CompilerIrInstr.BinOp
+      4
+      (compiler_ir_types.CompilerIrBinOp.Lt)
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      (compiler_ir_types.CompilerIrValue.Var bound)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.CompilerIrInstr.BinOp
+      4
+      (compiler_ir_types.CompilerIrBinOp.Gt)
+      (compiler_ir_types.CompilerIrValue.Var bound)
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      (compiler_ast_types.AstType.I64))))
+
+(define (opt-range-merge-low-instrs
+  [low-kind : i64]
+  [extra-use? : bool]
+  [low-fail : i64]) : compiler_ir_types.CompilerIrInstrSeq
+  (if extra-use?
+    (opt-test-instrs
+      (opt-range-merge-low-instr low-kind)
+      (compiler_ir_types.CompilerIrInstr.Mov
+        10
+        (compiler_ir_types.CompilerIrValue.Var 3)
+        (compiler_ast_types.AstType.Bool))
+      (compiler_ir_types.CompilerIrInstr.Branch
+        (compiler_ir_types.CompilerIrValue.Var 3)
+        (compiler_ir_types.compiler-ir-label "high")
+        low-fail))
+    (opt-test-instrs
+      (opt-range-merge-low-instr low-kind)
+      (compiler_ir_types.CompilerIrInstr.Branch
+        (compiler_ir_types.CompilerIrValue.Var 3)
+        (compiler_ir_types.compiler-ir-label "high")
+        low-fail))))
+
+(define (opt-range-merge-blocks
+  [low-kind : i64]
+  [high-kind : i64]
+  [bound : i64]
+  [extra-use? : bool]
+  [split-arms? : bool]) : compiler_ir_types.CompilerIrBlockList
+  (let
+    [low-fail : i64
+      (compiler_ir_types.compiler-ir-label
+        (if split-arms?
+          "fail_low"
+          "fail"))]
+    [high-fail : i64
+      (compiler_ir_types.compiler-ir-label
+        (if split-arms?
+          "fail_high"
+          "fail"))]
+    [tail : compiler_ir_types.CompilerIrBlockList
+      (if split-arms?
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "fail_low")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "fail"))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "fail_high")
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "fail"))))
+            (compiler_ir_types.CompilerIrBlockList.Nil)))
+        (compiler_ir_types.CompilerIrBlockList.Nil))]
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "low"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "low")
+          (opt-range-merge-low-instrs low-kind extra-use? low-fail))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "high")
+            (opt-test-instrs
+              (opt-range-merge-high-instr high-kind bound)
+              (compiler_ir_types.CompilerIrInstr.Branch
+                (compiler_ir_types.CompilerIrValue.Var 4)
+                (compiler_ir_types.compiler-ir-label "ok")
+                high-fail)))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "ok")
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.BoundsCheck
+                  (compiler_ir_types.CompilerIrValue.Var 0)
+                  (compiler_ir_types.CompilerIrValue.Var 1)
+                  (compiler_ir_types.compiler-ir-label "ok_ok"))
+                (compiler_ir_types.CompilerIrInstr.Return
+                  (compiler_ir_types.CompilerIrMaybeValue.Some
+                    (compiler_ir_types.CompilerIrValue.Var 0)))))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.CompilerIrBlock.Block
+                (compiler_ir_types.compiler-ir-label "fail")
+                (opt-test-instrs
+                  (compiler_ir_types.CompilerIrInstr.Return
+                    (compiler_ir_types.CompilerIrMaybeValue.Some
+                      (compiler_ir_types.CompilerIrValue.I64 (- 0 1))))))
+              tail)))))))
+
+;; Already-merged shape, hand-written the way the fold leaves it. The
+;; `bounds_check` below it is the round-two question: the SIGNED component facts
+;; are gone, and only the unsigned reading of the merged guard can discharge it.
+(define (opt-range-merge-merged-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Cast
+          5
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ast_types.AstType.I64)
+          (compiler_ast_types.AstType.U64))
+        (compiler_ir_types.CompilerIrInstr.Cast
+          6
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ast_types.AstType.I64)
+          (compiler_ast_types.AstType.U64))
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          7
+          (compiler_ir_types.CompilerIrBinOp.Lt)
+          (compiler_ir_types.CompilerIrValue.Var 5)
+          (compiler_ir_types.CompilerIrValue.Var 6)
+          (compiler_ast_types.AstType.U64))
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 7)
+          (compiler_ir_types.compiler-ir-label "ok")
+          (compiler_ir_types.compiler-ir-label "fail"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "ok")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.BoundsCheck
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            (compiler_ir_types.compiler-ir-label "ok_ok"))
+          (compiler_ir_types.CompilerIrInstr.Return
+            (compiler_ir_types.CompilerIrMaybeValue.Some
+              (compiler_ir_types.CompilerIrValue.Var 0)))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "fail")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Return
+              (compiler_ir_types.CompilerIrMaybeValue.Some
+                (compiler_ir_types.CompilerIrValue.I64 (- 0 1))))))
+        (compiler_ir_types.CompilerIrBlockList.Nil)))))
+
+(define (opt-range-merge-run [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrBlockList
+  (match (compiler_optimize.opt-bounds-dom-blocks-with-context-result
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    (compiler_optimize.opt-cfg-context-build blocks)
+    (opt-range-merge-params)
+    16
+    (opt_i64_i64_map.with-capacity 1)
+    blocks)
+    [(compiler_optimize.OptBoundsDomResult.Result result _) result]))
+
+(define (opt-range-merge-run-frame
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : i64
+  (match (compiler_optimize.opt-bounds-dom-blocks-with-context-result
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    (compiler_optimize.opt-cfg-context-build blocks)
+    (opt-range-merge-params)
+    16
+    (opt_i64_i64_map.with-capacity 1)
+    blocks)
+    [(compiler_optimize.OptBoundsDomResult.Result _ frame) frame]))
+
+(define (opt-range-merge-count-instrs
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [pos : i64]) : i64
+  (if (>= pos (compiler_ir_types.compiler-ir-instr-seq-count instrs))
+    0
+    (+
+      (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs pos)
+        [(compiler_ir_types.CompilerIrInstr.BinOp _ _ _ _ ty)
+          (match ty
+            [(compiler_ast_types.AstType.U64) 1]
+            [_ 0])]
+        [_ 0])
+      (opt-range-merge-count-instrs instrs (+ pos 1)))))
+
+;; How many unsigned-typed comparisons the output holds.
+(define (opt-range-merge-count-unsigned
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : i64
+  (match blocks
+    [(compiler_ir_types.CompilerIrBlockList.Nil) 0]
+    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (+
+            (opt-range-merge-count-instrs instrs 0)
+            (opt-range-merge-count-unsigned (__tl-box-place rest)))])]
+    [(compiler_ir_types.CompilerIrBlockList.Array seq)
+      (opt-range-merge-count-unsigned
+        (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-range-merge-true-instrs?
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [pos : i64]
+  [var : i64]) : bool
+  (if (>= pos (compiler_ir_types.compiler-ir-instr-seq-count instrs))
+    false
+    (if (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs pos)
+      [(compiler_ir_types.CompilerIrInstr.Mov dst src _)
+        (and
+          (= dst var)
+          (match src
+            [(compiler_ir_types.CompilerIrValue.Bool value) value]
+            [_ false]))]
+      [_ false])
+      true
+      (opt-range-merge-true-instrs? instrs (+ pos 1) var))))
+
+;; Is `var` defined by `mov true` -- the upper compare the merge discharged?
+(define (opt-range-merge-true?
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [var : i64]) : bool
+  (match blocks
+    [(compiler_ir_types.CompilerIrBlockList.Nil) false]
+    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (or
+            (opt-range-merge-true-instrs? instrs 0 var)
+            (opt-range-merge-true? (__tl-box-place rest) var))])]
+    [(compiler_ir_types.CompilerIrBlockList.Array seq)
+      (opt-range-merge-true?
+        (compiler_ir_types.compiler-ir-block-seq-to-list seq)
+        var)]))
+
+;; One knob combination merged: exactly one unsigned compare, the upper compare
+;; retired to `true`, two fresh cast vars, and the dominated duplicate check the
+;; true arm holds still discharged (the component facts are not lost).
+(define (opt-range-merge-case-merged?
+  [low-kind : i64]
+  [high-kind : i64]
+  [split-arms? : bool]) : bool
+  (let
+    [input : compiler_ir_types.CompilerIrBlockList
+      (opt-range-merge-blocks low-kind high-kind 1 false split-arms?)]
+    [after : compiler_ir_types.CompilerIrBlockList
+      (opt-range-merge-run
+        (opt-range-merge-blocks low-kind high-kind 1 false split-arms?))]
+    [frame : i64
+      (opt-range-merge-run-frame
+        (opt-range-merge-blocks low-kind high-kind 1 false split-arms?))]
+    (and
+      (= (compiler_optimize.opt-count-bounds-blocks input) 1)
+      (= (opt-range-merge-count-unsigned after) 1)
+      (opt-range-merge-true? after 4)
+      (= frame 18)
+      ;; The dominated duplicate the true arm holds is still discharged: the
+      ;; merge did not cost the walk the component facts.
+      (= (compiler_optimize.opt-count-bounds-blocks after) 0)
+      (compiler_optimize.opt-cfg-successor-targets-known? after))))
+
+(define (opt-range-merge-case-refused?
+  [bound : i64]
+  [extra-use? : bool]
+  [split-arms? : bool]) : bool
+  (let
+    [after : compiler_ir_types.CompilerIrBlockList
+      (opt-range-merge-run
+        (opt-range-merge-blocks 0 0 bound extra-use? split-arms?))]
+    [frame : i64
+      (opt-range-merge-run-frame
+        (opt-range-merge-blocks 0 0 bound extra-use? split-arms?))]
+    (and
+      (= (opt-range-merge-count-unsigned after) 0)
+      (not (opt-range-merge-true? after 4))
+      (= frame 16))))
+
+(define (compiler-optimize-range-merge-self-test) : i64
+  (cond
+    ;; (a) `(>= i 0) && (< i n)` with `n` a proven length, both operand orders.
+    [(not (opt-range-merge-case-merged? 0 0 false)) 1]
+    [(not (opt-range-merge-case-merged? 0 1 false)) 2]
+    ;; (b) the `(> i -1)` spelling, and the two reversed lower spellings.
+    [(not (opt-range-merge-case-merged? 1 0 false)) 3]
+    [(not (opt-range-merge-case-merged? 2 0 false)) 4]
+    [(not (opt-range-merge-case-merged? 3 1 false)) 5]
+    ;; The two failure arms may be distinct one-`Jump` blocks onto one target.
+    [(not (opt-range-merge-case-merged? 0 0 true)) 6]
+    ;; (c) `n` NOT provably non-negative -- the bound is `probe`, which nothing
+    ;; checks and no fact bounds: no merge.
+    [(not (opt-range-merge-case-refused? 2 false false)) 7]
+    [(not (opt-range-merge-case-refused? 2 false true)) 8]
+    ;; (d) the lower compare has a second consumer, so its value must survive.
+    [(not (opt-range-merge-case-refused? 1 true false)) 9]
+    ;; (e) the merged spelling still discharges a dominated duplicate check --
+    ;; the round-two question, where only the unsigned fact remains.
+    [(not
+        (=
+          (compiler_optimize.opt-count-bounds-blocks
+            (opt-range-merge-merged-blocks))
+          1))
+      10]
+    [(not
+        (=
+          (compiler_optimize.opt-count-bounds-blocks
+            (opt-range-merge-run (opt-range-merge-merged-blocks)))
+          0))
+      11]
+    ;; Idempotent: the merged output is not a candidate for itself.
+    [(not
+        (=
+          (opt-range-merge-count-unsigned
+            (opt-range-merge-run
+              (opt-range-merge-run (opt-range-merge-blocks 0 0 1 false false))))
+          1))
+      12]
+    [else 42]))
+
+;; --- whole-program non-negative scalar globals -------------------------------
+;;
+;; One program, eight `i64` globals, one function whose stores exercise each
+;; admitted and each refused shape:
+;;
+;;   lit      <- 5                    literal, non-negative       ADMITTED
+;;   neg      <- -3                   literal, negative           refused
+;;   len      <- load (gep @text, 1)  a descriptor length word    ADMITTED
+;;   plen     <- load (gep %p, 1)     a header PARAMETER's length ADMITTED
+;;   counter  <- add @counter, 1      arithmetic can overflow     refused
+;;   masked   <- bit-and %x, 63       mask clears the sign bit    ADMITTED
+;;   alias-a  <- @alias-b             mutual dependence, both     ADMITTED
+;;   alias-b  <- @alias-a             (the optimistic fixpoint)
+;;   tainted  <- @counter             depends on a refused global refused
+;;   escaped  <- 0                    address taken               refused
+;;   init-neg <- (never stored)       negative initializer        refused
+(defstruct OptNonnegTestSymbols
+  (lit i64)
+  (neg i64)
+  (len i64)
+  (plen i64)
+  (counter i64)
+  (masked i64)
+  (alias-a i64)
+  (alias-b i64)
+  (tainted i64)
+  (escaped i64)
+  (init-neg i64)
+  (text i64))
+
+(define (opt-nonneg-test-symbols) : OptNonnegTestSymbols
+  (OptNonnegTestSymbols
+    (opt-test-symbol "nn_lit")
+    (opt-test-symbol "nn_neg")
+    (opt-test-symbol "nn_len")
+    (opt-test-symbol "nn_plen")
+    (opt-test-symbol "nn_counter")
+    (opt-test-symbol "nn_masked")
+    (opt-test-symbol "nn_alias_a")
+    (opt-test-symbol "nn_alias_b")
+    (opt-test-symbol "nn_tainted")
+    (opt-test-symbol "nn_escaped")
+    (opt-test-symbol "nn_init_neg")
+    (opt-test-symbol "nn_text")))
+
+(define (opt-nonneg-test-globals [symbols : OptNonnegTestSymbols]) : compiler_ir_types.CompilerIrGlobalSeq
+  (let
+    [builder : compiler_ir_types.CompilerIrGlobalBuilder
+      (compiler_ir_types.compiler-ir-global-builder-with-capacity 12)]
+    (begin
+      (opt-test-global-builder-push!
+        (&mut builder)
+        symbols.lit
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.CompilerIrValue.I64 0))
+      (opt-test-global-builder-push!
+        (&mut builder)
+        symbols.neg
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.CompilerIrValue.I64 0))
+      (opt-test-global-builder-push!
+        (&mut builder)
+        symbols.len
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.CompilerIrValue.I64 0))
+      (opt-test-global-builder-push!
+        (&mut builder)
+        symbols.plen
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.CompilerIrValue.I64 0))
+      (opt-test-global-builder-push!
+        (&mut builder)
+        symbols.counter
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.CompilerIrValue.I64 0))
+      (opt-test-global-builder-push!
+        (&mut builder)
+        symbols.masked
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.CompilerIrValue.I64 0))
+      (opt-test-global-builder-push!
+        (&mut builder)
+        symbols.alias-a
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.CompilerIrValue.I64 0))
+      (opt-test-global-builder-push!
+        (&mut builder)
+        symbols.alias-b
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.CompilerIrValue.I64 0))
+      (opt-test-global-builder-push!
+        (&mut builder)
+        symbols.tainted
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.CompilerIrValue.I64 0))
+      (opt-test-global-builder-push!
+        (&mut builder)
+        symbols.escaped
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.CompilerIrValue.I64 0))
+      (opt-test-global-builder-push!
+        (&mut builder)
+        symbols.init-neg
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.CompilerIrValue.I64 (- 0 1)))
+      (opt-test-global-builder-push!
+        (&mut builder)
+        symbols.text
+        (compiler_ast_types.AstType.String)
+        (compiler_ir_types.CompilerIrValue.Unit))
+      (compiler_ir_types.compiler-ir-global-builder-to-seq builder))))
+
+(define (opt-nonneg-test-instrs [symbols : OptNonnegTestSymbols]) : compiler_ir_types.CompilerIrInstrSeq
+  (opt-test-instrs
+    ;; lit <- 5
+    (compiler_ir_types.CompilerIrInstr.Store
+      symbols.lit
+      (compiler_ir_types.CompilerIrValue.I64 5)
+      (compiler_ast_types.AstType.I64))
+    ;; neg <- -3
+    (compiler_ir_types.CompilerIrInstr.Store
+      symbols.neg
+      (compiler_ir_types.CompilerIrValue.I64 (- 0 3))
+      (compiler_ast_types.AstType.I64))
+    ;; len <- (string-length @text): load (gep @text, 1) : i64
+    (compiler_ir_types.CompilerIrInstr.Gep
+      1
+      (compiler_ir_types.CompilerIrValue.Global symbols.text)
+      (compiler_ir_types.CompilerIrValue.I64 1)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.CompilerIrInstr.Load
+      2
+      (compiler_ir_types.CompilerIrValue.Var 1)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.CompilerIrInstr.Store
+      symbols.len
+      (compiler_ir_types.CompilerIrValue.Var 2)
+      (compiler_ast_types.AstType.I64))
+    ;; plen <- (array-length p), p the header parameter, through one Mov copy
+    (compiler_ir_types.CompilerIrInstr.Gep
+      3
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      (compiler_ir_types.CompilerIrValue.I64 1)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.CompilerIrInstr.Load
+      4
+      (compiler_ir_types.CompilerIrValue.Var 3)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.CompilerIrInstr.Mov
+      5
+      (compiler_ir_types.CompilerIrValue.Var 4)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.CompilerIrInstr.Store
+      symbols.plen
+      (compiler_ir_types.CompilerIrValue.Var 5)
+      (compiler_ast_types.AstType.I64))
+    ;; counter <- counter + 1
+    (compiler_ir_types.CompilerIrInstr.BinOp
+      6
+      (compiler_ir_types.CompilerIrBinOp.Add)
+      (compiler_ir_types.CompilerIrValue.Global symbols.counter)
+      (compiler_ir_types.CompilerIrValue.I64 1)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.CompilerIrInstr.Store
+      symbols.counter
+      (compiler_ir_types.CompilerIrValue.Var 6)
+      (compiler_ast_types.AstType.I64))
+    ;; masked <- (bit-and opaque 63)
+    (compiler_ir_types.CompilerIrInstr.BinOp
+      7
+      (compiler_ir_types.CompilerIrBinOp.BitAnd)
+      (compiler_ir_types.CompilerIrValue.Var 4)
+      (compiler_ir_types.CompilerIrValue.I64 63)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.CompilerIrInstr.Store
+      symbols.masked
+      (compiler_ir_types.CompilerIrValue.Var 7)
+      (compiler_ast_types.AstType.I64))
+    ;; alias-a <- @alias-b, alias-b <- @alias-a
+    (compiler_ir_types.CompilerIrInstr.Store
+      symbols.alias-a
+      (compiler_ir_types.CompilerIrValue.Global symbols.alias-b)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.CompilerIrInstr.Store
+      symbols.alias-b
+      (compiler_ir_types.CompilerIrValue.Global symbols.alias-a)
+      (compiler_ast_types.AstType.I64))
+    ;; tainted <- @counter
+    (compiler_ir_types.CompilerIrInstr.Store
+      symbols.tainted
+      (compiler_ir_types.CompilerIrValue.Global symbols.counter)
+      (compiler_ast_types.AstType.I64))
+    ;; &escaped
+    (compiler_ir_types.CompilerIrInstr.Mov
+      8
+      (compiler_ir_types.CompilerIrValue.GlobalAddr symbols.escaped)
+      (compiler_ast_types.AstType.U64))
+    (compiler_ir_types.CompilerIrInstr.Return
+      (compiler_ir_types.CompilerIrMaybeValue.Some
+        (compiler_ir_types.CompilerIrValue.Var 2)))))
+
+(define (opt-nonneg-test-functions [symbols : OptNonnegTestSymbols]) : compiler_ir_types.CompilerIrFunctionList
+  (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.CompilerIrFunction.Function
+      (opt-test-symbol "nn_f")
+      (compiler_ir_types.compiler-ir-param-cons
+        (compiler_ir_types.CompilerIrParam.Param
+          "p"
+          (compiler_ast_types.ast-ty-dyn-array (compiler_ast_types.AstType.I64))
+          0)
+        (compiler_ir_types.CompilerIrParamList.Nil))
+      (compiler_ast_types.AstType.I64)
+      16
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "entry")
+          (opt-nonneg-test-instrs symbols))
+        (compiler_ir_types.CompilerIrBlockList.Nil)))
+    (compiler_ir_types.CompilerIrFunctionList.Nil)))
+
+(define (compiler-optimize-nonneg-globals-self-test) : i64
+  (let
+    [symbols : OptNonnegTestSymbols (opt-nonneg-test-symbols)]
+    [globals : compiler_ir_types.CompilerIrGlobalSeq
+      (opt-nonneg-test-globals symbols)]
+    [functions : compiler_ir_types.CompilerIrFunctionList
+      (opt-nonneg-test-functions symbols)]
+    [cell : compiler_optimize.OptGlobalCellSummary
+      (compiler_optimize.opt-global-cell-summary-build
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        globals
+        functions)]
+    [table : opt_i64_i64_map.Map cell.nonneg]
+    (cond
+      ;; ADMITTED
+      [(not (opt_i64_i64_map.contains? (& table) symbols.lit)) 1]
+      [(not (opt_i64_i64_map.contains? (& table) symbols.len)) 2]
+      [(not (opt_i64_i64_map.contains? (& table) symbols.plen)) 3]
+      [(not (opt_i64_i64_map.contains? (& table) symbols.masked)) 4]
+      ;; the optimistic fixpoint keeps a mutually dependent pair
+      [(not (opt_i64_i64_map.contains? (& table) symbols.alias-a)) 5]
+      [(not (opt_i64_i64_map.contains? (& table) symbols.alias-b)) 6]
+      ;; REFUSED
+      [(opt_i64_i64_map.contains? (& table) symbols.neg) 7]
+      [(opt_i64_i64_map.contains? (& table) symbols.counter) 8]
+      ;; the refusal propagates through the dependence edge
+      [(opt_i64_i64_map.contains? (& table) symbols.tainted) 9]
+      [(opt_i64_i64_map.contains? (& table) symbols.escaped) 10]
+      [(opt_i64_i64_map.contains? (& table) symbols.init-neg) 11]
+      ;; a descriptor global is not a scalar i64 candidate at all
+      [(opt_i64_i64_map.contains? (& table) symbols.text) 12]
+      [else 42])))
+
 ;; --- constant-offset runs: widening + ordered subsumption --------------------
 ;;
 ;; Six shapes over ONE base (`idx`, param 1) and two lengths (`len`, `len2`),

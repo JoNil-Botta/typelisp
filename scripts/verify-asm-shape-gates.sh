@@ -1514,6 +1514,43 @@ check_copy_call_word() {
     assert_fixed_count_eq "$_chunk" 'movl $25, %edx' 2 copy-call-word-peephole-count
 }
 
+# A3: the unsigned range-check merge. `(and (>= i 0) (< i n))` is two compares
+# and two conditional branches for a question one unsigned compare answers, and
+# `bounds_dom` merges them whenever `n` is provably non-negative. Both halves of
+# the verdict are pinned on one fixture: `literal_window`'s bound is a literal,
+# so it merges outright; `paired_window` is the straight-line `and`-chain whose
+# FIRST guard has nothing bounding `n` (it must keep the two-compare form) and
+# whose SECOND is proved by the first through the fact chain (it must merge).
+#
+# Pre-change both functions carry `testq %rX, %rX` + a signed `jl` in front of a
+# signed length compare; the sign test is what goes.
+check_range_merge_unsigned() {
+    _asm=$(compile_gate range_merge_unsigned tests/integration/range_merge_unsigned.tl)
+    _lit=$(function_body "$_asm" _tl_range_merge_unsigned_literal_window)
+    # One unsigned compare, no sign test, no signed length compare.
+    assert_matches "$_lit" '^[[:space:]]+cmpq \$16, %r[a-z0-9]+$' range-merge-unsigned
+    assert_matches "$_lit" '^[[:space:]]+jae ' range-merge-unsigned
+    assert_not_matches "$_lit" '^[[:space:]]+testq %r[a-z0-9]+, %r[a-z0-9]+$' range-merge-unsigned
+    assert_not_matches "$_lit" '^[[:space:]]+j(l|ge) ' range-merge-unsigned
+
+    _paired=$(function_body "$_asm" _tl_range_merge_unsigned_paired_window)
+    # The first guard stays signed (one sign test, one signed compare); the
+    # second is the merged unsigned one.
+    assert_regex_count_eq "$_paired" '^[[:space:]]+testq %r[a-z0-9]+, %r[a-z0-9]+$' 1 range-merge-unsigned
+    assert_regex_count_eq "$_paired" '^[[:space:]]+jae ' 1 range-merge-unsigned
+    assert_regex_count_eq "$_paired" '^[[:space:]]+jge ' 1 range-merge-unsigned
+    assert_regex_count_eq "$_paired" '^[[:space:]]+cmpq %r[a-z0-9]+, %r[a-z0-9]+$' 2 range-merge-unsigned
+
+    # The cached-length global: nothing in this function bounds `rm-len`, so
+    # only the whole-program non-negativity table can merge it. One compare
+    # straight against the cell, an unsigned jump, and no sign test.
+    _global=$(function_body "$_asm" _tl_range_merge_unsigned_global_window)
+    assert_matches "$_global" '^[[:space:]]+cmpq _tl_range_merge_unsigned_rm_len\(%rip\), %r[a-z0-9]+$' range-merge-unsigned
+    assert_regex_count_eq "$_global" '^[[:space:]]+jae ' 1 range-merge-unsigned
+    assert_not_matches "$_global" '^[[:space:]]+testq %r[a-z0-9]+, %r[a-z0-9]+$' range-merge-unsigned
+    assert_not_matches "$_global" '^[[:space:]]+j(l|ge) ' range-merge-unsigned
+}
+
 check_gep_load_cmp_spilled_stage() {
     _asm=$(compile_gate gep_load_cmp_spilled_stage         tests/integration/gep_load_cmp_spilled_stage.tl)
     _changed=$(function_body "$_asm"         _tl_gep_load_cmp_spilled_stage_changed_question)
@@ -1632,5 +1669,6 @@ check_mask_test_admission
 check_stdlib_math_sqrt
 check_inline_alloc_unique_labels_link
 check_gep_load_cmp_spilled_stage
+check_range_merge_unsigned
 
 echo "Assembly shape gates passed."

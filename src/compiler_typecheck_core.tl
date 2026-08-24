@@ -67363,10 +67363,16 @@
                 "typecheck: ptr-null? requires a raw pointer operand")])]
         [(ResultTcType.Err message) (ResultTcType.Err message)])]
     [(ast.AstExpr.PtrAddrOf place-box)
-      (let
-        [place : ast.AstExpr
-          (tc-context-expr-get (tc-global-shared-view ctx) place-box)]
-        (tc-ptr-addr-of-expr ctx env place))]
+      (match (tc-normalize-dotted-local-field-node!
+        (tc-global-shared-view ctx)
+        (tc-global-shared-view env)
+        place-box)
+        [(ResultTcUnit.Ok)
+          (let
+            [place : ast.AstExpr
+              (tc-context-expr-get (tc-global-shared-view ctx) place-box)]
+            (tc-ptr-addr-of-expr ctx env place))]
+        [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
     [(ast.AstExpr.PtrRead ptr-box)
       (let
         [ptr : ast.AstExpr

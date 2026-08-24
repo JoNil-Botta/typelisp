@@ -82,4 +82,4 @@
             (+
               (dynamic-array-slot-read-score)
               (reference-slot-read-score (& value))))))
-      226)))
+      264)))

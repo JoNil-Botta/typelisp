@@ -28456,10 +28456,10 @@ g:
 ;; rip-relative memory operand. The fixtures share the M6 homes above, so the
 ;; moved value is %r13, the compare's other operand %r14 and its result %r15.
 (define (compiler-backend-cmp-mem-global-asm-target
-  [rest : compiler_ir_types.CompilerIrInstrList]
+  [rest : compiler_ir_types.CompilerIrInstrSeq]
   [target : compiler_backend.CompilerBackendTarget]) : compiler_backend.ResultCompilerBackend
   (compiler-backend-emit-test-instrs-target
-    (compiler_ir_types.compiler-ir-instr-cons
+    (compiler-backend-test-instr-seq-prepend
       (compiler_ir_types.CompilerIrInstr.Mov
         3
         (compiler_ir_types.CompilerIrValue.Global (ci.intern "m6i_gen"))
@@ -28470,7 +28470,7 @@ g:
     target))
 
 (define (compiler-backend-cmp-mem-global-asm
-  [rest : compiler_ir_types.CompilerIrInstrList]) : compiler_backend.ResultCompilerBackend
+  [rest : compiler_ir_types.CompilerIrInstrSeq]) : compiler_backend.ResultCompilerBackend
   (compiler-backend-cmp-mem-global-asm-target
     rest
     (compiler_backend.CompilerBackendTarget.Linux)))
@@ -28543,9 +28543,10 @@ g:
 ;; destination one.
 (define (compiler-backend-cmp-mem-global-imm-fold-ok?) : bool
   (match (compiler-backend-cmp-mem-global-asm
-    (compiler-backend-cmp-mem-global-imm-tail
-      (compiler_ir_types.CompilerIrBinOp.Eq)
-      true))
+    (compiler_ir_types.compiler-ir-instr-seq-from-list
+      (compiler-backend-cmp-mem-global-imm-tail
+        (compiler_ir_types.CompilerIrBinOp.Eq)
+        true)))
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
@@ -28561,9 +28562,10 @@ g:
 ;; occupy cannot be exchanged, so the fold declines and the read survives.
 (define (compiler-backend-cmp-mem-global-imm-ordered-refused-ok?) : bool
   (match (compiler-backend-cmp-mem-global-asm
-    (compiler-backend-cmp-mem-global-imm-tail
-      (compiler_ir_types.CompilerIrBinOp.Lt)
-      true))
+    (compiler_ir_types.compiler-ir-instr-seq-from-list
+      (compiler-backend-cmp-mem-global-imm-tail
+        (compiler_ir_types.CompilerIrBinOp.Lt)
+        true)))
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
@@ -28581,24 +28583,25 @@ g:
 ;; thing that can refuse.
 (define (compiler-backend-cmp-mem-global-second-use-refused-ok?) : bool
   (match (compiler-backend-cmp-mem-global-asm
-    (compiler_ir_types.compiler-ir-instr-cons
-      (compiler_ir_types.CompilerIrInstr.BinOp
-        5
-        (compiler_ir_types.CompilerIrBinOp.Lt)
-        (compiler_ir_types.CompilerIrValue.Var 3)
-        (compiler_ir_types.CompilerIrValue.Var 4)
-        (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.compiler-ir-instr-seq-from-list
       (compiler_ir_types.compiler-ir-instr-cons
-        (compiler_ir_types.CompilerIrInstr.Branch
-          (compiler_ir_types.CompilerIrValue.Var 5)
-          (compiler_ir_types.compiler-ir-label "lt")
-          (compiler_ir_types.compiler-ir-label "ge"))
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          5
+          (compiler_ir_types.CompilerIrBinOp.Lt)
+          (compiler_ir_types.CompilerIrValue.Var 3)
+          (compiler_ir_types.CompilerIrValue.Var 4)
+          (compiler_ast_types.AstType.I64))
         (compiler_ir_types.compiler-ir-instr-cons
-          (compiler_ir_types.CompilerIrInstr.Mov
-            6
-            (compiler_ir_types.CompilerIrValue.Var 3)
-            (compiler_ast_types.AstType.I64))
-          compiler_ir_types.CompilerIrInstrList.Nil))))
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 5)
+            (compiler_ir_types.compiler-ir-label "lt")
+            (compiler_ir_types.compiler-ir-label "ge"))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Mov
+              6
+              (compiler_ir_types.CompilerIrValue.Var 3)
+              (compiler_ast_types.AstType.I64))
+            compiler_ir_types.CompilerIrInstrList.Nil)))))
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
@@ -28615,7 +28618,7 @@ g:
 ;; would otherwise be read AFTER the store instead of before it.
 (define (compiler-backend-cmp-mem-global-store-between-refused-ok?) : bool
   (match (compiler-backend-cmp-mem-global-asm
-    (compiler_ir_types.compiler-ir-instr-cons
+    (compiler-backend-test-instr-seq-prepend
       (compiler_ir_types.CompilerIrInstr.StorePtr
         (compiler_ir_types.CompilerIrValue.Var 0)
         (compiler_ir_types.CompilerIrValue.I64 7)
@@ -28638,7 +28641,7 @@ g:
 ;; read the cell AFTER the write instead of before it.
 (define (compiler-backend-cmp-mem-global-self-store-refused-ok?) : bool
   (match (compiler-backend-cmp-mem-global-asm
-    (compiler_ir_types.compiler-ir-instr-cons
+    (compiler-backend-test-instr-seq-prepend
       (compiler_ir_types.CompilerIrInstr.Store
         (ci.intern "m6i_gen")
         (compiler_ir_types.CompilerIrValue.I64 7)

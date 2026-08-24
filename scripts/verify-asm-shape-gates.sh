@@ -663,7 +663,7 @@ assert_call_alignment() {
 check_dead_frame_boundary() {
     _asm=$(compile_gate dead_frame_boundary tests/integration/dead_frame_boundary.tl)
 
-    _fwd=$(function_body "$_asm" _tl_dead_frame_boundary_dfb_forward)
+    _fwd=$(function_body "$_asm" tl_dfb_forward)
     assert_contains "$_fwd" 'jmp _tl_dead_frame_boundary_dfb_sink' dead-frame-tail-forward
     assert_not_matches "$_fwd" '^[[:space:]]+call ' dead-frame-tail-forward
     assert_regex_count_eq "$_fwd" '^[[:space:]]+subq \$[0-9]+, %rsp$' 0 dead-frame-tail-forward
@@ -745,7 +745,7 @@ check_dead_frame_boundary_win64() {
         tests/integration/dead_frame_boundary.tl \
         windows-x86_64)
 
-    _fwd=$(function_body "$_asm" _tl_dead_frame_boundary_dfb_forward)
+    _fwd=$(function_body "$_asm" tl_dfb_forward)
     assert_contains "$_fwd" 'jmp _tl_dead_frame_boundary_dfb_sink' dead-frame-win64-tail-forward
     assert_call_alignment "$_fwd" 0 dead-frame-win64-tail-forward
     assert_contains "$_fwd" '.seh_stackalloc ' dead-frame-win64-tail-forward

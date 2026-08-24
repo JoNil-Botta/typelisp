@@ -21,10 +21,8 @@
 ;; The gate is check_global_cmp_mem_fold in scripts/verify-asm-shape-gates.sh;
 ;; it FAILS on the pre-M6-I compiler, which stages every global read through a
 ;; scratch register first.
-
 (define gcmp-gen : i64
   0)
-
 (define gcmp-limit : i64
   0)
 
@@ -66,18 +64,12 @@
   (begin
     (set! gcmp-gen (gcmp-opaque 0 0))
     (set! gcmp-limit (gcmp-opaque 993 0))
-    (if (not (= (probe-lhs 7 0) 1))
-      1
-      (if (not (= (probe-lhs 8 0) 0))
-        2
-        (if (not (= (probe-rhs 999 0) 1))
-          3
-          (if (not (= (probe-rhs 1000 0) 0))
-            4
-            (if (not (= (probe-rhs 1001 0) 0))
-              5
-              (if (not (= (probe-refused 7 0) 8))
-                6
-                (if (not (= (probe-refused 9 0) 0))
-                  7
-                  42)))))))))
+    (cond
+      [(not (= (probe-lhs 7 0) 1)) 1]
+      [(not (= (probe-lhs 8 0) 0)) 2]
+      [(not (= (probe-rhs 999 0) 1)) 3]
+      [(not (= (probe-rhs 1000 0) 0)) 4]
+      [(not (= (probe-rhs 1001 0) 0)) 5]
+      [(not (= (probe-refused 7 0) 8)) 6]
+      [(not (= (probe-refused 9 0) 0)) 7]
+      [else 42])))

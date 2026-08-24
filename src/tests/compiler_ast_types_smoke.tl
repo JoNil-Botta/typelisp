@@ -35,7 +35,7 @@
       (= (ast.ast-int-literal-value-or-payload 73 "") 73))))
 
 (define (compiler-ast-state-expr-int-lit?
-  [pool : ast.AstExprNodePoolState]
+  [pool : (& pool ast.AstExprNodePoolState)]
   [id : i64]
   [expected : i64]) : bool
   (match (ast.ast-expr-node-pool-state-get pool id)
@@ -1316,6 +1316,33 @@
       (= (ast.ast-source-span-start-line span) line)]
     [(ast.AstMaybeSourceSpan.No) false]))
 
+;; Shallow pool snapshots share the dense span-slot table but retain their own
+;; canonical record generation. A slot from a newer generation must be treated
+;; as missing rather than indexing beyond the restored record array.
+(define (compiler-ast-stale-canonical-span-slot-recovery-smoke?) : bool
+  (match (ast.ast-expr-node-pool-state-push
+    (ast.ast-expr-node-pool-state-create 1)
+    (ast.AstExpr.Literal (ast.ast-lit-int 17)))
+    [(ast.AstExprNodePoolPushOk literal-pool literal)
+      (begin
+        (ast.ast-expr-span-slot-set-in-bases!
+          literal-pool.span-slot-segment-bases
+          literal
+          65)
+        (match (ast.ast-expr-node-pool-state-push
+          literal-pool
+          (ast.AstExpr.Spanned literal (ast.ast-source-span 7 1 7 3)))
+          [(ast.AstExprNodePoolPushOk recovered view)
+            (and
+              (= view 1)
+              (=
+                (ast.ast-expr-node-pool-state-canonical-span-count
+                  (owned_view.compiler-owned-shared-view recovered))
+                1)
+              (match (ast.ast-expr-node-pool-state-span-oracle recovered view)
+                [(ast.AstExprSpanOracleResult.CanonicalMatch) true]
+                [_ false]))]))]))
+
 ;; Canonical provenance is first-write/innermost.  A later wrapper with a
 ;; different source location gets a sparse per-use ReSpan, while an identical
 ;; wrapper shares the canonical record.  Truncation retires only suffix-owned
@@ -1326,26 +1353,38 @@
       (ast.ast-node-pool-context-new-with-capacities 1 1)]
     [literal : i64
       (ast.ast-node-pool-context-expr-push
-        pools
+        (owned_view.compiler-owned-shared-view pools)
         (ast.AstExpr.Literal (ast.ast-lit-int 7)))]
     [inner-span : ast.AstSourceSpan (ast.ast-source-span 2 3 2 8)]
     [outer-span : ast.AstSourceSpan (ast.ast-source-span 9 1 9 6)]
     [inner-view : i64
-      (ast.ast-expr-spanned-with-pools pools literal inner-span)]
+      (ast.ast-expr-spanned-with-pools
+        (owned_view.compiler-owned-shared-view pools)
+        literal
+        inner-span)]
     [same-view : i64
-      (ast.ast-expr-spanned-with-pools pools inner-view inner-span)]
+      (ast.ast-expr-spanned-with-pools
+        (owned_view.compiler-owned-shared-view pools)
+        inner-view
+        inner-span)]
     [outer-view : i64
-      (ast.ast-expr-spanned-with-pools pools same-view outer-span)]
+      (ast.ast-expr-spanned-with-pools
+        (owned_view.compiler-owned-shared-view pools)
+        same-view
+        outer-span)]
     [mark : i64 (ast.ast-node-pool-context-expr-len pools)]
     [later-view : i64
       (ast.ast-expr-spanned-with-pools
-        pools
+        (owned_view.compiler-owned-shared-view pools)
         outer-view
         (ast.ast-source-span 12 1 12 2))]
-    [_reset-suffix : unit (ast.ast-node-pool-context-expr-truncate! pools mark)]
+    [_reset-suffix : unit
+      (ast.ast-node-pool-context-expr-truncate!
+        (owned_view.compiler-owned-shared-view pools)
+        mark)]
     [reused : i64
       (ast.ast-node-pool-context-expr-push
-        pools
+        (owned_view.compiler-owned-shared-view pools)
         (ast.AstExpr.Literal (ast.ast-lit-int 11)))]
     [prefix-ok : bool
       (and
@@ -1384,7 +1423,7 @@
       ;; its view becomes the new identity's original provenance.  Keeping the
       ;; negative ReSpan slot would make canonical reads fail after the rewrite.
       (ast.ast-node-pool-context-expr-set!
-        pools
+        (owned_view.compiler-owned-shared-view pools)
         outer-view
         (ast.AstExpr.Literal (ast.ast-lit-int 99)))
       (let
@@ -1397,15 +1436,17 @@
             (compiler-ast-maybe-span-start-line?
               (ast.ast-node-pool-context-expr-view-span pools outer-view)
               9))]
-        (ast.ast-node-pool-context-expr-truncate! pools 0)
+        (ast.ast-node-pool-context-expr-truncate!
+          (owned_view.compiler-owned-shared-view pools)
+          0)
         (let
           [new-literal : i64
             (ast.ast-node-pool-context-expr-push
-              pools
+              (owned_view.compiler-owned-shared-view pools)
               (ast.AstExpr.Literal (ast.ast-lit-int 13)))]
           [new-view : i64
             (ast.ast-expr-spanned-with-pools
-              pools
+              (owned_view.compiler-owned-shared-view pools)
               new-literal
               (ast.ast-source-span 20 1 20 3))]
           (and
@@ -1479,7 +1520,7 @@
       (let
         [a-growth-view : i64
           (ast.ast-expr-spanned-with-pools
-            a
+            (owned_view.compiler-owned-shared-view a)
             a-last-expr
             (ast.ast-source-span 31 1 31 4))]
         [a-dupe-type : i64
@@ -1553,6 +1594,9 @@
     (unless (compiler-ast-generated-path-owner-smoke?) (return 12))
     (unless (compiler-ast-context-owned-arena-smoke?) (return 13))
     (unless (compiler-ast-compaction-borrow-child-smoke?) (return 14))
+    (unless
+      (compiler-ast-stale-canonical-span-slot-recovery-smoke?)
+      (return 20))
     (unless (compiler-ast-expression-span-sidecar-smoke?) (return 19))
     (unless (compiler-ast-segmented-growth-isolation-smoke?) (return 15))
     (unless (compiler-ast-macro-type-kind-dense-compaction-smoke?) (return 16))

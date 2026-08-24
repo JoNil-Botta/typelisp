@@ -1543,7 +1543,12 @@
               (ast-expr-span-slot-get-from-bases
                 ast-node-span-slot-segment-bases
                 semantic)]
-            (if (= slot 0)
+            ;; Pool snapshots share the dense slot sidecar. Restoring a snapshot
+            ;; taken before canonical-record growth can therefore expose a slot
+            ;; written by the newer generation while retaining the older record
+            ;; count. Treat that out-of-generation slot as missing provenance and
+            ;; establish a canonical record in the restored generation.
+            (if (or (<= slot 0) (> slot ast-node-canonical-span-count))
               (begin
                 (if (>=
                   ast-node-canonical-span-count
@@ -2001,7 +2006,7 @@
   [pool : (& pool AstExprNodePoolState)]) : i64
   (* pool.segment-count ast-expr-node-pool-segment-size))
 
-(define (ast-expr-node-pool-state-mark [pool : AstExprNodePoolState]) : i64
+(define (ast-expr-node-pool-state-mark [pool : (& pool AstExprNodePoolState)]) : i64
   (ast-expr-node-pool-state-len pool))
 
 (define (ast-expr-node-pool-state-with-canonical-spans
@@ -2150,7 +2155,11 @@
               (ast-expr-span-slot-get-from-bases
                 pool.span-slot-segment-bases
                 semantic)]
-            (if (= slot 0)
+            ;; The slot table is shared by shallow pool snapshots, while the
+            ;; canonical record array/count are snapshot state. A newer snapshot
+            ;; may leave a one-based slot beyond this restored generation's
+            ;; count; recover it exactly like an unrecorded semantic node.
+            (if (or (<= slot 0) (> slot pool.canonical-span-count))
               (let
                 [ready : AstExprNodePoolState
                   (if (>=
@@ -2474,7 +2483,9 @@
               next)
             id))))))
 
-(define (ast-expr-node-pool-state-get [pool : AstExprNodePoolState] [id : i64]) : AstExpr
+(define (ast-expr-node-pool-state-get
+  [pool : (& pool AstExprNodePoolState)]
+  [id : i64]) : AstExpr
   (let
     [biased-base : i64
       (unsafe
@@ -2566,7 +2577,7 @@
   [id : i64]) : AstExprSpanOracleResult
   (if (or (< id 0) (>= id pool.count))
     (AstExprSpanOracleResult.NotSpanned)
-    (match (ast-expr-node-pool-state-get (ast-global-shared-view pool) id)
+    (match (ast-expr-node-pool-state-get pool id)
       [(AstExpr.Spanned _ legacy-span)
         (match (ast-expr-node-pool-state-view-span
           (ast-global-shared-view pool)
@@ -4666,37 +4677,38 @@
     id))
 
 (define (ast-node-pool-context-expr-canonical-span
-  [pools : AstNodePoolContext]
+  [pools : (& pools AstNodePoolContext)]
   [id : i64]) : AstMaybeSourceSpan
   (ast-expr-node-pool-state-canonical-span
     (ast-array-shared-view pools.expr-pool 0)
     id))
 
 (define (ast-node-pool-context-expr-view-span
-  [pools : AstNodePoolContext]
+  [pools : (& pools AstNodePoolContext)]
   [id : i64]) : AstMaybeSourceSpan
   (ast-expr-node-pool-state-view-span
     (ast-array-shared-view pools.expr-pool 0)
     id))
 
 (define (ast-node-pool-context-expr-canonical-span-count
-  [pools : AstNodePoolContext]) : i64
+  [pools : (& pools AstNodePoolContext)]) : i64
   (ast-expr-node-pool-state-canonical-span-count
     (ast-array-shared-view pools.expr-pool 0)))
 
-(define (ast-node-pool-context-expr-respan-count [pools : AstNodePoolContext]) : i64
+(define (ast-node-pool-context-expr-respan-count
+  [pools : (& pools AstNodePoolContext)]) : i64
   (ast-expr-node-pool-state-respan-count
     (ast-array-shared-view pools.expr-pool 0)))
 
 (define (ast-node-pool-context-expr-span-oracle
-  [pools : AstNodePoolContext]
+  [pools : (& pools AstNodePoolContext)]
   [id : i64]) : AstExprSpanOracleResult
   (ast-expr-node-pool-state-span-oracle
     (ast-array-shared-view pools.expr-pool 0)
     id))
 
 (define (ast-node-pool-context-expr-span-oracle-ok?
-  [pools : AstNodePoolContext]) : bool
+  [pools : (& pools AstNodePoolContext)]) : bool
   (ast-expr-node-pool-state-span-oracle-ok?
     (ast-array-shared-view pools.expr-pool 0)))
 

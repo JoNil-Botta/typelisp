@@ -13055,23 +13055,22 @@
   [acc : i64]) : i64
   (if (>= index (compiler_ir_types.compiler-ir-instr-seq-count instrs))
     acc
-    (opt-branch-fold-count-seq
-      instrs
-      want
-      (+ index 1)
-      (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
-        [(compiler_ir_types.CompilerIrInstr.Branch cond _ _)
-          (match cond
-            [(compiler_ir_types.CompilerIrValue.Bool known)
-              (if known
-                (if (= want 1)
-                  (+ acc 1)
-                  acc)
-                (if (= want 1)
-                  acc
-                  (+ acc 1)))]
-            [_ acc])]
-        [_ acc]))))
+    (let
+      [next-acc : i64
+        (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
+          [(compiler_ir_types.CompilerIrInstr.Branch cond _ _)
+            (match cond
+              [(compiler_ir_types.CompilerIrValue.Bool known)
+                (if known
+                  (if (= want 1)
+                    (+ acc 1)
+                    acc)
+                  (if (= want 1)
+                    acc
+                    (+ acc 1)))]
+              [_ acc])]
+          [_ acc])]
+      (opt-branch-fold-count-seq instrs want (+ index 1) next-acc))))
 
 (define (opt-branch-fold-count
   [blocks : compiler_ir_types.CompilerIrBlockList]
@@ -13095,13 +13094,13 @@
   [acc : i64]) : i64
   (if (>= index (compiler_ir_types.compiler-ir-instr-seq-count instrs))
     acc
-    (opt-branch-fold-phi-inputs-seq
-      instrs
-      (+ index 1)
-      (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
-        [(compiler_ir_types.CompilerIrInstr.Phi _ inputs _)
-          (+ acc (compiler_ir_types.compiler-ir-phi-input-list-count inputs))]
-        [_ acc]))))
+    (let
+      [next-acc : i64
+        (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
+          [(compiler_ir_types.CompilerIrInstr.Phi _ inputs _)
+            (+ acc (compiler_ir_types.compiler-ir-phi-input-list-count inputs))]
+          [_ acc])]
+      (opt-branch-fold-phi-inputs-seq instrs (+ index 1) next-acc))))
 
 (define (opt-branch-fold-phi-inputs
   [blocks : compiler_ir_types.CompilerIrBlockList]) : i64
@@ -13120,19 +13119,51 @@
 (define (opt-branch-fold-run [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrBlockList
   (compiler_optimize.opt-bounds-dom-blocks-with-context
     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-    (compiler_optimize.opt-cfg-context-build blocks)
+    (compiler_optimize.opt-cfg-context-build
+      (compiler_optimize.compiler-opt-global-shared-view blocks))
     (opt-branch-fold-params)
     12
     blocks))
+
+(define (opt-branch-fold-count-is?
+  [blocks : (& blocks compiler_ir_types.CompilerIrBlockList)]
+  [want : i64]
+  [expected : i64]) : bool
+  (=
+    (opt-branch-fold-count
+      (owned_view.compiler-owned-reference-shared-view blocks)
+      want)
+    expected))
+
+(define (opt-branch-fold-block-count-is?
+  [blocks : (& blocks compiler_ir_types.CompilerIrBlockList)]
+  [expected : i64]) : bool
+  (=
+    (compiler_ir_types.compiler-ir-block-list-count
+      (owned_view.compiler-owned-reference-shared-view blocks))
+    expected))
+
+(define (opt-branch-fold-phi-input-count-is?
+  [blocks : (& blocks compiler_ir_types.CompilerIrBlockList)]
+  [expected : i64]) : bool
+  (=
+    (opt-branch-fold-phi-inputs
+      (owned_view.compiler-owned-reference-shared-view blocks))
+    expected))
+
+(define (opt-branch-fold-successors-known?
+  [blocks : (& blocks compiler_ir_types.CompilerIrBlockList)]) : bool
+  (compiler_optimize.opt-cfg-successor-targets-known?
+    (owned_view.compiler-owned-reference-shared-view blocks)))
 
 (define (compiler-optimize-dom-cmp-branch-fold-self-test) : i64
   (let
     [same : compiler_ir_types.CompilerIrBlockList (opt-branch-fold-blocks 0)]
     [after-same : compiler_ir_types.CompilerIrBlockList
-      (opt-branch-fold-run same)]
+      (opt-branch-fold-run (owned_view.compiler-owned-shared-view same))]
     ;; IDEMPOTENCE: the rewritten function is a fixed point of the same pass.
     [again : compiler_ir_types.CompilerIrBlockList
-      (opt-branch-fold-run after-same)]
+      (opt-branch-fold-run (owned_view.compiler-owned-shared-view after-same))]
     [negated : compiler_ir_types.CompilerIrBlockList (opt-branch-fold-blocks 1)]
     [after-negated : compiler_ir_types.CompilerIrBlockList
       (opt-branch-fold-run negated)]
@@ -13148,51 +13179,48 @@
     [diamond : compiler_ir_types.CompilerIrBlockList
       (opt-branch-fold-phi-blocks)]
     [after-diamond : compiler_ir_types.CompilerIrBlockList
-      (opt-branch-fold-run diamond)]
+      (opt-branch-fold-run (owned_view.compiler-owned-shared-view diamond))]
     [cleaned : compiler_ir_types.CompilerIrBlockList
-      (compiler_optimize.opt-cfg-simplify-blocks after-diamond)]
+      (compiler_optimize.opt-cfg-simplify-blocks
+        (owned_view.compiler-owned-shared-view after-diamond))]
     (cond
       ;; (a) the dominating branch's TRUE edge decides the copy the dominated
       ;; block branches on. Nothing else in the function is decided.
-      [(not (= (opt-branch-fold-count same 1) 0)) 1]
-      [(not (= (opt-branch-fold-count same 0) 0)) 2]
-      [(not (= (opt-branch-fold-count after-same 1) 1)) 3]
-      [(not (= (opt-branch-fold-count after-same 0) 0)) 4]
+      [(not (opt-branch-fold-count-is? (& same) 1 0)) 1]
+      [(not (opt-branch-fold-count-is? (& same) 0 0)) 2]
+      [(not (opt-branch-fold-count-is? (& after-same) 1 1)) 3]
+      [(not (opt-branch-fold-count-is? (& after-same) 0 0)) 4]
       ;; The terminators keep both successor labels, so the block set and the
       ;; CFG this pass hands to sccp are untouched.
-      [(not (= (compiler_ir_types.compiler-ir-block-list-count after-same) 6))
-        5]
-      [(not (compiler_optimize.opt-cfg-successor-targets-known? after-same)) 6]
-      [(not (= (opt-branch-fold-count again 1) 1)) 7]
-      [(not (= (compiler_ir_types.compiler-ir-block-list-count again) 6)) 8]
+      [(not (opt-branch-fold-block-count-is? (& after-same) 6)) 5]
+      [(not (opt-branch-fold-successors-known? (& after-same))) 6]
+      [(not (opt-branch-fold-count-is? (& again) 1 1)) 7]
+      [(not (opt-branch-fold-block-count-is? (& again) 6)) 8]
       ;; (b) the FALSE edge of the same branch decides the negation.
-      [(not (= (opt-branch-fold-count after-negated 0) 1)) 9]
-      [(not (= (opt-branch-fold-count after-negated 1) 0)) 10]
+      [(not (opt-branch-fold-count-is? (& after-negated) 0 1)) 9]
+      [(not (opt-branch-fold-count-is? (& after-negated) 1 0)) 10]
       ;; (c) a passed bounds check decides `idx < len` for the branch below it,
       ;; in a block that holds no comparison at all.
-      [(not (= (opt-branch-fold-count after-checked 1) 1)) 11]
-      [(not (= (opt-branch-fold-count after-checked 0) 0)) 12]
+      [(not (opt-branch-fold-count-is? (& after-checked) 1 1)) 11]
+      [(not (opt-branch-fold-count-is? (& after-checked) 0 0)) 12]
       ;; (d) the same question spelled through fresh `cast i64 -> u64`
       ;; destinations on both operands.
-      [(not (= (opt-branch-fold-count after-casted 1) 1)) 13]
-      [(not (= (opt-branch-fold-count after-casted 0) 0)) 14]
+      [(not (opt-branch-fold-count-is? (& after-casted) 1 1)) 13]
+      [(not (opt-branch-fold-count-is? (& after-casted) 0 0)) 14]
       ;; (e) REFUSED at a join the deciding edge does not dominate.
-      [(not (= (opt-branch-fold-count after-joined 1) 0)) 15]
-      [(not (= (opt-branch-fold-count after-joined 0) 0)) 16]
-      [(not (= (compiler_ir_types.compiler-ir-block-list-count after-joined) 7))
-        17]
+      [(not (opt-branch-fold-count-is? (& after-joined) 1 0)) 15]
+      [(not (opt-branch-fold-count-is? (& after-joined) 0 0)) 16]
+      [(not (opt-branch-fold-block-count-is? (& after-joined) 7)) 17]
       ;; (f) the dead arm's phi input, and the arm itself, go away in the CFG
       ;; cleanup that runs below this pass -- not in the pass.
-      [(not (= (opt-branch-fold-phi-inputs diamond) 3)) 18]
-      [(not (= (opt-branch-fold-count after-diamond 1) 1)) 19]
-      [(not (= (opt-branch-fold-phi-inputs after-diamond) 3)) 20]
-      [(not
-          (= (compiler_ir_types.compiler-ir-block-list-count after-diamond) 6))
-        21]
-      [(not (= (compiler_ir_types.compiler-ir-block-list-count cleaned) 5)) 22]
-      [(not (= (opt-branch-fold-phi-inputs cleaned) 2)) 23]
-      [(not (= (opt-branch-fold-count cleaned 1) 0)) 24]
-      [(not (compiler_optimize.opt-cfg-successor-targets-known? cleaned)) 25]
+      [(not (opt-branch-fold-phi-input-count-is? (& diamond) 3)) 18]
+      [(not (opt-branch-fold-count-is? (& after-diamond) 1 1)) 19]
+      [(not (opt-branch-fold-phi-input-count-is? (& after-diamond) 3)) 20]
+      [(not (opt-branch-fold-block-count-is? (& after-diamond) 6)) 21]
+      [(not (opt-branch-fold-block-count-is? (& cleaned) 5)) 22]
+      [(not (opt-branch-fold-phi-input-count-is? (& cleaned) 2)) 23]
+      [(not (opt-branch-fold-count-is? (& cleaned) 1 0)) 24]
+      [(not (opt-branch-fold-successors-known? (& cleaned))) 25]
       [else 42])))
 
 (define (compiler-optimize-bounds-self-test) : i64

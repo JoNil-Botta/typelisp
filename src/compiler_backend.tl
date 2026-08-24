@@ -63124,19 +63124,33 @@
 ;; saving prologue, and selected prologue all differ from their needles), so
 ;; length equality is a cheap, allocation-free proof that a splice did not
 ;; fire.
+;; Fail-closed proof that each of the three shrink-wrap text splices had a
+;; needle to act on.  The original form compared lengths before/after each
+;; `string.replace`, which is a proxy that reports drift whenever the
+;; replacement happens to be the same size as the needle.  That is the COMMON
+;; case, not a rare one: the planned guard and the incoming guard are
+;; byte-identical whenever every operand the guard reads is already pinned to
+;; its own ABI register (a first-parameter `test %rdi,%rdi` guard), and they
+;; are the same length whenever the two homes merely spell the same width
+;; (`%rdi` vs `%r13`).  Both are correct splices -- rendering the prefix from
+;; incoming ABI homes is exactly what the replacement is for -- so the length
+;; test refused the whole shrink-wrap for functions that were perfectly
+;; admissible.  Check containment of each needle instead: that is what
+;; "the splice had something to replace" actually means, and it is strictly
+;; stronger (a same-length substitution of a MISSING needle used to pass).
 (define (compiler-backend-shrinkwrap-splice-fallback-required?
   [active? : bool]
   [body : String]
+  [planned-guard : String]
   [guarded-body : String]
-  [framed-body : String]
-  [final-body : String]
-  [emitted-body : String]) : bool
+  [saving-label-line : String]
+  [final-body : String]) : bool
   (and
     active?
     (or
-      (= (string.string-length body) (string.string-length guarded-body))
-      (= (string.string-length guarded-body) (string.string-length framed-body))
-      (= (string.string-length final-body) (string.string-length emitted-body)))))
+      (not (compiler-backend-string-contains? body planned-guard))
+      (not (compiler-backend-string-contains? guarded-body saving-label-line))
+      (not (compiler-backend-string-contains? final-body saving-label-line)))))
 
 (define (compiler-backend-set-scavenge-ctx-ready!
   [function-state : CompilerBackendFunctionState]
@@ -69916,10 +69930,10 @@
                                 (compiler-backend-shrinkwrap-splice-fallback-required?
                                   shrinkwrap-active?
                                   body
+                                  shrinkwrap-planned-guard
                                   guarded-body
-                                  framed-body
-                                  final-body
-                                  emitted-body))
+                                  (str_cat.str-cat saving-asm-label ":\n" "")
+                                  final-body))
                                 ;; A textual invariant drifted. Re-run the full
                                 ;; unwrapped pipeline so the IR split, bare return,
                                 ;; register plan, and prologue placement are all
@@ -86395,49 +86409,62 @@
   (let
     [body : String "guard\nsave:\n"]
     [guarded : String (string.replace body "guard\n" "incoming-guard\n")]
-    [framed : String (string.replace guarded "save:\n" "save:\nprologue\n")]
-    [final-body : String (str_cat.str-cat "mode\n" framed)]
-    [emitted : String
-      (string.replace final-body "save:\n" "selected-prologue\n")]
-    [missing-guard : String
-      (string.replace body "absent-guard\n" "incoming-guard\n")]
+    [final-body : String
+      (str_cat.str-cat
+        "mode\n"
+        (string.replace guarded "save:\n" "save:\nprologue\n")
+        "")]
+    ;; Stage 1 drift: the planned guard is not in the emitted body.
+    ;; Stage 2 drift: the saving label never reached the guarded body.
+    ;; Stage 3 drift: the saving label never reached the rebased body.
+    ;; The clean case replaces every needle and the inactive case never fires.
+    ;; The identity case (planned guard == incoming guard, which is what a
+    ;; guard reading only ABI-pinned parameters renders as) is NOT drift.
     (and
       (compiler-backend-shrinkwrap-splice-fallback-required?
         true
         body
-        missing-guard
-        framed
-        final-body
-        emitted)
-      (compiler-backend-shrinkwrap-splice-fallback-required?
-        true
-        body
+        "absent-guard\n"
         guarded
-        guarded
-        final-body
-        emitted)
-      (compiler-backend-shrinkwrap-splice-fallback-required?
-        true
-        body
-        guarded
-        framed
-        final-body
+        "save:\n"
         final-body)
+      (compiler-backend-shrinkwrap-splice-fallback-required?
+        true
+        body
+        "guard\n"
+        "incoming-guard\n"
+        "save:\n"
+        final-body)
+      (compiler-backend-shrinkwrap-splice-fallback-required?
+        true
+        body
+        "guard\n"
+        guarded
+        "save:\n"
+        "mode\nincoming-guard\n")
       (not
         (compiler-backend-shrinkwrap-splice-fallback-required?
           true
           body
+          "guard\n"
           guarded
-          framed
-          final-body
-          emitted))
+          "save:\n"
+          final-body))
+      (not
+        (compiler-backend-shrinkwrap-splice-fallback-required?
+          true
+          body
+          body
+          body
+          "save:\n"
+          body))
       (not
         (compiler-backend-shrinkwrap-splice-fallback-required?
           false
           body
+          "absent-guard\n"
           body
-          body
-          body
+          "absent-save:\n"
           body)))))
 
 (define (compiler-backend-runtime-helper-asm-ok?) : bool

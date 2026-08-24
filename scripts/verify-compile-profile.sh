@@ -1678,10 +1678,11 @@ if [ "$NL_HOST_OS" = windows ]; then
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_type_pool macro_expand 26 1024 24 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
-    # Same series, same probe: 8,527 used nodes against 9,216 capacity, 689
-    # nodes of headroom below the 10-segment line.
+    # #6828's dense flag-exit/BCE storage declarations cross the next type-pool
+    # typecheck boundary: the authoritative Windows probe measured 9,221 used
+    # nodes, 10 segments, 10,240 capacity, and 245,760 physical payload bytes.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_type_pool typecheck 9 1024 24 \
+        "$SELFHOST_STDERR" ast_type_pool typecheck 10 1024 24 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # Each ownership boundary must expose used nodes, logical capacity, and
     # physical segmentation for both pools. Values vary with the source graph;

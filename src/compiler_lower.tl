@@ -3511,6 +3511,62 @@
         (ast.ast-node-pool-context-expr-segment-bytes pools))
       (compiler-lower-profile-counter
         (str_cat.str-cat
+          "ast_expr_pool."
+          (lower-global-shared-view point)
+          ".span_slot_bytes")
+        (ast.ast-node-pool-context-expr-span-slot-bytes
+          (lower-global-shared-view pools)))
+      (compiler-lower-profile-counter
+        (str_cat.str-cat
+          "ast_expr_pool."
+          (lower-global-shared-view point)
+          ".canonical_span_count")
+        (ast.ast-node-pool-context-expr-canonical-span-count
+          (lower-global-shared-view pools)))
+      (compiler-lower-profile-counter
+        (str_cat.str-cat
+          "ast_expr_pool."
+          (lower-global-shared-view point)
+          ".canonical_span_capacity")
+        (ast.ast-node-pool-context-expr-canonical-span-capacity
+          (lower-global-shared-view pools)))
+      (compiler-lower-profile-counter
+        (str_cat.str-cat
+          "ast_expr_pool."
+          (lower-global-shared-view point)
+          ".canonical_span_bytes")
+        (ast.ast-node-pool-context-expr-canonical-span-bytes
+          (lower-global-shared-view pools)))
+      (compiler-lower-profile-counter
+        (str_cat.str-cat
+          "ast_expr_pool."
+          (lower-global-shared-view point)
+          ".respan_count")
+        (ast.ast-node-pool-context-expr-respan-count
+          (lower-global-shared-view pools)))
+      (compiler-lower-profile-counter
+        (str_cat.str-cat
+          "ast_expr_pool."
+          (lower-global-shared-view point)
+          ".respan_capacity")
+        (ast.ast-node-pool-context-expr-respan-capacity
+          (lower-global-shared-view pools)))
+      (compiler-lower-profile-counter
+        (str_cat.str-cat
+          "ast_expr_pool."
+          (lower-global-shared-view point)
+          ".respan_bytes")
+        (ast.ast-node-pool-context-expr-respan-bytes
+          (lower-global-shared-view pools)))
+      (compiler-lower-profile-counter
+        (str_cat.str-cat
+          "ast_expr_pool."
+          (lower-global-shared-view point)
+          ".total_bytes")
+        (ast.ast-node-pool-context-expr-total-bytes
+          (lower-global-shared-view pools)))
+      (compiler-lower-profile-counter
+        (str_cat.str-cat
           "ast_type_pool."
           (lower-global-shared-view point)
           ".len")

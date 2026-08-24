@@ -635,6 +635,131 @@ check_csr_push_prologue() {
     assert_not_matches "$_deep" '^[[:space:]]+movq %r(12|13|14|15|bx|bp), -?[0-9]+\(%rsp\)$' csr-push-prologue-deeprec
 }
 
+# The prologue's total %rsp displacement D = 8*pushes + sub must satisfy
+# D % 16 == 8 for a function that makes a returning call: the caller left %rsp
+# 16-aligned at its `call`, the return address made it 8, and the callee's own
+# calls have to land back on 0. Reading the number out of the emitted `subq`
+# pins the invariant instead of one particular frame size.
+assert_call_alignment() {
+    _body=$1
+    _pushes=$2
+    _label=$3
+    _sub=$(sed -n 's/^[[:space:]]*subq \$\([0-9][0-9]*\), %rsp$/\1/p' "$_body" | sed -n 1p)
+    if [ -z "$_sub" ]; then
+        fail "$_label expected a prologue stack adjustment and found none"
+    fi
+    if [ $(( (8 * _pushes + _sub) % 16 )) -ne 8 ]; then
+        fail "$_label misaligned prologue: $_pushes pushes + subq \$$_sub"
+    fi
+}
+
+# W1-frame: the frame adjust and the even-push alignment pad follow what the
+# function actually needs. `dfb-forward` transfers only by a tail `jmp` and
+# names no frame slot, so it owes nothing; `tl_dfb_abort_only` pushes an EVEN
+# callee-saved run and its only `call` is the never-taken `tl_oob_abort` edge,
+# so the pushes stay and the pad goes; `dfb-returning` makes an ordinary
+# returning call and must keep both. Pre-change all three carried a
+# `subq`/`addq` pair, so the first two assertions are proven forcing.
+check_dead_frame_boundary() {
+    _asm=$(compile_gate dead_frame_boundary tests/integration/dead_frame_boundary.tl)
+
+    _fwd=$(function_body "$_asm" _tl_dead_frame_boundary_dfb_forward)
+    assert_contains "$_fwd" 'jmp _tl_dead_frame_boundary_dfb_sink' dead-frame-tail-forward
+    assert_not_matches "$_fwd" '^[[:space:]]+call ' dead-frame-tail-forward
+    assert_regex_count_eq "$_fwd" '^[[:space:]]+subq \$[0-9]+, %rsp$' 0 dead-frame-tail-forward
+    assert_regex_count_eq "$_fwd" '^[[:space:]]+addq \$[0-9]+, %rsp$' 0 dead-frame-tail-forward
+
+    _abort=$(function_body "$_asm" tl_dfb_abort_only)
+    _abort_pushes=$(csr_pushed_count "$_abort" dead-frame-abort-only)
+    if [ "$_abort_pushes" -lt 2 ] || [ $((_abort_pushes % 2)) -ne 0 ]; then
+        fail "dead-frame-abort-only expected an even, non-empty CSR push run, got $_abort_pushes"
+    fi
+    assert_contains "$_abort" 'call tl_oob_abort' dead-frame-abort-only
+    assert_regex_count_eq "$_abort" '^[[:space:]]+call ' 1 dead-frame-abort-only
+    assert_regex_count_eq "$_abort" '^[[:space:]]+subq \$[0-9]+, %rsp$' 0 dead-frame-abort-only
+    assert_regex_count_eq "$_abort" '^[[:space:]]+addq \$[0-9]+, %rsp$' 0 dead-frame-abort-only
+
+    _ret=$(function_body "$_asm" _tl_dead_frame_boundary_dfb_returning)
+    _ret_pushes=$(csr_pushed_count "$_ret" dead-frame-returning)
+    assert_contains "$_ret" 'call _tl_dead_frame_boundary_dfb_probe' dead-frame-returning
+    assert_call_alignment "$_ret" "$_ret_pushes" dead-frame-returning
+}
+
+# Win64 reserves 32 bytes of shadow space for EVERY call-shaped instruction,
+# the `tl_oob_abort` edge and the tail target included
+# (compiler-backend-outgoing-frame-space). That outgoing area is a genuine
+# frame consumer, so none of the three functions above may lose its stack
+# adjustment on this target -- and each one that makes a call must still land
+# on D % 16 == 8. This is the per-target half of the W1-frame contract: the
+# Linux gate above proves the adjust goes, this one proves Windows keeps it.
+# The end-to-end half of the abort-only case: build the safety fixture at opt2
+# and let the bounds check actually FIRE. `probe` reaches `tl_oob_abort_at`
+# from a frame with an even push run and NO stack adjustment, i.e. with
+# `%rsp % 16 == 0` where the SysV convention would have left 8. The located
+# abort splitter (pushq/pushq/lea/popq/popq/call) then runs below that %rsp and
+# has to render the site and exit 134 all the same. The safety corpus runs the
+# same fixture, but only at its default optimisation level, where every local
+# is a frame slot and the frameless shape cannot occur -- so this is the gate
+# that proves the abort path itself.
+check_dead_frame_abort_only_trap() {
+    _src=tests/safety/dead_frame_abort_only_trap.tl
+    _asm=$(compile_gate dead_frame_abort_only_trap "$_src")
+    _probe=$(function_body "$_asm" _tl_dead_frame_abort_only_trap_probe)
+    _pushes=$(csr_pushed_count "$_probe" dead-frame-abort-trap)
+    if [ "$_pushes" -lt 2 ] || [ $((_pushes % 2)) -ne 0 ]; then
+        fail "dead-frame-abort-trap expected an even, non-empty CSR push run, got $_pushes"
+    fi
+    assert_contains "$_probe" 'call tl_oob_abort_at' dead-frame-abort-trap
+    assert_regex_count_eq "$_probe" '^[[:space:]]+subq \$[0-9]+, %rsp$' 0 dead-frame-abort-trap
+    assert_regex_count_eq "$_probe" '^[[:space:]]+addq \$[0-9]+, %rsp$' 0 dead-frame-abort-trap
+
+    _binary="$WORKDIR/dead_frame_abort_only_trap.bin"
+    _build_out="$WORKDIR/dead_frame_abort_only_trap.build.stdout"
+    _build_err="$WORKDIR/dead_frame_abort_only_trap.build.stderr"
+    echo "[asm-shape] standalone opt2 trap run dead_frame_abort_only_trap" >&2
+    if ! "$COMPILER" build "$ROOT/$_src" \
+        --target linux-x86_64 \
+        --opt-level 2 \
+        --stdlib-root "$ROOT/stdlib" \
+        --stdlib-root "$ROOT/src" \
+        -o "$_binary" > "$_build_out" 2> "$_build_err"; then
+        sed 's/^/  /' "$_build_out" >&2 || true
+        sed 's/^/  /' "$_build_err" >&2 || true
+        fail "dead-frame-abort-trap standalone build failed"
+    fi
+    _run_out="$WORKDIR/dead_frame_abort_only_trap.run.stdout"
+    _run_err="$WORKDIR/dead_frame_abort_only_trap.run.stderr"
+    _got=0
+    "$_binary" > "$_run_out" 2> "$_run_err" || _got=$?
+    if [ "$_got" -ne 134 ]; then
+        sed 's/^/  /' "$_run_err" >&2 || true
+        fail "dead-frame-abort-trap expected exit 134, got $_got"
+    fi
+    assert_contains "$_run_err" 'array index out of bounds: index=7 length=4' \
+        dead-frame-abort-trap
+}
+
+check_dead_frame_boundary_win64() {
+    _asm=$(compile_gate \
+        dead_frame_boundary_win64 \
+        tests/integration/dead_frame_boundary.tl \
+        windows-x86_64)
+
+    _fwd=$(function_body "$_asm" _tl_dead_frame_boundary_dfb_forward)
+    assert_contains "$_fwd" 'jmp _tl_dead_frame_boundary_dfb_sink' dead-frame-win64-tail-forward
+    assert_call_alignment "$_fwd" 0 dead-frame-win64-tail-forward
+    assert_contains "$_fwd" '.seh_stackalloc ' dead-frame-win64-tail-forward
+
+    _abort=$(function_body "$_asm" tl_dfb_abort_only)
+    assert_contains "$_abort" 'call tl_oob_abort' dead-frame-win64-abort-only
+    assert_contains "$_abort" '.seh_stackalloc ' dead-frame-win64-abort-only
+
+    _ret=$(function_body "$_asm" _tl_dead_frame_boundary_dfb_returning)
+    _ret_pushes=$(csr_pushed_count "$_ret" dead-frame-win64-returning)
+    assert_contains "$_ret" 'call _tl_dead_frame_boundary_dfb_probe' dead-frame-win64-returning
+    assert_call_alignment "$_ret" "$_ret_pushes" dead-frame-win64-returning
+}
+
 check_save_reload_elide() {
     _asm=$(compile_gate save_reload_elide tests/integration/save_reload_elide.tl)
     _body=$(function_body "$_asm" _tl_save_reload_elide_relay)
@@ -697,11 +822,17 @@ check_alu_mem_operand_tie() {
     # No element load survives: the fold consumed all eight.
     assert_not_matches "$_body" \
         '^[[:space:]]+movq \(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r' alu-mem-operand-tie
-    # The only register-to-register copies left are the seed's entry home and the
-    # accumulator's move into the return register -- one each, outside both loops.
-    # A destination tied to the load instead would add one staging copy per op.
+    # The register-to-register copies left are the seed's entry home, the
+    # accumulator's move into the return register, and the three the CHECKED
+    # clone's preheader spends on `bounds_group`'s bound: that clone still runs
+    # four checks of one index against four lengths, so the pass builds
+    # `min(len_a, len_b, len_c, len_d)` there once as three compare/`cmov`
+    # pairs, each staging its running minimum with one `movq`. All five sit
+    # outside both loops. A destination tied to the load instead would add one
+    # staging copy per op INSIDE them, which is what the count guards and what
+    # the two assertions above pin independently.
     assert_regex_count_eq "$_body" \
-        '^[[:space:]]+movq %r[a-z0-9]+, %r[a-z0-9]+$' 2 alu-mem-operand-tie
+        '^[[:space:]]+movq %r[a-z0-9]+, %r[a-z0-9]+$' 5 alu-mem-operand-tie
 }
 
 check_alu_mem_operand_sink() {
@@ -717,10 +848,15 @@ check_alu_mem_operand_sink() {
     assert_regex_count_eq "$_body"         '^[[:space:]]+(andq|orq|xorq) \(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$' 8         alu-mem-operand-sink
     # No element load survives: the fold consumed all eight.
     assert_not_matches "$_body"         '^[[:space:]]+movq \(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r' alu-mem-operand-sink
-    # The only register-to-register copies left are the seed's entry home and
-    # the accumulator's move into the return register, one each and both
-    # outside the loops.
-    assert_regex_count_eq "$_body"         '^[[:space:]]+movq %r[a-z0-9]+, %r[a-z0-9]+$' 2 alu-mem-operand-sink
+    # The register-to-register copies left are the seed's entry home, the
+    # accumulator's move into the return register, and the three the CHECKED
+    # clone's preheader spends on `bounds_group`'s bound, exactly as in
+    # `check_alu_mem_operand_tie` above: four checks of one index against four
+    # lengths become one `min(len_a, len_b, len_c, len_d)` built there as three
+    # compare/`cmov` pairs, each staging its running minimum with one `movq`.
+    # All five are outside the loops; a wrong tie would put one staging copy per
+    # op INSIDE them, which is what the two assertions above pin independently.
+    assert_regex_count_eq "$_body"         '^[[:space:]]+movq %r[a-z0-9]+, %r[a-z0-9]+$' 5 alu-mem-operand-sink
 }
 
 check_const_global_mask_unroll() {
@@ -1342,6 +1478,9 @@ check_wide_const_hoist
 check_group_pair_home
 check_group_pair_phi_home
 check_csr_push_prologue
+check_dead_frame_boundary
+check_dead_frame_abort_only_trap
+check_dead_frame_boundary_win64
 check_save_reload_elide
 check_global_handle_cse
 check_loadcse_forward

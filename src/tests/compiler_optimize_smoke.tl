@@ -3344,6 +3344,10 @@
       (compiler_optimize_tests.compiler-optimize-dom-cmp-phi-carried-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-dom-cmp-branch-fold-self-test"
+      (compiler_optimize_tests.compiler-optimize-dom-cmp-branch-fold-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "smoke-object-bounds-self-test"
       (smoke-object-bounds-self-test)
       42)
@@ -4551,6 +4555,18 @@
       (compiler_optimize_tests.compiler-optimize-ubound-tangled-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-bounds-group-self-test"
+      (compiler_optimize_tests.compiler-optimize-bounds-group-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-bounds-group-offset-self-test"
+      (compiler_optimize_tests.compiler-optimize-bounds-group-offset-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-bounds-group-refusal-self-test"
+      (compiler_optimize_tests.compiler-optimize-bounds-group-refusal-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-successor-sink-self-test"
       (compiler_optimize_tests.compiler-optimize-successor-sink-self-test)
       42)
@@ -5292,3 +5308,52 @@
     (compiler_optimize_tests.compiler-optimize-exit-split-label-freshness-self-test)
     42
     "Sunk exit checks keep the legacy name when free, step generation when taken, and emit one block per predecessor"))
+
+(test
+  dom-cmp-phi-carried-compare
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-dom-cmp-phi-carried-self-test)
+    42
+    "a rotated loop's header test folds when both joining edges decide it, and is refused when they disagree or one decides nothing"))
+
+(test
+  ubound-narrowed-loop-test
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-ubound-self-test)
+    42
+    "a multi-path advance loop drops its header check for one unsigned test against min(bound, length), and the rewrite is idempotent"))
+
+(test
+  ubound-refusals
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-ubound-refusal-self-test)
+    42
+    "a missing entry guard, an opaque length, an instruction ahead of the check, a second reader of the loop compare and a negative seed are refused"))
+
+(test
+  bounds-group-coalescing
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-bounds-group-self-test)
+    42
+    "a parallel-array body drops one of its two checks for a single unsigned filter over the smaller length, with the originals kept on a slow arm"))
+
+(test
+  bounds-group-offset-coalescing
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-bounds-group-offset-self-test)
+    42
+    "i and i+1 against one length collapse to one saturating bound"))
+
+(test
+  bounds-group-coalescing-refusals
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-bounds-group-refusal-self-test)
+    42
+    "a body-defined length, a loopless block and an already-split block are refused"))
+
+(test
+  ubound-tangled-phi-web
+  (test.assert-i64-eq
+    (compiler_optimize_tests.compiler-optimize-ubound-tangled-self-test)
+    42
+    "mutually dependent header phis and a three-edge phi terminate the search and are refused"))

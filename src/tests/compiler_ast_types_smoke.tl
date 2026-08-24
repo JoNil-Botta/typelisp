@@ -420,6 +420,13 @@
               (= (ast.ast-source-span-start-col span) 2)
               (= (ast.ast-source-span-end-line span) 3)
               (= (ast.ast-source-span-end-col span) 4)
+              (match (ast.ast-node-pool-context-expr-view-span pools left)
+                [(ast.AstMaybeSourceSpan.Some sidecar-span)
+                  (ast.ast-source-span-eq? span sidecar-span)]
+                [_ false])
+              (match (ast.ast-node-pool-context-expr-span-oracle pools left)
+                [(ast.AstExprSpanOracleResult.CanonicalMatch) true]
+                [_ false])
               (compiler-ast-context-expr-int-lit? pools inner 7))]
           [_ false])
         false)]
@@ -1300,6 +1307,118 @@
         (arena.destroy dest))
       ok)))
 
+(define (compiler-ast-maybe-span-start-line?
+  [value : ast.AstMaybeSourceSpan]
+  [line : i64]) : bool
+  (match value
+    [(ast.AstMaybeSourceSpan.Some span)
+      (= (ast.ast-source-span-start-line span) line)]
+    [(ast.AstMaybeSourceSpan.No) false]))
+
+;; Canonical provenance is first-write/innermost.  A later wrapper with a
+;; different source location gets a sparse per-use ReSpan, while an identical
+;; wrapper shares the canonical record.  Truncation retires only suffix-owned
+;; records and clears reused slots before the next generation writes them.
+(define (compiler-ast-expression-span-sidecar-smoke?) : bool
+  (let
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 1 1)]
+    [literal : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Literal (ast.ast-lit-int 7)))]
+    [inner-span : ast.AstSourceSpan (ast.ast-source-span 2 3 2 8)]
+    [outer-span : ast.AstSourceSpan (ast.ast-source-span 9 1 9 6)]
+    [inner-view : i64
+      (ast.ast-expr-spanned-with-pools pools literal inner-span)]
+    [same-view : i64
+      (ast.ast-expr-spanned-with-pools pools inner-view inner-span)]
+    [outer-view : i64
+      (ast.ast-expr-spanned-with-pools pools same-view outer-span)]
+    [mark : i64 (ast.ast-node-pool-context-expr-len pools)]
+    [later-view : i64
+      (ast.ast-expr-spanned-with-pools
+        pools
+        outer-view
+        (ast.ast-source-span 12 1 12 2))]
+    [_reset-suffix : unit (ast.ast-node-pool-context-expr-truncate! pools mark)]
+    [reused : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Literal (ast.ast-lit-int 11)))]
+    [prefix-ok : bool
+      (and
+        (= literal 0)
+        (= inner-view 1)
+        (= same-view 2)
+        (= outer-view 3)
+        (= later-view 4)
+        (= reused later-view)
+        (= (ast.ast-node-pool-context-expr-canonical-span-count pools) 1)
+        (= (ast.ast-node-pool-context-expr-respan-count pools) 1)
+        (ast.ast-node-pool-context-expr-span-oracle-ok? pools)
+        (compiler-ast-maybe-span-start-line?
+          (ast.ast-node-pool-context-expr-canonical-span pools outer-view)
+          2)
+        (compiler-ast-maybe-span-start-line?
+          (ast.ast-node-pool-context-expr-view-span pools inner-view)
+          2)
+        (compiler-ast-maybe-span-start-line?
+          (ast.ast-node-pool-context-expr-view-span pools same-view)
+          2)
+        (compiler-ast-maybe-span-start-line?
+          (ast.ast-node-pool-context-expr-view-span pools outer-view)
+          9)
+        (match (ast.ast-node-pool-context-expr-view-span pools reused)
+          [(ast.AstMaybeSourceSpan.No) true]
+          [_ false])
+        (match (ast.ast-node-pool-context-expr-span-oracle pools inner-view)
+          [(ast.AstExprSpanOracleResult.CanonicalMatch) true]
+          [_ false])
+        (match (ast.ast-node-pool-context-expr-span-oracle pools outer-view)
+          [(ast.AstExprSpanOracleResult.ReSpanMatch) true]
+          [_ false]))]
+    (begin
+      ;; If an exceptional per-use wrapper is rewritten into a semantic node,
+      ;; its view becomes the new identity's original provenance.  Keeping the
+      ;; negative ReSpan slot would make canonical reads fail after the rewrite.
+      (ast.ast-node-pool-context-expr-set!
+        pools
+        outer-view
+        (ast.AstExpr.Literal (ast.ast-lit-int 99)))
+      (let
+        [rewrite-ok : bool
+          (and
+            (= (ast.ast-node-pool-context-expr-canonical-span-count pools) 2)
+            (compiler-ast-maybe-span-start-line?
+              (ast.ast-node-pool-context-expr-canonical-span pools outer-view)
+              9)
+            (compiler-ast-maybe-span-start-line?
+              (ast.ast-node-pool-context-expr-view-span pools outer-view)
+              9))]
+        (ast.ast-node-pool-context-expr-truncate! pools 0)
+        (let
+          [new-literal : i64
+            (ast.ast-node-pool-context-expr-push
+              pools
+              (ast.AstExpr.Literal (ast.ast-lit-int 13)))]
+          [new-view : i64
+            (ast.ast-expr-spanned-with-pools
+              pools
+              new-literal
+              (ast.ast-source-span 20 1 20 3))]
+          (and
+            prefix-ok
+            rewrite-ok
+            (= new-literal 0)
+            (= new-view 1)
+            (= (ast.ast-node-pool-context-expr-canonical-span-count pools) 1)
+            (= (ast.ast-node-pool-context-expr-respan-count pools) 0)
+            (ast.ast-node-pool-context-expr-span-oracle-ok? pools)
+            (compiler-ast-maybe-span-start-line?
+              (ast.ast-node-pool-context-expr-canonical-span pools new-literal)
+              20)))))))
+
 ;; Force several fixed-size expression and type segments in two independently
 ;; owned contexts. Boundary ids must continue to address their original nodes,
 ;; hash-consing must survive type-segment growth, and neither context may alias
@@ -1357,6 +1476,11 @@
             unit)
           (set! type-index (+ type-index 1))))
       (let
+        [a-growth-view : i64
+          (ast.ast-expr-spanned-with-pools
+            a
+            a-last-expr
+            (ast.ast-source-span 31 1 31 4))]
         [a-dupe-type : i64
           (ast.ast-node-pool-context-type-push
             (owned_view.compiler-owned-shared-view a)
@@ -1369,6 +1493,7 @@
             (= b-last-expr 65536)
             (= a-last-type 2048)
             (= b-last-type 1024)
+            (= a-growth-view 131073)
             (= a-dupe-type 1024)
             (= (ast.ast-node-pool-context-expr-segment-count a) 3)
             (= (ast.ast-node-pool-context-expr-segment-count b) 2)
@@ -1379,6 +1504,11 @@
             (compiler-ast-context-expr-int-lit? a 65536 65536)
             (compiler-ast-context-expr-int-lit? a 131072 131072)
             (compiler-ast-context-expr-int-lit? b 65536 -65536)
+            (= (ast.ast-node-pool-context-expr-canonical-span-count a) 1)
+            (= (ast.ast-node-pool-context-expr-respan-count a) 0)
+            (compiler-ast-maybe-span-start-line?
+              (ast.ast-node-pool-context-expr-view-span a a-growth-view)
+              31)
             (match (ast.ast-node-pool-context-type-get a 1024)
               [(ast.AstType.Var name) (= name 1024)]
               [_ false])
@@ -1422,6 +1552,7 @@
     (unless (compiler-ast-generated-path-owner-smoke?) (return 12))
     (unless (compiler-ast-context-owned-arena-smoke?) (return 13))
     (unless (compiler-ast-compaction-borrow-child-smoke?) (return 14))
+    (unless (compiler-ast-expression-span-sidecar-smoke?) (return 19))
     (unless (compiler-ast-segmented-growth-isolation-smoke?) (return 15))
     (unless (compiler-ast-macro-type-kind-dense-compaction-smoke?) (return 16))
     42))

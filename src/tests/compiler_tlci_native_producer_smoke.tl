@@ -81,7 +81,19 @@
     [span : ast.AstSourceSpan (producer-test-node-span pools node)]
     (and
       (= (ast.ast-source-span-start-line span) line)
-      (= (ast.ast-source-span-start-col span) col))))
+      (= (ast.ast-source-span-start-col span) col)
+      ;; Keep the legacy wrapper as a live oracle while #6329 migrates readers.
+      ;; This fixture covers template-produced nodes, unquoted caller operands,
+      ;; repeated splices, and both interpreted/package-native expansion routes.
+      (match (ast.ast-node-pool-context-expr-view-span pools node)
+        [(ast.AstMaybeSourceSpan.No) false]
+        [(ast.AstMaybeSourceSpan.Some sidecar-span)
+          (and
+            (ast.ast-source-span-eq? span sidecar-span)
+            (match (ast.ast-node-pool-context-expr-span-oracle pools node)
+              [(ast.AstExprSpanOracleResult.CanonicalMatch) true]
+              [(ast.AstExprSpanOracleResult.ReSpanMatch) true]
+              [_ false]))]))))
 
 ;; An operand arrives from a parsed call site, so it carries its own span the
 ;; way a real macro argument does. That origin survives substitution: a

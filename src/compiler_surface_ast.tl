@@ -72,6 +72,13 @@
 (define surface-ast-magic : i64
   3544386045472754772)
 (define surface-ast-schema-version : i64
+  ;; Expression-span sidecars do not change schema 5.  The canonical and sparse
+  ;; ReSpan records are generation-owned indexes derived deterministically while
+  ;; the decoder replays the still-required tag-0 AstExpr.Spanned rows through
+  ;; the destination pool's central push API.  They contain no additional wire
+  ;; data; malformed node references continue to fail in the existing decoder
+  ;; validation before a sidecar record can be observed.
+  ;;
   ;; 5: declaration paths encode physical provenance separately from effective
   ;; module ownership so hydrated dependency macros retain their package key.
   ;;
@@ -1817,6 +1824,41 @@
 
 (cfg
   compiler-surface-selftest
+  (define (surface-ast-int-node-value?
+    [pools : ast.AstNodePoolContext]
+    [id : i64]
+    [expected : i64]) : bool
+    (match (ast.ast-node-pool-context-expr-get pools id)
+      [(ast.AstExpr.Literal (ast.AstLiteral.Int value _)) (= value expected)]
+      [_ false])))
+
+(cfg
+  compiler-surface-selftest
+  (define (surface-ast-hydrated-tuple-set-ok? [pools : ast.AstNodePoolContext]) : bool
+    (let
+      [id : i64 0]
+      [ok : bool false]
+      (begin
+        ;; Compaction may change ids when declarations reach nodes in a
+        ;; different order from construction. Inspect the retained shape rather
+        ;; than comparing producer-generation ids.
+        (while (and (not ok) (< id (ast.ast-node-pool-context-expr-len pools)))
+          (begin
+            (match (ast.ast-node-pool-context-expr-get pools id)
+              [(ast.AstExpr.StructSet target field value)
+                (set!
+                  ok
+                  (and
+                    (ast.ast-tuple-set-field-id? field)
+                    (= (ast.ast-tuple-set-index-from-field-id field) 3)
+                    (surface-ast-int-node-value? pools target 20)
+                    (surface-ast-int-node-value? pools value 22)))]
+              [_ unit])
+            (set! id (+ id 1))))
+        ok))))
+
+(cfg
+  compiler-surface-selftest
   (define (surface-ast-tests-ok?) : bool
     (let
       [_reset : unit (ci.intern-reset!)]
@@ -1839,10 +1881,20 @@
         (ast.ast-node-pool-context-expr-push
           (owned_view.compiler-owned-shared-view source-pools)
           (ast.AstExpr.Literal (ast.AstLiteral.Int 22 "22")))]
-      [sum : i64
+      [sum-inner : i64
         (ast.ast-node-pool-context-expr-push
           (owned_view.compiler-owned-shared-view source-pools)
           (ast.AstExpr.Binary ast.AstBinOp.Add left right))]
+      [sum : i64
+        (ast.ast-expr-spanned-with-pools
+          source-pools
+          sum-inner
+          (ast.ast-source-span 4 2 4 9))]
+      [sum-outer : i64
+        (ast.ast-expr-spanned-with-pools
+          source-pools
+          sum
+          (ast.ast-source-span 40 1 40 8))]
       [borrow-lifetime-id : i64 (ci.intern "borrow-region")]
       [view-param-id : i64 (ci.intern "view")]
       [slice-i64 : ast.AstType
@@ -1933,7 +1985,7 @@
             macro-id
             (ast.AstMacroParamList macro-param-slots 1)
             ast.AstType.Unit
-            sum))
+            sum-outer))
         (set! (array-ref path-slots 0) "test.tl")
         (set! (array-ref path-slots 1) "test.tl")
         (set! (array-ref owner-slots 0) module-id)
@@ -2020,7 +2072,10 @@
                                     (ast.ast-node-pool-context-expr-len
                                       (owned_view.compiler-owned-shared-view
                                         hydration.pools))
-                                    6)
+                                    8)
+                                  (ast.ast-node-pool-context-expr-span-oracle-ok?
+                                    (owned_view.compiler-owned-shared-view
+                                      hydration.pools))
                                   (=
                                     (ast.ast-decl-list-len (& hydration.decls))
                                     2)
@@ -2105,11 +2160,32 @@
                                                   (match (ast.ast-node-pool-context-expr-get
                                                     hydration.pools
                                                     hydrated-sum)
-                                                    [(ast.AstExpr.Binary op _ _)
-                                                      (match op
-                                                        [(ast.AstBinOp.Add)
-                                                          true]
-                                                        [_ false])]
+                                                    [(ast.AstExpr.Spanned
+                                                        hydrated-inner
+                                                        hydrated-span)
+                                                      (and
+                                                        (=
+                                                          (ast.ast-source-span-start-line
+                                                            hydrated-span)
+                                                          4)
+                                                        (match (ast.ast-node-pool-context-expr-span-oracle
+                                                          hydration.pools
+                                                          hydrated-sum)
+                                                          [(ast.AstExprSpanOracleResult.CanonicalMatch)
+                                                            true]
+                                                          [_ false])
+                                                        (match (ast.ast-node-pool-context-expr-get
+                                                          hydration.pools
+                                                          hydrated-inner)
+                                                          [(ast.AstExpr.Binary
+                                                              op
+                                                              _
+                                                              _)
+                                                            (match op
+                                                              [(ast.AstBinOp.Add)
+                                                                true]
+                                                              [_ false])]
+                                                          [_ false]))]
                                                     [_ false]))]
                                               [_ false])]
                                           [_ false]))]
@@ -2122,7 +2198,7 @@
                                         hydrated-macro-name
                                         hydrated-params
                                         _
-                                        _)
+                                        hydrated-macro-body)
                                       (and
                                         (surface_identity.surface-identity-string-eq?
                                           (ci.intern-str hydrated-macro-name)
@@ -2131,6 +2207,21 @@
                                           (ast.ast-macro-param-list-len
                                             (& hydrated-params))
                                           1)
+                                        (match (ast.ast-node-pool-context-expr-span-oracle
+                                          hydration.pools
+                                          hydrated-macro-body)
+                                          [(ast.AstExprSpanOracleResult.ReSpanMatch)
+                                            true]
+                                          [_ false])
+                                        (match (ast.ast-node-pool-context-expr-view-span
+                                          hydration.pools
+                                          hydrated-macro-body)
+                                          [(ast.AstMaybeSourceSpan.Some span)
+                                            (=
+                                              (ast.ast-source-span-start-line
+                                                span)
+                                              40)]
+                                          [_ false])
                                         (match (ast.ast-macro-param-list-get
                                           (& hydrated-params)
                                           0
@@ -2177,23 +2268,8 @@
                                                 "type-var"))]
                                           [_ false]))]
                                     [_ false])
-                                  (match (ast.ast-node-pool-context-expr-get
-                                    hydration.pools
-                                    tuple-set)
-                                    [(ast.AstExpr.StructSet
-                                        hydrated-target
-                                        hydrated-field
-                                        hydrated-value)
-                                      (and
-                                        (= hydrated-target left)
-                                        (ast.ast-tuple-set-field-id?
-                                          hydrated-field)
-                                        (=
-                                          (ast.ast-tuple-set-index-from-field-id
-                                            hydrated-field)
-                                          3)
-                                        (= hydrated-value right))]
-                                    [_ false]))]))])))])]))))))
+                                  (surface-ast-hydrated-tuple-set-ok?
+                                    hydration.pools))]))])))])]))))))
 
 (cfg
   compiler-surface-selftest

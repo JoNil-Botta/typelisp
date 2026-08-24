@@ -85370,6 +85370,36 @@
   [np : i64]) : bool
   (opt-inline-body-instr-ok? (ir.compiler-ir-instr-seq-ref instrs index) np))
 
+;; The two exits a single-block callee body may end in.
+;;
+;; `Return` is the original one and expands to a Mov of the returned value into
+;; the site's destination (opt-inline-exit->result-instr).
+;;
+;; A DIRECT `TailCall` is the same exit with the callee's last call fused into
+;; it: `return f(args)`. It expands to `dst = f(args)` at the site -- the call
+;; the wrapper would have jumped to, made directly by the caller, with the
+;; wrapper's own frame, argument moves, call and return all gone. That is the
+;; whole content of the "forwarder / defaulted-argument wrapper" shape, and it
+;; is the reason this clause exists: a one-block body whose only terminator is
+;; a tail call used to be refused outright, so a wrapper such as
+;; `(define (mark-may-alias v) (facts-insert v -4))` paid a full call boundary
+;; per call for a body of one Mov.
+;;
+;; The multiblock path already converts a cloned direct tail call exactly this
+;; way (opt-inline-clone-multiblock-instr-seq-into!'s TailCall arm, which emits
+;; `Call` + the continuation wiring the Return arm builds); this is the same
+;; conversion where the continuation is the site's own instruction stream, so
+;; no block is added at all.
+;;
+;; `TailCallIndirect` stays refused, here and in the multiblock path, for the
+;; reason recorded at opt-inline-multiblock-instr-ok?: its target is a computed
+;; value the census cannot see through to price the site.
+(define (opt-inline-body-terminator-ok? [instr : ir.CompilerIrInstr]) : bool
+  (match instr
+    [(ir.CompilerIrInstr.Return _) true]
+    [(ir.CompilerIrInstr.TailCall _ _ _) true]
+    [_ false]))
+
 (define (opt-inline-instr-seq-ok-from?
   [instrs : ir.CompilerIrInstrSeq]
   [np : i64]
@@ -85377,7 +85407,9 @@
   [last : i64]) : bool
   (cond
     [(> index last) false]
-    [(= index last) (ir.compiler-ir-instr-seq-return? instrs index)]
+    [(= index last)
+      (opt-inline-body-terminator-ok?
+        (ir.compiler-ir-instr-seq-ref instrs index))]
     [(opt-inline-body-instr-seq-ok? instrs index np)
       (opt-inline-instr-seq-ok-from? instrs np (+ index 1) last)]
     [else false]))
@@ -86823,7 +86855,22 @@
           slots))]
     [_ instr]))
 
-(define (opt-inline-return->mov
+;; Rewrite the callee's exit instruction into the instruction that binds the
+;; site's result. `Return v` becomes `dst = v`; a direct `TailCall f(args)`
+;; becomes `dst = f(args)`, the ordinary call the tail call was the fused form
+;; of. Both arms are admitted by opt-inline-body-terminator-ok?, which is the
+;; predicate that decides a body reaches this function at all.
+;;
+;; The converted call keeps the SITE's result type rather than the tail call's
+;; own, so `dst` is defined under exactly the type the site's `Call dst` gave
+;; it. The two are computed the same way from the same declared return type --
+;; a direct call's IR type is `lower-one-word-register-storage-type` of the
+;; callee's result type (compiler_lower.tl lower-direct-call-values) and a tail
+;; call's is the same normalisation of the enclosing function's return type,
+;; which a `return f(...)` makes equal -- so this is a choice about which
+;; spelling to preserve, and preserving the site's leaves every downstream
+;; consumer of `dst`'s type reading what it read before.
+(define (opt-inline-exit->result-instr
   [instr : ir.CompilerIrInstr]
   [dst : i64]
   [ret : ast.AstType]
@@ -86840,6 +86887,12 @@
             (clone ret))]
         [(ir.CompilerIrMaybeValue.No)
           (ir.CompilerIrInstr.Mov dst (ir.CompilerIrValue.Unit) (clone ret))])]
+    [(ir.CompilerIrInstr.TailCall cname cargs _)
+      (ir.CompilerIrInstr.Call
+        dst
+        (ir.compiler-ir-symbol-clone cname)
+        (opt-inline-remap-args cargs sa np base)
+        (clone ret))]
     [_ (ir.CompilerIrInstr.Mov dst (ir.CompilerIrValue.Unit) (clone ret))]))
 
 (define (opt-inline-expand-instrs-from
@@ -86865,7 +86918,7 @@
             (ir.compiler-ir-instr-builder-push!
               (&mut builder)
               (if (= cursor (- count 1))
-                (opt-inline-return->mov instr dst ret sa np base)
+                (opt-inline-exit->result-instr instr dst ret sa np base)
                 (opt-inline-clone-instr instr sa np base label-prefix))))
           (set! cursor (+ cursor 1))))
       (ir.compiler-ir-instr-builder-to-seq builder))))
@@ -86977,7 +87030,7 @@
       [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
       [cloned : ir.CompilerIrInstr
         (if (= index (- count 1))
-          (opt-inline-return->mov instr dst ret sa np base)
+          (opt-inline-exit->result-instr instr dst ret sa np base)
           (opt-inline-clone-instr instr sa np base label-prefix))]
       [next-spans : ir.CompilerSourceSpans
         (opt-inline-record-clone-span
@@ -92591,6 +92644,12 @@
 (define (opt-inline-tiny-leaf-max-body) : i64
   8)
 
+;; The tail-call arms are what keep this level-1 pass call-free now that
+;; opt-inline-body-terminator-ok? admits a body ending in a direct `TailCall`:
+;; such a body passes opt-inline-single-block-ok? but is not a leaf, and the
+;; whole argument for the level-1 pass is that it copies leaves only. Without
+;; them the pass would import a call into a cheap build that never asked for
+;; one.
 (define (opt-inline-tiny-leaf-seq-call-free-from?
   [instrs : ir.CompilerIrInstrSeq]
   [pos : i64]
@@ -92601,6 +92660,8 @@
       [(ir.CompilerIrInstr.Call _ _ _ _) false]
       [(ir.CompilerIrInstr.CallIndirect _ _ _ _) false]
       [(ir.CompilerIrInstr.CallIndirectC _ _ _ _) false]
+      [(ir.CompilerIrInstr.TailCall _ _ _) false]
+      [(ir.CompilerIrInstr.TailCallIndirect _ _ _) false]
       [_ (opt-inline-tiny-leaf-seq-call-free-from? instrs (+ pos 1) count)])))
 
 (define (opt-inline-tiny-leaf-blocks-call-free?

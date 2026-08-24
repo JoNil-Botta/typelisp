@@ -20801,6 +20801,255 @@
           [(compiler_optimize.OptMaybeFunction.No) false])]
       [(compiler_optimize.OptMaybeFunction.No) false])))
 
+;; --- one-block callee whose only terminator is a direct tail call -----------
+;;
+;; The forwarder / defaulted-argument wrapper: `(define (f v) (g v 7))`. The
+;; lowerer fuses the body's single call into the return, so the whole function
+;; is one block ending in a `TailCall` and carries no `Return` at all. Until
+;; opt-inline-body-terminator-ok? admitted that exit, the shape was refused by
+;; every band -- the single-block path wanted a `Return` terminator and the
+;; multiblock path wants more than one block -- so the wrapper's frame,
+;; argument moves, call and jump were paid at every site.
+(define (opt-inline-single-block-tail-call-callee
+  [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    symbols.inline-nonleaf
+    compiler_ir_types.CompilerIrParamList.Nil
+    (compiler_ast_types.AstType.I64)
+    1
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Mov
+            0
+            (compiler_ir_types.CompilerIrValue.I64 7)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.TailCall
+            symbols.external-helper
+            (compiler_ir_types.CompilerIrCallArgs.One
+              (compiler_ir_types.CompilerIrValue.Var 0))
+            (compiler_ast_types.AstType.I64))))
+      compiler_ir_types.CompilerIrBlockList.Nil)))
+
+;; The nearest refused neighbour, on the same terms as the multiblock pair
+;; above: the target is LOADED, so devirtualization cannot spell it and the
+;; census cannot price the site. The body stays out of its call site.
+(define (opt-inline-single-block-tail-call-indirect-callee
+  [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    symbols.inline-nonleaf
+    compiler_ir_types.CompilerIrParamList.Nil
+    (compiler_ast_types.AstType.I64)
+    1
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Load
+            0
+            (compiler_ir_types.CompilerIrValue.Global symbols.external-helper)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.TailCallIndirect
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            compiler_ir_types.CompilerIrCallArgs.Nil
+            (compiler_ast_types.AstType.I64))))
+      compiler_ir_types.CompilerIrBlockList.Nil)))
+
+;; A one-block body whose tail call names the callee itself: the self-recursion
+;; the tail-recursion-to-loop pass owns, and which it only sees because the
+;; inliner leaves it alone. `opt-tailrec-function` runs per function AFTER the
+;; whole-program inline stage (optimize-function-once-with-summaries), so the
+;; inliner is what must refuse it, and it does -- by name in
+;; opt-inline-callee-ok? and by SCC in opt-inline-lookup-inlinable.
+(define (opt-inline-single-block-self-tail-call-callee
+  [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    symbols.inline-nonleaf
+    compiler_ir_types.CompilerIrParamList.Nil
+    (compiler_ast_types.AstType.I64)
+    1
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.TailCall
+            symbols.inline-nonleaf
+            compiler_ir_types.CompilerIrCallArgs.Nil
+            (compiler_ast_types.AstType.I64))))
+      compiler_ir_types.CompilerIrBlockList.Nil)))
+
+;; Mutual recursion through the tail call: the callee's one block tail-calls
+;; the CALLER. Inlining it would put a self-call inside `main` and would make
+;; the census's reference accounting for `main` wrong; the shared SCC is what
+;; refuses it.
+(define (opt-inline-single-block-tail-call-to-caller-callee
+  [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    symbols.inline-nonleaf
+    compiler_ir_types.CompilerIrParamList.Nil
+    (compiler_ast_types.AstType.I64)
+    1
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.TailCall
+            symbols.main
+            compiler_ir_types.CompilerIrCallArgs.Nil
+            (compiler_ast_types.AstType.I64))))
+      compiler_ir_types.CompilerIrBlockList.Nil)))
+
+(define (opt-inline-single-block-tail-call-functions
+  [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunctionList
+  (compiler_ir_types.compiler-ir-function-cons
+    (opt-inline-nonleaf-caller symbols)
+    (compiler_ir_types.compiler-ir-function-cons
+      (opt-inline-single-block-tail-call-callee symbols)
+      compiler_ir_types.CompilerIrFunctionList.Nil)))
+
+(define (opt-inline-single-block-tail-call-indirect-functions
+  [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunctionList
+  (compiler_ir_types.compiler-ir-function-cons
+    (opt-inline-nonleaf-caller symbols)
+    (compiler_ir_types.compiler-ir-function-cons
+      (opt-inline-single-block-tail-call-indirect-callee symbols)
+      compiler_ir_types.CompilerIrFunctionList.Nil)))
+
+(define (opt-inline-single-block-self-tail-call-functions
+  [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunctionList
+  (compiler_ir_types.compiler-ir-function-cons
+    (opt-inline-nonleaf-caller symbols)
+    (compiler_ir_types.compiler-ir-function-cons
+      (opt-inline-single-block-self-tail-call-callee symbols)
+      compiler_ir_types.CompilerIrFunctionList.Nil)))
+
+(define (opt-inline-single-block-tail-call-to-caller-functions
+  [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunctionList
+  (compiler_ir_types.compiler-ir-function-cons
+    (opt-inline-nonleaf-caller symbols)
+    (compiler_ir_types.compiler-ir-function-cons
+      (opt-inline-single-block-tail-call-to-caller-callee symbols)
+      compiler_ir_types.CompilerIrFunctionList.Nil)))
+
+;; The wrapper inlines, and what lands at the site is the TAIL TARGET's call:
+;; `%0 = call external_helper(7)`, in the caller's one block, with no tail call
+;; and no continuation block or phi anywhere -- the single-block expansion adds
+;; neither, which is what makes this cheaper than routing the same body through
+;; the multiblock clone.
+(define (compiler-optimize-inline-single-block-tail-call-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [optimized : compiler_ir_types.CompilerIrFunctionList
+      (compiler_optimize.opt-inline-program-functions
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-inline-single-block-tail-call-functions symbols)
+        2)]
+    (match (compiler_optimize.opt-function-list-find optimized "main")
+      [(compiler_optimize.OptMaybeFunction.Some main)
+        (let
+          [blocks : compiler_ir_types.CompilerIrBlockList
+            (compiler_optimize.opt-function-blocks main)]
+          (and
+            (= (opt-count-direct-call-name-blocks blocks "inline_nonleaf") 0)
+            (= (opt-count-direct-call-name-blocks blocks "external_helper") 1)
+            (= (opt-count-tail-call-blocks blocks) 0)
+            (= (opt-count-phi-blocks blocks) 0)
+            (= (compiler_ir_types.compiler-ir-block-list-count blocks) 1)
+            (compiler_optimize.opt-inline-structure-ok? blocks)))]
+      [(compiler_optimize.OptMaybeFunction.No) false])))
+
+;; Level 1 runs the call-free tiny-leaf pass only, and a body that ends in a
+;; tail call is not call-free. The site keeps its call in the cheap build.
+(define (compiler-optimize-inline-single-block-tail-call-level1-refusal-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [optimized : compiler_ir_types.CompilerIrFunctionList
+      (compiler_optimize.opt-inline-program-functions
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-inline-single-block-tail-call-functions symbols)
+        1)]
+    (match (compiler_optimize.opt-function-list-find optimized "main")
+      [(compiler_optimize.OptMaybeFunction.Some main)
+        (let
+          [blocks : compiler_ir_types.CompilerIrBlockList
+            (compiler_optimize.opt-function-blocks main)]
+          (and
+            (= (opt-count-direct-call-name-blocks blocks "inline_nonleaf") 1)
+            (= (opt-count-direct-call-name-blocks blocks "external_helper") 0)
+            (compiler_optimize.opt-inline-structure-ok? blocks)))]
+      [(compiler_optimize.OptMaybeFunction.No) false])))
+
+;; The indirect twin keeps its call.
+(define (compiler-optimize-inline-single-block-tail-call-indirect-refusal-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [optimized : compiler_ir_types.CompilerIrFunctionList
+      (compiler_optimize.opt-inline-program-functions
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-inline-single-block-tail-call-indirect-functions symbols)
+        2)]
+    (match (compiler_optimize.opt-function-list-find optimized "main")
+      [(compiler_optimize.OptMaybeFunction.Some main)
+        (let
+          [blocks : compiler_ir_types.CompilerIrBlockList
+            (compiler_optimize.opt-function-blocks main)]
+          (and
+            (= (opt-count-direct-call-name-blocks blocks "inline_nonleaf") 1)
+            (compiler_optimize.opt-inline-structure-ok? blocks)))]
+      [(compiler_optimize.OptMaybeFunction.No) false])))
+
+;; Self-recursion and mutual recursion through the tail call both keep their
+;; call sites, and the recursive callee keeps its own body for the
+;; tail-recursion pass to find.
+(define (compiler-optimize-inline-single-block-self-tail-call-refusal-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [optimized : compiler_ir_types.CompilerIrFunctionList
+      (compiler_optimize.opt-inline-program-functions
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-inline-single-block-self-tail-call-functions symbols)
+        2)]
+    (match (compiler_optimize.opt-function-list-find optimized "main")
+      [(compiler_optimize.OptMaybeFunction.Some main)
+        (match (compiler_optimize.opt-function-list-find
+          optimized
+          "inline_nonleaf")
+          [(compiler_optimize.OptMaybeFunction.Some callee)
+            (let
+              [blocks : compiler_ir_types.CompilerIrBlockList
+                (compiler_optimize.opt-function-blocks main)]
+              [callee-blocks : compiler_ir_types.CompilerIrBlockList
+                (compiler_optimize.opt-function-blocks callee)]
+              (and
+                (=
+                  (opt-count-direct-call-name-blocks blocks "inline_nonleaf")
+                  1)
+                (= (opt-count-tail-call-blocks blocks) 0)
+                (= (opt-count-tail-call-blocks callee-blocks) 1)
+                (compiler_optimize.opt-inline-structure-ok? blocks)))]
+          [(compiler_optimize.OptMaybeFunction.No) false])]
+      [(compiler_optimize.OptMaybeFunction.No) false])))
+
+(define (compiler-optimize-inline-single-block-tail-call-to-caller-refusal-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [optimized : compiler_ir_types.CompilerIrFunctionList
+      (compiler_optimize.opt-inline-program-functions
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-inline-single-block-tail-call-to-caller-functions symbols)
+        2)]
+    (match (compiler_optimize.opt-function-list-find optimized "main")
+      [(compiler_optimize.OptMaybeFunction.Some main)
+        (let
+          [blocks : compiler_ir_types.CompilerIrBlockList
+            (compiler_optimize.opt-function-blocks main)]
+          (and
+            (= (opt-count-direct-call-name-blocks blocks "inline_nonleaf") 1)
+            (= (opt-count-tail-call-blocks blocks) 0)
+            (compiler_optimize.opt-inline-structure-ok? blocks)))]
+      [(compiler_optimize.OptMaybeFunction.No) false])))
+
 (define (opt-inline-repeated-nonleaf-predicate-callee
   [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
@@ -21663,6 +21912,21 @@
                     (unless
                       (compiler-optimize-inline-multiblock-tail-call-idempotent-ok?)
                       (return 62))
+                    (unless
+                      (compiler-optimize-inline-single-block-tail-call-ok?)
+                      (return 63))
+                    (unless
+                      (compiler-optimize-inline-single-block-tail-call-level1-refusal-ok?)
+                      (return 64))
+                    (unless
+                      (compiler-optimize-inline-single-block-tail-call-indirect-refusal-ok?)
+                      (return 65))
+                    (unless
+                      (compiler-optimize-inline-single-block-self-tail-call-refusal-ok?)
+                      (return 66))
+                    (unless
+                      (compiler-optimize-inline-single-block-tail-call-to-caller-refusal-ok?)
+                      (return 67))
                     (unless
                       (compiler-optimize-inline-repeated-tiny-predicate-ok?)
                       (return 46))

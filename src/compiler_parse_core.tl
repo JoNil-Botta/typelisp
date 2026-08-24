@@ -1195,7 +1195,7 @@
   (Err String))
 
 (defenum ResultAstExternSymbol
-  (Ok String i64)
+  (Ok String ci.InternId)
   (Err String))
 
 (defenum ResultAstFnExport
@@ -1237,7 +1237,7 @@
   (Err String))
 
 (defenum ResultAstExternParts
-  (Ok ast.AstExternAbi i64 bool ast.AstType)
+  (Ok ast.AstExternAbi ci.InternId bool ast.AstType)
   (Err String))
 
 (defenum AstExternHeadItem
@@ -9216,8 +9216,7 @@
                 (string.string-length
                   (compiler-parse-dispatch-id-str dispatch value-id))
                 0)
-                (ResultAstFnExport.Ok
-                  (ast.ast-fn-export-id (ci.intern-id-value value-id)))
+                (ResultAstFnExport.Ok (ast.ast-fn-export-id value-id))
                 (ResultAstFnExport.Err
                   "parse: define :export-symbol must not be empty"))]
             [_
@@ -9767,7 +9766,7 @@
                 [value : String
                   (compiler-parse-dispatch-id-str dispatch value-id)]
                 (if (> (string.string-length value) 0)
-                  (ResultAstExternSymbol.Ok value (ci.intern-id-value value-id))
+                  (ResultAstExternSymbol.Ok value value-id)
                   (ResultAstExternSymbol.Err
                     (str_cat.str-cat "parse: extern " key " must not be empty"))))]
             [_
@@ -9801,7 +9800,7 @@
   [pools : ast.AstNodePoolContext]
   [items : reader.SpannedSexpr]
   [abi : ast.AstExternAbi]
-  [symbol-id : i64]
+  [symbol-id : ci.InternId]
   [link-inputs : (&mut link-inputs ast.AstExternLinkInputList)]
   [seen-abi : bool]
   [seen-symbol : bool]) : ResultAstExternParts
@@ -9945,7 +9944,7 @@
 (define (parse-ast-extern-head-finish
   [pools : ast.AstNodePoolContext]
   [abi : ast.AstExternAbi]
-  [symbol-id : i64]
+  [symbol-id : ci.InternId]
   [seen-abi : bool]
   [param-types : ast.AstTypeList]
   [ret : ast.AstType]) : ResultAstExternParts
@@ -9960,7 +9959,7 @@
   [pools : ast.AstNodePoolContext]
   [items : reader.SpannedSexpr]
   [abi : ast.AstExternAbi]
-  [symbol-id : i64]
+  [symbol-id : ci.InternId]
   [link-inputs : (&mut link-inputs ast.AstExternLinkInputList)]
   [seen-abi : bool]
   [seen-symbol : bool]
@@ -10117,7 +10116,7 @@
   [pools : ast.AstNodePoolContext]
   [items : reader.SpannedSexpr]
   [abi : ast.AstExternAbi]
-  [symbol-id : i64]
+  [symbol-id : ci.InternId]
   [link-inputs : (&mut link-inputs ast.AstExternLinkInputList)]
   [seen-abi : bool]
   [seen-symbol : bool]
@@ -10299,12 +10298,14 @@
       (let
         [link-inputs : ast.AstExternLinkInputList
           (ast.ast-extern-link-input-list-new)]
+        [source-symbol : ci.InternId
+          (ci.intern-syntax-id-renderable (ci.intern-syntax-id-from-raw name))]
         (match (parse-ast-extern-head-rest
           dispatch
           pools
           rest
           abi
-          name
+          source-symbol
           (&mut link-inputs)
           false
           false
@@ -10320,7 +10321,7 @@
                   link-inputs
                   (ast.ast-extern-metadata-flags
                     explicit-abi
-                    (= parsed-symbol-id name))
+                    (ci.intern-id-eq? parsed-symbol-id source-symbol))
                   ast.AstImportedSpmdMetadata.No)
                 ty))]
           [(ResultAstExternParts.Err message) (ResultAstDecl.Err message)]))]
@@ -10336,6 +10337,7 @@
         [(reader.SpannedSexprView.Sym name _)
           (let
             [name-id : i64 (ci.intern-syntax-id-value name)]
+            [source-symbol : ci.InternId (ci.intern-syntax-id-renderable name)]
             [link-inputs : ast.AstExternLinkInputList
               (ast.ast-extern-link-input-list-new)]
             (match (parse-ast-extern-items
@@ -10343,7 +10345,7 @@
               pools
               after-name
               (ast.AstExternAbi.C)
-              name-id
+              source-symbol
               (&mut link-inputs)
               false
               false)
@@ -10362,7 +10364,7 @@
                       link-inputs
                       (ast.ast-extern-metadata-flags
                         explicit-abi
-                        (= parsed-symbol-id name-id))
+                        (ci.intern-id-eq? parsed-symbol-id source-symbol))
                       ast.AstImportedSpmdMetadata.No)
                     parsed-ty))]
               [(ResultAstExternParts.Err message) (ResultAstDecl.Err message)]))]

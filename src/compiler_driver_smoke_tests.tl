@@ -92,7 +92,7 @@
   [matches-source : bool]) : compiler_ast_types.AstExternMetadata
   (compiler_ast_types.AstExternMetadata.Metadata
     (compiler_ast_types.AstExternAbi.C)
-    link-id
+    (ci.intern-id-from-renderable link-id)
     (compiler_ast_types.ast-extern-link-input-list-new)
     (compiler_ast_types.ast-extern-metadata-flags false matches-source)
     compiler_ast_types.AstImportedSpmdMetadata.No))

@@ -44825,7 +44825,7 @@
         callable.specializations]
       (or
         (and
-          (string.eq (ci.intern-str callable.signature) signature)
+          (string.eq (ci.intern-id-str callable.signature) signature)
           (>
             (ast.ast-imported-spmd-specialization-list-len (& specializations))
             0))
@@ -44846,7 +44846,7 @@
           index
           (ast.ast-imported-spmd-specialization-fallback))]
       (or
-        (string.eq (ci.intern-str item.result) "v")
+        (string.eq (ci.intern-id-str item.result) "v")
         (tc-spmd-imported-specializations-have-varying-result-at?
           specializations
           (+ index 1))))))
@@ -44867,7 +44867,7 @@
         callable.specializations]
       (or
         (and
-          (string.eq (ci.intern-str callable.signature) signature)
+          (string.eq (ci.intern-id-str callable.signature) signature)
           (tc-spmd-imported-specializations-have-varying-result-at?
             (& specializations)
             0))

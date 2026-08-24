@@ -40,7 +40,9 @@
   (DispatchFunction)
   (ModuleDefinition)
   (ModulePath)
-  (ImportAlias))
+  (ImportAlias)
+  (ValueQualifier)
+  (ValueName))
 
 (defstruct CompilerParseSemanticOrigin
   (kind CompilerParseSemanticOriginKind)
@@ -111,7 +113,8 @@
 (defstruct CompilerParseSemanticOriginCaptureState
   (active bool)
   (vec-addr i64)
-  (decl-slot i64))
+  (decl-slot i64)
+  (name-view ci.InternSemanticNameView))
 
 (define compiler-parse-semantic-origin-capture-active : bool
   false)
@@ -119,12 +122,38 @@
   0)
 (define compiler-parse-semantic-origin-capture-decl-slot : i64
   0)
+(define compiler-parse-semantic-origin-empty-name-view : (__tl_dyn-array
+    ci.InternSemanticNameView)
+  (__tl_make-array (ci.intern-semantic-name-view-empty)))
+(define compiler-parse-semantic-origin-capture-name-view : (__tl_dyn-array
+    ci.InternSemanticNameView)
+  (__tl_make-array (ci.intern-semantic-name-view-empty)))
+(define compiler-parse-semantic-quote-depth : i64
+  0)
+
+(define (compiler-parse-semantic-origin-empty-name-view-shared) : ci.InternSemanticNameView
+  (unsafe
+    (ptr-read
+      (ptr-cast
+        (__tl_array-data compiler-parse-semantic-origin-empty-name-view)
+        : (Ptr ci.InternSemanticNameView)))))
+
+(define (compiler-parse-semantic-origin-capture-name-view-shared) : ci.InternSemanticNameView
+  (unsafe
+    (ptr-read
+      (ptr-cast
+        (__tl_array-data compiler-parse-semantic-origin-capture-name-view)
+        : (Ptr ci.InternSemanticNameView)))))
 
 (define (compiler-parse-decl-origin-cache-reset!) : unit
   (begin
     (set! compiler-parse-semantic-origin-capture-active false)
     (set! compiler-parse-semantic-origin-capture-vec-addr 0)
-    (set! compiler-parse-semantic-origin-capture-decl-slot 0)))
+    (set! compiler-parse-semantic-origin-capture-decl-slot 0)
+    (set!
+      (array-ref compiler-parse-semantic-origin-capture-name-view 0)
+      (compiler-parse-semantic-origin-empty-name-view-shared))
+    (set! compiler-parse-semantic-quote-depth 0)))
 
 (define (compiler-parse-token-span-from-ast-span [span : ast.AstSourceSpan]) : token.SourceSpan
   (token.SourceSpan
@@ -155,7 +184,11 @@
     [(CompilerParseSemanticOriginKind.ModulePath)
       "__tl_semantic_origin_module_path"]
     [(CompilerParseSemanticOriginKind.ImportAlias)
-      "__tl_semantic_origin_import_alias"]))
+      "__tl_semantic_origin_import_alias"]
+    [(CompilerParseSemanticOriginKind.ValueQualifier)
+      "__tl_semantic_origin_value_qualifier"]
+    [(CompilerParseSemanticOriginKind.ValueName)
+      "__tl_semantic_origin_value_name"]))
 
 (define (compiler-parse-semantic-origin-kind-tag
   [kind : CompilerParseSemanticOriginKind]) : i64
@@ -169,7 +202,9 @@
     [(CompilerParseSemanticOriginKind.DispatchFunction) 6]
     [(CompilerParseSemanticOriginKind.ModuleDefinition) 7]
     [(CompilerParseSemanticOriginKind.ModulePath) 8]
-    [(CompilerParseSemanticOriginKind.ImportAlias) 9]))
+    [(CompilerParseSemanticOriginKind.ImportAlias) 9]
+    [(CompilerParseSemanticOriginKind.ValueQualifier) 10]
+    [(CompilerParseSemanticOriginKind.ValueName) 11]))
 
 (define (compiler-parse-semantic-origin-kind-tag-from-marker [marker : String]) : i64
   (cond
@@ -183,6 +218,8 @@
     [(string.eq marker "__tl_semantic_origin_module_definition") 7]
     [(string.eq marker "__tl_semantic_origin_module_path") 8]
     [(string.eq marker "__tl_semantic_origin_import_alias") 9]
+    [(string.eq marker "__tl_semantic_origin_value_qualifier") 10]
+    [(string.eq marker "__tl_semantic_origin_value_name") 11]
     [else -1]))
 
 (define (compiler-parse-semantic-origin-kind-from-tag [tag : i64]) : CompilerParseSemanticOriginKind
@@ -196,13 +233,16 @@
     [(= tag 6) (CompilerParseSemanticOriginKind.DispatchFunction)]
     [(= tag 7) (CompilerParseSemanticOriginKind.ModuleDefinition)]
     [(= tag 8) (CompilerParseSemanticOriginKind.ModulePath)]
-    [else (CompilerParseSemanticOriginKind.ImportAlias)]))
+    [(= tag 9) (CompilerParseSemanticOriginKind.ImportAlias)]
+    [(= tag 10) (CompilerParseSemanticOriginKind.ValueQualifier)]
+    [else (CompilerParseSemanticOriginKind.ValueName)]))
 
 (define (compiler-parse-semantic-origin-capture-current) : CompilerParseSemanticOriginCaptureState
   (CompilerParseSemanticOriginCaptureState
     compiler-parse-semantic-origin-capture-active
     compiler-parse-semantic-origin-capture-vec-addr
-    compiler-parse-semantic-origin-capture-decl-slot))
+    compiler-parse-semantic-origin-capture-decl-slot
+    (compiler-parse-semantic-origin-capture-name-view-shared)))
 
 (define (compiler-parse-semantic-origin-capture-select!
   [items : (MutPtr ParseSemanticOriginVec)]
@@ -215,10 +255,14 @@
     (set! compiler-parse-semantic-origin-capture-decl-slot decl-slot)))
 
 (define (compiler-parse-semantic-origin-capture-begin!
+  [name-view : ci.InternSemanticNameView]
   [items : (MutPtr ParseSemanticOriginVec)]
   [decl-slot : i64]) : unit
   (begin
     (set! compiler-parse-semantic-origin-capture-active true)
+    (set!
+      (array-ref compiler-parse-semantic-origin-capture-name-view 0)
+      name-view)
     (compiler-parse-semantic-origin-capture-select! items decl-slot)))
 
 (define (compiler-parse-semantic-origin-capture-restore!
@@ -226,37 +270,45 @@
   (begin
     (set! compiler-parse-semantic-origin-capture-active state.active)
     (set! compiler-parse-semantic-origin-capture-vec-addr state.vec-addr)
-    (set! compiler-parse-semantic-origin-capture-decl-slot state.decl-slot)))
+    (set! compiler-parse-semantic-origin-capture-decl-slot state.decl-slot)
+    (set!
+      (array-ref compiler-parse-semantic-origin-capture-name-view 0)
+      state.name-view)))
 
 (define (compiler-parse-semantic-origin-capture-end!) : unit
   (begin
     (set! compiler-parse-semantic-origin-capture-active false)
     (set! compiler-parse-semantic-origin-capture-vec-addr 0)
-    (set! compiler-parse-semantic-origin-capture-decl-slot 0)))
+    (set! compiler-parse-semantic-origin-capture-decl-slot 0)
+    (set!
+      (array-ref compiler-parse-semantic-origin-capture-name-view 0)
+      (compiler-parse-semantic-origin-empty-name-view-shared))))
 
 (define (compiler-parse-semantic-origin-push-active!
   [kind : CompilerParseSemanticOriginKind]
   [written-name : i64]
   [span : token.SourceSpan]) : unit
-  (unsafe
-    (let
-      [items-ptr : (MutPtr ParseSemanticOriginVec)
-        (int->ptr
-          (cast compiler-parse-semantic-origin-capture-vec-addr : u64)
-          : (MutPtr ParseSemanticOriginVec))]
-      [items : ParseSemanticOriginVec (ptr-read items-ptr)]
-      (begin
-        (parse-semantic-origin-vec-push!
-          (&mut items)
-          (ParseSemanticOriginRecord
-            compiler-parse-semantic-origin-capture-decl-slot
-            (compiler-parse-semantic-origin-kind-tag kind)
-            written-name
-            (token.span-start-line span)
-            (token.span-start-col span)
-            (token.span-end-line span)
-            (token.span-end-col span)))
-        (ptr-write! items-ptr items)))))
+  (if (> compiler-parse-semantic-quote-depth 0)
+    unit
+    (unsafe
+      (let
+        [items-ptr : (MutPtr ParseSemanticOriginVec)
+          (int->ptr
+            (cast compiler-parse-semantic-origin-capture-vec-addr : u64)
+            : (MutPtr ParseSemanticOriginVec))]
+        [items : ParseSemanticOriginVec (ptr-read items-ptr)]
+        (begin
+          (parse-semantic-origin-vec-push!
+            (&mut items)
+            (ParseSemanticOriginRecord
+              compiler-parse-semantic-origin-capture-decl-slot
+              (compiler-parse-semantic-origin-kind-tag kind)
+              written-name
+              (token.span-start-line span)
+              (token.span-start-col span)
+              (token.span-end-line span)
+              (token.span-end-col span)))
+          (ptr-write! items-ptr items))))))
 
 (define (compiler-parse-semantic-origin-push!
   [kind : CompilerParseSemanticOriginKind]
@@ -268,87 +320,152 @@
 
 ;; Dotted identifiers are one lexer token. Split their already-known token span
 ;; by byte offset (the lexer uses byte columns) without searching source text.
+(define (compiler-parse-semantic-origin-push-components-with-view!
+  [name-view : (& name-view ci.InternSemanticNameView)]
+  [name : ci.InternSyntaxId]
+  [span : token.SourceSpan]
+  [prefix-kind : CompilerParseSemanticOriginKind]
+  [final-kind : CompilerParseSemanticOriginKind]) : unit
+  (let
+    [syntax-name : i64 (ci.intern-syntax-id-value name)]
+    [resolved-name : i64
+      (if (ci.intern-renderable-id? syntax-name)
+        syntax-name
+        (ci.intern-syntax-source-name-id-or syntax-name -1))]
+    ;; Loader dispatch qualifies resolved names as `module/base`, while the
+    ;; span still covers only the source-written base. Dots in the internal
+    ;; module path are therefore not semantic source components.
+    [written-name : i64
+      (if (and
+        (>= resolved-name 0)
+        (ci.intern-semantic-name-view-qualified? name-view resolved-name))
+        (ci.intern-semantic-name-view-qualified-base-id name-view resolved-name)
+        resolved-name)]
+    (if (< written-name 0)
+      unit
+      (let
+        [current : i64 written-name]
+        [start-col : i64 (token.span-start-col span)]
+        [first-dot : i64
+          (ci.intern-semantic-name-view-first-dot name-view current)]
+        (if (< first-dot 0)
+          (let
+            [text : String (ci.intern-semantic-name-view-str name-view current)]
+            [n : i64 (string.string-length text)]
+            (compiler-parse-semantic-origin-push-active!
+              final-kind
+              current
+              (token.SourceSpan
+                (token.span-start-line span)
+                start-col
+                (token.span-end-line span)
+                (+ start-col n))))
+          (let
+            [done : bool false]
+            (while (not done)
+              (let
+                [dot : i64
+                  (ci.intern-semantic-name-view-first-dot name-view current)]
+                (if (>= dot 0)
+                  (begin
+                    (compiler-parse-semantic-origin-push-active!
+                      prefix-kind
+                      (ci.intern-semantic-name-view-leading-dot-id
+                        name-view
+                        current)
+                      (token.SourceSpan
+                        (token.span-start-line span)
+                        start-col
+                        (token.span-end-line span)
+                        (+ start-col dot)))
+                    (set! start-col (+ (+ start-col dot) 1))
+                    (set!
+                      current
+                      (ci.intern-semantic-name-view-dotted-tail-id
+                        name-view
+                        current)))
+                  (let
+                    [text : String
+                      (ci.intern-semantic-name-view-str name-view current)]
+                    [n : i64 (string.string-length text)]
+                    (begin
+                      (compiler-parse-semantic-origin-push-active!
+                        final-kind
+                        current
+                        (token.SourceSpan
+                          (token.span-start-line span)
+                          start-col
+                          (token.span-end-line span)
+                          (+ start-col n)))
+                      (set! done true))))))))))))
+
 (define (compiler-parse-semantic-origin-push-components!
-  [dispatch : sym_i64_env.SymI64Env]
   [name : ci.InternSyntaxId]
   [span : token.SourceSpan]
   [prefix-kind : CompilerParseSemanticOriginKind]
   [final-kind : CompilerParseSemanticOriginKind]) : unit
   (if compiler-parse-semantic-origin-capture-active
     (let
-      [intern-state : ci.InternCompatState
-        (compiler-parse-dispatch-intern-state dispatch)]
+      [name-view : ci.InternSemanticNameView
+        (compiler-parse-semantic-origin-capture-name-view-shared)]
+      (compiler-parse-semantic-origin-push-components-with-view!
+        (& name-view)
+        name
+        span
+        prefix-kind
+        final-kind))
+    unit))
+
+(define (compiler-parse-semantic-dotted-field-origins!
+  [name : ci.InternSyntaxId]
+  [span : token.SourceSpan]) : unit
+  (if compiler-parse-semantic-origin-capture-active
+    (let
+      [name-view : ci.InternSemanticNameView
+        (compiler-parse-semantic-origin-capture-name-view-shared)]
       [syntax-name : i64 (ci.intern-syntax-id-value name)]
       [resolved-name : i64
         (if (ci.intern-renderable-id? syntax-name)
           syntax-name
           (ci.intern-syntax-source-name-id-or syntax-name -1))]
-      ;; Loader dispatch qualifies resolved names as `module/base`, while the
-      ;; span still covers only the source-written base. Dots in the internal
-      ;; module path are therefore not semantic source components.
       [written-name : i64
         (if (and
           (>= resolved-name 0)
-          (ci.intern-compat-state-qualified? intern-state resolved-name))
-          (ci.intern-compat-state-qualified-base-id intern-state resolved-name)
+          (ci.intern-semantic-name-view-qualified? (& name-view) resolved-name))
+          (ci.intern-semantic-name-view-qualified-base-id
+            (& name-view)
+            resolved-name)
           resolved-name)]
       (if (< written-name 0)
         unit
         (let
-          [current : i64 written-name]
-          [start-col : i64 (token.span-start-col span)]
           [first-dot : i64
-            (ci.intern-compat-state-first-dot intern-state current)]
+            (ci.intern-semantic-name-view-first-dot (& name-view) written-name)]
           (if (< first-dot 0)
+            unit
             (let
-              [text : String (ci.intern-compat-state-str intern-state current)]
-              [n : i64 (string.string-length text)]
-              (compiler-parse-semantic-origin-push-active!
-                final-kind
-                current
-                (token.SourceSpan
-                  (token.span-start-line span)
-                  start-col
-                  (token.span-end-line span)
-                  (+ start-col n))))
-            (let
-              [done : bool false]
-              (while (not done)
-                (let
-                  [dot : i64
-                    (ci.intern-compat-state-first-dot intern-state current)]
-                  (if (>= dot 0)
-                    (begin
-                      (compiler-parse-semantic-origin-push-active!
-                        prefix-kind
-                        (ci.intern-compat-state-leading-dot-id
-                          intern-state
-                          current)
-                        (token.SourceSpan
-                          (token.span-start-line span)
-                          start-col
-                          (token.span-end-line span)
-                          (+ start-col dot)))
-                      (set! start-col (+ (+ start-col dot) 1))
-                      (set!
-                        current
-                        (ci.intern-compat-state-dotted-tail-id
-                          intern-state
-                          current)))
-                    (let
-                      [text : String
-                        (ci.intern-compat-state-str intern-state current)]
-                      [n : i64 (string.string-length text)]
-                      (begin
-                        (compiler-parse-semantic-origin-push-active!
-                          final-kind
-                          current
-                          (token.SourceSpan
-                            (token.span-start-line span)
-                            start-col
-                            (token.span-end-line span)
-                            (+ start-col n)))
-                        (set! done true)))))))))))
+              [fields-id : i64
+                (ci.intern-semantic-name-view-dotted-tail-id
+                  (& name-view)
+                  written-name)]
+              [fields-text : String
+                (ci.intern-semantic-name-view-str (& name-view) fields-id)]
+              [start-col : i64 (+ (token.span-start-col span) first-dot 1)]
+              (begin
+                (compiler-parse-semantic-origin-push-components!
+                  name
+                  span
+                  (CompilerParseSemanticOriginKind.ValueQualifier)
+                  (CompilerParseSemanticOriginKind.ValueName))
+                (compiler-parse-semantic-origin-push-components!
+                  (ci.intern-syntax-id-from-raw fields-id)
+                  (token.SourceSpan
+                    (token.span-start-line span)
+                    start-col
+                    (token.span-start-line span)
+                    (+ start-col (string.string-length fields-text)))
+                  (CompilerParseSemanticOriginKind.StructFieldUse)
+                  (CompilerParseSemanticOriginKind.StructFieldUse))))))))
     unit))
 
 (define (compiler-parse-decl-list-storage-key
@@ -1452,11 +1569,32 @@
               (set! cursor rest))]))
       0)))
 
+(define (compiler-parse-dispatch-invocation-control
+  [dispatch : sym_i64_env.SymI64Env]) : i64
+  (match (sym_i64_env.sym-i64-view dispatch)
+    [(sym_i64_env.SymI64ViewBind name-id value _)
+      (if (= name-id compiler-parse-invocation-marker-id)
+        (compiler-parse-raw-i64-ref
+          value
+          compiler-parse-invocation-control-slot)
+        0)]
+    [(sym_i64_env.SymI64ViewNil) 0]))
+
 (define (compiler-parse-dispatch-intern-state
   [dispatch : sym_i64_env.SymI64Env]) : ci.InternCompatState
   (let
-    [control : i64
-      (compiler-parse-env-marker-value dispatch compiler-parse-state-marker-id)]
+    [invocation-control : i64
+      (compiler-parse-dispatch-invocation-control dispatch)]
+    [control
+      : i64
+      ;; Production dispatches carry a one-node invocation frame. Reuse the
+      ;; cached control instead of rescanning the full dispatch for
+      ;; every source identifier that may contain semantic components.
+      (if (not (= invocation-control 0))
+        invocation-control
+        (compiler-parse-env-marker-value
+          dispatch
+          compiler-parse-state-marker-id))]
     (if (or
       (= control 0)
       (=
@@ -2447,14 +2585,7 @@
   [dispatch : sym_i64_env.SymI64Env]) : i64
   (let
     [invocation-control : i64
-      (match (sym_i64_env.sym-i64-view dispatch)
-        [(sym_i64_env.SymI64ViewBind name-id value _)
-          (if (= name-id compiler-parse-invocation-marker-id)
-            (compiler-parse-raw-i64-ref
-              value
-              compiler-parse-invocation-control-slot)
-            0)]
-        [(sym_i64_env.SymI64ViewNil) 0])]
+      (compiler-parse-dispatch-invocation-control dispatch)]
     [cursor : sym_i64_env.SymI64Env dispatch]
     [control : i64 0]
     [marker-id : i64 -1]
@@ -4074,7 +4205,6 @@
           (= tag (compiler-parse-tag-ty-expr)))
           unit
           (compiler-parse-semantic-origin-push-components!
-            dispatch
             name
             span
             (CompilerParseSemanticOriginKind.ModulePath)
@@ -4110,7 +4240,6 @@
                 (compiler-parse-semantic-type-second-origin! dispatch rest)]
               [else
                 (compiler-parse-semantic-origin-push-components!
-                  dispatch
                   head
                   head-span
                   (CompilerParseSemanticOriginKind.ModulePath)
@@ -4936,7 +5065,6 @@
         (match (reader.spanned-sexpr-view name-node)
           [(reader.SpannedSexprView.Sym name span)
             (compiler-parse-semantic-origin-push-components!
-              dispatch
               name
               span
               (CompilerParseSemanticOriginKind.ModulePath)
@@ -5318,7 +5446,6 @@
                         [(ResultAstDispatchIsa.Ok isa)
                           (begin
                             (compiler-parse-semantic-origin-push-components!
-                              dispatch
                               fn-name
                               fn-span
                               (CompilerParseSemanticOriginKind.ModulePath)
@@ -5408,7 +5535,6 @@
               (match (reader.spanned-sexpr-view name-node)
                 [(reader.SpannedSexprView.Sym name span)
                   (compiler-parse-semantic-origin-push-components!
-                    dispatch
                     name
                     span
                     (CompilerParseSemanticOriginKind.ModulePath)
@@ -5650,13 +5776,28 @@
                 (= tag (compiler-parse-tag-expr-array)))
                 unit
                 (compiler-parse-semantic-origin-push-components!
-                  dispatch
                   name
                   span
                   (CompilerParseSemanticOriginKind.ModulePath)
                   (CompilerParseSemanticOriginKind.EnumVariantPattern))))]
           [_ unit])
         (compiler-parse-semantic-pattern-list-origins! dispatch args))]
+    [(reader.SpannedSexprView.Sym name span)
+      (let
+        [tag : i64
+          (compiler-parse-dispatch-tag-id
+            dispatch
+            (ci.intern-syntax-id-value name))]
+        (if (or
+          (= tag (compiler-parse-tag-pattern-wildcard))
+          (= tag (compiler-parse-tag-lit-true))
+          (= tag (compiler-parse-tag-lit-false)))
+          unit
+          (compiler-parse-semantic-origin-push-components!
+            name
+            span
+            (CompilerParseSemanticOriginKind.ModulePath)
+            (CompilerParseSemanticOriginKind.EnumVariantPattern))))]
     [_ unit]))
 
 (define (parse-ast-cfg-expr-maybe
@@ -6079,16 +6220,20 @@
               (match (parse-ast-expr-with-pools dispatch pools value)
                 [(ResultAstExpr.Ok parsed-value)
                   (match (reader.spanned-sexpr-view target-node)
-                    [(reader.SpannedSexprView.Sym name _)
-                      (ResultAstExpr.Ok
-                        (ast.ast-expr-spanned-with-pools
-                          pools
-                          (ast.ast-expr-set-id-with-pools
+                    [(reader.SpannedSexprView.Sym name target-span)
+                      (begin
+                        (compiler-parse-semantic-dotted-field-origins!
+                          name
+                          target-span)
+                        (ResultAstExpr.Ok
+                          (ast.ast-expr-spanned-with-pools
                             pools
-                            (ci.intern-syntax-id-value name)
-                            parsed-value)
-                          (ast-source-span-from-source-span
-                            (reader.spanned-sexpr-span target-node))))]
+                            (ast.ast-expr-set-id-with-pools
+                              pools
+                              (ci.intern-syntax-id-value name)
+                              parsed-value)
+                            (ast-source-span-from-source-span
+                              (reader.spanned-sexpr-span target-node)))))]
                     [_
                       (match (parse-ast-expr-with-pools
                         dispatch
@@ -6783,7 +6928,6 @@
                     [(ResultAstExpr.Ok parsed-expr)
                       (begin
                         (compiler-parse-semantic-origin-push-components!
-                          dispatch
                           field
                           (reader.spanned-sexpr-span field-node)
                           (CompilerParseSemanticOriginKind.ModulePath)
@@ -8220,9 +8364,19 @@
         [(reader.SpannedSexprView.Nil _)
           (let
             [saved-depth : i64 compiler-parse-quote-depth]
+            [saved-semantic-depth : i64 compiler-parse-semantic-quote-depth]
             [result : ResultAstExpr
               (begin
                 (set! compiler-parse-quote-depth (+ saved-depth 1))
+                (set!
+                  compiler-parse-semantic-quote-depth
+                  (if (or
+                    (= tag (compiler-parse-tag-expr-unquote))
+                    (= tag (compiler-parse-tag-expr-unquote-splicing)))
+                    (if (> saved-semantic-depth 0)
+                      (- saved-semantic-depth 1)
+                      0)
+                    (+ saved-semantic-depth 1)))
                 (match (parse-ast-expr-with-pools dispatch pools expr)
                   [(ResultAstExpr.Ok parsed)
                     (cond
@@ -8243,6 +8397,7 @@
                   [(ResultAstExpr.Err message) (ResultAstExpr.Err message)]))]
             (begin
               (set! compiler-parse-quote-depth saved-depth)
+              (set! compiler-parse-semantic-quote-depth saved-semantic-depth)
               result))]
         [_
           (ResultAstExpr.Err "parse: quote form expects exactly one expression")])]
@@ -8544,7 +8699,7 @@
                 pools
                 (ast.AstExpr.Literal (ast.AstLiteral.Char c)))
               s))]
-        [(reader.SpannedSexprView.Sym name _)
+        [(reader.SpannedSexprView.Sym name span)
           (let
             [name-id : i64 (ci.intern-syntax-id-value name)]
             [tag : i64 (compiler-parse-dispatch-tag-id dispatch name-id)]
@@ -8574,13 +8729,18 @@
                       (ast.AstExpr.Literal ast.AstLiteral.Unit))
                     s))]
               [else
-                (ResultAstExpr.Ok
-                  (ast-expr-wrap-span
-                    pools
-                    (ast.ast-node-pool-context-expr-push
+                (begin
+                  ;; This is a source candidate, not a claimed field use. The
+                  ;; helper rejects generated syntax identities and plain
+                  ;; names before reading dotted-name metadata.
+                  (compiler-parse-semantic-dotted-field-origins! name span)
+                  (ResultAstExpr.Ok
+                    (ast-expr-wrap-span
                       pools
-                      (ast.AstExpr.Var name-id))
-                    s))]))]
+                      (ast.ast-node-pool-context-expr-push
+                        pools
+                        (ast.AstExpr.Var name-id))
+                      s)))]))]
         [(reader.SpannedSexprView.Cons head rest _)
           (match (reader.spanned-sexpr-view head)
             [(reader.SpannedSexprView.Sym op _)
@@ -10227,7 +10387,6 @@
                   (reader.spanned-sexpr-span name-node)))]
             (begin
               (compiler-parse-semantic-origin-push-components!
-                dispatch
                 name
                 name-span
                 (CompilerParseSemanticOriginKind.ModulePath)
@@ -10293,7 +10452,6 @@
                   (reader.spanned-sexpr-span name-node)))]
             (begin
               (compiler-parse-semantic-origin-push-components!
-                dispatch
                 name
                 name-span
                 (CompilerParseSemanticOriginKind.ModulePath)
@@ -10461,7 +10619,6 @@
         [(reader.SpannedSexprView.Sym name span)
           (begin
             (compiler-parse-semantic-origin-push-components!
-              dispatch
               name
               span
               (CompilerParseSemanticOriginKind.ModuleDefinition)
@@ -10491,7 +10648,6 @@
       (ast.AstImportSpec.Spec kind path module-name alias (box span)))))
 
 (define (parse-ast-import-alias
-  [dispatch : sym_i64_env.SymI64Env]
   [kind : ast.AstImportKind]
   [path : String]
   [module-name : ast.AstMaybeModuleName]
@@ -10512,7 +10668,6 @@
                         (cbi.compiler-builtin-ctfe-ref 260))
                         (begin
                           (compiler-parse-semantic-origin-push-components!
-                            dispatch
                             alias
                             alias-span
                             (CompilerParseSemanticOriginKind.ModulePath)
@@ -10558,7 +10713,6 @@
                     (ci.intern-syntax-id-value head)
                     (cbi.compiler-builtin-ctfe-ref 260))
                     (parse-ast-import-alias
-                      dispatch
                       (ast.AstImportKind.Macro
                         call-expr
                         ast.AstMaybeModuleName.No)
@@ -10649,7 +10803,6 @@
     (begin
       (if wildcard
         (compiler-parse-semantic-origin-push-components!
-          dispatch
           (ci.intern-syntax-id-from-raw
             (ci.intern-compat-state-dotted-prefix-id
               intern-state
@@ -10662,7 +10815,6 @@
           (CompilerParseSemanticOriginKind.ModulePath)
           (CompilerParseSemanticOriginKind.ModulePath))
         (compiler-parse-semantic-origin-push-components!
-          dispatch
           module-name
           span
           (CompilerParseSemanticOriginKind.ModulePath)
@@ -10750,7 +10902,6 @@
                   (ci.intern-syntax-id-value head)
                   (cbi.compiler-builtin-ctfe-ref 260))
                   (parse-ast-import-alias
-                    dispatch
                     (ast.AstImportKind.Module)
                     module-name
                     (ast.AstMaybeModuleName.Some module-name-id)
@@ -11488,6 +11639,8 @@
             [semantic-start : i64 out.semantic-origins.len]
             (begin
               (compiler-parse-semantic-origin-capture-begin!
+                (ci.intern-compat-state-semantic-name-view
+                  (compiler-parse-dispatch-intern-state dispatch))
                 semantic-origins
                 out.len)
               (match (parse-ast-decl-maybe-with-pools dispatch pools form)
@@ -11817,6 +11970,8 @@
             (begin
               (parse-ast-error-span-clear! dispatch)
               (compiler-parse-semantic-origin-capture-begin!
+                (ci.intern-compat-state-semantic-name-view
+                  (compiler-parse-dispatch-intern-state dispatch))
                 semantic-origins
                 out.len)
               (match (parse-ast-decl-maybe-with-pools
@@ -12019,6 +12174,8 @@
             (begin
               (parse-ast-error-span-clear! dispatch)
               (compiler-parse-semantic-origin-capture-begin!
+                (ci.intern-compat-state-semantic-name-view
+                  (compiler-parse-dispatch-intern-state dispatch))
                 semantic-origins
                 out.len)
               (match (parse-ast-decl-maybe-with-pools

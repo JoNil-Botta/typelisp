@@ -1136,6 +1136,78 @@
   (persistent-arena-floor-mark (__tl_dyn-array i64))
   (structural-table-cell (__tl_dyn-array InternStructuralTable)))
 
+;; Read-only subset used while the parser records exact semantic name spans.
+;; Capture it once per top-level form instead of copying the full intern owner
+;; for every identifier visited by the recursive parser.
+(defstruct InternSemanticNameView
+  (pool-slots (__tl_dyn-array String))
+  (pool-qualified-slots (__tl_dyn-array bool))
+  (pool-first-dot-slots (__tl_dyn-array i32))
+  (pool-leading-dot-id-slots (__tl_dyn-array InternSlotId))
+  (pool-base-id-slots (__tl_dyn-array InternSlotId)))
+
+(define (intern-semantic-name-view-empty) : InternSemanticNameView
+  (InternSemanticNameView
+    (__tl_make-array String 0)
+    (__tl_make-array bool 0)
+    (__tl_make-array i32 0)
+    (__tl_make-array InternSlotId 0)
+    (__tl_make-array InternSlotId 0)))
+
+(define (intern-compat-state-semantic-name-view [state : InternCompatState]) : InternSemanticNameView
+  (InternSemanticNameView
+    state.pool-slots
+    state.pool-qualified-slots
+    state.pool-first-dot-slots
+    state.pool-leading-dot-id-slots
+    state.pool-base-id-slots))
+
+(define (intern-semantic-name-view-str
+  [view : (& view InternSemanticNameView)]
+  [id : i64]) : String
+  (unsafe
+    (ptr-read
+      (ptr-offset
+        (ptr-cast (__tl_array-data view.pool-slots) : (Ptr String))
+        id))))
+
+(define (intern-semantic-name-view-qualified?
+  [view : (& view InternSemanticNameView)]
+  [id : i64]) : bool
+  (array-ref view.pool-qualified-slots id))
+
+(define (intern-semantic-name-view-qualified-base-id
+  [view : (& view InternSemanticNameView)]
+  [id : i64]) : i64
+  (intern-id-slot-decode (array-ref view.pool-base-id-slots id)))
+
+(define (intern-semantic-name-view-first-dot
+  [view : (& view InternSemanticNameView)]
+  [id : i64]) : i64
+  (cast (array-ref view.pool-first-dot-slots id) : i64))
+
+(define (intern-semantic-name-view-leading-dot-id
+  [view : (& view InternSemanticNameView)]
+  [id : i64]) : i64
+  (intern-id-slot-decode (array-ref view.pool-leading-dot-id-slots id)))
+
+(define (intern-semantic-name-view-dotted-tail-id
+  [view : (& view InternSemanticNameView)]
+  [id : i64]) : i64
+  (let
+    [base-id : i64
+      (if (intern-semantic-name-view-qualified? view id)
+        (intern-semantic-name-view-qualified-base-id view id)
+        id)]
+    (if (< (intern-semantic-name-view-first-dot view base-id) 0)
+      -1
+      (let
+        [tail-id : i64
+          (intern-id-slot-decode (array-ref view.pool-base-id-slots base-id))]
+        (if (= tail-id base-id)
+          -1
+          tail-id)))))
+
 ;; An immutable compile-intern capability. Source lookup and structural-key
 ;; ownership share one reset generation and one-word handle; the cells let
 ;; consumers reject stale identities without consulting whichever compatibility

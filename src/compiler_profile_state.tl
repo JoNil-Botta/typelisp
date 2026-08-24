@@ -9,7 +9,7 @@
 (cfg test (import stdlib.test))
 
 (define compiler-profile-state-metric-capacity : i64
-  (cfg (any compile-profile test) 78 0))
+  (cfg (any compile-profile test) 140 0))
 (define compiler-profile-state-summary-row-capacity : i64
   (cfg (any compile-profile-summary test) 40 0))
 (define compiler-profile-state-summary-scope-capacity : i64
@@ -132,6 +132,22 @@
     (CompilerProfileMetrics
       (compiler-profile-state-storage-field-shared-view _state metrics))
     (CompilerProfileMetrics 0)))
+
+;; Leaf compiler subsystems cannot import this module without creating a cycle.
+;; Give those owners a raw, one-word view of the fixed metric array instead;
+;; the array remains owned by `CompilerProfileState` for the whole job.
+(defmacro (compiler-profile-state-metrics-address [_state : Expr]) : Expr
+  (cfg
+    (any compile-profile test)
+    `(unsafe
+      (ptr->int
+        (ptr-cast
+          (__tl_array-data
+            (__tl-project-field
+              (array-ref ,(comptime.expr-struct-get _state "storage") 0)
+              metrics))
+          : (Ptr i64))))
+    `(cast 0 : u64)))
 
 (cfg
   (any compile-profile test)

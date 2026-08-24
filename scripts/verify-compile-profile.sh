@@ -1417,6 +1417,9 @@ fi
 # walkers brings ast_type_pool.macro_expand back from 24 to 23 segments: the
 # authoritative Windows probe measured 22,788 used nodes, 23,552 capacity, and
 # 565,248 physical payload bytes.
+# #4959's job-owned intern-metric slots and owner plumbing cross the next
+# typecheck Expr boundary: the authoritative Windows probe measured 2,425,352
+# used nodes, 2,490,368 capacity, and 79,691,776 physical payload bytes.
 #
 # Keep both the logical
 # capacity and physical payload bytes exact so an accidental return to eager or

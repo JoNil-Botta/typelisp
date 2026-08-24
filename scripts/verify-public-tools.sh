@@ -2001,11 +2001,16 @@ EOF
 EOF
     SELFHOST_OPT_RELEASE_ASM="$SELFHOST_OPTPKG/target/release/selfhost_opt_pkg.s"
     SELFHOST_OPT_DEV_ASM="$SELFHOST_OPTPKG/target/dev/selfhost_opt_pkg.s"
+    # The release build must show opt2 ran. The strongest such shape is the
+    # whole program folding to its constant answer (main returns 45), which is
+    # what the compiler emits since the tail-call forwarder inlining landed;
+    # the lea-of-two-arg-registers form is kept as the alternative so a
+    # compiler that legitimately keeps calc out of line still passes. opt0's
+    # stack multiply below stays refused either way.
+    SELFHOST_OPT2_REGALLOC_A='    movl $45, %eax'
     if [ "$HOST_OS" = windows ]; then
-        SELFHOST_OPT2_REGALLOC_A='    leaq (%rcx,%rdx), %rax'
         SELFHOST_OPT2_REGALLOC_B='    leaq (%rcx,%rdx), %rax'
     else
-        SELFHOST_OPT2_REGALLOC_A='    leaq (%rdi,%rsi), %rax'
         SELFHOST_OPT2_REGALLOC_B='    leaq (%rdi,%rsi), %rax'
     fi
     SELFHOST_OPT0_STACK_MUL="    imulq %r8, %rax"
@@ -3562,14 +3567,13 @@ assert_contains "$WALK_ASM" "main:"
 if [ "$IS_STAGE1_WRAPPER" -eq 1 ]; then
     assert_contains "$WALK_ASM" "inc:"
 else
-    assert_contains_any "$WALK_ASM" \
-        "_tl_inc:" \
-        "_tl_math_inc:" \
-        "_tl_walk_pkg_src_math_inc" \
-        "_tl_walk_pkg_src_math_math_inc"
+    # Since the tail-call forwarder inlining, `(math.inc 41)` folds to its
+    # constant answer, so the compiled-in proof of the upward-discovered
+    # module is the folded 42 when the inc label is gone.
     assert_contains_any "$WALK_ASM" \
         "_tl_walk_pkg_src_math_inc" \
-        "_tl_walk_pkg_src_math_math_inc"
+        "_tl_walk_pkg_src_math_math_inc" \
+        '    movl $42, %eax'
 fi
 
 MISSING_DEP="$WORKDIR/missing_dep"

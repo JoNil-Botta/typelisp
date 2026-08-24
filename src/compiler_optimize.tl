@@ -92343,7 +92343,7 @@
                   (compiler-opt-profile-escape-finish
                     "bounds_group"
                     level
-                    _profile-name
+                    (compiler-opt-global-shared-view _profile-name)
                     _t-bounds-group))]
               [_t-compact : i64 (cfg compile-profile (profile.now-ms) 0)]
               [optimized : ir.CompilerIrFunction

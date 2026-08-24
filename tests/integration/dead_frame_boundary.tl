@@ -40,7 +40,12 @@
     (+ 1 (dfb-probe (- x 1)))))
 
 ;; (a) TAIL-CALL-ONLY, no frame slot: no stack adjustment at all.
-(define (dfb-forward [a : i64]) : i64
+(define (dfb-forward [a : i64])
+  ;; Exported so the standalone body survives the tail-call forwarder inliner
+  ;; (a one-block body ending in a direct tail call is exactly the shape it
+  ;; absorbs at every call site): the shape gate reads this emitted function.
+  (:export-symbol "tl_dfb_forward")
+  : i64
   (dfb-sink a -4))
 
 ;; (b) ABORT-ONLY under an even callee-saved push run: the pushes stay, the

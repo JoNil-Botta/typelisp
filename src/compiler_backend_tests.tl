@@ -5372,6 +5372,17 @@
 ;; immediate LHS into that same register silently changed the pre-test into a
 ;; self-compare. Keep the function address-taken so opt2 cannot inline away the
 ;; allocation shape, then emit the full lower -> opt2 -> scalar-regalloc path.
+;;
+;; The address-take is a GLOBAL initialised with the function, and every fixture
+;; below that needs one spells it the same way. The older spelling was a
+;; `(define (keep [f : T]) : i64 0)` wrapper called from `main`, and that stopped
+;; holding anything: a wrapper whose body ignores its parameter is inlined at its
+;; site, the argument goes with it, and the subject is then unreferenced and
+;; pruned before it is ever emitted. That was already true at an ordinary call
+;; site and became true at a tail call site too once opt-inline-try grew its
+;; TailCall arm. A global holding the address is not a call at all, so nothing
+;; can dissolve it: the census reads it as address-taken (so the subject is never
+;; inlined) and the pruner reads it as a root (so the subject is always emitted).
 (define compiler-backend-shifted-loop-bound-source : String
   "(define (array-zero-count [buf : (MutPtr u8)] [byte-count : i64]) : i64
   (let
@@ -5390,8 +5401,8 @@
           (unsafe (ptr-write! (ptr-offset buf i) (cast 0 : u8)))
           (set! i (+ i 1))))
       w)))
-(define (keep [f : (-> (MutPtr u8) i64 i64)]) : i64 0)
-(define (main) : i64 (keep array-zero-count))")
+(define keep : (-> (MutPtr u8) i64 i64) array-zero-count)
+(define (main) : i64 0)")
 
 (define (compiler-backend-emit-source-opt2-for-target
   [source : String]
@@ -5489,15 +5500,30 @@
 ;; a true 2-cycle for the argument parallel move
 ;; (compiler-backend-emit-arg-move-list), which only exists once the parameters
 ;; live in argument registers -- so this fixture is also the cycle-break
-;; regression test. `keep4` takes the dispatcher as a value so the optimizer
-;; cannot inline the whole thing away.
+;; regression test. `keep4` is the address-taking global described above; it
+;; holds the dispatcher as a value so the optimizer cannot inline the whole
+;; thing away.
+;; The arms carry a guard so each one is more than a single block. Without it
+;; they are exactly the shape the single-block inliner takes at a tail-call site
+;; (opt-inline-try's TailCall arm), the dispatcher's three `jmp`s become three
+;; spliced bodies, and the tail-jump tail this fixture exists to check is not
+;; emitted at all. The guard costs the fixture nothing that it measures: every
+;; assertion below reads `_tl_tc_dispatch`, whose own shape -- the empty CSR set,
+;; the incoming argument registers, the 2-cycle break and the three tail jumps --
+;; is unchanged by what the arms contain.
 (define compiler-backend-tail-dispatch-source : String
   "(define (tc-arm-a [a : i64] [b : i64] [c : i64]) : i64
-  (+ (* a 3) (+ (* b 5) (* c 7))))
+  (if (< a 0)
+    (- 0 a)
+    (+ (* a 3) (+ (* b 5) (* c 7)))))
 (define (tc-arm-b [a : i64] [b : i64] [c : i64]) : i64
-  (- (* a 11) (+ (* b 13) (* c 17))))
+  (if (< b 0)
+    (- 0 b)
+    (- (* a 11) (+ (* b 13) (* c 17)))))
 (define (tc-arm-c [a : i64] [b : i64] [c : i64]) : i64
-  (+ (* a 19) (- (* b 23) (* c 29))))
+  (if (< c 0)
+    (- 0 c)
+    (+ (* a 19) (- (* b 23) (* c 29)))))
 (define (tc-dispatch [k : i64] [x : i64] [y : i64] [z : i64]) : i64
   (if (= k 0)
     (tc-arm-a x y z)
@@ -5506,8 +5532,8 @@
       (if (= k 2)
         (tc-arm-c z x y)
         (tc-arm-a z y x)))))
-(define (keep4 [f : (-> i64 i64 i64 i64 i64)]) : i64 0)
-(define (main) : i64 (keep4 tc-dispatch))")
+(define keep4 : (-> i64 i64 i64 i64 i64) tc-dispatch)
+(define (main) : i64 0)")
 
 ;; A classifier chain inside a loop, spelled with nested `if`s because the raw
 ;; source path lowers without the prelude that defines `or`. Its constants span
@@ -5554,8 +5580,8 @@
           (set! c (+ c 1))
           (set! i (+ i 1))))
       hits)))
-(define (keep2 [f : (-> i64 i64 i64)]) : i64 0)
-(define (main) : i64 (keep2 wbt-count))")
+(define keep2 : (-> i64 i64 i64) wbt-count)
+(define (main) : i64 0)")
 
 (define (compiler-backend-wide-bit-test-mask-ok?) : bool
   (match (compiler-backend-emit-source-opt2-for-target
@@ -5638,7 +5664,7 @@
 ;; reader is a branch fed by its own adjacent compare, so the shared boolean
 ;; used to be materialised (`cmp`/`setl`/`movzbq`) and tested at each site --
 ;; seven instructions where two fused pairs cost four. The late duplication pass
-;; gives each branch its own copy. Address-taking the function keeps opt2 from
+;; gives each branch its own copy. The address-taking global keeps opt2 from
 ;; inlining the shape away.
 (define compiler-backend-shared-compare-source : String
   "(define (cd-two-branch [a : i64] [b : i64] [c : i64]) : i64
@@ -5652,8 +5678,8 @@
         (set! t (+ t (* c 3)))
         (set! t (+ t (* c 5))))
       t)))
-(define (cd-keep [f : (-> i64 i64 i64 i64)]) : i64 0)
-(define (main) : i64 (cd-keep cd-two-branch))")
+(define cd-keep : (-> i64 i64 i64 i64) cd-two-branch)
+(define (main) : i64 0)")
 
 (define (compiler-backend-shared-compare-duplication-ok?) : bool
   (match (compiler-backend-emit-source-opt2-for-target
@@ -5691,7 +5717,7 @@
 ;; refuses the copy for the same reason. `setcc` and `movzb` read EFLAGS and
 ;; write none, so the comparison's own flags survive the materialisation and the
 ;; adjacent branch takes its `jcc` directly instead of spending a `test` to
-;; recompute what it already has. Address-taking the function keeps opt2 from
+;; recompute what it already has. The address-taking global keeps opt2 from
 ;; inlining the shape away; each case is its own program so every assertion
 ;; reads the same `_tl_fr_lt` body.
 ;;
@@ -5707,8 +5733,8 @@
       (if flag (set! t (* a 3)) (set! t (+ b 7)))
       (set! fr-sink flag)
       t)))
-(define (fr-keep [f : (-> i64 i64 i64)]) : i64 0)
-(define (main) : i64 (fr-keep fr-lt))")
+(define fr-keep : (-> i64 i64 i64) fr-lt)
+(define (main) : i64 0)")
 
 ;; Unsigned `<` takes the unsigned condition on both halves.
 (define compiler-backend-flags-reuse-ult-source : String
@@ -5721,8 +5747,8 @@
       (if flag (set! t 3) (set! t 9))
       (set! fr-sink flag)
       t)))
-(define (fr-keep [f : (-> u64 u64 i64)]) : i64 0)
-(define (main) : i64 (fr-keep fr-lt))")
+(define fr-keep : (-> u64 u64 i64) fr-lt)
+(define (main) : i64 0)")
 
 ;; A negated condition only exchanges the successors, so the reused `jcc` is the
 ;; comparison's own with the labels swapped.
@@ -5736,8 +5762,8 @@
       (if (not flag) (set! t (* a 5)) (set! t (+ b 11)))
       (set! fr-sink flag)
       t)))
-(define (fr-keep [f : (-> i64 i64 i64)]) : i64 0)
-(define (main) : i64 (fr-keep fr-lt))")
+(define fr-keep : (-> i64 i64 i64) fr-lt)
+(define (main) : i64 0)")
 
 ;; Float comparisons are excluded, as they are from every other fusion here.
 (define compiler-backend-flags-reuse-f64-source : String
@@ -5750,8 +5776,8 @@
       (if flag (set! t 13) (set! t 19))
       (set! fr-sink flag)
       t)))
-(define (fr-keep [f : (-> f64 f64 i64)]) : i64 0)
-(define (main) : i64 (fr-keep fr-lt))")
+(define fr-keep : (-> f64 f64 i64) fr-lt)
+(define (main) : i64 0)")
 
 ;; The window is closed at zero instructions: storing the boolean BEFORE the
 ;; branch puts something between the materialisation and the jump -- here a
@@ -5766,8 +5792,8 @@
       (set! fr-sink flag)
       (if flag (set! t (* a 3)) (set! t (+ b 7)))
       t)))
-(define (fr-keep [f : (-> i64 i64 i64)]) : i64 0)
-(define (main) : i64 (fr-keep fr-lt))")
+(define fr-keep : (-> i64 i64 i64) fr-lt)
+(define (main) : i64 0)")
 
 ;; The boolean materialises in every case (`setcc` and `movzb` both survive).
 ;; `reused?` says whether the branch then reads the comparison's own flags with
@@ -17224,8 +17250,8 @@ g:
     [(TotalSwitchValue.Three) 4]
     [(TotalSwitchValue.Four) 5]
     [(TotalSwitchValue.Five) 6]))
-(define (keep-total-switch [f : (-> TotalSwitchValue i64)]) : i64 0)
-(define (main) : i64 (keep-total-switch total-switch-score))")
+(define keep-total-switch : (-> TotalSwitchValue i64) total-switch-score)
+(define (main) : i64 0)")
 
 (define (compiler-backend-total-switch-lowered-opt2-asm-ok?) : bool
   (match (compiler-backend-emit-source-opt2-for-target
@@ -24112,6 +24138,7 @@ g:
       (compiler-backend-runtime-global-symbol-ok? asm "tl_region_reset"))
     (compiler-backend-runtime-global-symbol-ok? asm "tl_mem_fill8")
     (compiler-backend-runtime-global-symbol-ok? asm "tl_mem_copy_fwd")
+    (compiler-backend-runtime-global-symbol-ok? asm "tl_mem_copy8_fwd")
     (compiler-backend-runtime-global-symbol-ok? asm "tl_tlci_call_image_entry")
     (compiler-backend-runtime-global-symbol-ok? asm "tl_tlci_call_macro_entry")
     (compiler-backend-runtime-global-symbol-ok?
@@ -24120,7 +24147,7 @@ g:
 
 (define (compiler-backend-runtime-linux-global-symbols-ok? [asm : String]) : bool
   (and
-    (= (compiler_backend.compiler-backend-string-count asm "    .globl ") 24)
+    (= (compiler_backend.compiler-backend-string-count asm "    .globl ") 25)
     (compiler-backend-runtime-common-global-symbols-ok? asm)
     (compiler-backend-runtime-global-symbol-ok? asm "tl_thread_init")
     (not (compiler-backend-runtime-global-symbol-ok? asm "__chkstk"))
@@ -24129,7 +24156,7 @@ g:
 
 (define (compiler-backend-runtime-windows-global-symbols-ok? [asm : String]) : bool
   (and
-    (= (compiler_backend.compiler-backend-string-count asm "    .globl ") 27)
+    (= (compiler_backend.compiler-backend-string-count asm "    .globl ") 28)
     (compiler-backend-runtime-common-global-symbols-ok? asm)
     (compiler-backend-runtime-global-symbol-ok? asm "tl_thread_entry_ptr")
     (compiler-backend-runtime-global-symbol-ok? asm "__chkstk")
@@ -28424,6 +28451,245 @@ g:
               "    cmpq "))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
+;; M6-I: a scalar GLOBAL read (`Mov dst @g`, rendered `movq g(%rip), %r`)
+;; whose only reader is the compare behind it folds into that compare's
+;; rip-relative memory operand. The fixtures share the M6 homes above, so the
+;; moved value is %r13, the compare's other operand %r14 and its result %r15.
+(define (compiler-backend-cmp-mem-global-asm-target
+  [rest : compiler_ir_types.CompilerIrInstrSeq]
+  [target : compiler_backend.CompilerBackendTarget]) : compiler_backend.ResultCompilerBackend
+  (compiler-backend-emit-test-instrs-target
+    (compiler-backend-test-instr-seq-prepend
+      (compiler_ir_types.CompilerIrInstr.Mov
+        3
+        (compiler_ir_types.CompilerIrValue.Global (ci.intern "m6i_gen"))
+        (compiler_ast_types.AstType.I64))
+      rest)
+    (compiler-backend-cmp-mem-fold-assignments)
+    8
+    target))
+
+(define (compiler-backend-cmp-mem-global-asm
+  [rest : compiler_ir_types.CompilerIrInstrSeq]) : compiler_backend.ResultCompilerBackend
+  (compiler-backend-cmp-mem-global-asm-target
+    rest
+    (compiler_backend.CompilerBackendTarget.Linux)))
+
+;; `compare-with-a-literal ; branch`, with the global read on either side. An
+;; immediate can only reach the compare's DESTINATION slot by exchanging the
+;; operands, which only an equality-shaped compare permits.
+(define (compiler-backend-cmp-mem-global-imm-tail
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [mem-on-rhs? : bool]) : compiler_ir_types.CompilerIrInstrList
+  (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.CompilerIrInstr.BinOp
+      5
+      op
+      (if mem-on-rhs?
+        (compiler_ir_types.CompilerIrValue.I64 7)
+        (compiler_ir_types.CompilerIrValue.Var 3))
+      (if mem-on-rhs?
+        (compiler_ir_types.CompilerIrValue.Var 3)
+        (compiler_ir_types.CompilerIrValue.I64 7))
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Branch
+        (compiler_ir_types.CompilerIrValue.Var 5)
+        (compiler_ir_types.compiler-ir-label "hit")
+        (compiler_ir_types.compiler-ir-label "miss"))
+      compiler_ir_types.CompilerIrInstrList.Nil)))
+
+;; The global read is the compare's LEFT operand, which is the AT&T
+;; DESTINATION slot: `movq g(%rip), %r13 ; cmpq %r14, %r13` becomes one line.
+(define (compiler-backend-cmp-mem-global-lhs-fold-ok?) : bool
+  (match (compiler-backend-cmp-mem-global-asm
+    (compiler-backend-cmp-mem-wide-tail false))
+    [(compiler_backend.ResultCompilerBackend.Ok asm)
+      (and
+        (compiler_backend.compiler-backend-string-contains?
+          asm
+          "    cmpq %r14, _tl_m6i_gen(%rip)\n")
+        (compiler_backend.compiler-backend-string-contains? asm "    jl ")
+        (not
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    movq _tl_m6i_gen(%rip)"))
+        (not
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            (compiler-backend-todo-marker))))]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
+;; The mirror: the read is the compare's RIGHT operand, so the rip-relative
+;; operand takes the SOURCE slot and the register operand the destination one.
+;; The jcc is unchanged, because the AT&T operand order flipped with it.
+(define (compiler-backend-cmp-mem-global-rhs-fold-ok?) : bool
+  (match (compiler-backend-cmp-mem-global-asm
+    (compiler-backend-cmp-mem-wide-tail true))
+    [(compiler_backend.ResultCompilerBackend.Ok asm)
+      (and
+        (compiler_backend.compiler-backend-string-contains?
+          asm
+          "    cmpq _tl_m6i_gen(%rip), %r14\n")
+        (compiler_backend.compiler-backend-string-contains? asm "    jl ")
+        (not
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    movq _tl_m6i_gen(%rip)")))]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
+;; An equality compare against a literal folds from either side: the operands
+;; may be exchanged, so the literal reaches the source slot and the cell the
+;; destination one.
+(define (compiler-backend-cmp-mem-global-imm-fold-ok?) : bool
+  (match (compiler-backend-cmp-mem-global-asm
+    (compiler_ir_types.compiler-ir-instr-seq-from-list
+      (compiler-backend-cmp-mem-global-imm-tail
+        (compiler_ir_types.CompilerIrBinOp.Eq)
+        true)))
+    [(compiler_backend.ResultCompilerBackend.Ok asm)
+      (and
+        (compiler_backend.compiler-backend-string-contains?
+          asm
+          "    cmpq $7, _tl_m6i_gen(%rip)\n")
+        (not
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    movq _tl_m6i_gen(%rip)")))]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
+;; An ORDERED compare with the literal on the side the memory operand does not
+;; occupy cannot be exchanged, so the fold declines and the read survives.
+(define (compiler-backend-cmp-mem-global-imm-ordered-refused-ok?) : bool
+  (match (compiler-backend-cmp-mem-global-asm
+    (compiler_ir_types.compiler-ir-instr-seq-from-list
+      (compiler-backend-cmp-mem-global-imm-tail
+        (compiler_ir_types.CompilerIrBinOp.Lt)
+        true)))
+    [(compiler_backend.ResultCompilerBackend.Ok asm)
+      (and
+        (compiler_backend.compiler-backend-string-contains?
+          asm
+          "    movq _tl_m6i_gen(%rip), %r13\n")
+        (not
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    cmpq $7, _tl_m6i_gen(%rip)\n")))]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
+;; A SECOND use of the moved value keeps the read: the fold would drop the only
+;; definition that use reads. The extra use sits behind the branch so the
+;; compare/branch run itself is untouched and the single-use gate is the only
+;; thing that can refuse.
+(define (compiler-backend-cmp-mem-global-second-use-refused-ok?) : bool
+  (match (compiler-backend-cmp-mem-global-asm
+    (compiler_ir_types.compiler-ir-instr-seq-from-list
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          5
+          (compiler_ir_types.CompilerIrBinOp.Lt)
+          (compiler_ir_types.CompilerIrValue.Var 3)
+          (compiler_ir_types.CompilerIrValue.Var 4)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 5)
+            (compiler_ir_types.compiler-ir-label "lt")
+            (compiler_ir_types.compiler-ir-label "ge"))
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Mov
+              6
+              (compiler_ir_types.CompilerIrValue.Var 3)
+              (compiler_ast_types.AstType.I64))
+            compiler_ir_types.CompilerIrInstrList.Nil)))))
+    [(compiler_backend.ResultCompilerBackend.Ok asm)
+      (and
+        (compiler_backend.compiler-backend-string-contains?
+          asm
+          "    movq _tl_m6i_gen(%rip), %r13\n")
+        (not
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    cmpq %r14, _tl_m6i_gen(%rip)\n")))]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
+;; A memory write between the read and the compare ends the fold walk at
+;; itself, so the probe finds no compare there and declines: the folded operand
+;; would otherwise be read AFTER the store instead of before it.
+(define (compiler-backend-cmp-mem-global-store-between-refused-ok?) : bool
+  (match (compiler-backend-cmp-mem-global-asm
+    (compiler-backend-test-instr-seq-prepend
+      (compiler_ir_types.CompilerIrInstr.StorePtr
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ir_types.CompilerIrValue.I64 7)
+        (compiler_ast_types.AstType.I64))
+      (compiler-backend-cmp-mem-wide-tail false)))
+    [(compiler_backend.ResultCompilerBackend.Ok asm)
+      (and
+        (compiler_backend.compiler-backend-string-contains?
+          asm
+          "    movq _tl_m6i_gen(%rip), %r13\n")
+        (not
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    cmpq %r14, _tl_m6i_gen(%rip)\n")))]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
+;; A store to the CELL ITSELF between the read and the compare is refused for
+;; the same reason: the fold walk admits only size-preserving casts, so the
+;; store ends it and the probe finds no compare there. Folding across it would
+;; read the cell AFTER the write instead of before it.
+(define (compiler-backend-cmp-mem-global-self-store-refused-ok?) : bool
+  (match (compiler-backend-cmp-mem-global-asm
+    (compiler-backend-test-instr-seq-prepend
+      (compiler_ir_types.CompilerIrInstr.Store
+        (ci.intern "m6i_gen")
+        (compiler_ir_types.CompilerIrValue.I64 7)
+        (compiler_ast_types.AstType.I64))
+      (compiler-backend-cmp-mem-wide-tail false)))
+    [(compiler_backend.ResultCompilerBackend.Ok asm)
+      (and
+        (compiler_backend.compiler-backend-string-contains?
+          asm
+          "    movq _tl_m6i_gen(%rip), %r13\n")
+        (compiler_backend.compiler-backend-string-contains?
+          asm
+          "_tl_m6i_gen(%rip)\n")
+        (not
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    cmpq %r14, _tl_m6i_gen(%rip)\n")))]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
+;; Win64 spells a global read `g(%rip)` exactly as SysV does, so the fold is
+;; target-independent and the Windows body must carry the same folded compare.
+(define (compiler-backend-cmp-mem-global-windows-fold-ok?) : bool
+  (match (compiler-backend-cmp-mem-global-asm-target
+    (compiler-backend-cmp-mem-wide-tail false)
+    (compiler_backend.CompilerBackendTarget.Windows))
+    [(compiler_backend.ResultCompilerBackend.Ok asm)
+      (and
+        (compiler_backend.compiler-backend-string-contains?
+          asm
+          "    cmpq %r14, _tl_m6i_gen(%rip)\n")
+        (not
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    movq _tl_m6i_gen(%rip)")))]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-cmp-mem-global-fold-shapes-ok?) : bool
+  (and
+    (compiler_backend.backend-and4
+      (compiler-backend-cmp-mem-global-lhs-fold-ok?)
+      (compiler-backend-cmp-mem-global-rhs-fold-ok?)
+      (compiler-backend-cmp-mem-global-imm-fold-ok?)
+      (compiler-backend-cmp-mem-global-imm-ordered-refused-ok?))
+    (compiler-backend-cmp-mem-global-second-use-refused-ok?)
+    (compiler-backend-cmp-mem-global-store-between-refused-ok?)
+    (compiler-backend-cmp-mem-global-self-store-refused-ok?)
+    (compiler-backend-cmp-mem-global-windows-fold-ok?)))
+
 (define (compiler-backend-cmp-mem-fold-shapes-ok?) : bool
   (and
     (compiler_backend.backend-and4
@@ -28445,7 +28711,8 @@ g:
     (compiler-backend-cmp-mem-narrow-phi-copy-fold-ok?)
     (compiler-backend-gep-load-alu-commuted-shapes-ok?)
     (compiler-backend-cmp-mem-store-between-refused-ok?)
-    (compiler-backend-cmp-mem-flags-between-refused-ok?)))
+    (compiler-backend-cmp-mem-flags-between-refused-ok?)
+    (compiler-backend-cmp-mem-global-fold-shapes-ok?)))
 
 ;; GAP8: three-operand constant multiply strength reduction shapes.
 (define (compiler-backend-mul-pow2-test-asm [factor : i64] [dst-reg : i64]) : compiler_backend.ResultCompilerBackend
@@ -34770,15 +35037,28 @@ g:
     (compiler-backend-global-compare-program))
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
-        ;; The 64-bit global compare now materialises in %r9 (scratch reg
-        ;; choice changed); the load-bearing check is the width (cmpq, not cmpb).
+        ;; M6-I: the compare-branch path reads ONE of the two cells through the
+        ;; compare's own rip-relative memory operand, so only the other is
+        ;; staged. Both operands here are globals, so the left one keeps the
+        ;; staging register the plan reserved for it and the right one becomes
+        ;; the compare's memory SOURCE. Pre-M6-I both were staged and the line
+        ;; read `cmpq %r8, %r9`.
         (compiler_backend.compiler-backend-string-contains?
           asm
-          "    cmpq %r8, %r9\n")
+          "    movq _tl_g_next(%rip), %r9\n")
+        (compiler_backend.compiler-backend-string-contains?
+          asm
+          "    cmpq _tl_g_cap(%rip), %r9\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "    cmpb %r8b, %al\n")))]
+            "    movq _tl_g_cap(%rip)"))
+        ;; The load-bearing width check is unchanged: a full-word compare, not
+        ;; the byte one the `bool` result type would suggest.
+        (not
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    cmpb %r8b, ")))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-missing-var-compare-width-ok?) : bool

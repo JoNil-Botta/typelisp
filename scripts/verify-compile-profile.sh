@@ -495,6 +495,11 @@ profile_live_counter_in() {
     ' "$1"
 }
 
+# #6822's bounds-check range merge, tail-call inlining, word copy_call, and
+# rip-relative compare packets crossed ast_expr_pool.typecheck from 37 to 38
+# segments; the authoritative Windows CI probe measured 2,426,832 used nodes,
+# 2,490,368 capacity, and 79,691,776 physical payload bytes.
+#
 # Assert one selfhost pool boundary from its segment count alone.
 #
 # Since #5541 the AST pools are reclaimable segmented storage with fixed-size
@@ -1638,7 +1643,7 @@ if [ "$NL_HOST_OS" = windows ]; then
     # nodes past the boundary: 2,424,832 capacity and 77,594,624 physical
     # payload bytes.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool typecheck 37 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool typecheck 38 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # This is the tightest of the four and the one to check first when a series
     # adds compiler source: the copy-call / unsigned-bound-narrowing / chain

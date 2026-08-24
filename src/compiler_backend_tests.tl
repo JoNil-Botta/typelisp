@@ -5372,6 +5372,17 @@
 ;; immediate LHS into that same register silently changed the pre-test into a
 ;; self-compare. Keep the function address-taken so opt2 cannot inline away the
 ;; allocation shape, then emit the full lower -> opt2 -> scalar-regalloc path.
+;;
+;; The address-take is a GLOBAL initialised with the function, and every fixture
+;; below that needs one spells it the same way. The older spelling was a
+;; `(define (keep [f : T]) : i64 0)` wrapper called from `main`, and that stopped
+;; holding anything: a wrapper whose body ignores its parameter is inlined at its
+;; site, the argument goes with it, and the subject is then unreferenced and
+;; pruned before it is ever emitted. That was already true at an ordinary call
+;; site and became true at a tail call site too once opt-inline-try grew its
+;; TailCall arm. A global holding the address is not a call at all, so nothing
+;; can dissolve it: the census reads it as address-taken (so the subject is never
+;; inlined) and the pruner reads it as a root (so the subject is always emitted).
 (define compiler-backend-shifted-loop-bound-source : String
   "(define (array-zero-count [buf : (MutPtr u8)] [byte-count : i64]) : i64
   (let
@@ -5390,8 +5401,8 @@
           (unsafe (ptr-write! (ptr-offset buf i) (cast 0 : u8)))
           (set! i (+ i 1))))
       w)))
-(define (keep [f : (-> (MutPtr u8) i64 i64)]) : i64 0)
-(define (main) : i64 (keep array-zero-count))")
+(define keep : (-> (MutPtr u8) i64 i64) array-zero-count)
+(define (main) : i64 0)")
 
 (define (compiler-backend-emit-source-opt2-for-target
   [source : String]
@@ -5489,15 +5500,30 @@
 ;; a true 2-cycle for the argument parallel move
 ;; (compiler-backend-emit-arg-move-list), which only exists once the parameters
 ;; live in argument registers -- so this fixture is also the cycle-break
-;; regression test. `keep4` takes the dispatcher as a value so the optimizer
-;; cannot inline the whole thing away.
+;; regression test. `keep4` is the address-taking global described above; it
+;; holds the dispatcher as a value so the optimizer cannot inline the whole
+;; thing away.
+;; The arms carry a guard so each one is more than a single block. Without it
+;; they are exactly the shape the single-block inliner takes at a tail-call site
+;; (opt-inline-try's TailCall arm), the dispatcher's three `jmp`s become three
+;; spliced bodies, and the tail-jump tail this fixture exists to check is not
+;; emitted at all. The guard costs the fixture nothing that it measures: every
+;; assertion below reads `_tl_tc_dispatch`, whose own shape -- the empty CSR set,
+;; the incoming argument registers, the 2-cycle break and the three tail jumps --
+;; is unchanged by what the arms contain.
 (define compiler-backend-tail-dispatch-source : String
   "(define (tc-arm-a [a : i64] [b : i64] [c : i64]) : i64
-  (+ (* a 3) (+ (* b 5) (* c 7))))
+  (if (< a 0)
+    (- 0 a)
+    (+ (* a 3) (+ (* b 5) (* c 7)))))
 (define (tc-arm-b [a : i64] [b : i64] [c : i64]) : i64
-  (- (* a 11) (+ (* b 13) (* c 17))))
+  (if (< b 0)
+    (- 0 b)
+    (- (* a 11) (+ (* b 13) (* c 17)))))
 (define (tc-arm-c [a : i64] [b : i64] [c : i64]) : i64
-  (+ (* a 19) (- (* b 23) (* c 29))))
+  (if (< c 0)
+    (- 0 c)
+    (+ (* a 19) (- (* b 23) (* c 29)))))
 (define (tc-dispatch [k : i64] [x : i64] [y : i64] [z : i64]) : i64
   (if (= k 0)
     (tc-arm-a x y z)
@@ -5506,8 +5532,8 @@
       (if (= k 2)
         (tc-arm-c z x y)
         (tc-arm-a z y x)))))
-(define (keep4 [f : (-> i64 i64 i64 i64 i64)]) : i64 0)
-(define (main) : i64 (keep4 tc-dispatch))")
+(define keep4 : (-> i64 i64 i64 i64 i64) tc-dispatch)
+(define (main) : i64 0)")
 
 ;; A classifier chain inside a loop, spelled with nested `if`s because the raw
 ;; source path lowers without the prelude that defines `or`. Its constants span
@@ -5554,8 +5580,8 @@
           (set! c (+ c 1))
           (set! i (+ i 1))))
       hits)))
-(define (keep2 [f : (-> i64 i64 i64)]) : i64 0)
-(define (main) : i64 (keep2 wbt-count))")
+(define keep2 : (-> i64 i64 i64) wbt-count)
+(define (main) : i64 0)")
 
 (define (compiler-backend-wide-bit-test-mask-ok?) : bool
   (match (compiler-backend-emit-source-opt2-for-target
@@ -5638,7 +5664,7 @@
 ;; reader is a branch fed by its own adjacent compare, so the shared boolean
 ;; used to be materialised (`cmp`/`setl`/`movzbq`) and tested at each site --
 ;; seven instructions where two fused pairs cost four. The late duplication pass
-;; gives each branch its own copy. Address-taking the function keeps opt2 from
+;; gives each branch its own copy. The address-taking global keeps opt2 from
 ;; inlining the shape away.
 (define compiler-backend-shared-compare-source : String
   "(define (cd-two-branch [a : i64] [b : i64] [c : i64]) : i64
@@ -5652,8 +5678,8 @@
         (set! t (+ t (* c 3)))
         (set! t (+ t (* c 5))))
       t)))
-(define (cd-keep [f : (-> i64 i64 i64 i64)]) : i64 0)
-(define (main) : i64 (cd-keep cd-two-branch))")
+(define cd-keep : (-> i64 i64 i64 i64) cd-two-branch)
+(define (main) : i64 0)")
 
 (define (compiler-backend-shared-compare-duplication-ok?) : bool
   (match (compiler-backend-emit-source-opt2-for-target
@@ -5691,7 +5717,7 @@
 ;; refuses the copy for the same reason. `setcc` and `movzb` read EFLAGS and
 ;; write none, so the comparison's own flags survive the materialisation and the
 ;; adjacent branch takes its `jcc` directly instead of spending a `test` to
-;; recompute what it already has. Address-taking the function keeps opt2 from
+;; recompute what it already has. The address-taking global keeps opt2 from
 ;; inlining the shape away; each case is its own program so every assertion
 ;; reads the same `_tl_fr_lt` body.
 ;;
@@ -5707,8 +5733,8 @@
       (if flag (set! t (* a 3)) (set! t (+ b 7)))
       (set! fr-sink flag)
       t)))
-(define (fr-keep [f : (-> i64 i64 i64)]) : i64 0)
-(define (main) : i64 (fr-keep fr-lt))")
+(define fr-keep : (-> i64 i64 i64) fr-lt)
+(define (main) : i64 0)")
 
 ;; Unsigned `<` takes the unsigned condition on both halves.
 (define compiler-backend-flags-reuse-ult-source : String
@@ -5721,8 +5747,8 @@
       (if flag (set! t 3) (set! t 9))
       (set! fr-sink flag)
       t)))
-(define (fr-keep [f : (-> u64 u64 i64)]) : i64 0)
-(define (main) : i64 (fr-keep fr-lt))")
+(define fr-keep : (-> u64 u64 i64) fr-lt)
+(define (main) : i64 0)")
 
 ;; A negated condition only exchanges the successors, so the reused `jcc` is the
 ;; comparison's own with the labels swapped.
@@ -5736,8 +5762,8 @@
       (if (not flag) (set! t (* a 5)) (set! t (+ b 11)))
       (set! fr-sink flag)
       t)))
-(define (fr-keep [f : (-> i64 i64 i64)]) : i64 0)
-(define (main) : i64 (fr-keep fr-lt))")
+(define fr-keep : (-> i64 i64 i64) fr-lt)
+(define (main) : i64 0)")
 
 ;; Float comparisons are excluded, as they are from every other fusion here.
 (define compiler-backend-flags-reuse-f64-source : String
@@ -5750,8 +5776,8 @@
       (if flag (set! t 13) (set! t 19))
       (set! fr-sink flag)
       t)))
-(define (fr-keep [f : (-> f64 f64 i64)]) : i64 0)
-(define (main) : i64 (fr-keep fr-lt))")
+(define fr-keep : (-> f64 f64 i64) fr-lt)
+(define (main) : i64 0)")
 
 ;; The window is closed at zero instructions: storing the boolean BEFORE the
 ;; branch puts something between the materialisation and the jump -- here a
@@ -5766,8 +5792,8 @@
       (set! fr-sink flag)
       (if flag (set! t (* a 3)) (set! t (+ b 7)))
       t)))
-(define (fr-keep [f : (-> i64 i64 i64)]) : i64 0)
-(define (main) : i64 (fr-keep fr-lt))")
+(define fr-keep : (-> i64 i64 i64) fr-lt)
+(define (main) : i64 0)")
 
 ;; The boolean materialises in every case (`setcc` and `movzb` both survive).
 ;; `reused?` says whether the branch then reads the comparison's own flags with
@@ -17224,8 +17250,8 @@ g:
     [(TotalSwitchValue.Three) 4]
     [(TotalSwitchValue.Four) 5]
     [(TotalSwitchValue.Five) 6]))
-(define (keep-total-switch [f : (-> TotalSwitchValue i64)]) : i64 0)
-(define (main) : i64 (keep-total-switch total-switch-score))")
+(define keep-total-switch : (-> TotalSwitchValue i64) total-switch-score)
+(define (main) : i64 0)")
 
 (define (compiler-backend-total-switch-lowered-opt2-asm-ok?) : bool
   (match (compiler-backend-emit-source-opt2-for-target

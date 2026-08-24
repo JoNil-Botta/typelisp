@@ -21050,6 +21050,322 @@
             (compiler_optimize.opt-inline-structure-ok? blocks)))]
       [(compiler_optimize.OptMaybeFunction.No) false])))
 
+;; --- direct tail-call SITES -------------------------------------------------
+;;
+;; The site class the inliner could not see. `(define (main) (f))` lowers to one
+;; block holding a single `TailCall f`: no destination, no continuation, and --
+;; until opt-inline-try grew its TailCall arm -- no inline site either, so a
+;; caller that does nothing but forward paid `f`'s whole call boundary. The
+;; rewrite is the simpler of the two site classes: the callee's exit becomes the
+;; caller's exit, so a `Return` exit lands as the caller's `Return` and a
+;; `TailCall h` exit is forwarded as a `TailCall h`, never as a call.
+(define (opt-inline-tail-site-caller [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    symbols.main
+    compiler_ir_types.CompilerIrParamList.Nil
+    (compiler_ast_types.AstType.I64)
+    0
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.TailCall
+            symbols.inline-nonleaf
+            compiler_ir_types.CompilerIrCallArgs.Nil
+            (compiler_ast_types.AstType.I64))))
+      compiler_ir_types.CompilerIrBlockList.Nil)))
+
+;; The indirect twin of the site: the target is LOADED, so nothing names a
+;; callee and the census cannot price it. It must survive the pass untouched.
+(define (opt-inline-tail-site-indirect-caller
+  [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    symbols.main
+    compiler_ir_types.CompilerIrParamList.Nil
+    (compiler_ast_types.AstType.I64)
+    1
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Load
+            0
+            (compiler_ir_types.CompilerIrValue.Global symbols.inline-nonleaf)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.TailCallIndirect
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            compiler_ir_types.CompilerIrCallArgs.Nil
+            (compiler_ast_types.AstType.I64))))
+      compiler_ir_types.CompilerIrBlockList.Nil)))
+
+;; The ordinary `Return`-exit callee, seen from a tail site.
+(define (opt-inline-tail-site-return-callee
+  [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    symbols.inline-nonleaf
+    compiler_ir_types.CompilerIrParamList.Nil
+    (compiler_ast_types.AstType.I64)
+    1
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Mov
+            0
+            (compiler_ir_types.CompilerIrValue.I64 7)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Return
+            (compiler_ir_types.CompilerIrMaybeValue.Some
+              (compiler_ir_types.CompilerIrValue.Var 0)))))
+      compiler_ir_types.CompilerIrBlockList.Nil)))
+
+;; A self-tail-recursive callee: one block, one `Mov`, and a tail call to
+;; ITSELF. Its own tail call is now a site the walk visits, and it is the site
+;; that must stay refused -- expanding it would copy the body into itself and
+;; the next round would do it again. opt-inline-callee-ok? refuses it by name
+;; and opt-inline-lookup-inlinable refuses it by SCC; opt-tailrec, which runs
+;; after this whole stage, is what turns it into a loop.
+(define (opt-inline-self-tail-recursive-callee
+  [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    symbols.inline-nonleaf
+    compiler_ir_types.CompilerIrParamList.Nil
+    (compiler_ast_types.AstType.I64)
+    1
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Mov
+            0
+            (compiler_ir_types.CompilerIrValue.I64 7)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.TailCall
+            symbols.inline-nonleaf
+            compiler_ir_types.CompilerIrCallArgs.Nil
+            (compiler_ast_types.AstType.I64))))
+      compiler_ir_types.CompilerIrBlockList.Nil)))
+
+;; The mutual-recursion pair's other half: it tail-calls the CALLER back. The
+;; two functions share an SCC, so neither site may be taken -- taking either one
+;; would put a copy of one body inside the other and leave the cycle intact.
+(define (opt-inline-tail-site-mutual-callee
+  [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    symbols.inline-nonleaf
+    compiler_ir_types.CompilerIrParamList.Nil
+    (compiler_ast_types.AstType.I64)
+    1
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Mov
+            0
+            (compiler_ir_types.CompilerIrValue.I64 7)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.TailCall
+            symbols.main
+            compiler_ir_types.CompilerIrCallArgs.Nil
+            (compiler_ast_types.AstType.I64))))
+      compiler_ir_types.CompilerIrBlockList.Nil)))
+
+(define (opt-inline-tail-site-return-functions
+  [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunctionList
+  (compiler_ir_types.compiler-ir-function-cons
+    (opt-inline-tail-site-caller symbols)
+    (compiler_ir_types.compiler-ir-function-cons
+      (opt-inline-tail-site-return-callee symbols)
+      compiler_ir_types.CompilerIrFunctionList.Nil)))
+
+(define (opt-inline-tail-site-tail-functions
+  [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunctionList
+  (compiler_ir_types.compiler-ir-function-cons
+    (opt-inline-tail-site-caller symbols)
+    (compiler_ir_types.compiler-ir-function-cons
+      (opt-inline-single-block-tail-call-callee symbols)
+      compiler_ir_types.CompilerIrFunctionList.Nil)))
+
+(define (opt-inline-tail-site-indirect-functions
+  [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunctionList
+  (compiler_ir_types.compiler-ir-function-cons
+    (opt-inline-tail-site-indirect-caller symbols)
+    (compiler_ir_types.compiler-ir-function-cons
+      (opt-inline-tail-site-return-callee symbols)
+      compiler_ir_types.CompilerIrFunctionList.Nil)))
+
+(define (opt-inline-tail-site-self-recursive-functions
+  [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunctionList
+  (compiler_ir_types.compiler-ir-function-cons
+    (opt-inline-tail-site-caller symbols)
+    (compiler_ir_types.compiler-ir-function-cons
+      (opt-inline-self-tail-recursive-callee symbols)
+      compiler_ir_types.CompilerIrFunctionList.Nil)))
+
+(define (opt-inline-tail-site-mutual-functions
+  [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunctionList
+  (compiler_ir_types.compiler-ir-function-cons
+    (opt-inline-tail-site-caller symbols)
+    (compiler_ir_types.compiler-ir-function-cons
+      (opt-inline-tail-site-mutual-callee symbols)
+      compiler_ir_types.CompilerIrFunctionList.Nil)))
+
+;; (a) A `Return`-exit callee at a tail site: the body lands in the caller's one
+;; block and the callee's `Return` IS the caller's `Return`. No call and no tail
+;; call survive, and no block or phi is added.
+(define (compiler-optimize-inline-tail-site-return-exit-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [optimized : compiler_ir_types.CompilerIrFunctionList
+      (compiler_optimize.opt-inline-program-functions
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-inline-tail-site-return-functions symbols)
+        2)]
+    (match (compiler_optimize.opt-function-list-find optimized "main")
+      [(compiler_optimize.OptMaybeFunction.Some main)
+        (let
+          [blocks : compiler_ir_types.CompilerIrBlockList
+            (compiler_optimize.opt-function-blocks main)]
+          (and
+            (= (opt-count-direct-call-name-blocks blocks "inline_nonleaf") 0)
+            (= (opt-count-tail-call-blocks blocks) 0)
+            (= (opt-count-tail-call-indirect-blocks blocks) 0)
+            (= (opt-count-return-blocks blocks) 1)
+            (= (opt-count-instrs-blocks blocks) 2)
+            (= (opt-count-phi-blocks blocks) 0)
+            (= (compiler_ir_types.compiler-ir-block-list-count blocks) 1)
+            (compiler_optimize.opt-inline-structure-ok? blocks)))]
+      [(compiler_optimize.OptMaybeFunction.No) false])))
+
+;; (b) A `TailCall`-exit callee at a tail site: the exit is FORWARDED. The
+;; caller ends in a tail call to the inner target, not in a call plus a return,
+;; so the chain's stack usage is what it was.
+(define (compiler-optimize-inline-tail-site-tail-exit-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [optimized : compiler_ir_types.CompilerIrFunctionList
+      (compiler_optimize.opt-inline-program-functions
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-inline-tail-site-tail-functions symbols)
+        2)]
+    (match (compiler_optimize.opt-function-list-find optimized "main")
+      [(compiler_optimize.OptMaybeFunction.Some main)
+        (let
+          [blocks : compiler_ir_types.CompilerIrBlockList
+            (compiler_optimize.opt-function-blocks main)]
+          (and
+            (= (opt-count-direct-call-name-blocks blocks "external_helper") 0)
+            (= (opt-count-direct-call-name-blocks blocks "inline_nonleaf") 0)
+            (= (opt-count-tail-call-name-blocks blocks "external_helper") 1)
+            (= (opt-count-tail-call-name-blocks blocks "inline_nonleaf") 0)
+            (= (opt-count-tail-call-blocks blocks) 1)
+            (= (opt-count-return-blocks blocks) 0)
+            (= (opt-count-instrs-blocks blocks) 2)
+            (= (opt-count-phi-blocks blocks) 0)
+            (= (compiler_ir_types.compiler-ir-block-list-count blocks) 1)
+            (compiler_optimize.opt-inline-structure-ok? blocks)))]
+      [(compiler_optimize.OptMaybeFunction.No) false])))
+
+;; (c) A `TailCallIndirect` site is not a site.
+(define (compiler-optimize-inline-tail-site-indirect-refusal-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [optimized : compiler_ir_types.CompilerIrFunctionList
+      (compiler_optimize.opt-inline-program-functions
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-inline-tail-site-indirect-functions symbols)
+        2)]
+    (match (compiler_optimize.opt-function-list-find optimized "main")
+      [(compiler_optimize.OptMaybeFunction.Some main)
+        (let
+          [blocks : compiler_ir_types.CompilerIrBlockList
+            (compiler_optimize.opt-function-blocks main)]
+          (and
+            (= (opt-count-tail-call-indirect-blocks blocks) 1)
+            (= (opt-count-tail-call-blocks blocks) 0)
+            (= (opt-count-direct-call-name-blocks blocks "inline_nonleaf") 0)
+            (= (opt-count-instrs-blocks blocks) 2)
+            (compiler_optimize.opt-inline-structure-ok? blocks)))]
+      [(compiler_optimize.OptMaybeFunction.No) false])))
+
+;; (d) The self-recursive tail site stays put. The callee keeps its two
+;; instructions and its one tail call to itself: had the site been taken, the
+;; body would hold a second copy of the `Mov` and the whole-program walk would
+;; be free to do it again.
+(define (compiler-optimize-inline-tail-site-self-recursion-refusal-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [optimized : compiler_ir_types.CompilerIrFunctionList
+      (compiler_optimize.opt-inline-program-functions
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-inline-tail-site-self-recursive-functions symbols)
+        2)]
+    (match (compiler_optimize.opt-function-list-find optimized "inline_nonleaf")
+      [(compiler_optimize.OptMaybeFunction.Some callee)
+        (let
+          [callee-blocks : compiler_ir_types.CompilerIrBlockList
+            (compiler_optimize.opt-function-blocks callee)]
+          (and
+            (=
+              (opt-count-tail-call-name-blocks callee-blocks "inline_nonleaf")
+              1)
+            (= (opt-count-instrs-blocks callee-blocks) 2)
+            (= (compiler_ir_types.compiler-ir-block-list-count callee-blocks) 1)
+            (compiler_optimize.opt-inline-structure-ok? callee-blocks)))]
+      [(compiler_optimize.OptMaybeFunction.No) false])))
+
+;; (e) The mutual-recursion pair: neither half moves, because the SCC test
+;; refuses a callee that can reach its caller back.
+(define (compiler-optimize-inline-tail-site-mutual-recursion-refusal-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [optimized : compiler_ir_types.CompilerIrFunctionList
+      (compiler_optimize.opt-inline-program-functions
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-inline-tail-site-mutual-functions symbols)
+        2)]
+    (match (compiler_optimize.opt-function-list-find optimized "main")
+      [(compiler_optimize.OptMaybeFunction.Some main)
+        (match (compiler_optimize.opt-function-list-find
+          optimized
+          "inline_nonleaf")
+          [(compiler_optimize.OptMaybeFunction.Some callee)
+            (let
+              [blocks : compiler_ir_types.CompilerIrBlockList
+                (compiler_optimize.opt-function-blocks main)]
+              [callee-blocks : compiler_ir_types.CompilerIrBlockList
+                (compiler_optimize.opt-function-blocks callee)]
+              (and
+                (= (opt-count-tail-call-name-blocks blocks "inline_nonleaf") 1)
+                (= (opt-count-instrs-blocks blocks) 1)
+                (= (opt-count-tail-call-name-blocks callee-blocks "main") 1)
+                (= (opt-count-instrs-blocks callee-blocks) 2)
+                (compiler_optimize.opt-inline-structure-ok? blocks)))]
+          [(compiler_optimize.OptMaybeFunction.No) false])]
+      [(compiler_optimize.OptMaybeFunction.No) false])))
+
+;; (f) Level 1 runs the call-free tiny-leaf pass, which fires on `Call` sites
+;; only. The tail site is untouched in the cheap build.
+(define (compiler-optimize-inline-tail-site-level1-refusal-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [optimized : compiler_ir_types.CompilerIrFunctionList
+      (compiler_optimize.opt-inline-program-functions
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-inline-tail-site-return-functions symbols)
+        1)]
+    (match (compiler_optimize.opt-function-list-find optimized "main")
+      [(compiler_optimize.OptMaybeFunction.Some main)
+        (let
+          [blocks : compiler_ir_types.CompilerIrBlockList
+            (compiler_optimize.opt-function-blocks main)]
+          (and
+            (= (opt-count-tail-call-name-blocks blocks "inline_nonleaf") 1)
+            (= (opt-count-instrs-blocks blocks) 1)
+            (= (opt-count-return-blocks blocks) 0)
+            (compiler_optimize.opt-inline-structure-ok? blocks)))]
+      [(compiler_optimize.OptMaybeFunction.No) false])))
+
 (define (opt-inline-repeated-nonleaf-predicate-callee
   [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
@@ -21928,6 +22244,24 @@
                       (compiler-optimize-inline-single-block-tail-call-to-caller-refusal-ok?)
                       (return 67))
                     (unless
+                      (compiler-optimize-inline-tail-site-return-exit-ok?)
+                      (return 68))
+                    (unless
+                      (compiler-optimize-inline-tail-site-tail-exit-ok?)
+                      (return 69))
+                    (unless
+                      (compiler-optimize-inline-tail-site-indirect-refusal-ok?)
+                      (return 70))
+                    (unless
+                      (compiler-optimize-inline-tail-site-self-recursion-refusal-ok?)
+                      (return 71))
+                    (unless
+                      (compiler-optimize-inline-tail-site-mutual-recursion-refusal-ok?)
+                      (return 72))
+                    (unless
+                      (compiler-optimize-inline-tail-site-level1-refusal-ok?)
+                      (return 73))
+                    (unless
                       (compiler-optimize-inline-repeated-tiny-predicate-ok?)
                       (return 46))
                     (unless
@@ -22088,6 +22422,135 @@
             (opt-count-tail-call-blocks (__tl-box-place rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (opt-count-tail-call-blocks
+        (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-count-tail-call-name-instr-seq-from
+  [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)]
+  [index : i64]
+  [count : i64]
+  [name : String]
+  [acc : i64]) : i64
+  (if (>= index count)
+    acc
+    (opt-count-tail-call-name-instr-seq-from
+      slots
+      (+ index 1)
+      count
+      name
+      (+
+        acc
+        (match (array-ref slots index)
+          [(compiler_ir_types.CompilerIrInstr.TailCall target _ _)
+            (if (string.eq
+              (compiler_ir_types.compiler-ir-symbol-text target)
+              name)
+              1
+              0)]
+          [_ 0])))))
+
+(define (opt-count-tail-call-name-instr-seq
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [name : String]) : i64
+  (opt-count-tail-call-name-instr-seq-from instrs.slots 0 instrs.len name 0))
+
+(define (opt-count-tail-call-name-blocks
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [name : String]) : i64
+  (match blocks
+    [(compiler_ir_types.CompilerIrBlockList.Nil) 0]
+    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (+
+            (opt-count-tail-call-name-instr-seq instrs name)
+            (opt-count-tail-call-name-blocks (__tl-box-place rest) name))])]
+    [(compiler_ir_types.CompilerIrBlockList.Array seq)
+      (opt-count-tail-call-name-blocks
+        (compiler_ir_types.compiler-ir-block-seq-to-list seq)
+        name)]))
+
+(define (opt-count-tail-call-indirect-instr-seq-from
+  [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)]
+  [index : i64]
+  [count : i64]
+  [acc : i64]) : i64
+  (if (>= index count)
+    acc
+    (opt-count-tail-call-indirect-instr-seq-from
+      slots
+      (+ index 1)
+      count
+      (+
+        acc
+        (match (array-ref slots index)
+          [(compiler_ir_types.CompilerIrInstr.TailCallIndirect _ _ _) 1]
+          [_ 0])))))
+
+(define (opt-count-tail-call-indirect-blocks
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : i64
+  (match blocks
+    [(compiler_ir_types.CompilerIrBlockList.Nil) 0]
+    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (+
+            (opt-count-tail-call-indirect-instr-seq-from
+              instrs.slots
+              0
+              instrs.len
+              0)
+            (opt-count-tail-call-indirect-blocks (__tl-box-place rest)))])]
+    [(compiler_ir_types.CompilerIrBlockList.Array seq)
+      (opt-count-tail-call-indirect-blocks
+        (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-count-return-instr-seq-from
+  [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)]
+  [index : i64]
+  [count : i64]
+  [acc : i64]) : i64
+  (if (>= index count)
+    acc
+    (opt-count-return-instr-seq-from
+      slots
+      (+ index 1)
+      count
+      (+
+        acc
+        (match (array-ref slots index)
+          [(compiler_ir_types.CompilerIrInstr.Return _) 1]
+          [_ 0])))))
+
+(define (opt-count-return-blocks
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : i64
+  (match blocks
+    [(compiler_ir_types.CompilerIrBlockList.Nil) 0]
+    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (+
+            (opt-count-return-instr-seq-from instrs.slots 0 instrs.len 0)
+            (opt-count-return-blocks (__tl-box-place rest)))])]
+    [(compiler_ir_types.CompilerIrBlockList.Array seq)
+      (opt-count-return-blocks
+        (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
+
+;; Total instructions across a function's blocks. A refusal test that only
+;; counts terminators cannot tell "left alone" from "expanded into a copy of
+;; itself", which is precisely the failure a self-recursive tail site would
+;; produce, so the refusal tests count the body too.
+(define (opt-count-instrs-blocks
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : i64
+  (match blocks
+    [(compiler_ir_types.CompilerIrBlockList.Nil) 0]
+    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (+
+            (compiler_ir_types.compiler-ir-instr-seq-count instrs)
+            (opt-count-instrs-blocks (__tl-box-place rest)))])]
+    [(compiler_ir_types.CompilerIrBlockList.Array seq)
+      (opt-count-instrs-blocks
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-tailrec-test-params) : compiler_ir_types.CompilerIrParamList

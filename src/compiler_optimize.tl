@@ -86895,6 +86895,48 @@
         (clone ret))]
     [_ (ir.CompilerIrInstr.Mov dst (ir.CompilerIrValue.Unit) (clone ret))]))
 
+;; The tail-call SITE twin of opt-inline-exit->result-instr.
+;;
+;; At a direct `TailCall f(args)` site there is no destination to bind: the
+;; site IS the caller's exit, so the callee's exit becomes the caller's exit.
+;; `Return v` becomes the caller's `Return v'`, and a direct `TailCall h(hargs)`
+;; stays a `TailCall h(hargs')` -- a tail call is never turned into a non-tail
+;; call, so a chain that ran in constant stack before still does. That is why
+;; this rewrite is the simpler of the two: no destination, no continuation and
+;; no phi, because the spliced body ends the block it was spliced into.
+;;
+;; The forwarded tail call keeps the SITE's result type for the same reason the
+;; result rewrite keeps it. Both are `lower-one-word-register-storage-type` of a
+;; declared return type (compiler_lower.tl lower-tail-call): the site's is the
+;; CALLER's, the callee's own is the CALLEE's, and a site that is a tail call at
+;; all is `return f(...)`, which is what makes the two equal. Preserving the
+;; site's spelling leaves the caller's terminator reading exactly as it read
+;; before the splice.
+;;
+;; `TailCallIndirect` cannot appear here: opt-inline-body-terminator-ok? is the
+;; predicate that decides whether a body reaches this function at all, and it
+;; admits only the two exits above.
+(define (opt-inline-exit->terminator-instr
+  [instr : ir.CompilerIrInstr]
+  [ret : ast.AstType]
+  [sa : ir.CompilerIrCallArgs]
+  [np : i64]
+  [base : i64]) : ir.CompilerIrInstr
+  (match instr
+    [(ir.CompilerIrInstr.Return maybe)
+      (match maybe
+        [(ir.CompilerIrMaybeValue.Some v)
+          (ir.CompilerIrInstr.Return
+            (ir.CompilerIrMaybeValue.Some (opt-inline-remap-value v sa np base)))]
+        [(ir.CompilerIrMaybeValue.No)
+          (ir.CompilerIrInstr.Return (ir.CompilerIrMaybeValue.No))])]
+    [(ir.CompilerIrInstr.TailCall cname cargs _)
+      (ir.CompilerIrInstr.TailCall
+        (ir.compiler-ir-symbol-clone cname)
+        (opt-inline-remap-args cargs sa np base)
+        (clone ret))]
+    [_ (ir.CompilerIrInstr.Return (ir.CompilerIrMaybeValue.No))]))
+
 (define (opt-inline-expand-instrs-from
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]
@@ -86936,6 +86978,62 @@
     0
     (ir.compiler-ir-instr-seq-count instrs)
     dst
+    ret
+    sa
+    np
+    base
+    label-prefix))
+
+;; The destination-free expansion, for a direct tail-call site. It is the same
+;; walk as opt-inline-expand-instrs-from with one difference, and the difference
+;; is the whole reason it exists: the exit is rewritten by
+;; opt-inline-exit->terminator-instr rather than by
+;; opt-inline-exit->result-instr, so the spliced body ends in the caller's own
+;; terminator instead of in a binding.
+;;
+;; Routing a tail site through the destination-carrying path instead would need
+;; a fresh vreg and a trailing `Return`, and the callee's `TailCall h` exit would
+;; become `t = call h(...)` followed by `return t` -- a non-tail call in tail
+;; position, which is exactly the stack growth this site class may not
+;; introduce.
+(define (opt-inline-expand-tail-instrs-from
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [count : i64]
+  [ret : ast.AstType]
+  [sa : ir.CompilerIrCallArgs]
+  [np : i64]
+  [base : i64]
+  [label-prefix : String]) : ir.CompilerIrInstrSeq
+  (let
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity (- count index))]
+    [cursor : i64 index]
+    (begin
+      (while (< cursor count)
+        (begin
+          (let
+            [instr : ir.CompilerIrInstr
+              (ir.compiler-ir-instr-seq-ref instrs cursor)]
+            (ir.compiler-ir-instr-builder-push!
+              (&mut builder)
+              (if (= cursor (- count 1))
+                (opt-inline-exit->terminator-instr instr ret sa np base)
+                (opt-inline-clone-instr instr sa np base label-prefix))))
+          (set! cursor (+ cursor 1))))
+      (ir.compiler-ir-instr-builder-to-seq builder))))
+
+(define (opt-inline-expand-tail-instrs
+  [instrs : ir.CompilerIrInstrSeq]
+  [ret : ast.AstType]
+  [sa : ir.CompilerIrCallArgs]
+  [np : i64]
+  [base : i64]
+  [label-prefix : String]) : ir.CompilerIrInstrSeq
+  (opt-inline-expand-tail-instrs-from
+    instrs
+    0
+    (ir.compiler-ir-instr-seq-count instrs)
     ret
     sa
     np
@@ -87129,6 +87227,100 @@
     caller
     call-instr
     callee))
+
+;; Span-carrying twin of opt-inline-expand-tail-instrs-from, with the same span
+;; policy the destination-carrying walk uses (opt-inline-record-clone-span): a
+;; clone keeps the callee instruction's own span and falls back to the site's.
+;; The rewritten exit is the instruction that falls back, and for a tail site
+;; the site's span is the `return f(...)` the caller wrote, which is where the
+;; forwarded terminator belongs.
+(define (opt-inline-expand-tail-instrs-with-spans-into!
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [count : i64]
+  [ret : ast.AstType]
+  [sa : ir.CompilerIrCallArgs]
+  [np : i64]
+  [base : i64]
+  [label-prefix : String]
+  [source-spans : ir.CompilerSourceSpans]
+  [out-spans : ir.CompilerSourceSpans]
+  [caller : i64]
+  [call-instr : ir.CompilerIrInstr]
+  [callee : i64]
+  [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : ir.CompilerSourceSpans
+  (if (>= index count)
+    out-spans
+    (let
+      [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
+      [cloned : ir.CompilerIrInstr
+        (if (= index (- count 1))
+          (opt-inline-exit->terminator-instr instr ret sa np base)
+          (opt-inline-clone-instr instr sa np base label-prefix))]
+      [next-spans : ir.CompilerSourceSpans
+        (opt-inline-record-clone-span
+          source-spans
+          out-spans
+          caller
+          call-instr
+          callee
+          instr
+          cloned)]
+      (begin
+        (ir.compiler-ir-instr-builder-push! (&mut builder) cloned)
+        (opt-inline-expand-tail-instrs-with-spans-into!
+          instrs
+          (+ index 1)
+          count
+          ret
+          sa
+          np
+          base
+          label-prefix
+          source-spans
+          next-spans
+          caller
+          call-instr
+          callee
+          (&mut builder))))))
+
+(define (opt-inline-expand-tail-instrs-with-spans
+  [instrs : ir.CompilerIrInstrSeq]
+  [ret : ast.AstType]
+  [sa : ir.CompilerIrCallArgs]
+  [np : i64]
+  [base : i64]
+  [label-prefix : String]
+  [source-spans : ir.CompilerSourceSpans]
+  [out-spans : ir.CompilerSourceSpans]
+  [caller : i64]
+  [call-instr : ir.CompilerIrInstr]
+  [callee : i64]) : OptInlineSpanState
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity count)]
+    [final-spans : ir.CompilerSourceSpans
+      (opt-inline-expand-tail-instrs-with-spans-into!
+        instrs
+        0
+        count
+        ret
+        sa
+        np
+        base
+        label-prefix
+        source-spans
+        out-spans
+        caller
+        call-instr
+        callee
+        (&mut builder))]
+    (OptInlineSpanState.State
+      (ir.compiler-ir-instr-builder-to-seq builder)
+      base
+      0
+      final-spans)))
 
 (define (opt-inline-empty-instr-seq) : ir.CompilerIrInstrSeq
   (ir.compiler-ir-instr-builder-to-seq
@@ -89967,6 +90159,88 @@
         added-blocks))
     (<= (+ added-so-far added-blocks) (opt-inline-cost-block-fuel))))
 
+;; The admission decision shared by the two single-block SITE classes.
+;;
+;; A `Call` site binds the callee's exit into a destination. A direct `TailCall`
+;; site IS the caller's exit, so the callee's exit becomes the caller's. What
+;; the two retire is the same boundary -- the callee's frame, the argument
+;; moves, the transfer and the return -- so both are priced by this one
+;; predicate, and a site class cannot drift away from the other's bands by
+;; construction.
+;;
+;; No site-kind weight is introduced, and the direction of the approximation is
+;; the safe one: a tail site retires everything a call site retires except the
+;; callee's `ret`, and it retires the wrapper's frame pair and the caller's
+;; `jmp` on top, while the caller keeps the `ret` it already had. Charging it
+;; the call site's flat boundary credit (opt-inline-cost-call-bonus) therefore
+;; under-credits rather than over-credits it, so this admits no body that the
+;; existing bands would refuse at a call site.
+;;
+;; `added-blocks` is 0 for both: the single-block expansion adds no block, at
+;; either site class.
+(define (opt-inline-single-block-site-admitted?
+  [index : OptFunctionIndex]
+  [census : OptInlineCensus]
+  [func-name : i64]
+  [callee-name : i64]
+  [cargs : ir.CompilerIrCallArgs]
+  [np : i64]
+  [cblocks : ir.CompilerIrBlockList]
+  [callee-ret : ast.AstType]
+  [caller-blocks : i64]
+  [added-so-far : i64]) : bool
+  (let
+    [added-blocks : i64 0]
+    [body-instrs : ir.CompilerIrInstrSeq
+      (opt-inline-single-block-instrs cblocks)]
+    [const-args : i64 (opt-inline-args-const-count cargs)]
+    [absorbable? : bool
+      (opt-inline-census-absorbable? index census func-name callee-name)]
+    [has-bounds? : bool (opt-inline-instr-seq-has-bounds-check? body-instrs)]
+    [bounds-leaf? : bool (opt-inline-bounds-leaf-ok? cblocks np callee-ret)]
+    [callee-instrs : i64 (opt-inline-single-block-cost-instrs cblocks)]
+    (or
+      (and
+        (opt-inline-bounds-inline-ok? has-bounds? absorbable? const-args np)
+        (opt-inline-cost-inline?
+          callee-instrs
+          added-blocks
+          const-args
+          absorbable?
+          caller-blocks
+          added-so-far))
+      (and
+        bounds-leaf?
+        (opt-inline-bounds-leaf-cost-inline?
+          callee-instrs
+          added-blocks
+          caller-blocks
+          added-so-far)))))
+
+;; Rewrite one instruction if it is an admitted single-block inline SITE.
+;;
+;; Two site classes reach the expansion, and they differ only in where the
+;; callee's exit lands:
+;;
+;;   `dst = f(args)`      -- the exit binds `dst` and the caller's stream
+;;                           continues (opt-inline-exit->result-instr);
+;;   `return f(args)`     -- the exit IS the caller's terminator
+;;                           (opt-inline-exit->terminator-instr).
+;;
+;; The tail-call arm is what lets the inliner see a `return f(args)` at all. It
+;; was invisible before, so a caller that only ever forwards -- the dispatch arm,
+;; the renamed wrapper, the defaulted-argument entry point -- paid the callee's
+;; whole boundary at a site where the rewrite is strictly SIMPLER than the call
+;; site's: no destination to allocate, no continuation to open, no phi, and no
+;; possibility of stack growth, since a `TailCall h` exit is forwarded as a
+;; `TailCall h` and a `Return` exit becomes the caller's `Return`.
+;;
+;; `TailCallIndirect` is not a site here for the reason recorded at
+;; opt-inline-multiblock-instr-ok?: its target is a computed value the census
+;; cannot see through to price. Self- and mutual recursion are refused by
+;; opt-inline-lookup-inlinable's SCC test and by opt-inline-callee-ok?'s name
+;; test, which is what leaves a tail-recursive function's own self-site for
+;; opt-tailrec (it runs after this stage) instead of expanding it here.
 (define (opt-inline-try
   [instr : ir.CompilerIrInstr]
   [index : OptFunctionIndex]
@@ -89997,69 +90271,38 @@
                 cblocks)
               (let
                 [np : i64 (opt-inline-param-count cparams)]
-                (if (opt-inline-arity-ok? cargs np)
-                  (let
-                    [added-blocks : i64 0]
-                    [body-instrs : ir.CompilerIrInstrSeq
-                      (opt-inline-single-block-instrs cblocks)]
-                    [const-args : i64 (opt-inline-args-const-count cargs)]
-                    [absorbable? : bool
-                      (opt-inline-census-absorbable?
-                        index
-                        census
-                        func-name
-                        callee-name)]
-                    [has-bounds? : bool
-                      (opt-inline-instr-seq-has-bounds-check? body-instrs)]
-                    [bounds-leaf? : bool
-                      (opt-inline-bounds-leaf-ok? cblocks np callee-ret)]
-                    [callee-instrs : i64
-                      (opt-inline-single-block-cost-instrs cblocks)]
-                    (if (or
-                      (and
-                        (opt-inline-bounds-inline-ok?
-                          has-bounds?
-                          absorbable?
-                          const-args
-                          np)
-                        (opt-inline-cost-inline?
-                          callee-instrs
-                          added-blocks
-                          const-args
-                          absorbable?
-                          caller-blocks
-                          added-so-far))
-                      (and
-                        bounds-leaf?
-                        (opt-inline-bounds-leaf-cost-inline?
-                          callee-instrs
-                          added-blocks
-                          caller-blocks
-                          added-so-far)))
-                      (begin
-                        (set!
-                          opt-inline-caller-site-count
-                          (+ opt-inline-caller-site-count 1))
-                        (OptInlineState.State
-                          (opt-inline-expand-instrs
-                            body-instrs
-                            dst
-                            cret
-                            cargs
-                            np
-                            vars
-                            (opt-inline-site-prefix
-                              func-name
-                              block-label
-                              site-pos
-                              callee-name))
-                          (+ vars (opt-inline-frame-growth cvars np))
-                          (+ added-so-far added-blocks)))
-                      (OptInlineState.State
-                        (ir.compiler-ir-instr-seq1
-                          (ir.CompilerIrInstr.Call dst cname cargs cret))
+                (if (and
+                  (opt-inline-arity-ok? cargs np)
+                  (opt-inline-single-block-site-admitted?
+                    index
+                    census
+                    func-name
+                    callee-name
+                    cargs
+                    np
+                    cblocks
+                    callee-ret
+                    caller-blocks
+                    added-so-far))
+                  (begin
+                    (set!
+                      opt-inline-caller-site-count
+                      (+ opt-inline-caller-site-count 1))
+                    (OptInlineState.State
+                      (opt-inline-expand-instrs
+                        (opt-inline-single-block-instrs cblocks)
+                        dst
+                        cret
+                        cargs
+                        np
                         vars
-                        added-so-far)))
+                        (opt-inline-site-prefix
+                          func-name
+                          block-label
+                          site-pos
+                          callee-name))
+                      (+ vars (opt-inline-frame-growth cvars np))
+                      added-so-far))
                   (OptInlineState.State
                     (ir.compiler-ir-instr-seq1
                       (ir.CompilerIrInstr.Call dst cname cargs cret))
@@ -90071,9 +90314,69 @@
               (ir.CompilerIrInstr.Call dst cname cargs cret))
             vars
             added-so-far)])]
+    [(ir.CompilerIrInstr.TailCall cname cargs cret)
+      (match (opt-inline-lookup-inlinable
+        index
+        cname
+        func-name
+        scc-result
+        caller-scc)
+        [(OptMaybeFunction.Some callee)
+          (match callee
+            [(ir.CompilerIrFunction.Function
+                callee-name
+                cparams
+                callee-ret
+                cvars
+                cblocks)
+              (let
+                [np : i64 (opt-inline-param-count cparams)]
+                (if (and
+                  (opt-inline-arity-ok? cargs np)
+                  (opt-inline-single-block-site-admitted?
+                    index
+                    census
+                    func-name
+                    callee-name
+                    cargs
+                    np
+                    cblocks
+                    callee-ret
+                    caller-blocks
+                    added-so-far))
+                  (begin
+                    (set!
+                      opt-inline-caller-site-count
+                      (+ opt-inline-caller-site-count 1))
+                    (OptInlineState.State
+                      (opt-inline-expand-tail-instrs
+                        (opt-inline-single-block-instrs cblocks)
+                        cret
+                        cargs
+                        np
+                        vars
+                        (opt-inline-site-prefix
+                          func-name
+                          block-label
+                          site-pos
+                          callee-name))
+                      (+ vars (opt-inline-frame-growth cvars np))
+                      added-so-far))
+                  (OptInlineState.State
+                    (ir.compiler-ir-instr-seq1
+                      (ir.CompilerIrInstr.TailCall cname cargs cret))
+                    vars
+                    added-so-far)))])]
+        [(OptMaybeFunction.No)
+          (OptInlineState.State
+            (ir.compiler-ir-instr-seq1
+              (ir.CompilerIrInstr.TailCall cname cargs cret))
+            vars
+            added-so-far)])]
     [_
       (OptInlineState.State (ir.compiler-ir-instr-seq1 instr) vars added-so-far)]))
 
+;; Span-carrying twin of opt-inline-try, site class for site class.
 (define (opt-inline-try-with-spans
   [instr : ir.CompilerIrInstr]
   [index : OptFunctionIndex]
@@ -90106,78 +90409,46 @@
                 cblocks)
               (let
                 [np : i64 (opt-inline-param-count cparams)]
-                (if (opt-inline-arity-ok? cargs np)
-                  (let
-                    [added-blocks : i64 0]
-                    [body-instrs : ir.CompilerIrInstrSeq
-                      (opt-inline-single-block-instrs cblocks)]
-                    [const-args : i64 (opt-inline-args-const-count cargs)]
-                    [absorbable? : bool
-                      (opt-inline-census-absorbable?
-                        index
-                        census
+                (if (and
+                  (opt-inline-arity-ok? cargs np)
+                  (opt-inline-single-block-site-admitted?
+                    index
+                    census
+                    func-name
+                    callee-name
+                    cargs
+                    np
+                    cblocks
+                    callee-ret
+                    caller-blocks
+                    added-so-far))
+                  (begin
+                    (set!
+                      opt-inline-caller-site-count
+                      (+ opt-inline-caller-site-count 1))
+                    (match (opt-inline-expand-instrs-with-spans
+                      (opt-inline-single-block-instrs cblocks)
+                      dst
+                      cret
+                      cargs
+                      np
+                      vars
+                      (opt-inline-site-prefix
                         func-name
-                        callee-name)]
-                    [has-bounds? : bool
-                      (opt-inline-instr-seq-has-bounds-check? body-instrs)]
-                    [bounds-leaf? : bool
-                      (opt-inline-bounds-leaf-ok? cblocks np callee-ret)]
-                    [callee-instrs : i64
-                      (opt-inline-single-block-cost-instrs cblocks)]
-                    (if (or
-                      (and
-                        (opt-inline-bounds-inline-ok?
-                          has-bounds?
-                          absorbable?
-                          const-args
-                          np)
-                        (opt-inline-cost-inline?
-                          callee-instrs
-                          added-blocks
-                          const-args
-                          absorbable?
-                          caller-blocks
-                          added-so-far))
-                      (and
-                        bounds-leaf?
-                        (opt-inline-bounds-leaf-cost-inline?
-                          callee-instrs
-                          added-blocks
-                          caller-blocks
-                          added-so-far)))
-                      (begin
-                        (set!
-                          opt-inline-caller-site-count
-                          (+ opt-inline-caller-site-count 1))
-                        (match (opt-inline-expand-instrs-with-spans
-                          body-instrs
-                          dst
-                          cret
-                          cargs
-                          np
-                          vars
-                          (opt-inline-site-prefix
-                            func-name
-                            block-label
-                            site-pos
-                            callee-name)
-                          source-spans
-                          out-spans
-                          func-name
-                          instr
-                          cname)
-                          [(OptInlineSpanState.State expanded _ _ next-spans)
-                            (OptInlineSpanState.State
-                              expanded
-                              (+ vars (opt-inline-frame-growth cvars np))
-                              (+ added-so-far added-blocks)
-                              next-spans)]))
-                      (OptInlineSpanState.State
-                        (ir.compiler-ir-instr-seq1
-                          (ir.CompilerIrInstr.Call dst cname cargs cret))
-                        vars
-                        added-so-far
-                        out-spans)))
+                        block-label
+                        site-pos
+                        callee-name)
+                      source-spans
+                      out-spans
+                      func-name
+                      instr
+                      cname)
+                      [(OptInlineSpanState.State expanded _ _ next-spans)
+                        (OptInlineSpanState.State
+                          expanded
+                          (+ vars (opt-inline-frame-growth cvars np))
+                          added-so-far
+                          next-spans)]))
                   (OptInlineSpanState.State
                     (ir.compiler-ir-instr-seq1
                       (ir.CompilerIrInstr.Call dst cname cargs cret))
@@ -90188,6 +90459,75 @@
           (OptInlineSpanState.State
             (ir.compiler-ir-instr-seq1
               (ir.CompilerIrInstr.Call dst cname cargs cret))
+            vars
+            added-so-far
+            out-spans)])]
+    [(ir.CompilerIrInstr.TailCall cname cargs cret)
+      (match (opt-inline-lookup-inlinable
+        index
+        cname
+        func-name
+        scc-result
+        caller-scc)
+        [(OptMaybeFunction.Some callee)
+          (match callee
+            [(ir.CompilerIrFunction.Function
+                callee-name
+                cparams
+                callee-ret
+                cvars
+                cblocks)
+              (let
+                [np : i64 (opt-inline-param-count cparams)]
+                (if (and
+                  (opt-inline-arity-ok? cargs np)
+                  (opt-inline-single-block-site-admitted?
+                    index
+                    census
+                    func-name
+                    callee-name
+                    cargs
+                    np
+                    cblocks
+                    callee-ret
+                    caller-blocks
+                    added-so-far))
+                  (begin
+                    (set!
+                      opt-inline-caller-site-count
+                      (+ opt-inline-caller-site-count 1))
+                    (match (opt-inline-expand-tail-instrs-with-spans
+                      (opt-inline-single-block-instrs cblocks)
+                      cret
+                      cargs
+                      np
+                      vars
+                      (opt-inline-site-prefix
+                        func-name
+                        block-label
+                        site-pos
+                        callee-name)
+                      source-spans
+                      out-spans
+                      func-name
+                      instr
+                      cname)
+                      [(OptInlineSpanState.State expanded _ _ next-spans)
+                        (OptInlineSpanState.State
+                          expanded
+                          (+ vars (opt-inline-frame-growth cvars np))
+                          added-so-far
+                          next-spans)]))
+                  (OptInlineSpanState.State
+                    (ir.compiler-ir-instr-seq1
+                      (ir.CompilerIrInstr.TailCall cname cargs cret))
+                    vars
+                    added-so-far
+                    out-spans)))])]
+        [(OptMaybeFunction.No)
+          (OptInlineSpanState.State
+            (ir.compiler-ir-instr-seq1
+              (ir.CompilerIrInstr.TailCall cname cargs cret))
             vars
             added-so-far
             out-spans)])]
@@ -90939,21 +91279,25 @@
             scc-result
             caller-scc)]))))
 
-;; A block with no direct call instruction contains no inline site: both the
-;; single-block walk and the multiblock rewrite only fire on
-;; CompilerIrInstr.Call. Returning the original block skips the
-;; per-instruction rebuild walk without changing the result.
-(define (opt-inline-instr-seq-has-call-from?
+;; A block with neither a direct call nor a direct tail call contains no inline
+;; site: the multiblock rewrite fires only on CompilerIrInstr.Call, and the
+;; single-block walk fires on those two and nothing else. Returning the original
+;; block skips the per-instruction rebuild walk without changing the result --
+;; which is why the TailCall arm has to be here as well as in opt-inline-try: a
+;; forwarding block whose only site is its terminator would otherwise never
+;; reach the walk at all.
+(define (opt-inline-instr-seq-has-site-from?
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]) : bool
   (if (>= index (ir.compiler-ir-instr-seq-count instrs))
     false
     (match (ir.compiler-ir-instr-seq-ref instrs index)
       [(ir.CompilerIrInstr.Call _ _ _ _) true]
-      [_ (opt-inline-instr-seq-has-call-from? instrs (+ index 1))])))
+      [(ir.CompilerIrInstr.TailCall _ _ _) true]
+      [_ (opt-inline-instr-seq-has-site-from? instrs (+ index 1))])))
 
-(define (opt-inline-instr-seq-has-call? [instrs : ir.CompilerIrInstrSeq]) : bool
-  (opt-inline-instr-seq-has-call-from? instrs 0))
+(define (opt-inline-instr-seq-has-site? [instrs : ir.CompilerIrInstrSeq]) : bool
+  (opt-inline-instr-seq-has-site-from? instrs 0))
 
 (define (opt-inline-rewrite-block
   [block : ir.CompilerIrBlock]
@@ -90968,7 +91312,7 @@
   [caller-scc : i64]) : OptInlineMaybeBlockRewrite
   (match block
     [(ir.CompilerIrBlock.Block label seq)
-      (if (not (opt-inline-instr-seq-has-call? seq))
+      (if (not (opt-inline-instr-seq-has-site? seq))
         (OptInlineMaybeBlockRewrite.SomeBlockRewrite
           (ir.compiler-ir-block-cons block ir.CompilerIrBlockList.Nil)
           vars
@@ -91869,7 +92213,7 @@
   [out-spans : ir.CompilerSourceSpans]) : OptInlineMaybeSpanBlockRewrite
   (match block
     [(ir.CompilerIrBlock.Block label seq)
-      (if (not (opt-inline-instr-seq-has-call? seq))
+      (if (not (opt-inline-instr-seq-has-site? seq))
         (OptInlineMaybeSpanBlockRewrite.SomeSpanBlockRewrite
           (ir.compiler-ir-block-cons block ir.CompilerIrBlockList.Nil)
           vars

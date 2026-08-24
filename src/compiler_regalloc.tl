@@ -11844,6 +11844,14 @@
             (set! index (+ index 1))
             (set! i (+ i 1)))))]))
 
+;; W3. The spill-weight discount's candidate set, and the backend rewrite
+;; pipeline's. It must cover every value the allocator can RECOMPUTE
+;; (compiler-reg-remat-recompute-value?), because the discount is the claim
+;; "spilling this range is half price, the reload is a recompute" -- LLVM's
+;; `TotalWeight *= 0.5F` at CalcSpillWeights.cpp:377-378, which is guarded by
+;; `isRematerializable` over ALL of the interval's definitions. Function /
+;; String / Bytes materialise as one `leaq label(%rip)` exactly like GlobalAddr
+;; and were simply missing from this list.
 (define (compiler-reg-remat-value? [value : ir.CompilerIrValue]) : bool
   (match value
     [(ir.CompilerIrValue.I64 _) true]
@@ -11851,8 +11859,25 @@
     [(ir.CompilerIrValue.Char _) true]
     [(ir.CompilerIrValue.F64 _) true]
     [(ir.CompilerIrValue.GlobalAddr _) true]
+    [(ir.CompilerIrValue.Function _) true]
+    [(ir.CompilerIrValue.String _) true]
+    [(ir.CompilerIrValue.Bytes _) true]
     [_ false]))
 
+;; The same candidate set for a MOV, where a read of a global cell additionally
+;; needs the whole function to be store- and call-free (`allow-invariant-loads`,
+;; the conservative per-function proof).
+;;
+;; W3: deliberately NOT extended to a FROZEN cell read. That range is
+;; rematerialisable under W3 step (c), so the 0.5x discount would be honest --
+;; but discounting it is a measured LOSS: cfg_domloops +158,961 (+0.024%):
+;; `cfg-hash-prime` stops being register-homed (each use folds to
+;; `imulq cfg_hash_prime(%rip), %r14`, which is instruction-neutral) and the
+;; register the allocator frees is then spent worse elsewhere in
+;; `cfg-build-csr`, costing an `xor`/`lea` rewrite and a block-layout flip.
+;; The discount is a global re-ranking, so it needs the frequency-shaped
+;; weight model (family E-5) before it can be trusted at that granularity;
+;; the recompute capability itself is unconditional and stands.
 (define (compiler-reg-remat-mov-value?
   [value : ir.CompilerIrValue]
   [allow-invariant-loads : bool]) : bool
@@ -11882,21 +11907,70 @@
 (define (compiler-reg-remat-discount-weight [weight : i64]) : i64
   (/ weight 2))
 
+;; W3(a). Which var TYPE admits a rematerialised scalar LITERAL. A remat drops
+;; the def store and recomputes at each use, so the recompute must reproduce the
+;; exact 64-bit register content the reload would have produced --
+;; compiler-backend-emit-load-memory-to-reg sign/zero-EXTENDS a narrow slot
+;; (`movslq`/`movzbq`/...), while compiler-backend-emit-load-i64-immediate-into
+;; materialises the literal itself (`xorl`/`movl $K`/`movq $K`). The two agree
+;; exactly when the literal round-trips through the type's width:
+;;   * an 8-byte integer type reloads with a plain `movq`, so any i64 literal is
+;;     bit-identical;
+;;   * a `Bool` literal is 0 or 1 and a `Char` literal is a non-negative code
+;;     point below 2^21, so both survive every narrower sign- or zero-extension.
+;; Every other pairing (an i64 literal homed in an i32 var, a literal in a
+;; register-GROUP or float type) is refused rather than range-checked: the
+;; narrow-typed constant is not a shape the hot rows carry.
+(define (compiler-reg-remat-word-int-type? [ty : ast.AstType]) : bool
+  (match ty
+    [(ast.AstType.I64) true]
+    [(ast.AstType.U64) true]
+    [_ false]))
+
+(define (compiler-reg-remat-recompute-literal?
+  [value : ir.CompilerIrValue]
+  [ty : ast.AstType]) : bool
+  (match value
+    [(ir.CompilerIrValue.I64 _) (compiler-reg-remat-word-int-type? ty)]
+    [(ir.CompilerIrValue.Bool _)
+      (match ty
+        [(ast.AstType.Bool) true]
+        [_ (compiler-reg-remat-word-int-type? ty)])]
+    [(ir.CompilerIrValue.Char _)
+      (match ty
+        [(ast.AstType.Char) true]
+        [_ (compiler-reg-remat-word-int-type? ty)])]
+    [_ false]))
+
 ;; A value the backend can RECOMPUTE in one instruction at each use: a static
-;; address materialisation (`leaq label(%rip)`). Plain integer/bool/char constants
-;; are deliberately EXCLUDED: the optimiser's constant propagation already inlines
-;; them directly into their uses (so an optimised function never carries a constant
-;; in a spillable vreg), making constant remat moot on real code; addresses cannot
-;; always be folded into an instruction's immediate, so they are the case that
-;; genuinely benefits. CompilerIrValue.Global (a LOAD of a mutable global) and CompilerIrValue.F64
-;; (no scalar backend support) must never be rematerialised.
-(define (compiler-reg-remat-recompute-value? [value : ir.CompilerIrValue]) : bool
+;; address materialisation (`leaq label(%rip)`), or -- W3 step (a) -- an
+;; integer/bool/char LITERAL whose type admits it (`xorl`/`movl $K`/`movq $K`,
+;; LLVM's `MOV32r0`/`MOV64ri32`/`MOV64ri`, X86InstrCompiler.td:327 and
+;; X86InstrMisc.td:371/385). Constants were previously excluded on the argument
+;; that constant propagation inlines them into their uses; that holds for the
+;; uses the backend can spell with an immediate operand, but a constant that
+;; reaches a phi, a call argument or a two-address operand still lands in a
+;; spillable vreg, which is gvn P8's `xor esi,esi` shape.
+;; CompilerIrValue.Global (a LOAD of a global cell) and CompilerIrValue.F64
+;; (no scalar backend support) must never be rematerialised here.
+(define (compiler-reg-remat-recompute-value?
+  [value : ir.CompilerIrValue]
+  [ty : ast.AstType]) : bool
   (match value
     [(ir.CompilerIrValue.GlobalAddr _) true]
     [(ir.CompilerIrValue.Function _) true]
     [(ir.CompilerIrValue.String _) true]
     [(ir.CompilerIrValue.Bytes _) true]
-    [_ false]))
+    ;; W3 step (c). A read of a FROZEN global cell recomputes as
+    ;; `movq g(%rip), %r` -- one instruction, the same one the reload replaced,
+    ;; and one a compare can fold outright (compiler-backend-compare-memory-
+    ;; operand). Word width only: the cell read always materialises the full
+    ;; 8 bytes, while a narrow var reloads sign/zero-extended from its slot.
+    [(ir.CompilerIrValue.Global name)
+      (and
+        (compiler-reg-remat-word-int-type? ty)
+        (compiler-reg-global-frozen? (ir.compiler-ir-symbol-id name)))]
+    [_ (compiler-reg-remat-recompute-literal? value ty)]))
 
 (define (compiler-reg-remat-init-vals!
   [vals : (__tl_dyn-array ir.CompilerIrValue)]
@@ -11922,10 +11996,10 @@
     (while (< index count)
       (begin
         (match (array-ref slots index)
-          [(ir.CompilerIrInstr.Mov dst value _)
+          [(ir.CompilerIrInstr.Mov dst value ty)
             ;; flags[dst]: 0 = not remat, 1 = remat, 2 = poisoned (address-taken,
             ;; must keep a real slot). A poisoned var never becomes remat.
-            (if (if (if (compiler-reg-remat-recompute-value? value)
+            (if (if (if (compiler-reg-remat-recompute-value? value ty)
               (compiler-reg-sv-single-def? def-counts dst)
               false)
               (if (>= dst 0)
@@ -11939,6 +12013,30 @@
                 (set! (array-ref vals dst) value)
                 unit)
               unit)]
+          ;; W3(c). `load %v, @g` is the same cell read as `mov %v <- Global g`
+          ;; -- the address IS the cell -- so it records the same recompute
+          ;; payload. (A `load` off a `gep @g, k` addresses a DIFFERENT word and
+          ;; has no `CompilerIrValue` spelling; it is not recorded.)
+          [(ir.CompilerIrInstr.Load dst src ty)
+            (match src
+              [(ir.CompilerIrValue.GlobalAddr name)
+                (if (if (if (compiler-reg-remat-recompute-value?
+                  (ir.CompilerIrValue.Global name)
+                  ty)
+                  (compiler-reg-sv-single-def? def-counts dst)
+                  false)
+                  (if (>= dst 0)
+                    (if (< dst (array-length flags))
+                      (not (= (array-ref flags dst) 2))
+                      false)
+                    false)
+                  false)
+                  (begin
+                    (set! (array-ref flags dst) 1)
+                    (set! (array-ref vals dst) (ir.CompilerIrValue.Global name))
+                    unit)
+                  unit)]
+              [_ unit])]
           ;; Taking a var's address needs its real storage; poison it so it is
           ;; never rematerialised (its slot must hold the value).
           [(ir.CompilerIrInstr.AddrOf _ src)
@@ -12046,6 +12144,10 @@
                         (CompilerRegLocation.Remat (array-ref vals v)))
                       unit)]
                   [_ unit])]
+              ;; A var the greedy left UNASSIGNED keeps its implicit per-var
+              ;; slot: converting those to Remat as well was tried and dropped
+              ;; (no benchmark asm changed -- the shape is rare there -- and it
+              ;; perturbed register homes for nothing).
               [(CompilerRegMaybeLocation.No) unit])
             unit)
           (set! v (+ v 1))))
@@ -12150,7 +12252,7 @@
   [instr : ir.CompilerIrInstr]
   [allow-invariant-loads : bool]) : unit
   (match instr
-    [(ir.CompilerIrInstr.Mov dst value _)
+    [(ir.CompilerIrInstr.Mov dst value ty)
       (if (and
         (compiler-reg-remat-mov-value? value allow-invariant-loads)
         (>= dst 0)
@@ -12164,7 +12266,7 @@
         (< dst (array-length def-status)))
         (set! (array-ref def-status dst) (bit-or (array-ref def-status dst) 1))
         unit)]
-    [(ir.CompilerIrInstr.Load dst src _)
+    [(ir.CompilerIrInstr.Load dst src ty)
       (if (and
         (compiler-reg-remat-load? src allow-invariant-loads)
         (>= dst 0)
@@ -27400,6 +27502,18 @@
     0))
 (cfg
   regalloc-census
+  (define compiler-reg-assignment-census-remat-addr : i64
+    0))
+(cfg
+  regalloc-census
+  (define compiler-reg-assignment-census-remat-literal : i64
+    0))
+(cfg
+  regalloc-census
+  (define compiler-reg-assignment-census-remat-cell : i64
+    0))
+(cfg
+  regalloc-census
   (define compiler-reg-assignment-census-max-capacity : i64
     0))
 (cfg
@@ -27417,6 +27531,9 @@
       (set! compiler-reg-assignment-census-register 0)
       (set! compiler-reg-assignment-census-spill 0)
       (set! compiler-reg-assignment-census-remat 0)
+      (set! compiler-reg-assignment-census-remat-addr 0)
+      (set! compiler-reg-assignment-census-remat-literal 0)
+      (set! compiler-reg-assignment-census-remat-cell 0)
       (set! compiler-reg-assignment-census-max-capacity 0)
       (set! compiler-reg-assignment-census-max-assigned 0))))
 
@@ -27433,6 +27550,10 @@
       [registers : i64 0]
       [spills : i64 0]
       [remats : i64 0]
+      ;; W3 remat-site census: which recompute shape each Remat home carries.
+      [addrs : i64 0]
+      [literals : i64 0]
+      [cells : i64 0]
       (begin
         (while (< index capacity)
           (begin
@@ -27446,7 +27567,18 @@
                   [(CompilerRegLocation.RegisterPair _ _)
                     (set! registers (+ registers 1))]
                   [(CompilerRegLocation.Spill _) (set! spills (+ spills 1))]
-                  [(CompilerRegLocation.Remat _) (set! remats (+ remats 1))])))
+                  [(CompilerRegLocation.Remat value)
+                    (begin
+                      (set! remats (+ remats 1))
+                      (match value
+                        [(ir.CompilerIrValue.I64 _)
+                          (set! literals (+ literals 1))]
+                        [(ir.CompilerIrValue.Bool _)
+                          (set! literals (+ literals 1))]
+                        [(ir.CompilerIrValue.Char _)
+                          (set! literals (+ literals 1))]
+                        [(ir.CompilerIrValue.Global _) (set! cells (+ cells 1))]
+                        [_ (set! addrs (+ addrs 1))]))])))
             (set! index (+ index 1))))
         (set!
           compiler-reg-assignment-census-plans
@@ -27466,6 +27598,15 @@
         (set!
           compiler-reg-assignment-census-remat
           (+ compiler-reg-assignment-census-remat remats))
+        (set!
+          compiler-reg-assignment-census-remat-addr
+          (+ compiler-reg-assignment-census-remat-addr addrs))
+        (set!
+          compiler-reg-assignment-census-remat-literal
+          (+ compiler-reg-assignment-census-remat-literal literals))
+        (set!
+          compiler-reg-assignment-census-remat-cell
+          (+ compiler-reg-assignment-census-remat-cell cells))
         (if (> capacity compiler-reg-assignment-census-max-capacity)
           (set! compiler-reg-assignment-census-max-capacity capacity)
           unit)
@@ -27478,7 +27619,7 @@
   (define (compiler-reg-assignment-census-print!) : unit
     (begin
       (io.print-error
-        "regalloc-assignment-census|plans|capacity|assigned|register|spill|remat|max-capacity|max-assigned\n")
+        "regalloc-assignment-census|plans|capacity|assigned|register|spill|remat|remat-addr|remat-literal|remat-cell|max-capacity|max-assigned\n")
       (io.print-error
         (str_cat.str-cat
           "regalloc-assignment-census|"
@@ -27493,6 +27634,12 @@
           (string.int->string compiler-reg-assignment-census-spill)
           "|"
           (string.int->string compiler-reg-assignment-census-remat)
+          "|"
+          (string.int->string compiler-reg-assignment-census-remat-addr)
+          "|"
+          (string.int->string compiler-reg-assignment-census-remat-literal)
+          "|"
+          (string.int->string compiler-reg-assignment-census-remat-cell)
           "|"
           (string.int->string compiler-reg-assignment-census-max-capacity)
           "|"
@@ -27885,6 +28032,54 @@
 
 (define (compiler-reg-clear-c-memory-call-names!) : unit
   (set! compiler-reg-c-memory-call-names (reg_i64_i64_map.with-capacity 8)))
+
+;; W3 step (c). FROZEN GLOBAL CELLS -- the program fact that licenses
+;; rematerialising `movq g(%rip), %r`.
+;;
+;; A global's CELL is its own statically allocated storage, named by that symbol
+;; and by nothing else, so "can anything write cell(g)" is decided by NAMES
+;; alone. The writers are exhaustively:
+;;   * `CompilerIrInstr.Store g, v` -- the lowering of `(set! g ...)`;
+;;   * a `StorePtr` through a pointer derived from `CompilerIrValue.GlobalAddr g`,
+;;     which exists only where `(& g)` / `(&mut g)` was taken;
+;;   * the startup initializer's one `movq %rax, g(%rip)`, emitted by
+;;     compiler-backend-global-init-call BETWEEN the `__global_init_*` calls and
+;;     before `main` -- never inside a user function's activation, so it cannot
+;;     fall between a value's definition and a use of it.
+;; Disqualifying a global on either of the first two therefore leaves globals no
+;; execution can write while any function runs, and a re-read of the cell at a
+;; use yields the same word the defining read produced. This is TypeLisp's
+;; version of LLVM's `isDereferenceableInvariantLoad`
+;; (TargetInstrInfo.cpp:1641-1643) -- established by construction, where LLVM
+;; needs `GlobalOpt` + `IPSCCP` to prove it.
+;;
+;; The set is seeded once per program from the backend's whole-program value
+;; walk (compiler-backend-collect-program-collections, a TOTAL match over the IR
+;; that already visits every operand of every instruction of every function AND
+;; every global initializer, so a new IR shape cannot silently escape it), and
+;; `known?` gates every answer: any path that reaches the allocator without that
+;; walk having run gets `false` and the old behaviour.
+(define compiler-reg-nonfrozen-globals : reg_i64_i64_map.Map
+  (reg_i64_i64_map.with-capacity 8))
+(define compiler-reg-frozen-globals-known? : bool
+  false)
+
+(define (compiler-reg-frozen-globals-begin!) : unit
+  (begin
+    (set! compiler-reg-frozen-globals-known? false)
+    (set! compiler-reg-nonfrozen-globals (reg_i64_i64_map.with-capacity 8))))
+
+(define (compiler-reg-add-nonfrozen-global! [name : i64]) : unit
+  (reg_i64_i64_map.insert-ref! (&mut compiler-reg-nonfrozen-globals) name 1))
+
+(define (compiler-reg-frozen-globals-finish!) : unit
+  (set! compiler-reg-frozen-globals-known? true))
+
+(define (compiler-reg-global-frozen? [name : i64]) : bool
+  (and
+    compiler-reg-frozen-globals-known?
+    (not compiler-reg-program-maps-suppressed?)
+    (not (reg_i64_i64_map.contains? (& compiler-reg-nonfrozen-globals) name))))
 
 (define (compiler-reg-add-c-memory-call-name! [name : i64]) : unit
   (reg_i64_i64_map.insert-ref! (&mut compiler-reg-c-memory-call-names) name 1))

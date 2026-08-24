@@ -5337,13 +5337,17 @@
           "    movq %r12, _tl_g5b(%rip)\n")
         ;; %rbp is now the 6th callee-saved register (M-G3 stage 2), so the
         ;; call-spanning var 4 is homed in %rbp; var 6 remains rematerialised
-        ;; in caller-saved %r9d after the call.
+        ;; after the call. W3 step (a): the literal recompute is now decided
+        ;; in the ASSIGNMENT table, so the backend materialises it straight
+        ;; into the register the use scavenges (%r8d) instead of the fixed
+        ;; %r9 the use-site rewrite pipeline reserved. Same two instructions,
+        ;; one fewer constraint on the scavenger.
         (compiler_backend.compiler-backend-string-contains?
           a1
           "    movl $4, %ebp\n")
         (compiler_backend.compiler-backend-string-contains?
           a1
-          "    movl $6, %r9d\n"))]
+          "    movl $6, %r8d\n"))]
     (and
       (match a1-result
         [(compiler_backend.ResultCompilerBackend.Ok _) true]

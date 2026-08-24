@@ -5716,12 +5716,19 @@
             23
             (ir.CompilerIrValue.Var 0)
             (compiler-reg-i64-ty))))
-      (not
-        (compiler-reg-remat-defn?
-          (ir.CompilerIrInstr.Mov
-            24
-            (ir.CompilerIrValue.String "heap")
-            (ast.AstType.String))))
+      ;; W3: a String/Function/Bytes mov materialises as one
+      ;; `leaq label(%rip)` and IS rematerialisable, so the spill-weight
+      ;; discount must see it as a candidate (it was missing before).
+      (compiler-reg-remat-defn?
+        (ir.CompilerIrInstr.Mov
+          24
+          (ir.CompilerIrValue.String "heap")
+          (ast.AstType.String)))
+      (compiler-reg-remat-defn?
+        (ir.CompilerIrInstr.Mov
+          26
+          (ir.CompilerIrValue.Function (ir.compiler-ir-test-symbol "fn"))
+          (ast.AstType.U64)))
       (not
         (compiler-reg-remat-defn?
           (ir.CompilerIrInstr.BinOp
@@ -5730,6 +5737,258 @@
             (ir.CompilerIrValue.I64 1)
             (ir.CompilerIrValue.I64 2)
             (compiler-reg-i64-ty)))))))
+
+(cfg
+  test
+  (define (compiler-reg-remat-recompute-classifier-ok?) : bool
+    (and
+      ;; Static address materialisations: admitted at any word type, unchanged.
+      (reg.compiler-reg-remat-recompute-value?
+        (ir.CompilerIrValue.GlobalAddr (ir.compiler-ir-test-symbol "global"))
+        (ast.AstType.U64))
+      (reg.compiler-reg-remat-recompute-value?
+        (ir.CompilerIrValue.Function (ir.compiler-ir-test-symbol "fn"))
+        (ast.AstType.U64))
+      (reg.compiler-reg-remat-recompute-value?
+        (ir.CompilerIrValue.String "s")
+        (ast.AstType.String))
+      ;; W3 step (a): integer/bool/char literals at a type whose reload is
+      ;; bit-identical to the immediate materialisation.
+      (reg.compiler-reg-remat-recompute-value?
+        (ir.CompilerIrValue.I64 7)
+        (compiler-reg-i64-ty))
+      (reg.compiler-reg-remat-recompute-value?
+        (ir.CompilerIrValue.I64 0)
+        (ast.AstType.U64))
+      (reg.compiler-reg-remat-recompute-value?
+        (ir.CompilerIrValue.I64 -1)
+        (compiler-reg-i64-ty))
+      (reg.compiler-reg-remat-recompute-value?
+        (ir.CompilerIrValue.Bool false)
+        (ast.AstType.Bool))
+      (reg.compiler-reg-remat-recompute-value?
+        (ir.CompilerIrValue.Bool true)
+        (compiler-reg-i64-ty))
+      (reg.compiler-reg-remat-recompute-value?
+        (ir.CompilerIrValue.Char 'x')
+        (ast.AstType.Char))
+      ;; NEGATIVE GATE. A narrow var reloads sign/zero-EXTENDED from its slot
+      ;; (movslq / movzbq), so an i64 literal homed there is not reproduced by
+      ;; `movl $K` and must be refused.
+      (not
+        (reg.compiler-reg-remat-recompute-value?
+          (ir.CompilerIrValue.I64 7)
+          (ast.AstType.I32)))
+      (not
+        (reg.compiler-reg-remat-recompute-value?
+          (ir.CompilerIrValue.I64 7)
+          (ast.AstType.U8)))
+      (not
+        (reg.compiler-reg-remat-recompute-value?
+          (ir.CompilerIrValue.Char 'x')
+          (ast.AstType.U8)))
+      ;; NEGATIVE GATE. A literal in a register-GROUP / handle type is refused:
+      ;; the backend errors on a rematerialised group var.
+      (not
+        (reg.compiler-reg-remat-recompute-value?
+          (ir.CompilerIrValue.I64 0)
+          (ast.AstType.String)))
+      ;; NEGATIVE GATE. No scalar backend materialisation for f64, and a LOAD
+      ;; of a global cell is not a static value.
+      (not
+        (reg.compiler-reg-remat-recompute-value?
+          (ir.CompilerIrValue.F64 0x3ff0000000000000)
+          (compiler-reg-f64-ty)))
+      (not
+        (reg.compiler-reg-remat-recompute-value?
+          (ir.CompilerIrValue.Global (ir.compiler-ir-test-symbol "global"))
+          (compiler-reg-i64-ty)))
+      (not
+        (reg.compiler-reg-remat-recompute-value?
+          (ir.CompilerIrValue.Var 0)
+          (compiler-reg-i64-ty))))))
+
+;; End-to-end for the assignment-level rewrite: a SPILLED single-def literal
+;; becomes CompilerRegLocation.Remat (so its def store dies and every use
+;; recomputes), a MULTI-def one does not, and an address-taken one does not.
+(cfg
+  test
+  (define (compiler-reg-remat-assignment-spill-location
+    [func : ir.CompilerIrFunction]
+    [vars : i64]
+    [var : i64]) : reg.CompilerRegLocation
+    (let
+      [assignments : reg.CompilerRegAssignmentTable
+        (reg.compiler-reg-assignment-table-make vars)]
+      [empty-coalesce : reg.CompilerRegCoalesceMap
+        (reg.CompilerRegCoalesceMap (array.make-array i64 0))]
+      (begin
+        (reg.compiler-reg-assignment-table-insert
+          assignments
+          var
+          (reg.CompilerRegLocation.Spill 0))
+        (let
+          [rewritten : reg.CompilerRegAssignmentTable
+            (reg.compiler-reg-rewrite-remat-assignments
+              assignments
+              func
+              empty-coalesce
+              (live.compiler-live-set-empty)
+              vars)]
+          (match (reg.compiler-reg-assignment-table-lookup rewritten var)
+            [(reg.CompilerRegMaybeLocation.Some location) location]
+            [(reg.CompilerRegMaybeLocation.No)
+              (reg.CompilerRegLocation.Spill -1)]))))))
+
+(cfg
+  test
+  (define (compiler-reg-remat-literal-assignment-ok?) : bool
+    (and
+      ;; NON-VACUITY: var0 is `mov v0 <- 7 : i64`, single-def and spilled, so
+      ;; the widened recompute set must turn it into a Remat. Reverting step
+      ;; (a) fails here.
+      (compiler-reg-location-remat?
+        (compiler-reg-remat-assignment-spill-location
+          (compiler-reg-remat-weight-function)
+          2
+          0))
+      ;; A multi-def var keeps its slot: recomputing at a use would drop the
+      ;; other definition's value.
+      (not
+        (compiler-reg-location-remat?
+          (compiler-reg-remat-assignment-spill-location
+            (compiler-reg-remat-multi-def-function)
+            1
+            0)))
+      ;; An address-taken var keeps its slot: a remat has no stable storage.
+      (not
+        (compiler-reg-location-remat?
+          (compiler-reg-remat-assignment-spill-location
+            (compiler-reg-remat-addr-taken-literal-function)
+            2
+            0))))))
+
+(cfg
+  test
+  (define (compiler-reg-remat-addr-taken-literal-function) : ir.CompilerIrFunction
+    (ir.CompilerIrFunction.Function
+      (ir.compiler-ir-test-symbol "remat_addr_taken")
+      ir.CompilerIrParamList.Nil
+      (ast.AstType.Unit)
+      2
+      (ir.compiler-ir-block-cons
+        (ir.compiler-ir-block
+          (ir.compiler-ir-label "entry")
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.Mov
+              0
+              (ir.CompilerIrValue.I64 7)
+              (compiler-reg-i64-ty))
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.AddrOf 1 0)
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
+                ir.CompilerIrInstrList.Nil))))
+        ir.CompilerIrBlockList.Nil))))
+
+(cfg
+  test
+  (define (compiler-reg-remat-frozen-global-function [load-shape? : bool]) : ir.CompilerIrFunction
+    (ir.CompilerIrFunction.Function
+      (ir.compiler-ir-test-symbol "remat_frozen_global")
+      ir.CompilerIrParamList.Nil
+      (ast.AstType.Unit)
+      1
+      (ir.compiler-ir-block-cons
+        (ir.compiler-ir-block
+          (ir.compiler-ir-label "entry")
+          (ir.compiler-ir-instr-cons
+            (if load-shape?
+              (ir.CompilerIrInstr.Load
+                0
+                (ir.CompilerIrValue.GlobalAddr
+                  (ir.compiler-ir-test-symbol "frozen"))
+                (compiler-reg-i64-ty))
+              (ir.CompilerIrInstr.Mov
+                0
+                (ir.CompilerIrValue.Global
+                  (ir.compiler-ir-test-symbol "frozen"))
+                (compiler-reg-i64-ty)))
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.Store
+                (ir.compiler-ir-test-symbol "sink")
+                (ir.CompilerIrValue.Var 0)
+                (compiler-reg-i64-ty))
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
+                ir.CompilerIrInstrList.Nil))))
+        ir.CompilerIrBlockList.Nil))))
+
+;; W3 step (c). The frozen-global answer is a PROGRAM fact the backend seeds, so
+;; the gates are: unseeded (the default) refuses; seeded-and-not-a-cell-writer
+;; admits; a global the seeding walk saw written or address-taken refuses; and a
+;; narrow var type refuses (the cell read is always a full word, a narrow slot
+;; reloads extended). Both spellings of the read -- `mov %v <- Global g` and
+;; `load %v, @g` -- must reach the same Remat payload.
+(cfg
+  test
+  (define (compiler-reg-remat-frozen-global-ok?) : bool
+    (let
+      [frozen : i64
+        (ir.compiler-ir-symbol-id (ir.compiler-ir-test-symbol "frozen"))]
+      [cell : ir.CompilerIrValue
+        (ir.CompilerIrValue.Global (ir.compiler-ir-test-symbol "frozen"))]
+      [unseeded? : bool
+        (not
+          (reg.compiler-reg-remat-recompute-value? cell (compiler-reg-i64-ty)))]
+      (begin
+        (reg.compiler-reg-frozen-globals-begin!)
+        (reg.compiler-reg-frozen-globals-finish!)
+        (let
+          [seeded? : bool
+            (reg.compiler-reg-remat-recompute-value? cell (compiler-reg-i64-ty))]
+          [narrow-refused? : bool
+            (not
+              (reg.compiler-reg-remat-recompute-value? cell (ast.AstType.I32)))]
+          [mov-remat? : bool
+            (compiler-reg-location-remat?
+              (compiler-reg-remat-assignment-spill-location
+                (compiler-reg-remat-frozen-global-function false)
+                1
+                0))]
+          [load-remat? : bool
+            (compiler-reg-location-remat?
+              (compiler-reg-remat-assignment-spill-location
+                (compiler-reg-remat-frozen-global-function true)
+                1
+                0))]
+          (begin
+            (reg.compiler-reg-add-nonfrozen-global! frozen)
+            (let
+              [written-refused? : bool
+                (not
+                  (reg.compiler-reg-remat-recompute-value?
+                    cell
+                    (compiler-reg-i64-ty)))]
+              [written-load-refused? : bool
+                (not
+                  (compiler-reg-location-remat?
+                    (compiler-reg-remat-assignment-spill-location
+                      (compiler-reg-remat-frozen-global-function true)
+                      1
+                      0)))]
+              (begin
+                ;; Leave the process-wide fact as the allocator's default so no
+                ;; later fixture inherits a seeded answer.
+                (reg.compiler-reg-frozen-globals-begin!)
+                (and
+                  unseeded?
+                  seeded?
+                  narrow-refused?
+                  mov-remat?
+                  load-remat?
+                  written-refused?
+                  written-load-refused?)))))))))
 
 (cfg
   test
@@ -5937,9 +6196,11 @@
             ;; rematerialisable value rather than the most-used one.
             (compiler-reg-location-any-register?
               (reg.compiler-reg-assignment-lookup assignments 0))
-            (compiler-reg-location-spill-offset?
-              (reg.compiler-reg-assignment-lookup assignments 5)
-              (reg.compiler-reg-stack-slot-offset 5)))]))))
+            ;; W3 step (a): var5's def is an i64 literal, so the victim keeps no
+            ;; frame slot at all -- it is rematerialised at its one use (was: a
+            ;; Spill at stack slot 5).
+            (compiler-reg-maybe-location-remat?
+              (reg.compiler-reg-assignment-lookup assignments 5)))]))))
 
 (cfg
   test
@@ -6126,9 +6387,10 @@
         (and
           (compiler-reg-location-any-register?
             (reg.compiler-reg-assignment-lookup assignments 0))
-          (compiler-reg-location-spill-offset?
-            (reg.compiler-reg-assignment-lookup assignments 1)
-            (reg.compiler-reg-stack-slot-offset 1))
+          ;; W3 step (a): the victim's def is an i64 literal, so it leaves no
+          ;; frame slot behind (was: a Spill at stack slot 1).
+          (compiler-reg-maybe-location-remat?
+            (reg.compiler-reg-assignment-lookup assignments 1))
           (compiler-reg-location-any-register?
             (reg.compiler-reg-assignment-lookup assignments 5)))])))
 
@@ -6256,9 +6518,10 @@
             (> (array-ref weighted-counts 0) (array-ref weighted-counts 1))
             (compiler-reg-location-any-register?
               (reg.compiler-reg-assignment-lookup assignments 0))
-            (compiler-reg-location-spill-offset?
-              (reg.compiler-reg-assignment-lookup assignments 1)
-              (reg.compiler-reg-stack-slot-offset 1))
+            ;; W3 step (a): the victim's def is an i64 literal (was: a Spill at
+            ;; stack slot 1).
+            (compiler-reg-maybe-location-remat?
+              (reg.compiler-reg-assignment-lookup assignments 1))
             (compiler-reg-location-any-register?
               (reg.compiler-reg-assignment-lookup assignments 5)))]))))
 
@@ -7576,12 +7839,12 @@
           (and
             ;; Same capacity story as the single-block fixture: the greedy
             ;; register-homes the hot call-spanning value (spill-weight priority)
-            ;; and spills the single-use overflow (var 6) without a save/restore
-            ;; rescue.
-            (= (reg.compiler-reg-spill-count assignments) 2)
-            (compiler-reg-location-spill-offset?
-              (reg.compiler-reg-assignment-lookup assignments 6)
-              (reg.compiler-reg-stack-slot-offset 6))
+            ;; and the single-use overflow (var 6) takes no register. W3 step
+            ;; (a): both overflows are i64 literals, so they rematerialise
+            ;; instead of taking frame slots (was: 2 spills, var 6 at slot 6).
+            (= (reg.compiler-reg-spill-count assignments) 0)
+            (compiler-reg-maybe-location-remat?
+              (reg.compiler-reg-assignment-lookup assignments 6))
             (not
               (live.compiler-live-set-contains?
                 (reg.compiler-reg-call-split-shadows split-vars)
@@ -11665,6 +11928,18 @@
     unit
     (io.panic (compiler-regalloc-self-test-failure-message name))))
 
+(define (compiler-reg-location-remat? [location : reg.CompilerRegLocation]) : bool
+  (match location
+    [(reg.CompilerRegLocation.Remat _) true]
+    [_ false]))
+
+(define (compiler-reg-maybe-location-remat?
+  [maybe-location : reg.CompilerRegMaybeLocation]) : bool
+  (match maybe-location
+    [(reg.CompilerRegMaybeLocation.Some location)
+      (compiler-reg-location-remat? location)]
+    [(reg.CompilerRegMaybeLocation.No) false]))
+
 (define (compiler-reg-location-spill-offset?
   [maybe-location : reg.CompilerRegMaybeLocation]
   [offset : i64]) : bool
@@ -15203,10 +15478,14 @@
     (compiler-reg-syscall-clobber-overlap-function))
     [(reg.CompilerRegPlan.Plan assignments _ _ _ _ _)
       (and
-        (= (reg.compiler-reg-spill-count assignments) 1)
-        (compiler-reg-location-spill-offset?
-          (reg.compiler-reg-assignment-lookup assignments 5)
-          (reg.compiler-reg-stack-slot-offset 5)))]))
+        ;; W3 step (a) NON-VACUITY. The one value the syscall's clobber pushes
+        ;; out is a single-def i64 LITERAL, so the assignment rewrite converts
+        ;; its spill into a rematerialisation: no frame slot, no def store, one
+        ;; `movl $5` at the use. Before the literal widening this asserted a
+        ;; single Spill at stack slot 5; reverting the widening fails here.
+        (= (reg.compiler-reg-spill-count assignments) 0)
+        (compiler-reg-maybe-location-remat?
+          (reg.compiler-reg-assignment-lookup assignments 5)))]))
 
 (define (compiler-reg-scalar-call-spanning-caller-saved-ok?) : bool
   (let
@@ -15223,10 +15502,12 @@
           ;; the stack and needs no save/restore rescue. (The old allocator spilled
           ;; var 5 then save/restored it; the unified greedy's weight ordering
           ;; avoids that round-trip -- a strict improvement.)
-          (= (reg.compiler-reg-spill-count assignments) 2)
-          (compiler-reg-location-spill-offset?
-            (reg.compiler-reg-assignment-lookup assignments 6)
-            (reg.compiler-reg-stack-slot-offset 6))
+          ;; W3 step (a): both overflow values are single-def i64 literals, so
+          ;; the spills the weight order picked become rematerialisations
+          ;; instead of frame slots (was: 2 spills, var 6 at stack slot 6).
+          (= (reg.compiler-reg-spill-count assignments) 0)
+          (compiler-reg-maybe-location-remat?
+            (reg.compiler-reg-assignment-lookup assignments 6))
           (not
             (live.compiler-live-set-contains?
               (reg.compiler-reg-call-split-shadows split-vars)
@@ -18762,6 +19043,15 @@
     (compiler-regalloc-self-test-require!
       "compiler-reg-remat-classifier-ok?"
       (cfg test (compiler-reg-remat-classifier-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-remat-recompute-classifier-ok?"
+      (cfg test (compiler-reg-remat-recompute-classifier-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-remat-literal-assignment-ok?"
+      (cfg test (compiler-reg-remat-literal-assignment-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-remat-frozen-global-ok?"
+      (cfg test (compiler-reg-remat-frozen-global-ok?) true))
     (compiler-regalloc-self-test-require!
       "compiler-reg-remat-discount-weights-ok?"
       (cfg test (compiler-reg-remat-discount-weights-ok?) true))

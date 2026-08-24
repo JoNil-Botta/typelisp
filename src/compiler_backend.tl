@@ -12890,7 +12890,10 @@
             "%rax"
             backend-state))]
       [conditional-address : String
-        (compiler-backend-value-stack-address assignments on-true backend-state)]
+        (compiler-backend-value-read-memory-operand
+          assignments
+          on-true
+          backend-state)]
       [conditional-direct? : bool
         (or
           (not (string.eq true-home ""))
@@ -25701,7 +25704,7 @@
     [rhs-reg : String
       (compiler-backend-value-scalar-register backend-state assignments rhs)]
     [rhs-address : String
-      (compiler-backend-value-stack-address assignments rhs backend-state)]
+      (compiler-backend-value-read-memory-operand assignments rhs backend-state)]
     [lhs-reg : String
       (compiler-backend-value-scalar-register backend-state assignments lhs)]
     [rhs-load-needed : bool
@@ -26747,6 +26750,70 @@
 ;; The memory operand a compare may spell for `value` at width `ty`: this
 ;; function's own frame slot for a spilled var, or the rip-relative cell for a
 ;; scalar global read. Exactly one side of a compare may use it.
+;; W3(c): the value a var's plan home RECOMPUTES, or Unit when it has a real
+;; home. A rematerialised frozen global read owns no slot, but the cell it
+;; recomputes from is itself a legal memory operand, so the M6-I fold applies to
+;; it exactly as it does to a direct `Global` operand: `cmpq g(%rip), %r` is the
+;; whole of the remat plus the compare.
+(define (compiler-backend-var-remat-value
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [value : compiler_ir_types.CompilerIrValue]
+  [backend-state : CompilerBackendState]) : compiler_ir_types.CompilerIrValue
+  (match value
+    [(compiler_ir_types.CompilerIrValue.Var id)
+      (match (compiler-backend-emit-assignment-lookup
+        backend-state
+        assignments
+        id)
+        [(compiler_regalloc.CompilerRegMaybeLocation.Some location)
+          (match location
+            [(compiler_regalloc.CompilerRegLocation.Remat inner) inner]
+            [_ (compiler_ir_types.CompilerIrValue.Unit)])]
+        [(compiler_regalloc.CompilerRegMaybeLocation.No)
+          (compiler_ir_types.CompilerIrValue.Unit)])]
+    [_ (compiler_ir_types.CompilerIrValue.Unit)]))
+
+(define (compiler-backend-remat-global-cell-operand
+  [backend-state : CompilerBackendState]
+  [value : compiler_ir_types.CompilerIrValue]) : String
+  (match value
+    [(compiler_ir_types.CompilerIrValue.Global name)
+      (let
+        [symbol : String
+          (compiler-backend-state-user-symbol-id backend-state name)]
+        (if (string.eq symbol "")
+          ""
+          (str_cat.str-cat symbol "(%rip)")))]
+    [_ ""]))
+
+;; W3(c): the memory operand a READ of `value` may spell -- this function's own
+;; frame slot for a spilled var, or the rip-relative CELL for a var whose plan
+;; home rematerialises a frozen global read. `off(%rsp)` and `sym(%rip)` are
+;; both single ModRM memory operands, so wherever the slot spelling was legal
+;; the cell spelling is too, and it is the whole of the materialising
+;; `movq g(%rip), %scratch` the remat would otherwise emit in front of the
+;; instruction. This is LLVM's fold-first step for a rematerialised load
+;; (InlineSpiller.cpp:753-760, `foldMemoryOperand` / `++NumFoldedLoads`), and
+;; without it widening the remat set turns a folded operand back into two
+;; instructions -- measured as +59,998 on opt_crc32's `andq mask(%rip)` and
+;; +271,250 on gvn_table's `imulq prime(%rip)`.
+;;
+;; Every caller spells the result as a COMPLETE source operand (a binop or cmov
+;; source, a compare operand, a bounds-check length), never as an addressing
+;; base, which is the one thing rip-relative cannot be.
+(define (compiler-backend-value-read-memory-operand
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [value : compiler_ir_types.CompilerIrValue]
+  [backend-state : CompilerBackendState]) : String
+  (let
+    [stack : String
+      (compiler-backend-value-stack-address assignments value backend-state)]
+    (if (string.eq stack "")
+      (compiler-backend-remat-global-cell-operand
+        backend-state
+        (compiler-backend-var-remat-value assignments value backend-state))
+      stack)))
+
 (define (compiler-backend-compare-memory-operand
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -26755,7 +26822,10 @@
   [backend-state : CompilerBackendState]) : String
   (let
     [stack : String
-      (compiler-backend-value-stack-address assignments value backend-state)]
+      (compiler-backend-value-read-memory-operand
+        assignments
+        value
+        backend-state)]
     (if (string.eq stack "")
       (compiler-backend-value-global-memory-operand
         backend-state
@@ -27193,7 +27263,7 @@
       (compiler-backend-value-scalar-register backend-state assignments rhs)]
     (if (not (string.eq rhs-reg ""))
       (compiler-backend-sized-reg type-segment-bases rhs-reg ty)
-      (compiler-backend-value-stack-address assignments rhs backend-state))))
+      (compiler-backend-value-read-memory-operand assignments rhs backend-state))))
 
 (define (compiler-backend-emit-binop-spill-direct-source
   [type-segment-bases : i64]
@@ -28207,7 +28277,7 @@
                         [(CompilerBackendMaybeImmediate.No)
                           (let
                             [rhs-address : String
-                              (compiler-backend-value-stack-address
+                              (compiler-backend-value-read-memory-operand
                                 assignments
                                 rhs
                                 backend-state)]
@@ -30680,7 +30750,7 @@
             length)]
         (if (not (string.eq length-reg ""))
           length-reg
-          (compiler-backend-value-stack-address
+          (compiler-backend-value-read-memory-operand
             assignments
             length
             backend-state)))]))
@@ -36159,6 +36229,11 @@
   (let
     [_clear-c-memory-calls : unit
       (compiler_regalloc.compiler-reg-clear-c-memory-call-names!)]
+    ;; W3(c): drop the previous program's frozen-global answer here, so a
+    ;; second program emitted in the same process can never read a stale one.
+    ;; The whole-program walk below re-seeds and re-publishes it.
+    [_reset-frozen-globals : unit
+      (compiler_regalloc.compiler-reg-frozen-globals-begin!)]
     [function-count : i64 (compiler-backend-function-list-count functions)]
     [extern-count : i64 (compiler-backend-extern-seq-count externs)]
     [function-names : (__tl_dyn-array String)
@@ -72654,7 +72729,13 @@
     [(compiler_ir_types.CompilerIrValue.Global name)
       (compiler-backend-program-collections-add-reference collections name)]
     [(compiler_ir_types.CompilerIrValue.GlobalAddr name)
-      (compiler-backend-program-collections-add-reference collections name)]
+      ;; W3(c): `(& g)` exists, so a `StorePtr` could reach cell(g). Record it
+      ;; on the walk that already visits every operand of every instruction
+      ;; rather than paying a second traversal for the same answer.
+      (begin
+        (compiler_regalloc.compiler-reg-add-nonfrozen-global!
+          (compiler_ir_types.compiler-ir-symbol-id name))
+        (compiler-backend-program-collections-add-reference collections name))]
     [(compiler_ir_types.CompilerIrValue.String text)
       (compiler-backend-program-collections-add-string collections text)]
     [(compiler_ir_types.CompilerIrValue.F64 bits)
@@ -72805,8 +72886,12 @@
           args))]
     [(compiler_ir_types.CompilerIrInstr.TailCall _ args _)
       (compiler-backend-collect-call-args-collections collections args)]
-    [(compiler_ir_types.CompilerIrInstr.Store _ value _)
-      (compiler-backend-collect-value-collections collections value)]
+    [(compiler_ir_types.CompilerIrInstr.Store name value _)
+      ;; W3(c): the lowering of `(set! g ...)`, the one direct cell writer.
+      (begin
+        (compiler_regalloc.compiler-reg-add-nonfrozen-global!
+          (compiler_ir_types.compiler-ir-symbol-id name))
+        (compiler-backend-collect-value-collections collections value))]
     [(compiler_ir_types.CompilerIrInstr.Branch cond _ _)
       (compiler-backend-collect-value-collections collections cond)]
     [(compiler_ir_types.CompilerIrInstr.TotalEnumBranch cond _ _)
@@ -74932,6 +75017,11 @@
         program-index.backend-state
         (compiler-backend-collect-program-collections program)
         spans)]
+    ;; W3(c): the walk above is the whole-program cell-writer scan. Publishing
+    ;; here -- before any function is planned -- is what makes a frozen global's
+    ;; read rematerialisable in the allocator.
+    [_frozen-globals-known : unit
+      (compiler_regalloc.compiler-reg-frozen-globals-finish!)]
     [closure-names : BackendSymbolSeq
       (compiler-backend-program-collections-functions collections)]
     [referenced-symbols : BackendSymbolSeq
@@ -78577,6 +78667,8 @@
   (let
     [collections : CompilerBackendProgramCollections
       (compiler-backend-collect-program-collections program)]
+    [_frozen-globals-known : unit
+      (compiler_regalloc.compiler-reg-frozen-globals-finish!)]
     [closure-names : BackendSymbolSeq
       (compiler-backend-program-collections-functions collections)]
     [strings : BackendStringSeq

@@ -6363,8 +6363,9 @@ count must have exact source type `i64` and traps before allocation when
 negative. Count references count as argument uses but do not advance the
 implicit value iterator.
 
-The `+` sign emits a plus for nonnegative `i64`/`f64`/`f32` values and is
-rejected for nonnumeric values; `-` is accepted as the Rust-compatible no-op.
+The `+` sign emits a plus for nonnegative fixed-width integer and float values
+and is rejected for nonnumeric values; `-` is accepted as the Rust-compatible
+no-op.
 The `0` flag performs numeric sign-aware zero padding, inserting zeroes after an
 existing or requested sign and after a base prefix when a type-specific
 renderer supplies one; it overrides fill/alignment for that numeric value. `#`
@@ -6374,9 +6375,14 @@ change default Display output. Precision forms and the selectors `?`, `x?`,
 currently produce focused unsupported-semantics diagnostics. Malformed,
 duplicated, or out-of-order options are rejected during macro expansion.
 
-The built-in placeholder types are `String`, `i64`, `bool`, `char`, `f64`, and
-`f32`. A struct or enum instead delegates to a function in the type's canonical
-owner module. The owner may define either:
+The built-in placeholder types are `String`, `i8`, `i16`, `i32`, `i64`, `u8`,
+`u16`, `u32`, `u64`, `bool`, `char`, `f64`, and `f32`. Signed integers render
+their decimal magnitude with a leading minus when negative; unsigned conversion
+preserves the complete `u64` range. Float Display uses the source IEEE-754
+precision, emits the shortest round-tripping decimal without `e`/`E` notation,
+preserves signed zero, renders infinities as `inf`/`-inf`, and canonicalizes all
+NaNs to `NaN` without a sign. A struct or enum instead delegates to a function
+in the type's canonical owner module. The owner may define either:
 
 - `to-string : (& T) -> String`, normally for the module's primary type; or
 - `to-string-<NominalName> : (& T) -> String`, for another nominal type owned

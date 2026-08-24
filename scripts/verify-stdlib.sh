@@ -268,6 +268,7 @@ stdlib/tests/arena_patterns.tl|42|-|-|-
 stdlib/tests/byte_buf_api.tl|42|-|-
 stdlib/tests/byte_buf_core_api.tl|42|-|-
 stdlib/tests/format_api.tl|42|-|-|-
+stdlib/tests/format_primitive_display.tl|42|-|-|-
 stdlib/tests/format_negative_dynamic_width.tl|134|-|literal:format: dynamic width argument must be nonnegative|-
 stdlib/tests/io_stdio_lines.tl|42|printf:stdout-line\n|printf:stderr-line\n|printf:alpha\n\nomega
 stdlib/tests/io_stdio_bytes.tl|42|-|-|literal:abcdef

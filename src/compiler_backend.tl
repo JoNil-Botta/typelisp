@@ -7759,18 +7759,19 @@
     (let
       [mnemonic : String
         (compiler-backend-avx512-vector-binop-mnemonic op elem-ty)]
-      (if (compiler-backend-byte-vector-shift? op elem-ty)
-        (compiler-backend-emit-byte-vector-shift
-          assignments
-          dst
-          op
-          lhs
-          rhs
-          elem-ty
-          "zmm"
-          instr-diag
-          backend-state)
-        (if (compiler-backend-byte-vector-mul? op elem-ty)
+      (cond
+        [(compiler-backend-byte-vector-shift? op elem-ty)
+          (compiler-backend-emit-byte-vector-shift
+            assignments
+            dst
+            op
+            lhs
+            rhs
+            elem-ty
+            "zmm"
+            instr-diag
+            backend-state)]
+        [(compiler-backend-byte-vector-mul? op elem-ty)
           (compiler-backend-emit-byte-vector-mul
             assignments
             dst
@@ -7779,80 +7780,81 @@
             elem-ty
             "zmm"
             instr-diag
+            backend-state)]
+        [(= (string.string-length mnemonic) 0)
+          (ResultCompilerBackend.Err
+            (box
+              (compiler_diagnostic.compiler-diagnostic-with-message
+                instr-diag
+                "backend: unsupported AVX-512 vector binary op")))]
+        [else
+          (match (compiler-backend-vector-register-use
+            assignments
+            lhs
+            "lhs"
+            "zmm"
+            elem-ty
+            (compiler-backend-vector-spill-scratch "zmm" 0)
             backend-state)
-          (if (= (string.string-length mnemonic) 0)
-            (ResultCompilerBackend.Err
-              (box
-                (compiler_diagnostic.compiler-diagnostic-with-message
-                  instr-diag
-                  "backend: unsupported AVX-512 vector binary op")))
-            (match (compiler-backend-vector-register-use
-              assignments
-              lhs
-              "lhs"
-              "zmm"
-              elem-ty
-              (compiler-backend-vector-spill-scratch "zmm" 0)
-              backend-state)
-              [(ResultBackendVectorUse.Ok lhs-use)
-                (match lhs-use
-                  [(CompilerBackendVectorUse.Use lhs-asm lhs-reg)
-                    (match (compiler-backend-vector-memory-or-register-use
-                      assignments
-                      rhs
-                      "rhs"
-                      "zmm"
-                      elem-ty
-                      backend-state)
-                      [(ResultBackendVectorUse.Ok rhs-use)
-                        (match rhs-use
-                          [(CompilerBackendVectorUse.Use rhs-asm rhs-op)
-                            (match (compiler-backend-vector-dst-reg
-                              assignments
-                              dst
-                              "binop dst"
-                              "zmm"
-                              (compiler-backend-vector-spill-scratch "zmm" 0)
-                              backend-state)
-                              [(ResultBackendReg.Ok dst-reg)
-                                (ResultCompilerBackend.Ok
-                                  (str_cat.str-cat
-                                    lhs-asm
-                                    rhs-asm
-                                    "    "
-                                    mnemonic
-                                    " "
-                                    rhs-op
-                                    ", "
-                                    lhs-reg
-                                    ", "
+            [(ResultBackendVectorUse.Ok lhs-use)
+              (match lhs-use
+                [(CompilerBackendVectorUse.Use lhs-asm lhs-reg)
+                  (match (compiler-backend-vector-memory-or-register-use
+                    assignments
+                    rhs
+                    "rhs"
+                    "zmm"
+                    elem-ty
+                    backend-state)
+                    [(ResultBackendVectorUse.Ok rhs-use)
+                      (match rhs-use
+                        [(CompilerBackendVectorUse.Use rhs-asm rhs-op)
+                          (match (compiler-backend-vector-dst-reg
+                            assignments
+                            dst
+                            "binop dst"
+                            "zmm"
+                            (compiler-backend-vector-spill-scratch "zmm" 0)
+                            backend-state)
+                            [(ResultBackendReg.Ok dst-reg)
+                              (ResultCompilerBackend.Ok
+                                (str_cat.str-cat
+                                  lhs-asm
+                                  rhs-asm
+                                  "    "
+                                  mnemonic
+                                  " "
+                                  rhs-op
+                                  ", "
+                                  lhs-reg
+                                  ", "
+                                  dst-reg
+                                  "\n"
+                                  (compiler-backend-vector-store-dst
+                                    assignments
+                                    dst
+                                    "zmm"
+                                    elem-ty
                                     dst-reg
-                                    "\n"
-                                    (compiler-backend-vector-store-dst
-                                      assignments
-                                      dst
-                                      "zmm"
-                                      elem-ty
-                                      dst-reg
-                                      backend-state)))]
-                              [(ResultBackendReg.Err message)
-                                (ResultCompilerBackend.Err
-                                  (box
-                                    (compiler_diagnostic.compiler-diagnostic-with-message
-                                      instr-diag
-                                      message)))])])]
-                      [(ResultBackendVectorUse.Err message)
-                        (ResultCompilerBackend.Err
-                          (box
-                            (compiler_diagnostic.compiler-diagnostic-with-message
-                              instr-diag
-                              message)))])])]
-              [(ResultBackendVectorUse.Err message)
-                (ResultCompilerBackend.Err
-                  (box
-                    (compiler_diagnostic.compiler-diagnostic-with-message
-                      instr-diag
-                      message)))])))))
+                                    backend-state)))]
+                            [(ResultBackendReg.Err message)
+                              (ResultCompilerBackend.Err
+                                (box
+                                  (compiler_diagnostic.compiler-diagnostic-with-message
+                                    instr-diag
+                                    message)))])])]
+                    [(ResultBackendVectorUse.Err message)
+                      (ResultCompilerBackend.Err
+                        (box
+                          (compiler_diagnostic.compiler-diagnostic-with-message
+                            instr-diag
+                            message)))])])]
+            [(ResultBackendVectorUse.Err message)
+              (ResultCompilerBackend.Err
+                (box
+                  (compiler_diagnostic.compiler-diagnostic-with-message
+                    instr-diag
+                    message)))])]))
     (compiler-backend-avx512-shape-diagnostic
       type-segment-bases
       instr-diag

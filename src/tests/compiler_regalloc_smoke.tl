@@ -3,6 +3,22 @@
 (import compiler_regalloc as reg)
 (import compiler_regalloc_tests as reg_tests)
 (import compiler_ir_types as ir)
+
+(define (compiler-regalloc-smoke-instr-seq-prepend
+  [instr : ir.CompilerIrInstr]
+  [rest : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
+  (let
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity (+ rest.len 1))]
+    (begin
+      (ir.compiler-ir-instr-builder-push! (&mut builder) instr)
+      (ir.compiler-ir-instr-builder-append-seq-range!
+        (&mut builder)
+        rest
+        0
+        rest.len)
+      (ir.compiler-ir-instr-builder-to-seq builder))))
+
 (import compiler_ast_types as ast)
 (import compiler_intern as ci)
 (import stdlib.string)
@@ -25,24 +41,24 @@
       (reg_tests.compiler-reg-i64-ty)
       5
       (ir.compiler-ir-block-cons
-        (ir.compiler-ir-block
+        (ir.CompilerIrBlock.Block
           (ir.compiler-ir-label "entry")
-          (ir.compiler-ir-instr-cons
+          (compiler-regalloc-smoke-instr-seq-prepend
             (ir.CompilerIrInstr.Mov
               0
               (ir.CompilerIrValue.I64 1)
               (reg_tests.compiler-reg-i64-ty))
-            (ir.compiler-ir-instr-cons
+            (compiler-regalloc-smoke-instr-seq-prepend
               (ir.CompilerIrInstr.Mov
                 1
                 (ir.CompilerIrValue.I64 2)
                 (reg_tests.compiler-reg-i64-ty))
-              (ir.compiler-ir-instr-cons
+              (compiler-regalloc-smoke-instr-seq-prepend
                 (ir.CompilerIrInstr.Mov
                   2
                   (ir.CompilerIrValue.I64 3)
                   (reg_tests.compiler-reg-i64-ty))
-                (ir.compiler-ir-instr-cons
+                (compiler-regalloc-smoke-instr-seq-prepend
                   (ir.ir-instr-spmd-call
                     (ci.intern-generated-canonical-name "spmd_helper")
                     (ir.CompilerIrSpmdBackend.Avx512)
@@ -53,16 +69,16 @@
                       3
                       (ir.CompilerIrSpmdValueClass.Varying)
                       (reg_tests.compiler-reg-i64-ty)))
-                  (ir.compiler-ir-instr-cons
+                  (compiler-regalloc-smoke-instr-seq-prepend
                     (ir.CompilerIrInstr.Mov
                       4
                       (ir.CompilerIrValue.Var 3)
                       (reg_tests.compiler-reg-i64-ty))
-                    (ir.compiler-ir-instr-cons
+                    (compiler-regalloc-smoke-instr-seq-prepend
                       (ir.CompilerIrInstr.Return
                         (ir.CompilerIrMaybeValue.Some
                           (ir.CompilerIrValue.Var 4)))
-                      ir.CompilerIrInstrList.Nil)))))))
+                      (ir.compiler-ir-instr-seq-empty))))))))
         ir.CompilerIrBlockList.Nil))))
 
 (define (compiler-reg-smoke-spmd-call-shape-ok?) : bool
@@ -105,25 +121,25 @@
     (ast.AstType.I64)
     8
     (ir.compiler-ir-block-cons
-      (ir.compiler-ir-block
+      (ir.CompilerIrBlock.Block
         (ir.compiler-ir-label "entry")
-        (ir.compiler-ir-instr-cons
+        (compiler-regalloc-smoke-instr-seq-prepend
           (ir.CompilerIrInstr.Load
             1
             (ir.CompilerIrValue.Var 0)
             (ast.AstType.U64))
-          (ir.compiler-ir-instr-cons
+          (compiler-regalloc-smoke-instr-seq-prepend
             (ir.CompilerIrInstr.Gep
               2
               (ir.CompilerIrValue.Var 0)
               (ir.CompilerIrValue.I64 8)
               (ast.AstType.U8))
-            (ir.compiler-ir-instr-cons
+            (compiler-regalloc-smoke-instr-seq-prepend
               (ir.CompilerIrInstr.Load
                 3
                 (ir.CompilerIrValue.Var 2)
                 (ast.AstType.I64))
-              (ir.compiler-ir-instr-cons
+              (compiler-regalloc-smoke-instr-seq-prepend
                 (ir.CompilerIrInstr.Pack
                   4
                   (ir.compiler-ir-value-seq-prepend
@@ -132,24 +148,24 @@
                       (ir.CompilerIrValue.Var 3)
                       (ir.compiler-ir-value-seq-empty)))
                   (ast.AstType.String))
-                (ir.compiler-ir-instr-cons
+                (compiler-regalloc-smoke-instr-seq-prepend
                   (ir.CompilerIrInstr.Mov
                     5
                     (ir.CompilerIrValue.Var 4)
                     (ast.AstType.String))
-                  (ir.compiler-ir-instr-cons
+                  (compiler-regalloc-smoke-instr-seq-prepend
                     (ir.ir-instr-descriptor-pair-data
                       6
                       (ir.CompilerIrValue.Var 5))
-                    (ir.compiler-ir-instr-cons
+                    (compiler-regalloc-smoke-instr-seq-prepend
                       (ir.ir-instr-descriptor-pair-length
                         7
                         (ir.CompilerIrValue.Var 5))
-                      (ir.compiler-ir-instr-cons
+                      (compiler-regalloc-smoke-instr-seq-prepend
                         (ir.CompilerIrInstr.Return
                           (ir.CompilerIrMaybeValue.Some
                             (ir.CompilerIrValue.Var 7)))
-                        ir.CompilerIrInstrList.Nil)))))))))
+                        (ir.compiler-ir-instr-seq-empty))))))))))
       ir.CompilerIrBlockList.Nil)))
 
 (define (compiler-reg-smoke-descriptor-pair-group-ok?) : bool

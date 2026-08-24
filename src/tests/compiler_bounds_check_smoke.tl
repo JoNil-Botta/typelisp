@@ -7,6 +7,22 @@
 (import compiler_backend)
 (import compiler_optimize)
 (import compiler_ir_types as ir)
+
+(define (compiler-bounds-check-smoke-instr-seq-prepend
+  [instr : ir.CompilerIrInstr]
+  [rest : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
+  (let
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity (+ rest.len 1))]
+    (begin
+      (ir.compiler-ir-instr-builder-push! (&mut builder) instr)
+      (ir.compiler-ir-instr-builder-append-seq-range!
+        (&mut builder)
+        rest
+        0
+        rest.len)
+      (ir.compiler-ir-instr-builder-to-seq builder))))
+
 (import compiler_ast_types as ast)
 (import compiler_builtin_ids as cbi)
 
@@ -24,22 +40,22 @@
         (ast.AstType.I64)
         4
         (ir.compiler-ir-block-cons
-          (ir.compiler-ir-block
+          (ir.CompilerIrBlock.Block
             (ir.compiler-ir-label "entry")
-            (ir.compiler-ir-instr-cons
+            (compiler-bounds-check-smoke-instr-seq-prepend
               (ir.CompilerIrInstr.BoundsCheck
                 (ir.CompilerIrValue.Var 0)
                 (ir.CompilerIrValue.Var 1)
                 (ir.compiler-ir-label "bounds_ok.0"))
-              (ir.compiler-ir-instr-cons
+              (compiler-bounds-check-smoke-instr-seq-prepend
                 (ir.CompilerIrInstr.BoundsCheck
                   (ir.CompilerIrValue.Var 0)
                   (ir.CompilerIrValue.Var 1)
                   (ir.compiler-ir-label "bounds_ok.1"))
-                (ir.compiler-ir-instr-cons
+                (compiler-bounds-check-smoke-instr-seq-prepend
                   (ir.CompilerIrInstr.Return
                     (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 42)))
-                  (ir.CompilerIrInstrList.Nil)))))
+                  (ir.compiler-ir-instr-seq-empty)))))
           (ir.CompilerIrBlockList.Nil)))
       (ir.CompilerIrFunctionList.Nil))
     (ir.compiler-ir-extern-seq-empty)))

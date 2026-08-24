@@ -807,6 +807,59 @@ check_cmp_fold_load() {
     assert_not_contains "$_body" 'call tl_oob_abort' cmp-fold-load
 }
 
+# M6-I: a scalar global read folds into the compare's rip-relative memory
+# operand. The read is `movq g(%rip), %rN` on both targets, so the fold and its
+# spelling are target-independent and both are checked on both targets.
+check_global_cmp_mem_fold() {
+    for _target in linux-x86_64 windows-x86_64; do
+        _suffix=$(printf '%s' "$_target" | tr -c 'A-Za-z0-9_' '_')
+        _asm=$(compile_gate "global_cmp_mem_fold_$_suffix" \
+            tests/integration/global_cmp_mem_fold.tl "$_target")
+        _lhs=$(function_body "$_asm" _tl_global_cmp_mem_fold_probe_lhs)
+        _rhs=$(function_body "$_asm" _tl_global_cmp_mem_fold_probe_rhs)
+        _refused=$(function_body "$_asm" _tl_global_cmp_mem_fold_probe_refused)
+
+        # The cell is the compare's DESTINATION operand and nothing stages it
+        # into a register first. Pre-change this body carried
+        # `movq gcmp_gen(%rip), %r9 ; cmpq %rdi, %r9`, so both halves are
+        # proven forcing.
+        assert_regex_count_eq "$_lhs" \
+            '^[[:space:]]+cmpq %r[a-z0-9]+, _tl_global_cmp_mem_fold_gcmp_gen\(%rip\)$' 1 \
+            "global-cmp-mem-fold-lhs-$_target"
+        assert_not_matches "$_lhs" \
+            '^[[:space:]]+movq _tl_global_cmp_mem_fold_gcmp_gen\(%rip\), %r' \
+            "global-cmp-mem-fold-lhs-$_target"
+        # The flags the jcc reads are this compare's, with the sense the
+        # unfolded form had: an equality test that jumps away when unequal.
+        assert_next_line_matches "$_lhs" \
+            'cmpq %r[a-z0-9]+, _tl_global_cmp_mem_fold_gcmp_gen[(]%rip[)]' \
+            '^[[:space:]]+jne ' "global-cmp-mem-fold-lhs-$_target"
+
+        # The mirror: the cell takes the AT&T SOURCE slot. The compare is
+        # ORDERED, so a fold that exchanged the operands without swapping the
+        # condition would invert the branch -- which is what the jcc pins.
+        assert_regex_count_eq "$_rhs" \
+            '^[[:space:]]+cmpq _tl_global_cmp_mem_fold_gcmp_limit\(%rip\), %r[a-z0-9]+$' 1 \
+            "global-cmp-mem-fold-rhs-$_target"
+        assert_not_matches "$_rhs" \
+            '^[[:space:]]+movq _tl_global_cmp_mem_fold_gcmp_limit\(%rip\), %r' \
+            "global-cmp-mem-fold-rhs-$_target"
+        assert_next_line_matches "$_rhs" \
+            'cmpq _tl_global_cmp_mem_fold_gcmp_limit[(]%rip[)], %r[a-z0-9]+' \
+            '^[[:space:]]+jge ' "global-cmp-mem-fold-rhs-$_target"
+
+        # Nearest refused neighbour: the read is bound to a local that is read
+        # a second time, so the value must survive in a register and no
+        # compare addresses the cell.
+        assert_matches "$_refused" \
+            '^[[:space:]]+movq _tl_global_cmp_mem_fold_gcmp_gen\(%rip\), %r' \
+            "global-cmp-mem-fold-refused-$_target"
+        assert_not_matches "$_refused" \
+            '^[[:space:]]+cmpq .*_tl_global_cmp_mem_fold_gcmp_gen\(%rip\)' \
+            "global-cmp-mem-fold-refused-$_target"
+    done
+}
+
 check_alu_mem_operand_tie() {
     _asm=$(compile_gate alu_mem_operand_tie tests/integration/alu_mem_operand_tie.tl)
     _body=$(function_body "$_asm" _tl_alu_mem_operand_tie_fold_words)
@@ -1554,6 +1607,7 @@ check_global_handle_cse
 check_loadcse_forward
 check_switch_dispatch_scavenge
 check_cmp_fold_load
+check_global_cmp_mem_fold
 check_alu_mem_operand_tie
 check_alu_mem_operand_sink
 check_const_index_bounds

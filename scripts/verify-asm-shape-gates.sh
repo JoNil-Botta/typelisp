@@ -1538,7 +1538,10 @@ check_range_merge_unsigned() {
     # second is the merged unsigned one.
     assert_regex_count_eq "$_paired" '^[[:space:]]+testq %r[a-z0-9]+, %r[a-z0-9]+$' 1 range-merge-unsigned
     assert_regex_count_eq "$_paired" '^[[:space:]]+jae ' 1 range-merge-unsigned
-    assert_regex_count_eq "$_paired" '^[[:space:]]+jge ' 1 range-merge-unsigned
+    # The signed guard's two jumps may spell either polarity (the shrink-wrap
+    # arm layout inverts them); what is pinned is that exactly two SIGNED
+    # jumps survive alongside the one unsigned jae.
+    assert_regex_count_eq "$_paired" '^[[:space:]]+j(l|ge) ' 2 range-merge-unsigned
     assert_regex_count_eq "$_paired" '^[[:space:]]+cmpq %r[a-z0-9]+, %r[a-z0-9]+$' 2 range-merge-unsigned
 
     # The cached-length global: nothing in this function bounds `rm-len`, so

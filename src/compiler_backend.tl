@@ -5012,6 +5012,18 @@
       [(compiler_ir_types.CompilerIrBinOp.Shr _) true]
       [_ false])))
 
+(define (compiler-backend-byte-vector-mul?
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [elem-ty : compiler_ast_types.AstType]) : bool
+  (and
+    (match elem-ty
+      [(compiler_ast_types.AstType.I8) true]
+      [(compiler_ast_types.AstType.U8) true]
+      [_ false])
+    (match op
+      [(compiler_ir_types.CompilerIrBinOp.Mul) true]
+      [_ false])))
+
 (define (compiler-backend-word-vector-shift?
   [op : compiler_ir_types.CompilerIrBinOp]
   [elem-ty : compiler_ast_types.AstType]) : bool
@@ -5608,6 +5620,133 @@
                                   elem-ty
                                   dst-reg
                                   backend-state)))))]
+                      [(ResultBackendReg.Err message)
+                        (ResultCompilerBackend.Err
+                          (box
+                            (compiler_diagnostic.compiler-diagnostic-with-message
+                              instr-diag
+                              message)))])])]
+              [(ResultBackendVectorUse.Err message)
+                (ResultCompilerBackend.Err
+                  (box
+                    (compiler_diagnostic.compiler-diagnostic-with-message
+                      instr-diag
+                      message)))])])]
+      [(ResultBackendVectorUse.Err message)
+        (ResultCompilerBackend.Err
+          (box
+            (compiler_diagnostic.compiler-diagnostic-with-message
+              instr-diag
+              message)))])))
+
+;; x86 has no packed byte multiply. Treat every adjacent byte pair as a word:
+;; multiply the low bytes directly, multiply the high bytes after shifting them
+;; down, discard each product's high byte, and stitch the two byte products back
+;; together. Signed and unsigned multiplication have identical modulo-2^8 bits.
+(define (compiler-backend-emit-byte-vector-mul
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [dst : i64]
+  [lhs : compiler_ir_types.CompilerIrValue]
+  [rhs : compiler_ir_types.CompilerIrValue]
+  [elem-ty : compiler_ast_types.AstType]
+  [width : String]
+  [instr-diag : compiler_diagnostic.CompilerDiagnostic]
+  [backend-state : CompilerBackendState]) : ResultCompilerBackend
+  (let
+    [tmp0 : String
+      (if (string.eq width "zmm")
+        "%zmm0"
+        "%ymm0")]
+    [tmp1 : String
+      (if (string.eq width "zmm")
+        "%zmm1"
+        "%ymm1")]
+    [bit-or : String
+      (if (string.eq width "zmm")
+        "vpord"
+        "vpor")]
+    (match (compiler-backend-vector-register-use
+      assignments
+      lhs
+      "byte multiply lhs"
+      width
+      elem-ty
+      (compiler-backend-vector-spill-scratch width 0)
+      backend-state)
+      [(ResultBackendVectorUse.Ok lhs-use)
+        (match lhs-use
+          [(CompilerBackendVectorUse.Use lhs-asm lhs-reg)
+            (match (compiler-backend-vector-register-use
+              assignments
+              rhs
+              "byte multiply rhs"
+              width
+              elem-ty
+              (compiler-backend-vector-spill-scratch width 1)
+              backend-state)
+              [(ResultBackendVectorUse.Ok rhs-use)
+                (match rhs-use
+                  [(CompilerBackendVectorUse.Use rhs-asm rhs-reg)
+                    (match (compiler-backend-vector-dst-reg
+                      assignments
+                      dst
+                      "byte multiply dst"
+                      width
+                      (compiler-backend-vector-spill-scratch width 0)
+                      backend-state)
+                      [(ResultBackendReg.Ok dst-reg)
+                        (ResultCompilerBackend.Ok
+                          (str_cat.str-cat
+                            lhs-asm
+                            rhs-asm
+                            "    vpsrlw $8, "
+                            lhs-reg
+                            ", "
+                            tmp0
+                            "\n    vpsrlw $8, "
+                            rhs-reg
+                            ", "
+                            tmp1
+                            "\n    vpmullw "
+                            tmp1
+                            ", "
+                            tmp0
+                            ", "
+                            tmp0
+                            "\n    vpsllw $8, "
+                            tmp0
+                            ", "
+                            tmp0
+                            "\n    vpmullw "
+                            rhs-reg
+                            ", "
+                            lhs-reg
+                            ", "
+                            dst-reg
+                            "\n    vpsllw $8, "
+                            dst-reg
+                            ", "
+                            dst-reg
+                            "\n    vpsrlw $8, "
+                            dst-reg
+                            ", "
+                            dst-reg
+                            "\n    "
+                            bit-or
+                            " "
+                            tmp0
+                            ", "
+                            dst-reg
+                            ", "
+                            dst-reg
+                            "\n"
+                            (compiler-backend-vector-store-dst
+                              assignments
+                              dst
+                              width
+                              elem-ty
+                              dst-reg
+                              backend-state)))]
                       [(ResultBackendReg.Err message)
                         (ResultCompilerBackend.Err
                           (box
@@ -6396,6 +6535,16 @@
             assignments
             dst
             op
+            lhs
+            rhs
+            elem-ty
+            "ymm"
+            instr-diag
+            backend-state)]
+        [(compiler-backend-byte-vector-mul? op elem-ty)
+          (compiler-backend-emit-byte-vector-mul
+            assignments
+            dst
             lhs
             rhs
             elem-ty
@@ -7621,79 +7770,89 @@
           "zmm"
           instr-diag
           backend-state)
-        (if (= (string.string-length mnemonic) 0)
-          (ResultCompilerBackend.Err
-            (box
-              (compiler_diagnostic.compiler-diagnostic-with-message
-                instr-diag
-                "backend: unsupported AVX-512 vector binary op")))
-          (match (compiler-backend-vector-register-use
+        (if (compiler-backend-byte-vector-mul? op elem-ty)
+          (compiler-backend-emit-byte-vector-mul
             assignments
+            dst
             lhs
-            "lhs"
-            "zmm"
+            rhs
             elem-ty
-            (compiler-backend-vector-spill-scratch "zmm" 0)
+            "zmm"
+            instr-diag
             backend-state)
-            [(ResultBackendVectorUse.Ok lhs-use)
-              (match lhs-use
-                [(CompilerBackendVectorUse.Use lhs-asm lhs-reg)
-                  (match (compiler-backend-vector-memory-or-register-use
-                    assignments
-                    rhs
-                    "rhs"
-                    "zmm"
-                    elem-ty
-                    backend-state)
-                    [(ResultBackendVectorUse.Ok rhs-use)
-                      (match rhs-use
-                        [(CompilerBackendVectorUse.Use rhs-asm rhs-op)
-                          (match (compiler-backend-vector-dst-reg
-                            assignments
-                            dst
-                            "binop dst"
-                            "zmm"
-                            (compiler-backend-vector-spill-scratch "zmm" 0)
-                            backend-state)
-                            [(ResultBackendReg.Ok dst-reg)
-                              (ResultCompilerBackend.Ok
-                                (str_cat.str-cat
-                                  lhs-asm
-                                  rhs-asm
-                                  "    "
-                                  mnemonic
-                                  " "
-                                  rhs-op
-                                  ", "
-                                  lhs-reg
-                                  ", "
-                                  dst-reg
-                                  "\n"
-                                  (compiler-backend-vector-store-dst
-                                    assignments
-                                    dst
-                                    "zmm"
-                                    elem-ty
+          (if (= (string.string-length mnemonic) 0)
+            (ResultCompilerBackend.Err
+              (box
+                (compiler_diagnostic.compiler-diagnostic-with-message
+                  instr-diag
+                  "backend: unsupported AVX-512 vector binary op")))
+            (match (compiler-backend-vector-register-use
+              assignments
+              lhs
+              "lhs"
+              "zmm"
+              elem-ty
+              (compiler-backend-vector-spill-scratch "zmm" 0)
+              backend-state)
+              [(ResultBackendVectorUse.Ok lhs-use)
+                (match lhs-use
+                  [(CompilerBackendVectorUse.Use lhs-asm lhs-reg)
+                    (match (compiler-backend-vector-memory-or-register-use
+                      assignments
+                      rhs
+                      "rhs"
+                      "zmm"
+                      elem-ty
+                      backend-state)
+                      [(ResultBackendVectorUse.Ok rhs-use)
+                        (match rhs-use
+                          [(CompilerBackendVectorUse.Use rhs-asm rhs-op)
+                            (match (compiler-backend-vector-dst-reg
+                              assignments
+                              dst
+                              "binop dst"
+                              "zmm"
+                              (compiler-backend-vector-spill-scratch "zmm" 0)
+                              backend-state)
+                              [(ResultBackendReg.Ok dst-reg)
+                                (ResultCompilerBackend.Ok
+                                  (str_cat.str-cat
+                                    lhs-asm
+                                    rhs-asm
+                                    "    "
+                                    mnemonic
+                                    " "
+                                    rhs-op
+                                    ", "
+                                    lhs-reg
+                                    ", "
                                     dst-reg
-                                    backend-state)))]
-                            [(ResultBackendReg.Err message)
-                              (ResultCompilerBackend.Err
-                                (box
-                                  (compiler_diagnostic.compiler-diagnostic-with-message
-                                    instr-diag
-                                    message)))])])]
-                    [(ResultBackendVectorUse.Err message)
-                      (ResultCompilerBackend.Err
-                        (box
-                          (compiler_diagnostic.compiler-diagnostic-with-message
-                            instr-diag
-                            message)))])])]
-            [(ResultBackendVectorUse.Err message)
-              (ResultCompilerBackend.Err
-                (box
-                  (compiler_diagnostic.compiler-diagnostic-with-message
-                    instr-diag
-                    message)))]))))
+                                    "\n"
+                                    (compiler-backend-vector-store-dst
+                                      assignments
+                                      dst
+                                      "zmm"
+                                      elem-ty
+                                      dst-reg
+                                      backend-state)))]
+                              [(ResultBackendReg.Err message)
+                                (ResultCompilerBackend.Err
+                                  (box
+                                    (compiler_diagnostic.compiler-diagnostic-with-message
+                                      instr-diag
+                                      message)))])])]
+                      [(ResultBackendVectorUse.Err message)
+                        (ResultCompilerBackend.Err
+                          (box
+                            (compiler_diagnostic.compiler-diagnostic-with-message
+                              instr-diag
+                              message)))])])]
+              [(ResultBackendVectorUse.Err message)
+                (ResultCompilerBackend.Err
+                  (box
+                    (compiler_diagnostic.compiler-diagnostic-with-message
+                      instr-diag
+                      message)))])))))
     (compiler-backend-avx512-shape-diagnostic
       type-segment-bases
       instr-diag

@@ -164,9 +164,13 @@ compile and run in `avx2` and `avx512`.
 - `varying_match_enum_helper_reject.tl` - scalar reference for an enum value
   returned by a helper; AVX2/AVX-512 must diagnose this non-contiguous varying
   enum source instead of silently scalarizing. Scalar exits 42.
-- `i8_mul_reject.tl` - scalar `foreach` byte multiplication fixture that
-  compiles and exits 42 in scalar mode; explicit SIMD modes reject it with the
-  documented 8-bit lane multiplication diagnostic.
+- `byte_mul_value_types.tl` - scalar/AVX2/AVX-512 differential coverage for
+  modulo `i8`/`u8` multiplication in direct maps, nested masked `if`/`match`,
+  and varying `while`, across boundary bit patterns, full and partial gangs,
+  multiple gangs, and tails. Exit 42.
+- `byte_mul_reduce_reject.tl` - byte-product sum whose unsupported byte
+  reduction result is rejected with the existing precise `spmd-reduce sum`
+  type diagnostic in every backend mode.
 - `../integration/spmd_foreach.tl` - `foreach` add/sub maps over generated i64,
   u64, i32, u32, i16, u16, i8, u8, f64, and f32 vectors. Kernels borrow each
   vector's backing storage locally; bit-or/bit-xor cover every integer width
@@ -250,8 +254,9 @@ Coverage map:
   `uniform_zip_i64.tl`. Direct sub/bit-or/bit-xor opcode coverage lives in
   `../integration/spmd_foreach.tl`; direct checked shifts and comparisons live
   in `map_shift_value_types.tl`, `byte_shift_value_types.tl`,
-  `word_shift_value_types.tl`, and `map_compare_surface.tl`. The intentionally
-  unsupported byte multiply policy is covered by `i8_mul_reject.tl`.
+  `word_shift_value_types.tl`, and `map_compare_surface.tl`. Packed byte
+  multiplication and its remaining byte-reduction boundary live in
+  `byte_mul_value_types.tl` and `byte_mul_reduce_reject.tl`.
 - Vector/native-Slice public-surface coverage for borrowed backing storage
   lives in `native_slice_surface_i64.tl`.
 - Scalar and AVX2/AVX-512 gather-read coverage for generated Vec backing

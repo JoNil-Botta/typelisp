@@ -4551,11 +4551,13 @@ runtime-sized buffers, reading through `array-ref` and writing through
   modulo wrapping semantics of scalar integer arithmetic.
 - Straight-line contiguous numeric maps vectorize `+` and `-` for every
   numeric lane type; `bit-and`, `bit-or`, and `bit-xor` for every integer lane
-  type; and `*` for every numeric lane type except `i8`/`u8`. Direct `shl` and
-  `shr` maps vectorize every integer lane type, preserving the section 5.4
-  invalid-count trap on active lanes only, including partial tails. Byte
-  multiplication is rejected with an operator/type-specific diagnostic rather
-  than silently scalarizing.
+  type; and `*` for every numeric lane type. AVX2 and AVX-512 implement
+  `i8`/`u8` multiplication by splitting adjacent word lanes into low and high
+  bytes, multiplying with `vpmullw`, and stitching the low byte of each product
+  back together; signed and unsigned lanes therefore preserve the same scalar
+  modulo-2^8 result bits. Direct `shl` and `shr` maps vectorize every integer
+  lane type, preserving the section 5.4 invalid-count trap on active lanes
+  only, including partial tails.
   Numeric `=`, `!=`, `<`, `<=`, `>`, and `>=` maps produce private masks that
   are stored through `bool` array lanes.
 
@@ -7494,11 +7496,11 @@ ordered or non-canonical execution; it is not an unsupported fallback.
 
 | Surface | Scalar | AVX2 | AVX-512 | Coverage / open gap |
 |---------|--------|------|---------|---------------------|
-| Contiguous `foreach` map/zip and native `Slice` map | Supported: reference semantics | Supported: native gangs plus protected tail | Supported: native gangs plus protected tail | SPMD differential and shape gates; `i8`/`u8` multiplication is pending under [#6684](https://github.com/JoNil-Botta/typelisp/issues/6684) |
+| Contiguous `foreach` map/zip and native `Slice` map | Supported: reference semantics | Supported: native gangs plus protected tail | Supported: native gangs plus protected tail | SPMD differential and shape gates, including packed `i8`/`u8` multiplication |
 | Gather-only reads | Supported: reference semantics | Supported: native gather with active-lane checks | Supported: native gather with active-lane checks | Gather integration and benchmark gates |
 | Explicit atomic scatter | Supported: ordered reference | Supported: scalarized atomic lanes | Supported: scalarized atomic lanes | Atomic-scatter fixtures; this is the specified overlap-safe path |
-| Masked varying `if`, `while`, and scalar/enum `match` | Supported: reference semantics | Supported: native masked gangs | Supported: native masked gangs | Masked-control differential and shape gates; masked `i8`/`u8` multiplication is pending under [#6684](https://github.com/JoNil-Botta/typelisp/issues/6684) |
-| `spmd-reduce` | Supported: reference semantics | Supported: native eligible folds; scalar reference for other supported value shapes | Supported: native eligible folds; scalar reference for other supported value shapes | Reduction-matrix and gather-reduce gates |
+| Masked varying `if`, `while`, and scalar/enum `match` | Supported: reference semantics | Supported: native masked gangs | Supported: native masked gangs | Masked-control differential and shape gates, including packed `i8`/`u8` multiplication |
+| `spmd-reduce` | Supported: reference semantics | Supported: native eligible folds; scalar reference for other supported value shapes | Supported: native eligible folds; scalar reference for other supported value shapes | Reduction-matrix and gather-reduce gates; direct byte-product results receive the specified unsupported sum-result type diagnostic |
 | `spmd-scan` | Supported: reference semantics | Supported: native canonical range-wide prefixes; scalar reference for other supported shapes | Supported: native canonical range-wide prefixes; scalar reference for other supported shapes | AVX2 and AVX-512 prefix-shape gates |
 | `spmd-broadcast` | Supported: one-lane reference | Supported: gang-width semantics | Supported: gang-width semantics | `scripts/verify-spmd-broadcast.sh` |
 | `spmd-shuffle` | Supported: one-lane reference | Supported: native numeric permutations | Supported: native numeric permutations | Shuffle differential, trap, and shape gates |

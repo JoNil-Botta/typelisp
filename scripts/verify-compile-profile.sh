@@ -500,6 +500,10 @@ profile_live_counter_in() {
 # segments; the authoritative Windows CI probe measured 2,426,832 used nodes,
 # 2,490,368 capacity, and 79,691,776 physical payload bytes.
 #
+# #6827's packets also crossed lower.ast_type_pool.typecheck from 9 to 10
+# segments; the authoritative Windows CI-equivalent probe measured 9,229 used
+# nodes, 10,240 capacity, and 245,760 physical payload bytes.
+#
 # Assert one selfhost pool boundary from its segment count alone.
 #
 # Since #5541 the AST pools are reclaimable segmented storage with fixed-size
@@ -1534,10 +1538,13 @@ if [ "$NL_HOST_OS" = windows ]; then
         1 \
         "$SELFHOST_STDOUT" \
         "$SELFHOST_STDERR"
+    # #6827's range-merge, branch-threading and carrier-dataflow packets
+    # (~2,900 compiler-source lines) carried this to 25,131 KiB on the Windows
+    # CI probe; ceiling raised one step with the usual headroom.
     assert_profile_counter_at_most_in \
         "$SELFHOST_STDERR" \
         "typecheck.macro.walk_sp_reresolve_alloc_kb" \
-        25000 \
+        26000 \
         "$SELFHOST_STDOUT" \
         "$SELFHOST_STDERR"
     # One constant per boundary: the segment count. capacity and segment_bytes
@@ -1678,7 +1685,7 @@ if [ "$NL_HOST_OS" = windows ]; then
     # Same series, same probe: 8,527 used nodes against 9,216 capacity, 689
     # nodes of headroom below the 10-segment line.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_type_pool typecheck 9 1024 24 \
+        "$SELFHOST_STDERR" ast_type_pool typecheck 10 1024 24 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # Each ownership boundary must expose used nodes, logical capacity, and
     # physical segmentation for both pools. Values vary with the source graph;

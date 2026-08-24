@@ -2007,10 +2007,13 @@ EOF
     # the lea-of-two-arg-registers form is kept as the alternative so a
     # compiler that legitimately keeps calc out of line still passes. opt0's
     # stack multiply below stays refused either way.
-    SELFHOST_OPT2_REGALLOC_A='    movl $45, %eax'
     if [ "$HOST_OS" = windows ]; then
+        # Windows package emission is byte-encoded (no host assembler), so the
+        # folded constant appears as the movq $45,%rax encoding.
+        SELFHOST_OPT2_REGALLOC_A='0x48,0xc7,0xc0,0x2d,0x00,0x00,0x00'
         SELFHOST_OPT2_REGALLOC_B='    leaq (%rcx,%rdx), %rax'
     else
+        SELFHOST_OPT2_REGALLOC_A='    movl $45, %eax'
         SELFHOST_OPT2_REGALLOC_B='    leaq (%rdi,%rsi), %rax'
     fi
     SELFHOST_OPT0_STACK_MUL="    imulq %r8, %rax"
@@ -3573,7 +3576,8 @@ else
     assert_contains_any "$WALK_ASM" \
         "_tl_walk_pkg_src_math_inc" \
         "_tl_walk_pkg_src_math_math_inc" \
-        '    movl $42, %eax'
+        '    movl $42, %eax' \
+        '0x48,0xc7,0xc0,0x2a,0x00,0x00,0x00'
 fi
 
 MISSING_DEP="$WORKDIR/missing_dep"

@@ -2271,8 +2271,29 @@
 ;; the "any frame reference at all" fact its own readers were written for.
 (define compiler-backend-function-bool-nonsave-frame-slot-referenced : i64
   15)
-(define compiler-backend-function-bool-count : i64
+
+;; True when the function's FINAL emitted text contains a call that RETURNS to
+;; it. Only such a call imposes the x86-64 `%rsp % 16 == 0 at the call` duty on
+;; this frame, so only such a call can justify the prologue's 8-byte alignment
+;; pad. Three shapes are deliberately NOT returning calls:
+;;   * a tail `jmp` -- the epilogue has already restored the entry %rsp, so the
+;;     tail target re-enters with the caller's own alignment, unchanged;
+;;   * `call tl_oob_abort` / `tl_oob_abort_at` / `tl_div_abort*` /
+;;     `tl_shift_abort*` / `tl_panic_at` / `tl_oom_abort` / `tl_region_abort` --
+;;     compiler-emitted `never` runtime handlers that print through raw
+;;     syscalls and exit. TypeLisp codegen never spills through a 16-byte-
+;;     aligned SSE move (every vector store it emits is `vmovdqu*`/`vmovup*`)
+;;     and the runtime links no libc, so the abort chain has no alignment duty
+;;     to inherit;
+;;   * a bare `syscall` -- the kernel imposes no stack alignment.
+;; Any other `call`/`callq`, direct or indirect, including every C-ABI call,
+;; keeps the pad. The fact is derived from the emitted text rather than from the
+;; IR so that runtime helper calls planted by non-Call instructions (allocation,
+;; string concat, memory helpers, thread init, `__chkstk`) cannot be missed.
+(define compiler-backend-function-bool-call-align-needed : i64
   16)
+(define compiler-backend-function-bool-count : i64
+  17)
 (define compiler-backend-function-string-shrinkwrap-bare-label : i64
   0)
 (define compiler-backend-function-string-abort-site-path : i64
@@ -64845,6 +64866,21 @@
 ;; The prologue subq constant S under n pushes: frame + pad where pad keeps
 ;; the total displacement (8n + S) % 16 == 8 (frame is a 16-multiple), i.e.
 ;; the same call alignment as the no-push `subq $(frame+8)`.
+;;
+;; The pad is bought for ONE purpose: a call in this body must see
+;; %rsp % 16 == 0. A function that makes no RETURNING call
+;; (compiler-backend-function-bool-call-align-needed, set from the final text
+;; just before the rebase) has nothing to align for, so the pad is dead weight
+;; and the whole stack adjustment disappears with it.
+;;
+;; Dropping it is gated on `frame == 0`, and that guard is load-bearing, not
+;; conservatism: every frame reference is rebased off `%rsp` with a bias derived
+;; from this same S. With frame > 0 the negative (local slot) bias is `S - 8n`
+;; in push mode and `S - 8` without pushes, so shortening S by 8 would move
+;; every slot. With frame == 0 there is no negative reference left to move --
+;; the slot region is dead (or, in push mode, holds only callee-save slots the
+;; rebase deletes) -- and the positive (incoming stack argument) bias
+;; `S + 8n - 8` is computed from S and therefore follows it exactly.
 (define (compiler-backend-rsp-rebase-push-sub
   [backend-state : CompilerBackendState]
   [frame : i64]
@@ -64857,7 +64893,14 @@
     0
     (+
       frame
-      (if (= (bit-and push-count 1) 1)
+      (if (or
+        (= (bit-and push-count 1) 1)
+        (and
+          (= frame 0)
+          (not
+            (compiler-backend-function-state-bool?
+              (compiler-backend-state-function-state backend-state)
+              compiler-backend-function-bool-call-align-needed))))
         0
         8))))
 
@@ -65062,6 +65105,26 @@
             (compiler-backend-blocks-have-call? (__tl-box-place rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (compiler-backend-blocks-have-call?
+        (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
+
+;; The same census restricted to calls that RETURN here: a function whose only
+;; call-shaped instructions are tail transfers needs no slot region for them.
+;; The tail target inherits our caller's %rsp (the epilogue restores it before
+;; the `jmp`), and whatever stack argument space the tail call itself wants is
+;; sized separately by compiler-backend-outgoing-frame-space.
+(define (compiler-backend-blocks-have-returning-call?
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : bool
+  (match blocks
+    [(compiler_ir_types.CompilerIrBlockList.Nil) false]
+    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (if (compiler_regalloc.compiler-reg-seq-has-returning-call-or-syscall?
+            instrs)
+            true
+            (compiler-backend-blocks-have-returning-call? (__tl-box-place rest)))])]
+    [(compiler_ir_types.CompilerIrBlockList.Array seq)
+      (compiler-backend-blocks-have-returning-call?
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
 
 (define (compiler-backend-rsp-rebase-full
@@ -65306,13 +65369,13 @@
                                                 "")
                                               nl))))
                                       (let
-                                        [amount : i64
-                                          (if (compiler-backend-function-state-bool?
-                                            (compiler-backend-state-function-state
-                                              backend-state)
-                                            compiler-backend-function-bool-fpo-bare-frame)
-                                            delta
-                                            (+ (+ frame 8) delta))]
+                                        ;; `sub-s` IS the emitted no-push
+                                        ;; prologue adjustment -- `frame + 8`
+                                        ;; ordinarily, 0 for a bare frame and 0
+                                        ;; again when the pad was dropped for
+                                        ;; want of a returning call -- so the
+                                        ;; epilogue folds it back verbatim.
+                                        [amount : i64 (+ sub-s delta)]
                                         (if (< amount 0)
                                           (set! ok false)
                                           (if (= amount 0)
@@ -66004,10 +66067,10 @@
       (if pm
         sub-s
         frame)]
-    [disp : i64
-      (if pm
-        (+ (* push-count 8) sub-s)
-        (+ frame 8))]
+    ;; `sub-s` is the adjustment the prologue really emitted in both modes (0
+    ;; for a bare frame or a dropped alignment pad), so the sweep's entry delta
+    ;; tracks the text rather than assuming the pad is always there.
+    [disp : i64 (+ (* push-count 8) sub-s)]
     ;; Emergency scavenge slots live at rbp offset em-slot-offset - 64*i for
     ;; i in [0, em-used-count); canonical = bias_neg + (negative rbp offset).
     ;; They are read only by their own restores (visible in the text), EXCEPT
@@ -69229,12 +69292,18 @@
                                       ;; sub/add for a frame they never touch.
                                       ;; Outgoing stack args are %rsp-relative
                                       ;; and stay accounted separately below.
+                                      ;; The call term asks about RETURNING calls
+                                      ;; only: a tail transfer leaves through the
+                                      ;; epilogue with the entry %rsp restored,
+                                      ;; so it can no more use a slot region than
+                                      ;; a leaf can. Its own stack argument space
+                                      ;; is in outgoing-frame-space above.
                                       (if (or
                                         (compiler-backend-function-state-bool?
                                           function-state
                                           compiler-backend-function-bool-frame-slot-referenced)
                                         (> outgoing-frame-space 0)
-                                        (compiler-backend-blocks-have-call?
+                                        (compiler-backend-blocks-have-returning-call?
                                           emit-blocks-list))
                                         (compiler-backend-frame-slots-with-groups
                                           slot-vars
@@ -69338,6 +69407,20 @@
                                 slot-vars
                                 emit-blocks-list)
                               "")]
+                          ;; The alignment duty is a property of the FINAL text,
+                          ;; not of the IR: the prologue splice above adds the
+                          ;; callee-save saves, the argv capture and (for `main`)
+                          ;; the global initializers, and the body itself plants
+                          ;; runtime helper calls no `Call` instruction names.
+                          ;; Scanning `post-prologue` sees every one of them, and
+                          ;; it is available here because the body is emitted
+                          ;; before the prologue string is built.
+                          [_call-align : unit
+                            (compiler-backend-function-state-set-bool!
+                              function-state
+                              compiler-backend-function-bool-call-align-needed
+                              (compiler-backend-text-has-returning-call?
+                                post-prologue))]
                           ;; M-G3 stage 2: attempt frame-pointer omission on both
                           ;; text backends. Win64's FPO prologue emits explicit
                           ;; push/stack/XMM SEH unwind codes and the audit rejects
@@ -69396,7 +69479,7 @@
                                     function-state
                                     compiler-backend-function-bool-frame-slot-referenced))
                                 (not
-                                  (compiler-backend-blocks-have-call?
+                                  (compiler-backend-blocks-have-returning-call?
                                     emit-blocks-list))))]
                           ;; GAP1 corollary: in PUSH mode the callee-save slot
                           ;; region is never written -- the rebase deletes the
@@ -78734,6 +78817,43 @@
               e
               "call tl_region_abort")
             (compiler-backend-peephole-range-eq? data i e "call tl_oom_abort")))))))
+
+;; True iff `text` holds at least one `call`/`callq` line that RETURNS to this
+;; function -- i.e. a call line that is not one of the `never` abort handlers
+;; classified by compiler-backend-peephole-line-noreturn-abort?. Tail transfers
+;; are `jmp`, not `call`, so they are invisible here by construction, and a bare
+;; `syscall` is not a call mnemonic. This is the fact
+;; compiler-backend-function-bool-call-align-needed records; its comment carries
+;; the alignment argument.
+(define (compiler-backend-text-has-returning-call? [text : String]) : bool
+  (let
+    [n : i64 (string.string-length text)]
+    [data : (Ptr u8)
+      (unsafe
+        (string-data text))]
+    [i : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (not found) (< i n))
+        (let
+          [end : i64 (compiler-backend-peephole-scan-byte-range data i n 10)]
+          [m : i64 i]
+          (begin
+            (while (and
+              (< m end)
+              (= (compiler-backend-peephole-byte-at data m) 32))
+              (set! m (+ m 1)))
+            (if (and
+              (< m end)
+              (compiler-backend-peephole-mnemonic-call?
+                data
+                m
+                (- (compiler-backend-peephole-scan-byte-range data m end 32) m))
+              (not (compiler-backend-peephole-line-noreturn-abort? data i end)))
+              (set! found true)
+              unit)
+            (set! i (+ end 1)))))
+      found)))
 
 ;; True iff the byte range [start,end) of `data` contains `needle` as a substring.
 (define (compiler-backend-peephole-range-contains-substr?

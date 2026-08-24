@@ -15,6 +15,7 @@ shift_count_trap|run-trap|tests/safety/shift_count_trap.tl|129|shift count out o
 
 # Array/string/generated collection bounds trap rather than reading invalid memory.
 array_bounds_trap|run-trap|tests/safety/array_bounds_trap.tl|134|array index out of bounds: index=1 length=1
+dead_frame_abort_only_trap|run-trap|tests/safety/dead_frame_abort_only_trap.tl|134|array index out of bounds: index=7 length=4
 array_set_bounds_trap|run-trap|tests/safety/array_set_bounds_trap.tl|134|array index out of bounds: index=1 length=1
 fixed_array_take_bounds_trap|run-trap|tests/safety/fixed_array_take_bounds_trap.tl|134|array index out of bounds: index=1 length=1
 fixed_array_take_negative_bounds_trap|run-trap|tests/safety/fixed_array_take_negative_bounds_trap.tl|134|array index out of bounds: index=-1 length=1

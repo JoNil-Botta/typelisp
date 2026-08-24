@@ -2390,7 +2390,7 @@
                   (- compiler-comptime-host-stack-len 1))
                 (compiler-comptime-host-push!
                   (ctfe_support.CompilerCtfeValue.Expr
-                    (ast.ast-expr-spanned-with-pools pools node span)
+                    (ast.ast-expr-source-view-with-pools pools node span)
                     ty)))))]
         [(ctfe_support.CompilerCtfeValue.CapturedExpr node ty pools)
           (if (and unquoted? (compiler-comptime-host-node-spanned? pools node))
@@ -2401,7 +2401,7 @@
                 (- compiler-comptime-host-stack-len 1))
               (compiler-comptime-host-push!
                 (ctfe_support.CompilerCtfeValue.CapturedExpr
-                  (ast.ast-expr-spanned-with-pools pools node span)
+                  (ast.ast-expr-source-view-with-pools pools node span)
                   ty
                   pools))))]
         [_ tlci.tlci-host-callback-status-ok]))))

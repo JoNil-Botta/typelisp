@@ -13674,6 +13674,39 @@
           (set! index (+ index 1))))
       found)))
 
+;; The same census restricted to calls that RETURN to this function. A
+;; `TailCall`/`TailCallIndirect` transfers with the entry %rsp already restored
+;; by the epilogue, so it needs neither an outgoing area of its own (the
+;; separate outgoing-frame-space query sizes what it does need) nor a frame slot
+;; region nor any alignment duty -- the tail target simply inherits our caller's
+;; alignment. `Syscall` stays counted: it clobbers caller-saved registers like a
+;; call and costs nothing to keep conservative here.
+;; The clobber-freeness question above must keep using the FULL predicate: a
+;; tail call clobbers the caller-saved set exactly like an ordinary one.
+(define (compiler-reg-seq-has-returning-call-or-syscall?
+  [instrs : ir.CompilerIrInstrSeq]) : bool
+  (let
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [count : i64 instrs.len]
+    [index : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (< index count) (not found))
+        (begin
+          (set!
+            found
+            (match (array-ref slots index)
+              [(ir.CompilerIrInstr.Call _ _ _ _) true]
+              [(ir.CompilerIrInstr.CallIndirect _ _ _ _) true]
+              [(ir.CompilerIrInstr.CallIndirectC _ _ _ _) true]
+              [(ir.CompilerIrInstr.CallCAbiStoreResult _) true]
+              [(ir.CompilerIrInstr.CallIndirectCAbiStoreResult _) true]
+              [(ir.CompilerIrInstr.SpmdCall _) true]
+              [(ir.CompilerIrInstr.Syscall _ _) true]
+              [_ false]))
+          (set! index (+ index 1))))
+      found)))
+
 (define (compiler-reg-loop-split-region-crosses-kind-seq?
   [type-segment-bases : i64]
   [instrs : ir.CompilerIrInstrSeq]

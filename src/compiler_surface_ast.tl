@@ -557,6 +557,9 @@
     compiler-surface-selftest
     compiler-build-identity
     embedded-stdlib-tlci)
+  ;; Surface AST names retain their existing i64 wire representation. Convert at
+  ;; the codec edge so decoded linker/interface names are checked as renderable
+  ;; before entering the nominal AST fields.
   (define (surface-ast-write-fn-metadata!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : (&mut context codec.SurfaceAstWriteContext)]
@@ -566,7 +569,7 @@
       [(ast.AstFnMetadata.Export name)
         (begin
           (codec.surface-ast-write-i64! out 1)
-          (codec.surface-ast-write-name! out context name))]
+          (codec.surface-ast-write-name! out context (ci.intern-id-value name)))]
       [(ast.AstFnMetadata.SpmdCallable items)
         (begin
           (codec.surface-ast-write-i64! out 2)
@@ -581,7 +584,8 @@
     (cond
       [(= tag 0) ast.AstFnMetadata.No]
       [(= tag 1)
-        (ast.AstFnMetadata.Export (codec.surface-ast-read-name! reader))]
+        (ast.AstFnMetadata.Export
+          (ci.intern-id-from-renderable (codec.surface-ast-read-name! reader)))]
       [(= tag 2)
         (ast.AstFnMetadata.SpmdCallable
           (box (surface-ast-read-spmd-specialization-list! reader)))]
@@ -612,13 +616,28 @@
             [item : ast.AstImportedSpmdSpecialization
               (ast.ast-array-shared-view items.slots index)]
             (begin
-              (codec.surface-ast-write-name! out context item.abi)
-              (codec.surface-ast-write-name! out context item.backend)
+              (codec.surface-ast-write-name!
+                out
+                context
+                (ci.intern-id-value item.abi))
+              (codec.surface-ast-write-name!
+                out
+                context
+                (ci.intern-id-value item.backend))
               (codec.surface-ast-write-i64! out item.lanes)
-              (codec.surface-ast-write-name! out context item.args)
-              (codec.surface-ast-write-name! out context item.result)
+              (codec.surface-ast-write-name!
+                out
+                context
+                (ci.intern-id-value item.args))
+              (codec.surface-ast-write-name!
+                out
+                context
+                (ci.intern-id-value item.result))
               (codec.surface-ast-write-i64! out item.index-param)
-              (codec.surface-ast-write-name! out context item.symbol)
+              (codec.surface-ast-write-name!
+                out
+                context
+                (ci.intern-id-value item.symbol))
               (set! index (+ index 1)))))
         unit))))
 
@@ -635,13 +654,18 @@
           (set!
             (array-ref slots index)
             (ast.AstImportedSpmdSpecialization
-              (codec.surface-ast-read-name! reader)
-              (codec.surface-ast-read-name! reader)
+              (ci.intern-id-from-renderable
+                (codec.surface-ast-read-name! reader))
+              (ci.intern-id-from-renderable
+                (codec.surface-ast-read-name! reader))
               (codec.surface-ast-read-i64! reader)
-              (codec.surface-ast-read-name! reader)
-              (codec.surface-ast-read-name! reader)
+              (ci.intern-id-from-renderable
+                (codec.surface-ast-read-name! reader))
+              (ci.intern-id-from-renderable
+                (codec.surface-ast-read-name! reader))
               (codec.surface-ast-read-i64! reader)
-              (codec.surface-ast-read-name! reader)))
+              (ci.intern-id-from-renderable
+                (codec.surface-ast-read-name! reader))))
           (set! index (+ index 1))))
       (ast.AstImportedSpmdSpecializationList slots count))))
 
@@ -665,7 +689,10 @@
             [item : ast.AstImportedSpmdCallable
               (ast.ast-array-shared-view items.slots index)]
             (begin
-              (codec.surface-ast-write-name! out context item.signature)
+              (codec.surface-ast-write-name!
+                out
+                context
+                (ci.intern-id-value item.signature))
               (surface-ast-write-imported-spmd-specialization-list!
                 out
                 context
@@ -686,7 +713,8 @@
           (set!
             (array-ref slots index)
             (ast.AstImportedSpmdCallable
-              (codec.surface-ast-read-name! reader)
+              (ci.intern-id-from-renderable
+                (codec.surface-ast-read-name! reader))
               (surface-ast-read-imported-spmd-specialization-list! reader)))
           (set! index (+ index 1))))
       (ast.AstImportedSpmdCallableList slots count))))
@@ -706,7 +734,7 @@
       [(ast.AstImportedSpmdMetadata.Package name callables)
         (begin
           (codec.surface-ast-write-i64! out 1)
-          (codec.surface-ast-write-name! out context name)
+          (codec.surface-ast-write-name! out context (ci.intern-id-value name))
           (surface-ast-write-imported-spmd-callable-list!
             out
             context
@@ -720,7 +748,7 @@
       [(= tag 0) ast.AstImportedSpmdMetadata.No]
       [(= tag 1)
         (ast.AstImportedSpmdMetadata.Package
-          (codec.surface-ast-read-name! reader)
+          (ci.intern-id-from-renderable (codec.surface-ast-read-name! reader))
           (box (surface-ast-read-imported-spmd-callable-list! reader)))]
       [else
         (begin
@@ -743,7 +771,10 @@
       [(ast.AstExternMetadata.Metadata abi symbol links flags imported)
         (begin
           (surface-ast-write-extern-abi! out context abi)
-          (codec.surface-ast-write-name! out context symbol)
+          (codec.surface-ast-write-name!
+            out
+            context
+            (ci.intern-id-value symbol))
           (surface-ast-write-extern-link-list! out links)
           (codec.surface-ast-write-i64! out flags)
           (surface-ast-write-imported-spmd-metadata! out context imported))])))
@@ -752,7 +783,7 @@
   [reader : (& reader codec.SurfaceAstReader)]) : ast.AstExternMetadata
   (ast.AstExternMetadata.Metadata
     (surface-ast-read-extern-abi! reader)
-    (codec.surface-ast-read-name! reader)
+    (ci.intern-id-from-renderable (codec.surface-ast-read-name! reader))
     (surface-ast-read-extern-link-list! reader)
     (codec.surface-ast-read-i64! reader)
     (surface-ast-read-imported-spmd-metadata! reader)))

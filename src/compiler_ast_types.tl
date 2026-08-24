@@ -9,6 +9,7 @@
 (import compiler_intern as ci)
 (import compiler_builtin_ids as cbi)
 (import stdlib.array)
+(cfg test (import stdlib.io))
 
 ;; Arena access for the node-pool grow paths -- a regrown pool array must
 ;; be allocated in the persistent program arena, never a transient scratch arena
@@ -563,9 +564,12 @@
   (slots (__tl_dyn-array AstExternLinkInput))
   (len i64))
 
+;; Linker-facing spellings are always ordinary renderable intern names. Syntax
+;; identities must be reduced explicitly, so structural keys and missing raw
+;; sentinels cannot reach render or surface-serialization paths.
 (defenum AstFnExport
   (No)
-  (Export i64))
+  (Export ci.InternId))
 
 (defenum AstSpmdParamClass
   (Uniform)
@@ -599,22 +603,24 @@
 ;; Package imports remain ordinary scalar externs outside SPMD regions.  The
 ;; loader copies just the TLCI selection fields into this AST-owned form so the
 ;; metadata has the same compile-job lifetime as the synthetic extern and the
-;; lowerer does not depend on loader/TLCI global state.
+;; lowerer does not depend on loader/TLCI global state. Every copied text field
+;; is renderable linker/interface metadata, so keep it in the same nominal lane
+;; as export symbols instead of reopening raw i64 identity boundaries.
 (defstruct AstImportedSpmdSpecialization
-  (abi i64)
-  (backend i64)
+  (abi ci.InternId)
+  (backend ci.InternId)
   (lanes i64)
-  (args i64)
-  (result i64)
+  (args ci.InternId)
+  (result ci.InternId)
   (index-param i64)
-  (symbol i64))
+  (symbol ci.InternId))
 
 (defstruct AstImportedSpmdSpecializationList
   (slots (__tl_dyn-array AstImportedSpmdSpecialization))
   (len i64))
 
 (defstruct AstImportedSpmdCallable
-  (signature i64)
+  (signature ci.InternId)
   (specializations AstImportedSpmdSpecializationList))
 
 (defstruct AstImportedSpmdCallableList
@@ -625,14 +631,14 @@
   (No)
   ;; Canonical helper name plus every TLCI callable record having that name.
   ;; An empty list marks a package-owned extern for which no record exists.
-  (Package i64 (Box AstImportedSpmdCallableList)))
+  (Package ci.InternId (Box AstImportedSpmdCallableList)))
 
 ;; Export and callable metadata are mutually exclusive. Keep the common `No`
 ;; and export cases inline at the old `AstFnExport` footprint, while boxing the
 ;; rare specialization list so every ordinary function remains allocation-free.
 (defenum AstFnMetadata
   (No)
-  (Export i64)
+  (Export ci.InternId)
   (SpmdCallable (Box AstSpmdSpecializationList)))
 
 (defenum AstExternMetadata
@@ -641,7 +647,12 @@
   ;; established at the parser/loader boundary so lowering never has to render
   ;; two ids and compare their bytes to recover that identity fact. Packing the
   ;; bits preserves the compact boxed metadata layout.
-  (Metadata AstExternAbi i64 AstExternLinkInputList i64 AstImportedSpmdMetadata))
+  (Metadata
+    AstExternAbi
+    ci.InternId
+    AstExternLinkInputList
+    i64
+    AstImportedSpmdMetadata))
 
 (define (ast-extern-metadata-flags
   [explicit-abi : bool]
@@ -5818,7 +5829,7 @@
         (set! (array-ref v.slots index) value)
         (set! v.len (+ index 1))))))
 
-(define (ast-fn-export-id [name : i64]) : AstFnExport
+(define (ast-fn-export-id [name : ci.InternId]) : AstFnExport
   (AstFnExport.Export name))
 
 (define (ast-spmd-param-class-list-with-capacity [capacity : i64]) : AstSpmdParamClassList
@@ -6004,8 +6015,20 @@
           (set! index (+ index 1))))
       out)))
 
+(define (ast-renderable-name-id-fallback) : ci.InternId
+  (ci.intern-id-from-renderable 0))
+
 (define (ast-imported-spmd-specialization-fallback) : AstImportedSpmdSpecialization
-  (AstImportedSpmdSpecialization 0 0 0 0 0 -1 0))
+  (let
+    [fallback : ci.InternId (ast-renderable-name-id-fallback)]
+    (AstImportedSpmdSpecialization
+      fallback
+      fallback
+      0
+      fallback
+      fallback
+      -1
+      fallback)))
 
 (define (ast-imported-spmd-specialization-list-with-capacity [capacity : i64]) : AstImportedSpmdSpecializationList
   (AstImportedSpmdSpecializationList
@@ -6079,7 +6102,9 @@
         (set! items.len (+ index 1))))))
 
 (define (ast-imported-spmd-callable-fallback) : AstImportedSpmdCallable
-  (AstImportedSpmdCallable 0 (ast-imported-spmd-specialization-list-new)))
+  (AstImportedSpmdCallable
+    (ast-renderable-name-id-fallback)
+    (ast-imported-spmd-specialization-list-new)))
 
 (define (ast-imported-spmd-callable-list-with-capacity [capacity : i64]) : AstImportedSpmdCallableList
   (AstImportedSpmdCallableList
@@ -11453,9 +11478,10 @@
 
 (define (ast-extern-metadata-symbol [metadata : AstExternMetadata]) : String
   (match metadata
-    [(AstExternMetadata.Metadata _ symbol-id _ _ _) (ci.intern-str symbol-id)]))
+    [(AstExternMetadata.Metadata _ symbol-id _ _ _)
+      (ci.intern-id-str symbol-id)]))
 
-(define (ast-extern-metadata-symbol-id [metadata : AstExternMetadata]) : i64
+(define (ast-extern-metadata-symbol-id [metadata : AstExternMetadata]) : ci.InternId
   (match metadata
     [(AstExternMetadata.Metadata _ symbol-id _ _ _) symbol-id]))
 
@@ -11836,6 +11862,13 @@
 
 (define (compiler-ast-imported-spmd-metadata-clone-smoke?) : bool
   (let
+    [abi : ci.InternId (ci.intern-id-from-renderable 1)]
+    [backend : ci.InternId (ci.intern-id-from-renderable 2)]
+    [args : ci.InternId (ci.intern-id-from-renderable 3)]
+    [result : ci.InternId (ci.intern-id-from-renderable 4)]
+    [symbol : ci.InternId (ci.intern-id-from-renderable 5)]
+    [signature : ci.InternId (ci.intern-id-from-renderable 6)]
+    [name-id : ci.InternId (ci.intern-id-from-renderable 7)]
     [specializations : AstImportedSpmdSpecializationList
       (ast-imported-spmd-specialization-list-new)]
     [callables : AstImportedSpmdCallableList
@@ -11843,12 +11876,12 @@
     (begin
       (ast-imported-spmd-specialization-list-push
         (&mut specializations)
-        (AstImportedSpmdSpecialization 1 2 8 3 4 0 5))
+        (AstImportedSpmdSpecialization abi backend 8 args result 0 symbol))
       (ast-imported-spmd-callable-list-push
         (&mut callables)
-        (AstImportedSpmdCallable 6 specializations))
+        (AstImportedSpmdCallable signature specializations))
       (match (ast-imported-spmd-metadata-clone
-        (AstImportedSpmdMetadata.Package 7 (box callables)))
+        (AstImportedSpmdMetadata.Package name-id (box callables)))
         [(AstImportedSpmdMetadata.Package name copied-callables)
           (let
             [copied : AstImportedSpmdCallableList
@@ -11866,15 +11899,15 @@
                 0
                 (ast-imported-spmd-specialization-fallback))]
             (and
-              (= name 7)
+              (ci.intern-id-eq? name name-id)
               (= (ast-imported-spmd-callable-list-len (& copied)) 1)
-              (= callable.signature 6)
+              (ci.intern-id-eq? callable.signature signature)
               (=
                 (ast-imported-spmd-specialization-list-len
                   (& copied-specializations))
                 1)
               (= item.lanes 8)
-              (= item.symbol 5)))]
+              (ci.intern-id-eq? item.symbol symbol)))]
         [(AstImportedSpmdMetadata.No) false]))))
 
 ;; Pin `ast-expr-node-bytes` / `ast-type-node-bytes` to the compiler's REAL
@@ -12011,3 +12044,23 @@
             (ast-type-tag fn-ty)
             (+ (ast-expr-tag (ast-node-get expr)) (ast-decl-tag decl)))
           0)])))
+
+(cfg
+  test
+  (test
+    compiler-ast-renderable-name-layout
+    (unless
+      (and
+        (= (ci.intern-id-size) 4)
+        (= (comptime (size-of (type AstImportedSpmdSpecialization))) 40)
+        (= (comptime (size-of (type AstImportedSpmdCallable))) 24))
+      (io.panic
+        (str_cat.str-cat
+          "compiler AST renderable-name layout changed: InternId="
+          (string.int->string (ci.intern-id-size))
+          " specialization="
+          (string.int->string
+            (comptime (size-of (type AstImportedSpmdSpecialization))))
+          " callable="
+          (string.int->string
+            (comptime (size-of (type AstImportedSpmdCallable)))))))))

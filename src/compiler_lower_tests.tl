@@ -28,6 +28,9 @@
 (define (lower-test-generated-name-id [value : String]) : i64
   (ci.intern-generated-canonical-name value))
 
+(define (lower-test-renderable-name-id [value : String]) : ci.InternId
+  (ci.intern-id-from-renderable (ci.intern-generated-canonical-name value)))
+
 (define (lower-name-env-resolve-with-id
   [names : compiler_lower.LowerNameEnv]
   [source-name : String]
@@ -12903,7 +12906,8 @@
 
 (define (compiler-lower-imported-spmd-selection-smoke-ok?) : bool
   (let
-    [canonical-name : i64 (ci.intern-generated-canonical-name "fixture/helper")]
+    [canonical-name : ci.InternId
+      (lower-test-renderable-name-id "fixture/helper")]
     [signature : String "(-> i64 i64)"]
     [specializations : compiler_ast_types.AstImportedSpmdSpecializationList
       (compiler_ast_types.ast-imported-spmd-specialization-list-new)]
@@ -12930,45 +12934,45 @@
       (compiler_ast_types.ast-imported-spmd-specialization-list-push
         (&mut specializations)
         (compiler_ast_types.AstImportedSpmdSpecialization
-          (ci.intern-generated-canonical-name "spmd-call-v1")
-          (ci.intern-generated-canonical-name "scalar")
+          (lower-test-renderable-name-id "spmd-call-v1")
+          (lower-test-renderable-name-id "scalar")
           1
-          (ci.intern-generated-canonical-name "v")
-          (ci.intern-generated-canonical-name "v")
+          (lower-test-renderable-name-id "v")
+          (lower-test-renderable-name-id "v")
           0
-          (ci.intern-generated-canonical-name "_tl___fixture_helper_scalar")))
+          (lower-test-renderable-name-id "_tl___fixture_helper_scalar")))
       (compiler_ast_types.ast-imported-spmd-callable-list-push
         (&mut callables)
         (compiler_ast_types.AstImportedSpmdCallable
-          (ci.intern-generated-canonical-name
+          (lower-test-renderable-name-id
             (owned_view.compiler-owned-shared-view signature))
           (owned_view.compiler-owned-shared-view specializations)))
       (compiler_ast_types.ast-imported-spmd-callable-list-push
         (&mut duplicate-callables)
         (compiler_ast_types.AstImportedSpmdCallable
-          (ci.intern-generated-canonical-name
+          (lower-test-renderable-name-id
             (owned_view.compiler-owned-shared-view signature))
           (owned_view.compiler-owned-shared-view specializations)))
       (compiler_ast_types.ast-imported-spmd-callable-list-push
         (&mut duplicate-callables)
         (compiler_ast_types.AstImportedSpmdCallable
-          (ci.intern-generated-canonical-name
+          (lower-test-renderable-name-id
             (owned_view.compiler-owned-shared-view signature))
-          specializations))
+          (owned_view.compiler-owned-shared-view specializations)))
       (compiler_ast_types.ast-imported-spmd-specialization-list-push
         (&mut unsupported-specializations)
         (compiler_ast_types.AstImportedSpmdSpecialization
-          (ci.intern-generated-canonical-name "spmd-call-v2")
-          (ci.intern-generated-canonical-name "scalar")
+          (lower-test-renderable-name-id "spmd-call-v2")
+          (lower-test-renderable-name-id "scalar")
           1
-          (ci.intern-generated-canonical-name "v")
-          (ci.intern-generated-canonical-name "v")
+          (lower-test-renderable-name-id "v")
+          (lower-test-renderable-name-id "v")
           0
-          (ci.intern-generated-canonical-name "__fixture_helper_v2")))
+          (lower-test-renderable-name-id "__fixture_helper_v2")))
       (compiler_ast_types.ast-imported-spmd-callable-list-push
         (&mut unsupported-callables)
         (compiler_ast_types.AstImportedSpmdCallable
-          (ci.intern-generated-canonical-name
+          (lower-test-renderable-name-id
             (owned_view.compiler-owned-shared-view signature))
           unsupported-specializations))
       (and
@@ -12985,7 +12989,7 @@
           [(compiler_lower.ResultLowerImportedSpmdSpecialization.Ok selected)
             (and
               (string.eq
-                (ci.intern-str selected.symbol)
+                (ci.intern-id-str selected.symbol)
                 "_tl___fixture_helper_scalar")
               (string.eq
                 (ci.intern-str

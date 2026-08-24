@@ -887,7 +887,7 @@
           (and
             (ast.ast-extern-metadata-flags-explicit-abi? flags)
             (not (ast.ast-extern-metadata-flags-symbol-matches-source? flags))
-            (string.eq (ci.intern-str symbol) "native_symbol")
+            (string.eq (ci.intern-id-str symbol) "native_symbol")
             (match (ast.ast-extern-link-input-list-get
               (& links)
               0
@@ -1023,7 +1023,8 @@
                   (ast.AstExternKind.Function)
                   (ast.AstExternMetadata.Metadata
                     (ast.AstExternAbi.C)
-                    (ci.intern-generated-name "native_symbol")
+                    (ci.intern-id-from-renderable
+                      (ci.intern-generated-name "native_symbol"))
                     links
                     (ast.ast-extern-metadata-flags true false)
                     ast.AstImportedSpmdMetadata.No)

@@ -1055,7 +1055,7 @@
     (ast.AstExternKind.Function)
     (ast.AstExternMetadata.Metadata
       (ast.AstExternAbi.C)
-      (ci.intern-generated-name "GetStdHandle")
+      (ci.intern-id-from-renderable (ci.intern-generated-name "GetStdHandle"))
       (ast.ast-extern-link-input-list-new)
       (ast.ast-extern-metadata-flags true false)
       ast.AstImportedSpmdMetadata.No)
@@ -1069,7 +1069,7 @@
     (ast.AstExternKind.Function)
     (ast.AstExternMetadata.Metadata
       (ast.AstExternAbi.C)
-      (ci.intern-generated-name "WriteFile")
+      (ci.intern-id-from-renderable (ci.intern-generated-name "WriteFile"))
       (ast.ast-extern-link-input-list-new)
       (ast.ast-extern-metadata-flags true false)
       ast.AstImportedSpmdMetadata.No)

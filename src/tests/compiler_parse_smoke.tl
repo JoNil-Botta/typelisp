@@ -616,7 +616,8 @@
         [(compiler_parse_core.ResultAstProgram.Ok
             (ast.AstProgram.Program decls-box))
           (let
-            [decls : ast.AstDeclList (__tl-box-place decls-box)]
+            [decls : ast.AstDeclList
+              (ast.ast-decl-list-box-shared-view decls-box)]
             (set!
               ok
               (and

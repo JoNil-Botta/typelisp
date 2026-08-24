@@ -3521,8 +3521,7 @@
           "ast_expr_pool."
           (lower-global-shared-view point)
           ".canonical_span_count")
-        (ast.ast-node-pool-context-expr-canonical-span-count
-          (lower-global-shared-view pools)))
+        (ast.ast-node-pool-context-expr-canonical-span-count pools))
       (compiler-lower-profile-counter
         (str_cat.str-cat
           "ast_expr_pool."
@@ -3542,8 +3541,7 @@
           "ast_expr_pool."
           (lower-global-shared-view point)
           ".respan_count")
-        (ast.ast-node-pool-context-expr-respan-count
-          (lower-global-shared-view pools)))
+        (ast.ast-node-pool-context-expr-respan-count pools))
       (compiler-lower-profile-counter
         (str_cat.str-cat
           "ast_expr_pool."

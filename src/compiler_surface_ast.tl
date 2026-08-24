@@ -2105,8 +2105,7 @@
                                         hydration.pools))
                                     8)
                                   (ast.ast-node-pool-context-expr-span-oracle-ok?
-                                    (owned_view.compiler-owned-shared-view
-                                      hydration.pools))
+                                    hydration.pools)
                                   (=
                                     (ast.ast-decl-list-len (& hydration.decls))
                                     2)

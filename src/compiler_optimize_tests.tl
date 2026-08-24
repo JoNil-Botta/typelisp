@@ -69941,13 +69941,16 @@
   [label : i64]) : i64
   (let
     [block : compiler_ir_types.CompilerIrBlock (opt-bg-block-of blocks label)]
-    [count : i64 (opt-block-instr-count block)]
+    [count : i64
+      (opt-block-instr-count (owned_view.compiler-owned-shared-view block))]
     [cursor : i64 0]
     [checks : i64 0]
     (begin
       (while (< cursor count)
         (begin
-          (match (opt-block-instr-at block cursor)
+          (match (opt-block-instr-at
+            (owned_view.compiler-owned-shared-view block)
+            cursor)
             [(compiler_ir_types.CompilerIrInstr.BoundsCheck _ _ _)
               (set! checks (+ checks 1))]
             [_ unit])
@@ -69963,10 +69966,13 @@
   [slow-label : i64]) : bool
   (let
     [block : compiler_ir_types.CompilerIrBlock (opt-bg-block-of blocks label)]
-    [count : i64 (opt-block-instr-count block)]
+    [count : i64
+      (opt-block-instr-count (owned_view.compiler-owned-shared-view block))]
     (and
       (>= count 2)
-      (match (opt-block-instr-at block (- count 2))
+      (match (opt-block-instr-at
+        (owned_view.compiler-owned-shared-view block)
+        (- count 2))
         [(compiler_ir_types.CompilerIrInstr.BinOp _ op _ _ ty)
           (and
             (compiler_optimize.opt-binop-eq
@@ -69977,7 +69983,9 @@
               ty
               (compiler_ast_types.AstType.U64)))]
         [_ false])
-      (match (opt-block-instr-at block (- count 1))
+      (match (opt-block-instr-at
+        (owned_view.compiler-owned-shared-view block)
+        (- count 1))
         [(compiler_ir_types.CompilerIrInstr.Branch _ yes no)
           (and (= yes ok-label) (= no slow-label))]
         [_ false]))))
@@ -69994,19 +70002,40 @@
     [result : compiler_ir_types.CompilerIrFunction
       (opt-bg-result "bg_pair" (opt-bg-blocks false false true))]
     [blocks : compiler_ir_types.CompilerIrBlockList
-      (compiler_optimize.opt-function-blocks result)]
+      (compiler_optimize.opt-function-blocks
+        (owned_view.compiler-owned-shared-view result))]
     [head : i64 (opt-bg-label "head")]
     [ok : i64 (opt-bg-label "head__bg_ok")]
     [slow : i64 (opt-bg-label "head__bg_slow")]
     (begin
       (unless (opt-bg-verified? result) (return 1))
       ;; The body keeps its phi and gains the one unsigned filter.
-      (unless (opt-bg-filter-shape? blocks head ok slow) (return 2))
-      (unless (= (opt-bg-block-checks blocks head) 0) (return 3))
-      ;; Both checks moved to the slow arm, in their original order.
-      (unless (= (opt-bg-block-checks blocks slow) 2) (return 4))
       (unless
-        (match (opt-block-instr-at (opt-bg-block-of blocks slow) 0)
+        (opt-bg-filter-shape?
+          (owned_view.compiler-owned-shared-view blocks)
+          head
+          ok
+          slow)
+        (return 2))
+      (unless
+        (=
+          (opt-bg-block-checks
+            (owned_view.compiler-owned-shared-view blocks)
+            head)
+          0)
+        (return 3))
+      ;; Both checks moved to the slow arm, in their original order.
+      (unless
+        (=
+          (opt-bg-block-checks
+            (owned_view.compiler-owned-shared-view blocks)
+            slow)
+          2)
+        (return 4))
+      (unless
+        (match (opt-block-instr-at
+          (opt-bg-block-of (owned_view.compiler-owned-shared-view blocks) slow)
+          0)
           [(compiler_ir_types.CompilerIrInstr.BoundsCheck _ len ok-label)
             (and
               (compiler_optimize.opt-value-is-var? len 3)
@@ -70014,7 +70043,9 @@
           [_ false])
         (return 5))
       (unless
-        (match (opt-block-instr-at (opt-bg-block-of blocks slow) 1)
+        (match (opt-block-instr-at
+          (opt-bg-block-of (owned_view.compiler-owned-shared-view blocks) slow)
+          1)
           [(compiler_ir_types.CompilerIrInstr.BoundsCheck _ len ok-label)
             (and
               (compiler_optimize.opt-value-is-var? len 5)
@@ -70025,25 +70056,43 @@
       ;; no check at all.
       (unless
         (match (opt-block-instr-at
-          (opt-bg-block-of blocks slow)
-          (- (opt-block-instr-count (opt-bg-block-of blocks slow)) 1))
+          (opt-bg-block-of (owned_view.compiler-owned-shared-view blocks) slow)
+          (-
+            (opt-block-instr-count
+              (opt-bg-block-of
+                (owned_view.compiler-owned-shared-view blocks)
+                slow))
+            1))
           [(compiler_ir_types.CompilerIrInstr.Jump target) (= target ok)]
           [_ false])
         (return 7))
-      (unless (= (opt-bg-block-checks blocks ok) 0) (return 8))
+      (unless
+        (=
+          (opt-bg-block-checks
+            (owned_view.compiler-owned-shared-view blocks)
+            ok)
+          0)
+        (return 8))
       ;; `M` is built once, in the preheader: one compare and one select for the
       ;; second length.
       (unless
         (=
-          (opt-block-instr-count (opt-bg-block-of blocks (opt-bg-label "pre")))
+          (opt-block-instr-count
+            (opt-bg-block-of
+              (owned_view.compiler-owned-shared-view blocks)
+              (opt-bg-label "pre")))
           3)
         (return 9))
       ;; The back edge now leaves the fast block, so the body's phi names it.
       (unless
-        (match (opt-block-instr-at (opt-bg-block-of blocks head) 0)
+        (match (opt-block-instr-at
+          (opt-bg-block-of (owned_view.compiler-owned-shared-view blocks) head)
+          0)
           [(compiler_ir_types.CompilerIrInstr.Phi _ inputs _)
             (and
-              (compiler_optimize.opt-bool-branch-phi-input-has-label? inputs ok)
+              (compiler_optimize.opt-bool-branch-phi-input-has-label?
+                (owned_view.compiler-owned-shared-view inputs)
+                ok)
               (not
                 (compiler_optimize.opt-bool-branch-phi-input-has-label?
                   inputs
@@ -70059,14 +70108,15 @@
     [result : compiler_ir_types.CompilerIrFunction
       (opt-bg-result "bg_offset" (opt-bg-blocks false true true))]
     [blocks : compiler_ir_types.CompilerIrBlockList
-      (compiler_optimize.opt-function-blocks result)]
+      (compiler_optimize.opt-function-blocks
+        (owned_view.compiler-owned-shared-view result))]
     [slow : i64 (opt-bg-label "head__bg_slow")]
     [pre : i64 (opt-bg-label "pre")]
     (begin
       (unless (opt-bg-verified? result) (return 1))
       (unless
         (opt-bg-filter-shape?
-          blocks
+          (owned_view.compiler-owned-shared-view blocks)
           (opt-bg-label "head")
           (opt-bg-label "head__bg_ok")
           slow)
@@ -70074,17 +70124,30 @@
       ;; One length, two offsets: the repeated length collapses onto its largest
       ;; offset, so the preheader builds `satsub(la, 1)` and nothing else.
       (unless
-        (= (opt-block-instr-count (opt-bg-block-of blocks pre)) 4)
+        (=
+          (opt-block-instr-count
+            (opt-bg-block-of (owned_view.compiler-owned-shared-view blocks) pre))
+          4)
         (return 3))
       (unless
-        (match (opt-block-instr-at (opt-bg-block-of blocks pre) 2)
+        (match (opt-block-instr-at
+          (opt-bg-block-of (owned_view.compiler-owned-shared-view blocks) pre)
+          2)
           [(compiler_ir_types.CompilerIrInstr.Select _) true]
           [_ false])
         (return 4))
       ;; The arm holds both checks and the Add that re-forms `i + 1`.
-      (unless (= (opt-bg-block-checks blocks slow) 2) (return 5))
       (unless
-        (match (opt-block-instr-at (opt-bg-block-of blocks slow) 1)
+        (=
+          (opt-bg-block-checks
+            (owned_view.compiler-owned-shared-view blocks)
+            slow)
+          2)
+        (return 5))
+      (unless
+        (match (opt-block-instr-at
+          (opt-bg-block-of (owned_view.compiler-owned-shared-view blocks) slow)
+          1)
           [(compiler_ir_types.CompilerIrInstr.BinOp _ op _ _ _)
             (compiler_optimize.opt-binop-eq
               op
@@ -70093,7 +70156,11 @@
         (return 6))
       ;; The fast block keeps the body's own Add, now with Gep uses only.
       (unless
-        (= (opt-bg-block-checks blocks (opt-bg-label "head__bg_ok")) 0)
+        (=
+          (opt-bg-block-checks
+            (owned_view.compiler-owned-shared-view blocks)
+            (opt-bg-label "head__bg_ok"))
+          0)
         (return 7))
       42)))
 

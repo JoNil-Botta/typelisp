@@ -3423,6 +3423,30 @@
         (str_cat.str-cat "ast_expr_pool." point ".segment_bytes")
         (ast.ast-node-pool-context-expr-segment-bytes pools))
       (compiler-lower-profile-counter
+        (str_cat.str-cat "ast_expr_pool." point ".span_slot_bytes")
+        (ast.ast-node-pool-context-expr-span-slot-bytes pools))
+      (compiler-lower-profile-counter
+        (str_cat.str-cat "ast_expr_pool." point ".canonical_span_count")
+        (ast.ast-node-pool-context-expr-canonical-span-count pools))
+      (compiler-lower-profile-counter
+        (str_cat.str-cat "ast_expr_pool." point ".canonical_span_capacity")
+        (ast.ast-node-pool-context-expr-canonical-span-capacity pools))
+      (compiler-lower-profile-counter
+        (str_cat.str-cat "ast_expr_pool." point ".canonical_span_bytes")
+        (ast.ast-node-pool-context-expr-canonical-span-bytes pools))
+      (compiler-lower-profile-counter
+        (str_cat.str-cat "ast_expr_pool." point ".respan_count")
+        (ast.ast-node-pool-context-expr-respan-count pools))
+      (compiler-lower-profile-counter
+        (str_cat.str-cat "ast_expr_pool." point ".respan_capacity")
+        (ast.ast-node-pool-context-expr-respan-capacity pools))
+      (compiler-lower-profile-counter
+        (str_cat.str-cat "ast_expr_pool." point ".respan_bytes")
+        (ast.ast-node-pool-context-expr-respan-bytes pools))
+      (compiler-lower-profile-counter
+        (str_cat.str-cat "ast_expr_pool." point ".total_bytes")
+        (ast.ast-node-pool-context-expr-total-bytes pools))
+      (compiler-lower-profile-counter
         (str_cat.str-cat "ast_type_pool." point ".len")
         (ast.ast-node-pool-context-type-len pools))
       (compiler-lower-profile-counter

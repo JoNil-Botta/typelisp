@@ -896,6 +896,101 @@
 (define ast-type-node-pool-segment-size : i64
   1024)
 
+;; Source provenance is owned by the expression pool, but deliberately does not
+;; add another AstSourceSpan-sized column to every 32-byte AstExpr row.  A small
+;; aligned i32 slot accompanies each expression segment.  Zero means no source
+;; provenance, a positive value indexes the sparse canonical-span records, and
+;; a negative value indexes the sparse ReSpan records used by an exceptional
+;; view of an already-owned semantic node (principally quasiquote splices).
+;;
+;; `owner-node` is the Spanned wrapper whose push first established a canonical
+;; span.  It makes suffix rollback deterministic: records are appended in node
+;; push order and can be retired when their owner/view id is at or above a mark.
+(defstruct AstExprCanonicalSpanRecord
+  (semantic-node i32)
+  (owner-node i32)
+  (span AstSourceSpan))
+
+(defstruct AstExprReSpan
+  (view-node i32)
+  (semantic-node i32)
+  (span AstSourceSpan))
+
+(defenum AstMaybeSourceSpan
+  (No)
+  (Some AstSourceSpan))
+
+(defenum AstExprSpanOracleResult
+  (NotSpanned)
+  (CanonicalMatch)
+  (ReSpanMatch)
+  (MissingSidecar)
+  (UnexpectedDifference))
+
+(define ast-expr-span-record-initial-capacity : i64
+  64)
+(define ast-expr-span-slot-bytes : i64
+  4)
+(define ast-expr-span-record-bytes : i64
+  ;; Two i32 node ids plus four i32 source coordinates.
+  24)
+(define ast-expr-semantic-wrapper-fuel-limit : i64
+  ;; Public corpus measurement found at most 18 nested source views. Keep a
+  ;; generous fixed guard so malformed/cyclic in-place rewrites fail closed
+  ;; without walking a multi-million-node pool before every span write.
+  256)
+(define ast-expr-spanned-storage-tag : i64
+  ;; AstExpr is append-only and Spanned is its first inline enum variant.
+  0)
+(define ast-expr-macro-expansion-storage-tag : i64
+  ;; Keep synchronized with AstExpr's append-only inline variant order.
+  83)
+(define ast-expr-span-slot-segment-bytes : i64
+  (* ast-expr-node-pool-segment-size ast-expr-span-slot-bytes))
+
+(define (ast-source-span-eq? [a : AstSourceSpan] [b : AstSourceSpan]) : bool
+  (and
+    (= a.start-line b.start-line)
+    (= a.start-col b.start-col)
+    (= a.end-line b.end-line)
+    (= a.end-col b.end-col)))
+
+(define (ast-expr-span-slot-biased-segment-base
+  [segment : (__tl_dyn-array i32)]
+  [segment-index : i64]) : i64
+  (-
+    (cast
+      (unsafe
+        (ptr->int (ptr-cast (__tl_array-data segment) : (Ptr u8))))
+      : i64)
+    (* segment-index ast-expr-span-slot-segment-bytes)))
+
+(define (ast-expr-span-slot-get-from-bases [segment-bases : i64] [id : i64]) : i64
+  (let
+    [biased-base : i64
+      (unsafe
+        (ptr-read (ptr-offset (int->ptr segment-bases : (Ptr i64)) (shr id 16))))]
+    (cast
+      (unsafe
+        (ptr-read
+          (int->ptr (+ biased-base (* id ast-expr-span-slot-bytes)) : (Ptr i32))))
+      : i64)))
+
+(define (ast-expr-span-slot-set-in-bases!
+  [segment-bases : i64]
+  [id : i64]
+  [value : i64]) : unit
+  (let
+    [biased-base : i64
+      (unsafe
+        (ptr-read (ptr-offset (int->ptr segment-bases : (Ptr i64)) (shr id 16))))]
+    (unsafe
+      (ptr-write!
+        (int->ptr
+          (+ biased-base (* id ast-expr-span-slot-bytes))
+          : (MutPtr i32))
+        (cast value : i32)))))
+
 ;; --- node row strides: the single source of truth ---
 ;; `size-of` on an enum type value reports the handle width, not the compiler's
 ;; inline enum representation, so the inline row stride has to be stated here
@@ -994,6 +1089,38 @@
 (define ast-node-pool-segment-count : i64
   1)
 
+;; The compatibility pool mirrors every expression segment with a provenance
+;; slot segment.  Sparse record payloads live in the pool's base arena and grow
+;; independently of the dense slot index.
+(define ast-node-span-slot-first-segment : (__tl_dyn-array i32)
+  (array.make-array i32 ast-expr-node-pool-segment-size))
+(define ast-node-span-slot-segment-bases : i64
+  (let
+    [bases : (__tl_dyn-array i64) (ast-node-pool-segment-base-table-new)]
+    (begin
+      (set!
+        (array-ref bases 0)
+        (ast-expr-span-slot-biased-segment-base
+          (ast-global-shared-view ast-node-span-slot-first-segment)
+          0))
+      (cast
+        (unsafe
+          (ptr->int (ptr-cast (__tl_array-data bases) : (Ptr u8))))
+        : i64))))
+(define ast-node-canonical-span-records : (__tl_dyn-array
+    AstExprCanonicalSpanRecord)
+  (array.make-array
+    AstExprCanonicalSpanRecord
+    ast-expr-span-record-initial-capacity))
+(define ast-node-canonical-span-count : i64
+  0)
+(define ast-node-respan-records : (__tl_dyn-array AstExprReSpan)
+  (array.make-array AstExprReSpan ast-expr-span-record-initial-capacity))
+(define ast-node-respan-count : i64
+  0)
+(define ast-node-span-records-monotonic? : bool
+  true)
+
 ;; The program (base) arena, captured at global-init while it is the
 ;; active arena (the seed make-array above proves an allocation has happened, so
 ;; this is the real base handle, not the pre-allocation 0 sentinel). The node
@@ -1046,6 +1173,10 @@
       (in-arena
         (arena.Arena storage-root)
         (array.make-array AstExpr ast-expr-node-pool-segment-size))]
+    [new-span-slots : (__tl_dyn-array i32)
+      (in-arena
+        (arena.Arena storage-root)
+        (array.make-array i32 ast-expr-node-pool-segment-size))]
     (begin
       (unsafe
         (ptr-write!
@@ -1053,8 +1184,242 @@
             (int->ptr ast-node-pool-segment-bases : (MutPtr i64))
             segment-index)
           (ast-expr-node-pool-biased-segment-base new-segment segment-index)))
+      (unsafe
+        (ptr-write!
+          (ptr-offset
+            (int->ptr ast-node-span-slot-segment-bases : (MutPtr i64))
+            segment-index)
+          (ast-expr-span-slot-biased-segment-base new-span-slots segment-index)))
       (set! ast-node-pool-storage-arena storage-root)
       (set! ast-node-pool-segment-count (+ segment-index 1)))))
+
+(define (ast-expr-semantic-node-from-bases-fuel
+  [expr-segment-bases : i64]
+  [count : i64]
+  [id : i64]
+  [fuel : i64]) : i64
+  ;; Loaded rows are normally backward-pointing, but ownership-preserving
+  ;; in-place rewrites may legally copy a wrapper whose child has a later id.
+  ;; Bounds plus finite fuel admit that case while cycles still fail closed.
+  (if (or (< id 0) (>= id count) (<= fuel 0))
+    -1
+    (match (ast-expr-segment-bases-get expr-segment-bases id)
+      [(AstExpr.Spanned inner _)
+        (if (or (< inner 0) (>= inner count) (= inner id))
+          -1
+          (ast-expr-semantic-node-from-bases-fuel
+            expr-segment-bases
+            count
+            inner
+            (- fuel 1)))]
+      [(AstExpr.MacroExpansion inner _ _)
+        (if (or (< inner 0) (>= inner count) (= inner id))
+          -1
+          (ast-expr-semantic-node-from-bases-fuel
+            expr-segment-bases
+            count
+            inner
+            (- fuel 1)))]
+      [_ id])))
+
+(define (ast-expr-semantic-node-from-bases
+  [expr-segment-bases : i64]
+  [count : i64]
+  [id : i64]) : i64
+  (ast-expr-semantic-node-from-bases-fuel
+    expr-segment-bases
+    count
+    id
+    (if (< count ast-expr-semantic-wrapper-fuel-limit)
+      count
+      ast-expr-semantic-wrapper-fuel-limit)))
+
+(define (ast-node-canonical-span-records-grow!) : unit
+  (let
+    [old : (__tl_dyn-array AstExprCanonicalSpanRecord)
+      (ast-global-shared-view ast-node-canonical-span-records)]
+    [old-capacity : i64 (array-length old)]
+    [new-capacity : i64 (* old-capacity 2)]
+    [next : (__tl_dyn-array AstExprCanonicalSpanRecord)
+      (in-arena
+        (arena.Arena node-pool-base-arena)
+        (array.make-array AstExprCanonicalSpanRecord new-capacity))]
+    [i : i64 0]
+    (begin
+      (while (< i ast-node-canonical-span-count)
+        (begin
+          (set! (array-ref next i) (array-ref old i))
+          (set! i (+ i 1))))
+      (set! ast-node-canonical-span-records next))))
+
+(define (ast-node-respan-records-grow!) : unit
+  (let
+    [old : (__tl_dyn-array AstExprReSpan)
+      (ast-global-shared-view ast-node-respan-records)]
+    [old-capacity : i64 (array-length old)]
+    [new-capacity : i64 (* old-capacity 2)]
+    [next : (__tl_dyn-array AstExprReSpan)
+      (in-arena
+        (arena.Arena node-pool-base-arena)
+        (array.make-array AstExprReSpan new-capacity))]
+    [i : i64 0]
+    (begin
+      (while (< i ast-node-respan-count)
+        (begin
+          (set! (array-ref next i) (array-ref old i))
+          (set! i (+ i 1))))
+      (set! ast-node-respan-records next))))
+
+(define (ast-expr-semantic-node-from-span-slot
+  [slot : i64]
+  [canonical-records : (__tl_dyn-array AstExprCanonicalSpanRecord)]
+  [canonical-count : i64]
+  [respans : (__tl_dyn-array AstExprReSpan)]
+  [respan-count : i64]) : i64
+  (if (> slot 0)
+    (let
+      [index : i64 (- slot 1)]
+      (if (>= index canonical-count)
+        -1
+        (cast
+          (__tl-project-field (array-ref canonical-records index) semantic-node)
+          : i64)))
+    (if (< slot 0)
+      (let
+        [index : i64 (- (- 0 slot) 1)]
+        (if (>= index respan-count)
+          -1
+          (cast
+            (__tl-project-field (array-ref respans index) semantic-node)
+            : i64)))
+      -1)))
+
+(define (ast-expr-span-record-direct-active! [id : i64] [span : AstSourceSpan]) : unit
+  (begin
+    (if (>=
+      ast-node-canonical-span-count
+      (array-length ast-node-canonical-span-records))
+      (ast-node-canonical-span-records-grow!)
+      unit)
+    (let
+      [index : i64 ast-node-canonical-span-count]
+      (begin
+        (set!
+          (array-ref ast-node-canonical-span-records index)
+          (AstExprCanonicalSpanRecord (cast id : i32) (cast id : i32) span))
+        (set! ast-node-canonical-span-count (+ index 1))
+        (ast-expr-span-slot-set-in-bases!
+          ast-node-span-slot-segment-bases
+          id
+          (+ index 1))))))
+
+(define (ast-expr-span-note-active! [id : i64] [node : AstExpr]) : unit
+  (match node
+    [(AstExpr.Spanned inner span)
+      (let
+        [inner-slot : i64
+          (if (or (< inner 0) (>= inner ast-node-pool-count))
+            0
+            (ast-expr-span-slot-get-from-bases
+              ast-node-span-slot-segment-bases
+              inner))]
+        [stored-semantic : i64
+          (ast-expr-semantic-node-from-span-slot
+            inner-slot
+            (ast-global-shared-view ast-node-canonical-span-records)
+            ast-node-canonical-span-count
+            (ast-global-shared-view ast-node-respan-records)
+            ast-node-respan-count)]
+        [semantic : i64
+          (if (>= stored-semantic 0)
+            stored-semantic
+            (ast-expr-semantic-node-from-bases
+              ast-node-pool-segment-bases
+              ast-node-pool-count
+              inner))]
+        (if (< semantic 0)
+          unit
+          (let
+            [slot : i64
+              (ast-expr-span-slot-get-from-bases
+                ast-node-span-slot-segment-bases
+                semantic)]
+            (if (= slot 0)
+              (begin
+                (if (>=
+                  ast-node-canonical-span-count
+                  (array-length ast-node-canonical-span-records))
+                  (ast-node-canonical-span-records-grow!)
+                  unit)
+                (let
+                  [index : i64 ast-node-canonical-span-count]
+                  (begin
+                    (set!
+                      (array-ref ast-node-canonical-span-records index)
+                      (AstExprCanonicalSpanRecord
+                        (cast semantic : i32)
+                        (cast id : i32)
+                        span))
+                    (set! ast-node-canonical-span-count (+ index 1))
+                    (ast-expr-span-slot-set-in-bases!
+                      ast-node-span-slot-segment-bases
+                      semantic
+                      (+ index 1))
+                    (ast-expr-span-slot-set-in-bases!
+                      ast-node-span-slot-segment-bases
+                      id
+                      (+ index 1)))))
+              (let
+                [canonical-index : i64 (- slot 1)]
+                [canonical : AstExprCanonicalSpanRecord
+                  (array-ref ast-node-canonical-span-records canonical-index)]
+                (if (ast-source-span-eq? canonical.span span)
+                  (ast-expr-span-slot-set-in-bases!
+                    ast-node-span-slot-segment-bases
+                    id
+                    slot)
+                  (begin
+                    (if (>=
+                      ast-node-respan-count
+                      (array-length ast-node-respan-records))
+                      (ast-node-respan-records-grow!)
+                      unit)
+                    (let
+                      [index : i64 ast-node-respan-count]
+                      (begin
+                        (set!
+                          (array-ref ast-node-respan-records index)
+                          (AstExprReSpan
+                            (cast id : i32)
+                            (cast semantic : i32)
+                            span))
+                        (set! ast-node-respan-count (+ index 1))
+                        (ast-expr-span-slot-set-in-bases!
+                          ast-node-span-slot-segment-bases
+                          id
+                          (- 0 (+ index 1))))))))))))]
+    [(AstExpr.MacroExpansion inner _ _)
+      (let
+        [inner-slot : i64
+          (if (or (< inner 0) (>= inner ast-node-pool-count))
+            0
+            (ast-expr-span-slot-get-from-bases
+              ast-node-span-slot-segment-bases
+              inner))]
+        [semantic : i64
+          (ast-expr-semantic-node-from-span-slot
+            inner-slot
+            (ast-global-shared-view ast-node-canonical-span-records)
+            ast-node-canonical-span-count
+            (ast-global-shared-view ast-node-respan-records)
+            ast-node-respan-count)]
+        (ast-expr-span-slot-set-in-bases!
+          ast-node-span-slot-segment-bases
+          id
+          (if (< semantic 0)
+            0
+            inner-slot)))]
+    [_ unit]))
 
 ;: Append `node` to the active pool and return its AstNodeId.
 (define (ast-node-push-active [node : AstExpr]) : i64
@@ -1078,6 +1443,9 @@
       [source : (Ptr i64)
         (unsafe
           (ptr-cast (ptr-addr-of node) : (Ptr i64)))]
+      [storage-tag : i64
+        (unsafe
+          (ptr-read source))]
       (begin
         (unsafe
           (begin
@@ -1086,6 +1454,16 @@
             (ptr-write! (ptr-offset dest 2) (ptr-read (ptr-offset source 2)))
             (ptr-write! (ptr-offset dest 3) (ptr-read (ptr-offset source 3)))))
         (set! ast-node-pool-count (+ id 1))
+        ;; A truncated slot can still contain its prior generation's index.
+        (ast-expr-span-slot-set-in-bases! ast-node-span-slot-segment-bases id 0)
+        ;; Avoid a full AstExpr variant dispatch on the overwhelmingly common
+        ;; non-wrapper push path. The inline tag is already in the source row
+        ;; copied above; only the two provenance-bearing variants need work.
+        (if (or
+          (= storage-tag ast-expr-spanned-storage-tag)
+          (= storage-tag ast-expr-macro-expansion-storage-tag))
+          (ast-expr-span-note-active! id node)
+          unit)
         (ast-node-pool-active-context-capture-expr!)
         id))))
 
@@ -1138,17 +1516,172 @@
       [source : (Ptr i64)
         (unsafe
           (ptr-cast (ptr-addr-of node) : (Ptr i64)))]
-      (unsafe
-        (begin
-          (ptr-write! dest (ptr-read source))
-          (ptr-write! (ptr-offset dest 1) (ptr-read (ptr-offset source 1)))
-          (ptr-write! (ptr-offset dest 2) (ptr-read (ptr-offset source 2)))
-          (ptr-write! (ptr-offset dest 3) (ptr-read (ptr-offset source 3))))))))
+      [prior-slot : i64
+        (ast-expr-span-slot-get-from-bases ast-node-span-slot-segment-bases id)]
+      (begin
+        (unsafe
+          (begin
+            (ptr-write! dest (ptr-read source))
+            (ptr-write! (ptr-offset dest 1) (ptr-read (ptr-offset source 1)))
+            (ptr-write! (ptr-offset dest 2) (ptr-read (ptr-offset source 2)))
+            (ptr-write! (ptr-offset dest 3) (ptr-read (ptr-offset source 3)))))
+        ;; In-place semantic rewrites retain the identity's canonical slot.  A
+        ;; copied wrapper additionally establishes its per-use view immediately;
+        ;; prefix rollback later rebuilds records in id order.
+        (match node
+          [(AstExpr.Spanned _ _)
+            (let
+              [canonical-before : i64 ast-node-canonical-span-count]
+              [respan-before : i64 ast-node-respan-count]
+              (begin
+                (ast-expr-span-slot-set-in-bases!
+                  ast-node-span-slot-segment-bases
+                  id
+                  0)
+                (ast-expr-span-note-active! id node)
+                (if (or
+                  (> ast-node-canonical-span-count canonical-before)
+                  (> ast-node-respan-count respan-before))
+                  (set! ast-node-span-records-monotonic? false)
+                  unit)
+                (ast-node-pool-active-context-capture-expr!)))]
+          [(AstExpr.MacroExpansion _ _ _)
+            ;; Expansion frames delegate source ownership to their child.
+            (begin
+              (ast-expr-span-slot-set-in-bases!
+                ast-node-span-slot-segment-bases
+                id
+                0)
+              (ast-expr-span-note-active! id node)
+              (ast-node-pool-active-context-capture-expr!))]
+          [_
+            (if (< prior-slot 0)
+              (let
+                [index : i64 (- (- 0 prior-slot) 1)]
+                (if (or (< index 0) (>= index ast-node-respan-count))
+                  (begin
+                    (ast-expr-span-slot-set-in-bases!
+                      ast-node-span-slot-segment-bases
+                      id
+                      0)
+                    (ast-node-pool-active-context-capture-expr!))
+                  (begin
+                    ;; The per-use wrapper became a new semantic identity. Its
+                    ;; prior view is now that identity's original provenance.
+                    (set! ast-node-span-records-monotonic? false)
+                    (ast-expr-span-record-direct-active!
+                      id
+                      (__tl-project-field
+                        (array-ref ast-node-respan-records index)
+                        span))
+                    (ast-node-pool-active-context-capture-expr!))))
+              unit)])))))
 
 ;: Truncate the pool back to `mark` nodes (used to discard nodes from a failed
 ;: parse). Reset to 0 between compiles so a fresh compile reuses its segments.
+(define (ast-expr-span-reset-active-to! [mark : i64]) : unit
+  (if (= mark 0)
+    (begin
+      ;; Reused ids clear their own slots on push, so the common whole-compile
+      ;; reset is O(1) even for a million-node pool.
+      (set! ast-node-canonical-span-count 0)
+      (set! ast-node-respan-count 0)
+      (set! ast-node-span-records-monotonic? true))
+    (if ast-node-span-records-monotonic?
+      (let
+        [id : i64 mark]
+        [canonical-count : i64 ast-node-canonical-span-count]
+        [respan-count : i64 ast-node-respan-count]
+        (begin
+          ;; The common transactional rollback touches only the discarded
+          ;; suffix and the records whose owner/view lies in that suffix.
+          (while (< id ast-node-pool-count)
+            (begin
+              (ast-expr-span-slot-set-in-bases!
+                ast-node-span-slot-segment-bases
+                id
+                0)
+              (set! id (+ id 1))))
+          (while (and
+            (> canonical-count 0)
+            (>=
+              (cast
+                (__tl-project-field
+                  (array-ref
+                    ast-node-canonical-span-records
+                    (- canonical-count 1))
+                  owner-node)
+                : i64)
+              mark))
+            (let
+              [record : AstExprCanonicalSpanRecord
+                (array-ref
+                  ast-node-canonical-span-records
+                  (- canonical-count 1))]
+              [semantic : i64 (cast record.semantic-node : i64)]
+              (begin
+                (if (and
+                  (< semantic mark)
+                  (=
+                    (ast-expr-span-slot-get-from-bases
+                      ast-node-span-slot-segment-bases
+                      semantic)
+                    canonical-count))
+                  (ast-expr-span-slot-set-in-bases!
+                    ast-node-span-slot-segment-bases
+                    semantic
+                    0)
+                  unit)
+                (set! canonical-count (- canonical-count 1)))))
+          (while (and
+            (> respan-count 0)
+            (>=
+              (cast
+                (__tl-project-field
+                  (array-ref ast-node-respan-records (- respan-count 1))
+                  view-node)
+                : i64)
+              mark))
+            (set! respan-count (- respan-count 1)))
+          (set! ast-node-canonical-span-count canonical-count)
+          (set! ast-node-respan-count respan-count)))
+      (let
+        [id : i64 mark]
+        (while (< id ast-node-pool-count)
+          (let
+            [slot : i64
+              (ast-expr-span-slot-get-from-bases
+                ast-node-span-slot-segment-bases
+                id)]
+            (begin
+              (if (and (> slot 0) (<= slot ast-node-canonical-span-count))
+                (let
+                  [record : AstExprCanonicalSpanRecord
+                    (array-ref ast-node-canonical-span-records (- slot 1))]
+                  [semantic : i64 (cast record.semantic-node : i64)]
+                  (if (and
+                    (= (cast record.owner-node : i64) id)
+                    (< semantic mark)
+                    (=
+                      (ast-expr-span-slot-get-from-bases
+                        ast-node-span-slot-segment-bases
+                        semantic)
+                      slot))
+                    (ast-expr-span-slot-set-in-bases!
+                      ast-node-span-slot-segment-bases
+                      semantic
+                      0)
+                    unit))
+                unit)
+              (ast-expr-span-slot-set-in-bases!
+                ast-node-span-slot-segment-bases
+                id
+                0)
+              (set! id (+ id 1)))))))))
+
 (define (ast-node-pool-truncate! [mark : i64]) : unit
   (begin
+    (ast-expr-span-reset-active-to! mark)
     (set! ast-node-pool-count mark)
     (ast-node-pool-active-context-capture-expr!)))
 
@@ -1166,7 +1699,13 @@
   (count i64)
   (base-arena i64)
   (storage-arena i64)
-  (segment-count i64))
+  (segment-count i64)
+  (span-slot-segment-bases i64)
+  (canonical-span-records (__tl_dyn-array AstExprCanonicalSpanRecord))
+  (canonical-span-count i64)
+  (respan-records (__tl_dyn-array AstExprReSpan))
+  (respan-count i64)
+  (span-records-monotonic? bool))
 
 (define (ast-expr-node-pool-state-with-base-arena
   [pool : AstExprNodePoolState]
@@ -1176,7 +1715,13 @@
     pool.count
     base-arena
     pool.storage-arena
-    pool.segment-count))
+    pool.segment-count
+    pool.span-slot-segment-bases
+    pool.canonical-span-records
+    pool.canonical-span-count
+    pool.respan-records
+    pool.respan-count
+    pool.span-records-monotonic?))
 
 (defenum AstExprNodePoolPushResult
   (AstExprNodePoolPushOk AstExprNodePoolState i64))
@@ -1194,6 +1739,18 @@
         ast-expr-node-pool-segment-size)]
     [segment-bases : (__tl_dyn-array i64)
       (in-arena (arena.Arena base-arena) (ast-node-pool-segment-base-table-new))]
+    [span-slot-segment-bases : (__tl_dyn-array i64)
+      (in-arena (arena.Arena base-arena) (ast-node-pool-segment-base-table-new))]
+    [canonical-span-records : (__tl_dyn-array AstExprCanonicalSpanRecord)
+      (in-arena
+        (arena.Arena base-arena)
+        (array.make-array
+          AstExprCanonicalSpanRecord
+          ast-expr-span-record-initial-capacity))]
+    [respan-records : (__tl_dyn-array AstExprReSpan)
+      (in-arena
+        (arena.Arena base-arena)
+        (array.make-array AstExprReSpan ast-expr-span-record-initial-capacity))]
     [storage-root : i64 (ast-node-pool-arena-make)]
     [segment-index : i64 0]
     (begin
@@ -1203,10 +1760,17 @@
             (in-arena
               (arena.Arena storage-root)
               (array.make-array AstExpr ast-expr-node-pool-segment-size))]
+          [span-slots : (__tl_dyn-array i32)
+            (in-arena
+              (arena.Arena storage-root)
+              (array.make-array i32 ast-expr-node-pool-segment-size))]
           (begin
             (set!
               (array-ref segment-bases segment-index)
               (ast-expr-node-pool-biased-segment-base segment segment-index))
+            (set!
+              (array-ref span-slot-segment-bases segment-index)
+              (ast-expr-span-slot-biased-segment-base span-slots segment-index))
             (set! segment-index (+ segment-index 1)))))
       (AstExprNodePoolState
         (cast
@@ -1216,7 +1780,17 @@
         0
         base-arena
         storage-root
-        segment-count))))
+        segment-count
+        (cast
+          (unsafe
+            (ptr->int
+              (ptr-cast (__tl_array-data span-slot-segment-bases) : (Ptr u8))))
+          : i64)
+        canonical-span-records
+        0
+        respan-records
+        0
+        true))))
 
 (define (ast-expr-node-pool-state-create [capacity : i64]) : AstExprNodePoolState
   (ast-expr-node-pool-state-init capacity (arena.tl_arena_current)))
@@ -1230,15 +1804,373 @@
 (define (ast-expr-node-pool-state-mark [pool : AstExprNodePoolState]) : i64
   (ast-expr-node-pool-state-len pool))
 
+(define (ast-expr-node-pool-state-with-canonical-spans
+  [pool : AstExprNodePoolState]
+  [records : (__tl_dyn-array AstExprCanonicalSpanRecord)]
+  [count : i64]) : AstExprNodePoolState
+  (AstExprNodePoolState
+    pool.segment-bases
+    pool.count
+    pool.base-arena
+    pool.storage-arena
+    pool.segment-count
+    pool.span-slot-segment-bases
+    records
+    count
+    pool.respan-records
+    pool.respan-count
+    pool.span-records-monotonic?))
+
+(define (ast-expr-node-pool-state-with-respans
+  [pool : AstExprNodePoolState]
+  [records : (__tl_dyn-array AstExprReSpan)]
+  [count : i64]) : AstExprNodePoolState
+  (AstExprNodePoolState
+    pool.segment-bases
+    pool.count
+    pool.base-arena
+    pool.storage-arena
+    pool.segment-count
+    pool.span-slot-segment-bases
+    pool.canonical-span-records
+    pool.canonical-span-count
+    records
+    count
+    pool.span-records-monotonic?))
+
+(define (ast-expr-node-pool-state-with-span-record-order
+  [pool : AstExprNodePoolState]
+  [monotonic? : bool]) : AstExprNodePoolState
+  (AstExprNodePoolState
+    pool.segment-bases
+    pool.count
+    pool.base-arena
+    pool.storage-arena
+    pool.segment-count
+    pool.span-slot-segment-bases
+    pool.canonical-span-records
+    pool.canonical-span-count
+    pool.respan-records
+    pool.respan-count
+    monotonic?))
+
+(define (ast-expr-node-pool-state-canonical-records-grow
+  [pool : AstExprNodePoolState]) : AstExprNodePoolState
+  (let
+    [old : (__tl_dyn-array AstExprCanonicalSpanRecord)
+      pool.canonical-span-records]
+    [next-capacity : i64 (* (array-length old) 2)]
+    [next : (__tl_dyn-array AstExprCanonicalSpanRecord)
+      (in-arena
+        (arena.Arena pool.base-arena)
+        (array.make-array AstExprCanonicalSpanRecord next-capacity))]
+    [i : i64 0]
+    (begin
+      (while (< i pool.canonical-span-count)
+        (begin
+          (set! (array-ref next i) (array-ref old i))
+          (set! i (+ i 1))))
+      (ast-expr-node-pool-state-with-canonical-spans
+        pool
+        next
+        pool.canonical-span-count))))
+
+(define (ast-expr-node-pool-state-respan-records-grow
+  [pool : AstExprNodePoolState]) : AstExprNodePoolState
+  (let
+    [old : (__tl_dyn-array AstExprReSpan) pool.respan-records]
+    [next-capacity : i64 (* (array-length old) 2)]
+    [next : (__tl_dyn-array AstExprReSpan)
+      (in-arena
+        (arena.Arena pool.base-arena)
+        (array.make-array AstExprReSpan next-capacity))]
+    [i : i64 0]
+    (begin
+      (while (< i pool.respan-count)
+        (begin
+          (set! (array-ref next i) (array-ref old i))
+          (set! i (+ i 1))))
+      (ast-expr-node-pool-state-with-respans pool next pool.respan-count))))
+
+(define (ast-expr-node-pool-state-record-direct-span
+  [pool : AstExprNodePoolState]
+  [id : i64]
+  [span : AstSourceSpan]) : AstExprNodePoolState
+  (let
+    [ready : AstExprNodePoolState
+      (if (>=
+        pool.canonical-span-count
+        (array-length pool.canonical-span-records))
+        (ast-expr-node-pool-state-canonical-records-grow pool)
+        pool)]
+    [index : i64 ready.canonical-span-count]
+    (begin
+      (set!
+        (array-ref ready.canonical-span-records index)
+        (AstExprCanonicalSpanRecord (cast id : i32) (cast id : i32) span))
+      (ast-expr-span-slot-set-in-bases!
+        ready.span-slot-segment-bases
+        id
+        (+ index 1))
+      (ast-expr-node-pool-state-with-canonical-spans
+        ready
+        ready.canonical-span-records
+        (+ index 1)))))
+
+(define (ast-expr-node-pool-state-note-span
+  [pool : AstExprNodePoolState]
+  [id : i64]
+  [node : AstExpr]) : AstExprNodePoolState
+  (match node
+    [(AstExpr.Spanned inner span)
+      (let
+        [inner-slot : i64
+          (if (or (< inner 0) (>= inner pool.count))
+            0
+            (ast-expr-span-slot-get-from-bases
+              pool.span-slot-segment-bases
+              inner))]
+        [stored-semantic : i64
+          (ast-expr-semantic-node-from-span-slot
+            inner-slot
+            pool.canonical-span-records
+            pool.canonical-span-count
+            pool.respan-records
+            pool.respan-count)]
+        [semantic : i64
+          (if (>= stored-semantic 0)
+            stored-semantic
+            (ast-expr-semantic-node-from-bases
+              pool.segment-bases
+              pool.count
+              inner))]
+        (if (< semantic 0)
+          pool
+          (let
+            [slot : i64
+              (ast-expr-span-slot-get-from-bases
+                pool.span-slot-segment-bases
+                semantic)]
+            (if (= slot 0)
+              (let
+                [ready : AstExprNodePoolState
+                  (if (>=
+                    pool.canonical-span-count
+                    (array-length pool.canonical-span-records))
+                    (ast-expr-node-pool-state-canonical-records-grow pool)
+                    pool)]
+                [index : i64 ready.canonical-span-count]
+                (begin
+                  (set!
+                    (array-ref ready.canonical-span-records index)
+                    (AstExprCanonicalSpanRecord
+                      (cast semantic : i32)
+                      (cast id : i32)
+                      span))
+                  (ast-expr-span-slot-set-in-bases!
+                    ready.span-slot-segment-bases
+                    semantic
+                    (+ index 1))
+                  (ast-expr-span-slot-set-in-bases!
+                    ready.span-slot-segment-bases
+                    id
+                    (+ index 1))
+                  (ast-expr-node-pool-state-with-canonical-spans
+                    ready
+                    ready.canonical-span-records
+                    (+ index 1))))
+              (let
+                [canonical-index : i64 (- slot 1)]
+                [canonical : AstExprCanonicalSpanRecord
+                  (array-ref pool.canonical-span-records canonical-index)]
+                (if (ast-source-span-eq? canonical.span span)
+                  (begin
+                    (ast-expr-span-slot-set-in-bases!
+                      pool.span-slot-segment-bases
+                      id
+                      slot)
+                    pool)
+                  (let
+                    [ready : AstExprNodePoolState
+                      (if (>=
+                        pool.respan-count
+                        (array-length pool.respan-records))
+                        (ast-expr-node-pool-state-respan-records-grow pool)
+                        pool)]
+                    [index : i64 ready.respan-count]
+                    (begin
+                      (set!
+                        (array-ref ready.respan-records index)
+                        (AstExprReSpan
+                          (cast id : i32)
+                          (cast semantic : i32)
+                          span))
+                      (ast-expr-span-slot-set-in-bases!
+                        ready.span-slot-segment-bases
+                        id
+                        (- 0 (+ index 1)))
+                      (ast-expr-node-pool-state-with-respans
+                        ready
+                        ready.respan-records
+                        (+ index 1))))))))))]
+    [(AstExpr.MacroExpansion inner _ _)
+      (let
+        [inner-slot : i64
+          (if (or (< inner 0) (>= inner pool.count))
+            0
+            (ast-expr-span-slot-get-from-bases
+              pool.span-slot-segment-bases
+              inner))]
+        [semantic : i64
+          (ast-expr-semantic-node-from-span-slot
+            inner-slot
+            pool.canonical-span-records
+            pool.canonical-span-count
+            pool.respan-records
+            pool.respan-count)]
+        (begin
+          (ast-expr-span-slot-set-in-bases!
+            pool.span-slot-segment-bases
+            id
+            (if (< semantic 0)
+              0
+              inner-slot))
+          pool))]
+    [_ pool]))
+
+(define (ast-expr-node-pool-state-span-reset-to
+  [pool : AstExprNodePoolState]
+  [mark : i64]) : AstExprNodePoolState
+  (if (= mark 0)
+    (AstExprNodePoolState
+      pool.segment-bases
+      mark
+      pool.base-arena
+      pool.storage-arena
+      pool.segment-count
+      pool.span-slot-segment-bases
+      pool.canonical-span-records
+      0
+      pool.respan-records
+      0
+      true)
+    (if pool.span-records-monotonic?
+      (let
+        [id : i64 mark]
+        [canonical-count : i64 pool.canonical-span-count]
+        [respan-count : i64 pool.respan-count]
+        (begin
+          (while (< id pool.count)
+            (begin
+              (ast-expr-span-slot-set-in-bases!
+                pool.span-slot-segment-bases
+                id
+                0)
+              (set! id (+ id 1))))
+          (while (and
+            (> canonical-count 0)
+            (>=
+              (cast
+                (__tl-project-field
+                  (array-ref pool.canonical-span-records (- canonical-count 1))
+                  owner-node)
+                : i64)
+              mark))
+            (let
+              [record : AstExprCanonicalSpanRecord
+                (array-ref pool.canonical-span-records (- canonical-count 1))]
+              [semantic : i64 (cast record.semantic-node : i64)]
+              (begin
+                (if (and
+                  (< semantic mark)
+                  (=
+                    (ast-expr-span-slot-get-from-bases
+                      pool.span-slot-segment-bases
+                      semantic)
+                    canonical-count))
+                  (ast-expr-span-slot-set-in-bases!
+                    pool.span-slot-segment-bases
+                    semantic
+                    0)
+                  unit)
+                (set! canonical-count (- canonical-count 1)))))
+          (while (and
+            (> respan-count 0)
+            (>=
+              (cast
+                (__tl-project-field
+                  (array-ref pool.respan-records (- respan-count 1))
+                  view-node)
+                : i64)
+              mark))
+            (set! respan-count (- respan-count 1)))
+          (AstExprNodePoolState
+            pool.segment-bases
+            mark
+            pool.base-arena
+            pool.storage-arena
+            pool.segment-count
+            pool.span-slot-segment-bases
+            pool.canonical-span-records
+            canonical-count
+            pool.respan-records
+            respan-count
+            true)))
+      (let
+        [id : i64 mark]
+        (begin
+          ;; A rare in-place rewrite can append an older record after newer
+          ;; suffix records. Retire the suffix by its dense owner slots instead
+          ;; of replaying every retained AST node. Sparse record storage may
+          ;; keep unreachable entries until the next whole-generation reset.
+          (while (< id pool.count)
+            (let
+              [slot : i64
+                (ast-expr-span-slot-get-from-bases
+                  pool.span-slot-segment-bases
+                  id)]
+              (begin
+                (if (and (> slot 0) (<= slot pool.canonical-span-count))
+                  (let
+                    [record : AstExprCanonicalSpanRecord
+                      (array-ref pool.canonical-span-records (- slot 1))]
+                    [semantic : i64 (cast record.semantic-node : i64)]
+                    (if (and
+                      (= (cast record.owner-node : i64) id)
+                      (< semantic mark)
+                      (=
+                        (ast-expr-span-slot-get-from-bases
+                          pool.span-slot-segment-bases
+                          semantic)
+                        slot))
+                      (ast-expr-span-slot-set-in-bases!
+                        pool.span-slot-segment-bases
+                        semantic
+                        0)
+                      unit))
+                  unit)
+                (ast-expr-span-slot-set-in-bases!
+                  pool.span-slot-segment-bases
+                  id
+                  0)
+                (set! id (+ id 1)))))
+          (AstExprNodePoolState
+            pool.segment-bases
+            mark
+            pool.base-arena
+            pool.storage-arena
+            pool.segment-count
+            pool.span-slot-segment-bases
+            pool.canonical-span-records
+            pool.canonical-span-count
+            pool.respan-records
+            pool.respan-count
+            false))))))
+
 (define (ast-expr-node-pool-state-reset-to
   [pool : AstExprNodePoolState]
   [mark : i64]) : AstExprNodePoolState
-  (AstExprNodePoolState
-    pool.segment-bases
-    mark
-    pool.base-arena
-    pool.storage-arena
-    pool.segment-count))
+  (ast-expr-node-pool-state-span-reset-to pool mark))
 
 (define (ast-expr-node-pool-state-reset-to-mark
   [pool : AstExprNodePoolState]
@@ -1255,18 +2187,34 @@
       (in-arena
         (arena.Arena storage-arena)
         (array.make-array AstExpr ast-expr-node-pool-segment-size))]
+    [new-span-slots : (__tl_dyn-array i32)
+      (in-arena
+        (arena.Arena storage-arena)
+        (array.make-array i32 ast-expr-node-pool-segment-size))]
     [len : i64 pool.count]
     (begin
       (unsafe
         (ptr-write!
           (ptr-offset (int->ptr segment-bases : (MutPtr i64)) segment-index)
           (ast-expr-node-pool-biased-segment-base new-segment segment-index)))
+      (unsafe
+        (ptr-write!
+          (ptr-offset
+            (int->ptr pool.span-slot-segment-bases : (MutPtr i64))
+            segment-index)
+          (ast-expr-span-slot-biased-segment-base new-span-slots segment-index)))
       (AstExprNodePoolState
         segment-bases
         len
         base-arena
         storage-arena
-        (+ segment-index 1)))))
+        (+ segment-index 1)
+        pool.span-slot-segment-bases
+        pool.canonical-span-records
+        pool.canonical-span-count
+        pool.respan-records
+        pool.respan-count
+        pool.span-records-monotonic?))))
 
 (define (ast-expr-node-pool-state-push
   [pool : AstExprNodePoolState]
@@ -1289,6 +2237,9 @@
     [source : (Ptr i64)
       (unsafe
         (ptr-cast (ptr-addr-of node) : (Ptr i64)))]
+    [storage-tag : i64
+      (unsafe
+        (ptr-read source))]
     (begin
       (unsafe
         (begin
@@ -1296,14 +2247,29 @@
           (ptr-write! (ptr-offset dest 1) (ptr-read (ptr-offset source 1)))
           (ptr-write! (ptr-offset dest 2) (ptr-read (ptr-offset source 2)))
           (ptr-write! (ptr-offset dest 3) (ptr-read (ptr-offset source 3)))))
-      (AstExprNodePoolPushOk
-        (AstExprNodePoolState
-          segment-bases
-          (+ id 1)
-          ready.base-arena
-          ready.storage-arena
-          ready.segment-count)
-        id))))
+      (let
+        [next : AstExprNodePoolState
+          (AstExprNodePoolState
+            segment-bases
+            (+ id 1)
+            ready.base-arena
+            ready.storage-arena
+            ready.segment-count
+            ready.span-slot-segment-bases
+            ready.canonical-span-records
+            ready.canonical-span-count
+            ready.respan-records
+            ready.respan-count
+            ready.span-records-monotonic?)]
+        (begin
+          (ast-expr-span-slot-set-in-bases! next.span-slot-segment-bases id 0)
+          (AstExprNodePoolPushOk
+            (if (or
+              (= storage-tag ast-expr-spanned-storage-tag)
+              (= storage-tag ast-expr-macro-expansion-storage-tag))
+              (ast-expr-node-pool-state-note-span next id node)
+              next)
+            id))))))
 
 (define (ast-expr-node-pool-state-get [pool : AstExprNodePoolState] [id : i64]) : AstExpr
   (let
@@ -1314,6 +2280,142 @@
     (unsafe
       (ptr-read
         (int->ptr (+ biased-base (* id (ast-expr-node-bytes))) : (Ptr AstExpr))))))
+
+(define (ast-expr-span-from-slot
+  [slot : i64]
+  [canonical-records : (__tl_dyn-array AstExprCanonicalSpanRecord)]
+  [canonical-count : i64]
+  [respans : (__tl_dyn-array AstExprReSpan)]
+  [respan-count : i64]) : AstMaybeSourceSpan
+  (if (> slot 0)
+    (let
+      [index : i64 (- slot 1)]
+      (if (or (< index 0) (>= index canonical-count))
+        (AstMaybeSourceSpan.No)
+        (AstMaybeSourceSpan.Some
+          (__tl-project-field (array-ref canonical-records index) span))))
+    (if (< slot 0)
+      (let
+        [index : i64 (- (- 0 slot) 1)]
+        (if (or (< index 0) (>= index respan-count))
+          (AstMaybeSourceSpan.No)
+          (AstMaybeSourceSpan.Some
+            (__tl-project-field (array-ref respans index) span))))
+      (AstMaybeSourceSpan.No))))
+
+(define (ast-expr-canonical-span-from-store
+  [expr-segment-bases : i64]
+  [span-slot-segment-bases : i64]
+  [count : i64]
+  [canonical-records : (__tl_dyn-array AstExprCanonicalSpanRecord)]
+  [canonical-count : i64]
+  [id : i64]) : AstMaybeSourceSpan
+  (let
+    [semantic : i64
+      (ast-expr-semantic-node-from-bases expr-segment-bases count id)]
+    (if (< semantic 0)
+      (AstMaybeSourceSpan.No)
+      (let
+        [slot : i64
+          (ast-expr-span-slot-get-from-bases span-slot-segment-bases semantic)]
+        (if (or (<= slot 0) (> slot canonical-count))
+          (AstMaybeSourceSpan.No)
+          (AstMaybeSourceSpan.Some
+            (__tl-project-field (array-ref canonical-records (- slot 1)) span)))))))
+
+(define (ast-expr-node-pool-state-canonical-span
+  [pool : AstExprNodePoolState]
+  [id : i64]) : AstMaybeSourceSpan
+  (ast-expr-canonical-span-from-store
+    pool.segment-bases
+    pool.span-slot-segment-bases
+    pool.count
+    pool.canonical-span-records
+    pool.canonical-span-count
+    id))
+
+(define (ast-expr-node-pool-state-view-span
+  [pool : AstExprNodePoolState]
+  [id : i64]) : AstMaybeSourceSpan
+  (if (or (< id 0) (>= id pool.count))
+    (AstMaybeSourceSpan.No)
+    (let
+      [slot : i64
+        (ast-expr-span-slot-get-from-bases pool.span-slot-segment-bases id)]
+      (if (= slot 0)
+        (ast-expr-node-pool-state-canonical-span pool id)
+        (ast-expr-span-from-slot
+          slot
+          pool.canonical-span-records
+          pool.canonical-span-count
+          pool.respan-records
+          pool.respan-count)))))
+
+(define (ast-expr-node-pool-state-canonical-span-count
+  [pool : AstExprNodePoolState]) : i64
+  pool.canonical-span-count)
+
+(define (ast-expr-node-pool-state-respan-count [pool : AstExprNodePoolState]) : i64
+  pool.respan-count)
+
+(define (ast-expr-node-pool-state-span-oracle
+  [pool : AstExprNodePoolState]
+  [id : i64]) : AstExprSpanOracleResult
+  (if (or (< id 0) (>= id pool.count))
+    (AstExprSpanOracleResult.NotSpanned)
+    (match (ast-expr-node-pool-state-get pool id)
+      [(AstExpr.Spanned _ legacy-span)
+        (match (ast-expr-node-pool-state-view-span pool id)
+          [(AstMaybeSourceSpan.No) (AstExprSpanOracleResult.MissingSidecar)]
+          [(AstMaybeSourceSpan.Some view-span)
+            (if (not (ast-source-span-eq? legacy-span view-span))
+              (AstExprSpanOracleResult.UnexpectedDifference)
+              (match (ast-expr-node-pool-state-canonical-span pool id)
+                [(AstMaybeSourceSpan.No)
+                  (AstExprSpanOracleResult.MissingSidecar)]
+                [(AstMaybeSourceSpan.Some canonical-span)
+                  (if (ast-source-span-eq? canonical-span view-span)
+                    (AstExprSpanOracleResult.CanonicalMatch)
+                    (AstExprSpanOracleResult.ReSpanMatch))]))])]
+      [_ (AstExprSpanOracleResult.NotSpanned)])))
+
+(define (ast-expr-node-pool-state-span-oracle-ok? [pool : AstExprNodePoolState]) : bool
+  (let
+    [id : i64 0]
+    [ok : bool true]
+    (begin
+      (while (and ok (< id pool.count))
+        (begin
+          (match (ast-expr-node-pool-state-span-oracle pool id)
+            [(AstExprSpanOracleResult.MissingSidecar) (set! ok false)]
+            [(AstExprSpanOracleResult.UnexpectedDifference) (set! ok false)]
+            [_ unit])
+          (set! id (+ id 1))))
+      ok)))
+
+(define (ast-expr-canonical-span [id : i64]) : AstMaybeSourceSpan
+  (ast-expr-canonical-span-from-store
+    ast-node-pool-segment-bases
+    ast-node-span-slot-segment-bases
+    ast-node-pool-count
+    (ast-global-shared-view ast-node-canonical-span-records)
+    ast-node-canonical-span-count
+    id))
+
+(define (ast-expr-view-span [id : i64]) : AstMaybeSourceSpan
+  (if (or (< id 0) (>= id ast-node-pool-count))
+    (AstMaybeSourceSpan.No)
+    (let
+      [slot : i64
+        (ast-expr-span-slot-get-from-bases ast-node-span-slot-segment-bases id)]
+      (if (= slot 0)
+        (ast-expr-canonical-span id)
+        (ast-expr-span-from-slot
+          slot
+          (ast-global-shared-view ast-node-canonical-span-records)
+          ast-node-canonical-span-count
+          (ast-global-shared-view ast-node-respan-records)
+          ast-node-respan-count)))))
 
 (define (ast-expr-node-pool-state-set!
   [pool : AstExprNodePoolState]
@@ -1330,6 +2432,8 @@
     [source : (Ptr i64)
       (unsafe
         (ptr-cast (ptr-addr-of node) : (Ptr i64)))]
+    [prior-slot : i64
+      (ast-expr-span-slot-get-from-bases pool.span-slot-segment-bases id)]
     (begin
       (unsafe
         (begin
@@ -1337,7 +2441,46 @@
           (ptr-write! (ptr-offset dest 1) (ptr-read (ptr-offset source 1)))
           (ptr-write! (ptr-offset dest 2) (ptr-read (ptr-offset source 2)))
           (ptr-write! (ptr-offset dest 3) (ptr-read (ptr-offset source 3)))))
-      pool)))
+      (match node
+        [(AstExpr.Spanned _ _)
+          (let
+            [canonical-before : i64 pool.canonical-span-count]
+            [respan-before : i64 pool.respan-count]
+            (begin
+              (ast-expr-span-slot-set-in-bases!
+                pool.span-slot-segment-bases
+                id
+                0)
+              (let
+                [next : AstExprNodePoolState
+                  (ast-expr-node-pool-state-note-span pool id node)]
+                (if (or
+                  (> next.canonical-span-count canonical-before)
+                  (> next.respan-count respan-before))
+                  (ast-expr-node-pool-state-with-span-record-order next false)
+                  next))))]
+        [(AstExpr.MacroExpansion _ _ _)
+          (begin
+            (ast-expr-span-slot-set-in-bases! pool.span-slot-segment-bases id 0)
+            (ast-expr-node-pool-state-note-span pool id node))]
+        [_
+          (if (< prior-slot 0)
+            (let
+              [index : i64 (- (- 0 prior-slot) 1)]
+              (if (or (< index 0) (>= index pool.respan-count))
+                (begin
+                  (ast-expr-span-slot-set-in-bases!
+                    pool.span-slot-segment-bases
+                    id
+                    0)
+                  pool)
+                (ast-expr-node-pool-state-record-direct-span
+                  (ast-expr-node-pool-state-with-span-record-order pool false)
+                  id
+                  (__tl-project-field
+                    (array-ref pool.respan-records index)
+                    span))))
+            pool)]))))
 
 (define (ast-node-pool-state-capture) : AstExprNodePoolState
   (AstExprNodePoolState
@@ -1345,7 +2488,13 @@
     ast-node-pool-count
     node-pool-base-arena
     ast-node-pool-storage-arena
-    ast-node-pool-segment-count))
+    ast-node-pool-segment-count
+    (ast-global-shared-view ast-node-span-slot-segment-bases)
+    (ast-global-shared-view ast-node-canonical-span-records)
+    ast-node-canonical-span-count
+    (ast-global-shared-view ast-node-respan-records)
+    ast-node-respan-count
+    ast-node-span-records-monotonic?))
 
 ;; --- AstType node pool (segmented flat ty ids) ---
 ;; AstType's recursive children are stored as i64 ids into this pool instead of
@@ -2357,6 +3506,12 @@
     (set! ast-node-pool-count expr-pool.count)
     (set! ast-node-pool-storage-arena expr-pool.storage-arena)
     (set! ast-node-pool-segment-count expr-pool.segment-count)
+    (set! ast-node-span-slot-segment-bases expr-pool.span-slot-segment-bases)
+    (set! ast-node-canonical-span-records expr-pool.canonical-span-records)
+    (set! ast-node-canonical-span-count expr-pool.canonical-span-count)
+    (set! ast-node-respan-records expr-pool.respan-records)
+    (set! ast-node-respan-count expr-pool.respan-count)
+    (set! ast-node-span-records-monotonic? expr-pool.span-records-monotonic?)
     (set! ty-node-pool-segment-bases type-pool.segment-bases)
     (set! ty-node-pool-count type-pool.count)
     (set! ty-node-pool-storage-arena type-pool.storage-arena)
@@ -2771,6 +3926,42 @@
     (ast-node-pool-context-expr-segment-count pools)
     ast-expr-node-pool-segment-bytes))
 
+(define (ast-node-pool-context-expr-span-slot-bytes
+  [pools : AstNodePoolContext]) : i64
+  (*
+    (ast-node-pool-context-expr-segment-count pools)
+    ast-expr-span-slot-segment-bytes))
+
+(define (ast-node-pool-context-expr-canonical-span-capacity
+  [pools : AstNodePoolContext]) : i64
+  (array-length
+    (__tl-project-field (array-ref pools.expr-pool 0) canonical-span-records)))
+
+(define (ast-node-pool-context-expr-canonical-span-bytes
+  [pools : AstNodePoolContext]) : i64
+  (*
+    (ast-node-pool-context-expr-canonical-span-capacity pools)
+    ast-expr-span-record-bytes))
+
+(define (ast-node-pool-context-expr-respan-capacity
+  [pools : AstNodePoolContext]) : i64
+  (array-length
+    (__tl-project-field (array-ref pools.expr-pool 0) respan-records)))
+
+(define (ast-node-pool-context-expr-respan-bytes [pools : AstNodePoolContext]) : i64
+  (*
+    (ast-node-pool-context-expr-respan-capacity pools)
+    ast-expr-span-record-bytes))
+
+(define (ast-node-pool-context-expr-total-bytes [pools : AstNodePoolContext]) : i64
+  (+
+    (ast-node-pool-context-expr-segment-bytes pools)
+    (+
+      (ast-node-pool-context-expr-span-slot-bytes pools)
+      (+
+        (ast-node-pool-context-expr-canonical-span-bytes pools)
+        (ast-node-pool-context-expr-respan-bytes pools)))))
+
 (define (ast-node-pool-context-type-len [pools : AstNodePoolContext]) : i64
   (ast-type-node-pool-state-len (array-ref pools.type-pool 0)))
 
@@ -2923,6 +4114,12 @@
         (set! ast-node-pool-count state.count)
         (set! ast-node-pool-storage-arena state.storage-arena)
         (set! ast-node-pool-segment-count state.segment-count)
+        (set! ast-node-span-slot-segment-bases state.span-slot-segment-bases)
+        (set! ast-node-canonical-span-records state.canonical-span-records)
+        (set! ast-node-canonical-span-count state.canonical-span-count)
+        (set! ast-node-respan-records state.respan-records)
+        (set! ast-node-respan-count state.respan-count)
+        (set! ast-node-span-records-monotonic? state.span-records-monotonic?)
         (set! node-pool-base-arena state.base-arena)
         (set! node-pool-owner-arena pools.owner-arena)))))
 
@@ -2974,6 +4171,32 @@
   (ast-expr-segment-bases-get
     (ast-node-pool-context-expr-segment-bases pools)
     id))
+
+(define (ast-node-pool-context-expr-canonical-span
+  [pools : AstNodePoolContext]
+  [id : i64]) : AstMaybeSourceSpan
+  (ast-expr-node-pool-state-canonical-span (array-ref pools.expr-pool 0) id))
+
+(define (ast-node-pool-context-expr-view-span
+  [pools : AstNodePoolContext]
+  [id : i64]) : AstMaybeSourceSpan
+  (ast-expr-node-pool-state-view-span (array-ref pools.expr-pool 0) id))
+
+(define (ast-node-pool-context-expr-canonical-span-count
+  [pools : AstNodePoolContext]) : i64
+  (ast-expr-node-pool-state-canonical-span-count (array-ref pools.expr-pool 0)))
+
+(define (ast-node-pool-context-expr-respan-count [pools : AstNodePoolContext]) : i64
+  (ast-expr-node-pool-state-respan-count (array-ref pools.expr-pool 0)))
+
+(define (ast-node-pool-context-expr-span-oracle
+  [pools : AstNodePoolContext]
+  [id : i64]) : AstExprSpanOracleResult
+  (ast-expr-node-pool-state-span-oracle (array-ref pools.expr-pool 0) id))
+
+(define (ast-node-pool-context-expr-span-oracle-ok?
+  [pools : AstNodePoolContext]) : bool
+  (ast-expr-node-pool-state-span-oracle-ok? (array-ref pools.expr-pool 0)))
 
 (define (ast-node-pool-context-expr-set!
   [pools : AstNodePoolContext]
@@ -5692,6 +6915,16 @@
   [inner : i64]
   [span : AstSourceSpan]) : i64
   (ast-node-pool-context-expr-push pools (AstExpr.Spanned inner span)))
+
+;; Transitional per-use source view.  The legacy wrapper remains observable for
+;; #6329's dual-read migration, while the pool push records either the first
+;; canonical span or a sparse ReSpan without changing the semantic node's
+;; canonical provenance.
+(define (ast-expr-source-view-with-pools
+  [pools : AstNodePoolContext]
+  [inner : i64]
+  [span : AstSourceSpan]) : i64
+  (ast-expr-spanned-with-pools pools inner span))
 
 (define (ast-expr-binary-with-pools
   [pools : AstNodePoolContext]

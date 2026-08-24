@@ -1637,8 +1637,12 @@ if [ "$NL_HOST_OS" = windows ]; then
     # ~3,000 nodes), so the authoritative Windows probe lands a few thousand
     # nodes past the boundary: 2,424,832 capacity and 77,594,624 physical
     # payload bytes.
+    # Reconciled with #6824 and #6819, #6776's reflected-type expression bridge
+    # crosses the next boundary: the direct Windows selfhost probe measured
+    # 2,425,185 used nodes, 2,490,368 capacity, and 79,691,776 physical payload
+    # bytes.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool typecheck 37 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool typecheck 38 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # This is the tightest of the four and the one to check first when a series
     # adds compiler source: the copy-call / unsigned-bound-narrowing / chain

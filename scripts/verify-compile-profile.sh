@@ -495,6 +495,11 @@ profile_live_counter_in() {
     ' "$1"
 }
 
+# #6822's bounds-check range merge, tail-call inlining, word copy_call, and
+# rip-relative compare packets crossed ast_expr_pool.typecheck from 37 to 38
+# segments; the authoritative Windows CI probe measured 2,426,832 used nodes,
+# 2,490,368 capacity, and 79,691,776 physical payload bytes.
+#
 # Assert one selfhost pool boundary from its segment count alone.
 #
 # Since #5541 the AST pools are reclaimable segmented storage with fixed-size
@@ -1412,6 +1417,9 @@ fi
 # walkers brings ast_type_pool.macro_expand back from 24 to 23 segments: the
 # authoritative Windows probe measured 22,788 used nodes, 23,552 capacity, and
 # 565,248 physical payload bytes.
+# #4959's job-owned intern-metric slots and owner plumbing cross the next
+# typecheck Expr boundary: the authoritative Windows probe measured 2,425,352
+# used nodes, 2,490,368 capacity, and 79,691,776 physical payload bytes.
 #
 # Keep both the logical
 # capacity and physical payload bytes exact so an accidental return to eager or

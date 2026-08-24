@@ -18,10 +18,11 @@
 ;; a regression that loses the global-mask path shows up as an asymmetry rather
 ;; than as a silently slower binary.
 ;;
-;; Soundness note: `mask-global` is immutable, non-zero, literal and imm32, so
-;; it is exactly the case the substitution table admits. Mutable,
-;; address-taken, zero, non-literal and non-imm32 globals are excluded by that
-;; table and are covered by the optimizer's own self-tests.
+;; Soundness note: `mask-global` is immutable, literal and imm32, so it is
+;; exactly the case the substitution table admits. Mutable, address-taken,
+;; non-literal and non-imm32 globals are excluded by that table; zero-valued
+;; globals are admitted except in a div/mod divisor position. The optimizer's
+;; own self-tests cover those boundaries.
 (define mask-global : i64
   255)
 

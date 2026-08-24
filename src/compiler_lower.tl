@@ -2600,6 +2600,10 @@
   `(profile_state.compiler-profile-state-metrics
     (compiler-lower-state-profile ,_state)))
 
+(defmacro (compiler-lower-profile-intern-metrics-address [_state : Expr]) : Expr
+  `(profile_state.compiler-profile-state-metrics-address
+    (compiler-lower-state-profile ,_state)))
+
 (cfg
   compile-profile
   (define (compiler-lower-profile-field [value : i64]) : String
@@ -2624,19 +2628,23 @@
       (compiler-lower-profile-set!
         state
         compiler-lower-profile-start-intern-metric
-        (ci.intern-profile-intern-value))
+        (ci.intern-profile-intern-value
+          (compiler-lower-profile-intern-metrics-address state)))
       (compiler-lower-profile-set!
         state
         compiler-lower-profile-start-intern-slice-metric
-        (ci.intern-profile-slice-value))
+        (ci.intern-profile-slice-value
+          (compiler-lower-profile-intern-metrics-address state)))
       (compiler-lower-profile-set!
         state
         compiler-lower-profile-start-intern-generated-metric
-        (ci.intern-profile-generated-value))
+        (ci.intern-profile-generated-value
+          (compiler-lower-profile-intern-metrics-address state)))
       (compiler-lower-profile-set!
         state
         compiler-lower-profile-start-intern-render-metric
-        (ci.intern-profile-render-value))
+        (ci.intern-profile-render-value
+          (compiler-lower-profile-intern-metrics-address state)))
       (profile.alloc-reset-peak))))
 
 (cfg
@@ -2689,7 +2697,8 @@
               "|"
               (string.int->string
                 (-
-                  (ci.intern-profile-intern-value)
+                  (ci.intern-profile-intern-value
+                    (compiler-lower-profile-intern-metrics-address state))
                   (compiler-lower-profile-value
                     state
                     compiler-lower-profile-start-intern-metric)))
@@ -2704,7 +2713,8 @@
               "|"
               (string.int->string
                 (-
-                  (ci.intern-profile-slice-value)
+                  (ci.intern-profile-slice-value
+                    (compiler-lower-profile-intern-metrics-address state))
                   (compiler-lower-profile-value
                     state
                     compiler-lower-profile-start-intern-slice-metric)))
@@ -2719,7 +2729,8 @@
               "|"
               (string.int->string
                 (-
-                  (ci.intern-profile-render-value)
+                  (ci.intern-profile-render-value
+                    (compiler-lower-profile-intern-metrics-address state))
                   (compiler-lower-profile-value
                     state
                     compiler-lower-profile-start-intern-render-metric)))
@@ -2734,7 +2745,8 @@
               "|"
               (string.int->string
                 (-
-                  (ci.intern-profile-generated-value)
+                  (ci.intern-profile-generated-value
+                    (compiler-lower-profile-intern-metrics-address state))
                   (compiler-lower-profile-value
                     state
                     compiler-lower-profile-start-intern-generated-metric)))
@@ -2792,18 +2804,25 @@
 (cfg
   compile-profile
   (define (compiler-lower-profile-generated-role-counters
+    [state : CompilerLowerState]
     [name : String]
     [role : i64]) : unit
     (begin
       (compiler-lower-profile-counter
         (str_cat.str-cat "generated_role." name ".created")
-        (ci.intern-profile-generated-role-create-value role))
+        (ci.intern-profile-generated-role-create-value
+          (compiler-lower-profile-intern-metrics-address state)
+          role))
       (compiler-lower-profile-counter
         (str_cat.str-cat "generated_role." name ".reused")
-        (ci.intern-profile-generated-role-reuse-value role))
+        (ci.intern-profile-generated-role-reuse-value
+          (compiler-lower-profile-intern-metrics-address state)
+          role))
       (compiler-lower-profile-counter
         (str_cat.str-cat "generated_role." name ".rendered")
-        (ci.intern-profile-generated-role-render-value role)))))
+        (ci.intern-profile-generated-role-render-value
+          (compiler-lower-profile-intern-metrics-address state)
+          role)))))
 
 (cfg
   compile-profile
@@ -2831,54 +2850,71 @@
 
 (cfg
   compile-profile
-  (define (compiler-lower-profile-generated-role-counters-all) : unit
+  (define (compiler-lower-profile-generated-role-counters-all
+    [state : CompilerLowerState]) : unit
     (begin
       (compiler-lower-profile-generated-role-counters
+        state
         "clone_helper"
         (ci.intern-generated-symbol-role-clone-helper))
       (compiler-lower-profile-generated-role-counters
+        state
         "lambda"
         (ci.intern-generated-symbol-role-lambda))
       (compiler-lower-profile-generated-role-counters
+        state
         "global_initializer"
         (ci.intern-generated-symbol-role-global-initializer))
       (compiler-lower-profile-generated-role-counters
+        state
         "cleanup_helper"
         (ci.intern-generated-symbol-role-cleanup-helper))
       (compiler-lower-profile-generated-role-counters
+        state
         "cleanup_parameter"
         (ci.intern-generated-symbol-role-cleanup-parameter))
       (compiler-lower-profile-generated-role-counters
+        state
         "cleanup_payload"
         (ci.intern-generated-symbol-role-cleanup-payload))
       (compiler-lower-profile-generated-role-counters
+        state
         "dispatch_cache"
         (ci.intern-generated-symbol-role-dispatch-cache))
       (compiler-lower-profile-generated-role-counters
+        state
         "dispatch_variant"
         (ci.intern-generated-symbol-role-dispatch-variant))
       (compiler-lower-profile-generated-role-counters
+        state
         "nullary_enum_object"
         (ci.intern-generated-symbol-role-nullary-enum-object))
       (compiler-lower-profile-generated-role-counters
+        state
         "spmd_identity"
         (ci.intern-generated-symbol-role-spmd-identity))
       (compiler-lower-profile-generated-role-counters
+        state
         "spmd_package_symbol"
         (ci.intern-generated-symbol-role-spmd-package-symbol))
       (compiler-lower-profile-generated-role-counters
+        state
         "spmd_result_uniform"
         (ci.intern-generated-symbol-role-spmd-result-uniform))
       (compiler-lower-profile-generated-role-counters
+        state
         "spmd_result_varying"
         (ci.intern-generated-symbol-role-spmd-result-varying))
       (compiler-lower-profile-generated-role-counters
+        state
         "spmd_result_mask"
         (ci.intern-generated-symbol-role-spmd-result-mask))
       (compiler-lower-profile-generated-role-counters
+        state
         "spmd_private_helper"
         (ci.intern-generated-symbol-role-spmd-private-helper))
       (compiler-lower-profile-generated-role-counters
+        state
         "spmd_private_parameter"
         (ci.intern-generated-symbol-role-spmd-private-parameter)))))
 
@@ -70794,7 +70830,8 @@
                   (cfg
                     compile-profile
                     (begin
-                      (compiler-lower-profile-generated-role-counters-all)
+                      (compiler-lower-profile-generated-role-counters-all
+                        lower-state)
                       (compiler-lower-profile-spmd-symbol-counters lower-state)))
                   (ResultCompilerLower.Ok
                     (ir.CompilerIrProgram.Program

@@ -4158,7 +4158,7 @@
           (compiler_ir_types.CompilerIrValue.Var 0)
           (compiler_ir_types.CompilerIrValue.Var 1)
           (compiler_ir_types.CompilerIrCallArgs.Nil)
-          slots)
+          (compiler_ir_types.compiler-ir-global-shared-view slots))
         (compiler_ir_types.compiler-ir-instr-seq-empty))]
     [blocks : compiler_ir_types.CompilerIrBlockList
       (compiler_ir_types.compiler-ir-block-cons
@@ -4316,7 +4316,7 @@
           (compiler_ir_types.CompilerIrValue.Var 0)
           (ci.intern "cabi_return_shape")
           (compiler_ir_types.CompilerIrCallArgs.Nil)
-          slots)
+          (compiler_ir_types.compiler-ir-global-shared-view slots))
         (compiler_ir_types.compiler-ir-instr-seq-empty))]
     [blocks : compiler_ir_types.CompilerIrBlockList
       (compiler_ir_types.compiler-ir-block-cons
@@ -8062,9 +8062,15 @@
           (compiler_ir_types.compiler-ir-value-seq-empty)))]
     [instrs : compiler_ir_types.CompilerIrInstrSeq
       (compiler-backend-test-instr-seq-prepend
-        (compiler_ir_types.CompilerIrInstr.Pack 0 words0 group0)
+        (compiler_ir_types.CompilerIrInstr.Pack
+          0
+          words0
+          (owned_view.compiler-owned-shared-view group0))
         (compiler-backend-test-instr-seq-prepend
-          (compiler_ir_types.CompilerIrInstr.Pack 1 words2 group2)
+          (compiler_ir_types.CompilerIrInstr.Pack
+            1
+            words2
+            (owned_view.compiler-owned-shared-view group2))
           (compiler_ir_types.compiler-ir-instr-seq-empty)))]
     [blocks : compiler_ir_types.CompilerIrBlockList
       (compiler_ir_types.compiler-ir-block-cons
@@ -10226,27 +10232,30 @@
         (compiler_ir_types.compiler-ir-value-seq-empty))]
     [instrs : compiler_ir_types.CompilerIrInstrSeq
       (compiler-backend-test-instr-seq-prepend
-        (compiler_ir_types.CompilerIrInstr.Pack 0 words-mask2 struct-plain)
+        (compiler_ir_types.CompilerIrInstr.Pack
+          0
+          (owned_view.compiler-owned-shared-view words-mask2)
+          (owned_view.compiler-owned-shared-view struct-plain))
         (compiler-backend-test-instr-seq-prepend
           (compiler_ir_types.CompilerIrInstr.Pack
             1
-            words-mask2
-            struct-args-root)
+            (owned_view.compiler-owned-shared-view words-mask2)
+            (owned_view.compiler-owned-shared-view struct-args-root))
           (compiler-backend-test-instr-seq-prepend
             (compiler_ir_types.CompilerIrInstr.Pack
               2
-              words-mask2
-              enum-qualified)
+              (owned_view.compiler-owned-shared-view words-mask2)
+              (owned_view.compiler-owned-shared-view enum-qualified))
             (compiler-backend-test-instr-seq-prepend
               (compiler_ir_types.CompilerIrInstr.Pack
                 3
-                words-mask2
-                enum-args-qualified)
+                (owned_view.compiler-owned-shared-view words-mask2)
+                (owned_view.compiler-owned-shared-view enum-args-qualified))
               (compiler-backend-test-instr-seq-prepend
                 (compiler_ir_types.CompilerIrInstr.Pack
                   4
                   words-opaque
-                  opaque-struct)
+                  (owned_view.compiler-owned-shared-view opaque-struct))
                 (compiler_ir_types.compiler-ir-instr-seq-empty))))))]
     [blocks : compiler_ir_types.CompilerIrBlockList
       (compiler_ir_types.CompilerIrBlockList.Array
@@ -12118,7 +12127,7 @@
                     (compiler_ir_types.compiler-ir-value-seq-prepend
                       (compiler_ir_types.CompilerIrValue.I64 2)
                       (compiler_ir_types.compiler-ir-value-seq-empty)))
-                  ty)
+                  (owned_view.compiler-owned-shared-view ty))
                 (compiler_ir_types.compiler-ir-instr-seq-empty)))
             compiler_ir_types.CompilerIrBlockList.Nil))
         (compiler_ir_types.compiler-ir-function-cons
@@ -12161,7 +12170,9 @@
           (owned_view.compiler-owned-shared-view instrs))
         compiler_ir_types.CompilerIrBlockList.Nil)]
     [use-counts : (__tl_dyn-array i64)
-      (compiler_backend.compiler-backend-function-use-counts vars blocks)]
+      (compiler_backend.compiler-backend-function-use-counts
+        vars
+        (owned_view.compiler-owned-shared-view blocks))]
     [instr-count : i64 (compiler_ir_types.compiler-ir-instr-seq-count instrs)]
     [scratch-result : compiler_regalloc.CompilerRegScratchPlanResult
       (compiler-backend-scratch-test-result
@@ -14428,7 +14439,7 @@ g:
               (compiler_ir_types.CompilerIrValue.Var 1)
               (compiler_ir_types.compiler-ir-label "back")
               compiler_ir_types.CompilerIrPhiInputList.Nil)
-            ty)
+            (owned_view.compiler-owned-shared-view ty))
           (compiler-backend-test-instr-seq-prepend
             (compiler_ir_types.CompilerIrInstr.Phi
               1
@@ -14566,7 +14577,7 @@ g:
               (compiler_ir_types.CompilerIrValue.Var 1)
               (compiler_ir_types.compiler-ir-label "back")
               compiler_ir_types.CompilerIrPhiInputList.Nil)
-            ty)
+            (owned_view.compiler-owned-shared-view ty))
           (compiler-backend-test-instr-seq-prepend
             (compiler_ir_types.CompilerIrInstr.Phi
               1
@@ -23931,7 +23942,7 @@ g:
                 (compiler_ir_types.CompilerIrBlock.Block
                   (compiler_ir_types.compiler-ir-label "join")
                   (compiler-backend-test-instr-seq-prepend
-                    phi
+                    (compiler_ir_types.compiler-ir-global-shared-view phi)
                     (compiler-backend-test-instr-seq-prepend
                       (compiler_ir_types.CompilerIrInstr.Return
                         (compiler_ir_types.CompilerIrMaybeValue.Some
@@ -27243,7 +27254,7 @@ g:
             (compiler_ir_types.CompilerIrValue.Var 1)
             (compiler_ast_types.AstType.I64))
           (compiler_ir_types.compiler-ir-instr-seq-empty))
-        src-r9
+        (owned_view.compiler-owned-shared-view src-r9)
         3)
         [(compiler_backend.ResultCompilerBackend.Ok asm)
           (string.eq
@@ -29303,7 +29314,7 @@ g:
         (compiler_ir_types.CompilerIrInstr.Load
           3
           (compiler_ir_types.CompilerIrValue.Var 2)
-          load-ty)
+          (owned_view.compiler-owned-shared-view load-ty))
         (compiler-backend-test-instr-seq-prepend
           (compiler_ir_types.CompilerIrInstr.Cast
             6

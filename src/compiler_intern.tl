@@ -1220,28 +1220,30 @@
       ,persistent-arena-floor-mark
       ,structural-table-cell
       ,profile-metrics-address)
-    `(InternCompatState
-      ,table-id
-      ,pool-slots
-      ,pool-qualified-slots
-      ,pool-last-slash-slots
-      ,pool-first-dot-slots
-      ,pool-leading-dot-id-slots
-      ,pool-dotted-prefix-id-slots
-      ,pool-module-id-slots
-      ,pool-base-id-slots
-      ,pool-macro-prefix-class-slots
-      ,pool-count
-      ,generated-next-id
-      ,map-id-slots
-      ,map-hash-slots
-      ,generated-map-id-slots
-      ,generated-map-hash-slots
-      ,map-ready
-      ,reset-generation
-      ,persistent-arena
-      ,persistent-arena-floor-mark
-      ,structural-table-cell)))
+    (let
+      [_ : Expr profile-metrics-address]
+      `(InternCompatState
+        ,table-id
+        ,pool-slots
+        ,pool-qualified-slots
+        ,pool-last-slash-slots
+        ,pool-first-dot-slots
+        ,pool-leading-dot-id-slots
+        ,pool-dotted-prefix-id-slots
+        ,pool-module-id-slots
+        ,pool-base-id-slots
+        ,pool-macro-prefix-class-slots
+        ,pool-count
+        ,generated-next-id
+        ,map-id-slots
+        ,map-hash-slots
+        ,generated-map-id-slots
+        ,generated-map-hash-slots
+        ,map-ready
+        ,reset-generation
+        ,persistent-arena
+        ,persistent-arena-floor-mark
+        ,structural-table-cell))))
 
 ;; Read-only subset used while the parser records exact semantic name spans.
 ;; Capture it once per top-level form instead of copying the full intern owner

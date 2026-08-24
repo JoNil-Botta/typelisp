@@ -37169,6 +37169,56 @@
                 (set! candidate-id (+ candidate-id 1)))))))
       best)))
 
+(cfg
+  test
+  (test
+    tc-unbound-suggest-cache-reset-invalidation
+    (begin
+      (ci.intern-reset!)
+      (let
+        [candidate-id : i64 (ci.intern "alpha")]
+        [wanted-id : i64 (ci.intern "alphi")]
+        [env : TcTypeEnv
+          (tc-bind-id (tc-empty-env) candidate-id (ast.AstType.I64))]
+        [first : String (tc-unbound-near-miss false -1 env "alphi" wanted-id)]
+        [first-stamp : i64
+          (array-ref tc-unbound-suggest-cache-stamps candidate-id)]
+        [second : String (tc-unbound-near-miss false -1 env "alphi" wanted-id)]
+        (begin
+          (unless
+            (and
+              (string.eq first "alpha")
+              (string.eq second "alpha")
+              (> first-stamp 0)
+              (= (array-ref tc-unbound-suggest-cache-classes candidate-id) 1)
+              (= (array-ref tc-unbound-suggest-cache-lengths candidate-id) 5))
+            (io.panic "typecheck: unbound suggestion cache fill/reuse failed"))
+          (ci.intern-reset!)
+          (let
+            [hidden-id : i64 (ci.intern "__alpha")]
+            [hidden-wanted-id : i64 (ci.intern "alpha")]
+            [hidden-env : TcTypeEnv
+              (tc-bind-id (tc-empty-env) hidden-id (ast.AstType.I64))]
+            [hidden-result : String
+              (tc-unbound-near-miss
+                false
+                -1
+                hidden-env
+                "alpha"
+                hidden-wanted-id)]
+            (begin
+              (unless
+                (and
+                  (= hidden-id candidate-id)
+                  (string.eq hidden-result "")
+                  (not
+                    (=
+                      (array-ref tc-unbound-suggest-cache-stamps hidden-id)
+                      first-stamp))
+                  (= (array-ref tc-unbound-suggest-cache-classes hidden-id) 2))
+                (io.panic "typecheck: unbound suggestion cache reset leaked"))
+              (ci.intern-reset!))))))))
+
 (defenum TcUnboundSuggestion
   (No)
   (Help String)

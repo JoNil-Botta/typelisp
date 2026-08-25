@@ -698,6 +698,10 @@ typechecking validates the expanded expression afterward. The macro may call
 ordinary typechecking can determine it; the query does not evaluate the
 runtime expression and reports a macro-time diagnostic for syntax that cannot
 be typed in the caller context.
+`(type-expr reflected-type)` converts that resolved compile-time type value
+back into opaque type-literal `Expr` syntax. This inverse bridge preserves the
+resolved type identity and is intended for dense generator worklists; it does
+not render or reparse `type-key`.
 
 A fixed slot declared `ExprClause` accepts exactly one bracket-list operand
 `[first second]`, where `first` and `second` are ordinary expressions
@@ -5283,6 +5287,10 @@ Except for `expr-type`, reflection primitives take `type-expr` operands that
 must evaluate at compile time to a type value, usually `(type T)` or a
 `[comptime T : type]` parameter. `expr-type` takes an `Expr` captured by a macro
 and returns the expression's produced type as the same compile-time type value.
+`type-expr` takes that compile-time type value and returns an opaque resolved
+type-literal `Expr`. The result may be stored, reordered, or deduplicated in an
+`ExprList` and later recovered with `expr-list-type-nth`; its nominal identity,
+resolved lifetime substitutions, and indexed reflection are unchanged.
 Reflection primitives are valid only in compile-time-required contexts: explicit
 `(comptime ...)` folds, comptime parameter evaluation, macro transformer
 evaluation, and generated declaration evaluation. Any direct runtime use is
@@ -5308,6 +5316,7 @@ Primitive names and signatures are fixed as follows:
 | Primitive | Result | Notes |
 | --- | --- | --- |
 | `(expr-type expr)` | `type` | Produced type of a macro-captured `Expr`; does not evaluate the runtime expression. |
+| `(type-expr reflected-type)` | `Expr` | Opaque resolved type-literal syntax for a reflected type value; inverse of `expr-list-type-nth`/the type-value direction of `expr-type`. |
 | `(type-kind type-expr)` | `String` | One of the fixed kind strings below. |
 | `(type-key type-expr)` | `String` | Opaque deterministic key for generated declarations. |
 | `(type-cleanup-owning? type-expr)` | `bool` | True exactly for a struct or enum with type-level cleanup metadata. |

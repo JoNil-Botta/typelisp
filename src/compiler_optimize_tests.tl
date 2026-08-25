@@ -64708,3 +64708,498 @@
     (compiler-optimize-load-cse-typed-store-self-test)
     42
     "an i64 element or field store keeps a differently typed handle entry alive, while same-class, byte, CopyBytes and same-object stores still drop it"))
+
+;; --- T1-2: compare-of-sentinel-phi fold (phi_cmp_fold) ----------------------
+;;
+;; Every fixture below is the checked-accessor join in miniature: one
+;; predecessor carries a real value into the merge, the others carry the
+;; sentinel literal, and the merge compares the joined value against a literal
+;; and branches on it. Only the surroundings change, which is what decides
+;; whether the fold fires, which edges thread, and how the successors' phis are
+;; repaired.
+(define (opt-pcf-params) : compiler_ir_types.CompilerIrParamList
+  (compiler_ir_types.compiler-ir-param-cons
+    (compiler_ir_types.CompilerIrParam.Param
+      "cond"
+      (compiler_ast_types.AstType.Bool)
+      0)
+    (compiler_ir_types.compiler-ir-param-cons
+      (compiler_ir_types.CompilerIrParam.Param
+        "n"
+        (compiler_ast_types.AstType.I64)
+        1)
+      (compiler_ir_types.CompilerIrParamList.Nil))))
+
+(define (opt-pcf-branch [on-true : String] [on-false : String]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.Branch
+    (compiler_ir_types.CompilerIrValue.Var 0)
+    (compiler_ir_types.compiler-ir-label on-true)
+    (compiler_ir_types.compiler-ir-label on-false)))
+
+(define (opt-pcf-jump [label : String]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.Jump
+    (compiler_ir_types.compiler-ir-label label)))
+
+(define (opt-pcf-return [value : bool]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.Return
+    (compiler_ir_types.CompilerIrMaybeValue.Some
+      (compiler_ir_types.CompilerIrValue.Bool value))))
+
+;; The value the "real" arm carries into the merge: var 3, a copy of param 1.
+(define (opt-pcf-arm-value) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.Mov
+    3
+    (compiler_ir_types.CompilerIrValue.Var 1)
+    (compiler_ast_types.AstType.I64)))
+
+(define (opt-pcf-sentinel-input
+  [label : String]
+  [rest : compiler_ir_types.CompilerIrPhiInputList]) : compiler_ir_types.CompilerIrPhiInputList
+  (compiler_ir_types.compiler-ir-phi-input-cons
+    (compiler_ir_types.CompilerIrValue.I64 (- 0 1))
+    (compiler_ir_types.compiler-ir-label label)
+    rest))
+
+(define (opt-pcf-var-input
+  [label : String]
+  [rest : compiler_ir_types.CompilerIrPhiInputList]) : compiler_ir_types.CompilerIrPhiInputList
+  (compiler_ir_types.compiler-ir-phi-input-cons
+    (compiler_ir_types.CompilerIrValue.Var 3)
+    (compiler_ir_types.compiler-ir-label label)
+    rest))
+
+(define (opt-pcf-phi [inputs : compiler_ir_types.CompilerIrPhiInputList]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.Phi
+    4
+    inputs
+    (compiler_ast_types.AstType.I64)))
+
+(define (opt-pcf-compare
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [literal : i64]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.BinOp
+    5
+    op
+    (compiler_ir_types.CompilerIrValue.Var 4)
+    (compiler_ir_types.CompilerIrValue.I64 literal)
+    (compiler_ast_types.AstType.I64)))
+
+(define (opt-pcf-merge-branch) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.Branch
+    (compiler_ir_types.CompilerIrValue.Var 5)
+    (compiler_ir_types.compiler-ir-label "yes")
+    (compiler_ir_types.compiler-ir-label "no")))
+
+(define (opt-pcf-block
+  [label : String]
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.CompilerIrBlock.Block
+    (compiler_ir_types.compiler-ir-label label)
+    instrs))
+
+;; entry -> {arm, sent} -> merge, with the merge holding the sentinel phi, its
+;; compare and the branch. `op`/`literal` name the compare; `yes-instrs` is the
+;; true successor's body, which test (d) uses to plant a second reader of the
+;; phi.
+(define (opt-pcf-blocks
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [literal : i64]
+  [yes-instrs : compiler_ir_types.CompilerIrInstrSeq]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-pcf-block "entry" (opt-test-instrs (opt-pcf-branch "arm" "sent")))
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-pcf-block
+        "arm"
+        (opt-test-instrs (opt-pcf-arm-value) (opt-pcf-jump "merge")))
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-pcf-block "sent" (opt-test-instrs (opt-pcf-jump "merge")))
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-pcf-block
+            "merge"
+            (opt-test-instrs
+              (opt-pcf-phi
+                (opt-pcf-var-input
+                  "arm"
+                  (opt-pcf-sentinel-input
+                    "sent"
+                    (compiler_ir_types.CompilerIrPhiInputList.Nil))))
+              (opt-pcf-compare op literal)
+              (opt-pcf-merge-branch)))
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-pcf-block "yes" yes-instrs)
+            (compiler_ir_types.compiler-ir-block-cons
+              (opt-pcf-block "no" (opt-test-instrs (opt-pcf-return false)))
+              (compiler_ir_types.CompilerIrBlockList.Nil))))))))
+
+;; (a)/(e): the plain shape, with the true successor doing nothing of its own.
+(define (opt-pcf-blocks-plain
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [literal : i64]) : compiler_ir_types.CompilerIrBlockList
+  (opt-pcf-blocks op literal (opt-test-instrs (opt-pcf-return true))))
+
+;; (d): `yes` reads the phi as well, so the phi has a use beyond the compare.
+(define (opt-pcf-blocks-second-use) : compiler_ir_types.CompilerIrBlockList
+  (opt-pcf-blocks
+    (compiler_ir_types.CompilerIrBinOp.Eq)
+    37
+    (opt-test-instrs
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        6
+        (compiler_ir_types.CompilerIrBinOp.Add)
+        (compiler_ir_types.CompilerIrValue.Var 4)
+        (compiler_ir_types.CompilerIrValue.I64 1)
+        (compiler_ast_types.AstType.I64))
+      (opt-pcf-return true))))
+
+;; (b): three predecessors -- the variable arm plus two literals whose verdicts
+;; disagree, so one threads to `yes` and the other to `no`.
+(define (opt-pcf-blocks-two-literals) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-pcf-block "entry" (opt-test-instrs (opt-pcf-branch "arm" "pick")))
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-pcf-block "pick" (opt-test-instrs (opt-pcf-branch "hit" "miss")))
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-pcf-block
+          "arm"
+          (opt-test-instrs (opt-pcf-arm-value) (opt-pcf-jump "merge")))
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-pcf-block "hit" (opt-test-instrs (opt-pcf-jump "merge")))
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-pcf-block "miss" (opt-test-instrs (opt-pcf-jump "merge")))
+            (compiler_ir_types.compiler-ir-block-cons
+              (opt-pcf-block
+                "merge"
+                (opt-test-instrs
+                  (opt-pcf-phi
+                    (opt-pcf-var-input
+                      "arm"
+                      (compiler_ir_types.compiler-ir-phi-input-cons
+                        (compiler_ir_types.CompilerIrValue.I64 37)
+                        (compiler_ir_types.compiler-ir-label "hit")
+                        (opt-pcf-sentinel-input
+                          "miss"
+                          (compiler_ir_types.CompilerIrPhiInputList.Nil)))))
+                  (opt-pcf-compare (compiler_ir_types.CompilerIrBinOp.Eq) 37)
+                  (opt-pcf-merge-branch)))
+              (compiler_ir_types.compiler-ir-block-cons
+                (opt-pcf-block "yes" (opt-test-instrs (opt-pcf-return true)))
+                (compiler_ir_types.compiler-ir-block-cons
+                  (opt-pcf-block "no" (opt-test-instrs (opt-pcf-return false)))
+                  (compiler_ir_types.CompilerIrBlockList.Nil))))))))))
+
+;; (c): the merge IS a loop header -- its variable input arrives on the latch's
+;; back edge, which is the refusal JumpThreading spells out.
+(define (opt-pcf-blocks-loop-header) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-pcf-block "entry" (opt-test-instrs (opt-pcf-jump "merge")))
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-pcf-block
+        "merge"
+        (opt-test-instrs
+          (opt-pcf-phi
+            (opt-pcf-sentinel-input
+              "entry"
+              (opt-pcf-var-input
+                "latch"
+                (compiler_ir_types.CompilerIrPhiInputList.Nil))))
+          (opt-pcf-compare (compiler_ir_types.CompilerIrBinOp.Eq) 37)
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 5)
+            (compiler_ir_types.compiler-ir-label "latch")
+            (compiler_ir_types.compiler-ir-label "no"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-pcf-block
+          "latch"
+          (opt-test-instrs (opt-pcf-arm-value) (opt-pcf-jump "merge")))
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-pcf-block "no" (opt-test-instrs (opt-pcf-return false)))
+          (compiler_ir_types.CompilerIrBlockList.Nil))))))
+
+;; (f): the true successor already carries a phi keyed on the merge, so the
+;; edge the literal predecessor takes over has to inherit that input under its
+;; own label.
+(define (opt-pcf-blocks-successor-phi) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-pcf-block "entry" (opt-test-instrs (opt-pcf-branch "arm" "sent")))
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-pcf-block
+        "arm"
+        (opt-test-instrs (opt-pcf-arm-value) (opt-pcf-jump "merge")))
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-pcf-block "sent" (opt-test-instrs (opt-pcf-jump "merge")))
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-pcf-block
+            "merge"
+            (opt-test-instrs
+              (opt-pcf-phi
+                (opt-pcf-var-input
+                  "arm"
+                  (compiler_ir_types.compiler-ir-phi-input-cons
+                    (compiler_ir_types.CompilerIrValue.I64 37)
+                    (compiler_ir_types.compiler-ir-label "sent")
+                    (compiler_ir_types.CompilerIrPhiInputList.Nil))))
+              (opt-pcf-compare (compiler_ir_types.CompilerIrBinOp.Eq) 37)
+              (opt-pcf-merge-branch)))
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-pcf-block
+              "yes"
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.Phi
+                  6
+                  (compiler_ir_types.compiler-ir-phi-input-cons
+                    (compiler_ir_types.CompilerIrValue.I64 11)
+                    (compiler_ir_types.compiler-ir-label "merge")
+                    (compiler_ir_types.CompilerIrPhiInputList.Nil))
+                  (compiler_ast_types.AstType.I64))
+                (compiler_ir_types.CompilerIrInstr.Return
+                  (compiler_ir_types.CompilerIrMaybeValue.Some
+                    (compiler_ir_types.CompilerIrValue.Bool true)))))
+            (compiler_ir_types.compiler-ir-block-cons
+              (opt-pcf-block "no" (opt-test-instrs (opt-pcf-return false)))
+              (compiler_ir_types.CompilerIrBlockList.Nil))))))))
+
+(define (opt-pcf-run
+  [name : String]
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_optimize.OptFunctionPassResult
+  (compiler_optimize.opt-phi-cmp-fold-function-with-context-result
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    (compiler_optimize.opt-cfg-context-build blocks)
+    false
+    (compiler_ir_types.CompilerIrFunction.Function
+      (opt-test-symbol name)
+      (opt-pcf-params)
+      (compiler_ast_types.AstType.Bool)
+      16
+      blocks)))
+
+(define (opt-pcf-changed?
+  [name : String]
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : bool
+  (match (opt-pcf-run name blocks)
+    [(compiler_optimize.OptFunctionPassResult.Result _ changed) changed]))
+
+(define (opt-pcf-result
+  [name : String]
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrBlockList
+  (match (opt-pcf-run name blocks)
+    [(compiler_optimize.OptFunctionPassResult.Result f _)
+      (compiler_optimize.opt-function-blocks f)]))
+
+(define (opt-pcf-block-of
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : String]) : compiler_ir_types.CompilerIrBlock
+  (match (compiler_optimize.opt-cfg-find-block
+    blocks
+    (compiler_ir_types.compiler-ir-label label))
+    [(compiler_optimize.OptMaybeBlock.Some block) block]
+    [(compiler_optimize.OptMaybeBlock.No)
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label label)
+        (compiler_ir_types.compiler-ir-instr-seq-empty))]))
+
+(define (opt-pcf-count
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : String]) : i64
+  (opt-block-instr-count (opt-pcf-block-of blocks label)))
+
+;; The label the block's terminator jumps to, or `label-none` when it does not
+;; end in an unconditional jump.
+(define (opt-pcf-jump-target
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : String]) : i64
+  (let
+    [block : compiler_ir_types.CompilerIrBlock (opt-pcf-block-of blocks label)]
+    [count : i64 (opt-block-instr-count block)]
+    (if (<= count 0)
+      (compiler_ir_types.compiler-ir-label-none)
+      (match (opt-block-instr-at block (- count 1))
+        [(compiler_ir_types.CompilerIrInstr.Jump target) target]
+        [_ (compiler_ir_types.compiler-ir-label-none)]))))
+
+(define (opt-pcf-jumps-to?
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : String]
+  [target : String]) : bool
+  (=
+    (opt-pcf-jump-target blocks label)
+    (compiler_ir_types.compiler-ir-label target)))
+
+;; Is instruction `index` of `label` the moved compare `dst = op src, literal`?
+(define (opt-pcf-moved-compare?
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : String]
+  [index : i64]
+  [dst : i64]
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [src : i64]
+  [literal : i64]) : bool
+  (let
+    [block : compiler_ir_types.CompilerIrBlock (opt-pcf-block-of blocks label)]
+    (if (<= (opt-block-instr-count block) index)
+      false
+      (match (opt-block-instr-at block index)
+        [(compiler_ir_types.CompilerIrInstr.BinOp found-dst found-op lhs rhs _)
+          (and
+            (= found-dst dst)
+            (compiler_optimize.opt-binop-eq found-op op)
+            (match lhs
+              [(compiler_ir_types.CompilerIrValue.Var var) (= var src)]
+              [_ false])
+            (match rhs
+              [(compiler_ir_types.CompilerIrValue.I64 value) (= value literal)]
+              [_ false]))]
+        [_ false]))))
+
+(define (opt-pcf-phi-inputs
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : String]
+  [index : i64]) : compiler_ir_types.CompilerIrPhiInputList
+  (let
+    [block : compiler_ir_types.CompilerIrBlock (opt-pcf-block-of blocks label)]
+    (if (<= (opt-block-instr-count block) index)
+      (compiler_ir_types.CompilerIrPhiInputList.Nil)
+      (match (opt-block-instr-at block index)
+        [(compiler_ir_types.CompilerIrInstr.Phi _ inputs _) inputs]
+        [_ (compiler_ir_types.CompilerIrPhiInputList.Nil)]))))
+
+(define (opt-pcf-phi-bool?
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : String]
+  [index : i64]
+  [dst : i64]) : bool
+  (let
+    [block : compiler_ir_types.CompilerIrBlock (opt-pcf-block-of blocks label)]
+    (if (<= (opt-block-instr-count block) index)
+      false
+      (match (opt-block-instr-at block index)
+        [(compiler_ir_types.CompilerIrInstr.Phi found-dst _ ty)
+          (and
+            (= found-dst dst)
+            (compiler_optimize.opt-type-eq
+              (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+              ty
+              (compiler_ast_types.AstType.Bool)))]
+        [_ false]))))
+
+(define (opt-pcf-input-count
+  [inputs : compiler_ir_types.CompilerIrPhiInputList]) : i64
+  (match (compiler_ir_types.compiler-ir-phi-input-list-force-cons inputs)
+    [(compiler_ir_types.CompilerIrPhiInputList.Nil) 0]
+    [(compiler_ir_types.CompilerIrPhiInputList.Array seq)
+      (opt-pcf-input-count
+        (compiler_ir_types.compiler-ir-phi-input-seq-to-list seq))]
+    [(compiler_ir_types.CompilerIrPhiInputList.Cons _ _ rest)
+      (+ 1 (opt-pcf-input-count (__tl-box-place rest)))]))
+
+(define (opt-pcf-input-is-var?
+  [inputs : compiler_ir_types.CompilerIrPhiInputList]
+  [label : String]
+  [var : i64]) : bool
+  (match (compiler_optimize.opt-thread-phi-input-value
+    inputs
+    (compiler_ir_types.compiler-ir-label label))
+    [(compiler_ir_types.CompilerIrMaybeValue.Some value)
+      (match value
+        [(compiler_ir_types.CompilerIrValue.Var found) (= found var)]
+        [_ false])]
+    [(compiler_ir_types.CompilerIrMaybeValue.No) false]))
+
+(define (opt-pcf-input-is-i64?
+  [inputs : compiler_ir_types.CompilerIrPhiInputList]
+  [label : String]
+  [literal : i64]) : bool
+  (match (compiler_optimize.opt-thread-phi-input-value
+    inputs
+    (compiler_ir_types.compiler-ir-label label))
+    [(compiler_ir_types.CompilerIrMaybeValue.Some value)
+      (match value
+        [(compiler_ir_types.CompilerIrValue.I64 found) (= found literal)]
+        [_ false])]
+    [(compiler_ir_types.CompilerIrMaybeValue.No) false]))
+
+;; Returns 42 only when every fold, every refusal and every repair holds.
+(define (compiler-optimize-phi-cmp-fold-self-test) : i64
+  (let
+    [plain : compiler_ir_types.CompilerIrBlockList
+      (opt-pcf-result
+        "pcf_plain"
+        (opt-pcf-blocks-plain (compiler_ir_types.CompilerIrBinOp.Eq) 37))]
+    [two : compiler_ir_types.CompilerIrBlockList
+      (opt-pcf-result "pcf_two" (opt-pcf-blocks-two-literals))]
+    [ge : compiler_ir_types.CompilerIrBlockList
+      (opt-pcf-result
+        "pcf_ge"
+        (opt-pcf-blocks-plain (compiler_ir_types.CompilerIrBinOp.Ge) 48))]
+    [succ : compiler_ir_types.CompilerIrBlockList
+      (opt-pcf-result "pcf_succ" (opt-pcf-blocks-successor-phi))]
+    (cond
+      ;; (a) `eq %p, 37` with a `-1` sentinel edge: the sentinel predecessor
+      ;; threads to the false target, the compare moves to the end of the
+      ;; variable arm (taking over the dead phi's destination), and the merge is
+      ;; left as a single-predecessor bool phi feeding its branch.
+      [(not
+          (opt-pcf-changed?
+            "pcf_plain_changed"
+            (opt-pcf-blocks-plain (compiler_ir_types.CompilerIrBinOp.Eq) 37)))
+        1]
+      [(not (opt-pcf-jumps-to? plain "sent" "no")) 2]
+      [(not (= (opt-pcf-count plain "arm") 3)) 3]
+      [(not
+          (opt-pcf-moved-compare?
+            plain
+            "arm"
+            1
+            4
+            (compiler_ir_types.CompilerIrBinOp.Eq)
+            3
+            37))
+        4]
+      [(not (= (opt-pcf-count plain "merge") 2)) 5]
+      [(not (opt-pcf-phi-bool? plain "merge" 0 5)) 6]
+      [(not (= (opt-pcf-input-count (opt-pcf-phi-inputs plain "merge" 0)) 1)) 7]
+      [(not
+          (opt-pcf-input-is-var? (opt-pcf-phi-inputs plain "merge" 0) "arm" 4))
+        8]
+      ;; (b) two literal predecessors whose verdicts disagree thread to the true
+      ;; and the false target respectively.
+      [(not (opt-pcf-jumps-to? two "hit" "yes")) 9]
+      [(not (opt-pcf-jumps-to? two "miss" "no")) 10]
+      [(not (= (opt-pcf-input-count (opt-pcf-phi-inputs two "merge" 0)) 1)) 11]
+      [(not (opt-pcf-input-is-var? (opt-pcf-phi-inputs two "merge" 0) "arm" 4))
+        12]
+      ;; (c) a loop-header phi (its variable input arrives on a back edge) is
+      ;; refused outright.
+      [(opt-pcf-changed? "pcf_loop" (opt-pcf-blocks-loop-header)) 13]
+      ;; (d) a second reader of the phi is refused outright.
+      [(opt-pcf-changed? "pcf_second_use" (opt-pcf-blocks-second-use)) 14]
+      ;; (e) the `ge` form folds the same way: `-1 >= 48` is false, so the
+      ;; sentinel edge threads to the false target.
+      [(not (opt-pcf-jumps-to? ge "sent" "no")) 15]
+      [(not
+          (opt-pcf-moved-compare?
+            ge
+            "arm"
+            1
+            4
+            (compiler_ir_types.CompilerIrBinOp.Ge)
+            3
+            48))
+        16]
+      ;; (f) the true successor's phi is keyed on the merge, so the threaded
+      ;; predecessor inherits that input under its own label while the merge's
+      ;; own (still live) edge keeps its.
+      [(not (opt-pcf-jumps-to? succ "sent" "yes")) 17]
+      [(not (= (opt-pcf-input-count (opt-pcf-phi-inputs succ "yes" 0)) 2)) 18]
+      [(not (opt-pcf-input-is-i64? (opt-pcf-phi-inputs succ "yes" 0) "sent" 11))
+        19]
+      [(not
+          (opt-pcf-input-is-i64? (opt-pcf-phi-inputs succ "yes" 0) "merge" 11))
+        20]
+      [else 42])))
+
+(test
+  phi-cmp-fold-sentinel-join
+  (test.assert-i64-eq
+    (compiler-optimize-phi-cmp-fold-self-test)
+    42
+    "a sentinel phi compared against a literal threads its literal edges to the branch targets, moves the compare onto the variable edge and leaves a bool phi; loop-header phis, back edges and second readers are refused, and successor phis keyed on the merge are re-keyed onto the threaded predecessor"))

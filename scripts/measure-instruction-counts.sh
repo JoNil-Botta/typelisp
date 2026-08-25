@@ -25,6 +25,17 @@ set -eu
 # TYPELISP_BIN) to measure it as-is, or set TYPELISP_IR_SELF_STAGE2=0 to measure
 # the raw seed.
 #
+# Cachegrind runs with VEX guest chasing disabled (--vex-guest-chase=no). With
+# chasing on, VEX extends a superblock through unconditional jumps and the Ir
+# attributed to a block is charged even when a conditional exit inside the
+# chased superblock is taken, so the count includes instructions that never
+# executed; the size of the error depends on branch layout (measured on
+# peephole_lines: 514,849,010 with chasing vs 511,910,822 without for one
+# binary, 529,354,525 vs 498,771,841 for another, while callgrind and
+# exp-bbv agree with the chase-free figures to within a few instructions).
+# Without chasing every superblock ends at a branch and Ir is the number of
+# instructions the process actually retired, which is what this metric is for.
+#
 # The `--c-scalar` mode (env TYPELISP_IR_MEASURE_C_SCALAR=1) additionally
 # builds each C baseline with clang vectorization disabled
 # (-fno-vectorize -fno-slp-vectorize) and measures it as
@@ -419,6 +430,7 @@ run_cachegrind() {
     set +e
     env -i LC_ALL=C "$VALGRIND" \
         --quiet --tool=cachegrind --instr-at-start="$instr_at_start" \
+        --vex-guest-chase=no \
         --cachegrind-out-file="$cgout" \
         "$@" >"$stdout" 2>"$stderr"
     status=$?

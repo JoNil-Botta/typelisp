@@ -59,6 +59,12 @@ reject_diag() {
             printf "format: bare '_' is not a captured identifier" ;;
         stdlib/tests/format_duplicate_named_reject.tl)
             printf 'format: duplicate named argument name' ;;
+        stdlib/tests/format_dynamic_precision_integer_type_reject.tl)
+            printf 'format: dynamic precision argument must have exact type i64' ;;
+        stdlib/tests/format_dynamic_precision_index_reject.tl)
+            printf 'format: dynamic precision argument index is out of range: 2' ;;
+        stdlib/tests/format_dynamic_precision_type_reject.tl)
+            printf 'format: dynamic precision argument must have exact type i64' ;;
         stdlib/tests/format_dynamic_width_index_reject.tl)
             printf 'format: dynamic width argument index is out of range: 2' ;;
         stdlib/tests/format_dynamic_width_type_reject.tl)
@@ -87,8 +93,20 @@ reject_diag() {
             printf 'format: owner hook has wrong signature for' ;;
         stdlib/tests/format_positional_after_named_reject.tl)
             printf 'format: positional argument follows named argument' ;;
+        stdlib/tests/format_precision_duplicate_dollar_reject.tl)
+            printf 'format: malformed, duplicated, or out-of-order format specifier' ;;
+        stdlib/tests/format_precision_duplicate_star_reject.tl)
+            printf 'format: malformed, duplicated, or out-of-order format specifier' ;;
+        stdlib/tests/format_precision_missing_reject.tl)
+            printf "format: precision requires a count or '*'" ;;
+        stdlib/tests/format_precision_negative_literal_reject.tl)
+            printf 'format: malformed precision count' ;;
+        stdlib/tests/format_precision_overflow_reject.tl)
+            printf 'format: precision integer overflow' ;;
+        stdlib/tests/format_precision_unknown_capture_reject.tl)
+            printf 'typecheck: unbound name missing' ;;
         stdlib/tests/format_precision_unsupported_reject.tl)
-            printf 'format: precision is parsed but not supported yet' ;;
+            printf 'format: precision for text Display output is not supported yet' ;;
         stdlib/tests/format_plus_nonnumeric_reject.tl)
             printf "format: '+' sign requires a numeric argument" ;;
         stdlib/tests/format_raw_capture_reject.tl)
@@ -97,6 +115,8 @@ reject_diag() {
             printf 'format: malformed, duplicated, or out-of-order format specifier' ;;
         stdlib/tests/format_specifier_reject.tl)
             printf 'format: type selector is parsed but not supported yet: x' ;;
+        stdlib/tests/format_star_precision_too_few_reject.tl)
+            printf 'format: not enough arguments for placeholders' ;;
         stdlib/tests/format_too_few_args_reject.tl)
             printf 'format: not enough arguments for placeholders' ;;
         stdlib/tests/format_too_many_args_reject.tl)

@@ -139,9 +139,15 @@ Vec bang place macros as available yet.
   braces, and Rust-style byte width/fill/alignment, numeric sign, alternate,
   and sign-aware zero-padding options. Widths may be inline or supplied by an
   exact-`i64` positional/named argument with `N$` / `name$`; count references
-  do not advance the implicit value iterator. Precision and type selectors are
-  parsed but remain focused unsupported-semantics diagnostics. Supported values
-  are `String`, `i64`, `bool`, `char`, `f64`, and `f32`. Every supplied
+  do not advance the implicit value iterator. Precision accepts inline,
+  positional/named dollar, and `*` counts. Dynamic counts require exact `i64`
+  and must be nonnegative. Star consumes the current implicit argument as its
+  count, followed by the implicit value when the value is omitted; dollar
+  counts never advance that iterator. Ordinary integral output ignores the
+  resolved precision, while text/character/owner and float consumers remain
+  focused follow-up features. Type selectors remain focused unsupported-
+  semantics diagnostics. Supported values are `String`, `i64`, `bool`, `char`,
+  `f64`, and `f32`. Every supplied
   expression is evaluated once in source order. A nominal struct or
   enum delegates to its canonical owner module's exact
   `to-string : (& T) -> String` hook; modules with multiple nominal types may
@@ -650,7 +656,7 @@ borrowed process runtime wrappers likewise copy at their owned boundary.
 | `string.is-char-whitespace`, `string.char-eq`, `string.index-of-byte`, `string.contains`, `string.contains-char`, `string.is-string-prefix-at` | Non-allocating string/char inspection; text parameters are borrowed `str` inputs. |
 | `string.append`, `string.concat`, `string.copy`, `string.substring`, `string.slice`, `string.concat-all` | Copying string helpers allocate fresh active-arena `String` storage and copy bytes from borrowed `str` inputs. Owned `String` places auto-borrow at call sites, and stdlib code that already has `(& r str)` values calls the same public helpers directly. `string.concat-all` accepts a borrowed native `Slice String`; long `str-cat` expansions pass a live-prefix Slice over one compiler-private packed buffer. |
 | `int->string` | Allocates fresh active-arena `String` storage, writes decimal bytes directly, and returns the zero, positive, negative, and signed edge-case spelling without calling the legacy runtime helper. Project callers should import the stdlib helper instead of relying on an unimported compiler default. |
-| `format.format` | Parses a literal template into a deterministic plan at macro expansion and emits one flat `str-cat` expression. Implicit, indexed, explicit named, and call-site-captured value/count selections bind every supplied expression once in source order. Nominal placeholders call the canonical owner module's exact shared-borrow display hook without moving places. An unchanged value takes the existing fast path; applying sign or padding allocates one option-rendered piece, then the final `String` allocates once in the active arena. Scalar and owner-hook conversion helpers may allocate their rendered pieces before those steps. |
+| `format.format` | Parses a literal template into a deterministic plan at macro expansion and emits one flat `str-cat` expression. Implicit, indexed, explicit named, call-site-captured, and star precision value/count selections bind every supplied expression once in source order. Nominal placeholders call the canonical owner module's exact shared-borrow display hook without moving places. An unchanged value takes the existing fast path; applying shared options allocates an option-rendered piece only when content, sign, or padding changes, then the final `String` allocates once in the active arena. Scalar and owner-hook conversion helpers may allocate their rendered pieces before those steps. |
 | `string-trim-left`, `string-trim-right`, `string-trim` | Borrow the input text and return fresh `String` storage from `substring`, allocated in the active arena. |
 | `string-replace` | Compatibility wrapper: returns fresh `String` storage from `substring`/`string-append` when a replacement is made; returns the caller-provided `s` when `old` is not present. `string_caller_result.tl` exposes the `string-replace-result` caller-result shape that preserves the no-match borrow until explicit materialization. |
 | `read-file`, `try-read-file` | `read-file` returns an active-arena `ByteBuf`. The recoverable form returns `OkIoBytes ByteBuf` when the path is readable, or `ErrIoBytes` for empty paths, expected absence, permission failures, interrupted reads, and target status-code failures. Text consumers call `byte_buf.to-string` explicitly. |

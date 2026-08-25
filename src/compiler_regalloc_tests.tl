@@ -7250,9 +7250,9 @@
       (compiler-reg-i64-ty)
       3
       (ir.compiler-ir-block-cons
-        (ir.compiler-ir-block
+        (ir.CompilerIrBlock.Block
           (ir.compiler-ir-label "entry")
-          (ir.compiler-ir-instr-cons
+          (compiler-reg-test-instr-seq-prepend
             (ir.CompilerIrInstr.BinOp
               2
               (ir.CompilerIrBinOp.Mul)
@@ -7260,10 +7260,10 @@
               (ir.CompilerIrValue.Global
                 (ir.compiler-ir-test-symbol "global_value"))
               (compiler-reg-i64-ty))
-            (ir.compiler-ir-instr-cons
+            (compiler-reg-test-instr-seq-prepend
               (ir.CompilerIrInstr.Return
                 (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 2)))
-              ir.CompilerIrInstrList.Nil)))
+              (ir.compiler-ir-instr-seq-empty))))
         ir.CompilerIrBlockList.Nil))))
 
 (cfg
@@ -12544,14 +12544,14 @@
     (ast.AstType.I32)
     2
     (ir.compiler-ir-block-cons
-      (ir.compiler-ir-block
+      (ir.CompilerIrBlock.Block
         (ir.compiler-ir-label "entry")
-        (ir.compiler-ir-instr-cons
+        (compiler-reg-test-instr-seq-prepend
           (ir.CompilerIrInstr.Mov
             1
             (ir.CompilerIrValue.Var 0)
             (ast.AstType.I32))
-          ir.CompilerIrInstrList.Nil))
+          (ir.compiler-ir-instr-seq-empty)))
       ir.CompilerIrBlockList.Nil)))
 
 (define (compiler-reg-scalar-mov-scratch-vregs-ok?) : bool
@@ -12598,18 +12598,18 @@
     (ast.AstType.U64)
     1
     (ir.compiler-ir-block-cons
-      (ir.compiler-ir-block
+      (ir.CompilerIrBlock.Block
         (ir.compiler-ir-label "entry")
-        (ir.compiler-ir-instr-cons
+        (compiler-reg-test-instr-seq-prepend
           (ir.CompilerIrInstr.Call
             0
             (ir.compiler-ir-test-symbol "tl_alloc")
             (ir.CompilerIrCallArgs.One (ir.CompilerIrValue.I64 16))
             (ast.AstType.U64))
-          (ir.compiler-ir-instr-cons
+          (compiler-reg-test-instr-seq-prepend
             (ir.CompilerIrInstr.Return
               (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0)))
-            ir.CompilerIrInstrList.Nil)))
+            (ir.compiler-ir-instr-seq-empty))))
       ir.CompilerIrBlockList.Nil)))
 
 (define (compiler-reg-fast-alloc-scratch-vregs-ok?) : bool
@@ -12685,19 +12685,19 @@
     (ast.AstType.Bool)
     3
     (ir.compiler-ir-block-cons
-      (ir.compiler-ir-block
+      (ir.CompilerIrBlock.Block
         (ir.compiler-ir-label "entry")
-        (ir.compiler-ir-instr-cons
+        (compiler-reg-test-instr-seq-prepend
           (ir.CompilerIrInstr.BinOp
             2
             (ir.CompilerIrBinOp.Ne)
             (ir.CompilerIrValue.Var 0)
             (ir.CompilerIrValue.Var 1)
             (ast.AstType.U64))
-          (ir.compiler-ir-instr-cons
+          (compiler-reg-test-instr-seq-prepend
             (ir.CompilerIrInstr.Return
               (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 2)))
-            ir.CompilerIrInstrList.Nil)))
+            (ir.compiler-ir-instr-seq-empty))))
       ir.CompilerIrBlockList.Nil)))
 
 (define (compiler-reg-return-compare-rax-rhs-scratch-vregs-ok?) : bool
@@ -12744,9 +12744,9 @@
     (ast.AstType.I64)
     5
     (ir.compiler-ir-block-cons
-      (ir.compiler-ir-block
+      (ir.CompilerIrBlock.Block
         (ir.compiler-ir-label "entry")
-        (ir.compiler-ir-instr-cons
+        (compiler-reg-test-instr-seq-prepend
           (ir.CompilerIrInstr.BinOp
             2
             (ir.CompilerIrBinOp.Mul)
@@ -12754,22 +12754,22 @@
             (ir.CompilerIrValue.Global
               (ir.compiler-ir-test-symbol "binop_global_rhs_value"))
             (ast.AstType.I64))
-          (ir.compiler-ir-instr-cons
+          (compiler-reg-test-instr-seq-prepend
             (ir.CompilerIrInstr.Mov
               3
               (ir.CompilerIrValue.Var 2)
               (ast.AstType.I64))
-            (ir.compiler-ir-instr-cons
+            (compiler-reg-test-instr-seq-prepend
               (ir.CompilerIrInstr.BinOp
                 4
                 (ir.CompilerIrBinOp.Sub)
                 (ir.CompilerIrValue.Var 1)
                 (ir.CompilerIrValue.Var 3)
                 (ast.AstType.I64))
-              (ir.compiler-ir-instr-cons
+              (compiler-reg-test-instr-seq-prepend
                 (ir.CompilerIrInstr.Return
                   (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 4)))
-                ir.CompilerIrInstrList.Nil)))))
+                (ir.compiler-ir-instr-seq-empty))))))
       ir.CompilerIrBlockList.Nil)))
 
 (define (compiler-reg-binop-global-rhs-scratch-test-plan) : reg.CompilerRegPlan

@@ -50181,49 +50181,49 @@ g:
 ;; Safe literal div/mod folds a single-use Mov (and an optional Cast) into the
 ;; consumer. The emission cursor still names the producer, so the fusion must
 ;; explicitly fetch the consumer's modeled scratch point.
-(define (compiler-backend-scratch-vreg-fused-divmod-instrs) : compiler_ir_types.CompilerIrInstrList
-  (compiler_ir_types.compiler-ir-instr-cons
+(define (compiler-backend-scratch-vreg-fused-divmod-instrs) : compiler_ir_types.CompilerIrInstrSeq
+  (compiler-backend-test-instr-seq-prepend
     (compiler_ir_types.CompilerIrInstr.Mov
       1
       (compiler_ir_types.CompilerIrValue.I64 10)
       (compiler_ast_types.AstType.I64))
-    (compiler_ir_types.compiler-ir-instr-cons
+    (compiler-backend-test-instr-seq-prepend
       (compiler_ir_types.CompilerIrInstr.BinOp
         2
         (compiler_ir_types.CompilerIrBinOp.Div)
         (compiler_ir_types.CompilerIrValue.Var 0)
         (compiler_ir_types.CompilerIrValue.Var 1)
         (compiler_ast_types.AstType.I64))
-      (compiler_ir_types.compiler-ir-instr-cons
+      (compiler-backend-test-instr-seq-prepend
         (compiler_ir_types.CompilerIrInstr.Return
           (compiler_ir_types.CompilerIrMaybeValue.Some
             (compiler_ir_types.CompilerIrValue.Var 2)))
-        compiler_ir_types.CompilerIrInstrList.Nil))))
+        (compiler_ir_types.compiler-ir-instr-seq-empty)))))
 
-(define (compiler-backend-scratch-vreg-fused-cast-divmod-instrs) : compiler_ir_types.CompilerIrInstrList
-  (compiler_ir_types.compiler-ir-instr-cons
+(define (compiler-backend-scratch-vreg-fused-cast-divmod-instrs) : compiler_ir_types.CompilerIrInstrSeq
+  (compiler-backend-test-instr-seq-prepend
     (compiler_ir_types.CompilerIrInstr.Mov
       1
       (compiler_ir_types.CompilerIrValue.I64 10)
       (compiler_ast_types.AstType.I64))
-    (compiler_ir_types.compiler-ir-instr-cons
+    (compiler-backend-test-instr-seq-prepend
       (compiler_ir_types.CompilerIrInstr.Cast
         2
         (compiler_ir_types.CompilerIrValue.Var 1)
         (compiler_ast_types.AstType.I64)
         (compiler_ast_types.AstType.U64))
-      (compiler_ir_types.compiler-ir-instr-cons
+      (compiler-backend-test-instr-seq-prepend
         (compiler_ir_types.CompilerIrInstr.BinOp
           3
           (compiler_ir_types.CompilerIrBinOp.Div)
           (compiler_ir_types.CompilerIrValue.Var 0)
           (compiler_ir_types.CompilerIrValue.Var 2)
           (compiler_ast_types.AstType.U64))
-        (compiler_ir_types.compiler-ir-instr-cons
+        (compiler-backend-test-instr-seq-prepend
           (compiler_ir_types.CompilerIrInstr.Return
             (compiler_ir_types.CompilerIrMaybeValue.Some
               (compiler_ir_types.CompilerIrValue.Var 3)))
-          compiler_ir_types.CompilerIrInstrList.Nil)))))
+          (compiler_ir_types.compiler-ir-instr-seq-empty))))))
 
 (define (compiler-backend-scratch-vreg-fused-divmod-assignments
   [with-cast : bool]) : compiler_regalloc.CompilerRegAssignmentTable
@@ -50277,24 +50277,24 @@ g:
 ;; A pointer-typed Gep can feed StorePtr through a scalar Mov. The producer
 ;; fusion skips both instructions, so the value staging scratch belongs to the
 ;; StorePtr two sites ahead rather than to the intervening scratch-free Mov.
-(define (compiler-backend-scratch-vreg-fused-gep-mov-store-instrs) : compiler_ir_types.CompilerIrInstrList
-  (compiler_ir_types.compiler-ir-instr-cons
+(define (compiler-backend-scratch-vreg-fused-gep-mov-store-instrs) : compiler_ir_types.CompilerIrInstrSeq
+  (compiler-backend-test-instr-seq-prepend
     (compiler_ir_types.CompilerIrInstr.Gep
       3
       (compiler_ir_types.CompilerIrValue.Var 0)
       (compiler_ir_types.CompilerIrValue.Var 1)
       (compiler_ast_types.AstType.U64))
-    (compiler_ir_types.compiler-ir-instr-cons
+    (compiler-backend-test-instr-seq-prepend
       (compiler_ir_types.CompilerIrInstr.Mov
         4
         (compiler_ir_types.CompilerIrValue.Var 3)
         (compiler_ast_types.AstType.U64))
-      (compiler_ir_types.compiler-ir-instr-cons
+      (compiler-backend-test-instr-seq-prepend
         (compiler_ir_types.CompilerIrInstr.StorePtr
           (compiler_ir_types.CompilerIrValue.Var 4)
           (compiler_ir_types.CompilerIrValue.Var 2)
           (compiler_ast_types.AstType.U64))
-        compiler_ir_types.CompilerIrInstrList.Nil))))
+        (compiler_ir_types.compiler-ir-instr-seq-empty)))))
 
 (define (compiler-backend-scratch-vreg-fused-gep-mov-store-assignments) : compiler_regalloc.CompilerRegAssignmentTable
   (compiler_regalloc.compiler-reg-assignments-prepend
@@ -50340,31 +50340,31 @@ g:
 
 ;; Gep+Load+Compare+Branch keeps the address scratch at the producer site and
 ;; reuses the comparison's unmaterialized result slot to stage a spilled RHS.
-(define (compiler-backend-scratch-vreg-fused-gep-load-compare-instrs) : compiler_ir_types.CompilerIrInstrList
-  (compiler_ir_types.compiler-ir-instr-cons
+(define (compiler-backend-scratch-vreg-fused-gep-load-compare-instrs) : compiler_ir_types.CompilerIrInstrSeq
+  (compiler-backend-test-instr-seq-prepend
     (compiler_ir_types.CompilerIrInstr.Gep
       2
       (compiler_ir_types.CompilerIrValue.Var 0)
       (compiler_ir_types.CompilerIrValue.I64 1)
       (compiler_ast_types.AstType.I64))
-    (compiler_ir_types.compiler-ir-instr-cons
+    (compiler-backend-test-instr-seq-prepend
       (compiler_ir_types.CompilerIrInstr.Load
         3
         (compiler_ir_types.CompilerIrValue.Var 2)
         (compiler_ast_types.AstType.I64))
-      (compiler_ir_types.compiler-ir-instr-cons
+      (compiler-backend-test-instr-seq-prepend
         (compiler_ir_types.CompilerIrInstr.BinOp
           4
           (compiler_ir_types.CompilerIrBinOp.Eq)
           (compiler_ir_types.CompilerIrValue.Var 3)
           (compiler_ir_types.CompilerIrValue.Var 1)
           (compiler_ast_types.AstType.I64))
-        (compiler_ir_types.compiler-ir-instr-cons
+        (compiler-backend-test-instr-seq-prepend
           (compiler_ir_types.CompilerIrInstr.Branch
             (compiler_ir_types.CompilerIrValue.Var 4)
             (compiler_ir_types.compiler-ir-label "match")
             (compiler_ir_types.compiler-ir-label "next"))
-          compiler_ir_types.CompilerIrInstrList.Nil)))))
+          (compiler_ir_types.compiler-ir-instr-seq-empty))))))
 
 (define (compiler-backend-scratch-vreg-fused-gep-load-compare-assignments-from
   [var : i64]) : compiler_regalloc.CompilerRegAssignmentTable
@@ -50593,20 +50593,20 @@ g:
 
 (define (compiler-backend-scratch-vreg-scalar-return-compare-blocks) : compiler_ir_types.CompilerIrBlockList
   (compiler_ir_types.compiler-ir-block-cons
-    (compiler_ir_types.compiler-ir-block
+    (compiler_ir_types.CompilerIrBlock.Block
       (compiler_ir_types.compiler-ir-label "entry")
-      (compiler_ir_types.compiler-ir-instr-cons
+      (compiler-backend-test-instr-seq-prepend
         (compiler_ir_types.CompilerIrInstr.BinOp
           2
           (compiler_ir_types.CompilerIrBinOp.Eq)
           (compiler_ir_types.CompilerIrValue.Var 0)
           (compiler_ir_types.CompilerIrValue.Var 1)
           (compiler_ast_types.AstType.I64))
-        (compiler_ir_types.compiler-ir-instr-cons
+        (compiler-backend-test-instr-seq-prepend
           (compiler_ir_types.CompilerIrInstr.Return
             (compiler_ir_types.CompilerIrMaybeValue.Some
               (compiler_ir_types.CompilerIrValue.Var 2)))
-          compiler_ir_types.CompilerIrInstrList.Nil)))
+          (compiler_ir_types.compiler-ir-instr-seq-empty))))
     compiler_ir_types.CompilerIrBlockList.Nil))
 
 ;; Return comparison operands can be forwarded after allocation just like the

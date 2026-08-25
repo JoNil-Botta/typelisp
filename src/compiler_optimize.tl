@@ -5078,18 +5078,6 @@
               (+ index 1)
               candidates)])))))
 
-(define (opt-aggregate-instr-list-append
-  [left : ir.CompilerIrInstrList]
-  [right : ir.CompilerIrInstrList]) : ir.CompilerIrInstrList
-  (match left
-    [(ir.CompilerIrInstrList.Nil) right]
-    [(ir.CompilerIrInstrList.Cons head rest)
-      (ir.compiler-ir-instr-cons
-        head
-        (opt-aggregate-instr-list-append
-          (compiler-opt-box-shared-view rest)
-          right))]))
-
 (define (opt-aggregate-append-blocks!
   [blocks : ir.CompilerIrBlockList]
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : unit
@@ -7563,26 +7551,6 @@
             (= atrap btrap))]
         [_ false])]))
 
-(define (opt-instr-list-eq
-  [type-segment-bases : i64]
-  [a : ir.CompilerIrInstrList]
-  [b : ir.CompilerIrInstrList]) : bool
-  (match (compiler-opt-global-shared-view a)
-    [(ir.CompilerIrInstrList.Nil)
-      (match b
-        [(ir.CompilerIrInstrList.Nil) true]
-        [_ false])]
-    [(ir.CompilerIrInstrList.Cons ah at)
-      (match b
-        [(ir.CompilerIrInstrList.Cons bh bt)
-          (and
-            (opt-instr-eq type-segment-bases ah bh)
-            (opt-instr-list-eq
-              type-segment-bases
-              (compiler-opt-box-shared-view at)
-              (compiler-opt-box-shared-view bt)))]
-        [_ false])]))
-
 (define (opt-instr-seq-eq-from
   [type-segment-bases : i64]
   [a : ir.CompilerIrInstrSeq]
@@ -8824,16 +8792,6 @@
             (set! state next-state)
             (set! index (+ index 1)))]))))
 
-(define (opt-copy-instrs [env : OptCopyEnv] [instrs : ir.CompilerIrInstrList]) : ir.CompilerIrInstrList
-  (match instrs
-    [(ir.CompilerIrInstrList.Nil) (ir.CompilerIrInstrList.Nil)]
-    [(ir.CompilerIrInstrList.Cons instr rest)
-      (match (opt-copy-instr env instr)
-        [(OptCopyResult.Result new-env new-instr)
-          (ir.compiler-ir-instr-cons
-            new-instr
-            (opt-copy-instrs new-env (compiler-opt-box-shared-view rest)))])]))
-
 ;; --- block-local redundant bounds-check elimination -------------------------
 ;;
 ;; `CompilerIrInstr.BoundsCheck index length ok-label` is a trapping side-effect: it must be kept
@@ -9226,299 +9184,6 @@
     [(ir.CompilerIrInstr.TailCallIndirect _ _ _) (OptBoundsFacts.Nil)]
     [(ir.CompilerIrInstr.Switch _ _ _ _) (OptBoundsFacts.Nil)]
     [(ir.CompilerIrInstr.TotalEnumSwitch _ _ _ _ _) (OptBoundsFacts.Nil)]))
-
-(define (opt-bounds-instrs-with-object
-  [type-segment-bases : i64]
-  [facts : OptBoundsFacts]
-  [lengths : OptObjectLengthFact]
-  [ptrs : OptObjectLengthFact]
-  [casts : OptBoundsCastEnv]
-  [instrs : ir.CompilerIrInstrList]) : ir.CompilerIrInstrList
-  (match instrs
-    [(ir.CompilerIrInstrList.Nil) (ir.CompilerIrInstrList.Nil)]
-    [(ir.CompilerIrInstrList.Cons instr rest)
-      (match (compiler-opt-global-shared-view instr)
-        [(ir.CompilerIrInstr.BoundsCheck index length _)
-          (let
-            [index-key : ir.CompilerIrValue
-              (opt-bounds-cast-canon
-                (compiler-opt-global-shared-view casts)
-                index)]
-            [length-key : ir.CompilerIrValue
-              (opt-bounds-length-value lengths length)]
-            (if (opt-bounds-contains
-              (compiler-opt-global-shared-view facts)
-              (compiler-opt-global-shared-view index-key)
-              (compiler-opt-global-shared-view length-key))
-              (opt-bounds-instrs-with-object
-                type-segment-bases
-                (compiler-opt-global-shared-view facts)
-                lengths
-                ptrs
-                casts
-                (compiler-opt-box-shared-view rest))
-              (ir.compiler-ir-instr-cons
-                instr
-                (opt-bounds-instrs-with-object
-                  type-segment-bases
-                  (opt-bounds-add facts index-key length-key)
-                  lengths
-                  ptrs
-                  casts
-                  (compiler-opt-box-shared-view rest)))))]
-        [(ir.CompilerIrInstr.Gep dst base offset ty)
-          (let
-            [facts2 : OptBoundsFacts (opt-bounds-invalidate-var facts dst)]
-            [lengths2 : OptObjectLengthFact
-              (opt-object-length-invalidate-var lengths dst)]
-            [ptrs2 : OptObjectLengthFact
-              (opt-object-length-invalidate-var ptrs dst)]
-            [ptrs3 : OptObjectLengthFact
-              (if (opt-bounds-object-length-slot? type-segment-bases offset ty)
-                (match base
-                  [(ir.CompilerIrValue.Var object-var)
-                    (opt-object-length-bind ptrs2 dst object-var)]
-                  [_ ptrs2])
-                ptrs2)]
-            (ir.compiler-ir-instr-cons
-              instr
-              (opt-bounds-instrs-with-object
-                type-segment-bases
-                facts2
-                lengths2
-                ptrs3
-                (opt-bounds-cast-unbind casts dst)
-                (compiler-opt-box-shared-view rest))))]
-        [(ir.CompilerIrInstr.Load dst src ty)
-          (let
-            [facts2 : OptBoundsFacts (opt-bounds-invalidate-var facts dst)]
-            [lengths2 : OptObjectLengthFact
-              (opt-object-length-invalidate-var lengths dst)]
-            [ptrs2 : OptObjectLengthFact
-              (opt-object-length-invalidate-var ptrs dst)]
-            [lengths3 : OptObjectLengthFact
-              (if (opt-type-eq type-segment-bases ty (ast.AstType.I64))
-                (match (compiler-opt-global-shared-view src)
-                  [(ir.CompilerIrValue.Var ptr-var)
-                    (match (opt-object-length-lookup ptrs2 ptr-var)
-                      [(option_i64.Some object-var)
-                        (opt-object-length-bind lengths2 dst object-var)]
-                      [(option_i64.None) lengths2])]
-                  [_ lengths2])
-                lengths2)]
-            (ir.compiler-ir-instr-cons
-              instr
-              (opt-bounds-instrs-with-object
-                type-segment-bases
-                facts2
-                lengths3
-                ptrs2
-                (opt-bounds-cast-unbind casts dst)
-                (compiler-opt-box-shared-view rest))))]
-        [(ir.CompilerIrInstr.Cast dst src from-ty to-ty)
-          (let
-            [facts2 : OptBoundsFacts (opt-bounds-invalidate-var facts dst)]
-            [lengths2 : OptObjectLengthFact
-              (opt-object-length-invalidate-var lengths dst)]
-            [ptrs2 : OptObjectLengthFact
-              (opt-object-length-invalidate-var ptrs dst)]
-            [lengths3 : OptObjectLengthFact
-              (if (and
-                (opt-type-eq
-                  type-segment-bases
-                  (compiler-opt-global-shared-view from-ty)
-                  (ast.AstType.I64))
-                (opt-type-eq
-                  type-segment-bases
-                  (compiler-opt-global-shared-view to-ty)
-                  (ast.AstType.U64)))
-                (match (compiler-opt-global-shared-view src)
-                  [(ir.CompilerIrValue.Var length-var)
-                    (match (opt-object-length-lookup lengths2 length-var)
-                      [(option_i64.Some object-var)
-                        (opt-object-length-bind lengths2 dst object-var)]
-                      [(option_i64.None) lengths2])]
-                  [_ lengths2])
-                lengths2)]
-            (ir.compiler-ir-instr-cons
-              instr
-              (opt-bounds-instrs-with-object
-                type-segment-bases
-                facts2
-                lengths3
-                ptrs2
-                (opt-bounds-cast-update
-                  type-segment-bases
-                  casts
-                  dst
-                  src
-                  from-ty
-                  to-ty)
-                (compiler-opt-box-shared-view rest))))]
-        ;; An array element store cannot change any array's LENGTH (in TL a
-        ;; length slot is only ever written by make-array, and user code cannot
-        ;; obtain a raw pointer to it), so the (index, length-token) bounds facts
-        ;; survive it. Only a store whose target is a tracked length-slot pointer
-        ;; (the make-array length write) clears the facts; element stores -- which
-        ;; never alias a length slot -- keep object mode and its facts. This lets a
-        ;; read-then-write of the same slot (qs-swap) drop the write's check.
-        [(ir.CompilerIrInstr.StorePtr ptr _ _)
-          (match ptr
-            [(ir.CompilerIrValue.Var ptr-var)
-              (match (opt-object-length-lookup ptrs ptr-var)
-                [(option_i64.Some _)
-                  (ir.compiler-ir-instr-cons
-                    instr
-                    (opt-bounds-instrs
-                      type-segment-bases
-                      (OptBoundsFacts.Nil)
-                      casts
-                      (compiler-opt-box-shared-view rest)))]
-                [(option_i64.None)
-                  (ir.compiler-ir-instr-cons
-                    instr
-                    (opt-bounds-instrs-with-object
-                      type-segment-bases
-                      facts
-                      lengths
-                      ptrs
-                      casts
-                      (compiler-opt-box-shared-view rest)))])]
-            [_
-              (ir.compiler-ir-instr-cons
-                instr
-                (opt-bounds-instrs
-                  type-segment-bases
-                  (OptBoundsFacts.Nil)
-                  casts
-                  (compiler-opt-box-shared-view rest)))])]
-        [_
-          (let
-            [next-facts : OptBoundsFacts
-              (opt-bounds-update-facts
-                facts
-                (compiler-opt-global-shared-view instr))]
-            [casts2 : OptBoundsCastEnv
-              (match (opt-instr-def-var (compiler-opt-global-shared-view instr))
-                [(option_i64.Some dst) (opt-bounds-cast-unbind casts dst)]
-                [(option_i64.None) casts])]
-            (match (compiler-opt-global-shared-view next-facts)
-              [(OptBoundsFacts.Nil)
-                (ir.compiler-ir-instr-cons
-                  instr
-                  (opt-bounds-instrs
-                    type-segment-bases
-                    next-facts
-                    casts2
-                    (compiler-opt-box-shared-view rest)))]
-              [_
-                (match (opt-instr-def-var
-                  (compiler-opt-global-shared-view instr))
-                  [(option_i64.Some dst)
-                    (ir.compiler-ir-instr-cons
-                      instr
-                      (opt-bounds-instrs-with-object
-                        type-segment-bases
-                        next-facts
-                        (opt-object-length-invalidate-var lengths dst)
-                        (opt-object-length-invalidate-var ptrs dst)
-                        casts2
-                        (compiler-opt-box-shared-view rest)))]
-                  [(option_i64.None)
-                    (ir.compiler-ir-instr-cons
-                      instr
-                      (opt-bounds-instrs-with-object
-                        type-segment-bases
-                        next-facts
-                        lengths
-                        ptrs
-                        casts2
-                        (compiler-opt-box-shared-view rest)))])]))])]))
-
-(define (opt-bounds-instrs
-  [type-segment-bases : i64]
-  [facts : OptBoundsFacts]
-  [casts : OptBoundsCastEnv]
-  [instrs : ir.CompilerIrInstrList]) : ir.CompilerIrInstrList
-  (match instrs
-    [(ir.CompilerIrInstrList.Nil) (ir.CompilerIrInstrList.Nil)]
-    [(ir.CompilerIrInstrList.Cons instr rest)
-      (match (compiler-opt-global-shared-view instr)
-        [(ir.CompilerIrInstr.BoundsCheck index length _)
-          (let
-            [index-key : ir.CompilerIrValue
-              (opt-bounds-cast-canon
-                (compiler-opt-global-shared-view casts)
-                index)]
-            (if (opt-bounds-contains
-              (compiler-opt-global-shared-view facts)
-              (compiler-opt-global-shared-view index-key)
-              (compiler-opt-global-shared-view length))
-              (opt-bounds-instrs
-                type-segment-bases
-                (compiler-opt-global-shared-view facts)
-                casts
-                (compiler-opt-box-shared-view rest))
-              (ir.compiler-ir-instr-cons
-                instr
-                (opt-bounds-instrs
-                  type-segment-bases
-                  (opt-bounds-add facts index-key length)
-                  casts
-                  (compiler-opt-box-shared-view rest)))))]
-        [(ir.CompilerIrInstr.Gep dst base offset ty)
-          (let
-            [next-facts : OptBoundsFacts (opt-bounds-invalidate-var facts dst)]
-            [casts2 : OptBoundsCastEnv (opt-bounds-cast-unbind casts dst)]
-            (if (opt-bounds-object-length-slot? type-segment-bases offset ty)
-              (ir.compiler-ir-instr-cons
-                instr
-                (opt-bounds-instrs-with-object
-                  type-segment-bases
-                  next-facts
-                  (OptObjectLengthFact.None)
-                  (match base
-                    [(ir.CompilerIrValue.Var object-var)
-                      (opt-object-length-bind
-                        (OptObjectLengthFact.None)
-                        dst
-                        object-var)]
-                    [_ (OptObjectLengthFact.None)])
-                  casts2
-                  (compiler-opt-box-shared-view rest)))
-              (ir.compiler-ir-instr-cons
-                instr
-                (opt-bounds-instrs
-                  type-segment-bases
-                  next-facts
-                  casts2
-                  (compiler-opt-box-shared-view rest)))))]
-        [(ir.CompilerIrInstr.Cast dst src from-ty to-ty)
-          (ir.compiler-ir-instr-cons
-            (compiler-opt-global-shared-view instr)
-            (opt-bounds-instrs
-              type-segment-bases
-              (opt-bounds-update-facts facts instr)
-              (opt-bounds-cast-update
-                type-segment-bases
-                casts
-                dst
-                src
-                from-ty
-                to-ty)
-              (compiler-opt-box-shared-view rest)))]
-        [_
-          (ir.compiler-ir-instr-cons
-            (compiler-opt-global-shared-view instr)
-            (opt-bounds-instrs
-              type-segment-bases
-              (opt-bounds-update-facts
-                facts
-                (compiler-opt-global-shared-view instr))
-              (match (opt-instr-def-var instr)
-                [(option_i64.Some dst) (opt-bounds-cast-unbind casts dst)]
-                [(option_i64.None) casts])
-              (compiler-opt-box-shared-view rest)))])]))
 
 (defenum OptBoundsSeqState
   (Plain OptBoundsFacts OptBoundsCastEnv)
@@ -30885,24 +30550,205 @@
   (No)
   (Some bool i64))
 
-;; One redirected predecessor and the value it must deliver at X.
+;; One redirected predecessor and the value it must deliver at X. Dense plan
+;; storage retains cons-order through reverse logical indexing: appending a
+;; record is O(1), while index zero remains the newest logical item.
+(defstruct OptFlagExitEdgeValue
+  (label i64)
+  (value ir.CompilerIrValue))
+
 (defenum OptFlagExitEdgeValues
   (Nil)
-  (Cons i64 ir.CompilerIrValue (Box OptFlagExitEdgeValues)))
+  (Dense (__tl_dyn-array OptFlagExitEdgeValue) i64))
 
 ;; A phi already sitting in X: its dst, the value its G edge carried, and the
 ;; value each redirected predecessor delivers in that edge's place.
+(defstruct OptFlagExitPhiFix
+  (dst i64)
+  (value ir.CompilerIrValue)
+  (values OptFlagExitEdgeValues))
+
 (defenum OptFlagExitPhiFixes
   (Nil)
-  (Cons i64 ir.CompilerIrValue OptFlagExitEdgeValues (Box OptFlagExitPhiFixes)))
+  (Dense (__tl_dyn-array OptFlagExitPhiFix) i64))
 
 ;; A loop value read from X's dominated region: the value, the fresh var the
 ;; exit phi minted for it, its type, and one input per redirected predecessor.
 ;; The surviving predecessors' inputs are the value itself and are appended when
 ;; the phi is materialised.
+(defstruct OptFlagExitMint
+  (source i64)
+  (fresh i64)
+  (ty ast.AstType)
+  (values OptFlagExitEdgeValues))
+
 (defenum OptFlagExitMints
   (Nil)
-  (Cons i64 i64 ast.AstType OptFlagExitEdgeValues (Box OptFlagExitMints)))
+  (Dense (__tl_dyn-array OptFlagExitMint) i64))
+
+(define (opt-flag-exit-edge-values-count [values : OptFlagExitEdgeValues]) : i64
+  (match values
+    [(OptFlagExitEdgeValues.Nil) 0]
+    [(OptFlagExitEdgeValues.Dense _ len) len]))
+
+(define (opt-flag-exit-edge-values-ref
+  [values : OptFlagExitEdgeValues]
+  [index : i64]) : OptFlagExitEdgeValue
+  (match values
+    [(OptFlagExitEdgeValues.Nil)
+      (OptFlagExitEdgeValue -1 (ir.CompilerIrValue.Unit))]
+    [(OptFlagExitEdgeValues.Dense items len)
+      (array-ref items (- (- len 1) index))]))
+
+(define (opt-flag-exit-edge-values-tail [values : OptFlagExitEdgeValues]) : OptFlagExitEdgeValues
+  (match values
+    [(OptFlagExitEdgeValues.Nil) (OptFlagExitEdgeValues.Nil)]
+    [(OptFlagExitEdgeValues.Dense items len)
+      (if (<= len 1)
+        (OptFlagExitEdgeValues.Nil)
+        (OptFlagExitEdgeValues.Dense items (- len 1)))]))
+
+(define (opt-flag-exit-edge-values-cons
+  [label : i64]
+  [value : ir.CompilerIrValue]
+  [values : OptFlagExitEdgeValues]) : OptFlagExitEdgeValues
+  (let
+    [item : OptFlagExitEdgeValue (OptFlagExitEdgeValue label value)]
+    (match values
+      [(OptFlagExitEdgeValues.Nil)
+        (let
+          [items : (__tl_dyn-array OptFlagExitEdgeValue)
+            (array.make-array OptFlagExitEdgeValue 4)]
+          (begin
+            (set! (array-ref items 0) item)
+            (OptFlagExitEdgeValues.Dense items 1)))]
+      [(OptFlagExitEdgeValues.Dense items len)
+        (if (< len (array-length items))
+          (begin
+            (set! (array-ref items len) item)
+            (OptFlagExitEdgeValues.Dense items (+ len 1)))
+          (let
+            [bigger : (__tl_dyn-array OptFlagExitEdgeValue)
+              (array.make-array
+                OptFlagExitEdgeValue
+                (opt-dense-next-capacity len))]
+            [index : i64 0]
+            (begin
+              (while (< index len)
+                (begin
+                  (set! (array-ref bigger index) (array-ref items index))
+                  (set! index (+ index 1))))
+              (set! (array-ref bigger len) item)
+              (OptFlagExitEdgeValues.Dense bigger (+ len 1)))))])))
+
+(define (opt-flag-exit-phi-fixes-count [fixes : OptFlagExitPhiFixes]) : i64
+  (match fixes
+    [(OptFlagExitPhiFixes.Nil) 0]
+    [(OptFlagExitPhiFixes.Dense _ len) len]))
+
+(define (opt-flag-exit-phi-fixes-ref
+  [fixes : OptFlagExitPhiFixes]
+  [index : i64]) : OptFlagExitPhiFix
+  (match fixes
+    [(OptFlagExitPhiFixes.Nil)
+      (OptFlagExitPhiFix
+        -1
+        (ir.CompilerIrValue.Unit)
+        (OptFlagExitEdgeValues.Nil))]
+    [(OptFlagExitPhiFixes.Dense items len)
+      (array-ref items (- (- len 1) index))]))
+
+(define (opt-flag-exit-phi-fixes-tail [fixes : OptFlagExitPhiFixes]) : OptFlagExitPhiFixes
+  (match fixes
+    [(OptFlagExitPhiFixes.Nil) (OptFlagExitPhiFixes.Nil)]
+    [(OptFlagExitPhiFixes.Dense items len)
+      (if (<= len 1)
+        (OptFlagExitPhiFixes.Nil)
+        (OptFlagExitPhiFixes.Dense items (- len 1)))]))
+
+(define (opt-flag-exit-phi-fixes-cons
+  [dst : i64]
+  [value : ir.CompilerIrValue]
+  [values : OptFlagExitEdgeValues]
+  [fixes : OptFlagExitPhiFixes]) : OptFlagExitPhiFixes
+  (let
+    [item : OptFlagExitPhiFix (OptFlagExitPhiFix dst value values)]
+    (match fixes
+      [(OptFlagExitPhiFixes.Nil)
+        (let
+          [items : (__tl_dyn-array OptFlagExitPhiFix)
+            (array.make-array OptFlagExitPhiFix 4)]
+          (begin
+            (set! (array-ref items 0) item)
+            (OptFlagExitPhiFixes.Dense items 1)))]
+      [(OptFlagExitPhiFixes.Dense items len)
+        (if (< len (array-length items))
+          (begin
+            (set! (array-ref items len) item)
+            (OptFlagExitPhiFixes.Dense items (+ len 1)))
+          (let
+            [bigger : (__tl_dyn-array OptFlagExitPhiFix)
+              (array.make-array OptFlagExitPhiFix (opt-dense-next-capacity len))]
+            [index : i64 0]
+            (begin
+              (while (< index len)
+                (begin
+                  (set! (array-ref bigger index) (array-ref items index))
+                  (set! index (+ index 1))))
+              (set! (array-ref bigger len) item)
+              (OptFlagExitPhiFixes.Dense bigger (+ len 1)))))])))
+
+(define (opt-flag-exit-mints-count [mints : OptFlagExitMints]) : i64
+  (match mints
+    [(OptFlagExitMints.Nil) 0]
+    [(OptFlagExitMints.Dense _ len) len]))
+
+(define (opt-flag-exit-mints-ref [mints : OptFlagExitMints] [index : i64]) : OptFlagExitMint
+  (match mints
+    [(OptFlagExitMints.Nil)
+      (OptFlagExitMint -1 -1 (ast.AstType.Unit) (OptFlagExitEdgeValues.Nil))]
+    [(OptFlagExitMints.Dense items len) (array-ref items (- (- len 1) index))]))
+
+(define (opt-flag-exit-mints-tail [mints : OptFlagExitMints]) : OptFlagExitMints
+  (match mints
+    [(OptFlagExitMints.Nil) (OptFlagExitMints.Nil)]
+    [(OptFlagExitMints.Dense items len)
+      (if (<= len 1)
+        (OptFlagExitMints.Nil)
+        (OptFlagExitMints.Dense items (- len 1)))]))
+
+(define (opt-flag-exit-mints-cons
+  [source : i64]
+  [fresh : i64]
+  [ty : ast.AstType]
+  [values : OptFlagExitEdgeValues]
+  [mints : OptFlagExitMints]) : OptFlagExitMints
+  (let
+    [item : OptFlagExitMint (OptFlagExitMint source fresh ty values)]
+    (match mints
+      [(OptFlagExitMints.Nil)
+        (let
+          [items : (__tl_dyn-array OptFlagExitMint)
+            (array.make-array OptFlagExitMint 4)]
+          (begin
+            (set! (array-ref items 0) item)
+            (OptFlagExitMints.Dense items 1)))]
+      [(OptFlagExitMints.Dense items len)
+        (if (< len (array-length items))
+          (begin
+            (set! (array-ref items len) item)
+            (OptFlagExitMints.Dense items (+ len 1)))
+          (let
+            [bigger : (__tl_dyn-array OptFlagExitMint)
+              (array.make-array OptFlagExitMint (opt-dense-next-capacity len))]
+            [index : i64 0]
+            (begin
+              (while (< index len)
+                (begin
+                  (set! (array-ref bigger index) (array-ref items index))
+                  (set! index (+ index 1))))
+              (set! (array-ref bigger len) item)
+              (OptFlagExitMints.Dense bigger (+ len 1)))))])))
 
 (defstruct OptFlagExitPlan
   (gate i64)
@@ -32849,10 +32695,17 @@
 (define (opt-flag-exit-phi-fix-lookup [fixes : OptFlagExitPhiFixes] [dst : i64]) : OptFlagExitEdgeValues
   (match (compiler-opt-global-shared-view fixes)
     [(OptFlagExitPhiFixes.Nil) (OptFlagExitEdgeValues.Nil)]
-    [(OptFlagExitPhiFixes.Cons found _ values rest)
-      (if (= found dst)
-        values
-        (opt-flag-exit-phi-fix-lookup (compiler-opt-box-shared-view rest) dst))]))
+    [(OptFlagExitPhiFixes.Dense _ _)
+      (let
+        [fix : OptFlagExitPhiFix
+          (opt-flag-exit-phi-fixes-ref
+            (compiler-opt-global-shared-view fixes)
+            0)]
+        (if (= fix.dst dst)
+          fix.values
+          (opt-flag-exit-phi-fix-lookup
+            (opt-flag-exit-phi-fixes-tail fixes)
+            dst)))]))
 
 ;; X's phis, each paired with the value its G edge carried. A phi with no input
 ;; on that edge means the CFG and the phi web disagree, so refuse.
@@ -32874,11 +32727,11 @@
               instrs
               (+ pos 1)
               arm-pred
-              (OptFlagExitPhiFixes.Cons
+              (opt-flag-exit-phi-fixes-cons
                 dst
                 value
                 (OptFlagExitEdgeValues.Nil)
-                (box acc)))])]
+                acc))])]
       [_ (OptFlagExitMaybePhiFixes.Some acc)])))
 
 (define (opt-flag-exit-phi-seeds
@@ -32922,18 +32775,15 @@
                 mint
                 (+ var 1)
                 (+ next-var 1)
-                (OptFlagExitMints.Cons
+                (opt-flag-exit-mints-cons
                   var
                   next-var
                   ty
                   (OptFlagExitEdgeValues.Nil)
-                  (box acc)))])]))))
+                  acc))])]))))
 
 (define (opt-flag-exit-mint-count [mints : OptFlagExitMints] [acc : i64]) : i64
-  (match (compiler-opt-global-shared-view mints)
-    [(OptFlagExitMints.Nil) acc]
-    [(OptFlagExitMints.Cons _ _ _ _ rest)
-      (opt-flag-exit-mint-count (compiler-opt-box-shared-view rest) (+ acc 1))]))
+  (+ acc (opt-flag-exit-mints-count mints)))
 
 (define (opt-flag-exit-extend-phi-fixes
   [ctx : OptFlagExitFixCtx]
@@ -32945,35 +32795,40 @@
   (match (compiler-opt-global-shared-view fixes)
     [(OptFlagExitPhiFixes.Nil)
       (OptFlagExitMaybePhiFixes.Some (OptFlagExitPhiFixes.Nil))]
-    [(OptFlagExitPhiFixes.Cons dst value values rest)
-      (match (opt-flag-exit-resolve
-        (compiler-opt-global-shared-view ctx.blocks)
-        (compiler-opt-global-shared-view ctx.index)
-        (compiler-opt-global-shared-view ctx.doms)
-        (compiler-opt-global-shared-view ctx.def-label)
-        (compiler-opt-global-shared-view pos)
-        (compiler-opt-global-shared-view labels)
-        pred
-        (compiler-opt-global-shared-view value)
-        at
-        ctx.fuel)
-        [(ir.CompilerIrMaybeValue.No) (OptFlagExitMaybePhiFixes.No)]
-        [(ir.CompilerIrMaybeValue.Some resolved)
-          (match (opt-flag-exit-extend-phi-fixes
-            ctx
-            pos
-            labels
-            pred
-            at
-            (compiler-opt-box-shared-view rest))
-            [(OptFlagExitMaybePhiFixes.No) (OptFlagExitMaybePhiFixes.No)]
-            [(OptFlagExitMaybePhiFixes.Some tail)
-              (OptFlagExitMaybePhiFixes.Some
-                (OptFlagExitPhiFixes.Cons
-                  dst
-                  value
-                  (OptFlagExitEdgeValues.Cons pred resolved (box values))
-                  (box tail)))])])]))
+    [(OptFlagExitPhiFixes.Dense _ _)
+      (let
+        [fix : OptFlagExitPhiFix
+          (opt-flag-exit-phi-fixes-ref
+            (compiler-opt-global-shared-view fixes)
+            0)]
+        (match (opt-flag-exit-resolve
+          (compiler-opt-global-shared-view ctx.blocks)
+          (compiler-opt-global-shared-view ctx.index)
+          (compiler-opt-global-shared-view ctx.doms)
+          (compiler-opt-global-shared-view ctx.def-label)
+          (compiler-opt-global-shared-view pos)
+          (compiler-opt-global-shared-view labels)
+          pred
+          (compiler-opt-global-shared-view fix.value)
+          at
+          ctx.fuel)
+          [(ir.CompilerIrMaybeValue.No) (OptFlagExitMaybePhiFixes.No)]
+          [(ir.CompilerIrMaybeValue.Some resolved)
+            (match (opt-flag-exit-extend-phi-fixes
+              ctx
+              pos
+              labels
+              pred
+              at
+              (opt-flag-exit-phi-fixes-tail fixes))
+              [(OptFlagExitMaybePhiFixes.No) (OptFlagExitMaybePhiFixes.No)]
+              [(OptFlagExitMaybePhiFixes.Some tail)
+                (OptFlagExitMaybePhiFixes.Some
+                  (opt-flag-exit-phi-fixes-cons
+                    fix.dst
+                    fix.value
+                    (opt-flag-exit-edge-values-cons pred resolved fix.values)
+                    tail))])]))]))
 
 (define (opt-flag-exit-extend-mints
   [ctx : OptFlagExitFixCtx]
@@ -32984,36 +32839,39 @@
   [mints : OptFlagExitMints]) : OptFlagExitMaybeMints
   (match (compiler-opt-global-shared-view mints)
     [(OptFlagExitMints.Nil) (OptFlagExitMaybeMints.Some (OptFlagExitMints.Nil))]
-    [(OptFlagExitMints.Cons source fresh ty values rest)
-      (match (opt-flag-exit-resolve
-        (compiler-opt-global-shared-view ctx.blocks)
-        (compiler-opt-global-shared-view ctx.index)
-        (compiler-opt-global-shared-view ctx.doms)
-        (compiler-opt-global-shared-view ctx.def-label)
-        (compiler-opt-global-shared-view pos)
-        (compiler-opt-global-shared-view labels)
-        pred
-        (ir.CompilerIrValue.Var source)
-        at
-        ctx.fuel)
-        [(ir.CompilerIrMaybeValue.No) (OptFlagExitMaybeMints.No)]
-        [(ir.CompilerIrMaybeValue.Some resolved)
-          (match (opt-flag-exit-extend-mints
-            ctx
-            pos
-            labels
-            pred
-            at
-            (compiler-opt-box-shared-view rest))
-            [(OptFlagExitMaybeMints.No) (OptFlagExitMaybeMints.No)]
-            [(OptFlagExitMaybeMints.Some tail)
-              (OptFlagExitMaybeMints.Some
-                (OptFlagExitMints.Cons
-                  source
-                  fresh
-                  ty
-                  (OptFlagExitEdgeValues.Cons pred resolved (box values))
-                  (box tail)))])])]))
+    [(OptFlagExitMints.Dense _ _)
+      (let
+        [mint : OptFlagExitMint
+          (opt-flag-exit-mints-ref (compiler-opt-global-shared-view mints) 0)]
+        (match (opt-flag-exit-resolve
+          (compiler-opt-global-shared-view ctx.blocks)
+          (compiler-opt-global-shared-view ctx.index)
+          (compiler-opt-global-shared-view ctx.doms)
+          (compiler-opt-global-shared-view ctx.def-label)
+          (compiler-opt-global-shared-view pos)
+          (compiler-opt-global-shared-view labels)
+          pred
+          (ir.CompilerIrValue.Var mint.source)
+          at
+          ctx.fuel)
+          [(ir.CompilerIrMaybeValue.No) (OptFlagExitMaybeMints.No)]
+          [(ir.CompilerIrMaybeValue.Some resolved)
+            (match (opt-flag-exit-extend-mints
+              ctx
+              pos
+              labels
+              pred
+              at
+              (opt-flag-exit-mints-tail mints))
+              [(OptFlagExitMaybeMints.No) (OptFlagExitMaybeMints.No)]
+              [(OptFlagExitMaybeMints.Some tail)
+                (OptFlagExitMaybeMints.Some
+                  (opt-flag-exit-mints-cons
+                    mint.source
+                    mint.fresh
+                    mint.ty
+                    (opt-flag-exit-edge-values-cons pred resolved mint.values)
+                    tail))])]))]))
 
 (define (opt-flag-exit-fix-edges
   [ctx : OptFlagExitFixCtx]
@@ -33127,10 +32985,10 @@
               gate
               dropped
               source
-              (OptFlagExitEdgeValues.Cons
+              (opt-flag-exit-edge-values-cons
                 label
                 (ir.CompilerIrValue.Var source)
-                (box values))))))]))
+                values)))))]))
 
 (define (opt-flag-exit-mints-survivors
   [doms : OptDomInfo]
@@ -33141,36 +32999,50 @@
   [mints : OptFlagExitMints]) : OptFlagExitMaybeMints
   (match (compiler-opt-global-shared-view mints)
     [(OptFlagExitMints.Nil) (OptFlagExitMaybeMints.Some (OptFlagExitMints.Nil))]
-    [(OptFlagExitMints.Cons source fresh ty values rest)
-      (match (opt-flag-exit-mint-survivors
-        (compiler-opt-global-shared-view doms)
-        (compiler-opt-global-shared-view def-label)
-        (compiler-opt-global-shared-view preds)
-        gate
-        (compiler-opt-global-shared-view dropped)
-        source
-        values)
-        [(OptFlagExitMaybeEdgeValues.No) (OptFlagExitMaybeMints.No)]
-        [(OptFlagExitMaybeEdgeValues.Some full)
-          (match (opt-flag-exit-mints-survivors
-            doms
-            def-label
-            preds
-            gate
-            dropped
-            (compiler-opt-box-shared-view rest))
-            [(OptFlagExitMaybeMints.No) (OptFlagExitMaybeMints.No)]
-            [(OptFlagExitMaybeMints.Some tail)
-              (OptFlagExitMaybeMints.Some
-                (OptFlagExitMints.Cons source fresh ty full (box tail)))])])]))
+    [(OptFlagExitMints.Dense _ _)
+      (let
+        [mint : OptFlagExitMint
+          (opt-flag-exit-mints-ref (compiler-opt-global-shared-view mints) 0)]
+        (match (opt-flag-exit-mint-survivors
+          (compiler-opt-global-shared-view doms)
+          (compiler-opt-global-shared-view def-label)
+          (compiler-opt-global-shared-view preds)
+          gate
+          (compiler-opt-global-shared-view dropped)
+          mint.source
+          (compiler-opt-global-shared-view mint.values))
+          [(OptFlagExitMaybeEdgeValues.No) (OptFlagExitMaybeMints.No)]
+          [(OptFlagExitMaybeEdgeValues.Some full)
+            (match (opt-flag-exit-mints-survivors
+              doms
+              def-label
+              preds
+              gate
+              dropped
+              (opt-flag-exit-mints-tail mints))
+              [(OptFlagExitMaybeMints.No) (OptFlagExitMaybeMints.No)]
+              [(OptFlagExitMaybeMints.Some tail)
+                (OptFlagExitMaybeMints.Some
+                  (opt-flag-exit-mints-cons
+                    mint.source
+                    mint.fresh
+                    mint.ty
+                    full
+                    tail))])]))]))
 
 (define (opt-flag-exit-mint-env [mints : OptFlagExitMints] [env : OptCopyEnv]) : OptCopyEnv
   (match (compiler-opt-global-shared-view mints)
     [(OptFlagExitMints.Nil) env]
-    [(OptFlagExitMints.Cons source fresh _ _ rest)
-      (opt-flag-exit-mint-env
-        (compiler-opt-box-shared-view rest)
-        (OptCopyEnv.Cons source (ir.CompilerIrValue.Var fresh) (box env)))]))
+    [(OptFlagExitMints.Dense _ _)
+      (let
+        [mint : OptFlagExitMint
+          (opt-flag-exit-mints-ref (compiler-opt-global-shared-view mints) 0)]
+        (opt-flag-exit-mint-env
+          (opt-flag-exit-mints-tail mints)
+          (OptCopyEnv.Cons
+            mint.source
+            (ir.CompilerIrValue.Var mint.fresh)
+            (box env))))]))
 
 ;; --- C7's alternate-exit clause, for an alternate exit that lands ON X --------
 ;;
@@ -33405,12 +33277,14 @@
   [pred : i64]
   [len : i64]
   [mints : OptFlagExitMints]) : bool
-  (match mints
+  (match (compiler-opt-global-shared-view mints)
     [(OptFlagExitMints.Nil) true]
-    [(OptFlagExitMints.Cons source _ _ _ rest)
-      (and
-        (let
-          [value : ir.CompilerIrValue (ir.CompilerIrValue.Var source)]
+    [(OptFlagExitMints.Dense _ _)
+      (let
+        [mint : OptFlagExitMint
+          (opt-flag-exit-mints-ref (compiler-opt-global-shared-view mints) 0)]
+        [value : ir.CompilerIrValue (ir.CompilerIrValue.Var mint.source)]
+        (and
           (match (opt-flag-exit-resolve
             (compiler-opt-global-shared-view ctx.blocks)
             (compiler-opt-global-shared-view ctx.index)
@@ -33432,14 +33306,14 @@
                 len
                 (compiler-opt-global-shared-view ctx.exit-preds)
                 value
-                want)]))
-        (opt-flag-exit-agree-mints?
-          ctx
-          pos
-          labels
-          pred
-          len
-          (compiler-opt-box-shared-view rest)))]))
+                want)])
+          (opt-flag-exit-agree-mints?
+            ctx
+            pos
+            labels
+            pred
+            len
+            (opt-flag-exit-mints-tail mints))))]))
 
 ;; --- reads outside the loop ---------------------------------------------------
 ;;
@@ -33858,25 +33732,182 @@
   [values : OptFlagExitEdgeValues]) : ir.CompilerIrPhiInputList
   (match (compiler-opt-global-shared-view values)
     [(OptFlagExitEdgeValues.Nil) inputs]
-    [(OptFlagExitEdgeValues.Cons label value rest)
-      (opt-flag-exit-add-inputs
-        (ir.compiler-ir-phi-input-cons value label inputs)
-        (compiler-opt-box-shared-view rest))]))
+    [(OptFlagExitEdgeValues.Dense _ _)
+      (let
+        [edge : OptFlagExitEdgeValue
+          (opt-flag-exit-edge-values-ref
+            (compiler-opt-global-shared-view values)
+            0)]
+        (opt-flag-exit-add-inputs
+          (ir.compiler-ir-phi-input-cons edge.value edge.label inputs)
+          (opt-flag-exit-edge-values-tail values)))]))
 
 (define (opt-flag-exit-push-mints!
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]
   [mints : OptFlagExitMints]) : unit
   (match (compiler-opt-global-shared-view mints)
     [(OptFlagExitMints.Nil) unit]
-    [(OptFlagExitMints.Cons _ fresh ty values rest)
+    [(OptFlagExitMints.Dense _ _)
+      (let
+        [mint : OptFlagExitMint
+          (opt-flag-exit-mints-ref (compiler-opt-global-shared-view mints) 0)]
+        (begin
+          (ir.compiler-ir-instr-builder-push!
+            builder
+            (ir.CompilerIrInstr.Phi
+              mint.fresh
+              (opt-flag-exit-add-inputs
+                (ir.CompilerIrPhiInputList.Nil)
+                mint.values)
+              mint.ty))
+          (opt-flag-exit-push-mints! builder (opt-flag-exit-mints-tail mints))))]))
+
+(cfg
+  test
+  (define (opt-flag-exit-test-phi-input-order?
+    [inputs : ir.CompilerIrPhiInputList]
+    [expected : i64]
+    [count : i64]) : bool
+    (match (ir.compiler-ir-phi-input-list-force-cons inputs)
+      [(ir.CompilerIrPhiInputList.Nil) (= expected count)]
+      [(ir.CompilerIrPhiInputList.Cons value label rest)
+        (and
+          (= label expected)
+          (match value
+            [(ir.CompilerIrValue.I64 literal) (= literal (+ 1000 expected))]
+            [_ false])
+          (opt-flag-exit-test-phi-input-order?
+            (ir.compiler-ir-phi-input-list-box-shared-view rest)
+            (+ expected 1)
+            count))]
+      [(ir.CompilerIrPhiInputList.Array _) false])))
+
+(cfg
+  test
+  (test
+    optimizer-flag-exit-plan-dense-storage-grows-and-rebuilds
+    (let
+      [values : OptFlagExitEdgeValues (OptFlagExitEdgeValues.Nil)]
+      [fixes : OptFlagExitPhiFixes (OptFlagExitPhiFixes.Nil)]
+      [mints : OptFlagExitMints (OptFlagExitMints.Nil)]
+      [index : i64 0]
       (begin
-        (ir.compiler-ir-instr-builder-push!
-          builder
-          (ir.CompilerIrInstr.Phi
-            fresh
-            (opt-flag-exit-add-inputs (ir.CompilerIrPhiInputList.Nil) values)
-            ty))
-        (opt-flag-exit-push-mints! builder (compiler-opt-box-shared-view rest)))]))
+        (while (< index 9)
+          (begin
+            (set!
+              values
+              (opt-flag-exit-edge-values-cons
+                index
+                (ir.CompilerIrValue.I64 (+ 1000 index))
+                values))
+            (set!
+              fixes
+              (opt-flag-exit-phi-fixes-cons
+                index
+                (ir.CompilerIrValue.I64 (+ 2000 index))
+                (OptFlagExitEdgeValues.Nil)
+                fixes))
+            (set!
+              mints
+              (opt-flag-exit-mints-cons
+                index
+                (+ 100 index)
+                (ast.AstType.I64)
+                (OptFlagExitEdgeValues.Nil)
+                mints))
+            (set! index (+ index 1))))
+        (test.assert-i64-eq
+          (opt-flag-exit-edge-values-count
+            (compiler-opt-global-shared-view values))
+          9
+          "flag-exit edge values grow past four")
+        (test.assert-i64-eq
+          (opt-flag-exit-phi-fixes-count
+            (compiler-opt-global-shared-view fixes))
+          9
+          "flag-exit phi fixes grow past four")
+        (test.assert-i64-eq
+          (opt-flag-exit-mints-count (compiler-opt-global-shared-view mints))
+          9
+          "flag-exit mints grow past four")
+        (match (compiler-opt-global-shared-view values)
+          [(OptFlagExitEdgeValues.Nil)
+            (test.assert-true false "edge values are non-empty")]
+          [(OptFlagExitEdgeValues.Dense items _)
+            (test.assert-true
+              (>= (array-length items) 9)
+              "edge value capacity expands")])
+        (match (compiler-opt-global-shared-view fixes)
+          [(OptFlagExitPhiFixes.Nil)
+            (test.assert-true false "phi fixes are non-empty")]
+          [(OptFlagExitPhiFixes.Dense items _)
+            (test.assert-true
+              (>= (array-length items) 9)
+              "phi-fix capacity expands")])
+        (match (compiler-opt-global-shared-view mints)
+          [(OptFlagExitMints.Nil)
+            (test.assert-true false "mints are non-empty")]
+          [(OptFlagExitMints.Dense items _)
+            (test.assert-true
+              (>= (array-length items) 9)
+              "mint capacity expands")])
+        (let
+          [newest-edge : OptFlagExitEdgeValue
+            (opt-flag-exit-edge-values-ref
+              (compiler-opt-global-shared-view values)
+              0)]
+          [oldest-edge : OptFlagExitEdgeValue
+            (opt-flag-exit-edge-values-ref
+              (compiler-opt-global-shared-view values)
+              8)]
+          [newest-fix : OptFlagExitPhiFix
+            (opt-flag-exit-phi-fixes-ref
+              (compiler-opt-global-shared-view fixes)
+              0)]
+          [next-fix : OptFlagExitPhiFix
+            (opt-flag-exit-phi-fixes-ref
+              (compiler-opt-global-shared-view fixes)
+              1)]
+          [newest-mint : OptFlagExitMint
+            (opt-flag-exit-mints-ref (compiler-opt-global-shared-view mints) 0)]
+          [next-mint : OptFlagExitMint
+            (opt-flag-exit-mints-ref (compiler-opt-global-shared-view mints) 1)]
+          [rebuilt : OptFlagExitPhiFixes
+            (opt-flag-exit-phi-fixes-cons
+              newest-fix.dst
+              (compiler-opt-global-shared-view newest-fix.value)
+              (opt-flag-exit-edge-values-cons
+                77
+                (ir.CompilerIrValue.I64 7077)
+                (compiler-opt-global-shared-view newest-fix.values))
+              (opt-flag-exit-phi-fixes-tail fixes))]
+          (begin
+            (test.assert-i64-eq newest-edge.label 8 "newest edge stays first")
+            (test.assert-i64-eq oldest-edge.label 0 "oldest edge stays last")
+            (test.assert-i64-eq newest-fix.dst 8 "newest phi fix stays first")
+            (test.assert-i64-eq next-fix.dst 7 "phi-fix order is stable")
+            (test.assert-i64-eq newest-mint.source 8 "newest mint stays first")
+            (test.assert-i64-eq next-mint.source 7 "mint order is stable")
+            (test.assert-i64-eq
+              (opt-flag-exit-edge-values-count
+                (opt-flag-exit-phi-fix-lookup
+                  (compiler-opt-global-shared-view rebuilt)
+                  8))
+              1
+              "phi-fix rebuild updates the selected destination")
+            (test.assert-i64-eq
+              (opt-flag-exit-edge-values-count
+                (opt-flag-exit-phi-fix-lookup rebuilt 7))
+              0
+              "phi-fix rebuild preserves the remaining destinations")
+            (test.assert-true
+              (opt-flag-exit-test-phi-input-order?
+                (opt-flag-exit-add-inputs
+                  (ir.CompilerIrPhiInputList.Nil)
+                  values)
+                0
+                9)
+              "materialized phi inputs preserve predecessor order")))))))
 
 ;; A plan with nothing minted leaves every read outside the loop alone, which is
 ;; the shape this pass has always had; the walks below then cost nothing.
@@ -66180,44 +66211,81 @@
 ;; The distinct invariant bounds collected off one index expression. A phi merges
 ;; several, so the set is what the guard states, once per member.
 (defenum OptBceMaskList
-  (Nil)
-  (Cons ir.CompilerIrValue (Box OptBceMaskList)))
+  (Empty)
+  (Dense (__tl_dyn-array ir.CompilerIrValue) i64))
 
 (defenum OptBceMaskSet
   (No)
-  (Some OptBceMaskList i64))
+  (Some OptBceMaskList))
 
 ;; A cursor merged through the arms of a `cond` carries one bound per arm; more
 ;; than a handful would be a guard nobody can pay for.
 (define (opt-bce-mask-set-max) : i64
   4)
 
+(define (opt-bce-mask-list-count [masks : OptBceMaskList]) : i64
+  (match masks
+    [(OptBceMaskList.Empty) 0]
+    [(OptBceMaskList.Dense _ count) count]))
+
+(define (opt-bce-mask-list-ref [masks : OptBceMaskList] [index : i64]) : ir.CompilerIrValue
+  (match masks
+    [(OptBceMaskList.Empty) (ir.CompilerIrValue.Unit)]
+    [(OptBceMaskList.Dense values count)
+      (array-ref values (- (- count 1) index))]))
+
+(define (opt-bce-mask-list-tail [masks : OptBceMaskList]) : OptBceMaskList
+  (match masks
+    [(OptBceMaskList.Empty) (OptBceMaskList.Empty)]
+    [(OptBceMaskList.Dense values count)
+      (if (<= count 1)
+        (OptBceMaskList.Empty)
+        (OptBceMaskList.Dense values (- count 1)))]))
+
+(define (opt-bce-mask-list-cons
+  [value : ir.CompilerIrValue]
+  [masks : OptBceMaskList]) : OptBceMaskList
+  (match masks
+    [(OptBceMaskList.Empty)
+      (let
+        [values : (__tl_dyn-array ir.CompilerIrValue)
+          (array.make-array ir.CompilerIrValue (opt-bce-mask-set-max))]
+        (begin
+          (set! (array-ref values 0) value)
+          (OptBceMaskList.Dense values 1)))]
+    [(OptBceMaskList.Dense values count)
+      (begin
+        (set! (array-ref values count) value)
+        (OptBceMaskList.Dense values (+ count 1)))]))
+
 (define (opt-bce-mask-list-contains?
   [masks : OptBceMaskList]
   [value : ir.CompilerIrValue]) : bool
-  (match masks
-    [(OptBceMaskList.Nil) false]
-    [(OptBceMaskList.Cons mask rest)
-      (if (opt-value-eq mask (compiler-opt-global-shared-view value))
+  (match (compiler-opt-global-shared-view masks)
+    [(OptBceMaskList.Empty) false]
+    [(OptBceMaskList.Dense _ _)
+      (if (opt-value-eq
+        (opt-bce-mask-list-ref (compiler-opt-global-shared-view masks) 0)
+        (compiler-opt-global-shared-view value))
         true
-        (opt-bce-mask-list-contains? (deref rest) value))]))
+        (opt-bce-mask-list-contains? (opt-bce-mask-list-tail masks) value))]))
 
 (define (opt-bce-mask-set-add
   [set : OptBceMaskSet]
   [value : ir.CompilerIrValue]) : OptBceMaskSet
   (match set
     [(OptBceMaskSet.No) (OptBceMaskSet.No)]
-    [(OptBceMaskSet.Some masks count)
-      (cond
-        [(opt-bce-mask-list-contains?
-            (compiler-opt-global-shared-view masks)
-            (compiler-opt-global-shared-view value))
-          (OptBceMaskSet.Some masks count)]
-        [(>= count (opt-bce-mask-set-max)) (OptBceMaskSet.No)]
-        [else
-          (OptBceMaskSet.Some
-            (OptBceMaskList.Cons value (box masks))
-            (+ count 1))])]))
+    [(OptBceMaskSet.Some masks)
+      (let
+        [count : i64
+          (opt-bce-mask-list-count (compiler-opt-global-shared-view masks))]
+        (cond
+          [(opt-bce-mask-list-contains?
+              (compiler-opt-global-shared-view masks)
+              (compiler-opt-global-shared-view value))
+            (OptBceMaskSet.Some masks)]
+          [(>= count (opt-bce-mask-set-max)) (OptBceMaskSet.No)]
+          [else (OptBceMaskSet.Some (opt-bce-mask-list-cons value masks))]))]))
 
 ;; An invariant bound is usable only when it can pass: a negative literal never
 ;; can (see the head comment).
@@ -66232,14 +66300,84 @@
   [masks : OptBceMaskList]
   [length-value : ir.CompilerIrValue]
   [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
-  (match masks
-    [(OptBceMaskList.Nil) acc]
-    [(OptBceMaskList.Cons mask rest)
-      (opt-bce-mask-conds
-        (compiler-opt-global-shared-view cell)
-        (deref rest)
-        (compiler-opt-global-shared-view length-value)
-        (opt-bce-version-mask-cond cell mask length-value acc))]))
+  (match (compiler-opt-global-shared-view masks)
+    [(OptBceMaskList.Empty) acc]
+    [(OptBceMaskList.Dense _ _)
+      (let
+        [next : OptBceVersionGuardAcc
+          (opt-bce-version-mask-cond
+            (compiler-opt-global-shared-view cell)
+            (opt-bce-mask-list-ref (compiler-opt-global-shared-view masks) 0)
+            (compiler-opt-global-shared-view length-value)
+            acc)]
+        (opt-bce-mask-conds
+          cell
+          (opt-bce-mask-list-tail masks)
+          length-value
+          next))]))
+
+(cfg
+  test
+  (test
+    optimizer-bce-mask-fixed-capacity-order-and-overflow
+    (let
+      [set : OptBceMaskSet (OptBceMaskSet.Some (OptBceMaskList.Empty))]
+      [index : i64 0]
+      (begin
+        (match (compiler-opt-global-shared-view set)
+          [(OptBceMaskSet.No)
+            (test.assert-true false "empty BCE mask set is available")]
+          [(OptBceMaskSet.Some masks)
+            (test.assert-i64-eq
+              (opt-bce-mask-list-count masks)
+              0
+              "BCE mask set starts empty")])
+        (while (< index 4)
+          (begin
+            (set! set (opt-bce-mask-set-add set (ir.CompilerIrValue.I64 index)))
+            (set! index (+ index 1))))
+        (set! set (opt-bce-mask-set-add set (ir.CompilerIrValue.I64 2)))
+        (match (compiler-opt-global-shared-view set)
+          [(OptBceMaskSet.No)
+            (test.assert-true false "four BCE masks remain admitted")]
+          [(OptBceMaskSet.Some masks)
+            (begin
+              (test.assert-i64-eq
+                (opt-bce-mask-list-count
+                  (compiler-opt-global-shared-view masks))
+                4
+                "duplicate mask does not consume capacity")
+              (match (compiler-opt-global-shared-view masks)
+                [(OptBceMaskList.Empty)
+                  (test.assert-true false "four-mask storage is dense")]
+                [(OptBceMaskList.Dense items _)
+                  (test.assert-i64-eq
+                    (array-length items)
+                    4
+                    "BCE mask storage uses the exact hard capacity")])
+              (let
+                [newest : ir.CompilerIrValue
+                  (opt-bce-mask-list-ref
+                    (compiler-opt-global-shared-view masks)
+                    0)]
+                [oldest : ir.CompilerIrValue
+                  (opt-bce-mask-list-ref
+                    (compiler-opt-global-shared-view masks)
+                    3)]
+                (begin
+                  (match newest
+                    [(ir.CompilerIrValue.I64 value)
+                      (test.assert-i64-eq value 3 "newest BCE mask stays first")]
+                    [_ (test.assert-true false "newest BCE mask is an integer")])
+                  (match oldest
+                    [(ir.CompilerIrValue.I64 value)
+                      (test.assert-i64-eq value 0 "oldest BCE mask stays last")]
+                    [_ (test.assert-true false "oldest BCE mask is an integer")]))))])
+        (match (opt-bce-mask-set-add set (ir.CompilerIrValue.I64 4))
+          [(OptBceMaskSet.No)
+            (test.assert-true true "fifth distinct BCE mask is rejected")]
+          [(OptBceMaskSet.Some _)
+            (test.assert-true false "fifth distinct BCE mask must overflow")])))))
 
 ;; Either operand of a `bit-and`, whichever is loop-invariant. The operation is
 ;; commutative, so the sides are tried in order and the first invariant one wins.
@@ -66274,7 +66412,7 @@
   [set : OptBceMaskSet]) : OptBceMaskSet
   (match (compiler-opt-global-shared-view set)
     [(OptBceMaskSet.No) (OptBceMaskSet.No)]
-    [(OptBceMaskSet.Some _ _)
+    [(OptBceMaskSet.Some _)
       (match (opt-bce-version-invariant-operand
         (compiler-opt-global-shared-view instrs)
         phi-count
@@ -66417,10 +66555,12 @@
     defs
     value
     4
-    (OptBceMaskSet.Some (OptBceMaskList.Nil) 0))
+    (OptBceMaskSet.Some (OptBceMaskList.Empty)))
     [(OptBceMaskSet.No) (OptBceVersionGuardAcc.No)]
-    [(OptBceMaskSet.Some masks count)
-      (if (< count 1)
+    [(OptBceMaskSet.Some masks)
+      (if (<
+        (opt-bce-mask-list-count (compiler-opt-global-shared-view masks))
+        1)
         (OptBceVersionGuardAcc.No)
         (opt-bce-mask-conds cell masks length-value acc))]))
 
@@ -66705,18 +66845,6 @@
                 (opt-bce-version-keep-add state.keep index)
                 state.derived)])]
         [_ state]))))
-
-(define (opt-bce-version-append-reverse-instr-list!
-  [builder : (&mut builder ir.CompilerIrInstrBuilder)]
-  [instrs : ir.CompilerIrInstrList]) : unit
-  (match instrs
-    [(ir.CompilerIrInstrList.Nil) unit]
-    [(ir.CompilerIrInstrList.Cons instr rest)
-      (begin
-        (opt-bce-version-append-reverse-instr-list!
-          builder
-          (compiler-opt-box-shared-view rest))
-        (ir.compiler-ir-instr-builder-push! builder instr))]))
 
 (define (opt-bce-version-and-chain-array
   [cell : (__tl_dyn-array i64)]
@@ -73528,7 +73656,7 @@
   [set : OptBceMaskSet]) : OptBceMaskSet
   (match (compiler-opt-global-shared-view set)
     [(OptBceMaskSet.No) (OptBceMaskSet.No)]
-    [(OptBceMaskSet.Some _ _)
+    [(OptBceMaskSet.Some _)
       (match (opt-bce-mb-invariant-operand
         (compiler-opt-global-shared-view body-blocks)
         (compiler-opt-global-shared-view defs)
@@ -73648,10 +73776,12 @@
     defs
     value
     4
-    (OptBceMaskSet.Some (OptBceMaskList.Nil) 0))
+    (OptBceMaskSet.Some (OptBceMaskList.Empty)))
     [(OptBceMaskSet.No) (OptBceVersionGuardAcc.No)]
-    [(OptBceMaskSet.Some masks count)
-      (if (< count 1)
+    [(OptBceMaskSet.Some masks)
+      (if (<
+        (opt-bce-mask-list-count (compiler-opt-global-shared-view masks))
+        1)
         (OptBceVersionGuardAcc.No)
         (opt-bce-mask-conds cell masks length-value acc))]))
 
@@ -79500,137 +79630,6 @@
             unit)
           (set! index (- index 1))))
       shifted)))
-
-(define (opt-unroll-mb-clone-instrs-list
-  [label : i64]
-  [instrs : ir.CompilerIrInstrSeq]
-  [index : i64]
-  [shape : OptUnrollMbShape]
-  [remap0 : (__tl_dyn-array ir.CompilerIrValue)]
-  [remap1 : (__tl_dyn-array ir.CompilerIrValue)]
-  [cell : (__tl_dyn-array i64)]
-  [copy : i64]) : ir.CompilerIrInstrList
-  (if (>=
-    index
-    (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs)))
-    (ir.CompilerIrInstrList.Nil)
-    (if (or
-      (and
-        (= copy 1)
-        (= label shape.header)
-        (match (ir.compiler-ir-instr-seq-ref
-          (compiler-opt-global-shared-view instrs)
-          index)
-          [(ir.CompilerIrInstr.Phi dst _ _) (= dst shape.iphi)]
-          [_ false]))
-      ;; Copy 0 never tests or carries its intermediate counter. Dropping the
-      ;; whole add/copy/compare chain prevents GVN from reusing its dominating
-      ;; `i + 1` in copy 1, where the offset must remain address-only.
-      (and
-        (= copy 0)
-        (= label shape.latch)
-        (opt-unroll-mb-copy0-counter-tail?
-          (ir.compiler-ir-instr-seq-ref
-            (compiler-opt-global-shared-view instrs)
-            index)
-          (compiler-opt-global-shared-view shape))))
-      (opt-unroll-mb-clone-instrs-list
-        label
-        (compiler-opt-global-shared-view instrs)
-        (+ index 1)
-        (compiler-opt-global-shared-view shape)
-        (compiler-opt-global-shared-view remap0)
-        (compiler-opt-global-shared-view remap1)
-        (compiler-opt-global-shared-view cell)
-        copy)
-      (let
-        [instr : ir.CompilerIrInstr
-          (ir.compiler-ir-instr-seq-ref
-            (compiler-opt-global-shared-view instrs)
-            index)]
-        [last? : bool
-          (=
-            index
-            (-
-              (ir.compiler-ir-instr-seq-count
-                (compiler-opt-global-shared-view instrs))
-              1))]
-        [remap : (__tl_dyn-array ir.CompilerIrValue)
-          (if (= copy 0)
-            remap0
-            (compiler-opt-global-shared-view remap1))]
-        [cloned : ir.CompilerIrInstr
-          (if (and last? (= label shape.latch))
-            (match (compiler-opt-global-shared-view instr)
-              [(ir.CompilerIrInstr.Branch cond _ _)
-                (if (= copy 0)
-                  (ir.CompilerIrInstr.Jump
-                    (opt-unroll-mb-label
-                      (compiler-opt-global-shared-view shape.body-labels)
-                      shape.header
-                      1))
-                  (ir.CompilerIrInstr.Branch
-                    (opt-unroll-subst-value
-                      (compiler-opt-global-shared-view remap1)
-                      cond)
-                    (opt-unroll-mb-label shape.body-labels shape.header 0)
-                    shape.exit-label))]
-              [_ instr])
-            (if (and
-              (= label shape.header)
-              (match (compiler-opt-global-shared-view instr)
-                [(ir.CompilerIrInstr.Phi _ _ _) true]
-                [_ false]))
-              (opt-unroll-mb-clone-header-phi
-                (compiler-opt-global-shared-view instr)
-                (compiler-opt-global-shared-view shape)
-                (compiler-opt-global-shared-view remap0)
-                (compiler-opt-global-shared-view remap1)
-                copy)
-              (opt-unroll-mb-clone-instr
-                (compiler-opt-global-shared-view instr)
-                remap
-                shape.body-labels
-                (compiler-opt-global-shared-view shape)
-                copy)))]
-        [tail : ir.CompilerIrInstrList
-          (opt-unroll-mb-clone-instrs-list
-            label
-            (compiler-opt-global-shared-view instrs)
-            (+ index 1)
-            (compiler-opt-global-shared-view shape)
-            (compiler-opt-global-shared-view remap0)
-            (compiler-opt-global-shared-view remap1)
-            (compiler-opt-global-shared-view cell)
-            copy)]
-        (if (= copy 1)
-          (match instr
-            [(ir.CompilerIrInstr.Gep _ base offset _ty)
-              (if (opt-unroll-mb-direct-var? offset shape.iphi)
-                (let
-                  [shifted : i64 (opt-unroll-alloc-var cell)]
-                  (ir.compiler-ir-instr-cons
-                    (ir.CompilerIrInstr.BinOp
-                      shifted
-                      (ir.CompilerIrBinOp.Add)
-                      (opt-unroll-subst-value
-                        remap0
-                        (ir.CompilerIrValue.Var shape.iphi))
-                      (ir.CompilerIrValue.I64 1)
-                      (ast.AstType.I64))
-                    (match (compiler-opt-global-shared-view cloned)
-                      [(ir.CompilerIrInstr.Gep dst _ _mapped-offset mapped-ty)
-                        (ir.compiler-ir-instr-cons
-                          (ir.CompilerIrInstr.Gep
-                            dst
-                            (opt-unroll-subst-value remap1 base)
-                            (ir.CompilerIrValue.Var shifted)
-                            mapped-ty)
-                          tail)]
-                      [_ (ir.compiler-ir-instr-cons cloned tail)])))
-                (ir.compiler-ir-instr-cons cloned tail))]
-            [_ (ir.compiler-ir-instr-cons cloned tail)])
-          (ir.compiler-ir-instr-cons cloned tail))))))
 
 (define (opt-unroll-mb-clone-instrs
   [label : i64]

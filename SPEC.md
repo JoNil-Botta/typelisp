@@ -692,6 +692,10 @@ typechecking validates the expanded expression afterward. The macro may call
 ordinary typechecking can determine it; the query does not evaluate the
 runtime expression and reports a macro-time diagnostic for syntax that cannot
 be typed in the caller context.
+`(type-expr reflected-type)` converts that resolved compile-time type value
+back into opaque type-literal `Expr` syntax. This inverse bridge preserves the
+resolved type identity and is intended for dense generator worklists; it does
+not render or reparse `type-key`.
 
 A fixed slot declared `ExprClause` accepts exactly one bracket-list operand
 `[first second]`, where `first` and `second` are ordinary expressions
@@ -4515,11 +4519,13 @@ runtime-sized buffers, reading through `array-ref` and writing through
   modulo wrapping semantics of scalar integer arithmetic.
 - Straight-line contiguous numeric maps vectorize `+` and `-` for every
   numeric lane type; `bit-and`, `bit-or`, and `bit-xor` for every integer lane
-  type; and `*` for every numeric lane type except `i8`/`u8`. Direct `shl` and
-  `shr` maps vectorize every integer lane type, preserving the section 5.4
-  invalid-count trap on active lanes only, including partial tails. Byte
-  multiplication is rejected with an operator/type-specific diagnostic rather
-  than silently scalarizing.
+  type; and `*` for every numeric lane type. AVX2 and AVX-512 implement
+  `i8`/`u8` multiplication by splitting adjacent word lanes into low and high
+  bytes, multiplying with `vpmullw`, and stitching the low byte of each product
+  back together; signed and unsigned lanes therefore preserve the same scalar
+  modulo-2^8 result bits. Direct `shl` and `shr` maps vectorize every integer
+  lane type, preserving the section 5.4 invalid-count trap on active lanes
+  only, including partial tails.
   Numeric `=`, `!=`, `<`, `<=`, `>`, and `>=` maps produce private masks that
   are stored through `bool` array lanes.
 
@@ -5245,6 +5251,10 @@ Except for `expr-type`, reflection primitives take `type-expr` operands that
 must evaluate at compile time to a type value, usually `(type T)` or a
 `[comptime T : type]` parameter. `expr-type` takes an `Expr` captured by a macro
 and returns the expression's produced type as the same compile-time type value.
+`type-expr` takes that compile-time type value and returns an opaque resolved
+type-literal `Expr`. The result may be stored, reordered, or deduplicated in an
+`ExprList` and later recovered with `expr-list-type-nth`; its nominal identity,
+resolved lifetime substitutions, and indexed reflection are unchanged.
 Reflection primitives are valid only in compile-time-required contexts: explicit
 `(comptime ...)` folds, comptime parameter evaluation, macro transformer
 evaluation, and generated declaration evaluation. Any direct runtime use is
@@ -5270,6 +5280,7 @@ Primitive names and signatures are fixed as follows:
 | Primitive | Result | Notes |
 | --- | --- | --- |
 | `(expr-type expr)` | `type` | Produced type of a macro-captured `Expr`; does not evaluate the runtime expression. |
+| `(type-expr reflected-type)` | `Expr` | Opaque resolved type-literal syntax for a reflected type value; inverse of `expr-list-type-nth`/the type-value direction of `expr-type`. |
 | `(type-kind type-expr)` | `String` | One of the fixed kind strings below. |
 | `(type-key type-expr)` | `String` | Opaque deterministic key for generated declarations. |
 | `(type-cleanup-owning? type-expr)` | `bool` | True exactly for a struct or enum with type-level cleanup metadata. |
@@ -6327,16 +6338,30 @@ count must have exact source type `i64` and traps before allocation when
 negative. Count references count as argument uses but do not advance the
 implicit value iterator.
 
+Precision may be an inline nonnegative signed-`i64` decimal, a positional or
+named count reference written `N$` or `name$`, or `*`. Dollar references obey
+the width rules and do not advance the implicit iterator. Star takes its count
+from the current implicit positional argument and advances that iterator once;
+an implicit value therefore follows the count, while an indexed or named value
+does not advance the iterator itself. Thus `{:.*}` consumes count then value,
+whereas `{2:.*}` and `{name:.*}` consume only the implicit count. Dynamic
+precision requires exact source type `i64` and traps with the precision-count
+diagnostic before rendering or allocation when negative. An omitted precision
+remains distinct from explicit zero in the shared options value. Ordinary
+integral Display and radix rendering accepts and ignores precision. Text,
+bool, char, owner Display, and float precision consumers are separate formatter
+features and produce category-specific unsupported diagnostics until present.
+
 The `+` sign emits a plus for nonnegative `i64`/`f64`/`f32` values and is
 rejected for nonnumeric values; `-` is accepted as the Rust-compatible no-op.
 The `0` flag performs numeric sign-aware zero padding, inserting zeroes after an
 existing or requested sign and after a base prefix when a type-specific
 renderer supplies one; it overrides fill/alignment for that numeric value. `#`
 is retained in the common option plan for type-specific renderers and does not
-change default Display output. Precision forms and the selectors `?`, `x?`,
-`X?`, `o`, `x`, `X`, `p`, `b`, `e`, and `E` are parsed into that same plan, but
-currently produce focused unsupported-semantics diagnostics. Malformed,
-duplicated, or out-of-order options are rejected during macro expansion.
+change default Display output. The selectors `?`, `x?`, `X?`, `o`, `x`, `X`,
+`p`, `b`, `e`, and `E` are parsed into that same plan, but currently produce
+focused unsupported-semantics diagnostics. Malformed, duplicated, or
+out-of-order options are rejected during macro expansion.
 
 The built-in placeholder types are `String`, `i64`, `bool`, `char`, `f64`, and
 `f32`. A struct or enum instead delegates to a function in the type's canonical
@@ -7460,11 +7485,11 @@ ordered or non-canonical execution; it is not an unsupported fallback.
 
 | Surface | Scalar | AVX2 | AVX-512 | Coverage / open gap |
 |---------|--------|------|---------|---------------------|
-| Contiguous `foreach` map/zip and native `Slice` map | Supported: reference semantics | Supported: native gangs plus protected tail | Supported: native gangs plus protected tail | SPMD differential and shape gates; `i8`/`u8` multiplication is pending under [#6684](https://github.com/JoNil-Botta/typelisp/issues/6684) |
+| Contiguous `foreach` map/zip and native `Slice` map | Supported: reference semantics | Supported: native gangs plus protected tail | Supported: native gangs plus protected tail | SPMD differential and shape gates, including packed `i8`/`u8` multiplication |
 | Gather-only reads | Supported: reference semantics | Supported: native gather with active-lane checks | Supported: native gather with active-lane checks | Gather integration and benchmark gates |
 | Explicit atomic scatter | Supported: ordered reference | Supported: scalarized atomic lanes | Supported: scalarized atomic lanes | Atomic-scatter fixtures; this is the specified overlap-safe path |
-| Masked varying `if`, `while`, and scalar/enum `match` | Supported: reference semantics | Supported: native masked gangs | Supported: native masked gangs | Masked-control differential and shape gates; masked `i8`/`u8` multiplication is pending under [#6684](https://github.com/JoNil-Botta/typelisp/issues/6684) |
-| `spmd-reduce` | Supported: reference semantics | Supported: native eligible folds; scalar reference for other supported value shapes | Supported: native eligible folds; scalar reference for other supported value shapes | Reduction-matrix and gather-reduce gates |
+| Masked varying `if`, `while`, and scalar/enum `match` | Supported: reference semantics | Supported: native masked gangs | Supported: native masked gangs | Masked-control differential and shape gates, including packed `i8`/`u8` multiplication |
+| `spmd-reduce` | Supported: reference semantics | Supported: native eligible folds; scalar reference for other supported value shapes | Supported: native eligible folds; scalar reference for other supported value shapes | Reduction-matrix and gather-reduce gates; direct byte-product results receive the specified unsupported sum-result type diagnostic |
 | `spmd-scan` | Supported: reference semantics | Supported: native canonical range-wide prefixes; scalar reference for other supported shapes | Supported: native canonical range-wide prefixes; scalar reference for other supported shapes | AVX2 and AVX-512 prefix-shape gates |
 | `spmd-broadcast` | Supported: one-lane reference | Supported: gang-width semantics | Supported: gang-width semantics | `scripts/verify-spmd-broadcast.sh` |
 | `spmd-shuffle` | Supported: one-lane reference | Supported: native numeric permutations | Supported: native numeric permutations | Shuffle differential, trap, and shape gates |

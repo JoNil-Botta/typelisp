@@ -3393,6 +3393,32 @@
                         "0"
                         "0")
                       (+ opened 1))))]
+              ;; `(comptime.type-expr T)`: turn any computed reflected Type
+              ;; value into one opaque TypeLiteral Expr in the host pools.
+              [(and
+                  (or
+                    (string.eq head "comptime.type-expr")
+                    (string.eq head "type-expr"))
+                  (= argc 1))
+                (let
+                  [opened : i64
+                    (embedded-native-computed-expr-ops
+                      params
+                      (compiler_ast_types.ast-expr-list-get (& args) 0 0)
+                      (owned_view.compiler-owned-shared-view ops)
+                      (owned_view.compiler-owned-shared-view ops-count))]
+                  (if (< opened 0)
+                    -1
+                    (begin
+                      (embedded-native-template-push!
+                        ops
+                        ops-count
+                        (tlci_core.tlci-host-callback-name-shared-view
+                          tlci_core.tlci-host-callback-name-type-expr)
+                        "0"
+                        "0"
+                        "0")
+                      (+ opened 1))))]
               ;; `(comptime.expr-string-value p)`: the literal text of a
               ;; string-literal Expr operand, as a comptime String value.
               ;; Refs #5626.
@@ -8483,6 +8509,7 @@
     "(extern comptime-host-operand-expr-type-kind-eq (:symbol \"_tl_comptime_host_operand-expr-type-kind-eq\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-operand-type-key-eq (:symbol \"_tl_comptime_host_operand-type-key-eq\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-type (:symbol \"_tl_comptime_host_expr-type\") : (-> i64 i64 i64 i64 i64 i64))\n"
+    "(extern comptime-host-type-expr (:symbol \"_tl_comptime_host_type-expr\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-cast (:symbol \"_tl_comptime_host_expr-cast\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-ann (:symbol \"_tl_comptime_host_expr-ann\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-init (:symbol \"_tl_comptime_host_expr-init\") : (-> i64 i64 i64 i64 i64 i64))\n"

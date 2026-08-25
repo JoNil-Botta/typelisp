@@ -352,6 +352,11 @@ fixed_array_match_pattern_borrow_escape_reject|check-fail|tests/safety/fixed_arr
 fixed_array_match_pattern_borrow_conflict_reject|check-fail|tests/safety/fixed_array_match_pattern_borrow_conflict_reject.tl|-|cannot assign to borrowed place `items[0]`
 foreign_abi_metadata_reject|check-fail|tests/safety/foreign_abi_metadata_reject.tl|-|unknown extern ABI stdcall
 runtime_type_literal_reject|check-fail|tests/safety/runtime_type_literal_reject.tl|-|type value i64 is compile-time only
+type_expr_runtime_reject|check-fail|tests/safety/type_expr_runtime_reject.tl|-|typecheck: type-expr is compile-time only; wrap it in (comptime ...)
+type_expr_non_type_reject|check-fail|tests/safety/type_expr_non_type_reject.tl|-|type-expr expects a type argument
+type_expr_zero_arity_reject|check-fail|tests/safety/type_expr_zero_arity_reject.tl|-|type-expr expects exactly one type argument
+type_expr_two_arity_reject|check-fail|tests/safety/type_expr_two_arity_reject.tl|-|type-expr expects exactly one type argument
+type_expr_macro_escape_reject|check-fail|tests/safety/type_expr_macro_escape_reject.tl|-|type value i64 is compile-time only
 serialize_missing_object_hook_reject|check-fail|tests/safety/serialize_missing_object_hook_reject.tl|-|typecheck: strategy module serialize_missing_object_hook_format does not export hook object-finish
 serialize_missing_sequence_hook_reject|check-fail|tests/safety/serialize_missing_sequence_hook_reject.tl|-|typecheck: strategy module serialize_missing_sequence_hook_format does not export hook sequence-empty
 serialize_missing_extra_decls_hook_reject|check-fail|tests/safety/serialize_missing_extra_decls_hook_reject.tl|-|typecheck: strategy module serialize_missing_extra_decls_hook_format does not export hook extra-decls

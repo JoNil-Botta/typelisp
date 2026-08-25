@@ -5083,6 +5083,18 @@
       [(compiler_ir_types.CompilerIrBinOp.Shr _) true]
       [_ false])))
 
+(define (compiler-backend-byte-vector-mul?
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [elem-ty : compiler_ast_types.AstType]) : bool
+  (and
+    (match elem-ty
+      [(compiler_ast_types.AstType.I8) true]
+      [(compiler_ast_types.AstType.U8) true]
+      [_ false])
+    (match op
+      [(compiler_ir_types.CompilerIrBinOp.Mul) true]
+      [_ false])))
+
 (define (compiler-backend-word-vector-shift?
   [op : compiler_ir_types.CompilerIrBinOp]
   [elem-ty : compiler_ast_types.AstType]) : bool
@@ -5711,6 +5723,139 @@
                                   (compiler-backend-global-shared-view elem-ty)
                                   (compiler-backend-global-shared-view dst-reg)
                                   backend-state)))))]
+                      [(ResultBackendReg.Err message)
+                        (ResultCompilerBackend.Err
+                          (box
+                            (compiler_diagnostic.compiler-diagnostic-with-message
+                              instr-diag
+                              message)))])])]
+              [(ResultBackendVectorUse.Err message)
+                (ResultCompilerBackend.Err
+                  (box
+                    (compiler_diagnostic.compiler-diagnostic-with-message
+                      instr-diag
+                      message)))])])]
+      [(ResultBackendVectorUse.Err message)
+        (ResultCompilerBackend.Err
+          (box
+            (compiler_diagnostic.compiler-diagnostic-with-message
+              instr-diag
+              message)))])))
+
+;; x86 has no packed byte multiply. Treat every adjacent byte pair as a word:
+;; multiply the low bytes directly, multiply the high bytes after shifting them
+;; down, discard each product's high byte, and stitch the two byte products back
+;; together. Signed and unsigned multiplication have identical modulo-2^8 bits.
+(define (compiler-backend-emit-byte-vector-mul
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [dst : i64]
+  [lhs : compiler_ir_types.CompilerIrValue]
+  [rhs : compiler_ir_types.CompilerIrValue]
+  [elem-ty : compiler_ast_types.AstType]
+  [width : String]
+  [instr-diag : compiler_diagnostic.CompilerDiagnostic]
+  [backend-state : CompilerBackendState]) : ResultCompilerBackend
+  (let
+    [tmp0 : String
+      (if (string.eq (compiler-backend-global-shared-view width) "zmm")
+        "%zmm0"
+        "%ymm0")]
+    [tmp1 : String
+      (if (string.eq (compiler-backend-global-shared-view width) "zmm")
+        "%zmm1"
+        "%ymm1")]
+    [bit-or : String
+      (if (string.eq (compiler-backend-global-shared-view width) "zmm")
+        "vpord"
+        "vpor")]
+    (match (compiler-backend-vector-register-use
+      (compiler-backend-global-shared-view assignments)
+      lhs
+      "byte multiply lhs"
+      (compiler-backend-global-shared-view width)
+      (compiler-backend-global-shared-view elem-ty)
+      (compiler-backend-vector-spill-scratch
+        (compiler-backend-global-shared-view width)
+        0)
+      (compiler-backend-global-shared-view backend-state))
+      [(ResultBackendVectorUse.Ok lhs-use)
+        (match lhs-use
+          [(CompilerBackendVectorUse.Use lhs-asm lhs-reg)
+            (match (compiler-backend-vector-register-use
+              (compiler-backend-global-shared-view assignments)
+              rhs
+              "byte multiply rhs"
+              (compiler-backend-global-shared-view width)
+              (compiler-backend-global-shared-view elem-ty)
+              (compiler-backend-vector-spill-scratch
+                (compiler-backend-global-shared-view width)
+                1)
+              (compiler-backend-global-shared-view backend-state))
+              [(ResultBackendVectorUse.Ok rhs-use)
+                (match rhs-use
+                  [(CompilerBackendVectorUse.Use rhs-asm rhs-reg)
+                    (match (compiler-backend-vector-dst-reg
+                      (compiler-backend-global-shared-view assignments)
+                      dst
+                      "byte multiply dst"
+                      (compiler-backend-global-shared-view width)
+                      (compiler-backend-vector-spill-scratch
+                        (compiler-backend-global-shared-view width)
+                        0)
+                      (compiler-backend-global-shared-view backend-state))
+                      [(ResultBackendReg.Ok dst-reg)
+                        (ResultCompilerBackend.Ok
+                          (str_cat.str-cat
+                            lhs-asm
+                            rhs-asm
+                            "    vpsrlw $8, "
+                            (compiler-backend-global-shared-view lhs-reg)
+                            ", "
+                            (compiler-backend-global-shared-view tmp0)
+                            "\n    vpsrlw $8, "
+                            (compiler-backend-global-shared-view rhs-reg)
+                            ", "
+                            (compiler-backend-global-shared-view tmp1)
+                            "\n    vpmullw "
+                            (compiler-backend-global-shared-view tmp1)
+                            ", "
+                            (compiler-backend-global-shared-view tmp0)
+                            ", "
+                            (compiler-backend-global-shared-view tmp0)
+                            "\n    vpsllw $8, "
+                            (compiler-backend-global-shared-view tmp0)
+                            ", "
+                            (compiler-backend-global-shared-view tmp0)
+                            "\n    vpmullw "
+                            (compiler-backend-global-shared-view rhs-reg)
+                            ", "
+                            (compiler-backend-global-shared-view lhs-reg)
+                            ", "
+                            (compiler-backend-global-shared-view dst-reg)
+                            "\n    vpsllw $8, "
+                            (compiler-backend-global-shared-view dst-reg)
+                            ", "
+                            (compiler-backend-global-shared-view dst-reg)
+                            "\n    vpsrlw $8, "
+                            (compiler-backend-global-shared-view dst-reg)
+                            ", "
+                            (compiler-backend-global-shared-view dst-reg)
+                            "\n    "
+                            bit-or
+                            " "
+                            (compiler-backend-global-shared-view tmp0)
+                            ", "
+                            (compiler-backend-global-shared-view dst-reg)
+                            ", "
+                            (compiler-backend-global-shared-view dst-reg)
+                            "\n"
+                            (compiler-backend-vector-store-dst
+                              assignments
+                              dst
+                              width
+                              elem-ty
+                              dst-reg
+                              backend-state)))]
                       [(ResultBackendReg.Err message)
                         (ResultCompilerBackend.Err
                           (box
@@ -6533,6 +6678,18 @@
             assignments
             dst
             op
+            lhs
+            rhs
+            elem-ty
+            "ymm"
+            instr-diag
+            backend-state)]
+        [(compiler-backend-byte-vector-mul?
+            (compiler-backend-global-shared-view op)
+            (compiler-backend-global-shared-view elem-ty))
+          (compiler-backend-emit-byte-vector-mul
+            assignments
+            dst
             lhs
             rhs
             elem-ty
@@ -7782,25 +7939,39 @@
         (compiler-backend-avx512-vector-binop-mnemonic
           (compiler-backend-global-shared-view op)
           (compiler-backend-global-shared-view elem-ty))]
-      (if (compiler-backend-byte-vector-shift?
-        (compiler-backend-global-shared-view op)
-        (compiler-backend-global-shared-view elem-ty))
-        (compiler-backend-emit-byte-vector-shift
-          assignments
-          dst
-          op
-          lhs
-          rhs
-          elem-ty
-          "zmm"
-          instr-diag
-          backend-state)
-        (if (= (string.string-length mnemonic) 0)
+      (cond
+        [(compiler-backend-byte-vector-shift?
+            (compiler-backend-global-shared-view op)
+            (compiler-backend-global-shared-view elem-ty))
+          (compiler-backend-emit-byte-vector-shift
+            assignments
+            dst
+            op
+            lhs
+            rhs
+            elem-ty
+            "zmm"
+            instr-diag
+            backend-state)]
+        [(compiler-backend-byte-vector-mul?
+            (compiler-backend-global-shared-view op)
+            (compiler-backend-global-shared-view elem-ty))
+          (compiler-backend-emit-byte-vector-mul
+            assignments
+            dst
+            lhs
+            rhs
+            elem-ty
+            "zmm"
+            instr-diag
+            backend-state)]
+        [(= (string.string-length mnemonic) 0)
           (ResultCompilerBackend.Err
             (box
               (compiler_diagnostic.compiler-diagnostic-with-message
                 instr-diag
-                "backend: unsupported AVX-512 vector binary op")))
+                "backend: unsupported AVX-512 vector binary op")))]
+        [else
           (match (compiler-backend-vector-register-use
             (compiler-backend-global-shared-view assignments)
             lhs
@@ -7867,7 +8038,7 @@
                 (box
                   (compiler_diagnostic.compiler-diagnostic-with-message
                     instr-diag
-                    message)))]))))
+                    message)))])]))
     (compiler-backend-avx512-shape-diagnostic
       type-segment-bases
       instr-diag

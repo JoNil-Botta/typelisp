@@ -608,6 +608,7 @@
     (= name-id (ctfe-builtin-ref 89))
     (= name-id (ctfe-builtin-ref 214))
     (= name-id (ctfe-builtin-ref 218))
+    (= name-id (ctfe-builtin-ref 289))
     (ctfe-builtin-id-any2?
       name-id
       (ctfe-builtin-ref 210)
@@ -750,6 +751,7 @@
         (ctfe-builtin-ref 277)
         (ctfe-builtin-ref 278))
       (= name-id (ctfe-builtin-ref 279))
+      (= name-id (ctfe-builtin-ref 289))
       (ctfe-builtin-id-any3?
         name-id
         (ctfe-builtin-ref 282)
@@ -7837,6 +7839,48 @@
     (ResultCtfe.Err
       (box (ctfe-diagnostic-at-expr expr "expr-type expects exactly one arg")))))
 
+;; Convert one already-resolved reflected type value back into opaque type-
+;; literal syntax. The new expression and its type node are allocated together
+;; in the active syntax pool. This matters when the reflected value came from a
+;; captured ExprList owned by a caller snapshot: its child type IDs still name
+;; that snapshot, so the result retains the same explicit captured-syntax
+;; provenance instead of copying IDs into an unrelated pool. The AstType itself
+;; is preserved verbatim, so nominal identity and lifetime substitutions never
+;; pass through display syntax, re-resolution, or type-key text.
+(define (ctfe-eval-type-expr-call
+  [args : ast.AstExprList]
+  [expr : ast.AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (if (= (ctfe-expr-arg-count args) 1)
+    (let
+      [arg : ast.AstExpr (ctfe-expr-arg args 0 env)]
+      (match (compiler-ctfe-eval arg env fuel)
+        [(ResultCtfe.Ok value arg-fuel)
+          (match value
+            [(CompilerCtfeValue.Type ty)
+              (let
+                [pools : ast.AstNodePoolContext
+                  (ctfe-env-syntax-pool-context env)]
+                (ResultCtfe.Ok
+                  (ctfe-syntax-expr-value
+                    env
+                    (ast.ast-expr-type-literal-with-pools pools ty)
+                    (ast.AstType.Expr))
+                  arg-fuel))]
+            [_
+              (ResultCtfe.Err
+                (box
+                  (ctfe-diagnostic-at-expr
+                    expr
+                    "type-expr expects a type argument")))])]
+        [(ResultCtfe.Err diag) (ResultCtfe.Err diag)]))
+    (ResultCtfe.Err
+      (box
+        (ctfe-diagnostic-at-expr
+          expr
+          "type-expr expects exactly one type argument")))))
+
 (define (ctfe-eval-expr-clause-list-inspector-call
   [name : String]
   [args : ast.AstExprList]
@@ -10170,6 +10214,8 @@
             (ctfe-eval-syntax-name-fresh-call args expr env fuel)]
           [(= call-id (ctfe-builtin-ref 45))
             (ctfe-eval-expr-type-call args expr env fuel)]
+          [(= call-id (ctfe-builtin-ref 289))
+            (ctfe-eval-type-expr-call args expr env fuel)]
           [(= call-id (ctfe-builtin-ref 47))
             (ctfe-eval-module-name-call args expr env fuel)]
           [(= call-id (ctfe-builtin-ref 48))
@@ -17274,6 +17320,303 @@
                         [(CtfeMaybeModuleValueType.None) true]))))]
               [(CtfeMaybeModuleValueType.None) false]))]))))
 
+;; `type-expr` must preserve every AstType shape as an opaque TypeLiteral and
+;; make that node immediately consumable by ExprList reflection. Keeping this
+;; test at the AstType layer covers internal/reserved shapes which source syntax
+;; deliberately cannot spell yet (notably Slice and Region).
+(define (compiler-ctfe-type-expr-roundtrip-one?
+  [env : (& env CtfeEnv)]
+  [ty : ast.AstType]) : bool
+  (let
+    [pools : ast.AstNodePoolContext (ctfe-env-pools env)]
+    [resolved : ast.AstType
+      (ctfe-reflect-resolve-type-with-pools
+        (ast.ast-place-shared-view pools)
+        (ctfe-env-reflections env)
+        (clone ty))]
+    [arg : i64
+      (ast.ast-expr-type-literal-with-pools
+        (ast.ast-place-shared-view pools)
+        ty)]
+    [call : i64 (compiler-ctfe-call1-in-env env (ctfe-builtin-ref 289) arg)]
+    [origin : ast.AstExpr (ctfe-ast-get env call)]
+    (match (compiler-ctfe-eval (clone origin) env (ctfe-fuel-limit))
+      [(ResultCtfe.Ok value _)
+        (match value
+          [(CompilerCtfeValue.Expr node produced)
+            (and
+              (ctfe-type-eq-in-env env produced (ast.AstType.Expr))
+              (match (ast.ast-node-pool-context-expr-get (& pools) node)
+                [(ast.AstExpr.TypeLiteral ty-id)
+                  (ctfe-type-eq-in-env
+                    env
+                    (ast.ast-node-pool-context-type-get (& pools) ty-id)
+                    (clone resolved))]
+                [_ false])
+              (match (ctfe-eval-expr-list-type-nth-value
+                (CompilerCtfeValue.ExprList
+                  (ast.ast-expr-cons node (ast.ast-expr-list-new)))
+                0
+                origin
+                (ctfe-env-shared-view env)
+                (ctfe-fuel-limit))
+                [(ResultCtfe.Ok reflected _)
+                  (match reflected
+                    [(CompilerCtfeValue.Type actual)
+                      (ctfe-type-eq-in-env env actual resolved)]
+                    [_ false])]
+                [(ResultCtfe.Err _) false]))]
+          [_ false])]
+      [(ResultCtfe.Err _) false])))
+
+;; A captured type list can belong to a caller snapshot whose node pools do not
+;; share storage with the transformer definition. `expr-list-type-nth` returns
+;; the reflected AstType while the environment retains that captured syntax
+;; pool. `type-expr` must therefore allocate the opaque node in the caller pool
+;; and return a pool-bearing captured value; copying its child IDs to the base
+;; pool would leave a dangling or aliased nested type.
+(define (compiler-ctfe-type-expr-foreign-pool-ok?) : bool
+  (let
+    [base-env : CtfeEnv (compiler-ctfe-reflection-env)]
+    [base-pools : ast.AstNodePoolContext (ctfe-env-pools base-env)]
+    [foreign-pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new
+        (ast.ast-expr-node-pool-state-create 8)
+        (ast.ast-type-node-pool-state-create 8)
+        ;; Self-test scratch pool: never installed, owned by the caller arena.
+        (arena.tl_arena_current))]
+    [foreign-ty : ast.AstType
+      (ast.ast-ty-box-with-pools
+        (ast.ast-place-shared-view foreign-pools)
+        (ast.AstType.I64))]
+    [foreign-node : i64
+      (ast.ast-expr-type-literal-with-pools
+        (ast.ast-place-shared-view foreign-pools)
+        foreign-ty)]
+    [items : ast.AstExprList
+      (ast.ast-expr-cons foreign-node (ast.ast-expr-list-new))]
+    [items-name : i64 (ctfe-materialize-generated-name-id "foreign-type-items")]
+    [env : CtfeEnv
+      (ctfe-env-extend-id
+        base-env
+        items-name
+        (CompilerCtfeValue.CapturedExprList
+          items
+          (ast.ast-place-shared-view foreign-pools)))]
+    [items-expr : i64 (ctfe-ast-push env (ast.AstExpr.Var items-name))]
+    [zero-expr : i64
+      (ctfe-ast-push env (ast.AstExpr.Literal (ast.ast-lit-int 0)))]
+    [nth-call : i64
+      (compiler-ctfe-call2-in-env
+        env
+        (ctfe-builtin-ref 215)
+        items-expr
+        zero-expr)]
+    [type-expr-call : i64
+      (compiler-ctfe-call1-in-env env (ctfe-builtin-ref 289) nth-call)]
+    (and
+      (not
+        (ctfe-node-pools-share-storage?
+          base-pools
+          (ast.ast-place-shared-view foreign-pools)))
+      (match (compiler-ctfe-eval
+        (ctfe-ast-get env type-expr-call)
+        env
+        (ctfe-fuel-limit))
+        [(ResultCtfe.Ok value _)
+          (match value
+            [(CompilerCtfeValue.CapturedExpr node (ast.AstType.Expr) owner)
+              (and
+                (ctfe-node-pools-share-storage?
+                  (ast.ast-place-shared-view owner)
+                  (ast.ast-place-shared-view foreign-pools))
+                (match (ast.ast-node-pool-context-expr-get (& owner) node)
+                  [(ast.AstExpr.TypeLiteral ty-id)
+                    (match (ast.ast-node-pool-context-type-get (& owner) ty-id)
+                      [(ast.AstType.Box inner-id)
+                        (match (ast.ast-node-pool-context-type-get
+                          (& owner)
+                          inner-id)
+                          [(ast.AstType.I64) true]
+                          [_ false])]
+                      [_ false])]
+                  [_ false]))]
+            [_ false])]
+        [(ResultCtfe.Err _) false]))))
+
+(define (compiler-ctfe-type-expr-roundtrip-ok?) : bool
+  (let
+    [env : CtfeEnv (compiler-ctfe-reflection-env)]
+    [pools : ast.AstNodePoolContext (ctfe-env-pools env)]
+    [region : i64 (ctfe-materialize-generated-name-id "type-expr-region")]
+    [unknown : i64 (ctfe-materialize-generated-name-id "GeneratedType")]
+    ;; Intern the same nominal spelling under two generated package modules in
+    ;; reverse lexical order. Exact round-trip identity must follow the
+    ;; qualified IDs, never the unqualified display spelling or intern order.
+    [same-name : i64 (ctfe-materialize-generated-name-id "Same")]
+    [right-module : i64
+      (ctfe-materialize-generated-name-id "package.generated.right")]
+    [left-module : i64
+      (ctfe-materialize-generated-name-id "package.generated.left")]
+    [right-same : i64
+      (ci.intern-generated-qualified-name
+        "package.generated.right/Same"
+        right-module
+        same-name)]
+    [left-same : i64
+      (ci.intern-generated-qualified-name
+        "package.generated.left/Same"
+        left-module
+        same-name)]
+    [qualified-status : i64
+      (ci.intern-generated-qualified-name
+        "stdlib/Status"
+        cbi.compiler-builtin-id-fix-stdlib
+        cbi.compiler-builtin-id-fix-Status)]
+    [lifetimes : ast.AstLifetimeList
+      (ast.ast-lifetime-cons region (ast.ast-lifetime-list-new))]
+    [pair : ast.AstTypeList
+      (ast.ast-type-cons-with-pools
+        (ast.ast-place-shared-view pools)
+        (ast.AstType.I64)
+        (ast.ast-type-cons-with-pools
+          (ast.ast-place-shared-view pools)
+          (ast.AstType.Bool)
+          (ast.ast-type-list-new)))]
+    [unit-expr : i64
+      (ctfe-ast-push env (ast.AstExpr.Literal (ast.AstLiteral.Unit)))]
+    [empty-call : i64
+      (ast.ast-expr-call-with-pools
+        (ast.ast-place-shared-view pools)
+        (ctfe-ast-push env (ast.AstExpr.Var (ctfe-builtin-ref 289)))
+        (ast.ast-expr-list-new))]
+    [two-call : i64
+      (compiler-ctfe-call2-in-env
+        env
+        (ctfe-builtin-ref 289)
+        unit-expr
+        unit-expr)]
+    (and
+      (compiler-ctfe-type-expr-roundtrip-one? env (ast.AstType.I64))
+      (compiler-ctfe-type-expr-roundtrip-one? env (ast.AstType.I32))
+      (compiler-ctfe-type-expr-roundtrip-one? env (ast.AstType.I16))
+      (compiler-ctfe-type-expr-roundtrip-one? env (ast.AstType.I8))
+      (compiler-ctfe-type-expr-roundtrip-one? env (ast.AstType.U64))
+      (compiler-ctfe-type-expr-roundtrip-one? env (ast.AstType.U32))
+      (compiler-ctfe-type-expr-roundtrip-one? env (ast.AstType.U16))
+      (compiler-ctfe-type-expr-roundtrip-one? env (ast.AstType.U8))
+      (compiler-ctfe-type-expr-roundtrip-one? env (ast.AstType.F64))
+      (compiler-ctfe-type-expr-roundtrip-one? env (ast.AstType.F32))
+      (compiler-ctfe-type-expr-roundtrip-one? env (ast.AstType.Bool))
+      (compiler-ctfe-type-expr-roundtrip-one? env (ast.AstType.Char))
+      (compiler-ctfe-type-expr-roundtrip-one? env (ast.AstType.String))
+      (compiler-ctfe-type-expr-roundtrip-one? env (ast.AstType.Str))
+      (compiler-ctfe-type-expr-roundtrip-one? env (ast.AstType.Bytes))
+      (compiler-ctfe-type-expr-roundtrip-one? env (ast.AstType.Unit))
+      (compiler-ctfe-type-expr-roundtrip-one? env (ast.AstType.Never))
+      (compiler-ctfe-type-expr-roundtrip-one? env (ast.AstType.Expr))
+      (compiler-ctfe-type-expr-roundtrip-one? env (ast.AstType.ExprList))
+      (compiler-ctfe-type-expr-roundtrip-one?
+        env
+        (ast.ast-ty-func-with-pools
+          (ast.ast-place-shared-view pools)
+          (clone pair)
+          (ast.AstType.String)))
+      (compiler-ctfe-type-expr-roundtrip-one?
+        env
+        (ast.AstType.Tuple (box pair)))
+      (compiler-ctfe-type-expr-roundtrip-one?
+        env
+        (ast.ast-ty-array-with-pools
+          (ast.ast-place-shared-view pools)
+          (ast.AstType.Char)
+          17))
+      (compiler-ctfe-type-expr-roundtrip-one?
+        env
+        (ast.ast-ty-dyn-array-with-pools
+          (ast.ast-place-shared-view pools)
+          (ast.AstType.U8)))
+      (compiler-ctfe-type-expr-roundtrip-one?
+        env
+        (ast.ast-ty-slice-with-pools
+          (ast.ast-place-shared-view pools)
+          (ast.AstType.U16)))
+      (compiler-ctfe-type-expr-roundtrip-one?
+        env
+        (ast.ast-ty-box-with-pools
+          (ast.ast-place-shared-view pools)
+          (ast.AstType.String)))
+      (compiler-ctfe-type-expr-roundtrip-one?
+        env
+        (ast.ast-ty-ptr-with-pools
+          (ast.ast-place-shared-view pools)
+          (ast.AstType.I32)))
+      (compiler-ctfe-type-expr-roundtrip-one?
+        env
+        (ast.ast-ty-mut-ptr-with-pools
+          (ast.ast-place-shared-view pools)
+          (ast.AstType.I16)))
+      (compiler-ctfe-type-expr-roundtrip-one?
+        env
+        (ast.ast-ty-region-with-pools
+          (ast.ast-place-shared-view pools)
+          region
+          (ast.AstType.Bool)))
+      (compiler-ctfe-type-expr-roundtrip-one?
+        env
+        (ast.ast-ty-ref-with-pools
+          (ast.ast-place-shared-view pools)
+          region
+          (ast.AstType.Str)))
+      (compiler-ctfe-type-expr-roundtrip-one?
+        env
+        (ast.ast-ty-mut-ref-with-pools
+          (ast.ast-place-shared-view pools)
+          region
+          (ast.AstType.I64)))
+      (compiler-ctfe-type-expr-roundtrip-one?
+        env
+        (ast.AstType.Struct cbi.compiler-builtin-id-fix-Point))
+      (compiler-ctfe-type-expr-roundtrip-one?
+        env
+        (ast.AstType.Enum cbi.compiler-builtin-id-fix-Maybe))
+      (compiler-ctfe-type-expr-roundtrip-one?
+        env
+        (ast.AstType.StructArgs
+          cbi.compiler-builtin-id-fix-Point
+          (box (clone lifetimes))))
+      (compiler-ctfe-type-expr-roundtrip-one?
+        env
+        (ast.AstType.EnumArgs
+          cbi.compiler-builtin-id-fix-Maybe
+          (box (clone lifetimes))))
+      (compiler-ctfe-type-expr-roundtrip-one? env (ast.AstType.Var unknown))
+      (compiler-ctfe-type-expr-roundtrip-one?
+        env
+        (ast.AstType.Var qualified-status))
+      (compiler-ctfe-type-expr-roundtrip-one?
+        env
+        (ast.AstType.VarArgs unknown (box lifetimes)))
+      (not (= left-same right-same))
+      (compiler-ctfe-type-expr-roundtrip-one?
+        env
+        (ast.AstType.Struct right-same))
+      (compiler-ctfe-type-expr-roundtrip-one?
+        env
+        (ast.AstType.Struct left-same))
+      (compiler-ctfe-eval-error-ok?
+        (compiler-ctfe-call1-in-env env (ctfe-builtin-ref 289) unit-expr)
+        env
+        "type-expr expects a type argument")
+      (compiler-ctfe-eval-error-ok?
+        empty-call
+        env
+        "type-expr expects exactly one type argument")
+      (compiler-ctfe-eval-error-ok?
+        two-call
+        env
+        "type-expr expects exactly one type argument"))))
+
 (define (compiler-ctfe-reflection-program) : ast.AstProgram
   (let
     [fields : ast.AstFieldDefList
@@ -19403,6 +19746,8 @@
     (unless (compiler-ctfe-f64-ok?) (return 1))
     (unless (compiler-ctfe-layout-query-ok?) (return 1))
     (unless (compiler-ctfe-reflection-query-ok?) (return 1))
+    (unless (compiler-ctfe-type-expr-foreign-pool-ok?) (return 1))
+    (unless (compiler-ctfe-type-expr-roundtrip-ok?) (return 1))
     (unless (compiler-ctfe-module-value-index-state-ok?) (return 1))
     (unless (compiler-ctfe-module-value-query-ok?) (return 1))
     (unless (compiler-ctfe-reflection-from-program-ok?) (return 1))

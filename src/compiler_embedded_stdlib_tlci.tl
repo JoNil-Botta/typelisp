@@ -2999,6 +2999,51 @@
             (set! compiler-comptime-host-session-status result))
           result)))))
 
+;; type-expr: pop one reflected Type value and push one opaque TypeLiteral Expr
+;; allocated in the active host pools. This is the exact inverse node shape of
+;; expr-list-type-nth and mirrors ctfe-eval-type-expr-call.
+(define (compiler-comptime-host-callback-type-expr
+  [session : i64]
+  [_arg-a : i64]
+  [_arg-b : i64]
+  [_arg-c : i64]) : i64
+  (if (or
+    (= compiler-comptime-host-session-cookie 0)
+    (not (= session compiler-comptime-host-session-cookie)))
+    tlci.tlci-host-callback-status-bad-request
+    (if (not
+      (=
+        compiler-comptime-host-session-status
+        tlci.tlci-host-callback-status-ok))
+      compiler-comptime-host-session-status
+      (let
+        [result : i64
+          (if (< compiler-comptime-host-stack-len 1)
+            tlci.tlci-host-callback-status-bad-request
+            (match (compiler-comptime-host-array-element-shared-view
+              compiler-comptime-host-stack
+              (- compiler-comptime-host-stack-len 1))
+              [(ctfe_support.CompilerCtfeValue.Type ty)
+                (let
+                  [pools : ast.AstNodePoolContext
+                    (compiler-comptime-host-array-element-shared-view
+                      compiler-comptime-host-pools
+                      0)]
+                  (begin
+                    (set!
+                      compiler-comptime-host-stack-len
+                      (- compiler-comptime-host-stack-len 1))
+                    (compiler-comptime-host-push!
+                      (ctfe_support.CompilerCtfeValue.Expr
+                        (ast.ast-expr-type-literal-with-pools pools ty)
+                        (ast.AstType.Expr)))))]
+              [_ tlci.tlci-host-callback-status-bad-request]))]
+        (begin
+          (when
+            (not (= result tlci.tlci-host-callback-status-ok))
+            (set! compiler-comptime-host-session-status result))
+          result)))))
+
 ;; expr-cast: pop the type value then the operand expression and push the
 ;; cast node the parser produces for `(cast e : T)`. The producer emits the
 ;; operand template first and the type second.
@@ -9218,6 +9263,11 @@
         (tlci.tlci-host-callback-name-shared-view
           tlci.tlci-host-callback-name-expr-type)
         compiler-comptime-host-callback-expr-type)
+      (compiler-comptime-host-registry-add!
+        (&mut registry)
+        (tlci.tlci-host-callback-name-shared-view
+          tlci.tlci-host-callback-name-type-expr)
+        compiler-comptime-host-callback-type-expr)
       (compiler-comptime-host-registry-add!
         (&mut registry)
         (tlci.tlci-host-callback-name-shared-view

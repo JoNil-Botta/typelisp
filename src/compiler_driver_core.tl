@@ -354,7 +354,9 @@
 ;; Emit owner candidates plus the active arena at stable compiler phase
 ;; boundaries. `arena_root` lets consumers de-duplicate an active arena that is
 ;; also one of the named owners.
-(define (compiler-driver-allocation-profile-snapshot! [phase : String]) : unit
+(define (compiler-driver-allocation-profile-snapshot-for-job!
+  [typecheck-state : compiler_typecheck_core.TcJobState]
+  [phase : String]) : unit
   (if (= (allocation_profile.compiler-allocation-profile-control! 0 "" "" 0) 0)
     unit
     (begin
@@ -432,7 +434,8 @@
         2
         phase
         "typecheck-aggregate-layout-cache"
-        (compiler_typecheck_core.tc-agg-layout-cache-storage-arena-handle-value))
+        (compiler_typecheck_core.tc-agg-layout-cache-storage-arena-handle-value-for-job
+          typecheck-state))
       (allocation_profile.compiler-allocation-profile-control!
         2
         phase
@@ -444,6 +447,11 @@
         "lower-ir"
         compiler_lower.lower-ir-arena)
       unit)))
+
+(define (compiler-driver-allocation-profile-snapshot! [phase : String]) : unit
+  (compiler-driver-allocation-profile-snapshot-for-job!
+    (compiler_typecheck_core.TcJobState 0)
+    phase))
 
 (define (compiler-driver-allocation-profile-pool-storage-snapshot!
   [phase : String]
@@ -2188,7 +2196,9 @@
             (cfg
               compile-profile
               (compiler-driver-profile-finish-phase profile-state "optimize"))
-            (compiler-driver-allocation-profile-snapshot! "optimize")
+            (compiler-driver-allocation-profile-snapshot-for-job!
+              typecheck-state
+              "optimize")
             (compiler-driver-release-lowered-ir! opt-level)
             (if (compiler_ast_types.ast-node-pool-context-type-exhausted? pools)
               (ResultCompilerDriverBuffer.Err
@@ -2229,7 +2239,9 @@
                         (compiler-driver-profile-finish-phase
                           profile-state
                           "backend"))
-                      (compiler-driver-allocation-profile-snapshot! "backend")
+                      (compiler-driver-allocation-profile-snapshot-for-job!
+                        typecheck-state
+                        "backend")
                       (compiler-driver-allocation-profile-backend-output-snapshot!
                         backend-state)
                       (ResultCompilerDriverBuffer.Ok asm))]
@@ -2240,7 +2252,9 @@
                         (compiler-driver-profile-finish-phase
                           profile-state
                           "backend"))
-                      (compiler-driver-allocation-profile-snapshot! "backend")
+                      (compiler-driver-allocation-profile-snapshot-for-job!
+                        typecheck-state
+                        "backend")
                       (compiler-driver-allocation-profile-backend-output-snapshot!
                         backend-state)
                       (ResultCompilerDriverBuffer.Err
@@ -4053,7 +4067,9 @@
             compile-profile
             (compiler-driver-profile-prelude-counters
               (compiler-driver-state-profile state)))
-          (compiler-driver-allocation-profile-snapshot! "load")
+          (compiler-driver-allocation-profile-snapshot-for-job!
+            (compiler-driver-state-typecheck state)
+            "load")
           (compiler-driver-allocation-profile-pool-storage-snapshot!
             "source-load"
             pools)
@@ -4226,7 +4242,9 @@
                   (compiler-driver-state-prefix-cache-allocation-profile-snapshot!
                     state
                     "lower")
-                  (compiler-driver-allocation-profile-snapshot! "lower")
+                  (compiler-driver-allocation-profile-snapshot-for-job!
+                    (compiler-driver-state-typecheck state)
+                    "lower")
                   (if (compiler_ast_types.ast-node-pool-context-type-exhausted?
                     pools)
                     (ResultCompilerDriverLowered.Err
@@ -4285,7 +4303,9 @@
                   (compiler-driver-state-prefix-cache-allocation-profile-snapshot!
                     state
                     "lower")
-                  (compiler-driver-allocation-profile-snapshot! "lower")
+                  (compiler-driver-allocation-profile-snapshot-for-job!
+                    (compiler-driver-state-typecheck state)
+                    "lower")
                   (ResultCompilerDriverLowered.Err diag))])))]
       [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
         (begin
@@ -4294,7 +4314,9 @@
             (compiler-driver-profile-finish-phase
               (compiler-driver-state-profile state)
               "load"))
-          (compiler-driver-allocation-profile-snapshot! "load")
+          (compiler-driver-allocation-profile-snapshot-for-job!
+            (compiler-driver-state-typecheck state)
+            "load")
           (ResultCompilerDriverLowered.Err diag))])))
 
 (define (compiler-driver-load-and-lower-pic-image-with-state-and-retirement
@@ -5272,6 +5294,7 @@
 
 (define (compiler-driver-write-buffer-result
   [_profile-state : profile_state.CompilerProfileState]
+  [typecheck-state : compiler_typecheck_core.TcJobState]
   [result : ResultCompilerDriverBuffer]
   [output-path : String]) : i64
   (match result
@@ -5287,7 +5310,9 @@
           (cfg
             compile-profile
             (compiler-driver-profile-finish-phase _profile-state "write"))
-          (compiler-driver-allocation-profile-snapshot! "write")
+          (compiler-driver-allocation-profile-snapshot-for-job!
+            typecheck-state
+            "write")
           (cfg
             compile-profile
             (compiler-driver-profile-finish-total _profile-state))
@@ -5298,7 +5323,9 @@
             status)))]
     [(ResultCompilerDriverBuffer.Err diag)
       (begin
-        (compiler-driver-allocation-profile-snapshot! "write-error")
+        (compiler-driver-allocation-profile-snapshot-for-job!
+          typecheck-state
+          "write-error")
         (cfg
           compile-profile
           (compiler-driver-profile-finish-total _profile-state))

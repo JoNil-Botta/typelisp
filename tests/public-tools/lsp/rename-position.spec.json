@@ -8,9 +8,10 @@
     {"jsonpath_id": 5, "raw_contains": "{\"line\":6,\"character\":28}", "raw_contains": "{\"line\":2,\"character\":17}", "raw_contains": "\"newText\":\"first-field\""},
     {"jsonpath_id": 6, "json_contains": "\"error\":{\"code\":-32803,\"message\":\"New name collides with a visible binding\"}"},
     {"jsonpath_id": 7, "json_contains": "\"error\":{\"code\":-32803,\"message\":\"Rename would modify generated, stale, or non-workspace source\"}"},
-    {"jsonpath_id": 8, "raw_contains": "\"uri\":\"${{TMP_URI}}/root/main.tl\",\"version\":11", "raw_contains": "{\"line\":1,\"character\":17}", "raw_contains": "{\"line\":2,\"character\":17}", "raw_contains": "\"uri\":\"${{TMP_URI}}/root/surfaces/lib.tl\",\"version\":null", "raw_contains": "\"newText\":\"library\""},
-    {"jsonpath_id": 9, "json_contains": "\"error\":{\"code\":-32803,\"message\":\"Current document semantic snapshot is incomplete\"}"},
-    {"jsonpath_id": 10, "json_contains": "\"error\":{\"code\":-32803,\"message\":\"Rename would modify generated, stale, or non-workspace source\"}"},
-    {"jsonpath_id": 11, "json_contains": "\"result\":null", "jsonpath_result": null}
+    {"jsonpath_id": 8, "raw_contains": "\"uri\":\"${{TMP_URI}}/root/main.tl\",\"version\":11", "raw_contains": "{\"line\":1,\"character\":17}", "raw_contains": "{\"line\":2,\"character\":17}", "raw_contains": "\"uri\":\"${{TMP_URI}}/root/surfaces/lib.tl\",\"version\":null", "raw_contains": "\"newText\":\"library\"", "raw_contains": "\"kind\":\"rename\",\"oldUri\":\"${{TMP_URI}}/root/surfaces/lib.tl\",\"newUri\":\"${{TMP_URI}}/root/surfaces/library.tl\""},
+    {"jsonpath_id": 9, "json_contains": "\"error\":{\"code\":-32803,\"message\":\"Renamed module source path already exists\"}"},
+    {"jsonpath_id": 10, "json_contains": "\"error\":{\"code\":-32803,\"message\":\"Current document semantic snapshot is incomplete\"}"},
+    {"jsonpath_id": 11, "json_contains": "\"error\":{\"code\":-32803,\"message\":\"Rename would modify generated, stale, or non-workspace source\"}"},
+    {"jsonpath_id": 12, "json_contains": "\"result\":null", "jsonpath_result": null}
   ]
 }

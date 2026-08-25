@@ -8,11 +8,12 @@
   {"jsonrpc":"2.0","id":6,"method":"textDocument/rename","params":{"textDocument":{"uri":"${{TMP_URI}}/root/main.tl"},"position":{"line":6,"character":30},"newName":"right"}},
   {"jsonrpc":"2.0","id":7,"method":"textDocument/rename","params":{"textDocument":{"uri":"${{TMP_URI}}/root/main.tl"},"position":{"line":7,"character":24},"newName":"equal2"}},
   {"jsonrpc":"2.0","id":8,"method":"textDocument/rename","params":{"textDocument":{"uri":"${{TMP_URI}}/root/main.tl"},"position":{"line":1,"character":18},"newName":"library"}},
+  {"jsonrpc":"2.0","id":9,"method":"textDocument/rename","params":{"textDocument":{"uri":"${{TMP_URI}}/root/main.tl"},"position":{"line":1,"character":18},"newName":"occupied"}},
   {"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"${{TMP_URI}}/root/main.tl","version":12},"contentChanges":[{"text":"(define broken : i64 true)"}]}},
-  {"jsonrpc":"2.0","id":9,"method":"textDocument/prepareRename","params":{"textDocument":{"uri":"${{TMP_URI}}/root/main.tl"},"position":{"line":0,"character":9}}},
+  {"jsonrpc":"2.0","id":10,"method":"textDocument/prepareRename","params":{"textDocument":{"uri":"${{TMP_URI}}/root/main.tl"},"position":{"line":0,"character":9}}},
   {"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"${{TMP_URI}}/root/main.tl"}}},
   {"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"${{TMP_URI}}/root/no-version.tl","languageId":"typelisp","text":"(define local-value : i64 1)\n(define use : i64 local-value)\n"}}},
-  {"jsonrpc":"2.0","id":10,"method":"textDocument/rename","params":{"textDocument":{"uri":"${{TMP_URI}}/root/no-version.tl"},"position":{"line":0,"character":9},"newName":"renamed-local"}},
-  {"jsonrpc":"2.0","id":11,"method":"shutdown","params":null},
+  {"jsonrpc":"2.0","id":11,"method":"textDocument/rename","params":{"textDocument":{"uri":"${{TMP_URI}}/root/no-version.tl"},"position":{"line":0,"character":9},"newName":"renamed-local"}},
+  {"jsonrpc":"2.0","id":12,"method":"shutdown","params":null},
   {"jsonrpc":"2.0","method":"exit"}
 ]

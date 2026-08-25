@@ -178,6 +178,7 @@
   ;; components can share a canonical declaration while remaining separate
   ;; rename surfaces.
   (surface-name String)
+  (kind compiler_semantic_index.CompilerSemanticSymbolKind)
   (record-span compiler_semantic_index.CompilerSemanticSpan)
   (edit-span compiler_semantic_index.CompilerSemanticSpan))
 
@@ -191,6 +192,11 @@
 
 (defenum LspRenameValidation
   (Ok i64)
+  (Err String))
+
+(defenum LspRenameModuleMoveLookup
+  (Found String String)
+  (Missing)
   (Err String))
 
 (defstruct LspLineCol
@@ -9243,6 +9249,7 @@
                               (LspRenameTarget
                                 canonical-key
                                 surface-name
+                                record.kind
                                 record-span
                                 edit-span))))
                         unit))
@@ -9282,6 +9289,112 @@
   (string.eq
     (lsp-rename-span-text (lsp-rename-fact-surface-span fact text) text)
     surface-name))
+
+(define (lsp-rename-module-kind?
+  [kind : (& kind compiler_semantic_index.CompilerSemanticSymbolKind)]) : bool
+  (match (deref kind)
+    [(compiler_semantic_index.CompilerSemanticSymbolKind.Module) true]
+    [_ false]))
+
+(define (lsp-rename-path-leaf-start [path : String] [name : String]) : i64
+  (let
+    [path-len : i64 (string.string-length path)]
+    [leaf-len : i64 (+ (string.string-length name) 3)]
+    [start : i64 (- path-len leaf-len)]
+    (if (and
+      (>= start 0)
+      (string.eq (string.substring path start leaf-len) (lsp-str2 name ".tl"))
+      (or
+        (= start 0)
+        (= (string.string-ref path (- start 1)) '/')
+        (= (string.string-ref path (- start 1)) '\\')))
+      start
+      -1)))
+
+(define (lsp-rename-module-new-path
+  [path : String]
+  [old-name : String]
+  [new-name : String]) : String
+  (let
+    [start : i64 (lsp-rename-path-leaf-start path old-name)]
+    (if (< start 0)
+      ""
+      (lsp-str3 (string.substring path 0 start) new-name ".tl"))))
+
+;; A real module declaration is source-addressed by its final component. Its
+;; file must move after all TextDocumentEdits have applied to the old URI;
+;; selected import aliases have no matching source leaf and therefore need no
+;; resource operation.
+(define (lsp-rename-module-move
+  [state : (& state lsp_vector_families.LspServerState)]
+  [query : (& query LspWorkspaceSemanticQuery)]
+  [target : LspRenameTarget]
+  [new-name : String]) : LspRenameModuleMoveLookup
+  (if (not (lsp-rename-module-kind? (& target.kind)))
+    LspRenameModuleMoveLookup.Missing
+    (let
+      [index : i64 0]
+      [old-path : String ""]
+      [new-path : String ""]
+      (begin
+        (while (< index query.len)
+          (let
+            [fact : lsp_vector_families.LspWorkspaceSemanticFact
+              (lsp-workspace-semantic-facts-get query index)]
+            (begin
+              (if (and
+                (lsp-workspace-semantic-fact-definition? fact)
+                (lsp-rename-module-kind? (& fact.kind))
+                (>=
+                  (lsp-rename-path-leaf-start
+                    fact.span.path
+                    target.surface-name)
+                  0))
+                (match (lsp-rename-source-for-fact state fact)
+                  [(LspRenameSourceLookup.Found text)
+                    (if (lsp-rename-fact-selected?
+                      fact
+                      text
+                      target.surface-name)
+                      (let
+                        [candidate : String
+                          (lsp-rename-module-new-path
+                            fact.span.path
+                            target.surface-name
+                            new-name)]
+                        (cond
+                          [(= (string.string-length old-path) 0)
+                            (begin
+                              (set! old-path fact.span.path)
+                              (set! new-path candidate))]
+                          [(not (string.eq old-path fact.span.path))
+                            (return
+                              (LspRenameModuleMoveLookup.Err
+                                "Rename resolves to multiple module source files"))]
+                          [else unit]))
+                      unit)]
+                  [(LspRenameSourceLookup.Missing) unit])
+                unit)
+              (set! index (+ index 1)))))
+        (if (= (string.string-length old-path) 0)
+          LspRenameModuleMoveLookup.Missing
+          (match (lsp-workspace-root-for-path
+            (& state.workspace.roots)
+            new-path
+            false)
+            [(lsp_vector_families.LspWorkspaceRootLookup.Missing)
+              (LspRenameModuleMoveLookup.Err
+                "Renamed module path would leave the editable workspace")]
+            [(lsp_vector_families.LspWorkspaceRootLookup.Found _)
+              (match (io.try-file-exists? (& new-path))
+                [(io.ErrIoBool _)
+                  (LspRenameModuleMoveLookup.Err
+                    "Cannot validate the renamed module destination")]
+                [(io.OkIoBool exists)
+                  (if exists
+                    (LspRenameModuleMoveLookup.Err
+                      "Renamed module source path already exists")
+                    (LspRenameModuleMoveLookup.Found old-path new-path))])]))))))
 
 (define (lsp-rename-space-list-contains? [items : String] [name : String]) : bool
   (let
@@ -9332,6 +9445,17 @@
               " "
               (lsp-str3 (lsp-completion-types) " " "true false unit"))
             name))))))
+
+(define (lsp-rename-valid-new-name-for-target?
+  [target : LspRenameTarget]
+  [name : String]) : bool
+  (and
+    (lsp-rename-valid-new-name? name)
+    (if (lsp-rename-module-kind? (& target.kind))
+      (let
+        [slash : String "/"]
+        (not (string.contains (& name) (& slash))))
+      true)))
 
 (define (lsp-rename-fact-workspace-editable?
   [state : (& state lsp_vector_families.LspServerState)]
@@ -9496,6 +9620,15 @@
     "edits"
     (lsp-json-array edits)))
 
+(define (lsp-rename-file-operation [old-path : String] [new-path : String]) : json.Json
+  (lsp-json-object3
+    "kind"
+    (json.JsonString "rename")
+    "oldUri"
+    (json.JsonString (lsp-path-to-file-uri old-path))
+    "newUri"
+    (json.JsonString (lsp-path-to-file-uri new-path))))
+
 (define (lsp-rename-workspace-edit
   [state : (& state lsp_vector_families.LspServerState)]
   [query : (& query LspWorkspaceSemanticQuery)]
@@ -9554,6 +9687,16 @@
                   (lsp-rename-document-edit uri open version edits)
                   changes))
               unit))))
+      (match (lsp-rename-module-move state query target new-name)
+        [(LspRenameModuleMoveLookup.Found old-path new-path)
+          (set!
+            changes
+            (json.list-concat
+              changes
+              (lsp-json-list-cons
+                (lsp-rename-file-operation old-path new-path)
+                (json.list-empty))))]
+        [_ unit])
       (lsp-json-object1 "documentChanges" (lsp-json-array changes)))))
 
 (define (lsp-prepare-rename-result [target : LspRenameTarget]) : json.Json
@@ -13262,7 +13405,7 @@
         (lsp-write-error id -32602 "textDocument/rename requires newName")]
       [(LspJsonText.Ok new-name)
         (cond
-          [(not (lsp-rename-valid-new-name? new-name))
+          [(not (lsp-rename-valid-new-name-for-target? target new-name))
             (lsp-write-error
               id
               -32602
@@ -13270,13 +13413,22 @@
           [(string.eq new-name target.surface-name)
             (lsp-write-error id -32602 "newName is unchanged")]
           [else
-            (match (lsp-rename-validate-query state query target new-name true)
-              [(LspRenameValidation.Ok _)
-                (lsp-write-response
-                  id
-                  (lsp-rename-workspace-edit state query target new-name))]
-              [(LspRenameValidation.Err message)
-                (lsp-write-error id -32803 message)])])])))
+            (match (lsp-rename-module-move state query target new-name)
+              [(LspRenameModuleMoveLookup.Err message)
+                (lsp-write-error id -32803 message)]
+              [_
+                (match (lsp-rename-validate-query
+                  state
+                  query
+                  target
+                  new-name
+                  true)
+                  [(LspRenameValidation.Ok _)
+                    (lsp-write-response
+                      id
+                      (lsp-rename-workspace-edit state query target new-name))]
+                  [(LspRenameValidation.Err message)
+                    (lsp-write-error id -32803 message)])])])])))
 
 (define (lsp-handle-rename-position!
   [method : String]

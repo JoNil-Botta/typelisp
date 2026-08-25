@@ -77401,7 +77401,138 @@
 
 (defenum OptSuccessorSinkMoves
   (Nil)
-  (Cons OptSuccessorSinkMove (Box OptSuccessorSinkMoves)))
+  ;; Planning prepends bundles while scanning source instructions backward and
+  ;; source blocks forward. Physical pushes are therefore oldest -> newest;
+  ;; logical readers index from the live end toward zero to preserve the old
+  ;; Cons traversal without one box per bundle.
+  (Dense (__tl_dyn-array OptSuccessorSinkMove) i64))
+
+(define (opt-successor-sink-moves-count [moves : OptSuccessorSinkMoves]) : i64
+  (match moves
+    [(OptSuccessorSinkMoves.Nil) 0]
+    [(OptSuccessorSinkMoves.Dense _ len) len]))
+
+(define (opt-successor-sink-moves-ref
+  [moves : OptSuccessorSinkMoves]
+  [index : i64]) : OptSuccessorSinkMove
+  (match moves
+    [(OptSuccessorSinkMoves.Nil)
+      (OptSuccessorSinkMove.Move
+        -1
+        (array.make-array i64 0)
+        -1
+        (ir.compiler-ir-instr-seq-empty)
+        (array.make-array i64 0))]
+    [(OptSuccessorSinkMoves.Dense items len)
+      (array-ref items (- (- len 1) index))]))
+
+(define (opt-successor-sink-moves-prepend
+  [move : OptSuccessorSinkMove]
+  [moves : OptSuccessorSinkMoves]) : OptSuccessorSinkMoves
+  (match moves
+    [(OptSuccessorSinkMoves.Nil)
+      (let
+        [items : (__tl_dyn-array OptSuccessorSinkMove)
+          (array.make-array OptSuccessorSinkMove 4)]
+        (begin
+          (set! (array-ref items 0) move)
+          (OptSuccessorSinkMoves.Dense items 1)))]
+    [(OptSuccessorSinkMoves.Dense items len)
+      (if (< len (array-length items))
+        (begin
+          (set! (array-ref items len) move)
+          (OptSuccessorSinkMoves.Dense items (+ len 1)))
+        (let
+          [bigger : (__tl_dyn-array OptSuccessorSinkMove)
+            (array.make-array
+              OptSuccessorSinkMove
+              (opt-dense-next-capacity len))]
+          [index : i64 0]
+          (begin
+            (while (< index len)
+              (begin
+                (set! (array-ref bigger index) (array-ref items index))
+                (set! index (+ index 1))))
+            (set! (array-ref bigger len) move)
+            (OptSuccessorSinkMoves.Dense bigger (+ len 1)))))]))
+
+(cfg
+  test
+  (test
+    optimizer-successor-sink-moves-dense-storage-grows-in-plan-order
+    (let
+      [empty : OptSuccessorSinkMoves (OptSuccessorSinkMoves.Nil)]
+      [retained : OptSuccessorSinkMoves
+        (opt-successor-sink-moves-prepend
+          (OptSuccessorSinkMove.Move
+            44
+            (array.make-array i64 0)
+            144
+            (ir.compiler-ir-instr-seq-empty)
+            (array.make-array i64 0))
+          empty)]
+      [duplicate : OptSuccessorSinkMoves
+        (opt-successor-sink-moves-prepend
+          (OptSuccessorSinkMove.Move
+            44
+            (array.make-array i64 0)
+            145
+            (ir.compiler-ir-instr-seq-empty)
+            (array.make-array i64 0))
+          retained)]
+      [moves : OptSuccessorSinkMoves (OptSuccessorSinkMoves.Nil)]
+      [index : i64 8]
+      (begin
+        (test.assert-i64-eq
+          (opt-successor-sink-moves-count empty)
+          0
+          "successor sink empty move storage")
+        (test.assert-i64-eq
+          (opt-successor-sink-moves-count retained)
+          1
+          "successor sink retained singleton length")
+        (test.assert-i64-eq
+          (opt-successor-sink-moves-count duplicate)
+          2
+          "successor sink duplicate move length")
+        (match (opt-successor-sink-moves-ref retained 0)
+          [(OptSuccessorSinkMove.Move source _ target _ _)
+            (begin
+              (test.assert-i64-eq source 44 "successor sink retained source")
+              (test.assert-i64-eq target 144 "successor sink retained target"))])
+        (match (opt-successor-sink-moves-ref duplicate 0)
+          [(OptSuccessorSinkMove.Move source _ target _ _)
+            (begin
+              (test.assert-i64-eq source 44 "successor sink duplicate source")
+              (test.assert-i64-eq target 145 "successor sink prepend order"))])
+        (while (>= index 0)
+          (begin
+            (set!
+              moves
+              (opt-successor-sink-moves-prepend
+                (OptSuccessorSinkMove.Move
+                  index
+                  (array.make-array i64 0)
+                  (+ index 100)
+                  (ir.compiler-ir-instr-seq-empty)
+                  (array.make-array i64 0))
+                moves))
+            (set! index (- index 1))))
+        (match moves
+          [(OptSuccessorSinkMoves.Nil)
+            (test.assert-true false "successor sink move storage is non-empty")]
+          [(OptSuccessorSinkMoves.Dense items len)
+            (begin
+              (test.assert-i64-eq len 9 "successor sink move storage length")
+              (test.assert-true
+                (>= (array-length items) 9)
+                "successor sink move storage grows past eight"))])
+        (match (opt-successor-sink-moves-ref moves 0)
+          [(OptSuccessorSinkMove.Move source _ _ _ _)
+            (test.assert-i64-eq source 0 "successor sink newest planned move")])
+        (match (opt-successor-sink-moves-ref moves 8)
+          [(OptSuccessorSinkMove.Move source _ _ _ _)
+            (test.assert-i64-eq source 8 "successor sink oldest planned move")])))))
 
 (defenum OptSuccessorSinkMaybeLabel
   (No)
@@ -78210,11 +78341,12 @@
   [moves : OptSuccessorSinkMoves]
   [target : i64]
   [uses : (__tl_dyn-array i64)]) : unit
-  (match moves
-    [(OptSuccessorSinkMoves.Nil) unit]
-    [(OptSuccessorSinkMoves.Cons move rest)
+  (let
+    [move-index : i64 0]
+    [move-count : i64 (opt-successor-sink-moves-count moves)]
+    (while (< move-index move-count)
       (begin
-        (match move
+        (match (opt-successor-sink-moves-ref moves move-index)
           [(OptSuccessorSinkMove.Move _ _ move-target instrs origins)
             (if (= move-target target)
               (let
@@ -78231,10 +78363,7 @@
                       unit)
                     (set! index (+ index 1)))))
               unit)])
-        (opt-successor-sink-collect-moved-uses!
-          (__tl-box-place rest)
-          target
-          uses))]))
+        (set! move-index (+ move-index 1))))))
 
 (define (opt-successor-sink-single-pred?
   [cfg : OptCfgIndex]
@@ -78923,14 +79052,14 @@
                                     origins)
                                   (set!
                                     moves
-                                    (OptSuccessorSinkMoves.Cons
+                                    (opt-successor-sink-moves-prepend
                                       (OptSuccessorSinkMove.Move
                                         label
                                         removed
                                         target
                                         prepared
                                         origins)
-                                      (box moves)))]
+                                      moves))]
                                 [(OptSuccessorSinkPrepared.No) unit])]
                             [(OptSuccessorSinkMaybeLabel.No) unit])]
                         [(option_i64.None) unit])
@@ -78998,31 +79127,35 @@
   [moves : OptSuccessorSinkMoves]
   [source : i64]
   [index : i64]) : bool
-  (match moves
-    [(OptSuccessorSinkMoves.Nil) false]
-    [(OptSuccessorSinkMoves.Cons move rest)
-      (match move
-        [(OptSuccessorSinkMove.Move move-source removed _ _ _)
-          (if (and
-            (= move-source source)
-            (>= index 0)
-            (< index (array-length removed))
-            (> (array-ref removed index) 0))
-            true
-            (opt-successor-sink-source-index?
-              (__tl-box-place rest)
-              source
-              index))])]))
+  (let
+    [move-index : i64 0]
+    [move-count : i64 (opt-successor-sink-moves-count moves)]
+    [found? : bool false]
+    (begin
+      (while (and (not found?) (< move-index move-count))
+        (begin
+          (match (opt-successor-sink-moves-ref moves move-index)
+            [(OptSuccessorSinkMove.Move move-source removed _ _ _)
+              (set!
+                found?
+                (and
+                  (= move-source source)
+                  (>= index 0)
+                  (< index (array-length removed))
+                  (> (array-ref removed index) 0)))])
+          (set! move-index (+ move-index 1))))
+      found?)))
 
 (define (opt-successor-sink-push-target-moves!
   [moves : OptSuccessorSinkMoves]
   [target : i64]
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : unit
-  (match moves
-    [(OptSuccessorSinkMoves.Nil) unit]
-    [(OptSuccessorSinkMoves.Cons move rest)
+  (let
+    [move-index : i64 0]
+    [move-count : i64 (opt-successor-sink-moves-count moves)]
+    (while (< move-index move-count)
       (begin
-        (match move
+        (match (opt-successor-sink-moves-ref moves move-index)
           [(OptSuccessorSinkMove.Move _ _ move-target instrs _)
             (if (= move-target target)
               (let
@@ -79035,10 +79168,7 @@
                       (ir.compiler-ir-instr-seq-ref instrs index))
                     (set! index (+ index 1)))))
               unit)])
-        (opt-successor-sink-push-target-moves!
-          (__tl-box-place rest)
-          target
-          (&mut builder)))]))
+        (set! move-index (+ move-index 1))))))
 
 (define (opt-successor-sink-rewrite-block
   [moves : OptSuccessorSinkMoves]
@@ -79313,19 +79443,17 @@
     ;; pass runs on every function every iteration but only plans moves for a
     ;; few hundred of them, so the reuse covers the overwhelming majority of
     ;; runs and saves the caller a whole CFG context build.
-    (match moves
-      [(OptSuccessorSinkMoves.Nil)
-        (OptSuccessorSinkBlocksResult.Result
-          ready
-          cfg-context
-          true
-          (not stripped))]
-      [_
-        (OptSuccessorSinkBlocksResult.Result
-          (opt-successor-sink-rewrite-blocks moves ready)
-          cfg-context
-          false
-          false)])))
+    (if (= (opt-successor-sink-moves-count moves) 0)
+      (OptSuccessorSinkBlocksResult.Result
+        ready
+        cfg-context
+        true
+        (not stripped))
+      (OptSuccessorSinkBlocksResult.Result
+        (opt-successor-sink-rewrite-blocks moves ready)
+        cfg-context
+        false
+        false))))
 
 (define (opt-successor-sink-blocks-result
   [type-segment-bases : i64]

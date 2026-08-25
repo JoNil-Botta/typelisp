@@ -1671,6 +1671,102 @@
           (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
           ok)))))
 
+(define (producer-test-dispatch-type-expr?
+  [loaded : (& loaded tlci_loader.TlciLoadedImage)]
+  [identity : String]) : bool
+  (let
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [box-ty : ast.AstType (ast.ast-ty-box-with-pools pools (ast.AstType.I64))]
+    [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
+      (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
+    (begin
+      (set!
+        (array-ref operands 0)
+        (compiler_ctfe.CompilerCtfeValue.Type box-ty))
+      (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
+        pools
+        operands
+        1
+        64
+        producer-test-cookie
+        (compiler_ctfe.ctfe-reflect-info-list-empty))
+      (let
+        [ok : bool
+          (match (tlci_loader.tlci-loader-dispatch-macro
+            loaded
+            identity
+            producer-test-cookie
+            (array.make-array i64 0)
+            0)
+            [(tlci_loader.ResultTlciMacroDispatch.Err _) false]
+            [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
+              (and
+                (= dispatch.status tlci.tlci-host-callback-status-ok)
+                (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-ready?)
+                (match (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-value)
+                  [(compiler_ctfe.CompilerCtfeValue.Expr
+                      node
+                      (ast.AstType.Expr))
+                    (match (producer-test-expr-get pools node)
+                      [(ast.AstExpr.TypeLiteral ty-id)
+                        (compiler_ctfe.ctfe-type-eq
+                          (ast.ast-node-pool-context-type-get pools ty-id)
+                          box-ty)]
+                      [_ false])]
+                  [_ false]))])]
+        (begin
+          (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
+          ok)))))
+
+(define (producer-test-dispatch-type-expr-list?
+  [loaded : (& loaded tlci_loader.TlciLoadedImage)]
+  [identity : String]) : bool
+  (let
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [box-ty : ast.AstType (ast.ast-ty-box-with-pools pools (ast.AstType.I64))]
+    [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
+      (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
+    (begin
+      (set!
+        (array-ref operands 0)
+        (compiler_ctfe.CompilerCtfeValue.Type box-ty))
+      (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
+        pools
+        operands
+        1
+        64
+        producer-test-cookie
+        (compiler_ctfe.ctfe-reflect-info-list-empty))
+      (let
+        [ok : bool
+          (match (tlci_loader.tlci-loader-dispatch-macro
+            loaded
+            identity
+            producer-test-cookie
+            (array.make-array i64 0)
+            0)
+            [(tlci_loader.ResultTlciMacroDispatch.Err _) false]
+            [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
+              (and
+                (= dispatch.status tlci.tlci-host-callback-status-ok)
+                (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-ready?)
+                (match (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-value)
+                  [(compiler_ctfe.CompilerCtfeValue.ExprList items)
+                    (and
+                      (= (ast.ast-expr-list-len (& items)) 1)
+                      (match (producer-test-expr-get
+                        pools
+                        (ast.ast-expr-list-get (& items) 0 -1))
+                        [(ast.AstExpr.TypeLiteral ty-id)
+                          (compiler_ctfe.ctfe-type-eq
+                            (ast.ast-node-pool-context-type-get pools ty-id)
+                            box-ty)]
+                        [_ false]))]
+                  [_ false]))])]
+        (begin
+          (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
+          ok)))))
+
 ;; The comptime string scanner: `comptime.expr-string?` (256) guards a String
 ;; session local that `expr-string-value` (246) binds, `string-length` (252)
 ;; measures, `string-ref` (253) indexes through a `char` cast, `string-slice`
@@ -3530,6 +3626,69 @@
           (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
           ok)))))
 
+(define (producer-test-type-expr-callback-ok? [valid : bool]) : bool
+  (let
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [box-ty : ast.AstType (ast.ast-ty-box-with-pools pools (ast.AstType.I64))]
+    [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
+      (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
+    (begin
+      (set!
+        (array-ref operands 0)
+        (if valid
+          (compiler_ctfe.CompilerCtfeValue.Type box-ty)
+          (compiler_ctfe.CompilerCtfeValue.Bool false)))
+      (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
+        pools
+        operands
+        1
+        64
+        producer-test-cookie
+        (compiler_ctfe.ctfe-reflect-info-list-empty))
+      (let
+        [push-status : i64
+          (compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-push-operand
+            producer-test-cookie
+            0
+            0
+            0)]
+        [type-expr-status : i64
+          (if (= push-status tlci.tlci-host-callback-status-ok)
+            (compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-type-expr
+              producer-test-cookie
+              0
+              0
+              0)
+            push-status)]
+        [commit-status : i64
+          (if (and valid (= type-expr-status tlci.tlci-host-callback-status-ok))
+            (compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-commit-result
+              producer-test-cookie
+              0
+              0
+              0)
+            type-expr-status)]
+        [ok : bool
+          (if valid
+            (and
+              (= commit-status tlci.tlci-host-callback-status-ok)
+              (match (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-value)
+                [(compiler_ctfe.CompilerCtfeValue.Expr node (ast.AstType.Expr))
+                  (match (producer-test-expr-get pools node)
+                    [(ast.AstExpr.TypeLiteral ty-id)
+                      (compiler_ctfe.ctfe-type-eq
+                        (ast.ast-node-pool-context-type-get pools ty-id)
+                        box-ty)]
+                    [_ false])]
+                [_ false]))
+            (and
+              (= commit-status tlci.tlci-host-callback-status-bad-request)
+              (not
+                (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-ready?))))]
+        (begin
+          (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
+          ok)))))
+
 (define (producer-test-expr-string-value-callback-ok? [literal : bool]) : bool
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
@@ -3663,6 +3822,8 @@
       (producer-test-type-list-callbacks-ok? 2)
       (producer-test-type-list-callbacks-ok? 3)
       (producer-test-type-list-callbacks-ok? 4)
+      (producer-test-type-expr-callback-ok? true)
+      (producer-test-type-expr-callback-ok? false)
       (producer-test-expr-string-value-callback-ok? true)
       (producer-test-expr-string-value-callback-ok? false)
       (producer-test-string-var-preserves-source-session?))
@@ -3884,6 +4045,8 @@
 (defmacro (rawptr [value : Expr]) : Expr `(unsafe (ptr-write! (ptr-offset (string-data ,value) 1) (ptr-read (ptr-offset (__tl_array-data ,value) 2))) (string-from-bytes (string-data ,value) (ptr->int (string-data ,value)))))
 (defmacro (strval [value : Expr]) : Expr (comptime.expr-var (comptime.expr-string-value value)))
 (defmacro (typeof [value : Expr]) : Expr `(marker ,(comptime.expr-type value)))
+(defmacro (typeexpr [T : type]) : Expr (comptime.type-expr T))
+(defmacro (typeexprlist [T : type]) : ExprList (comptime.expr-list-cons (comptime.type-expr T) (comptime.expr-list-empty)))
 (defmacro (aliaslike [value : Expr] [idx : Expr]) : Expr (match idx [(comptime.Expr.Int i) (match value [(comptime.Expr.Var t) (comptime.expr-var (comptime.string-append (comptime.string-append t \"_n\") (comptime.int->string i)))] [_ value])] [_ value]))
 (defmacro (typetpl [value : Expr]) : Expr `(let [a : (Ptr u8) (ptr-cast (string-data ,value) : (Ptr u8))] [b : (__tl_dyn-array i64) ,value] [c : (& region str) ,value] [d : (Box i64) ,value] [e : (Array i64 4) ,value] [f : (Slice i64) ,value] [g : (LifetimeOne text) ,value] [h : (LifetimePair left right) ,value] (marker a b c d e f g h)))
 (defmacro (scan [text : Expr]) : Expr (if (comptime.expr-string? text) (let [s : String (comptime.expr-string-value text)] [n : i64 (string.string-length s)] (if (= (cast (string.string-ref s 0) : i64) 123) `(brace ,(comptime.expr-int n)) `(plain ,(comptime.expr-string (comptime.string-slice s 1 (- n 1)))))) (comptime.comptime-error \"scan: expects a string literal\")))
@@ -3950,13 +4113,13 @@
                         (let
                           [ok : bool
                             (and
-                              (= (array-length name-array) 41)
-                              (= captures.len 41)
+                              (= (array-length name-array) 43)
+                              (= captures.len 43)
                               (=
                                 (array-ref
                                   compiler_tlci_native_producer.embedded-stdlib-tlci-native-report-count
                                   0)
-                                40)
+                                42)
                               (=
                                 (array-ref
                                   compiler_tlci_native_producer.embedded-stdlib-tlci-native-report-partial-count
@@ -4076,6 +4239,12 @@
                               (producer-test-dispatch-typeof?
                                 (& loaded)
                                 "package.macros/typeof")
+                              (producer-test-dispatch-type-expr?
+                                (& loaded)
+                                "package.macros/typeexpr")
+                              (producer-test-dispatch-type-expr-list?
+                                (& loaded)
+                                "package.macros/typeexprlist")
                               (producer-test-dispatch-typetpl?
                                 (& loaded)
                                 "package.macros/typetpl")

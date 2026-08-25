@@ -432,6 +432,11 @@
 (define (expr-type [value : Expr]) : Expr
   value)
 
+;: Build an opaque resolved type-literal expression from a reflected type value.
+;: The compiler preserves nominal identity and resolved lifetime substitutions.
+(define (type-expr [ty : Expr]) : Expr
+  ty)
+
 ;: Return the public value-level reflection descriptor for a type operand.
 (define (type-info [ty : Expr]) : TypeInfo
   (type-info ty))

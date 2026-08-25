@@ -282,6 +282,7 @@ region_reset_preserve|tests/integration/region_reset_preserve.tl|62|-|-|stdlib/s
 region_reset_overflow_retains|tests/integration/region_reset_overflow_retains.tl|42|-|-|-
 region_reset_invalid_trap|tests/integration/region_reset_invalid_trap.tl|134|-|-|-|expected-stderr:tl: invalid region mark\n
 print|tests/integration/print.tl|0|42\nfalse\n|-|-
+format_precision_counts|tests/integration/format_precision_counts.tl|42|-|-|stdlib/array.tl stdlib/format.tl stdlib/profile.tl stdlib/string.tl
 io_format_print|tests/integration/io_format_print.tl|0|Ada:-7:true:x:1.5 {done}\n42\n|-|-
 format_owner_protocol|tests/integration/format_owner_protocol.tl|0|@tests/integration/format_owner_protocol.stdout|-|format_owner_alpha.tl format_owner_beta.tl format_owner_multi.tl format_owner_nested.tl format_owner_point.tl format_owner_state.tl stdlib/format.tl stdlib/io.tl stdlib/string.tl
 format_owner_order_a|tests/integration/format_owner_order_a.tl|0|@tests/integration/format_owner_order.stdout|-|format_owner_alpha.tl format_owner_beta.tl stdlib/format.tl stdlib/io.tl
@@ -452,6 +453,7 @@ box_take_set|tests/integration/box_take_set.tl|42|-|-|-
 function_lifetime_elision|tests/integration/function_lifetime_elision.tl|42|-|-|stdlib/io.tl
 consume_parameters|tests/integration/consume_parameters.tl|0|-|-|consume/parameters/helper.tl stdlib/string.tl
 comptime_module_value_reflection|tests/integration/comptime_module_value_reflection.tl|42|-|-|reflection/signature/provider.tl stdlib/comptime.tl
+comptime_type_expr_worklist|tests/integration/comptime_type_expr_worklist.tl|42|-|-|stdlib/comptime.tl
 str_cat_scoped_region|tests/integration/str_cat_scoped_region.tl|42|-|-|-
 tlci_native_index_folds|tests/integration/tlci_native_index_folds.tl|42|-|-|stdlib/fs.tl stdlib/string.tl stdlib/str_cat.tl
 tlci_native_wildcard_arms|tests/integration/tlci_native_wildcard_arms.tl|42|-|-|stdlib/eq.tl stdlib/hash.tl

@@ -3,9 +3,9 @@
 ;# `format` parses a string-literal template during macro expansion. It supports
 ;# implicit `{}`, indexed `{0}`, explicit named, and call-site-captured `{name}`
 ;# selections; escapes use `{{` / `}}`. Format specifications share one parsed
-;# plan supporting byte fill, alignment, sign, alternate/zero flags, and static
-;# or argument-provided width. The generated expression evaluates each supplied
-;# value once and uses one flat `str-cat` expansion.
+;# plan supporting byte fill, alignment, sign, alternate/zero flags, width, and
+;# literal/dollar/star precision counts. The generated expression evaluates
+;# each supplied value once and uses one flat `str-cat` expansion.
 ;#
 ;# Nominal structs and enums participate through their canonical owner module.
 ;# A module's common primary type defines `to-string`; additional nominal types
@@ -59,19 +59,29 @@
 ;: Rust's currently unused `-` spelling. Width and fill count TypeLisp bytes,
 ;: not Unicode scalars or terminal columns. `alternate` is retained for the
 ;: type-specific formatter siblings even where default Display ignores it.
+;: Precision is resolved before this shared transport: `precision-present`
+;: distinguishes an omitted count from an explicit zero.
 (defstruct FormatOptions
   (fill char)
   (alignment i64)
   (sign i64)
   (alternate bool)
   (sign-aware-zero-pad bool)
-  (width i64))
+  (width i64)
+  (precision-present bool)
+  (precision i64))
 
 ;: Validate one runtime-provided width before allocation or arithmetic.
 (define (format-width-count-runtime [count : i64]) : i64
   (if (< count 0)
     (format-runtime-abort-string
       "format: dynamic width argument must be nonnegative")
+    count))
+
+;: Validate one runtime-provided precision before rendering or allocation.
+(define (format-precision-count-runtime [count : i64]) : i64
+  (if (< count 0)
+    (format-runtime-abort-string "format: precision count must be nonnegative")
     count))
 
 ;: Fill a caller-validated live destination byte range.
@@ -257,7 +267,7 @@
   [width-kind-expr : comptime.Expr]
   [width-value : comptime.Expr]
   [precision-kind-expr : comptime.Expr]
-  [_precision-value : comptime.Expr]
+  [precision-value : comptime.Expr]
   [selector-expr : comptime.Expr]) : String
   (match fill-expr
     [(comptime.Expr.Int fill-code)
@@ -374,7 +384,7 @@
                                   (if plain-present?
                                     true
                                     qualified-present?)]
-                                [numeric? : bool
+                                [integral? : bool
                                   (match value-kind
                                     ["i8" true]
                                     ["i16" true]
@@ -384,9 +394,14 @@
                                     ["u16" true]
                                     ["u32" true]
                                     ["u64" true]
-                                    ["f64" true]
-                                    ["f32" true]
                                     [_ false])]
+                                [numeric? : bool
+                                  (if integral?
+                                    true
+                                    (match value-kind
+                                      ["f64" true]
+                                      ["f32" true]
+                                      [_ false]))]
                                 [rendered : comptime.Expr
                                   (if nominal?
                                     (match hook-dispatch
@@ -536,10 +551,29 @@
                                             "format: unsupported argument type "
                                             value-key))]))]
                                 (begin
+                                  ;; Macro CTFE cannot invoke `cond`.
+                                  ;; lint-allow: nested-if-ladder
                                   (if (= precision-kind 0)
                                     unit
-                                    (comptime.comptime-error
-                                      "format: precision is parsed but not supported yet"))
+                                    (if integral?
+                                      unit
+                                      (if (if (string.eq value-kind "f64")
+                                        true
+                                        (string.eq value-kind "f32"))
+                                        (comptime.comptime-error
+                                          "format: precision for float Display output is not supported yet")
+                                        (if (if (string.eq value-kind "string")
+                                          true
+                                          (string.eq value-kind "str"))
+                                          (comptime.comptime-error
+                                            "format: precision for text Display output is not supported yet")
+                                          (if nominal?
+                                            (comptime.comptime-error
+                                              "format: precision for owner Display output is not supported yet")
+                                            (comptime.comptime-error
+                                              (comptime.string-append
+                                                "format: precision for Display type is not supported yet: "
+                                                value-key)))))))
                                   (if (string.eq selector "")
                                     unit
                                     (comptime.comptime-error
@@ -587,6 +621,41 @@
                                                   (deref ,width-value))
                                                 (comptime.comptime-error
                                                   "format: dynamic width argument must have exact type i64"))))))]
+                                    [resolved-precision : comptime.Expr
+                                      (if (= precision-kind 0)
+                                        (comptime.expr-int 0)
+                                        (if (= precision-kind 1)
+                                          precision-value
+                                          (let
+                                            [count-type : comptime.Expr
+                                              (comptime.expr-type
+                                                precision-value)]
+                                            [count-kind : String
+                                              (type-kind count-type)]
+                                            (if (string.eq count-kind "i64")
+                                              `(stdlib.format.format-precision-count-runtime
+                                                ,precision-value)
+                                              (if (if (string.eq
+                                                count-kind
+                                                "ref")
+                                                (string.eq
+                                                  (type-kind
+                                                    (comptime.reference-element-type
+                                                      count-type))
+                                                  "i64")
+                                                (if (string.eq
+                                                  count-kind
+                                                  "mut-ref")
+                                                  (string.eq
+                                                    (type-kind
+                                                      (comptime.reference-element-type
+                                                        count-type))
+                                                    "i64")
+                                                  false))
+                                                `(stdlib.format.format-precision-count-runtime
+                                                  (deref ,precision-value))
+                                                (comptime.comptime-error
+                                                  "format: dynamic precision argument must have exact type i64"))))))]
                                     [default-options? : bool
                                       (if (= fill-code 32)
                                         (if (= alignment 0)
@@ -599,29 +668,68 @@
                                             false)
                                           false)
                                         false)]
-                                    (if default-options?
-                                      rendered
-                                      (if numeric?
-                                        `(stdlib.format.format-apply-options
-                                          ,rendered
-                                          true
-                                          (stdlib.format.FormatOptions
-                                            (cast ,fill-expr : char)
-                                            ,alignment-expr
-                                            ,sign-expr
-                                            (!= ,alternate-expr 0)
-                                            (!= ,zero-expr 0)
-                                            ,resolved-width))
-                                        `(stdlib.format.format-apply-options
-                                          ,rendered
-                                          false
-                                          (stdlib.format.FormatOptions
-                                            (cast ,fill-expr : char)
-                                            ,alignment-expr
-                                            ,sign-expr
-                                            (!= ,alternate-expr 0)
-                                            (!= ,zero-expr 0)
-                                            ,resolved-width)))))))]
+                                    [width-runtime? : bool (> width-kind 1)]
+                                    [precision-runtime? : bool
+                                      (> precision-kind 1)]
+                                    [width-name : String
+                                      (comptime.syntax-name-fresh
+                                        "__tl_format_resolved_width")]
+                                    [precision-name : String
+                                      (comptime.syntax-name-fresh
+                                        "__tl_format_resolved_precision")]
+                                    [width-var : comptime.Expr
+                                      (comptime.expr-var width-name)]
+                                    [precision-var : comptime.Expr
+                                      (comptime.expr-var precision-name)]
+                                    [transported-width : comptime.Expr
+                                      (if width-runtime?
+                                        width-var
+                                        resolved-width)]
+                                    [transported-precision : comptime.Expr
+                                      (if precision-runtime?
+                                        precision-var
+                                        resolved-precision)]
+                                    [formatted : comptime.Expr
+                                      (if default-options?
+                                        rendered
+                                        (if numeric?
+                                          `(stdlib.format.format-apply-options
+                                            ,rendered
+                                            true
+                                            (stdlib.format.FormatOptions
+                                              (cast ,fill-expr : char)
+                                              ,alignment-expr
+                                              ,sign-expr
+                                              (!= ,alternate-expr 0)
+                                              (!= ,zero-expr 0)
+                                              ,transported-width
+                                              (!= ,precision-kind-expr 0)
+                                              ,transported-precision))
+                                          `(stdlib.format.format-apply-options
+                                            ,rendered
+                                            false
+                                            (stdlib.format.FormatOptions
+                                              (cast ,fill-expr : char)
+                                              ,alignment-expr
+                                              ,sign-expr
+                                              (!= ,alternate-expr 0)
+                                              (!= ,zero-expr 0)
+                                              ,transported-width
+                                              (!= ,precision-kind-expr 0)
+                                              ,transported-precision))))]
+                                    [precision-checked : comptime.Expr
+                                      (if precision-runtime?
+                                        (comptime.expr-let-scope
+                                          precision-name
+                                          resolved-precision
+                                          formatted)
+                                        formatted)]
+                                    (if width-runtime?
+                                      (comptime.expr-let-scope
+                                        width-name
+                                        resolved-width
+                                        precision-checked)
+                                      precision-checked))))]
                             [_
                               (comptime.comptime-error
                                 "format: internal precision option is malformed")])]
@@ -1051,7 +1159,9 @@
                                                         unit)))
                                                   ;; Macro CTFE cannot invoke `cond`.
                                                   ;; lint-allow: nested-if-ladder
-                                                  (if (= precision-kind 2)
+                                                  (if (if (= precision-kind 2)
+                                                    true
+                                                    (= precision-kind 4))
                                                     (match (comptime.expr-list-nth
                                                       fields
                                                       11)
@@ -1077,9 +1187,10 @@
                                                           "format: internal precision kind is malformed")
                                                         unit)))))))
                                           (set! plan-index (- plan-index 1)))))
-                                    ;; Value, width, and precision references all
-                                    ;; count as uses without advancing the
-                                    ;; implicit value iterator.
+                                    ;; Every positional value/count reference
+                                    ;; counts as a use. Scanner-resolved star
+                                    ;; counts have already advanced the implicit
+                                    ;; iterator; dollar references have not.
                                     (let
                                       [positional-index : i64 0]
                                       (while (<
@@ -1178,9 +1289,15 @@
                                                                     unit)]
                                                                 [_ unit])
                                                               unit)
-                                                            (if (=
+                                                            (if (if (=
                                                               reference-kind
                                                               2)
+                                                              true
+                                                              (if (= slot 2)
+                                                                (=
+                                                                  reference-kind
+                                                                  4)
+                                                                false))
                                                               (match reference-value
                                                                 [(comptime.Expr.Int
                                                                     selected)
@@ -1706,7 +1823,9 @@
                                                           precision-kind
                                                           found)]
                                                       [_ unit])
-                                                    (if (= precision-kind 2)
+                                                    (if (if (= precision-kind 2)
+                                                      true
+                                                      (= precision-kind 4))
                                                       (match (comptime.expr-list-nth
                                                         fields
                                                         11)
@@ -2522,7 +2641,13 @@
                                                     (comptime.expr-int
                                                       width-number))
                                                   (set! cursor width-scan)))))
-                                          (if (< cursor placeholder-end)
+                                          (if (if (< cursor placeholder-end)
+                                            (!=
+                                              (cast
+                                                (string.string-ref text cursor)
+                                                : i64)
+                                              46)
+                                            false)
                                             (let
                                               [name-scan : i64 cursor]
                                               [name-scanning? : bool true]
@@ -2650,8 +2775,10 @@
                                                         (+ name-scan 1))))
                                                   unit)))
                                             unit))))
-                                    ;; Preserve precision for #6647 without
-                                    ;; resolving its argument-counter semantics.
+                                    ;; Precision shares the independent implicit
+                                    ;; value iterator. For `{:.*}`, the selector
+                                    ;; provisionally consumed the count slot, so
+                                    ;; move the value to the following slot.
                                     (if (if (< cursor placeholder-end)
                                       (=
                                         (cast
@@ -2672,6 +2799,21 @@
                                           42)
                                           (begin
                                             (set! precision-kind 4)
+                                            (set!
+                                              precision-value
+                                              (if (= implicit-state 1)
+                                                selector-value
+                                                (comptime.expr-int
+                                                  next-implicit)))
+                                            (if (= implicit-state 1)
+                                              (set!
+                                                selector-value
+                                                (comptime.expr-int
+                                                  next-implicit))
+                                              unit)
+                                            (set!
+                                              next-implicit
+                                              (+ next-implicit 1))
                                             (set! cursor (+ cursor 1)))
                                           (let
                                             [precision-digit? : bool false]

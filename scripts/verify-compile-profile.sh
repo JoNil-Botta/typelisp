@@ -1645,6 +1645,10 @@ if [ "$NL_HOST_OS" = windows ]; then
     # ~3,000 nodes), so the authoritative Windows probe lands a few thousand
     # nodes past the boundary: 2,424,832 capacity and 77,594,624 physical
     # payload bytes.
+    # Reconciled with #6824 and #6819, #6776's reflected-type expression bridge
+    # crosses the next boundary: the direct Windows selfhost probe measured
+    # 2,425,185 used nodes, 2,490,368 capacity, and 79,691,776 physical payload
+    # bytes.
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_expr_pool typecheck 38 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
@@ -1678,10 +1682,11 @@ if [ "$NL_HOST_OS" = windows ]; then
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_type_pool macro_expand 26 1024 24 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
-    # Same series, same probe: 8,527 used nodes against 9,216 capacity, 689
-    # nodes of headroom below the 10-segment line.
+    # #6828's dense flag-exit/BCE storage declarations cross the next type-pool
+    # typecheck boundary: the authoritative Windows probe measured 9,221 used
+    # nodes, 10 segments, 10,240 capacity, and 245,760 physical payload bytes.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_type_pool typecheck 9 1024 24 \
+        "$SELFHOST_STDERR" ast_type_pool typecheck 10 1024 24 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # Each ownership boundary must expose used nodes, logical capacity, and
     # physical segmentation for both pools. Values vary with the source graph;

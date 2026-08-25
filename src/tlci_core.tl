@@ -559,6 +559,8 @@
   "expr-match")
 (define tlci-host-callback-name-expr-type : String
   "expr-type")
+(define tlci-host-callback-name-type-expr : String
+  "type-expr")
 (define tlci-host-callback-name-module-name : String
   "module-name")
 (define tlci-host-callback-name-module-hook : String

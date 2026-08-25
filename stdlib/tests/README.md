@@ -205,12 +205,13 @@ Inline stdlib coverage:
   braces; String, integer, boolean, char, float, and nominal formatting; byte
   fill and left/center/right/default alignment; sign and sign-aware zero
   padding; short/equal/long widths; positional/named/captured dynamic counts;
-  count reuse; and non-advancing count references.
+  literal/dollar/star precision counts and Rust-compatible star counter
+  advancement; count reuse; and non-advancing dollar references.
   `comptime_string_literal_reject.tl` keeps non-literal syntax inspection
   rejected at macro expansion. The `format_*_reject.tl` fixtures cover
-  non-literal templates, unsupported precision/type semantics, malformed or
-  out-of-order options, multi-byte fill, static width overflow, dynamic width
-  type/range/sign failures, both placeholder-count mismatches,
+  non-literal templates, unsupported precision consumers/type semantics,
+  malformed or out-of-order options, static width/precision overflow, dynamic
+  width/precision type/range/sign failures, both placeholder-count mismatches,
   invalid/overflowed indices, malformed/captured/raw/bare names,
   named ordering/duplication/unused cases, the documented non-ASCII whitespace
   limitation, and missing or wrongly typed canonical owner hooks.

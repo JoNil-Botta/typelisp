@@ -155,7 +155,9 @@
               intern-state
               profile-state)
             address)
-          (compiler_backend.compiler-backend-state-new intern-state)))]
+          (compiler_backend.compiler-backend-state-new-with-metrics
+            intern-state
+            (profile_state.compiler-profile-state-metrics profile-state))))]
     (match surface-state
       [(CompilerDriverSurfaceState.State
           typecheck-state
@@ -898,8 +900,9 @@
   [profile-state : profile_state.CompilerProfileState]) : ResultCompilerDriverLowered
   (let
     [backend-state : compiler_backend.CompilerBackendState
-      (compiler_backend.compiler-backend-state-new
-        (ci.intern-compat-state-capture-active))]
+      (compiler_backend.compiler-backend-state-new-with-metrics
+        (ci.intern-compat-state-capture-active)
+        (profile_state.compiler-profile-state-metrics profile-state))]
     (compiler-driver-lowered-from-active-pools-and-profile-state-and-backend-state
       program
       spans
@@ -910,13 +913,16 @@
   [program : compiler_ir_types.CompilerIrProgram]
   [spans : compiler_ir_types.CompilerSourceSpans]) : ResultCompilerDriverLowered
   (let
+    [profile-state : profile_state.CompilerProfileState
+      (profile_state.compiler-profile-state-new)]
     [backend-state : compiler_backend.CompilerBackendState
-      (compiler_backend.compiler-backend-state-new
-        (ci.intern-compat-state-capture-active))]
+      (compiler_backend.compiler-backend-state-new-with-metrics
+        (ci.intern-compat-state-capture-active)
+        (profile_state.compiler-profile-state-metrics profile-state))]
     (compiler-driver-lowered-from-active-pools-and-profile-state-and-backend-state
       program
       spans
-      (profile_state.compiler-profile-state-new)
+      profile-state
       backend-state)))
 
 (define (compiler-driver-lowered-from-pools-and-profile-state-and-backend-state
@@ -1992,21 +1998,27 @@
   [target : compiler_backend.CompilerBackendTarget]
   [has-target : bool]
   [opt-level : i64]) : ResultCompilerDriver
-  (compiler-driver-emit-lowered-with-level-mode-entry-and-crt-and-profile-state-and-backend-state
-    (compiler_ast_types.ast-node-pool-reader-context-current)
-    input-path
-    program
-    spans
-    target
-    has-target
-    (compiler_backend.CompilerBackendMode.Scalar)
-    opt-level
-    true
-    false
-    (profile_state.compiler-profile-state-new)
-    (compiler_backend.compiler-backend-state-new
-      (ci.intern-compat-state-capture-active))
-    (compiler_typecheck_core.tc-serial-job-state)))
+  (let
+    [profile-state : profile_state.CompilerProfileState
+      (profile_state.compiler-profile-state-new)]
+    [backend-state : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new-with-metrics
+        (ci.intern-compat-state-capture-active)
+        (profile_state.compiler-profile-state-metrics profile-state))]
+    (compiler-driver-emit-lowered-with-level-mode-entry-and-crt-and-profile-state-and-backend-state
+      (compiler_ast_types.ast-node-pool-reader-context-current)
+      input-path
+      program
+      spans
+      target
+      has-target
+      (compiler_backend.CompilerBackendMode.Scalar)
+      opt-level
+      true
+      false
+      profile-state
+      backend-state
+      (compiler_typecheck_core.tc-serial-job-state))))
 
 ;; The lowered IR functions live in a dedicated arena
 ;; (lower-ir-arena); at opt levels >= 1 the optimizer deep-clones every
@@ -2384,8 +2396,9 @@
   [profile-state : profile_state.CompilerProfileState]) : ResultCompilerDriverObject
   (let
     [backend-state : compiler_backend.CompilerBackendState
-      (compiler_backend.compiler-backend-state-new
-        (ci.intern-compat-state-capture-active))]
+      (compiler_backend.compiler-backend-state-new-with-metrics
+        (ci.intern-compat-state-capture-active)
+        (profile_state.compiler-profile-state-metrics profile-state))]
     (compiler-driver-emit-lowered-object-image-with-level-mode-entry-and-crt-and-profile-state-and-backend-state
       pools
       input-path
@@ -2517,8 +2530,10 @@
                                 "backend.object-image"))
                             (let
                               [side-backend-state : compiler_backend.CompilerBackendState
-                                (compiler_backend.compiler-backend-state-new
-                                  (ci.intern-compat-state-capture-active))]
+                                (compiler_backend.compiler-backend-state-new-with-metrics
+                                  (ci.intern-compat-state-capture-active)
+                                  (profile_state.compiler-profile-state-metrics
+                                    profile-state))]
                               (begin
                                 (compiler_backend.compiler-backend-state-set-scalar-registers-enabled!
                                   side-backend-state

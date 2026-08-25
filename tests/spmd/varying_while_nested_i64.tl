@@ -3,9 +3,9 @@
 (import stdlib.array)
 
 (define (fill-nested
-  [outer : (__tl_dyn-array i64)]
-  [inner : (__tl_dyn-array i64)]
-  [out : (__tl_dyn-array i64)]
+  [outer : (&mut outer (__tl_dyn-array i64))]
+  [inner : (&mut inner (__tl_dyn-array i64))]
+  [out : (&mut out (__tl_dyn-array i64))]
   [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
@@ -20,9 +20,9 @@
         (set! (array-ref inner i) (+ (% i 2) 1))))))
 
 (define (fill-scalar
-  [outer : (__tl_dyn-array i64)]
-  [inner : (__tl_dyn-array i64)]
-  [out : (__tl_dyn-array i64)]
+  [outer : (&mut outer (__tl_dyn-array i64))]
+  [inner : (&mut inner (__tl_dyn-array i64))]
+  [out : (&mut out (__tl_dyn-array i64))]
   [n : i64]) : unit
   (let
     [i : i64 0]
@@ -60,8 +60,8 @@
             (set! (array-ref inner i) inner-count)
             (set! (array-ref inner-ref i) inner-count)
             (set! i (+ i 1)))))
-      (fill-nested outer inner got n)
-      (fill-scalar outer-ref inner-ref want n)
+      (fill-nested (&mut outer) (&mut inner) (&mut got) n)
+      (fill-scalar (&mut outer-ref) (&mut inner-ref) (&mut want) n)
       (set! i 0)
       (while (< i n)
         (begin

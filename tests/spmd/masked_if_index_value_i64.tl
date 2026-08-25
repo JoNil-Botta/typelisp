@@ -3,7 +3,7 @@
 ;; array address. The n = 13 length exercises a non-multiple-of-8 tail.
 (import stdlib.array)
 
-(define (init-out [out : (__tl_dyn-array i64)] [n : i64]) : unit
+(define (init-out [out : (&mut out (__tl_dyn-array i64))] [n : i64]) : unit
   (let
     [i : i64 0]
     (while (< i n)
@@ -11,14 +11,14 @@
         (set! (array-ref out i) -99)
         (set! i (+ i 1))))))
 
-(define (fill-masked [out : (__tl_dyn-array i64)] [n : i64]) : unit
+(define (fill-masked [out : (&mut out (__tl_dyn-array i64))] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (if (< i 6)
       (set! (array-ref out i) i)
       (set! (array-ref out i) (+ i 1)))))
 
-(define (fill-scalar [out : (__tl_dyn-array i64)] [n : i64]) : unit
+(define (fill-scalar [out : (&mut out (__tl_dyn-array i64))] [n : i64]) : unit
   (let
     [i : i64 0]
     (while (< i n)
@@ -29,8 +29,8 @@
         (set! i (+ i 1))))))
 
 (define (arrays-eq
-  [a : (__tl_dyn-array i64)]
-  [b : (__tl_dyn-array i64)]
+  [a : (& a (__tl_dyn-array i64))]
+  [b : (& b (__tl_dyn-array i64))]
   [n : i64]) : bool
   (let
     [i : i64 0]
@@ -50,10 +50,10 @@
     [got : (__tl_dyn-array i64) (array.make-array i64 n)]
     [want : (__tl_dyn-array i64) (array.make-array i64 n)]
     (begin
-      (init-out got n)
-      (init-out want n)
-      (fill-masked got n)
-      (fill-scalar want n)
-      (if (arrays-eq got want n)
+      (init-out (&mut got) n)
+      (init-out (&mut want) n)
+      (fill-masked (&mut got) n)
+      (fill-scalar (&mut want) n)
+      (if (arrays-eq (& got) (& want) n)
         42
         1))))

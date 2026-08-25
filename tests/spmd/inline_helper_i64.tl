@@ -5,12 +5,12 @@
   (+ x 5))
 
 (define (fill-inline
-  [xs : (__tl_dyn-array i64)]
-  [out : (__tl_dyn-array i64)]
+  [xs : (& xs (__tl_dyn-array i64))]
+  [out : (&mut out (__tl_dyn-array i64))]
   [n : i64]) : unit
   (foreach ([i : i64 0 n]) (set! (array-ref out i) (bump (array-ref xs i)))))
 
-(define (sum-array [xs : (__tl_dyn-array i64)] [n : i64]) : i64
+(define (sum-array [xs : (& xs (__tl_dyn-array i64))] [n : i64]) : i64
   (let
     [i : i64 0]
     [sum : i64 0]
@@ -28,7 +28,7 @@
     [out : (__tl_dyn-array i64) (array.make-array i64 n)]
     (begin
       (set! (array-ref xs 0) 37)
-      (fill-inline xs out n)
-      (if (= (sum-array out n) 42)
+      (fill-inline (& xs) (&mut out) n)
+      (if (= (sum-array (& out) n) 42)
         42
         1))))

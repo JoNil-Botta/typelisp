@@ -2,7 +2,7 @@
 ;; lanes. The n = 13 length exercises parent/child branch masks plus a tail.
 (import stdlib.array)
 
-(define (init-xs [xs : (__tl_dyn-array i64)]) : unit
+(define (init-xs [xs : (&mut xs (__tl_dyn-array i64))]) : unit
   (begin
     (set! (array-ref xs 0) -3)
     (set! (array-ref xs 1) 4)
@@ -19,8 +19,8 @@
     (set! (array-ref xs 12) 5)))
 
 (define (fill-masked
-  [xs : (__tl_dyn-array i64)]
-  [out : (__tl_dyn-array i64)]
+  [xs : (& xs (__tl_dyn-array i64))]
+  [out : (&mut out (__tl_dyn-array i64))]
   [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
@@ -33,8 +33,8 @@
         [else (set! (array-ref out i) 12)]))))
 
 (define (fill-scalar
-  [xs : (__tl_dyn-array i64)]
-  [out : (__tl_dyn-array i64)]
+  [xs : (& xs (__tl_dyn-array i64))]
+  [out : (&mut out (__tl_dyn-array i64))]
   [n : i64]) : unit
   (let
     [i : i64 0]
@@ -50,8 +50,8 @@
         (set! i (+ i 1))))))
 
 (define (arrays-eq
-  [a : (__tl_dyn-array i64)]
-  [b : (__tl_dyn-array i64)]
+  [a : (& a (__tl_dyn-array i64))]
+  [b : (& b (__tl_dyn-array i64))]
   [n : i64]) : bool
   (let
     [i : i64 0]
@@ -72,9 +72,9 @@
     [got : (__tl_dyn-array i64) (array.make-array i64 n)]
     [want : (__tl_dyn-array i64) (array.make-array i64 n)]
     (begin
-      (init-xs xs)
-      (fill-masked xs got n)
-      (fill-scalar xs want n)
-      (if (arrays-eq got want n)
+      (init-xs (&mut xs))
+      (fill-masked (& xs) (&mut got) n)
+      (fill-scalar (& xs) (&mut want) n)
+      (if (arrays-eq (& got) (& want) n)
         42
         1))))

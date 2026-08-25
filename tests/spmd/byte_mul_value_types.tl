@@ -56,11 +56,11 @@
     [_ (cast 4 : u8)]))
 
 (define (init
-  [a : (__tl_dyn-array i8)]
-  [b : (__tl_dyn-array i8)]
-  [c : (__tl_dyn-array i8)]
-  [ua : (__tl_dyn-array u8)]
-  [ub : (__tl_dyn-array u8)]
+  [a : (&mut a (__tl_dyn-array i8))]
+  [b : (&mut b (__tl_dyn-array i8))]
+  [c : (&mut c (__tl_dyn-array i8))]
+  [ua : (&mut ua (__tl_dyn-array u8))]
+  [ub : (&mut ub (__tl_dyn-array u8))]
   [n : i64]) : unit
   (let
     [i : i64 0]
@@ -74,18 +74,18 @@
         (set! i (+ i 1))))))
 
 (define (fill-i8
-  [a : (__tl_dyn-array i8)]
-  [b : (__tl_dyn-array i8)]
-  [out : (__tl_dyn-array i8)]
+  [a : (& a (__tl_dyn-array i8))]
+  [b : (& b (__tl_dyn-array i8))]
+  [out : (&mut out (__tl_dyn-array i8))]
   [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (set! (array-ref out i) (* (array-ref a i) (array-ref b i)))))
 
 (define (fill-i8-scalar
-  [a : (__tl_dyn-array i8)]
-  [b : (__tl_dyn-array i8)]
-  [out : (__tl_dyn-array i8)]
+  [a : (& a (__tl_dyn-array i8))]
+  [b : (& b (__tl_dyn-array i8))]
+  [out : (&mut out (__tl_dyn-array i8))]
   [n : i64]) : unit
   (let
     [i : i64 0]
@@ -95,18 +95,18 @@
         (set! i (+ i 1))))))
 
 (define (fill-u8
-  [a : (__tl_dyn-array u8)]
-  [b : (__tl_dyn-array u8)]
-  [out : (__tl_dyn-array u8)]
+  [a : (& a (__tl_dyn-array u8))]
+  [b : (& b (__tl_dyn-array u8))]
+  [out : (&mut out (__tl_dyn-array u8))]
   [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (set! (array-ref out i) (* (array-ref a i) (array-ref b i)))))
 
 (define (fill-u8-scalar
-  [a : (__tl_dyn-array u8)]
-  [b : (__tl_dyn-array u8)]
-  [out : (__tl_dyn-array u8)]
+  [a : (& a (__tl_dyn-array u8))]
+  [b : (& b (__tl_dyn-array u8))]
+  [out : (&mut out (__tl_dyn-array u8))]
   [n : i64]) : unit
   (let
     [i : i64 0]
@@ -116,11 +116,11 @@
         (set! i (+ i 1))))))
 
 (define (fill-masked
-  [a : (__tl_dyn-array i8)]
-  [b : (__tl_dyn-array i8)]
-  [c : (__tl_dyn-array i8)]
-  [if-out : (__tl_dyn-array i8)]
-  [match-out : (__tl_dyn-array i8)]
+  [a : (& a (__tl_dyn-array i8))]
+  [b : (& b (__tl_dyn-array i8))]
+  [c : (& c (__tl_dyn-array i8))]
+  [if-out : (&mut if-out (__tl_dyn-array i8))]
+  [match-out : (&mut match-out (__tl_dyn-array i8))]
   [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
@@ -141,11 +141,11 @@
           [_ (* (array-ref b i) (array-ref b i))])))))
 
 (define (fill-masked-scalar
-  [a : (__tl_dyn-array i8)]
-  [b : (__tl_dyn-array i8)]
-  [c : (__tl_dyn-array i8)]
-  [if-out : (__tl_dyn-array i8)]
-  [match-out : (__tl_dyn-array i8)]
+  [a : (& a (__tl_dyn-array i8))]
+  [b : (& b (__tl_dyn-array i8))]
+  [c : (& c (__tl_dyn-array i8))]
+  [if-out : (&mut if-out (__tl_dyn-array i8))]
+  [match-out : (&mut match-out (__tl_dyn-array i8))]
   [n : i64]) : unit
   (let
     [i : i64 0]
@@ -168,10 +168,10 @@
         (set! i (+ i 1))))))
 
 (define (fill-masked-u8
-  [a : (__tl_dyn-array u8)]
-  [b : (__tl_dyn-array u8)]
-  [if-out : (__tl_dyn-array u8)]
-  [match-out : (__tl_dyn-array u8)]
+  [a : (& a (__tl_dyn-array u8))]
+  [b : (& b (__tl_dyn-array u8))]
+  [if-out : (&mut if-out (__tl_dyn-array u8))]
+  [match-out : (&mut match-out (__tl_dyn-array u8))]
   [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
@@ -192,10 +192,10 @@
           [_ (* (array-ref b i) (array-ref a i))])))))
 
 (define (fill-masked-u8-scalar
-  [a : (__tl_dyn-array u8)]
-  [b : (__tl_dyn-array u8)]
-  [if-out : (__tl_dyn-array u8)]
-  [match-out : (__tl_dyn-array u8)]
+  [a : (& a (__tl_dyn-array u8))]
+  [b : (& b (__tl_dyn-array u8))]
+  [if-out : (&mut if-out (__tl_dyn-array u8))]
+  [match-out : (&mut match-out (__tl_dyn-array u8))]
   [n : i64]) : unit
   (let
     [i : i64 0]
@@ -218,9 +218,9 @@
         (set! i (+ i 1))))))
 
 (define (fill-while
-  [factor : (__tl_dyn-array i8)]
-  [remaining : (__tl_dyn-array i8)]
-  [out : (__tl_dyn-array i8)]
+  [factor : (& factor (__tl_dyn-array i8))]
+  [remaining : (&mut remaining (__tl_dyn-array i8))]
+  [out : (&mut out (__tl_dyn-array i8))]
   [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
@@ -230,9 +230,9 @@
         (set! (array-ref remaining i) (+ (array-ref remaining i) -1))))))
 
 (define (fill-while-scalar
-  [factor : (__tl_dyn-array i8)]
-  [remaining : (__tl_dyn-array i8)]
-  [out : (__tl_dyn-array i8)]
+  [factor : (& factor (__tl_dyn-array i8))]
+  [remaining : (&mut remaining (__tl_dyn-array i8))]
+  [out : (&mut out (__tl_dyn-array i8))]
   [n : i64]) : unit
   (let
     [i : i64 0]
@@ -245,9 +245,9 @@
         (set! i (+ i 1))))))
 
 (define (fill-while-u8
-  [factor : (__tl_dyn-array u8)]
-  [remaining : (__tl_dyn-array u8)]
-  [out : (__tl_dyn-array u8)]
+  [factor : (& factor (__tl_dyn-array u8))]
+  [remaining : (&mut remaining (__tl_dyn-array u8))]
+  [out : (&mut out (__tl_dyn-array u8))]
   [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
@@ -259,9 +259,9 @@
           (+ (array-ref remaining i) (cast 255 : u8)))))))
 
 (define (fill-while-u8-scalar
-  [factor : (__tl_dyn-array u8)]
-  [remaining : (__tl_dyn-array u8)]
-  [out : (__tl_dyn-array u8)]
+  [factor : (& factor (__tl_dyn-array u8))]
+  [remaining : (&mut remaining (__tl_dyn-array u8))]
+  [out : (&mut out (__tl_dyn-array u8))]
   [n : i64]) : unit
   (let
     [i : i64 0]
@@ -276,8 +276,8 @@
         (set! i (+ i 1))))))
 
 (define (arrays-eq-i8
-  [a : (__tl_dyn-array i8)]
-  [b : (__tl_dyn-array i8)]
+  [a : (& a (__tl_dyn-array i8))]
+  [b : (& b (__tl_dyn-array i8))]
   [n : i64]) : bool
   (let
     [i : i64 0]
@@ -292,8 +292,8 @@
       ok)))
 
 (define (arrays-eq-u8
-  [a : (__tl_dyn-array u8)]
-  [b : (__tl_dyn-array u8)]
+  [a : (& a (__tl_dyn-array u8))]
+  [b : (& b (__tl_dyn-array u8))]
   [n : i64]) : bool
   (let
     [i : i64 0]
@@ -336,7 +336,7 @@
     [u8-while-want : (__tl_dyn-array u8) (array.make-array u8 n)]
     [i : i64 0]
     (begin
-      (init a b c ua ub n)
+      (init (&mut a) (&mut b) (&mut c) (&mut ua) (&mut ub) n)
       (while (< i n)
         (begin
           (set! (array-ref remaining i) (cast (% i 4) : i8))
@@ -348,27 +348,36 @@
           (set! (array-ref u8-while-got i) (cast 1 : u8))
           (set! (array-ref u8-while-want i) (cast 1 : u8))
           (set! i (+ i 1))))
-      (fill-i8 a b i8-got n)
-      (fill-i8-scalar a b i8-want n)
-      (fill-u8 ua ub u8-got n)
-      (fill-u8-scalar ua ub u8-want n)
-      (fill-masked a b c if-got match-got n)
-      (fill-masked-scalar a b c if-want match-want n)
-      (fill-masked-u8 ua ub u8-if-got u8-match-got n)
-      (fill-masked-u8-scalar ua ub u8-if-want u8-match-want n)
-      (fill-while a remaining while-got n)
-      (fill-while-scalar a remaining-want while-want n)
-      (fill-while-u8 ua u8-remaining u8-while-got n)
-      (fill-while-u8-scalar ua u8-remaining-want u8-while-want n)
+      (fill-i8 (& a) (& b) (&mut i8-got) n)
+      (fill-i8-scalar (& a) (& b) (&mut i8-want) n)
+      (fill-u8 (& ua) (& ub) (&mut u8-got) n)
+      (fill-u8-scalar (& ua) (& ub) (&mut u8-want) n)
+      (fill-masked (& a) (& b) (& c) (&mut if-got) (&mut match-got) n)
+      (fill-masked-scalar (& a) (& b) (& c) (&mut if-want) (&mut match-want) n)
+      (fill-masked-u8 (& ua) (& ub) (&mut u8-if-got) (&mut u8-match-got) n)
+      (fill-masked-u8-scalar
+        (& ua)
+        (& ub)
+        (&mut u8-if-want)
+        (&mut u8-match-want)
+        n)
+      (fill-while (& a) (&mut remaining) (&mut while-got) n)
+      (fill-while-scalar (& a) (&mut remaining-want) (&mut while-want) n)
+      (fill-while-u8 (& ua) (&mut u8-remaining) (&mut u8-while-got) n)
+      (fill-while-u8-scalar
+        (& ua)
+        (&mut u8-remaining-want)
+        (&mut u8-while-want)
+        n)
       (and
-        (arrays-eq-i8 i8-got i8-want n)
-        (arrays-eq-u8 u8-got u8-want n)
-        (arrays-eq-i8 if-got if-want n)
-        (arrays-eq-i8 match-got match-want n)
-        (arrays-eq-u8 u8-if-got u8-if-want n)
-        (arrays-eq-u8 u8-match-got u8-match-want n)
-        (arrays-eq-i8 while-got while-want n)
-        (arrays-eq-u8 u8-while-got u8-while-want n)))))
+        (arrays-eq-i8 (& i8-got) (& i8-want) n)
+        (arrays-eq-u8 (& u8-got) (& u8-want) n)
+        (arrays-eq-i8 (& if-got) (& if-want) n)
+        (arrays-eq-i8 (& match-got) (& match-want) n)
+        (arrays-eq-u8 (& u8-if-got) (& u8-if-want) n)
+        (arrays-eq-u8 (& u8-match-got) (& u8-match-want) n)
+        (arrays-eq-i8 (& while-got) (& while-want) n)
+        (arrays-eq-u8 (& u8-while-got) (& u8-while-want) n)))))
 
 (define (main) : i64
   (begin

@@ -3,9 +3,9 @@
 (import stdlib.array)
 
 (define (init-u32
-  [keys : (__tl_dyn-array u32)]
-  [left : (__tl_dyn-array u32)]
-  [right : (__tl_dyn-array u32)]
+  [keys : (&mut keys (__tl_dyn-array u32))]
+  [left : (&mut left (__tl_dyn-array u32))]
+  [right : (&mut right (__tl_dyn-array u32))]
   [n : i64]) : unit
   (let
     [i : i64 0]
@@ -17,10 +17,10 @@
         (set! i (+ i 1))))))
 
 (define (fill-u32-foreach
-  [keys : (__tl_dyn-array u32)]
-  [left : (__tl_dyn-array u32)]
-  [right : (__tl_dyn-array u32)]
-  [out : (__tl_dyn-array u32)]
+  [keys : (& keys (__tl_dyn-array u32))]
+  [left : (& left (__tl_dyn-array u32))]
+  [right : (& right (__tl_dyn-array u32))]
+  [out : (&mut out (__tl_dyn-array u32))]
   [n : i64]
   [pivot : u32]) : unit
   (foreach
@@ -32,10 +32,10 @@
         (array-ref right i)))))
 
 (define (fill-u32-scalar
-  [keys : (__tl_dyn-array u32)]
-  [left : (__tl_dyn-array u32)]
-  [right : (__tl_dyn-array u32)]
-  [out : (__tl_dyn-array u32)]
+  [keys : (& keys (__tl_dyn-array u32))]
+  [left : (& left (__tl_dyn-array u32))]
+  [right : (& right (__tl_dyn-array u32))]
+  [out : (&mut out (__tl_dyn-array u32))]
   [n : i64]
   [pivot : u32]) : unit
   (let
@@ -49,7 +49,10 @@
             (array-ref right i)))
         (set! i (+ i 1))))))
 
-(define (eq-u32 [a : (__tl_dyn-array u32)] [b : (__tl_dyn-array u32)] [n : i64]) : bool
+(define (eq-u32
+  [a : (& a (__tl_dyn-array u32))]
+  [b : (& b (__tl_dyn-array u32))]
+  [n : i64]) : bool
   (let
     [i : i64 0]
     [ok : bool true]
@@ -71,15 +74,15 @@
     [want : (__tl_dyn-array u32) (array.make-array u32 n)]
     [pivot : u32 (cast 40 : u32)]
     (begin
-      (init-u32 keys left right n)
-      (fill-u32-foreach keys left right got n pivot)
-      (fill-u32-scalar keys left right want n pivot)
-      (eq-u32 got want n))))
+      (init-u32 (&mut keys) (&mut left) (&mut right) n)
+      (fill-u32-foreach (& keys) (& left) (& right) (&mut got) n pivot)
+      (fill-u32-scalar (& keys) (& left) (& right) (&mut want) n pivot)
+      (eq-u32 (& got) (& want) n))))
 
 (define (init-u64
-  [keys : (__tl_dyn-array u64)]
-  [left : (__tl_dyn-array u64)]
-  [right : (__tl_dyn-array u64)]
+  [keys : (&mut keys (__tl_dyn-array u64))]
+  [left : (&mut left (__tl_dyn-array u64))]
+  [right : (&mut right (__tl_dyn-array u64))]
   [n : i64]) : unit
   (let
     [i : i64 0]
@@ -91,10 +94,10 @@
         (set! i (+ i 1))))))
 
 (define (fill-u64-foreach
-  [keys : (__tl_dyn-array u64)]
-  [left : (__tl_dyn-array u64)]
-  [right : (__tl_dyn-array u64)]
-  [out : (__tl_dyn-array u64)]
+  [keys : (& keys (__tl_dyn-array u64))]
+  [left : (& left (__tl_dyn-array u64))]
+  [right : (& right (__tl_dyn-array u64))]
+  [out : (&mut out (__tl_dyn-array u64))]
   [n : i64]
   [pivot : u64]) : unit
   (foreach
@@ -106,10 +109,10 @@
         (array-ref right i)))))
 
 (define (fill-u64-scalar
-  [keys : (__tl_dyn-array u64)]
-  [left : (__tl_dyn-array u64)]
-  [right : (__tl_dyn-array u64)]
-  [out : (__tl_dyn-array u64)]
+  [keys : (& keys (__tl_dyn-array u64))]
+  [left : (& left (__tl_dyn-array u64))]
+  [right : (& right (__tl_dyn-array u64))]
+  [out : (&mut out (__tl_dyn-array u64))]
   [n : i64]
   [pivot : u64]) : unit
   (let
@@ -123,7 +126,10 @@
             (array-ref right i)))
         (set! i (+ i 1))))))
 
-(define (eq-u64 [a : (__tl_dyn-array u64)] [b : (__tl_dyn-array u64)] [n : i64]) : bool
+(define (eq-u64
+  [a : (& a (__tl_dyn-array u64))]
+  [b : (& b (__tl_dyn-array u64))]
+  [n : i64]) : bool
   (let
     [i : i64 0]
     [ok : bool true]
@@ -145,15 +151,15 @@
     [want : (__tl_dyn-array u64) (array.make-array u64 n)]
     [pivot : u64 (cast 50 : u64)]
     (begin
-      (init-u64 keys left right n)
-      (fill-u64-foreach keys left right got n pivot)
-      (fill-u64-scalar keys left right want n pivot)
-      (eq-u64 got want n))))
+      (init-u64 (&mut keys) (&mut left) (&mut right) n)
+      (fill-u64-foreach (& keys) (& left) (& right) (&mut got) n pivot)
+      (fill-u64-scalar (& keys) (& left) (& right) (&mut want) n pivot)
+      (eq-u64 (& got) (& want) n))))
 
 (define (init-f32
-  [keys : (__tl_dyn-array f32)]
-  [left : (__tl_dyn-array f32)]
-  [right : (__tl_dyn-array f32)]
+  [keys : (&mut keys (__tl_dyn-array f32))]
+  [left : (&mut left (__tl_dyn-array f32))]
+  [right : (&mut right (__tl_dyn-array f32))]
   [n : i64]) : unit
   (let
     [i : i64 0]
@@ -165,10 +171,10 @@
         (set! i (+ i 1))))))
 
 (define (fill-f32-foreach
-  [keys : (__tl_dyn-array f32)]
-  [left : (__tl_dyn-array f32)]
-  [right : (__tl_dyn-array f32)]
-  [out : (__tl_dyn-array f32)]
+  [keys : (& keys (__tl_dyn-array f32))]
+  [left : (& left (__tl_dyn-array f32))]
+  [right : (& right (__tl_dyn-array f32))]
+  [out : (&mut out (__tl_dyn-array f32))]
   [n : i64]
   [pivot : f32]) : unit
   (foreach
@@ -180,10 +186,10 @@
         (array-ref right i)))))
 
 (define (fill-f32-scalar
-  [keys : (__tl_dyn-array f32)]
-  [left : (__tl_dyn-array f32)]
-  [right : (__tl_dyn-array f32)]
-  [out : (__tl_dyn-array f32)]
+  [keys : (& keys (__tl_dyn-array f32))]
+  [left : (& left (__tl_dyn-array f32))]
+  [right : (& right (__tl_dyn-array f32))]
+  [out : (&mut out (__tl_dyn-array f32))]
   [n : i64]
   [pivot : f32]) : unit
   (let
@@ -197,7 +203,10 @@
             (array-ref right i)))
         (set! i (+ i 1))))))
 
-(define (eq-f32 [a : (__tl_dyn-array f32)] [b : (__tl_dyn-array f32)] [n : i64]) : bool
+(define (eq-f32
+  [a : (& a (__tl_dyn-array f32))]
+  [b : (& b (__tl_dyn-array f32))]
+  [n : i64]) : bool
   (let
     [i : i64 0]
     [ok : bool true]
@@ -219,15 +228,15 @@
     [want : (__tl_dyn-array f32) (array.make-array f32 n)]
     [pivot : f32 9.5]
     (begin
-      (init-f32 keys left right n)
-      (fill-f32-foreach keys left right got n pivot)
-      (fill-f32-scalar keys left right want n pivot)
-      (eq-f32 got want n))))
+      (init-f32 (&mut keys) (&mut left) (&mut right) n)
+      (fill-f32-foreach (& keys) (& left) (& right) (&mut got) n pivot)
+      (fill-f32-scalar (& keys) (& left) (& right) (&mut want) n pivot)
+      (eq-f32 (& got) (& want) n))))
 
 (define (init-f64
-  [keys : (__tl_dyn-array f64)]
-  [left : (__tl_dyn-array f64)]
-  [right : (__tl_dyn-array f64)]
+  [keys : (&mut keys (__tl_dyn-array f64))]
+  [left : (&mut left (__tl_dyn-array f64))]
+  [right : (&mut right (__tl_dyn-array f64))]
   [n : i64]) : unit
   (let
     [i : i64 0]
@@ -239,10 +248,10 @@
         (set! i (+ i 1))))))
 
 (define (fill-f64-foreach
-  [keys : (__tl_dyn-array f64)]
-  [left : (__tl_dyn-array f64)]
-  [right : (__tl_dyn-array f64)]
-  [out : (__tl_dyn-array f64)]
+  [keys : (& keys (__tl_dyn-array f64))]
+  [left : (& left (__tl_dyn-array f64))]
+  [right : (& right (__tl_dyn-array f64))]
+  [out : (&mut out (__tl_dyn-array f64))]
   [n : i64]
   [pivot : f64]) : unit
   (foreach
@@ -254,10 +263,10 @@
         (array-ref right i)))))
 
 (define (fill-f64-scalar
-  [keys : (__tl_dyn-array f64)]
-  [left : (__tl_dyn-array f64)]
-  [right : (__tl_dyn-array f64)]
-  [out : (__tl_dyn-array f64)]
+  [keys : (& keys (__tl_dyn-array f64))]
+  [left : (& left (__tl_dyn-array f64))]
+  [right : (& right (__tl_dyn-array f64))]
+  [out : (&mut out (__tl_dyn-array f64))]
   [n : i64]
   [pivot : f64]) : unit
   (let
@@ -271,7 +280,10 @@
             (array-ref right i)))
         (set! i (+ i 1))))))
 
-(define (eq-f64 [a : (__tl_dyn-array f64)] [b : (__tl_dyn-array f64)] [n : i64]) : bool
+(define (eq-f64
+  [a : (& a (__tl_dyn-array f64))]
+  [b : (& b (__tl_dyn-array f64))]
+  [n : i64]) : bool
   (let
     [i : i64 0]
     [ok : bool true]
@@ -293,15 +305,15 @@
     [want : (__tl_dyn-array f64) (array.make-array f64 n)]
     [pivot : f64 7.5]
     (begin
-      (init-f64 keys left right n)
-      (fill-f64-foreach keys left right got n pivot)
-      (fill-f64-scalar keys left right want n pivot)
-      (eq-f64 got want n))))
+      (init-f64 (&mut keys) (&mut left) (&mut right) n)
+      (fill-f64-foreach (& keys) (& left) (& right) (&mut got) n pivot)
+      (fill-f64-scalar (& keys) (& left) (& right) (&mut want) n pivot)
+      (eq-f64 (& got) (& want) n))))
 
 (define (init-bool
-  [keys : (__tl_dyn-array bool)]
-  [left : (__tl_dyn-array bool)]
-  [right : (__tl_dyn-array bool)]
+  [keys : (&mut keys (__tl_dyn-array bool))]
+  [left : (&mut left (__tl_dyn-array bool))]
+  [right : (&mut right (__tl_dyn-array bool))]
   [n : i64]) : unit
   (let
     [i : i64 0]
@@ -313,10 +325,10 @@
         (set! i (+ i 1))))))
 
 (define (fill-bool-foreach
-  [keys : (__tl_dyn-array bool)]
-  [left : (__tl_dyn-array bool)]
-  [right : (__tl_dyn-array bool)]
-  [out : (__tl_dyn-array bool)]
+  [keys : (& keys (__tl_dyn-array bool))]
+  [left : (& left (__tl_dyn-array bool))]
+  [right : (& right (__tl_dyn-array bool))]
+  [out : (&mut out (__tl_dyn-array bool))]
   [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
@@ -327,10 +339,10 @@
         (array-ref right i)))))
 
 (define (fill-bool-scalar
-  [keys : (__tl_dyn-array bool)]
-  [left : (__tl_dyn-array bool)]
-  [right : (__tl_dyn-array bool)]
-  [out : (__tl_dyn-array bool)]
+  [keys : (& keys (__tl_dyn-array bool))]
+  [left : (& left (__tl_dyn-array bool))]
+  [right : (& right (__tl_dyn-array bool))]
+  [out : (&mut out (__tl_dyn-array bool))]
   [n : i64]) : unit
   (let
     [i : i64 0]
@@ -344,8 +356,8 @@
         (set! i (+ i 1))))))
 
 (define (eq-bool
-  [a : (__tl_dyn-array bool)]
-  [b : (__tl_dyn-array bool)]
+  [a : (& a (__tl_dyn-array bool))]
+  [b : (& b (__tl_dyn-array bool))]
   [n : i64]) : bool
   (let
     [i : i64 0]
@@ -371,10 +383,10 @@
     [got : (__tl_dyn-array bool) (array.make-array bool n)]
     [want : (__tl_dyn-array bool) (array.make-array bool n)]
     (begin
-      (init-bool keys left right n)
-      (fill-bool-foreach keys left right got n)
-      (fill-bool-scalar keys left right want n)
-      (eq-bool got want n))))
+      (init-bool (&mut keys) (&mut left) (&mut right) n)
+      (fill-bool-foreach (& keys) (& left) (& right) (&mut got) n)
+      (fill-bool-scalar (& keys) (& left) (& right) (&mut want) n)
+      (eq-bool (& got) (& want) n))))
 
 (define (main) : i64
   (begin

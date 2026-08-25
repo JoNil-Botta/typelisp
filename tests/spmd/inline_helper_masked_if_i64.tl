@@ -1,7 +1,7 @@
 ;; Direct source-known helper calls inside AVX-512 masked SPMD branches.
 (import stdlib.array)
 
-(define (init-xs [xs : (__tl_dyn-array i64)]) : unit
+(define (init-xs [xs : (&mut xs (__tl_dyn-array i64))]) : unit
   (begin
     (set! (array-ref xs 0) -3)
     (set! (array-ref xs 1) 4)
@@ -24,8 +24,8 @@
   (>= x 0))
 
 (define (fill-inline
-  [xs : (__tl_dyn-array i64)]
-  [out : (__tl_dyn-array i64)]
+  [xs : (& xs (__tl_dyn-array i64))]
+  [out : (&mut out (__tl_dyn-array i64))]
   [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
@@ -33,7 +33,7 @@
       (set! (array-ref out i) (bump (array-ref xs i)))
       (set! (array-ref out i) 0))))
 
-(define (sum-array [xs : (__tl_dyn-array i64)] [n : i64]) : i64
+(define (sum-array [xs : (& xs (__tl_dyn-array i64))] [n : i64]) : i64
   (let
     [i : i64 0]
     [sum : i64 0]
@@ -50,8 +50,8 @@
     [xs : (__tl_dyn-array i64) (array.make-array i64 n)]
     [out : (__tl_dyn-array i64) (array.make-array i64 n)]
     (begin
-      (init-xs xs)
-      (fill-inline xs out n)
-      (if (= (sum-array out n) 72)
+      (init-xs (&mut xs))
+      (fill-inline (& xs) (&mut out) n)
+      (if (= (sum-array (& out) n) 72)
         42
         1))))

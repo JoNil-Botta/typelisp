@@ -7,8 +7,8 @@
     (+ x lane)))
 
 (define (fill-inline-shadow
-  [xs : (__tl_dyn-array i64)]
-  [out : (__tl_dyn-array i64)]
+  [xs : (& xs (__tl_dyn-array i64))]
+  [out : (&mut out (__tl_dyn-array i64))]
   [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
@@ -16,7 +16,7 @@
       [lane : i64 (array-ref xs i)]
       (set! (array-ref out i) (bump-with-shadow lane)))))
 
-(define (sum-array [xs : (__tl_dyn-array i64)] [n : i64]) : i64
+(define (sum-array [xs : (& xs (__tl_dyn-array i64))] [n : i64]) : i64
   (let
     [i : i64 0]
     [sum : i64 0]
@@ -38,7 +38,7 @@
         (begin
           (set! (array-ref xs i) (+ i 1))
           (set! i (+ i 1))))
-      (fill-inline-shadow xs out n)
-      (if (= (sum-array out n) 104)
+      (fill-inline-shadow (& xs) (&mut out) n)
+      (if (= (sum-array (& out) n) 104)
         42
         1))))

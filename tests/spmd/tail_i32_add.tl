@@ -5,7 +5,10 @@
 ;; avx2, and avx512 builds must all exit 91.
 (import stdlib.array)
 
-(define (init [a : (__tl_dyn-array i32)] [b : (__tl_dyn-array i32)] [n : i64]) : unit
+(define (init
+  [a : (&mut a (__tl_dyn-array i32))]
+  [b : (&mut b (__tl_dyn-array i32))]
+  [n : i64]) : unit
   (let
     [i : i64 0]
     (while (< i n)
@@ -15,15 +18,15 @@
         (set! i (+ i 1))))))
 
 (define (fill
-  [a : (__tl_dyn-array i32)]
-  [b : (__tl_dyn-array i32)]
-  [out : (__tl_dyn-array i32)]
+  [a : (& a (__tl_dyn-array i32))]
+  [b : (& b (__tl_dyn-array i32))]
+  [out : (&mut out (__tl_dyn-array i32))]
   [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (set! (array-ref out i) (+ (array-ref a i) (array-ref b i)))))
 
-(define (checksum [out : (__tl_dyn-array i32)] [n : i64]) : i64
+(define (checksum [out : (& out (__tl_dyn-array i32))] [n : i64]) : i64
   (let
     [i : i64 0]
     [acc : i64 0]
@@ -41,6 +44,6 @@
     [b : (__tl_dyn-array i32) (array.make-array i32 n)]
     [out : (__tl_dyn-array i32) (array.make-array i32 n)]
     (begin
-      (init a b n)
-      (fill a b out n)
-      (bit-and (checksum out n) 0xff))))
+      (init (&mut a) (&mut b) n)
+      (fill (& a) (& b) (&mut out) n)
+      (bit-and (checksum (& out) n) 0xff))))

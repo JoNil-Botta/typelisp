@@ -1,16 +1,15 @@
 (import stdlib.array)
 
-;; The three parameters are distinct IR bases but deliberately receive the same
-;; array at runtime. Sequential gang copies must load both inputs before their
-;; corresponding output store, preserving scalar alias semantics.
-(define (alias-map
-  [left : (__tl_dyn-array i64)]
-  [right : (__tl_dyn-array i64)]
-  [out : (__tl_dyn-array i64)]
-  [n : i64]) : unit
+;; The single mutable reference deliberately reads and writes the same array.
+;; Sequential gang copies must load both inputs before their corresponding
+;; output store, preserving scalar alias semantics without manufacturing
+;; overlapping safe references.
+(define (alias-map [values : (&mut values (__tl_dyn-array i64))] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (set! (array-ref out i) (+ (+ (array-ref left i) (array-ref right i)) 3))))
+    (set!
+      (array-ref values i)
+      (+ (+ (array-ref values i) (array-ref values i)) 3))))
 
 (define (main) : i64
   (let
@@ -23,7 +22,7 @@
         (begin
           (set! (array-ref values i) (+ i 1))
           (set! i (+ i 1))))
-      (alias-map values values values n)
+      (alias-map (&mut values) n)
       (set! i 0)
       (while (and ok (< i n))
         (begin

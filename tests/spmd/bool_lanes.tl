@@ -1,8 +1,8 @@
 (import stdlib.array)
 
 (define (init-bool
-  [flags : (__tl_dyn-array bool)]
-  [values : (__tl_dyn-array i64)]
+  [flags : (&mut flags (__tl_dyn-array bool))]
+  [values : (&mut values (__tl_dyn-array i64))]
   [n : i64]) : unit
   (let
     [i : i64 0]
@@ -12,7 +12,7 @@
         (set! (array-ref values i) (- i 4))
         (set! i (+ i 1))))))
 
-(define (init-i32 [values : (__tl_dyn-array i32)] [n : i64]) : unit
+(define (init-i32 [values : (&mut values (__tl_dyn-array i32))] [n : i64]) : unit
   (let
     [i : i64 0]
     (while (< i n)
@@ -20,7 +20,7 @@
         (set! (array-ref values i) (cast (- i 4) : i32))
         (set! i (+ i 1))))))
 
-(define (init-i16 [values : (__tl_dyn-array i16)] [n : i64]) : unit
+(define (init-i16 [values : (&mut values (__tl_dyn-array i16))] [n : i64]) : unit
   (let
     [i : i64 0]
     (while (< i n)
@@ -28,7 +28,7 @@
         (set! (array-ref values i) (cast (- i 4) : i16))
         (set! i (+ i 1))))))
 
-(define (init-i8 [values : (__tl_dyn-array i8)] [n : i64]) : unit
+(define (init-i8 [values : (&mut values (__tl_dyn-array i8))] [n : i64]) : unit
   (let
     [i : i64 0]
     (while (< i n)
@@ -37,14 +37,14 @@
         (set! i (+ i 1))))))
 
 (define (fill-bool-copy-foreach
-  [src : (__tl_dyn-array bool)]
-  [out : (__tl_dyn-array bool)]
+  [src : (& src (__tl_dyn-array bool))]
+  [out : (&mut out (__tl_dyn-array bool))]
   [n : i64]) : unit
   (foreach ([i : i64 0 n]) (set! (array-ref out i) (array-ref src i))))
 
 (define (fill-bool-copy-scalar
-  [src : (__tl_dyn-array bool)]
-  [out : (__tl_dyn-array bool)]
+  [src : (& src (__tl_dyn-array bool))]
+  [out : (&mut out (__tl_dyn-array bool))]
   [n : i64]) : unit
   (let
     [i : i64 0]
@@ -54,14 +54,14 @@
         (set! i (+ i 1))))))
 
 (define (fill-bool-compare-foreach
-  [values : (__tl_dyn-array i64)]
-  [out : (__tl_dyn-array bool)]
+  [values : (& values (__tl_dyn-array i64))]
+  [out : (&mut out (__tl_dyn-array bool))]
   [n : i64]) : unit
   (foreach ([i : i64 0 n]) (set! (array-ref out i) (< (array-ref values i) 0))))
 
 (define (fill-bool-compare-scalar
-  [values : (__tl_dyn-array i64)]
-  [out : (__tl_dyn-array bool)]
+  [values : (& values (__tl_dyn-array i64))]
+  [out : (&mut out (__tl_dyn-array bool))]
   [n : i64]) : unit
   (let
     [i : i64 0]
@@ -71,14 +71,14 @@
         (set! i (+ i 1))))))
 
 (define (fill-bool-compare-i32-foreach
-  [values : (__tl_dyn-array i32)]
-  [out : (__tl_dyn-array bool)]
+  [values : (& values (__tl_dyn-array i32))]
+  [out : (&mut out (__tl_dyn-array bool))]
   [n : i64]) : unit
   (foreach ([i : i64 0 n]) (set! (array-ref out i) (< (array-ref values i) 0))))
 
 (define (fill-bool-compare-i32-scalar
-  [values : (__tl_dyn-array i32)]
-  [out : (__tl_dyn-array bool)]
+  [values : (& values (__tl_dyn-array i32))]
+  [out : (&mut out (__tl_dyn-array bool))]
   [n : i64]) : unit
   (let
     [i : i64 0]
@@ -88,14 +88,14 @@
         (set! i (+ i 1))))))
 
 (define (fill-bool-compare-i16-foreach
-  [values : (__tl_dyn-array i16)]
-  [out : (__tl_dyn-array bool)]
+  [values : (& values (__tl_dyn-array i16))]
+  [out : (&mut out (__tl_dyn-array bool))]
   [n : i64]) : unit
   (foreach ([i : i64 0 n]) (set! (array-ref out i) (< (array-ref values i) 0))))
 
 (define (fill-bool-compare-i16-scalar
-  [values : (__tl_dyn-array i16)]
-  [out : (__tl_dyn-array bool)]
+  [values : (& values (__tl_dyn-array i16))]
+  [out : (&mut out (__tl_dyn-array bool))]
   [n : i64]) : unit
   (let
     [i : i64 0]
@@ -105,14 +105,14 @@
         (set! i (+ i 1))))))
 
 (define (fill-bool-compare-i8-foreach
-  [values : (__tl_dyn-array i8)]
-  [out : (__tl_dyn-array bool)]
+  [values : (& values (__tl_dyn-array i8))]
+  [out : (&mut out (__tl_dyn-array bool))]
   [n : i64]) : unit
   (foreach ([i : i64 0 n]) (set! (array-ref out i) (< (array-ref values i) 0))))
 
 (define (fill-bool-compare-i8-scalar
-  [values : (__tl_dyn-array i8)]
-  [out : (__tl_dyn-array bool)]
+  [values : (& values (__tl_dyn-array i8))]
+  [out : (&mut out (__tl_dyn-array bool))]
   [n : i64]) : unit
   (let
     [i : i64 0]
@@ -122,8 +122,8 @@
         (set! i (+ i 1))))))
 
 (define (eq-bool
-  [a : (__tl_dyn-array bool)]
-  [b : (__tl_dyn-array bool)]
+  [a : (& a (__tl_dyn-array bool))]
+  [b : (& b (__tl_dyn-array bool))]
   [n : i64]) : bool
   (let
     [i : i64 0]
@@ -159,26 +159,26 @@
     [cmp8-got : (__tl_dyn-array bool) (array.make-array bool n)]
     [cmp8-want : (__tl_dyn-array bool) (array.make-array bool n)]
     (begin
-      (init-bool flags values n)
-      (init-i32 values32 n)
-      (init-i16 values16 n)
-      (init-i8 values8 n)
-      (fill-bool-copy-foreach flags copy-got n)
-      (fill-bool-copy-scalar flags copy-want n)
-      (fill-bool-compare-foreach values cmp-got n)
-      (fill-bool-compare-scalar values cmp-want n)
-      (fill-bool-compare-i32-foreach values32 cmp32-got n)
-      (fill-bool-compare-i32-scalar values32 cmp32-want n)
-      (fill-bool-compare-i16-foreach values16 cmp16-got n)
-      (fill-bool-compare-i16-scalar values16 cmp16-want n)
-      (fill-bool-compare-i8-foreach values8 cmp8-got n)
-      (fill-bool-compare-i8-scalar values8 cmp8-want n)
+      (init-bool (&mut flags) (&mut values) n)
+      (init-i32 (&mut values32) n)
+      (init-i16 (&mut values16) n)
+      (init-i8 (&mut values8) n)
+      (fill-bool-copy-foreach (& flags) (&mut copy-got) n)
+      (fill-bool-copy-scalar (& flags) (&mut copy-want) n)
+      (fill-bool-compare-foreach (& values) (&mut cmp-got) n)
+      (fill-bool-compare-scalar (& values) (&mut cmp-want) n)
+      (fill-bool-compare-i32-foreach (& values32) (&mut cmp32-got) n)
+      (fill-bool-compare-i32-scalar (& values32) (&mut cmp32-want) n)
+      (fill-bool-compare-i16-foreach (& values16) (&mut cmp16-got) n)
+      (fill-bool-compare-i16-scalar (& values16) (&mut cmp16-want) n)
+      (fill-bool-compare-i8-foreach (& values8) (&mut cmp8-got) n)
+      (fill-bool-compare-i8-scalar (& values8) (&mut cmp8-want) n)
       (and
-        (eq-bool copy-got copy-want n)
-        (eq-bool cmp-got cmp-want n)
-        (eq-bool cmp32-got cmp32-want n)
-        (eq-bool cmp16-got cmp16-want n)
-        (eq-bool cmp8-got cmp8-want n)))))
+        (eq-bool (& copy-got) (& copy-want) n)
+        (eq-bool (& cmp-got) (& cmp-want) n)
+        (eq-bool (& cmp32-got) (& cmp32-want) n)
+        (eq-bool (& cmp16-got) (& cmp16-want) n)
+        (eq-bool (& cmp8-got) (& cmp8-want) n)))))
 
 (define (all-cases) : bool
   (and

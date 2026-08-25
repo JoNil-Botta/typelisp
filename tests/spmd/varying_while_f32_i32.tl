@@ -2,11 +2,11 @@
 (import stdlib.array)
 
 (define (fill-recurrence
-  [remaining : (__tl_dyn-array i32)]
-  [x-values : (__tl_dyn-array f32)]
-  [y-values : (__tl_dyn-array f32)]
-  [z-re : (__tl_dyn-array f32)]
-  [z-im : (__tl_dyn-array f32)]
+  [remaining : (&mut remaining (__tl_dyn-array i32))]
+  [x-values : (& x-values (__tl_dyn-array f32))]
+  [y-values : (& y-values (__tl_dyn-array f32))]
+  [z-re : (&mut z-re (__tl_dyn-array f32))]
+  [z-im : (&mut z-im (__tl_dyn-array f32))]
   [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
@@ -51,7 +51,13 @@
           (set! (array-ref x-values i) (cast 1.0 : f32))
           (set! (array-ref y-values i) (cast 0.0 : f32))
           (set! i (+ i 1))))
-      (fill-recurrence remaining x-values y-values z-re z-im n)
+      (fill-recurrence
+        (&mut remaining)
+        (& x-values)
+        (& y-values)
+        (&mut z-re)
+        (&mut z-im)
+        n)
       (set! i 0)
       (while (< i n)
         (begin

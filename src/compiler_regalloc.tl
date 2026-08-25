@@ -19,6 +19,7 @@
 (import compiler_liveness as live)
 (import compiler_ir_types as ir)
 (import compiler_parallel_move as pmove)
+(import compiler_profile_state as profile_state)
 (cfg test (import stdlib.test))
 
 (defmacro (compiler-reg-global-shared-view [place : Expr]) : Expr
@@ -96,7 +97,10 @@
 (defstruct CompilerRegVarTypes
   (present (__tl_dyn-array i64))
   (items (__tl_dyn-array ast.AstType))
-  (representations ir.CompilerIrRepresentationIndex))
+  (representations ir.CompilerIrRepresentationIndex)
+  ;; The census owner follows the already-ubiquitous type view through every
+  ;; planning and rewrite path. Ordinary builds carry only its zero sentinel.
+  (metrics profile_state.CompilerProfileMetrics))
 
 (defenum CompilerRegMaybeType
   (No)
@@ -189,33 +193,41 @@
   (baseline live.CompilerFunctionLiveness)
   (edge-precise CompilerRegMaybeLiveness))
 
-(cfg
-  (any regalloc-liveness-census test)
-  (define compiler-reg-liveness-census-baseline : i64
-    0))
-(cfg
-  (any regalloc-liveness-census test)
-  (define compiler-reg-liveness-census-edge-precise : i64
-    0))
+(define compiler-reg-liveness-census-baseline-metric : i64
+  162)
+(define compiler-reg-liveness-census-edge-precise-metric : i64
+  163)
 
-(define (compiler-reg-liveness-census-reset!) : unit
+(define (compiler-reg-profile-metrics-new) : profile_state.CompilerProfileMetrics
+  (profile_state.compiler-profile-state-metrics
+    (profile_state.compiler-profile-state-new)))
+
+(define (compiler-reg-liveness-census-reset!
+  [metrics : profile_state.CompilerProfileMetrics]) : unit
   (cfg
     (any regalloc-liveness-census test)
-    (begin
-      (set! compiler-reg-liveness-census-baseline 0)
-      (set! compiler-reg-liveness-census-edge-precise 0))
+    (profile_state.compiler-profile-metrics-reset-range!
+      metrics
+      compiler-reg-liveness-census-baseline-metric
+      (+ compiler-reg-liveness-census-edge-precise-metric 1))
     unit))
 
-(define (compiler-reg-liveness-census-baseline-count) : i64
+(define (compiler-reg-liveness-census-baseline-count
+  [metrics : profile_state.CompilerProfileMetrics]) : i64
   (cfg
     (any regalloc-liveness-census test)
-    compiler-reg-liveness-census-baseline
+    (profile_state.compiler-profile-metrics-value
+      metrics
+      compiler-reg-liveness-census-baseline-metric)
     0))
 
-(define (compiler-reg-liveness-census-edge-precise-count) : i64
+(define (compiler-reg-liveness-census-edge-precise-count
+  [metrics : profile_state.CompilerProfileMetrics]) : i64
   (cfg
     (any regalloc-liveness-census test)
-    compiler-reg-liveness-census-edge-precise
+    (profile_state.compiler-profile-metrics-value
+      metrics
+      compiler-reg-liveness-census-edge-precise-metric)
     0))
 
 (define (compiler-reg-instr-seq-has-phi?
@@ -251,16 +263,18 @@
 
 (define (compiler-reg-liveness-handle-make
   [func : ir.CompilerIrFunction]
-  [need-edge-precise : bool]) : CompilerRegLivenessHandle
+  [need-edge-precise : bool]
+  [metrics : profile_state.CompilerProfileMetrics]) : CompilerRegLivenessHandle
   (let
     [baseline : live.CompilerFunctionLiveness
       (live.compiler-live-analyze-function func)]
     (begin
       (cfg
         (any regalloc-liveness-census test)
-        (set!
-          compiler-reg-liveness-census-baseline
-          (+ compiler-reg-liveness-census-baseline 1))
+        (profile_state.compiler-profile-metrics-add!
+          metrics
+          compiler-reg-liveness-census-baseline-metric
+          1)
         unit)
       (cfg
         regalloc-liveness-census
@@ -289,9 +303,10 @@
                 (begin
                   (cfg
                     (any regalloc-liveness-census test)
-                    (set!
-                      compiler-reg-liveness-census-edge-precise
-                      (+ compiler-reg-liveness-census-edge-precise 1))
+                    (profile_state.compiler-profile-metrics-add!
+                      metrics
+                      compiler-reg-liveness-census-edge-precise-metric
+                      1)
                     unit)
                   (CompilerRegLivenessHandle
                     baseline
@@ -652,6 +667,32 @@
   (any regalloc-census test)
   (defstruct CompilerRegCallSpanCensus
     (counts (__tl_dyn-array i64))))
+
+(define compiler-reg-call-span-census-metric-start : i64
+  164)
+(define compiler-reg-call-span-census-metric-end : i64
+  176)
+(define compiler-reg-evict-census-metric-start : i64
+  176)
+(define compiler-reg-evict-census-metric-end : i64
+  196)
+(define compiler-reg-assignment-census-metric-start : i64
+  196)
+(define compiler-reg-assignment-census-metric-end : i64
+  204)
+(define compiler-reg-move-census-metric-start : i64
+  204)
+(define compiler-reg-move-census-metric-end : i64
+  220)
+
+(cfg
+  regalloc-census
+  (define (compiler-reg-census-reset!
+    [metrics : profile_state.CompilerProfileMetrics]) : unit
+    (profile_state.compiler-profile-metrics-reset-range!
+      metrics
+      compiler-reg-call-span-census-metric-start
+      compiler-reg-move-census-metric-end)))
 
 (defstruct CompilerRegMove
   (src i64)
@@ -1589,19 +1630,21 @@
   (CompilerRegVarTypes
     (array.make-array i64 0)
     (array.make-array ast.AstType 0)
-    (ir.compiler-ir-representation-index-empty)))
+    (ir.compiler-ir-representation-index-empty)
+    (compiler-reg-profile-metrics-new)))
 
 (define (compiler-reg-var-types-empty-with-representations
   [representations : ir.CompilerIrRepresentationIndex]) : CompilerRegVarTypes
   (CompilerRegVarTypes
     (array.make-array i64 0)
     (array.make-array ast.AstType 0)
-    representations))
+    representations
+    (compiler-reg-profile-metrics-new)))
 
 (define (compiler-reg-var-types-with-representations
   [types : CompilerRegVarTypes]
   [representations : ir.CompilerIrRepresentationIndex]) : CompilerRegVarTypes
-  (CompilerRegVarTypes types.present types.items representations))
+  (CompilerRegVarTypes types.present types.items representations types.metrics))
 
 (define (compiler-reg-var-types-lookup
   [types : CompilerRegVarTypes]
@@ -1656,7 +1699,11 @@
                 (set! index (+ index 1))))
             (set! (array-ref present var) 1)
             (set! (array-ref items var) ty)
-            (CompilerRegVarTypes present items types.representations)))))))
+            (CompilerRegVarTypes
+              present
+              items
+              types.representations
+              types.metrics)))))))
 
 (define (compiler-reg-addr-of-result-type) : ast.AstType
   (ast.ast-ty-mut-ptr (ast.AstType.U8)))
@@ -1791,9 +1838,10 @@
                 (compiler-reg-instr-seq-types-array! instrs present types)])
             (set! i (+ i 1)))))]))
 
-(define (compiler-reg-function-var-types-with-representations
+(define (compiler-reg-function-var-types-with-representations-and-metrics
   [func : ir.CompilerIrFunction]
-  [representations : ir.CompilerIrRepresentationIndex]) : CompilerRegVarTypes
+  [representations : ir.CompilerIrRepresentationIndex]
+  [metrics : profile_state.CompilerProfileMetrics]) : CompilerRegVarTypes
   (match func
     [(ir.CompilerIrFunction.Function _ params _ vars blocks)
       (let
@@ -1803,7 +1851,23 @@
         (begin
           (compiler-reg-param-types-array! params present types)
           (compiler-reg-block-list-types-array! blocks present types)
-          (CompilerRegVarTypes present types representations)))]))
+          (CompilerRegVarTypes present types representations metrics)))]))
+
+(define (compiler-reg-function-var-types-with-representations
+  [func : ir.CompilerIrFunction]
+  [representations : ir.CompilerIrRepresentationIndex]) : CompilerRegVarTypes
+  (compiler-reg-function-var-types-with-representations-and-metrics
+    func
+    representations
+    (compiler-reg-profile-metrics-new)))
+
+(define (compiler-reg-function-var-types-with-metrics
+  [func : ir.CompilerIrFunction]
+  [metrics : profile_state.CompilerProfileMetrics]) : CompilerRegVarTypes
+  (compiler-reg-function-var-types-with-representations-and-metrics
+    func
+    (ir.compiler-ir-representation-index-empty)
+    metrics))
 
 (define (compiler-reg-function-var-types [func : ir.CompilerIrFunction]) : CompilerRegVarTypes
   (compiler-reg-function-var-types-with-representations
@@ -16690,7 +16754,7 @@
           (ir.compiler-ir-label-none))
         (let
           [liveness-handle : CompilerRegLivenessHandle
-            (compiler-reg-liveness-handle-make func false)]
+            (compiler-reg-liveness-handle-make func false type-info.metrics)]
           (compiler-reg-loop-split-rewrite-fueled
             type-segment-bases
             target-abi
@@ -16867,7 +16931,8 @@
                                     new-func
                                     (compiler-reg-liveness-handle-make
                                       new-func
-                                      false)
+                                      false
+                                      type-info.metrics)
                                     new-blocks
                                     new-vars
                                     type-info
@@ -17397,8 +17462,12 @@
             current-vars
             extra-assignments
             extra-types))]
+      [round-plan-types : CompilerRegVarTypes
+        (compiler-reg-plan-types round-plan)]
       [round-type-info : CompilerRegVarTypes
-        (compiler-reg-function-var-types func)]
+        (compiler-reg-function-var-types-with-metrics
+          func
+          round-plan-types.metrics)]
       (match (compiler-reg-loop-split-rewrite-one
         type-segment-bases
         target-abi
@@ -21084,9 +21153,10 @@
                     split-vars
                     split-blocks)]
                 [split-types : CompilerRegVarTypes
-                  (compiler-reg-function-var-types-with-representations
+                  (compiler-reg-function-var-types-with-representations-and-metrics
                     split-func
-                    ctx.type-info.representations)]
+                    ctx.type-info.representations
+                    ctx.type-info.metrics)]
                 [split-plan
                   : CompilerRegPlan
                   ;; `cold-split?` is FALSE and never observed: cycle 20's
@@ -23267,9 +23337,10 @@
                     park-vars
                     park-blocks)]
                 [park-types : CompilerRegVarTypes
-                  (compiler-reg-function-var-types-with-representations
+                  (compiler-reg-function-var-types-with-representations-and-metrics
                     park-func
-                    rd.type-info.representations)]
+                    rd.type-info.representations
+                    rd.type-info.metrics)]
                 [park-plan : CompilerRegPlan
                   (compiler-reg-plan-function-scalar-forced-spill-with-types
                     rd.type-segment-bases
@@ -25074,6 +25145,7 @@
 ;; -1 refuses the candidate: an exit edge whose target cannot host a reload
 ;; (phi head, empty block, unresolved label) or more targets than the cap.
 (define (compiler-reg-call-region-evict-exit-points!
+  [metrics : profile_state.CompilerProfileMetrics]
   [bslots : (__tl_dyn-array ir.CompilerIrBlock)]
   [nblocks : i64]
   [ids : reg_label_i64_map.Map]
@@ -25115,6 +25187,7 @@
                                   (cfg
                                     regalloc-census
                                     (compiler-reg-evict-census-bump!
+                                      metrics
                                       (+ 8 status))
                                     unit)
                                   (return (- 0 1))))
@@ -25131,7 +25204,9 @@
                                     (begin
                                       (cfg
                                         regalloc-census
-                                        (compiler-reg-evict-census-bump! 12)
+                                        (compiler-reg-evict-census-bump!
+                                          metrics
+                                          12)
                                         unit)
                                       (return (- 0 1))))
                                   (set!
@@ -25142,7 +25217,7 @@
                         (begin
                           (cfg
                             regalloc-census
-                            (compiler-reg-evict-census-bump! 13)
+                            (compiler-reg-evict-census-bump! metrics 13)
                             unit)
                           (return (- 0 1)))])
                     (set! succs (live.compiler-live-label-set-tail succs)))]))
@@ -25345,6 +25420,7 @@
 ;; index to lend, the victim, and the number of reload points left in
 ;; `out-points` after the liveness filter.
 (define (compiler-reg-call-region-evict-try
+  [metrics : profile_state.CompilerProfileMetrics]
   [blocks : ir.CompilerIrBlockList]
   [depths : (__tl_dyn-array i64)]
   [weights : (__tl_dyn-array i64)]
@@ -25465,7 +25541,7 @@
                               (begin
                                 (cfg
                                   regalloc-census
-                                  (compiler-reg-evict-census-bump! 5)
+                                  (compiler-reg-evict-census-bump! metrics 5)
                                   unit)
                                 (when
                                   (and
@@ -25496,7 +25572,9 @@
                                     (begin
                                       (cfg
                                         regalloc-census
-                                        (compiler-reg-evict-census-bump! 6)
+                                        (compiler-reg-evict-census-bump!
+                                          metrics
+                                          6)
                                         unit)
                                       (when
                                         (or (< victim 0) (< w victim-weight))
@@ -25509,7 +25587,7 @@
                         (begin
                           (cfg
                             regalloc-census
-                            (compiler-reg-evict-census-bump! 3)
+                            (compiler-reg-evict-census-bump! metrics 3)
                             unit)
                           (CompilerRegCallEvictPick.CompilerRegCallEvictNoPick))
                         (if (compiler-reg-call-region-evict-var-mentioned?
@@ -25524,7 +25602,7 @@
                           (begin
                             (cfg
                               regalloc-census
-                              (compiler-reg-evict-census-bump! 7)
+                              (compiler-reg-evict-census-bump! metrics 7)
                               unit)
                             (CompilerRegCallEvictPick.CompilerRegCallEvictNoPick))
                           (let
@@ -25550,6 +25628,7 @@
                                   (cfg
                                     regalloc-census
                                     (compiler-reg-evict-census-bump!
+                                      metrics
                                       (- 12 def-count))
                                     unit)
                                   (return
@@ -25557,6 +25636,7 @@
                               (set!
                                 raw-exits
                                 (compiler-reg-call-region-evict-exit-points!
+                                  metrics
                                   bslots
                                   nblocks
                                   ids
@@ -25569,7 +25649,7 @@
                                 (begin
                                   (cfg
                                     regalloc-census
-                                    (compiler-reg-evict-census-bump! 2)
+                                    (compiler-reg-evict-census-bump! metrics 2)
                                     unit)
                                   (return
                                     (CompilerRegCallEvictPick.CompilerRegCallEvictNoPick))))
@@ -25608,7 +25688,9 @@
                                   (cfg
                                     regalloc-census
                                     (begin
-                                      (compiler-reg-evict-census-bump! 4)
+                                      (compiler-reg-evict-census-bump!
+                                        metrics
+                                        4)
                                       ;; how far short: 18 counts the ones
                                       ;; that clear a bare break-even, so
                                       ;; the report can say whether the
@@ -25636,7 +25718,9 @@
                                               depths
                                               out-saves
                                               def-count)))
-                                        (compiler-reg-evict-census-bump! 18)))
+                                        (compiler-reg-evict-census-bump!
+                                          metrics
+                                          18)))
                                     unit)
                                   (CompilerRegCallEvictPick.CompilerRegCallEvictNoPick))))))))))))))))))
 
@@ -26233,9 +26317,11 @@
                                                   (cfg
                                                     regalloc-census
                                                     (compiler-reg-evict-census-bump!
+                                                      type-info.metrics
                                                       0)
                                                     unit)
                                                   (match (compiler-reg-call-region-evict-try
+                                                    type-info.metrics
                                                     blocks
                                                     depths
                                                     weights
@@ -26329,8 +26415,10 @@
                                             regalloc-census
                                             (begin
                                               (compiler-reg-evict-census-bump!
+                                                type-info.metrics
                                                 1)
                                               (compiler-reg-evict-census-add!
+                                                type-info.metrics
                                                 8
                                                 acc-exits))
                                             unit))))))
@@ -26525,7 +26613,9 @@
     [func : ir.CompilerIrFunction]
     [plan : CompilerRegPlan]) : CompilerRegCallSpanCensus
     (let
-      [type-info : CompilerRegVarTypes (compiler-reg-function-var-types func)]
+      [plan-types : CompilerRegVarTypes (compiler-reg-plan-types plan)]
+      [type-info : CompilerRegVarTypes
+        (compiler-reg-function-var-types-with-metrics func plan-types.metrics)]
       [census : CompilerRegCallSpanCensus (compiler-reg-call-span-census-empty)]
       (begin
         (match plan
@@ -26564,28 +26654,35 @@
 
 (cfg
   regalloc-census
-  (define compiler-reg-call-span-census-total : CompilerRegCallSpanCensus
-    (compiler-reg-call-span-census-empty)))
-
-(cfg
-  regalloc-census
-  (define (compiler-reg-call-span-census-reset!) : unit
-    (set!
-      compiler-reg-call-span-census-total
-      (compiler-reg-call-span-census-empty))))
+  (define (compiler-reg-call-span-census-reset!
+    [metrics : profile_state.CompilerProfileMetrics]) : unit
+    (profile_state.compiler-profile-metrics-reset-range!
+      metrics
+      compiler-reg-call-span-census-metric-start
+      compiler-reg-call-span-census-metric-end)))
 
 (cfg
   regalloc-census
   (define (compiler-reg-call-span-census-record-plan!
+    [metrics : profile_state.CompilerProfileMetrics]
     [func : ir.CompilerIrFunction]
     [plan : CompilerRegPlan]) : unit
-    (compiler-reg-call-span-census-merge-into!
-      (&mut compiler-reg-call-span-census-total)
-      (compiler-reg-plan-call-span-census func plan))))
+    (let
+      [census : CompilerRegCallSpanCensus
+        (compiler-reg-plan-call-span-census func plan)]
+      [index : i64 0]
+      (while (< index (array-length census.counts))
+        (begin
+          (profile_state.compiler-profile-metrics-add!
+            metrics
+            (+ compiler-reg-call-span-census-metric-start index)
+            (array-ref census.counts index))
+          (set! index (+ index 1)))))))
 
 (cfg
   regalloc-census
   (define (compiler-reg-call-span-census-row
+    [metrics : profile_state.CompilerProfileMetrics]
     [bucket-name : String]
     [bucket : i64]) : String
     (str_cat.str-cat
@@ -26593,34 +26690,44 @@
       bucket-name
       "|"
       (string.int->string
-        (compiler-reg-call-span-census-count
-          (& compiler-reg-call-span-census-total)
-          bucket
-          (compiler-reg-call-span-outcome-register)))
+        (profile_state.compiler-profile-metrics-value
+          metrics
+          (+
+            compiler-reg-call-span-census-metric-start
+            (compiler-reg-call-span-census-index
+              bucket
+              (compiler-reg-call-span-outcome-register)))))
       "|"
       (string.int->string
-        (compiler-reg-call-span-census-count
-          (& compiler-reg-call-span-census-total)
-          bucket
-          (compiler-reg-call-span-outcome-spill)))
+        (profile_state.compiler-profile-metrics-value
+          metrics
+          (+
+            compiler-reg-call-span-census-metric-start
+            (compiler-reg-call-span-census-index
+              bucket
+              (compiler-reg-call-span-outcome-spill)))))
       "|"
       (string.int->string
-        (compiler-reg-call-span-census-count
-          (& compiler-reg-call-span-census-total)
-          bucket
-          (compiler-reg-call-span-outcome-unassigned)))
+        (profile_state.compiler-profile-metrics-value
+          metrics
+          (+
+            compiler-reg-call-span-census-metric-start
+            (compiler-reg-call-span-census-index
+              bucket
+              (compiler-reg-call-span-outcome-unassigned)))))
       "\n")))
 
 (cfg
   regalloc-census
-  (define (compiler-reg-call-span-census-print!) : unit
+  (define (compiler-reg-call-span-census-print!
+    [metrics : profile_state.CompilerProfileMetrics]) : unit
     (begin
       (io.print-error
         "regalloc-call-span-census|calls_spanned|register|spill|unassigned\n")
-      (io.print-error (compiler-reg-call-span-census-row "0" 0))
-      (io.print-error (compiler-reg-call-span-census-row "1" 1))
-      (io.print-error (compiler-reg-call-span-census-row "2-3" 2))
-      (io.print-error (compiler-reg-call-span-census-row "4+" 3)))))
+      (io.print-error (compiler-reg-call-span-census-row metrics "0" 0))
+      (io.print-error (compiler-reg-call-span-census-row metrics "1" 1))
+      (io.print-error (compiler-reg-call-span-census-row metrics "2-3" 2))
+      (io.print-error (compiler-reg-call-span-census-row metrics "4+" 3)))))
 
 ;; P11b phase 3 eviction census. Slots, in the order the attempt walks them:
 ;;   0 attempts        1 accepted        2 refused: an exit edge cannot be served
@@ -26640,142 +26747,124 @@
 ;;  16 the def is not before the region    17 more defs than the cap
 (cfg
   regalloc-census
-  (define compiler-reg-evict-census-counts : (__tl_dyn-array i64)
-    (array.make-array i64 20)))
+  (define (compiler-reg-evict-census-bump!
+    [metrics : profile_state.CompilerProfileMetrics]
+    [slot : i64]) : unit
+    (profile_state.compiler-profile-metrics-add!
+      metrics
+      (+ compiler-reg-evict-census-metric-start slot)
+      1)))
 
 (cfg
   regalloc-census
-  (define (compiler-reg-evict-census-bump! [slot : i64]) : unit
-    (set!
-      (array-ref compiler-reg-evict-census-counts slot)
-      (+ (array-ref compiler-reg-evict-census-counts slot) 1))))
+  (define (compiler-reg-evict-census-add!
+    [metrics : profile_state.CompilerProfileMetrics]
+    [slot : i64]
+    [amount : i64]) : unit
+    (profile_state.compiler-profile-metrics-add!
+      metrics
+      (+ compiler-reg-evict-census-metric-start slot)
+      amount)))
 
 (cfg
   regalloc-census
-  (define (compiler-reg-evict-census-add! [slot : i64] [amount : i64]) : unit
-    (set!
-      (array-ref compiler-reg-evict-census-counts slot)
-      (+ (array-ref compiler-reg-evict-census-counts slot) amount))))
+  (define (compiler-reg-evict-census-value
+    [metrics : profile_state.CompilerProfileMetrics]
+    [slot : i64]) : i64
+    (profile_state.compiler-profile-metrics-value
+      metrics
+      (+ compiler-reg-evict-census-metric-start slot))))
 
 (cfg
   regalloc-census
-  (define (compiler-reg-evict-census-print!) : unit
+  (define (compiler-reg-evict-census-print!
+    [metrics : profile_state.CompilerProfileMetrics]) : unit
     (io.print-error
       (str_cat.str-cat
         "regalloc-evict-census|attempts="
-        (string.int->string (array-ref compiler-reg-evict-census-counts 0))
+        (string.int->string (compiler-reg-evict-census-value metrics 0))
         "|accepted="
-        (string.int->string (array-ref compiler-reg-evict-census-counts 1))
+        (string.int->string (compiler-reg-evict-census-value metrics 1))
         (str_cat.str-cat
           "|no-exit="
-          (string.int->string (array-ref compiler-reg-evict-census-counts 2))
+          (string.int->string (compiler-reg-evict-census-value metrics 2))
           "|no-victim="
-          (string.int->string (array-ref compiler-reg-evict-census-counts 3))
+          (string.int->string (compiler-reg-evict-census-value metrics 3))
           (str_cat.str-cat
             "|priced-out="
-            (string.int->string (array-ref compiler-reg-evict-census-counts 4))
+            (string.int->string (compiler-reg-evict-census-value metrics 4))
             "|sole-occupant="
-            (string.int->string (array-ref compiler-reg-evict-census-counts 5))
+            (string.int->string (compiler-reg-evict-census-value metrics 5))
             (str_cat.str-cat
               "|parked="
-              (string.int->string
-                (array-ref compiler-reg-evict-census-counts 6))
+              (string.int->string (compiler-reg-evict-census-value metrics 6))
               "|verifier-refused="
-              (string.int->string
-                (array-ref compiler-reg-evict-census-counts 7))
+              (string.int->string (compiler-reg-evict-census-value metrics 7))
               (str_cat.str-cat
                 "|reloads="
-                (string.int->string
-                  (array-ref compiler-reg-evict-census-counts 8))
+                (string.int->string (compiler-reg-evict-census-value metrics 8))
                 (str_cat.str-cat
                   "|exit-backward="
                   (string.int->string
-                    (array-ref compiler-reg-evict-census-counts 9))
+                    (compiler-reg-evict-census-value metrics 9))
                   "|exit-critical="
                   (string.int->string
-                    (array-ref compiler-reg-evict-census-counts 10))
+                    (compiler-reg-evict-census-value metrics 10))
                   (str_cat.str-cat
                     "|exit-phi="
                     (string.int->string
-                      (array-ref compiler-reg-evict-census-counts 11))
+                      (compiler-reg-evict-census-value metrics 11))
                     "|exit-cap="
                     (string.int->string
-                      (array-ref compiler-reg-evict-census-counts 12))
+                      (compiler-reg-evict-census-value metrics 12))
                     (str_cat.str-cat
                       "|exit-label="
                       (string.int->string
-                        (array-ref compiler-reg-evict-census-counts 13))
+                        (compiler-reg-evict-census-value metrics 13))
                       "|def-phi="
                       (string.int->string
-                        (array-ref compiler-reg-evict-census-counts 14))
+                        (compiler-reg-evict-census-value metrics 14))
                       (str_cat.str-cat
                         "|def-last="
                         (string.int->string
-                          (array-ref compiler-reg-evict-census-counts 15))
+                          (compiler-reg-evict-census-value metrics 15))
                         "|def-late="
                         (string.int->string
-                          (array-ref compiler-reg-evict-census-counts 16))
+                          (compiler-reg-evict-census-value metrics 16))
                         (str_cat.str-cat
                           "|def-many="
                           (string.int->string
-                            (array-ref compiler-reg-evict-census-counts 17))
+                            (compiler-reg-evict-census-value metrics 17))
                           (str_cat.str-cat
                             "|priced-break-even="
                             (string.int->string
-                              (array-ref compiler-reg-evict-census-counts 18))
+                              (compiler-reg-evict-census-value metrics 18))
                             "\n"))))))))))))))
 
 ;; Dense assignment occupancy for performance and representation audits. These
-;; counters are compiled only for explicit regalloc-census builds.
+;; slots are compiled only for explicit regalloc-census builds.
 (cfg
   regalloc-census
-  (define compiler-reg-assignment-census-plans : i64
-    0))
-(cfg
-  regalloc-census
-  (define compiler-reg-assignment-census-capacity : i64
-    0))
-(cfg
-  regalloc-census
-  (define compiler-reg-assignment-census-assigned : i64
-    0))
-(cfg
-  regalloc-census
-  (define compiler-reg-assignment-census-register : i64
-    0))
-(cfg
-  regalloc-census
-  (define compiler-reg-assignment-census-spill : i64
-    0))
-(cfg
-  regalloc-census
-  (define compiler-reg-assignment-census-remat : i64
-    0))
-(cfg
-  regalloc-census
-  (define compiler-reg-assignment-census-max-capacity : i64
-    0))
-(cfg
-  regalloc-census
-  (define compiler-reg-assignment-census-max-assigned : i64
-    0))
+  (define (compiler-reg-assignment-census-value
+    [metrics : profile_state.CompilerProfileMetrics]
+    [slot : i64]) : i64
+    (profile_state.compiler-profile-metrics-value
+      metrics
+      (+ compiler-reg-assignment-census-metric-start slot))))
 
 (cfg
   regalloc-census
-  (define (compiler-reg-assignment-census-reset!) : unit
-    (begin
-      (set! compiler-reg-assignment-census-plans 0)
-      (set! compiler-reg-assignment-census-capacity 0)
-      (set! compiler-reg-assignment-census-assigned 0)
-      (set! compiler-reg-assignment-census-register 0)
-      (set! compiler-reg-assignment-census-spill 0)
-      (set! compiler-reg-assignment-census-remat 0)
-      (set! compiler-reg-assignment-census-max-capacity 0)
-      (set! compiler-reg-assignment-census-max-assigned 0))))
+  (define (compiler-reg-assignment-census-reset!
+    [metrics : profile_state.CompilerProfileMetrics]) : unit
+    (profile_state.compiler-profile-metrics-reset-range!
+      metrics
+      compiler-reg-assignment-census-metric-start
+      compiler-reg-assignment-census-metric-end)))
 
 (cfg
   regalloc-census
   (define (compiler-reg-assignment-census-record!
+    [metrics : profile_state.CompilerProfileMetrics]
     [assignments : (& assignments CompilerRegAssignmentTable)]) : unit
     (let
       [present : (__tl_dyn-array i64) assignments.present]
@@ -26801,55 +26890,68 @@
                   [(CompilerRegLocation.Spill _) (set! spills (+ spills 1))]
                   [(CompilerRegLocation.Remat _) (set! remats (+ remats 1))])))
             (set! index (+ index 1))))
-        (set!
-          compiler-reg-assignment-census-plans
-          (+ compiler-reg-assignment-census-plans 1))
-        (set!
-          compiler-reg-assignment-census-capacity
-          (+ compiler-reg-assignment-census-capacity capacity))
-        (set!
-          compiler-reg-assignment-census-assigned
-          (+ compiler-reg-assignment-census-assigned assigned))
-        (set!
-          compiler-reg-assignment-census-register
-          (+ compiler-reg-assignment-census-register registers))
-        (set!
-          compiler-reg-assignment-census-spill
-          (+ compiler-reg-assignment-census-spill spills))
-        (set!
-          compiler-reg-assignment-census-remat
-          (+ compiler-reg-assignment-census-remat remats))
-        (if (> capacity compiler-reg-assignment-census-max-capacity)
-          (set! compiler-reg-assignment-census-max-capacity capacity)
+        (profile_state.compiler-profile-metrics-add!
+          metrics
+          (+ compiler-reg-assignment-census-metric-start 0)
+          1)
+        (profile_state.compiler-profile-metrics-add!
+          metrics
+          (+ compiler-reg-assignment-census-metric-start 1)
+          capacity)
+        (profile_state.compiler-profile-metrics-add!
+          metrics
+          (+ compiler-reg-assignment-census-metric-start 2)
+          assigned)
+        (profile_state.compiler-profile-metrics-add!
+          metrics
+          (+ compiler-reg-assignment-census-metric-start 3)
+          registers)
+        (profile_state.compiler-profile-metrics-add!
+          metrics
+          (+ compiler-reg-assignment-census-metric-start 4)
+          spills)
+        (profile_state.compiler-profile-metrics-add!
+          metrics
+          (+ compiler-reg-assignment-census-metric-start 5)
+          remats)
+        (if (> capacity (compiler-reg-assignment-census-value metrics 6))
+          (profile_state.compiler-profile-metrics-set!
+            metrics
+            (+ compiler-reg-assignment-census-metric-start 6)
+            capacity)
           unit)
-        (if (> assigned compiler-reg-assignment-census-max-assigned)
-          (set! compiler-reg-assignment-census-max-assigned assigned)
+        (if (> assigned (compiler-reg-assignment-census-value metrics 7))
+          (profile_state.compiler-profile-metrics-set!
+            metrics
+            (+ compiler-reg-assignment-census-metric-start 7)
+            assigned)
           unit)))))
 
 (cfg
   regalloc-census
-  (define (compiler-reg-assignment-census-print!) : unit
+  (define (compiler-reg-assignment-census-print!
+    [metrics : profile_state.CompilerProfileMetrics]) : unit
     (begin
       (io.print-error
         "regalloc-assignment-census|plans|capacity|assigned|register|spill|remat|max-capacity|max-assigned\n")
       (io.print-error
         (str_cat.str-cat
           "regalloc-assignment-census|"
-          (string.int->string compiler-reg-assignment-census-plans)
+          (string.int->string (compiler-reg-assignment-census-value metrics 0))
           "|"
-          (string.int->string compiler-reg-assignment-census-capacity)
+          (string.int->string (compiler-reg-assignment-census-value metrics 1))
           "|"
-          (string.int->string compiler-reg-assignment-census-assigned)
+          (string.int->string (compiler-reg-assignment-census-value metrics 2))
           "|"
-          (string.int->string compiler-reg-assignment-census-register)
+          (string.int->string (compiler-reg-assignment-census-value metrics 3))
           "|"
-          (string.int->string compiler-reg-assignment-census-spill)
+          (string.int->string (compiler-reg-assignment-census-value metrics 4))
           "|"
-          (string.int->string compiler-reg-assignment-census-remat)
+          (string.int->string (compiler-reg-assignment-census-value metrics 5))
           "|"
-          (string.int->string compiler-reg-assignment-census-max-capacity)
+          (string.int->string (compiler-reg-assignment-census-value metrics 6))
           "|"
-          (string.int->string compiler-reg-assignment-census-max-assigned)
+          (string.int->string (compiler-reg-assignment-census-value metrics 7))
           "\n")))))
 
 ;; ---- move census (cfg regalloc-census) ------------------------------------
@@ -26866,24 +26968,30 @@
 ;;                    simultaneous-liveness copy (needs a split, else irreducible)
 (cfg
   regalloc-census
-  (define compiler-reg-move-census-counts : (__tl_dyn-array i64)
-    (array.make-array i64 16)))
+  (define (compiler-reg-move-census-reset!
+    [metrics : profile_state.CompilerProfileMetrics]) : unit
+    (profile_state.compiler-profile-metrics-reset-range!
+      metrics
+      compiler-reg-move-census-metric-start
+      compiler-reg-move-census-metric-end)))
 
 (cfg
   regalloc-census
-  (define (compiler-reg-move-census-reset!) : unit
-    (set! compiler-reg-move-census-counts (array.make-array i64 16))))
-
-(cfg
-  regalloc-census
-  (define (compiler-reg-move-census-bump! [slot : i64]) : unit
+  (define (compiler-reg-move-census-bump!
+    [metrics : profile_state.CompilerProfileMetrics]
+    [slot : i64]) : unit
     (if (if (< slot 0)
       true
-      (>= slot (array-length compiler-reg-move-census-counts)))
+      (>=
+        slot
+        (-
+          compiler-reg-move-census-metric-end
+          compiler-reg-move-census-metric-start)))
       unit
-      (set!
-        (array-ref compiler-reg-move-census-counts slot)
-        (+ (array-ref compiler-reg-move-census-counts slot) 1)))))
+      (profile_state.compiler-profile-metrics-add!
+        metrics
+        (+ compiler-reg-move-census-metric-start slot)
+        1))))
 
 (cfg
   regalloc-census
@@ -26903,6 +27011,7 @@
 (cfg
   regalloc-census
   (define (compiler-reg-move-census-record!
+    [metrics : profile_state.CompilerProfileMetrics]
     [moves : CompilerRegMoveSeq]
     [parents : (__tl_dyn-array i64)]
     [interval-index : CompilerRegIntervalIndex]
@@ -26920,14 +27029,14 @@
             [src : i64 item.src]
             [dst : i64 item.dst]
             (begin
-              (compiler-reg-move-census-bump! 0)
+              (compiler-reg-move-census-bump! metrics 0)
               (let
                 [rs : i64 (compiler-reg-move-census-find parents src)]
                 [rd : i64 (compiler-reg-move-census-find parents dst)]
                 (if (= rs rd)
-                  (compiler-reg-move-census-bump! 1)
+                  (compiler-reg-move-census-bump! metrics 1)
                   (if (compiler-reg-same-value-class? sv-parents src dst)
-                    (compiler-reg-move-census-bump! 2)
+                    (compiler-reg-move-census-bump! metrics 2)
                     (if (not
                       (compiler-reg-vars-interfere-segmented-index?
                         interval-index
@@ -26940,14 +27049,14 @@
                       ;; ones, the PAIR is coalesce-vars-compatible? -> the merge
                       ;; was blocked by the all-pairs class check, not the pair.
                       (begin
-                        (compiler-reg-move-census-bump! 3)
+                        (compiler-reg-move-census-bump! metrics 3)
                         (if (compiler-reg-vars-interfere-segmented-index?
                           eff-index
                           rs
                           rd)
-                          (compiler-reg-move-census-bump! 6)
+                          (compiler-reg-move-census-bump! metrics 6)
                           (begin
-                            (compiler-reg-move-census-bump! 5)
+                            (compiler-reg-move-census-bump! metrics 5)
                             (if (compiler-reg-coalesce-vars-compatible?
                               interval-index
                               types
@@ -26956,7 +27065,7 @@
                               dst
                               false
                               sv-parents)
-                              (compiler-reg-move-census-bump! 7)
+                              (compiler-reg-move-census-bump! metrics 7)
                               (if (if (live.compiler-live-set-contains?
                                 group-vars
                                 src)
@@ -26964,49 +27073,55 @@
                                 (live.compiler-live-set-contains?
                                   group-vars
                                   dst))
-                                (compiler-reg-move-census-bump! 8)
+                                (compiler-reg-move-census-bump! metrics 8)
                                 (if (not
                                   (compiler-reg-compatible-types? types src dst))
-                                  (compiler-reg-move-census-bump! 9)
-                                  (compiler-reg-move-census-bump! 10)))))))
-                      (compiler-reg-move-census-bump! 4)))))))
+                                  (compiler-reg-move-census-bump! metrics 9)
+                                  (compiler-reg-move-census-bump! metrics 10)))))))
+                      (compiler-reg-move-census-bump! metrics 4)))))))
           (set! index (- index 1)))))))
 
 (cfg
   regalloc-census
-  (define (compiler-reg-move-census-count-text [index : i64]) : String
-    (string.int->string (array-ref compiler-reg-move-census-counts index))))
+  (define (compiler-reg-move-census-count-text
+    [metrics : profile_state.CompilerProfileMetrics]
+    [index : i64]) : String
+    (string.int->string
+      (profile_state.compiler-profile-metrics-value
+        metrics
+        (+ compiler-reg-move-census-metric-start index)))))
 
 (cfg
   regalloc-census
-  (define (compiler-reg-move-census-print!) : unit
+  (define (compiler-reg-move-census-print!
+    [metrics : profile_state.CompilerProfileMetrics]) : unit
     (begin
       (io.print-error
         "regalloc-move-census|harvested|coalesced|samevalue_unco|disjoint_unco|interfere|disjoint_rootfree|disjoint_rootblocked|rootfree_paircompat|rootfree_group|rootfree_typemismatch|rootfree_other\n")
       (io.print-error
         (str_cat.str-cat
           "regalloc-move-census|"
-          (compiler-reg-move-census-count-text 0)
+          (compiler-reg-move-census-count-text metrics 0)
           "|"
-          (compiler-reg-move-census-count-text 1)
+          (compiler-reg-move-census-count-text metrics 1)
           "|"
-          (compiler-reg-move-census-count-text 2)
+          (compiler-reg-move-census-count-text metrics 2)
           "|"
-          (compiler-reg-move-census-count-text 3)
+          (compiler-reg-move-census-count-text metrics 3)
           "|"
-          (compiler-reg-move-census-count-text 4)
+          (compiler-reg-move-census-count-text metrics 4)
           "|"
-          (compiler-reg-move-census-count-text 5)
+          (compiler-reg-move-census-count-text metrics 5)
           "|"
-          (compiler-reg-move-census-count-text 6)
+          (compiler-reg-move-census-count-text metrics 6)
           "|"
-          (compiler-reg-move-census-count-text 7)
+          (compiler-reg-move-census-count-text metrics 7)
           "|"
-          (compiler-reg-move-census-count-text 8)
+          (compiler-reg-move-census-count-text metrics 8)
           "|"
-          (compiler-reg-move-census-count-text 9)
+          (compiler-reg-move-census-count-text metrics 9)
           "|"
-          (compiler-reg-move-census-count-text 10)
+          (compiler-reg-move-census-count-text metrics 10)
           "\n")))))
 
 ;; Mark every var that is a member of `member-set` AND whose live interval
@@ -32374,6 +32489,7 @@
         regalloc-census
         (if allow-caller-saved-zero-call
           (compiler-reg-move-census-record!
+            type-info.metrics
             moves
             coalesce.parents
             interval-index
@@ -32865,19 +32981,21 @@
 ;; SIMD/AVX register plan (unchanged from before #perf): full dataflow-liveness
 ;; intervals + the call-live-conservative ineligibility, keeping AVX backend
 ;; golden output byte-identical.
-(define (compiler-reg-plan-function-with-type-segment-bases-for-abi-and-representations
+(define (compiler-reg-plan-function-with-type-segment-bases-for-abi-and-representations-and-metrics
   [type-segment-bases : i64]
   [target-abi : cabi.CompilerRegTargetAbi]
   [func : ir.CompilerIrFunction]
-  [representations : ir.CompilerIrRepresentationIndex]) : CompilerRegPlan
+  [representations : ir.CompilerIrRepresentationIndex]
+  [metrics : profile_state.CompilerProfileMetrics]) : CompilerRegPlan
   (let
-    [liveness-handle : CompilerRegLivenessHandle
-      (compiler-reg-liveness-handle-make func false)]
-    [liveness : live.CompilerFunctionLiveness liveness-handle.baseline]
     [type-info : CompilerRegVarTypes
-      (compiler-reg-function-var-types-with-representations
+      (compiler-reg-function-var-types-with-representations-and-metrics
         func
-        representations)]
+        representations
+        metrics)]
+    [liveness-handle : CompilerRegLivenessHandle
+      (compiler-reg-liveness-handle-make func false type-info.metrics)]
+    [liveness : live.CompilerFunctionLiveness liveness-handle.baseline]
     [intervals : CompilerRegIntervalSeq
       (compiler-reg-live-intervals func liveness)]
     [ineligible : live.CompilerLiveI64Set
@@ -32900,6 +33018,18 @@
       target-abi
       false
       (- 0 1))))
+
+(define (compiler-reg-plan-function-with-type-segment-bases-for-abi-and-representations
+  [type-segment-bases : i64]
+  [target-abi : cabi.CompilerRegTargetAbi]
+  [func : ir.CompilerIrFunction]
+  [representations : ir.CompilerIrRepresentationIndex]) : CompilerRegPlan
+  (compiler-reg-plan-function-with-type-segment-bases-for-abi-and-representations-and-metrics
+    type-segment-bases
+    target-abi
+    func
+    representations
+    (compiler-reg-profile-metrics-new)))
 
 (define (compiler-reg-plan-function-with-type-segment-bases-for-abi
   [type-segment-bases : i64]
@@ -32922,19 +33052,21 @@
 (define (compiler-reg-plan-function [func : ir.CompilerIrFunction]) : CompilerRegPlan
   (compiler-reg-plan-function-for-abi cabi.CompilerRegTargetAbi.Linux func))
 
-(define (compiler-reg-plan-function-avx2-with-type-segment-bases-for-abi-and-representations
+(define (compiler-reg-plan-function-avx2-with-type-segment-bases-for-abi-and-representations-and-metrics
   [type-segment-bases : i64]
   [target-abi : cabi.CompilerRegTargetAbi]
   [func : ir.CompilerIrFunction]
-  [representations : ir.CompilerIrRepresentationIndex]) : CompilerRegPlan
+  [representations : ir.CompilerIrRepresentationIndex]
+  [metrics : profile_state.CompilerProfileMetrics]) : CompilerRegPlan
   (let
-    [liveness-handle : CompilerRegLivenessHandle
-      (compiler-reg-liveness-handle-make func false)]
-    [liveness : live.CompilerFunctionLiveness liveness-handle.baseline]
     [type-info : CompilerRegVarTypes
-      (compiler-reg-function-var-types-with-representations
+      (compiler-reg-function-var-types-with-representations-and-metrics
         func
-        representations)]
+        representations
+        metrics)]
+    [liveness-handle : CompilerRegLivenessHandle
+      (compiler-reg-liveness-handle-make func false type-info.metrics)]
+    [liveness : live.CompilerFunctionLiveness liveness-handle.baseline]
     [intervals : CompilerRegIntervalSeq
       (compiler-reg-live-intervals func liveness)]
     [ineligible : live.CompilerLiveI64Set
@@ -32957,6 +33089,18 @@
       target-abi
       false
       (- 0 1))))
+
+(define (compiler-reg-plan-function-avx2-with-type-segment-bases-for-abi-and-representations
+  [type-segment-bases : i64]
+  [target-abi : cabi.CompilerRegTargetAbi]
+  [func : ir.CompilerIrFunction]
+  [representations : ir.CompilerIrRepresentationIndex]) : CompilerRegPlan
+  (compiler-reg-plan-function-avx2-with-type-segment-bases-for-abi-and-representations-and-metrics
+    type-segment-bases
+    target-abi
+    func
+    representations
+    (compiler-reg-profile-metrics-new)))
 
 (define (compiler-reg-plan-function-avx2-with-type-segment-bases-for-abi
   [type-segment-bases : i64]
@@ -33140,7 +33284,7 @@
   [forced-assignments : CompilerRegAssignmentTable]) : CompilerRegPlan
   (let
     [liveness-handle : CompilerRegLivenessHandle
-      (compiler-reg-liveness-handle-make func true)]
+      (compiler-reg-liveness-handle-make func true type-info.metrics)]
     [vars : i64
       (match func
         [(ir.CompilerIrFunction.Function _ _ _ function-vars _) function-vars])]
@@ -33303,14 +33447,16 @@
                   (set! v (+ v 1))))
               ok))]))))
 
-(define (compiler-reg-plan-function-stack-only-with-representations
+(define (compiler-reg-plan-function-stack-only-with-representations-and-metrics
   [func : ir.CompilerIrFunction]
-  [representations : ir.CompilerIrRepresentationIndex]) : CompilerRegPlan
+  [representations : ir.CompilerIrRepresentationIndex]
+  [metrics : profile_state.CompilerProfileMetrics]) : CompilerRegPlan
   (let
     [type-info : CompilerRegVarTypes
-      (compiler-reg-function-var-types-with-representations
+      (compiler-reg-function-var-types-with-representations-and-metrics
         func
-        representations)]
+        representations
+        metrics)]
     (CompilerRegPlan.Plan
       (compiler-reg-assignment-table-empty)
       (live.compiler-live-set-empty)
@@ -33318,6 +33464,14 @@
       type-info
       (compiler-reg-call-split-empty)
       (compiler-reg-split-plan-empty))))
+
+(define (compiler-reg-plan-function-stack-only-with-representations
+  [func : ir.CompilerIrFunction]
+  [representations : ir.CompilerIrRepresentationIndex]) : CompilerRegPlan
+  (compiler-reg-plan-function-stack-only-with-representations-and-metrics
+    func
+    representations
+    (compiler-reg-profile-metrics-new)))
 
 (define (compiler-reg-plan-function-stack-only [func : ir.CompilerIrFunction]) : CompilerRegPlan
   (compiler-reg-plan-function-stack-only-with-representations
@@ -35100,7 +35254,7 @@
     [items : (__tl_dyn-array ast.AstType) (array.make-array ast.AstType vars)]
     (begin
       (compiler-reg-color-scatter-types remap present items types)
-      (CompilerRegVarTypes present items types.representations))))
+      (CompilerRegVarTypes present items types.representations types.metrics))))
 
 ;; Spilled scalars are dropped: the id remap re-homes them, so emission's
 ;; formula-slot fallback covers the new id and a stale Spill offset keyed by
@@ -37566,7 +37720,7 @@
                   (set! (array-ref present index) 1)
                   (set! (array-ref items index) (array-ref extra-items index))))
               (set! index (+ index 1))))
-          (CompilerRegVarTypes present items base.representations))))))
+          (CompilerRegVarTypes present items base.representations base.metrics))))))
 
 (define (compiler-reg-plan-with-call-save-rewrite
   [plan : CompilerRegPlan]
@@ -41828,7 +41982,11 @@
                 scratch-excluded)
               (CompilerRegEarlyScratchModel
                 (CompilerRegIntervalIndex starts ends segments)
-                (CompilerRegVarTypes present types base-types.representations)
+                (CompilerRegVarTypes
+                  present
+                  types
+                  base-types.representations
+                  base-types.metrics)
                 assignments
                 scratch-weights
                 scratch-excluded
@@ -43150,7 +43308,10 @@
               [base-type-info : CompilerRegVarTypes
                 (compiler-reg-plan-types plan)]
               [liveness-handle : CompilerRegLivenessHandle
-                (compiler-reg-liveness-handle-make _func false)]
+                (compiler-reg-liveness-handle-make
+                  _func
+                  false
+                  base-type-info.metrics)]
               [base-interval-selection : CompilerRegIntervalSelection
                 (compiler-reg-live-interval-selection
                   _func
@@ -43224,7 +43385,8 @@
                           (CompilerRegVarTypes
                             present
                             types
-                            base-type-info.representations)]
+                            base-type-info.representations
+                            base-type-info.metrics)]
                         [interval-index : CompilerRegIntervalIndex
                           (CompilerRegIntervalIndex starts ends segments)]
                         [intervals : CompilerRegIntervalSeq
@@ -44620,7 +44782,7 @@
       [group-vars : live.CompilerLiveI64Set
         (compiler-reg-function-group-vars type-segment-bases func type-info)]
       [liveness-handle : CompilerRegLivenessHandle
-        (compiler-reg-liveness-handle-make func false)]
+        (compiler-reg-liveness-handle-make func false type-info.metrics)]
       [liveness : live.CompilerFunctionLiveness liveness-handle.baseline]
       (match (compiler-reg-live-interval-selection func liveness)
         [(CompilerRegIntervalSelection.Selection intervals interval-index)

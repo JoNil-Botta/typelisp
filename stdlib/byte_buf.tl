@@ -36,10 +36,6 @@
   (slots (__tl_dyn-array u8))
   (len i64))
 
-(defstruct ByteBufMutViewRef
-  (:lifetimes source)
-  (value (&mut source bytes)))
-
 (unsafe
   (extern (tl_bytes_view_from_str_parts
     [data : (Ptr u8)]
@@ -159,20 +155,12 @@
   [view : (&mut source bytes)]
   [index : i64]
   [fallback : u8]) : u8
-  (let
-    [cell : (ByteBufMutViewRef source) (ByteBufMutViewRef view)]
-    [address : u64
-      (unsafe
-        (ptr-read (ptr-cast (ptr-addr-of cell) : (Ptr u64))))]
-    [owned : String
-      (unsafe
-        (ptr-read (int->ptr address : (Ptr String))))]
-    (if (if (>= index 0)
-      (< index (string-length (& owned)))
-      false)
-      (unsafe
-        (ptr-read (ptr-offset (string-data (& owned)) index)))
-      fallback)))
+  (if (if (>= index 0)
+    (< index (bytes-mut-length view))
+    false)
+    (unsafe
+      (ptr-read (ptr-offset (bytes-mut-data view) index)))
+    fallback))
 
 ;: Read byte `index`, trapping when `index` is outside the view.
 (define (bytes-ref [view : (& source bytes)] [index : i64]) : u8
@@ -183,35 +171,17 @@
 
 ;: Read byte `index` from a mutable view, trapping when outside the view.
 (define (bytes-mut-ref [view : (&mut source bytes)] [index : i64]) : u8
-  (let
-    [cell : (ByteBufMutViewRef source) (ByteBufMutViewRef view)]
-    [address : u64
-      (unsafe
-        (ptr-read (ptr-cast (ptr-addr-of cell) : (Ptr u64))))]
-    [owned : String
-      (unsafe
-        (ptr-read (int->ptr address : (Ptr String))))]
-    (begin
-      (check-range (string-length (& owned)) index 1)
-      (unsafe
-        (ptr-read (ptr-offset (string-data (& owned)) index))))))
+  (begin
+    (check-range (bytes-mut-length view) index 1)
+    (unsafe
+      (ptr-read (ptr-offset (bytes-mut-data view) index)))))
 
 ;: Overwrite byte `index` inside a mutable fixed-length view.
 (define (bytes-set! [view : (&mut source bytes)] [index : i64] [value : u8]) : unit
-  (let
-    [cell : (ByteBufMutViewRef source) (ByteBufMutViewRef view)]
-    [address : u64
-      (unsafe
-        (ptr-read (ptr-cast (ptr-addr-of cell) : (Ptr u64))))]
-    [owned : String
-      (unsafe
-        (ptr-read (int->ptr address : (Ptr String))))]
-    (begin
-      (check-range (string-length (& owned)) index 1)
-      (unsafe
-        (ptr-write!
-          (ptr-offset (ptr-cast (string-data (& owned)) : (MutPtr u8)) index)
-          value)))))
+  (begin
+    (check-range (bytes-mut-length view) index 1)
+    (unsafe
+      (ptr-write! (ptr-offset (bytes-mut-data view) index) value))))
 
 ;: Convert a borrowed `str` view into an immutable borrowed byte view.
 (define (str-as-bytes [text : (& source str)]) : (& source bytes)
@@ -235,21 +205,13 @@
   [view : (&mut source bytes)]
   [start : i64]
   [count : i64]) : (&mut source bytes)
-  (let
-    [cell : (ByteBufMutViewRef source) (ByteBufMutViewRef view)]
-    [address : u64
-      (unsafe
-        (ptr-read (ptr-cast (ptr-addr-of cell) : (Ptr u64))))]
-    [owned : String
-      (unsafe
-        (ptr-read (int->ptr address : (Ptr String))))]
-    (begin
-      (check-range (string-length (& owned)) start count)
-      (unsafe
-        (tl_bytes_mut_view_from_bytes_parts
-          (ptr-offset (ptr-cast (string-data (& owned)) : (MutPtr u8)) start)
-          count
-          cell.value)))))
+  (begin
+    (check-range (bytes-mut-length view) start count)
+    (unsafe
+      (tl_bytes_mut_view_from_bytes_parts
+        (ptr-offset (bytes-mut-data view) start)
+        count
+        view))))
 
 ;: Copy all bytes in `view` into a fresh `String`.
 (define (bytes-to-string [view : (& source bytes)]) : String

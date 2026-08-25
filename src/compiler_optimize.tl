@@ -27383,24 +27383,205 @@
   (No)
   (Some bool i64))
 
-;; One redirected predecessor and the value it must deliver at X.
+;; One redirected predecessor and the value it must deliver at X. Dense plan
+;; storage retains cons-order through reverse logical indexing: appending a
+;; record is O(1), while index zero remains the newest logical item.
+(defstruct OptFlagExitEdgeValue
+  (label i64)
+  (value ir.CompilerIrValue))
+
 (defenum OptFlagExitEdgeValues
   (Nil)
-  (Cons i64 ir.CompilerIrValue (Box OptFlagExitEdgeValues)))
+  (Dense (__tl_dyn-array OptFlagExitEdgeValue) i64))
 
 ;; A phi already sitting in X: its dst, the value its G edge carried, and the
 ;; value each redirected predecessor delivers in that edge's place.
+(defstruct OptFlagExitPhiFix
+  (dst i64)
+  (value ir.CompilerIrValue)
+  (values OptFlagExitEdgeValues))
+
 (defenum OptFlagExitPhiFixes
   (Nil)
-  (Cons i64 ir.CompilerIrValue OptFlagExitEdgeValues (Box OptFlagExitPhiFixes)))
+  (Dense (__tl_dyn-array OptFlagExitPhiFix) i64))
 
 ;; A loop value read from X's dominated region: the value, the fresh var the
 ;; exit phi minted for it, its type, and one input per redirected predecessor.
 ;; The surviving predecessors' inputs are the value itself and are appended when
 ;; the phi is materialised.
+(defstruct OptFlagExitMint
+  (source i64)
+  (fresh i64)
+  (ty ast.AstType)
+  (values OptFlagExitEdgeValues))
+
 (defenum OptFlagExitMints
   (Nil)
-  (Cons i64 i64 ast.AstType OptFlagExitEdgeValues (Box OptFlagExitMints)))
+  (Dense (__tl_dyn-array OptFlagExitMint) i64))
+
+(define (opt-flag-exit-edge-values-count [values : OptFlagExitEdgeValues]) : i64
+  (match values
+    [(OptFlagExitEdgeValues.Nil) 0]
+    [(OptFlagExitEdgeValues.Dense _ len) len]))
+
+(define (opt-flag-exit-edge-values-ref
+  [values : OptFlagExitEdgeValues]
+  [index : i64]) : OptFlagExitEdgeValue
+  (match values
+    [(OptFlagExitEdgeValues.Nil)
+      (OptFlagExitEdgeValue -1 (ir.CompilerIrValue.Unit))]
+    [(OptFlagExitEdgeValues.Dense items len)
+      (array-ref items (- (- len 1) index))]))
+
+(define (opt-flag-exit-edge-values-tail [values : OptFlagExitEdgeValues]) : OptFlagExitEdgeValues
+  (match values
+    [(OptFlagExitEdgeValues.Nil) (OptFlagExitEdgeValues.Nil)]
+    [(OptFlagExitEdgeValues.Dense items len)
+      (if (<= len 1)
+        (OptFlagExitEdgeValues.Nil)
+        (OptFlagExitEdgeValues.Dense items (- len 1)))]))
+
+(define (opt-flag-exit-edge-values-cons
+  [label : i64]
+  [value : ir.CompilerIrValue]
+  [values : OptFlagExitEdgeValues]) : OptFlagExitEdgeValues
+  (let
+    [item : OptFlagExitEdgeValue (OptFlagExitEdgeValue label value)]
+    (match values
+      [(OptFlagExitEdgeValues.Nil)
+        (let
+          [items : (__tl_dyn-array OptFlagExitEdgeValue)
+            (array.make-array OptFlagExitEdgeValue 4)]
+          (begin
+            (set! (array-ref items 0) item)
+            (OptFlagExitEdgeValues.Dense items 1)))]
+      [(OptFlagExitEdgeValues.Dense items len)
+        (if (< len (array-length items))
+          (begin
+            (set! (array-ref items len) item)
+            (OptFlagExitEdgeValues.Dense items (+ len 1)))
+          (let
+            [bigger : (__tl_dyn-array OptFlagExitEdgeValue)
+              (array.make-array
+                OptFlagExitEdgeValue
+                (opt-dense-next-capacity len))]
+            [index : i64 0]
+            (begin
+              (while (< index len)
+                (begin
+                  (set! (array-ref bigger index) (array-ref items index))
+                  (set! index (+ index 1))))
+              (set! (array-ref bigger len) item)
+              (OptFlagExitEdgeValues.Dense bigger (+ len 1)))))])))
+
+(define (opt-flag-exit-phi-fixes-count [fixes : OptFlagExitPhiFixes]) : i64
+  (match fixes
+    [(OptFlagExitPhiFixes.Nil) 0]
+    [(OptFlagExitPhiFixes.Dense _ len) len]))
+
+(define (opt-flag-exit-phi-fixes-ref
+  [fixes : OptFlagExitPhiFixes]
+  [index : i64]) : OptFlagExitPhiFix
+  (match fixes
+    [(OptFlagExitPhiFixes.Nil)
+      (OptFlagExitPhiFix
+        -1
+        (ir.CompilerIrValue.Unit)
+        (OptFlagExitEdgeValues.Nil))]
+    [(OptFlagExitPhiFixes.Dense items len)
+      (array-ref items (- (- len 1) index))]))
+
+(define (opt-flag-exit-phi-fixes-tail [fixes : OptFlagExitPhiFixes]) : OptFlagExitPhiFixes
+  (match fixes
+    [(OptFlagExitPhiFixes.Nil) (OptFlagExitPhiFixes.Nil)]
+    [(OptFlagExitPhiFixes.Dense items len)
+      (if (<= len 1)
+        (OptFlagExitPhiFixes.Nil)
+        (OptFlagExitPhiFixes.Dense items (- len 1)))]))
+
+(define (opt-flag-exit-phi-fixes-cons
+  [dst : i64]
+  [value : ir.CompilerIrValue]
+  [values : OptFlagExitEdgeValues]
+  [fixes : OptFlagExitPhiFixes]) : OptFlagExitPhiFixes
+  (let
+    [item : OptFlagExitPhiFix (OptFlagExitPhiFix dst value values)]
+    (match fixes
+      [(OptFlagExitPhiFixes.Nil)
+        (let
+          [items : (__tl_dyn-array OptFlagExitPhiFix)
+            (array.make-array OptFlagExitPhiFix 4)]
+          (begin
+            (set! (array-ref items 0) item)
+            (OptFlagExitPhiFixes.Dense items 1)))]
+      [(OptFlagExitPhiFixes.Dense items len)
+        (if (< len (array-length items))
+          (begin
+            (set! (array-ref items len) item)
+            (OptFlagExitPhiFixes.Dense items (+ len 1)))
+          (let
+            [bigger : (__tl_dyn-array OptFlagExitPhiFix)
+              (array.make-array OptFlagExitPhiFix (opt-dense-next-capacity len))]
+            [index : i64 0]
+            (begin
+              (while (< index len)
+                (begin
+                  (set! (array-ref bigger index) (array-ref items index))
+                  (set! index (+ index 1))))
+              (set! (array-ref bigger len) item)
+              (OptFlagExitPhiFixes.Dense bigger (+ len 1)))))])))
+
+(define (opt-flag-exit-mints-count [mints : OptFlagExitMints]) : i64
+  (match mints
+    [(OptFlagExitMints.Nil) 0]
+    [(OptFlagExitMints.Dense _ len) len]))
+
+(define (opt-flag-exit-mints-ref [mints : OptFlagExitMints] [index : i64]) : OptFlagExitMint
+  (match mints
+    [(OptFlagExitMints.Nil)
+      (OptFlagExitMint -1 -1 (ast.AstType.Unit) (OptFlagExitEdgeValues.Nil))]
+    [(OptFlagExitMints.Dense items len) (array-ref items (- (- len 1) index))]))
+
+(define (opt-flag-exit-mints-tail [mints : OptFlagExitMints]) : OptFlagExitMints
+  (match mints
+    [(OptFlagExitMints.Nil) (OptFlagExitMints.Nil)]
+    [(OptFlagExitMints.Dense items len)
+      (if (<= len 1)
+        (OptFlagExitMints.Nil)
+        (OptFlagExitMints.Dense items (- len 1)))]))
+
+(define (opt-flag-exit-mints-cons
+  [source : i64]
+  [fresh : i64]
+  [ty : ast.AstType]
+  [values : OptFlagExitEdgeValues]
+  [mints : OptFlagExitMints]) : OptFlagExitMints
+  (let
+    [item : OptFlagExitMint (OptFlagExitMint source fresh ty values)]
+    (match mints
+      [(OptFlagExitMints.Nil)
+        (let
+          [items : (__tl_dyn-array OptFlagExitMint)
+            (array.make-array OptFlagExitMint 4)]
+          (begin
+            (set! (array-ref items 0) item)
+            (OptFlagExitMints.Dense items 1)))]
+      [(OptFlagExitMints.Dense items len)
+        (if (< len (array-length items))
+          (begin
+            (set! (array-ref items len) item)
+            (OptFlagExitMints.Dense items (+ len 1)))
+          (let
+            [bigger : (__tl_dyn-array OptFlagExitMint)
+              (array.make-array OptFlagExitMint (opt-dense-next-capacity len))]
+            [index : i64 0]
+            (begin
+              (while (< index len)
+                (begin
+                  (set! (array-ref bigger index) (array-ref items index))
+                  (set! index (+ index 1))))
+              (set! (array-ref bigger len) item)
+              (OptFlagExitMints.Dense bigger (+ len 1)))))])))
 
 (defstruct OptFlagExitPlan
   (gate i64)
@@ -29139,10 +29320,14 @@
 (define (opt-flag-exit-phi-fix-lookup [fixes : OptFlagExitPhiFixes] [dst : i64]) : OptFlagExitEdgeValues
   (match fixes
     [(OptFlagExitPhiFixes.Nil) (OptFlagExitEdgeValues.Nil)]
-    [(OptFlagExitPhiFixes.Cons found _ values rest)
-      (if (= found dst)
-        values
-        (opt-flag-exit-phi-fix-lookup (__tl-box-place rest) dst))]))
+    [(OptFlagExitPhiFixes.Dense _ _)
+      (let
+        [fix : OptFlagExitPhiFix (opt-flag-exit-phi-fixes-ref fixes 0)]
+        (if (= fix.dst dst)
+          fix.values
+          (opt-flag-exit-phi-fix-lookup
+            (opt-flag-exit-phi-fixes-tail fixes)
+            dst)))]))
 
 ;; X's phis, each paired with the value its G edge carried. A phi with no input
 ;; on that edge means the CFG and the phi web disagree, so refuse.
@@ -29162,11 +29347,11 @@
               instrs
               (+ pos 1)
               arm-pred
-              (OptFlagExitPhiFixes.Cons
+              (opt-flag-exit-phi-fixes-cons
                 dst
                 value
                 (OptFlagExitEdgeValues.Nil)
-                (box acc)))])]
+                acc))])]
       [_ (OptFlagExitMaybePhiFixes.Some acc)])))
 
 (define (opt-flag-exit-phi-seeds
@@ -29207,18 +29392,15 @@
                 mint
                 (+ var 1)
                 (+ next-var 1)
-                (OptFlagExitMints.Cons
+                (opt-flag-exit-mints-cons
                   var
                   next-var
                   ty
                   (OptFlagExitEdgeValues.Nil)
-                  (box acc)))])]))))
+                  acc))])]))))
 
 (define (opt-flag-exit-mint-count [mints : OptFlagExitMints] [acc : i64]) : i64
-  (match mints
-    [(OptFlagExitMints.Nil) acc]
-    [(OptFlagExitMints.Cons _ _ _ _ rest)
-      (opt-flag-exit-mint-count (__tl-box-place rest) (+ acc 1))]))
+  (+ acc (opt-flag-exit-mints-count mints)))
 
 (define (opt-flag-exit-extend-phi-fixes
   [ctx : OptFlagExitFixCtx]
@@ -29230,35 +29412,37 @@
   (match fixes
     [(OptFlagExitPhiFixes.Nil)
       (OptFlagExitMaybePhiFixes.Some (OptFlagExitPhiFixes.Nil))]
-    [(OptFlagExitPhiFixes.Cons dst value values rest)
-      (match (opt-flag-exit-resolve
-        ctx.blocks
-        ctx.index
-        ctx.doms
-        ctx.def-label
-        pos
-        labels
-        pred
-        value
-        at
-        ctx.fuel)
-        [(ir.CompilerIrMaybeValue.No) (OptFlagExitMaybePhiFixes.No)]
-        [(ir.CompilerIrMaybeValue.Some resolved)
-          (match (opt-flag-exit-extend-phi-fixes
-            ctx
-            pos
-            labels
-            pred
-            at
-            (__tl-box-place rest))
-            [(OptFlagExitMaybePhiFixes.No) (OptFlagExitMaybePhiFixes.No)]
-            [(OptFlagExitMaybePhiFixes.Some tail)
-              (OptFlagExitMaybePhiFixes.Some
-                (OptFlagExitPhiFixes.Cons
-                  dst
-                  value
-                  (OptFlagExitEdgeValues.Cons pred resolved (box values))
-                  (box tail)))])])]))
+    [(OptFlagExitPhiFixes.Dense _ _)
+      (let
+        [fix : OptFlagExitPhiFix (opt-flag-exit-phi-fixes-ref fixes 0)]
+        (match (opt-flag-exit-resolve
+          ctx.blocks
+          ctx.index
+          ctx.doms
+          ctx.def-label
+          pos
+          labels
+          pred
+          fix.value
+          at
+          ctx.fuel)
+          [(ir.CompilerIrMaybeValue.No) (OptFlagExitMaybePhiFixes.No)]
+          [(ir.CompilerIrMaybeValue.Some resolved)
+            (match (opt-flag-exit-extend-phi-fixes
+              ctx
+              pos
+              labels
+              pred
+              at
+              (opt-flag-exit-phi-fixes-tail fixes))
+              [(OptFlagExitMaybePhiFixes.No) (OptFlagExitMaybePhiFixes.No)]
+              [(OptFlagExitMaybePhiFixes.Some tail)
+                (OptFlagExitMaybePhiFixes.Some
+                  (opt-flag-exit-phi-fixes-cons
+                    fix.dst
+                    fix.value
+                    (opt-flag-exit-edge-values-cons pred resolved fix.values)
+                    tail))])]))]))
 
 (define (opt-flag-exit-extend-mints
   [ctx : OptFlagExitFixCtx]
@@ -29269,36 +29453,38 @@
   [mints : OptFlagExitMints]) : OptFlagExitMaybeMints
   (match mints
     [(OptFlagExitMints.Nil) (OptFlagExitMaybeMints.Some (OptFlagExitMints.Nil))]
-    [(OptFlagExitMints.Cons source fresh ty values rest)
-      (match (opt-flag-exit-resolve
-        ctx.blocks
-        ctx.index
-        ctx.doms
-        ctx.def-label
-        pos
-        labels
-        pred
-        (ir.CompilerIrValue.Var source)
-        at
-        ctx.fuel)
-        [(ir.CompilerIrMaybeValue.No) (OptFlagExitMaybeMints.No)]
-        [(ir.CompilerIrMaybeValue.Some resolved)
-          (match (opt-flag-exit-extend-mints
-            ctx
-            pos
-            labels
-            pred
-            at
-            (__tl-box-place rest))
-            [(OptFlagExitMaybeMints.No) (OptFlagExitMaybeMints.No)]
-            [(OptFlagExitMaybeMints.Some tail)
-              (OptFlagExitMaybeMints.Some
-                (OptFlagExitMints.Cons
-                  source
-                  fresh
-                  ty
-                  (OptFlagExitEdgeValues.Cons pred resolved (box values))
-                  (box tail)))])])]))
+    [(OptFlagExitMints.Dense _ _)
+      (let
+        [mint : OptFlagExitMint (opt-flag-exit-mints-ref mints 0)]
+        (match (opt-flag-exit-resolve
+          ctx.blocks
+          ctx.index
+          ctx.doms
+          ctx.def-label
+          pos
+          labels
+          pred
+          (ir.CompilerIrValue.Var mint.source)
+          at
+          ctx.fuel)
+          [(ir.CompilerIrMaybeValue.No) (OptFlagExitMaybeMints.No)]
+          [(ir.CompilerIrMaybeValue.Some resolved)
+            (match (opt-flag-exit-extend-mints
+              ctx
+              pos
+              labels
+              pred
+              at
+              (opt-flag-exit-mints-tail mints))
+              [(OptFlagExitMaybeMints.No) (OptFlagExitMaybeMints.No)]
+              [(OptFlagExitMaybeMints.Some tail)
+                (OptFlagExitMaybeMints.Some
+                  (opt-flag-exit-mints-cons
+                    mint.source
+                    mint.fresh
+                    mint.ty
+                    (opt-flag-exit-edge-values-cons pred resolved mint.values)
+                    tail))])]))]))
 
 (define (opt-flag-exit-fix-edges
   [ctx : OptFlagExitFixCtx]
@@ -29389,10 +29575,10 @@
               gate
               dropped
               source
-              (OptFlagExitEdgeValues.Cons
+              (opt-flag-exit-edge-values-cons
                 label
                 (ir.CompilerIrValue.Var source)
-                (box values))))))]))
+                values)))))]))
 
 (define (opt-flag-exit-mints-survivors
   [doms : OptDomInfo]
@@ -29403,36 +29589,48 @@
   [mints : OptFlagExitMints]) : OptFlagExitMaybeMints
   (match mints
     [(OptFlagExitMints.Nil) (OptFlagExitMaybeMints.Some (OptFlagExitMints.Nil))]
-    [(OptFlagExitMints.Cons source fresh ty values rest)
-      (match (opt-flag-exit-mint-survivors
-        doms
-        def-label
-        preds
-        gate
-        dropped
-        source
-        values)
-        [(OptFlagExitMaybeEdgeValues.No) (OptFlagExitMaybeMints.No)]
-        [(OptFlagExitMaybeEdgeValues.Some full)
-          (match (opt-flag-exit-mints-survivors
-            doms
-            def-label
-            preds
-            gate
-            dropped
-            (__tl-box-place rest))
-            [(OptFlagExitMaybeMints.No) (OptFlagExitMaybeMints.No)]
-            [(OptFlagExitMaybeMints.Some tail)
-              (OptFlagExitMaybeMints.Some
-                (OptFlagExitMints.Cons source fresh ty full (box tail)))])])]))
+    [(OptFlagExitMints.Dense _ _)
+      (let
+        [mint : OptFlagExitMint (opt-flag-exit-mints-ref mints 0)]
+        (match (opt-flag-exit-mint-survivors
+          doms
+          def-label
+          preds
+          gate
+          dropped
+          mint.source
+          mint.values)
+          [(OptFlagExitMaybeEdgeValues.No) (OptFlagExitMaybeMints.No)]
+          [(OptFlagExitMaybeEdgeValues.Some full)
+            (match (opt-flag-exit-mints-survivors
+              doms
+              def-label
+              preds
+              gate
+              dropped
+              (opt-flag-exit-mints-tail mints))
+              [(OptFlagExitMaybeMints.No) (OptFlagExitMaybeMints.No)]
+              [(OptFlagExitMaybeMints.Some tail)
+                (OptFlagExitMaybeMints.Some
+                  (opt-flag-exit-mints-cons
+                    mint.source
+                    mint.fresh
+                    mint.ty
+                    full
+                    tail))])]))]))
 
 (define (opt-flag-exit-mint-env [mints : OptFlagExitMints] [env : OptCopyEnv]) : OptCopyEnv
   (match mints
     [(OptFlagExitMints.Nil) env]
-    [(OptFlagExitMints.Cons source fresh _ _ rest)
-      (opt-flag-exit-mint-env
-        (__tl-box-place rest)
-        (OptCopyEnv.Cons source (ir.CompilerIrValue.Var fresh) (box env)))]))
+    [(OptFlagExitMints.Dense _ _)
+      (let
+        [mint : OptFlagExitMint (opt-flag-exit-mints-ref mints 0)]
+        (opt-flag-exit-mint-env
+          (opt-flag-exit-mints-tail mints)
+          (OptCopyEnv.Cons
+            mint.source
+            (ir.CompilerIrValue.Var mint.fresh)
+            (box env))))]))
 
 ;; --- C7's alternate-exit clause, for an alternate exit that lands ON X --------
 ;;
@@ -29634,10 +29832,11 @@
   [mints : OptFlagExitMints]) : bool
   (match mints
     [(OptFlagExitMints.Nil) true]
-    [(OptFlagExitMints.Cons source _ _ _ rest)
-      (and
-        (let
-          [value : ir.CompilerIrValue (ir.CompilerIrValue.Var source)]
+    [(OptFlagExitMints.Dense _ _)
+      (let
+        [mint : OptFlagExitMint (opt-flag-exit-mints-ref mints 0)]
+        [value : ir.CompilerIrValue (ir.CompilerIrValue.Var mint.source)]
+        (and
           (match (opt-flag-exit-resolve
             ctx.blocks
             ctx.index
@@ -29659,14 +29858,14 @@
                 len
                 ctx.exit-preds
                 value
-                want)]))
-        (opt-flag-exit-agree-mints?
-          ctx
-          pos
-          labels
-          pred
-          len
-          (__tl-box-place rest)))]))
+                want)])
+          (opt-flag-exit-agree-mints?
+            ctx
+            pos
+            labels
+            pred
+            len
+            (opt-flag-exit-mints-tail mints))))]))
 
 ;; --- reads outside the loop ---------------------------------------------------
 ;;
@@ -30052,25 +30251,162 @@
   [values : OptFlagExitEdgeValues]) : ir.CompilerIrPhiInputList
   (match values
     [(OptFlagExitEdgeValues.Nil) inputs]
-    [(OptFlagExitEdgeValues.Cons label value rest)
-      (opt-flag-exit-add-inputs
-        (ir.compiler-ir-phi-input-cons value label inputs)
-        (__tl-box-place rest))]))
+    [(OptFlagExitEdgeValues.Dense _ _)
+      (let
+        [edge : OptFlagExitEdgeValue (opt-flag-exit-edge-values-ref values 0)]
+        (opt-flag-exit-add-inputs
+          (ir.compiler-ir-phi-input-cons edge.value edge.label inputs)
+          (opt-flag-exit-edge-values-tail values)))]))
 
 (define (opt-flag-exit-push-mints!
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]
   [mints : OptFlagExitMints]) : unit
   (match mints
     [(OptFlagExitMints.Nil) unit]
-    [(OptFlagExitMints.Cons _ fresh ty values rest)
+    [(OptFlagExitMints.Dense _ _)
+      (let
+        [mint : OptFlagExitMint (opt-flag-exit-mints-ref mints 0)]
+        (begin
+          (ir.compiler-ir-instr-builder-push!
+            builder
+            (ir.CompilerIrInstr.Phi
+              mint.fresh
+              (opt-flag-exit-add-inputs
+                (ir.CompilerIrPhiInputList.Nil)
+                mint.values)
+              mint.ty))
+          (opt-flag-exit-push-mints! builder (opt-flag-exit-mints-tail mints))))]))
+
+(cfg
+  test
+  (define (opt-flag-exit-test-phi-input-order?
+    [inputs : ir.CompilerIrPhiInputList]
+    [expected : i64]
+    [count : i64]) : bool
+    (match (ir.compiler-ir-phi-input-list-force-cons inputs)
+      [(ir.CompilerIrPhiInputList.Nil) (= expected count)]
+      [(ir.CompilerIrPhiInputList.Cons value label rest)
+        (and
+          (= label expected)
+          (match value
+            [(ir.CompilerIrValue.I64 literal) (= literal (+ 1000 expected))]
+            [_ false])
+          (opt-flag-exit-test-phi-input-order?
+            (__tl-box-place rest)
+            (+ expected 1)
+            count))]
+      [(ir.CompilerIrPhiInputList.Array _) false])))
+
+(cfg
+  test
+  (test
+    optimizer-flag-exit-plan-dense-storage-grows-and-rebuilds
+    (let
+      [values : OptFlagExitEdgeValues (OptFlagExitEdgeValues.Nil)]
+      [fixes : OptFlagExitPhiFixes (OptFlagExitPhiFixes.Nil)]
+      [mints : OptFlagExitMints (OptFlagExitMints.Nil)]
+      [index : i64 0]
       (begin
-        (ir.compiler-ir-instr-builder-push!
-          builder
-          (ir.CompilerIrInstr.Phi
-            fresh
-            (opt-flag-exit-add-inputs (ir.CompilerIrPhiInputList.Nil) values)
-            ty))
-        (opt-flag-exit-push-mints! builder (__tl-box-place rest)))]))
+        (while (< index 9)
+          (begin
+            (set!
+              values
+              (opt-flag-exit-edge-values-cons
+                index
+                (ir.CompilerIrValue.I64 (+ 1000 index))
+                values))
+            (set!
+              fixes
+              (opt-flag-exit-phi-fixes-cons
+                index
+                (ir.CompilerIrValue.I64 (+ 2000 index))
+                (OptFlagExitEdgeValues.Nil)
+                fixes))
+            (set!
+              mints
+              (opt-flag-exit-mints-cons
+                index
+                (+ 100 index)
+                (ast.AstType.I64)
+                (OptFlagExitEdgeValues.Nil)
+                mints))
+            (set! index (+ index 1))))
+        (test.assert-i64-eq
+          (opt-flag-exit-edge-values-count values)
+          9
+          "flag-exit edge values grow past four")
+        (test.assert-i64-eq
+          (opt-flag-exit-phi-fixes-count fixes)
+          9
+          "flag-exit phi fixes grow past four")
+        (test.assert-i64-eq
+          (opt-flag-exit-mints-count mints)
+          9
+          "flag-exit mints grow past four")
+        (match values
+          [(OptFlagExitEdgeValues.Nil)
+            (test.assert-true false "edge values are non-empty")]
+          [(OptFlagExitEdgeValues.Dense items _)
+            (test.assert-true
+              (>= (array-length items) 9)
+              "edge value capacity expands")])
+        (match fixes
+          [(OptFlagExitPhiFixes.Nil)
+            (test.assert-true false "phi fixes are non-empty")]
+          [(OptFlagExitPhiFixes.Dense items _)
+            (test.assert-true
+              (>= (array-length items) 9)
+              "phi-fix capacity expands")])
+        (match mints
+          [(OptFlagExitMints.Nil)
+            (test.assert-true false "mints are non-empty")]
+          [(OptFlagExitMints.Dense items _)
+            (test.assert-true
+              (>= (array-length items) 9)
+              "mint capacity expands")])
+        (let
+          [newest-edge : OptFlagExitEdgeValue
+            (opt-flag-exit-edge-values-ref values 0)]
+          [oldest-edge : OptFlagExitEdgeValue
+            (opt-flag-exit-edge-values-ref values 8)]
+          [newest-fix : OptFlagExitPhiFix (opt-flag-exit-phi-fixes-ref fixes 0)]
+          [next-fix : OptFlagExitPhiFix (opt-flag-exit-phi-fixes-ref fixes 1)]
+          [newest-mint : OptFlagExitMint (opt-flag-exit-mints-ref mints 0)]
+          [next-mint : OptFlagExitMint (opt-flag-exit-mints-ref mints 1)]
+          [rebuilt : OptFlagExitPhiFixes
+            (opt-flag-exit-phi-fixes-cons
+              newest-fix.dst
+              newest-fix.value
+              (opt-flag-exit-edge-values-cons
+                77
+                (ir.CompilerIrValue.I64 7077)
+                newest-fix.values)
+              (opt-flag-exit-phi-fixes-tail fixes))]
+          (begin
+            (test.assert-i64-eq newest-edge.label 8 "newest edge stays first")
+            (test.assert-i64-eq oldest-edge.label 0 "oldest edge stays last")
+            (test.assert-i64-eq newest-fix.dst 8 "newest phi fix stays first")
+            (test.assert-i64-eq next-fix.dst 7 "phi-fix order is stable")
+            (test.assert-i64-eq newest-mint.source 8 "newest mint stays first")
+            (test.assert-i64-eq next-mint.source 7 "mint order is stable")
+            (test.assert-i64-eq
+              (opt-flag-exit-edge-values-count
+                (opt-flag-exit-phi-fix-lookup rebuilt 8))
+              1
+              "phi-fix rebuild updates the selected destination")
+            (test.assert-i64-eq
+              (opt-flag-exit-edge-values-count
+                (opt-flag-exit-phi-fix-lookup rebuilt 7))
+              0
+              "phi-fix rebuild preserves the remaining destinations")
+            (test.assert-true
+              (opt-flag-exit-test-phi-input-order?
+                (opt-flag-exit-add-inputs
+                  (ir.CompilerIrPhiInputList.Nil)
+                  values)
+                0
+                9)
+              "materialized phi inputs preserve predecessor order")))))))
 
 ;; A plan with nothing minted leaves every read outside the loop alone, which is
 ;; the shape this pass has always had; the walks below then cost nothing.
@@ -60944,42 +61280,75 @@
 ;; The distinct invariant bounds collected off one index expression. A phi merges
 ;; several, so the set is what the guard states, once per member.
 (defenum OptBceMaskList
-  (Nil)
-  (Cons ir.CompilerIrValue (Box OptBceMaskList)))
+  (Empty)
+  (Dense (__tl_dyn-array ir.CompilerIrValue) i64))
 
 (defenum OptBceMaskSet
   (No)
-  (Some OptBceMaskList i64))
+  (Some OptBceMaskList))
 
 ;; A cursor merged through the arms of a `cond` carries one bound per arm; more
 ;; than a handful would be a guard nobody can pay for.
 (define (opt-bce-mask-set-max) : i64
   4)
 
+(define (opt-bce-mask-list-count [masks : OptBceMaskList]) : i64
+  (match masks
+    [(OptBceMaskList.Empty) 0]
+    [(OptBceMaskList.Dense _ count) count]))
+
+(define (opt-bce-mask-list-ref [masks : OptBceMaskList] [index : i64]) : ir.CompilerIrValue
+  (match masks
+    [(OptBceMaskList.Empty) (ir.CompilerIrValue.Unit)]
+    [(OptBceMaskList.Dense values count)
+      (array-ref values (- (- count 1) index))]))
+
+(define (opt-bce-mask-list-tail [masks : OptBceMaskList]) : OptBceMaskList
+  (match masks
+    [(OptBceMaskList.Empty) (OptBceMaskList.Empty)]
+    [(OptBceMaskList.Dense values count)
+      (if (<= count 1)
+        (OptBceMaskList.Empty)
+        (OptBceMaskList.Dense values (- count 1)))]))
+
+(define (opt-bce-mask-list-cons
+  [value : ir.CompilerIrValue]
+  [masks : OptBceMaskList]) : OptBceMaskList
+  (match masks
+    [(OptBceMaskList.Empty)
+      (let
+        [values : (__tl_dyn-array ir.CompilerIrValue)
+          (array.make-array ir.CompilerIrValue (opt-bce-mask-set-max))]
+        (begin
+          (set! (array-ref values 0) value)
+          (OptBceMaskList.Dense values 1)))]
+    [(OptBceMaskList.Dense values count)
+      (begin
+        (set! (array-ref values count) value)
+        (OptBceMaskList.Dense values (+ count 1)))]))
+
 (define (opt-bce-mask-list-contains?
   [masks : OptBceMaskList]
   [value : ir.CompilerIrValue]) : bool
   (match masks
-    [(OptBceMaskList.Nil) false]
-    [(OptBceMaskList.Cons mask rest)
-      (if (opt-value-eq mask value)
+    [(OptBceMaskList.Empty) false]
+    [(OptBceMaskList.Dense _ _)
+      (if (opt-value-eq (opt-bce-mask-list-ref masks 0) value)
         true
-        (opt-bce-mask-list-contains? (deref rest) value))]))
+        (opt-bce-mask-list-contains? (opt-bce-mask-list-tail masks) value))]))
 
 (define (opt-bce-mask-set-add
   [set : OptBceMaskSet]
   [value : ir.CompilerIrValue]) : OptBceMaskSet
   (match set
     [(OptBceMaskSet.No) (OptBceMaskSet.No)]
-    [(OptBceMaskSet.Some masks count)
-      (cond
-        [(opt-bce-mask-list-contains? masks value)
-          (OptBceMaskSet.Some masks count)]
-        [(>= count (opt-bce-mask-set-max)) (OptBceMaskSet.No)]
-        [else
-          (OptBceMaskSet.Some
-            (OptBceMaskList.Cons value (box masks))
-            (+ count 1))])]))
+    [(OptBceMaskSet.Some masks)
+      (let
+        [count : i64 (opt-bce-mask-list-count masks)]
+        (cond
+          [(opt-bce-mask-list-contains? masks value) (OptBceMaskSet.Some masks)]
+          [(>= count (opt-bce-mask-set-max)) (OptBceMaskSet.No)]
+          [else (OptBceMaskSet.Some (opt-bce-mask-list-cons value masks))]))]))
 
 ;; An invariant bound is usable only when it can pass: a negative literal never
 ;; can (see the head comment).
@@ -60995,13 +61364,73 @@
   [length-value : ir.CompilerIrValue]
   [acc : OptBceVersionGuardAcc (:consume)]) : OptBceVersionGuardAcc
   (match masks
-    [(OptBceMaskList.Nil) acc]
-    [(OptBceMaskList.Cons mask rest)
+    [(OptBceMaskList.Empty) acc]
+    [(OptBceMaskList.Dense _ _)
       (opt-bce-mask-conds
         cell
-        (deref rest)
+        (opt-bce-mask-list-tail masks)
         length-value
-        (opt-bce-version-mask-cond cell mask length-value acc))]))
+        (opt-bce-version-mask-cond
+          cell
+          (opt-bce-mask-list-ref masks 0)
+          length-value
+          acc))]))
+
+(cfg
+  test
+  (test
+    optimizer-bce-mask-fixed-capacity-order-and-overflow
+    (let
+      [set : OptBceMaskSet (OptBceMaskSet.Some (OptBceMaskList.Empty))]
+      [index : i64 0]
+      (begin
+        (match set
+          [(OptBceMaskSet.No)
+            (test.assert-true false "empty BCE mask set is available")]
+          [(OptBceMaskSet.Some masks)
+            (test.assert-i64-eq
+              (opt-bce-mask-list-count masks)
+              0
+              "BCE mask set starts empty")])
+        (while (< index 4)
+          (begin
+            (set! set (opt-bce-mask-set-add set (ir.CompilerIrValue.I64 index)))
+            (set! index (+ index 1))))
+        (set! set (opt-bce-mask-set-add set (ir.CompilerIrValue.I64 2)))
+        (match set
+          [(OptBceMaskSet.No)
+            (test.assert-true false "four BCE masks remain admitted")]
+          [(OptBceMaskSet.Some masks)
+            (begin
+              (test.assert-i64-eq
+                (opt-bce-mask-list-count masks)
+                4
+                "duplicate mask does not consume capacity")
+              (match masks
+                [(OptBceMaskList.Empty)
+                  (test.assert-true false "four-mask storage is dense")]
+                [(OptBceMaskList.Dense items _)
+                  (test.assert-i64-eq
+                    (array-length items)
+                    4
+                    "BCE mask storage uses the exact hard capacity")])
+              (let
+                [newest : ir.CompilerIrValue (opt-bce-mask-list-ref masks 0)]
+                [oldest : ir.CompilerIrValue (opt-bce-mask-list-ref masks 3)]
+                (begin
+                  (match newest
+                    [(ir.CompilerIrValue.I64 value)
+                      (test.assert-i64-eq value 3 "newest BCE mask stays first")]
+                    [_ (test.assert-true false "newest BCE mask is an integer")])
+                  (match oldest
+                    [(ir.CompilerIrValue.I64 value)
+                      (test.assert-i64-eq value 0 "oldest BCE mask stays last")]
+                    [_ (test.assert-true false "oldest BCE mask is an integer")]))))])
+        (match (opt-bce-mask-set-add set (ir.CompilerIrValue.I64 4))
+          [(OptBceMaskSet.No)
+            (test.assert-true true "fifth distinct BCE mask is rejected")]
+          [(OptBceMaskSet.Some _)
+            (test.assert-true false "fifth distinct BCE mask must overflow")])))))
 
 ;; Either operand of a `bit-and`, whichever is loop-invariant. The operation is
 ;; commutative, so the sides are tried in order and the first invariant one wins.
@@ -61031,7 +61460,7 @@
   [set : OptBceMaskSet]) : OptBceMaskSet
   (match set
     [(OptBceMaskSet.No) (OptBceMaskSet.No)]
-    [(OptBceMaskSet.Some _ _)
+    [(OptBceMaskSet.Some _)
       (match (opt-bce-version-invariant-operand
         instrs
         phi-count
@@ -61161,10 +61590,10 @@
     defs
     value
     4
-    (OptBceMaskSet.Some (OptBceMaskList.Nil) 0))
+    (OptBceMaskSet.Some (OptBceMaskList.Empty)))
     [(OptBceMaskSet.No) (OptBceVersionGuardAcc.No)]
-    [(OptBceMaskSet.Some masks count)
-      (if (< count 1)
+    [(OptBceMaskSet.Some masks)
+      (if (< (opt-bce-mask-list-count masks) 1)
         (OptBceVersionGuardAcc.No)
         (opt-bce-mask-conds cell masks length-value acc))]))
 
@@ -67667,7 +68096,7 @@
   [set : OptBceMaskSet]) : OptBceMaskSet
   (match set
     [(OptBceMaskSet.No) (OptBceMaskSet.No)]
-    [(OptBceMaskSet.Some _ _)
+    [(OptBceMaskSet.Some _)
       (match (opt-bce-mb-invariant-operand body-blocks defs value)
         [(ir.CompilerIrMaybeValue.Some raw-bound)
           (let
@@ -67771,10 +68200,10 @@
     defs
     value
     4
-    (OptBceMaskSet.Some (OptBceMaskList.Nil) 0))
+    (OptBceMaskSet.Some (OptBceMaskList.Empty)))
     [(OptBceMaskSet.No) (OptBceVersionGuardAcc.No)]
-    [(OptBceMaskSet.Some masks count)
-      (if (< count 1)
+    [(OptBceMaskSet.Some masks)
+      (if (< (opt-bce-mask-list-count masks) 1)
         (OptBceVersionGuardAcc.No)
         (opt-bce-mask-conds cell masks length-value acc))]))
 

@@ -138,6 +138,18 @@
     [(State state)
       (ci.intern-compat-state-source-slice-id-ready-ref state src start len)]))
 
+(cfg
+  compile-profile
+  (define (lexer-intern-profile-note-source-bytes
+    [owner : (LexerInternOwner intern-state)]
+    [len : i64]) : unit
+    (match owner
+      [(Active) (ci.intern-profile-note-active-source-bytes len)]
+      [(State state)
+        (ci.intern-profile-note-source-bytes
+          (ci.intern-compat-state-profile-metrics-address-ref state)
+          len)])))
+
 ;; The lexer is also used by standalone tools that do not initialize the
 ;; compiler builtin-ID catalog. The active adapter keeps the direct builtin
 ;; fast path. An explicit owner must resolve ':' in its own table because a
@@ -680,7 +692,7 @@
     [message : String ""]
     [err-pos : i64 0]
     (begin
-      (cfg compile-profile (ci.intern-profile-note-source-bytes n))
+      (cfg compile-profile (lexer-intern-profile-note-source-bytes owner n))
       (while (and (< i n) ok)
         (let
           [c : char (__tl_string_ref src i)]
@@ -882,7 +894,7 @@
     [err-pos : i64 0]
     [limit : i64 (array-length lex-spanned-token-buffer)]
     (begin
-      (cfg compile-profile (ci.intern-profile-note-source-bytes n))
+      (cfg compile-profile (lexer-intern-profile-note-source-bytes owner n))
       (while (and (< i n) ok)
         (begin
           (if (> (+ count 2) limit)

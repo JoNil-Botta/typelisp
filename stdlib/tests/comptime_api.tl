@@ -26,6 +26,21 @@
         (comptime.expr-int 42)
         (comptime.expr-int 0)))))
 
+(defmacro (stdlib-comptime-type-expr-roundtrip [T : type]) : i64
+  (let
+    [first : comptime.Expr (comptime.type-expr T)]
+    [items : comptime.ExprList
+      (comptime.expr-list-cons first (comptime.expr-list-empty))]
+    ;; Reorder through a second list so this is not merely direct node use.
+    [reordered : comptime.ExprList
+      (comptime.expr-list-cons
+        (comptime.type-expr (comptime.expr-list-type-nth items 0))
+        (comptime.expr-list-empty))]
+    [roundtrip : comptime.Expr (comptime.expr-list-type-nth reordered 0)]
+    (if (= T roundtrip)
+      (comptime.expr-int 42)
+      (comptime.expr-int 0))))
+
 (defmacro (stdlib-comptime-public-field-count [args : comptime.Expr ...]) : i64
   (comptime.expr-int args.len))
 
@@ -151,6 +166,11 @@
 (define (stdlib-comptime-type-list-item-shape) : i64
   (stdlib-comptime-type-list-item (type i64)))
 
+(define (stdlib-comptime-type-expr-roundtrip-shape) : i64
+  (+
+    (stdlib-comptime-type-expr-roundtrip (Box (Tuple i64 bool)))
+    (- (stdlib-comptime-type-expr-roundtrip (-> i64 bool String)) 42)))
+
 (define (stdlib-comptime-public-field-shape) : i64
   (+
     (stdlib-comptime-public-field-count 1 2 3)
@@ -216,6 +236,14 @@
 (test
   comptime-type-list-item-shape
   (if (= (stdlib-comptime-type-list-item-shape) 42)
+    unit
+    (begin
+      (/ 1 0)
+      unit)))
+
+(test
+  comptime-type-expr-roundtrip-shape
+  (if (= (stdlib-comptime-type-expr-roundtrip-shape) 42)
     unit
     (begin
       (/ 1 0)

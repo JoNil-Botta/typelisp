@@ -155,7 +155,7 @@ tests/spmd/private_helper_uniform_stack.tl
 tests/spmd/private_helper_masked_load.tl
 tests/spmd/private_helper_store.tl
 tests/spmd/private_helper_effects.tl
-tests/spmd/i8_mul_reject.tl
+tests/spmd/byte_mul_value_types.tl
 tests/spmd/full_gang_all_active_i64.tl
 tests/spmd/masked_if_i64.tl
 tests/spmd/masked_if_offset_i64.tl
@@ -209,9 +209,6 @@ spmd_mode_expected_compile_diagnostic() {
     case "$_prog:$_mode" in
         tests/spmd/inline_helper_shadow_i64.tl:avx2 | tests/spmd/inline_helper_shadow_i64.tl:avx512)
             printf '%s\n' "lower: SPMD foreach does not match a SIMD lowering pattern for this backend mode; use scalar or a contiguous map/zip body with supported array and uniform operands"
-            ;;
-        tests/spmd/i8_mul_reject.tl:avx2 | tests/spmd/i8_mul_reject.tl:avx512)
-            printf '%s\n' "lower: SPMD foreach SIMD lowering does not support 8-bit lane multiplication; use scalar or widen before multiplying"
             ;;
         tests/spmd/varying_match_enum_helper_reject.tl:avx2 | tests/spmd/varying_match_enum_helper_reject.tl:avx512)
             printf '%s\n' "lower: SPMD masked if does not support a SIMD varying enum match source outside a contiguous array lane"
@@ -620,6 +617,79 @@ verify_map_operator_surface_shape() {
                 ;;
         esac
     done
+}
+
+verify_byte_mul_shape() {
+    _mode=$1
+    compile_spmd_mode tests/spmd/byte_mul_value_types.tl "$_mode"
+    _tag=tests_spmd_byte_mul_value_types_tl
+    _asm="$WORKDIR/$_tag.$_mode.compile.s"
+    if [ "$mode_code" != 0 ]; then
+        echo "[spmd-simd] byte-multiply $_mode shape compile failed:" >&2
+        sed 's/^/    /' "$mode_err" >&2
+        echo "tests/spmd/byte_mul_value_types.tl $_mode (shape compile)" >> "$FAILURES"
+        return
+    fi
+
+    for _lane in i8 u8; do
+        _func="$WORKDIR/$_tag.$_mode.fill-$_lane.s"
+        _gang="$WORKDIR/$_tag.$_mode.fill-$_lane-gang.s"
+        sed -n \
+            "/^_tl_byte_mul_value_types_fill_${_lane}:/,/^$/p" \
+            "$_asm" > "$_func"
+        sed -n '/foreach_avx2_body/,/foreach_tail_header/p' \
+            "$_func" > "$_gang"
+        if [ ! -s "$_gang" ]; then
+            echo "[spmd-simd] byte-multiply $_mode fill-$_lane lacks a SIMD gang" >&2
+            echo "tests/spmd/byte_mul_value_types.tl $_mode fill-$_lane (missing gang)" >> "$FAILURES"
+            continue
+        fi
+        _word_muls=$(grep -c -F -- "vpmullw" "$_gang" || true)
+        _right_shifts=$(grep -c -F -- 'vpsrlw $8' "$_gang" || true)
+        _left_shifts=$(grep -c -F -- 'vpsllw $8' "$_gang" || true)
+        if [ "$_word_muls" != 2 ] || [ "$_right_shifts" != 3 ] || \
+            [ "$_left_shifts" != 2 ]; then
+            echo "[spmd-simd] byte-multiply $_mode fill-$_lane expansion shape changed: vpmullw=$_word_muls vpsrlw8=$_right_shifts vpsllw8=$_left_shifts" >&2
+            echo "tests/spmd/byte_mul_value_types.tl $_mode fill-$_lane (packed-word expansion)" >> "$FAILURES"
+        fi
+        if grep -E -- '^[[:space:]]+imul' "$_gang" > /dev/null; then
+            echo "[spmd-simd] byte-multiply $_mode fill-$_lane scalarizes multiplication inside the SIMD gang" >&2
+            echo "tests/spmd/byte_mul_value_types.tl $_mode fill-$_lane (scalar multiply in gang)" >> "$FAILURES"
+        fi
+        if [ "$_mode" = avx2 ]; then
+            _or=vpor
+            _register='%ymm'
+        else
+            _or=vpord
+            _register='%zmm'
+        fi
+        if [ "$(grep -c -F -- "$_or" "$_gang" || true)" != 1 ] || \
+            ! grep -F -- "$_register" "$_gang" > /dev/null; then
+            echo "[spmd-simd] byte-multiply $_mode fill-$_lane lacks the packed-byte stitch/register shape" >&2
+            echo "tests/spmd/byte_mul_value_types.tl $_mode fill-$_lane (stitch/register shape)" >> "$FAILURES"
+        fi
+    done
+
+    for _surface in masked masked_u8 while while_u8; do
+        _func="$WORKDIR/$_tag.$_mode.fill-$_surface.s"
+        sed -n \
+            "/^_tl_byte_mul_value_types_fill_${_surface}:/,/^$/p" \
+            "$_asm" > "$_func"
+        if ! grep -F -- "vpmullw" "$_func" > /dev/null; then
+            echo "[spmd-simd] byte-multiply $_mode fill-$_surface lacks vector multiplication" >&2
+            echo "tests/spmd/byte_mul_value_types.tl $_mode fill-$_surface (missing vpmullw)" >> "$FAILURES"
+        fi
+    done
+
+    compile_spmd_mode tests/spmd/byte_mul_reduce_reject.tl "$_mode"
+    if [ "$mode_code" = 0 ] ||
+        ! grep -F -- \
+            "typecheck: spmd-reduce sum requires an i32, i64, f32, or f64 type" \
+            "$mode_err" > /dev/null; then
+        echo "[spmd-simd] byte-product reduction $_mode lacks the precise unsupported-result diagnostic" >&2
+        sed 's/^/    /' "$mode_err" >&2
+        echo "tests/spmd/byte_mul_reduce_reject.tl $_mode (reduction diagnostic)" >> "$FAILURES"
+    fi
 }
 
 verify_map_compare_shape() {
@@ -1383,6 +1453,7 @@ for mode in avx2 avx512; do
     verify_reduce_accumulator_shape "$mode"
     verify_map_fused_reduce_shape "$mode"
     verify_map_operator_surface_shape "$mode"
+    verify_byte_mul_shape "$mode"
     verify_map_compare_shape "$mode"
     verify_map_shift_shape "$mode"
     verify_byte_shift_shape "$mode"

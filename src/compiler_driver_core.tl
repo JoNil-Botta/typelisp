@@ -158,7 +158,8 @@
             address)
           (compiler_backend.compiler-backend-state-new-with-metrics
             (owned_view.compiler-owned-shared-view intern-state)
-            (profile_state.compiler-profile-state-metrics profile-state))))]
+            (profile_state.compiler-profile-state-metrics
+              (owned_view.compiler-owned-shared-view profile-state)))))]
     (match surface-state
       [(CompilerDriverSurfaceState.State
           typecheck-state

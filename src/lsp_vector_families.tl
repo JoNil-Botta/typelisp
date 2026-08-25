@@ -118,6 +118,11 @@
   (open bool)
   (version i64)
   (role compiler_semantic_index.CompilerSemanticRecordRole)
+  ;; The semantic display name and kind let refactoring consumers recover the
+  ;; exact source spelling of aliases and qualified final components without
+  ;; retaining a compiler-session record.
+  (display-name String)
+  (kind compiler_semantic_index.CompilerSemanticSymbolKind)
   (span compiler_semantic_index.CompilerSemanticSpan)
   (editable bool))
 

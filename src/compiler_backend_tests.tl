@@ -48694,7 +48694,7 @@ b_keep:
   [c : i64]
   [d : i64]
   [e : i64]) : (__tl_dyn-array i64)
-  (make-array a b c d e))
+  (__tl_make-array a b c d e))
 
 ;; `%1 = phi [%0 from entry], [%3 from latch]` in the loop header.
 (define (compiler-backend-placement-test-carry-phi) : compiler_ir_types.CompilerIrInstr

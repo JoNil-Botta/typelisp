@@ -1908,7 +1908,7 @@
   read.bytes)
 
 ;: Return true when a stdin read observed EOF after the read completed.
-(define (stdin-read-eof? [read : StdinRead]) : bool
+(define (stdin-read-eof? [read : (& read StdinRead)]) : bool
   read.eof)
 
 ;: Return the current sticky stdin EOF state without performing a read.

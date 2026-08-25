@@ -122,7 +122,8 @@
   (thread.Thread
     (thread.spawn-result-handle-or (& spawn) 0)
     (thread.spawn-result-clear-tid-addr-or (& spawn) 0)
-    (thread.spawn-result-result-addr-or (& spawn) 0)))
+    (thread.spawn-result-result-addr-or (& spawn) 0)
+    ""))
 
 (define (arena-atomic-join [worker : thread.Thread]) : i64
   (thread.join-result-value-or (thread.join worker) 8))

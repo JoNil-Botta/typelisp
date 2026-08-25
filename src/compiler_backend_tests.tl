@@ -11873,12 +11873,13 @@
     [data : (Ptr u8)
       (unsafe
         (string-data asm))]
+    [n : i64 (string.string-length asm)]
     (compiler_backend.compiler-backend-peephole-r10-dead-after?
       backend-state
-      asm
+      (owned_view.compiler-owned-shared-view asm)
       data
       0
-      (string.string-length asm))))
+      n)))
 
 ;; The grouped TextBuf path must preserve pairs that cross arbitrary physical
 ;; chunks, while splitting safely at the following function's `.globl` chunk.
@@ -15763,7 +15764,7 @@ g:
           (compiler-backend-phi-f64-cycle-blocks)
           (compiler_ir_types.compiler-ir-label "join")
           (compiler_ir_types.compiler-ir-label "back")
-          index
+          (owned_view.compiler-owned-shared-view index)
           2
           ""
           ""
@@ -15803,7 +15804,7 @@ g:
           (compiler-backend-phi-f64-cycle-blocks)
           (compiler_ir_types.compiler-ir-label "join")
           (compiler_ir_types.compiler-ir-label "back")
-          index
+          (owned_view.compiler-owned-shared-view index)
           2
           ""
           ""
@@ -15823,7 +15824,7 @@ g:
           (compiler-backend-phi-f32-three-cycle-blocks)
           (compiler_ir_types.compiler-ir-label "join")
           (compiler_ir_types.compiler-ir-label "back")
-          index
+          (owned_view.compiler-owned-shared-view index)
           3
           ""
           ""
@@ -15851,7 +15852,7 @@ g:
           (compiler-backend-phi-f64-cycle-blocks)
           (compiler_ir_types.compiler-ir-label "join")
           (compiler_ir_types.compiler-ir-label "back")
-          index
+          (owned_view.compiler-owned-shared-view index)
           2
           ""
           ""
@@ -35517,21 +35518,21 @@ g:
             (compiler_backend.compiler-backend-rsp-rebase-full-result
               (str_cat.str-cat
                 (compiler_backend.compiler-backend-emit-save-callee-regs
-                  assignments
+                  (owned_view.compiler-owned-shared-view assignments)
                   slot-vars
-                  backend-state)
+                  (owned_view.compiler-owned-shared-view backend-state))
                 binop-asm
                 (compiler_backend.compiler-backend-emit-restore-callee-regs
-                  assignments
+                  (owned_view.compiler-owned-shared-view assignments)
                   slot-vars
-                  backend-state)
+                  (owned_view.compiler-owned-shared-view backend-state))
                 "    leave\n    ret\n")
               frame
               true
-              push-regs
+              (owned_view.compiler-owned-shared-view push-regs)
               push-count
               slot-vars
-              backend-state)]
+              (owned_view.compiler-owned-shared-view backend-state))]
           (compiler_backend.CompilerBackendRspRebaseResult
             (compiler_backend.compiler-backend-peephole-asm result.text)
             result.ok))]
@@ -52383,7 +52384,7 @@ b_keep:
         "    leave\n    ret\n"
         0
         true
-        rsp-push-regs
+        (owned_view.compiler-owned-shared-view rsp-push-regs)
         0
         0
         state-b)]
@@ -52392,7 +52393,7 @@ b_keep:
         "    syscall\n    leave\n    ret\n"
         0
         true
-        rsp-push-regs
+        (owned_view.compiler-owned-shared-view rsp-push-regs)
         0
         0
         state-a)]

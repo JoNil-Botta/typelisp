@@ -1893,7 +1893,7 @@
   (Node (Box Tree) (Box Tree)))")
 
 (define (compiler-typecheck-inline-field-id-at
-  [fields : tc_core.TcInlineFieldLayoutList]
+  [fields : (& fields tc_core.TcInlineFieldLayoutList)]
   [index : i64]) : i64
   (if (or
     (< index 0)
@@ -1903,7 +1903,7 @@
       [(tc_core.TcInlineFieldLayout.Field name-id _ _) name-id])))
 
 (define (compiler-typecheck-inline-variant-id-at
-  [variants : tc_core.TcInlineVariantLayoutList]
+  [variants : (& variants tc_core.TcInlineVariantLayoutList)]
   [index : i64]) : i64
   (if (or
     (< index 0)
@@ -1948,7 +1948,10 @@
             state
             0
             4242
-            (tc_core.TcInlineAggregateLayout.Struct 8 8 fields))]
+            (tc_core.TcInlineAggregateLayout.Struct
+              8
+              8
+              (tc_core.tc-global-shared-view fields)))]
         [ok : bool
           (and
             (> storage 0)
@@ -2023,12 +2026,12 @@
       (tc_core.tc-inline-field-layout-list-with-count-for-state state-b 3)]
     [_field-a : unit
       (tc_core.tc-inline-field-layout-list-set!
-        fields-a
+        (tc_core.tc-global-shared-view fields-a)
         0
         (tc_core.TcInlineFieldLayout.Field 1101 (ast.AstType.I64) 0))]
     [_field-b : unit
       (tc_core.tc-inline-field-layout-list-set!
-        fields-b
+        (tc_core.tc-global-shared-view fields-b)
         0
         (tc_core.TcInlineFieldLayout.Field 2202 (ast.AstType.U32) 0))]
     [_publish-a : unit
@@ -2036,13 +2039,19 @@
         state-a
         0
         101
-        (tc_core.TcInlineAggregateLayout.Struct 16 8 fields-a))]
+        (tc_core.TcInlineAggregateLayout.Struct
+          16
+          8
+          (tc_core.tc-global-shared-view fields-a)))]
     [_publish-b : unit
       (tc_core.tc-agg-layout-cache-store-for-state!
         state-b
         0
         202
-        (tc_core.TcInlineAggregateLayout.Struct 12 4 fields-b))]
+        (tc_core.TcInlineAggregateLayout.Struct
+          12
+          4
+          (tc_core.tc-global-shared-view fields-b)))]
     [storage-a : i64
       (tc_core.tc-agg-layout-cache-storage-arena-handle-value-for-state state-a)]
     [storage-b : i64
@@ -2085,7 +2094,7 @@
             state-a)]
         [_reuse-field : unit
           (tc_core.tc-inline-field-layout-list-set!
-            reused-a
+            (tc_core.tc-global-shared-view reused-a)
             0
             (tc_core.TcInlineFieldLayout.Field 3303 (ast.AstType.U64) 0))]
         [_reuse-publish : unit
@@ -2093,7 +2102,10 @@
             state-a
             0
             303
-            (tc_core.TcInlineAggregateLayout.Struct 8 8 reused-a))]
+            (tc_core.TcInlineAggregateLayout.Struct
+              8
+              8
+              (tc_core.tc-global-shared-view reused-a)))]
         (begin
           (tc_core.tc-agg-layout-cache-storage-reset-for-state! state-b)
           (let
@@ -2302,13 +2314,9 @@
                             fields)
                           (let
                             [first-id : i64
-                              (compiler-typecheck-inline-field-id-at
-                                (tc_core.tc-global-shared-view fields)
-                                0)]
+                              (compiler-typecheck-inline-field-id-at fields 0)]
                             [last-id : i64
-                              (compiler-typecheck-inline-field-id-at
-                                (tc_core.tc-global-shared-view fields)
-                                11)]
+                              (compiler-typecheck-inline-field-id-at fields 11)]
                             (if (and
                               (= size 56)
                               (= align 8)
@@ -2335,7 +2343,7 @@
                                 (tc_core.tc-inline-aggregate-layout-field-offset-id
                                   (tc_core.tc-global-shared-view layout)
                                   (compiler-typecheck-inline-field-id-at
-                                    (tc_core.tc-global-shared-view fields)
+                                    fields
                                     8))
                                 24)
                               (=
@@ -2362,11 +2370,11 @@
                           (let
                             [first-id : i64
                               (compiler-typecheck-inline-variant-id-at
-                                (tc_core.tc-global-shared-view variants)
+                                variants
                                 0)]
                             [last-id : i64
                               (compiler-typecheck-inline-variant-id-at
-                                (tc_core.tc-global-shared-view variants)
+                                variants
                                 11)]
                             [payloads : tc_core.TcInlinePayloadLayoutList
                               (match (tc_core.tc-inline-variant-layout-list-ref

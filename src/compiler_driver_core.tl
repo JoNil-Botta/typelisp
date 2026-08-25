@@ -2675,7 +2675,8 @@
                                 (compiler_backend.compiler-backend-state-new-with-metrics
                                   (ci.intern-compat-state-capture-active)
                                   (profile_state.compiler-profile-state-metrics
-                                    profile-state))]
+                                    (profile_state.compiler-profile-state-shared-view
+                                      profile-state)))]
                               (begin
                                 (compiler_backend.compiler-backend-state-set-scalar-registers-enabled!
                                   side-backend-state

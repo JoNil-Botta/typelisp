@@ -105432,9 +105432,32 @@
 ;;        mirrored) and same-base entries at provably disjoint byte ranges
 ;;        (two fields of one object cannot overlap).
 ;;      - a generic FIELD store (const-offset gep off a non-descriptor base)
-;;        keeps only same-base disjoint-range entries: two handles may name
-;;        the same object, and structs can live inline inside array buffers,
-;;        so neither element nor other-base entries are safe.
+;;        keeps same-base disjoint-range entries: two handles may name the
+;;        same object, and structs can live inline inside array buffers, so
+;;        addresses alone justify nothing else.
+;;      - TYPED-WORD FILTERING, on top of all of the above: TypeLisp memory is
+;;        typed, so a store of static type Ts writes only words whose static
+;;        type is Ts, and an entry whose LOADED type Te falls in a different
+;;        known alias class (opt-load-alias-classes-distinct?) names a
+;;        different word -- whatever the addresses look like. That keeps a
+;;        `Vec.slots` handle entry alive across a loop of i64 element stores,
+;;        and keeps an i64 entry alive across handle stores. It is the same
+;;        trust level as the "data buffers never hold descriptor headers"
+;;        rule above; SPEC.md section 2 lets optimizations rely on the static
+;;        type facts.
+;;        Soundness fences, all three necessary:
+;;          * BYTE and UNMODELLED stores prove nothing. u8/i8/bool/char and
+;;            every aggregate type map to class 0, and CopyBytes and
+;;            summarized-callee writes are classified with a byte type, so
+;;            those keep exactly their old (full) kill sets. A word can only
+;;            be re-typed through such a write.
+;;          * SAME OBJECT keeps the byte-range rule ONLY: for a Field store
+;;            and a Field entry on the SAME un-redefined base var there is no
+;;            class exemption, because a Bitcast can hand out two differently
+;;            typed views of one object's own storage.
+;;          * A 16-byte fat reference (`&`/`&mut` to a Slice) is class 0: it
+;;            is two words, one of them a plain length, not one typed handle
+;;            word, so its halves may legitimately be written separately.
 ;;    Alias facts (OptAliasFacts) are threaded exactly as before; they gate
 ;;    nothing here and keep their conservative store-clears semantics.
 ;;
@@ -105905,6 +105928,62 @@
       (opt-load-loc-type-size
         type-segment-bases
         (ast.ast-type-segment-bases-get type-segment-bases inner))]))
+
+;; --- typed-word alias classes ----------------------------------------------
+;;
+;; TypeLisp memory is TYPED: the word that holds a `(__tl_dyn-array T)` handle
+;; is only ever written by a store of that handle type, an i64 slot only by an
+;; i64-typed store, and so on (SPEC.md section 2 -- optimizations may rely on
+;; the static type, move, borrow and region facts). The only writes that cross
+;; a word's static type are BYTE-level ones (u8/i8 stores, CopyBytes) and
+;; stores whose type this pass does not model; both land in the unknown class
+;; below, which proves nothing and keeps today's conservative behaviour.
+;;
+;; Class codes: 0 = unknown-or-byte (proves nothing), 1 = 64-bit integer,
+;; 2 = 32-bit integer, 3 = 16-bit integer, 4 = f64, 5 = f32, 6 = pointer-sized
+;; handle word. A 16-byte fat reference (a `&`/`&mut` to a Slice) is
+;; deliberately class 0: it is TWO words, one of which is a plain length, so it
+;; is not a single typed handle word and its halves may be written separately.
+(define (opt-load-type-alias-class
+  [type-segment-bases : i64]
+  [ty : ast.AstType]) : i64
+  (match ty
+    [(ast.AstType.I64) 1]
+    [(ast.AstType.U64) 1]
+    [(ast.AstType.I32) 2]
+    [(ast.AstType.U32) 2]
+    [(ast.AstType.I16) 3]
+    [(ast.AstType.U16) 3]
+    [(ast.AstType.F64) 4]
+    [(ast.AstType.F32) 5]
+    [(ast.AstType.DynArray _) 6]
+    [(ast.AstType.String) 6]
+    [(ast.AstType.Box _) 6]
+    [(ast.AstType.Ptr _) 6]
+    [(ast.AstType.MutPtr _) 6]
+    [(ast.AstType.Func _ _) 6]
+    [(ast.AstType.Ref _ inner)
+      (if (opt-reference-to-slice? type-segment-bases inner)
+        0
+        6)]
+    [(ast.AstType.MutRef _ inner)
+      (if (opt-reference-to-slice? type-segment-bases inner)
+        0
+        6)]
+    [_ 0]))
+
+;; Two static types that can never name one word: both classes known (non-zero)
+;; and different. Symmetric, and false whenever either side is the byte/unknown
+;; class, so a u8 store or an unmodelled store still kills everything it did
+;; before.
+(define (opt-load-alias-classes-distinct?
+  [type-segment-bases : i64]
+  [a : ast.AstType]
+  [b : ast.AstType]) : bool
+  (let
+    [ca : i64 (opt-load-type-alias-class type-segment-bases a)]
+    [cb : i64 (opt-load-type-alias-class type-segment-bases b)]
+    (and (> ca 0) (and (> cb 0) (not (= ca cb))))))
 
 ;; What memory a pointer-valued var addresses:
 ;;   Element          -- points at/into some array/string DATA BUFFER (the
@@ -107105,11 +107184,14 @@
           [(option_i64.Some dst) (opt-load-global-bases-drop-var bases dst)]
           [(option_i64.None) bases]))]))
 
-;; How a classified store writes memory (Unknown clears the whole table).
+;; How a classified store writes memory (Unknown clears the whole table). Both
+;; classified forms carry the STORED TYPE: the typed-word rule in
+;; `opt-load-entry-survives-store-location?` compares it against the loaded type
+;; of each table entry.
 (defenum OptLoadStoreClass
   (OptLoadStoreUnknown)
-  (OptLoadStoreElement)
-  (OptLoadStoreField i64 i64 i64 bool))
+  (OptLoadStoreElement ast.AstType)
+  (OptLoadStoreField i64 i64 i64 bool ast.AstType))
 
 (define (opt-load-key-eq
   [type-segment-bases : i64]
@@ -107521,10 +107603,13 @@
   [class : OptLoadStoreClass]
   [entry : OptLoadEntry]) : bool
   (match class
-    [(OptLoadStoreElement)
-      ;; Element stores write data-buffer memory; only descriptor-field
-      ;; entries (header-typed base) and named global CELLS are provably
-      ;; outside every buffer.
+    [(OptLoadStoreElement sty)
+      ;; Element stores write data-buffer memory. Descriptor-field entries
+      ;; (header-typed base) and named global CELLS are provably outside every
+      ;; buffer whatever the stored type is; everything else survives only on
+      ;; the TYPED-WORD rule -- a store of class C writes only words whose
+      ;; static type is class C, so an entry read at a different known class
+      ;; names a different word even inside the same buffer.
       ;;
       ;; The global-cell arm is the same allocation-layer argument the header
       ;; arm makes, one level up the descriptor chain: an element address is
@@ -107536,31 +107621,49 @@
       ;; binding (opt-load-global-bases-step), so only constant-offset cell
       ;; words are ever keyed this way.
       (match (opt-load-entry-key entry)
-        [(OptLoadKey.Field _ _ _ header?) header?]
+        [(OptLoadKey.Field _ _ ety header?)
+          (or
+            header?
+            (opt-load-alias-classes-distinct? type-segment-bases sty ety))]
         [(OptLoadKey.GlobalField _ _ _ _) true]
-        [_ false])]
-    [(OptLoadStoreField sbase slo swidth sheader?)
+        ;; An element or unclassified address may name a word inside the very
+        ;; buffer this store writes -- but not a word of a different class.
+        [(OptLoadKey.Raw _ ety _)
+          (opt-load-alias-classes-distinct? type-segment-bases sty ety)]
+        [(OptLoadKey.ScaledField _ _ ety _)
+          (opt-load-alias-classes-distinct? type-segment-bases sty ety)])]
+    [(OptLoadStoreField sbase slo swidth sheader? sty)
       (match (opt-load-entry-key entry)
-        [(OptLoadKey.Raw _ _ element?)
+        [(OptLoadKey.Raw _ ety element?)
           ;; A descriptor-field store cannot touch buffer memory; a generic
-          ;; field store might (inline structs live inside buffers).
-          (and element? sheader?)]
+          ;; field store might (inline structs live inside buffers) -- unless
+          ;; the two static types are different known classes.
+          (or
+            (and element? sheader?)
+            (opt-load-alias-classes-distinct? type-segment-bases sty ety))]
         [(OptLoadKey.Field ebase eoff ety _)
-          ;; Same object (same un-redefined base var) at disjoint byte
-          ;; ranges. Different base vars may name the same object -- drop.
-          (and
-            (= ebase sbase)
+          (if (= ebase sbase)
+            ;; SAME object (same un-redefined base var): byte ranges only. No
+            ;; class exemption here -- a Bitcast can hand out two differently
+            ;; typed views of one object's own storage, and the range rule is
+            ;; what already covers the honest field-vs-field case.
             (opt-load-ranges-disjoint?
               slo
               swidth
               eoff
-              (opt-load-loc-type-size type-segment-bases ety)))]
-        ;; A var-offset key cannot prove disjointness from any store: drop
-        ;; (conservative, matching a generic Raw).
-        [(OptLoadKey.ScaledField _ _ _ _) false]
+              (opt-load-loc-type-size type-segment-bases ety))
+            ;; DIFFERENT base vars may name the same object, so offsets prove
+            ;; nothing; different known type classes still do.
+            (opt-load-alias-classes-distinct? type-segment-bases sty ety))]
+        ;; A var-offset key cannot prove disjointness from any store by
+        ;; address; only the typed-word rule applies.
+        [(OptLoadKey.ScaledField _ _ ety _)
+          (opt-load-alias-classes-distinct? type-segment-bases sty ety)]
         ;; A field store's base var may hold the global's own address, so a
-        ;; global-keyed entry is never provably outside it: drop.
-        [(OptLoadKey.GlobalField _ _ _ _) false])]
+        ;; global-keyed entry is never provably outside it by address; the
+        ;; typed-word rule is the only thing that separates them.
+        [(OptLoadKey.GlobalField _ _ ety _)
+          (opt-load-alias-classes-distinct? type-segment-bases sty ety)])]
     [(OptLoadStoreUnknown) false]))
 
 ;; Epoch-ordering rule: freshly allocated storage is disjoint from every address
@@ -107661,23 +107764,27 @@
           tail))]))
 
 ;; Classify a store's target from the pointer kinds; `width` is the byte size
-;; actually written (StorePtr type width / CopyBytes size).
+;; actually written (StorePtr type width / CopyBytes size) and `ty` is the
+;; STORED TYPE, which the typed-word rule compares against entry types. A
+;; caller with no single static type for the write (CopyBytes, a summarized
+;; callee) passes a byte type, whose class proves nothing.
 (define (opt-load-classify-store
   [kinds : OptLoadPtrKinds]
   [ptr : ir.CompilerIrValue]
-  [width : i64]) : OptLoadStoreClass
+  [width : i64]
+  [ty : ast.AstType]) : OptLoadStoreClass
   (if (<= width 0)
     (OptLoadStoreUnknown)
     (match ptr
       [(ir.CompilerIrValue.Var p)
         (match (opt-load-kinds-lookup kinds p)
-          [(OptLoadLocElement) (OptLoadStoreElement)]
+          [(OptLoadLocElement) (OptLoadStoreElement ty)]
           [(OptLoadLocField base off _ header?)
-            (OptLoadStoreField base off width header?)]
+            (OptLoadStoreField base off width header? ty)]
           ;; A scaled element store writes data-buffer memory (base is the
           ;; loaded data pointer), exactly like an Element store: descriptor
           ;; fields are provably outside it, so header-typed entries survive.
-          [(OptLoadLocScaledField _ _ _ _) (OptLoadStoreElement)]
+          [(OptLoadLocScaledField _ _ _ _) (OptLoadStoreElement ty)]
           [(OptLoadLocUnknown) (OptLoadStoreUnknown)])]
       [_ (OptLoadStoreUnknown)])))
 
@@ -107696,18 +107803,20 @@
 (define (opt-dead-store-set-clear [pending : OptDeadStoreSet]) : OptDeadStoreSet
   (OptDeadStoreSet pending.slots 0))
 
+;; DSE deliberately ignores the stored type carried by the class: it stays
+;; exactly as conservative as before the typed-word rule.
 (define (opt-dead-store-trackable? [class : OptLoadStoreClass]) : bool
   (match class
-    [(OptLoadStoreField _ _ _ _) true]
+    [(OptLoadStoreField _ _ _ _ _) true]
     [_ false]))
 
 (define (opt-dead-store-classes-exact?
   [a : OptLoadStoreClass]
   [b : OptLoadStoreClass]) : bool
   (match a
-    [(OptLoadStoreField abase aoff awidth aheader?)
+    [(OptLoadStoreField abase aoff awidth aheader? _)
       (match b
-        [(OptLoadStoreField bbase boff bwidth bheader?)
+        [(OptLoadStoreField bbase boff bwidth bheader? _)
           (and
             (= abase bbase)
             (= aoff boff)
@@ -107727,14 +107836,14 @@
   [candidate : OptLoadStoreClass]) : bool
   (match access
     [(OptLoadStoreUnknown) false]
-    [(OptLoadStoreElement)
+    [(OptLoadStoreElement _)
       (match candidate
-        [(OptLoadStoreField _ _ _ header?) header?]
+        [(OptLoadStoreField _ _ _ header? _) header?]
         [_ false])]
-    [(OptLoadStoreField abase aoff awidth aheader?)
+    [(OptLoadStoreField abase aoff awidth aheader? _)
       (match candidate
-        [(OptLoadStoreElement) aheader?]
-        [(OptLoadStoreField bbase boff bwidth _)
+        [(OptLoadStoreElement _) aheader?]
+        [(OptLoadStoreField bbase boff bwidth _ _)
           (and
             (= abase bbase)
             (opt-load-ranges-disjoint? aoff awidth boff bwidth))]
@@ -107810,7 +107919,7 @@
 
 (define (opt-dead-store-class-uses-var? [class : OptLoadStoreClass] [var : i64]) : bool
   (match class
-    [(OptLoadStoreField base _ _ _) (= base var)]
+    [(OptLoadStoreField base _ _ _ _) (= base var)]
     [_ false]))
 
 (define (opt-dead-store-filter-def [pending : OptDeadStoreSet] [var : i64]) : OptDeadStoreSet
@@ -107862,7 +107971,8 @@
               (opt-load-classify-store
                 kinds
                 ptr
-                (opt-load-loc-type-size type-segment-bases ty))]
+                (opt-load-loc-type-size type-segment-bases ty)
+                ty)]
             (opt-dead-store-add-current
               (opt-dead-store-filter-store pending dead class)
               index
@@ -107873,7 +107983,8 @@
             (opt-load-classify-store
               kinds
               src
-              (opt-load-loc-type-size type-segment-bases ty)))]
+              (opt-load-loc-type-size type-segment-bases ty)
+              ty))]
         [(ir.CompilerIrInstr.CopyBytes _ _ _)
           (opt-dead-store-set-clear pending)]
         [_
@@ -108231,7 +108342,10 @@
     table
     facts
     (OptAliasRoot.NoRoot)
-    (OptLoadStoreElement)))
+    ;; A summarized callee has no single stored type, so the element class
+    ;; carries a byte type: the typed-word rule proves nothing here and the
+    ;; verdict is exactly the pre-existing one.
+    (OptLoadStoreElement (ast.AstType.U8))))
 
 (define (opt-load-cse-state-direct-call
   [type-segment-bases : i64]
@@ -108341,7 +108455,7 @@
         profile-state)
       (let
         [width : i64 (opt-load-loc-type-size type-segment-bases ty)]
-        [class : OptLoadStoreClass (opt-load-classify-store kinds ptr width)]
+        [class : OptLoadStoreClass (opt-load-classify-store kinds ptr width ty)]
         [store-root : OptAliasRoot (opt-alias-root-of-value facts ptr)]
         [next-epoch : i64 (opt-load-cse-epoch-step epoch instr)]
         [facts2 : OptAliasFacts
@@ -108438,8 +108552,12 @@
         bases
         profile-state)
       (let
-        [class : OptLoadStoreClass (opt-load-classify-store kinds dst size)]
-        [src-class : OptLoadStoreClass (opt-load-classify-store kinds src size)]
+        ;; CopyBytes writes raw bytes: the byte class keeps its kill set
+        ;; exactly as wide as it was before the typed-word rule.
+        [class : OptLoadStoreClass
+          (opt-load-classify-store kinds dst size (ast.AstType.U8))]
+        [src-class : OptLoadStoreClass
+          (opt-load-classify-store kinds src size (ast.AstType.U8))]
         [store-root : OptAliasRoot (opt-alias-root-of-value facts dst)]
         [next-epoch : i64 (opt-load-cse-epoch-step epoch instr)]
         [facts2 : OptAliasFacts
@@ -108467,7 +108585,7 @@
               next-epoch
               (opt-load-global-bases-clear bases)
               profile-state)]
-          [(OptLoadStoreElement)
+          [(OptLoadStoreElement _)
             (OptLoadCseState.State
               facts2
               filtered
@@ -108476,11 +108594,11 @@
               next-epoch
               (opt-load-global-bases-clear bases)
               profile-state)]
-          [(OptLoadStoreField dst-base dst-off _ dst-header?)
+          [(OptLoadStoreField dst-base dst-off _ dst-header? _)
             (let
               [copied : OptLoadTable
                 (match src-class
-                  [(OptLoadStoreField src-base src-off _ src-header?)
+                  [(OptLoadStoreField src-base src-off _ src-header? _)
                     (if (and
                       (= src-base dst-base)
                       (=

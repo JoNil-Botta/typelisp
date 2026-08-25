@@ -64494,3 +64494,217 @@
     (compiler-optimize-uniform-phi-self-test)
     42
     "a phi whose surviving inputs all name one value (literal or var, self-references skipped) folds to a Mov of it, disagreeing inputs keep the phi, and a chain collapses in one sweep"))
+
+;; --- P1: typed-word store filtering in the redundant-load CSE ---------------
+;;
+;; TypeLisp memory is typed: the word that holds a `(__tl_dyn-array i64)`
+;; handle is only ever written by a store of that handle type, so an i64
+;; element store cannot change it. These fixtures pin the survival cases that
+;; buys, and the fences that keep it sound -- same-class stores, byte stores,
+;; CopyBytes, and same-object punning all still drop the entry.
+;; Two reads of `(gep param 0) : (__tl_dyn-array i64)` -- the `Vec.slots` handle
+;; word of an `&mut Vec`-shaped parameter -- with one ELEMENT store of
+;; `store-ty` in between. This is the loop-to-loop reload shape from
+;; cfg-build-csr: var 3 is the slots handle, var 5 its data pointer, var 6 an
+;; element address inside the buffer.
+(define (opt-load-cse-typed-element-store-instrs
+  [store-ty : compiler_ast_types.AstType]) : compiler_ir_types.CompilerIrInstrSeq
+  (opt-test-instrs
+    (compiler_ir_types.CompilerIrInstr.Gep
+      2
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      (compiler_ir_types.CompilerIrValue.I64 0)
+      (compiler_ast_types.ast-ty-dyn-array (compiler_ast_types.AstType.I64)))
+    (compiler_ir_types.CompilerIrInstr.Load
+      3
+      (compiler_ir_types.CompilerIrValue.Var 2)
+      (compiler_ast_types.ast-ty-dyn-array (compiler_ast_types.AstType.I64)))
+    (compiler_ir_types.CompilerIrInstr.Gep
+      4
+      (compiler_ir_types.CompilerIrValue.Var 3)
+      (compiler_ir_types.CompilerIrValue.I64 0)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.CompilerIrInstr.Load
+      5
+      (compiler_ir_types.CompilerIrValue.Var 4)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.CompilerIrInstr.Gep
+      6
+      (compiler_ir_types.CompilerIrValue.Var 5)
+      (compiler_ir_types.CompilerIrValue.I64 2)
+      store-ty)
+    (compiler_ir_types.CompilerIrInstr.StorePtr
+      (compiler_ir_types.CompilerIrValue.Var 6)
+      (compiler_ir_types.CompilerIrValue.I64 7)
+      store-ty)
+    (compiler_ir_types.CompilerIrInstr.Gep
+      8
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      (compiler_ir_types.CompilerIrValue.I64 0)
+      (compiler_ast_types.ast-ty-dyn-array (compiler_ast_types.AstType.I64)))
+    (compiler_ir_types.CompilerIrInstr.Load
+      9
+      (compiler_ir_types.CompilerIrValue.Var 8)
+      (compiler_ast_types.ast-ty-dyn-array (compiler_ast_types.AstType.I64)))))
+
+;; A generic FIELD store of `store-ty` through base var `store-base`, between
+;; two reads of `Field(1, 0, (__tl_dyn-array i64))`. With store-base 0 the two
+;; bases are DIFFERENT handles (the typed-word rule is the only thing that can
+;; separate them); with store-base 1 they are the SAME object, where only the
+;; byte-range rule applies.
+(define (opt-load-cse-typed-field-store-instrs
+  [store-base : i64]
+  [store-ty : compiler_ast_types.AstType]) : compiler_ir_types.CompilerIrInstrSeq
+  (opt-test-instrs
+    (compiler_ir_types.CompilerIrInstr.Gep
+      2
+      (compiler_ir_types.CompilerIrValue.Var 1)
+      (compiler_ir_types.CompilerIrValue.I64 0)
+      (compiler_ast_types.ast-ty-dyn-array (compiler_ast_types.AstType.I64)))
+    (compiler_ir_types.CompilerIrInstr.Load
+      3
+      (compiler_ir_types.CompilerIrValue.Var 2)
+      (compiler_ast_types.ast-ty-dyn-array (compiler_ast_types.AstType.I64)))
+    (compiler_ir_types.CompilerIrInstr.Gep
+      4
+      (compiler_ir_types.CompilerIrValue.Var store-base)
+      (compiler_ir_types.CompilerIrValue.I64 0)
+      store-ty)
+    (compiler_ir_types.CompilerIrInstr.StorePtr
+      (compiler_ir_types.CompilerIrValue.Var 4)
+      (compiler_ir_types.CompilerIrValue.I64 7)
+      store-ty)
+    (compiler_ir_types.CompilerIrInstr.Gep
+      5
+      (compiler_ir_types.CompilerIrValue.Var 1)
+      (compiler_ir_types.CompilerIrValue.I64 0)
+      (compiler_ast_types.ast-ty-dyn-array (compiler_ast_types.AstType.I64)))
+    (compiler_ir_types.CompilerIrInstr.Load
+      6
+      (compiler_ir_types.CompilerIrValue.Var 5)
+      (compiler_ast_types.ast-ty-dyn-array (compiler_ast_types.AstType.I64)))))
+
+;; The same shape with a CopyBytes in the store's place: raw bytes carry no
+;; static type, so the generic Field entry must still die.
+(define (opt-load-cse-typed-copybytes-instrs) : compiler_ir_types.CompilerIrInstrSeq
+  (opt-test-instrs
+    (compiler_ir_types.CompilerIrInstr.Gep
+      2
+      (compiler_ir_types.CompilerIrValue.Var 1)
+      (compiler_ir_types.CompilerIrValue.I64 0)
+      (compiler_ast_types.ast-ty-dyn-array (compiler_ast_types.AstType.I64)))
+    (compiler_ir_types.CompilerIrInstr.Load
+      3
+      (compiler_ir_types.CompilerIrValue.Var 2)
+      (compiler_ast_types.ast-ty-dyn-array (compiler_ast_types.AstType.I64)))
+    (compiler_ir_types.CompilerIrInstr.Gep
+      4
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      (compiler_ir_types.CompilerIrValue.I64 0)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.CompilerIrInstr.CopyBytes
+      (compiler_ir_types.CompilerIrValue.Var 4)
+      (compiler_ir_types.CompilerIrValue.Var 2)
+      8)
+    (compiler_ir_types.CompilerIrInstr.Gep
+      5
+      (compiler_ir_types.CompilerIrValue.Var 1)
+      (compiler_ir_types.CompilerIrValue.I64 0)
+      (compiler_ast_types.ast-ty-dyn-array (compiler_ast_types.AstType.I64)))
+    (compiler_ir_types.CompilerIrInstr.Load
+      6
+      (compiler_ir_types.CompilerIrValue.Var 5)
+      (compiler_ast_types.ast-ty-dyn-array (compiler_ast_types.AstType.I64)))))
+
+;; Two shared-ref params: the alias layer proves nothing about a store rooted
+;; at a Shared root, so every verdict below is the location rule's alone.
+(define (opt-load-cse-typed-run [instrs : compiler_ir_types.CompilerIrInstrSeq]) : compiler_ir_types.CompilerIrInstrSeq
+  (opt-load-cse-run-with-params (opt-load-cse-shared-ref-params) instrs))
+
+(define (opt-load-cse-typed-element-kept?
+  [store-ty : compiler_ast_types.AstType]) : bool
+  (let
+    [out : compiler_ir_types.CompilerIrInstrSeq
+      (opt-load-cse-typed-run
+        (opt-load-cse-typed-element-store-instrs store-ty))]
+    (and
+      (= (opt-count-load-instr-seq out) 2)
+      (= (opt-count-mov-dst-instr-seq out 9) 1))))
+
+(define (opt-load-cse-typed-element-dropped?
+  [store-ty : compiler_ast_types.AstType]) : bool
+  (let
+    [out : compiler_ir_types.CompilerIrInstrSeq
+      (opt-load-cse-typed-run
+        (opt-load-cse-typed-element-store-instrs store-ty))]
+    (and
+      (= (opt-count-load-instr-seq out) 3)
+      (= (opt-count-mov-dst-instr-seq out 9) 0))))
+
+(define (opt-load-cse-typed-field-kept?
+  [store-base : i64]
+  [store-ty : compiler_ast_types.AstType]) : bool
+  (let
+    [out : compiler_ir_types.CompilerIrInstrSeq
+      (opt-load-cse-typed-run
+        (opt-load-cse-typed-field-store-instrs store-base store-ty))]
+    (and
+      (= (opt-count-load-instr-seq out) 1)
+      (= (opt-count-mov-dst-instr-seq out 6) 1))))
+
+(define (opt-load-cse-typed-field-dropped?
+  [store-base : i64]
+  [store-ty : compiler_ast_types.AstType]) : bool
+  (let
+    [out : compiler_ir_types.CompilerIrInstrSeq
+      (opt-load-cse-typed-run
+        (opt-load-cse-typed-field-store-instrs store-base store-ty))]
+    (and
+      (= (opt-count-load-instr-seq out) 2)
+      (= (opt-count-mov-dst-instr-seq out 6) 0))))
+
+;; Returns 42 only when every typed-store survival case AND every fence holds.
+(define (compiler-optimize-load-cse-typed-store-self-test) : i64
+  (let
+    [copybytes : compiler_ir_types.CompilerIrInstrSeq
+      (opt-load-cse-typed-run (opt-load-cse-typed-copybytes-instrs))]
+    (cond
+      ;; (a) an i64 ELEMENT store cannot write the slots handle word.
+      [(not (opt-load-cse-typed-element-kept? (compiler_ast_types.AstType.I64)))
+        1]
+      ;; (b) an element store of the SAME class (a buffer of handles) can.
+      [(not
+          (opt-load-cse-typed-element-dropped?
+            (compiler_ast_types.ast-ty-dyn-array
+              (compiler_ast_types.AstType.I64))))
+        2]
+      ;; (c) a byte store re-types any word it touches: no exemption.
+      [(not
+          (opt-load-cse-typed-element-dropped? (compiler_ast_types.AstType.U8)))
+        3]
+      ;; (d) a FIELD store of i64 through a DIFFERENT base leaves a handle
+      ;; entry alone; the same store typed as the handle does not.
+      [(not (opt-load-cse-typed-field-kept? 0 (compiler_ast_types.AstType.I64)))
+        4]
+      [(not
+          (opt-load-cse-typed-field-dropped?
+            0
+            (compiler_ast_types.ast-ty-dyn-array
+              (compiler_ast_types.AstType.I64))))
+        5]
+      ;; (e) SAME object, overlapping range, different class: still dropped --
+      ;; one object's own storage can be punned through a Bitcast.
+      [(not
+          (opt-load-cse-typed-field-dropped? 1 (compiler_ast_types.AstType.I64)))
+        6]
+      ;; (f) CopyBytes still drops a generic Field entry.
+      [(not (= (opt-count-load-instr-seq copybytes) 2)) 7]
+      [(not (= (opt-count-mov-dst-instr-seq copybytes 6) 0)) 8]
+      [else 42])))
+
+(test
+  load-cse-typed-word-store-filter
+  (test.assert-i64-eq
+    (compiler-optimize-load-cse-typed-store-self-test)
+    42
+    "an i64 element or field store keeps a differently typed handle entry alive, while same-class, byte, CopyBytes and same-object stores still drop it"))

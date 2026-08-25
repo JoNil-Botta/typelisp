@@ -369,6 +369,7 @@
   [exclude-n : i64]
   [fallback : String]) : String
   (compiler_backend.compiler-backend-scavenge-pick-with-mask
+    backend-state
     (compiler_backend.compiler-backend-state-function-state backend-state)
     (compiler-backend-scavenge-occupied-mask-for-instr
       starts
@@ -6863,8 +6864,8 @@
     leave
     ret
 "]
-    [rebased : String
-      (compiler_backend.compiler-backend-rsp-rebase-full
+    [rebase-result : compiler_backend.CompilerBackendRspRebaseResult
+      (compiler_backend.compiler-backend-rsp-rebase-full-result
         post-prologue
         64
         true
@@ -6872,6 +6873,7 @@
         push-count
         3
         backend-state)]
+    [rebased : String rebase-result.text]
     (and
       (= push-count 3)
       (string.eq
@@ -6882,7 +6884,7 @@
     pushq %r14
     subq $64, %rsp
 ")
-      (compiler_backend.compiler-backend-test-get-compiler-backend-rsp-rebase-last-ok)
+      rebase-result.ok
       (string.eq
         rebased
         "    movq 56(%rsp), %rax
@@ -6955,8 +6957,8 @@
         0
         (owned_view.compiler-owned-shared-view push-regs)
         push-count)]
-    [dead-rebased : String
-      (compiler_backend.compiler-backend-rsp-rebase-full
+    [dead-result : compiler_backend.CompilerBackendRspRebaseResult
+      (compiler_backend.compiler-backend-rsp-rebase-full-result
         (compiler-backend-dead-slot-region-push-body)
         0
         true
@@ -6964,8 +6966,7 @@
         push-count
         0
         backend-state)]
-    [dead-ok : bool
-      (compiler_backend.compiler-backend-test-get-compiler-backend-rsp-rebase-last-ok)]
+    [dead-rebased : String dead-result.text]
     [live-prologue : String
       (compiler_backend.compiler-backend-emit-function-entry-fpo-push
         backend-state
@@ -6973,8 +6974,8 @@
         16
         (owned_view.compiler-owned-shared-view push-regs)
         push-count)]
-    [live-rebased : String
-      (compiler_backend.compiler-backend-rsp-rebase-full
+    [live-result : compiler_backend.CompilerBackendRspRebaseResult
+      (compiler_backend.compiler-backend-rsp-rebase-full-result
         (compiler-backend-dead-slot-region-push-body)
         16
         true
@@ -6982,12 +6983,11 @@
         push-count
         0
         backend-state)]
-    [live-ok : bool
-      (compiler_backend.compiler-backend-test-get-compiler-backend-rsp-rebase-last-ok)]
+    [live-rebased : String live-result.text]
     (and
       (= push-count 3)
-      dead-ok
-      live-ok
+      dead-result.ok
+      live-result.ok
       ;; ADMITTED: no stack adjustment in either direction.
       (string.eq
         dead-prologue
@@ -7142,8 +7142,8 @@
     leave
     ret
 "]
-    [safe-rebased : String
-      (compiler_backend.compiler-backend-rsp-rebase-full
+    [safe-result : compiler_backend.CompilerBackendRspRebaseResult
+      (compiler_backend.compiler-backend-rsp-rebase-full-result
         safe-body
         frame
         true
@@ -7151,10 +7151,9 @@
         push-count
         1
         backend-state)]
-    [safe-ok : bool
-      (compiler_backend.compiler-backend-test-get-compiler-backend-rsp-rebase-last-ok)]
-    [_unsafe : String
-      (compiler_backend.compiler-backend-rsp-rebase-full
+    [safe-rebased : String safe-result.text]
+    [unsafe-result : compiler_backend.CompilerBackendRspRebaseResult
+      (compiler_backend.compiler-backend-rsp-rebase-full-result
         "    pushq %rax
     popq %rax
     leave
@@ -7166,9 +7165,7 @@
         0
         1
         backend-state)]
-    [unsafe-rejected : bool
-      (not
-        (compiler_backend.compiler-backend-test-get-compiler-backend-rsp-rebase-last-ok))]
+    [unsafe-rejected : bool (not unsafe-result.ok)]
     [ok : bool
       (and
         (= push-count 8)
@@ -7214,7 +7211,7 @@
           (compiler_backend.compiler-backend-string-contains?
             prologue
             "movq %rsp, %rbp"))
-        safe-ok
+        safe-result.ok
         (not
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view safe-rebased)
@@ -10724,7 +10721,9 @@
     (compiler_backend.compiler-backend-peephole-carry-safe-reset-with-backend-state!
       session.backend-state
       session.stream)
-    (compiler_backend.compiler-backend-sweep-reset! session.stream)))
+    (compiler_backend.compiler-backend-sweep-reset!
+      session.backend-state
+      session.stream)))
 
 (define (compiler-backend-peephole-test-session-asm
   [session : CompilerBackendPeepholeTestSession]
@@ -11825,6 +11824,9 @@
 
 (define (compiler-backend-r10-dead-scan-long-gap-ok?) : bool
   (let
+    [backend-state : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
     [asm : String
       "    movq %rax, %rax
     movq %rax, %rax
@@ -11872,7 +11874,8 @@
       (unsafe
         (string-data asm))]
     (compiler_backend.compiler-backend-peephole-r10-dead-after?
-      (owned_view.compiler-owned-shared-view asm)
+      backend-state
+      asm
       data
       0
       (string.string-length asm))))
@@ -15723,16 +15726,35 @@ g:
 
 (define (compiler-backend-phi-float-cycle-copy-ok?) : bool
   (let
-    [prev-register-count : i64
-      (compiler_backend.compiler-backend-test-get-compiler-backend-phi-xmm-cycle-register-count)]
-    [prev-fallback-count : i64
-      (compiler_backend.compiler-backend-test-get-compiler-backend-phi-xmm-cycle-fallback-count)]
+    [index : compiler_backend.CompilerBackendProgramIndex
+      (compiler_backend.compiler-backend-program-index-build
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        compiler_ir_types.CompilerIrFunctionList.Nil
+        (compiler_ir_types.compiler-ir-extern-seq-empty))]
+    [_backend-state : compiler_backend.CompilerBackendState index.backend-state]
+    [_prev-register-count : i64
+      (cfg
+        (any regalloc-census test)
+        (compiler_backend.compiler-backend-test-get-compiler-backend-phi-xmm-cycle-register-count
+          _backend-state)
+        0)]
+    [_prev-fallback-count : i64
+      (cfg
+        (any regalloc-census test)
+        (compiler_backend.compiler-backend-test-get-compiler-backend-phi-xmm-cycle-fallback-count
+          _backend-state)
+        0)]
     [_set : unit
-      (begin
-        (compiler_backend.compiler-backend-test-set-compiler-backend-phi-xmm-cycle-register-count!
-          0)
-        (compiler_backend.compiler-backend-test-set-compiler-backend-phi-xmm-cycle-fallback-count!
-          0))]
+      (cfg
+        (any regalloc-census test)
+        (begin
+          (compiler_backend.compiler-backend-test-set-compiler-backend-phi-xmm-cycle-register-count!
+            _backend-state
+            0)
+          (compiler_backend.compiler-backend-test-set-compiler-backend-phi-xmm-cycle-fallback-count!
+            _backend-state
+            0))
+        unit)]
     [ok : bool
       (and
         (match (compiler_backend.compiler-backend-emit-phi-edge-copies
@@ -15741,10 +15763,7 @@ g:
           (compiler-backend-phi-f64-cycle-blocks)
           (compiler_ir_types.compiler-ir-label "join")
           (compiler_ir_types.compiler-ir-label "back")
-          (compiler_backend.compiler-backend-program-index-build
-            (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-            compiler_ir_types.CompilerIrFunctionList.Nil
-            (compiler_ir_types.compiler-ir-extern-seq-empty))
+          index
           2
           ""
           ""
@@ -15784,10 +15803,7 @@ g:
           (compiler-backend-phi-f64-cycle-blocks)
           (compiler_ir_types.compiler-ir-label "join")
           (compiler_ir_types.compiler-ir-label "back")
-          (compiler_backend.compiler-backend-program-index-build
-            (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-            compiler_ir_types.CompilerIrFunctionList.Nil
-            (compiler_ir_types.compiler-ir-extern-seq-empty))
+          index
           2
           ""
           ""
@@ -15807,10 +15823,7 @@ g:
           (compiler-backend-phi-f32-three-cycle-blocks)
           (compiler_ir_types.compiler-ir-label "join")
           (compiler_ir_types.compiler-ir-label "back")
-          (compiler_backend.compiler-backend-program-index-build
-            (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-            compiler_ir_types.CompilerIrFunctionList.Nil
-            (compiler_ir_types.compiler-ir-extern-seq-empty))
+          index
           3
           ""
           ""
@@ -15838,10 +15851,7 @@ g:
           (compiler-backend-phi-f64-cycle-blocks)
           (compiler_ir_types.compiler-ir-label "join")
           (compiler_ir_types.compiler-ir-label "back")
-          (compiler_backend.compiler-backend-program-index-build
-            (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-            compiler_ir_types.CompilerIrFunctionList.Nil
-            (compiler_ir_types.compiler-ir-extern-seq-empty))
+          index
           2
           ""
           ""
@@ -15895,21 +15905,28 @@ g:
                   "%xmm15")))]
           [(compiler_backend.ResultCompilerBackend.Err _) false])
         (cfg
-          regalloc-census
+          (any regalloc-census test)
           (and
             (=
-              (compiler_backend.compiler-backend-test-get-compiler-backend-phi-xmm-cycle-register-count)
+              (compiler_backend.compiler-backend-test-get-compiler-backend-phi-xmm-cycle-register-count
+                _backend-state)
               2)
             (=
-              (compiler_backend.compiler-backend-test-get-compiler-backend-phi-xmm-cycle-fallback-count)
+              (compiler_backend.compiler-backend-test-get-compiler-backend-phi-xmm-cycle-fallback-count
+                _backend-state)
               1))
           true))]
     [_restore : unit
-      (begin
-        (compiler_backend.compiler-backend-test-set-compiler-backend-phi-xmm-cycle-register-count!
-          prev-register-count)
-        (compiler_backend.compiler-backend-test-set-compiler-backend-phi-xmm-cycle-fallback-count!
-          prev-fallback-count))]
+      (cfg
+        (any regalloc-census test)
+        (begin
+          (compiler_backend.compiler-backend-test-set-compiler-backend-phi-xmm-cycle-register-count!
+            _backend-state
+            _prev-register-count)
+          (compiler_backend.compiler-backend-test-set-compiler-backend-phi-xmm-cycle-fallback-count!
+            _backend-state
+            _prev-fallback-count))
+        unit)]
     ok))
 
 (define (compiler-backend-arg-cycle-temp-slot-ok?) : bool
@@ -35453,11 +35470,10 @@ g:
             compiler_abi.compiler-reg-id-r12)))
       (compiler_regalloc.compiler-reg-assignment-table-empty))))
 
-(define (compiler-backend-rbp-immediate-add-final-asm [spill-dst? : bool]) : String
+(define (compiler-backend-rbp-immediate-add-final-asm
+  [spill-dst? : bool]
+  [backend-state : compiler_backend.CompilerBackendState]) : compiler_backend.CompilerBackendRspRebaseResult
   (let
-    [backend-state : compiler_backend.CompilerBackendState
-      (compiler_backend.compiler-backend-state-new
-        (ci.intern-compat-state-capture-active))]
     [_linux : unit
       (compiler_backend.compiler-backend-set-current-fn-linux! backend-state)]
     [assignments : compiler_regalloc.CompilerRegAssignmentTable
@@ -35496,38 +35512,49 @@ g:
       (compiler_ast_types.AstType.I64)
       (owned_view.compiler-owned-shared-view backend-state))
       [(compiler_backend.ResultCompilerBackend.Ok binop-asm)
-        (compiler_backend.compiler-backend-peephole-asm
-          (compiler_backend.compiler-backend-rsp-rebase-full
-            (str_cat.str-cat
-              (compiler_backend.compiler-backend-emit-save-callee-regs
-                (owned_view.compiler-owned-shared-view assignments)
-                slot-vars
-                (owned_view.compiler-owned-shared-view backend-state))
-              binop-asm
-              (compiler_backend.compiler-backend-emit-restore-callee-regs
-                (owned_view.compiler-owned-shared-view assignments)
-                slot-vars
-                (owned_view.compiler-owned-shared-view backend-state))
-              "    leave\n    ret\n")
-            frame
-            true
-            (owned_view.compiler-owned-shared-view push-regs)
-            push-count
-            slot-vars
-            backend-state))]
-      [(compiler_backend.ResultCompilerBackend.Err _) ""])))
+        (let
+          [result : compiler_backend.CompilerBackendRspRebaseResult
+            (compiler_backend.compiler-backend-rsp-rebase-full-result
+              (str_cat.str-cat
+                (compiler_backend.compiler-backend-emit-save-callee-regs
+                  assignments
+                  slot-vars
+                  backend-state)
+                binop-asm
+                (compiler_backend.compiler-backend-emit-restore-callee-regs
+                  assignments
+                  slot-vars
+                  backend-state)
+                "    leave\n    ret\n")
+              frame
+              true
+              push-regs
+              push-count
+              slot-vars
+              backend-state)]
+          (compiler_backend.CompilerBackendRspRebaseResult
+            (compiler_backend.compiler-backend-peephole-asm result.text)
+            result.ok))]
+      [(compiler_backend.ResultCompilerBackend.Err _)
+        (compiler_backend.CompilerBackendRspRebaseResult "" false)])))
 
 (define (compiler-backend-rbp-immediate-add-final-ok?) : bool
   (let
-    [direct : String (compiler-backend-rbp-immediate-add-final-asm false)]
-    [direct-rebase-ok : bool
-      (compiler_backend.compiler-backend-test-get-compiler-backend-rsp-rebase-last-ok)]
-    [spilled : String (compiler-backend-rbp-immediate-add-final-asm true)]
-    [spilled-rebase-ok : bool
-      (compiler_backend.compiler-backend-test-get-compiler-backend-rsp-rebase-last-ok)]
+    [direct-state : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [spilled-state : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [direct-result : compiler_backend.CompilerBackendRspRebaseResult
+      (compiler-backend-rbp-immediate-add-final-asm false direct-state)]
+    [direct : String direct-result.text]
+    [spilled-result : compiler_backend.CompilerBackendRspRebaseResult
+      (compiler-backend-rbp-immediate-add-final-asm true spilled-state)]
+    [spilled : String spilled-result.text]
     (and
-      direct-rebase-ok
-      spilled-rebase-ok
+      direct-result.ok
+      spilled-result.ok
       (compiler_backend.compiler-backend-string-contains?
         (owned_view.compiler-owned-shared-view direct)
         "    leaq 31(,%rbp,1), %r12\n")
@@ -48504,6 +48531,7 @@ g:
         (compiler-backend-scavenge-segment-pick-busy-mask))]
     [hull-pick : String
       (compiler_backend.compiler-backend-scavenge-pick-with-mask
+        backend-state
         function-state
         busy
         (owned_view.compiler-owned-shared-view exclude)
@@ -48515,6 +48543,7 @@ g:
         compiler_backend.compiler-backend-scratch-bool-emergency-pending)]
     [segment-pick : String
       (compiler_backend.compiler-backend-scavenge-pick-with-mask
+        backend-state
         function-state
         (bit-or
           (array-ref segmented 4)
@@ -48665,6 +48694,7 @@ g:
             (not
               (string.eq
                 (compiler_backend.compiler-backend-scavenge-pick-with-mask
+                  backend-state
                   (compiler_backend.compiler-backend-state-function-state
                     backend-state)
                   mask
@@ -51628,7 +51658,7 @@ g:
         backend-state
         stream)]
     [_sweep-reset : unit
-      (compiler_backend.compiler-backend-sweep-reset! stream)]
+      (compiler_backend.compiler-backend-sweep-reset! backend-state stream)]
     [_start : unit
       (compiler_backend.compiler-backend-assembly-stream-start!
         stream
@@ -52037,7 +52067,9 @@ b_keep:
                     stream)
                   4096))]
             (begin
-              (compiler_backend.compiler-backend-sweep-reset! stream)
+              (compiler_backend.compiler-backend-sweep-reset!
+                backend-state
+                stream)
               (set! i 0)
               (while (< i 200)
                 (begin
@@ -52065,7 +52097,9 @@ b_keep:
                         stream)
                       8192))]
                 [_coverage-reset : unit
-                  (compiler_backend.compiler-backend-sweep-reset! stream)]
+                  (compiler_backend.compiler-backend-sweep-reset!
+                    backend-state
+                    stream)]
                 [_coverage-record : unit
                   (compiler-backend-peephole-test-session-win64!
                     session
@@ -52280,7 +52314,26 @@ b_keep:
           (compiler_backend.BackendSymbolSeq labels-a 1))
         (compiler_backend.compiler-backend-test-set-compiler-backend-current-phi-targets!
           state-b
-          (compiler_backend.BackendSymbolSeq labels-b 1)))]
+          (compiler_backend.BackendSymbolSeq labels-b 1))
+        ;; Use the same metric ids in both owners with deliberately different
+        ;; observations. These setters target the phi metric slots, not a
+        ;; functional backend-state field.
+        (cfg
+          (any regalloc-census test)
+          (begin
+            (compiler_backend.compiler-backend-test-set-compiler-backend-phi-xmm-cycle-register-count!
+              state-a
+              11)
+            (compiler_backend.compiler-backend-test-set-compiler-backend-phi-xmm-cycle-register-count!
+              state-b
+              29)
+            (compiler_backend.compiler-backend-test-set-compiler-backend-phi-xmm-cycle-fallback-count!
+              state-a
+              41)
+            (compiler_backend.compiler-backend-test-set-compiler-backend-phi-xmm-cycle-fallback-count!
+              state-b
+              43))
+          unit))]
     [plan-gep-before-reset : bool
       (compiler_backend.compiler-backend-test-register-plan-gep-isolation-stage!
         plan-state-a
@@ -52291,6 +52344,87 @@ b_keep:
       (compiler_backend.compiler-backend-test-register-plan-gep-isolation-reset-ok?
         plan-state-a
         plan-state-b)]
+    [metrics-before-reset : bool
+      (cfg
+        (any regalloc-census test)
+        (and
+          (=
+            (compiler_backend.compiler-backend-test-get-compiler-backend-phi-xmm-cycle-register-count
+              state-a)
+            11)
+          (=
+            (compiler_backend.compiler-backend-test-get-compiler-backend-phi-xmm-cycle-register-count
+              state-b)
+            29)
+          (=
+            (compiler_backend.compiler-backend-test-get-compiler-backend-phi-xmm-cycle-fallback-count
+              state-a)
+            41)
+          (=
+            (compiler_backend.compiler-backend-test-get-compiler-backend-phi-xmm-cycle-fallback-count
+              state-b)
+            43))
+        true)]
+    [_reset-metrics-a : unit
+      (cfg
+        (any regalloc-census test)
+        (begin
+          (compiler_backend.compiler-backend-test-set-compiler-backend-phi-xmm-cycle-register-count!
+            state-a
+            0)
+          (compiler_backend.compiler-backend-test-set-compiler-backend-phi-xmm-cycle-fallback-count!
+            state-a
+            0))
+        unit)]
+    [rsp-push-regs : (__tl_dyn-array String)
+      (compiler_backend.compiler-backend-rsp-rebase-make-push-regs)]
+    [rsp-success-b : compiler_backend.CompilerBackendRspRebaseResult
+      (compiler_backend.compiler-backend-rsp-rebase-full-result
+        "    leave\n    ret\n"
+        0
+        true
+        rsp-push-regs
+        0
+        0
+        state-b)]
+    [rsp-failure-a : compiler_backend.CompilerBackendRspRebaseResult
+      (compiler_backend.compiler-backend-rsp-rebase-full-result
+        "    syscall\n    leave\n    ret\n"
+        0
+        true
+        rsp-push-regs
+        0
+        0
+        state-a)]
+    [metrics-after-failure : bool
+      (and
+        rsp-success-b.ok
+        (not rsp-failure-a.ok)
+        (cfg
+          (any regalloc-census test)
+          (and
+            (=
+              (compiler_backend.compiler-backend-test-get-compiler-backend-phi-xmm-cycle-register-count
+                state-a)
+              0)
+            (=
+              (compiler_backend.compiler-backend-test-get-compiler-backend-phi-xmm-cycle-fallback-count
+                state-a)
+              0)
+            (=
+              (compiler_backend.compiler-backend-test-get-compiler-backend-phi-xmm-cycle-register-count
+                state-b)
+              29)
+            (=
+              (compiler_backend.compiler-backend-test-get-compiler-backend-phi-xmm-cycle-fallback-count
+                state-b)
+              43)
+            (not
+              (compiler_backend.compiler-backend-test-get-compiler-backend-rsp-rebase-last-ok
+                state-a))
+            (compiler_backend.compiler-backend-test-get-compiler-backend-rsp-rebase-last-ok
+              state-b))
+          true))]
     [before-reset : bool
       (and
         (compiler_backend.compiler-backend-mode-avx2?
@@ -52626,6 +52760,8 @@ b_keep:
       before-reset
       plan-gep-before-reset
       plan-gep-after-reset
+      metrics-before-reset
+      metrics-after-failure
       failure-ok
       failure-retired
       retired-stays-retired

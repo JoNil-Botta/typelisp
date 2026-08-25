@@ -478,6 +478,10 @@
   (unused-unsafe TcUnusedUnsafeState)
   (type-resolution-cache TcTypeResolutionCacheState)
   (agg-scalar-caches TcAggScalarCacheState)
+  ;; Lazily allocated typed complete-layout state. Its slot table belongs to
+  ;; this job's lifetime arena; retained nested layout arrays use the state's
+  ;; separately resettable payload arena.
+  (agg-layout-cache-address i64)
   ;; Lazily points into the expansion scratch arena while one macro walk owns
   ;; a segmented declaration/path view. Zero outside that structural scope, so
   ;; idle compiler jobs retain no segment table or maximum-capacity storage.
@@ -716,6 +720,7 @@
           (tc-unused-unsafe-state-new)
           (tc-type-resolution-cache-state-new)
           (tc-agg-scalar-cache-state-new)
+          0
           0))
       (TcJobState
         (cast
@@ -834,6 +839,21 @@
 
 (define (tc-job-state-agg-scalar-caches [state : TcJobState]) : TcAggScalarCacheState
   (tc-job-state-field state agg-scalar-caches TcAggScalarCacheState))
+
+(define (tc-job-state-agg-layout-cache-address [state : TcJobState]) : i64
+  (tc-job-state-field state agg-layout-cache-address i64))
+
+(define (tc-job-state-set-agg-layout-cache-address!
+  [state : TcJobState]
+  [address : i64]) : unit
+  (unsafe
+    (ptr-write!
+      (ptr-cast
+        (ptr-offset
+          (int->ptr (cast state.address : u64) : (Ptr u8))
+          (comptime (offset-of (type TcJobStateData) agg-layout-cache-address)))
+        : (MutPtr i64))
+      address)))
 
 (define (tc-job-state-macro-program-view-address [state : TcJobState]) : i64
   (tc-job-state-field state macro-program-view-address i64))
@@ -2802,87 +2822,152 @@
   (Empty)
   (Full i64 TcInlineAggregateLayout))
 
-;; Transitional owner for the remaining process-global complete
-;; aggregate-layout table. The table is mutable and still requires explicit
-;; job ownership; it is not an immutable exception. Keeping its payload arena
-;; beside the dependent views makes that later move a whole-state swap instead
-;; of a protocol over unrelated globals. Refs #6257 and #4960.
-(defstruct TcLazyGlobalTableState
-  (owner arena.Arena)
-  ;; Complete aggregate layouts contain retained field/payload/variant arrays.
-  ;; Keep their owner in the same state as the slots that publish those views.
+;; Complete aggregate layouts are mutable job-local memo state. The slot table
+;; lives in the compiler job's retained arena, while nested field/payload/
+;; variant arrays use a separately resettable arena kept beside the views that
+;; depend on it. No process-global active-owner selector participates here.
+(defstruct TcAggLayoutCacheStateData
+  (owner-arena i64)
   (agg-layout-storage-owner arena.Arena)
-  (agg-layout-cache (__tl_dyn-array TcAggLayoutCacheSlot)))
+  (agg-layout-cache (__tl_dyn-array TcAggLayoutCacheSlot))
+  (intern-table-id i64)
+  (intern-generation i64))
 
-(define tc-lazy-global-table-state : TcLazyGlobalTableState
-  (TcLazyGlobalTableState
-    (arena.Arena 0)
-    (arena.Arena 0)
-    (array.make-array TcAggLayoutCacheSlot 0)))
+(defstruct TcAggLayoutCacheState
+  (address i64))
+
+(define (tc-agg-layout-cache-state-data [state : TcAggLayoutCacheState]) : TcAggLayoutCacheStateData
+  (unsafe
+    (ptr-read
+      (int->ptr (cast state.address : u64) : (Ptr TcAggLayoutCacheStateData)))))
+
+(define (tc-agg-layout-cache-state-data-set!
+  [state : TcAggLayoutCacheState]
+  [data : TcAggLayoutCacheStateData]) : unit
+  (unsafe
+    (ptr-write!
+      (int->ptr (cast state.address : u64) : (MutPtr TcAggLayoutCacheStateData))
+      data)))
+
+(define (tc-job-state-agg-layout-cache-init! [job-state : TcJobState]) : TcAggLayoutCacheState
+  (let
+    [owner : arena.Arena
+      (arena.Arena (tc-job-state-field job-state owner-arena i64))]
+    [cell : (__tl_dyn-array TcAggLayoutCacheStateData)
+      (in-arena owner (array.make-array TcAggLayoutCacheStateData 1))]
+    [address : i64
+      (cast
+        (unsafe
+          (ptr->int
+            (ptr-cast (__tl_array-data cell) : (Ptr TcAggLayoutCacheStateData))))
+        : i64)]
+    (begin
+      (set!
+        (array-ref cell 0)
+        (TcAggLayoutCacheStateData
+          (arena.raw-handle owner)
+          (arena.Arena 0)
+          (array.make-array TcAggLayoutCacheSlot 0)
+          -1
+          -1))
+      (tc-job-state-set-agg-layout-cache-address! job-state address)
+      (TcAggLayoutCacheState address))))
+
+(define (tc-job-state-agg-layout-cache [job-state : TcJobState]) : TcAggLayoutCacheState
+  (let
+    [address : i64 (tc-job-state-agg-layout-cache-address job-state)]
+    (if (> address 0)
+      (TcAggLayoutCacheState address)
+      (tc-job-state-agg-layout-cache-init! job-state))))
+
+(define (tc-agg-layout-cache-storage-arena-handle-value-for-state
+  [state : TcAggLayoutCacheState]) : i64
+  (arena.raw-handle
+    (__tl-project-field
+      (tc-agg-layout-cache-state-data state)
+      agg-layout-storage-owner)))
+
+(define (tc-agg-layout-cache-storage-arena-handle-value-for-job
+  [job-state : TcJobState]) : i64
+  (if (> job-state.address 0)
+    (let
+      [address : i64 (tc-job-state-agg-layout-cache-address job-state)]
+      (if (> address 0)
+        (tc-agg-layout-cache-storage-arena-handle-value-for-state
+          (TcAggLayoutCacheState address))
+        0))
+    0))
 
 (define (tc-agg-layout-cache-storage-arena-handle-value) : i64
-  (arena.raw-handle
-    (__tl-project-field tc-lazy-global-table-state agg-layout-storage-owner)))
+  (tc-agg-layout-cache-storage-arena-handle-value-for-job (tc-serial-job-state)))
 
-(define (tc-agg-layout-cache-storage-handle) : arena.Arena
+(define (tc-agg-layout-cache-storage-handle-for-state
+  [state : TcAggLayoutCacheState]) : arena.Arena
   (let
-    [storage : arena.Arena
-      (__tl-project-field tc-lazy-global-table-state agg-layout-storage-owner)]
+    [data : TcAggLayoutCacheStateData (tc-agg-layout-cache-state-data state)]
+    [storage : arena.Arena data.agg-layout-storage-owner]
     (if (= (arena.raw-handle storage) 0)
       ;; Selfhost retains less than 1 MiB here. A small root leaves ample
       ;; headroom and still grows through the ordinary arena overflow path.
       (let
         [fresh : arena.Arena (arena.Arena (arena.tl_arena_make_small))]
         (begin
-          (__tl-project-set-field
-            tc-lazy-global-table-state
-            agg-layout-storage-owner
-            fresh)
+          (set! data.agg-layout-storage-owner fresh)
+          (tc-agg-layout-cache-state-data-set! state data)
           fresh))
       storage)))
 
-(define (tc-agg-layout-cache-storage-reset!) : unit
+(define (tc-agg-layout-cache-storage-reset-for-state!
+  [state : TcAggLayoutCacheState]) : unit
   (let
-    [storage : arena.Arena
-      (__tl-project-field tc-lazy-global-table-state agg-layout-storage-owner)]
+    [data : TcAggLayoutCacheStateData (tc-agg-layout-cache-state-data state)]
+    [storage : arena.Arena data.agg-layout-storage-owner]
     [index : i64 0]
     (begin
       ;; Unpublish every dependent view before destroying its owner. The slot
       ;; backing array belongs to the outer persistent-table owner and is safe
       ;; to reuse; none of its entries may retain the retired payload brand.
-      (while (<
-        index
-        (array-length
-          (__tl-project-field tc-lazy-global-table-state agg-layout-cache)))
+      (while (< index (array-length data.agg-layout-cache))
         (begin
           (set!
-            (array-ref
-              (__tl-project-field tc-lazy-global-table-state agg-layout-cache)
-              index)
+            (array-ref data.agg-layout-cache index)
             (TcAggLayoutCacheSlot.Empty))
           (set! index (+ index 1))))
-      (__tl-project-set-field
-        tc-lazy-global-table-state
-        agg-layout-storage-owner
-        (arena.Arena 0))
+      (set! data.agg-layout-storage-owner (arena.Arena 0))
+      (tc-agg-layout-cache-state-data-set! state data)
       (if (= (arena.raw-handle storage) 0)
         unit
         (unsafe
           (arena.destroy storage))))))
 
+(define (tc-agg-layout-cache-storage-reset-for-job! [job-state : TcJobState]) : unit
+  (let
+    [address : i64 (tc-job-state-agg-layout-cache-address job-state)]
+    (if (> address 0)
+      (tc-agg-layout-cache-storage-reset-for-state!
+        (TcAggLayoutCacheState address))
+      unit)))
+
+(define (tc-agg-layout-cache-storage-reset!) : unit
+  (tc-agg-layout-cache-storage-reset-for-job! (tc-serial-job-state)))
+
+(define (tc-agg-layout-cache-slot-empty-for-state?
+  [state : TcAggLayoutCacheState]
+  [index : i64]) : bool
+  (let
+    [data : TcAggLayoutCacheStateData (tc-agg-layout-cache-state-data state)]
+    [slots : (__tl_dyn-array TcAggLayoutCacheSlot)
+      (tc-global-shared-view data.agg-layout-cache)]
+    (if (or (< index 0) (>= index (array-length slots)))
+      false
+      (match (tc-global-array-element-shared-view slots index)
+        [(TcAggLayoutCacheSlot.Empty) true]
+        [(TcAggLayoutCacheSlot.Full _ _) false]))))
+
 (define (tc-agg-layout-cache-slot-empty? [index : i64]) : bool
-  (if (or
-    (< index 0)
-    (>=
-      index
-      (array-length
-        (__tl-project-field tc-lazy-global-table-state agg-layout-cache))))
-    false
-    (match (tc-global-array-element-shared-view
-      (__tl-project-field tc-lazy-global-table-state agg-layout-cache)
-      index)
-      [(TcAggLayoutCacheSlot.Empty) true]
-      [(TcAggLayoutCacheSlot.Full _ _) false])))
+  (tc-agg-layout-cache-slot-empty-for-state?
+    (tc-job-state-agg-layout-cache (tc-serial-job-state))
+    index))
 
 ;; Builders know the final cardinality from their AST vectors. Allocate one
 ;; right-sized backing array in the retained cache arena, fill it in source
@@ -2905,10 +2990,17 @@
   [value : TcReprCFieldLayout]) : unit
   (set! (array-ref items.slots index) value))
 
-(define (tc-inline-field-layout-list-with-count [count : i64]) : TcInlineFieldLayoutList
+(define (tc-inline-field-layout-list-with-count-for-state
+  [state : TcAggLayoutCacheState]
+  [count : i64]) : TcInlineFieldLayoutList
   (in-arena
-    (tc-agg-layout-cache-storage-handle)
+    (tc-agg-layout-cache-storage-handle-for-state state)
     (TcInlineFieldLayoutList (array.make-array TcInlineFieldLayout count))))
+
+(define (tc-inline-field-layout-list-with-count [count : i64]) : TcInlineFieldLayoutList
+  (tc-inline-field-layout-list-with-count-for-state
+    (tc-job-state-agg-layout-cache (tc-serial-job-state))
+    count))
 
 (define (tc-inline-field-layout-list-count
   [items : (& items TcInlineFieldLayoutList)]) : i64
@@ -2925,10 +3017,17 @@
   [value : TcInlineFieldLayout]) : unit
   (set! (array-ref items.slots index) value))
 
-(define (tc-inline-payload-layout-list-with-count [count : i64]) : TcInlinePayloadLayoutList
+(define (tc-inline-payload-layout-list-with-count-for-state
+  [state : TcAggLayoutCacheState]
+  [count : i64]) : TcInlinePayloadLayoutList
   (in-arena
-    (tc-agg-layout-cache-storage-handle)
+    (tc-agg-layout-cache-storage-handle-for-state state)
     (TcInlinePayloadLayoutList (array.make-array TcInlinePayloadLayout count))))
+
+(define (tc-inline-payload-layout-list-with-count [count : i64]) : TcInlinePayloadLayoutList
+  (tc-inline-payload-layout-list-with-count-for-state
+    (tc-job-state-agg-layout-cache (tc-serial-job-state))
+    count))
 
 (define (tc-inline-payload-layout-list-count
   [items : (& items TcInlinePayloadLayoutList)]) : i64
@@ -2945,10 +3044,17 @@
   [value : TcInlinePayloadLayout]) : unit
   (set! (array-ref items.slots index) value))
 
-(define (tc-inline-variant-layout-list-with-count [count : i64]) : TcInlineVariantLayoutList
+(define (tc-inline-variant-layout-list-with-count-for-state
+  [state : TcAggLayoutCacheState]
+  [count : i64]) : TcInlineVariantLayoutList
   (in-arena
-    (tc-agg-layout-cache-storage-handle)
+    (tc-agg-layout-cache-storage-handle-for-state state)
     (TcInlineVariantLayoutList (array.make-array TcInlineVariantLayout count))))
+
+(define (tc-inline-variant-layout-list-with-count [count : i64]) : TcInlineVariantLayoutList
+  (tc-inline-variant-layout-list-with-count-for-state
+    (tc-job-state-agg-layout-cache (tc-serial-job-state))
+    count))
 
 (define (tc-inline-variant-layout-list-count
   [items : (& items TcInlineVariantLayoutList)]) : i64
@@ -21278,17 +21384,6 @@
 ;; rebinding or resetting only that job advances its epoch. Fixed storage is
 ;; allocated lazily in the job owner arena, and ids beyond it fall back to the
 ;; uncached walk over the same explicitly bound segment table.
-(define (tc-lazy-global-table-arena-ensure!) : arena.Arena
-  (let
-    [owner : arena.Arena (__tl-project-field tc-lazy-global-table-state owner)]
-    (if (= (arena.raw-handle owner) 0)
-      (let
-        [fresh : arena.Arena (arena.Arena (arena.tl_arena_make_small))]
-        (begin
-          (__tl-project-set-field tc-lazy-global-table-state owner fresh)
-          fresh))
-      owner)))
-
 (define tc-type-resolution-cache-capacity : i64
   131072)
 
@@ -44600,7 +44695,7 @@
   (ResultTcType.Err
     (str_cat.str-cat
       "typecheck: "
-      name
+      (tc-global-shared-view name)
       " is compile-time only; wrap it in (comptime ...)")))
 
 (define (tc-reflection-runtime-call-id?
@@ -57165,7 +57260,10 @@
   [stack : TcStringList]) : ResultTcInlineFieldsLayout
   (let
     [layout : TcInlineFieldLayoutList
-      (tc-inline-field-layout-list-with-count fields.len)]
+      (tc-inline-field-layout-list-with-count-for-state
+        (tc-job-state-agg-layout-cache
+          (tc-context-job-state (tc-global-shared-view ctx)))
+        fields.len)]
     (tc-inline-aggregate-field-defs-layout-at
       ctx
       (& fields)
@@ -57232,7 +57330,9 @@
   [stack : TcStringList]) : ResultTcInlinePayloadFieldsLayout
   (let
     [layout : TcInlinePayloadLayoutList
-      (tc-inline-payload-layout-list-with-count
+      (tc-inline-payload-layout-list-with-count-for-state
+        (tc-job-state-agg-layout-cache
+          (tc-context-job-state (tc-global-shared-view ctx)))
         (ast.ast-type-list-len (& types)))]
     (tc-inline-aggregate-payloads-layout-at
       ctx
@@ -57387,7 +57487,10 @@
   [stack : TcStringList]) : ResultTcInlineAggregateLayout
   (let
     [layout : TcInlineVariantLayoutList
-      (tc-inline-variant-layout-list-with-count variants.len)]
+      (tc-inline-variant-layout-list-with-count-for-state
+        (tc-job-state-agg-layout-cache
+          (tc-context-job-state (tc-global-shared-view ctx)))
+        variants.len)]
     (tc-inline-aggregate-variants-layout-at
       ctx
       (& variants)
@@ -57493,34 +57596,55 @@
 ;; dangle after that arena rewinds (the scratch-arena hazard).
 (define tc-agg-layout-cache-capacity : i64
   65536)
-(define tc-agg-layout-cache-generation : i64
-  -1)
 
-(define (tc-agg-layout-cache-table-storage-ensure!) : unit
-  (if (=
-    (array-length
-      (__tl-project-field tc-lazy-global-table-state agg-layout-cache))
-    tc-agg-layout-cache-capacity)
-    unit
-    (let
-      [owner : arena.Arena (tc-lazy-global-table-arena-ensure!)]
-      (in-arena
-        owner
-        (__tl-project-set-field
-          tc-lazy-global-table-state
-          agg-layout-cache
-          (array.make-array TcAggLayoutCacheSlot tc-agg-layout-cache-capacity))))))
-
-;; `make-array` does not produce valid Empty enum slots, so the fill is
-;; mandatory before the first probe; generation -1 forces it on first use.
-(define (tc-agg-layout-cache-ensure!) : unit
-  (begin
-    (tc-agg-layout-cache-table-storage-ensure!)
-    (if (= tc-agg-layout-cache-generation (ci.intern-generation))
+(define (tc-agg-layout-cache-table-storage-ensure-for-state!
+  [state : TcAggLayoutCacheState]) : unit
+  (let
+    [data : TcAggLayoutCacheStateData (tc-agg-layout-cache-state-data state)]
+    (if (= (array-length data.agg-layout-cache) tc-agg-layout-cache-capacity)
       unit
       (begin
-        (tc-agg-layout-cache-storage-reset!)
-        (set! tc-agg-layout-cache-generation (ci.intern-generation))))))
+        (in-arena
+          (arena.Arena data.owner-arena)
+          (set!
+            data.agg-layout-cache
+            (array.make-array TcAggLayoutCacheSlot tc-agg-layout-cache-capacity)))
+        (tc-agg-layout-cache-state-data-set! state data)))))
+
+(define (tc-agg-layout-cache-table-storage-ensure-for-job!
+  [job-state : TcJobState]) : unit
+  (tc-agg-layout-cache-table-storage-ensure-for-state!
+    (tc-job-state-agg-layout-cache job-state)))
+
+;; Serial/test compatibility adapter. Production prewarming supplies the
+;; CompilerDriverState-owned job explicitly.
+(define (tc-agg-layout-cache-table-storage-ensure!) : unit
+  (tc-agg-layout-cache-table-storage-ensure-for-job! (tc-serial-job-state)))
+
+;; `make-array` does not produce valid Empty enum slots, so the fill is
+;; mandatory before the first probe. Validate against the owning source-name
+;; session rather than whichever compatibility interner is process-active.
+(define (tc-agg-layout-cache-ensure-for-state!
+  [state : TcAggLayoutCacheState]
+  [intern-table-id : i64]
+  [intern-generation : i64]) : unit
+  (begin
+    (tc-agg-layout-cache-table-storage-ensure-for-state! state)
+    (let
+      [data : TcAggLayoutCacheStateData (tc-agg-layout-cache-state-data state)]
+      (if (and
+        (= data.intern-table-id intern-table-id)
+        (= data.intern-generation intern-generation))
+        unit
+        (begin
+          (tc-agg-layout-cache-storage-reset-for-state! state)
+          (let
+            [next-data : TcAggLayoutCacheStateData
+              (tc-agg-layout-cache-state-data state)]
+            (begin
+              (set! next-data.intern-table-id intern-table-id)
+              (set! next-data.intern-generation intern-generation)
+              (tc-agg-layout-cache-state-data-set! state next-data))))))))
 
 ;; Cache key: the stable i64 identity of the nominal type name. Source intern
 ;; ids and structural/generated ids occupy different numeric domains, so hash
@@ -57532,15 +57656,18 @@
     (bit-xor name-id (shr name-id 16))
     (- tc-agg-layout-cache-capacity 1)))
 
-(define (tc-agg-layout-cache-probe-slot [name-id : i64]) : i64
+(define (tc-agg-layout-cache-probe-slot-for-state
+  [state : TcAggLayoutCacheState]
+  [name-id : i64]) : i64
   (let
+    [data : TcAggLayoutCacheStateData (tc-agg-layout-cache-state-data state)]
+    [slots : (__tl_dyn-array TcAggLayoutCacheSlot)
+      (tc-global-shared-view data.agg-layout-cache)]
     [cursor : i64 (tc-agg-layout-cache-slot-key name-id)]
     [steps : i64 0]
     (begin
       (while (< steps tc-agg-layout-cache-capacity)
-        (match (tc-global-array-element-shared-view
-          (__tl-project-field tc-lazy-global-table-state agg-layout-cache)
-          cursor)
+        (match (tc-global-array-element-shared-view slots cursor)
           [(TcAggLayoutCacheSlot.Empty) (return cursor)]
           [(TcAggLayoutCacheSlot.Full cached-id _)
             (if (= cached-id name-id)
@@ -57552,19 +57679,37 @@
                 (set! steps (+ steps 1))))]))
       -1)))
 
+(define (tc-agg-layout-cache-probe-slot [name-id : i64]) : i64
+  (tc-agg-layout-cache-probe-slot-for-state
+    (tc-job-state-agg-layout-cache (tc-serial-job-state))
+    name-id))
+
 ;; Layout arrays are allocated in the persistent program arena at their final
 ;; size, so the completed value can be stored without recursively cloning it.
 ;; Only fully-resolved Ok layouts reach this point, so a cached entry can never
 ;; participate in a cycle (its computation already terminated).
-(define (tc-agg-layout-cache-store!
+(define (tc-agg-layout-cache-store-for-state!
+  [state : TcAggLayoutCacheState]
   [slot : i64]
   [name-id : i64]
   [layout : TcInlineAggregateLayout]) : unit
   (set!
     (array-ref
-      (__tl-project-field tc-lazy-global-table-state agg-layout-cache)
+      (__tl-project-field
+        (tc-agg-layout-cache-state-data state)
+        agg-layout-cache)
       slot)
     (TcAggLayoutCacheSlot.Full name-id layout)))
+
+(define (tc-agg-layout-cache-store!
+  [slot : i64]
+  [name-id : i64]
+  [layout : TcInlineAggregateLayout]) : unit
+  (tc-agg-layout-cache-store-for-state!
+    (tc-job-state-agg-layout-cache (tc-serial-job-state))
+    slot
+    name-id
+    layout))
 
 (define (tc-inline-aggregate-layout-kind-dispatch
   [ctx : TcContext]
@@ -57605,30 +57750,35 @@
   [stack : TcStringList]
   [name-id : i64]
   [slot : i64]) : ResultTcInlineAggregateLayout
-  (match (tc-inline-aggregate-layout-kind-dispatch
-    (tc-global-shared-view ctx)
-    (tc-global-shared-view name)
-    name-id
-    handle
-    (tc-global-shared-view stack))
-    [(ResultTcInlineAggregateLayout.Ok layout)
-      (begin
-        (tc-agg-layout-cache-store! slot name-id layout)
-        (match (tc-global-array-element-shared-view
-          (__tl-project-field tc-lazy-global-table-state agg-layout-cache)
-          slot)
-          [(TcAggLayoutCacheSlot.Full _ cached)
-            (ResultTcInlineAggregateLayout.Ok cached)]
-          [(TcAggLayoutCacheSlot.Empty)
-            ;; Unreachable: the slot was just stored. Recompute defensively.
-            (tc-inline-aggregate-layout-kind-dispatch
-              ctx
-              name
-              name-id
-              handle
-              stack)]))]
-    [(ResultTcInlineAggregateLayout.Err message)
-      (ResultTcInlineAggregateLayout.Err message)]))
+  (let
+    [state : TcAggLayoutCacheState
+      (tc-job-state-agg-layout-cache
+        (tc-context-job-state (tc-global-shared-view ctx)))]
+    [data : TcAggLayoutCacheStateData (tc-agg-layout-cache-state-data state)]
+    [slots : (__tl_dyn-array TcAggLayoutCacheSlot)
+      (tc-global-shared-view data.agg-layout-cache)]
+    (match (tc-inline-aggregate-layout-kind-dispatch
+      (tc-global-shared-view ctx)
+      (tc-global-shared-view name)
+      name-id
+      handle
+      (tc-global-shared-view stack))
+      [(ResultTcInlineAggregateLayout.Ok layout)
+        (begin
+          (tc-agg-layout-cache-store-for-state! state slot name-id layout)
+          (match (tc-global-array-element-shared-view slots slot)
+            [(TcAggLayoutCacheSlot.Full _ cached)
+              (ResultTcInlineAggregateLayout.Ok cached)]
+            [(TcAggLayoutCacheSlot.Empty)
+              ;; Unreachable: the slot was just stored. Recompute defensively.
+              (tc-inline-aggregate-layout-kind-dispatch
+                (tc-global-shared-view ctx)
+                (tc-global-shared-view name)
+                name-id
+                handle
+                (tc-global-shared-view stack))]))]
+      [(ResultTcInlineAggregateLayout.Err message)
+        (ResultTcInlineAggregateLayout.Err message)])))
 
 (define (tc-inline-aggregate-layout-for-with-stack
   [ctx : TcContext]
@@ -57636,6 +57786,11 @@
   [name-id : i64]
   [stack : TcStringList]) : ResultTcInlineAggregateLayout
   (let
+    [state : TcAggLayoutCacheState
+      (tc-job-state-agg-layout-cache
+        (tc-context-job-state (tc-global-shared-view ctx)))]
+    [source-names : ci.InternSourceNameSessionHandle
+      (tc-context-source-names (tc-global-shared-view ctx))]
     [handle : i64
       (csym.compiler-symbols-lookup-type-id-or
         (tc-context-symbols ctx)
@@ -57643,9 +57798,16 @@
         (csym.compiler-symbols-missing-handle))]
     (if (csym.compiler-symbols-handle-found? handle)
       (begin
-        (tc-agg-layout-cache-ensure!)
+        (tc-agg-layout-cache-ensure-for-state!
+          state
+          (ci.intern-source-name-session-handle-table-id source-names)
+          (ci.intern-source-name-session-handle-reset-generation source-names))
         (let
-          [slot : i64 (tc-agg-layout-cache-probe-slot name-id)]
+          [data : TcAggLayoutCacheStateData
+            (tc-agg-layout-cache-state-data state)]
+          [slots : (__tl_dyn-array TcAggLayoutCacheSlot)
+            (tc-global-shared-view data.agg-layout-cache)]
+          [slot : i64 (tc-agg-layout-cache-probe-slot-for-state state name-id)]
           (if (< slot 0)
             (begin
               (cfg compile-profile (tc-lp-note 14))
@@ -57655,9 +57817,7 @@
                 name-id
                 handle
                 stack))
-            (match (tc-global-array-element-shared-view
-              (__tl-project-field tc-lazy-global-table-state agg-layout-cache)
-              slot)
+            (match (tc-global-array-element-shared-view slots slot)
               [(TcAggLayoutCacheSlot.Full _ layout)
                 (begin
                   (cfg compile-profile (tc-lp-note 12))
@@ -58116,10 +58276,23 @@
       (set! data.regwords-intern-generation -1)
       (tc-agg-scalar-cache-state-data-set! state data))))
 
+(define (tc-agg-layout-cache-reset-for-job! [job-state : TcJobState]) : unit
+  (let
+    [address : i64 (tc-job-state-agg-layout-cache-address job-state)]
+    (if (> address 0)
+      (let
+        [state : TcAggLayoutCacheState (TcAggLayoutCacheState address)]
+        [data : TcAggLayoutCacheStateData
+          (tc-agg-layout-cache-state-data state)]
+        (begin
+          (set! data.intern-table-id -1)
+          (set! data.intern-generation -1)
+          (tc-agg-layout-cache-state-data-set! state data)))
+      unit)))
+
 (define (tc-agg-caches-reset-for-job! [job-state : TcJobState]) : unit
   (begin
-    ;; The retained aggregate-layout table remains process-owned in this slice.
-    (set! tc-agg-layout-cache-generation -1)
+    (tc-agg-layout-cache-reset-for-job! job-state)
     (tc-agg-scalar-caches-reset-for-job! job-state)))
 
 (define (tc-agg-caches-reset!) : unit
@@ -64779,6 +64952,10 @@
       (tc-make-array-zero-literal-length? len)
       (not (tc-type-contains-reference? elem)))))
 
+;; An unquote recursively enters ordinary typechecking, which may install a
+;; different node-pool context during macro expansion. Re-project every child
+;; read through `ctx`; unlike the non-installing analysis walks above, this
+;; traversal must not hoist one segment-bases token across the recursion.
 (define (tc-quasiquote-template-list-ok
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -64795,9 +64972,15 @@
     (match (tc-quasiquote-template-ok
       (tc-global-shared-view ctx)
       env
-      (ast.ast-node-get (ast.ast-expr-list-get exprs index 0)))
+      (tc-context-expr-get
+        (tc-global-shared-view ctx)
+        (ast.ast-expr-list-get exprs index 0)))
       [(ResultTcUnit.Ok)
-        (tc-quasiquote-template-list-ok-at ctx env exprs (+ index 1))]
+        (tc-quasiquote-template-list-ok-at
+          (tc-global-shared-view ctx)
+          env
+          exprs
+          (+ index 1))]
       [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])))
 
 (define (tc-quasiquote-template-ok
@@ -64807,22 +64990,26 @@
   (match expr
     [(ast.AstExpr.Spanned inner-box _)
       (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
-        (tc-quasiquote-template-ok ctx env inner))]
+        [inner : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) inner-box)]
+        (tc-quasiquote-template-ok (tc-global-shared-view ctx) env inner))]
     [(ast.AstExpr.MacroExpansion inner-box _ _)
       (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
-        (tc-quasiquote-template-ok ctx env inner))]
+        [inner : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) inner-box)]
+        (tc-quasiquote-template-ok (tc-global-shared-view ctx) env inner))]
     [(ast.AstExpr.Unquote inner-box)
       (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
+        [inner : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) inner-box)]
         (match (tc-expr (tc-global-shared-view ctx) env inner)
           [(ResultTcType.Ok ty)
             (tc-expect ty (ast.AstType.Expr) "typecheck: unquote expects Expr")]
           [(ResultTcType.Err message) (ResultTcUnit.Err message)]))]
     [(ast.AstExpr.UnquoteSplicing inner-box)
       (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
+        [inner : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) inner-box)]
         (match (tc-expr (tc-global-shared-view ctx) env inner)
           [(ResultTcType.Ok ty)
             (tc-expect
@@ -64832,28 +65019,40 @@
           [(ResultTcType.Err message) (ResultTcUnit.Err message)]))]
     [(ast.AstExpr.Binary _ left-box right-box)
       (let
-        [left : ast.AstExpr (ast.ast-node-get left-box)]
-        [right : ast.AstExpr (ast.ast-node-get right-box)]
+        [left : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) left-box)]
+        [right : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) right-box)]
         (match (tc-quasiquote-template-ok (tc-global-shared-view ctx) env left)
-          [(ResultTcUnit.Ok) (tc-quasiquote-template-ok ctx env right)]
+          [(ResultTcUnit.Ok)
+            (tc-quasiquote-template-ok (tc-global-shared-view ctx) env right)]
           [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
     [(ast.AstExpr.Unary _ inner-box)
       (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
-        (tc-quasiquote-template-ok ctx env inner))]
+        [inner : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) inner-box)]
+        (tc-quasiquote-template-ok (tc-global-shared-view ctx) env inner))]
     [(ast.AstExpr.Call func-box args)
       (let
-        [func : ast.AstExpr (ast.ast-node-get func-box)]
+        [func : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) func-box)]
         (match (tc-quasiquote-template-ok (tc-global-shared-view ctx) env func)
-          [(ResultTcUnit.Ok) (tc-quasiquote-template-list-ok ctx env args)]
+          [(ResultTcUnit.Ok)
+            (tc-quasiquote-template-list-ok
+              (tc-global-shared-view ctx)
+              env
+              args)]
           [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
     [(ast.AstExpr.BracketClause items)
-      (tc-quasiquote-template-list-ok ctx env items)]
+      (tc-quasiquote-template-list-ok (tc-global-shared-view ctx) env items)]
     [(ast.AstExpr.If cond-box then-branch-box else-branch-box)
       (let
-        [cond : ast.AstExpr (ast.ast-node-get cond-box)]
-        [then-branch : ast.AstExpr (ast.ast-node-get then-branch-box)]
-        [else-branch : ast.AstExpr (ast.ast-node-get else-branch-box)]
+        [cond : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) cond-box)]
+        [then-branch : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) then-branch-box)]
+        [else-branch : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) else-branch-box)]
         (match (tc-quasiquote-template-ok (tc-global-shared-view ctx) env cond)
           [(ResultTcUnit.Ok)
             (match (tc-quasiquote-template-ok
@@ -64861,56 +65060,175 @@
               env
               then-branch)
               [(ResultTcUnit.Ok)
-                (tc-quasiquote-template-ok ctx env else-branch)]
+                (tc-quasiquote-template-ok
+                  (tc-global-shared-view ctx)
+                  env
+                  else-branch)]
               [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
           [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
-    [(ast.AstExpr.Tuple exprs) (tc-quasiquote-template-list-ok ctx env exprs)]
-    [(ast.AstExpr.Array exprs) (tc-quasiquote-template-list-ok ctx env exprs)]
+    [(ast.AstExpr.Tuple exprs)
+      (tc-quasiquote-template-list-ok (tc-global-shared-view ctx) env exprs)]
+    [(ast.AstExpr.Array exprs)
+      (tc-quasiquote-template-list-ok (tc-global-shared-view ctx) env exprs)]
     [(ast.AstExpr.DynArray exprs)
-      (tc-quasiquote-template-list-ok ctx env exprs)]
-    [(ast.AstExpr.Begin exprs) (tc-quasiquote-template-list-ok ctx env exprs)]
-    [(ast.AstExpr.Unsafe exprs) (tc-quasiquote-template-list-ok ctx env exprs)]
+      (tc-quasiquote-template-list-ok (tc-global-shared-view ctx) env exprs)]
+    [(ast.AstExpr.Begin exprs)
+      (tc-quasiquote-template-list-ok (tc-global-shared-view ctx) env exprs)]
+    [(ast.AstExpr.Unsafe exprs)
+      (tc-quasiquote-template-list-ok (tc-global-shared-view ctx) env exprs)]
     [(ast.AstExpr.Ann inner-box _)
       (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
-        (tc-quasiquote-template-ok ctx env inner))]
+        [inner : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) inner-box)]
+        (tc-quasiquote-template-ok (tc-global-shared-view ctx) env inner))]
     [(ast.AstExpr.Cast inner-box _)
       (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
-        (tc-quasiquote-template-ok ctx env inner))]
+        [inner : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) inner-box)]
+        (tc-quasiquote-template-ok (tc-global-shared-view ctx) env inner))]
     [(ast.AstExpr.Box inner-box)
       (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
-        (tc-quasiquote-template-ok ctx env inner))]
+        [inner : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) inner-box)]
+        (tc-quasiquote-template-ok (tc-global-shared-view ctx) env inner))]
     [(ast.AstExpr.BoxGet inner-box)
       (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
-        (tc-quasiquote-template-ok ctx env inner))]
+        [inner : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) inner-box)]
+        (tc-quasiquote-template-ok (tc-global-shared-view ctx) env inner))]
     [(ast.AstExpr.BoxTake inner-box)
       (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
-        (tc-quasiquote-template-ok ctx env inner))]
+        [inner : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) inner-box)]
+        (tc-quasiquote-template-ok (tc-global-shared-view ctx) env inner))]
     [(ast.AstExpr.BoxSet inner-box value-box)
       (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
-        [value : ast.AstExpr (ast.ast-node-get value-box)]
+        [inner : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) inner-box)]
+        [value : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) value-box)]
         (match (tc-quasiquote-template-ok (tc-global-shared-view ctx) env inner)
-          [(ResultTcUnit.Ok) (tc-quasiquote-template-ok ctx env value)]
+          [(ResultTcUnit.Ok)
+            (tc-quasiquote-template-ok (tc-global-shared-view ctx) env value)]
           [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
     [(ast.AstExpr.Comptime inner-box)
       (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
-        (tc-quasiquote-template-ok ctx env inner))]
+        [inner : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) inner-box)]
+        (tc-quasiquote-template-ok (tc-global-shared-view ctx) env inner))]
     [(ast.AstExpr.Return inner-box)
       (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
-        (tc-quasiquote-template-ok ctx env inner))]
+        [inner : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) inner-box)]
+        (tc-quasiquote-template-ok (tc-global-shared-view ctx) env inner))]
     [(ast.AstExpr.Quote _) ResultTcUnit.Ok]
     [(ast.AstExpr.Quasiquote inner-box)
       (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
-        (tc-quasiquote-template-ok ctx env inner))]
+        [inner : ast.AstExpr
+          (tc-context-expr-get (tc-global-shared-view ctx) inner-box)]
+        (tc-quasiquote-template-ok (tc-global-shared-view ctx) env inner))]
     [_ ResultTcUnit.Ok]))
+
+(test
+  tc-quasiquote-template-explicit-pool-isolation
+  (let
+    [prev : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [pools-a : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [pools-b : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [quoted-value-a : i64
+      (ast.ast-node-pool-context-expr-push
+        (tc-global-shared-view pools-a)
+        (ast.AstExpr.Var 101))]
+    [quote-a : i64
+      (ast.ast-node-pool-context-expr-push
+        (tc-global-shared-view pools-a)
+        (ast.AstExpr.Quote quoted-value-a))]
+    [unquote-a : i64
+      (ast.ast-node-pool-context-expr-push
+        (tc-global-shared-view pools-a)
+        (ast.AstExpr.Unquote quote-a))]
+    [return-value-a : i64
+      (ast.ast-node-pool-context-expr-push
+        (tc-global-shared-view pools-a)
+        (ast.AstExpr.Var 202))]
+    [return-a : i64
+      (ast.ast-node-pool-context-expr-push
+        (tc-global-shared-view pools-a)
+        (ast.AstExpr.Return return-value-a))]
+    [template-items : ast.AstExprList (ast.ast-expr-list-new)]
+    [_item-unquote : unit
+      (ast.ast-expr-list-push (&mut template-items) unquote-a)]
+    [_item-return : unit
+      (ast.ast-expr-list-push (&mut template-items) return-a)]
+    [quoted-value-b : i64
+      (ast.ast-node-pool-context-expr-push
+        (tc-global-shared-view pools-b)
+        (ast.AstExpr.Var 901))]
+    [quote-b : i64
+      (ast.ast-node-pool-context-expr-push
+        (tc-global-shared-view pools-b)
+        (ast.AstExpr.Var 902))]
+    [unquote-b : i64
+      (ast.ast-node-pool-context-expr-push
+        (tc-global-shared-view pools-b)
+        (ast.AstExpr.Unquote quote-b))]
+    [return-value-b : i64
+      (ast.ast-node-pool-context-expr-push
+        (tc-global-shared-view pools-b)
+        (ast.AstExpr.Var 903))]
+    [return-b : i64
+      (ast.ast-node-pool-context-expr-push
+        (tc-global-shared-view pools-b)
+        (ast.AstExpr.Return return-value-b))]
+    [job-state : TcJobState (tc-job-state-new)]
+    [ctx : TcContext
+      (tc-context-new-with-source-names-and-job-state
+        (ast.ast-program (ast.ast-decl-list-new))
+        (csym.compiler-symbols-empty)
+        (csym.compiler-registries-empty)
+        ""
+        cbi.compiler-builtin-id-fix-empty
+        (tc-global-shared-view pools-a)
+        (ci.intern-source-name-session-capture-active-handle)
+        (tc-global-shared-view job-state))]
+    [env : TcTypeEnv
+      (tc-empty-env-with-job-state (tc-global-shared-view job-state))]
+    [_install-decoy : unit
+      (ast.ast-node-pool-context-install! (tc-global-shared-view pools-b))]
+    [result : ResultTcUnit
+      (tc-quasiquote-template-ok ctx env (ast.AstExpr.Begin template-items))]
+    [decoy-still-installed? : bool
+      (and
+        (=
+          (ast.ast-node-pool-active-expr-segment-bases)
+          (ast.ast-node-pool-context-expr-segment-bases pools-b))
+        (match (ast.ast-node-pool-context-expr-get pools-b quote-b)
+          [(ast.AstExpr.Var name-id) (= name-id 902)]
+          [_ false]))]
+    [ok? : bool
+      (and
+        (= quoted-value-a quoted-value-b)
+        (= quote-a quote-b)
+        (= unquote-a unquote-b)
+        (= return-value-a return-value-b)
+        (= return-a return-b)
+        (match result
+          [(ResultTcUnit.Ok) true]
+          [(ResultTcUnit.Err _) false])
+        decoy-still-installed?
+        (=
+          (ast.ast-node-pool-context-expr-len (tc-global-shared-view pools-a))
+          5)
+        (=
+          (ast.ast-node-pool-context-expr-len (tc-global-shared-view pools-b))
+          5))]
+    (begin
+      (ast.ast-node-pool-context-install! prev)
+      (if ok?
+        unit
+        (io.panic "typecheck: quasiquote template pool isolation failed")))))
 
 (define (tc-clone-out-unsupported-message
   [ctx : TcContext]
@@ -107855,12 +108173,10 @@
       (tc-job-state-type-resolution-cache job-state)]
     [scalar-state : TcAggScalarCacheState
       (tc-job-state-agg-scalar-caches job-state)]
+    [layout-state : TcAggLayoutCacheState
+      (tc-job-state-agg-layout-cache job-state)]
     [initially-lazy? : bool
       (and
-        (=
-          (arena.raw-handle
-            (__tl-project-field tc-lazy-global-table-state owner))
-          0)
         (=
           (array-length
             (__tl-project-field
@@ -107887,7 +108203,13 @@
           0)
         (=
           (array-length
-            (__tl-project-field tc-lazy-global-table-state agg-layout-cache))
+            (__tl-project-field
+              (tc-agg-layout-cache-state-data layout-state)
+              agg-layout-cache))
+          0)
+        (=
+          (tc-agg-layout-cache-storage-arena-handle-value-for-state
+            layout-state)
           0)
         (= (array-length (tc-macro-proof-field proof-state qualified-keys)) 0))]
     [_set-scratch : unit
@@ -107902,7 +108224,8 @@
       (tc-agg-scalar-cache-state-data scalar-state)]
     [resolution-data : TcTypeResolutionCacheStateData
       (tc-type-resolution-cache-state-data resolution-state)]
-    [_layout : unit (tc-agg-layout-cache-table-storage-ensure!)]
+    [_layout : unit
+      (tc-agg-layout-cache-table-storage-ensure-for-state! layout-state)]
     [_macro-proof : unit
       (tc-macro-abstract-proof-qualified-key-storage-ensure! proof-state)]
     [restored-caller? : bool (arena.eq? (arena.current) scratch)]
@@ -107918,7 +108241,9 @@
           tc-agg-scalar-cache-capacity)
         (=
           (array-length
-            (__tl-project-field tc-lazy-global-table-state agg-layout-cache))
+            (__tl-project-field
+              (tc-agg-layout-cache-state-data layout-state)
+              agg-layout-cache))
           tc-agg-layout-cache-capacity)
         (=
           (array-length (tc-macro-proof-field proof-state qualified-keys))
@@ -107934,7 +108259,9 @@
       (set! (array-ref scalar-data.regwords-cache 0) 37)
       (set!
         (array-ref
-          (__tl-project-field tc-lazy-global-table-state agg-layout-cache)
+          (__tl-project-field
+            (tc-agg-layout-cache-state-data layout-state)
+            agg-layout-cache)
           0)
         (TcAggLayoutCacheSlot.Empty))
       (set!
@@ -107948,7 +108275,9 @@
             (= (array-ref scalar-data.align-cache 0) 31)
             (= (array-ref scalar-data.regwords-cache 0) 37)
             (match (tc-global-array-element-shared-view
-              (__tl-project-field tc-lazy-global-table-state agg-layout-cache)
+              (__tl-project-field
+                (tc-agg-layout-cache-state-data layout-state)
+                agg-layout-cache)
               0)
               [(TcAggLayoutCacheSlot.Empty) true]
               [_ false])

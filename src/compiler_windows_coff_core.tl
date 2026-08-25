@@ -156,7 +156,8 @@
   [spans : compiler_ir_types.CompilerSourceSpans]
   [mode : compiler_backend.CompilerBackendMode]
   [category : String]
-  [profile-state : profile_state.CompilerProfileState]) : ResultCompilerWindowsBatchArtifact
+  [profile-state : profile_state.CompilerProfileState]
+  [typecheck-state : compiler_typecheck_core.TcJobState]) : ResultCompilerWindowsBatchArtifact
   (begin
     (cfg
       compile-profile
@@ -179,7 +180,8 @@
             (compiler_driver_core.compiler-driver-profile-finish-phase
               (profile_state.compiler-profile-state-shared-view profile-state)
               "backend.assembly"))
-          (compiler_driver_core.compiler-driver-allocation-profile-snapshot!
+          (compiler_driver_core.compiler-driver-allocation-profile-snapshot-for-job!
+            typecheck-state
             "backend.assembly")
           (ResultCompilerWindowsBatchArtifact.Assembly asm category))]
       [(compiler_backend.ResultCompilerBackendBuffer.Err diag)
@@ -189,7 +191,8 @@
             (compiler_driver_core.compiler-driver-profile-finish-phase
               (profile_state.compiler-profile-state-shared-view profile-state)
               "backend.assembly"))
-          (compiler_driver_core.compiler-driver-allocation-profile-snapshot!
+          (compiler_driver_core.compiler-driver-allocation-profile-snapshot-for-job!
+            typecheck-state
             "backend.assembly-error")
           (ResultCompilerWindowsBatchArtifact.Err
             (compiler-windows-batch-backend-diagnostic input-path diag)))])))
@@ -212,7 +215,8 @@
   [mode : compiler_backend.CompilerBackendMode]
   [force-assembly : bool]
   [emit-side-assembly : bool]
-  [profile-state : profile_state.CompilerProfileState]) : ResultCompilerWindowsBatchArtifact
+  [profile-state : profile_state.CompilerProfileState]
+  [typecheck-state : compiler_typecheck_core.TcJobState]) : ResultCompilerWindowsBatchArtifact
   (if force-assembly
     (compiler-windows-batch-emit-assembly
       backend-state
@@ -222,7 +226,8 @@
       spans
       mode
       "forced-assembly"
-      (profile_state.compiler-profile-state-shared-view profile-state))
+      profile-state
+      typecheck-state)
     (if (not
       (compiler-windows-coff-object-program-supported?
         (owned_view.compiler-owned-shared-view backend-state)
@@ -235,7 +240,8 @@
         spans
         mode
         (compiler_backend.compiler-backend-object-unsupported-semantics-category)
-        (profile_state.compiler-profile-state-shared-view profile-state))
+        profile-state
+        typecheck-state)
       (begin
         (cfg
           compile-profile
@@ -259,7 +265,8 @@
                   (profile_state.compiler-profile-state-shared-view
                     profile-state)
                   "backend.object-image"))
-              (compiler_driver_core.compiler-driver-allocation-profile-snapshot!
+              (compiler_driver_core.compiler-driver-allocation-profile-snapshot-for-job!
+                typecheck-state
                 "backend.object-image")
               (match (compiler-windows-coff-linkability
                 (owned_view.compiler-owned-shared-view image))
@@ -280,7 +287,8 @@
                               (profile_state.compiler-profile-state-shared-view
                                 profile-state)
                               "render.coff-object"))
-                          (compiler_driver_core.compiler-driver-allocation-profile-snapshot!
+                          (compiler_driver_core.compiler-driver-allocation-profile-snapshot-for-job!
+                            typecheck-state
                             "render.coff-object")
                           (if emit-side-assembly
                             (match (compiler_object_asm.compiler-object-asm-render
@@ -325,7 +333,8 @@
                     spans
                     mode
                     category
-                    profile-state)]))]
+                    profile-state
+                    typecheck-state)]))]
           [(compiler_backend.ResultCompilerBackendObject.Err diag)
             (begin
               (cfg
@@ -334,7 +343,8 @@
                   (profile_state.compiler-profile-state-shared-view
                     profile-state)
                   "backend.object-image"))
-              (compiler_driver_core.compiler-driver-allocation-profile-snapshot!
+              (compiler_driver_core.compiler-driver-allocation-profile-snapshot-for-job!
+                typecheck-state
                 "backend.object-image-error")
               (ResultCompilerWindowsBatchArtifact.Err
                 (compiler-windows-batch-backend-diagnostic input-path diag)))])))))
@@ -379,7 +389,8 @@
               (compiler_driver_core.compiler-driver-profile-finish-phase
                 (profile_state.compiler-profile-state-shared-view profile-state)
                 "optimize"))
-            (compiler_driver_core.compiler-driver-allocation-profile-snapshot!
+            (compiler_driver_core.compiler-driver-allocation-profile-snapshot-for-job!
+              typecheck-state
               "optimize")
             (compiler_driver_core.compiler-driver-release-lowered-ir! opt-level)
             (if (compiler_ast_types.ast-node-pool-context-type-exhausted? pools)
@@ -400,7 +411,8 @@
                   mode
                   force-assembly
                   emit-side-assembly
-                  profile-state))))]))))
+                  profile-state
+                  typecheck-state))))]))))
 
 (define (compiler-windows-batch-emit-lowered-result
   [input-path : String]

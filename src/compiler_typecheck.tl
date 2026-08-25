@@ -1916,73 +1916,209 @@
 ;; restore the caller's active arena after each allocation. Exercise all three
 ;; builder families directly, including cache-owner reuse and reset.
 (define (compiler-typecheck-inline-layout-storage-arena-ok?) : bool
-  (begin
-    (tc_core.tc-agg-caches-reset!)
-    (tc_core.tc-agg-layout-cache-table-storage-ensure!)
-    (tc_core.tc-agg-layout-cache-storage-reset!)
-    (let
-      [home : i64 (arena.raw-handle (arena.current))]
-      [fields : tc_core.TcInlineFieldLayoutList
-        (tc_core.tc-inline-field-layout-list-with-count 4)]
-      [storage : i64 (tc_core.tc-agg-layout-cache-storage-arena-handle-value)]
-      [state-storage : i64
-        (arena.raw-handle
+  (let
+    [job-state : tc_core.TcJobState (tc_core.tc-serial-job-state)]
+    [state : tc_core.TcAggLayoutCacheState
+      (tc_core.tc-job-state-agg-layout-cache job-state)]
+    (begin
+      (tc_core.tc-agg-caches-reset-for-job! job-state)
+      (tc_core.tc-agg-layout-cache-table-storage-ensure-for-state! state)
+      (tc_core.tc-agg-layout-cache-storage-reset-for-state! state)
+      (let
+        [home : i64 (arena.raw-handle (arena.current))]
+        [fields : tc_core.TcInlineFieldLayoutList
+          (tc_core.tc-inline-field-layout-list-with-count-for-state state 4)]
+        [storage : i64
+          (tc_core.tc-agg-layout-cache-storage-arena-handle-value-for-state
+            state)]
+        [state-storage : i64
+          (arena.raw-handle
+            (__tl-project-field
+              (tc_core.tc-agg-layout-cache-state-data state)
+              agg-layout-storage-owner))]
+        [after-fields : i64 (arena.raw-handle (arena.current))]
+        [payloads : tc_core.TcInlinePayloadLayoutList
+          (tc_core.tc-inline-payload-layout-list-with-count-for-state state 3)]
+        [after-payloads : i64 (arena.raw-handle (arena.current))]
+        [variants : tc_core.TcInlineVariantLayoutList
+          (tc_core.tc-inline-variant-layout-list-with-count-for-state state 2)]
+        [after-variants : i64 (arena.raw-handle (arena.current))]
+        [_publish : unit
+          (tc_core.tc-agg-layout-cache-store-for-state!
+            state
+            0
+            4242
+            (tc_core.TcInlineAggregateLayout.Struct 8 8 fields))]
+        [ok : bool
+          (and
+            (> storage 0)
+            (= storage state-storage)
+            (=
+              storage
+              (tc_core.tc-agg-layout-cache-storage-arena-handle-value-for-state
+                state))
+            (=
+              (array-length
+                (__tl-project-field
+                  (tc_core.tc-agg-layout-cache-state-data state)
+                  agg-layout-cache))
+              tc_core.tc-agg-layout-cache-capacity)
+            (not (tc_core.tc-agg-layout-cache-slot-empty-for-state? state 0))
+            (= home after-fields)
+            (= home after-payloads)
+            (= home after-variants)
+            (= (tc_core.tc-inline-field-layout-list-count fields) 4)
+            (= (tc_core.tc-inline-payload-layout-list-count payloads) 3)
+            (= (tc_core.tc-inline-variant-layout-list-count variants) 2))]
+        (begin
+          (tc_core.tc-agg-layout-cache-storage-reset-for-state! state)
+          (tc_core.tc-agg-caches-reset-for-job! job-state)
+          (and
+            ok
+            (= (arena.raw-handle (arena.current)) home)
+            (=
+              (tc_core.tc-agg-layout-cache-storage-arena-handle-value-for-state
+                state)
+              0)
+            (=
+              (array-length
+                (__tl-project-field
+                  (tc_core.tc-agg-layout-cache-state-data state)
+                  agg-layout-cache))
+              tc_core.tc-agg-layout-cache-capacity)
+            (tc_core.tc-agg-layout-cache-slot-empty-for-state? state 0)
+            (=
+              (arena.raw-handle
+                (__tl-project-field
+                  (tc_core.tc-agg-layout-cache-state-data state)
+                  agg-layout-storage-owner))
+              0)))))))
+
+;; Complete aggregate layouts and their retained payload arrays belong to the
+;; explicit compiler job. Reset and destroy each payload owner while the other
+;; job remains populated, then reuse the first job to prove the swap is local.
+(define (compiler-typecheck-inline-layout-state-isolation-ok?) : bool
+  (let
+    [job-a : tc_core.TcJobState (tc_core.tc-job-state-new)]
+    [job-b : tc_core.TcJobState (tc_core.tc-job-state-new)]
+    [state-a : tc_core.TcAggLayoutCacheState
+      (tc_core.tc-job-state-agg-layout-cache job-a)]
+    [state-b : tc_core.TcAggLayoutCacheState
+      (tc_core.tc-job-state-agg-layout-cache job-b)]
+    [_table-a : unit
+      (tc_core.tc-agg-layout-cache-table-storage-ensure-for-state! state-a)]
+    [_table-b : unit
+      (tc_core.tc-agg-layout-cache-table-storage-ensure-for-state! state-b)]
+    [_clear-a : unit
+      (tc_core.tc-agg-layout-cache-storage-reset-for-state! state-a)]
+    [_clear-b : unit
+      (tc_core.tc-agg-layout-cache-storage-reset-for-state! state-b)]
+    [_bind-a : unit
+      (tc_core.tc-agg-layout-cache-ensure-for-state! state-a 101 3)]
+    [_bind-b : unit
+      (tc_core.tc-agg-layout-cache-ensure-for-state! state-b 202 7)]
+    [fields-a : tc_core.TcInlineFieldLayoutList
+      (tc_core.tc-inline-field-layout-list-with-count-for-state state-a 2)]
+    [fields-b : tc_core.TcInlineFieldLayoutList
+      (tc_core.tc-inline-field-layout-list-with-count-for-state state-b 3)]
+    [_field-a : unit
+      (tc_core.tc-inline-field-layout-list-set!
+        fields-a
+        0
+        (tc_core.TcInlineFieldLayout.Field 1101 (ast.AstType.I64) 0))]
+    [_field-b : unit
+      (tc_core.tc-inline-field-layout-list-set!
+        fields-b
+        0
+        (tc_core.TcInlineFieldLayout.Field 2202 (ast.AstType.U32) 0))]
+    [_publish-a : unit
+      (tc_core.tc-agg-layout-cache-store-for-state!
+        state-a
+        0
+        101
+        (tc_core.TcInlineAggregateLayout.Struct 16 8 fields-a))]
+    [_publish-b : unit
+      (tc_core.tc-agg-layout-cache-store-for-state!
+        state-b
+        0
+        202
+        (tc_core.TcInlineAggregateLayout.Struct 12 4 fields-b))]
+    [storage-a : i64
+      (tc_core.tc-agg-layout-cache-storage-arena-handle-value-for-state state-a)]
+    [storage-b : i64
+      (tc_core.tc-agg-layout-cache-storage-arena-handle-value-for-state state-b)]
+    [initially-isolated? : bool
+      (and
+        (> storage-a 0)
+        (> storage-b 0)
+        (not (= storage-a storage-b))
+        (not (tc_core.tc-agg-layout-cache-slot-empty-for-state? state-a 0))
+        (not (tc_core.tc-agg-layout-cache-slot-empty-for-state? state-b 0))
+        (= (compiler-typecheck-inline-field-id-at fields-a 0) 1101)
+        (= (compiler-typecheck-inline-field-id-at fields-b 0) 2202)
+        (=
           (__tl-project-field
-            tc_core.tc-lazy-global-table-state
-            agg-layout-storage-owner))]
-      [after-fields : i64 (arena.raw-handle (arena.current))]
-      [payloads : tc_core.TcInlinePayloadLayoutList
-        (tc_core.tc-inline-payload-layout-list-with-count 3)]
-      [after-payloads : i64 (arena.raw-handle (arena.current))]
-      [variants : tc_core.TcInlineVariantLayoutList
-        (tc_core.tc-inline-variant-layout-list-with-count 2)]
-      [after-variants : i64 (arena.raw-handle (arena.current))]
-      [_publish : unit
-        (tc_core.tc-agg-layout-cache-store!
-          0
-          4242
-          (tc_core.TcInlineAggregateLayout.Struct
-            8
-            8
-            (tc_core.tc-global-shared-view fields)))]
-      [ok : bool
-        (and
-          (> storage 0)
-          (= storage state-storage)
-          (= storage (tc_core.tc-agg-layout-cache-storage-arena-handle-value))
-          (=
-            (array-length
-              (__tl-project-field
-                tc_core.tc-lazy-global-table-state
-                agg-layout-cache))
-            tc_core.tc-agg-layout-cache-capacity)
-          (not (tc_core.tc-agg-layout-cache-slot-empty? 0))
-          (= home after-fields)
-          (= home after-payloads)
-          (= home after-variants)
-          (= (tc_core.tc-inline-field-layout-list-count fields) 4)
-          (= (tc_core.tc-inline-payload-layout-list-count payloads) 3)
-          (= (tc_core.tc-inline-variant-layout-list-count variants) 2))]
-      (begin
-        (tc_core.tc-agg-layout-cache-storage-reset!)
-        (tc_core.tc-agg-caches-reset!)
-        (and
-          ok
-          (= (arena.raw-handle (arena.current)) home)
-          (= (tc_core.tc-agg-layout-cache-storage-arena-handle-value) 0)
-          (=
-            (array-length
-              (__tl-project-field
-                tc_core.tc-lazy-global-table-state
-                agg-layout-cache))
-            tc_core.tc-agg-layout-cache-capacity)
-          (tc_core.tc-agg-layout-cache-slot-empty? 0)
-          (=
-            (arena.raw-handle
-              (__tl-project-field
-                tc_core.tc-lazy-global-table-state
-                agg-layout-storage-owner))
-            0))))))
+            (tc_core.tc-agg-layout-cache-state-data state-a)
+            intern-table-id)
+          101)
+        (=
+          (__tl-project-field
+            (tc_core.tc-agg-layout-cache-state-data state-b)
+            intern-generation)
+          7))]
+    (begin
+      (tc_core.tc-agg-layout-cache-storage-reset-for-state! state-a)
+      (let
+        [b-after-a-destroy? : bool
+          (and
+            (tc_core.tc-agg-layout-cache-slot-empty-for-state? state-a 0)
+            (not (tc_core.tc-agg-layout-cache-slot-empty-for-state? state-b 0))
+            (=
+              (tc_core.tc-agg-layout-cache-storage-arena-handle-value-for-state
+                state-b)
+              storage-b)
+            (= (compiler-typecheck-inline-field-id-at fields-b 0) 2202))]
+        [reused-a : tc_core.TcInlineFieldLayoutList
+          (tc_core.tc-inline-field-layout-list-with-count-for-state state-a 1)]
+        [reused-storage-a : i64
+          (tc_core.tc-agg-layout-cache-storage-arena-handle-value-for-state
+            state-a)]
+        [_reuse-field : unit
+          (tc_core.tc-inline-field-layout-list-set!
+            reused-a
+            0
+            (tc_core.TcInlineFieldLayout.Field 3303 (ast.AstType.U64) 0))]
+        [_reuse-publish : unit
+          (tc_core.tc-agg-layout-cache-store-for-state!
+            state-a
+            0
+            303
+            (tc_core.TcInlineAggregateLayout.Struct 8 8 reused-a))]
+        (begin
+          (tc_core.tc-agg-layout-cache-storage-reset-for-state! state-b)
+          (let
+            [a-after-b-destroy? : bool
+              (and
+                (> reused-storage-a 0)
+                (not
+                  (tc_core.tc-agg-layout-cache-slot-empty-for-state? state-a 0))
+                (tc_core.tc-agg-layout-cache-slot-empty-for-state? state-b 0)
+                (= (compiler-typecheck-inline-field-id-at reused-a 0) 3303))]
+            (begin
+              (tc_core.tc-agg-layout-cache-storage-reset-for-state! state-a)
+              (and
+                initially-isolated?
+                b-after-a-destroy?
+                a-after-b-destroy?
+                (tc_core.tc-agg-layout-cache-slot-empty-for-state? state-a 0)
+                (=
+                  (tc_core.tc-agg-layout-cache-storage-arena-handle-value-for-state
+                    state-a)
+                  0)
+                (=
+                  (tc_core.tc-agg-layout-cache-storage-arena-handle-value-for-state
+                    state-b)
+                  0)))))))))
 
 (define (compiler-typecheck-inline-layout-query-ok?) : bool
   (match (parser.parse-ast-source
@@ -2665,6 +2801,9 @@
         unit
         (set! ok false))
       (if (compiler-typecheck-inline-layout-storage-arena-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-inline-layout-state-isolation-ok?)
         unit
         (set! ok false))
       (if (compiler-typecheck-inline-layout-error-ok?

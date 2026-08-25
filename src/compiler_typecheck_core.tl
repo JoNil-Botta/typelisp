@@ -60653,6 +60653,10 @@
       (tc-make-array-zero-literal-length? len)
       (not (tc-type-contains-reference? elem)))))
 
+;; An unquote recursively enters ordinary typechecking, which may install a
+;; different node-pool context during macro expansion. Re-project every child
+;; read through `ctx`; unlike the non-installing analysis walks above, this
+;; traversal must not hoist one segment-bases token across the recursion.
 (define (tc-quasiquote-template-list-ok
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -60669,7 +60673,7 @@
     (match (tc-quasiquote-template-ok
       ctx
       env
-      (ast.ast-node-get (ast.ast-expr-list-get exprs index 0)))
+      (tc-context-expr-get ctx (ast.ast-expr-list-get exprs index 0)))
       [(ResultTcUnit.Ok)
         (tc-quasiquote-template-list-ok-at ctx env exprs (+ index 1))]
       [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])))
@@ -60681,22 +60685,22 @@
   (match expr
     [(ast.AstExpr.Spanned inner-box _)
       (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
+        [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
         (tc-quasiquote-template-ok ctx env inner))]
     [(ast.AstExpr.MacroExpansion inner-box _ _)
       (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
+        [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
         (tc-quasiquote-template-ok ctx env inner))]
     [(ast.AstExpr.Unquote inner-box)
       (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
+        [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
         (match (tc-expr ctx env inner)
           [(ResultTcType.Ok ty)
             (tc-expect ty (ast.AstType.Expr) "typecheck: unquote expects Expr")]
           [(ResultTcType.Err message) (ResultTcUnit.Err message)]))]
     [(ast.AstExpr.UnquoteSplicing inner-box)
       (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
+        [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
         (match (tc-expr ctx env inner)
           [(ResultTcType.Ok ty)
             (tc-expect
@@ -60706,18 +60710,18 @@
           [(ResultTcType.Err message) (ResultTcUnit.Err message)]))]
     [(ast.AstExpr.Binary _ left-box right-box)
       (let
-        [left : ast.AstExpr (ast.ast-node-get left-box)]
-        [right : ast.AstExpr (ast.ast-node-get right-box)]
+        [left : ast.AstExpr (tc-context-expr-get ctx left-box)]
+        [right : ast.AstExpr (tc-context-expr-get ctx right-box)]
         (match (tc-quasiquote-template-ok ctx env left)
           [(ResultTcUnit.Ok) (tc-quasiquote-template-ok ctx env right)]
           [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
     [(ast.AstExpr.Unary _ inner-box)
       (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
+        [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
         (tc-quasiquote-template-ok ctx env inner))]
     [(ast.AstExpr.Call func-box args)
       (let
-        [func : ast.AstExpr (ast.ast-node-get func-box)]
+        [func : ast.AstExpr (tc-context-expr-get ctx func-box)]
         (match (tc-quasiquote-template-ok ctx env func)
           [(ResultTcUnit.Ok) (tc-quasiquote-template-list-ok ctx env args)]
           [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
@@ -60725,9 +60729,9 @@
       (tc-quasiquote-template-list-ok ctx env items)]
     [(ast.AstExpr.If cond-box then-branch-box else-branch-box)
       (let
-        [cond : ast.AstExpr (ast.ast-node-get cond-box)]
-        [then-branch : ast.AstExpr (ast.ast-node-get then-branch-box)]
-        [else-branch : ast.AstExpr (ast.ast-node-get else-branch-box)]
+        [cond : ast.AstExpr (tc-context-expr-get ctx cond-box)]
+        [then-branch : ast.AstExpr (tc-context-expr-get ctx then-branch-box)]
+        [else-branch : ast.AstExpr (tc-context-expr-get ctx else-branch-box)]
         (match (tc-quasiquote-template-ok ctx env cond)
           [(ResultTcUnit.Ok)
             (match (tc-quasiquote-template-ok ctx env then-branch)
@@ -60743,45 +60747,130 @@
     [(ast.AstExpr.Unsafe exprs) (tc-quasiquote-template-list-ok ctx env exprs)]
     [(ast.AstExpr.Ann inner-box _)
       (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
+        [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
         (tc-quasiquote-template-ok ctx env inner))]
     [(ast.AstExpr.Cast inner-box _)
       (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
+        [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
         (tc-quasiquote-template-ok ctx env inner))]
     [(ast.AstExpr.Box inner-box)
       (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
+        [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
         (tc-quasiquote-template-ok ctx env inner))]
     [(ast.AstExpr.BoxGet inner-box)
       (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
+        [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
         (tc-quasiquote-template-ok ctx env inner))]
     [(ast.AstExpr.BoxTake inner-box)
       (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
+        [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
         (tc-quasiquote-template-ok ctx env inner))]
     [(ast.AstExpr.BoxSet inner-box value-box)
       (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
-        [value : ast.AstExpr (ast.ast-node-get value-box)]
+        [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
+        [value : ast.AstExpr (tc-context-expr-get ctx value-box)]
         (match (tc-quasiquote-template-ok ctx env inner)
           [(ResultTcUnit.Ok) (tc-quasiquote-template-ok ctx env value)]
           [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
     [(ast.AstExpr.Comptime inner-box)
       (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
+        [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
         (tc-quasiquote-template-ok ctx env inner))]
     [(ast.AstExpr.Return inner-box)
       (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
+        [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
         (tc-quasiquote-template-ok ctx env inner))]
     [(ast.AstExpr.Quote _) ResultTcUnit.Ok]
     [(ast.AstExpr.Quasiquote inner-box)
       (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
+        [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
         (tc-quasiquote-template-ok ctx env inner))]
     [_ ResultTcUnit.Ok]))
+
+(test
+  tc-quasiquote-template-explicit-pool-isolation
+  (let
+    [prev : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [pools-a : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [pools-b : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [quoted-value-a : i64
+      (ast.ast-node-pool-context-expr-push pools-a (ast.AstExpr.Var 101))]
+    [quote-a : i64
+      (ast.ast-node-pool-context-expr-push
+        pools-a
+        (ast.AstExpr.Quote quoted-value-a))]
+    [unquote-a : i64
+      (ast.ast-node-pool-context-expr-push
+        pools-a
+        (ast.AstExpr.Unquote quote-a))]
+    [return-value-a : i64
+      (ast.ast-node-pool-context-expr-push pools-a (ast.AstExpr.Var 202))]
+    [return-a : i64
+      (ast.ast-node-pool-context-expr-push
+        pools-a
+        (ast.AstExpr.Return return-value-a))]
+    [template-items : ast.AstExprList (ast.ast-expr-list-new)]
+    [_item-unquote : unit
+      (ast.ast-expr-list-push (&mut template-items) unquote-a)]
+    [_item-return : unit
+      (ast.ast-expr-list-push (&mut template-items) return-a)]
+    [quoted-value-b : i64
+      (ast.ast-node-pool-context-expr-push pools-b (ast.AstExpr.Var 901))]
+    [quote-b : i64
+      (ast.ast-node-pool-context-expr-push pools-b (ast.AstExpr.Var 902))]
+    [unquote-b : i64
+      (ast.ast-node-pool-context-expr-push
+        pools-b
+        (ast.AstExpr.Unquote quote-b))]
+    [return-value-b : i64
+      (ast.ast-node-pool-context-expr-push pools-b (ast.AstExpr.Var 903))]
+    [return-b : i64
+      (ast.ast-node-pool-context-expr-push
+        pools-b
+        (ast.AstExpr.Return return-value-b))]
+    [job-state : TcJobState (tc-job-state-new)]
+    [ctx : TcContext
+      (tc-context-new-with-source-names-and-job-state
+        (ast.ast-program (ast.ast-decl-list-new))
+        (csym.compiler-symbols-empty)
+        (csym.compiler-registries-empty)
+        ""
+        cbi.compiler-builtin-id-fix-empty
+        pools-a
+        (ci.intern-source-name-session-capture-active-handle)
+        job-state)]
+    [env : TcTypeEnv (tc-empty-env-with-job-state job-state)]
+    [_install-decoy : unit (ast.ast-node-pool-context-install! pools-b)]
+    [result : ResultTcUnit
+      (tc-quasiquote-template-ok ctx env (ast.AstExpr.Begin template-items))]
+    [decoy-still-installed? : bool
+      (and
+        (=
+          (ast.ast-node-pool-active-expr-segment-bases)
+          (ast.ast-node-pool-context-expr-segment-bases pools-b))
+        (match (ast.ast-node-pool-context-expr-get pools-b quote-b)
+          [(ast.AstExpr.Var name-id) (= name-id 902)]
+          [_ false]))]
+    [ok? : bool
+      (and
+        (= quoted-value-a quoted-value-b)
+        (= quote-a quote-b)
+        (= unquote-a unquote-b)
+        (= return-value-a return-value-b)
+        (= return-a return-b)
+        (match result
+          [(ResultTcUnit.Ok) true]
+          [(ResultTcUnit.Err _) false])
+        decoy-still-installed?
+        (= (ast.ast-node-pool-context-expr-len pools-a) 5)
+        (= (ast.ast-node-pool-context-expr-len pools-b) 5))]
+    (begin
+      (ast.ast-node-pool-context-install! prev)
+      (if ok?
+        unit
+        (io.panic "typecheck: quasiquote template pool isolation failed")))))
 
 (define (tc-clone-out-unsupported-message
   [ctx : TcContext]

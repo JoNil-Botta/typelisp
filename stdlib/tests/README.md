@@ -47,6 +47,12 @@ or external runtime orchestration. Pure stdlib API coverage that can run through
   by hot compiler/runtime modules, including reserve, push, array and string
   append, binary NUL/high-byte preservation, and explicit array/string finish
   boundaries.
+- `format_primitive_display.tl` covers zero, one, signed minima, and maxima for
+  every fixed-width integer type, including the full `u64` range. Its pinned
+  Rust Display tables cover binary32/binary64 signed zero, source-width
+  rounding, decimal-only powers, normal/subnormal edges, max finite values,
+  infinities, and canonical NaNs; deterministic finite-bit samples additionally
+  prove decimal parse round trips.
 - `io_stdio_pipe_short_read.tl` is typechecked like the other witnesses and is
   also run by `scripts/verify-stdlib.sh` through a native pipe to ensure
   positive short pipe reads do not report EOF before all bytes arrive.

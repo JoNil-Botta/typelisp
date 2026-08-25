@@ -269,6 +269,7 @@ stdlib/tests/byte_buf_api.tl|42|-|-
 stdlib/tests/byte_buf_core_api.tl|42|-|-
 stdlib/tests/format_api.tl|42|-|-|-
 stdlib/tests/format_precision_io.tl|42|printf:abc/   tr\n|literal:er|-
+stdlib/tests/format_primitive_display.tl|42|-|-|-
 stdlib/tests/format_negative_dynamic_precision.tl|134|-|literal:format: precision count must be nonnegative|-
 stdlib/tests/format_negative_dynamic_width.tl|134|-|literal:format: dynamic width argument must be nonnegative|-
 stdlib/tests/io_stdio_lines.tl|42|printf:stdout-line\n|printf:stderr-line\n|printf:alpha\n\nomega

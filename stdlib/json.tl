@@ -1164,10 +1164,10 @@
 
 ;: Render a finite f32 as deterministic JSON number text.
 ;:
-;: Widens to f64 so the binary32-rounded value is formatted deterministically.
+;: Uses source-width shortest Display before wrapping the result as JSON text.
 (define (f32->number-text [value : f32]) : JsonNumberTextResult
   (if (io.float-f32-finite? value)
-    (OkJsonNumberText (format.format-float-core (cast value : f64)))
+    (OkJsonNumberText (format.format-f32-core value))
     (ErrJsonNumberText "json: non-finite f32 cannot be rendered as a number")))
 
 ;: Convert a JSON number rendering result into a JSON value, panicking only for
@@ -2241,7 +2241,7 @@
       [(OkJsonNumberF64 value)
         (stdlib.json.stdlib-inline-test-assert-json-number-text
           (stdlib.json.f64->number-text value)
-          "1e+17"
+          "100000000000000000"
           "stdlib.json.number->f64 large magnitude")]
       [(ErrJsonNumberF64 _)
         (io.panic "stdlib.json.number->f64 large magnitude")])
@@ -2261,6 +2261,13 @@
       (stdlib.json.stdlib-inline-test-number-f32 "1.5")
       1.5
       "stdlib.json.number->f32")
+    (match (stdlib.json.stdlib-inline-test-number-f32 "1.2345678")
+      [(OkJsonNumberF32 value)
+        (stdlib.json.stdlib-inline-test-assert-json-number-text
+          (stdlib.json.f32->number-text value)
+          "1.2345678"
+          "stdlib.json.f32 source-width Display")]
+      [(ErrJsonNumberF32 _) (io.panic "stdlib.json.number->f32 Display")])
     (stdlib.json.stdlib-inline-test-assert-json-f32-error
       (stdlib.json.stdlib-inline-test-number-f32 "1e39")
       "stdlib.json.number->f32 overflow")

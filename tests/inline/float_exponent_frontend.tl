@@ -80,11 +80,11 @@
 (define (fe-lex-printer-roundtrip-ok?) : bool
   (let
     [i : i64 0]
-    [exponent-cases : i64 0]
     [ok : bool true]
     (begin
-      ;; Deterministically cover signs, varied exponent fields, and mantissa
-      ;; patterns while staying small enough for the lexer smoke binary.
+      ;; Default Display is decimal-only and its shortest output must round-trip
+      ;; through the decimal parser. Integer-looking Display strings are not
+      ;; required to lex as float literals without an f32/f64 context.
       (while (and (< i 192) ok)
         (let
           [sign : u64
@@ -100,36 +100,18 @@
           [text : String
             (format.format-float-core (io.float-f64-from-bits bits))]
           (begin
-            (if (or
-              (string.contains (& text) "e")
-              (string.contains (& text) "E"))
-              (begin
-                (set! exponent-cases (+ exponent-cases 1))
-                (match (lx.result (lx.global-shared-view text))
-                  [(lx.ResultTokens.Ok toks)
-                    (let
-                      [value : tk.Token (lx.array-shared-view toks 0)]
-                      [end : tk.Token (lx.array-shared-view toks 1)]
-                      (if (and
-                        (=
-                          (tk.tag (lx.global-shared-view value))
-                          (tk.tag-float))
-                        (string.eq
-                          (tk.float value)
-                          (lx.global-shared-view text))
-                        (= (tk.tag end) (tk.tag-end)))
-                        unit
-                        (set! ok false)))]
-                  [(lx.ResultTokens.Err _) (set! ok false)])
-                (match (io.float-parse-f64 text)
-                  [(io.IoFloatSomeF64 value)
-                    (if (= (io.float-f64-bits value) bits)
-                      unit
-                      (set! ok false))]
-                  [(io.IoFloatNoF64) (set! ok false)]))
-              unit)
+            (if (and
+              (not
+                (or
+                  (string.contains (& text) "e")
+                  (string.contains (& text) "E")))
+              (match (io.float-parse-f64 text)
+                [(io.IoFloatSomeF64 value) (= (io.float-f64-bits value) bits)]
+                [(io.IoFloatNoF64) false]))
+              unit
+              (set! ok false))
             (set! i (+ i 1)))))
-      (and ok (>= exponent-cases 16)))))
+      ok)))
 
 (define (fe-compiler-float-roundtrip-ok?) : bool
   (let

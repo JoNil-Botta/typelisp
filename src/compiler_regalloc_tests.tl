@@ -6,6 +6,7 @@
 ;; compile into instrumentation builds, so they are not self-test code.
 (import stdlib.str_cat_runtime as str_cat)
 (import compiler_regalloc as reg)
+(import compiler_profile_state as profile_state)
 (import compiler_abi as cabi)
 (import compiler_liveness as live)
 (import compiler_ir_types as ir)
@@ -8443,6 +8444,9 @@
           [evicted : (__tl_dyn-array i64) (array.make-array i64 7)]
           [weights : (__tl_dyn-array i64) (array.make-array i64 7)]
           [parents : (__tl_dyn-array i64) (compiler-reg-evict-test-parents)]
+          [metrics : profile_state.CompilerProfileMetrics
+            (profile_state.compiler-profile-state-metrics
+              (profile_state.compiler-profile-state-new))]
           (begin
             (set! (array-ref occ-var 0) 3)
             (set! (array-ref occ-reg 0) 0)
@@ -8459,6 +8463,7 @@
             (when already-evicted? (set! (array-ref evicted 3) 1))
             (when coalesced? (set! (array-ref parents 5) 3))
             (reg.compiler-reg-call-region-evict-try
+              metrics
               blocks
               (reg.compiler-reg-function-loop-depths blocks)
               weights
@@ -10573,15 +10578,19 @@
   (define (compiler-reg-liveness-handle-ok?) : bool
     (let
       [func : ir.CompilerIrFunction (compiler-reg-edge-copy-linear-function)]
+      [profile : profile_state.CompilerProfileState
+        (profile_state.compiler-profile-state-new)]
+      [metrics : profile_state.CompilerProfileMetrics
+        (profile_state.compiler-profile-state-metrics profile)]
       [region : reg.CompilerRegLabelSeq
         (reg.compiler-reg-label-seq-prepend
           (ir.compiler-ir-label "hot")
           (reg.compiler-reg-label-seq-empty))]
       (begin
-        (reg.compiler-reg-liveness-census-reset!)
+        (reg.compiler-reg-liveness-census-reset! metrics)
         (let
           [handle : reg.CompilerRegLivenessHandle
-            (reg.compiler-reg-liveness-handle-make func true)]
+            (reg.compiler-reg-liveness-handle-make func true metrics)]
           [liveness : live.CompilerFunctionLiveness handle.baseline]
           (and
             (match (reg.compiler-reg-edge-copy-plan-for-region-with-liveness
@@ -10600,10 +10609,10 @@
               (compiler-reg-i64-ty))
               [(reg.CompilerRegEdgeCopyPlan.Plan _) true]
               [(reg.CompilerRegEdgeCopyPlan.Refused _) false])
-            (= (reg.compiler-reg-liveness-census-baseline-count) 1)
+            (= (reg.compiler-reg-liveness-census-baseline-count metrics) 1)
             ;; The linear fixture is phi-free, so the edge-precise analysis is
             ;; the baseline itself and no second fixpoint is computed.
-            (= (reg.compiler-reg-liveness-census-edge-precise-count) 0)))))))
+            (= (reg.compiler-reg-liveness-census-edge-precise-count metrics) 0)))))))
 
 (cfg
   test
@@ -10648,17 +10657,69 @@
 (cfg
   test
   (define (compiler-reg-liveness-handle-phi-ok?) : bool
-    (begin
-      (reg.compiler-reg-liveness-census-reset!)
-      (let
-        [_handle : reg.CompilerRegLivenessHandle
-          (reg.compiler-reg-liveness-handle-make
-            (compiler-reg-liveness-handle-phi-fixture)
-            true)]
-        (and
-          (= (reg.compiler-reg-liveness-census-baseline-count) 1)
-          ;; Phi present: the second, edge-precise fixpoint is computed.
-          (= (reg.compiler-reg-liveness-census-edge-precise-count) 1))))))
+    (let
+      [profile : profile_state.CompilerProfileState
+        (profile_state.compiler-profile-state-new)]
+      [metrics : profile_state.CompilerProfileMetrics
+        (profile_state.compiler-profile-state-metrics profile)]
+      (begin
+        (reg.compiler-reg-liveness-census-reset! metrics)
+        (let
+          [_handle : reg.CompilerRegLivenessHandle
+            (reg.compiler-reg-liveness-handle-make
+              (compiler-reg-liveness-handle-phi-fixture)
+              true
+              metrics)]
+          (and
+            (= (reg.compiler-reg-liveness-census-baseline-count metrics) 1)
+            ;; Phi present: the second, edge-precise fixpoint is computed.
+            (= (reg.compiler-reg-liveness-census-edge-precise-count metrics) 1)))))))
+
+(cfg
+  test
+  (test
+    compiler-reg-liveness-metrics-job-isolation
+    (let
+      [left-profile : profile_state.CompilerProfileState
+        (profile_state.compiler-profile-state-new)]
+      [right-profile : profile_state.CompilerProfileState
+        (profile_state.compiler-profile-state-new)]
+      [left : profile_state.CompilerProfileMetrics
+        (profile_state.compiler-profile-state-metrics left-profile)]
+      [right : profile_state.CompilerProfileMetrics
+        (profile_state.compiler-profile-state-metrics right-profile)]
+      (begin
+        (reg.compiler-reg-liveness-census-reset! left)
+        (reg.compiler-reg-liveness-census-reset! right)
+        (let
+          [_left : reg.CompilerRegLivenessHandle
+            (reg.compiler-reg-liveness-handle-make
+              (compiler-reg-liveness-handle-phi-fixture)
+              true
+              left)]
+          [_right : reg.CompilerRegLivenessHandle
+            (reg.compiler-reg-liveness-handle-make
+              (compiler-reg-edge-copy-linear-function)
+              true
+              right)]
+          (begin
+            (test.assert-i64-eq
+              (reg.compiler-reg-liveness-census-edge-precise-count left)
+              1
+              "left owner records edge-precise liveness")
+            (test.assert-i64-eq
+              (reg.compiler-reg-liveness-census-edge-precise-count right)
+              0
+              "right owner retains its serial result")
+            (reg.compiler-reg-liveness-census-reset! left)
+            (test.assert-i64-eq
+              (reg.compiler-reg-liveness-census-baseline-count left)
+              0
+              "left reset clears only left baseline")
+            (test.assert-i64-eq
+              (reg.compiler-reg-liveness-census-baseline-count right)
+              1
+              "left reset leaves right baseline intact")))))))
 
 (cfg
   test
@@ -15988,7 +16049,9 @@
       (reg.CompilerRegVarTypes
         present
         types
-        (ir.compiler-ir-representation-index-empty)))))
+        (ir.compiler-ir-representation-index-empty)
+        (profile_state.compiler-profile-state-metrics
+          (profile_state.compiler-profile-state-new))))))
 
 (define (compiler-reg-coalesce-test-flat-index) : reg.CompilerRegIntervalIndex
   (reg.compiler-reg-interval-index-build

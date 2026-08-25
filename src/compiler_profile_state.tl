@@ -9,7 +9,13 @@
 (cfg test (import stdlib.test))
 
 (define compiler-profile-state-metric-capacity : i64
-  (cfg (any compile-profile test) 140 0))
+  (cfg
+    (any regalloc-census test)
+    223
+    (cfg
+      regalloc-liveness-census
+      164
+      (cfg scavenge-census 147 (cfg compile-profile 140 0)))))
 (define compiler-profile-state-summary-row-capacity : i64
   (cfg (any compile-profile-summary test) 40 0))
 (define compiler-profile-state-summary-scope-capacity : i64
@@ -24,7 +30,13 @@
   (cfg (any compile-profile-summary test) 24 0))
 
 (cfg
-  (any compile-profile compile-profile-summary test)
+  (any
+    compile-profile
+    compile-profile-summary
+    regalloc-census
+    regalloc-liveness-census
+    scavenge-census
+    test)
   (defstruct CompilerProfileStateStorage
     (metrics (__tl_dyn-array i64))
     (summary-keys (__tl_dyn-array i64))
@@ -43,30 +55,60 @@
     (summary-exact-top (__tl_dyn-array i64))))
 
 (cfg
-  (any compile-profile compile-profile-summary test)
+  (any
+    compile-profile
+    compile-profile-summary
+    regalloc-census
+    regalloc-liveness-census
+    scavenge-census
+    test)
   (defstruct CompilerProfileState
     (storage (__tl_dyn-array CompilerProfileStateStorage))))
 
 ;; Hot instrumentation passes this one-word view instead of repeatedly copying
 ;; the wide profile storage record out of its job-owned array.
 (cfg
-  (any compile-profile test)
+  (any
+    compile-profile
+    regalloc-census
+    regalloc-liveness-census
+    scavenge-census
+    test)
   (defstruct CompilerProfileMetrics
     (values (__tl_dyn-array i64))))
 
 (cfg
-  (not (any compile-profile test))
+  (not
+    (any
+      compile-profile
+      regalloc-census
+      regalloc-liveness-census
+      scavenge-census
+      test))
   (defstruct CompilerProfileMetrics
     (disabled i64)))
 
 (cfg
-  (not (any compile-profile compile-profile-summary test))
+  (not
+    (any
+      compile-profile
+      compile-profile-summary
+      regalloc-census
+      regalloc-liveness-census
+      scavenge-census
+      test))
   (defstruct CompilerProfileState
     (disabled i64)))
 
 (define (compiler-profile-state-new) : CompilerProfileState
   (cfg
-    (any compile-profile compile-profile-summary test)
+    (any
+      compile-profile
+      compile-profile-summary
+      regalloc-census
+      regalloc-liveness-census
+      scavenge-census
+      test)
     (let
       [storage : (__tl_dyn-array CompilerProfileStateStorage)
         (__tl_make-array CompilerProfileStateStorage 1)]
@@ -107,13 +149,24 @@
     (CompilerProfileState 0)))
 
 (cfg
-  (any compile-profile compile-profile-summary test)
+  (any
+    compile-profile
+    compile-profile-summary
+    regalloc-census
+    regalloc-liveness-census
+    scavenge-census
+    test)
   (define (compiler-profile-state-storage [state : CompilerProfileState]) : CompilerProfileStateStorage
     (array-ref state.storage 0)))
 
 (defmacro (compiler-profile-state-metrics [_state : Expr]) : Expr
   (cfg
-    (any compile-profile test)
+    (any
+      compile-profile
+      regalloc-census
+      regalloc-liveness-census
+      scavenge-census
+      test)
     `(CompilerProfileMetrics
       (__tl-project-field
         (array-ref ,(comptime.expr-struct-get _state "storage") 0)
@@ -125,7 +178,12 @@
 ;; the array remains owned by `CompilerProfileState` for the whole job.
 (defmacro (compiler-profile-state-metrics-address [_state : Expr]) : Expr
   (cfg
-    (any compile-profile test)
+    (any
+      compile-profile
+      regalloc-census
+      regalloc-liveness-census
+      scavenge-census
+      test)
     `(unsafe
       (ptr->int
         (ptr-cast
@@ -137,12 +195,22 @@
     `(cast 0 : u64)))
 
 (cfg
-  (any compile-profile test)
+  (any
+    compile-profile
+    regalloc-census
+    regalloc-liveness-census
+    scavenge-census
+    test)
   (defmacro (compiler-profile-metrics-value [metrics : Expr] [metric : Expr]) : Expr
     `(array-ref ,(comptime.expr-struct-get metrics "values") ,metric)))
 
 (cfg
-  (any compile-profile test)
+  (any
+    compile-profile
+    regalloc-census
+    regalloc-liveness-census
+    scavenge-census
+    test)
   (defmacro (compiler-profile-metrics-set!
     [metrics : Expr]
     [metric : Expr]
@@ -152,7 +220,12 @@
       ,value)))
 
 (cfg
-  (any compile-profile test)
+  (any
+    compile-profile
+    regalloc-census
+    regalloc-liveness-census
+    scavenge-census
+    test)
   (defmacro (compiler-profile-metrics-add!
     [metrics : Expr]
     [metric : Expr]
@@ -164,7 +237,12 @@
       (set! (array-ref values index) (+ (array-ref values index) ,value)))))
 
 (cfg
-  (any compile-profile test)
+  (any
+    compile-profile
+    regalloc-census
+    regalloc-liveness-census
+    scavenge-census
+    test)
   (define (compiler-profile-metrics-reset-range!
     [metrics : CompilerProfileMetrics]
     [start : i64]
@@ -177,7 +255,12 @@
           (set! metric (+ metric 1)))))))
 
 (cfg
-  (any compile-profile test)
+  (any
+    compile-profile
+    regalloc-census
+    regalloc-liveness-census
+    scavenge-census
+    test)
   (define (compiler-profile-state-metric-value
     [state : CompilerProfileState]
     [metric : i64]) : i64
@@ -186,7 +269,12 @@
       metric)))
 
 (cfg
-  (any compile-profile test)
+  (any
+    compile-profile
+    regalloc-census
+    regalloc-liveness-census
+    scavenge-census
+    test)
   (define (compiler-profile-state-metric-set!
     [state : CompilerProfileState]
     [metric : i64]
@@ -197,7 +285,12 @@
       value)))
 
 (cfg
-  (any compile-profile test)
+  (any
+    compile-profile
+    regalloc-census
+    regalloc-liveness-census
+    scavenge-census
+    test)
   (define (compiler-profile-state-metric-add!
     [state : CompilerProfileState]
     [metric : i64]
@@ -208,7 +301,12 @@
       value)))
 
 (cfg
-  (any compile-profile test)
+  (any
+    compile-profile
+    regalloc-census
+    regalloc-liveness-census
+    scavenge-census
+    test)
   (define (compiler-profile-state-metric-reset-range!
     [state : CompilerProfileState]
     [start : i64]
@@ -333,6 +431,13 @@
         (compiler-profile-state-metric-add! left 3 7)
         (compiler-profile-state-metric-set! left 4 41)
         (compiler-profile-state-metric-set! right 4 43)
+        ;; Exercise the first backend slot and the final regalloc slot so the
+        ;; owner test covers the complete census range, not only legacy
+        ;; compile-profile ids.
+        (compiler-profile-state-metric-set! left 140 47)
+        (compiler-profile-state-metric-set! right 140 53)
+        (compiler-profile-state-metric-set! left 222 59)
+        (compiler-profile-state-metric-set! right 222 61)
         (compiler-profile-state-metric-reset-range! right 3 5)
         (test.assert-i64-eq
           (compiler-profile-state-metric-value left 3)
@@ -349,4 +454,21 @@
         (test.assert-i64-eq
           (compiler-profile-state-metric-value right 4)
           0
-          "right reset clears its second metric")))))
+          "right reset clears its second metric")
+        (test.assert-i64-eq
+          (compiler-profile-state-metric-value left 140)
+          47
+          "left backend metric remains isolated")
+        (test.assert-i64-eq
+          (compiler-profile-state-metric-value right 140)
+          53
+          "right backend metric remains isolated")
+        (compiler-profile-state-metric-reset-range! left 140 223)
+        (test.assert-i64-eq
+          (compiler-profile-state-metric-value left 222)
+          0
+          "left census reset reaches the final metric")
+        (test.assert-i64-eq
+          (compiler-profile-state-metric-value right 222)
+          61
+          "left census reset leaves right owner intact")))))

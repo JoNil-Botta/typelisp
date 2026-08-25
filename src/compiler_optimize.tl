@@ -84777,10 +84777,13 @@
   [uses : (__tl_dyn-array i64)]) : unit
   (let
     [move-index : i64 0]
-    [move-count : i64 (opt-successor-sink-moves-count moves)]
+    [move-count : i64
+      (opt-successor-sink-moves-count (compiler-opt-global-shared-view moves))]
     (while (< move-index move-count)
       (begin
-        (match (opt-successor-sink-moves-ref moves move-index)
+        (match (opt-successor-sink-moves-ref
+          (compiler-opt-global-shared-view moves)
+          move-index)
           [(OptSuccessorSinkMove.Move _ _ move-target instrs origins)
             (if (= move-target target)
               (let
@@ -85673,10 +85676,13 @@
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : unit
   (let
     [move-index : i64 0]
-    [move-count : i64 (opt-successor-sink-moves-count moves)]
+    [move-count : i64
+      (opt-successor-sink-moves-count (compiler-opt-global-shared-view moves))]
     (while (< move-index move-count)
       (begin
-        (match (opt-successor-sink-moves-ref moves move-index)
+        (match (opt-successor-sink-moves-ref
+          (compiler-opt-global-shared-view moves)
+          move-index)
           [(OptSuccessorSinkMove.Move _ _ move-target instrs _)
             (if (= move-target target)
               (let

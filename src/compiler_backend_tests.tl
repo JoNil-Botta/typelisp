@@ -15008,28 +15008,28 @@ g:
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         compiler_ir_types.CompilerIrFunctionList.Nil
         (compiler_ir_types.compiler-ir-extern-seq-empty))]
-    [backend-state : compiler_backend.CompilerBackendState index.backend-state]
-    [prev-register-count : i64
+    [_backend-state : compiler_backend.CompilerBackendState index.backend-state]
+    [_prev-register-count : i64
       (cfg
         (any regalloc-census test)
         (compiler_backend.compiler-backend-test-get-compiler-backend-phi-xmm-cycle-register-count
-          backend-state)
+          _backend-state)
         0)]
-    [prev-fallback-count : i64
+    [_prev-fallback-count : i64
       (cfg
         (any regalloc-census test)
         (compiler_backend.compiler-backend-test-get-compiler-backend-phi-xmm-cycle-fallback-count
-          backend-state)
+          _backend-state)
         0)]
     [_set : unit
       (cfg
         (any regalloc-census test)
         (begin
           (compiler_backend.compiler-backend-test-set-compiler-backend-phi-xmm-cycle-register-count!
-            backend-state
+            _backend-state
             0)
           (compiler_backend.compiler-backend-test-set-compiler-backend-phi-xmm-cycle-fallback-count!
-            backend-state
+            _backend-state
             0))
         unit)]
     [ok : bool
@@ -15184,11 +15184,11 @@ g:
           (and
             (=
               (compiler_backend.compiler-backend-test-get-compiler-backend-phi-xmm-cycle-register-count
-                backend-state)
+                _backend-state)
               2)
             (=
               (compiler_backend.compiler-backend-test-get-compiler-backend-phi-xmm-cycle-fallback-count
-                backend-state)
+                _backend-state)
               1))
           true))]
     [_restore : unit
@@ -15196,11 +15196,11 @@ g:
         (any regalloc-census test)
         (begin
           (compiler_backend.compiler-backend-test-set-compiler-backend-phi-xmm-cycle-register-count!
-            backend-state
-            prev-register-count)
+            _backend-state
+            _prev-register-count)
           (compiler_backend.compiler-backend-test-set-compiler-backend-phi-xmm-cycle-fallback-count!
-            backend-state
-            prev-fallback-count))
+            _backend-state
+            _prev-fallback-count))
         unit)]
     ok))
 

@@ -66492,7 +66492,7 @@
                 true))))))))
 
 (define (compiler-backend-sweep-reset!
-  [backend-state : CompilerBackendState]
+  [_backend-state : CompilerBackendState]
   [stream : CompilerBackendStreamState]) : unit
   (let
     [data : CompilerBackendStreamStateData
@@ -66504,7 +66504,7 @@
       (cfg
         (any regalloc-census test)
         (profile_state.compiler-profile-metrics-reset-range!
-          (compiler-backend-state-metrics backend-state)
+          (compiler-backend-state-metrics _backend-state)
           compiler-backend-sweep-swept-stores-metric
           compiler-backend-census-metric-end)
         unit))))
@@ -66696,7 +66696,7 @@
 (define (compiler-backend-commit-frame-layout!
   [backend-state : CompilerBackendState]
   [target : CompilerBackendTarget]
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [_assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [symbol : String]
   [frame : i64]
   [push-count : i64]
@@ -66707,30 +66707,29 @@
   [shrinkwrap-active? : bool]) : unit
   (begin
     (if fpo-ok
-      (begin
-        (cfg
-          (any regalloc-census test)
-          (begin
+      (cfg
+        (any regalloc-census test)
+        (begin
+          (compiler-backend-metric-add!
+            backend-state
+            compiler-backend-fpo-metric
+            1)
+          (if (> push-count 0)
             (compiler-backend-metric-add!
               backend-state
-              compiler-backend-fpo-metric
+              compiler-backend-fpo-push-metric
               1)
-            (if (> push-count 0)
-              (compiler-backend-metric-add!
-                backend-state
-                compiler-backend-fpo-push-metric
-                1)
-              unit)
-            (if (compiler-backend-plan-uses-reg?
+            unit)
+          (if (compiler-backend-plan-uses-reg?
+            backend-state
+            _assignments
+            compiler_abi.compiler-reg-id-rbp)
+            (compiler-backend-metric-add!
               backend-state
-              assignments
-              compiler_abi.compiler-reg-id-rbp)
-              (compiler-backend-metric-add!
-                backend-state
-                compiler-backend-fpo-rbp-plan-metric
-                1)
-              unit))
-          unit))
+              compiler-backend-fpo-rbp-plan-metric
+              1)
+            unit))
+        unit)
       unit)
     ;; The sweep's displacement model starts at a function-entry prologue.
     ;; Keep shrink-wrapped interior prologues conservatively excluded.
@@ -78934,7 +78933,7 @@
   128)
 
 (define (compiler-backend-peephole-r10-dead-after?
-  [backend-state : CompilerBackendState]
+  [_backend-state : CompilerBackendState]
   [asm : String]
   [asm-data : (Ptr u8)]
   [start : i64]
@@ -78977,7 +78976,7 @@
         (cfg
           (any regalloc-census test)
           (compiler-backend-metric-add!
-            backend-state
+            _backend-state
             compiler-backend-peephole-r10-dead-scan-cap-hits-metric
             1)
           unit)

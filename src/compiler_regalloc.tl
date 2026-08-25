@@ -203,30 +203,30 @@
     (profile_state.compiler-profile-state-new)))
 
 (define (compiler-reg-liveness-census-reset!
-  [metrics : profile_state.CompilerProfileMetrics]) : unit
+  [_metrics : profile_state.CompilerProfileMetrics]) : unit
   (cfg
     (any regalloc-liveness-census test)
     (profile_state.compiler-profile-metrics-reset-range!
-      metrics
+      _metrics
       compiler-reg-liveness-census-baseline-metric
       (+ compiler-reg-liveness-census-edge-precise-metric 1))
     unit))
 
 (define (compiler-reg-liveness-census-baseline-count
-  [metrics : profile_state.CompilerProfileMetrics]) : i64
+  [_metrics : profile_state.CompilerProfileMetrics]) : i64
   (cfg
     (any regalloc-liveness-census test)
     (profile_state.compiler-profile-metrics-value
-      metrics
+      _metrics
       compiler-reg-liveness-census-baseline-metric)
     0))
 
 (define (compiler-reg-liveness-census-edge-precise-count
-  [metrics : profile_state.CompilerProfileMetrics]) : i64
+  [_metrics : profile_state.CompilerProfileMetrics]) : i64
   (cfg
     (any regalloc-liveness-census test)
     (profile_state.compiler-profile-metrics-value
-      metrics
+      _metrics
       compiler-reg-liveness-census-edge-precise-metric)
     0))
 
@@ -264,7 +264,7 @@
 (define (compiler-reg-liveness-handle-make
   [func : ir.CompilerIrFunction]
   [need-edge-precise : bool]
-  [metrics : profile_state.CompilerProfileMetrics]) : CompilerRegLivenessHandle
+  [_metrics : profile_state.CompilerProfileMetrics]) : CompilerRegLivenessHandle
   (let
     [baseline : live.CompilerFunctionLiveness
       (live.compiler-live-analyze-function func)]
@@ -272,7 +272,7 @@
       (cfg
         (any regalloc-liveness-census test)
         (profile_state.compiler-profile-metrics-add!
-          metrics
+          _metrics
           compiler-reg-liveness-census-baseline-metric
           1)
         unit)
@@ -304,7 +304,7 @@
                   (cfg
                     (any regalloc-liveness-census test)
                     (profile_state.compiler-profile-metrics-add!
-                      metrics
+                      _metrics
                       compiler-reg-liveness-census-edge-precise-metric
                       1)
                     unit)
@@ -25145,7 +25145,7 @@
 ;; -1 refuses the candidate: an exit edge whose target cannot host a reload
 ;; (phi head, empty block, unresolved label) or more targets than the cap.
 (define (compiler-reg-call-region-evict-exit-points!
-  [metrics : profile_state.CompilerProfileMetrics]
+  [_metrics : profile_state.CompilerProfileMetrics]
   [bslots : (__tl_dyn-array ir.CompilerIrBlock)]
   [nblocks : i64]
   [ids : reg_label_i64_map.Map]
@@ -25187,7 +25187,7 @@
                                   (cfg
                                     regalloc-census
                                     (compiler-reg-evict-census-bump!
-                                      metrics
+                                      _metrics
                                       (+ 8 status))
                                     unit)
                                   (return (- 0 1))))
@@ -25205,7 +25205,7 @@
                                       (cfg
                                         regalloc-census
                                         (compiler-reg-evict-census-bump!
-                                          metrics
+                                          _metrics
                                           12)
                                         unit)
                                       (return (- 0 1))))
@@ -25217,7 +25217,7 @@
                         (begin
                           (cfg
                             regalloc-census
-                            (compiler-reg-evict-census-bump! metrics 13)
+                            (compiler-reg-evict-census-bump! _metrics 13)
                             unit)
                           (return (- 0 1)))])
                     (set! succs (live.compiler-live-label-set-tail succs)))]))

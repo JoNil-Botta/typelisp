@@ -66961,3 +66961,430 @@
     (compiler-optimize-phi-cmp-fold-self-test)
     42
     "a sentinel phi compared against a literal threads its literal edges to the branch targets, moves the compare onto the variable edge and leaves a bool phi; loop-header phis, back edges and second readers are refused, and successor phis keyed on the merge are re-keyed onto the threaded predecessor"))
+
+;; --- T1-3: the non-negativity lattice in bounds_dom -------------------------
+;;
+;; Every fixture below drives `opt-bounds-dom-blocks-with-context` end to end
+;; and asks one question of it: what does the pass do once it can (or cannot)
+;; prove an index's SIGN? The parameters are shared -- %0 a bool to branch on,
+;; %1 a length, %2 and %3 unconstrained i64s -- so the fixtures differ only in
+;; the shape under test.
+(define (opt-nn-params) : compiler_ir_types.CompilerIrParamList
+  (compiler_ir_types.compiler-ir-param-cons
+    (compiler_ir_types.CompilerIrParam.Param
+      "cond"
+      (compiler_ast_types.AstType.Bool)
+      0)
+    (compiler_ir_types.compiler-ir-param-cons
+      (compiler_ir_types.CompilerIrParam.Param
+        "len"
+        (compiler_ast_types.AstType.I64)
+        1)
+      (compiler_ir_types.compiler-ir-param-cons
+        (compiler_ir_types.CompilerIrParam.Param
+          "x"
+          (compiler_ast_types.AstType.I64)
+          2)
+        (compiler_ir_types.compiler-ir-param-cons
+          (compiler_ir_types.CompilerIrParam.Param
+            "y"
+            (compiler_ast_types.AstType.I64)
+            3)
+          (compiler_ir_types.CompilerIrParamList.Nil))))))
+
+(define (opt-nn-block
+  [label : String]
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.CompilerIrBlock.Block
+    (compiler_ir_types.compiler-ir-label label)
+    instrs))
+
+(define (opt-nn-jump [label : String]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.Jump
+    (compiler_ir_types.compiler-ir-label label)))
+
+(define (opt-nn-branch [cond : i64] [on-true : String] [on-false : String]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.Branch
+    (compiler_ir_types.CompilerIrValue.Var cond)
+    (compiler_ir_types.compiler-ir-label on-true)
+    (compiler_ir_types.compiler-ir-label on-false)))
+
+(define (opt-nn-return [var : i64]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.Return
+    (compiler_ir_types.CompilerIrMaybeValue.Some
+      (compiler_ir_types.CompilerIrValue.Var var))))
+
+;; `dst = <op> var, literal : i64`
+(define (opt-nn-cmp-lit
+  [dst : i64]
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [var : i64]
+  [literal : i64]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.BinOp
+    dst
+    op
+    (compiler_ir_types.CompilerIrValue.Var var)
+    (compiler_ir_types.CompilerIrValue.I64 literal)
+    (compiler_ast_types.AstType.I64)))
+
+;; `dst = <op> lhs, rhs : i64`
+(define (opt-nn-cmp-var
+  [dst : i64]
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [lhs : i64]
+  [rhs : i64]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.BinOp
+    dst
+    op
+    (compiler_ir_types.CompilerIrValue.Var lhs)
+    (compiler_ir_types.CompilerIrValue.Var rhs)
+    (compiler_ast_types.AstType.I64)))
+
+(define (opt-nn-check [idx : i64] [len : i64] [label : String]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.BoundsCheck
+    (compiler_ir_types.CompilerIrValue.Var idx)
+    (compiler_ir_types.CompilerIrValue.Var len)
+    (compiler_ir_types.compiler-ir-label label)))
+
+(define (opt-nn-phi-input
+  [value : compiler_ir_types.CompilerIrValue]
+  [label : String]
+  [rest : compiler_ir_types.CompilerIrPhiInputList]) : compiler_ir_types.CompilerIrPhiInputList
+  (compiler_ir_types.compiler-ir-phi-input-cons
+    value
+    (compiler_ir_types.compiler-ir-label label)
+    rest))
+
+(define (opt-nn-run [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_optimize.opt-bounds-dom-blocks-with-context
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    (compiler_optimize.opt-cfg-context-build blocks)
+    (opt-nn-params)
+    64
+    blocks))
+
+(define (opt-nn-block-of
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : String]) : compiler_ir_types.CompilerIrBlock
+  (match (compiler_optimize.opt-cfg-find-block
+    blocks
+    (compiler_ir_types.compiler-ir-label label))
+    [(compiler_optimize.OptMaybeBlock.Some block) block]
+    [(compiler_optimize.OptMaybeBlock.No)
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label label)
+        (compiler_ir_types.compiler-ir-instr-seq-empty))]))
+
+(define (opt-nn-count
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : String]) : i64
+  (opt-block-instr-count (opt-nn-block-of blocks label)))
+
+;; Is instruction `index` of `label` `dst = mov <value> : bool`? That is what a
+;; decided comparison collapses to.
+(define (opt-nn-folded?
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : String]
+  [index : i64]
+  [dst : i64]
+  [value : bool]) : bool
+  (let
+    [block : compiler_ir_types.CompilerIrBlock (opt-nn-block-of blocks label)]
+    (if (<= (opt-block-instr-count block) index)
+      false
+      (match (opt-block-instr-at block index)
+        [(compiler_ir_types.CompilerIrInstr.Mov found-dst operand _)
+          (and
+            (= found-dst dst)
+            (match operand
+              [(compiler_ir_types.CompilerIrValue.Bool found) (= found value)]
+              [_ false]))]
+        [_ false]))))
+
+;; Is instruction `index` of `label` still the SIGNED comparison
+;; `dst = <op> ... : i64`? Proving an operand's sign must leave the comparison
+;; itself alone -- see the retyping note in the pass.
+(define (opt-nn-compare-signed?
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : String]
+  [index : i64]
+  [dst : i64]) : bool
+  (let
+    [block : compiler_ir_types.CompilerIrBlock (opt-nn-block-of blocks label)]
+    (if (<= (opt-block-instr-count block) index)
+      false
+      (match (opt-block-instr-at block index)
+        [(compiler_ir_types.CompilerIrInstr.BinOp found-dst _ _ _ ty)
+          (and
+            (= found-dst dst)
+            (compiler_optimize.opt-type-eq
+              (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+              ty
+              (compiler_ast_types.AstType.I64)))]
+        [_ false]))))
+
+;; (a) TWO NESTED COUNTERS. The outer index reaches its own phi three ways: the
+;; literal seed, its own `+ 1` off a body-level `if`, and -- the shape a lexer
+;; leaves -- the INNER loop's counter, itself seeded from the outer one. No
+;; single input proves anything on its own; the group does, and every `+ 1` in
+;; it is fenced by the `< len` guarding the block it is computed in. `inner-op`
+;; is the inner loop's test: `lt` fences the inner step, `eq` does not, and the
+;; whole proof collapses with it.
+(define (opt-nn-nested-blocks [inner-op : compiler_ir_types.CompilerIrBinOp]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-nn-block "entry" (opt-test-instrs (opt-nn-jump "outer_header")))
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-nn-block
+        "outer_header"
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Phi
+            10
+            (opt-nn-phi-input
+              (compiler_ir_types.CompilerIrValue.I64 0)
+              "entry"
+              (opt-nn-phi-input
+                (compiler_ir_types.CompilerIrValue.Var 12)
+                "back_a"
+                (opt-nn-phi-input
+                  (compiler_ir_types.CompilerIrValue.Var 13)
+                  "back_b"
+                  (compiler_ir_types.CompilerIrPhiInputList.Nil))))
+            (compiler_ast_types.AstType.I64))
+          (opt-nn-cmp-var 11 (compiler_ir_types.CompilerIrBinOp.Lt) 10 1)
+          (opt-nn-branch 11 "outer_body" "exit")))
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-nn-block
+          "outer_body"
+          (opt-test-instrs
+            (opt-nn-check 10 1 "ok_a")
+            (opt-nn-branch 0 "back_a" "inner_header")))
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-nn-block
+            "back_a"
+            (opt-test-instrs
+              (opt-nn-cmp-lit 12 (compiler_ir_types.CompilerIrBinOp.Add) 10 1)
+              (opt-nn-jump "outer_header")))
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-nn-block
+              "inner_header"
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.Phi
+                  13
+                  (opt-nn-phi-input
+                    (compiler_ir_types.CompilerIrValue.Var 10)
+                    "outer_body"
+                    (opt-nn-phi-input
+                      (compiler_ir_types.CompilerIrValue.Var 15)
+                      "inner_body"
+                      (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                  (compiler_ast_types.AstType.I64))
+                (opt-nn-cmp-var 14 inner-op 13 1)
+                (opt-nn-branch 14 "inner_body" "back_b")))
+            (compiler_ir_types.compiler-ir-block-cons
+              (opt-nn-block
+                "inner_body"
+                (opt-test-instrs
+                  (opt-nn-cmp-lit
+                    15
+                    (compiler_ir_types.CompilerIrBinOp.Add)
+                    13
+                    1)
+                  (opt-nn-jump "inner_header")))
+              (compiler_ir_types.compiler-ir-block-cons
+                (opt-nn-block
+                  "back_b"
+                  (opt-test-instrs (opt-nn-jump "outer_header")))
+                (compiler_ir_types.compiler-ir-block-cons
+                  (opt-nn-block "exit" (opt-test-instrs (opt-nn-return 10)))
+                  (compiler_ir_types.CompilerIrBlockList.Nil))))))))))
+
+;; (b) `x - 48` is non-negative under a dominating `x >= 48` and nothing at all
+;; under its negation, which is the difference between the two arms.
+;; (c) `x + 1` needs an UPPER fence, not a lower one: `x >= 0` is known on both
+;; arms below, `x < len` only on the fenced one.
+(define (opt-nn-affine-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-nn-block
+      "entry"
+      (opt-test-instrs
+        (opt-nn-cmp-lit 20 (compiler_ir_types.CompilerIrBinOp.Ge) 2 48)
+        (opt-nn-branch 20 "hot" "cold")))
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-nn-block
+        "hot"
+        (opt-test-instrs
+          (opt-nn-cmp-lit 21 (compiler_ir_types.CompilerIrBinOp.Sub) 2 48)
+          (opt-nn-cmp-lit 22 (compiler_ir_types.CompilerIrBinOp.Ge) 21 0)
+          (opt-nn-branch 22 "nonneg_guard" "done")))
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-nn-block
+          "cold"
+          (opt-test-instrs
+            (opt-nn-cmp-lit 23 (compiler_ir_types.CompilerIrBinOp.Sub) 2 48)
+            (opt-nn-cmp-lit 24 (compiler_ir_types.CompilerIrBinOp.Ge) 23 0)
+            (opt-nn-branch 24 "done" "done2")))
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-nn-block
+            "nonneg_guard"
+            (opt-test-instrs
+              (opt-nn-cmp-lit 30 (compiler_ir_types.CompilerIrBinOp.Ge) 2 0)
+              (opt-nn-branch 30 "mid" "done")))
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-nn-block
+              "mid"
+              (opt-test-instrs
+                (opt-nn-cmp-var 31 (compiler_ir_types.CompilerIrBinOp.Lt) 2 1)
+                (opt-nn-branch 31 "fenced" "unfenced")))
+            (compiler_ir_types.compiler-ir-block-cons
+              (opt-nn-block
+                "fenced"
+                (opt-test-instrs
+                  (opt-nn-cmp-lit
+                    32
+                    (compiler_ir_types.CompilerIrBinOp.Add)
+                    2
+                    1)
+                  (opt-nn-cmp-lit
+                    33
+                    (compiler_ir_types.CompilerIrBinOp.Ge)
+                    32
+                    0)
+                  (opt-nn-branch 33 "done" "done2")))
+              (compiler_ir_types.compiler-ir-block-cons
+                (opt-nn-block
+                  "unfenced"
+                  (opt-test-instrs
+                    (opt-nn-cmp-lit
+                      34
+                      (compiler_ir_types.CompilerIrBinOp.Add)
+                      2
+                      1)
+                    (opt-nn-cmp-lit
+                      35
+                      (compiler_ir_types.CompilerIrBinOp.Ge)
+                      34
+                      0)
+                    (opt-nn-branch 35 "done" "done2")))
+                (compiler_ir_types.compiler-ir-block-cons
+                  (opt-nn-block "done" (opt-test-instrs (opt-nn-return 2)))
+                  (compiler_ir_types.compiler-ir-block-cons
+                    (opt-nn-block "done2" (opt-test-instrs (opt-nn-return 3)))
+                    (compiler_ir_types.CompilerIrBlockList.Nil)))))))))))
+
+;; (d) A branch-feeding signed `lt x, len` whose operands the lattice proves
+;; non-negative -- `x` from the dominating guard, `len` because a `bounds_check`
+;; uses it as its length -- is LEFT UNCHANGED. The unsigned spelling would
+;; compute the same bool, but `ubound` and `lftr` below match loop shapes on the
+;; signed one, so the pass does not touch it; the compare with an unconstrained
+;; operand is untouched for the plainer reason that nothing is proved about it.
+;; (e) The length itself is non-negative, so `len >= 0` is a constant.
+(define (opt-nn-length-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-nn-block
+      "entry"
+      (opt-test-instrs
+        (opt-nn-cmp-lit 40 (compiler_ir_types.CompilerIrBinOp.Ge) 2 0)
+        (opt-nn-branch 40 "mid" "other")))
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-nn-block
+        "mid"
+        (opt-test-instrs
+          (opt-nn-check 3 1 "ok_d")
+          (opt-nn-cmp-var 41 (compiler_ir_types.CompilerIrBinOp.Lt) 2 1)
+          (opt-nn-branch 41 "next" "done")))
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-nn-block
+          "next"
+          (opt-test-instrs
+            (opt-nn-cmp-lit 42 (compiler_ir_types.CompilerIrBinOp.Ge) 1 0)
+            (opt-nn-branch 42 "done" "done2")))
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-nn-block
+            "other"
+            (opt-test-instrs
+              (opt-nn-cmp-var 43 (compiler_ir_types.CompilerIrBinOp.Lt) 3 1)
+              (opt-nn-branch 43 "done" "done2")))
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-nn-block "done" (opt-test-instrs (opt-nn-return 2)))
+            (compiler_ir_types.compiler-ir-block-cons
+              (opt-nn-block "done2" (opt-test-instrs (opt-nn-return 3)))
+              (compiler_ir_types.CompilerIrBlockList.Nil))))))))
+
+;; (f) A phi is non-negative only when EVERY input is. `other` is the second
+;; input: a non-negative literal proves the phi, an unconstrained parameter
+;; leaves it unproven -- the optimism over the group never survives one input
+;; the recursion cannot discharge.
+(define (opt-nn-phi-blocks [other : compiler_ir_types.CompilerIrValue]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-nn-block "entry" (opt-test-instrs (opt-nn-branch 0 "seed_a" "seed_b")))
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-nn-block "seed_a" (opt-test-instrs (opt-nn-jump "merge")))
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-nn-block "seed_b" (opt-test-instrs (opt-nn-jump "merge")))
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-nn-block
+            "merge"
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Phi
+                50
+                (opt-nn-phi-input
+                  (compiler_ir_types.CompilerIrValue.I64 0)
+                  "seed_a"
+                  (opt-nn-phi-input
+                    other
+                    "seed_b"
+                    (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                (compiler_ast_types.AstType.I64))
+              (opt-nn-cmp-lit 51 (compiler_ir_types.CompilerIrBinOp.Ge) 50 0)
+              (opt-nn-branch 51 "done" "done2")))
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-nn-block "done" (opt-test-instrs (opt-nn-return 2)))
+            (compiler_ir_types.compiler-ir-block-cons
+              (opt-nn-block "done2" (opt-test-instrs (opt-nn-return 3)))
+              (compiler_ir_types.CompilerIrBlockList.Nil))))))))
+
+;; Returns 42 only when every proof and every refusal holds.
+(define (compiler-optimize-bounds-dom-nonneg-self-test) : i64
+  (let
+    [nested : compiler_ir_types.CompilerIrBlockList
+      (opt-nn-run (opt-nn-nested-blocks (compiler_ir_types.CompilerIrBinOp.Lt)))]
+    [unfenced-nest : compiler_ir_types.CompilerIrBlockList
+      (opt-nn-run (opt-nn-nested-blocks (compiler_ir_types.CompilerIrBinOp.Eq)))]
+    [affine : compiler_ir_types.CompilerIrBlockList
+      (opt-nn-run (opt-nn-affine-blocks))]
+    [lengths : compiler_ir_types.CompilerIrBlockList
+      (opt-nn-run (opt-nn-length-blocks))]
+    [phi-proved : compiler_ir_types.CompilerIrBlockList
+      (opt-nn-run (opt-nn-phi-blocks (compiler_ir_types.CompilerIrValue.I64 7)))]
+    [phi-open : compiler_ir_types.CompilerIrBlockList
+      (opt-nn-run (opt-nn-phi-blocks (compiler_ir_types.CompilerIrValue.Var 2)))]
+    (cond
+      ;; (a) the outer counter is proved through the inner loop's phi, so the
+      ;; check under `lt i, len` goes and only the branch is left.
+      [(not (= (opt-nn-count nested "outer_body") 1)) 1]
+      ;; ... and it stays when the inner loop's test is an `eq`, which fences
+      ;; no step: one unproven input refuses the whole group.
+      [(not (= (opt-nn-count unfenced-nest "outer_body") 2)) 2]
+      ;; (b) `x - 48` under `x >= 48`.
+      [(not (opt-nn-folded? affine "hot" 1 22 true)) 3]
+      [(not (opt-nn-compare-signed? affine "cold" 1 24)) 4]
+      ;; (c) `x + 1` with `x >= 0` and `x < len` known, and with only `x >= 0`.
+      [(not (opt-nn-folded? affine "fenced" 1 33 true)) 5]
+      [(not (opt-nn-compare-signed? affine "unfenced" 1 35)) 6]
+      ;; (d) the branch-feeding compare of two PROVED non-negative operands
+      ;; keeps its signed spelling, and so does the one nothing is proved about.
+      [(not (opt-nn-compare-signed? lengths "mid" 1 41)) 7]
+      [(not (opt-nn-compare-signed? lengths "other" 0 43)) 8]
+      ;; (e) a container length is non-negative.
+      [(not (opt-nn-folded? lengths "next" 0 42 true)) 9]
+      ;; (f) all inputs proved, then one input open.
+      [(not (opt-nn-folded? phi-proved "merge" 1 51 true)) 10]
+      [(not (opt-nn-compare-signed? phi-open "merge" 1 51)) 11]
+      [else 42])))
+
+(test
+  bounds-dom-nonneg-lattice
+  (test.assert-i64-eq
+    (compiler-optimize-bounds-dom-nonneg-self-test)
+    42
+    "the non-negativity lattice proves a counter reassigned through an inner loop, a difference under a dominating lower bound and a fenced increment, refuses an unfenced increment and a phi with one open input, folds `>= 0` on a proved value, and leaves every comparison's signed spelling alone"))

@@ -79717,7 +79717,8 @@
   (begin
     (compiler-backend-state-set-metrics!
       backend-state
-      (profile_state.compiler-profile-state-metrics profile-state))
+      (profile_state.compiler-profile-state-metrics
+        (compiler-backend-global-shared-view profile-state)))
     (compiler-backend-state-user-symbol-cache-reset! backend-state)
     (compiler-backend-state-slot-cache-reset! backend-state)
     (compiler-backend-peephole-carry-safe-reset-with-backend-state!
@@ -83780,7 +83781,8 @@
   (begin
     (compiler-backend-state-set-metrics!
       backend-state
-      (profile_state.compiler-profile-state-metrics profile-state))
+      (profile_state.compiler-profile-state-metrics
+        (compiler-backend-global-shared-view profile-state)))
     (compiler-backend-state-user-symbol-cache-reset! backend-state)
     (compiler-backend-state-slot-cache-reset! backend-state)
     (compiler-backend-state-set-abort-site-counter! backend-state 0)

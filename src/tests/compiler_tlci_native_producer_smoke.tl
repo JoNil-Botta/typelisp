@@ -1734,16 +1734,20 @@
   [identity : String]) : bool
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
-    [box-ty : ast.AstType (ast.ast-ty-box-with-pools pools (ast.AstType.I64))]
+    [box-ty : ast.AstType
+      (ast.ast-ty-box-with-pools
+        (owned_view.compiler-owned-shared-view pools)
+        (ast.AstType.I64))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
       (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
     (begin
       (set!
         (array-ref operands 0)
-        (compiler_ctfe.CompilerCtfeValue.Type box-ty))
+        (compiler_ctfe.CompilerCtfeValue.Type
+          (owned_view.compiler-owned-shared-view box-ty)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        pools
-        operands
+        (owned_view.compiler-owned-shared-view pools)
+        (owned_view.compiler-owned-shared-view operands)
         1
         64
         producer-test-cookie
@@ -1781,16 +1785,20 @@
   [identity : String]) : bool
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
-    [box-ty : ast.AstType (ast.ast-ty-box-with-pools pools (ast.AstType.I64))]
+    [box-ty : ast.AstType
+      (ast.ast-ty-box-with-pools
+        (owned_view.compiler-owned-shared-view pools)
+        (ast.AstType.I64))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
       (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
     (begin
       (set!
         (array-ref operands 0)
-        (compiler_ctfe.CompilerCtfeValue.Type box-ty))
+        (compiler_ctfe.CompilerCtfeValue.Type
+          (owned_view.compiler-owned-shared-view box-ty)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        pools
-        operands
+        (owned_view.compiler-owned-shared-view pools)
+        (owned_view.compiler-owned-shared-view operands)
         1
         64
         producer-test-cookie
@@ -3729,18 +3737,22 @@
 (define (producer-test-type-expr-callback-ok? [valid : bool]) : bool
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
-    [box-ty : ast.AstType (ast.ast-ty-box-with-pools pools (ast.AstType.I64))]
+    [box-ty : ast.AstType
+      (ast.ast-ty-box-with-pools
+        (owned_view.compiler-owned-shared-view pools)
+        (ast.AstType.I64))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
       (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
     (begin
       (set!
         (array-ref operands 0)
         (if valid
-          (compiler_ctfe.CompilerCtfeValue.Type box-ty)
+          (compiler_ctfe.CompilerCtfeValue.Type
+            (owned_view.compiler-owned-shared-view box-ty))
           (compiler_ctfe.CompilerCtfeValue.Bool false)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        pools
-        operands
+        (owned_view.compiler-owned-shared-view pools)
+        (owned_view.compiler-owned-shared-view operands)
         1
         64
         producer-test-cookie

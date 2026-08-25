@@ -948,7 +948,8 @@
     [backend-state : compiler_backend.CompilerBackendState
       (compiler_backend.compiler-backend-state-new-with-metrics
         (ci.intern-compat-state-capture-active)
-        (profile_state.compiler-profile-state-metrics profile-state))]
+        (profile_state.compiler-profile-state-metrics
+          (owned_view.compiler-owned-shared-view profile-state)))]
     (compiler-driver-lowered-from-active-pools-and-profile-state-and-backend-state
       program
       spans
@@ -964,7 +965,8 @@
     [backend-state : compiler_backend.CompilerBackendState
       (compiler_backend.compiler-backend-state-new-with-metrics
         (ci.intern-compat-state-capture-active)
-        (profile_state.compiler-profile-state-metrics profile-state))]
+        (profile_state.compiler-profile-state-metrics
+          (owned_view.compiler-owned-shared-view profile-state)))]
     (compiler-driver-lowered-from-active-pools-and-profile-state-and-backend-state
       program
       spans
@@ -2094,7 +2096,8 @@
     [backend-state : compiler_backend.CompilerBackendState
       (compiler_backend.compiler-backend-state-new-with-metrics
         (ci.intern-compat-state-capture-active)
-        (profile_state.compiler-profile-state-metrics profile-state))]
+        (profile_state.compiler-profile-state-metrics
+          (owned_view.compiler-owned-shared-view profile-state)))]
     (compiler-driver-emit-lowered-with-level-mode-entry-and-crt-and-profile-state-and-backend-state
       (compiler_ast_types.ast-node-pool-reader-context-current)
       input-path
@@ -2521,7 +2524,8 @@
     [backend-state : compiler_backend.CompilerBackendState
       (compiler_backend.compiler-backend-state-new-with-metrics
         (ci.intern-compat-state-capture-active)
-        (profile_state.compiler-profile-state-metrics profile-state))]
+        (profile_state.compiler-profile-state-metrics
+          (owned_view.compiler-owned-shared-view profile-state)))]
     (compiler-driver-emit-lowered-object-image-with-level-mode-entry-and-crt-and-profile-state-and-backend-state
       pools
       input-path

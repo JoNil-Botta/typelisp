@@ -6382,9 +6382,16 @@ whereas `{2:.*}` and `{name:.*}` consume only the implicit count. Dynamic
 precision requires exact source type `i64` and traps with the precision-count
 diagnostic before rendering or allocation when negative. An omitted precision
 remains distinct from explicit zero in the shared options value. Ordinary
-integral Display and radix rendering accepts and ignores precision. Text,
-bool, char, owner Display, and float precision consumers are separate formatter
-features and produce category-specific unsupported diagnostics until present.
+integral Display and radix rendering accepts and ignores precision. `String`,
+borrowed `str`, `bool`, `char`, and the `String` returned by an owner Display
+hook truncate to `min(precision, rendered-byte-length)` before width/fill/
+alignment is applied. This precision counts TypeLisp characters, which are
+bytes: it does not decode or validate UTF-8, so a boundary may split a
+multi-byte UTF-8 sequence, and embedded NUL and bytes above `0x7f` remain
+ordinary output bytes. This is an intentional difference from Rust's
+Unicode-scalar count and keeps precision in the same unit as TypeLisp width.
+Float fixed precision remains a separate formatter feature and produces its
+focused unsupported diagnostic until present.
 
 The `+` sign emits a plus for nonnegative `i64`/`f64`/`f32` values and is
 rejected for nonnumeric values; `-` is accepted as the Rust-compatible no-op.

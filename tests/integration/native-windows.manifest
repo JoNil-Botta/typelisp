@@ -457,6 +457,6 @@ comptime_type_expr_worklist|tests/integration/comptime_type_expr_worklist.tl|42|
 str_cat_scoped_region|tests/integration/str_cat_scoped_region.tl|42|-|-|-
 tlci_native_index_folds|tests/integration/tlci_native_index_folds.tl|42|-|-|stdlib/fs.tl stdlib/string.tl stdlib/str_cat.tl
 tlci_native_wildcard_arms|tests/integration/tlci_native_wildcard_arms.tl|42|-|-|stdlib/eq.tl stdlib/hash.tl
-tlci_native_format_scanner|tests/integration/tlci_native_format_scanner.tl|42|scanner: 1 {} 2\ndone\n|-|stdlib/format.tl stdlib/io.tl stdlib/string.tl
+tlci_native_format_scanner|tests/integration/tlci_native_format_scanner.tl|42|sca: 1 {} 2\ndo\n|-|stdlib/format.tl stdlib/io.tl stdlib/string.tl
 inline_multiblock_call_carrying_clone|tests/integration/inline_multiblock_call_carrying_clone.tl|42|-|-|stdlib/array.tl
 inline_tail_call_boundary|tests/integration/inline_tail_call_boundary.tl|42|-|-|-

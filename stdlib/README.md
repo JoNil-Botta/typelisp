@@ -144,10 +144,13 @@ Vec bang place macros as available yet.
   and must be nonnegative. Star consumes the current implicit argument as its
   count, followed by the implicit value when the value is omitted; dollar
   counts never advance that iterator. Ordinary integral output ignores the
-  resolved precision, while text/character/owner and float consumers remain
-  focused follow-up features. Type selectors remain focused unsupported-
-  semantics diagnostics. Supported values are `String`, `i64`, `bool`, `char`,
-  `f64`, and `f32`. Every supplied
+  resolved precision. `String`, borrowed `str`, `bool`, `char`, and owner-hook
+  output truncate to the resolved number of TypeLisp bytes before width/fill/
+  alignment. The byte count deliberately does not decode UTF-8 and may split a
+  multi-byte sequence; NUL and high bytes remain ordinary text bytes. Float
+  fixed precision remains a focused follow-up feature. Type selectors remain
+  focused unsupported-semantics diagnostics. Supported values are `String`,
+  `i64`, `bool`, `char`, `f64`, and `f32`. Every supplied
   expression is evaluated once in source order. A nominal struct or
   enum delegates to its canonical owner module's exact
   `to-string : (& T) -> String` hook; modules with multiple nominal types may

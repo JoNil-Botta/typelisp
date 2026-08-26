@@ -113,9 +113,9 @@
     [pd : i64 (win-param-preassign-logical-name "win_pd")]
     (ir.CompilerIrProgram.Program
       (win-param-preassign-globals pa pb pc pd)
-      (ir.compiler-ir-function-cons
+      (ir.compiler-ir-function-seq-prepend
         (win-param-preassign-function function-name pa pb pc pd)
-        ir.CompilerIrFunctionList.Nil)
+        (ir.compiler-ir-function-seq-empty))
       (ir.compiler-ir-extern-seq-empty))))
 
 (define (win-param-preassign-safe-div-function) : ir.CompilerIrFunction

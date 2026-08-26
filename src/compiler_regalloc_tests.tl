@@ -5599,6 +5599,249 @@
                 (ir.compiler-ir-instr-seq-empty)))))
         ir.CompilerIrBlockList.Nil))))
 
+;; ---------------------------------------------------------------------------
+;; R5: invariant-load facts.
+;;
+;; The shape is cfg-build-csr's, reduced: a `&Vec` parameter, the slots handle
+;; read out of it, the handle's `len` and `data` words, and an ELEMENT store
+;; through the data pointer. Every descriptor word here must stay invariant
+;; across that store -- the handle by the typed-word rule (a handle word is
+;; class 6, the store is class 1), `len`/`data` because their base is a
+;; descriptor handle and a descriptor is outside every payload buffer.
+(cfg
+  test
+  (define (compiler-reg-invariant-descriptor-function
+    [extra : ir.CompilerIrInstrSeq]) : ir.CompilerIrFunction
+    (ir.CompilerIrFunction.Function
+      (ir.compiler-ir-test-symbol "invariant_descriptor")
+      (ir.CompilerIrParamList.Cons
+        (ir.CompilerIrParam.Param "v" (ast.AstType.Ref 0 0) 0)
+        (box ir.CompilerIrParamList.Nil))
+      (ast.AstType.Unit)
+      9
+      (ir.compiler-ir-block-cons
+        (ir.CompilerIrBlock.Block
+          (ir.compiler-ir-label "entry")
+          (compiler-reg-test-instr-seq-prepend
+            (ir.CompilerIrInstr.Gep
+              1
+              (ir.CompilerIrValue.Var 0)
+              (ir.CompilerIrValue.I64 0)
+              (ast.AstType.U8))
+            (compiler-reg-test-instr-seq-prepend
+              (ir.CompilerIrInstr.Load
+                2
+                (ir.CompilerIrValue.Var 1)
+                (ast.AstType.DynArray 0))
+              (compiler-reg-test-instr-seq-prepend
+                (ir.CompilerIrInstr.Gep
+                  3
+                  (ir.CompilerIrValue.Var 2)
+                  (ir.CompilerIrValue.I64 1)
+                  (compiler-reg-i64-ty))
+                (compiler-reg-test-instr-seq-prepend
+                  (ir.CompilerIrInstr.Load
+                    4
+                    (ir.CompilerIrValue.Var 3)
+                    (compiler-reg-i64-ty))
+                  (compiler-reg-test-instr-seq-prepend
+                    (ir.CompilerIrInstr.Gep
+                      5
+                      (ir.CompilerIrValue.Var 2)
+                      (ir.CompilerIrValue.I64 0)
+                      (compiler-reg-i64-ty))
+                    (compiler-reg-test-instr-seq-prepend
+                      (ir.CompilerIrInstr.Load
+                        6
+                        (ir.CompilerIrValue.Var 5)
+                        (ast.AstType.U64))
+                      (compiler-reg-test-instr-seq-prepend
+                        (ir.CompilerIrInstr.Gep
+                          7
+                          (ir.CompilerIrValue.Var 6)
+                          (ir.CompilerIrValue.Var 4)
+                          (compiler-reg-i64-ty))
+                        (compiler-reg-test-instr-seq-prepend
+                          (ir.CompilerIrInstr.StorePtr
+                            (ir.CompilerIrValue.Var 7)
+                            (ir.CompilerIrValue.I64 0)
+                            (compiler-reg-i64-ty))
+                          extra)))))))))
+        ir.CompilerIrBlockList.Nil))))
+
+(cfg
+  test
+  (define (compiler-reg-invariant-return-seq) : ir.CompilerIrInstrSeq
+    (compiler-reg-test-instr-seq-prepend
+      (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
+      (ir.compiler-ir-instr-seq-empty))))
+
+(cfg
+  test
+  (define (compiler-reg-invariant-facts-for [extra : ir.CompilerIrInstrSeq]) : reg.CompilerRegInvariantFacts
+    (let
+      [func : ir.CompilerIrFunction
+        (compiler-reg-invariant-descriptor-function extra)]
+      (reg.compiler-reg-invariant-facts-build
+        func
+        (reg.compiler-reg-function-var-types func)))))
+
+(cfg
+  test
+  (define (compiler-reg-invariant-word-load-admitted-ok?) : bool
+    (let
+      [facts : reg.CompilerRegInvariantFacts
+        (compiler-reg-invariant-facts-for (compiler-reg-invariant-return-seq))]
+      (and
+        ;; the handle read off the `&Vec` parameter, and both descriptor words
+        (reg.compiler-reg-invariant-facts-word-load? facts 2)
+        (reg.compiler-reg-invariant-facts-word-load? facts 4)
+        (reg.compiler-reg-invariant-facts-word-load? facts 6)
+        ;; recorded against the base the recompute has to re-read
+        (= (array-ref facts.bases 2) 0)
+        (= (array-ref facts.bases 4) 2)
+        (= (array-ref facts.bases 6) 2)
+        (= (array-ref facts.indexes 4) 1)
+        (= (array-ref facts.indexes 6) 0)
+        ;; an element store cannot write a named global cell either
+        facts.cells-clean
+        ;; the ELEMENT address itself is not a descriptor word
+        (not (reg.compiler-reg-invariant-facts-word-load? facts 7))))))
+
+;; A FIELD store -- one whose address is a descriptor word rather than an
+;; element of a payload buffer -- may write any of these words, so the whole
+;; function falls back to "nothing is invariant".
+(cfg
+  test
+  (define (compiler-reg-invariant-field-store-refused-ok?) : bool
+    (let
+      [facts : reg.CompilerRegInvariantFacts
+        (compiler-reg-invariant-facts-for
+          (compiler-reg-test-instr-seq-prepend
+            (ir.CompilerIrInstr.StorePtr
+              (ir.CompilerIrValue.Var 3)
+              (ir.CompilerIrValue.I64 0)
+              (compiler-reg-i64-ty))
+            (compiler-reg-invariant-return-seq)))]
+      (and
+        (not (reg.compiler-reg-invariant-facts-word-load? facts 2))
+        (not (reg.compiler-reg-invariant-facts-word-load? facts 4))
+        (not (reg.compiler-reg-invariant-facts-word-load? facts 6))
+        (not facts.cells-clean)))))
+
+;; A CALL that may write memory is the `&mut`-parameter case: the callee can
+;; push through the reference and move `data`/`len`, so no descriptor word of
+;; this function is invariant any more (LLVM refuses the same way through
+;; `isDereferenceableInvariantLoad`'s mod/ref query).
+(cfg
+  test
+  (define (compiler-reg-invariant-call-refused-ok?) : bool
+    (let
+      [facts : reg.CompilerRegInvariantFacts
+        (compiler-reg-invariant-facts-for
+          (compiler-reg-test-instr-seq-prepend
+            (ir.CompilerIrInstr.Call
+              8
+              (ir.compiler-ir-test-symbol "vec_push")
+              ir.CompilerIrCallArgs.Nil
+              (ast.AstType.Unit))
+            (compiler-reg-invariant-return-seq)))]
+      (and
+        (not (reg.compiler-reg-invariant-facts-word-load? facts 2))
+        (not (reg.compiler-reg-invariant-facts-word-load? facts 4))
+        (not (reg.compiler-reg-invariant-facts-word-load? facts 6))
+        (not facts.cells-clean)))))
+
+;; The recipe itself: an invariant descriptor word recomputes as the same
+;; `gep`+`load` pair the function already ran (which the backend's gep fusion
+;; cluster folds into one memory operand), and a zero index needs no address
+;; instruction at all.
+(cfg
+  test
+  (define (compiler-reg-invariant-recipe-ok?) : bool
+    (let
+      [func : ir.CompilerIrFunction
+        (compiler-reg-invariant-descriptor-function
+          (compiler-reg-invariant-return-seq))]
+      [table : reg.CompilerRegRematTable
+        (reg.compiler-reg-remat-table-build
+          func
+          (reg.compiler-reg-function-var-types func))]
+      (and
+        (= (array-ref table.wide 4) 1)
+        (= (array-ref table.kinds 4) (reg.compiler-reg-remat-kind-word-load))
+        (not (reg.compiler-reg-remat-zero-offset? table 4))
+        (reg.compiler-reg-remat-zero-offset? table 6)
+        (match (reg.compiler-reg-remat-address-instr table 20 4)
+          [(ir.CompilerIrInstr.Gep dst base offset _)
+            (and
+              (= dst 20)
+              (match base
+                [(ir.CompilerIrValue.Var b) (= b 2)]
+                [_ false])
+              (match offset
+                [(ir.CompilerIrValue.I64 k) (= k 1)]
+                [_ false]))]
+          [_ false])
+        (match (reg.compiler-reg-remat-value-instr table 21 20 1 4)
+          [(ir.CompilerIrInstr.Load dst src _)
+            (and
+              (= dst 21)
+              (match src
+                [(ir.CompilerIrValue.Var a) (= a 20)]
+                [_ false]))]
+          [_ false])
+        ;; index 0: the base IS the address, so one instruction serves
+        (match (reg.compiler-reg-remat-value-instr table 22 22 0 6)
+          [(ir.CompilerIrInstr.Load dst src _)
+            (and
+              (= dst 22)
+              (match src
+                [(ir.CompilerIrValue.Var b) (= b 2)]
+                [_ false]))]
+          [_ false])))))
+
+;; LLVM's `allUsesAvailableAt`: a recompute may only run where its base operand
+;; is still in a register and still carries that value. A spilled base fails.
+(cfg
+  test
+  (define (compiler-reg-invariant-base-availability-ok?) : bool
+    (let
+      [func : ir.CompilerIrFunction
+        (compiler-reg-invariant-descriptor-function
+          (compiler-reg-invariant-return-seq))]
+      [table : reg.CompilerRegRematTable
+        (reg.compiler-reg-remat-table-build
+          func
+          (reg.compiler-reg-function-var-types func))]
+      [assignments : reg.CompilerRegAssignmentTable
+        (reg.compiler-reg-assignment-table-make 9)]
+      [liveness : live.CompilerFunctionLiveness
+        (live.compiler-live-analyze-function func)]
+      (begin
+        (reg.compiler-reg-assignment-table-insert
+          assignments
+          2
+          (reg.CompilerRegLocation.Spill 0))
+        (match (reg.compiler-reg-live-interval-selection func liveness)
+          [(reg.CompilerRegIntervalSelection.Selection _ index)
+            (and
+              ;; base spilled -> refused everywhere
+              (not
+                (reg.compiler-reg-remat-base-available?
+                  table
+                  assignments
+                  index
+                  6
+                  4))
+              ;; a value with no register operand at all is always available
+              (reg.compiler-reg-remat-base-available?
+                table
+                assignments
+                index
+                6
+                0))])))))
+
 (cfg
   test
   (define (compiler-reg-remat-classifier-ok?) : bool
@@ -5654,12 +5897,22 @@
               (ir.compiler-ir-test-symbol "global"))
             (ir.CompilerIrValue.Var 0)
             (compiler-reg-i64-ty))))
+      ;; R5: `gep BASE, K` with a REGISTER base and a constant offset is one
+      ;; `leaq K*w(%base), %r` -- exactly the cost of the reload it replaces --
+      ;; so the shape is admitted here; whether the base is really in a register
+      ;; and live at a given use is the rewrite's per-use question.
+      (compiler-reg-remat-defn?
+        (ir.CompilerIrInstr.Gep
+          19
+          (ir.CompilerIrValue.Var 0)
+          (ir.CompilerIrValue.I64 2)
+          (compiler-reg-i64-ty)))
       (not
         (compiler-reg-remat-defn?
           (ir.CompilerIrInstr.Gep
-            19
+            27
             (ir.CompilerIrValue.Var 0)
-            (ir.CompilerIrValue.I64 2)
+            (ir.CompilerIrValue.Var 1)
             (compiler-reg-i64-ty))))
       (not
         (compiler-reg-remat-defn?
@@ -5716,68 +5969,84 @@
       ;; Static address materialisations: admitted at any word type, unchanged.
       (reg.compiler-reg-remat-recompute-value?
         (ir.CompilerIrValue.GlobalAddr (ir.compiler-ir-test-symbol "global"))
-        (ast.AstType.U64))
+        (ast.AstType.U64)
+        false)
       (reg.compiler-reg-remat-recompute-value?
         (ir.CompilerIrValue.Function (ir.compiler-ir-test-symbol "fn"))
-        (ast.AstType.U64))
+        (ast.AstType.U64)
+        false)
       (reg.compiler-reg-remat-recompute-value?
         (ir.CompilerIrValue.String "s")
-        (ast.AstType.String))
+        (ast.AstType.String)
+        false)
       ;; W3 step (a): integer/bool/char literals at a type whose reload is
       ;; bit-identical to the immediate materialisation.
       (reg.compiler-reg-remat-recompute-value?
         (ir.CompilerIrValue.I64 7)
-        (compiler-reg-i64-ty))
+        (compiler-reg-i64-ty)
+        false)
       (reg.compiler-reg-remat-recompute-value?
         (ir.CompilerIrValue.I64 0)
-        (ast.AstType.U64))
+        (ast.AstType.U64)
+        false)
       (reg.compiler-reg-remat-recompute-value?
         (ir.CompilerIrValue.I64 -1)
-        (compiler-reg-i64-ty))
+        (compiler-reg-i64-ty)
+        false)
       (reg.compiler-reg-remat-recompute-value?
         (ir.CompilerIrValue.Bool false)
-        (ast.AstType.Bool))
+        (ast.AstType.Bool)
+        false)
       (reg.compiler-reg-remat-recompute-value?
         (ir.CompilerIrValue.Bool true)
-        (compiler-reg-i64-ty))
+        (compiler-reg-i64-ty)
+        false)
       (reg.compiler-reg-remat-recompute-value?
         (ir.CompilerIrValue.Char 'x')
-        (ast.AstType.Char))
+        (ast.AstType.Char)
+        false)
       ;; NEGATIVE GATE. A narrow var reloads sign/zero-EXTENDED from its slot
       ;; (movslq / movzbq), so an i64 literal homed there is not reproduced by
       ;; `movl $K` and must be refused.
       (not
         (reg.compiler-reg-remat-recompute-value?
           (ir.CompilerIrValue.I64 7)
-          (ast.AstType.I32)))
+          (ast.AstType.I32)
+          false))
       (not
         (reg.compiler-reg-remat-recompute-value?
           (ir.CompilerIrValue.I64 7)
-          (ast.AstType.U8)))
+          (ast.AstType.U8)
+          false))
       (not
         (reg.compiler-reg-remat-recompute-value?
           (ir.CompilerIrValue.Char 'x')
-          (ast.AstType.U8)))
+          (ast.AstType.U8)
+          false))
       ;; NEGATIVE GATE. A literal in a register-GROUP / handle type is refused:
       ;; the backend errors on a rematerialised group var.
       (not
         (reg.compiler-reg-remat-recompute-value?
           (ir.CompilerIrValue.I64 0)
-          (ast.AstType.String)))
+          (ast.AstType.String)
+          false))
       ;; NEGATIVE GATE. No scalar backend materialisation for f64, and a LOAD
       ;; of a global cell is not a static value.
       (not
         (reg.compiler-reg-remat-recompute-value?
           (ir.CompilerIrValue.F64 0x3ff0000000000000)
-          (compiler-reg-f64-ty)))
+          (compiler-reg-f64-ty)
+          false))
       (not
         (reg.compiler-reg-remat-recompute-value?
           (ir.CompilerIrValue.Global (ir.compiler-ir-test-symbol "global"))
-          (compiler-reg-i64-ty)))
+          (compiler-reg-i64-ty)
+          false))
       (not
         (reg.compiler-reg-remat-recompute-value?
           (ir.CompilerIrValue.Var 0)
-          (compiler-reg-i64-ty))))))
+          (compiler-reg-i64-ty)
+          false)))))
 
 ;; End-to-end for the assignment-level rewrite: a SPILLED single-def literal
 ;; becomes CompilerRegLocation.Remat (so its def store dies and every use
@@ -5805,6 +6074,7 @@
               func
               empty-coalesce
               (live.compiler-live-set-empty)
+              false
               vars)]
           (match (reg.compiler-reg-assignment-table-lookup rewritten var)
             [(reg.CompilerRegMaybeLocation.Some location) location]
@@ -5905,16 +6175,25 @@
         (ir.CompilerIrValue.Global (ir.compiler-ir-test-symbol "frozen"))]
       [unseeded? : bool
         (not
-          (reg.compiler-reg-remat-recompute-value? cell (compiler-reg-i64-ty)))]
+          (reg.compiler-reg-remat-recompute-value?
+            cell
+            (compiler-reg-i64-ty)
+            false))]
       (begin
         (reg.compiler-reg-frozen-globals-begin!)
         (reg.compiler-reg-frozen-globals-finish!)
         (let
           [seeded? : bool
-            (reg.compiler-reg-remat-recompute-value? cell (compiler-reg-i64-ty))]
+            (reg.compiler-reg-remat-recompute-value?
+              cell
+              (compiler-reg-i64-ty)
+              false)]
           [narrow-refused? : bool
             (not
-              (reg.compiler-reg-remat-recompute-value? cell (ast.AstType.I32)))]
+              (reg.compiler-reg-remat-recompute-value?
+                cell
+                (ast.AstType.I32)
+                false))]
           [mov-remat? : bool
             (compiler-reg-location-remat?
               (compiler-reg-remat-assignment-spill-location
@@ -5934,7 +6213,8 @@
                 (not
                   (reg.compiler-reg-remat-recompute-value?
                     cell
-                    (compiler-reg-i64-ty)))]
+                    (compiler-reg-i64-ty)
+                    false))]
               [written-load-refused? : bool
                 (not
                   (compiler-reg-location-remat?
@@ -19331,6 +19611,21 @@
     (compiler-regalloc-self-test-require!
       "compiler-reg-remat-classifier-ok?"
       (cfg test (compiler-reg-remat-classifier-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-invariant-word-load-admitted-ok?"
+      (cfg test (compiler-reg-invariant-word-load-admitted-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-invariant-field-store-refused-ok?"
+      (cfg test (compiler-reg-invariant-field-store-refused-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-invariant-call-refused-ok?"
+      (cfg test (compiler-reg-invariant-call-refused-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-invariant-recipe-ok?"
+      (cfg test (compiler-reg-invariant-recipe-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-invariant-base-availability-ok?"
+      (cfg test (compiler-reg-invariant-base-availability-ok?) true))
     (compiler-regalloc-self-test-require!
       "compiler-reg-remat-recompute-classifier-ok?"
       (cfg test (compiler-reg-remat-recompute-classifier-ok?) true))

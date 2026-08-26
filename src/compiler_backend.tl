@@ -33037,75 +33037,82 @@
   ;; compiler-backend-emit-address-base returns the register home directly when
   ;; available, falling back to loading the pointer into the scavenged base. This
   ;; mirrors the store path (compiler-backend-emit-store-ptr).
-  (let
-    [src-home : String
-      (compiler-backend-value-register-home backend-state assignments src)]
-    [scav-base : String
-      (compiler-backend-planned-or-scavenge-reg-here
-        planned-address
-        (compiler-backend-one-exclude src-home)
-        1
-        "%r10"
-        backend-state)]
-    (match (compiler-backend-emit-address-base
-      assignments
-      src
-      scav-base
-      backend-state)
-      [(ResultCompilerBackendAddressBase.Ok base-plan)
-        (let
-          [ptr-asm : String base-plan.asm]
-          [base : String
-            (compiler_abi.compiler-abi-register-spelling base-plan.reg)]
-          [base-mem : String (compiler-backend-base-deref base)]
-          (ResultCompilerBackend.Ok
-            (if (compiler-backend-float-type? ty)
-              (let
-                [dst-home : String
-                  (compiler-backend-var-register-home
-                    backend-state
-                    assignments
-                    dst)]
-                [load-reg : String
-                  (if (string.eq dst-home "")
-                    (let
-                      [no-exclude : (__tl_dyn-array String)
-                        (__tl_make-array String 0)]
-                      (compiler-backend-planned-or-scavenge-xmm-reg
-                        planned-value
-                        dst
-                        no-exclude
-                        0
-                        "%xmm2"
-                        backend-state))
-                    dst-home)]
-                [store-asm : String
-                  (if (string.eq dst-home "")
-                    (compiler-backend-emit-store-float-var-with-plan
+  (if (compiler-backend-var-remat-home? backend-state assignments dst)
+    ;; R5: same argument as the `mov` arm -- a `load @g` whose destination
+    ;; recomputes at every use has a dead definition.
+    (ResultCompilerBackend.Ok "")
+    (let
+      [src-home : String
+        (compiler-backend-value-register-home backend-state assignments src)]
+      [scav-base : String
+        (compiler-backend-planned-or-scavenge-reg-here
+          planned-address
+          (compiler-backend-one-exclude src-home)
+          1
+          "%r10"
+          backend-state)]
+      (match (compiler-backend-emit-address-base
+        assignments
+        src
+        scav-base
+        backend-state)
+        [(ResultCompilerBackendAddressBase.Ok base-plan)
+          (let
+            [ptr-asm : String base-plan.asm]
+            [base : String
+              (compiler_abi.compiler-abi-register-spelling base-plan.reg)]
+            [base-mem : String (compiler-backend-base-deref base)]
+            (ResultCompilerBackend.Ok
+              (if (compiler-backend-float-type? ty)
+                (let
+                  [dst-home : String
+                    (compiler-backend-var-register-home
+                      backend-state
                       assignments
-                      dst
+                      dst)]
+                  [load-reg : String
+                    (if (string.eq dst-home "")
+                      (let
+                        [no-exclude : (__tl_dyn-array String)
+                          (__tl_make-array String 0)]
+                        (compiler-backend-planned-or-scavenge-xmm-reg
+                          planned-value
+                          dst
+                          no-exclude
+                          0
+                          "%xmm2"
+                          backend-state))
+                      dst-home)]
+                  [store-asm : String
+                    (if (string.eq dst-home "")
+                      (compiler-backend-emit-store-float-var-with-plan
+                        assignments
+                        dst
+                        load-reg
+                        ty
+                        backend-state)
+                      "")]
+                  (str_cat.str-cat
+                    ptr-asm
+                    (compiler-backend-emit-load-float-memory
+                      base-mem
                       load-reg
-                      ty
-                      backend-state)
-                    "")]
+                      ty)
+                    store-asm))
                 (str_cat.str-cat
                   ptr-asm
-                  (compiler-backend-emit-load-float-memory base-mem load-reg ty)
-                  store-asm))
-              (str_cat.str-cat
-                ptr-asm
-                (compiler-backend-emit-load-scalar-address-to-var
-                  type-segment-bases
-                  assignments
-                  dst
-                  base-mem
-                  ty
-                  (compiler-backend-one-exclude base)
-                  1
-                  planned-value
-                  backend-state)))))]
-      [(ResultCompilerBackendAddressBase.Err message)
-        (ResultCompilerBackend.Err message)])))
+                  (compiler-backend-emit-load-scalar-address-to-var
+                    type-segment-bases
+                    assignments
+                    dst
+                    base-mem
+                    ty
+                    (compiler-backend-one-exclude base)
+                    1
+                    planned-value
+                    backend-state)))))]
+        [(ResultCompilerBackendAddressBase.Err message)
+          (ResultCompilerBackend.Err message)]))))
 
 (define (compiler-backend-emit-load-float-address-to-var
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -46588,6 +46595,27 @@
               lanes
               backend-state))]))))
 
+;; R5. Is `var`'s home a RECOMPUTE rather than storage? Then this instruction is
+;; its single definition, every use materialises the value for itself, and the
+;; definition is dead -- not just its store. The immediate path already emitted
+;; nothing (compiler-backend-emit-store-immediate-to-var-home); a global cell
+;; read, a `leaq label(%rip)` or a `load @g` still staged the value into a
+;; scavenged register and then dropped it, leaving one dead instruction per
+;; definition. Removing a pure recompute is always safe.
+(define (compiler-backend-var-remat-home?
+  [backend-state : CompilerBackendState]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [var-id : i64]) : bool
+  (match (compiler-backend-emit-assignment-lookup
+    backend-state
+    assignments
+    var-id)
+    [(compiler_regalloc.CompilerRegMaybeLocation.Some location)
+      (match location
+        [(compiler_regalloc.CompilerRegLocation.Remat _) true]
+        [_ false])]
+    [(compiler_regalloc.CompilerRegMaybeLocation.No) false]))
+
 (define (compiler-backend-emit-mov-with-plan
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -46627,6 +46655,10 @@
         planned1
         backend-state)]
     [(compiler-backend-value-same-home? backend-state assignments dst src)
+      (ResultCompilerBackend.Ok "")]
+    ;; R5: a rematerialised destination has no storage and no live use of this
+    ;; definition -- every use recomputes -- so the whole `mov` is dead.
+    [(compiler-backend-var-remat-home? backend-state assignments dst)
       (ResultCompilerBackend.Ok "")]
     [(compiler-backend-float-type? ty)
       (let
@@ -69718,6 +69750,215 @@
           (set! b (+ b 1))))
       total)))
 
+;; R5 ORDINAL RESYNC. The GAP9 displacement table is indexed by the ORDINAL of
+;; a `Gep` in walk order, and it is built before register allocation. The remat
+;; rewrite runs after the plan and edits that sequence: it mints recipe geps at
+;; recomputed use sites and retires the address gep of a load whose every use
+;; was recomputed. Re-thread the table onto the final block list rather than let
+;; the emitter consume shifted entries -- a recipe gep is minted with a var id
+;; at or above `pre-vars` and folds nothing, so it takes a fresh zero entry;
+;; every surviving gep keeps the entry it was given, matched by its destination
+;; in the (order-preserving) old sequence. Anything that fails to line up
+;; poisons the function, which is the same loud error the audit already raises.
+(define (compiler-backend-gep-fold-collect-dsts
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [dsts : (__tl_dyn-array i64)]) : i64
+  (let
+    [seq : compiler_ir_types.CompilerIrBlockSeq
+      (compiler_liveness.compiler-live-ir-block-list-to-seq blocks)]
+    [block-count : i64 (compiler_ir_types.compiler-ir-block-seq-count seq)]
+    [b : i64 0]
+    [total : i64 0]
+    (begin
+      (while (< b block-count)
+        (begin
+          (match (compiler_ir_types.compiler-ir-block-seq-ref seq b)
+            [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+              (let
+                [n : i64 (compiler_ir_types.compiler-ir-instr-seq-count instrs)]
+                [j : i64 0]
+                (while (< j n)
+                  (begin
+                    (match (compiler_ir_types.compiler-ir-instr-seq-ref
+                      instrs
+                      j)
+                      [(compiler_ir_types.CompilerIrInstr.Gep dst _ _ _)
+                        (begin
+                          (if (< total (array-length dsts))
+                            (set! (array-ref dsts total) dst)
+                            unit)
+                          (set! total (+ total 1)))]
+                      [_ unit])
+                    (set! j (+ j 1)))))])
+          (set! b (+ b 1))))
+      total)))
+
+(define (compiler-backend-gep-fold-count-blocks-geps
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : i64
+  (compiler-backend-gep-fold-collect-dsts blocks (__tl_make-array i64 0)))
+
+(define (compiler-backend-gep-fold-resync!
+  [function-state : CompilerBackendFunctionState]
+  [type-segment-bases : i64]
+  [old-blocks : compiler_ir_types.CompilerIrBlockList]
+  [new-blocks : compiler_ir_types.CompilerIrBlockList]
+  [pre-vars : i64]) : unit
+  (if (not
+    (compiler-backend-function-state-bool?
+      function-state
+      compiler-backend-function-bool-gep-fold-ready))
+    unit
+    (let
+      [old-count : i64 (compiler-backend-gep-fold-count-blocks-geps old-blocks)]
+      [new-count : i64 (compiler-backend-gep-fold-count-blocks-geps new-blocks)]
+      ;; Equal counts do NOT mean the sequence is untouched (one retired gep and
+      ;; one minted recipe gep balance), so the re-thread runs whenever the
+      ;; table is live and the function has any gep at all.
+      (if (= old-count 0)
+        unit
+        (compiler-backend-gep-fold-resync-tables!
+          function-state
+          type-segment-bases
+          old-blocks
+          new-blocks
+          pre-vars
+          old-count
+          new-count)))))
+
+(define (compiler-backend-gep-fold-resync-tables!
+  [function-state : CompilerBackendFunctionState]
+  [type-segment-bases : i64]
+  [old-blocks : compiler_ir_types.CompilerIrBlockList]
+  [new-blocks : compiler_ir_types.CompilerIrBlockList]
+  [pre-vars : i64]
+  [old-count : i64]
+  [new-count : i64]) : unit
+  (let
+    [old-disp : (__tl_dyn-array i64)
+      (compiler-backend-function-state-i64-array
+        function-state
+        compiler-backend-function-i64-array-gep-fold-disp-table)]
+    [old-kind : (__tl_dyn-array i64)
+      (compiler-backend-function-state-i64-array
+        function-state
+        compiler-backend-function-i64-array-gep-fold-kind-table)]
+    [old-scale : (__tl_dyn-array i64)
+      (compiler-backend-function-state-i64-array
+        function-state
+        compiler-backend-function-i64-array-gep-fold-scale-table)]
+    [old-dsts : (__tl_dyn-array i64)
+      (__tl_make-array
+        i64
+        (if (< old-count 1)
+          1
+          old-count))]
+    [_collect : i64
+      (compiler-backend-gep-fold-collect-dsts old-blocks old-dsts)]
+    [disp : (__tl_dyn-array i64)
+      (__tl_make-array
+        i64
+        (if (< new-count 1)
+          1
+          new-count))]
+    [kind : (__tl_dyn-array i64)
+      (__tl_make-array
+        i64
+        (if (< new-count 1)
+          1
+          new-count))]
+    [scale : (__tl_dyn-array i64)
+      (__tl_make-array
+        i64
+        (if (< new-count 1)
+          1
+          new-count))]
+    [seq : compiler_ir_types.CompilerIrBlockSeq
+      (compiler_liveness.compiler-live-ir-block-list-to-seq new-blocks)]
+    [block-count : i64 (compiler_ir_types.compiler-ir-block-seq-count seq)]
+    [b : i64 0]
+    [out : i64 0]
+    [cursor : i64 0]
+    [failed : bool false]
+    (begin
+      (if (not (= (array-length old-disp) old-count))
+        (set! failed true)
+        unit)
+      (while (< b block-count)
+        (begin
+          (match (compiler_ir_types.compiler-ir-block-seq-ref seq b)
+            [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+              (let
+                [n : i64 (compiler_ir_types.compiler-ir-instr-seq-count instrs)]
+                [j : i64 0]
+                (while (< j n)
+                  (begin
+                    (match (compiler_ir_types.compiler-ir-instr-seq-ref
+                      instrs
+                      j)
+                      [(compiler_ir_types.CompilerIrInstr.Gep
+                          dst
+                          _
+                          offset
+                          elem-ty)
+                        (if (>= out new-count)
+                          (set! failed true)
+                          (if (>= dst pre-vars)
+                            (begin
+                              (set! (array-ref disp out) 0)
+                              (set!
+                                (array-ref kind out)
+                                (compiler-backend-gep-fold-offset-kind offset))
+                              (set!
+                                (array-ref scale out)
+                                (compiler-backend-type-size
+                                  type-segment-bases
+                                  elem-ty))
+                              (set! out (+ out 1)))
+                            (begin
+                              (while (and
+                                (< cursor old-count)
+                                (not (= (array-ref old-dsts cursor) dst)))
+                                (set! cursor (+ cursor 1)))
+                              (if (>= cursor old-count)
+                                (set! failed true)
+                                (begin
+                                  (set!
+                                    (array-ref disp out)
+                                    (array-ref old-disp cursor))
+                                  (set!
+                                    (array-ref kind out)
+                                    (array-ref old-kind cursor))
+                                  (set!
+                                    (array-ref scale out)
+                                    (array-ref old-scale cursor))
+                                  (set! cursor (+ cursor 1))
+                                  (set! out (+ out 1)))))))]
+                      [_ unit])
+                    (set! j (+ j 1)))))])
+          (set! b (+ b 1))))
+      (if (or failed (not (= out new-count)))
+        (compiler-backend-function-state-set-bool!
+          function-state
+          compiler-backend-function-bool-gep-fold-drift
+          true)
+        (begin
+          (compiler-backend-function-state-set-i64-array!
+            function-state
+            compiler-backend-function-i64-array-gep-fold-disp-table
+            disp)
+          (compiler-backend-function-state-set-i64-array!
+            function-state
+            compiler-backend-function-i64-array-gep-fold-kind-table
+            kind)
+          (compiler-backend-function-state-set-i64-array!
+            function-state
+            compiler-backend-function-i64-array-gep-fold-scale-table
+            scale)
+          (compiler-backend-function-state-set-i64!
+            function-state
+            compiler-backend-function-i64-gep-fold-cursor
+            0))))))
+
 (define (compiler-backend-gep-fold-count-defs
   [defs : (__tl_dyn-array i64)]
   [barr : (__tl_dyn-array compiler_ir_types.CompilerIrBlock)]) : unit
@@ -72163,6 +72404,18 @@
                 _
                 _)
               out-vars])]
+        ;; R5: the remat rewrite is the only stage that edits the `Gep`
+        ;; sequence after the GAP9 displacement table was built, so re-thread
+        ;; the table onto its output before emission consumes the ordinals.
+        [_gep-fold-resync : unit
+          (if call-save-enabled
+            (compiler-backend-gep-fold-resync!
+              function-state
+              type-segment-bases
+              rewritten-blocks
+              remat0-blocks
+              rewritten-vars)
+            unit)]
         ;; SplitKit removed: it was inert on the shipped path (the realization
         ;; declined every recorded piece), replaced by M-G2b's per-call-region
         ;; split + FPO. The final pipeline stage is the identity of the remat

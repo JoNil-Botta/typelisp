@@ -571,6 +571,13 @@
 (defstruct CompilerRegRematTable
   (def-counts (__tl_dyn-array i64))
   (candidates (__tl_dyn-array i64))
+  ;; R5's ADDED candidates -- an invariant descriptor word, a `gep` off a
+  ;; register base, a clean global cell read -- kept out of `candidates` on
+  ;; purpose. `candidates` is also the M-G2b rescue's "this root has no stable
+  ;; slot" exclusion (compiler-reg-assign-caller-saved-call-spanning), and a
+  ;; value R5 can only recompute AT SOME uses keeps its slot, so widening that
+  ;; exclusion would silently shrink an unrelated rescue's population.
+  (wide (__tl_dyn-array i64))
   (kinds (__tl_dyn-array i64))
   (values (__tl_dyn-array ir.CompilerIrValue))
   (offsets (__tl_dyn-array ir.CompilerIrValue))
@@ -585,6 +592,14 @@
 
 (define (compiler-reg-remat-kind-gep) : i64
   3)
+
+;; R5. `load (gep BASE, K)` on a word no instruction of the function can write.
+;; The recipe is a `Gep` followed immediately by its `Load`, which the backend's
+;; gep fusion cluster (compiler-backend-emit-gep-step) collapses into ONE
+;; memory operand -- `movq K*w(%base), %r`, or `cmpq K*w(%base), %idx` straight
+;; into a bounds check or a compare+branch.
+(define (compiler-reg-remat-kind-word-load) : i64
+  4)
 
 (defenum CompilerRegEdgeCopyDirection
   (IntoRegion)
@@ -12049,11 +12064,42 @@
     [(ir.CompilerIrValue.Global _) allow-invariant-loads]
     [_ (compiler-reg-remat-value? value)]))
 
+;; R5. `gep BASE, K` with a CONSTANT offset recomputes in ONE instruction --
+;; `leaq K*w(%base), %r` for a register base, `leaq label+K*w(%rip), %r` for a
+;; static one -- so it is exactly as cheap as the reload it replaces and drops
+;; the definition's spill store outright. The Var arm is R5's second admission
+;; (LLVM admits every `LEA` shape through `isReMaterializableImpl`); whether the
+;; base is actually IN a register and LIVE at a given use is a per-use question
+;; the post-plan rewrite answers (compiler-reg-remat-base-available?), not a
+;; property of the instruction.
+;; The shape the SPILL-WEIGHT DISCOUNT prices: a static address, materialised
+;; with no operand at all. R5 deliberately does NOT widen this. The discount is
+;; a global re-ranking of every value in the function, and widening it measured
+;; cfg_domloops +38,989,032 (+6.2%) -- the same failure the W3 note above
+;; records for frozen cell reads, an order of magnitude larger, because every
+;; `&Vec` length and every descriptor word in the program then spills first.
+;; The RECOMPUTE capability below is unconditional and stands; only the claim
+;; "losing this range is half price" stays narrow until the weight model is
+;; frequency-shaped (family E-5 / packet R2).
+(define (compiler-reg-remat-gep-static?
+  [base : ir.CompilerIrValue]
+  [offset : ir.CompilerIrValue]) : bool
+  (match base
+    [(ir.CompilerIrValue.GlobalAddr _)
+      (match offset
+        [(ir.CompilerIrValue.I64 _) true]
+        [_ false])]
+    [_ false]))
+
 (define (compiler-reg-remat-gep?
   [base : ir.CompilerIrValue]
   [offset : ir.CompilerIrValue]) : bool
   (match base
     [(ir.CompilerIrValue.GlobalAddr _)
+      (match offset
+        [(ir.CompilerIrValue.I64 _) true]
+        [_ false])]
+    [(ir.CompilerIrValue.Var _)
       (match offset
         [(ir.CompilerIrValue.I64 _) true]
         [_ false])]
@@ -12119,7 +12165,8 @@
 ;; (no scalar backend support) must never be rematerialised here.
 (define (compiler-reg-remat-recompute-value?
   [value : ir.CompilerIrValue]
-  [ty : ast.AstType]) : bool
+  [ty : ast.AstType]
+  [cells-clean : bool]) : bool
   (match value
     [(ir.CompilerIrValue.GlobalAddr _) true]
     [(ir.CompilerIrValue.Function _) true]
@@ -12130,10 +12177,17 @@
     ;; and one a compare can fold outright (compiler-backend-compare-memory-
     ;; operand). Word width only: the cell read always materialises the full
     ;; 8 bytes, while a narrow var reloads sign/zero-extended from its slot.
+    ;; R5 widens the CAPABILITY (not the discount) from "frozen for the whole
+    ;; program" to "no instruction of THIS function can write a global cell":
+    ;; with only element stores left, the cell no execution reaches can change
+    ;; between the defining read and any later use, so `movq g(%rip), %r` at the
+    ;; use is the same word -- and a compare folds it outright.
     [(ir.CompilerIrValue.Global name)
       (and
         (compiler-reg-remat-word-int-type? ty)
-        (compiler-reg-global-frozen? (ir.compiler-ir-symbol-id name)))]
+        (or
+          cells-clean
+          (compiler-reg-global-frozen? (ir.compiler-ir-symbol-id name))))]
     [_ (compiler-reg-remat-recompute-literal? value ty)]))
 
 (define (compiler-reg-remat-init-vals!
@@ -12152,7 +12206,8 @@
   [instrs : ir.CompilerIrInstrSeq]
   [def-counts : (__tl_dyn-array i64)]
   [flags : (__tl_dyn-array i64)]
-  [vals : (__tl_dyn-array ir.CompilerIrValue)]) : unit
+  [vals : (__tl_dyn-array ir.CompilerIrValue)]
+  [cells-clean : bool]) : unit
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
@@ -12163,7 +12218,10 @@
           [(ir.CompilerIrInstr.Mov dst value ty)
             ;; flags[dst]: 0 = not remat, 1 = remat, 2 = poisoned (address-taken,
             ;; must keep a real slot). A poisoned var never becomes remat.
-            (if (if (if (compiler-reg-remat-recompute-value? value ty)
+            (if (if (if (compiler-reg-remat-recompute-value?
+              value
+              ty
+              cells-clean)
               (compiler-reg-sv-single-def? def-counts dst)
               false)
               (if (>= dst 0)
@@ -12186,7 +12244,8 @@
               [(ir.CompilerIrValue.GlobalAddr name)
                 (if (if (if (compiler-reg-remat-recompute-value?
                   (ir.CompilerIrValue.Global name)
-                  ty)
+                  ty
+                  cells-clean)
                   (compiler-reg-sv-single-def? def-counts dst)
                   false)
                   (if (>= dst 0)
@@ -12218,40 +12277,60 @@
   [blocks : ir.CompilerIrBlockList]
   [def-counts : (__tl_dyn-array i64)]
   [flags : (__tl_dyn-array i64)]
-  [vals : (__tl_dyn-array ir.CompilerIrValue)]) : unit
+  [vals : (__tl_dyn-array ir.CompilerIrValue)]
+  [cells-clean : bool]) : unit
   (match blocks
     [(ir.CompilerIrBlockList.Nil) unit]
     [(ir.CompilerIrBlockList.Cons block rest)
       (begin
         (match block
           [(ir.CompilerIrBlock.Block _ instrs)
-            (compiler-reg-collect-remat-seq! instrs def-counts flags vals)])
+            (compiler-reg-collect-remat-seq!
+              instrs
+              def-counts
+              flags
+              vals
+              cells-clean)])
         (compiler-reg-collect-remat-blocks!
           (__tl-box-place rest)
           def-counts
           flags
-          vals))]
+          vals
+          cells-clean))]
     [(ir.CompilerIrBlockList.Array seq)
-      (compiler-reg-collect-remat-seq-from! seq 0 def-counts flags vals)]))
+      (compiler-reg-collect-remat-seq-from!
+        seq
+        0
+        def-counts
+        flags
+        vals
+        cells-clean)]))
 
 (define (compiler-reg-collect-remat-seq-from!
   [blocks : ir.CompilerIrBlockSeq]
   [index : i64]
   [def-counts : (__tl_dyn-array i64)]
   [flags : (__tl_dyn-array i64)]
-  [vals : (__tl_dyn-array ir.CompilerIrValue)]) : unit
+  [vals : (__tl_dyn-array ir.CompilerIrValue)]
+  [cells-clean : bool]) : unit
   (if (>= index (ir.compiler-ir-block-seq-count blocks))
     unit
     (begin
       (match (ir.compiler-ir-block-seq-ref blocks index)
         [(ir.CompilerIrBlock.Block _ instrs)
-          (compiler-reg-collect-remat-seq! instrs def-counts flags vals)])
+          (compiler-reg-collect-remat-seq!
+            instrs
+            def-counts
+            flags
+            vals
+            cells-clean)])
       (compiler-reg-collect-remat-seq-from!
         blocks
         (+ index 1)
         def-counts
         flags
-        vals))))
+        vals
+        cells-clean))))
 
 ;; Post-allocation rewrite: a singleton (non-coalesced) rematerialisable var that
 ;; the allocator chose to SPILL is converted to CompilerRegLocation.Remat instead -- its
@@ -12263,6 +12342,7 @@
   [func : ir.CompilerIrFunction]
   [coalesce : CompilerRegCoalesceMap]
   [shadows : live.CompilerLiveI64Set]
+  [cells-clean : bool]
   [vars : i64]) : CompilerRegAssignmentTable
   (let
     [def-counts : (__tl_dyn-array i64) (compiler-reg-function-def-counts func)]
@@ -12279,9 +12359,20 @@
         [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
           (match blocks
             [(ir.CompilerIrBlockList.Array seq)
-              (compiler-reg-collect-remat-seq-from! seq 0 def-counts flags vals)]
+              (compiler-reg-collect-remat-seq-from!
+                seq
+                0
+                def-counts
+                flags
+                vals
+                cells-clean)]
             [_
-              (compiler-reg-collect-remat-blocks! blocks def-counts flags vals)])])
+              (compiler-reg-collect-remat-blocks!
+                blocks
+                def-counts
+                flags
+                vals
+                cells-clean)])])
       (while (< v vars)
         (begin
           ;; Skip vars the call-spanning saver shadows: those keep a real slot to
@@ -12411,6 +12502,594 @@
     [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
       (not (compiler-reg-remat-blocks-mutates-memory? blocks))]))
 
+;; ============================================================================
+;; R5. INVARIANT-LOAD FACTS -- "which loads may be recomputed at their uses".
+;;
+;; `compiler-reg-remat-invariant-loads-ok?` above answers the question for the
+;; WHOLE function ("no instruction mutates memory"), which no benchmark function
+;; that touches a Vec can pass: writing one element disqualifies every
+;; descriptor word of every array in the function. LLVM asks the question per
+;; LOAD instead (`TargetInstrInfo::isReMaterializableImpl` ->
+;; `MachineInstr::isDereferenceableInvariantLoad`, TargetInstrInfo.cpp:1641), so
+;; a `len`/`data` word of a `&Vec` parameter is recomputed at each use rather
+;; than spilled, whatever the loop body stores into the buffer.
+;;
+;; The facts here are the ALLOCATOR-side statement of the two rules the
+;; optimizer's load-CSE alias model already trusts
+;; (compiler_optimize.tl:121708-121741, `opt-load-entry-survives-store-location?`):
+;;
+;;   (1) ALLOCATION LAYER. An ELEMENT store -- a store through an address
+;;       derived from a data pointer that was itself LOADED out of a descriptor
+;;       word -- writes array/string payload. A descriptor word read off a
+;;       HEADER-typed base (`(__tl_dyn-array T)` / `String`, the `header?` flag
+;;       of `OptLoadLocField`) is provably outside every payload buffer, so it
+;;       survives every element store whatever the stored type is. So does a
+;;       named global CELL.
+;;   (2) TYPED WORD. TypeLisp memory is typed (SPEC.md section 2): a store of
+;;       static class C writes only words whose static type is class C. A
+;;       descriptor word read at a known class different from every class an
+;;       element store writes therefore names a different word. The byte/unknown
+;;       class (0) proves nothing and keeps the old conservative answer.
+;;
+;; Anything else that may write memory -- a field/unclassified `StorePtr`, a
+;; `Store g`, `CopyBytes`, an `Alloc`, a call whose summary is not pure or
+;; read-only, a vector/predicated store, a syscall -- sets `writes-nonelement`
+;; and the whole function falls back to "nothing is invariant". That single flag
+;; is also the CELL verdict (`cells-clean`): with no such instruction present,
+;; the only writers left are element stores, and an element store can never name
+;; a global cell (the `GlobalField` arm of the same optimizer rule).
+;;
+;; Wrong facts here are miscompiles, so the base of an admitted load is
+;; additionally restricted to the shapes the optimizer's `opt-load-hoist-safe-base?`
+;; rule admits (a `&`/`&mut` parameter, a `Global` handle, or another admitted
+;; invariant load), it must have exactly ONE definition, and it must not be a
+;; `Phi` -- a phi is defined once but holds a different value per iteration, so
+;; recomputing off it at a later use would read a different object.
+;;
+;; The facts do NOT decide that a recompute is possible: the base has to be in a
+;; register and LIVE at the use site as well, which only the post-plan rewrite
+;; can know (LLVM's `LiveRangeEdit::allUsesAvailableAt`). That check lives in
+;; `compiler-reg-remat-base-available?`.
+(define (compiler-reg-invariant-kind-none) : i64
+  0)
+
+;; The var's sole definition is `load (gep BASE, INDEX)` on an invariant word.
+(define (compiler-reg-invariant-kind-word-load) : i64
+  1)
+
+;; Address classification, mirroring `OptLoadLocKind`.
+(define (compiler-reg-invariant-addr-none) : i64
+  0)
+
+;; Exactly (value of BASE) + INDEX * sizeof(ELEM): a descriptor word.
+(define (compiler-reg-invariant-addr-word) : i64
+  1)
+
+;; Points at or into an array/string DATA BUFFER.
+(define (compiler-reg-invariant-addr-element) : i64
+  2)
+
+(defstruct CompilerRegInvariantFacts
+  (kinds (__tl_dyn-array i64))
+  (bases (__tl_dyn-array i64))
+  (indexes (__tl_dyn-array i64))
+  (elem-types (__tl_dyn-array ast.AstType))
+  ;; A var whose VALUE is fixed for the whole activation: exactly one
+  ;; definition, and that definition is not a `Phi` (a phi is written once but
+  ;; holds a different value per iteration). Only such a var may be re-read as
+  ;; the base of a recomputed address.
+  (stable (__tl_dyn-array i64))
+  ;; No instruction of this function can write a named global CELL, so a read of
+  ;; one is invariant across the whole body (the per-function version of
+  ;; `compiler-reg-global-frozen?`).
+  (cells-clean bool))
+
+(define (compiler-reg-invariant-facts-empty) : CompilerRegInvariantFacts
+  (CompilerRegInvariantFacts
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array ast.AstType 0)
+    (__tl_make-array i64 0)
+    false))
+
+;; May a recomputed `gep BASE, K` re-read BASE here? A static address always
+;; may; a var only when its value cannot have changed since the original
+;; address was formed.
+(define (compiler-reg-invariant-stable-base?
+  [facts : CompilerRegInvariantFacts]
+  [base : ir.CompilerIrValue]) : bool
+  (match base
+    [(ir.CompilerIrValue.Var var)
+      (= (compiler-reg-invariant-array-at facts.stable var) 1)]
+    [_ true]))
+
+(define (compiler-reg-invariant-facts-word-load?
+  [facts : CompilerRegInvariantFacts]
+  [var : i64]) : bool
+  (let
+    [kinds : (__tl_dyn-array i64) facts.kinds]
+    (and
+      (>= var 0)
+      (< var (array-length kinds))
+      (= (array-ref kinds var) (compiler-reg-invariant-kind-word-load)))))
+
+;; A descriptor HANDLE: the pointer word a `(__tl_dyn-array T)` / `String` value
+;; is, whose target is the {data, len} pair. `OptLoadLocField`'s `header?`.
+(define (compiler-reg-invariant-handle-type? [ty : ast.AstType]) : bool
+  (match ty
+    [(ast.AstType.DynArray _) true]
+    [(ast.AstType.String) true]
+    [_ false]))
+
+;; A `&`/`&mut` reference parameter or local: dereferenceable, and its target is
+;; a struct/aggregate, not a payload buffer.
+(define (compiler-reg-invariant-reference-type? [ty : ast.AstType]) : bool
+  (match ty
+    [(ast.AstType.Ref _ _) true]
+    [(ast.AstType.MutRef _ _) true]
+    [_ false]))
+
+;; The static type a DATA word is loaded at. Only these become element roots, so
+;; a `len` word (i64) can never be mistaken for a buffer pointer.
+(define (compiler-reg-invariant-raw-pointer-type? [ty : ast.AstType]) : bool
+  (match ty
+    [(ast.AstType.U64) true]
+    [(ast.AstType.Ptr _) true]
+    [(ast.AstType.MutPtr _) true]
+    [_ false]))
+
+;; Typed-word alias classes, the allocator's copy of `opt-load-type-alias-class`
+;; (compiler_optimize.tl:119916). 0 = unknown-or-byte and proves nothing; a
+;; 16-byte fat reference is deliberately 0 there and is 0 here for the same
+;; reason (two words, one of them a plain length).
+(define (compiler-reg-invariant-alias-class [ty : ast.AstType]) : i64
+  (match ty
+    [(ast.AstType.I64) 1]
+    [(ast.AstType.U64) 1]
+    [(ast.AstType.I32) 2]
+    [(ast.AstType.U32) 2]
+    [(ast.AstType.I16) 3]
+    [(ast.AstType.U16) 3]
+    [(ast.AstType.F64) 4]
+    [(ast.AstType.F32) 5]
+    [(ast.AstType.DynArray _) 6]
+    [(ast.AstType.String) 6]
+    [(ast.AstType.Box _) 6]
+    [(ast.AstType.Ptr _) 6]
+    [(ast.AstType.MutPtr _) 6]
+    [(ast.AstType.Func _ _) 6]
+    [_ 0]))
+
+(define (compiler-reg-invariant-var-type
+  [types : CompilerRegVarTypes]
+  [var : i64]) : ast.AstType
+  (match (compiler-reg-var-types-lookup types var)
+    [(CompilerRegMaybeType.Some ty) ty]
+    [(CompilerRegMaybeType.No) (ast.AstType.Unit)]))
+
+(define (compiler-reg-invariant-array-at
+  [items : (__tl_dyn-array i64)]
+  [index : i64]) : i64
+  (if (or (< index 0) (>= index (array-length items)))
+    0
+    (array-ref items index)))
+
+(define (compiler-reg-invariant-set-at!
+  [items : (__tl_dyn-array i64)]
+  [index : i64]
+  [value : i64]) : unit
+  (if (or (< index 0) (>= index (array-length items)))
+    unit
+    (begin
+      (set! (array-ref items index) value)
+      unit)))
+
+;; Does an instruction that is not one of the classified shapes below write
+;; memory? `Load`/`Gep`/`Mov`/`Cast`/`Bitcast`/`Phi` are pure; `TailCall` and the
+;; other terminators end the activation, so nothing they do can reach a use in
+;; this function.
+(define (compiler-reg-invariant-opaque-write? [instr : ir.CompilerIrInstr]) : bool
+  (match (ir.compiler-ir-instr-effect instr)
+    [(ir.CompilerIrEffect.MemoryWrite) true]
+    [(ir.CompilerIrEffect.Unknown) true]
+    [_ false]))
+
+;; Copy one var's address classification onto another (a `mov`/`cast` of a
+;; pointer keeps naming the same memory).
+(define (compiler-reg-invariant-copy-addr!
+  [addr-kinds : (__tl_dyn-array i64)]
+  [addr-bases : (__tl_dyn-array i64)]
+  [addr-indexes : (__tl_dyn-array i64)]
+  [addr-headers : (__tl_dyn-array i64)]
+  [addr-elems : (__tl_dyn-array ast.AstType)]
+  [dst : i64]
+  [src : i64]) : unit
+  (if (or
+    (< dst 0)
+    (>= dst (array-length addr-kinds))
+    (< src 0)
+    (>= src (array-length addr-kinds)))
+    unit
+    (begin
+      (set! (array-ref addr-kinds dst) (array-ref addr-kinds src))
+      (set! (array-ref addr-bases dst) (array-ref addr-bases src))
+      (set! (array-ref addr-indexes dst) (array-ref addr-indexes src))
+      (set! (array-ref addr-headers dst) (array-ref addr-headers src))
+      (set! (array-ref addr-elems dst) (array-ref addr-elems src))
+      unit)))
+
+;; Pass 1 over one instruction: classify the addresses it defines and record
+;; what it may write. `writes` is the two-cell accumulator
+;; [0] = "something other than an element store may write memory",
+;; [1] = bitmask of the typed-word classes element stores write.
+(define (compiler-reg-invariant-scan-addresses!
+  [types : CompilerRegVarTypes]
+  [instr : ir.CompilerIrInstr]
+  [def-counts : (__tl_dyn-array i64)]
+  [addr-kinds : (__tl_dyn-array i64)]
+  [addr-bases : (__tl_dyn-array i64)]
+  [addr-indexes : (__tl_dyn-array i64)]
+  [addr-headers : (__tl_dyn-array i64)]
+  [addr-elems : (__tl_dyn-array ast.AstType)]
+  [phi-defs : (__tl_dyn-array i64)]
+  [global-handles : (__tl_dyn-array i64)]
+  [writes : (__tl_dyn-array i64)]) : unit
+  (match instr
+    [(ir.CompilerIrInstr.Gep dst base offset elem-ty)
+      ;; A destination written more than once has no single classification, so
+      ;; it stays unknown and every store through it stays opaque.
+      (if (not (= (compiler-reg-invariant-array-at def-counts dst) 1))
+        unit
+        (match base
+          [(ir.CompilerIrValue.Var b)
+            (let
+              [base-ty : ast.AstType (compiler-reg-invariant-var-type types b)]
+              [header? : bool (compiler-reg-invariant-handle-type? base-ty)]
+              [word-base? : bool
+                (or header? (compiler-reg-invariant-reference-type? base-ty))]
+              (if word-base?
+                (match offset
+                  [(ir.CompilerIrValue.I64 k)
+                    (if (or (< dst 0) (>= dst (array-length addr-kinds)))
+                      unit
+                      (begin
+                        (set!
+                          (array-ref addr-kinds dst)
+                          (compiler-reg-invariant-addr-word))
+                        (set! (array-ref addr-bases dst) b)
+                        (set! (array-ref addr-indexes dst) k)
+                        (set!
+                          (array-ref addr-headers dst)
+                          (if header?
+                            1
+                            0))
+                        (set! (array-ref addr-elems dst) elem-ty)
+                        unit))]
+                  [_ unit])
+                (if (=
+                  (compiler-reg-invariant-array-at addr-kinds b)
+                  (compiler-reg-invariant-addr-element))
+                  (compiler-reg-invariant-set-at!
+                    addr-kinds
+                    dst
+                    (compiler-reg-invariant-addr-element))
+                  unit)))]
+          [_ unit]))]
+    [(ir.CompilerIrInstr.Load dst src ty)
+      (match src
+        [(ir.CompilerIrValue.Var a)
+          (if (and
+            (= (compiler-reg-invariant-array-at def-counts dst) 1)
+            (=
+              (compiler-reg-invariant-array-at addr-kinds a)
+              (compiler-reg-invariant-addr-word))
+            ;; Only the DATA word of a DESCRIPTOR makes an element root --
+            ;; exactly `OptLoadLocElement`'s "the loaded data pointer". A raw
+            ;; pointer read out of an ordinary struct field may name anything,
+            ;; descriptor words included, so stores through it stay opaque.
+            (= (compiler-reg-invariant-array-at addr-headers a) 1)
+            (compiler-reg-invariant-raw-pointer-type? ty))
+            (compiler-reg-invariant-set-at!
+              addr-kinds
+              dst
+              (compiler-reg-invariant-addr-element))
+            unit)]
+        [_ unit])]
+    [(ir.CompilerIrInstr.Mov dst value _)
+      (if (not (= (compiler-reg-invariant-array-at def-counts dst) 1))
+        unit
+        (match value
+          [(ir.CompilerIrValue.GlobalAddr _)
+            (compiler-reg-invariant-set-at! global-handles dst 1)]
+          [(ir.CompilerIrValue.Var b)
+            (compiler-reg-invariant-copy-addr!
+              addr-kinds
+              addr-bases
+              addr-indexes
+              addr-headers
+              addr-elems
+              dst
+              b)]
+          [_ unit]))]
+    [(ir.CompilerIrInstr.Cast dst value _ _)
+      (if (not (= (compiler-reg-invariant-array-at def-counts dst) 1))
+        unit
+        (match value
+          [(ir.CompilerIrValue.Var b)
+            (compiler-reg-invariant-copy-addr!
+              addr-kinds
+              addr-bases
+              addr-indexes
+              addr-headers
+              addr-elems
+              dst
+              b)]
+          [_ unit]))]
+    [(ir.CompilerIrInstr.Bitcast dst value _ _)
+      (if (not (= (compiler-reg-invariant-array-at def-counts dst) 1))
+        unit
+        (match value
+          [(ir.CompilerIrValue.Var b)
+            (compiler-reg-invariant-copy-addr!
+              addr-kinds
+              addr-bases
+              addr-indexes
+              addr-headers
+              addr-elems
+              dst
+              b)]
+          [_ unit]))]
+    [(ir.CompilerIrInstr.Phi dst _ _)
+      (compiler-reg-invariant-set-at! phi-defs dst 1)]
+    [(ir.CompilerIrInstr.StorePtr addr _ ty)
+      (let
+        [element? : bool
+          (match addr
+            [(ir.CompilerIrValue.Var p)
+              (=
+                (compiler-reg-invariant-array-at addr-kinds p)
+                (compiler-reg-invariant-addr-element))]
+            [_ false])]
+        [class : i64 (compiler-reg-invariant-alias-class ty)]
+        (if (and element? (> class 0))
+          (set!
+            (array-ref writes 1)
+            (bit-or (array-ref writes 1) (shl 1 class)))
+          (set! (array-ref writes 0) 1)))]
+    [_
+      (if (compiler-reg-invariant-opaque-write? instr)
+        (set! (array-ref writes 0) 1)
+        unit)]))
+
+;; The base shapes `opt-load-hoist-safe-base?` admits: a `&`/`&mut` parameter
+;; (dereferenceable for the whole activation), a `Global` handle, or another
+;; word whose own load this pass already admitted (the
+;; `param -> handle -> len/data` chain). A phi is excluded even though it has
+;; one definition: it holds a different value per iteration.
+(define (compiler-reg-invariant-base-shape-ok?
+  [param-vars : live.CompilerLiveI64Set]
+  [def-counts : (__tl_dyn-array i64)]
+  [phi-defs : (__tl_dyn-array i64)]
+  [global-handles : (__tl_dyn-array i64)]
+  [kinds : (__tl_dyn-array i64)]
+  [base : i64]) : bool
+  (and
+    (>= base 0)
+    (< base (array-length kinds))
+    (= (compiler-reg-invariant-array-at def-counts base) 1)
+    (= (compiler-reg-invariant-array-at phi-defs base) 0)
+    (or
+      (live.compiler-live-set-contains? param-vars base)
+      (= (compiler-reg-invariant-array-at global-handles base) 1)
+      (= (array-ref kinds base) (compiler-reg-invariant-kind-word-load)))))
+
+;; Rule (1) OR rule (2) of the header comment: a header-based descriptor word is
+;; outside every payload buffer; any other word survives only when its own class
+;; is known and no element store writes that class.
+(define (compiler-reg-invariant-word-survives?
+  [ty : ast.AstType]
+  [header? : bool]
+  [element-classes : i64]) : bool
+  (if header?
+    true
+    (let
+      [class : i64 (compiler-reg-invariant-alias-class ty)]
+      (and (> class 0) (= (bit-and element-classes (shl 1 class)) 0)))))
+
+;; Pass 2 over one instruction: admit `load (gep BASE, INDEX)` when the word it
+;; reads is invariant for the whole function.
+;; The recipe is an ADDRESS computation plus a load, and the address half is an
+;; integer register whatever the loaded word is. A float (or a value that is not
+;; single-register-eligible at all) would hand that `gep` an XMM or register-pair
+;; home, so only integer-class words are admitted.
+(define (compiler-reg-invariant-word-type-ok? [ty : ast.AstType]) : bool
+  (and
+    (compiler-reg-register-eligible-type? ty)
+    (not (compiler-reg-float-type? ty))))
+
+(define (compiler-reg-invariant-scan-loads!
+  [instr : ir.CompilerIrInstr]
+  [param-vars : live.CompilerLiveI64Set]
+  [def-counts : (__tl_dyn-array i64)]
+  [addr-kinds : (__tl_dyn-array i64)]
+  [addr-bases : (__tl_dyn-array i64)]
+  [addr-indexes : (__tl_dyn-array i64)]
+  [addr-headers : (__tl_dyn-array i64)]
+  [addr-elems : (__tl_dyn-array ast.AstType)]
+  [phi-defs : (__tl_dyn-array i64)]
+  [global-handles : (__tl_dyn-array i64)]
+  [element-classes : i64]
+  [kinds : (__tl_dyn-array i64)]
+  [bases : (__tl_dyn-array i64)]
+  [indexes : (__tl_dyn-array i64)]
+  [elem-types : (__tl_dyn-array ast.AstType)]) : unit
+  (match instr
+    [(ir.CompilerIrInstr.Load dst src ty)
+      (match src
+        [(ir.CompilerIrValue.Var a)
+          (let
+            [base : i64 (compiler-reg-invariant-array-at addr-bases a)]
+            [header? : bool
+              (= (compiler-reg-invariant-array-at addr-headers a) 1)]
+            (if (and
+              (>= dst 0)
+              (< dst (array-length kinds))
+              (=
+                (compiler-reg-invariant-array-at addr-kinds a)
+                (compiler-reg-invariant-addr-word))
+              (= (compiler-reg-invariant-array-at def-counts a) 1)
+              (= (compiler-reg-invariant-array-at def-counts dst) 1)
+              (= (compiler-reg-invariant-array-at phi-defs dst) 0)
+              (not (live.compiler-live-set-contains? param-vars dst))
+              (compiler-reg-invariant-base-shape-ok?
+                param-vars
+                def-counts
+                phi-defs
+                global-handles
+                kinds
+                base)
+              (compiler-reg-invariant-word-type-ok? ty)
+              (compiler-reg-invariant-word-survives? ty header? element-classes))
+              (begin
+                (set!
+                  (array-ref kinds dst)
+                  (compiler-reg-invariant-kind-word-load))
+                (set! (array-ref bases dst) base)
+                (set!
+                  (array-ref indexes dst)
+                  (compiler-reg-invariant-array-at addr-indexes a))
+                (set! (array-ref elem-types dst) (array-ref addr-elems a))
+                unit)
+              unit))]
+        [_ unit])]
+    [_ unit]))
+
+(define (compiler-reg-invariant-facts-build
+  [func : ir.CompilerIrFunction]
+  [types : CompilerRegVarTypes]) : CompilerRegInvariantFacts
+  (match func
+    [(ir.CompilerIrFunction.Function _ params _ vars blocks)
+      (let
+        [n : i64
+          (if (< vars 1)
+            1
+            vars)]
+        [kinds : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+        [bases : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+        [indexes : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+        [elem-types : (__tl_dyn-array ast.AstType)
+          (__tl_make-array ast.AstType n)]
+        [addr-kinds : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+        [addr-bases : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+        [addr-indexes : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+        [addr-headers : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+        [addr-elems : (__tl_dyn-array ast.AstType)
+          (__tl_make-array ast.AstType n)]
+        [phi-defs : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+        [global-handles : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+        [stable : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+        [writes : (__tl_dyn-array i64) (__tl_make-array i64 2)]
+        [def-counts : (__tl_dyn-array i64)
+          (compiler-reg-function-def-counts func)]
+        [param-vars : live.CompilerLiveI64Set
+          (compiler-reg-ineligible-params params (live.compiler-live-set-empty))]
+        [seq : ir.CompilerIrBlockSeq
+          (live.compiler-live-ir-block-list-to-seq blocks)]
+        [block-count : i64 (ir.compiler-ir-block-seq-count seq)]
+        [b : i64 0]
+        (begin
+          (compiler-reg-fill-i64-array kinds (compiler-reg-invariant-kind-none))
+          (compiler-reg-fill-i64-array bases (- 0 1))
+          (compiler-reg-fill-i64-array indexes 0)
+          (compiler-reg-fill-i64-array
+            addr-kinds
+            (compiler-reg-invariant-addr-none))
+          (compiler-reg-fill-i64-array addr-bases (- 0 1))
+          (compiler-reg-fill-i64-array addr-indexes 0)
+          (compiler-reg-fill-i64-array addr-headers 0)
+          (compiler-reg-fill-i64-array phi-defs 0)
+          (compiler-reg-fill-i64-array global-handles 0)
+          (compiler-reg-fill-i64-array stable 0)
+          (compiler-reg-fill-i64-array writes 0)
+          (while (< b block-count)
+            (begin
+              (match (ir.compiler-ir-block-seq-ref seq b)
+                [(ir.CompilerIrBlock.Block _ instrs)
+                  (let
+                    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+                    [count : i64 instrs.len]
+                    [i : i64 0]
+                    (while (< i count)
+                      (begin
+                        (compiler-reg-invariant-scan-addresses!
+                          types
+                          (array-ref slots i)
+                          def-counts
+                          addr-kinds
+                          addr-bases
+                          addr-indexes
+                          addr-headers
+                          addr-elems
+                          phi-defs
+                          global-handles
+                          writes)
+                        (set! i (+ i 1)))))])
+              (set! b (+ b 1))))
+          (if (= (array-ref writes 0) 0)
+            (let
+              [element-classes : i64 (array-ref writes 1)]
+              [b2 : i64 0]
+              (while (< b2 block-count)
+                (begin
+                  (match (ir.compiler-ir-block-seq-ref seq b2)
+                    [(ir.CompilerIrBlock.Block _ instrs)
+                      (let
+                        [slots : (__tl_dyn-array ir.CompilerIrInstr)
+                          instrs.slots]
+                        [count : i64 instrs.len]
+                        [i : i64 0]
+                        (while (< i count)
+                          (begin
+                            (compiler-reg-invariant-scan-loads!
+                              (array-ref slots i)
+                              param-vars
+                              def-counts
+                              addr-kinds
+                              addr-bases
+                              addr-indexes
+                              addr-headers
+                              addr-elems
+                              phi-defs
+                              global-handles
+                              element-classes
+                              kinds
+                              bases
+                              indexes
+                              elem-types)
+                            (set! i (+ i 1)))))])
+                  (set! b2 (+ b2 1)))))
+            unit)
+          (let
+            [v : i64 0]
+            (while (< v n)
+              (begin
+                (set!
+                  (array-ref stable v)
+                  (if (and
+                    (= (compiler-reg-invariant-array-at def-counts v) 1)
+                    (= (array-ref phi-defs v) 0))
+                    1
+                    0))
+                (set! v (+ v 1)))))
+          (CompilerRegInvariantFacts
+            kinds
+            bases
+            indexes
+            elem-types
+            stable
+            (= (array-ref writes 0) 0))))]))
+
 (define (compiler-reg-remat-status-candidate-add-instr!
   [def-status : (__tl_dyn-array i64)]
   [instr : ir.CompilerIrInstr]
@@ -12425,7 +13104,7 @@
         unit)]
     [(ir.CompilerIrInstr.Gep dst base offset _)
       (if (and
-        (compiler-reg-remat-gep? base offset)
+        (compiler-reg-remat-gep-static? base offset)
         (>= dst 0)
         (< dst (array-length def-status)))
         (set! (array-ref def-status dst) (bit-or (array-ref def-status dst) 1))
@@ -26876,7 +27555,9 @@
     [kind0 : live.CompilerLiveI64Set
       (compiler-reg-clobber-kind-points type-segment-bases func 0)]
     [remat-cands : (__tl_dyn-array i64)
-      (__tl-project-field (compiler-reg-remat-table-build func) candidates)]
+      (__tl-project-field
+        (compiler-reg-remat-table-build func type-info)
+        candidates)]
     [root-has-remat : (__tl_dyn-array i64) (__tl_make-array i64 an)]
     [cand : (__tl_dyn-array i64) (__tl_make-array i64 an)]
     [order : (__tl_dyn-array i64) (__tl_make-array i64 an)]
@@ -34097,6 +34778,7 @@
           func
           coalesce
           call-save-shadows
+          (compiler-reg-invariant-facts-build func type-info).cells-clean
           (array-length interval-index.starts))
         assignments)]
     ;; GAP2b: register-pair homing for group values. Runs LAST, when every
@@ -45515,10 +46197,12 @@
 (define (compiler-reg-remat-table-record-def!
   [table : CompilerRegRematTable]
   [instr : ir.CompilerIrInstr]
-  [allow-invariant-loads : bool]) : unit
+  [facts : CompilerRegInvariantFacts]
+  [narrow-allow : bool]) : unit
   (let
     [def-counts : (__tl_dyn-array i64) table.def-counts]
     [candidates : (__tl_dyn-array i64) table.candidates]
+    [wide : (__tl_dyn-array i64) table.wide]
     [kinds : (__tl_dyn-array i64) table.kinds]
     [values : (__tl_dyn-array ir.CompilerIrValue) table.values]
     [offsets : (__tl_dyn-array ir.CompilerIrValue) table.offsets]
@@ -45532,12 +46216,14 @@
       (match instr
         [(ir.CompilerIrInstr.Mov dst value ty)
           (if (and
-            (compiler-reg-remat-mov-value? value allow-invariant-loads)
             (>= dst 0)
             (< dst (array-length candidates))
-            (not (= (array-ref candidates dst) 2)))
+            (not (= (array-ref candidates dst) 2))
+            (compiler-reg-remat-mov-value? value facts.cells-clean))
             (begin
-              (set! (array-ref candidates dst) 1)
+              (if (compiler-reg-remat-mov-value? value narrow-allow)
+                (set! (array-ref candidates dst) 1)
+                (set! (array-ref wide dst) 1))
               (set! (array-ref kinds dst) (compiler-reg-remat-kind-mov))
               (set! (array-ref values dst) value)
               (set! (array-ref op-types dst) ty)
@@ -45545,12 +46231,15 @@
             unit)]
         [(ir.CompilerIrInstr.Gep dst base offset ty)
           (if (and
-            (compiler-reg-remat-gep? base offset)
             (>= dst 0)
             (< dst (array-length candidates))
-            (not (= (array-ref candidates dst) 2)))
+            (not (= (array-ref candidates dst) 2))
+            (compiler-reg-remat-gep? base offset)
+            (compiler-reg-invariant-stable-base? facts base))
             (begin
-              (set! (array-ref candidates dst) 1)
+              (if (compiler-reg-remat-gep-static? base offset)
+                (set! (array-ref candidates dst) 1)
+                (set! (array-ref wide dst) 1))
               (set! (array-ref kinds dst) (compiler-reg-remat-kind-gep))
               (set! (array-ref values dst) base)
               (set! (array-ref offsets dst) offset)
@@ -45559,16 +46248,40 @@
             unit)]
         [(ir.CompilerIrInstr.Load dst src ty)
           (if (and
-            (compiler-reg-remat-load? src allow-invariant-loads)
             (>= dst 0)
             (< dst (array-length candidates))
             (not (= (array-ref candidates dst) 2)))
-            (begin
-              (set! (array-ref candidates dst) 1)
-              (set! (array-ref kinds dst) (compiler-reg-remat-kind-load))
-              (set! (array-ref values dst) src)
-              (set! (array-ref op-types dst) ty)
-              (set! (array-ref types dst) ty))
+            (if (compiler-reg-remat-load? src facts.cells-clean)
+              (begin
+                (if (compiler-reg-remat-load? src narrow-allow)
+                  (set! (array-ref candidates dst) 1)
+                  (set! (array-ref wide dst) 1))
+                (set! (array-ref kinds dst) (compiler-reg-remat-kind-load))
+                (set! (array-ref values dst) src)
+                (set! (array-ref op-types dst) ty)
+                (set! (array-ref types dst) ty))
+              ;; R5: an invariant DESCRIPTOR word. `values`/`offsets` carry the
+              ;; base and the constant index of the address the load read, so
+              ;; the recipe is the same `gep`+`load` pair the function already
+              ;; ran, and the backend's gep fusion cluster folds the pair into
+              ;; one memory operand.
+              (if (compiler-reg-invariant-facts-word-load? facts dst)
+                (begin
+                  (set! (array-ref wide dst) 1)
+                  (set!
+                    (array-ref kinds dst)
+                    (compiler-reg-remat-kind-word-load))
+                  (set!
+                    (array-ref values dst)
+                    (ir.CompilerIrValue.Var (array-ref facts.bases dst)))
+                  (set!
+                    (array-ref offsets dst)
+                    (ir.CompilerIrValue.I64 (array-ref facts.indexes dst)))
+                  (set!
+                    (array-ref op-types dst)
+                    (array-ref facts.elem-types dst))
+                  (set! (array-ref types dst) ty))
+                unit))
             unit)]
         [(ir.CompilerIrInstr.AddrOf _ src)
           ;; Address-taken values need stable storage. Mark the source as
@@ -45584,7 +46297,8 @@
 (define (compiler-reg-remat-table-record-instrs!
   [table : CompilerRegRematTable]
   [instrs : ir.CompilerIrInstrSeq]
-  [allow-invariant-loads : bool]) : unit
+  [facts : CompilerRegInvariantFacts]
+  [narrow-allow : bool]) : unit
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
@@ -45594,13 +46308,15 @@
         (compiler-reg-remat-table-record-def!
           table
           (array-ref slots index)
-          allow-invariant-loads)
+          facts
+          narrow-allow)
         (set! index (+ index 1))))))
 
 (define (compiler-reg-remat-table-record-blocks!
   [table : CompilerRegRematTable]
   [blocks : ir.CompilerIrBlockList]
-  [allow-invariant-loads : bool]) : unit
+  [facts : CompilerRegInvariantFacts]
+  [narrow-allow : bool]) : unit
   (match blocks
     [(ir.CompilerIrBlockList.Nil) unit]
     [(ir.CompilerIrBlockList.Cons block rest)
@@ -45610,11 +46326,13 @@
             (compiler-reg-remat-table-record-instrs!
               table
               instrs
-              allow-invariant-loads)])
+              facts
+              narrow-allow)])
         (compiler-reg-remat-table-record-blocks!
           table
           (__tl-box-place rest)
-          allow-invariant-loads))]
+          facts
+          narrow-allow))]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -45626,15 +46344,19 @@
                 (compiler-reg-remat-table-record-instrs!
                   table
                   instrs
-                  allow-invariant-loads)])
+                  facts
+                  narrow-allow)])
             (set! i (+ i 1)))))]))
 
-(define (compiler-reg-remat-table-build [func : ir.CompilerIrFunction]) : CompilerRegRematTable
+(define (compiler-reg-remat-table-build
+  [func : ir.CompilerIrFunction]
+  [var-types : CompilerRegVarTypes]) : CompilerRegRematTable
   (match func
     [(ir.CompilerIrFunction.Function _ params _ vars blocks)
       (let
         [def-counts : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
         [candidates : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+        [wide : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
         [kinds : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
         [values : (__tl_dyn-array ir.CompilerIrValue)
           (__tl_make-array ir.CompilerIrValue vars)]
@@ -45644,12 +46366,13 @@
           (__tl_make-array ast.AstType vars)]
         [types : (__tl_dyn-array ast.AstType)
           (__tl_make-array ast.AstType vars)]
-        [allow-invariant-loads : bool
-          (compiler-reg-remat-invariant-loads-ok? func)]
+        [facts : CompilerRegInvariantFacts
+          (compiler-reg-invariant-facts-build func var-types)]
         [table : CompilerRegRematTable
           (CompilerRegRematTable
             def-counts
             candidates
+            wide
             kinds
             values
             offsets
@@ -45658,6 +46381,7 @@
         (begin
           (compiler-reg-fill-i64-array def-counts 0)
           (compiler-reg-fill-i64-array candidates 0)
+          (compiler-reg-fill-i64-array wide 0)
           (compiler-reg-fill-i64-array kinds 0)
           ;; Parameters are an implicit definition at function entry (their
           ;; incoming value). Count them so a param that is ALSO written by a
@@ -45670,7 +46394,8 @@
           (compiler-reg-remat-table-record-blocks!
             table
             blocks
-            allow-invariant-loads)
+            facts
+            (compiler-reg-remat-invariant-loads-ok? func))
           table))]))
 
 (define (compiler-reg-remat-var-spilled?
@@ -45692,13 +46417,125 @@
   (let
     [def-counts : (__tl_dyn-array i64) table.def-counts]
     [candidates : (__tl_dyn-array i64) table.candidates]
+    [wide : (__tl_dyn-array i64) table.wide]
     (and
       (>= var 0)
       (< var (array-length def-counts))
       (= (array-ref def-counts var) 1)
-      (= (array-ref candidates var) 1)
+      (not (= (array-ref candidates var) 2))
+      (or (= (array-ref candidates var) 1) (= (array-ref wide var) 1))
       (compiler-reg-remat-var-spilled? assignments var)
       (not (compiler-reg-coalesce-var-nonsingleton? parents merged-roots var)))))
+
+;; R5. The VAR a recipe reads, or -1 when the recompute needs no register
+;; operand at all (a literal, a `leaq label(%rip)`, a `movq g(%rip), %r`).
+(define (compiler-reg-remat-recipe-base-var
+  [table : CompilerRegRematTable]
+  [var : i64]) : i64
+  (let
+    [kinds : (__tl_dyn-array i64) table.kinds]
+    [values : (__tl_dyn-array ir.CompilerIrValue) table.values]
+    (if (or (< var 0) (>= var (array-length kinds)))
+      (- 0 1)
+      (let
+        [kind : i64 (array-ref kinds var)]
+        (if (or
+          (= kind (compiler-reg-remat-kind-gep))
+          (= kind (compiler-reg-remat-kind-word-load)))
+          (match (array-ref values var)
+            [(ir.CompilerIrValue.Var base) base]
+            [_ (- 0 1)])
+          (- 0 1))))))
+
+;; Segment-precise "is `var` live here". The greedy's interference test is
+;; segment-precise, so a hole in a hull may hold a DIFFERENT value's home; only a
+;; point inside a real segment proves the register still carries `var`.
+(define (compiler-reg-remat-var-live-at?
+  [intervals : CompilerRegIntervalIndex]
+  [var : i64]
+  [point : i64]) : bool
+  (let
+    [segments : (__tl_dyn-array CompilerRegIntervalSeq) intervals.segments]
+    [segs : CompilerRegIntervalSeq
+      (if (and (>= var 0) (< var (array-length segments)))
+        (array-ref segments var)
+        (compiler-reg-interval-seq-empty))]
+    ;; No segment row means nothing is proven, so nothing is admitted: the
+    ;; coarse hull spans a value's HOLES, and a hole is exactly where another
+    ;; value may own the same register.
+    (and
+      (not (compiler-reg-interval-seq-empty? segs))
+      (compiler-reg-sv-point-in-segments? segs point)
+      (compiler-reg-remat-interval-active-at? intervals var point))))
+
+;; Does `reg` still carry `base` at `point`?
+;;
+;; "`base` is live here" is NOT enough on its own. The segment rows this pass
+;; can build are the CONSERVATIVE ones -- a phi uses every input at the phi
+;; block -- while the greedy decided interference against the EDGE-PRECISE
+;; index the coalescer builds, so two values that the edge-precise rows keep
+;; apart can both look live at one point here and legitimately share a register
+;; (measured: `opt-fold-instr`, where `instr`'s home %r12 has already been
+;; handed to a local buffer address by the block that recomputed off it, so the
+;; recipe read the wrong object). The plan gives one home per value, so the
+;; decisive question is asked of the assignment table itself: no OTHER value
+;; homed in `reg` may reach this point, judged on the same segment rows. Where
+;; those rows over-approximate they make BOTH values look live, which is exactly
+;; the ambiguity this refuses.
+(define (compiler-reg-remat-register-carries-var?
+  [assignments : CompilerRegAssignmentTable]
+  [intervals : CompilerRegIntervalIndex]
+  [point : i64]
+  [base : i64]
+  [reg : i64]) : bool
+  (let
+    [present : (__tl_dyn-array i64) assignments.present]
+    [items : (__tl_dyn-array CompilerRegLocation) assignments.items]
+    [var : i64 0]
+    [carries : bool true]
+    (begin
+      (while (and (< var (array-length present)) carries)
+        (begin
+          (if (and
+            (not (= var base))
+            (not (= (array-ref present var) 0))
+            (compiler-reg-location-uses-register? (array-ref items var) reg)
+            (compiler-reg-remat-var-live-at? intervals var point))
+            (set! carries false)
+            unit)
+          (set! var (+ var 1))))
+      carries)))
+
+;; LLVM's `LiveRangeEdit::allUsesAvailableAt` (LiveRangeEdit.cpp:71-79), asked
+;; per USE rather than per interval: the recompute may only run where its base
+;; operand still holds the value the original address was built from. A base in
+;; a REGISTER whose live segment covers this point does; a spilled base would
+;; need a reload of its own (so the recompute would cost more than the reload it
+;; replaces) and a dead one would read whatever displaced it.
+(define (compiler-reg-remat-base-available?
+  [table : CompilerRegRematTable]
+  [assignments : CompilerRegAssignmentTable]
+  [intervals : CompilerRegIntervalIndex]
+  [point : i64]
+  [var : i64]) : bool
+  (let
+    [base : i64 (compiler-reg-remat-recipe-base-var table var)]
+    (if (< base 0)
+      true
+      (match (compiler-reg-assignment-lookup assignments base)
+        [(CompilerRegMaybeLocation.Some location)
+          (match location
+            [(CompilerRegLocation.Register reg)
+              (and
+                (compiler-reg-remat-var-live-at? intervals base point)
+                (compiler-reg-remat-register-carries-var?
+                  assignments
+                  intervals
+                  point
+                  base
+                  reg))]
+            [_ false])]
+        [(CompilerRegMaybeLocation.No) false]))))
 
 (define (compiler-reg-remat-registers-for-type [ty : ast.AstType]) : CompilerRegIdSeq
   (if (compiler-reg-float-type? ty)
@@ -45809,6 +46646,47 @@
           (array-ref op-types var))]
       [else (ir.CompilerIrInstr.Mov temp value ty)])))
 
+;; R5. A zero index needs no address computation: `load BASE` reads the same
+;; word `load (gep BASE, 0)` did, in one instruction and with no temp of its own.
+(define (compiler-reg-remat-zero-offset?
+  [table : CompilerRegRematTable]
+  [var : i64]) : bool
+  (let
+    [offsets : (__tl_dyn-array ir.CompilerIrValue) table.offsets]
+    (if (or (< var 0) (>= var (array-length offsets)))
+      false
+      (match (array-ref offsets var)
+        [(ir.CompilerIrValue.I64 k) (= k 0)]
+        [_ false]))))
+
+;; The ADDRESS half of an invariant-descriptor-word recipe.
+(define (compiler-reg-remat-address-instr
+  [table : CompilerRegRematTable]
+  [temp : i64]
+  [var : i64]) : ir.CompilerIrInstr
+  (ir.CompilerIrInstr.Gep
+    temp
+    (array-ref table.values var)
+    (array-ref table.offsets var)
+    (array-ref table.op-types var)))
+
+;; The VALUE half. `addr-temps` is 1 when the address half was emitted (and so
+;; lives in `addr-temp`), 0 when the base itself is the address.
+(define (compiler-reg-remat-value-instr
+  [table : CompilerRegRematTable]
+  [temp : i64]
+  [addr-temp : i64]
+  [addr-temps : i64]
+  [var : i64]) : ir.CompilerIrInstr
+  (if (= (array-ref table.kinds var) (compiler-reg-remat-kind-word-load))
+    (ir.CompilerIrInstr.Load
+      temp
+      (if (= addr-temps 1)
+        (ir.CompilerIrValue.Var addr-temp)
+        (array-ref table.values var))
+      (array-ref table.types var))
+    (compiler-reg-remat-instr table temp var)))
+
 (define (compiler-reg-remat-use-site-ok? [instr : ir.CompilerIrInstr]) : bool
   (match instr
     [(ir.CompilerIrInstr.Phi _ _ _) false]
@@ -45862,6 +46740,7 @@
   [extra-assignments : CompilerRegAssignmentTable]
   [extra-types : CompilerRegVarTypes]
   [remap : (__tl_dyn-array i64)]
+  [marks : (__tl_dyn-array i64)]
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : CompilerRegCallSaveInstrRewrite
   (if (compiler-reg-remat-use-site-ok? instr)
     (let
@@ -45899,6 +46778,12 @@
                           assignments
                           parents
                           merged-roots
+                          var)
+                        (compiler-reg-remat-base-available?
+                          table
+                          assignments
+                          intervals
+                          point
                           var))
                         (match (compiler-reg-remat-selected-register
                           table
@@ -45911,16 +46796,61 @@
                             (let
                               [temp : i64 out-next-var]
                               [ty : ast.AstType (array-ref types var)]
+                              ;; R5: an invariant descriptor word needs its
+                              ;; ADDRESS first. The two recipe instructions are
+                              ;; adjacent and each is single-use, which is
+                              ;; exactly the shape the backend's gep fusion
+                              ;; cluster folds into one memory operand, so both
+                              ;; temps share the one register and the pair costs
+                              ;; a single instruction. A zero index needs no
+                              ;; address at all.
+                              [addr-temps : i64
+                                (if (and
+                                  (=
+                                    (array-ref table.kinds var)
+                                    (compiler-reg-remat-kind-word-load))
+                                  (not
+                                    (compiler-reg-remat-zero-offset? table var)))
+                                  1
+                                  0)]
+                              [value-temp : i64 (+ temp addr-temps)]
                               (begin
-                                (set! (array-ref remap var) temp)
+                                (set! (array-ref remap var) value-temp)
                                 ;; Recipes for one instruction are pushed in
                                 ;; the order they are chosen (ascending operand
                                 ;; var). That is exactly the order the old
                                 ;; reverse-consed `prefix` produced once the
                                 ;; reversed accumulator was flipped at the end.
+                                (if (= addr-temps 1)
+                                  (begin
+                                    (ir.compiler-ir-instr-builder-push!
+                                      (&mut builder)
+                                      (compiler-reg-remat-address-instr
+                                        table
+                                        temp
+                                        var))
+                                    (set!
+                                      out-extra-assignments
+                                      (compiler-reg-assignments-prepend
+                                        (CompilerRegAssignment
+                                          temp
+                                          (CompilerRegLocation.Register reg))
+                                        out-extra-assignments))
+                                    (set!
+                                      out-extra-types
+                                      (compiler-reg-var-types-insert
+                                        out-extra-types
+                                        temp
+                                        (compiler-reg-addr-of-result-type))))
+                                  unit)
                                 (ir.compiler-ir-instr-builder-push!
                                   (&mut builder)
-                                  (compiler-reg-remat-instr table temp var))
+                                  (compiler-reg-remat-value-instr
+                                    table
+                                    value-temp
+                                    temp
+                                    addr-temps
+                                    var))
                                 (set!
                                   chosen
                                   (compiler-reg-id-seq-prepend reg chosen))
@@ -45928,16 +46858,17 @@
                                   out-extra-assignments
                                   (compiler-reg-assignments-prepend
                                     (CompilerRegAssignment
-                                      temp
+                                      value-temp
                                       (CompilerRegLocation.Register reg))
                                     out-extra-assignments))
                                 (set!
                                   out-extra-types
                                   (compiler-reg-var-types-insert
                                     out-extra-types
-                                    temp
+                                    value-temp
                                     ty))
-                                (set! out-next-var (+ out-next-var 1))))]
+                                (compiler-reg-invariant-set-at! marks var 1)
+                                (set! out-next-var (+ value-temp 1))))]
                           [(CompilerRegMaybeId.No) unit])
                         unit))
                     unit)
@@ -45990,6 +46921,7 @@
   [extra-assignments : CompilerRegAssignmentTable]
   [extra-types : CompilerRegVarTypes]
   [remap : (__tl_dyn-array i64)]
+  [marks : (__tl_dyn-array i64)]
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : CompilerRegCallSaveInstrRewrite
   (let
     [index : i64 0]
@@ -46014,6 +46946,7 @@
             out-extra-assignments
             out-extra-types
             remap
+            marks
             (&mut builder))
             [(CompilerRegCallSaveInstrRewrite.Rewrite
                 point2
@@ -46045,6 +46978,7 @@
   [extra-assignments : CompilerRegAssignmentTable]
   [extra-types : CompilerRegVarTypes]
   [remap : (__tl_dyn-array i64)]
+  [marks : (__tl_dyn-array i64)]
   [acc : ir.CompilerIrBlockList]) : CompilerRegCallSaveRewrite
   (match blocks
     [(ir.CompilerIrBlockList.Nil)
@@ -46077,6 +47011,7 @@
               extra-assignments
               extra-types
               remap
+              marks
               (&mut builder))
               [(CompilerRegCallSaveInstrRewrite.Rewrite
                   next-point
@@ -46096,6 +47031,7 @@
                   extra-assignments2
                   extra-types2
                   remap
+                  marks
                   (ir.compiler-ir-block-cons
                     (ir.CompilerIrBlock.Block
                       label
@@ -46115,6 +47051,7 @@
         extra-assignments
         extra-types
         remap
+        marks
         acc)]))
 
 (define (compiler-reg-remat-rewrite-block-seq-rev
@@ -46130,6 +47067,7 @@
   [extra-assignments : CompilerRegAssignmentTable]
   [extra-types : CompilerRegVarTypes]
   [remap : (__tl_dyn-array i64)]
+  [marks : (__tl_dyn-array i64)]
   [acc : ir.CompilerIrBlockList]) : CompilerRegCallSaveRewrite
   (let
     [i : i64 0]
@@ -46161,6 +47099,7 @@
                   out-extra-assignments
                   out-extra-types
                   remap
+                  marks
                   (&mut builder))
                   [(CompilerRegCallSaveInstrRewrite.Rewrite
                       next-point
@@ -46191,6 +47130,173 @@
 ;; with no Spill assignment in the plan there is nothing to rescue, so skip
 ;; the remat table, liveness fixpoint, interval selection, and coalesce map
 ;; for the (majority) spill-free functions.
+;; R5. Use counts (definitions excluded) over the REWRITTEN blocks: what is
+;; still read after every admitted use site was replaced by a recompute.
+(define (compiler-reg-remat-use-counts-instr!
+  [counts : (__tl_dyn-array i64)]
+  [instr : ir.CompilerIrInstr]) : unit
+  (let
+    [ids : (__tl_dyn-array i64) (live.compiler-live-instr-ids)]
+    [id-count : i64 (live.compiler-live-instr-use-ids! instr)]
+    (if (< id-count 0)
+      (compiler-reg-ref-counts-add-set-weighted!
+        counts
+        (live.compiler-live-instr-uses instr)
+        1)
+      (compiler-reg-ref-counts-add-ids-weighted! counts ids id-count 1))))
+
+(define (compiler-reg-remat-use-counts-blocks!
+  [counts : (__tl_dyn-array i64)]
+  [seq : ir.CompilerIrBlockSeq]) : unit
+  (let
+    [block-count : i64 (ir.compiler-ir-block-seq-count seq)]
+    [b : i64 0]
+    (while (< b block-count)
+      (begin
+        (match (ir.compiler-ir-block-seq-ref seq b)
+          [(ir.CompilerIrBlock.Block _ instrs)
+            (let
+              [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+              [i : i64 0]
+              (while (< i count)
+                (begin
+                  (compiler-reg-remat-use-counts-instr!
+                    counts
+                    (ir.compiler-ir-instr-seq-ref instrs i))
+                  (set! i (+ i 1)))))])
+        (set! b (+ b 1))))))
+
+;; Only the two PURE address/word shapes are ever dropped: a `Load` whose value
+;; every use recomputed, and the `Gep` that addressed it. Dropping a load is
+;; always safe (removing a read cannot introduce a fault), and both were proven
+;; single-definition before they became remat candidates.
+(define (compiler-reg-remat-dead-def?
+  [instr : ir.CompilerIrInstr]
+  [counts : (__tl_dyn-array i64)]
+  [droppable : (__tl_dyn-array i64)]) : bool
+  (let
+    [dst : i64
+      (match instr
+        [(ir.CompilerIrInstr.Load d _ _) d]
+        [(ir.CompilerIrInstr.Gep d _ _ _) d]
+        [_ (- 0 1)])]
+    (and
+      (>= dst 0)
+      (= (compiler-reg-invariant-array-at droppable dst) 1)
+      (= (compiler-reg-invariant-array-at counts dst) 0))))
+
+;; A dropped instruction's operands may in turn have become dead (the address
+;; `gep` of a dropped descriptor load is the shape this exists for).
+(define (compiler-reg-remat-mark-uses-droppable!
+  [droppable : (__tl_dyn-array i64)]
+  [instr : ir.CompilerIrInstr]) : unit
+  (let
+    [ids : (__tl_dyn-array i64) (live.compiler-live-instr-ids)]
+    [id-count : i64 (live.compiler-live-instr-use-ids! instr)]
+    [index : i64 0]
+    (while (< index id-count)
+      (begin
+        (compiler-reg-invariant-set-at! droppable (array-ref ids index) 1)
+        (set! index (+ index 1))))))
+
+(define (compiler-reg-remat-drop-round
+  [blocks : ir.CompilerIrBlockList]
+  [vars : i64]
+  [droppable : (__tl_dyn-array i64)]) : ir.CompilerIrBlockList
+  (let
+    [seq : ir.CompilerIrBlockSeq
+      (live.compiler-live-ir-block-list-to-seq blocks)]
+    [block-count : i64 (ir.compiler-ir-block-seq-count seq)]
+    [counts : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+    [rev : ir.CompilerIrBlockList ir.CompilerIrBlockList.Nil]
+    [b : i64 0]
+    [dropped : i64 0]
+    (begin
+      (compiler-reg-fill-i64-array counts 0)
+      (compiler-reg-remat-use-counts-blocks! counts seq)
+      (while (< b block-count)
+        (begin
+          (match (ir.compiler-ir-block-seq-ref seq b)
+            [(ir.CompilerIrBlock.Block label instrs)
+              (let
+                [builder : ir.CompilerIrInstrBuilder
+                  (ir.compiler-ir-instr-builder-with-capacity
+                    (ir.compiler-ir-instr-seq-count instrs))]
+                [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+                [i : i64 0]
+                (begin
+                  (while (< i count)
+                    (let
+                      [instr : ir.CompilerIrInstr
+                        (ir.compiler-ir-instr-seq-ref instrs i)]
+                      (begin
+                        (if (compiler-reg-remat-dead-def?
+                          instr
+                          counts
+                          droppable)
+                          (begin
+                            (compiler-reg-remat-mark-uses-droppable!
+                              droppable
+                              instr)
+                            (set! dropped (+ dropped 1)))
+                          (ir.compiler-ir-instr-builder-push!
+                            (&mut builder)
+                            instr))
+                        (set! i (+ i 1)))))
+                  (set!
+                    rev
+                    (ir.compiler-ir-block-cons
+                      (ir.CompilerIrBlock.Block
+                        label
+                        (ir.compiler-ir-instr-builder-to-seq builder))
+                      rev))))])
+          (set! b (+ b 1))))
+      (if (= dropped 0)
+        blocks
+        (ir.compiler-ir-block-list-reverse-onto rev ir.CompilerIrBlockList.Nil)))))
+
+(define (compiler-reg-remat-any-mark? [marks : (__tl_dyn-array i64)]) : bool
+  (let
+    [index : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (< index (array-length marks)) (not found))
+        (begin
+          (if (= (array-ref marks index) 1)
+            (set! found true)
+            unit)
+          (set! index (+ index 1))))
+      found)))
+
+;; Two rounds are enough for every shape this pass mints: round one retires the
+;; recomputed value's own `load`, round two the `gep` that addressed only it.
+(define (compiler-reg-remat-drop-dead-defs
+  [blocks : ir.CompilerIrBlockList]
+  [vars : i64]
+  [marks : (__tl_dyn-array i64)]) : ir.CompilerIrBlockList
+  (if (not (compiler-reg-remat-any-mark? marks))
+    blocks
+    (let
+      [n : i64
+        (if (< vars 1)
+          1
+          vars)]
+      [droppable : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+      [index : i64 0]
+      [current : ir.CompilerIrBlockList blocks]
+      (begin
+        (compiler-reg-fill-i64-array droppable 0)
+        (while (< index (array-length marks))
+          (begin
+            (compiler-reg-invariant-set-at!
+              droppable
+              index
+              (array-ref marks index))
+            (set! index (+ index 1))))
+        (set! current (compiler-reg-remat-drop-round current n droppable))
+        (set! current (compiler-reg-remat-drop-round current n droppable))
+        current))))
+
 (define (compiler-reg-assignments-have-spill?
   [assignments : CompilerRegAssignmentTable]) : bool
   (compiler-reg-assignment-table-has-spill? assignments))
@@ -46211,7 +47317,8 @@
       (compiler-reg-assignment-table-empty)
       (compiler-reg-var-types-empty))
     (let
-      [table : CompilerRegRematTable (compiler-reg-remat-table-build func)]
+      [table : CompilerRegRematTable
+        (compiler-reg-remat-table-build func type-info)]
       [group-vars : live.CompilerLiveI64Set
         (compiler-reg-function-group-vars type-segment-bases func type-info)]
       [liveness-handle : CompilerRegLivenessHandle
@@ -46236,6 +47343,17 @@
             ;; touches (see compiler-reg-remat-reset-remap-uses!), replacing the
             ;; old per-instruction O(vars) allocation + zero + identity fill.
             [remap : (__tl_dyn-array i64) (compiler-reg-caller-save-remap vars)]
+            ;; R5: which vars had a use recomputed. A var every use of which was
+            ;; recomputed has a DEAD definition, and dropping it is where the
+            ;; rematerialisation actually pays -- the definition's spill STORE
+            ;; and, for a descriptor word, the load that fed it.
+            [marks : (__tl_dyn-array i64)
+              (__tl_make-array
+                i64
+                (if (< vars 1)
+                  1
+                  vars))]
+            [_marks-reset : unit (compiler-reg-fill-i64-array marks 0)]
             (match (compiler-reg-remat-rewrite-blocks-rev
               blocks
               0
@@ -46249,6 +47367,7 @@
               (compiler-reg-assignment-table-empty)
               (compiler-reg-var-types-empty)
               remap
+              marks
               ir.CompilerIrBlockList.Nil)
               [(CompilerRegCallSaveRewrite.Rewrite
                   rev
@@ -46257,9 +47376,12 @@
                   extra-assignments
                   extra-types)
                 (CompilerRegCallSaveRewrite.Rewrite
-                  (ir.compiler-ir-block-list-reverse-onto
-                    rev
-                    ir.CompilerIrBlockList.Nil)
+                  (compiler-reg-remat-drop-dead-defs
+                    (ir.compiler-ir-block-list-reverse-onto
+                      rev
+                      ir.CompilerIrBlockList.Nil)
+                    out-vars
+                    marks)
                   vars
                   out-vars
                   extra-assignments

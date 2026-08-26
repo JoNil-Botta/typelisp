@@ -2238,8 +2238,14 @@
   9)
 (define compiler-backend-scratch-i64-array-current-planned-local-preserve-regs : i64
   10)
-(define compiler-backend-scratch-i64-array-count : i64
+
+;; T1-6 (b): where each pending emergency-scavenge save is PARKED, one entry per
+;; `-array-emergency-regs` entry. `>= 0` = an XMM register id (a frame-free
+;; save); `< 0` = `-(slot-index + 1)`, the classic 64-byte frame slot.
+(define compiler-backend-scratch-i64-array-emergency-save-locs : i64
   11)
+(define compiler-backend-scratch-i64-array-count : i64
+  12)
 (define compiler-backend-scratch-bool-array-const-hoist-site-wide : i64
   0)
 (define compiler-backend-scratch-bool-array-const-hoist-site-frame : i64
@@ -2319,8 +2325,17 @@
   18)
 (define compiler-backend-function-i64-gep-fold-cursor : i64
   19)
-(define compiler-backend-function-i64-count : i64
+
+;; SysV red zone (see compiler-backend-red-zone-decide!): the number of bytes
+;; immediately below the post-prologue %rsp that the body's own tracked stack
+;; motion (abort-site argument pushes, c-ABI dip windows, phi cycle-break
+;; pushes) may occupy. The local slot region is anchored BELOW this guard, so
+;; a transient push can never land on a live red-zone slot. 0 when the body
+;; never moves %rsp.
+(define compiler-backend-function-i64-red-zone-guard : i64
   20)
+(define compiler-backend-function-i64-count : i64
+  21)
 (define compiler-backend-function-bool-current-fn-win64 : i64
   0)
 (define compiler-backend-function-bool-addr-of-forwarding-enabled : i64
@@ -2382,8 +2397,17 @@
 ;; string concat, memory helpers, thread init, `__chkstk`) cannot be missed.
 (define compiler-backend-function-bool-call-align-needed : i64
   16)
-(define compiler-backend-function-bool-count : i64
+
+;; True when this function's frame lives in the System V red zone: the 128
+;; bytes below %rsp that the ABI guarantees no signal handler or interrupt
+;; frame may clobber. Set by compiler-backend-red-zone-decide! (Linux FPO
+;; functions with no RETURNING call and frame + guard <= 128); when set the
+;; prologue emits no `subq $N, %rsp`, the epilogue no matching `addq`, and
+;; every local slot is addressed at a NEGATIVE displacement from %rsp.
+(define compiler-backend-function-bool-red-zone : i64
   17)
+(define compiler-backend-function-bool-count : i64
+  18)
 (define compiler-backend-function-string-shrinkwrap-bare-label : i64
   0)
 (define compiler-backend-function-string-abort-site-path : i64
@@ -16029,6 +16053,326 @@
       compiler-backend-scratch-i64-emergency-slot-offset)
     (* (compiler-backend-emergency-slot-size) index)))
 
+;; ============================================================================
+;; T1-6 (b): frame-free emergency scratch saves.
+;;
+;; The address/global-materialisation sites hand the scavenger a fixed
+;; preferred scratch (`%r10` for a base, `%r9` for a length, ...). When the
+;; occupancy at that point leaves NO free, non-excluded, caller-saved register,
+;; the scavenger borrows an occupied one and `compiler-backend-emergency-wrap`
+;; brackets the instruction with a save/restore. That save used to be
+;; unconditionally a 64-byte FRAME slot -- and naming a frame slot is exactly
+;; what forces a function to have a frame at all: gvn's `facts_remove` is a
+;; call-free leaf that pays `subq $144,%rsp` / `addq $144,%rsp` on every one of
+;; its 1.5M calls for one `movq %r9,(%rsp)` pair.
+;;
+;; Park the value in a free XMM register instead. `movq %rGP, %xmmN` /
+;; `movq %xmmN, %rGP` is the same two instructions, touches no memory, needs no
+;; slot -- so the function keeps a dead slot region and (with T1-6 (a) or the
+;; existing bare-frame rule) no stack adjustment at all.
+;;
+;; The park register must be provably untouched between the save and the
+;; restore, which bracket ONE instruction's emission. Four conditions give that:
+;;   * the pool is {%xmm4, %xmm5}. Those two spellings appear nowhere in the
+;;     emitters except in the scavenge candidate pool, so the only ways they can
+;;     reach the text are the register allocator's plan and the XMM scavenger;
+;;   * the PLAN never homes a value in that family anywhere in this function
+;;     (`scavenge-plan-reg-mask`, which folds vec ids onto their xmm sibling, so
+;;     a ymm/zmm home is caught too) -- this rules out the allocator;
+;;   * the bit is added to the instruction's RESERVED mask the moment it is
+;;     picked, so a later XMM scavenge inside the same instruction cannot pick
+;;     it -- this rules out the scavenger;
+;;   * it is free in the occupancy mask at this point, and not a planned scratch.
+;; Scalar mode only: in AVX2/AVX-512 bodies a legacy-SSE `movq` next to VEX code
+;; would pay an AVX/SSE transition, and those bodies have live wide registers
+;; anyway. Win64 keeps the frame slot (its own callee-save discipline for
+;; %xmm6.. is unrelated, but the parking pool is not worth two ABIs of proof).
+(define compiler-backend-emergency-park-candidate-count : i64
+  2)
+
+(define (compiler-backend-emergency-park-candidate [index : i64]) : i64
+  (if (= index 0)
+    (compiler_abi.compiler-abi-xmm-register-id 4)
+    (compiler_abi.compiler-abi-xmm-register-id 5)))
+
+;; "Undecided" park location: the entry exists but the bracketed text has not
+;; been seen yet, so neither an XMM park nor a frame slot has been charged for
+;; it. Every emitter of a save or a restore commits first.
+(define compiler-backend-emergency-loc-undecided : i64
+  -4611686018427387904)
+
+;; "Elided": the bracketed text turned out never to touch the borrowed
+;; register, so there is nothing to preserve and the wrap emits no save and no
+;; restore at all. See compiler-backend-emergency-reg-untouched-by-text?.
+(define compiler-backend-emergency-loc-elided : i64
+  -4611686018427387903)
+
+;; A borrowed register the bracketed text provably leaves alone.
+;;
+;; The scavenger enqueues the emergency save when it hands the register out,
+;; before the instruction is emitted -- and the instruction often turns out not
+;; to use the scratch at all (a fused address whose base already had a register
+;; home, say), leaving a save/restore pair around text that never writes the
+;; register. Two facts make dropping such a pair provable from the text alone:
+;;
+;;   * the register is %r8..%r15. Those eight are the only general-purpose
+;;     registers no x86-64 instruction touches IMPLICITLY (%rax/%rdx feed
+;;     mul/div/cqto, %rcx/%rsi/%rdi feed the string and shift forms, %rsp/%rbp
+;;     feed push/pop/leave), so "not named in the text" means "not written";
+;;   * the text contains no `call` (the substring also covers `syscall`): a
+;;     callee may clobber any caller-saved register without naming it.
+;;
+;; Then no spelling of the register appears in the bracketed text, so the value
+;; the wrap would have preserved is still there when the wrap ends. Dropping
+;; the pair is strictly better than emitting it: two fewer instructions, and no
+;; frame slot named for a save that was never needed.
+(define (compiler-backend-emergency-reg-untouched-by-text?
+  [text : String]
+  [reg : i64]) : bool
+  (and
+    (compiler-backend-emergency-text-park-allowed? text)
+    (>= reg compiler_abi.compiler-reg-id-r8)
+    (<= reg compiler_abi.compiler-reg-id-r15)
+    (let
+      [name : String (compiler_abi.compiler-abi-register-spelling reg)]
+      (and
+        (not (compiler-backend-string-contains? text name))
+        (not
+          (compiler-backend-string-contains?
+            text
+            (compiler-backend-reg-part name 4)))
+        (not
+          (compiler-backend-string-contains?
+            text
+            (compiler-backend-reg-part name 2)))
+        (not
+          (compiler-backend-string-contains?
+            text
+            (compiler-backend-reg-part name 1)))))))
+
+;; The park location recorded for pending entry `index`.
+(define (compiler-backend-emergency-save-loc
+  [function-state : CompilerBackendFunctionState]
+  [index : i64]) : i64
+  (let
+    [locs : (__tl_dyn-array i64)
+      (compiler-backend-function-scratch-i64-array
+        function-state
+        compiler-backend-scratch-i64-array-emergency-save-locs)]
+    (if (< index (array-length locs))
+      (array-ref locs index)
+      compiler-backend-emergency-loc-undecided)))
+
+(define (compiler-backend-emergency-loc-slot-form? [loc : i64]) : bool
+  (and
+    (< loc 0)
+    (not (= loc compiler-backend-emergency-loc-undecided))
+    (not (= loc compiler-backend-emergency-loc-elided))))
+
+;; Is `xmm` already parking another pending save in this wrap?
+(define (compiler-backend-emergency-park-taken?
+  [function-state : CompilerBackendFunctionState]
+  [count : i64]
+  [xmm : i64]) : bool
+  (let
+    [i : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (< i count) (not found))
+        (begin
+          (if (= (compiler-backend-emergency-save-loc function-state i) xmm)
+            (set! found true)
+            unit)
+          (set! i (+ i 1))))
+      found)))
+
+;; Number of pending saves already charged a FRAME slot (their dense index).
+(define (compiler-backend-emergency-slot-form-count
+  [function-state : CompilerBackendFunctionState]
+  [count : i64]) : i64
+  (let
+    [i : i64 0]
+    [n : i64 0]
+    (begin
+      (while (< i count)
+        (begin
+          (if (compiler-backend-emergency-loc-slot-form?
+            (compiler-backend-emergency-save-loc function-state i))
+            (set! n (+ n 1))
+            unit)
+          (set! i (+ i 1))))
+      n)))
+
+;; Does the bracketed text leave `xmm` alone? The three vector spellings of the
+;; family are the ONLY ways a line can name it, so a text that mentions none of
+;; them neither reads nor writes the register.
+(define (compiler-backend-emergency-park-untouched-by-text?
+  [text : String]
+  [xmm : i64]) : bool
+  (let
+    [family : i64 (compiler_regalloc.compiler-reg-xmm-family-index xmm)]
+    [digits : String (string.int->string family)]
+    (and
+      (not
+        (compiler-backend-string-contains? text (str_cat.str-cat "%xmm" digits)))
+      (not
+        (compiler-backend-string-contains? text (str_cat.str-cat "%ymm" digits)))
+      (not
+        (compiler-backend-string-contains? text (str_cat.str-cat "%zmm" digits))))))
+
+;; The XMM register pending save `index` may park in, or -1 for a frame slot.
+;; See the T1-6 (b) note above for the four conditions.
+(define (compiler-backend-emergency-park-reg
+  [function-state : CompilerBackendFunctionState]
+  [reg : i64]
+  [count : i64]
+  [text : String]
+  [park-allowed : bool]) : i64
+  (if (or
+    (not park-allowed)
+    (compiler-backend-function-state-bool?
+      function-state
+      compiler-backend-function-bool-current-fn-win64)
+    (>= (compiler_regalloc.compiler-reg-xmm-family-index reg) 0)
+    (not
+      (match (compiler-backend-function-state-current-mode function-state)
+        [(CompilerBackendMode.Scalar) true]
+        [_ false])))
+    -1
+    (let
+      [plan-mask : i64
+        (compiler-backend-function-scratch-i64
+          function-state
+          compiler-backend-scratch-i64-scavenge-plan-reg-mask)]
+      [scratch-mask : i64
+        (compiler-backend-function-scratch-i64
+          function-state
+          compiler-backend-scratch-i64-planned-scratch-reg-mask)]
+      [i : i64 0]
+      [found : i64 -1]
+      (begin
+        (while (and
+          (< i compiler-backend-emergency-park-candidate-count)
+          (< found 0))
+          (let
+            [xmm : i64 (compiler-backend-emergency-park-candidate i)]
+            [bit : i64 (compiler-backend-scavenge-reg-id-bit xmm)]
+            (begin
+              (if (and
+                (not (= bit 0))
+                (= (bit-and plan-mask bit) 0)
+                (=
+                  (bit-and scratch-mask (compiler-backend-plan-reg-id-bit xmm))
+                  0)
+                (not
+                  (compiler-backend-const-hoist-uses-reg? function-state xmm))
+                (not
+                  (compiler-backend-emergency-park-taken?
+                    function-state
+                    count
+                    xmm))
+                (compiler-backend-emergency-park-untouched-by-text? text xmm))
+                (set! found xmm)
+                unit)
+              (set! i (+ i 1)))))
+        found))))
+
+;; Give every still-undecided pending save a park location. `text` is the
+;; bracketed instruction text and `park-allowed` says whether an XMM park may be
+;; considered at all -- false for the INLINE restore paths (a branch's
+;; restore-before-jumps, the divmod address restore, the buffer-splice wrap),
+;; which emit their restore before the bracketed text exists.
+;; Charging a frame slot here rather than at scavenge time is what lets an
+;; XMM-parked function keep a dead slot region: `emergency-used` and the slot
+;; count are the frame's inputs and are read only after the whole body is
+;; emitted.
+(define (compiler-backend-emergency-commit-locs!
+  [function-state : CompilerBackendFunctionState]
+  [text : String]
+  [have-text : bool]
+  [park-allowed : bool]) : unit
+  (let
+    [count : i64
+      (compiler-backend-function-scratch-i64
+        function-state
+        compiler-backend-scratch-i64-emergency-pending-count)]
+    [i : i64 0]
+    (while (< i count)
+      (begin
+        (if (=
+          (compiler-backend-emergency-save-loc function-state i)
+          compiler-backend-emergency-loc-undecided)
+          (let
+            [reg : i64
+              (array-ref
+                (compiler-backend-function-scratch-i64-array
+                  function-state
+                  compiler-backend-scratch-i64-array-emergency-regs)
+                i)]
+            [untouched : bool
+              (and
+                have-text
+                (compiler-backend-emergency-reg-untouched-by-text? text reg))]
+            [park : i64
+              (if untouched
+                -1
+                (compiler-backend-emergency-park-reg
+                  function-state
+                  reg
+                  count
+                  text
+                  park-allowed))]
+            [slot-index : i64
+              (compiler-backend-emergency-slot-form-count function-state count)]
+            [loc : i64
+              (if untouched
+                compiler-backend-emergency-loc-elided
+                (if (>= park 0)
+                  park
+                  (- 0 (+ slot-index 1))))]
+            [locs : (__tl_dyn-array i64)
+              (compiler-backend-function-scratch-i64-array
+                function-state
+                compiler-backend-scratch-i64-array-emergency-save-locs)]
+            (begin
+              (set! (array-ref locs i) loc)
+              (compiler-backend-function-scratch-set-i64-array!
+                function-state
+                compiler-backend-scratch-i64-array-emergency-save-locs
+                locs)
+              (if (or untouched (>= park 0))
+                unit
+                (begin
+                  (compiler-backend-function-scratch-set-bool!
+                    function-state
+                    compiler-backend-scratch-bool-emergency-used
+                    true)
+                  (if (>
+                    (+ slot-index 1)
+                    (compiler-backend-function-scratch-i64
+                      function-state
+                      compiler-backend-scratch-i64-emergency-used-count))
+                    (compiler-backend-function-scratch-set-i64!
+                      function-state
+                      compiler-backend-scratch-i64-emergency-used-count
+                      (+ slot-index 1))
+                    unit)))))
+          unit)
+        (set! i (+ i 1))))))
+
+;; Park nothing: force every pending save onto a frame slot.
+(define (compiler-backend-emergency-commit-slot-form!
+  [function-state : CompilerBackendFunctionState]) : unit
+  (compiler-backend-emergency-commit-locs! function-state "" false false))
+
+;; True when the bracketed text may leave the park register intact: a `call`
+;; (the substring also covers `syscall`) hands control to code that is free to
+;; clobber every caller-saved XMM register, so such a bracket keeps the frame
+;; slot. Deliberately a plain substring test: a label that merely spells "call"
+;; costs one frame slot, never correctness.
+(define (compiler-backend-emergency-text-park-allowed? [text : String]) : bool
+  (not (compiler-backend-string-contains? text "call")))
+
 (define (compiler-backend-emergency-index
   [function-state : CompilerBackendFunctionState]
   [reg : i64]) : i64
@@ -16096,11 +16440,19 @@
             function-state
             compiler-backend-scratch-bool-emergency-pending
             true)
-          (compiler-backend-function-scratch-set-bool!
-            function-state
-            compiler-backend-scratch-bool-emergency-used
-            true))
+          ;; `emergency-used` is the "this function needs the frame's emergency
+          ;; region" fact; an XMM-parked save does not.
+          (if (compiler-backend-emergency-loc-slot-form?
+            (compiler-backend-emergency-save-loc function-state existing))
+            (compiler-backend-function-scratch-set-bool!
+              function-state
+              compiler-backend-scratch-bool-emergency-used
+              true)
+            unit))
         (let
+          ;; T1-6 (b): the park location is decided when the bracketed text is
+          ;; known (compiler-backend-emergency-commit-locs!), not here.
+          [loc : i64 compiler-backend-emergency-loc-undecided]
           [next-count : i64 (+ count 1)]
           [regs : (__tl_dyn-array i64)
             (compiler-backend-emergency-regs-push
@@ -16109,11 +16461,22 @@
                 compiler-backend-scratch-i64-array-emergency-regs)
               count
               reg)]
+          [locs : (__tl_dyn-array i64)
+            (compiler-backend-emergency-regs-push
+              (compiler-backend-function-scratch-i64-array
+                function-state
+                compiler-backend-scratch-i64-array-emergency-save-locs)
+              count
+              loc)]
           (begin
             (compiler-backend-function-scratch-set-i64-array!
               function-state
               compiler-backend-scratch-i64-array-emergency-regs
               regs)
+            (compiler-backend-function-scratch-set-i64-array!
+              function-state
+              compiler-backend-scratch-i64-array-emergency-save-locs
+              locs)
             (compiler-backend-function-scratch-set-i64!
               function-state
               compiler-backend-scratch-i64-emergency-pending-count
@@ -16121,21 +16484,7 @@
             (compiler-backend-function-scratch-set-bool!
               function-state
               compiler-backend-scratch-bool-emergency-pending
-              true)
-            (compiler-backend-function-scratch-set-bool!
-              function-state
-              compiler-backend-scratch-bool-emergency-used
-              true)
-            (if (>
-              next-count
-              (compiler-backend-function-scratch-i64
-                function-state
-                compiler-backend-scratch-i64-emergency-used-count))
-              (compiler-backend-function-scratch-set-i64!
-                function-state
-                compiler-backend-scratch-i64-emergency-used-count
-                next-count)
-              unit)))))))
+              true)))))))
 
 (define (compiler-backend-emergency-add!
   [function-state : CompilerBackendFunctionState]
@@ -16202,6 +16551,61 @@
             "\n")])
       (str_cat.str-cat "    movq " slot ", " reg-name "\n"))))
 
+;; T1-6 (b): one pending save, at its recorded park location -- an XMM register
+;; (frame-free) or the classic 64-byte frame slot.
+(define (compiler-backend-emergency-entry-reg
+  [function-state : CompilerBackendFunctionState]
+  [index : i64]) : i64
+  (array-ref
+    (compiler-backend-function-scratch-i64-array
+      function-state
+      compiler-backend-scratch-i64-array-emergency-regs)
+    index))
+
+(define (compiler-backend-emergency-entry-save-asm
+  [function-state : CompilerBackendFunctionState]
+  [index : i64]
+  [backend-state : CompilerBackendState]) : String
+  (let
+    [reg : i64 (compiler-backend-emergency-entry-reg function-state index)]
+    [loc : i64 (compiler-backend-emergency-save-loc function-state index)]
+    (cond
+      [(= loc compiler-backend-emergency-loc-elided) ""]
+      [(>= loc 0)
+        (str_cat.str-cat
+          "    movq "
+          (compiler_abi.compiler-abi-register-spelling reg)
+          ", "
+          (compiler_abi.compiler-abi-register-spelling loc)
+          "\n")]
+      [else
+        (compiler-backend-emergency-reg-save-asm
+          reg
+          (compiler-backend-emergency-reg-offset function-state (- (- 0 loc) 1))
+          backend-state)])))
+
+(define (compiler-backend-emergency-entry-restore-asm
+  [function-state : CompilerBackendFunctionState]
+  [index : i64]
+  [backend-state : CompilerBackendState]) : String
+  (let
+    [reg : i64 (compiler-backend-emergency-entry-reg function-state index)]
+    [loc : i64 (compiler-backend-emergency-save-loc function-state index)]
+    (cond
+      [(= loc compiler-backend-emergency-loc-elided) ""]
+      [(>= loc 0)
+        (str_cat.str-cat
+          "    movq "
+          (compiler_abi.compiler-abi-register-spelling loc)
+          ", "
+          (compiler_abi.compiler-abi-register-spelling reg)
+          "\n")]
+      [else
+        (compiler-backend-emergency-reg-restore-asm
+          reg
+          (compiler-backend-emergency-reg-offset function-state (- (- 0 loc) 1))
+          backend-state)])))
+
 (define (compiler-backend-emergency-save-asm
   [function-state : CompilerBackendFunctionState]
   [index : i64]
@@ -16210,13 +16614,9 @@
   (if (>= index count)
     ""
     (str_cat.str-cat
-      (compiler-backend-emergency-reg-save-asm
-        (array-ref
-          (compiler-backend-function-scratch-i64-array
-            function-state
-            compiler-backend-scratch-i64-array-emergency-regs)
-          index)
-        (compiler-backend-emergency-reg-offset function-state index)
+      (compiler-backend-emergency-entry-save-asm
+        function-state
+        index
         backend-state)
       (compiler-backend-emergency-save-asm
         function-state
@@ -16231,13 +16631,9 @@
   (if (< index 0)
     ""
     (str_cat.str-cat
-      (compiler-backend-emergency-reg-restore-asm
-        (array-ref
-          (compiler-backend-function-scratch-i64-array
-            function-state
-            compiler-backend-scratch-i64-array-emergency-regs)
-          index)
-        (compiler-backend-emergency-reg-offset function-state index)
+      (compiler-backend-emergency-entry-restore-asm
+        function-state
+        index
         backend-state)
       (compiler-backend-emergency-restore-asm
         function-state
@@ -16267,6 +16663,10 @@
           function-state
           compiler-backend-scratch-bool-emergency-restore-suppressed)))
       (let
+        ;; The restore is emitted BEFORE the bracketed text exists, so the park
+        ;; decision cannot see it: charge frame slots.
+        [_slot-form : unit
+          (compiler-backend-emergency-commit-slot-form! function-state)]
         [count : i64
           (compiler-backend-function-scratch-i64
             function-state
@@ -16294,6 +16694,12 @@
       function-state
       compiler-backend-scratch-bool-emergency-pending)
       (let
+        [_commit : unit
+          (compiler-backend-emergency-commit-locs!
+            function-state
+            head
+            true
+            (compiler-backend-emergency-text-park-allowed? head))]
         [count : i64
           (compiler-backend-function-scratch-i64
             function-state
@@ -16360,6 +16766,10 @@
       function-state
       compiler-backend-scratch-bool-emergency-pending)
       (let
+        ;; The bracketed bytes are already in the buffer and are not scanned
+        ;; here, so this splice keeps the frame slot.
+        [_slot-form : unit
+          (compiler-backend-emergency-commit-slot-form! function-state)]
         [count : i64
           (compiler-backend-function-scratch-i64
             function-state
@@ -48658,16 +49068,24 @@
         backend-state
         (compiler-backend-emergency-reg-offset function-state target-idx))]
     [_reserve-target-slot : unit
-      (if (<
-        (compiler-backend-function-scratch-i64
+      (begin
+        ;; T1-6 (b): this dedicated stash slot is a REAL frame slot even when
+        ;; every borrowed register is XMM-parked, so the emergency frame region
+        ;; must be reserved for it explicitly.
+        (compiler-backend-function-scratch-set-bool!
           function-state
-          compiler-backend-scratch-i64-emergency-used-count)
-        (+ target-idx 1))
-        (compiler-backend-function-scratch-set-i64!
-          function-state
-          compiler-backend-scratch-i64-emergency-used-count
+          compiler-backend-scratch-bool-emergency-used
+          true)
+        (if (<
+          (compiler-backend-function-scratch-i64
+            function-state
+            compiler-backend-scratch-i64-emergency-used-count)
           (+ target-idx 1))
-        unit)]
+          (compiler-backend-function-scratch-set-i64!
+            function-state
+            compiler-backend-scratch-i64-emergency-used-count
+            (+ target-idx 1))
+          unit))]
     [done-label : String
       (compiler-backend-asm-label
         function
@@ -48793,16 +49211,24 @@
         backend-state
         (compiler-backend-emergency-reg-offset function-state target-idx))]
     [_reserve-target-slot : unit
-      (if (<
-        (compiler-backend-function-scratch-i64
+      (begin
+        ;; T1-6 (b): this dedicated stash slot is a REAL frame slot even when
+        ;; every borrowed register is XMM-parked, so the emergency frame region
+        ;; must be reserved for it explicitly.
+        (compiler-backend-function-scratch-set-bool!
           function-state
-          compiler-backend-scratch-i64-emergency-used-count)
-        (+ target-idx 1))
-        (compiler-backend-function-scratch-set-i64!
-          function-state
-          compiler-backend-scratch-i64-emergency-used-count
+          compiler-backend-scratch-bool-emergency-used
+          true)
+        (if (<
+          (compiler-backend-function-scratch-i64
+            function-state
+            compiler-backend-scratch-i64-emergency-used-count)
           (+ target-idx 1))
-        unit)]
+          (compiler-backend-function-scratch-set-i64!
+            function-state
+            compiler-backend-scratch-i64-emergency-used-count
+            (+ target-idx 1))
+          unit))]
     [table-label : String
       (compiler-backend-switch-table-label function current-label)]
     [done-label : String
@@ -57450,6 +57876,10 @@
         compiler-backend-scratch-i64-emergency-pending-count))
       ""
       (let
+        ;; Inline restore emitted mid-instruction: no bracketed text to prove a
+        ;; park register survives, so charge frame slots.
+        [_slot-form : unit
+          (compiler-backend-emergency-commit-slot-form! function-state)]
         [reg : i64
           (array-ref
             (compiler-backend-function-scratch-i64-array
@@ -57481,9 +57911,9 @@
                 reg
                 (compiler_abi.compiler-abi-register-id-from-spelling
                   offset-home))))
-            (compiler-backend-emergency-reg-restore-asm
-              reg
-              (compiler-backend-emergency-reg-offset function-state index)
+            (compiler-backend-emergency-entry-restore-asm
+              function-state
+              index
               backend-state)
             "")
           (compiler-backend-divmod-address-emergency-restore-asm
@@ -65622,6 +66052,290 @@
             (set! idx (+ idx 1)))))
       count)))
 
+;; ============================================================================
+;; T1-6 (a): System V red-zone leaf frames.
+;;
+;; The SysV AMD64 ABI reserves the 128 bytes below %rsp -- the RED ZONE -- to
+;; the running function: the kernel skips them when it builds a signal frame,
+;; and nothing else (interrupt, debugger stub) may write there either. A
+;; function that makes no RETURNING call therefore needs no stack pointer
+;; adjustment at all: it can leave %rsp at its entry value and address every
+;; frame slot at a NEGATIVE displacement. This is X86FrameLowering's red-zone
+;; rule (SysV, no frame pointer, stack size <= 128) and it deletes both the
+;; prologue `subq $N, %rsp` and the epilogue `addq`.
+;;
+;; Three facts make it sound here, and every one of them is checked:
+;;
+;;  1. NO RETURNING CALL. `compiler-backend-function-bool-call-align-needed` is
+;;     the FINAL-TEXT census of calls that come back to this function. The
+;;     out-of-line `never` handlers (tl_oob_abort*, tl_div_abort*,
+;;     tl_shift_abort*, tl_panic_at, tl_oom_abort, tl_region_abort) are excluded
+;;     from it for the alignment argument and are excluded from the red zone for
+;;     the same reason: control never returns, so whatever the handler does to
+;;     the stack below %rsp -- including the return address its `call` pushes --
+;;     cannot be observed here, and by the time the `call` is reached every
+;;     reported value already sits in an argument register. A tail `jmp` is not
+;;     a call: the epilogue has already restored the entry %rsp (with a red-zone
+;;     frame it never moved), so the tail target opens a fresh frame below it
+;;     and our slots are dead. A `syscall` fails the FPO audit outright.
+;;
+;;  2. NOTHING WRITES BELOW %rsp WHILE A SLOT IS LIVE. The body's own stack
+;;     motion -- abort-site argument staging (`pushq LEN; pushq IDX; ...; popq;
+;;     popq`), c-ABI dip windows (`subq $X,%rsp ... addq $X,%rsp`), phi
+;;     cycle-break pushes, the wide-vector scratch windows -- dips BELOW %rsp,
+;;     exactly where red-zone slots would sit. Instead of refusing those
+;;     functions the slot region is anchored `guard` bytes LOWER, `guard` being
+;;     the deepest dip the body reaches (compiler-backend-text-max-rsp-dip runs
+;;     the rebase audit's own delta walk over the final text). Every transient
+;;     push then lands strictly ABOVE every slot -- and still READS the slots it
+;;     stages from correctly, because the rebase re-biases each reference by the
+;;     running delta. This is the "push above the red-zone slots" resolution of
+;;     the abort-site edge: no extra instruction is emitted at any abort site.
+;;
+;;  3. EVERYTHING FITS: `guard + frame <= 128`.
+;;
+;; Alignment: with no adjustment %rsp keeps its entry value, so `%rsp % 16 == 8`
+;; at an abort `call` where a framed function would have had 0. That is exactly
+;; the situation the dropped alignment pad already produces for a bare frame,
+;; and the argument is the one recorded on call-align-needed: the abort chain
+;; links no libc, prints through raw syscalls and never spills through a
+;; 16-byte-aligned SSE move, so it inherits no alignment duty.
+;;
+;; Excluded: Windows (the x64 ABI has NO red zone -- the kernel may write below
+;; %rsp freely, so :71008 and every Win64 path keep their frame), any function
+;; with outgoing stack-argument space (those are POSITIVE `N(%rsp)` offsets and
+;; would land on the return address once the prologue stops moving %rsp), and
+;; shrink-wrapped functions (their prologue is spliced at an interior label,
+;; outside this pass's displacement model).
+(define compiler-backend-red-zone-limit : i64
+  128)
+
+(define (compiler-backend-red-zone? [backend-state : CompilerBackendState]) : bool
+  (compiler-backend-function-state-bool?
+    (compiler-backend-state-function-state backend-state)
+    compiler-backend-function-bool-red-zone))
+
+(define (compiler-backend-red-zone-guard [backend-state : CompilerBackendState]) : i64
+  (compiler-backend-function-state-i64
+    (compiler-backend-state-function-state backend-state)
+    compiler-backend-function-i64-red-zone-guard))
+
+;; Deepest point BELOW the post-prologue %rsp that `text` reaches through its
+;; own tracked stack motion, in bytes, or -1 when the walk cannot bound it.
+;; Mirrors the rsp-rebase audit line for line: a label restores tracking and
+;; resets the running delta (dip windows are straight-line), `pushq` costs 8,
+;; `popq` gives 8 back, `subq $imm, %rsp` / `addq $imm, %rsp` move it by imm,
+;; and any OTHER write to %rsp (an epilogue `leaq slot, %rsp`, `movq %rbp,%rsp`)
+;; or a `leave` ends tracking until the next label -- an epilogue shape, where
+;; no slot is live any more and a write below %rsp can hurt nothing. A `pushq`
+;; taken while untracked is not boundable and refuses the red zone outright, as
+;; does a delta that would go negative outside an epilogue.
+(define (compiler-backend-text-max-rsp-dip [text : String]) : i64
+  (let
+    [n : i64 (string.string-length text)]
+    [data : (Ptr u8)
+      (unsafe
+        (string-data text))]
+    [i : i64 0]
+    [delta : i64 0]
+    [valid : bool true]
+    [deepest : i64 0]
+    [ok : bool true]
+    (begin
+      (while (and ok (< i n))
+        (let
+          [end : i64 (compiler-backend-peephole-scan-byte-range data i n 10)]
+          [m : i64 i]
+          (begin
+            (while (and
+              (< m end)
+              (= (compiler-backend-peephole-byte-at data m) 32))
+              (set! m (+ m 1)))
+            (if (>= m end)
+              unit
+              (if (= (compiler-backend-peephole-byte-at data (- end 1)) 58)
+                (begin
+                  (set! delta 0)
+                  (set! valid true))
+                (let
+                  [tok : i64
+                    (-
+                      (compiler-backend-peephole-scan-byte-range data m end 32)
+                      m)]
+                  [te : i64 (+ m tok)]
+                  [kind : i64
+                    (compiler-backend-control-mnemonic-kind data m tok)]
+                  [rsp-dst? : bool
+                    (and
+                      (>= (- end i) 6)
+                      (= (compiler-backend-peephole-byte-at data (- end 1)) 112)
+                      (= (compiler-backend-peephole-byte-at data (- end 6)) 44)
+                      (= (compiler-backend-peephole-byte-at data (- end 5)) 32)
+                      (= (compiler-backend-peephole-byte-at data (- end 4)) 37)
+                      (= (compiler-backend-peephole-byte-at data (- end 3)) 114)
+                      (= (compiler-backend-peephole-byte-at data (- end 2)) 115))]
+                  (cond
+                    [(= kind compiler-backend-control-mnemonic-push)
+                      (if valid
+                        (begin
+                          (set! delta (+ delta 8))
+                          (if (> delta deepest)
+                            (set! deepest delta)
+                            unit))
+                        (set! ok false))]
+                    [(= kind compiler-backend-control-mnemonic-pop)
+                      (if valid
+                        (begin
+                          (set! delta (- delta 8))
+                          (if (< delta 0)
+                            (set! ok false)
+                            unit))
+                        unit)]
+                    [(= kind compiler-backend-control-mnemonic-leave)
+                      (set! valid false)]
+                    [rsp-dst?
+                      (if (and
+                        valid
+                        (= kind compiler-backend-control-mnemonic-subq)
+                        (< (+ te 1) end)
+                        (= (compiler-backend-peephole-byte-at data (+ te 1)) 36))
+                        (begin
+                          (set!
+                            delta
+                            (+
+                              delta
+                              (compiler-backend-rsp-rebase-parse-int
+                                data
+                                (+ te 2)
+                                (- end 6))))
+                          (if (> delta deepest)
+                            (set! deepest delta)
+                            unit))
+                        (if (and
+                          valid
+                          (= kind compiler-backend-control-mnemonic-addq)
+                          (< (+ te 1) end)
+                          (=
+                            (compiler-backend-peephole-byte-at data (+ te 1))
+                            36))
+                          (begin
+                            (set!
+                              delta
+                              (-
+                                delta
+                                (compiler-backend-rsp-rebase-parse-int
+                                  data
+                                  (+ te 2)
+                                  (- end 6))))
+                            (if (< delta 0)
+                              (set! ok false)
+                              unit))
+                          (set! valid false)))]
+                    [else unit]))))
+            (set!
+              i
+              (if (< end n)
+                (+ end 1)
+                end)))))
+      (if ok
+        deepest
+        -1))))
+
+;; Decide whether this function's frame lives in the red zone, and how deep
+;; below %rsp its slot region must be anchored so the body's own transient
+;; pushes cannot reach it. Always writes both facts, so a stale decision from
+;; an abandoned emission attempt can never be read by the prologue, the rebase
+;; or the dead-frame-store sweep.
+(define (compiler-backend-red-zone-decide!
+  [backend-state : CompilerBackendState]
+  [target : CompilerBackendTarget]
+  [text : String]
+  [fpo-attempt : bool]
+  [frame : i64]
+  [outgoing : i64]
+  [shrinkwrap-active? : bool]) : unit
+  (let
+    [function-state : CompilerBackendFunctionState
+      (compiler-backend-state-function-state backend-state)]
+    [eligible : bool
+      (and
+        fpo-attempt
+        (compiler-backend-target-linux? target)
+        (not (compiler-backend-current-fn-win64? backend-state))
+        (not shrinkwrap-active?)
+        (> frame 0)
+        (<= frame compiler-backend-red-zone-limit)
+        (= outgoing 0)
+        (not
+          (compiler-backend-function-state-bool?
+            function-state
+            compiler-backend-function-bool-call-align-needed)))]
+    [dip : i64
+      (if eligible
+        (compiler-backend-text-max-rsp-dip text)
+        -1)]
+    [guard : i64
+      (if (< dip 0)
+        -1
+        (compiler-backend-round-up-16 dip))]
+    [accept : bool
+      (and
+        eligible
+        (>= guard 0)
+        (<= (+ guard frame) compiler-backend-red-zone-limit))]
+    (begin
+      (compiler-backend-function-state-set-bool!
+        function-state
+        compiler-backend-function-bool-red-zone
+        accept)
+      (compiler-backend-function-state-set-i64!
+        function-state
+        compiler-backend-function-i64-red-zone-guard
+        (if accept
+          guard
+          0)))))
+
+;; The two biases the rsp-rebase pass rewrites frame references with, shared
+;; with the dead-frame-store sweep so both describe the SAME layout.
+;;
+;; `bias-pos` is the distance from the final %rsp up to the VIRTUAL %rbp the
+;; positive (incoming stack argument, tail-call stack-arg store) offsets were
+;; spelled against: `8n + S - 8`, the whole prologue displacement minus the
+;; omitted `pushq %rbp`. `bias-neg` is the distance up to the LOCAL slot
+;; region's anchor, which is not the same word: under pushes the locals sit
+;; directly below the pushed CSRs (anchor `S`), without pushes they sit below
+;; the omitted saved-rbp word (anchor `frame` = `S - 8`), and under the red zone
+;; (`S = 0`) they are pushed a further `guard` bytes BELOW %rsp so a transient
+;; push cannot land on a live slot.
+;;
+;; Both take the pass's own `fpo` flag: the stage-1 keep-rbp fallback re-runs
+;; the SAME text with fpo=false after a failed audit, and there the prologue is
+;; the ordinary `pushq %rbp; movq %rsp,%rbp; subq $frame` -- no pushes, no red
+;; zone, bias `frame` in both directions.
+(define (compiler-backend-frame-bias-neg
+  [backend-state : CompilerBackendState]
+  [fpo : bool]
+  [frame : i64]
+  [push-count : i64]) : i64
+  (if (and fpo (compiler-backend-red-zone? backend-state))
+    (- 0 (compiler-backend-red-zone-guard backend-state))
+    (if (and fpo (> push-count 0))
+      (compiler-backend-rsp-rebase-push-sub backend-state frame push-count)
+      frame)))
+
+(define (compiler-backend-frame-bias-pos
+  [backend-state : CompilerBackendState]
+  [fpo : bool]
+  [frame : i64]
+  [push-count : i64]) : i64
+  (if (and fpo (or (compiler-backend-red-zone? backend-state) (> push-count 0)))
+    (-
+      (+
+        (compiler-backend-rsp-rebase-push-sub backend-state frame push-count)
+        (* push-count 8))
+      8)
+    frame))
+
 ;; The prologue subq constant S under n pushes: frame + pad where pad keeps
 ;; the total displacement (8n + S) % 16 == 8 (frame is a 16-multiple), i.e.
 ;; the same call alignment as the no-push `subq $(frame+8)`.
@@ -65644,11 +66358,13 @@
   [backend-state : CompilerBackendState]
   [frame : i64]
   [push-count : i64]) : i64
-  (if (and
-    (compiler-backend-function-state-bool?
-      (compiler-backend-state-function-state backend-state)
-      compiler-backend-function-bool-fpo-bare-frame)
-    (= push-count 0))
+  (if (or
+    (compiler-backend-red-zone? backend-state)
+    (and
+      (compiler-backend-function-state-bool?
+        (compiler-backend-state-function-state backend-state)
+        compiler-backend-function-bool-fpo-bare-frame)
+      (= push-count 0)))
     0
     (+
       frame
@@ -65920,14 +66636,14 @@
     [sub-s : i64
       (compiler-backend-rsp-rebase-push-sub backend-state frame push-count)]
     [disp : i64 (+ (* push-count 8) sub-s)]
+    ;; Red zone: sub-s is 0 and the local anchor sits `guard` bytes BELOW the
+    ;; final %rsp, so local references come out NEGATIVE. Both biases come from
+    ;; the shared helpers the sweep also reads.
+    [rz : bool (and fpo (compiler-backend-red-zone? backend-state))]
     [bias-neg : i64
-      (if pm
-        sub-s
-        frame)]
+      (compiler-backend-frame-bias-neg backend-state fpo frame push-count)]
     [bias-pos : i64
-      (if pm
-        (- (+ sub-s (* push-count 8)) 8)
-        frame)]
+      (compiler-backend-frame-bias-pos backend-state fpo frame push-count)]
     (begin
       (while (and ok (< i n))
         (let
@@ -66258,7 +66974,23 @@
                                                                   bias-neg)
                                                                 delta)
                                                               k)]
-                                                          (if (< noff 0)
+                                                          ;; A negative
+                                                          ;; displacement is a
+                                                          ;; RED-ZONE slot and
+                                                          ;; is legal only
+                                                          ;; there, and only
+                                                          ;; inside the 128
+                                                          ;; bytes the ABI
+                                                          ;; reserves.
+                                                          (if (or
+                                                            (and
+                                                              (< noff 0)
+                                                              (not rz))
+                                                            (<
+                                                              noff
+                                                              (-
+                                                                0
+                                                                compiler-backend-red-zone-limit)))
                                                             (set! ok false)
                                                             (begin
                                                               (set!
@@ -66858,14 +67590,12 @@
   (let
     [sub-s : i64
       (compiler-backend-rsp-rebase-push-sub backend-state frame push-count)]
-    [pm : bool (> push-count 0)]
     [bias-neg : i64
-      (if pm
-        sub-s
-        frame)]
+      (compiler-backend-frame-bias-neg backend-state true frame push-count)]
     ;; `sub-s` is the adjustment the prologue really emitted in both modes (0
-    ;; for a bare frame or a dropped alignment pad), so the sweep's entry delta
-    ;; tracks the text rather than assuming the pad is always there.
+    ;; for a bare frame, for a dropped alignment pad, and for a red-zone frame),
+    ;; so the sweep's entry delta tracks the text rather than assuming the pad is
+    ;; always there.
     [disp : i64 (+ (* push-count 8) sub-s)]
     ;; Emergency scavenge slots live at rbp offset em-slot-offset - 64*i for
     ;; i in [0, em-used-count); canonical = bias_neg + (negative rbp offset).
@@ -71405,6 +72135,10 @@
                         function-state
                         compiler-backend-scratch-i64-array-emergency-regs
                         (array.make-array i64 0))
+                      (compiler-backend-function-scratch-set-i64-array!
+                        function-state
+                        compiler-backend-scratch-i64-array-emergency-save-locs
+                        (array.make-array i64 0))
                       (compiler-backend-function-scratch-set-i64!
                         function-state
                         compiler-backend-scratch-i64-emergency-slot-offset
@@ -71747,6 +72481,21 @@
                                 0))
                               0
                               frame)]
+                          ;; T1-6 (a): red-zone decision. It reads the FINAL
+                          ;; text (for the returning-call census and for the
+                          ;; body's own deepest stack dip) and the frame size
+                          ;; the FPO path will really use, so it must sit
+                          ;; between `fpo-frame` and the rebase, whose biases
+                          ;; and whose prologue both consult it.
+                          [_red-zone : unit
+                            (compiler-backend-red-zone-decide!
+                              program-index.backend-state
+                              target
+                              post-prologue
+                              fpo-attempt
+                              fpo-frame
+                              outgoing-frame-space
+                              shrinkwrap-active?)]
                           [rebase-result : CompilerBackendRspRebaseResult
                             (compiler-backend-rsp-rebase-full-result
                               post-prologue
@@ -71759,6 +72508,17 @@
                           [rebased : String rebase-result.text]
                           [rebase-ok : bool rebase-result.ok]
                           [fpo-ok : bool (and fpo-attempt rebase-ok)]
+                          ;; A failed audit falls back to the rbp frame, whose
+                          ;; prologue moves %rsp again: retract the red-zone
+                          ;; fact so no later reader (prologue, sweep record)
+                          ;; describes a layout this function did not emit.
+                          [_red-zone-retract : unit
+                            (if fpo-ok
+                              unit
+                              (compiler-backend-function-state-set-bool!
+                                function-state
+                                compiler-backend-function-bool-red-zone
+                                false))]
                           (if (and
                             (not fpo-ok)
                             (compiler-backend-plan-uses-reg?

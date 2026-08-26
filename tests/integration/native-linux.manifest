@@ -117,6 +117,9 @@ wide_const_hoist|tests/integration/wide_const_hoist.tl|42|-|-|stdlib/io.tl
 target_asm_loop_divmod_parity|tests/integration/target_asm_loop_divmod_parity.tl|42|-|-|stdlib/io.tl
 csr_push_prologue|tests/integration/csr_push_prologue.tl|42|-|-|stdlib/io.tl
 dead_frame_boundary|tests/integration/dead_frame_boundary.tl|42|-|-|stdlib/io.tl stdlib/array.tl
+red_zone_leaf|tests/integration/red_zone_leaf.tl|42|-|-|stdlib/io.tl stdlib/array.tl
+red_zone_abort_ok|tests/integration/red_zone_abort_trap.tl|42|-|-|stdlib/io.tl stdlib/array.tl
+red_zone_abort_trap|tests/integration/red_zone_abort_trap.tl|134|-|1|stdlib/io.tl stdlib/array.tl|expected-stderr:tl: target/integration-verify/linux/red_zone_abort_trap/red_zone_abort_trap.tl:69:25: array index out of bounds: index=4 length=4\n
 group_copy_direct|tests/integration/group_copy_direct.tl|42|-|-|stdlib/io.tl
 group_pair_home|tests/integration/group_pair_home.tl|42|-|-|stdlib/io.tl
 group_pair_phi_home|tests/integration/group_pair_phi_home.tl|42|-|-|stdlib/io.tl

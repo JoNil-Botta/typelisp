@@ -1626,6 +1626,77 @@ check_jump_only_forward() {
     done
 }
 
+# T1-6 (a): System V red-zone leaf frames. A Linux function with no RETURNING
+# call and a frame that fits (with the body's own transient stack depth) inside
+# the ABI's 128 reserved bytes addresses its slots at NEGATIVE displacements
+# from %rsp and emits no stack adjustment at all. The gate pins all four sides
+# of the rule on one fixture: the red-zone leaf, the over-128 leaf that must
+# keep its adjust, the call-bearing function that must keep its adjust, and the
+# abort-site leaf, whose located `tl_oob_abort_at` splitter stages its two
+# reported values with `pushq`/`popq` BELOW %rsp. That last one is the whole
+# soundness question: the slot region is anchored below the deepest transient
+# dip, so the two staging pushes (16 bytes) land strictly above every live
+# slot -- which is why `rzl-abort` has no slot at -8 or -16 while the
+# push-free `rzl-slots` starts at -8. The runtime halves are the
+# red_zone_leaf / red_zone_abort_ok / red_zone_abort_trap manifest cases.
+check_red_zone_leaf() {
+    _asm=$(compile_gate red_zone_leaf tests/integration/red_zone_leaf.tl)
+
+    # (a) call-free leaf, frame inside the red zone: no adjust, slots negative.
+    _slots=$(function_body "$_asm" tl_rzl_slots)
+    assert_regex_count_eq "$_slots" '^[[:space:]]+call ' 0 red-zone-slots
+    assert_regex_count_eq "$_slots" '^[[:space:]]+subq \$[0-9]+, %rsp$' 0 red-zone-slots
+    assert_regex_count_eq "$_slots" '^[[:space:]]+addq \$[0-9]+, %rsp$' 0 red-zone-slots
+    # Three distinct spill slots, all below %rsp and inside the 128-byte zone.
+    _neg=$(grep -oE -- '-[0-9]+\(%rsp\)' "$_slots" | sort -u | wc -l)
+    if [ "$_neg" -lt 3 ]; then
+        fail "red-zone-slots expected at least 3 distinct negative %rsp slots, got $_neg"
+    fi
+    assert_matches "$_slots" '[-]8\(%rsp\)' red-zone-slots
+    assert_not_matches "$_slots" '[-](1[3-9][0-9]|[2-9][0-9][0-9])\(%rsp\)' red-zone-slots
+    assert_not_matches "$_slots" '\(%rbp\)' red-zone-slots
+
+    # (b) the same shape with a frame LARGER than the red zone keeps its adjust.
+    _big=$(function_body "$_asm" tl_rzl_big)
+    assert_regex_count_eq "$_big" '^[[:space:]]+call ' 0 red-zone-big
+    assert_regex_count_eq "$_big" '^[[:space:]]+subq \$[0-9]+, %rsp$' 1 red-zone-big
+    assert_not_matches "$_big" '[-][0-9]+\(%rsp\)' red-zone-big
+
+    # (c) a returning call keeps the frame and the adjust.
+    _call=$(function_body "$_asm" tl_rzl_call)
+    assert_regex_count_at_least "$_call" '^[[:space:]]+call ' 1 red-zone-call
+    assert_regex_count_eq "$_call" '^[[:space:]]+subq \$[0-9]+, %rsp$' 1 red-zone-call
+    assert_not_matches "$_call" '[-][0-9]+\(%rsp\)' red-zone-call
+
+    # (d) abort-site leaf: red zone used, and the staging pushes are guarded.
+    _abort=$(function_body "$_asm" tl_rzl_abort)
+    assert_contains "$_abort" 'call tl_oob_abort_at' red-zone-abort
+    assert_regex_count_eq "$_abort" '^[[:space:]]+call ' 1 red-zone-abort
+    assert_regex_count_eq "$_abort" '^[[:space:]]+subq \$[0-9]+, %rsp$' 0 red-zone-abort
+    assert_regex_count_eq "$_abort" '^[[:space:]]+addq \$[0-9]+, %rsp$' 0 red-zone-abort
+    _abort_neg=$(grep -oE -- '-[0-9]+\(%rsp\)' "$_abort" | sort -u | wc -l)
+    if [ "$_abort_neg" -lt 1 ]; then
+        fail "red-zone-abort expected live negative %rsp slots, got $_abort_neg"
+    fi
+    # The 16 bytes the two staging pushes occupy hold no slot.
+    assert_not_matches "$_abort" '[-]8\(%rsp\)' red-zone-abort-guard
+    assert_not_matches "$_abort" '[-]16\(%rsp\)' red-zone-abort-guard
+    assert_not_matches "$_abort" '[-](1[3-9][0-9]|[2-9][0-9][0-9])\(%rsp\)' red-zone-abort
+}
+
+# Windows has NO red zone: the same source compiled for Win64 must keep every
+# stack adjustment and address every slot at a non-negative displacement.
+check_red_zone_leaf_win64() {
+    _asm=$(compile_gate red_zone_leaf_win64 tests/integration/red_zone_leaf.tl \
+        windows-x86_64)
+    for _fn in tl_rzl_slots tl_rzl_big tl_rzl_abort; do
+        _body=$(function_body "$_asm" "$_fn")
+        assert_regex_count_at_least "$_body" '^[[:space:]]+subq \$[0-9]+, %rsp$' 1 \
+            "red-zone-win64-$_fn"
+        assert_not_matches "$_body" '[-][0-9]+\(%rsp\)' "red-zone-win64-$_fn"
+    done
+}
+
 check_mem_dest_rmw_fold
 check_word_merge_unroll
 check_copy_call_word
@@ -1642,6 +1713,8 @@ check_csr_push_prologue
 check_dead_frame_boundary
 check_dead_frame_abort_only_trap
 check_dead_frame_boundary_win64
+check_red_zone_leaf
+check_red_zone_leaf_win64
 check_save_reload_elide
 check_global_handle_cse
 check_loadcse_forward

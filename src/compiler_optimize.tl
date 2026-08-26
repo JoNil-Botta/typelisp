@@ -41503,16 +41503,39 @@
         from-ty
         to-ty)]
     [(ir.CompilerIrInstr.BinOp dst op lhs rhs ty)
-      (opt-sccp-rewrite-scalar-def
-        env
-        dst
-        (ir.compiler-ir-binop-result-type op ty)
-        (ir.CompilerIrInstr.BinOp
+      ;; sccp substitutes Const lattice values into operands, but a wide
+      ;; (non-imm32) literal in the LEFT operand of a BinOp is never encodable,
+      ;; so folding it there can only add a materialization inside the loop --
+      ;; exactly the substitution the global copy sweep refuses. Reuse its
+      ;; predicate (opt-global-copy-keep-wide-left, whose doc comment carries
+      ;; the rationale) so both passes agree; sccp is the pass that meets a
+      ;; freshly minted mask Mov first (opt-bit-test-mask-block runs after the
+      ;; fixpoint's sccp slot in the iteration that forms it), so without this
+      ;; the late whole-function sccp run undoes the refusal.
+      ;; Fully-constant BinOps still fold: opt-sccp-rewrite-scalar-def replaces
+      ;; the whole instruction with a Mov when dst's own lattice is Const.
+      ;;
+      ;; MEASURED over the 17 benchmark rows: lex_source -6,092,768 Ir, and
+      ;; peephole_lines +144 Ir -- one site where keeping the Var costs the
+      ;; allocator a spill/reload pair, the case the rule's own doc comment
+      ;; calls out as still not the worse choice. Every other row is byte-equal.
+      ;; Gating the refusal on the late slot alone (the packet's fallback) was
+      ;; built and measured too and reproduces that table exactly, so the cost
+      ;; belongs to the late run and the flag would buy nothing: the rule is
+      ;; stated once here, for every sccp run, as its own scope note argues.
+      (let
+        [resolved-lhs : ir.CompilerIrValue (opt-sccp-rewrite-value env lhs)]
+        [resolved-rhs : ir.CompilerIrValue (opt-sccp-rewrite-value env rhs)]
+        (opt-sccp-rewrite-scalar-def
+          env
           dst
-          op
-          (opt-sccp-rewrite-value env lhs)
-          (opt-sccp-rewrite-value env rhs)
-          ty))]
+          (ir.compiler-ir-binop-result-type op ty)
+          (ir.CompilerIrInstr.BinOp
+            dst
+            op
+            (opt-global-copy-keep-wide-left lhs resolved-lhs resolved-rhs)
+            resolved-rhs
+            ty)))]
     [(ir.CompilerIrInstr.UnOp dst op value ty)
       (opt-sccp-rewrite-scalar-def
         env

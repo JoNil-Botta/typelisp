@@ -26086,6 +26086,103 @@
         24]
       [else 42])))
 
+;; --- sccp honours the wide-literal left-operand refusal ----------------------
+;;
+;; sccp substitutes Const lattice values into operands directly, so it can undo
+;; `opt-global-copy-keep-wide-left` unless it applies the same rule: a wide
+;; (non-imm32) literal is not encodable as a left operand, so folding it there
+;; only re-materializes the constant at the use. sccp is where this matters
+;; most -- it is the FIRST constant lattice a freshly minted bit-test mask Mov
+;; meets (opt-bit-test-mask-block runs after the fixpoint's sccp slot in the
+;; iteration that forms the mask, so the late whole-function sccp run sees it
+;; before any copy sweep does).
+;;
+;; The fixtures and the operand probes are the copy-propagation ones above:
+;; `opt-wide-literal-cross-block-blocks` is exactly the mask shape -- constant
+;; defined in the dominating block, shift count a parameter, so the shift can
+;; never fold.
+;;
+;; Control: the shift count is a constant too, so the BinOp itself is constant
+;; and `opt-sccp-rewrite-scalar-def` must still replace the whole instruction
+;; with a Mov. `opt-wide-literal-lhs-var` reports -2 when no BinOp defines the
+;; dst, i.e. when the fold happened.
+(define (opt-sccp-wide-literal-const-count-blocks [literal : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Mov
+          3
+          (compiler_ir_types.CompilerIrValue.I64 literal)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Mov
+          5
+          (compiler_ir_types.CompilerIrValue.I64 7)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "use"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "use")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            4
+            (compiler_ir_types.CompilerIrBinOp.Shr
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrValue.Var 3)
+            (compiler_ir_types.CompilerIrValue.Var 5)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Return
+            (compiler_ir_types.CompilerIrMaybeValue.Some
+              (compiler_ir_types.CompilerIrValue.Var 4)))))
+      compiler_ir_types.CompilerIrBlockList.Nil)))
+
+(define (opt-sccp-wide-literal-blocks
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_optimize.opt-sccp-blocks
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    (opt-gvn-scalar-params)
+    blocks))
+
+(define (compiler-optimize-sccp-wide-literal-operand-self-test) : i64
+  (let
+    [wide-left : compiler_ir_types.CompilerIrBlockList
+      (opt-sccp-wide-literal-blocks
+        (opt-wide-literal-cross-block-blocks (opt-wide-literal-mask)))]
+    [imm32-left : compiler_ir_types.CompilerIrBlockList
+      (opt-sccp-wide-literal-blocks
+        (opt-wide-literal-cross-block-blocks 1234567))]
+    [wide-right : compiler_ir_types.CompilerIrBlockList
+      (opt-sccp-wide-literal-blocks
+        (opt-wide-literal-cross-block-rhs-blocks (opt-wide-literal-mask)))]
+    [const-count : compiler_ir_types.CompilerIrBlockList
+      (opt-sccp-wide-literal-blocks
+        (opt-sccp-wide-literal-const-count-blocks (opt-wide-literal-mask)))]
+    (cond
+      ;; The mask stays a Var operand and its defining Mov survives, which is
+      ;; what keeps the materialization hoistable out of the loop.
+      [(not (= (opt-wide-literal-lhs-var wide-left 4) 3)) 1]
+      [(not
+          (=
+            (opt-count-mov-i64-value-blocks wide-left (opt-wide-literal-mask))
+            1))
+        2]
+      ;; An imm32 literal is encodable in that position, so it still folds.
+      [(not (= (opt-wide-literal-lhs-var imm32-left 4) (- 0 1))) 3]
+      [(not (= (opt-count-mov-i64-value-blocks imm32-left 1234567) 1)) 4]
+      ;; Right operands keep folding at any width.
+      [(not (= (opt-wide-literal-rhs-var wide-right 4) (- 0 1))) 5]
+      ;; A fully-constant BinOp still collapses to a Mov of the result.
+      [(not (= (opt-wide-literal-lhs-var const-count 4) (- 0 2))) 6]
+      [else 42])))
+
+(test
+  optimize-sccp-wide-literal-left-operand
+  (test.assert-i64-eq
+    (compiler-optimize-sccp-wide-literal-operand-self-test)
+    42
+    "sccp refuses to fold a wide literal into a BinOp's left operand and keeps its Mov alive, while imm32 left operands, right operands and fully-constant expressions still fold"))
+
 (define (opt-cfg-constant-if-blocks) : compiler_ir_types.CompilerIrBlockList
   (compiler_ir_types.compiler-ir-block-cons
     (compiler_ir_types.CompilerIrBlock.Block

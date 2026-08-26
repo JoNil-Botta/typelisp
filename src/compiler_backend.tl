@@ -27985,9 +27985,11 @@
         (compiler-backend-global-shared-view assignments)
         (compiler-backend-global-shared-view rhs))]
     [rhs-address : String
-      (compiler-backend-value-read-memory-operand
+      (compiler-backend-compare-memory-operand
+        type-segment-bases
         (compiler-backend-global-shared-view assignments)
         (compiler-backend-global-shared-view rhs)
+        (compiler-backend-global-shared-view ty)
         (compiler-backend-global-shared-view backend-state))]
     [lhs-reg : String
       (compiler-backend-value-scalar-register

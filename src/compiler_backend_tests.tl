@@ -49911,7 +49911,7 @@ g:
               (string.eq (owned_view.compiler-owned-shared-view planned) "%rdi")
               (compiler_backend.compiler-backend-string-contains?
                 (owned_view.compiler-owned-shared-view wrapped)
-                "    movq %rdi, -64(%rbp)\n")
+                "    movq %rdi, %xmm4\n")
               (compiler_backend.compiler-backend-string-contains?
                 (owned_view.compiler-owned-shared-view wrapped)
                 "    movq 0(%rbp), %rdi\n")
@@ -49923,7 +49923,7 @@ g:
                 "    movq %rdi, -8(%rbp)\n")
               (compiler_backend.compiler-backend-string-contains?
                 (owned_view.compiler-owned-shared-view wrapped)
-                "    movq -64(%rbp), %rdi\n")))]
+                "    movq %xmm4, %rdi\n")))]
         [(compiler_backend.ResultCompilerBackend.Err _) false]))
     true))
 
@@ -50015,7 +50015,7 @@ g:
               (string.eq (owned_view.compiler-owned-shared-view planned) "%rdi")
               (compiler_backend.compiler-backend-string-contains?
                 (owned_view.compiler-owned-shared-view wrapped)
-                "    movq %rdi, -64(%rbp)\n")
+                "    movq %rdi, %xmm4\n")
               (compiler_backend.compiler-backend-string-contains?
                 (owned_view.compiler-owned-shared-view wrapped)
                 "    movq 0(%rbp), %rdi\n")
@@ -50024,7 +50024,7 @@ g:
                 "    movq 8(%rdi), %r12\n")
               (compiler_backend.compiler-backend-string-contains?
                 (owned_view.compiler-owned-shared-view wrapped)
-                "    movq -64(%rbp), %rdi\n")))]
+                "    movq %xmm4, %rdi\n")))]
         [(compiler_backend.ResultCompilerBackend.Err _) false]))
     true))
 
@@ -50114,7 +50114,7 @@ g:
               (string.eq (owned_view.compiler-owned-shared-view planned) "%rdi")
               (compiler_backend.compiler-backend-string-contains?
                 (owned_view.compiler-owned-shared-view wrapped)
-                "    movq %rdi, -64(%rbp)\n")
+                "    movq %rdi, %xmm4\n")
               (compiler_backend.compiler-backend-string-contains?
                 (owned_view.compiler-owned-shared-view wrapped)
                 "    movq (%r13), %rdi\n")
@@ -50123,7 +50123,7 @@ g:
                 "    movq %rdi, (%r12)\n")
               (compiler_backend.compiler-backend-string-contains?
                 (owned_view.compiler-owned-shared-view wrapped)
-                "    movq -64(%rbp), %rdi\n")))]
+                "    movq %xmm4, %rdi\n")))]
         [(compiler_backend.ResultCompilerBackend.Err _) false]))
     true))
 
@@ -50220,7 +50220,7 @@ g:
               (string.eq (owned_view.compiler-owned-shared-view planned) "%rdi")
               (compiler_backend.compiler-backend-string-contains?
                 (owned_view.compiler-owned-shared-view wrapped)
-                "    movq %rdi, -64(%rbp)\n")
+                "    movq %rdi, %xmm4\n")
               (compiler_backend.compiler-backend-string-contains?
                 (owned_view.compiler-owned-shared-view wrapped)
                 "    movq %rax, %rdi\n")
@@ -50229,7 +50229,7 @@ g:
                 "    movq %rsi, (%r10,%rdi,8)\n")
               (compiler_backend.compiler-backend-string-contains?
                 (owned_view.compiler-owned-shared-view wrapped)
-                "    movq -64(%rbp), %rdi\n")))]
+                "    movq %xmm4, %rdi\n")))]
         [(compiler_backend.ResultCompilerBackend.Err _) false]))
     true))
 
@@ -51343,6 +51343,14 @@ g:
               (compiler_regalloc.compiler-reg-assignment-table-empty))))]
       [fallthrough : compiler_backend.CompilerBackendMaybeLabel
         (compiler_backend.CompilerBackendMaybeLabel.No)]
+      ;; The backend state owns an exact intern snapshot. Materialize every
+      ;; synthetic name before capturing it, as production lowering does.
+      [not-a-divisor : i64 (ci.intern "not_a_divisor")]
+      [scratch-condition : i64 (ci.intern "scratch_condition")]
+      [scratch-lhs : i64 (ci.intern "scratch_lhs")]
+      [scratch-rhs : i64 (ci.intern "scratch_rhs")]
+      [yes-label : i64 (compiler_ir_types.compiler-ir-label "yes")]
+      [no-label : i64 (compiler_ir_types.compiler-ir-label "no")]
       [backend-state : compiler_backend.CompilerBackendState
         (compiler_backend.compiler-backend-state-new
           (ci.intern-compat-state-capture-active))]
@@ -51395,7 +51403,7 @@ g:
         (match (compiler_backend.compiler-backend-binop-literal-divmod-asm-dst-with-plan
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
           (compiler_ir_types.CompilerIrBinOp.Mul)
-          (compiler_ir_types.CompilerIrValue.Global (ci.intern "not_a_divisor"))
+          (compiler_ir_types.CompilerIrValue.Global not-a-divisor)
           (compiler_ast_types.AstType.I64)
           2
           ""
@@ -51490,10 +51498,9 @@ g:
           (compiler_backend.compiler-backend-emit-branch-with-plan
             (owned_view.compiler-owned-shared-view assignments)
             "scratch_control"
-            (compiler_ir_types.CompilerIrValue.Global
-              (ci.intern "scratch_condition"))
-            (compiler_ir_types.compiler-ir-label "yes")
-            (compiler_ir_types.compiler-ir-label "no")
+            (compiler_ir_types.CompilerIrValue.Global scratch-condition)
+            yes-label
+            no-label
             (owned_view.compiler-owned-shared-view fallthrough)
             "%r14"
             backend-state)
@@ -51507,8 +51514,8 @@ g:
             (compiler_ir_types.CompilerIrValue.Var 0)
             (compiler_ir_types.CompilerIrValue.Var 1)
             (compiler_ast_types.AstType.I64)
-            (compiler_ir_types.compiler-ir-label "yes")
-            (compiler_ir_types.compiler-ir-label "no")
+            yes-label
+            no-label
             (owned_view.compiler-owned-shared-view fallthrough)
             "%r14"
             "%r15"
@@ -51520,11 +51527,11 @@ g:
             (owned_view.compiler-owned-shared-view assignments)
             "scratch_compare_collision"
             (compiler_ir_types.CompilerIrBinOp.Eq)
-            (compiler_ir_types.CompilerIrValue.Global (ci.intern "scratch_lhs"))
-            (compiler_ir_types.CompilerIrValue.Global (ci.intern "scratch_rhs"))
+            (compiler_ir_types.CompilerIrValue.Global scratch-lhs)
+            (compiler_ir_types.CompilerIrValue.Global scratch-rhs)
             (compiler_ast_types.AstType.I64)
-            (compiler_ir_types.compiler-ir-label "yes")
-            (compiler_ir_types.compiler-ir-label "no")
+            yes-label
+            no-label
             (owned_view.compiler-owned-shared-view fallthrough)
             "%r14"
             "%r14"
@@ -51540,10 +51547,10 @@ g:
             "scratch_compare_global_rhs"
             (compiler_ir_types.CompilerIrBinOp.Eq)
             (compiler_ir_types.CompilerIrValue.I64 0)
-            (compiler_ir_types.CompilerIrValue.Global (ci.intern "scratch_rhs"))
+            (compiler_ir_types.CompilerIrValue.Global scratch-rhs)
             (compiler_ast_types.AstType.I64)
-            (compiler_ir_types.compiler-ir-label "yes")
-            (compiler_ir_types.compiler-ir-label "no")
+            yes-label
+            no-label
             (owned_view.compiler-owned-shared-view fallthrough)
             "%r14"
             ""
@@ -51556,13 +51563,11 @@ g:
               (owned_view.compiler-owned-shared-view assignments)
               "scratch_compare_collision"
               (compiler_ir_types.CompilerIrBinOp.Eq)
-              (compiler_ir_types.CompilerIrValue.Global
-                (ci.intern "scratch_lhs"))
-              (compiler_ir_types.CompilerIrValue.Global
-                (ci.intern "scratch_rhs"))
+              (compiler_ir_types.CompilerIrValue.Global scratch-lhs)
+              (compiler_ir_types.CompilerIrValue.Global scratch-rhs)
               (compiler_ast_types.AstType.I64)
-              (compiler_ir_types.compiler-ir-label "yes")
-              (compiler_ir_types.compiler-ir-label "no")
+              yes-label
+              no-label
               (owned_view.compiler-owned-shared-view fallthrough)
               "%r14"
               "%r14"
@@ -51589,7 +51594,7 @@ g:
             "%r14"
             (compiler_ir_types.CompilerIrBinOp.Eq)
             (compiler_ir_types.CompilerIrValue.Var 0)
-            (compiler_ir_types.CompilerIrValue.Global (ci.intern "scratch_rhs"))
+            (compiler_ir_types.CompilerIrValue.Global scratch-rhs)
             (compiler_ast_types.AstType.I64)
             "%r14"
             backend-state)
@@ -51616,8 +51621,8 @@ g:
             (compiler_ir_types.CompilerIrBinOp.Eq)
             (compiler_ir_types.CompilerIrValue.Var 1)
             (compiler_ast_types.AstType.I64)
-            (compiler_ir_types.compiler-ir-label "yes")
-            (compiler_ir_types.compiler-ir-label "no")
+            yes-label
+            no-label
             (owned_view.compiler-owned-shared-view fallthrough)
             "%r14"
             "%r15"
@@ -51634,8 +51639,8 @@ g:
             (compiler_ir_types.CompilerIrBinOp.Eq)
             (compiler_ir_types.CompilerIrValue.Var 1)
             (compiler_ast_types.AstType.I64)
-            (compiler_ir_types.compiler-ir-label "yes")
-            (compiler_ir_types.compiler-ir-label "no")
+            yes-label
+            no-label
             (owned_view.compiler-owned-shared-view fallthrough)
             ""
             ""
@@ -51652,8 +51657,8 @@ g:
             (compiler_ir_types.CompilerIrBinOp.Eq)
             (compiler_ir_types.CompilerIrValue.Var 1)
             (compiler_ast_types.AstType.I64)
-            (compiler_ir_types.compiler-ir-label "yes")
-            (compiler_ir_types.compiler-ir-label "no")
+            yes-label
+            no-label
             (owned_view.compiler-owned-shared-view fallthrough)
             "%r14"
             "%r15"
@@ -51672,8 +51677,8 @@ g:
             (compiler_ir_types.CompilerIrBinOp.BitTestEq)
             (compiler_ir_types.CompilerIrValue.Var 1)
             (compiler_ast_types.AstType.I64)
-            (compiler_ir_types.compiler-ir-label "yes")
-            (compiler_ir_types.compiler-ir-label "no")
+            yes-label
+            no-label
             (owned_view.compiler-owned-shared-view fallthrough)
             "%r14"
             "%r15"
@@ -51691,8 +51696,8 @@ g:
               (compiler_ir_types.CompilerIrBinOp.BitTestEq)
               (compiler_ir_types.CompilerIrValue.Var 1)
               (compiler_ast_types.AstType.I64)
-              (compiler_ir_types.compiler-ir-label "yes")
-              (compiler_ir_types.compiler-ir-label "no")
+              yes-label
+              no-label
               (owned_view.compiler-owned-shared-view fallthrough)
               "%r14"
               "%r15"
@@ -51706,8 +51711,8 @@ g:
             (compiler_ir_types.CompilerIrBinOp.BitTestNe)
             (compiler_ir_types.CompilerIrValue.Var 1)
             (compiler_ast_types.AstType.I64)
-            (compiler_ir_types.compiler-ir-label "yes")
-            (compiler_ir_types.compiler-ir-label "no")
+            yes-label
+            no-label
             (owned_view.compiler-owned-shared-view fallthrough)
             "%r14"
             "%r15"
@@ -51722,8 +51727,8 @@ g:
               (compiler_ir_types.CompilerIrBinOp.BitTestNe)
               (compiler_ir_types.CompilerIrValue.Var 1)
               (compiler_ast_types.AstType.I64)
-              (compiler_ir_types.compiler-ir-label "yes")
-              (compiler_ir_types.compiler-ir-label "no")
+              yes-label
+              no-label
               (owned_view.compiler-owned-shared-view fallthrough)
               "%r14"
               "%r15"

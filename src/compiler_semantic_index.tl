@@ -7716,6 +7716,248 @@
             (set! record-index (+ record-index 1)))))
       found)))
 
+;; Namespace mask used by semantic rename preflight. Struct names occupy both
+;; the value (constructor) and type namespaces; every other ordinary binding
+;; has one lookup namespace. Members and modules use owner-specific checks
+;; below in addition to any bindings visible at the occurrence.
+(define (compiler-semantic-rename-namespace-mask
+  [kind : (& kind CompilerSemanticSymbolKind)]) : i64
+  (match (deref kind)
+    [(CompilerSemanticSymbolKind.Macro)
+      (compiler-semantic-binding-namespace-macro-mask)]
+    [(CompilerSemanticSymbolKind.Struct)
+      (bit-or
+        (compiler-semantic-binding-namespace-value-mask)
+        (compiler-semantic-binding-namespace-type-mask))]
+    [(CompilerSemanticSymbolKind.Enum)
+      (compiler-semantic-binding-namespace-type-mask)]
+    [(CompilerSemanticSymbolKind.Module) 0]
+    [(CompilerSemanticSymbolKind.Field) 0]
+    [(CompilerSemanticSymbolKind.EnumMember) 0]
+    [_ (compiler-semantic-binding-namespace-value-mask)]))
+
+(define (compiler-semantic-rename-symbol-eq?
+  [left : (& left CompilerSemanticSymbolId)]
+  [right : (& right CompilerSemanticSymbolId)]) : bool
+  (and
+    (= left.module-id right.module-id)
+    (= left.declaration-ordinal right.declaration-ordinal)
+    (= left.local-ordinal right.local-ordinal)))
+
+(define (compiler-semantic-rename-visible-collision-at?
+  [index : (& index CompilerSemanticSourceIndex)]
+  [target : (& target CompilerSemanticRecord)]
+  [byte-offset : i64]
+  [new-name : String]) : bool
+  (let
+    [mask : i64 (compiler-semantic-rename-namespace-mask (& target.kind))]
+    (if (= mask 0)
+      false
+      (match (compiler-semantic-source-index-query
+        index
+        (string.copy (& target.span.path))
+        byte-offset)
+        [(CompilerSemanticMaybeVisibleBindingQuery.None) false]
+        [(CompilerSemanticMaybeVisibleBindingQuery.Some query)
+          (let
+            [cursor : CompilerSemanticVisibleBindingCursor
+              (compiler-semantic-visible-binding-cursor index query mask)]
+            [done : bool false]
+            (begin
+              (while (not done)
+                (match (compiler-semantic-visible-binding-cursor-step
+                  index
+                  cursor)
+                  [(CompilerSemanticVisibleBindingStep.Some binding next)
+                    (if (and
+                      (string.eq binding.display-name new-name)
+                      (not
+                        (compiler-semantic-rename-symbol-eq?
+                          (& binding.symbol)
+                          (& target.symbol))))
+                      (return true)
+                      (set! cursor next))]
+                  [(CompilerSemanticVisibleBindingStep.Done) (set! done true)]))
+              false))]))))
+
+(define (compiler-semantic-rename-member-owner-eq?
+  [left : (& left CompilerSemanticRecord)]
+  [right : (& right CompilerSemanticRecord)]) : bool
+  (and
+    (= left.symbol.module-id right.symbol.module-id)
+    (=
+      (csym.compiler-registry-handle-owner-index
+        left.symbol.declaration-ordinal)
+      (csym.compiler-registry-handle-owner-index
+        right.symbol.declaration-ordinal))))
+
+(define (compiler-semantic-rename-kind-eq?
+  [left : (& left CompilerSemanticSymbolKind)]
+  [right : (& right CompilerSemanticSymbolKind)]) : bool
+  (match (deref left)
+    [(CompilerSemanticSymbolKind.Value)
+      (match (deref right)
+        [(CompilerSemanticSymbolKind.Value) true]
+        [_ false])]
+    [(CompilerSemanticSymbolKind.Function)
+      (match (deref right)
+        [(CompilerSemanticSymbolKind.Function) true]
+        [_ false])]
+    [(CompilerSemanticSymbolKind.Macro)
+      (match (deref right)
+        [(CompilerSemanticSymbolKind.Macro) true]
+        [_ false])]
+    [(CompilerSemanticSymbolKind.ExternValue)
+      (match (deref right)
+        [(CompilerSemanticSymbolKind.ExternValue) true]
+        [_ false])]
+    [(CompilerSemanticSymbolKind.ExternFunction)
+      (match (deref right)
+        [(CompilerSemanticSymbolKind.ExternFunction) true]
+        [_ false])]
+    [(CompilerSemanticSymbolKind.Struct)
+      (match (deref right)
+        [(CompilerSemanticSymbolKind.Struct) true]
+        [_ false])]
+    [(CompilerSemanticSymbolKind.Enum)
+      (match (deref right)
+        [(CompilerSemanticSymbolKind.Enum) true]
+        [_ false])]
+    [(CompilerSemanticSymbolKind.Module)
+      (match (deref right)
+        [(CompilerSemanticSymbolKind.Module) true]
+        [_ false])]
+    [(CompilerSemanticSymbolKind.Field)
+      (match (deref right)
+        [(CompilerSemanticSymbolKind.Field) true]
+        [_ false])]
+    [(CompilerSemanticSymbolKind.EnumMember)
+      (match (deref right)
+        [(CompilerSemanticSymbolKind.EnumMember) true]
+        [_ false])]
+    [(CompilerSemanticSymbolKind.Parameter)
+      (match (deref right)
+        [(CompilerSemanticSymbolKind.Parameter) true]
+        [_ false])]
+    [(CompilerSemanticSymbolKind.Local)
+      (match (deref right)
+        [(CompilerSemanticSymbolKind.Local) true]
+        [_ false])]))
+
+;; Return true when changing one exact canonical occurrence to `new-name`
+;; would capture or collide with a different checked binding. The occurrence
+;; coordinates disambiguate aliases and component records that deliberately
+;; share one canonical declaration identity.
+(define (compiler-semantic-source-index-rename-collision?
+  [index : (& index CompilerSemanticSourceIndex)]
+  [canonical-key : String]
+  [path : String]
+  [start-byte : i64]
+  [end-byte : i64]
+  [new-name : String]) : bool
+  (let
+    [record-index : i64 0]
+    [target-index : i64 -1]
+    (begin
+      (while (and (< target-index 0) (< record-index index.len))
+        (let
+          [record : CompilerSemanticRecord
+            (array-ref index.records record-index)]
+          (if (and
+            (string.eq record.span.path path)
+            (= record.span.start-byte start-byte)
+            (= record.span.end-byte end-byte)
+            (string.eq
+              (compiler-semantic-source-index-record-canonical-key
+                index
+                (& record))
+              canonical-key))
+            (set! target-index record-index)
+            (set! record-index (+ record-index 1)))))
+      (if (< target-index 0)
+        false
+        (let
+          [target : CompilerSemanticRecord
+            (array-ref index.records target-index)]
+          [scan : i64 0]
+          (begin
+            (when
+              (or
+                (compiler-semantic-rename-visible-collision-at?
+                  index
+                  (& target)
+                  target.span.start-byte
+                  new-name)
+                (compiler-semantic-rename-visible-collision-at?
+                  index
+                  (& target)
+                  target.span.end-byte
+                  new-name))
+              (return true))
+            (while (< scan index.len)
+              (let
+                [candidate : CompilerSemanticRecord
+                  (array-ref index.records scan)]
+                (begin
+                  (when
+                    (and
+                      (match candidate.role
+                        [(CompilerSemanticRecordRole.Definition) true]
+                        [_ false])
+                      (string.eq candidate.display-name new-name)
+                      (not
+                        (compiler-semantic-rename-symbol-eq?
+                          (& candidate.symbol)
+                          (& target.symbol)))
+                      (cond
+                        [(or
+                            (match target.kind
+                              [(CompilerSemanticSymbolKind.Field) true]
+                              [_ false])
+                            (match target.kind
+                              [(CompilerSemanticSymbolKind.EnumMember) true]
+                              [_ false]))
+                          (and
+                            (compiler-semantic-rename-kind-eq?
+                              (& target.kind)
+                              (& candidate.kind))
+                            (compiler-semantic-rename-member-owner-eq?
+                              (& target)
+                              (& candidate)))]
+                        [(match target.kind
+                            [(CompilerSemanticSymbolKind.Module) true]
+                            [_ false])
+                          (and
+                            (match candidate.kind
+                              [(CompilerSemanticSymbolKind.Module) true]
+                              [_ false])
+                            (string.eq candidate.span.path target.span.path))]
+                        [(or
+                            (match target.kind
+                              [(CompilerSemanticSymbolKind.Parameter) true]
+                              [_ false])
+                            (match target.kind
+                              [(CompilerSemanticSymbolKind.Local) true]
+                              [_ false]))
+                          (and
+                            (=
+                              candidate.symbol.module-id
+                              target.symbol.module-id)
+                            (=
+                              candidate.symbol.declaration-ordinal
+                              target.symbol.declaration-ordinal)
+                            (or
+                              (match candidate.kind
+                                [(CompilerSemanticSymbolKind.Parameter) true]
+                                [_ false])
+                              (match candidate.kind
+                                [(CompilerSemanticSymbolKind.Local) true]
+                                [_ false])))]
+                        [else false]))
+                    (return true))
+                  (set! scan (+ scan 1)))))
+            false))))))
+
 (define (compiler-check-semantic-index-record-ok?
   [source : String]
   [record : CompilerSemanticRecord]

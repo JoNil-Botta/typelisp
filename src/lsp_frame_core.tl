@@ -172,6 +172,33 @@
   ;; 0 complete, 1 refreshable, 2 currently incomplete.
   (completeness i64))
 
+(defstruct LspRenameTarget
+  (canonical-key String)
+  ;; Exact source spelling selected by the user. Import aliases and module
+  ;; components can share a canonical declaration while remaining separate
+  ;; rename surfaces.
+  (surface-name String)
+  (kind compiler_semantic_index.CompilerSemanticSymbolKind)
+  (record-span compiler_semantic_index.CompilerSemanticSpan)
+  (edit-span compiler_semantic_index.CompilerSemanticSpan))
+
+(defenum LspRenameTargetLookup
+  (Found LspRenameTarget)
+  (Missing))
+
+(defenum LspRenameSourceLookup
+  (Found String)
+  (Missing))
+
+(defenum LspRenameValidation
+  (Ok i64)
+  (Err String))
+
+(defenum LspRenameModuleMoveLookup
+  (Found String String)
+  (Missing)
+  (Err String))
+
 (defstruct LspLineCol
   (line i64)
   (col i64))
@@ -967,65 +994,68 @@
               "referencesProvider"
               (json.JsonBool true)
               (lsp-json-member
-                "documentSymbolProvider"
-                (json.JsonBool true)
+                "renameProvider"
+                (lsp-json-object1 "prepareProvider" (json.JsonBool true))
                 (lsp-json-member
-                  "documentHighlightProvider"
+                  "documentSymbolProvider"
                   (json.JsonBool true)
                   (lsp-json-member
-                    "completionProvider"
-                    (lsp-json-object1 "resolveProvider" (json.JsonBool false))
+                    "documentHighlightProvider"
+                    (json.JsonBool true)
                     (lsp-json-member
-                      "signatureHelpProvider"
-                      (lsp-json-object2
-                        "triggerCharacters"
-                        (lsp-json-array
-                          (lsp-json-list-cons
-                            (json.JsonString " ")
-                            (json.list-empty)))
-                        "retriggerCharacters"
-                        (lsp-json-array
-                          (lsp-json-list-cons
-                            (json.JsonString ")")
-                            (json.list-empty))))
+                      "completionProvider"
+                      (lsp-json-object1 "resolveProvider" (json.JsonBool false))
                       (lsp-json-member
-                        "codeActionProvider"
-                        (lsp-json-object1
-                          "codeActionKinds"
+                        "signatureHelpProvider"
+                        (lsp-json-object2
+                          "triggerCharacters"
                           (lsp-json-array
                             (lsp-json-list-cons
-                              (json.JsonString "quickfix")
+                              (json.JsonString " ")
+                              (json.list-empty)))
+                          "retriggerCharacters"
+                          (lsp-json-array
+                            (lsp-json-list-cons
+                              (json.JsonString ")")
                               (json.list-empty))))
                         (lsp-json-member
-                          "inlayHintProvider"
-                          (json.JsonBool true)
+                          "codeActionProvider"
+                          (lsp-json-object1
+                            "codeActionKinds"
+                            (lsp-json-array
+                              (lsp-json-list-cons
+                                (json.JsonString "quickfix")
+                                (json.list-empty))))
                           (lsp-json-member
-                            "documentFormattingProvider"
+                            "inlayHintProvider"
                             (json.JsonBool true)
                             (lsp-json-member
-                              "hoverProvider"
+                              "documentFormattingProvider"
                               (json.JsonBool true)
                               (lsp-json-member
-                                "documentLinkProvider"
-                                (lsp-json-object1
-                                  "resolveProvider"
-                                  (json.JsonBool false))
+                                "hoverProvider"
+                                (json.JsonBool true)
                                 (lsp-json-member
-                                  "foldingRangeProvider"
-                                  (json.JsonBool true)
+                                  "documentLinkProvider"
+                                  (lsp-json-object1
+                                    "resolveProvider"
+                                    (json.JsonBool false))
                                   (lsp-json-member
-                                    "workspaceSymbolProvider"
+                                    "foldingRangeProvider"
                                     (json.JsonBool true)
                                     (lsp-json-member
-                                      "workspace"
-                                      (lsp-json-object1
-                                        "workspaceFolders"
-                                        (lsp-json-object2
-                                          "supported"
-                                          (json.JsonBool true)
-                                          "changeNotifications"
-                                          (json.JsonBool true)))
-                                      (json.member-list-empty))))))))))))))))))
+                                      "workspaceSymbolProvider"
+                                      (json.JsonBool true)
+                                      (lsp-json-member
+                                        "workspace"
+                                        (lsp-json-object1
+                                          "workspaceFolders"
+                                          (lsp-json-object2
+                                            "supported"
+                                            (json.JsonBool true)
+                                            "changeNotifications"
+                                            (json.JsonBool true)))
+                                        (json.member-list-empty)))))))))))))))))))
     "serverInfo"
     (lsp-json-object2
       "name"
@@ -8706,6 +8736,8 @@
     false
     -1
     compiler_semantic_index.CompilerSemanticRecordRole.Definition
+    ""
+    compiler_semantic_index.CompilerSemanticSymbolKind.Value
     (compiler_semantic_index.CompilerSemanticSpan
       ""
       -1
@@ -8883,6 +8915,32 @@
                       compiler_semantic_index.CompilerSemanticRecordRole.Definition]
                     [(compiler_semantic_index.CompilerSemanticRecordRole.Use)
                       compiler_semantic_index.CompilerSemanticRecordRole.Use])
+                  (string.copy (& record.display-name))
+                  (match record.kind
+                    [(compiler_semantic_index.CompilerSemanticSymbolKind.Value)
+                      compiler_semantic_index.CompilerSemanticSymbolKind.Value]
+                    [(compiler_semantic_index.CompilerSemanticSymbolKind.Function)
+                      compiler_semantic_index.CompilerSemanticSymbolKind.Function]
+                    [(compiler_semantic_index.CompilerSemanticSymbolKind.Macro)
+                      compiler_semantic_index.CompilerSemanticSymbolKind.Macro]
+                    [(compiler_semantic_index.CompilerSemanticSymbolKind.ExternValue)
+                      compiler_semantic_index.CompilerSemanticSymbolKind.ExternValue]
+                    [(compiler_semantic_index.CompilerSemanticSymbolKind.ExternFunction)
+                      compiler_semantic_index.CompilerSemanticSymbolKind.ExternFunction]
+                    [(compiler_semantic_index.CompilerSemanticSymbolKind.Struct)
+                      compiler_semantic_index.CompilerSemanticSymbolKind.Struct]
+                    [(compiler_semantic_index.CompilerSemanticSymbolKind.Enum)
+                      compiler_semantic_index.CompilerSemanticSymbolKind.Enum]
+                    [(compiler_semantic_index.CompilerSemanticSymbolKind.Module)
+                      compiler_semantic_index.CompilerSemanticSymbolKind.Module]
+                    [(compiler_semantic_index.CompilerSemanticSymbolKind.Field)
+                      compiler_semantic_index.CompilerSemanticSymbolKind.Field]
+                    [(compiler_semantic_index.CompilerSemanticSymbolKind.EnumMember)
+                      compiler_semantic_index.CompilerSemanticSymbolKind.EnumMember]
+                    [(compiler_semantic_index.CompilerSemanticSymbolKind.Parameter)
+                      compiler_semantic_index.CompilerSemanticSymbolKind.Parameter]
+                    [(compiler_semantic_index.CompilerSemanticSymbolKind.Local)
+                      compiler_semantic_index.CompilerSemanticSymbolKind.Local])
                   (compiler_semantic_index.CompilerSemanticSpan
                     (string.copy (& path))
                     record.span.start-byte
@@ -9074,6 +9132,583 @@
               unit)
             (set! index (- index 1)))))
       (lsp-json-array locations))))
+
+(define (lsp-rename-span-real?
+  [span : compiler_semantic_index.CompilerSemanticSpan]
+  [text : String]) : bool
+  (and
+    (>= span.start-byte 0)
+    (> span.end-byte span.start-byte)
+    (<= span.end-byte (string.string-length text))))
+
+;; Value/function facts preserve a whole qualified token for navigation. A
+;; rename edits only its final identifier component; aliases have a different
+;; source spelling and therefore keep their exact alias span.
+(define (lsp-rename-effective-span
+  [span : compiler_semantic_index.CompilerSemanticSpan]
+  [display-name : String]
+  [text : String]) : compiler_semantic_index.CompilerSemanticSpan
+  (if (not (lsp-rename-span-real? span text))
+    span
+    (let
+      [name-len : i64 (string.string-length display-name)]
+      [candidate-start : i64 (- span.end-byte name-len)]
+      [suffix : bool
+        (and
+          (> name-len 0)
+          (>= candidate-start span.start-byte)
+          (string.eq
+            (string.substring text candidate-start name-len)
+            display-name))]
+      [component : bool
+        (and
+          suffix
+          (or
+            (= candidate-start span.start-byte)
+            (= (string.string-ref text (- candidate-start 1)) '.')
+            (= (string.string-ref text (- candidate-start 1)) '/')))]
+      (if (not component)
+        span
+        (let
+          [source : ast.AstSourceSpan span.source]
+          [end-line : i64 (ast.ast-source-span-end-line source)]
+          [end-col : i64 (ast.ast-source-span-end-col source)]
+          (compiler_semantic_index.CompilerSemanticSpan
+            (string.copy (& span.path))
+            candidate-start
+            span.end-byte
+            (ast.ast-source-span end-line (- end-col name-len) end-line end-col)
+            (- span.utf16-end-col name-len)
+            span.utf16-end-col))))))
+
+(define (lsp-rename-span-text
+  [span : compiler_semantic_index.CompilerSemanticSpan]
+  [text : String]) : String
+  (if (lsp-rename-span-real? span text)
+    (string.substring text span.start-byte (- span.end-byte span.start-byte))
+    ""))
+
+(define (lsp-rename-target-at
+  [doc : (& doc lsp_vector_families.LspDocument)]
+  [byte-position : i64]) : LspRenameTargetLookup
+  (match (lsp-document-semantic-snapshot-status doc)
+    [(LspSemanticSnapshotStatus.Current _ complete)
+      (if (not complete)
+        LspRenameTargetLookup.Missing
+        (let
+          [index : compiler_semantic_index.CompilerSemanticSourceIndex
+            doc.semantic.index]
+          [record-index : i64 0]
+          [best-width : i64 999999999]
+          [result : LspRenameTargetLookup LspRenameTargetLookup.Missing]
+          [source-text : String (string.copy (& doc.text))]
+          (begin
+            (while (<
+              record-index
+              (compiler_semantic_index.compiler-semantic-source-index-len
+                (& index)))
+              (let
+                [record : compiler_semantic_index.CompilerSemanticRecord
+                  (compiler_semantic_index.compiler-semantic-source-index-get
+                    (& index)
+                    record-index)]
+                [record-span : compiler_semantic_index.CompilerSemanticSpan
+                  record.span]
+                [edit-span : compiler_semantic_index.CompilerSemanticSpan
+                  (lsp-rename-effective-span
+                    record-span
+                    record.display-name
+                    source-text)]
+                [width : i64 (- edit-span.end-byte edit-span.start-byte)]
+                (begin
+                  (if (and
+                    (lsp-semantic-record-exact-editable? record)
+                    (string.eq
+                      (lsp-normalized-absolute-path
+                        (string.copy (& record-span.path)))
+                      (lsp-normalized-absolute-path (string.copy (& doc.path))))
+                    (lsp-rename-span-real? edit-span source-text)
+                    (>= byte-position edit-span.start-byte)
+                    (< byte-position edit-span.end-byte)
+                    (< width best-width))
+                    (let
+                      [canonical-key : String
+                        (compiler_semantic_index.compiler-semantic-source-index-record-canonical-key
+                          (& index)
+                          (& record))]
+                      [surface-name : String
+                        (lsp-rename-span-text edit-span source-text)]
+                      (if (and
+                        (> (string.string-length canonical-key) 0)
+                        (> (string.string-length surface-name) 0))
+                        (begin
+                          (set! best-width width)
+                          (set!
+                            result
+                            (LspRenameTargetLookup.Found
+                              (LspRenameTarget
+                                canonical-key
+                                surface-name
+                                record.kind
+                                record-span
+                                edit-span))))
+                        unit))
+                    unit)
+                  (set! record-index (+ record-index 1)))))
+            result)))]
+    [_ LspRenameTargetLookup.Missing]))
+
+(define (lsp-rename-source-for-fact
+  [state : (& state lsp_vector_families.LspServerState)]
+  [fact : lsp_vector_families.LspWorkspaceSemanticFact]) : LspRenameSourceLookup
+  (let
+    [doc-index : i64
+      (lsp-documents-find-path-index (& state.documents) fact.span.path)]
+    (if (>= doc-index 0)
+      (LspRenameSourceLookup.Found
+        (__tl-project-field
+          (lsp_document_vec.get
+            (& state.documents)
+            doc-index
+            (lsp-document-fallback))
+          text))
+      (match (io.try-read-file (& fact.span.path))
+        [(io.OkIoBytes contents)
+          (LspRenameSourceLookup.Found (byte_buf.to-string contents))]
+        [(io.ErrIoBytes _) LspRenameSourceLookup.Missing]))))
+
+(define (lsp-rename-fact-surface-span
+  [fact : lsp_vector_families.LspWorkspaceSemanticFact]
+  [text : String]) : compiler_semantic_index.CompilerSemanticSpan
+  (lsp-rename-effective-span fact.span fact.display-name text))
+
+(define (lsp-rename-fact-selected?
+  [fact : lsp_vector_families.LspWorkspaceSemanticFact]
+  [text : String]
+  [surface-name : String]) : bool
+  (string.eq
+    (lsp-rename-span-text (lsp-rename-fact-surface-span fact text) text)
+    surface-name))
+
+(define (lsp-rename-module-kind?
+  [kind : (& kind compiler_semantic_index.CompilerSemanticSymbolKind)]) : bool
+  (match (deref kind)
+    [(compiler_semantic_index.CompilerSemanticSymbolKind.Module) true]
+    [_ false]))
+
+(define (lsp-rename-path-leaf-start [path : String] [name : String]) : i64
+  (let
+    [path-len : i64 (string.string-length path)]
+    [leaf-len : i64 (+ (string.string-length name) 3)]
+    [start : i64 (- path-len leaf-len)]
+    (if (and
+      (>= start 0)
+      (string.eq (string.substring path start leaf-len) (lsp-str2 name ".tl"))
+      (or
+        (= start 0)
+        (= (string.string-ref path (- start 1)) '/')
+        (= (string.string-ref path (- start 1)) '\\')))
+      start
+      -1)))
+
+(define (lsp-rename-module-new-path
+  [path : String]
+  [old-name : String]
+  [new-name : String]) : String
+  (let
+    [start : i64 (lsp-rename-path-leaf-start path old-name)]
+    (if (< start 0)
+      ""
+      (lsp-str3 (string.substring path 0 start) new-name ".tl"))))
+
+;; A real module declaration is source-addressed by its final component. Its
+;; file must move after all TextDocumentEdits have applied to the old URI;
+;; selected import aliases have no matching source leaf and therefore need no
+;; resource operation.
+(define (lsp-rename-module-move
+  [state : (& state lsp_vector_families.LspServerState)]
+  [query : (& query LspWorkspaceSemanticQuery)]
+  [target : LspRenameTarget]
+  [new-name : String]) : LspRenameModuleMoveLookup
+  (if (not (lsp-rename-module-kind? (& target.kind)))
+    LspRenameModuleMoveLookup.Missing
+    (let
+      [index : i64 0]
+      [old-path : String ""]
+      [new-path : String ""]
+      (begin
+        (while (< index query.len)
+          (let
+            [fact : lsp_vector_families.LspWorkspaceSemanticFact
+              (lsp-workspace-semantic-facts-get query index)]
+            (begin
+              (if (and
+                (lsp-workspace-semantic-fact-definition? fact)
+                (lsp-rename-module-kind? (& fact.kind))
+                (>=
+                  (lsp-rename-path-leaf-start
+                    fact.span.path
+                    target.surface-name)
+                  0))
+                (match (lsp-rename-source-for-fact state fact)
+                  [(LspRenameSourceLookup.Found text)
+                    (if (lsp-rename-fact-selected?
+                      fact
+                      text
+                      target.surface-name)
+                      (let
+                        [candidate : String
+                          (lsp-rename-module-new-path
+                            fact.span.path
+                            target.surface-name
+                            new-name)]
+                        (cond
+                          [(= (string.string-length old-path) 0)
+                            (begin
+                              (set! old-path fact.span.path)
+                              (set! new-path candidate))]
+                          [(not (string.eq old-path fact.span.path))
+                            (return
+                              (LspRenameModuleMoveLookup.Err
+                                "Rename resolves to multiple module source files"))]
+                          [else unit]))
+                      unit)]
+                  [(LspRenameSourceLookup.Missing) unit])
+                unit)
+              (set! index (+ index 1)))))
+        (if (= (string.string-length old-path) 0)
+          LspRenameModuleMoveLookup.Missing
+          (match (lsp-workspace-root-for-path
+            (& state.workspace.roots)
+            new-path
+            false)
+            [(lsp_vector_families.LspWorkspaceRootLookup.Missing)
+              (LspRenameModuleMoveLookup.Err
+                "Renamed module path would leave the editable workspace")]
+            [(lsp_vector_families.LspWorkspaceRootLookup.Found _)
+              (match (io.try-file-exists? (& new-path))
+                [(io.ErrIoBool _)
+                  (LspRenameModuleMoveLookup.Err
+                    "Cannot validate the renamed module destination")]
+                [(io.OkIoBool exists)
+                  (if exists
+                    (LspRenameModuleMoveLookup.Err
+                      "Renamed module source path already exists")
+                    (LspRenameModuleMoveLookup.Found old-path new-path))])]))))))
+
+(define (lsp-rename-space-list-contains? [items : String] [name : String]) : bool
+  (let
+    [len : i64 (string.string-length items)]
+    [name-len : i64 (string.string-length name)]
+    [index : i64 0]
+    (begin
+      (while (<= (+ index name-len) len)
+        (if (and
+          (or (= index 0) (= (string.string-ref items (- index 1)) ' '))
+          (or
+            (= (+ index name-len) len)
+            (= (string.string-ref items (+ index name-len)) ' '))
+          (string.is-string-prefix-at (& items) (& name) index))
+          (return true)
+          (set! index (+ index 1))))
+      false)))
+
+(define (lsp-rename-valid-new-name? [name : String]) : bool
+  (let
+    [len : i64 (string.string-length name)]
+    [index : i64 0]
+    [valid : bool (> len 0)]
+    [dot : String "."]
+    [colon : String ":"]
+    (begin
+      (if (and
+        valid
+        (or
+          (and
+            (>= (string.string-ref name 0) '0')
+            (<= (string.string-ref name 0) '9'))
+          (string.eq name "_")
+          (string.contains (& name) (& dot))
+          (string.contains (& name) (& colon))))
+        (set! valid false)
+        unit)
+      (while (and valid (< index len))
+        (if (lsp-ident-char? (string.string-ref name index))
+          (set! index (+ index 1))
+          (set! valid false)))
+      (and
+        valid
+        (not
+          (lsp-rename-space-list-contains?
+            (lsp-str3
+              (lsp-completion-keywords)
+              " "
+              (lsp-str3 (lsp-completion-types) " " "true false unit"))
+            name))))))
+
+(define (lsp-rename-valid-new-name-for-target?
+  [target : LspRenameTarget]
+  [name : String]) : bool
+  (and
+    (lsp-rename-valid-new-name? name)
+    (if (lsp-rename-module-kind? (& target.kind))
+      (let
+        [slash : String "/"]
+        (not (string.contains (& name) (& slash))))
+      true)))
+
+(define (lsp-rename-fact-workspace-editable?
+  [state : (& state lsp_vector_families.LspServerState)]
+  [fact : lsp_vector_families.LspWorkspaceSemanticFact]) : bool
+  (and
+    fact.editable
+    (lsp-workspace-semantic-fact-real-location? fact)
+    (if fact.open
+      (>= fact.version 0)
+      (match (lsp-workspace-root-for-path
+        (& state.workspace.roots)
+        fact.span.path
+        true)
+        [(lsp_vector_families.LspWorkspaceRootLookup.Found _) true]
+        [(lsp_vector_families.LspWorkspaceRootLookup.Missing) false]))))
+
+(define (lsp-rename-fact-collision-in-index?
+  [index : (& index compiler_semantic_index.CompilerSemanticSourceIndex)]
+  [fact : lsp_vector_families.LspWorkspaceSemanticFact]
+  [canonical-key : String]
+  [new-name : String]) : bool
+  (compiler_semantic_index.compiler-semantic-source-index-rename-collision?
+    index
+    canonical-key
+    fact.span.path
+    fact.span.start-byte
+    fact.span.end-byte
+    new-name))
+
+(define (lsp-rename-fact-collision?
+  [state : (& state lsp_vector_families.LspServerState)]
+  [fact : lsp_vector_families.LspWorkspaceSemanticFact]
+  [canonical-key : String]
+  [new-name : String]) : bool
+  (let
+    [doc-index : i64 0]
+    [cache-index : i64 0]
+    (begin
+      (while (< doc-index (lsp_document_vec.len (& state.documents)))
+        (let
+          [doc : lsp_vector_families.LspDocument
+            (lsp_document_vec.get
+              (& state.documents)
+              doc-index
+              (lsp-document-fallback))]
+          (begin
+            (when
+              (lsp-rename-fact-collision-in-index?
+                (& doc.semantic.index)
+                fact
+                canonical-key
+                new-name)
+              (return true))
+            (set! doc-index (+ doc-index 1)))))
+      (while (< cache-index state.semantic-cache.len)
+        (begin
+          (when
+            (lsp-rename-fact-collision-in-index?
+              (& (array-ref state.semantic-cache.slots cache-index).index)
+              fact
+              canonical-key
+              new-name)
+            (return true))
+          (set! cache-index (+ cache-index 1))))
+      false)))
+
+(define (lsp-rename-validate-query
+  [state : (& state lsp_vector_families.LspServerState)]
+  [query : (& query LspWorkspaceSemanticQuery)]
+  [target : LspRenameTarget]
+  [new-name : String]
+  [check-collisions : bool]) : LspRenameValidation
+  (if (not (= query.completeness 0))
+    (LspRenameValidation.Err
+      "Workspace semantic rename information is currently incomplete")
+    (let
+      [index : i64 0]
+      [selected : i64 0]
+      [definitions : i64 0]
+      [error : String ""]
+      (begin
+        (while (and (< index query.len) (= (string.string-length error) 0))
+          (let
+            [fact : lsp_vector_families.LspWorkspaceSemanticFact
+              (lsp-workspace-semantic-facts-get query index)]
+            (begin
+              (match (lsp-rename-source-for-fact state fact)
+                [(LspRenameSourceLookup.Missing)
+                  (if (string.eq fact.display-name target.surface-name)
+                    (set!
+                      error
+                      "A rename occurrence has no current source text")
+                    unit)]
+                [(LspRenameSourceLookup.Found text)
+                  (if (lsp-rename-fact-selected? fact text target.surface-name)
+                    (begin
+                      (set! selected (+ selected 1))
+                      (if (lsp-workspace-semantic-fact-definition? fact)
+                        (set! definitions (+ definitions 1))
+                        unit)
+                      (cond
+                        [(not (lsp-rename-fact-workspace-editable? state fact))
+                          (set!
+                            error
+                            "Rename would modify generated, stale, or non-workspace source")]
+                        [(not
+                            (lsp-rename-span-real?
+                              (lsp-rename-fact-surface-span fact text)
+                              text))
+                          (set!
+                            error
+                            "Rename occurrence has an invalid source range")]
+                        [(and
+                            check-collisions
+                            (lsp-rename-fact-collision?
+                              state
+                              fact
+                              target.canonical-key
+                              new-name))
+                          (set!
+                            error
+                            "New name collides with a visible binding")]
+                        [else unit]))
+                    unit)])
+              (set! index (+ index 1)))))
+        (cond
+          [(> (string.string-length error) 0) (LspRenameValidation.Err error)]
+          [(= selected 0)
+            (LspRenameValidation.Err
+              "No editable rename occurrences were found")]
+          [(= definitions 0)
+            (LspRenameValidation.Err "Rename target has no editable definition")]
+          [else (LspRenameValidation.Ok selected)])))))
+
+(define (lsp-rename-text-edit
+  [span : compiler_semantic_index.CompilerSemanticSpan]
+  [new-name : String]) : json.Json
+  (lsp-json-object2
+    "range"
+    (lsp-json-object2
+      "start"
+      (lsp-semantic-span-position span true)
+      "end"
+      (lsp-semantic-span-position span false))
+    "newText"
+    (json.JsonString new-name)))
+
+(define (lsp-rename-document-edit
+  [uri : String]
+  [open : bool]
+  [version : i64]
+  [edits : json.JsonSeq]) : json.Json
+  (lsp-json-object2
+    "textDocument"
+    (lsp-json-object2
+      "uri"
+      (json.JsonString uri)
+      "version"
+      (if open
+        (lsp-json-number version)
+        json.JsonNull))
+    "edits"
+    (lsp-json-array edits)))
+
+(define (lsp-rename-file-operation [old-path : String] [new-path : String]) : json.Json
+  (lsp-json-object3
+    "kind"
+    (json.JsonString "rename")
+    "oldUri"
+    (json.JsonString (lsp-path-to-file-uri old-path))
+    "newUri"
+    (json.JsonString (lsp-path-to-file-uri new-path))))
+
+(define (lsp-rename-workspace-edit
+  [state : (& state lsp_vector_families.LspServerState)]
+  [query : (& query LspWorkspaceSemanticQuery)]
+  [target : LspRenameTarget]
+  [new-name : String]) : json.Json
+  (let
+    [index : i64 (- query.len 1)]
+    [changes : json.JsonSeq (json.list-empty)]
+    (begin
+      (while (>= index 0)
+        (let
+          [last : lsp_vector_families.LspWorkspaceSemanticFact
+            (lsp-workspace-semantic-facts-get query index)]
+          [uri : String last.uri]
+          [open : bool last.open]
+          [version : i64 last.version]
+          [edits : json.JsonSeq (json.list-empty)]
+          [previous-start : i64 -1]
+          [previous-end : i64 -1]
+          (begin
+            (while (and
+              (>= index 0)
+              (string.eq (lsp-workspace-semantic-facts-get query index).uri uri))
+              (let
+                [fact : lsp_vector_families.LspWorkspaceSemanticFact
+                  (lsp-workspace-semantic-facts-get query index)]
+                (begin
+                  (match (lsp-rename-source-for-fact state fact)
+                    [(LspRenameSourceLookup.Missing) unit]
+                    [(LspRenameSourceLookup.Found text)
+                      (if (lsp-rename-fact-selected?
+                        fact
+                        text
+                        target.surface-name)
+                        (let
+                          [span : compiler_semantic_index.CompilerSemanticSpan
+                            (lsp-rename-fact-surface-span fact text)]
+                          (if (and
+                            (= span.start-byte previous-start)
+                            (= span.end-byte previous-end))
+                            unit
+                            (begin
+                              (set! previous-start span.start-byte)
+                              (set! previous-end span.end-byte)
+                              (set!
+                                edits
+                                (lsp-json-list-cons
+                                  (lsp-rename-text-edit span new-name)
+                                  edits)))))
+                        unit)])
+                  (set! index (- index 1)))))
+            (if (> (json.list-count edits) 0)
+              (set!
+                changes
+                (lsp-json-list-cons
+                  (lsp-rename-document-edit uri open version edits)
+                  changes))
+              unit))))
+      (match (lsp-rename-module-move state query target new-name)
+        [(LspRenameModuleMoveLookup.Found old-path new-path)
+          (set!
+            changes
+            (json.list-concat
+              changes
+              (lsp-json-list-cons
+                (lsp-rename-file-operation old-path new-path)
+                (json.list-empty))))]
+        [_ unit])
+      (lsp-json-object1 "documentChanges" (lsp-json-array changes)))))
+
+(define (lsp-prepare-rename-result [target : LspRenameTarget]) : json.Json
+  (lsp-json-object2
+    "range"
+    (lsp-json-object2
+      "start"
+      (lsp-semantic-span-position target.edit-span true)
+      "end"
+      (lsp-semantic-span-position target.edit-span false))
+    "placeholder"
+    (json.JsonString target.surface-name)))
 
 (define (lsp-server-state-initialize-workspaces
   [state : lsp_vector_families.LspServerState]
@@ -12472,7 +13107,6 @@
     (string.eq method "tl/replaceBody")
     (string.eq method "tl/replacePattern")
     (string.eq method "tl/patch")
-    (string.eq method "tl/rename")
     (string.eq method "tl/delete")
     (string.eq method "tl/insertAfter")
     (string.eq method "tl/batch")))
@@ -12754,6 +13388,211 @@
               (arena.tl_arena_destroy scratch))
             (LspHandleResult.Continue next)))])))
 
+(define (lsp-rename-write-result!
+  [method : String]
+  [id : json.Json]
+  [params : json.Json]
+  [state : (& state lsp_vector_families.LspServerState)]
+  [query : (& query LspWorkspaceSemanticQuery)]
+  [target : LspRenameTarget]) : unit
+  (if (string.eq method "textDocument/prepareRename")
+    (match (lsp-rename-validate-query state query target "" false)
+      [(LspRenameValidation.Ok _)
+        (lsp-write-response id (lsp-prepare-rename-result target))]
+      [(LspRenameValidation.Err message) (lsp-write-error id -32803 message)])
+    (match (lsp-json-string-field params "newName")
+      [(LspJsonText.Missing)
+        (lsp-write-error id -32602 "textDocument/rename requires newName")]
+      [(LspJsonText.Ok new-name)
+        (cond
+          [(not (lsp-rename-valid-new-name-for-target? target new-name))
+            (lsp-write-error
+              id
+              -32602
+              "newName is not a valid TypeLisp identifier")]
+          [(string.eq new-name target.surface-name)
+            (lsp-write-error id -32602 "newName is unchanged")]
+          [else
+            (match (lsp-rename-module-move state query target new-name)
+              [(LspRenameModuleMoveLookup.Err message)
+                (lsp-write-error id -32803 message)]
+              [_
+                (match (lsp-rename-validate-query
+                  state
+                  query
+                  target
+                  new-name
+                  true)
+                  [(LspRenameValidation.Ok _)
+                    (lsp-write-response
+                      id
+                      (lsp-rename-workspace-edit state query target new-name))]
+                  [(LspRenameValidation.Err message)
+                    (lsp-write-error id -32803 message)])])])])))
+
+(define (lsp-handle-rename-position!
+  [method : String]
+  [id : json.Json]
+  [position : json.Json]
+  [params : json.Json]
+  [state : lsp_vector_families.LspServerState]
+  [stdlib-roots : lsp_svec.Vec]
+  [doc : (& doc lsp_vector_families.LspDocument)]) : lsp_vector_families.LspServerState
+  (if (not
+    (and
+      (lsp-json-int-field-usable? position "line")
+      (lsp-json-int-field-usable? position "character")))
+    (begin
+      (lsp-write-error id -32602 "Rename requires a valid position")
+      state)
+    (match (lsp-document-semantic-snapshot-status doc)
+      [(LspSemanticSnapshotStatus.Current _ complete)
+        (if (not complete)
+          (begin
+            (lsp-write-error
+              id
+              -32803
+              "Current document semantic snapshot is incomplete")
+            state)
+          (let
+            [line : i64 (lsp-json-int-field-default position "line" -1)]
+            [character : i64
+              (lsp-json-int-field-default position "character" -1)]
+            (match (lsp-offset-at-position-checked
+              (string.copy (& doc.text))
+              line
+              character)
+              [(LspOffsetLookup.Missing)
+                (begin
+                  (lsp-write-response id json.JsonNull)
+                  state)]
+              [(LspOffsetLookup.Found offset)
+                (match (lsp-rename-target-at doc offset)
+                  [(LspRenameTargetLookup.Missing)
+                    (begin
+                      (lsp-write-response id json.JsonNull)
+                      state)]
+                  [(LspRenameTargetLookup.Found target)
+                    (let
+                      [query : LspWorkspaceSemanticQuery
+                        (lsp-workspace-semantic-query
+                          (& state)
+                          stdlib-roots
+                          target.canonical-key)]
+                      (if (= query.completeness 1)
+                        (let
+                          [refreshed : lsp_vector_families.LspServerState
+                            (lsp-server-state-refresh-semantic-cache
+                              state
+                              stdlib-roots)]
+                          [refreshed-query : LspWorkspaceSemanticQuery
+                            (lsp-workspace-semantic-query
+                              (& refreshed)
+                              stdlib-roots
+                              target.canonical-key)]
+                          (begin
+                            (lsp-rename-write-result!
+                              method
+                              id
+                              params
+                              (& refreshed)
+                              (& refreshed-query)
+                              target)
+                            refreshed))
+                        (begin
+                          (lsp-rename-write-result!
+                            method
+                            id
+                            params
+                            (& state)
+                            (& query)
+                            target)
+                          state)))])])))]
+      [_
+        (begin
+          (lsp-write-error
+            id
+            -32803
+            "Current document semantic snapshot is stale")
+          state)])))
+
+(define (lsp-handle-rename-with-params!
+  [method : String]
+  [id : json.Json]
+  [params : json.Json]
+  [state : lsp_vector_families.LspServerState]
+  [stdlib-roots : lsp_svec.Vec]) : lsp_vector_families.LspServerState
+  (match (lsp-tl-request-uri params)
+    [(LspJsonText.Missing)
+      (begin
+        (lsp-write-error id -32602 "Rename requires textDocument.uri")
+        state)]
+    [(LspJsonText.Ok uri)
+      (let
+        [doc-index : i64 (lsp-documents-find-index state.documents uri)]
+        (if (< doc-index 0)
+          (begin
+            (lsp-write-response id json.JsonNull)
+            state)
+          (let
+            [position-key : String "position"]
+            [doc : lsp_vector_families.LspDocument
+              (lsp_document_vec.get
+                (& state.documents)
+                doc-index
+                (lsp-document-fallback))]
+            (match (json.object-get params (& position-key))
+              [(json.JsonMissing)
+                (begin
+                  (lsp-write-error id -32602 "Rename requires position")
+                  state)]
+              [(json.JsonFound position)
+                (lsp-handle-rename-position!
+                  method
+                  id
+                  position
+                  params
+                  state
+                  stdlib-roots
+                  (& doc))]))))]))
+
+(define (lsp-handle-rename-message
+  [method : String]
+  [message : json.Json]
+  [state : lsp_vector_families.LspServerState]
+  [stdlib-roots : lsp_svec.Vec]) : LspHandleResult
+  (let
+    [id-key : String "id"]
+    (match (json.object-get message (& id-key))
+      [(json.JsonMissing) (LspHandleResult.Continue state)]
+      [(json.JsonFound id)
+        (let
+          [previous : i64 (arena.tl_arena_current)]
+          [scratch : i64 (arena.tl_arena_make)]
+          [_install : unit
+            (unsafe
+              (arena.tl_arena_set scratch))]
+          [params-key : String "params"]
+          [next : lsp_vector_families.LspServerState
+            (match (json.object-get message (& params-key))
+              [(json.JsonMissing)
+                (begin
+                  (lsp-write-error id -32602 "Rename requires params")
+                  state)]
+              [(json.JsonFound params)
+                (lsp-handle-rename-with-params!
+                  method
+                  id
+                  params
+                  state
+                  stdlib-roots)])]
+          (begin
+            (unsafe
+              (arena.tl_arena_set previous))
+            (unsafe
+              (arena.tl_arena_destroy scratch))
+            (LspHandleResult.Continue next)))])))
+
 ;; Workspace queries are read-only and run in a request-local arena. Repeated
 ;; searches therefore retain neither candidate arrays nor JSON result graphs,
 ;; while the immutable state-owned declaration rows remain untouched.
@@ -12814,6 +13653,10 @@
             (string.eq method "workspace/didChangeWorkspaceFolders"))
           (lsp-handle-stateful-notification method message state stdlib-roots)]
         [(string.eq method "$/cancelRequest") (LspHandleResult.Continue state)]
+        [(or
+            (string.eq method "textDocument/prepareRename")
+            (string.eq method "textDocument/rename"))
+          (lsp-handle-rename-message method message state stdlib-roots)]
         [(string.eq method "textDocument/references")
           (lsp-handle-references-message message state stdlib-roots)]
         [(or
@@ -12869,7 +13712,6 @@
     (string.eq method "tl/signatureHelp")
     (string.eq method "tl/replacePattern")
     (string.eq method "tl/patch")
-    (string.eq method "tl/rename")
     (string.eq method "tl/delete")
     (string.eq method "tl/insertAfter")
     (string.eq method "tl/batch")
@@ -12945,7 +13787,6 @@
     [(string.eq method "tl/replacePattern")
       (lsp-handle-tl-replace-pattern-at id params docs)]
     [(string.eq method "tl/patch") (lsp-handle-tl-patch id params docs)]
-    [(string.eq method "tl/rename") (lsp-handle-tl-rename id params docs)]
     [(string.eq method "tl/delete") (lsp-handle-tl-delete-at id params docs)]
     [(string.eq method "tl/insertAfter")
       (lsp-handle-tl-insert-after id params docs)]
@@ -13422,7 +14263,10 @@
           (io.print-error "\n")
           2)])))
 
-(define (lsp-replace-all-words [text : String] [old : String] [new : String]) : String
+(define (lsp-replace-pattern-words
+  [text : String]
+  [old : String]
+  [new : String]) : String
   (let
     [n : i64 (string.string-length text)]
     [old-len : i64 (string.string-length old)]
@@ -13449,54 +14293,6 @@
           (set! result (str_cat.str-cat result (string.substring text i 1) ""))
           (set! i (+ i 1))))
       result)))
-
-(define (lsp-handle-tl-rename
-  [id : json.Json]
-  [params : json.Json]
-  [docs : lsp_document_vec.Vec]) : LspDocumentHandleResult
-  (match (lsp-get-document params docs)
-    [(LspDocumentLookup.Found path text _)
-      (let
-        [old-name : String
-          (let
-            [pos-key : String "position"]
-            (match (json.object-get params (& pos-key))
-              [(json.JsonFound position)
-                (let
-                  [line : i64 (lsp-json-int-field-default position "line" 0)]
-                  [col : i64
-                    (lsp-json-int-field-default position "character" 0)]
-                  (lsp-find-and-extract-name text line col))]
-              [(json.JsonMissing)
-                (match (lsp-json-string-field params "oldName")
-                  [(LspJsonText.Ok n) n]
-                  [(LspJsonText.Missing) ""])]))]
-        (if (= (string.string-length old-name) 0)
-          (begin
-            (lsp-write-error id -32600 "Missing oldName or position parameter")
-            (LspDocumentHandleResult.Continue docs))
-          (match (lsp-json-string-field params "newName")
-            [(LspJsonText.Ok new-name)
-              (if (string.eq old-name "")
-                (begin
-                  (lsp-write-error id -32600 "oldName cannot be empty")
-                  (LspDocumentHandleResult.Continue docs))
-                (if (string.eq new-name "")
-                  (begin
-                    (lsp-write-error id -32600 "newName cannot be empty")
-                    (LspDocumentHandleResult.Continue docs))
-                  (let
-                    [result : String
-                      (lsp-replace-all-words text old-name new-name)]
-                    (lsp-write-structural-edit-success id params docs result))))]
-            [(LspJsonText.Missing)
-              (begin
-                (lsp-write-error id -32600 "Missing newName parameter")
-                (LspDocumentHandleResult.Continue docs))])))]
-    [(LspDocumentLookup.Missing)
-      (begin
-        (lsp-write-error id -32600 "Document not found")
-        (LspDocumentHandleResult.Continue docs))]))
 
 (define (lsp-replace-body-text-with-decls
   [text : String]
@@ -13640,7 +14436,7 @@
                               body-start-off
                               (- body-end-off body-start-off))]
                           [replaced-body : String
-                            (lsp-replace-all-words
+                            (lsp-replace-pattern-words
                               body-text
                               old-pattern
                               new-pattern)]

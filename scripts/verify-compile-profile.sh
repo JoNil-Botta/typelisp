@@ -500,6 +500,10 @@ profile_live_counter_in() {
 # segments; the authoritative Windows CI probe measured 2,426,832 used nodes,
 # 2,490,368 capacity, and 79,691,776 physical payload bytes.
 #
+# #6827's packets also crossed lower.ast_type_pool.typecheck from 9 to 10
+# segments; the authoritative Windows CI-equivalent probe measured 9,229 used
+# nodes, 10,240 capacity, and 245,760 physical payload bytes.
+#
 # Assert one selfhost pool boundary from its segment count alone.
 #
 # Since #5541 the AST pools are reclaimable segmented storage with fixed-size
@@ -1537,10 +1541,13 @@ if [ "$NL_HOST_OS" = windows ]; then
         1 \
         "$SELFHOST_STDOUT" \
         "$SELFHOST_STDERR"
+    # #6827's range-merge, branch-threading and carrier-dataflow packets
+    # (~2,900 compiler-source lines) carried this to 25,131 KiB on the Windows
+    # CI probe; ceiling raised one step with the usual headroom.
     assert_profile_counter_at_most_in \
         "$SELFHOST_STDERR" \
         "typecheck.macro.walk_sp_reresolve_alloc_kb" \
-        25000 \
+        26000 \
         "$SELFHOST_STDOUT" \
         "$SELFHOST_STDERR"
     # One constant per boundary: the segment count. capacity and segment_bytes
@@ -1600,8 +1607,12 @@ if [ "$NL_HOST_OS" = windows ]; then
     # exact-span parser coverage cross the next macro-expand expression boundary:
     # the authoritative Windows CI probe measured 2,950,768 used nodes,
     # 3,014,656 capacity, and 96,468,992 physical payload bytes.
+    # #6827's range-merge, branch-threading, carrier-dataflow, loop-placement,
+    # and rematerialisation helpers cross the next boundary: the authoritative
+    # Windows CI probe measured 3,021,008 used nodes, 3,080,192 capacity, and
+    # 98,566,144 physical payload bytes.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool macro_expand 46 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool macro_expand 47 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # The three dense optimizer plan containers crossed the checked expression
     # graph into its 33rd segment; the accessor-admission/absorption/fold/sinking

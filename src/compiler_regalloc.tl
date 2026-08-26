@@ -679,11 +679,11 @@
 (define compiler-reg-assignment-census-metric-start : i64
   196)
 (define compiler-reg-assignment-census-metric-end : i64
-  204)
+  207)
 (define compiler-reg-move-census-metric-start : i64
-  204)
+  207)
 (define compiler-reg-move-census-metric-end : i64
-  220)
+  223)
 
 (cfg
   regalloc-census
@@ -11908,6 +11908,14 @@
             (set! index (+ index 1))
             (set! i (+ i 1)))))]))
 
+;; W3. The spill-weight discount's candidate set, and the backend rewrite
+;; pipeline's. It must cover every value the allocator can RECOMPUTE
+;; (compiler-reg-remat-recompute-value?), because the discount is the claim
+;; "spilling this range is half price, the reload is a recompute" -- LLVM's
+;; `TotalWeight *= 0.5F` at CalcSpillWeights.cpp:377-378, which is guarded by
+;; `isRematerializable` over ALL of the interval's definitions. Function /
+;; String / Bytes materialise as one `leaq label(%rip)` exactly like GlobalAddr
+;; and were simply missing from this list.
 (define (compiler-reg-remat-value? [value : ir.CompilerIrValue]) : bool
   (match value
     [(ir.CompilerIrValue.I64 _) true]
@@ -11915,8 +11923,25 @@
     [(ir.CompilerIrValue.Char _) true]
     [(ir.CompilerIrValue.F64 _) true]
     [(ir.CompilerIrValue.GlobalAddr _) true]
+    [(ir.CompilerIrValue.Function _) true]
+    [(ir.CompilerIrValue.String _) true]
+    [(ir.CompilerIrValue.Bytes _) true]
     [_ false]))
 
+;; The same candidate set for a MOV, where a read of a global cell additionally
+;; needs the whole function to be store- and call-free (`allow-invariant-loads`,
+;; the conservative per-function proof).
+;;
+;; W3: deliberately NOT extended to a FROZEN cell read. That range is
+;; rematerialisable under W3 step (c), so the 0.5x discount would be honest --
+;; but discounting it is a measured LOSS: cfg_domloops +158,961 (+0.024%):
+;; `cfg-hash-prime` stops being register-homed (each use folds to
+;; `imulq cfg_hash_prime(%rip), %r14`, which is instruction-neutral) and the
+;; register the allocator frees is then spent worse elsewhere in
+;; `cfg-build-csr`, costing an `xor`/`lea` rewrite and a block-layout flip.
+;; The discount is a global re-ranking, so it needs the frequency-shaped
+;; weight model (family E-5) before it can be trusted at that granularity;
+;; the recompute capability itself is unconditional and stands.
 (define (compiler-reg-remat-mov-value?
   [value : ir.CompilerIrValue]
   [allow-invariant-loads : bool]) : bool
@@ -11946,21 +11971,70 @@
 (define (compiler-reg-remat-discount-weight [weight : i64]) : i64
   (/ weight 2))
 
+;; W3(a). Which var TYPE admits a rematerialised scalar LITERAL. A remat drops
+;; the def store and recomputes at each use, so the recompute must reproduce the
+;; exact 64-bit register content the reload would have produced --
+;; compiler-backend-emit-load-memory-to-reg sign/zero-EXTENDS a narrow slot
+;; (`movslq`/`movzbq`/...), while compiler-backend-emit-load-i64-immediate-into
+;; materialises the literal itself (`xorl`/`movl $K`/`movq $K`). The two agree
+;; exactly when the literal round-trips through the type's width:
+;;   * an 8-byte integer type reloads with a plain `movq`, so any i64 literal is
+;;     bit-identical;
+;;   * a `Bool` literal is 0 or 1 and a `Char` literal is a non-negative code
+;;     point below 2^21, so both survive every narrower sign- or zero-extension.
+;; Every other pairing (an i64 literal homed in an i32 var, a literal in a
+;; register-GROUP or float type) is refused rather than range-checked: the
+;; narrow-typed constant is not a shape the hot rows carry.
+(define (compiler-reg-remat-word-int-type? [ty : ast.AstType]) : bool
+  (match ty
+    [(ast.AstType.I64) true]
+    [(ast.AstType.U64) true]
+    [_ false]))
+
+(define (compiler-reg-remat-recompute-literal?
+  [value : ir.CompilerIrValue]
+  [ty : ast.AstType]) : bool
+  (match value
+    [(ir.CompilerIrValue.I64 _) (compiler-reg-remat-word-int-type? ty)]
+    [(ir.CompilerIrValue.Bool _)
+      (match ty
+        [(ast.AstType.Bool) true]
+        [_ (compiler-reg-remat-word-int-type? ty)])]
+    [(ir.CompilerIrValue.Char _)
+      (match ty
+        [(ast.AstType.Char) true]
+        [_ (compiler-reg-remat-word-int-type? ty)])]
+    [_ false]))
+
 ;; A value the backend can RECOMPUTE in one instruction at each use: a static
-;; address materialisation (`leaq label(%rip)`). Plain integer/bool/char constants
-;; are deliberately EXCLUDED: the optimiser's constant propagation already inlines
-;; them directly into their uses (so an optimised function never carries a constant
-;; in a spillable vreg), making constant remat moot on real code; addresses cannot
-;; always be folded into an instruction's immediate, so they are the case that
-;; genuinely benefits. CompilerIrValue.Global (a LOAD of a mutable global) and CompilerIrValue.F64
-;; (no scalar backend support) must never be rematerialised.
-(define (compiler-reg-remat-recompute-value? [value : ir.CompilerIrValue]) : bool
+;; address materialisation (`leaq label(%rip)`), or -- W3 step (a) -- an
+;; integer/bool/char LITERAL whose type admits it (`xorl`/`movl $K`/`movq $K`,
+;; LLVM's `MOV32r0`/`MOV64ri32`/`MOV64ri`, X86InstrCompiler.td:327 and
+;; X86InstrMisc.td:371/385). Constants were previously excluded on the argument
+;; that constant propagation inlines them into their uses; that holds for the
+;; uses the backend can spell with an immediate operand, but a constant that
+;; reaches a phi, a call argument or a two-address operand still lands in a
+;; spillable vreg, which is gvn P8's `xor esi,esi` shape.
+;; CompilerIrValue.Global (a LOAD of a global cell) and CompilerIrValue.F64
+;; (no scalar backend support) must never be rematerialised here.
+(define (compiler-reg-remat-recompute-value?
+  [value : ir.CompilerIrValue]
+  [ty : ast.AstType]) : bool
   (match value
     [(ir.CompilerIrValue.GlobalAddr _) true]
     [(ir.CompilerIrValue.Function _) true]
     [(ir.CompilerIrValue.String _) true]
     [(ir.CompilerIrValue.Bytes _) true]
-    [_ false]))
+    ;; W3 step (c). A read of a FROZEN global cell recomputes as
+    ;; `movq g(%rip), %r` -- one instruction, the same one the reload replaced,
+    ;; and one a compare can fold outright (compiler-backend-compare-memory-
+    ;; operand). Word width only: the cell read always materialises the full
+    ;; 8 bytes, while a narrow var reloads sign/zero-extended from its slot.
+    [(ir.CompilerIrValue.Global name)
+      (and
+        (compiler-reg-remat-word-int-type? ty)
+        (compiler-reg-global-frozen? (ir.compiler-ir-symbol-id name)))]
+    [_ (compiler-reg-remat-recompute-literal? value ty)]))
 
 (define (compiler-reg-remat-init-vals!
   [vals : (__tl_dyn-array ir.CompilerIrValue)]
@@ -11986,10 +12060,10 @@
     (while (< index count)
       (begin
         (match (array-ref slots index)
-          [(ir.CompilerIrInstr.Mov dst value _)
+          [(ir.CompilerIrInstr.Mov dst value ty)
             ;; flags[dst]: 0 = not remat, 1 = remat, 2 = poisoned (address-taken,
             ;; must keep a real slot). A poisoned var never becomes remat.
-            (if (if (if (compiler-reg-remat-recompute-value? value)
+            (if (if (if (compiler-reg-remat-recompute-value? value ty)
               (compiler-reg-sv-single-def? def-counts dst)
               false)
               (if (>= dst 0)
@@ -12003,6 +12077,30 @@
                 (set! (array-ref vals dst) value)
                 unit)
               unit)]
+          ;; W3(c). `load %v, @g` is the same cell read as `mov %v <- Global g`
+          ;; -- the address IS the cell -- so it records the same recompute
+          ;; payload. (A `load` off a `gep @g, k` addresses a DIFFERENT word and
+          ;; has no `CompilerIrValue` spelling; it is not recorded.)
+          [(ir.CompilerIrInstr.Load dst src ty)
+            (match src
+              [(ir.CompilerIrValue.GlobalAddr name)
+                (if (if (if (compiler-reg-remat-recompute-value?
+                  (ir.CompilerIrValue.Global name)
+                  ty)
+                  (compiler-reg-sv-single-def? def-counts dst)
+                  false)
+                  (if (>= dst 0)
+                    (if (< dst (array-length flags))
+                      (not (= (array-ref flags dst) 2))
+                      false)
+                    false)
+                  false)
+                  (begin
+                    (set! (array-ref flags dst) 1)
+                    (set! (array-ref vals dst) (ir.CompilerIrValue.Global name))
+                    unit)
+                  unit)]
+              [_ unit])]
           ;; Taking a var's address needs its real storage; poison it so it is
           ;; never rematerialised (its slot must hold the value).
           [(ir.CompilerIrInstr.AddrOf _ src)
@@ -12110,6 +12208,10 @@
                         (CompilerRegLocation.Remat (array-ref vals v)))
                       unit)]
                   [_ unit])]
+              ;; A var the greedy left UNASSIGNED keeps its implicit per-var
+              ;; slot: converting those to Remat as well was tried and dropped
+              ;; (no benchmark asm changed -- the shape is rare there -- and it
+              ;; perturbed register homes for nothing).
               [(CompilerRegMaybeLocation.No) unit])
             unit)
           (set! v (+ v 1))))
@@ -12214,7 +12316,7 @@
   [instr : ir.CompilerIrInstr]
   [allow-invariant-loads : bool]) : unit
   (match instr
-    [(ir.CompilerIrInstr.Mov dst value _)
+    [(ir.CompilerIrInstr.Mov dst value ty)
       (if (and
         (compiler-reg-remat-mov-value? value allow-invariant-loads)
         (>= dst 0)
@@ -12228,7 +12330,7 @@
         (< dst (array-length def-status)))
         (set! (array-ref def-status dst) (bit-or (array-ref def-status dst) 1))
         unit)]
-    [(ir.CompilerIrInstr.Load dst src _)
+    [(ir.CompilerIrInstr.Load dst src ty)
       (if (and
         (compiler-reg-remat-load? src allow-invariant-loads)
         (>= dst 0)
@@ -20287,6 +20389,13 @@
               (set! index (+ index 1))))
           found)))))
 
+;; The ESTIMATE's reload question, kept at the shape the memory class was tuned
+;; with. The REWRITE asks `compiler-reg-call-hole-reload-needed-flow?` instead,
+;; which answers the same question over the whole CFG and for both classes; this
+;; one still drives `compiler-reg-call-hole-charge-live-through!`, so the cost
+;; the round SELECTS on stays an upper bound on what the rewrite will emit --
+;; over-charging a candidate can only refuse a relocation, never mis-place a mov.
+;;
 ;; Is the reload after the crossing at `from` OBSERVABLE, for a CSR candidate?
 ;; It is not when `var` has no use between `from` and the next kind-0 clobber in
 ;; the same block: the reload after THAT crossing overwrites it first, and that
@@ -20579,15 +20688,641 @@
         (set! (array-ref picked best) true)
         unit))))
 
-(define (compiler-reg-call-hole-reset-valid!
+;; ---------------------------------------------------------------------------
+;; E-1 -- exact carrier store and reload placement.
+;;
+;; The P3/P7 design note above specifies both elisions -- a carrier store is
+;; dead when `S_V` already holds `V` on this path, a carrier reload is dead when
+;; nothing reads `V` before the next crossing -- and the rewrite answered both
+;; questions INSIDE ONE BLOCK: "S_V valid" started false at every block entry
+;; and "nothing reads V" stopped at the block's terminator. Both questions are
+;; ordinary dataflow, and answering them over the whole CFG is what removes the
+;; shapes the accounting measures. At `gvn-kinds-bind` the second crossing's
+;; five stores re-write a slot the first crossing's stores already filled -- the
+;; two crossings sit in different blocks only because a branch separates the two
+;; calls -- and a reload whose next reader is past a second crossing is dead on
+;; the path that takes it.
+;;
+;;   * STORE availability is a forward MUST dataflow (available expressions):
+;;     `in[b] = AND over predecessors p of out[p]`, `in[entry] = 0`, and the
+;;     transfer is the rewrite's own bookkeeping -- a crossing makes every value
+;;     it stores available, a def of V takes V's availability away. The meet is
+;;     an INTERSECTION, so a store is elided only when every path into the block
+;;     already wrote the slot. That is the direction the correctness rule
+;;     demands: `compiler-reg-call-region-stat-exit`'s comment is "an extra dead
+;;     store is safe; a missing live store is a miscompile", so an absence of
+;;     information must read as "not available", never as "available".
+;;   * RELOAD liveness is a backward MAY dataflow: `out[b] = OR over successors
+;;     s of in[s]`, and the transfer reports which values are read before the
+;;     next crossing, before a redefinition, or off the end of the block. A
+;;     block with an unresolvable successor contributes EVERY value, so a jump
+;;     this function cannot resolve keeps every reload.
+;;
+;; This is the target-independent half of `SplitEditor::splitLiveThroughBlock`
+;; (`llvm/lib/CodeGen/SplitKit.cpp:1676`) plus
+;; `InlineSpiller::eliminateRedundantSpills` (`InlineSpiller.cpp:508`): a
+;; live-through region with no use gets neither store nor reload, and a value
+;; already known to be on the stack is not re-spilled.
+;;
+;; Both lattices are ONE i64 per block, indexed by SELECTION index rather than
+;; by var id -- `compiler-reg-call-hole-max-selected` is 32, so one word holds a
+;; block's whole state and a pass is a walk over the blocks.
+;;
+;; Neither fixpoint runs unbounded: `compiler-reg-call-hole-flow-max-passes`
+;; caps the round-robin the way `compiler-reg-region-park-max-blocks` caps the
+;; parking walks, and a run that has not converged inside the cap DISCARDS its
+;; partial answer for the degenerate flow -- `store-in` all zero, `reload-out`
+;; all one -- which is exactly the per-block behaviour this replaces. Stopping a
+;; must-analysis early is unsound; stopping it and throwing the answer away is
+;; not.
+;; ---------------------------------------------------------------------------
+(defstruct CompilerRegCallHoleFlow
+  (count i64)
+  ;; Bit j = "the carrier of `selected[j]` already holds its value on EVERY path
+  ;; into this block".
+  (store-in (__tl_dyn-array i64))
+  ;; Bit j = "`selected[j]` may be read on SOME path leaving this block before
+  ;; the next crossing or a redefinition".
+  (reload-out (__tl_dyn-array i64)))
+
+(define (compiler-reg-call-hole-flow-max-passes) : i64
+  8)
+
+;; The mask of every selection index, or zero when there is no usable selection.
+(define (compiler-reg-call-hole-flow-full [selected-count : i64]) : i64
+  (if (or
+    (< selected-count 1)
+    (> selected-count (compiler-reg-call-hole-max-selected)))
+    0
+    (- (shl 1 selected-count) 1)))
+
+;; The mask bit `var` occupies in the selection, or zero when it is not selected.
+;; The selection is at most `compiler-reg-call-hole-max-selected` wide, so this
+;; scan is bounded by a constant.
+(define (compiler-reg-call-hole-selected-bit
   [selected : (__tl_dyn-array i64)]
   [selected-count : i64]
+  [var : i64]) : i64
+  (if (< var 0)
+    0
+    (let
+      [index : i64 0]
+      [bit : i64 0]
+      (begin
+        (while (and (< index selected-count) (= bit 0))
+          (begin
+            (if (= (array-ref selected index) var)
+              (set! bit (shl 1 index))
+              unit)
+            (set! index (+ index 1))))
+        bit))))
+
+;; The selected values this crossing carries: live AFTER it and not defined BY
+;; it. Exactly the set `compiler-reg-call-hole-rewrite-block` stores and
+;; reloads.
+(define (compiler-reg-call-hole-flow-carried-mask
+  [live-after : live.CompilerLiveI64Set]
+  [selected : (__tl_dyn-array i64)]
+  [selected-count : i64]
+  [full : i64]
+  [def-bit : i64]) : i64
+  (let
+    [index : i64 0]
+    [mask : i64 0]
+    (begin
+      (while (< index selected-count)
+        (begin
+          (if (live.compiler-live-set-contains?
+            live-after
+            (array-ref selected index))
+            (set! mask (bit-or mask (shl 1 index)))
+            unit)
+          (set! index (+ index 1))))
+      (bit-and mask (bit-xor full def-bit)))))
+
+;; `store-in` all zero and `reload-out` all one: no carrier is available on
+;; entry to any block and every value may be read after every crossing. This is
+;; the answer the per-block rewrite gave, and it is what an unconverged fixpoint
+;; falls back to.
+(define (compiler-reg-call-hole-flow-degenerate [count : i64]) : CompilerRegCallHoleFlow
+  (let
+    [store-in : (__tl_dyn-array i64) (array.make-array i64 (+ count 1))]
+    [reload-out : (__tl_dyn-array i64) (array.make-array i64 (+ count 1))]
+    (begin
+      ;; EVERY bit, not only the ones the selection uses: the conservative
+      ;; answer must not depend on the mask being the right width. A selection
+      ;; too wide for one word is refused before the fixpoints run, and it has
+      ;; to land here rather than on an empty mask, which would read as "no
+      ;; reload needed" -- the one direction that is a miscompile.
+      (compiler-reg-fill-i64-array reload-out (- 0 1))
+      (CompilerRegCallHoleFlow count store-in reload-out))))
+
+(define (compiler-reg-call-hole-flow-store-in
+  [flow : CompilerRegCallHoleFlow]
+  [block : i64]) : i64
+  (if (and (>= block 0) (< block flow.count))
+    (array-ref flow.store-in block)
+    0))
+
+(define (compiler-reg-call-hole-flow-reload-out
+  [flow : CompilerRegCallHoleFlow]
+  [block : i64]
+  [full : i64]) : i64
+  (if (and (>= block 0) (< block flow.count))
+    (bit-and (array-ref flow.reload-out block) full)
+    full))
+
+;; One block's transfer for the carrier-availability dataflow: exactly the
+;; bookkeeping `compiler-reg-call-hole-rewrite-block` performs, run on a mask
+;; instead of on the emitted movs. A crossing stores (and so makes available)
+;; every selected value live through it; every instruction's def invalidates its
+;; own carrier. The rewrite's own reloads are not defs here for the same reason
+;; they are not there: a reload writes exactly what the carrier holds.
+(define (compiler-reg-call-hole-flow-store-transfer
+  [type-segment-bases : i64]
+  [slots : (__tl_dyn-array ir.CompilerIrInstr)]
+  [count : i64]
+  [after : live.CompilerLiveInstrSetVec]
+  [selected : (__tl_dyn-array i64)]
+  [selected-count : i64]
+  [full : i64]
+  [entry : i64]) : i64
+  (let
+    [last : i64 (- count 1)]
+    [valid : i64 entry]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (let
+            [instr : ir.CompilerIrInstr (array-ref slots index)]
+            [def-var : i64 (live.compiler-live-instr-def-var instr)]
+            (begin
+              (if (and
+                (< index last)
+                (compiler-reg-clobber-instr-kind? type-segment-bases instr 0))
+                (let
+                  [live-after : live.CompilerLiveI64Set
+                    (live.compiler-live-instr-set-vec-nth after index)]
+                  [j : i64 0]
+                  (while (< j selected-count)
+                    (begin
+                      (let
+                        [var : i64 (array-ref selected j)]
+                        (if (and
+                          (not (= var def-var))
+                          (live.compiler-live-set-contains? live-after var))
+                          (set! valid (bit-or valid (shl 1 j)))
+                          unit))
+                      (set! j (+ j 1)))))
+                unit)
+              (set!
+                valid
+                (bit-and
+                  valid
+                  (bit-xor
+                    full
+                    (compiler-reg-call-hole-selected-bit
+                      selected
+                      selected-count
+                      def-var))))))
+          (set! index (+ index 1))))
+      valid)))
+
+;; The rewrite leaves a block whose liveness handle is missing exactly as it
+;; found it, so it emits no store there -- but the block's defs are real. Report
+;; nothing available on the way out.
+(define (compiler-reg-call-hole-flow-store-block
+  [type-segment-bases : i64]
+  [seq : ir.CompilerIrBlockSeq]
+  [liveness : live.CompilerFunctionLiveness]
+  [selected : (__tl_dyn-array i64)]
+  [selected-count : i64]
+  [full : i64]
+  [block : i64]
+  [entry : i64]) : i64
+  (match (ir.compiler-ir-block-seq-ref seq block)
+    [(ir.CompilerIrBlock.Block label instrs)
+      (match (live.compiler-live-function-find-block liveness label)
+        [(live.CompilerLiveMaybeBlock.No) 0]
+        [(live.CompilerLiveMaybeBlock.Some live-block)
+          (compiler-reg-call-hole-flow-store-transfer
+            type-segment-bases
+            instrs.slots
+            instrs.len
+            (live.compiler-live-block-instr-after live-block)
+            selected
+            selected-count
+            full
+            entry)])]))
+
+;; `in[b]`: the intersection of every predecessor's `out`. The entry block, and
+;; any block with no predecessor at all, start from NOTHING -- an intersection
+;; over an empty set is the lattice top, and taking it here would claim a slot
+;; was written on a path that does not exist.
+(define (compiler-reg-call-hole-flow-meet-preds
+  [block : i64]
+  [pred-offsets : (__tl_dyn-array i64)]
+  [pred-sources : (__tl_dyn-array i64)]
+  [store-out : (__tl_dyn-array i64)]) : i64
+  (if (= block 0)
+    0
+    (let
+      [edge : i64 (array-ref pred-offsets block)]
+      [stop : i64 (array-ref pred-offsets (+ block 1))]
+      [seen : bool false]
+      [acc : i64 0]
+      (begin
+        (while (< edge stop)
+          (begin
+            (let
+              [source : i64 (array-ref pred-sources edge)]
+              (if seen
+                (set! acc (bit-and acc (array-ref store-out source)))
+                (begin
+                  (set! acc (array-ref store-out source))
+                  (set! seen true))))
+            (set! edge (+ edge 1))))
+        (if seen
+          acc
+          0)))))
+
+;; One round-robin pass of the forward fixpoint, in block order. Reports whether
+;; any block's `out` moved.
+(define (compiler-reg-call-hole-flow-store-pass!
+  [type-segment-bases : i64]
+  [seq : ir.CompilerIrBlockSeq]
+  [liveness : live.CompilerFunctionLiveness]
+  [selected : (__tl_dyn-array i64)]
+  [selected-count : i64]
+  [count : i64]
+  [full : i64]
+  [pred-offsets : (__tl_dyn-array i64)]
+  [pred-sources : (__tl_dyn-array i64)]
+  [store-in : (__tl_dyn-array i64)]
+  [store-out : (__tl_dyn-array i64)]) : bool
+  (let
+    [block : i64 0]
+    [changed : bool false]
+    (begin
+      (while (< block count)
+        (begin
+          (let
+            [entry : i64
+              (compiler-reg-call-hole-flow-meet-preds
+                block
+                pred-offsets
+                pred-sources
+                store-out)]
+            [out : i64
+              (compiler-reg-call-hole-flow-store-block
+                type-segment-bases
+                seq
+                liveness
+                selected
+                selected-count
+                full
+                block
+                entry)]
+            (begin
+              (set! (array-ref store-in block) entry)
+              (if (= out (array-ref store-out block))
+                unit
+                (begin
+                  (set! (array-ref store-out block) out)
+                  (set! changed true)))))
+          (set! block (+ block 1))))
+      changed)))
+
+;; What must be in `selected[j]`'s REGISTER at the start of this block, on some
+;; path out of it. Two things read that register, and both are counted:
+;;
+;;   * an ordinary use of the value;
+;;   * the CARRIER STORE the rewrite emits at a crossing -- `Mov S_V <- V` reads
+;;     V, so a crossing whose store is NOT elided needs the register just as much
+;;     as a use does. Missing this is a MISCOMPILE and not a missed elision: the
+;;     store would spill whatever the register happened to hold. It is the whole
+;;     reason this transfer tracks availability as well as reads.
+;;
+;; A crossing whose store IS elided kills the value instead: either it reloads,
+;; refreshing the register, or nothing downstream reads the value at all.
+;;
+;; Availability is seeded from the converged forward answer for this block and
+;; advanced exactly as `compiler-reg-call-hole-flow-store-transfer` advances it,
+;; which is why the store fixpoint runs first and this one consumes it.
+;;
+;; Unlike the per-block walk this generalises, the TERMINATOR is scanned: a
+;; branch condition and a tail call's outgoing arguments are reads, and the
+;; per-block version could only be safe about them by assuming one. `exit` is
+;; what the successors report, and is inherited by whatever the block itself
+;; does not decide.
+(define (compiler-reg-call-hole-flow-reload-transfer
+  [type-segment-bases : i64]
+  [slots : (__tl_dyn-array ir.CompilerIrInstr)]
+  [count : i64]
+  [after : live.CompilerLiveInstrSetVec]
+  [selected : (__tl_dyn-array i64)]
+  [selected-count : i64]
+  [full : i64]
+  [avail : i64]
+  [exit : i64]) : i64
+  (let
+    [last : i64 (- count 1)]
+    [pending : i64 full]
+    [read : i64 0]
+    [held : i64 avail]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (let
+            [instr : ir.CompilerIrInstr (array-ref slots index)]
+            [def-bit : i64
+              (compiler-reg-call-hole-selected-bit
+                selected
+                selected-count
+                (live.compiler-live-instr-def-var instr))]
+            [bits : i64 pending]
+            (begin
+              (while (not (= bits 0))
+                (begin
+                  (let
+                    [j : i64 (compiler-reg-low-bit-index32 bits)]
+                    (if (compiler-reg-call-hole-instr-uses?
+                      instr
+                      (array-ref selected j))
+                      (begin
+                        (set! read (bit-or read (shl 1 j)))
+                        (set!
+                          pending
+                          (bit-and pending (bit-xor full (shl 1 j)))))
+                      unit))
+                  (set! bits (bit-and bits (- bits 1)))))
+              (if (and
+                (< index last)
+                (compiler-reg-clobber-instr-kind? type-segment-bases instr 0))
+                (let
+                  [carried : i64
+                    (compiler-reg-call-hole-flow-carried-mask
+                      (live.compiler-live-instr-set-vec-nth after index)
+                      selected
+                      selected-count
+                      full
+                      def-bit)]
+                  (begin
+                    ;; The stores this crossing emits are the carried values the
+                    ;; carrier does not already hold; each one reads its register.
+                    (set!
+                      read
+                      (bit-or
+                        read
+                        (bit-and pending (bit-and carried (bit-xor full held)))))
+                    (set! pending 0)
+                    (set! held (bit-or held carried))))
+                unit)
+              (set! pending (bit-and pending (bit-xor full def-bit)))
+              (set! held (bit-and held (bit-xor full def-bit)))))
+          (set! index (+ index 1))))
+      (bit-or read (bit-and pending exit)))))
+
+;; `out[b]`: the union of every successor's `in`. A successor this function
+;; cannot resolve -- a jump to a label it does not define -- contributes EVERY
+;; value, so every reload survives on that edge. A block with no successor at
+;; all (a `Return`, a tail call) contributes nothing: its terminator's own reads
+;; were already counted by the transfer, and nothing in this function runs after
+;; it.
+(define (compiler-reg-call-hole-flow-join-succs
+  [block : i64]
+  [cfg : CompilerRegCallHoleCfg]
+  [need-in : (__tl_dyn-array i64)]
+  [full : i64]) : i64
+  (let
+    [edge : i64 (array-ref cfg.succ-offsets block)]
+    [stop : i64 (array-ref cfg.succ-offsets (+ block 1))]
+    [acc : i64 0]
+    (begin
+      (while (< edge stop)
+        (begin
+          (let
+            [target : i64 (array-ref cfg.succ-targets edge)]
+            (if (< target 0)
+              (set! acc full)
+              (set! acc (bit-or acc (array-ref need-in target)))))
+          (set! edge (+ edge 1))))
+      acc)))
+
+(define (compiler-reg-call-hole-flow-reload-block
+  [type-segment-bases : i64]
+  [seq : ir.CompilerIrBlockSeq]
+  [liveness : live.CompilerFunctionLiveness]
+  [selected : (__tl_dyn-array i64)]
+  [selected-count : i64]
+  [full : i64]
+  [avail : i64]
+  [block : i64]
+  [exit : i64]) : i64
+  (match (ir.compiler-ir-block-seq-ref seq block)
+    [(ir.CompilerIrBlock.Block label instrs)
+      (match (live.compiler-live-function-find-block liveness label)
+        ;; No liveness handle, so the rewrite does no bookkeeping here at all:
+        ;; report that every value may be read.
+        [(live.CompilerLiveMaybeBlock.No) full]
+        [(live.CompilerLiveMaybeBlock.Some live-block)
+          (compiler-reg-call-hole-flow-reload-transfer
+            type-segment-bases
+            instrs.slots
+            instrs.len
+            (live.compiler-live-block-instr-after live-block)
+            selected
+            selected-count
+            full
+            avail
+            exit)])]))
+
+;; One round-robin pass of the backward fixpoint, in reverse block order.
+(define (compiler-reg-call-hole-flow-reload-pass!
+  [type-segment-bases : i64]
+  [seq : ir.CompilerIrBlockSeq]
+  [liveness : live.CompilerFunctionLiveness]
+  [cfg : CompilerRegCallHoleCfg]
+  [selected : (__tl_dyn-array i64)]
+  [selected-count : i64]
+  [count : i64]
+  [full : i64]
+  [store-in : (__tl_dyn-array i64)]
+  [need-in : (__tl_dyn-array i64)]) : bool
+  (let
+    [block : i64 (- count 1)]
+    [changed : bool false]
+    (begin
+      (while (>= block 0)
+        (begin
+          (let
+            [value : i64
+              (compiler-reg-call-hole-flow-reload-block
+                type-segment-bases
+                seq
+                liveness
+                selected
+                selected-count
+                full
+                (array-ref store-in block)
+                block
+                (compiler-reg-call-hole-flow-join-succs block cfg need-in full))]
+            (if (= value (array-ref need-in block))
+              unit
+              (begin
+                (set! (array-ref need-in block) value)
+                (set! changed true))))
+          (set! block (- block 1))))
+      changed)))
+
+;; The reload after the crossing at `from`, asked over the whole CFG. The walk
+;; inside the block is the same one `compiler-reg-call-hole-reload-needed?`
+;; performs, extended by the two facts the per-block version could not have: the
+;; terminator IS scanned, and a run that reaches the end of the block asks the
+;; backward dataflow instead of assuming a read.
+(define (compiler-reg-call-hole-reload-needed-flow?
+  [type-segment-bases : i64]
+  [slots : (__tl_dyn-array ir.CompilerIrInstr)]
+  [last : i64]
+  [from : i64]
+  [var : i64]
+  [exit? : bool]) : bool
+  (let
+    [index : i64 (+ from 1)]
+    [needed : bool false]
+    [stopped : bool false]
+    (begin
+      (while (and (<= index last) (not needed) (not stopped))
+        (begin
+          (let
+            [instr : ir.CompilerIrInstr (array-ref slots index)]
+            (cond
+              [(compiler-reg-call-hole-instr-uses? instr var)
+                (set! needed true)]
+              ;; A crossing restores what it is asked to restore, so a reload
+              ;; before it is overwritten before anything reads it.
+              [(and
+                  (< index last)
+                  (compiler-reg-clobber-instr-kind? type-segment-bases instr 0))
+                (set! stopped true)]
+              ;; A redefinition makes the reloaded value dead too.
+              [(= (live.compiler-live-instr-def-var instr) var)
+                (set! stopped true)]
+              [else unit]))
+          (set! index (+ index 1))))
+      (cond [needed true] [stopped false] [else exit?]))))
+
+(define (compiler-reg-call-hole-flow-build
+  [type-segment-bases : i64]
+  [seq : ir.CompilerIrBlockSeq]
+  [liveness : live.CompilerFunctionLiveness]
+  [selected : (__tl_dyn-array i64)]
+  [selected-count : i64]) : CompilerRegCallHoleFlow
+  (let
+    [count : i64 (ir.compiler-ir-block-seq-count seq)]
+    [full : i64 (compiler-reg-call-hole-flow-full selected-count)]
+    (if (or (< count 1) (= full 0))
+      (compiler-reg-call-hole-flow-degenerate count)
+      (let
+        [cfg : CompilerRegCallHoleCfg (compiler-reg-call-hole-cfg-build seq)]
+        [edges : i64 (array-ref cfg.succ-offsets count)]
+        [pred-offsets : (__tl_dyn-array i64) (array.make-array i64 (+ count 1))]
+        [pred-sources : (__tl_dyn-array i64) (array.make-array i64 (+ edges 1))]
+        [cursor : (__tl_dyn-array i64) (array.make-array i64 count)]
+        [store-in : (__tl_dyn-array i64) (array.make-array i64 (+ count 1))]
+        [store-out : (__tl_dyn-array i64) (array.make-array i64 (+ count 1))]
+        [need-in : (__tl_dyn-array i64) (array.make-array i64 (+ count 1))]
+        [reload-out : (__tl_dyn-array i64) (array.make-array i64 (+ count 1))]
+        [index : i64 0]
+        [pass : i64 0]
+        [changed : bool true]
+        (begin
+          (compiler-reg-loop-nest-fill-pred!
+            count
+            cfg.succ-offsets
+            cfg.succ-targets
+            pred-offsets
+            pred-sources
+            cursor)
+          ;; A forward MUST analysis starts at the lattice top and only ever
+          ;; retracts, so every intermediate state is an OVER-estimate and only
+          ;; the fixpoint may be used.
+          (while (< index count)
+            (begin
+              (set! (array-ref store-out index) full)
+              (set! index (+ index 1))))
+          (while (and changed (< pass (compiler-reg-call-hole-flow-max-passes)))
+            (begin
+              (set!
+                changed
+                (compiler-reg-call-hole-flow-store-pass!
+                  type-segment-bases
+                  seq
+                  liveness
+                  selected
+                  selected-count
+                  count
+                  full
+                  pred-offsets
+                  pred-sources
+                  store-in
+                  store-out))
+              (set! pass (+ pass 1))))
+          (if changed
+            (compiler-reg-fill-i64-array store-in 0)
+            unit)
+          ;; A backward MAY analysis starts at the lattice bottom and only ever
+          ;; grows, so an unconverged run UNDER-reports the reads -- the one
+          ;; direction that would drop a live reload. Discard it for the
+          ;; all-ones answer, which is the per-block behaviour.
+          (set! pass 0)
+          (set! changed true)
+          (while (and changed (< pass (compiler-reg-call-hole-flow-max-passes)))
+            (begin
+              (set!
+                changed
+                (compiler-reg-call-hole-flow-reload-pass!
+                  type-segment-bases
+                  seq
+                  liveness
+                  cfg
+                  selected
+                  selected-count
+                  count
+                  full
+                  store-in
+                  need-in))
+              (set! pass (+ pass 1))))
+          (set! index 0)
+          (while (< index count)
+            (begin
+              (set!
+                (array-ref reload-out index)
+                (if changed
+                  (- 0 1)
+                  (compiler-reg-call-hole-flow-join-succs
+                    index
+                    cfg
+                    need-in
+                    full)))
+              (set! index (+ index 1))))
+          (CompilerRegCallHoleFlow count store-in reload-out))))))
+
+;; Seed the rewrite's per-var validity flags from the block's dataflow answer.
+(define (compiler-reg-call-hole-seed-valid!
+  [selected : (__tl_dyn-array i64)]
+  [selected-count : i64]
+  [entry : i64]
   [valid : (__tl_dyn-array bool)]) : unit
   (let
     [index : i64 0]
     (while (< index selected-count)
       (begin
-        (set! (array-ref valid (array-ref selected index)) false)
+        (set!
+          (array-ref valid (array-ref selected index))
+          (not (= 0 (bit-and entry (shl 1 index)))))
         (set! index (+ index 1))))))
 
 ;; A def of V invalidates the claim that S_V still holds V. The reload
@@ -20607,13 +21342,14 @@
 
 (define (compiler-reg-call-hole-rewrite-block
   [type-segment-bases : i64]
-  [csr : (__tl_dyn-array bool)]
   [block : ir.CompilerIrBlock]
   [liveness : live.CompilerFunctionLiveness]
   [type-info : CompilerRegVarTypes]
   [carrier : (__tl_dyn-array i64)]
   [selected : (__tl_dyn-array i64)]
   [selected-count : i64]
+  [entry-valid : i64]
+  [exit-read : i64]
   [valid : (__tl_dyn-array bool)]) : ir.CompilerIrBlock
   (match block
     [(ir.CompilerIrBlock.Block label instrs)
@@ -20630,11 +21366,14 @@
               (ir.compiler-ir-instr-builder-with-capacity count)]
             [index : i64 0]
             (begin
-              ;; "S_V valid" starts false at every block entry: the elision is a
-              ;; straight-line claim and this pass proves nothing across edges.
-              (compiler-reg-call-hole-reset-valid!
+              ;; "S_V valid" on entry is the forward MUST dataflow's answer for
+              ;; this block: every path into it already stored the carrier. The
+              ;; degenerate flow makes this all-false, which is the per-block
+              ;; claim this generalises.
+              (compiler-reg-call-hole-seed-valid!
                 selected
                 selected-count
+                entry-valid
                 valid)
               (while (< index count)
                 (begin
@@ -20694,13 +21433,13 @@
                                   (live.compiler-live-set-contains?
                                     live-after
                                     var)
-                                  (compiler-reg-call-hole-reload-needed?
+                                  (compiler-reg-call-hole-reload-needed-flow?
                                     type-segment-bases
-                                    csr
                                     slots
                                     last
                                     index
-                                    var))
+                                    var
+                                    (not (= 0 (bit-and exit-read (shl 1 j))))))
                                   (match (compiler-reg-var-types-lookup
                                     type-info
                                     var)
@@ -20729,13 +21468,14 @@
 
 (define (compiler-reg-call-hole-rewrite-blocks
   [type-segment-bases : i64]
-  [csr : (__tl_dyn-array bool)]
   [seq : ir.CompilerIrBlockSeq]
   [liveness : live.CompilerFunctionLiveness]
   [type-info : CompilerRegVarTypes]
   [carrier : (__tl_dyn-array i64)]
   [selected : (__tl_dyn-array i64)]
   [selected-count : i64]
+  [flow : CompilerRegCallHoleFlow]
+  [full : i64]
   [valid : (__tl_dyn-array bool)]) : ir.CompilerIrBlockList
   (let
     [count : i64 (ir.compiler-ir-block-seq-count seq)]
@@ -20749,13 +21489,14 @@
             (array-ref out index)
             (compiler-reg-call-hole-rewrite-block
               type-segment-bases
-              csr
               (ir.compiler-ir-block-seq-ref seq index)
               liveness
               type-info
               carrier
               selected
               selected-count
+              (compiler-reg-call-hole-flow-store-in flow index)
+              (compiler-reg-call-hole-flow-reload-out flow index full)
               valid))
           (set! index (+ index 1))))
       (ir.CompilerIrBlockList.Array (ir.CompilerIrBlockSeq out count)))))
@@ -21133,16 +21874,24 @@
                     selected
                     selected-count
                     ctx.vars)]
+                [flow : CompilerRegCallHoleFlow
+                  (compiler-reg-call-hole-flow-build
+                    ctx.type-segment-bases
+                    ctx.seq
+                    ctx.liveness
+                    selected
+                    selected-count)]
                 [split-blocks : ir.CompilerIrBlockList
                   (compiler-reg-call-hole-rewrite-blocks
                     ctx.type-segment-bases
-                    ctx.scores.csr
                     ctx.seq
                     ctx.liveness
                     ctx.type-info
                     carrier
                     selected
                     selected-count
+                    flow
+                    (compiler-reg-call-hole-flow-full selected-count)
                     valid)]
                 [split-vars : i64 (+ ctx.vars selected-count)]
                 [split-func : ir.CompilerIrFunction
@@ -26875,6 +27624,10 @@
       [registers : i64 0]
       [spills : i64 0]
       [remats : i64 0]
+      ;; W3 remat-site census: which recompute shape each Remat home carries.
+      [addrs : i64 0]
+      [literals : i64 0]
+      [cells : i64 0]
       (begin
         (while (< index capacity)
           (begin
@@ -26888,7 +27641,18 @@
                   [(CompilerRegLocation.RegisterPair _ _)
                     (set! registers (+ registers 1))]
                   [(CompilerRegLocation.Spill _) (set! spills (+ spills 1))]
-                  [(CompilerRegLocation.Remat _) (set! remats (+ remats 1))])))
+                  [(CompilerRegLocation.Remat value)
+                    (begin
+                      (set! remats (+ remats 1))
+                      (match value
+                        [(ir.CompilerIrValue.I64 _)
+                          (set! literals (+ literals 1))]
+                        [(ir.CompilerIrValue.Bool _)
+                          (set! literals (+ literals 1))]
+                        [(ir.CompilerIrValue.Char _)
+                          (set! literals (+ literals 1))]
+                        [(ir.CompilerIrValue.Global _) (set! cells (+ cells 1))]
+                        [_ (set! addrs (+ addrs 1))]))])))
             (set! index (+ index 1))))
         (profile_state.compiler-profile-metrics-add!
           metrics
@@ -26914,16 +27678,28 @@
           metrics
           (+ compiler-reg-assignment-census-metric-start 5)
           remats)
-        (if (> capacity (compiler-reg-assignment-census-value metrics 6))
+        (profile_state.compiler-profile-metrics-add!
+          metrics
+          (+ compiler-reg-assignment-census-metric-start 6)
+          addrs)
+        (profile_state.compiler-profile-metrics-add!
+          metrics
+          (+ compiler-reg-assignment-census-metric-start 7)
+          literals)
+        (profile_state.compiler-profile-metrics-add!
+          metrics
+          (+ compiler-reg-assignment-census-metric-start 8)
+          cells)
+        (if (> capacity (compiler-reg-assignment-census-value metrics 9))
           (profile_state.compiler-profile-metrics-set!
             metrics
-            (+ compiler-reg-assignment-census-metric-start 6)
+            (+ compiler-reg-assignment-census-metric-start 9)
             capacity)
           unit)
-        (if (> assigned (compiler-reg-assignment-census-value metrics 7))
+        (if (> assigned (compiler-reg-assignment-census-value metrics 10))
           (profile_state.compiler-profile-metrics-set!
             metrics
-            (+ compiler-reg-assignment-census-metric-start 7)
+            (+ compiler-reg-assignment-census-metric-start 10)
             assigned)
           unit)))))
 
@@ -26933,7 +27709,7 @@
     [metrics : profile_state.CompilerProfileMetrics]) : unit
     (begin
       (io.print-error
-        "regalloc-assignment-census|plans|capacity|assigned|register|spill|remat|max-capacity|max-assigned\n")
+        "regalloc-assignment-census|plans|capacity|assigned|register|spill|remat|remat-addr|remat-literal|remat-cell|max-capacity|max-assigned\n")
       (io.print-error
         (str_cat.str-cat
           "regalloc-assignment-census|"
@@ -26952,6 +27728,12 @@
           (string.int->string (compiler-reg-assignment-census-value metrics 6))
           "|"
           (string.int->string (compiler-reg-assignment-census-value metrics 7))
+          "|"
+          (string.int->string (compiler-reg-assignment-census-value metrics 8))
+          "|"
+          (string.int->string (compiler-reg-assignment-census-value metrics 9))
+          "|"
+          (string.int->string (compiler-reg-assignment-census-value metrics 10))
           "\n")))))
 
 ;; ---- move census (cfg regalloc-census) ------------------------------------
@@ -27353,6 +28135,54 @@
 
 (define (compiler-reg-clear-c-memory-call-names!) : unit
   (set! compiler-reg-c-memory-call-names (reg_i64_i64_map.with-capacity 8)))
+
+;; W3 step (c). FROZEN GLOBAL CELLS -- the program fact that licenses
+;; rematerialising `movq g(%rip), %r`.
+;;
+;; A global's CELL is its own statically allocated storage, named by that symbol
+;; and by nothing else, so "can anything write cell(g)" is decided by NAMES
+;; alone. The writers are exhaustively:
+;;   * `CompilerIrInstr.Store g, v` -- the lowering of `(set! g ...)`;
+;;   * a `StorePtr` through a pointer derived from `CompilerIrValue.GlobalAddr g`,
+;;     which exists only where `(& g)` / `(&mut g)` was taken;
+;;   * the startup initializer's one `movq %rax, g(%rip)`, emitted by
+;;     compiler-backend-global-init-call BETWEEN the `__global_init_*` calls and
+;;     before `main` -- never inside a user function's activation, so it cannot
+;;     fall between a value's definition and a use of it.
+;; Disqualifying a global on either of the first two therefore leaves globals no
+;; execution can write while any function runs, and a re-read of the cell at a
+;; use yields the same word the defining read produced. This is TypeLisp's
+;; version of LLVM's `isDereferenceableInvariantLoad`
+;; (TargetInstrInfo.cpp:1641-1643) -- established by construction, where LLVM
+;; needs `GlobalOpt` + `IPSCCP` to prove it.
+;;
+;; The set is seeded once per program from the backend's whole-program value
+;; walk (compiler-backend-collect-program-collections, a TOTAL match over the IR
+;; that already visits every operand of every instruction of every function AND
+;; every global initializer, so a new IR shape cannot silently escape it), and
+;; `known?` gates every answer: any path that reaches the allocator without that
+;; walk having run gets `false` and the old behaviour.
+(define compiler-reg-nonfrozen-globals : reg_i64_i64_map.Map
+  (reg_i64_i64_map.with-capacity 8))
+(define compiler-reg-frozen-globals-known? : bool
+  false)
+
+(define (compiler-reg-frozen-globals-begin!) : unit
+  (begin
+    (set! compiler-reg-frozen-globals-known? false)
+    (set! compiler-reg-nonfrozen-globals (reg_i64_i64_map.with-capacity 8))))
+
+(define (compiler-reg-add-nonfrozen-global! [name : i64]) : unit
+  (reg_i64_i64_map.insert-ref! (&mut compiler-reg-nonfrozen-globals) name 1))
+
+(define (compiler-reg-frozen-globals-finish!) : unit
+  (set! compiler-reg-frozen-globals-known? true))
+
+(define (compiler-reg-global-frozen? [name : i64]) : bool
+  (and
+    compiler-reg-frozen-globals-known?
+    (not compiler-reg-program-maps-suppressed?)
+    (not (reg_i64_i64_map.contains? (& compiler-reg-nonfrozen-globals) name))))
 
 (define (compiler-reg-add-c-memory-call-name! [name : i64]) : unit
   (reg_i64_i64_map.insert-ref! (&mut compiler-reg-c-memory-call-names) name 1))

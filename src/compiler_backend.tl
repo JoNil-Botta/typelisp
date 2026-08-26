@@ -13141,7 +13141,10 @@
             "%rax"
             backend-state))]
       [conditional-address : String
-        (compiler-backend-value-stack-address assignments on-true backend-state)]
+        (compiler-backend-value-read-memory-operand
+          assignments
+          on-true
+          backend-state)]
       [conditional-direct? : bool
         (or
           (not (string.eq true-home ""))
@@ -25962,7 +25965,7 @@
     [rhs-reg : String
       (compiler-backend-value-scalar-register backend-state assignments rhs)]
     [rhs-address : String
-      (compiler-backend-value-stack-address assignments rhs backend-state)]
+      (compiler-backend-value-read-memory-operand assignments rhs backend-state)]
     [lhs-reg : String
       (compiler-backend-value-scalar-register backend-state assignments lhs)]
     [rhs-load-needed : bool
@@ -27008,6 +27011,70 @@
 ;; The memory operand a compare may spell for `value` at width `ty`: this
 ;; function's own frame slot for a spilled var, or the rip-relative cell for a
 ;; scalar global read. Exactly one side of a compare may use it.
+;; W3(c): the value a var's plan home RECOMPUTES, or Unit when it has a real
+;; home. A rematerialised frozen global read owns no slot, but the cell it
+;; recomputes from is itself a legal memory operand, so the M6-I fold applies to
+;; it exactly as it does to a direct `Global` operand: `cmpq g(%rip), %r` is the
+;; whole of the remat plus the compare.
+(define (compiler-backend-var-remat-value
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [value : compiler_ir_types.CompilerIrValue]
+  [backend-state : CompilerBackendState]) : compiler_ir_types.CompilerIrValue
+  (match value
+    [(compiler_ir_types.CompilerIrValue.Var id)
+      (match (compiler-backend-emit-assignment-lookup
+        backend-state
+        assignments
+        id)
+        [(compiler_regalloc.CompilerRegMaybeLocation.Some location)
+          (match location
+            [(compiler_regalloc.CompilerRegLocation.Remat inner) inner]
+            [_ (compiler_ir_types.CompilerIrValue.Unit)])]
+        [(compiler_regalloc.CompilerRegMaybeLocation.No)
+          (compiler_ir_types.CompilerIrValue.Unit)])]
+    [_ (compiler_ir_types.CompilerIrValue.Unit)]))
+
+(define (compiler-backend-remat-global-cell-operand
+  [backend-state : CompilerBackendState]
+  [value : compiler_ir_types.CompilerIrValue]) : String
+  (match value
+    [(compiler_ir_types.CompilerIrValue.Global name)
+      (let
+        [symbol : String
+          (compiler-backend-state-user-symbol-id backend-state name)]
+        (if (string.eq symbol "")
+          ""
+          (str_cat.str-cat symbol "(%rip)")))]
+    [_ ""]))
+
+;; W3(c): the memory operand a READ of `value` may spell -- this function's own
+;; frame slot for a spilled var, or the rip-relative CELL for a var whose plan
+;; home rematerialises a frozen global read. `off(%rsp)` and `sym(%rip)` are
+;; both single ModRM memory operands, so wherever the slot spelling was legal
+;; the cell spelling is too, and it is the whole of the materialising
+;; `movq g(%rip), %scratch` the remat would otherwise emit in front of the
+;; instruction. This is LLVM's fold-first step for a rematerialised load
+;; (InlineSpiller.cpp:753-760, `foldMemoryOperand` / `++NumFoldedLoads`), and
+;; without it widening the remat set turns a folded operand back into two
+;; instructions -- measured as +59,998 on opt_crc32's `andq mask(%rip)` and
+;; +271,250 on gvn_table's `imulq prime(%rip)`.
+;;
+;; Every caller spells the result as a COMPLETE source operand (a binop or cmov
+;; source, a compare operand, a bounds-check length), never as an addressing
+;; base, which is the one thing rip-relative cannot be.
+(define (compiler-backend-value-read-memory-operand
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [value : compiler_ir_types.CompilerIrValue]
+  [backend-state : CompilerBackendState]) : String
+  (let
+    [stack : String
+      (compiler-backend-value-stack-address assignments value backend-state)]
+    (if (string.eq stack "")
+      (compiler-backend-remat-global-cell-operand
+        backend-state
+        (compiler-backend-var-remat-value assignments value backend-state))
+      stack)))
+
 (define (compiler-backend-compare-memory-operand
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -27016,7 +27083,10 @@
   [backend-state : CompilerBackendState]) : String
   (let
     [stack : String
-      (compiler-backend-value-stack-address assignments value backend-state)]
+      (compiler-backend-value-read-memory-operand
+        assignments
+        value
+        backend-state)]
     (if (string.eq stack "")
       (compiler-backend-value-global-memory-operand
         backend-state
@@ -27454,7 +27524,7 @@
       (compiler-backend-value-scalar-register backend-state assignments rhs)]
     (if (not (string.eq rhs-reg ""))
       (compiler-backend-sized-reg type-segment-bases rhs-reg ty)
-      (compiler-backend-value-stack-address assignments rhs backend-state))))
+      (compiler-backend-value-read-memory-operand assignments rhs backend-state))))
 
 (define (compiler-backend-emit-binop-spill-direct-source
   [type-segment-bases : i64]
@@ -28468,7 +28538,7 @@
                         [(CompilerBackendMaybeImmediate.No)
                           (let
                             [rhs-address : String
-                              (compiler-backend-value-stack-address
+                              (compiler-backend-value-read-memory-operand
                                 assignments
                                 rhs
                                 backend-state)]
@@ -30941,7 +31011,7 @@
             length)]
         (if (not (string.eq length-reg ""))
           length-reg
-          (compiler-backend-value-stack-address
+          (compiler-backend-value-read-memory-operand
             assignments
             length
             backend-state)))]))
@@ -36420,6 +36490,11 @@
   (let
     [_clear-c-memory-calls : unit
       (compiler_regalloc.compiler-reg-clear-c-memory-call-names!)]
+    ;; W3(c): drop the previous program's frozen-global answer here, so a
+    ;; second program emitted in the same process can never read a stale one.
+    ;; The whole-program walk below re-seeds and re-publishes it.
+    [_reset-frozen-globals : unit
+      (compiler_regalloc.compiler-reg-frozen-globals-begin!)]
     [function-count : i64 (compiler-backend-function-list-count functions)]
     [extern-count : i64 (compiler-backend-extern-seq-count externs)]
     [function-names : (__tl_dyn-array String)
@@ -63384,19 +63459,33 @@
 ;; saving prologue, and selected prologue all differ from their needles), so
 ;; length equality is a cheap, allocation-free proof that a splice did not
 ;; fire.
+;; Fail-closed proof that each of the three shrink-wrap text splices had a
+;; needle to act on.  The original form compared lengths before/after each
+;; `string.replace`, which is a proxy that reports drift whenever the
+;; replacement happens to be the same size as the needle.  That is the COMMON
+;; case, not a rare one: the planned guard and the incoming guard are
+;; byte-identical whenever every operand the guard reads is already pinned to
+;; its own ABI register (a first-parameter `test %rdi,%rdi` guard), and they
+;; are the same length whenever the two homes merely spell the same width
+;; (`%rdi` vs `%r13`).  Both are correct splices -- rendering the prefix from
+;; incoming ABI homes is exactly what the replacement is for -- so the length
+;; test refused the whole shrink-wrap for functions that were perfectly
+;; admissible.  Check containment of each needle instead: that is what
+;; "the splice had something to replace" actually means, and it is strictly
+;; stronger (a same-length substitution of a MISSING needle used to pass).
 (define (compiler-backend-shrinkwrap-splice-fallback-required?
   [active? : bool]
   [body : String]
+  [planned-guard : String]
   [guarded-body : String]
-  [framed-body : String]
-  [final-body : String]
-  [emitted-body : String]) : bool
+  [saving-label-line : String]
+  [final-body : String]) : bool
   (and
     active?
     (or
-      (= (string.string-length body) (string.string-length guarded-body))
-      (= (string.string-length guarded-body) (string.string-length framed-body))
-      (= (string.string-length final-body) (string.string-length emitted-body)))))
+      (not (compiler-backend-string-contains? body planned-guard))
+      (not (compiler-backend-string-contains? guarded-body saving-label-line))
+      (not (compiler-backend-string-contains? final-body saving-label-line)))))
 
 (define (compiler-backend-set-scavenge-ctx-ready!
   [function-state : CompilerBackendFunctionState]
@@ -68593,6 +68682,1376 @@
                 out))
             blocks))))))
 
+;; ---------------------------------------------------------------------------
+;; #block-placement: IR loop rotation, immediately before emission.
+;;
+;; `compiler-backend-emit-blocks-into` walks the CompilerIrBlockList in order
+;; and hands every block the NEXT list entry as its fall-through, and
+;; `compiler-backend-emit-branch-jumps` already inverts a `jcc` only to match an
+;; order it did not choose.  Layout therefore IS list order, and this pass is
+;; the one place that chooses it.  It runs on the final post-coloring list, so
+;; every later view -- scavenge intervals, const-hoist, #jump-forward, phi
+;; targets, the peephole's layout-next reasoning -- is derived from the order
+;; actually emitted.
+;;
+;; LOOP ROTATION, LLVM's `MachineBlockPlacement::rotateLoop`
+;; (llvm/lib/CodeGen/MachineBlockPlacement.cpp).  Each natural loop's
+;; contiguous run is rotated so its EXITING block is last -- LLVM's
+;; `std::rotate(LoopChain.begin(), std::next(ExitIt), LoopChain.end())` -- which
+;; turns
+;;
+;;     H: cmp r12,r14 / jge exit             body ...
+;;        body ...                   ->      add r12,1
+;;        add r12,1                          L: cmp r12,r14 / jl body
+;;        jmp H
+;;
+;; i.e. the latch falls through into the exit test and the back edge becomes a
+;; conditional jump with no unconditional companion.  The rotation is what makes
+;; the wrap-around adjacency real: old bottom -> old top, which is exactly the
+;; back edge.  Declined when the header already has a viable fall-through
+;; predecessor and the current bottom already exits -- LLVM's
+;; `ViableTopFallthrough` test -- because that loop is already bottom-tested and
+;; rotating it would only move its jumps around.
+;;
+;; The loop is then entered by one forward jump from the preheader, paid once
+;; per entry rather than once per iteration; `compiler-backend-placement-
+;; counting-loop?` below is the admission that keeps that trade profitable.
+;;
+;; The entry block stays first unconditionally: the prologue, the Windows SEH
+;; directives that describe it, and the shrink-wrap splice all anchor there.
+;; Nothing but a loop's own run ever moves, so every other block keeps its
+;; original neighbours and a function with no rotatable loop comes out
+;; byte-identical.
+;;
+;; A block that does not end in a terminator falls through to whatever the list
+;; puts next, so its successor is named nowhere and moving either half would
+;; lose the edge.  Such a function is declined whole rather than glued back
+;; together -- every IR builder terminates its blocks, so this is a fail-closed
+;; check and not a case to optimize.
+;;
+;; The GAP9 gep displacement table (`compiler-backend-gep-fold-*`) is a flat
+;; array RECORDED in list order and CONSUMED by a cursor in emission order, so
+;; a permutation has to carry it.  One entry per `Gep` instruction, in block
+;; order, is exactly the invariant `compiler-backend-gep-fold-rewrite-seq`
+;; maintains -- all three of its arms record one -- so the table is
+;; re-concatenated per block alongside the blocks.  A gep count that disagrees
+;; with the table length would mean a pass after the fold cloned a gep-bearing
+;; block, and the function is declined rather than emitted against a shifted
+;; table.
+;;
+;; MEASURED AND SHELVED: greedy CHAIN BUILDING, LLVM's `buildChain` /
+;; `selectBestSuccessor` with a static HotProb, was implemented over this same
+;; state (patch: target/wsl/patches/W2-layout-chain-building-shelved.patch) and
+;; LOSES.  Appending the successor the Ball & Larus set predicts taken moves a
+;; loop's latch to wherever the predicted path reaches it, which destroys the
+;; "latch last" property the front end's structured lowering already gives every
+;; loop -- and that property is the one rotation needs.  Measured against this
+;; branch base, chain building on top of rotation cost peephole_lines +8.78M,
+;; gvn_table +4.22M, cfg_domloops +3.86M and intern_table +63k.  The cold-arm
+;; out-lining it would have bought is what the post-emission text pass
+;; `#block-layout` (mode bit 2) already does, from the same predictor, without
+;; disturbing the loops.
+;;
+;; 0 disables the pass, 1 enables it: the A/B switch the rows above were
+;; measured on.
+(define compiler-backend-placement-mode : i64
+  1)
+
+;; Everything the layout reads about one function: the CFG in index space, the
+;; loop tree, and the order under construction.
+(defstruct CompilerBackendPlacement
+  (count i64)
+  (term-kind (__tl_dyn-array i64))
+  (succ-off (__tl_dyn-array i64))
+  (succ-buf (__tl_dyn-array i64))
+  ;; innermost loop header of each block, or -1: what keeps a rotation's cut
+  ;; point out of a nested loop's run
+  (inner (__tl_dyn-array i64))
+  (order (__tl_dyn-array i64))
+  (pos (__tl_dyn-array i64))
+  (scratch (__tl_dyn-array i64))
+  ;; one loop's blocks, header first, copied out of the nest's shared member
+  ;; buffer before the next stamped walk overwrites it
+  (members (__tl_dyn-array i64))
+  ;; per-variable stamps for the trip-count admission
+  (variant (__tl_dyn-array i64))
+  (iv (__tl_dyn-array i64))
+  (phis (__tl_dyn-array i64)))
+
+(defenum CompilerBackendMaybePlacement
+  (No)
+  (Some CompilerBackendPlacement))
+
+;; Terminator classes the layout needs to tell apart: 0 = none (the block falls
+;; through to its list successor and cannot be moved), 1 = Jump, 2 = two-arm
+;; branch, 3 = switch, 4 = leaves the function.
+(define (compiler-backend-placement-term-kind
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
+  (let
+    [n : i64 instrs.len]
+    (if (= n 0)
+      0
+      (match (array-ref instrs.slots (- n 1))
+        [(compiler_ir_types.CompilerIrInstr.Jump _) 1]
+        [(compiler_ir_types.CompilerIrInstr.Branch _ _ _) 2]
+        [(compiler_ir_types.CompilerIrInstr.TotalEnumBranch _ _ _) 2]
+        [(compiler_ir_types.CompilerIrInstr.Switch _ _ _ _) 3]
+        [(compiler_ir_types.CompilerIrInstr.TotalEnumSwitch _ _ _ _ _) 3]
+        [(compiler_ir_types.CompilerIrInstr.Return _) 4]
+        [(compiler_ir_types.CompilerIrInstr.TailCall _ _ _) 4]
+        [(compiler_ir_types.CompilerIrInstr.TailCallIndirect _ _ _) 4]
+        [_ 0]))))
+
+(define (compiler-backend-placement-index-of
+  [ids : backend_label_i64_map.Map]
+  [label : i64]) : i64
+  (match (backend_label_i64_map.get (& ids) label)
+    [(backend_label_i64_map.LookupFound q) q]
+    [(backend_label_i64_map.LookupMissing) (- 0 1)]))
+
+(define (compiler-backend-placement-fill!
+  [slots : (__tl_dyn-array i64)]
+  [value : i64]) : unit
+  (let
+    [n : i64 (array-length slots)]
+    [i : i64 0]
+    (while (< i n)
+      (begin
+        (set! (array-ref slots i) value)
+        (set! i (+ i 1))))))
+
+;; Upper bound on successor edges, so the flat CSR is allocated once.
+(define (compiler-backend-placement-succ-bound
+  [seq : compiler_ir_types.CompilerIrBlockSeq]) : i64
+  (let
+    [n : i64 (compiler_ir_types.compiler-ir-block-seq-count seq)]
+    [i : i64 0]
+    [total : i64 0]
+    (begin
+      (while (< i n)
+        (begin
+          (match (compiler_ir_types.compiler-ir-block-seq-ref seq i)
+            [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+              (if (= instrs.len 0)
+                unit
+                (match (array-ref instrs.slots (- instrs.len 1))
+                  [(compiler_ir_types.CompilerIrInstr.Jump _)
+                    (set! total (+ total 1))]
+                  [(compiler_ir_types.CompilerIrInstr.Branch _ _ _)
+                    (set! total (+ total 2))]
+                  [(compiler_ir_types.CompilerIrInstr.TotalEnumBranch _ _ _)
+                    (set! total (+ total 2))]
+                  [(compiler_ir_types.CompilerIrInstr.Switch _ _ cases _)
+                    (set! total (+ total (+ cases.len 2)))]
+                  [(compiler_ir_types.CompilerIrInstr.TotalEnumSwitch
+                      _
+                      _
+                      cases
+                      _
+                      _)
+                    (set! total (+ total (+ cases.len 3)))]
+                  [_ unit]))])
+          (set! i (+ i 1))))
+      (+ total 1))))
+
+(define (compiler-backend-placement-push-succ!
+  [buf : (__tl_dyn-array i64)]
+  [write : i64]
+  [target : i64]) : i64
+  (if (< target 0)
+    write
+    (begin
+      (set! (array-ref buf write) target)
+      (+ write 1))))
+
+(define (compiler-backend-placement-push-cases!
+  [ids : backend_label_i64_map.Map]
+  [buf : (__tl_dyn-array i64)]
+  [write : i64]
+  [cases : compiler_ir_types.CompilerIrSwitchCaseSeq]) : i64
+  (let
+    [i : i64 0]
+    [w : i64 write]
+    (begin
+      (while (< i cases.len)
+        (begin
+          (match (compiler_ir_types.compiler-ir-switch-case-seq-ref cases i)
+            [(compiler_ir_types.CompilerIrSwitchCase.Case _ label)
+              (set!
+                w
+                (compiler-backend-placement-push-succ!
+                  buf
+                  w
+                  (compiler-backend-placement-index-of ids label)))])
+          (set! i (+ i 1))))
+      w)))
+
+;; Fill the successor CSR and the terminator classes, reading targets straight
+;; off the terminators so nothing is allocated per block. Returns
+;;   -1  some block has no terminator: its successor is its list neighbour and
+;;       nothing names it, so the function declines layout;
+;;    0  no edge runs backward in list order, so the function closes no cycle
+;;       and this pass has nothing to rotate -- the answer that lets the common
+;;       loop-free function stop before the loop nest is ever built;
+;;    1  some edge does.
+(define (compiler-backend-placement-fill-succ!
+  [term-kind : (__tl_dyn-array i64)]
+  [succ-off : (__tl_dyn-array i64)]
+  [succ-buf : (__tl_dyn-array i64)]
+  [ids : backend_label_i64_map.Map]
+  [seq : compiler_ir_types.CompilerIrBlockSeq]) : i64
+  (let
+    [n : i64 (compiler_ir_types.compiler-ir-block-seq-count seq)]
+    [i : i64 0]
+    [write : i64 0]
+    [ok : bool true]
+    [closes? : bool false]
+    (begin
+      (while (< i n)
+        (begin
+          (set! (array-ref succ-off i) write)
+          (match (compiler_ir_types.compiler-ir-block-seq-ref seq i)
+            [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+              (let
+                [kind : i64 (compiler-backend-placement-term-kind instrs)]
+                (begin
+                  (set! (array-ref term-kind i) kind)
+                  (if (= kind 0)
+                    (set! ok false)
+                    (match (array-ref instrs.slots (- instrs.len 1))
+                      [(compiler_ir_types.CompilerIrInstr.Jump target)
+                        (set!
+                          write
+                          (compiler-backend-placement-push-succ!
+                            succ-buf
+                            write
+                            (compiler-backend-placement-index-of ids target)))]
+                      [(compiler_ir_types.CompilerIrInstr.Branch
+                          _
+                          true-label
+                          false-label)
+                        (begin
+                          (set!
+                            write
+                            (compiler-backend-placement-push-succ!
+                              succ-buf
+                              write
+                              (compiler-backend-placement-index-of
+                                ids
+                                true-label)))
+                          (set!
+                            write
+                            (compiler-backend-placement-push-succ!
+                              succ-buf
+                              write
+                              (compiler-backend-placement-index-of
+                                ids
+                                false-label))))]
+                      [(compiler_ir_types.CompilerIrInstr.TotalEnumBranch
+                          _
+                          true-label
+                          false-label)
+                        (begin
+                          (set!
+                            write
+                            (compiler-backend-placement-push-succ!
+                              succ-buf
+                              write
+                              (compiler-backend-placement-index-of
+                                ids
+                                true-label)))
+                          (set!
+                            write
+                            (compiler-backend-placement-push-succ!
+                              succ-buf
+                              write
+                              (compiler-backend-placement-index-of
+                                ids
+                                false-label))))]
+                      [(compiler_ir_types.CompilerIrInstr.Switch
+                          _
+                          _
+                          cases
+                          default-label)
+                        (begin
+                          (set!
+                            write
+                            (compiler-backend-placement-push-succ!
+                              succ-buf
+                              write
+                              (compiler-backend-placement-index-of
+                                ids
+                                default-label)))
+                          (set!
+                            write
+                            (compiler-backend-placement-push-cases!
+                              ids
+                              succ-buf
+                              write
+                              cases)))]
+                      [(compiler_ir_types.CompilerIrInstr.TotalEnumSwitch
+                          _
+                          _
+                          cases
+                          default-label
+                          trap-label)
+                        (begin
+                          (set!
+                            write
+                            (compiler-backend-placement-push-succ!
+                              succ-buf
+                              write
+                              (compiler-backend-placement-index-of
+                                ids
+                                default-label)))
+                          (set!
+                            write
+                            (compiler-backend-placement-push-succ!
+                              succ-buf
+                              write
+                              (compiler-backend-placement-index-of
+                                ids
+                                trap-label)))
+                          (set!
+                            write
+                            (compiler-backend-placement-push-cases!
+                              ids
+                              succ-buf
+                              write
+                              cases)))]
+                      [_ unit]))))])
+          (let
+            [edge : i64 (array-ref succ-off i)]
+            (while (< edge write)
+              (begin
+                (if (<= (array-ref succ-buf edge) i)
+                  (set! closes? true)
+                  unit)
+                (set! edge (+ edge 1)))))
+          (set! i (+ i 1))))
+      (set! (array-ref succ-off n) write)
+      (if (not ok)
+        (- 0 1)
+        (if closes?
+          1
+          0)))))
+
+;; The condition of the two-arm branch that ends this block.
+(define (compiler-backend-placement-branch-cond
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]) : compiler_ir_types.CompilerIrValue
+  (if (= instrs.len 0)
+    (compiler_ir_types.CompilerIrValue.Unit)
+    (match (array-ref instrs.slots (- instrs.len 1))
+      [(compiler_ir_types.CompilerIrInstr.Branch cond _ _) cond]
+      [(compiler_ir_types.CompilerIrInstr.TotalEnumBranch cond _ _) cond]
+      [_ (compiler_ir_types.CompilerIrValue.Unit)])))
+
+;; Headers ordered by loop size ascending, so the loop tree is filled innermost
+;; first and every block lands on the smallest loop that contains it.
+(define (compiler-backend-placement-sort-headers!
+  [sorted : (__tl_dyn-array i64)]
+  [size : (__tl_dyn-array i64)]
+  [count : i64]) : unit
+  (let
+    [i : i64 1]
+    (while (< i count)
+      (let
+        [h : i64 (array-ref sorted i)]
+        [k : i64 (- i 1)]
+        (begin
+          (while (and
+            (>= k 0)
+            (> (array-ref size (array-ref sorted k)) (array-ref size h)))
+            (begin
+              (set! (array-ref sorted (+ k 1)) (array-ref sorted k))
+              (set! k (- k 1))))
+          (set! (array-ref sorted (+ k 1)) h)
+          (set! i (+ i 1)))))))
+
+;; Two stamped walks per loop: the first sizes it so the headers can be sorted,
+;; the second -- innermost first -- gives every block the smallest loop that
+;; owns it.
+(define (compiler-backend-placement-loop-info!
+  [st : CompilerBackendPlacement]
+  [nest : compiler_regalloc.CompilerRegLoopNest]
+  [sorted : (__tl_dyn-array i64)]
+  [size : (__tl_dyn-array i64)]
+  [header-count : i64]) : unit
+  (let
+    [generation : i64 0]
+    [i : i64 0]
+    (begin
+      (while (< i header-count)
+        (let
+          [h : i64 (compiler_regalloc.compiler-reg-loop-nest-header nest i)]
+          (begin
+            (set! (array-ref sorted i) h)
+            (set! generation (+ generation 1))
+            (set!
+              (array-ref size h)
+              (+
+                (compiler_regalloc.compiler-reg-loop-nest-header-members!
+                  nest
+                  h
+                  generation)
+                1))
+            (set! i (+ i 1)))))
+      (compiler-backend-placement-sort-headers! sorted size header-count)
+      (set! i 0)
+      (while (< i header-count)
+        (let
+          [h : i64 (array-ref sorted i)]
+          (begin
+            (set! generation (+ generation 1))
+            (let
+              [total : i64
+                (compiler_regalloc.compiler-reg-loop-nest-header-members!
+                  nest
+                  h
+                  generation)]
+              [m : i64 0]
+              (begin
+                (if (< (array-ref st.inner h) 0)
+                  (set! (array-ref st.inner h) h)
+                  unit)
+                (while (< m total)
+                  (let
+                    [block : i64 (array-ref nest.members m)]
+                    (begin
+                      (if (and
+                        (>= block 0)
+                        (< block st.count)
+                        (< (array-ref st.inner block) 0))
+                        (set! (array-ref st.inner block) h)
+                        unit)
+                      (set! m (+ m 1)))))))
+            (set! i (+ i 1))))))))
+
+;; Geps in one block. The gep-fold rewrite records exactly one displacement
+;; ordinal per Gep, whether or not the offset folded, so this count is the
+;; block's slice of the table.
+(define (compiler-backend-placement-gep-count
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
+  (let
+    [n : i64 instrs.len]
+    [i : i64 0]
+    [total : i64 0]
+    (begin
+      (while (< i n)
+        (begin
+          (match (array-ref instrs.slots i)
+            [(compiler_ir_types.CompilerIrInstr.Gep _ _ _ _)
+              (set! total (+ total 1))]
+            [_ unit])
+          (set! i (+ i 1))))
+      total)))
+
+;; ---------------------------------------------------------------------------
+;; Trip-count admission for rotation.
+;;
+;; Rotation trades ONE jump per loop ENTRY -- the preheader now jumps to a
+;; header that sits at the bottom -- for one per LATCH execution, where the back
+;; edge becomes a fall-through.  Writing K for header executions per entry, the
+;; emitted-instruction delta is `2 - K`: a loop whose body runs more than about
+;; twice per entry wins, and one that usually falls straight back out loses
+;; exactly once per call.  Measured on this corpus: peephole_lines' character
+;; scans run 21 trips and pay -10.6M, while gvn_table's hash probe (660,240
+;; header executions over 655,872 entries, K = 1.007) and its `n = next[n]`
+;; bucket walk (K = 1.71) pay +1.25M between them.
+;;
+;; With no profile the trip count has to be read off the loop's SHAPE, and the
+;; shape that separates the two groups is the classic one.  A COUNTING loop --
+;; one whose exit test compares an affine induction variable against a
+;; loop-invariant bound -- runs to its bound.  A SEARCH loop -- one whose exit
+;; is decided by data it loads or computes each trip -- stops as soon as it
+;; finds what it wants, which for a hash probe or a bucket chain is the first
+;; test.  Rotation is admitted only for a loop with a counting exit.
+;;
+;; The recognizer is deliberately small:
+;;   * every variable defined inside the loop is VARIANT and everything else --
+;;     constants, parameters, values computed above the loop -- INVARIANT;
+;;   * a header phi that some in-loop `add`/`sub` combines with an invariant is
+;;     an INDUCTION VARIABLE, and so is anything built from one by another
+;;     `add`/`sub` against an invariant, which is what the `i + 6 <= limit`
+;;     bound test of a lookahead scan looks like;
+;;   * the loop qualifies when some EXITING block's branch compares an
+;;     induction variable against an invariant.
+;; An instruction whose destination this pass cannot name -- the vector and
+;; SPMD payload forms -- makes its loop decline rather than guess.
+;; -1: defines no variable. -2: defines one this pass cannot name.
+(define (compiler-backend-placement-instr-dst
+  [instr : compiler_ir_types.CompilerIrInstr]) : i64
+  (match instr
+    [(compiler_ir_types.CompilerIrInstr.Mov dst _ _) dst]
+    [(compiler_ir_types.CompilerIrInstr.Alloc dst _) dst]
+    [(compiler_ir_types.CompilerIrInstr.AddrOf dst _) dst]
+    [(compiler_ir_types.CompilerIrInstr.Gep dst _ _ _) dst]
+    [(compiler_ir_types.CompilerIrInstr.Load dst _ _) dst]
+    [(compiler_ir_types.CompilerIrInstr.Cast dst _ _ _) dst]
+    [(compiler_ir_types.CompilerIrInstr.Bitcast dst _ _ _) dst]
+    [(compiler_ir_types.CompilerIrInstr.BinOp dst _ _ _ _) dst]
+    [(compiler_ir_types.CompilerIrInstr.UnOp dst _ _ _) dst]
+    [(compiler_ir_types.CompilerIrInstr.LaneId dst _ _) dst]
+    [(compiler_ir_types.CompilerIrInstr.Splat dst _ _ _) dst]
+    [(compiler_ir_types.CompilerIrInstr.VectorReduce dst _ _ _ _) dst]
+    [(compiler_ir_types.CompilerIrInstr.MaskBinOp dst _ _ _ _) dst]
+    [(compiler_ir_types.CompilerIrInstr.MaskNot dst _ _) dst]
+    [(compiler_ir_types.CompilerIrInstr.MaskReduce dst _ _ _) dst]
+    [(compiler_ir_types.CompilerIrInstr.VectorLoad dst _ _ _ _) dst]
+    [(compiler_ir_types.CompilerIrInstr.TailMask dst _ _ _) dst]
+    [(compiler_ir_types.CompilerIrInstr.EntryArgc dst) dst]
+    [(compiler_ir_types.CompilerIrInstr.EntryArgv dst) dst]
+    [(compiler_ir_types.CompilerIrInstr.EntryEnvp dst) dst]
+    [(compiler_ir_types.CompilerIrInstr.CpuId dst _ _ _) dst]
+    [(compiler_ir_types.CompilerIrInstr.Xgetbv dst _) dst]
+    [(compiler_ir_types.CompilerIrInstr.Syscall dst _) dst]
+    [(compiler_ir_types.CompilerIrInstr.Call dst _ _ _) dst]
+    [(compiler_ir_types.CompilerIrInstr.CallIndirect dst _ _ _) dst]
+    [(compiler_ir_types.CompilerIrInstr.CallIndirectC dst _ _ _) dst]
+    [(compiler_ir_types.CompilerIrInstr.TailCall dst _ _) dst]
+    [(compiler_ir_types.CompilerIrInstr.Store dst _ _) dst]
+    [(compiler_ir_types.CompilerIrInstr.Phi dst _ _) dst]
+    [(compiler_ir_types.CompilerIrInstr.Pack dst _ _) dst]
+    [(compiler_ir_types.CompilerIrInstr.Word dst _ _ _) dst]
+    [(compiler_ir_types.CompilerIrInstr.StorePtr _ _ _) (- 0 1)]
+    [(compiler_ir_types.CompilerIrInstr.CopyBytes _ _ _) (- 0 1)]
+    [(compiler_ir_types.CompilerIrInstr.BoundsCheck _ _ _) (- 0 1)]
+    [(compiler_ir_types.CompilerIrInstr.Jump _) (- 0 1)]
+    [(compiler_ir_types.CompilerIrInstr.Branch _ _ _) (- 0 1)]
+    [(compiler_ir_types.CompilerIrInstr.TotalEnumBranch _ _ _) (- 0 1)]
+    [(compiler_ir_types.CompilerIrInstr.Return _) (- 0 1)]
+    [(compiler_ir_types.CompilerIrInstr.TailCallIndirect _ _ _) (- 0 1)]
+    [(compiler_ir_types.CompilerIrInstr.Switch _ _ _ _) (- 0 1)]
+    [(compiler_ir_types.CompilerIrInstr.TotalEnumSwitch _ _ _ _ _) (- 0 1)]
+    [_ (- 0 2)]))
+
+;; One past the highest destination this pass can name, which sizes the stamp
+;; tables. A destination beyond it reads as neither invariant nor induction, so
+;; an unnamed variable can only make a loop decline.
+(define (compiler-backend-placement-var-cap
+  [seq : compiler_ir_types.CompilerIrBlockSeq]) : i64
+  (let
+    [n : i64 (compiler_ir_types.compiler-ir-block-seq-count seq)]
+    [i : i64 0]
+    [cap : i64 0]
+    (begin
+      (while (< i n)
+        (begin
+          (match (compiler_ir_types.compiler-ir-block-seq-ref seq i)
+            [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+              (let
+                [k : i64 0]
+                (while (< k instrs.len)
+                  (begin
+                    (let
+                      [dst : i64
+                        (compiler-backend-placement-instr-dst
+                          (array-ref instrs.slots k))]
+                      (if (>= dst cap)
+                        (set! cap (+ dst 1))
+                        unit))
+                    (set! k (+ k 1)))))])
+          (set! i (+ i 1))))
+      cap)))
+
+(define (compiler-backend-placement-stamped?
+  [table : (__tl_dyn-array i64)]
+  [index : i64]
+  [generation : i64]) : bool
+  (and
+    (>= index 0)
+    (< index (array-length table))
+    (= (array-ref table index) generation)))
+
+(define (compiler-backend-placement-stamp!
+  [table : (__tl_dyn-array i64)]
+  [index : i64]
+  [generation : i64]) : unit
+  (if (and (>= index 0) (< index (array-length table)))
+    (set! (array-ref table index) generation)
+    unit))
+
+(define (compiler-backend-placement-stamp-value!
+  [table : (__tl_dyn-array i64)]
+  [value : compiler_ir_types.CompilerIrValue]
+  [generation : i64]) : unit
+  (match value
+    [(compiler_ir_types.CompilerIrValue.Var v)
+      (compiler-backend-placement-stamp! table v generation)]
+    [_ unit]))
+
+;; A value nothing inside the loop writes. Constants qualify; a variable this
+;; pass could not name does not.
+(define (compiler-backend-placement-invariant?
+  [variant : (__tl_dyn-array i64)]
+  [generation : i64]
+  [value : compiler_ir_types.CompilerIrValue]) : bool
+  (match value
+    [(compiler_ir_types.CompilerIrValue.Var v)
+      (if (and (>= v 0) (< v (array-length variant)))
+        (not (= (array-ref variant v) generation))
+        ;; Past the highest destination in the whole function, so no
+        ;; instruction defines it and nothing in the loop can write it: a
+        ;; PARAMETER, which is the usual spelling of a counting loop's bound and
+        ;; the one value that is never anybody's `dst`.
+        true)]
+    [_ true]))
+
+(define (compiler-backend-placement-marked?
+  [table : (__tl_dyn-array i64)]
+  [generation : i64]
+  [value : compiler_ir_types.CompilerIrValue]) : bool
+  (match value
+    [(compiler_ir_types.CompilerIrValue.Var v)
+      (compiler-backend-placement-stamped? table v generation)]
+    [_ false]))
+
+(define (compiler-backend-placement-affine-op?
+  [op : compiler_ir_types.CompilerIrBinOp]) : bool
+  (match op
+    [(compiler_ir_types.CompilerIrBinOp.Add) true]
+    [(compiler_ir_types.CompilerIrBinOp.Sub) true]
+    [_ false]))
+
+(define (compiler-backend-placement-commutes?
+  [op : compiler_ir_types.CompilerIrBinOp]) : bool
+  (match op
+    [(compiler_ir_types.CompilerIrBinOp.Add) true]
+    [_ false]))
+
+;; Stamp every variable the loop writes. False when some instruction defines a
+;; destination this pass cannot name.
+(define (compiler-backend-placement-mark-variant!
+  [st : CompilerBackendPlacement]
+  [seq : compiler_ir_types.CompilerIrBlockSeq]
+  [total : i64]
+  [generation : i64]) : bool
+  (let
+    [i : i64 0]
+    [ok : bool true]
+    (begin
+      (while (< i total)
+        (begin
+          (match (compiler_ir_types.compiler-ir-block-seq-ref
+            seq
+            (array-ref st.members i))
+            [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+              (let
+                [k : i64 0]
+                (while (< k instrs.len)
+                  (begin
+                    (let
+                      [dst : i64
+                        (compiler-backend-placement-instr-dst
+                          (array-ref instrs.slots k))]
+                      (if (= dst (- 0 2))
+                        (set! ok false)
+                        (compiler-backend-placement-stamp!
+                          st.variant
+                          dst
+                          generation)))
+                    (set! k (+ k 1)))))])
+          (set! i (+ i 1))))
+      ok)))
+
+;; One `add`/`sub` against an invariant: it names a header phi as an induction
+;; variable and carries the induction stamp to its own result.
+(define (compiler-backend-placement-induction-step!
+  [st : CompilerBackendPlacement]
+  [dst : i64]
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [lhs : compiler_ir_types.CompilerIrValue]
+  [rhs : compiler_ir_types.CompilerIrValue]
+  [generation : i64]) : unit
+  (if (not (compiler-backend-placement-affine-op? op))
+    unit
+    (let
+      [swap? : bool (compiler-backend-placement-commutes? op)]
+      (begin
+        (if (and
+          (compiler-backend-placement-marked? st.phis generation lhs)
+          (compiler-backend-placement-invariant? st.variant generation rhs))
+          (begin
+            (compiler-backend-placement-stamp-value! st.iv lhs generation)
+            (compiler-backend-placement-stamp! st.iv dst generation))
+          unit)
+        (if (and
+          swap?
+          (compiler-backend-placement-marked? st.phis generation rhs)
+          (compiler-backend-placement-invariant? st.variant generation lhs))
+          (begin
+            (compiler-backend-placement-stamp-value! st.iv rhs generation)
+            (compiler-backend-placement-stamp! st.iv dst generation))
+          unit)
+        (if (and
+          (compiler-backend-placement-marked? st.iv generation lhs)
+          (compiler-backend-placement-invariant? st.variant generation rhs))
+          (compiler-backend-placement-stamp! st.iv dst generation)
+          unit)
+        (if (and
+          swap?
+          (compiler-backend-placement-marked? st.iv generation rhs)
+          (compiler-backend-placement-invariant? st.variant generation lhs))
+          (compiler-backend-placement-stamp! st.iv dst generation)
+          unit)))))
+
+;; Seed the induction set from the header's phis, then close it under
+;; `add`/`sub` against an invariant. Two rounds reach a bound expression built
+;; from a phi the header defines, which is as deep as the measured shapes go.
+(define (compiler-backend-placement-mark-induction!
+  [st : CompilerBackendPlacement]
+  [seq : compiler_ir_types.CompilerIrBlockSeq]
+  [header : i64]
+  [total : i64]
+  [generation : i64]) : unit
+  (let
+    [round : i64 0]
+    (begin
+      (match (compiler_ir_types.compiler-ir-block-seq-ref seq header)
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (let
+            [k : i64 0]
+            (while (< k instrs.len)
+              (begin
+                (match (array-ref instrs.slots k)
+                  [(compiler_ir_types.CompilerIrInstr.Phi dst _ _)
+                    (compiler-backend-placement-stamp! st.phis dst generation)]
+                  [_ unit])
+                (set! k (+ k 1)))))])
+      (while (< round 2)
+        (let
+          [i : i64 0]
+          (begin
+            (while (< i total)
+              (begin
+                (match (compiler_ir_types.compiler-ir-block-seq-ref
+                  seq
+                  (array-ref st.members i))
+                  [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+                    (let
+                      [k : i64 0]
+                      (while (< k instrs.len)
+                        (begin
+                          (match (array-ref instrs.slots k)
+                            [(compiler_ir_types.CompilerIrInstr.BinOp
+                                dst
+                                op
+                                lhs
+                                rhs
+                                _)
+                              (compiler-backend-placement-induction-step!
+                                st
+                                dst
+                                op
+                                lhs
+                                rhs
+                                generation)]
+                            [_ unit])
+                          (set! k (+ k 1)))))])
+                (set! i (+ i 1))))
+            (set! round (+ round 1))))))))
+
+;; Does the compare that decides this block's branch read an induction variable
+;; against a loop-invariant bound?
+(define (compiler-backend-placement-counting-test?
+  [st : CompilerBackendPlacement]
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [generation : i64]) : bool
+  (match (compiler-backend-placement-branch-cond instrs)
+    [(compiler_ir_types.CompilerIrValue.Var v)
+      (let
+        [i : i64 (- instrs.len 2)]
+        [found : bool false]
+        (begin
+          (while (>= i 0)
+            (begin
+              (match (array-ref instrs.slots i)
+                [(compiler_ir_types.CompilerIrInstr.BinOp dst op lhs rhs _)
+                  (if (= dst v)
+                    (begin
+                      (set!
+                        found
+                        (and
+                          (compiler_ir_types.compiler-ir-binop-compare? op)
+                          (or
+                            (and
+                              (compiler-backend-placement-marked?
+                                st.iv
+                                generation
+                                lhs)
+                              (compiler-backend-placement-invariant?
+                                st.variant
+                                generation
+                                rhs))
+                            (and
+                              (compiler-backend-placement-marked?
+                                st.iv
+                                generation
+                                rhs)
+                              (compiler-backend-placement-invariant?
+                                st.variant
+                                generation
+                                lhs)))))
+                      (set! i 0))
+                    unit)]
+                [_ unit])
+              (set! i (- i 1))))
+          found))]
+    [_ false]))
+
+;; The admission itself: some exiting block of this loop counts.
+(define (compiler-backend-placement-counting-loop?
+  [st : CompilerBackendPlacement]
+  [nest : compiler_regalloc.CompilerRegLoopNest]
+  [seq : compiler_ir_types.CompilerIrBlockSeq]
+  [header : i64]
+  [total : i64]
+  [generation : i64]) : bool
+  (if (not (compiler-backend-placement-mark-variant! st seq total generation))
+    false
+    (begin
+      (compiler-backend-placement-mark-induction!
+        st
+        seq
+        header
+        total
+        generation)
+      (let
+        [i : i64 0]
+        [found : bool false]
+        (begin
+          (while (< i total)
+            (let
+              [b : i64 (array-ref st.members i)]
+              (begin
+                (if (and
+                  (= (array-ref st.term-kind b) 2)
+                  (compiler-backend-placement-succ-outside?
+                    st
+                    nest
+                    b
+                    generation))
+                  (match (compiler_ir_types.compiler-ir-block-seq-ref seq b)
+                    [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+                      (if (compiler-backend-placement-counting-test?
+                        st
+                        instrs
+                        generation)
+                        (begin
+                          (set! found true)
+                          (set! i total))
+                        unit)])
+                  unit)
+                (set! i (+ i 1)))))
+          found)))))
+
+(define (compiler-backend-placement-succ-outside?
+  [st : CompilerBackendPlacement]
+  [nest : compiler_regalloc.CompilerRegLoopNest]
+  [b : i64]
+  [generation : i64]) : bool
+  (let
+    [edge : i64 (array-ref st.succ-off b)]
+    [stop : i64 (array-ref st.succ-off (+ b 1))]
+    [found : bool false]
+    (begin
+      (while (< edge stop)
+        (begin
+          (if (compiler_regalloc.compiler-reg-loop-nest-member?
+            nest
+            (array-ref st.succ-buf edge)
+            generation)
+            unit
+            (set! found true))
+          (set! edge (+ edge 1))))
+      found)))
+
+(define (compiler-backend-placement-succ-inside?
+  [st : CompilerBackendPlacement]
+  [nest : compiler_regalloc.CompilerRegLoopNest]
+  [b : i64]
+  [generation : i64]) : bool
+  (let
+    [edge : i64 (array-ref st.succ-off b)]
+    [stop : i64 (array-ref st.succ-off (+ b 1))]
+    [found : bool false]
+    (begin
+      (while (< edge stop)
+        (begin
+          (if (compiler_regalloc.compiler-reg-loop-nest-member?
+            nest
+            (array-ref st.succ-buf edge)
+            generation)
+            (set! found true)
+            unit)
+          (set! edge (+ edge 1))))
+      found)))
+
+(define (compiler-backend-placement-pred?
+  [nest : compiler_regalloc.CompilerRegLoopNest]
+  [block : i64]
+  [candidate : i64]) : bool
+  (let
+    [edge : i64 (array-ref nest.pred-offsets block)]
+    [stop : i64 (array-ref nest.pred-offsets (+ block 1))]
+    [found : bool false]
+    (begin
+      (while (< edge stop)
+        (begin
+          (if (= (array-ref nest.pred-sources edge) candidate)
+            (set! found true)
+            unit)
+          (set! edge (+ edge 1))))
+      found)))
+
+;; `rotateLoop`. Innermost loops first, so an outer rotation moves whole inner
+;; runs. Each loop's run is rotated left past its exiting block, which lands
+;; that block at the bottom and makes the old bottom -- the latch -- adjacent to
+;; the header.
+(define (compiler-backend-placement-rotate!
+  [st : CompilerBackendPlacement]
+  [nest : compiler_regalloc.CompilerRegLoopNest]
+  [seq : compiler_ir_types.CompilerIrBlockSeq]
+  [sorted : (__tl_dyn-array i64)]
+  [header-count : i64]
+  [generation-base : i64]) : unit
+  (let
+    [n : i64 st.count]
+    [i : i64 0]
+    [generation : i64 generation-base]
+    (begin
+      (while (< i n)
+        (begin
+          (set! (array-ref st.pos (array-ref st.order i)) i)
+          (set! i (+ i 1))))
+      (set! i 0)
+      (while (< i header-count)
+        (let
+          [h : i64 (array-ref sorted i)]
+          (begin
+            (set! generation (+ generation 1))
+            (let
+              [total : i64
+                (compiler_regalloc.compiler-reg-loop-nest-header-members!
+                  nest
+                  h
+                  generation)]
+              [lo : i64 (array-ref st.pos h)]
+              [hi : i64 (array-ref st.pos h)]
+              [m : i64 0]
+              [exiting : i64 (- 0 1)]
+              [p : i64 0]
+              [span : i64 0]
+              [shift : i64 0]
+              [k : i64 0]
+              (begin
+                ;; The nest hands its member list back in one shared buffer, so
+                ;; take a copy -- header first -- before anything stamps again.
+                (set! (array-ref st.members 0) h)
+                (while (< m total)
+                  (let
+                    [q : i64 (array-ref st.pos (array-ref nest.members m))]
+                    (begin
+                      (set!
+                        (array-ref st.members (+ m 1))
+                        (array-ref nest.members m))
+                      (if (< q lo)
+                        (set! lo q)
+                        unit)
+                      (if (> q hi)
+                        (set! hi q)
+                        unit)
+                      (set! m (+ m 1)))))
+                ;; Rotate only a run that is contiguous, that is entered at its
+                ;; header, that is not the entry block's, and whose trip count
+                ;; the counting-loop shape vouches for.
+                (if (and
+                  (= (- (+ hi 1) lo) (+ total 1))
+                  (> lo 0)
+                  (= (array-ref st.order lo) h)
+                  (compiler-backend-placement-counting-loop?
+                    st
+                    nest
+                    seq
+                    h
+                    (+ total 1)
+                    generation))
+                  (begin
+                    ;; The exiting block is the last one whose own innermost
+                    ;; loop is this one -- so the cut never lands inside a
+                    ;; nested run -- and which has both a successor that stays
+                    ;; and one that leaves, so it can sit at the bottom and fall
+                    ;; out of the loop.
+                    (set! p lo)
+                    (while (<= p hi)
+                      (let
+                        [b : i64 (array-ref st.order p)]
+                        (begin
+                          (if (and
+                            (= (array-ref st.inner b) h)
+                            (compiler-backend-placement-succ-inside?
+                              st
+                              nest
+                              b
+                              generation)
+                            (compiler-backend-placement-succ-outside?
+                              st
+                              nest
+                              b
+                              generation))
+                            (set! exiting p)
+                            unit)
+                          (set! p (+ p 1)))))
+                    ;; ViableTopFallthrough: the header already falls through
+                    ;; from outside and the bottom already exits, so this loop
+                    ;; is bottom-tested already and rotating only moves its
+                    ;; jumps around.
+                    (if (or
+                      (< exiting 0)
+                      (= exiting hi)
+                      (and
+                        (compiler-backend-placement-pred?
+                          nest
+                          h
+                          (array-ref st.order (- lo 1)))
+                        (compiler-backend-placement-succ-outside?
+                          st
+                          nest
+                          (array-ref st.order hi)
+                          generation)))
+                      unit
+                      (begin
+                        (set! span (- (+ hi 1) lo))
+                        (set! shift (- (+ exiting 1) lo))
+                        (set! k 0)
+                        (while (< k span)
+                          (begin
+                            (set!
+                              (array-ref st.scratch k)
+                              (array-ref st.order (+ lo (% (+ k shift) span))))
+                            (set! k (+ k 1))))
+                        (set! k 0)
+                        (while (< k span)
+                          (begin
+                            (set!
+                              (array-ref st.order (+ lo k))
+                              (array-ref st.scratch k))
+                            (set!
+                              (array-ref st.pos (array-ref st.scratch k))
+                              (+ lo k))
+                            (set! k (+ k 1)))))))
+                  unit)))
+            (set! i (+ i 1))))))))
+
+;; Where each block's slice of the gep displacement table starts, and how long
+;; the whole table has to be for the permutation to be sound.
+(define (compiler-backend-placement-gep-starts!
+  [seq : compiler_ir_types.CompilerIrBlockSeq]
+  [starts : (__tl_dyn-array i64)]) : i64
+  (let
+    [n : i64 (compiler_ir_types.compiler-ir-block-seq-count seq)]
+    [i : i64 0]
+    [total : i64 0]
+    (begin
+      (while (< i n)
+        (begin
+          (set! (array-ref starts i) total)
+          (match (compiler_ir_types.compiler-ir-block-seq-ref seq i)
+            [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+              (set!
+                total
+                (+ total (compiler-backend-placement-gep-count instrs)))])
+          (set! i (+ i 1))))
+      (set! (array-ref starts n) total)
+      total)))
+
+(define (compiler-backend-placement-permute-table
+  [source : (__tl_dyn-array i64)]
+  [order : (__tl_dyn-array i64)]
+  [starts : (__tl_dyn-array i64)]
+  [n : i64]
+  [total : i64]) : (__tl_dyn-array i64)
+  (let
+    [out : (__tl_dyn-array i64) (array.make-array i64 total)]
+    [i : i64 0]
+    [write : i64 0]
+    (begin
+      (while (< i n)
+        (let
+          [b : i64 (array-ref order i)]
+          [read : i64 (array-ref starts b)]
+          [stop : i64 (array-ref starts (+ b 1))]
+          (begin
+            (while (< read stop)
+              (begin
+                (set! (array-ref out write) (array-ref source read))
+                (set! write (+ write 1))
+                (set! read (+ read 1))))
+            (set! i (+ i 1)))))
+      out)))
+
+(define (compiler-backend-placement-permute-geps!
+  [function-state : CompilerBackendFunctionState]
+  [order : (__tl_dyn-array i64)]
+  [starts : (__tl_dyn-array i64)]
+  [n : i64]
+  [total : i64]) : unit
+  (begin
+    (compiler-backend-function-state-set-i64-array!
+      function-state
+      compiler-backend-function-i64-array-gep-fold-disp-table
+      (compiler-backend-placement-permute-table
+        (compiler-backend-function-state-i64-array
+          function-state
+          compiler-backend-function-i64-array-gep-fold-disp-table)
+        order
+        starts
+        n
+        total))
+    (compiler-backend-function-state-set-i64-array!
+      function-state
+      compiler-backend-function-i64-array-gep-fold-kind-table
+      (compiler-backend-placement-permute-table
+        (compiler-backend-function-state-i64-array
+          function-state
+          compiler-backend-function-i64-array-gep-fold-kind-table)
+        order
+        starts
+        n
+        total))
+    (compiler-backend-function-state-set-i64-array!
+      function-state
+      compiler-backend-function-i64-array-gep-fold-scale-table
+      (compiler-backend-placement-permute-table
+        (compiler-backend-function-state-i64-array
+          function-state
+          compiler-backend-function-i64-array-gep-fold-scale-table)
+        order
+        starts
+        n
+        total))))
+
+(define (compiler-backend-placement-identity?
+  [order : (__tl_dyn-array i64)]
+  [n : i64]) : bool
+  (let
+    [i : i64 0]
+    [same : bool true]
+    (begin
+      (while (< i n)
+        (begin
+          (if (= (array-ref order i) i)
+            unit
+            (begin
+              (set! same false)
+              (set! i n)))
+          (set! i (+ i 1))))
+      same)))
+
+(define (compiler-backend-placement-apply
+  [seq : compiler_ir_types.CompilerIrBlockSeq]
+  [order : (__tl_dyn-array i64)]
+  [n : i64]) : compiler_ir_types.CompilerIrBlockList
+  (let
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrBlock)
+      (array.make-array compiler_ir_types.CompilerIrBlock n)]
+    [i : i64 0]
+    (begin
+      (while (< i n)
+        (begin
+          (set!
+            (array-ref slots i)
+            (compiler_ir_types.compiler-ir-block-seq-ref
+              seq
+              (array-ref order i)))
+          (set! i (+ i 1))))
+      (compiler_ir_types.CompilerIrBlockList.Array
+        (compiler_ir_types.CompilerIrBlockSeq slots n)))))
+
+;; The gep table is sound to permute only when it holds exactly one entry per
+;; Gep in the list being laid out. Anything else would mean a pass after the
+;; fold cloned a gep-bearing block, and the emitter's cursor would then read a
+;; shifted table -- decline the function instead.
+(define (compiler-backend-placement-gep-table-permutable?
+  [function-state : CompilerBackendFunctionState]
+  [total : i64]) : bool
+  (if (not
+    (compiler-backend-function-state-bool?
+      function-state
+      compiler-backend-function-bool-gep-fold-ready))
+    true
+    (=
+      total
+      (array-length
+        (compiler-backend-function-state-i64-array
+          function-state
+          compiler-backend-function-i64-array-gep-fold-disp-table)))))
+
+(define (compiler-backend-placement-state
+  [n : i64]
+  [term-kind : (__tl_dyn-array i64)]
+  [succ-off : (__tl_dyn-array i64)]
+  [succ-buf : (__tl_dyn-array i64)]
+  [var-cap : i64]) : CompilerBackendPlacement
+  (let
+    [st : CompilerBackendPlacement
+      (CompilerBackendPlacement
+        n
+        term-kind
+        succ-off
+        succ-buf
+        (array.make-array i64 n)
+        (array.make-array i64 n)
+        (array.make-array i64 n)
+        (array.make-array i64 n)
+        (array.make-array i64 (+ n 1))
+        (array.make-array i64 var-cap)
+        (array.make-array i64 var-cap)
+        (array.make-array i64 var-cap))]
+    [i : i64 0]
+    (begin
+      (compiler-backend-placement-fill! st.inner (- 0 1))
+      ;; The three per-variable tables are deliberately NOT filled: the only
+      ;; generations that read them come from the rotation walk, which starts
+      ;; above `2 * (header-count + 1)` and so can never be the 0 a fresh array
+      ;; holds. On the compiler's own large functions that fill would be three
+      ;; passes over every variable, per function.
+      (while (< i n)
+        (begin
+          (set! (array-ref st.order i) i)
+          (set! i (+ i 1))))
+      st)))
+
+;; Choose the layout for `seq`, leaving it in `st.order`.
+(define (compiler-backend-placement-plan!
+  [st : CompilerBackendPlacement]
+  [nest : compiler_regalloc.CompilerRegLoopNest]
+  [header-count : i64]
+  [seq : compiler_ir_types.CompilerIrBlockSeq]) : unit
+  (let
+    [sorted : (__tl_dyn-array i64) (array.make-array i64 (+ header-count 1))]
+    [size : (__tl_dyn-array i64) (array.make-array i64 st.count)]
+    (begin
+      (compiler-backend-placement-loop-info! st nest sorted size header-count)
+      (compiler-backend-placement-rotate!
+        st
+        nest
+        seq
+        sorted
+        header-count
+        (* 2 (+ header-count 1))))))
+
+;; The state this pass builds for one block sequence, or `No` when the sequence
+;; declines: too small to reorder, a block without a terminator, or no edge
+;; running backward at all. Shared by the production entry and by the unit
+;; tests, which read the chosen order out of `st.order` rather than out of
+;; emitted text.
+(define (compiler-backend-placement-plan-for-seq
+  [seq : compiler_ir_types.CompilerIrBlockSeq]) : CompilerBackendMaybePlacement
+  (let
+    [n : i64 (compiler_ir_types.compiler-ir-block-seq-count seq)]
+    (if (< n 3)
+      (CompilerBackendMaybePlacement.No)
+      (let
+        [term-kind : (__tl_dyn-array i64) (array.make-array i64 n)]
+        [succ-off : (__tl_dyn-array i64) (array.make-array i64 (+ n 1))]
+        [succ-buf : (__tl_dyn-array i64)
+          (array.make-array i64 (compiler-backend-placement-succ-bound seq))]
+        [shape : i64
+          (compiler-backend-placement-fill-succ!
+            term-kind
+            succ-off
+            succ-buf
+            (compiler_regalloc.compiler-reg-loop-depth-block-ids-seq
+              seq
+              (backend_label_i64_map.with-capacity
+                (compiler_regalloc.compiler-reg-bits-map-capacity n))
+              0)
+            seq)]
+        ;; No backward edge means no cycle, and most functions are that: stop
+        ;; here rather than build a loop nest whose answer is already known.
+        (if (not (= shape 1))
+          (CompilerBackendMaybePlacement.No)
+          (let
+            [nest : compiler_regalloc.CompilerRegLoopNest
+              (compiler_regalloc.compiler-reg-loop-nest-build-seq seq)]
+            [header-count : i64
+              (compiler_regalloc.compiler-reg-loop-nest-header-count nest)]
+            (if (= header-count 0)
+              (CompilerBackendMaybePlacement.No)
+              (let
+                [st : CompilerBackendPlacement
+                  (compiler-backend-placement-state
+                    n
+                    term-kind
+                    succ-off
+                    succ-buf
+                    (compiler-backend-placement-var-cap seq))]
+                (begin
+                  (compiler-backend-placement-plan! st nest header-count seq)
+                  (CompilerBackendMaybePlacement.Some st))))))))))
+
+;; Test entry: the layout order as block indices into `blocks`, or a
+;; zero-length array when the function declines. Reads the mode the production
+;; entry reads, so the fixtures that assert a rotated order fail when the pass
+;; is switched off rather than quietly asserting nothing.
+(define (compiler-backend-placement-order-for-blocks
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : (__tl_dyn-array i64)
+  (if (= compiler-backend-placement-mode 0)
+    (array.make-array i64 0)
+    (match (compiler_ir_types.compiler-ir-block-list-compact blocks)
+      [(compiler_ir_types.CompilerIrBlockList.Array seq)
+        (match (compiler-backend-placement-plan-for-seq seq)
+          [(CompilerBackendMaybePlacement.Some st) st.order]
+          [(CompilerBackendMaybePlacement.No) (array.make-array i64 0)])]
+      [_ (array.make-array i64 0)])))
+
+;; The pass entry. Returns the input list untouched whenever the layout is the
+;; identity or the function declines, so a compile that gains nothing allocates
+;; no blocks and rewrites no table.
+(define (compiler-backend-placement-blocks
+  [function-state : CompilerBackendFunctionState]
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrBlockList
+  (if (= compiler-backend-placement-mode 0)
+    blocks
+    (let
+      [dense : compiler_ir_types.CompilerIrBlockList
+        (compiler_ir_types.compiler-ir-block-list-compact blocks)]
+      (match dense
+        [(compiler_ir_types.CompilerIrBlockList.Array seq)
+          (match (compiler-backend-placement-plan-for-seq seq)
+            [(CompilerBackendMaybePlacement.No) blocks]
+            [(CompilerBackendMaybePlacement.Some st)
+              (let
+                [n : i64 st.count]
+                (if (compiler-backend-placement-identity? st.order n)
+                  blocks
+                  ;; Only a real permutation has to carry the gep displacement
+                  ;; table, so its walk is paid here and not on every function.
+                  (let
+                    [starts : (__tl_dyn-array i64)
+                      (array.make-array i64 (+ n 1))]
+                    [total : i64
+                      (compiler-backend-placement-gep-starts! seq starts)]
+                    (if (not
+                      (compiler-backend-placement-gep-table-permutable?
+                        function-state
+                        total))
+                      blocks
+                      (begin
+                        (if (compiler-backend-function-state-bool?
+                          function-state
+                          compiler-backend-function-bool-gep-fold-ready)
+                          (compiler-backend-placement-permute-geps!
+                            function-state
+                            st.order
+                            starts
+                            n
+                            total)
+                          unit)
+                        (compiler-backend-placement-apply seq st.order n))))))])]
+        [_ blocks]))))
+
 (define (compiler-backend-emit-function
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
@@ -69283,11 +70742,18 @@
                 remap
                 scratch-vars
                 (compiler_regalloc.compiler-reg-plan-assignments remat-reg-plan))])]
-        [emit-blocks-list : compiler_ir_types.CompilerIrBlockList
+        [colored-blocks : compiler_ir_types.CompilerIrBlockList
           (match coloring
             [(compiler_regalloc.CompilerRegColoring.None) remat-blocks]
             [(compiler_regalloc.CompilerRegColoring.Remap remap _)
               (compiler_regalloc.compiler-reg-remap-blocks remap remat-blocks)])]
+        ;; #block-placement: the last word on layout. Every view below --
+        ;; scavenge intervals, const-hoist, #jump-forward, phi targets, the
+        ;; emission walk itself -- is derived from THIS list, so choosing the
+        ;; order here and nowhere later is what keeps them all agreeing with the
+        ;; text that comes out.
+        [emit-blocks-list : compiler_ir_types.CompilerIrBlockList
+          (compiler-backend-placement-blocks function-state colored-blocks)]
         [emit-params : compiler_ir_types.CompilerIrParamList
           (match coloring
             [(compiler_regalloc.CompilerRegColoring.None) params]
@@ -70247,10 +71713,10 @@
                                 (compiler-backend-shrinkwrap-splice-fallback-required?
                                   shrinkwrap-active?
                                   body
+                                  shrinkwrap-planned-guard
                                   guarded-body
-                                  framed-body
-                                  final-body
-                                  emitted-body))
+                                  (str_cat.str-cat saving-asm-label ":\n" "")
+                                  final-body))
                                 ;; A textual invariant drifted. Re-run the full
                                 ;; unwrapped pipeline so the IR split, bare return,
                                 ;; register plan, and prologue placement are all
@@ -71594,7 +73060,13 @@
     [(compiler_ir_types.CompilerIrValue.Global name)
       (compiler-backend-program-collections-add-reference collections name)]
     [(compiler_ir_types.CompilerIrValue.GlobalAddr name)
-      (compiler-backend-program-collections-add-reference collections name)]
+      ;; W3(c): `(& g)` exists, so a `StorePtr` could reach cell(g). Record it
+      ;; on the walk that already visits every operand of every instruction
+      ;; rather than paying a second traversal for the same answer.
+      (begin
+        (compiler_regalloc.compiler-reg-add-nonfrozen-global!
+          (compiler_ir_types.compiler-ir-symbol-id name))
+        (compiler-backend-program-collections-add-reference collections name))]
     [(compiler_ir_types.CompilerIrValue.String text)
       (compiler-backend-program-collections-add-string collections text)]
     [(compiler_ir_types.CompilerIrValue.F64 bits)
@@ -71745,8 +73217,12 @@
           args))]
     [(compiler_ir_types.CompilerIrInstr.TailCall _ args _)
       (compiler-backend-collect-call-args-collections collections args)]
-    [(compiler_ir_types.CompilerIrInstr.Store _ value _)
-      (compiler-backend-collect-value-collections collections value)]
+    [(compiler_ir_types.CompilerIrInstr.Store name value _)
+      ;; W3(c): the lowering of `(set! g ...)`, the one direct cell writer.
+      (begin
+        (compiler_regalloc.compiler-reg-add-nonfrozen-global!
+          (compiler_ir_types.compiler-ir-symbol-id name))
+        (compiler-backend-collect-value-collections collections value))]
     [(compiler_ir_types.CompilerIrInstr.Branch cond _ _)
       (compiler-backend-collect-value-collections collections cond)]
     [(compiler_ir_types.CompilerIrInstr.TotalEnumBranch cond _ _)
@@ -73872,6 +75348,11 @@
         program-index.backend-state
         (compiler-backend-collect-program-collections program)
         spans)]
+    ;; W3(c): the walk above is the whole-program cell-writer scan. Publishing
+    ;; here -- before any function is planned -- is what makes a frozen global's
+    ;; read rematerialisable in the allocator.
+    [_frozen-globals-known : unit
+      (compiler_regalloc.compiler-reg-frozen-globals-finish!)]
     [closure-names : BackendSymbolSeq
       (compiler-backend-program-collections-functions collections)]
     [referenced-symbols : BackendSymbolSeq
@@ -77553,6 +79034,8 @@
   (let
     [collections : CompilerBackendProgramCollections
       (compiler-backend-collect-program-collections program)]
+    [_frozen-globals-known : unit
+      (compiler_regalloc.compiler-reg-frozen-globals-finish!)]
     [closure-names : BackendSymbolSeq
       (compiler-backend-program-collections-functions collections)]
     [strings : BackendStringSeq
@@ -86775,49 +88258,62 @@
   (let
     [body : String "guard\nsave:\n"]
     [guarded : String (string.replace body "guard\n" "incoming-guard\n")]
-    [framed : String (string.replace guarded "save:\n" "save:\nprologue\n")]
-    [final-body : String (str_cat.str-cat "mode\n" framed)]
-    [emitted : String
-      (string.replace final-body "save:\n" "selected-prologue\n")]
-    [missing-guard : String
-      (string.replace body "absent-guard\n" "incoming-guard\n")]
+    [final-body : String
+      (str_cat.str-cat
+        "mode\n"
+        (string.replace guarded "save:\n" "save:\nprologue\n")
+        "")]
+    ;; Stage 1 drift: the planned guard is not in the emitted body.
+    ;; Stage 2 drift: the saving label never reached the guarded body.
+    ;; Stage 3 drift: the saving label never reached the rebased body.
+    ;; The clean case replaces every needle and the inactive case never fires.
+    ;; The identity case (planned guard == incoming guard, which is what a
+    ;; guard reading only ABI-pinned parameters renders as) is NOT drift.
     (and
       (compiler-backend-shrinkwrap-splice-fallback-required?
         true
         body
-        missing-guard
-        framed
-        final-body
-        emitted)
-      (compiler-backend-shrinkwrap-splice-fallback-required?
-        true
-        body
+        "absent-guard\n"
         guarded
-        guarded
-        final-body
-        emitted)
-      (compiler-backend-shrinkwrap-splice-fallback-required?
-        true
-        body
-        guarded
-        framed
-        final-body
+        "save:\n"
         final-body)
+      (compiler-backend-shrinkwrap-splice-fallback-required?
+        true
+        body
+        "guard\n"
+        "incoming-guard\n"
+        "save:\n"
+        final-body)
+      (compiler-backend-shrinkwrap-splice-fallback-required?
+        true
+        body
+        "guard\n"
+        guarded
+        "save:\n"
+        "mode\nincoming-guard\n")
       (not
         (compiler-backend-shrinkwrap-splice-fallback-required?
           true
           body
+          "guard\n"
           guarded
-          framed
-          final-body
-          emitted))
+          "save:\n"
+          final-body))
+      (not
+        (compiler-backend-shrinkwrap-splice-fallback-required?
+          true
+          body
+          body
+          body
+          "save:\n"
+          body))
       (not
         (compiler-backend-shrinkwrap-splice-fallback-required?
           false
           body
+          "absent-guard\n"
           body
-          body
-          body
+          "absent-save:\n"
           body)))))
 
 (define (compiler-backend-runtime-helper-asm-ok?) : bool

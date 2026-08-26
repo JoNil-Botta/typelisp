@@ -11,7 +11,7 @@
 (define compiler-profile-state-metric-capacity : i64
   (cfg
     (any regalloc-census test)
-    220
+    223
     (cfg
       regalloc-liveness-census
       164
@@ -436,8 +436,8 @@
         ;; compile-profile ids.
         (compiler-profile-state-metric-set! left 140 47)
         (compiler-profile-state-metric-set! right 140 53)
-        (compiler-profile-state-metric-set! left 219 59)
-        (compiler-profile-state-metric-set! right 219 61)
+        (compiler-profile-state-metric-set! left 222 59)
+        (compiler-profile-state-metric-set! right 222 61)
         (compiler-profile-state-metric-reset-range! right 3 5)
         (test.assert-i64-eq
           (compiler-profile-state-metric-value left 3)
@@ -463,12 +463,12 @@
           (compiler-profile-state-metric-value right 140)
           53
           "right backend metric remains isolated")
-        (compiler-profile-state-metric-reset-range! left 140 220)
+        (compiler-profile-state-metric-reset-range! left 140 223)
         (test.assert-i64-eq
-          (compiler-profile-state-metric-value left 219)
+          (compiler-profile-state-metric-value left 222)
           0
           "left census reset reaches the final metric")
         (test.assert-i64-eq
-          (compiler-profile-state-metric-value right 219)
+          (compiler-profile-state-metric-value right 222)
           61
           "left census reset leaves right owner intact")))))

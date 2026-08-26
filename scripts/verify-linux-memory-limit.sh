@@ -45,7 +45,7 @@ exercise_backend() {
             fail "Linux memory-limit backend wrote no peak evidence: $_memory_backend"
         _memory_peak=$(sed -n '1p' "$_memory_metrics")
         case "$_memory_peak" in
-            "" | *[!0-9]*) fail "malformed peak evidence from $_memory_backend: $_memory_peak" ;;
+            "" | *[!0-9]* | 0) fail "malformed peak evidence from $_memory_backend: $_memory_peak" ;;
         esac
     }
 

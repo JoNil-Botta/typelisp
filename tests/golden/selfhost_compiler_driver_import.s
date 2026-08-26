@@ -565,29 +565,27 @@ tl_abort_string:
 .globl tl_array_fill8
     .type tl_array_fill8,@function
 tl_array_fill8:
-    subq $104, %rsp
-    movq %rdi, 88(%rsp)
-    movq %rsi, 80(%rsp)
-    movq %rdx, 72(%rsp)
+    movq %rdi, -8(%rsp)
+    movq %rsi, -16(%rsp)
+    movq %rdx, -24(%rsp)
 .Lf15_entry:
-    movq 88(%rsp), %r8
-    movq %r8, 64(%rsp)
-    movq $0, 48(%rsp)
+    movq -8(%rsp), %r8
+    movq %r8, -32(%rsp)
+    movq $0, -48(%rsp)
 .Lf15_while_header.0:
-    movq 80(%rsp), %r8
-    cmpq %r8, 48(%rsp)
+    movq -16(%rsp), %r8
+    cmpq %r8, -48(%rsp)
     jge .Lf15_while_exit.2
 .Lf15_while_body.1:
-    movq 64(%rsp), %r10
-    movq 48(%rsp), %r8
-    movq 72(%rsp), %r9
+    movq -32(%rsp), %r10
+    movq -48(%rsp), %r8
+    movq -24(%rsp), %r9
     movq %r9, (%r10,%r8,8)
-    movq 48(%rsp), %rax
+    movq -48(%rsp), %rax
     addq $1, %rax
-    movq %rax, 48(%rsp)
+    movq %rax, -48(%rsp)
     jmp .Lf15_while_header.0
 .Lf15_while_exit.2:
-    addq $104, %rsp
     ret
     .size tl_array_fill8, . - tl_array_fill8
 
@@ -647,14 +645,12 @@ _tl_helper_helper_helper_opaque:
 .globl _tl_helper_helper_helper
     .type _tl_helper_helper_helper,@function
 _tl_helper_helper_helper:
-    subq $40, %rsp
 .Lf19_entry:
     movl $38, %r9d
     movq _tl_shared_shared_shared(%rip), %r8
     addq %r8, %r9
     movq %r9, %rdi
     movl $1, %esi
-    addq $40, %rsp
     jmp _tl_helper_helper_helper_opaque
     .size _tl_helper_helper_helper, . - _tl_helper_helper_helper
 

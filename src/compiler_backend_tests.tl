@@ -4903,22 +4903,23 @@
         (or
           (compiler_backend.compiler-backend-string-contains? asm "_tl_calc")
           (compiler_backend.compiler-backend-string-contains? asm "_tl_f"))
-        ;; FPO (M-G3 stage 2) makes frame refs rsp-relative; params spill
-        ;; to rsp slots and the spilled sum is reloaded into its modeled
-        ;; scratch (%rsi with scratch-vreg, legacy %r8 otherwise),
+        ;; FPO (M-G3 stage 2) makes frame refs rsp-relative; T1-6 (a) puts
+        ;; this call-free leaf's frame in the red zone, so its params spill
+        ;; to NEGATIVE rsp slots and the spilled sum is reloaded into its
+        ;; modeled scratch (%rsi with scratch-vreg, legacy %r8 otherwise),
         ;; leaving the product in %rax.
         (compiler_backend.compiler-backend-string-contains?
           asm
-          "    movq %rdi, 56(%rsp)\n")
+          "    movq %rdi, -8(%rsp)\n")
         (compiler_backend.compiler-backend-string-contains?
           asm
-          "    movq %rsi, 48(%rsp)\n")
+          "    movq %rsi, -16(%rsp)\n")
         (compiler_backend.compiler-backend-string-contains?
           asm
           (cfg
             scratch-vreg
-            "    movq 32(%rsp), %rsi\n"
-            "    movq 32(%rsp), %r8\n"))
+            "    movq -32(%rsp), %rsi\n"
+            "    movq -32(%rsp), %r8\n"))
         (compiler_backend.compiler-backend-string-contains?
           asm
           (cfg scratch-vreg "    imulq %rsi, %rax\n" "    imulq %r8, %rax\n"))
@@ -4935,29 +4936,29 @@
     (compiler-backend-regalloc-f64-source))
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (compiler_backend.backend-and8
-        ;; FPO (M-G3 stage 2) rsp-relative frame slots (a=32, b=16, sum=8).
+        ;; T1-6 (a) red-zone frame slots (a=-16, b=-32, sum=-40).
         (compiler_backend.compiler-backend-string-contains? asm "main:\n")
         (compiler_backend.compiler-backend-string-contains?
           asm
           (cfg
             scratch-vreg
-            "    movsd 32(%rsp), %xmm0\n"
-            "    movsd 32(%rsp), %xmm2\n"))
+            "    movsd -16(%rsp), %xmm0\n"
+            "    movsd -16(%rsp), %xmm2\n"))
         (compiler_backend.compiler-backend-string-contains?
           asm
           (cfg
             scratch-vreg
-            "    addsd 16(%rsp), %xmm0\n"
-            "    addsd 16(%rsp), %xmm2\n"))
+            "    addsd -32(%rsp), %xmm0\n"
+            "    addsd -32(%rsp), %xmm2\n"))
         (compiler_backend.compiler-backend-string-contains?
           asm
           (cfg
             scratch-vreg
-            "    movsd %xmm0, 8(%rsp)\n"
-            "    movsd %xmm2, 8(%rsp)\n"))
+            "    movsd %xmm0, -40(%rsp)\n"
+            "    movsd %xmm2, -40(%rsp)\n"))
         (compiler_backend.compiler-backend-string-contains?
           asm
-          "    movsd 8(%rsp), %xmm0\n")
+          "    movsd -40(%rsp), %xmm0\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
             asm
@@ -4967,8 +4968,8 @@
             asm
             (cfg
               scratch-vreg
-              "    movsd 32(%rsp), %xmm2\n"
-              "    movsd 32(%rsp), %xmm0\n")))
+              "    movsd -16(%rsp), %xmm2\n"
+              "    movsd -16(%rsp), %xmm0\n")))
         (not (compiler_backend.compiler-backend-string-contains? asm "%xmm3")))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
@@ -8350,22 +8351,22 @@
     [incoming0 : i64
       (compiler_backend.compiler-backend-string-find-from
         body
-        "    movq %rdi, 24(%rsp)\n"
+        "    movq %rdi, -8(%rsp)\n"
         0)]
     [incoming1 : i64
       (compiler_backend.compiler-backend-string-find-from
         body
-        "    movq %rsi, 16(%rsp)\n"
+        "    movq %rsi, -16(%rsp)\n"
         0)]
     [outgoing0 : i64
       (compiler_backend.compiler-backend-string-find-from
         body
-        "    movq 24(%rsp), %rax\n"
+        "    movq -8(%rsp), %rax\n"
         0)]
     [outgoing1 : i64
       (compiler_backend.compiler-backend-string-find-from
         body
-        "    movq 16(%rsp), %rdx\n"
+        "    movq -16(%rsp), %rdx\n"
         0)]
     (and
       (> (string.string-length body) 0)
@@ -9349,6 +9350,9 @@
         (compiler_backend.compiler-backend-state-function-state backend-state)
         "%r9")
       (let
+        ;; T1-6 (b), bracket 1: the instruction provably never touches %r9
+        ;; (%r8..%r15 have no implicit uses, and there is no `call`), so the
+        ;; save/restore pair the scavenger enqueued is dropped outright.
         [rendered : String
           (text_buf.render
             (compiler_backend.compiler-backend-append-located-instr
@@ -9356,10 +9360,43 @@
               "    .loc 1 2 3\n"
               "    shlq %cl, %r10\n"
               backend-state))]
+        [_second : unit
+          (compiler_backend.compiler-backend-emergency-add!
+            (compiler_backend.compiler-backend-state-function-state
+              backend-state)
+            "%r9")]
+        ;; Bracket 2: the instruction DOES write %r9, and it is call-free, so
+        ;; the value is parked in a free XMM register -- no frame slot.
+        [rendered-park : String
+          (text_buf.render
+            (compiler_backend.compiler-backend-append-located-instr
+              (text_buf.empty)
+              "    .loc 1 2 3\n"
+              "    shlq %cl, %r9\n"
+              backend-state))]
+        [_third : unit
+          (compiler_backend.compiler-backend-emergency-add!
+            (compiler_backend.compiler-backend-state-function-state
+              backend-state)
+            "%r9")]
+        ;; Bracket 3: a `call` hands every caller-saved XMM register to the
+        ;; callee, so that bracket falls back to the emergency frame slot.
+        [rendered-call : String
+          (text_buf.render
+            (compiler_backend.compiler-backend-append-located-instr
+              (text_buf.empty)
+              "    .loc 1 2 3\n"
+              "    call _tl_sink\n"
+              backend-state))]
         [ok : bool
-          (string.eq
-            rendered
-            "    .loc 1 2 3\n    movq %r9, -64(%rbp)\n    shlq %cl, %r10\n    movq -64(%rbp), %r9\n")]
+          (and
+            (string.eq rendered "    .loc 1 2 3\n    shlq %cl, %r10\n")
+            (string.eq
+              rendered-park
+              "    .loc 1 2 3\n    movq %r9, %xmm4\n    shlq %cl, %r9\n    movq %xmm4, %r9\n")
+            (string.eq
+              rendered-call
+              "    .loc 1 2 3\n    movq %r9, -64(%rbp)\n    call _tl_sink\n    movq -64(%rbp), %r9\n"))]
         (begin
           (compiler_backend.compiler-backend-function-scratch-fixture-set-emergency-pending!
             (compiler_backend.compiler-backend-state-function-state
@@ -17424,13 +17461,14 @@ g:
     (compiler-backend-switch-test-program))
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
-        ;; FPO makes the switch scrutinee load rsp-relative (8(%rsp)).
+        ;; T1-6 (a): `main` is a call-free leaf, so the switch scrutinee
+        ;; loads from a red-zone slot (-8(%rsp)).
         (compiler_backend.compiler-backend-string-contains?
           asm
           (cfg
             scratch-vreg
-            "    movq 8(%rsp), %rax\n"
-            "    movq 8(%rsp), %r8\n"))
+            "    movq -8(%rsp), %rax\n"
+            "    movq -8(%rsp), %r8\n"))
         (compiler_backend.compiler-backend-string-contains?
           asm
           (cfg scratch-vreg "    cmpq $2, %rax\n" "    cmpq $2, %r8\n"))
@@ -17524,13 +17562,14 @@ g:
     (compiler-backend-switch-base-test-program))
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
-        ;; FPO makes the switch scrutinee load rsp-relative (8(%rsp)).
+        ;; T1-6 (a): `main` is a call-free leaf, so the switch scrutinee
+        ;; loads from a red-zone slot (-8(%rsp)).
         (compiler_backend.compiler-backend-string-contains?
           asm
           (cfg
             scratch-vreg
-            "    movq 8(%rsp), %rax\n"
-            "    movq 8(%rsp), %r8\n"))
+            "    movq -8(%rsp), %rax\n"
+            "    movq -8(%rsp), %r8\n"))
         (compiler_backend.compiler-backend-string-contains?
           asm
           (cfg scratch-vreg "    subq $4, %rax\n" "    subq $4, %r8\n"))
@@ -26655,19 +26694,85 @@ g:
             (compiler_backend.compiler-backend-string-contains?
               asm
               "-576(%rbp)")))
-        (compiler_backend.backend-and4
+        ;; T1-6 (b): both borrowed registers are PARKED in free XMM
+        ;; registers instead of the 64-byte emergency frame slots, so the
+        ;; function names no frame slot for them at all -- the same
+        ;; save/restore instruction count, no frame.
+        (compiler_backend.backend-and8
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "    movq %r9, -512(%rbp)\n")
+            "    movq %r9, %xmm4\n")
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "    movq -512(%rbp), %r9\n")
+            "    movq %xmm4, %r9\n")
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "    movq %rcx, -576(%rbp)\n")
+            "    movq %rcx, %xmm5\n")
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "    movq -576(%rbp), %rcx\n")))]
+            "    movq %xmm5, %rcx\n")
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              asm
+              "-512(%rbp)"))
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              asm
+              "-576(%rbp)"))
+          true
+          true))]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
+;; T1-6 (e): the %r10-preferred global/address scratch site takes a
+;; SCAVENGED register when one is free, and when the occupancy leaves none free
+;; the borrowed register is parked in a free XMM register instead of the
+;; 64-byte emergency FRAME slot. Naming a frame slot is what forces a call-free
+;; leaf to carry a frame at all (gvn's facts_remove paid `subq $144, %rsp` on
+;; every call for one `movq %r9, (%rsp)` pair), so this pins the frame-free
+;; form on the emitted text.
+(define (compiler-backend-scratch-save-scavenged-not-framed-ok?) : bool
+  (match (compiler-backend-gep-load-multi-emergency-asm)
+    [(compiler_backend.ResultCompilerBackend.Ok asm)
+      (cfg
+        scratch-vreg
+        ;; The modeled scratch plan hands the site a free register outright,
+        ;; so there is nothing to preserve and no park at all.
+        (and
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    movq -8(%rbp), %r12\n")
+          (not (compiler_backend.compiler-backend-string-contains? asm "%xmm4")))
+        (compiler_backend.backend-and8
+          ;; The base is materialised into a SCAVENGED register (%r9 here --
+          ;; the preferred %r10 is occupied at this point), never a fixed one.
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    movq -8(%rbp), %r9\n")
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    movq 192(%r9), %rcx\n")
+          ;; Both borrowed registers are parked in free XMM registers ...
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    movq %r9, %xmm4\n")
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    movq %xmm4, %r9\n")
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    movq %rcx, %xmm5\n")
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    movq %xmm5, %rcx\n")
+          ;; ... and neither one is stored into the emergency frame region.
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              asm
+              "    movq %r9, -512(%rbp)\n"))
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              asm
+              "    movq %rcx, -576(%rbp)\n"))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-copy-bytes-direct-home-shape-ok?) : bool
@@ -27297,6 +27402,7 @@ g:
       (compiler-backend-gep-load-store-order-shape-ok?)
       (compiler-backend-gep-load-register-homes-shape-ok?)
       (compiler-backend-gep-load-live-through-home-preserved-ok?))
+    (compiler-backend-scratch-save-scavenged-not-framed-ok?)
     (compiler_backend.backend-and4
       (compiler-backend-gep-load-multi-emergency-preserved-ok?)
       (compiler-backend-gep-store-index-home-preserved-ok?)
@@ -31114,25 +31220,27 @@ g:
         (compiler_backend.compiler-backend-string-contains?
           asm
           "    movsd %xmm1, ")
-        ;; FPO rsp-relative frame slot (the y param spills to 16(%rsp)).
+        ;; T1-6 (a): these three leaves are call-free with a frame inside the
+        ;; red zone, so the y param spills BELOW %rsp (-16(%rsp)) and the
+        ;; prologue moves no stack pointer at all.
         (compiler_backend.compiler-backend-string-contains?
           asm
           (cfg
             scratch-vreg
-            "    addsd 16(%rsp), %xmm0\n"
-            "    addsd 16(%rsp), %xmm2\n"))
+            "    addsd -16(%rsp), %xmm0\n"
+            "    addsd -16(%rsp), %xmm2\n"))
         (compiler_backend.compiler-backend-string-contains?
           asm
           (cfg
             scratch-vreg
-            "    subsd 16(%rsp), %xmm0\n"
-            "    subsd 16(%rsp), %xmm2\n"))
+            "    subsd -16(%rsp), %xmm0\n"
+            "    subsd -16(%rsp), %xmm2\n"))
         (compiler_backend.compiler-backend-string-contains?
           asm
           (cfg
             scratch-vreg
-            "    ucomisd 16(%rsp), %xmm0\n"
-            "    ucomisd 16(%rsp), %xmm2\n"))
+            "    ucomisd -16(%rsp), %xmm0\n"
+            "    ucomisd -16(%rsp), %xmm2\n"))
         (compiler_backend.compiler-backend-string-contains?
           asm
           (cfg scratch-vreg "    setb %al\n" "    setb %r8b\n"))
@@ -35143,21 +35251,22 @@ g:
     (compiler-backend-f64-abi-source))
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (compiler_backend.backend-and8
-        ;; FPO rsp-relative frame slots (second's n at 8(%rsp); half's x
-        ;; f64 param spills from %xmm0 to 24(%rsp), divisor 2.0 at 16(%rsp)).
+        ;; T1-6 (a) red-zone frame slots (second's n at -8(%rsp); half's x
+        ;; f64 param spills from %xmm0 to -8(%rsp), divisor 2.0 at
+        ;; -16(%rsp)); every one of these leaves is call-free.
         (compiler_backend.compiler-backend-string-contains?
           asm
-          "    movq %rdi, 8(%rsp)\n")
+          "    movq %rdi, -8(%rsp)\n")
         (compiler_backend.compiler-backend-string-contains?
           asm
-          "    movsd %xmm0, 24(%rsp)\n")
+          "    movsd %xmm0, -8(%rsp)\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "    movsd %xmm1, 24(%rsp)\n"))
+            "    movsd %xmm1, -8(%rsp)\n"))
         (compiler_backend.compiler-backend-string-contains?
           asm
-          "    divsd 16(%rsp), %xmm2\n")
+          "    divsd -16(%rsp), %xmm2\n")
         (or
           (compiler-backend-call-or-jmp-ok? asm "_tl_half")
           (compiler-backend-call-or-jmp-ok? asm "_tl_callhalf")
@@ -35416,12 +35525,12 @@ g:
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       ;; Under FPO the outgoing stack-arg area is reserved once in the
       ;; prologue (no per-call `subq $16`/`addq $16`); both stack args are
-      ;; stored to 0(%rsp)/8(%rsp), and the callee reads the incoming stack args
-      ;; rsp-relative (96/104(%rsp)) instead of positive 16/24(%rbp). The
-      ;; incoming-arg checks are scoped to the _tl_add8 body: with everything now
-      ;; positive-rsp, `main` also uses those same numeric slots for its own
-      ;; locals (e.g. `movq 104(%rsp), %rax`), so a whole-program `not` check
-      ;; would spuriously trip.
+      ;; stored to 0(%rsp)/8(%rsp). `_tl_add8` is a call-free leaf, so T1-6 (a)
+      ;; leaves its %rsp at the entry value and its incoming stack args sit at
+      ;; 8/16(%rsp) -- the caller's frame, one word past the return address --
+      ;; while its own spills go BELOW %rsp. The incoming-arg checks stay scoped
+      ;; to the _tl_add8 body: `main` uses the same small numeric slots for its
+      ;; own locals, so a whole-program `not` check would spuriously trip.
       (let
         [callee : String (compiler-backend-asm-function-body asm "_tl_add8")]
         (and
@@ -35438,18 +35547,18 @@ g:
           (compiler-backend-stack-add-call-ok? asm)
           (compiler_backend.compiler-backend-string-contains?
             callee
-            "    movq 96(%rsp), %r8\n")
+            "    movq 8(%rsp), %r8\n")
           (compiler_backend.compiler-backend-string-contains?
             callee
-            "    movq 104(%rsp), %r8\n")
+            "    movq 16(%rsp), %r8\n")
           (not
             (compiler_backend.compiler-backend-string-contains?
               callee
-              "    movq 96(%rsp), %rax\n"))
+              "    movq 8(%rsp), %rax\n"))
           (not
             (compiler_backend.compiler-backend-string-contains?
               callee
-              "    movq 104(%rsp), %rax\n"))))]
+              "    movq 16(%rsp), %rax\n"))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 ;; A SysV call with ten f64 args uses xmm0..xmm7 then spills two on the
@@ -35466,8 +35575,9 @@ g:
             "too many call args"))
         ;; FPO reserves the outgoing stack-arg area in the prologue (no
         ;; per-call `subq $16`); the two spilled f64 args go to 0/8(%rsp) via GP
-        ;; bit-copies and the callee reads incoming f64 stack args rsp-relative
-        ;; (112/120(%rsp)) instead of positive 16/24(%rbp).
+        ;; bit-copies. `_tl_sum10` is a call-free leaf, so T1-6 (a) leaves its
+        ;; %rsp at the entry value and it reads its incoming f64 stack args at
+        ;; 8/16(%rsp) instead of positive 16/24(%rbp).
         (compiler_backend.compiler-backend-string-contains?
           asm
           "    movq %r10, 0(%rsp)\n")
@@ -35476,18 +35586,18 @@ g:
           "    movq %r10, 8(%rsp)\n")
         (compiler_backend.compiler-backend-string-contains?
           asm
-          "    movsd 112(%rsp), %xmm2\n")
+          "    movsd 8(%rsp), %xmm2\n")
         (compiler_backend.compiler-backend-string-contains?
           asm
-          "    movsd 120(%rsp), %xmm2\n")
+          "    movsd 16(%rsp), %xmm2\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "    movsd 112(%rsp), %xmm0\n"))
+            "    movsd 8(%rsp), %xmm0\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
             asm
-            "    movsd 120(%rsp), %xmm0\n")))]
+            "    movsd 16(%rsp), %xmm0\n")))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 ;; A mixed call spilling one int and one f64 keeps the integer and float
@@ -36584,7 +36694,10 @@ g:
 
 ;; Under FPO the source params spill to rsp-relative slots whose offsets
 ;; depend on each fixture's frame size (and target), so slot0/slot1 are passed
-;; per call site instead of the old fixed -8/-16(%rbp). A "" slot1 means the
+;; per call site instead of the old fixed -8/-16(%rbp). On Linux these
+;; forwarders are call-free (a tail `jmp` is not a call), so T1-6 (a) puts
+;; their slots in the RED ZONE and the offsets are negative; Win64 has no red
+;; zone and keeps its positive frame. A "" slot1 means the
 ;; second param is not spilled (correctly optimised away — e.g. the `finish x x`
 ;; duplicated fixture, where the dead y param is never stored).
 (define (compiler-backend-direct-tail-call-i64-keeps-spills?
@@ -36763,8 +36876,8 @@ g:
       (compiler-backend-direct-tail-call-i64-keeps-spills?
         (compiler-backend-direct-tail-call-reordered-source)
         (compiler_backend.CompilerBackendTarget.Linux)
-        "8(%rsp)"
-        "0(%rsp)")
+        "-8(%rsp)"
+        "-16(%rsp)")
       (compiler-backend-direct-tail-call-i64-keeps-spills?
         (compiler-backend-direct-tail-call-reordered-source)
         (compiler_backend.CompilerBackendTarget.Windows)
@@ -36773,7 +36886,7 @@ g:
       (compiler-backend-direct-tail-call-i64-keeps-spills?
         (compiler-backend-direct-tail-call-duplicated-source)
         (compiler_backend.CompilerBackendTarget.Linux)
-        "8(%rsp)"
+        "-8(%rsp)"
         "")
       (compiler-backend-direct-tail-call-i64-keeps-spills?
         (compiler-backend-direct-tail-call-duplicated-source)
@@ -36783,8 +36896,8 @@ g:
       (compiler-backend-direct-tail-call-i64-keeps-spills?
         (compiler-backend-direct-tail-call-nontrivial-source)
         (compiler_backend.CompilerBackendTarget.Linux)
-        "40(%rsp)"
-        "32(%rsp)")
+        "-8(%rsp)"
+        "-16(%rsp)")
       (compiler-backend-direct-tail-call-i64-keeps-spills?
         (compiler-backend-direct-tail-call-nontrivial-source)
         (compiler_backend.CompilerBackendTarget.Windows)
@@ -36792,8 +36905,8 @@ g:
         (cfg scratch-vreg "112(%rsp)" "64(%rsp)"))
       (compiler-backend-direct-tail-call-f64-keeps-spills?
         (compiler_backend.CompilerBackendTarget.Linux)
-        "8(%rsp)"
-        "0(%rsp)")
+        "-8(%rsp)"
+        "-16(%rsp)")
       (compiler-backend-direct-tail-call-f64-keeps-spills?
         (compiler_backend.CompilerBackendTarget.Windows)
         "40(%rsp)"
@@ -44696,11 +44809,34 @@ g:
                 (compiler_backend.compiler-backend-state-function-state
                   backend-state))
               1)
+            ;; T1-6 (b): the pick only ENQUEUES the borrowed register; where
+            ;; it is saved (a free XMM register or a frame slot) is decided
+            ;; when the bracketed text is known, so nothing is charged to the
+            ;; frame yet.
             (=
               (compiler_backend.compiler-backend-function-scratch-fixture-get-emergency-used-count
                 (compiler_backend.compiler-backend-state-function-state
                   backend-state))
-              1))]
+              0)
+            (not
+              (compiler_backend.compiler-backend-function-scratch-fixture-get-emergency-used
+                (compiler_backend.compiler-backend-state-function-state
+                  backend-state)))
+            ;; Forcing the slot form (what every inline-restore path does)
+            ;; charges exactly one emergency slot.
+            (begin
+              (compiler_backend.compiler-backend-emergency-commit-slot-form!
+                (compiler_backend.compiler-backend-state-function-state
+                  backend-state))
+              (and
+                (compiler_backend.compiler-backend-function-scratch-fixture-get-emergency-used
+                  (compiler_backend.compiler-backend-state-function-state
+                    backend-state))
+                (=
+                  (compiler_backend.compiler-backend-function-scratch-fixture-get-emergency-used-count
+                    (compiler_backend.compiler-backend-state-function-state
+                      backend-state))
+                  1))))]
         (begin
           (compiler_backend.compiler-backend-function-scratch-fixture-set-emergency-pending!
             (compiler_backend.compiler-backend-state-function-state
@@ -48629,8 +48765,12 @@ b_keep:
         0
         "%xmm2"
         state-a)]
+    ;; T1-6 (b) drops a save/restore pair whose bracketed text provably never
+    ;; touches the borrowed register, so name the scavenged GP scratch in it.
     [scratch-wrap-a : String
-      (compiler_backend.compiler-backend-emergency-wrap "A_BODY\n" state-a)]
+      (compiler_backend.compiler-backend-emergency-wrap
+        (str_cat.str-cat "A_BODY " scratch-gp-a "\n")
+        state-a)]
     [scratch-cycle-a0 : String
       (compiler_backend.compiler-backend-cycle-temp-slot-with-backend-state
         state-a

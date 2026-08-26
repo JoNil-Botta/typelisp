@@ -319,6 +319,11 @@
   (form-start i64)
   (module-id i64)
   (declaration-ordinal i64)
+  ;; Physical slot in the flattened declaration storage. Unlike the public
+  ;; logical ordinal, this matches the successful checker's stable walk key even
+  ;; when the retained AstProgram is a non-zero-offset list view.
+  (checked-declaration-ordinal i64)
+  (declaration-retains-let-facts bool)
   (generated bool)
   (provenance CompilerSemanticProvenance)
   (records (Box CompilerSemanticRecordVec))
@@ -329,6 +334,10 @@
   (visibility-storage (Box CompilerSemanticVisibilityBuildStorage))
   (visited-expr-ids (__tl_dyn-array i64))
   (next-local-ordinal (Box i64))
+  ;; A complete checked walk must find an exact retained fact for every let.
+  ;; Partial indexes deliberately omit locals after the first missing fact;
+  ;; complete callers turn this flag into an owned diagnostic and no index.
+  (checked-let-fact-mismatch (Box bool))
   ;; Exact parser occurrences are a contiguous run per flattened declaration.
   ;; One cursor per origin kind makes claiming an occurrence amortized O(1)
   ;; while allowing the semantic AST walk to interleave type, member, and
@@ -2018,6 +2027,24 @@
         (string.copy (& item))
         (string.copy (& key)))]))
 
+(define (compiler-semantic-decl-retains-checked-let-facts?
+  [path : String]
+  [decl : ast.AstDecl]) : bool
+  (if (tc.tc-decl-unchecked-clone? path decl)
+    false
+    (match decl
+      ;; DefMacro templates are checked by CTFE/macro expansion rather than the
+      ;; final runtime body checker that publishes retained let facts.
+      [(ast.AstDecl.DefMacro _ _ _ _ _) false]
+      ;; Test bodies stay in the parsed program for tooling but ordinary source
+      ;; checking deliberately does not execute/typecheck them.
+      [(ast.AstDecl.Test _ _ _) false]
+      [(ast.AstDecl.Unsafe inner)
+        (compiler-semantic-decl-retains-checked-let-facts?
+          path
+          (__tl-box-place inner))]
+      [_ true])))
+
 (define (compiler-semantic-use-span-from-origin
   [path : String]
   [source : String]
@@ -3377,31 +3404,19 @@
   [search-limit : i64]) : CompilerSemanticBindResult
   (let
     [ctx : tc.TcContext state.ctx]
-    [expr-bases : i64 (tc.tc-context-expr-bases ctx)]
-    [init : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases init-id)]
-    [body : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases body-id)]
-    (match (tc.tc-let-binding-init-type-at
-      ctx
-      env
-      (tc.tc-env-key-name-text-for-session
-        (tc.tc-context-structural-session ctx)
-        name-id)
-      maybe-ty
-      init-id
-      bindings
-      (+ binding-index 1)
-      body)
-      [(tc.ResultTcType.Ok init-ty)
+    [facts : tc.TcCheckedLetBindingFactState
+      (tc.tc-job-state-checked-let-binding-facts (tc.tc-context-job-state ctx))]
+    (match (tc.tc-checked-let-binding-fact-lookup
+      facts
+      state.checked-declaration-ordinal
+      body-id
+      binding-index
+      name-id
+      init-id)
+      [(tc.TcMaybeCheckedLetBindingFact.Hit binding-ty transition)
         (let
-          [resolved-maybe-ty : ast.AstMaybeType
-            (tc.tc-let-binding-resolve-maybe-type ctx maybe-ty)]
-          [binding-ty : ast.AstType
-            (tc.tc-let-binding-plain-bind-type ctx resolved-maybe-ty init-ty)]
           [recorded-maybe-ty : ast.AstMaybeType
-            (match resolved-maybe-ty
-              [(ast.AstMaybeType.Some ty) (ast.AstMaybeType.Some ty)]
-              [(ast.AstMaybeType.No)
-                (ast.AstMaybeType.Some (tc.tc-resolve-type ctx binding-ty))])]
+            (ast.AstMaybeType.Some (tc.tc-resolve-type ctx binding-ty))]
           [bound : CompilerSemanticBindResult
             (compiler-semantic-bind-local!
               state
@@ -3419,32 +3434,28 @@
               [(ast.AstMaybeType.No) unit])
             (CompilerSemanticBindResult
               bound.scope
-              ;; Reproduce the successful checker's special arena-owner,
-              ;; arena-phase, and raw C function-pointer binding transition so a
-              ;; later inferred binding sees the same exact lexical environment.
-              (tc.tc-bind-c-abi-fnptr-if-needed-id
+              ;; Apply the successful checker's retained arena-owner, arena-phase,
+              ;; and raw C-function-pointer decision without inspecting or
+              ;; typechecking the initializer again.
+              (tc.tc-bind-checked-let-transition-id
                 ctx
                 env
                 name-id
                 binding-ty
-                init)
+                transition)
               bound.next-search)))]
-      [(tc.ResultTcType.Err _)
-        ;; A complete check reached this walk successfully, so this is only a
-        ;; fail-closed fallback for facts the replay cannot reproduce.
+      [_
+        ;; Partial checks can legitimately lack a fact after their first error.
+        ;; Do not fabricate an annotation-only binding: retain syntax records,
+        ;; leave the environment unchanged, and make complete callers fail.
         (begin
+          (if state.declaration-retains-let-facts
+            (set! (deref state.checked-let-fact-mismatch) true)
+            unit)
           (match maybe-ty
             [(ast.AstMaybeType.Some ty) (compiler-semantic-walk-type! state ty)]
             [(ast.AstMaybeType.No) unit])
-          (compiler-semantic-bind-local!
-            state
-            scope
-            env
-            name-id
-            CompilerSemanticSymbolKind.Local
-            (tc.tc-let-binding-resolve-maybe-type ctx maybe-ty)
-            search-start
-            search-limit))])))
+          (CompilerSemanticBindResult scope env search-start))])))
 
 (define (compiler-semantic-expr-start-offset
   [state : CompilerSemanticWalkState]
@@ -3486,7 +3497,11 @@
     (begin
       ;; Atomic expression spans may end at their first or final byte. Advance
       ;; only through the token so a sequential binder starts after its RHS.
+      ;; Generated nodes can have no source span and deliberately preserve a
+      ;; negative fallback; leave it for the scope-region guard instead of
+      ;; indexing the source at -1.
       (while (and
+        (>= cursor 0)
         (< cursor source-len)
         (not
           (compiler-semantic-delimiter? (string.string-ref state.source cursor))))
@@ -6928,6 +6943,8 @@
               -1
               cbi.compiler-builtin-id-fix-empty
               -1
+              -1
+              true
               false
               CompilerSemanticProvenance.EditableSource
               (box
@@ -6958,6 +6975,7 @@
                 i64
                 (ast.ast-node-pool-context-expr-len (tc.tc-context-pools ctx)))
               (box 0)
+              (box false)
               parse_core.CompilerParseMaybeSemanticOriginRun.None
               (array.make-array i64 12))]
           [index : i64 0]
@@ -7039,6 +7057,14 @@
                         walk-state.module-index))
                     unit)
                   (set! walk-state.declaration-ordinal index)
+                  (set!
+                    walk-state.checked-declaration-ordinal
+                    (+ decls.offset index))
+                  (set!
+                    walk-state.declaration-retains-let-facts
+                    (compiler-semantic-decl-retains-checked-let-facts?
+                      path
+                      decl))
                   (set! walk-state.generated generated)
                   (set! walk-state.provenance provenance)
                   (set! (deref walk-state.next-local-ordinal) 0)
@@ -7365,7 +7391,9 @@
                             len)
                           canonical-build.symbols
                           canonical-build.len
-                          complete
+                          (and
+                            complete
+                            (not (deref walk-state.checked-let-fact-mismatch)))
                           paths-out
                           path-count
                           modules-out
@@ -7400,9 +7428,13 @@
   [stdlib-roots : svec.Vec]
   [cache-scope : String]) : ResultCompilerCheckWithSemanticIndex
   (let
+    [job-state : tc.TcJobState (tc.tc-serial-job-state)]
     [macro-sites : tc.TcMacroCallSiteState
-      (tc.tc-job-state-macro-call-sites (tc.tc-serial-job-state))]
+      (tc.tc-job-state-macro-call-sites job-state)]
+    [let-facts : tc.TcCheckedLetBindingFactState
+      (tc.tc-job-state-checked-let-binding-facts job-state)]
     (begin
+      (tc.tc-checked-let-binding-facts-begin! let-facts)
       (tc.tc-macro-call-site-state-set-enabled! macro-sites true)
       (cfg compile-profile (check_core.compiler-check-profile-start))
       (match (tc_api.typecheck-compiler-program-with-paths-checked-cache
@@ -7412,6 +7444,8 @@
         cache-scope)
         [(tc.ResultCompilerTypecheckChecked.Ok summary ctx env checked-paths)
           (let
+            [_let-check-count-before : i64
+              (cfg test (tc.tc-let-binding-init-type-call-count-for-test) 0)]
             [index : CompilerSemanticSourceIndex
               (compiler-semantic-index-build-owned
                 ctx
@@ -7422,12 +7456,32 @@
                 true)]
             (begin
               (cfg
+                test
+                (unless
+                  (=
+                    _let-check-count-before
+                    (tc.tc-let-binding-init-type-call-count-for-test))
+                  (io.panic
+                    "semantic index: let initializer was typechecked during index construction"))
+                unit)
+              (cfg
                 compile-profile
                 (check_core.compiler-check-profile-finish "typecheck"))
               (tc.tc-macro-call-site-state-set-enabled! macro-sites false)
-              (ResultCompilerCheckWithSemanticIndex.Ok summary index)))]
+              (tc.tc-checked-let-binding-facts-finish! let-facts)
+              (if (compiler-semantic-source-index-complete? (& index))
+                (ResultCompilerCheckWithSemanticIndex.Ok summary index)
+                (begin
+                  (compiler-semantic-source-index-release! (&mut index))
+                  (ResultCompilerCheckWithSemanticIndex.Err
+                    (box
+                      (cdiag.compiler-diagnostic-list-single
+                        (tc.tc-diag-at-start
+                          "semantic index: missing or inconsistent retained checked let-binding fact"))))))))]
         [(tc.ResultCompilerTypecheckChecked.Partial diag ctx env checked-paths)
           (let
+            [_let-check-count-before : i64
+              (cfg test (tc.tc-let-binding-init-type-call-count-for-test) 0)]
             [index : CompilerSemanticSourceIndex
               (compiler-semantic-index-build-owned
                 ctx
@@ -7438,9 +7492,19 @@
                 false)]
             (begin
               (cfg
+                test
+                (unless
+                  (=
+                    _let-check-count-before
+                    (tc.tc-let-binding-init-type-call-count-for-test))
+                  (io.panic
+                    "semantic index: let initializer was typechecked during partial index construction"))
+                unit)
+              (cfg
                 compile-profile
                 (check_core.compiler-check-profile-finish "typecheck"))
               (tc.tc-macro-call-site-state-set-enabled! macro-sites false)
+              (tc.tc-checked-let-binding-facts-finish! let-facts)
               (ResultCompilerCheckWithSemanticIndex.Partial
                 (box
                   (check_core.compiler-check-diagnostics-with-fallback-path
@@ -7453,6 +7517,7 @@
               compile-profile
               (check_core.compiler-check-profile-finish "typecheck"))
             (tc.tc-macro-call-site-state-set-enabled! macro-sites false)
+            (tc.tc-checked-let-binding-facts-finish! let-facts)
             (ResultCompilerCheckWithSemanticIndex.Err
               (box
                 (check_core.compiler-check-diagnostics-with-fallback-path
@@ -9755,6 +9820,119 @@
           false)]
       [(ResultCompilerCheckWithSemanticIndex.Err _) false])))
 
+(define (compiler-check-semantic-index-retained-transitions-ok?) : bool
+  (let
+    [path : String "src/tests/semantic_index_retained_transitions.tl"]
+    [source : String
+      "(import stdlib.arena)
+(import stdlib.string)
+(extern raw-fn (:symbol \"semantic_index_raw_fn\") : (-> i64 i64))
+(define (read-ref [value : (& owner i64)]) : i64 1)
+(define (read-owned [value : String]) : i64 1)
+(define (probe [n : i64]) : i64
+  (let
+    [ref (& n)]
+    [ref-closure (lambda () : i64 (read-ref ref))]
+    [owned : String \"repeat\"]
+    [move-closure (lambda () : i64 (read-owned owned))]
+    [once : String \"once\"]
+    [consume-closure (lambda () : String once)]
+    [owner (arena.make)]
+    [phase (arena.phase owner)]
+    [raw-copy raw-fn]
+    [score (+ (ref-closure) (+ (move-closure) (raw-copy 39)))]
+    [taken (consume-closure)]
+    (begin
+      (arena.rewind-safe! phase)
+      (arena.destroy-safe! owner)
+      (+ score (string.string-length taken)))))"]
+    [roots : svec.Vec
+      (let
+        [items : svec.Vec (svec.new)]
+        (begin
+          (svec.push-ref! (&mut items) "stdlib")
+          items))]
+    (match (compiler-check-source-index-with-roots path source roots)
+      [(ResultCompilerCheckWithSemanticIndex.Ok _ index)
+        (let
+          [ref-index : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& index)
+              path
+              "ref"
+              CompilerSemanticRecordRole.Definition
+              0)]
+          [ref-closure-index : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& index)
+              path
+              "ref-closure"
+              CompilerSemanticRecordRole.Definition
+              0)]
+          [move-closure-index : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& index)
+              path
+              "move-closure"
+              CompilerSemanticRecordRole.Definition
+              0)]
+          [consume-closure-index : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& index)
+              path
+              "consume-closure"
+              CompilerSemanticRecordRole.Definition
+              0)]
+          [owner-index : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& index)
+              path
+              "owner"
+              CompilerSemanticRecordRole.Definition
+              0)]
+          [phase-index : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& index)
+              path
+              "phase"
+              CompilerSemanticRecordRole.Definition
+              0)]
+          [raw-index : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& index)
+              path
+              "raw-copy"
+              CompilerSemanticRecordRole.Definition
+              0)]
+          [taken-index : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& index)
+              path
+              "taken"
+              CompilerSemanticRecordRole.Definition
+              0)]
+          [ok : bool
+            (and
+              (>= ref-index 0)
+              (>= ref-closure-index 0)
+              (>= move-closure-index 0)
+              (>= consume-closure-index 0)
+              (>= owner-index 0)
+              (>= phase-index 0)
+              (>= raw-index 0)
+              (>= taken-index 0)
+              (string.eq
+                (compiler-semantic-source-index-get (& index) raw-index).resolved-type
+                "(-> i64 i64)"))]
+          (begin
+            (compiler-semantic-source-index-release! (&mut index))
+            (and ok (= (compiler-semantic-source-index-len (& index)) 0))))]
+      [(ResultCompilerCheckWithSemanticIndex.Partial _ partial)
+        (begin
+          (compiler-semantic-source-index-release! (&mut partial))
+          false)]
+      [(ResultCompilerCheckWithSemanticIndex.Err _) false])))
+
 (define (compiler-check-semantic-index-dense-visibility-ok?
   [index : (& index CompilerSemanticSourceIndex)]
   [path : String]
@@ -11562,6 +11740,7 @@
     (compiler-check-semantic-index-base-ok?)
     (compiler-check-semantic-index-macro-call-sites-ok?)
     (compiler-check-semantic-index-inferred-locals-ok?)
+    (compiler-check-semantic-index-retained-transitions-ok?)
     (compiler-check-semantic-index-dense-scopes-ok?)
     (compiler-check-semantic-index-partial-ok?)
     (compiler-check-semantic-index-canonical-ok?)

@@ -69697,3 +69697,363 @@
     (compiler-optimize-bounds-dom-inductive-self-test)
     42
     "the ABCD cycle rule retires an explicit stack's header check from the push's own check and the pop edge's guard, a reversed copy's decreasing index from the cursor that filled it, and a byte scanner's index from a signed test plus an inductive sign; a stepped input whose check does not dominate its edge, an unclassified seed, an unguarded decrement and an unfenced step are all refused"))
+
+;; ---------------------------------------------------------------------------
+;; T2-3: if-conversion over triangles, literal arms and bool casts.
+;;
+;; The final `if_convert` pass replaces a two-way branch whose arms only carry a
+;; value into the join with one instruction at the end of the source block. Two
+;; joins qualify -- the four-block diamond and the triangle whose "false" arm is
+;; the source's own edge -- and neither is read off the block layout any more:
+;; the arms and the merge are looked up through the CFG index, so a merge that
+;; happens to sit at the end of the function converts exactly like one three
+;; slots down.
+;;
+;; What the join becomes depends on the two values. A bool home is a full
+;; register holding 0 or 1 (every compare is materialised `setcc; movzbq`), so
+;; `phi [1, taken], [0, untaken]` IS the condition zero-extended and lowers to a
+;; single `movzbq`; the reversed pair is that cast with an `xor $1` over it.
+;; Anything else stays a `Select`. Arms holding INSTRUCTIONS are still refused:
+;; the pass never moves work above the branch, so it never speculates.
+(define (opt-ifc-instr-kind [instr : compiler_ir_types.CompilerIrInstr]) : i64
+  (match instr
+    [(compiler_ir_types.CompilerIrInstr.Cast _ _ _ _) 1]
+    [(compiler_ir_types.CompilerIrInstr.Select _) 2]
+    [(compiler_ir_types.CompilerIrInstr.Phi _ _ _) 3]
+    [(compiler_ir_types.CompilerIrInstr.BinOp _ op _ _ _)
+      (match op
+        [(compiler_ir_types.CompilerIrBinOp.BitXor) 4]
+        [_ 0])]
+    [(compiler_ir_types.CompilerIrInstr.Mov _ _ _) 5]
+    [_ 0]))
+
+(define (opt-ifc-count-seq
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [kind : i64]
+  [index : i64]
+  [acc : i64]) : i64
+  (if (>= index (compiler_ir_types.compiler-ir-instr-seq-count instrs))
+    acc
+    (opt-ifc-count-seq
+      instrs
+      kind
+      (+ index 1)
+      (if (=
+        (opt-ifc-instr-kind
+          (compiler_ir_types.compiler-ir-instr-seq-ref instrs index))
+        kind)
+        (+ acc 1)
+        acc))))
+
+(define (opt-ifc-count
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [kind : i64]) : i64
+  (match blocks
+    [(compiler_ir_types.CompilerIrBlockList.Nil) 0]
+    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (+
+            (opt-ifc-count-seq instrs kind 0 0)
+            (opt-ifc-count (__tl-box-place rest) kind))])]
+    [(compiler_ir_types.CompilerIrBlockList.Array seq)
+      (opt-ifc-count (compiler_ir_types.compiler-ir-block-seq-to-list seq) kind)]))
+
+(define (opt-ifc-params) : compiler_ir_types.CompilerIrParamList
+  (compiler_ir_types.compiler-ir-param-cons
+    (compiler_ir_types.CompilerIrParam.Param
+      "x"
+      (compiler_ast_types.AstType.I64)
+      0)
+    (compiler_ir_types.compiler-ir-param-cons
+      (compiler_ir_types.CompilerIrParam.Param
+        "y"
+        (compiler_ast_types.AstType.I64)
+        1)
+      (compiler_ir_types.CompilerIrParamList.Nil))))
+
+(define (opt-ifc-run [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrBlockList
+  (match (compiler_optimize.opt-if-convert-function
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    (compiler_ir_types.CompilerIrFunction.Function
+      (opt-test-symbol "if_convert_fixture")
+      (opt-ifc-params)
+      (compiler_ast_types.AstType.I64)
+      32
+      blocks))
+    [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ out) out]))
+
+;; `%dst = <op> %x, %y : i64`
+(define (opt-ifc-binop [dst : i64] [op : compiler_ir_types.CompilerIrBinOp]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.BinOp
+    dst
+    op
+    (compiler_ir_types.CompilerIrValue.Var 0)
+    (compiler_ir_types.CompilerIrValue.Var 1)
+    (compiler_ast_types.AstType.I64)))
+
+(define (opt-ifc-cmp [dst : i64]) : compiler_ir_types.CompilerIrInstr
+  (opt-ifc-binop dst (compiler_ir_types.CompilerIrBinOp.Lt)))
+
+(define (opt-ifc-phi
+  [dst : i64]
+  [first : compiler_ir_types.CompilerIrValue]
+  [first-label : String]
+  [second : compiler_ir_types.CompilerIrValue]
+  [second-label : String]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.Phi
+    dst
+    (opt-nn-phi-input
+      first
+      first-label
+      (opt-nn-phi-input
+        second
+        second-label
+        (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+    (compiler_ast_types.AstType.I64)))
+
+(define (opt-ifc-lit [value : i64]) : compiler_ir_types.CompilerIrValue
+  (compiler_ir_types.CompilerIrValue.I64 value))
+
+;; (a) The four-block diamond with literal arms. `flip` reverses the pair, so
+;; `(if c 1 0)` becomes `(if c 0 1)` and the cast picks up its `xor $1`.
+(define (opt-ifc-diamond-blocks [flip : bool]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-nn-block
+      "entry"
+      (opt-test-instrs (opt-ifc-cmp 10) (opt-nn-branch 10 "then" "else")))
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-nn-block "then" (opt-test-instrs (opt-nn-jump "merge")))
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-nn-block "else" (opt-test-instrs (opt-nn-jump "merge")))
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-nn-block
+            "merge"
+            (opt-test-instrs
+              (opt-ifc-phi
+                11
+                (opt-ifc-lit
+                  (if flip
+                    0
+                    1))
+                "then"
+                (opt-ifc-lit
+                  (if flip
+                    1
+                    0))
+                "else")
+              (opt-nn-return 11)))
+          (compiler_ir_types.CompilerIrBlockList.Nil))))))
+
+;; (b) The triangle `(if c 1 0)`: only the true edge gets an arm block, and the
+;; phi names the SOURCE on the edge that runs straight into the merge. This is
+;; the shape pl-parse-line stores twelve times per line.
+(define (opt-ifc-triangle-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-nn-block
+      "entry"
+      (opt-test-instrs (opt-ifc-cmp 10) (opt-nn-branch 10 "arm" "merge")))
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-nn-block "arm" (opt-test-instrs (opt-nn-jump "merge")))
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-nn-block
+          "merge"
+          (opt-test-instrs
+            (opt-ifc-phi 11 (opt-ifc-lit 1) "arm" (opt-ifc-lit 0) "entry")
+            (opt-nn-return 11)))
+        (compiler_ir_types.CompilerIrBlockList.Nil)))))
+
+;; (c) The same diamond with the merge laid out BETWEEN the two arms, so the
+;; old `facts[id+1..3]` rule sees a four-instruction block where it wanted a
+;; jump-only arm. Layout is an accident of lowering; the join is the same join.
+(define (opt-ifc-scattered-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-nn-block
+      "entry"
+      (opt-test-instrs (opt-ifc-cmp 10) (opt-nn-branch 10 "then" "else")))
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-nn-block "then" (opt-test-instrs (opt-nn-jump "merge")))
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-nn-block
+          "merge"
+          (opt-test-instrs
+            (opt-ifc-phi 11 (opt-ifc-lit 1) "then" (opt-ifc-lit 0) "else")
+            (opt-nn-return 11)))
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-nn-block "else" (opt-test-instrs (opt-nn-jump "merge")))
+          (compiler_ir_types.CompilerIrBlockList.Nil))))))
+
+;; (d) An arm that COMPUTES its value. Converting would run the add on the path
+;; that never wanted it -- speculation the pass does not do -- so the branch
+;; stays exactly as lowering left it.
+(define (opt-ifc-working-arm-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-nn-block
+      "entry"
+      (opt-test-instrs (opt-ifc-cmp 10) (opt-nn-branch 10 "then" "else")))
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-nn-block
+        "then"
+        (opt-test-instrs
+          (opt-ifc-binop 12 (compiler_ir_types.CompilerIrBinOp.Add))
+          (opt-nn-jump "merge")))
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-nn-block "else" (opt-test-instrs (opt-nn-jump "merge")))
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-nn-block
+            "merge"
+            (opt-test-instrs
+              (opt-ifc-phi
+                11
+                (compiler_ir_types.CompilerIrValue.Var 12)
+                "then"
+                (compiler_ir_types.CompilerIrValue.Var 0)
+                "else")
+              (opt-nn-return 11)))
+          (compiler_ir_types.CompilerIrBlockList.Nil))))))
+
+;; (f) Two vars, both already computed above the branch, on a join only the
+;; generalised pass can see -- a triangle. It is deliberately NOT folded: this
+;; backend's select lowering re-materialises the mask instead of reusing the
+;; compare's flags, so trading the branch for a cmov here spends more
+;; instructions than it saves (measured: +28.3M Ir on gvn_table when every such
+;; join was folded). The constant forms have no such trade, so they convert on
+;; exactly this shape.
+(define (opt-ifc-var-arms-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-nn-block
+      "entry"
+      (opt-test-instrs
+        (opt-ifc-binop 12 (compiler_ir_types.CompilerIrBinOp.Add))
+        (opt-ifc-cmp 10)
+        (opt-nn-branch 10 "arm" "merge")))
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-nn-block "arm" (opt-test-instrs (opt-nn-jump "merge")))
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-nn-block
+          "merge"
+          (opt-test-instrs
+            (opt-ifc-phi
+              11
+              (compiler_ir_types.CompilerIrValue.Var 12)
+              "arm"
+              (compiler_ir_types.CompilerIrValue.Var 0)
+              "entry")
+            (opt-nn-return 11)))
+        (compiler_ir_types.CompilerIrBlockList.Nil)))))
+
+;; (e) The exact shape the pass accepted before this packet: four CONTIGUOUS
+;; blocks, a source that opens with a phi and closes `compare; branch`, both phi
+;; inputs vars. It still converts, and it still converts to a `Select` -- the
+;; select arm is byte-for-byte the one that was there before.
+(define (opt-ifc-legacy-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-nn-block
+      "entry"
+      (opt-test-instrs (opt-ifc-cmp 20) (opt-nn-branch 20 "left" "right")))
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-nn-block
+        "left"
+        (opt-test-instrs
+          (opt-ifc-binop 21 (compiler_ir_types.CompilerIrBinOp.Add))
+          (opt-nn-jump "source")))
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-nn-block
+          "right"
+          (opt-test-instrs
+            (opt-ifc-binop 22 (compiler_ir_types.CompilerIrBinOp.Sub))
+            (opt-nn-jump "source")))
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-nn-block
+            "source"
+            (opt-test-instrs
+              (opt-ifc-phi
+                23
+                (compiler_ir_types.CompilerIrValue.Var 21)
+                "left"
+                (compiler_ir_types.CompilerIrValue.Var 22)
+                "right")
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                10
+                (compiler_ir_types.CompilerIrBinOp.Lt)
+                (compiler_ir_types.CompilerIrValue.Var 23)
+                (compiler_ir_types.CompilerIrValue.Var 1)
+                (compiler_ast_types.AstType.I64))
+              (opt-nn-branch 10 "then" "else")))
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-nn-block "then" (opt-test-instrs (opt-nn-jump "merge")))
+            (compiler_ir_types.compiler-ir-block-cons
+              (opt-nn-block "else" (opt-test-instrs (opt-nn-jump "merge")))
+              (compiler_ir_types.compiler-ir-block-cons
+                (opt-nn-block
+                  "merge"
+                  (opt-test-instrs
+                    (opt-ifc-phi
+                      11
+                      (compiler_ir_types.CompilerIrValue.Var 23)
+                      "then"
+                      (compiler_ir_types.CompilerIrValue.Var 1)
+                      "else")
+                    (opt-nn-return 11)))
+                (compiler_ir_types.CompilerIrBlockList.Nil)))))))))
+
+;; Returns 42 only when every conversion and every refusal holds.
+(define (compiler-optimize-if-convert-self-test) : i64
+  (let
+    [ones : compiler_ir_types.CompilerIrBlockList
+      (opt-ifc-run (opt-ifc-diamond-blocks false))]
+    [zeros : compiler_ir_types.CompilerIrBlockList
+      (opt-ifc-run (opt-ifc-diamond-blocks true))]
+    [triangle : compiler_ir_types.CompilerIrBlockList
+      (opt-ifc-run (opt-ifc-triangle-blocks))]
+    [scattered : compiler_ir_types.CompilerIrBlockList
+      (opt-ifc-run (opt-ifc-scattered-blocks))]
+    [working : compiler_ir_types.CompilerIrBlockList
+      (opt-ifc-run (opt-ifc-working-arm-blocks))]
+    [vars : compiler_ir_types.CompilerIrBlockList
+      (opt-ifc-run (opt-ifc-var-arms-blocks))]
+    [legacy : compiler_ir_types.CompilerIrBlockList
+      (opt-ifc-run (opt-ifc-legacy-blocks))]
+    (cond
+      ;; (a) `phi [1, then], [0, else]` is the condition itself: one cast, no
+      ;; select, no phi, and no negation over it.
+      [(not (= (opt-ifc-count ones 1) 1)) 1]
+      [(not (= (opt-ifc-count ones 3) 0)) 2]
+      [(not (= (opt-ifc-count ones 2) 0)) 3]
+      [(not (= (opt-ifc-count ones 4) 0)) 4]
+      ;; ... and the reversed pair is that cast with one `xor $1` over it.
+      [(not (= (opt-ifc-count zeros 1) 1)) 5]
+      [(not (= (opt-ifc-count zeros 4) 1)) 6]
+      [(not (= (opt-ifc-count zeros 3) 0)) 7]
+      [(not (= (opt-ifc-count zeros 2) 0)) 8]
+      ;; (b) the triangle: one arm block, the other edge the source's own.
+      [(not (= (opt-ifc-count triangle 1) 1)) 9]
+      [(not (= (opt-ifc-count triangle 3) 0)) 10]
+      [(not (= (opt-ifc-count triangle 2) 0)) 11]
+      ;; (c) the merge laid out between the arms converts identically.
+      [(not (= (opt-ifc-count scattered 1) 1)) 12]
+      [(not (= (opt-ifc-count scattered 3) 0)) 13]
+      ;; (d) an arm holding an instruction is refused outright: the phi, and
+      ;; the branch that feeds it, are still there.
+      [(not (= (opt-ifc-count working 3) 1)) 14]
+      [(not (= (opt-ifc-count working 1) 0)) 15]
+      [(not (= (opt-ifc-count working 2) 0)) 16]
+      ;; (e) the pre-packet shape still converts, and still to a select. The
+      ;; outer diamond's arms compute, so only the inner join folds: one select
+      ;; and the outer phi are what remain.
+      [(not (= (opt-ifc-count legacy 2) 1)) 17]
+      [(not (= (opt-ifc-count legacy 3) 1)) 18]
+      [(not (= (opt-ifc-count legacy 1) 0)) 19]
+      ;; (f) the same two computed vars on a newly visible join stay a branch:
+      ;; the select is not widened past the shapes it already covered.
+      [(not (= (opt-ifc-count vars 2) 0)) 20]
+      [(not (= (opt-ifc-count vars 1) 0)) 21]
+      [(not (= (opt-ifc-count vars 3) 1)) 22]
+      [else 42])))
+
+(test
+  if-convert-triangles-literals-and-bool-casts
+  (test.assert-i64-eq
+    (compiler-optimize-if-convert-self-test)
+    42
+    "if-conversion finds the arms and the merge through the CFG index rather than the block layout, folds the triangle as well as the diamond, and spells a literal 1/0 join as a bool zero-extension (0/1 as that cast under an xor); computed vars still fold to a select and an arm holding an instruction is still refused"))

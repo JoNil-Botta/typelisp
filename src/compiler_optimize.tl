@@ -86753,7 +86753,6 @@
   (instrs ir.CompilerIrInstrSeq)
   (count i64)
   (first ir.CompilerIrInstrScalarFact)
-  (before-last ir.CompilerIrInstrScalarFact)
   (last ir.CompilerIrInstrScalarFact))
 
 (define (opt-if-convert-block-fact [block : ir.CompilerIrBlock]) : OptIfConvertBlockFact
@@ -86768,10 +86767,6 @@
           (if (> count 0)
             (ir.compiler-ir-instr-scalar-fact
               (ir.compiler-ir-instr-seq-ref instrs 0))
-            (ir.CompilerIrInstrScalarFact.Other))
-          (if (> count 1)
-            (ir.compiler-ir-instr-scalar-fact
-              (ir.compiler-ir-instr-seq-ref instrs (- count 2)))
             (ir.CompilerIrInstrScalarFact.Other))
           (if (> count 0)
             (ir.compiler-ir-instr-scalar-fact
@@ -86795,13 +86790,107 @@
           (set! index (+ index 1))))
       facts)))
 
-(define (opt-if-convert-arm? [fact : OptIfConvertBlockFact] [merge : i64]) : bool
-  (and
-    (= fact.count 1)
+;; A jump-only arm forwards its single edge unconditionally: the label it
+;; forwards to, or `label-none` when the block is not exactly one `Jump`.
+(define (opt-if-convert-arm-target [fact : OptIfConvertBlockFact]) : i64
+  (if (= fact.count 1)
     (match fact.last
-      [(ir.CompilerIrInstrScalarFact.Jump target) (= target merge)]
-      [_ false])))
+      [(ir.CompilerIrInstrScalarFact.Jump target) target]
+      [_ (ir.compiler-ir-label-none)])
+    (ir.compiler-ir-label-none)))
 
+;; The arm block's ONLY predecessor is the source branch. This is the rail the
+;; whole rewrite stands on: an arm reached from anywhere else would still need
+;; its own edge into the merge after the branch is gone, and the phi input it
+;; carried would have no definition on the path that survives. With a single
+;; predecessor the arm holds nothing (one `Jump`) and dies with the branch, so
+;; every value the phi named on that edge is a value that already dominates the
+;; SOURCE -- which is exactly where the select/cast is placed.
+(define (opt-if-convert-sole-pred?
+  [index : OptCfgIndex]
+  [block-id : i64]
+  [source-id : i64]) : bool
+  (let
+    [csr : OptCfgCsr index.preds]
+    [start : i64 (array-ref csr.offsets block-id)]
+    [end : i64 (array-ref csr.offsets (+ block-id 1))]
+    (and (= (- end start) 1) (= (array-ref csr.edges start) source-id))))
+
+(define (opt-if-convert-block-id [index : OptCfgIndex] [label : i64]) : i64
+  (match (opt-cfg-index-id index label)
+    [(option_i64.Some id) id]
+    [(option_i64.None) (- 0 1)]))
+
+(define (opt-if-convert-phi-at? [instrs : ir.CompilerIrInstrSeq] [pos : i64]) : bool
+  (match (& (array-ref instrs.slots pos))
+    [(ir.CompilerIrInstr.Phi _ _ _) true]
+    [_ false]))
+
+;; The block the two arms of a two-way branch join at, with the phi input labels
+;; that name the taken and the untaken edge.
+(defenum OptIfConvertShape
+  (No)
+  ;; merge id, first arm id, second arm id (-1 for a triangle, where the source
+  ;; carries one edge itself), phi label on the true edge, phi label on the
+  ;; false edge.
+  (Some i64 i64 i64 i64 i64))
+
+;; Two joins qualify, and neither depends on where the blocks sit in the layout:
+;;
+;;   diamond            triangle
+;;   source             source
+;;    |    \             |    \
+;;   arm   arm          arm    |
+;;    \    /             \    /
+;;    merge              merge
+;;
+;; In the triangle the source's own edge into the merge stands in for the second
+;; arm, so the phi input on that edge is labelled with the SOURCE.
+(define (opt-if-convert-shape
+  [index : OptCfgIndex]
+  [facts : (__tl_dyn-array OptIfConvertBlockFact)]
+  [id : i64]
+  [source-label : i64]
+  [yes : i64]
+  [no : i64]) : OptIfConvertShape
+  (if (= yes no)
+    (OptIfConvertShape.No)
+    (let
+      [yes-id : i64 (opt-if-convert-block-id index yes)]
+      [no-id : i64 (opt-if-convert-block-id index no)]
+      (if (or (< yes-id 0) (< no-id 0) (= yes-id id) (= no-id id))
+        (OptIfConvertShape.No)
+        (let
+          [yes-target : i64
+            (opt-if-convert-arm-target (array-ref facts yes-id))]
+          [no-target : i64 (opt-if-convert-arm-target (array-ref facts no-id))]
+          (cond
+            ;; Diamond: both targets are jump-only arms over one merge.
+            [(and
+                (ir.compiler-ir-label-some? yes-target)
+                (= yes-target no-target))
+              (let
+                [merge-id : i64 (opt-if-convert-block-id index yes-target)]
+                (if (or
+                  (< merge-id 0)
+                  (= merge-id id)
+                  (= merge-id yes-id)
+                  (= merge-id no-id))
+                  (OptIfConvertShape.No)
+                  (OptIfConvertShape.Some merge-id yes-id no-id yes no)))]
+            ;; Triangle: the false edge runs straight from the source to the
+            ;; merge, so the phi names the source on it.
+            [(= yes-target no)
+              (OptIfConvertShape.Some no-id yes-id (- 0 1) yes source-label)]
+            ;; Triangle, mirrored: the true edge is the direct one.
+            [(= no-target yes)
+              (OptIfConvertShape.Some yes-id no-id (- 0 1) source-label no)]
+            [else (OptIfConvertShape.No)]))))))
+
+;; Both phi inputs are vars the arms did not compute -- the arms hold nothing
+;; but a jump -- so a select names two values that already dominate the source
+;; and no work moves above the branch. This is the rule the pass has always
+;; applied; literal inputs reach the constant forms below instead.
 (define (opt-if-convert-live-values?
   [first : ir.CompilerIrValue]
   [second : ir.CompilerIrValue]) : bool
@@ -86812,66 +86901,225 @@
         [_ false])]
     [_ false]))
 
+;; The join is one this pass already folded to a `Select` before it learned to
+;; see past the block layout: a contiguous four-block diamond (arms at `id + 1`
+;; and `id + 2`, merge at `id + 3`) whose source opens with a phi and closes
+;; `compare; branch`.
+;;
+;; Everything this packet ADDED -- triangles, scattered layouts, a condition
+;; that is not a freshly adjacent compare -- is admitted for the CONSTANT forms
+;; only, and the reason is measured rather than stylistic. This backend's select
+;; lowering (`compiler-backend-emit-select`) re-materialises the mask and tests
+;; it instead of reusing the defining compare's flags, so a var/var join costs
+;; `mov; test; setcc; movzbq; mov; test; cmov` where the branch it replaces
+;; costs `test; jcc; mov`. Handing every join the pass can now see to that
+;; lowering measured +28.3M Ir on gvn_table, +0.44M on route_http and +0.54M on
+;; peephole_lines -- paid against a branch predictor an executed-instruction
+;; count does not model. The constant forms have no such trade: they are one
+;; instruction, or two. Taking the cmov off the compare's own flags (research
+;; item P5) is what unblocks the rest.
+(define (opt-if-convert-legacy-select?
+  [source : OptIfConvertBlockFact]
+  [id : i64]
+  [merge-id : i64]
+  [arm-a : i64]
+  [arm-b : i64]
+  [condition-var : i64]) : bool
+  (and
+    (= merge-id (+ id 3))
+    (or
+      (and (= arm-a (+ id 1)) (= arm-b (+ id 2)))
+      (and (= arm-a (+ id 2)) (= arm-b (+ id 1))))
+    (>= source.count 2)
+    (match source.first
+      [(ir.CompilerIrInstrScalarFact.Phi _ _ _) true]
+      [_ false])
+    (match (ir.compiler-ir-instr-scalar-fact
+      (ir.compiler-ir-instr-seq-ref source.instrs (- source.count 2)))
+      [(ir.CompilerIrInstrScalarFact.BinOp condition-dst op _ _ _)
+        (and (= condition-dst condition-var) (ir.compiler-ir-binop-compare? op))]
+      [_ false])))
+
+;; 1 for the phi type's literal one, 0 for its literal zero, -1 for anything
+;; else. `1/0` and `true/false` are the pairs a bool zero-extension spells.
+(define (opt-if-convert-literal-bit
+  [value : ir.CompilerIrValue]
+  [bool-ty? : bool]) : i64
+  (if bool-ty?
+    (match value
+      [(ir.CompilerIrValue.Bool flag)
+        (if flag
+          1
+          0)]
+      [_ (- 0 1)])
+    (match value
+      [(ir.CompilerIrValue.I64 literal)
+        (cond [(= literal 1) 1] [(= literal 0) 0] [else (- 0 1)])]
+      [_ (- 0 1)])))
+
+;; 1 = the condition itself (`cast %c : bool -> ty`), 2 = its negation,
+;; 0 = neither, so the join needs a real select.
+(define (opt-if-convert-constant-form
+  [on-true : ir.CompilerIrValue]
+  [on-false : ir.CompilerIrValue]
+  [bool-ty? : bool]) : i64
+  (let
+    [true-bit : i64 (opt-if-convert-literal-bit on-true bool-ty?)]
+    [false-bit : i64 (opt-if-convert-literal-bit on-false bool-ty?)]
+    (cond
+      [(and (= true-bit 1) (= false-bit 0)) 1]
+      [(and (= true-bit 0) (= false-bit 1)) 2]
+      [else 0])))
+
+;; The instruction (or pair) that reproduces `phi [on-true, taken],
+;; [on-false, untaken]` at the end of the source block. The constant forms are
+;; the point of the pass: a bool home is a full register holding 0 or 1 (the
+;; backend materialises every compare as `setcc; movzbq`), so `cast %c : bool ->
+;; i64` IS the value the diamond was branching to build, and it lowers to a
+;; single `movzbq`. The negated pair costs one extra `xor $1` over a fresh var
+;; -- still two instructions against the diamond's compare, branch, move and
+;; jump. Everything else falls back to the Select the pass has always emitted.
+(define (opt-if-convert-emit!
+  [builder : (&mut builder ir.CompilerIrInstrBuilder)]
+  [frame-cell : (__tl_dyn-array i64)]
+  [form : i64]
+  [dst : i64]
+  [condition-var : i64]
+  [on-true : ir.CompilerIrValue]
+  [on-false : ir.CompilerIrValue]
+  [bool-ty? : bool]
+  [ty : ast.AstType]) : unit
+  (cond
+    [(= form 1)
+      (ir.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (if bool-ty?
+          (ir.CompilerIrInstr.Mov dst (ir.CompilerIrValue.Var condition-var) ty)
+          (ir.CompilerIrInstr.Cast
+            dst
+            (ir.CompilerIrValue.Var condition-var)
+            (ast.AstType.Bool)
+            ty)))]
+    [(= form 2)
+      (if bool-ty?
+        (ir.compiler-ir-instr-builder-push!
+          (&mut builder)
+          (ir.CompilerIrInstr.BinOp
+            dst
+            (ir.CompilerIrBinOp.Eq)
+            (ir.CompilerIrValue.Var condition-var)
+            (ir.CompilerIrValue.Bool false)
+            (ast.AstType.Bool)))
+        (let
+          [widened : i64 (array-ref frame-cell 0)]
+          (begin
+            (set! (array-ref frame-cell 0) (+ widened 1))
+            (ir.compiler-ir-instr-builder-push!
+              (&mut builder)
+              (ir.CompilerIrInstr.Cast
+                widened
+                (ir.CompilerIrValue.Var condition-var)
+                (ast.AstType.Bool)
+                (clone ty)))
+            (ir.compiler-ir-instr-builder-push!
+              (&mut builder)
+              (ir.CompilerIrInstr.BinOp
+                dst
+                (ir.CompilerIrBinOp.BitXor)
+                (ir.CompilerIrValue.Var widened)
+                (ir.CompilerIrValue.I64 1)
+                ty)))))]
+    [else
+      (ir.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (ir.ir-instr-select
+          dst
+          (ir.CompilerIrValue.Var condition-var)
+          on-true
+          on-false
+          0
+          ty))]))
+
 (define (opt-if-convert-try!
   [type-segment-bases : i64]
+  [index : OptCfgIndex]
   [blocks : ir.CompilerIrBlockSeq]
   [facts : (__tl_dyn-array OptIfConvertBlockFact)]
+  [frame-cell : (__tl_dyn-array i64)]
   [id : i64]) : bool
-  (if (>= (+ id 3) (array-length facts))
-    false
-    (let
-      [source : OptIfConvertBlockFact (array-ref facts id)]
-      [a : OptIfConvertBlockFact (array-ref facts (+ id 1))]
-      [b : OptIfConvertBlockFact (array-ref facts (+ id 2))]
-      [merge : OptIfConvertBlockFact (array-ref facts (+ id 3))]
-      [source-label : i64 source.label]
-      [a-label : i64 a.label]
-      [b-label : i64 b.label]
-      [merge-label : i64 merge.label]
-      [source-instrs : ir.CompilerIrInstrSeq source.instrs]
-      [merge-instrs : ir.CompilerIrInstrSeq merge.instrs]
-      (begin
-        (when
-          (or
-            (< source.count 2)
-            (< merge.count 1)
-            (match source.first
-              [(ir.CompilerIrInstrScalarFact.Phi _ _ _) false]
-              [_ true])
-            (not (opt-if-convert-arm? a merge-label))
-            (not (opt-if-convert-arm? b merge-label)))
-          (return false))
-        (match source.last
-          [(ir.CompilerIrInstrScalarFact.Branch condition yes no)
-            (if (not
-              (or
-                (and (= a-label yes) (= b-label no))
-                (and (= a-label no) (= b-label yes))))
-              false
-              (match condition
-                [(ir.CompilerIrValue.Var condition-var)
-                  (match source.before-last
-                    [(ir.CompilerIrInstrScalarFact.BinOp condition-dst op _ _ _)
-                      (if (not
-                        (and
-                          (= condition-dst condition-var)
-                          (ir.compiler-ir-binop-compare? op)))
-                        false
-                        (match merge.first
-                          [(ir.CompilerIrInstrScalarFact.Phi dst inputs ty)
-                            (if (or
-                              (not
+  (let
+    [source : OptIfConvertBlockFact (array-ref facts id)]
+    [source-label : i64 source.label]
+    [source-instrs : ir.CompilerIrInstrSeq source.instrs]
+    (begin
+      (when (< source.count 1) (return false))
+      (match source.last
+        ;; Any two-way branch, not just one whose compare sits immediately
+        ;; above it. A branch condition is bool-typed by construction and every
+        ;; bool home in this backend is 0 or 1 in a full register, so the
+        ;; condition is a usable select mask -- and a usable zero-extension
+        ;; source -- whether a compare defined it one instruction ago, a load
+        ;; brought it back from a stack slot, or a call returned it. Requiring
+        ;; the adjacent compare is what kept `(if flag 1 0)` on a flag reloaded
+        ;; across a call out of this pass entirely.
+        [(ir.CompilerIrInstrScalarFact.Branch condition yes no)
+          (match condition
+            [(ir.CompilerIrValue.Var condition-var)
+              (match (opt-if-convert-shape index facts id source-label yes no)
+                [(OptIfConvertShape.No) false]
+                [(OptIfConvertShape.Some
+                    merge-id
+                    arm-a
+                    arm-b
+                    true-label
+                    false-label)
+                  (let
+                    [merge : OptIfConvertBlockFact (array-ref facts merge-id)]
+                    [merge-label : i64 merge.label]
+                    [merge-instrs : ir.CompilerIrInstrSeq merge.instrs]
+                    (begin
+                      (when
+                        (or
+                          (< merge.count 1)
+                          (not (opt-if-convert-sole-pred? index arm-a id))
+                          (and
+                            (>= arm-b 0)
+                            (not (opt-if-convert-sole-pred? index arm-b id)))
+                          ;; One phi only. The arms retire with the
+                          ;; branch, so a sibling phi over the same two
+                          ;; edges would be left naming labels that no
+                          ;; longer reach the merge -- and its second
+                          ;; value would be lost.
+                          (and
+                            (> merge.count 1)
+                            (opt-if-convert-phi-at? merge-instrs 1)))
+                        (return false))
+                      (match merge.first
+                        [(ir.CompilerIrInstrScalarFact.Phi dst inputs ty)
+                          (let
+                            [bool-ty? : bool
+                              (opt-type-eq
+                                type-segment-bases
+                                ty
+                                (ast.AstType.Bool))]
+                            (begin
+                              (when
                                 (or
-                                  (opt-integer-type? ty)
-                                  (opt-type-eq
-                                    type-segment-bases
-                                    ty
-                                    (ast.AstType.Bool))))
-                              (match merge.last
-                                [(ir.CompilerIrInstrScalarFact.Branch next _ _)
-                                  (opt-value-eq (clone condition) next)]
-                                [_ false]))
-                              false
+                                  (not (or (opt-integer-type? ty) bool-ty?))
+                                  ;; A merge that re-tests the very
+                                  ;; condition the source compared is the
+                                  ;; bool-branch passes' shape, not this
+                                  ;; one.
+                                  (match merge.last
+                                    [(ir.CompilerIrInstrScalarFact.Branch
+                                        next
+                                        _
+                                        _)
+                                      (opt-value-eq
+                                        (ir.CompilerIrValue.Var condition-var)
+                                        next)]
+                                    [_ false]))
+                                (return false))
                               (match (opt-bool-branch-phi-inputs inputs)
                                 [(OptBoolBranchPhiInputs.No) false]
                                 [(OptBoolBranchPhiInputs.Two
@@ -86879,73 +87127,143 @@
                                     first-label
                                     second
                                     second-label)
-                                  (if (or
-                                    (not
+                                  (let
+                                    [forward? : bool
+                                      (and
+                                        (= first-label true-label)
+                                        (= second-label false-label))]
+                                    (if (not
                                       (or
+                                        forward?
                                         (and
-                                          (= first-label yes)
-                                          (= second-label no))
-                                        (and
-                                          (= first-label no)
-                                          (= second-label yes))))
-                                    (not
-                                      (opt-if-convert-live-values? first second)))
-                                    false
-                                    (let
-                                      [source-builder : ir.CompilerIrInstrBuilder
-                                        (ir.compiler-ir-instr-builder-with-capacity
-                                          (+ source.count 1))]
-                                      [merge-builder : ir.CompilerIrInstrBuilder
-                                        (ir.compiler-ir-instr-builder-with-capacity
-                                          (- merge.count 1))]
-                                      (begin
-                                        (ir.compiler-ir-instr-builder-append-seq-range!
-                                          (&mut source-builder)
-                                          source-instrs
-                                          0
-                                          (- source.count 1))
-                                        (ir.compiler-ir-instr-builder-push!
-                                          (&mut source-builder)
-                                          (ir.ir-instr-select
-                                            dst
-                                            condition
-                                            (if (= first-label yes)
-                                              first
-                                              second)
-                                            (if (= first-label yes)
-                                              second
-                                              first)
-                                            0
-                                            ty))
-                                        (ir.compiler-ir-instr-builder-push!
-                                          (&mut source-builder)
-                                          (ir.CompilerIrInstr.Jump merge-label))
-                                        (ir.compiler-ir-instr-builder-append-seq-range!
-                                          (&mut merge-builder)
-                                          merge-instrs
-                                          1
-                                          merge.count)
-                                        (set!
-                                          (array-ref blocks.slots id)
-                                          (ir.CompilerIrBlock.Block
-                                            source-label
-                                            (ir.compiler-ir-instr-builder-to-seq
-                                              source-builder)))
-                                        (set!
-                                          (array-ref blocks.slots (+ id 3))
-                                          (ir.CompilerIrBlock.Block
-                                            merge-label
-                                            (ir.compiler-ir-instr-builder-to-seq
-                                              merge-builder)))
-                                        (set!
-                                          (array-ref facts (+ id 3))
-                                          (opt-if-convert-block-fact
-                                            (array-ref blocks.slots (+ id 3))))
-                                        true)))]))]
-                          [_ false]))]
-                    [_ false])]
-                [_ false]))]
-          [_ false])))))
+                                          (= first-label false-label)
+                                          (= second-label true-label))))
+                                      false
+                                      (let
+                                        [on-true : ir.CompilerIrValue
+                                          (if forward?
+                                            first
+                                            second)]
+                                        [on-false : ir.CompilerIrValue
+                                          (if forward?
+                                            second
+                                            first)]
+                                        [form : i64
+                                          (opt-if-convert-constant-form
+                                            on-true
+                                            on-false
+                                            bool-ty?)]
+                                        (begin
+                                          (when
+                                            (and
+                                              (= form 0)
+                                              (not
+                                                (and
+                                                  (opt-if-convert-live-values?
+                                                    on-true
+                                                    on-false)
+                                                  (opt-if-convert-legacy-select?
+                                                    source
+                                                    id
+                                                    merge-id
+                                                    arm-a
+                                                    arm-b
+                                                    condition-var))))
+                                            (return false))
+                                          (let
+                                            [source-builder : ir.CompilerIrInstrBuilder
+                                              (ir.compiler-ir-instr-builder-with-capacity
+                                                (+ source.count 2))]
+                                            [merge-builder : ir.CompilerIrInstrBuilder
+                                              (ir.compiler-ir-instr-builder-with-capacity
+                                                (- merge.count 1))]
+                                            (begin
+                                              (ir.compiler-ir-instr-builder-append-seq-range!
+                                                (&mut source-builder)
+                                                source-instrs
+                                                0
+                                                (- source.count 1))
+                                              (opt-if-convert-emit!
+                                                (&mut source-builder)
+                                                frame-cell
+                                                form
+                                                dst
+                                                condition-var
+                                                on-true
+                                                on-false
+                                                bool-ty?
+                                                ty)
+                                              (ir.compiler-ir-instr-builder-push!
+                                                (&mut source-builder)
+                                                (ir.CompilerIrInstr.Jump
+                                                  merge-label))
+                                              (ir.compiler-ir-instr-builder-append-seq-range!
+                                                (&mut merge-builder)
+                                                merge-instrs
+                                                1
+                                                merge.count)
+                                              (set!
+                                                (array-ref blocks.slots id)
+                                                (ir.CompilerIrBlock.Block
+                                                  source-label
+                                                  (ir.compiler-ir-instr-builder-to-seq
+                                                    source-builder)))
+                                              (set!
+                                                (array-ref
+                                                  blocks.slots
+                                                  merge-id)
+                                                (ir.CompilerIrBlock.Block
+                                                  merge-label
+                                                  (ir.compiler-ir-instr-builder-to-seq
+                                                    merge-builder)))
+                                              ;; Both rewritten blocks can
+                                              ;; be named again by a later
+                                              ;; source, so their facts are
+                                              ;; refreshed rather than left
+                                              ;; describing the shape that
+                                              ;; just retired.
+                                              (set!
+                                                (array-ref facts id)
+                                                (opt-if-convert-block-fact
+                                                  (array-ref blocks.slots id)))
+                                              (set!
+                                                (array-ref facts merge-id)
+                                                (opt-if-convert-block-fact
+                                                  (array-ref
+                                                    blocks.slots
+                                                    merge-id)))
+                                              true))))))])))]
+                        [_ false])))])]
+            [_ false])]
+        [_ false]))))
+
+;; Could any join in this function match? Both shapes need a merge that OPENS
+;; with a phi and an arm that is exactly one `Jump`; a function with neither has
+;; nothing for the pass to look up, and the CFG index the lookup needs is not
+;; worth building for it. The scan reads facts that are already computed, and
+;; the accessors, wrappers and straight-line helpers that make up most of a
+;; program fail it in a few words.
+(define (opt-if-convert-any-candidate?
+  [facts : (__tl_dyn-array OptIfConvertBlockFact)]) : bool
+  (let
+    [count : i64 (array-length facts)]
+    [id : i64 0]
+    [merge? : bool false]
+    [arm? : bool false]
+    (begin
+      (while (< id count)
+        (let
+          [fact : OptIfConvertBlockFact (array-ref facts id)]
+          (begin
+            (match fact.first
+              [(ir.CompilerIrInstrScalarFact.Phi _ _ _) (set! merge? true)]
+              [_ unit])
+            (when
+              (ir.compiler-ir-label-some? (opt-if-convert-arm-target fact))
+              (set! arm? true))
+            (when (and merge? arm?) (return true))
+            (set! id (+ id 1)))))
+      false)))
 
 (define (opt-if-convert-function-pass
   [type-segment-bases : i64]
@@ -86961,30 +87279,56 @@
             (let
               [facts : (__tl_dyn-array OptIfConvertBlockFact)
                 (opt-if-convert-facts seq)]
-              [read : i64 0]
-              [changed : bool false]
-              (begin
-                (while (< read (array-length facts))
+              (if (not (opt-if-convert-any-candidate? facts))
+                (OptFunctionPassResult.Result func false)
+                (let
+                  ;; The joins are looked up through the CFG index, not through
+                  ;; the block layout: which block follows which in the array is
+                  ;; an accident of lowering, and a merge three slots down is the
+                  ;; same merge as one at the end of the function. The index also
+                  ;; carries the predecessor rows the arm rail needs.
+                  [index : OptCfgIndex (opt-cfg-index-build blocks)]
+                  ;; A negated constant join mints one var for the zero-extended
+                  ;; condition, so the frame counter is carried in a cell and
+                  ;; written back into the rewritten function.
+                  [frame-cell : (__tl_dyn-array i64) (array.make-array i64 1)]
+                  [read : i64 0]
+                  [changed : bool false]
                   (begin
-                    (if (opt-if-convert-try! type-segment-bases seq facts read)
-                      (set! changed true)
-                      unit)
-                    (set! read (+ read 1))))
-                (if (not changed)
-                  (OptFunctionPassResult.Result func false)
-                  (let
-                    [next : ir.CompilerIrFunction
-                      (ir.CompilerIrFunction.Function
-                        name
-                        params
-                        ret-ty
-                        frame
-                        (opt-cfg-simplify-blocks blocks))]
-                    (match (opt-verify-function next)
-                      [(ResultCompilerOptimizeVerify.Ok)
-                        (OptFunctionPassResult.Result next true)]
-                      [(ResultCompilerOptimizeVerify.Err _)
-                        (OptFunctionPassResult.Result func false)])))))]
+                    (set! (array-ref frame-cell 0) frame)
+                    ;; Duplicate labels make the index's id map answer for the
+                    ;; first block of a name while `facts` is indexed by
+                    ;; position; the verifier rejects such a function anyway.
+                    (if (not index.labels-unique)
+                      (OptFunctionPassResult.Result func false)
+                      (begin
+                        (while (< read (array-length facts))
+                          (begin
+                            (if (opt-if-convert-try!
+                              type-segment-bases
+                              index
+                              seq
+                              facts
+                              frame-cell
+                              read)
+                              (set! changed true)
+                              unit)
+                            (set! read (+ read 1))))
+                        (if (not changed)
+                          (OptFunctionPassResult.Result func false)
+                          (let
+                            [next : ir.CompilerIrFunction
+                              (ir.CompilerIrFunction.Function
+                                name
+                                params
+                                ret-ty
+                                (array-ref frame-cell 0)
+                                (opt-cfg-simplify-blocks blocks))]
+                            (match (opt-verify-function next)
+                              [(ResultCompilerOptimizeVerify.Ok)
+                                (OptFunctionPassResult.Result next true)]
+                              [(ResultCompilerOptimizeVerify.Err _)
+                                (OptFunctionPassResult.Result func false)])))))))))]
           [_ (OptFunctionPassResult.Result func false)]))]))
 
 (define (opt-if-convert-function

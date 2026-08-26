@@ -1623,9 +1623,12 @@ if [ "$NL_HOST_OS" = windows ]; then
     # moves throughout the compiler. Its pre-#6840 authoritative Windows probe
     # measured 4,624,578 used nodes, 4,653,056 capacity, and 148,897,792
     # physical payload bytes; #6840's separately measured 8,185-node increase
-    # remains within the same exact 71-segment boundary.
+    # remains within the same exact 71-segment boundary. Rebasing the ownership
+    # cutover over #6857/#6861/#6862 crosses the next boundary: the authoritative
+    # Windows CI probe measured 4,653,508 used nodes, 4,718,592 capacity, and
+    # 150,994,944 physical payload bytes.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool macro_expand 71 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool macro_expand 72 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # The three dense optimizer plan containers crossed the checked expression
     # graph into its 33rd segment; the accessor-admission/absorption/fold/sinking

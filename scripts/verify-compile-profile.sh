@@ -1600,8 +1600,11 @@ if [ "$NL_HOST_OS" = windows ]; then
     # exact-span parser coverage cross the next macro-expand expression boundary:
     # the authoritative Windows CI probe measured 2,950,768 used nodes,
     # 3,014,656 capacity, and 96,468,992 physical payload bytes.
+    # #6840's semantic workspace rename provider crosses the next boundary: the
+    # authoritative Windows CI probe measured 3,014,657 used nodes, 3,080,192
+    # capacity, and 98,566,144 physical payload bytes.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool macro_expand 46 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool macro_expand 47 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # The three dense optimizer plan containers crossed the checked expression
     # graph into its 33rd segment; the accessor-admission/absorption/fold/sinking

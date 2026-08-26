@@ -4398,14 +4398,15 @@
 (define (intern-source-name-session-from-state
   [state : (& state InternCompatState)]) : InternSourceNameSession
   (InternSourceNameSession
-    (owned_view.compiler-owned-shared-view state.table-id)
-    (owned_view.compiler-owned-shared-view state.reset-generation)
-    (owned_view.compiler-owned-shared-view state.pool-slots)
-    (owned_view.compiler-owned-shared-view state.map-id-slots)
-    (owned_view.compiler-owned-shared-view state.map-hash-slots)
-    (owned_view.compiler-owned-shared-view state.map-ready)
-    (owned_view.compiler-owned-shared-view state.persistent-arena)
-    (owned_view.compiler-owned-shared-view state.structural-table-cell)
+    (owned_view.compiler-owned-reference-shared-view (& state.table-id))
+    (owned_view.compiler-owned-reference-shared-view (& state.reset-generation))
+    (owned_view.compiler-owned-reference-shared-view (& state.pool-slots))
+    (owned_view.compiler-owned-reference-shared-view (& state.map-id-slots))
+    (owned_view.compiler-owned-reference-shared-view (& state.map-hash-slots))
+    (owned_view.compiler-owned-reference-shared-view (& state.map-ready))
+    (owned_view.compiler-owned-reference-shared-view (& state.persistent-arena))
+    (owned_view.compiler-owned-reference-shared-view
+      (& state.structural-table-cell))
     (intern-compat-state-table-id state)
     (intern-compat-state-generation state)
     (intern-compat-state-pool-len state)

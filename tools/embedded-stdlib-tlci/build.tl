@@ -246,7 +246,9 @@
         (begin
           (let
             [identity : String
-              (ast.ast-place-shared-view (array-ref names index))]
+              (__tl-compiler-owned-shared-view-dyn-ref-as
+                (& (array-ref names index))
+                String)]
             [slot : i64
               (compiler_tlci_native_producer.tlci-native-macro-capture-slot
                 captures

@@ -503,7 +503,7 @@
   [image : (& image tlci.TlciImage)]) : unit
   (tlci-loader-apply-fixups-at!
     image-base
-    (owned_view.compiler-owned-shared-view image.fixups)
+    (owned_view.compiler-owned-reference-shared-view (& image.fixups))
     0
     (/ (array-length image.fixups) tlci.tlci-section-fixup-record-size)))
 
@@ -572,7 +572,7 @@
   [host-table : (& host-table tlci.TlciHostCallbackTable)]) : ResultTlciLoaderUnit
   (tlci-loader-bind-imports-at!
     image-base
-    (owned_view.compiler-owned-shared-view image.imports)
+    (owned_view.compiler-owned-reference-shared-view (& image.imports))
     (str_cat.str-cat
       (string.copy (& image.metadata.package-name))
       (str_cat.str-cat "@" (string.copy (& image.metadata.package-version))))

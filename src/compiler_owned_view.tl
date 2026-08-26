@@ -77,30 +77,8 @@
   (cfg
     stage0-borrowed-inline-bootstrap
     `(compiler-owned-shared-view-reflected ,place)
-    (match place
-      [(comptime.Expr.Var name)
-        ;; Captured dotted/qualified places also use Expr.Var syntax. Only a
-        ;; plain name is guaranteed to select a whole storage slot.
-        (let
-          [index : i64 0]
-          [name-len : i64 (string.string-length name)]
-          [plain-name? : bool true]
-          (begin
-            (while (< index name-len)
-              (let
-                [c : char (string.string-ref name index)]
-                (begin
-                  (if (= c '.')
-                    (set! plain-name? false)
-                    (if (= c '/')
-                      (set! plain-name? false)
-                      unit))
-                  (set! index (+ index 1)))))
-            (if plain-name?
-              `(unsafe
-                (ptr-read (ptr-addr-of ,place)))
-              `(compiler-owned-shared-view-reflected ,place))))]
-      [_ `(compiler-owned-shared-view-reflected ,place)])))
+    `(unsafe
+      (ptr-read (ptr-addr-of ,place)))))
 
 (defmacro (compiler-owned-string-place-shared-view [place : Expr]) : Expr
   `(let

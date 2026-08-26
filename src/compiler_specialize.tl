@@ -249,7 +249,7 @@
 (cfg
   (any compile-profile test)
   (define (spec-owner-profile-metrics [owner : (& owner SpecOwnerContext)]) : profile_state.CompilerProfileMetrics
-    (owned_view.compiler-owned-shared-view owner.profile-metrics)))
+    (owned_view.compiler-owned-reference-shared-view (& owner.profile-metrics))))
 
 (define (spec-owner-expr-get [owner : (& owner SpecOwnerContext)] [id : i64]) : ast.AstExpr
   (ast.ast-expr-segment-bases-get owner.expr-segment-bases id))

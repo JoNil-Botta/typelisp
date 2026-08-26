@@ -43,23 +43,27 @@
 (import stdlib.comptime)
 
 (defmacro (ast-place-shared-view [place : Expr]) : Expr
-  (let
-    [value-ty : comptime.Expr (comptime.expr-type place)]
-    (match (comptime.type-info value-ty)
-      [(comptime.TypeInfo.DynArray _)
-        `(let
-          [shared-ref (& ,place)]
-          (__tl-compiler-owned-shared-view-dyn-ref-as shared-ref ,value-ty))]
-      [(comptime.TypeInfo.Builtin kind)
-        (if (string.eq kind "string")
+  (cfg
+    stage0-borrowed-inline-bootstrap
+    (let
+      [value-ty : comptime.Expr (comptime.expr-type place)]
+      (match (comptime.type-info value-ty)
+        [(comptime.TypeInfo.DynArray _)
           `(let
             [shared-ref (& ,place)]
-            (__tl-compiler-owned-shared-view-dyn-ref-as shared-ref ,value-ty))
+            (__tl-compiler-owned-shared-view-dyn-ref-as shared-ref ,value-ty))]
+        [(comptime.TypeInfo.Builtin kind)
+          (if (string.eq kind "string")
+            `(let
+              [shared-ref (& ,place)]
+              (__tl-compiler-owned-shared-view-dyn-ref-as shared-ref ,value-ty))
+            `(unsafe
+              (ptr-read (ptr-addr-of ,place))))]
+        [_
           `(unsafe
-            (ptr-read (ptr-addr-of ,place))))]
-      [_
-        `(unsafe
-          (ptr-read (ptr-addr-of ,place)))])))
+            (ptr-read (ptr-addr-of ,place)))]))
+    `(unsafe
+      (ptr-read (ptr-addr-of ,place)))))
 
 (define (ast-decl-box-shared-view [value : (Box AstDecl)]) : AstDecl
   (let

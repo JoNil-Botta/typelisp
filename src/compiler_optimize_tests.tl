@@ -37331,6 +37331,21 @@
 ;; 24-25 are the no-wrap condition's literal-bound boundary: 24's bound of
 ;; 100 satisfies the cap at compile time and emits no condition, while 25's
 ;; i64-MAX bound can never satisfy it and rejects the versioning outright.
+;; Variants 26-33 cover the guard algebra and the decreasing index forms:
+;; 26 checks `base - i` (the reversed-copy shape) and versions through the
+;; MIRRORED conditions with no division at all; 27 gives that form's strided
+;; side an i64-MIN offset, whose negation is not representable, and rejects;
+;; 28 is a bare derived phi read at TWO offsets with no variable base, which
+;; collapses to one derived family; 29 is a scale-2 variable-base fan with
+;; kmin < 0 (`base+2i-1` and `base+2i+1`), which collapses to one quotient
+;; and one extra minimum compare; 30 checks the counter against a length that
+;; IS the loop bound, so the family's `bound <= len` conjunct is reflexive and
+;; must not be emitted; 31 makes both the bound and the length the same
+;; literal, so EVERY conjunct folds and the guard states a literal `true`;
+;; 32-33 are the once-only pair, whose two signed compares merge into one
+;; unsigned `seed <u bound` exactly when the bound is a container length --
+;; 32 loads its bound from a length slot, 33 takes the same shape's bound from
+;; a plain parameter and keeps both compares.
 (define (opt-bce-version-test-check-tail [variant : i64]) : compiler_ir_types.CompilerIrInstrSeq
   (let
     [after-check : compiler_ir_types.CompilerIrInstrSeq
@@ -37345,7 +37360,8 @@
           (cond
             [(= variant 23) (compiler_ir_types.CompilerIrValue.Var 0)]
             [(= variant 22) (compiler_ir_types.CompilerIrValue.I64 0)]
-            [(>= variant 17) (compiler_ir_types.CompilerIrValue.I64 8)]
+            [(and (>= variant 17) (<= variant 25))
+              (compiler_ir_types.CompilerIrValue.I64 8)]
             [else (compiler_ir_types.CompilerIrValue.I64 1)])
           (compiler_ast_types.AstType.I64))
         (compiler_ir_types.CompilerIrInstr.BinOp
@@ -37358,9 +37374,12 @@
           ;; compile time (24 satisfies the cap, 25 cannot).
           (cond
             [(= variant 20) (compiler_ir_types.CompilerIrValue.Var 5)]
-            [(= variant 24) (compiler_ir_types.CompilerIrValue.I64 100)]
+            [(or (= variant 24) (= variant 31))
+              (compiler_ir_types.CompilerIrValue.I64 100)]
             [(= variant 25)
               (compiler_ir_types.CompilerIrValue.I64 9223372036854775807)]
+            ;; 32's bound is the length-slot load the entry block makes.
+            [(= variant 32) (compiler_ir_types.CompilerIrValue.Var 15)]
             [else (compiler_ir_types.CompilerIrValue.Var 0)])
           (compiler_ast_types.AstType.Bool))
         (compiler_ir_types.CompilerIrInstr.Branch
@@ -37397,6 +37416,16 @@
                 (compiler_ir_types.CompilerIrValue.Var 11)
                 (compiler_ir_types.CompilerIrValue.Var 1)
                 (compiler_ir_types.compiler-ir-label "bce_version_ok_second")))]
+          ;; 28's second check reads the SAME derived phi two slots along, and
+          ;; 29's reads the scale-2 family's upper offset: both are members of
+          ;; one family and cost the extremal conditions only.
+          [(or (= variant 28) (= variant 29))
+            (opt-test-instrs-with-tail
+              after-check
+              (compiler_ir_types.CompilerIrInstr.BoundsCheck
+                (compiler_ir_types.CompilerIrValue.Var 12)
+                (compiler_ir_types.CompilerIrValue.Var 1)
+                (compiler_ir_types.compiler-ir-label "bce_version_ok_second")))]
           ;; 21's three-member fan (base+i, +1, +2 on a step-8 counter):
           ;; the subsumed middle check needs no condition of its own.
           [(= variant 21)
@@ -37415,13 +37444,21 @@
           (cond
             [(= variant 0) (compiler_ir_types.CompilerIrValue.Var 5)]
             ;; 19-20 and 22-25 check the counter itself; 21 is a fan and
-            ;; takes the variable-base index like 16-18.
+            ;; takes the variable-base index like 16-18. 30-33 check the
+            ;; counter too: what they vary is the LENGTH and the bound.
             [(or
                 (= variant 1)
-                (and (>= variant 19) (<= variant 25) (not (= variant 21))))
+                (and (>= variant 19) (<= variant 25) (not (= variant 21)))
+                (and (>= variant 30) (<= variant 33)))
               (compiler_ir_types.CompilerIrValue.Var 3)]
             [else (compiler_ir_types.CompilerIrValue.Var 9)])
-          (compiler_ir_types.CompilerIrValue.Var 1)
+          (cond
+            ;; 30's length IS the loop bound, so the family's `bound <= len`
+            ;; conjunct compares a value with itself.
+            [(= variant 30) (compiler_ir_types.CompilerIrValue.Var 0)]
+            ;; 31 makes it the same literal the bound is.
+            [(= variant 31) (compiler_ir_types.CompilerIrValue.I64 100)]
+            [else (compiler_ir_types.CompilerIrValue.Var 1)])
           (compiler_ir_types.compiler-ir-label "bce_version_ok")))]
     (cond
       [(= variant 2)
@@ -37657,15 +37694,113 @@
             (compiler_ir_types.CompilerIrValue.Var 2)
             (compiler_ir_types.CompilerIrValue.Var 11)
             (compiler_ast_types.AstType.I64)))]
+      ;; 26: `base - i`, the reversed-copy index, at unit magnitude.
+      [(= variant 26)
+        (opt-test-instrs-with-tail
+          check
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            9
+            (compiler_ir_types.CompilerIrBinOp.Sub)
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            (compiler_ir_types.CompilerIrValue.Var 3)
+            (compiler_ast_types.AstType.I64)))]
+      ;; 27: the same shape with an i64-MIN literal on the strided side, whose
+      ;; negation the descending recovery has no representable value for.
+      [(= variant 27)
+        (opt-test-instrs-with-tail
+          check
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            11
+            (compiler_ir_types.CompilerIrBinOp.Mul)
+            (compiler_ir_types.CompilerIrValue.Var 3)
+            (compiler_ir_types.CompilerIrValue.I64 2)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            16
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            (compiler_ir_types.CompilerIrValue.Var 11)
+            (compiler_ir_types.CompilerIrValue.I64
+              (- (- 0 9223372036854775807) 1))
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            9
+            (compiler_ir_types.CompilerIrBinOp.Sub)
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            (compiler_ir_types.CompilerIrValue.Var 16)
+            (compiler_ast_types.AstType.I64)))]
+      ;; 28: a bare derived phi (init 0, step 2) read at offsets 0 and 2, with
+      ;; no variable base anywhere -- the shape a strided token walker leaves.
+      [(= variant 28)
+        (opt-test-instrs-with-tail
+          check
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            13
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            (compiler_ir_types.CompilerIrValue.Var 12)
+            (compiler_ir_types.CompilerIrValue.I64 2)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            9
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            (compiler_ir_types.CompilerIrValue.Var 12)
+            (compiler_ir_types.CompilerIrValue.I64 2)
+            (compiler_ast_types.AstType.I64)))]
+      ;; 29: `base + 2*i - 1` and `base + 2*i + 1`, a scale-2 family whose
+      ;; offset range straddles zero.
+      [(= variant 29)
+        (opt-test-instrs-with-tail
+          check
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            11
+            (compiler_ir_types.CompilerIrBinOp.Mul)
+            (compiler_ir_types.CompilerIrValue.Var 3)
+            (compiler_ir_types.CompilerIrValue.I64 2)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            10
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            (compiler_ir_types.CompilerIrValue.Var 11)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            9
+            (compiler_ir_types.CompilerIrBinOp.Sub)
+            (compiler_ir_types.CompilerIrValue.Var 10)
+            (compiler_ir_types.CompilerIrValue.I64 1)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            12
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            (compiler_ir_types.CompilerIrValue.Var 10)
+            (compiler_ir_types.CompilerIrValue.I64 1)
+            (compiler_ast_types.AstType.I64)))]
       [else check])))
 
 (define (opt-bce-version-test-blocks [variant : i64]) : compiler_ir_types.CompilerIrBlockList
   (compiler_ir_types.compiler-ir-block-cons
     (compiler_ir_types.CompilerIrBlock.Block
       (compiler_ir_types.compiler-ir-label "entry")
-      (opt-test-instrs
-        (compiler_ir_types.CompilerIrInstr.Jump
-          (compiler_ir_types.compiler-ir-label "loop"))))
+      ;; Variants 32-33 seed the counter from a PARAMETER rather than a
+      ;; literal, so the once-only `seed >= 0 && seed < bound` pair is really
+      ;; emitted, and 32 additionally derives its bound from a container's
+      ;; length slot -- the provenance that makes the pair mergeable into one
+      ;; unsigned compare.
+      (if (or (= variant 32) (= variant 33))
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Gep
+            14
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            (compiler_ir_types.CompilerIrValue.I64 1)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Load
+            15
+            (compiler_ir_types.CompilerIrValue.Var 14)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "loop")))
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "loop")))))
     (compiler_ir_types.compiler-ir-block-cons
       (compiler_ir_types.CompilerIrBlock.Block
         (compiler_ir_types.compiler-ir-label "loop")
@@ -37690,7 +37825,7 @@
                   (compiler_ir_types.CompilerIrValue.Var 4)
                   (compiler_ir_types.CompilerIrValue.Var 3)
                   (compiler_ast_types.AstType.I64)))]
-            [(or (= variant 8) (= variant 9))
+            [(or (= variant 8) (= variant 9) (= variant 28))
               (opt-test-instrs-with-tail
                 (opt-bce-version-test-check-tail variant)
                 (compiler_ir_types.CompilerIrInstr.Phi
@@ -37721,10 +37856,12 @@
           (compiler_ir_types.CompilerIrInstr.Phi
             3
             (compiler_ir_types.compiler-ir-phi-input-cons
-              (compiler_ir_types.CompilerIrValue.I64
-                (if (= variant 3)
-                  2
-                  0))
+              (if (or (= variant 32) (= variant 33))
+                (compiler_ir_types.CompilerIrValue.Var 2)
+                (compiler_ir_types.CompilerIrValue.I64
+                  (if (= variant 3)
+                    2
+                    0)))
               (compiler_ir_types.compiler-ir-label "entry")
               (compiler_ir_types.compiler-ir-phi-input-cons
                 (compiler_ir_types.CompilerIrValue.Var 6)
@@ -37893,6 +38030,43 @@
       (match block
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (opt-bce-version-test-block-binop-count-from instrs 0 op 0)])]))
+
+;; The same count restricted to one operand type: a guard conjunct's SIGNEDNESS
+;; is what the merged once-only compare and the unsigned trip quotient are
+;; about, and it is invisible to the opcode alone.
+(define (opt-bce-version-test-block-binop-typed-count-from
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [ty : compiler_ast_types.AstType]
+  [acc : i64]) : i64
+  (if (>= index (compiler_ir_types.compiler-ir-instr-seq-count instrs))
+    acc
+    (opt-bce-version-test-block-binop-typed-count-from
+      instrs
+      (+ index 1)
+      op
+      ty
+      (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
+        [(compiler_ir_types.CompilerIrInstr.BinOp _ instr-op _ _ instr-ty)
+          (if (and
+            (compiler_optimize.opt-binop-eq instr-op op)
+            (compiler_optimize.opt-type-eq (- 0 1) instr-ty ty))
+            (+ acc 1)
+            acc)]
+        [_ acc]))))
+
+(define (opt-bce-version-test-block-binop-typed-count
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label-want : i64]
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [ty : compiler_ast_types.AstType]) : i64
+  (match (compiler_optimize.opt-cfg-find-block blocks label-want)
+    [(compiler_optimize.OptMaybeBlock.No) (- 0 1)]
+    [(compiler_optimize.OptMaybeBlock.Some block)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (opt-bce-version-test-block-binop-typed-count-from instrs 0 op ty 0)])]))
 
 ;; --- masked index with a loop-invariant mask ---------------------------------
 ;;
@@ -38374,12 +38548,31 @@
               (compiler_ir_types.CompilerIrBinOp.Div))
             0))
         14]
-      ;; Decreasing affine expressions are outside this monotone analysis.
+      ;; A decreasing affine expression is MIRRORED rather than refused: its
+      ;; maximum index sits at the seed and its minimum at the last trip, so the
+      ;; guard states `origin >= 0`, `len > origin` and `last-trip <= origin/|scale|`
+      ;; (opt-bce-version-mirror-guard). Here the whole family is literal --
+      ;; base 0, seed 0 -- so the origin is 0, its quotient folds, and the two
+      ;; surviving conjuncts need no division at all.
       [(not
           (=
             (compiler_ir_types.compiler-ir-block-list-count negative-scale-out)
-            3))
+            5))
         15]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              negative-scale-out
+              (compiler_ir_types.compiler-ir-label "loop__bce_fast"))
+            0))
+        150]
+      [(not
+          (=
+            (opt-count-binop-op-blocks
+              negative-scale-out
+              (compiler_ir_types.CompilerIrBinOp.Div))
+            0))
+        151]
       ;; Induction lowering's canonical derived phi is covered by the
       ;; trip-count quotient guard as well.
       [(not
@@ -38962,8 +39155,34 @@
         23]
       ;; an INT64_MIN strided offset rejects (nothing derives: untouched).
       [(not (= (compiler_ir_types.compiler-ir-block-list-count kmin-out) 3)) 24]
-      ;; non-positive literal scales reject.
-      [(not (= (compiler_ir_types.compiler-ir-block-list-count neg-out) 3)) 25]
+      ;; A NEGATIVE scale is mirrored: `base - 2*i` versions through the
+      ;; decreasing guard, whose three conditions run from the origin down
+      ;; instead of from the derived seed up, with ONE unsigned quotient.
+      [(not (= (compiler_ir_types.compiler-ir-block-list-count neg-out) 5)) 25]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              neg-out
+              (compiler_ir_types.compiler-ir-label "loop__bce_fast"))
+            0))
+        250]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              neg-out
+              (compiler_ir_types.compiler-ir-label "loop"))
+            1))
+        251]
+      [(not
+          (=
+            (opt-bce-version-test-block-binop-typed-count
+              neg-out
+              guard-label
+              (compiler_ir_types.CompilerIrBinOp.Div)
+              (compiler_ast_types.AstType.U64))
+            1))
+        252]
+      ;; A zero scale does not involve the counter at all and still rejects.
       [(not (= (compiler_ir_types.compiler-ir-block-list-count zero-out) 3)) 26]
       ;; a LONE scale-1 variable-base check clears the RE-COSTED
       ;; guard-economics gate (one eliminable check; see the re-cost note at
@@ -39186,6 +39405,312 @@
     (compiler-optimize-bce-version-strided-self-test)
     42
     "strided variable-base indices version through the synthesized derived-seed guard"))
+
+;; --- guard algebra and decreasing index forms -------------------------------------
+;;
+;; What the guard COSTS, stated on the emitted block rather than on an internal:
+;; the trip quotient's signedness (an unsigned one lowers to a single shift,
+;; the signed one to five instructions), the extremal collapse of a scaled or
+;; derived family, the conjuncts a compile-time decision must not emit at all,
+;; and the once-only pair's merge into one unsigned compare.
+(define (compiler-optimize-bce-version-guard-algebra-self-test) : i64
+  (let
+    [guard-label : i64 (compiler_ir_types.compiler-ir-label "loop__bce_guard")]
+    [fast-label : i64 (compiler_ir_types.compiler-ir-label "loop__bce_fast")]
+    [slow-label : i64 (compiler_ir_types.compiler-ir-label "loop")]
+    [descending : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-bce-version-function
+        (opt-bce-version-test-function (opt-bce-version-test-blocks 26)))]
+    [descending-out : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks descending)]
+    [descending-wrap-out : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.opt-bce-version-function
+          (opt-bce-version-test-function (opt-bce-version-test-blocks 27))))]
+    [dphi-fan : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-bce-version-function
+        (opt-bce-version-test-function (opt-bce-version-test-blocks 28)))]
+    [dphi-fan-out : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks dphi-fan)]
+    [scaled-fan : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-bce-version-function
+        (opt-bce-version-test-function (opt-bce-version-test-blocks 29)))]
+    [scaled-fan-out : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks scaled-fan)]
+    [reflexive-out : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.opt-bce-version-function
+          (opt-bce-version-test-function (opt-bce-version-test-blocks 30))))]
+    [all-folded : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-bce-version-function
+        (opt-bce-version-test-function (opt-bce-version-test-blocks 31)))]
+    [all-folded-out : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks all-folded)]
+    [merged : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-bce-version-function
+        (opt-bce-version-test-function (opt-bce-version-test-blocks 32)))]
+    [merged-out : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks merged)]
+    [unmerged-out : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.opt-bce-version-function
+          (opt-bce-version-test-function (opt-bce-version-test-blocks 33))))]
+    (cond
+      ;; --- decreasing index: `base - i` ---------------------------------------
+      ;; The mirrored range needs NO division at a unit magnitude, and states
+      ;; the three conditions the increasing guard states, read downward.
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function descending)))
+        1]
+      [(not
+          (= (compiler_ir_types.compiler-ir-block-list-count descending-out) 5))
+        2]
+      [(not (= (opt-bce-version-test-block-checks descending-out fast-label) 0))
+        3]
+      [(not (= (opt-bce-version-test-block-checks descending-out slow-label) 1))
+        4]
+      [(not
+          (=
+            (opt-bce-version-test-block-binop-count
+              descending-out
+              guard-label
+              (compiler_ir_types.CompilerIrBinOp.Div))
+            0))
+        5]
+      ;; origin >= 0, length > origin, last-trip <= origin.
+      [(not
+          (=
+            (opt-bce-version-test-block-binop-count
+              descending-out
+              guard-label
+              (compiler_ir_types.CompilerIrBinOp.Ge))
+            1))
+        6]
+      [(not
+          (=
+            (opt-bce-version-test-block-binop-count
+              descending-out
+              guard-label
+              (compiler_ir_types.CompilerIrBinOp.Gt))
+            1))
+        7]
+      [(not
+          (=
+            (opt-bce-version-test-block-binop-count
+              descending-out
+              guard-label
+              (compiler_ir_types.CompilerIrBinOp.Le))
+            1))
+        8]
+      ;; The strided side's i64-MIN offset has no representable negation, so
+      ;; the descending recovery refuses rather than wrapping into a range it
+      ;; cannot state: the loop is left untouched.
+      [(not
+          (=
+            (compiler_ir_types.compiler-ir-block-list-count descending-wrap-out)
+            3))
+        9]
+      ;; --- bare derived phi read at two offsets --------------------------------
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function dphi-fan)))
+        10]
+      [(not (= (compiler_ir_types.compiler-ir-block-list-count dphi-fan-out) 5))
+        11]
+      [(not (= (opt-bce-version-test-block-checks dphi-fan-out fast-label) 0))
+        12]
+      [(not (= (opt-bce-version-test-block-checks dphi-fan-out slow-label) 2))
+        13]
+      ;; ONE quotient for the whole family, not one per member.
+      [(not
+          (=
+            (opt-bce-version-test-block-binop-count
+              dphi-fan-out
+              guard-label
+              (compiler_ir_types.CompilerIrBinOp.Div))
+            1))
+        14]
+      ;; --- scale-2 family with a negative minimum offset -----------------------
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function scaled-fan)))
+        15]
+      [(not
+          (= (compiler_ir_types.compiler-ir-block-list-count scaled-fan-out) 5))
+        16]
+      [(not (= (opt-bce-version-test-block-checks scaled-fan-out fast-label) 0))
+        17]
+      [(not (= (opt-bce-version-test-block-checks scaled-fan-out slow-label) 2))
+        18]
+      ;; One quotient, and it is UNSIGNED: a power-of-two scale then lowers to
+      ;; a single logical shift instead of the signed sequence's five
+      ;; instructions (`mov; sar $63; and; add; sar`).
+      [(not
+          (=
+            (opt-bce-version-test-block-binop-count
+              scaled-fan-out
+              guard-label
+              (compiler_ir_types.CompilerIrBinOp.Div))
+            1))
+        19]
+      [(not
+          (=
+            (opt-bce-version-test-block-binop-typed-count
+              scaled-fan-out
+              guard-label
+              (compiler_ir_types.CompilerIrBinOp.Div)
+              (compiler_ast_types.AstType.U64))
+            1))
+        20]
+      ;; The extremal pair: cond A at BOTH ends, cond B and the quotient at the
+      ;; maximum only -- four conjuncts for two members instead of six.
+      [(not
+          (=
+            (opt-bce-version-test-block-binop-count
+              scaled-fan-out
+              guard-label
+              (compiler_ir_types.CompilerIrBinOp.Ge))
+            2))
+        21]
+      [(not
+          (=
+            (opt-bce-version-test-block-binop-count
+              scaled-fan-out
+              guard-label
+              (compiler_ir_types.CompilerIrBinOp.Gt))
+            1))
+        22]
+      [(not
+          (=
+            (opt-bce-version-test-block-binop-count
+              scaled-fan-out
+              guard-label
+              (compiler_ir_types.CompilerIrBinOp.Le))
+            1))
+        23]
+      ;; --- conjuncts a compile-time decision must not emit ---------------------
+      ;; `bound <= len` where the length IS the bound: reflexive, so no compare
+      ;; at all, and no identity add anywhere in the guard.
+      [(not
+          (= (compiler_ir_types.compiler-ir-block-list-count reflexive-out) 5))
+        24]
+      [(not (= (opt-bce-version-test-block-checks reflexive-out fast-label) 0))
+        25]
+      [(not
+          (=
+            (opt-bce-version-test-block-binop-count
+              reflexive-out
+              guard-label
+              (compiler_ir_types.CompilerIrBinOp.Le))
+            0))
+        26]
+      [(opt-bce-version-test-block-binop-op-lit?
+          reflexive-out
+          guard-label
+          (compiler_ir_types.CompilerIrBinOp.Add)
+          0)
+        27]
+      ;; Every conjunct decided at compile time: the guard states a literal
+      ;; `true` rather than refusing the versioning.
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function all-folded)))
+        28]
+      [(not
+          (= (compiler_ir_types.compiler-ir-block-list-count all-folded-out) 5))
+        29]
+      [(not (= (opt-bce-version-test-block-checks all-folded-out fast-label) 0))
+        30]
+      [(not
+          (=
+            (opt-bce-version-test-block-binop-count
+              all-folded-out
+              guard-label
+              (compiler_ir_types.CompilerIrBinOp.Le))
+            0))
+        31]
+      [(not
+          (=
+            (opt-bce-version-test-block-binop-count
+              all-folded-out
+              guard-label
+              (compiler_ir_types.CompilerIrBinOp.Lt))
+            0))
+        32]
+      [(not
+          (=
+            (opt-bce-version-test-block-binop-count
+              all-folded-out
+              guard-label
+              (compiler_ir_types.CompilerIrBinOp.Ge))
+            0))
+        33]
+      ;; --- the once-only pair ---------------------------------------------------
+      ;; A bound loaded from a container's LENGTH SLOT is provably
+      ;; non-negative, which is exactly the fact that makes
+      ;; `seed >= 0 && seed < bound` one unsigned compare.
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function merged)))
+        34]
+      [(not (= (compiler_ir_types.compiler-ir-block-list-count merged-out) 5))
+        35]
+      [(not
+          (=
+            (opt-bce-version-test-block-binop-count
+              merged-out
+              guard-label
+              (compiler_ir_types.CompilerIrBinOp.Ge))
+            0))
+        36]
+      [(not
+          (=
+            (opt-bce-version-test-block-binop-typed-count
+              merged-out
+              guard-label
+              (compiler_ir_types.CompilerIrBinOp.Lt)
+              (compiler_ast_types.AstType.U64))
+            1))
+        37]
+      ;; The same loop with the bound taken from a plain parameter keeps both
+      ;; signed compares: nothing there decides the bound's sign.
+      [(not (= (compiler_ir_types.compiler-ir-block-list-count unmerged-out) 5))
+        38]
+      [(not
+          (=
+            (opt-bce-version-test-block-binop-count
+              unmerged-out
+              guard-label
+              (compiler_ir_types.CompilerIrBinOp.Ge))
+            1))
+        39]
+      [(not
+          (=
+            (opt-bce-version-test-block-binop-typed-count
+              unmerged-out
+              guard-label
+              (compiler_ir_types.CompilerIrBinOp.Lt)
+              (compiler_ast_types.AstType.I64))
+            1))
+        40]
+      [(not
+          (=
+            (opt-bce-version-test-block-binop-typed-count
+              unmerged-out
+              guard-label
+              (compiler_ir_types.CompilerIrBinOp.Lt)
+              (compiler_ast_types.AstType.U64))
+            0))
+        41]
+      [else 42])))
+
+(test
+  bce-version-guard-algebra
+  (test.assert-i64-eq
+    (compiler-optimize-bce-version-guard-algebra-self-test)
+    42
+    "the versioning guard emits an unsigned trip quotient, collapses scaled and derived families to their extremal conditions, drops conjuncts it can decide at compile time, merges the once-only pair against a container length, and mirrors a decreasing index instead of refusing it"))
 
 ;; --- multi-block bce-version self-tests -------------------------------------------
 ;;

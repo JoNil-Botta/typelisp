@@ -355,10 +355,14 @@ self_test() {
     else
         run_bounded_workload "$_memory_report" 96 30 \
             powershell.exe -NoProfile -Command \
-            '$chunks=@(); while($true){$x=New-Object byte[] (8MB); for($i=0;$i-lt$x.Length;$i+=4096){$x[$i]=1}; $chunks+=$x}' \
+            '$ErrorActionPreference="Stop"; $chunks=@(); while($true){$x=New-Object byte[] (8MB); for($i=0;$i-lt$x.Length;$i+=4096){$x[$i]=1}; $chunks+=$x}' \
             || _memory_status=$?
     fi
-    [ "$_memory_status" -eq 137 ]
+    [ "$_memory_status" -eq 137 ] || {
+        cat "$_memory_report.stderr" >&2 || true
+        echo "semantic-index benchmark self-test: memory case returned $_memory_status, expected 137" >&2
+        return 1
+    }
     assert_report "$_memory_report" memory-limit 137 unavailable
     [ "$(report_field "$_memory_report" peak_memory_bytes)" -gt 0 ]
 

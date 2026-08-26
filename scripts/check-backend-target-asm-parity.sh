@@ -420,16 +420,23 @@ check_register_group_phi_return_opt2_shapes() {
 
     # Both match arms are terminal after trivial-phi folding. Pin the live
     # two-word returns instead of an unreachable merge block: CFG cleanup may
-    # (and should) delete that block once both arms return directly.
+    # (and should) delete that block once both arms return directly. A
+    # call-free leaf whose frame fits the SysV red zone addresses its slots
+    # below %rsp and has no frame teardown at all, so the slot displacement may
+    # be negative and the teardown line may be absent (Linux only; Win64 has
+    # no red zone and keeps the framed form).
     for _assembly in "$_linux" "$_windows"; do
         if ! awk '
             function group_return_ok(    word0, word1, teardown, terminator) {
                 if ((getline word0) <= 0) return 0
                 if ((getline word1) <= 0) return 0
                 if ((getline teardown) <= 0) return 0
-                if ((getline terminator) <= 0) return 0
-                return (word0 ~ /^movq [0-9]+\(%rsp\), %rax$/ &&
-                        word1 ~ /^movq [0-9]+\(%rsp\), %rdx$/ &&
+                if (teardown == "ret") {
+                    terminator = teardown
+                    teardown = "FRAME_TEARDOWN"
+                } else if ((getline terminator) <= 0) return 0
+                return (word0 ~ /^movq -?[0-9]+\(%rsp\), %rax$/ &&
+                        word1 ~ /^movq -?[0-9]+\(%rsp\), %rdx$/ &&
                         teardown == "FRAME_TEARDOWN" &&
                         terminator == "ret")
             }

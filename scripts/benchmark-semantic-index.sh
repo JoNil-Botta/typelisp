@@ -353,9 +353,12 @@ self_test() {
             'awk '\''BEGIN { chunk = sprintf("%1048576s", "x"); for (i = 0; i < 96; i++) values[i] = chunk i; system("sleep 30") }'\''' \
             || _memory_status=$?
     else
+        # Keep each allocation below the Windows wrapper's 5% near-cap
+        # classification window. An 8 MiB request at this 96 MiB cap can make
+        # PowerShell report managed OOM before the observed peak reaches 95%.
         run_bounded_workload "$_memory_report" 96 30 \
             powershell.exe -NoProfile -Command \
-            '$ErrorActionPreference="Stop"; $chunks=@(); while($true){$x=New-Object byte[] (8MB); for($i=0;$i-lt$x.Length;$i+=4096){$x[$i]=1}; $chunks+=$x}' \
+            '$ErrorActionPreference="Stop"; $chunks=@(); while($true){$x=New-Object byte[] (1MB); for($i=0;$i-lt$x.Length;$i+=4096){$x[$i]=1}; $chunks+=$x}' \
             || _memory_status=$?
     fi
     [ "$_memory_status" -eq 137 ] || {

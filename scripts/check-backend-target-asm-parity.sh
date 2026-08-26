@@ -470,10 +470,17 @@ expected_target_asm_mismatch() {
     # the other). Both sides execute one `imulq` per iteration, so the
     # divergence is home-choice only and instruction-count neutral; the loop
     # structure, unroll guard, and magic-number sequences are identical.
+    #
+    # #6846 red-zone leaf frames: a call-free SysV leaf whose frame fits the
+    # 128-byte red zone keeps its slots below %rsp and emits no rsp
+    # adjustment, while Win64 (no red zone) keeps the framed form. The two
+    # match arms' group returns differ only in slot displacement sign and the
+    # absent teardown; the shape check above pins both forms.
     case "${_etm_opt}:${_etm_name}" in
         2:functions) return 0 ;;
         2:lambda_capture_struct_enum) return 0 ;;
         2:many_args) return 0 ;;
+        2:register_group_phi_return) return 0 ;;
         2:target_asm_loop_divmod_parity) return 0 ;;
     esac
     return 1

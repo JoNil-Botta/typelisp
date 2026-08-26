@@ -7862,6 +7862,107 @@
               (set! i (+ i 1))))
           (live.CompilerLiveUseDef out-vector out-mask)))]))
 
+;; SIMD class is an identity property across copies. CSE/GVN can replace a
+;; vector or mask definition with `Mov dst, earlier`, and later copy rewrites
+;; can leave chains in either instruction order. Close both class sets
+;; bidirectionally over var-to-var moves so every endpoint is allocated from
+;; the same register bank as the direct SIMD definition.
+(define (compiler-reg-vector-mask-defs-propagate-instr
+  [instr : ir.CompilerIrInstr]
+  [vector-set : live.CompilerLiveI64Set]
+  [mask-set : live.CompilerLiveI64Set]) : live.CompilerLiveUseDef
+  (match instr
+    [(ir.CompilerIrInstr.Mov dst src _)
+      (match src
+        [(ir.CompilerIrValue.Var source)
+          (let
+            [next-vector : live.CompilerLiveI64Set
+              (if (or
+                (live.compiler-live-set-contains? vector-set dst)
+                (live.compiler-live-set-contains? vector-set source))
+                (live.compiler-live-set-insert
+                  (live.compiler-live-set-insert vector-set dst)
+                  source)
+                vector-set)]
+            [next-mask : live.CompilerLiveI64Set
+              (if (or
+                (live.compiler-live-set-contains? mask-set dst)
+                (live.compiler-live-set-contains? mask-set source))
+                (live.compiler-live-set-insert
+                  (live.compiler-live-set-insert mask-set dst)
+                  source)
+                mask-set)]
+            (live.CompilerLiveUseDef next-vector next-mask))]
+        [_ (live.CompilerLiveUseDef vector-set mask-set)])]
+    [_ (live.CompilerLiveUseDef vector-set mask-set)]))
+
+(define (compiler-reg-vector-mask-defs-propagate-seq
+  [instrs : ir.CompilerIrInstrSeq]
+  [vector-set : live.CompilerLiveI64Set]
+  [mask-set : live.CompilerLiveI64Set]) : live.CompilerLiveUseDef
+  (let
+    [index : i64 0]
+    [out-vector : live.CompilerLiveI64Set vector-set]
+    [out-mask : live.CompilerLiveI64Set mask-set]
+    (begin
+      (while (< index (ir.compiler-ir-instr-seq-count instrs))
+        (let
+          [next : live.CompilerLiveUseDef
+            (compiler-reg-vector-mask-defs-propagate-instr
+              (ir.compiler-ir-instr-seq-ref instrs index)
+              out-vector
+              out-mask)]
+          (begin
+            (set! out-vector next.uses)
+            (set! out-mask next.defs)
+            (set! index (+ index 1)))))
+      (live.CompilerLiveUseDef out-vector out-mask))))
+
+(define (compiler-reg-vector-mask-defs-propagate-blocks
+  [blocks : ir.CompilerIrBlockList]
+  [vector-set : live.CompilerLiveI64Set]
+  [mask-set : live.CompilerLiveI64Set]) : live.CompilerLiveUseDef
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) (live.CompilerLiveUseDef vector-set mask-set)]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (let
+            [next : live.CompilerLiveUseDef
+              (compiler-reg-vector-mask-defs-propagate-seq
+                instrs
+                vector-set
+                mask-set)]
+            (compiler-reg-vector-mask-defs-propagate-blocks
+              (__tl-box-place rest)
+              next.uses
+              next.defs))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (compiler-reg-vector-mask-defs-propagate-blocks
+        (ir.compiler-ir-block-seq-to-list seq)
+        vector-set
+        mask-set)]))
+
+(define (compiler-reg-vector-mask-defs-fixpoint
+  [blocks : ir.CompilerIrBlockList]
+  [vector-set : live.CompilerLiveI64Set]
+  [mask-set : live.CompilerLiveI64Set]) : live.CompilerLiveUseDef
+  (let
+    [next : live.CompilerLiveUseDef
+      (compiler-reg-vector-mask-defs-propagate-blocks
+        blocks
+        vector-set
+        mask-set)]
+    (if (and
+      (=
+        (live.compiler-live-set-count next.uses)
+        (live.compiler-live-set-count vector-set))
+      (=
+        (live.compiler-live-set-count next.defs)
+        (live.compiler-live-set-count mask-set)))
+      next
+      (compiler-reg-vector-mask-defs-fixpoint blocks next.uses next.defs))))
+
 (define (compiler-reg-function-vector-mask-defs [func : ir.CompilerIrFunction]) : live.CompilerLiveUseDef
   (match (compiler-reg-global-shared-view func)
     [(ir.CompilerIrFunction.Function _ params _ _ blocks)
@@ -7871,7 +7972,9 @@
             params
             (live.compiler-live-set-empty)
             (live.compiler-live-set-empty))]
-        (compiler-reg-vector-mask-defs-blocks blocks defs.uses defs.defs))]))
+        [seeded : live.CompilerLiveUseDef
+          (compiler-reg-vector-mask-defs-blocks blocks defs.uses defs.defs)]
+        (compiler-reg-vector-mask-defs-fixpoint blocks seeded.uses seeded.defs))]))
 
 (define (compiler-reg-special-candidates
   [intervals : CompilerRegIntervalSeq]
@@ -37214,6 +37317,83 @@
                   (compiler-reg-global-shared-view words))])
             (set! index (+ index 1)))))]))
 
+;; Stack shape follows SIMD identity through Mov just like register class does.
+;; Propagate the maximum word width in both directions to a fixpoint so a copy
+;; chain gets a full-width spill range regardless of instruction order.
+(define (compiler-reg-vector-stack-words-propagate-instr!
+  [instr : ir.CompilerIrInstr]
+  [words : (__tl_dyn-array i64)]) : bool
+  (match instr
+    [(ir.CompilerIrInstr.Mov dst src _)
+      (match src
+        [(ir.CompilerIrValue.Var source)
+          (if (or
+            (< dst 0)
+            (>= dst (array-length words))
+            (< source 0)
+            (>= source (array-length words)))
+            false
+            (let
+              [dst-words : i64 (array-ref words dst)]
+              [source-words : i64 (array-ref words source)]
+              [next : i64
+                (if (> dst-words source-words)
+                  dst-words
+                  source-words)]
+              [changed : bool
+                (or (not (= dst-words next)) (not (= source-words next)))]
+              (begin
+                (set! (array-ref words dst) next)
+                (set! (array-ref words source) next)
+                changed)))]
+        [_ false])]
+    [_ false]))
+
+(define (compiler-reg-vector-stack-words-propagate-seq!
+  [instrs : ir.CompilerIrInstrSeq]
+  [words : (__tl_dyn-array i64)]) : bool
+  (let
+    [index : i64 0]
+    [changed : bool false]
+    (begin
+      (while (< index (ir.compiler-ir-instr-seq-count instrs))
+        (begin
+          (if (compiler-reg-vector-stack-words-propagate-instr!
+            (ir.compiler-ir-instr-seq-ref instrs index)
+            words)
+            (set! changed true)
+            unit)
+          (set! index (+ index 1))))
+      changed)))
+
+(define (compiler-reg-vector-stack-words-propagate-blocks!
+  [blocks : ir.CompilerIrBlockList]
+  [words : (__tl_dyn-array i64)]) : bool
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) false]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (let
+            [here : bool
+              (compiler-reg-vector-stack-words-propagate-seq! instrs words)]
+            [later : bool
+              (compiler-reg-vector-stack-words-propagate-blocks!
+                (__tl-box-place rest)
+                words)]
+            (or here later))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (compiler-reg-vector-stack-words-propagate-blocks!
+        (ir.compiler-ir-block-seq-to-list seq)
+        words)]))
+
+(define (compiler-reg-vector-stack-words-fixpoint!
+  [blocks : ir.CompilerIrBlockList]
+  [words : (__tl_dyn-array i64)]) : unit
+  (if (compiler-reg-vector-stack-words-propagate-blocks! blocks words)
+    (compiler-reg-vector-stack-words-fixpoint! blocks words)
+    unit))
+
 (define (compiler-reg-vector-stack-extra-slots
   [words : (__tl_dyn-array i64)]
   [index : i64]
@@ -40593,12 +40773,11 @@
         [vector-stack-words : (__tl_dyn-array i64) (array.make-array i64 vars)]
         [_vector-stack-words : unit
           (begin
-            (compiler-reg-vector-stack-words-params!
-              (compiler-reg-global-shared-view params)
-              (compiler-reg-global-shared-view vector-stack-words))
-            (compiler-reg-vector-stack-words-blocks!
-              (compiler-reg-global-shared-view blocks)
-              (compiler-reg-global-shared-view vector-stack-words)))]
+            (compiler-reg-vector-stack-words-params! params vector-stack-words)
+            (compiler-reg-vector-stack-words-blocks! blocks vector-stack-words)
+            (compiler-reg-vector-stack-words-fixpoint!
+              blocks
+              vector-stack-words))]
         [slots : i64
           (+
             (+

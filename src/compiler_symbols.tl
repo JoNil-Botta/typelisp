@@ -780,9 +780,6 @@
 (define (compiler-symbols-duplicate-macro-message [name : String]) : String
   (str_cat.str-cat "symbols: duplicate macro declaration " name))
 
-(define (compiler-symbols-duplicate-macro-value-message [name : String]) : String
-  (str_cat.str-cat "symbols: duplicate macro/value declaration " name))
-
 (define (compiler-registries-duplicate-variant-message [name : String]) : String
   (str_cat.str-cat "symbols: duplicate enum variant " name))
 
@@ -1042,6 +1039,9 @@
           (compiler-symbol-map-bind-id! (&mut variants) key-id handle)
           (CompilerRegistries variants fields identity)))]))
 
+;; SPEC 4.4.2 requires value and macro declarations to remain independent even
+;; when their spelling is identical. Duplicate checks therefore consult only
+;; the map for the namespace being populated.
 (define (compiler-symbols-add-value-id
   [symbols : CompilerSymbols]
   [name-id : i64]
@@ -1052,13 +1052,10 @@
       (if (compiler-symbol-map-contains-id? (& values) name-id)
         (ResultCompilerSymbols.Err
           (compiler-symbols-duplicate-value-message display-name))
-        (if (compiler-symbol-map-contains-id? (& macros) name-id)
-          (ResultCompilerSymbols.Err
-            (compiler-symbols-duplicate-macro-value-message display-name))
-          (begin
-            (compiler-symbol-map-bind-id! (&mut values) name-id handle)
-            (ResultCompilerSymbols.Ok
-              (CompilerSymbols values types macros decls owner-names decl-count)))))]))
+        (begin
+          (compiler-symbol-map-bind-id! (&mut values) name-id handle)
+          (ResultCompilerSymbols.Ok
+            (CompilerSymbols values types macros decls owner-names decl-count))))]))
 
 (define (compiler-symbols-add-type-id
   [symbols : CompilerSymbols]
@@ -1085,13 +1082,10 @@
       (if (compiler-symbol-map-contains-id? (& macros) name-id)
         (ResultCompilerSymbols.Err
           (compiler-symbols-duplicate-macro-message display-name))
-        (if (compiler-symbol-map-contains-id? (& values) name-id)
-          (ResultCompilerSymbols.Err
-            (compiler-symbols-duplicate-macro-value-message display-name))
-          (begin
-            (compiler-symbol-map-bind-id! (&mut macros) name-id handle)
-            (ResultCompilerSymbols.Ok
-              (CompilerSymbols values types macros decls owner-names decl-count)))))]))
+        (begin
+          (compiler-symbol-map-bind-id! (&mut macros) name-id handle)
+          (ResultCompilerSymbols.Ok
+            (CompilerSymbols values types macros decls owner-names decl-count))))]))
 
 (define (compiler-symbols-handle-from-nonroot-owner?
   [symbols : (& symbols CompilerSymbols)]
@@ -1123,29 +1117,7 @@
     [(CompilerSymbols values types macros decls owner-names decl-count)
       (match (compiler-symbol-map-lookup-id (& macros) name-id)
         [(option_i64.Some existing)
-          (if (compiler-symbol-owner-storage-handle-from-nonroot?
-            (& owner-names)
-            decl-count
-            existing)
-            (if (compiler-symbol-map-contains-id? (& values) name-id)
-              (ResultCompilerSymbols.Err
-                (compiler-symbols-duplicate-macro-value-message display-name))
-              (begin
-                (compiler-symbol-map-bind-id! (&mut macros) name-id handle)
-                (ResultCompilerSymbols.Ok
-                  (CompilerSymbols
-                    values
-                    types
-                    macros
-                    decls
-                    owner-names
-                    decl-count))))
-            (ResultCompilerSymbols.Err
-              (compiler-symbols-duplicate-macro-message display-name)))]
-        [(option_i64.None)
-          (if (compiler-symbol-map-contains-id? (& values) name-id)
-            (ResultCompilerSymbols.Err
-              (compiler-symbols-duplicate-macro-value-message display-name))
+          (if (compiler-symbols-handle-from-nonroot-owner? symbols existing)
             (begin
               (compiler-symbol-map-bind-id! (&mut macros) name-id handle)
               (ResultCompilerSymbols.Ok
@@ -1155,7 +1127,14 @@
                   macros
                   decls
                   owner-names
-                  decl-count))))])]))
+                  decl-count)))
+            (ResultCompilerSymbols.Err
+              (compiler-symbols-duplicate-macro-message display-name)))]
+        [(option_i64.None)
+          (begin
+            (compiler-symbol-map-bind-id! (&mut macros) name-id handle)
+            (ResultCompilerSymbols.Ok
+              (CompilerSymbols values types macros decls owner-names decl-count)))])]))
 
 (define (compiler-symbols-add-root-value-id
   [symbols : CompilerSymbols]
@@ -1166,29 +1145,7 @@
     [(CompilerSymbols values types macros decls owner-names decl-count)
       (match (compiler-symbol-map-lookup-id (& values) name-id)
         [(option_i64.Some existing)
-          (if (compiler-symbol-owner-storage-handle-from-nonroot?
-            (& owner-names)
-            decl-count
-            existing)
-            (if (compiler-symbol-map-contains-id? (& macros) name-id)
-              (ResultCompilerSymbols.Err
-                (compiler-symbols-duplicate-macro-value-message display-name))
-              (begin
-                (compiler-symbol-map-bind-id! (&mut values) name-id handle)
-                (ResultCompilerSymbols.Ok
-                  (CompilerSymbols
-                    values
-                    types
-                    macros
-                    decls
-                    owner-names
-                    decl-count))))
-            (ResultCompilerSymbols.Err
-              (compiler-symbols-duplicate-value-message display-name)))]
-        [(option_i64.None)
-          (if (compiler-symbol-map-contains-id? (& macros) name-id)
-            (ResultCompilerSymbols.Err
-              (compiler-symbols-duplicate-macro-value-message display-name))
+          (if (compiler-symbols-handle-from-nonroot-owner? symbols existing)
             (begin
               (compiler-symbol-map-bind-id! (&mut values) name-id handle)
               (ResultCompilerSymbols.Ok
@@ -1198,7 +1155,14 @@
                   macros
                   decls
                   owner-names
-                  decl-count))))])]))
+                  decl-count)))
+            (ResultCompilerSymbols.Err
+              (compiler-symbols-duplicate-value-message display-name)))]
+        [(option_i64.None)
+          (begin
+            (compiler-symbol-map-bind-id! (&mut values) name-id handle)
+            (ResultCompilerSymbols.Ok
+              (CompilerSymbols values types macros decls owner-names decl-count)))])]))
 
 (define (compiler-symbols-add-value-in-module-id
   [symbols : CompilerSymbols]
@@ -1265,20 +1229,10 @@
               (compiler-symbols-duplicate-value-message
                 (compiler-symbol-module-key-by-id module-id display-name-id))))]
         [(option_i64.None)
-          (if (compiler-symbol-map-contains-id? (& macros) key-id)
-            (ResultCompilerSymbols.Err
-              (compiler-symbols-duplicate-macro-value-message
-                (compiler-symbol-module-key-by-id module-id display-name-id)))
-            (begin
-              (compiler-symbol-map-bind-id! (&mut values) key-id handle)
-              (ResultCompilerSymbols.Ok
-                (CompilerSymbols
-                  values
-                  types
-                  macros
-                  decls
-                  owner-names
-                  decl-count))))])]))
+          (begin
+            (compiler-symbol-map-bind-id! (&mut values) key-id handle)
+            (ResultCompilerSymbols.Ok
+              (CompilerSymbols values types macros decls owner-names decl-count)))])]))
 
 (define (compiler-symbols-add-variant-flat-value-alias-key-in-module-id
   [symbols : CompilerSymbols]
@@ -1299,20 +1253,10 @@
               (compiler-symbols-duplicate-value-message
                 (compiler-symbol-module-key-by-id module-id display-name-id))))]
         [(option_i64.None)
-          (if (compiler-symbol-map-contains-id? (& macros) key-id)
-            (ResultCompilerSymbols.Err
-              (compiler-symbols-duplicate-macro-value-message
-                (compiler-symbol-module-key-by-id module-id display-name-id)))
-            (begin
-              (compiler-symbol-map-bind-id! (&mut values) key-id handle)
-              (ResultCompilerSymbols.Ok
-                (CompilerSymbols
-                  values
-                  types
-                  macros
-                  decls
-                  owner-names
-                  decl-count))))])]))
+          (begin
+            (compiler-symbol-map-bind-id! (&mut values) key-id handle)
+            (ResultCompilerSymbols.Ok
+              (CompilerSymbols values types macros decls owner-names decl-count)))])]))
 
 (define (compiler-symbols-add-variant-value-in-module-id
   [symbols : CompilerSymbols]
@@ -4790,9 +4734,13 @@
   "(defmacro (all [first : bool] [rest : bool ...]) : bool first)
 (define (main) : i64 0)")
 
-(define (compiler-symbols-duplicate-macro-value-source) : String
+(define (compiler-symbols-duplicate-macro-source) : String
   "(defmacro (same) : bool (expr-bool true))
-(define same : i64 1)")
+(defmacro (same) : bool (expr-bool false))")
+
+(define (compiler-symbols-value-then-macro-source) : String
+  "(define same : i64 1)
+(defmacro (same) : bool (expr-bool true))")
 
 (define (compiler-symbols-module-duplicate-value-source) : String
   "(module left)
@@ -4804,10 +4752,19 @@
 (defstruct Point (x i64))
 (defenum Point (PointVariant))")
 
-(define (compiler-symbols-module-duplicate-macro-value-source) : String
+(define (compiler-symbols-module-duplicate-macro-source) : String
+  "(module left)
+(defmacro (same) : bool (expr-bool true))
+(defmacro (same) : bool (expr-bool false))")
+
+(define (compiler-symbols-module-macro-then-value-source) : String
   "(module left)
 (defmacro (same) : bool (expr-bool true))
 (define same : i64 1)")
+
+(define (compiler-symbols-macro-then-variant-source) : String
+  "(defmacro (same) : bool (expr-bool true))
+(defenum Choice (same))")
 
 (define (compiler-symbols-module-duplicate-variant-source) : String
   "(module left)
@@ -4876,11 +4833,11 @@
           (compiler-symbols-duplicate-type-message "left/Point"))]
       [(ResultCompilerSymbols.Ok _) false])
     (match (build-compiler-symbols-from-source
-      (compiler-symbols-module-duplicate-macro-value-source))
+      (compiler-symbols-module-duplicate-macro-source))
       [(ResultCompilerSymbols.Err message)
         (string.eq
           message
-          (compiler-symbols-duplicate-macro-value-message "left/same"))]
+          (compiler-symbols-duplicate-macro-message "left/same"))]
       [(ResultCompilerSymbols.Ok _) false])
     (match (build-compiler-symbols-from-source
       (compiler-symbols-module-duplicate-variant-source))
@@ -5034,14 +4991,109 @@
         [(ResultCompilerSymbols.Err _) false])]
     [(parser.ResultAstProgram.Err _) false]))
 
-(define (compiler-symbols-duplicate-macro-value-ok?) : bool
+(define (compiler-symbols-duplicate-macro-ok?) : bool
   (match (build-compiler-symbols-from-source
-    (compiler-symbols-duplicate-macro-value-source))
+    (compiler-symbols-duplicate-macro-source))
     [(ResultCompilerSymbols.Err message)
-      (string.eq
-        message
-        (compiler-symbols-duplicate-macro-value-message "same"))]
+      (string.eq message (compiler-symbols-duplicate-macro-message "same"))]
     [(ResultCompilerSymbols.Ok _) false]))
+
+(define (compiler-symbols-value-then-macro-namespace-ok?) : bool
+  (match (parser.parse-ast-source (compiler-symbols-value-then-macro-source))
+    [(parser.ResultAstProgram.Ok program)
+      (match (build-compiler-symbols program)
+        [(ResultCompilerSymbols.Ok symbols)
+          (let
+            [same-id : i64 (compiler-symbols-decl-name-id-at-index symbols 0)]
+            (and
+              (=
+                (compiler-symbol-lookup-score
+                  (compiler-symbols-lookup-value-id symbols same-id)
+                  (compiler-symbol-kind-value-define)
+                  0)
+                1)
+              (=
+                (compiler-symbol-lookup-score
+                  (compiler-symbols-lookup-macro-id symbols same-id)
+                  (compiler-symbol-kind-defmacro)
+                  1)
+                1)))]
+        [(ResultCompilerSymbols.Err _) false])]
+    [(parser.ResultAstProgram.Err _) false]))
+
+(define (compiler-symbols-module-macro-then-value-namespace-ok?) : bool
+  (match (parser.parse-ast-source
+    (compiler-symbols-module-macro-then-value-source))
+    [(parser.ResultAstProgram.Ok program)
+      (match (build-compiler-symbols program)
+        [(ResultCompilerSymbols.Ok symbols)
+          (let
+            [left-id : i64 cbi.compiler-builtin-id-fix-left]
+            [same-id : i64 cbi.compiler-builtin-id-fix-same]
+            (and
+              (=
+                (compiler-symbol-lookup-score
+                  (compiler-symbols-lookup-value-in-module-id
+                    symbols
+                    left-id
+                    same-id)
+                  (compiler-symbol-kind-value-define)
+                  1)
+                1)
+              (=
+                (compiler-symbol-lookup-score
+                  (compiler-symbols-lookup-macro-in-module-id
+                    symbols
+                    left-id
+                    same-id)
+                  (compiler-symbol-kind-defmacro)
+                  0)
+                1)
+              (=
+                (compiler-symbol-lookup-score
+                  (compiler-symbols-lookup-value-id symbols same-id)
+                  (compiler-symbol-kind-value-define)
+                  1)
+                1)
+              (=
+                (compiler-symbol-lookup-score
+                  (compiler-symbols-lookup-macro-id symbols same-id)
+                  (compiler-symbol-kind-defmacro)
+                  0)
+                1)))]
+        [(ResultCompilerSymbols.Err _) false])]
+    [(parser.ResultAstProgram.Err _) false]))
+
+(define (compiler-symbols-macro-then-variant-namespace-ok?) : bool
+  (match (parser.parse-ast-source (compiler-symbols-macro-then-variant-source))
+    [(parser.ResultAstProgram.Ok program)
+      (match (build-compiler-symbols program)
+        [(ResultCompilerSymbols.Ok symbols)
+          (let
+            [same-id : i64
+              (compiler-symbols-variant-name-id-at-index symbols 1 0)]
+            (and
+              (=
+                (compiler-symbol-lookup-score
+                  (compiler-symbols-lookup-macro-id symbols same-id)
+                  (compiler-symbol-kind-defmacro)
+                  0)
+                1)
+              (=
+                (compiler-registry-lookup-score
+                  (compiler-symbols-lookup-value-id symbols same-id)
+                  (compiler-symbol-kind-enum-variant)
+                  1
+                  0)
+                1)))]
+        [(ResultCompilerSymbols.Err _) false])]
+    [(parser.ResultAstProgram.Err _) false]))
+
+(define (compiler-symbols-value-macro-namespace-ok?) : bool
+  (and
+    (compiler-symbols-value-then-macro-namespace-ok?)
+    (compiler-symbols-module-macro-then-value-namespace-ok?)
+    (compiler-symbols-macro-then-variant-namespace-ok?)))
 
 (define (compiler-registry-large-owner-handle-ok?) : bool
   (let
@@ -6299,7 +6351,10 @@
                     (if (compiler-symbols-macro-namespace-ok?)
                       unit
                       (set! ok false))
-                    (if (compiler-symbols-duplicate-macro-value-ok?)
+                    (if (compiler-symbols-duplicate-macro-ok?)
+                      unit
+                      (set! ok false))
+                    (if (compiler-symbols-value-macro-namespace-ok?)
                       unit
                       (set! ok false))
                     (if (compiler-symbol-map-structure-ok?)

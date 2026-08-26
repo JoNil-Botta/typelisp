@@ -220,7 +220,7 @@ normalize_asm() {
         }
         function flush_pending_stack_arg() {
             if (pending_stack_arg != "") {
-                print pending_stack_line
+                emit(pending_stack_line)
                 pending_stack_arg = ""
                 pending_stack_line = ""
             }
@@ -254,8 +254,63 @@ normalize_asm() {
             flush_pending_stack_arg()
             return s
         }
+        function slot_token(disp) {
+            if (disp in slot_index) return slot_index[disp]
+            slot_index[disp] = "SLOT" slot_count
+            slot_count++
+            return slot_index[disp]
+        }
+        function tokenize_slots(s,    out, rest, ref, disp) {
+            # A line that WRITES %rsp is frame arithmetic, not a slot
+            # reference; leave it literal so a frame-size divergence still
+            # fails the gate loudly.
+            if (s ~ /, %rsp$/) return s
+            out = ""
+            rest = s
+            # Scan left to right and rebuild, so a freshly written SLOTn token
+            # is never rescanned as a displacement.
+            while (match(rest, /-?[0-9]+\(%rsp\)/)) {
+                out = out substr(rest, 1, RSTART - 1)
+                ref = substr(rest, RSTART, RLENGTH)
+                disp = ref
+                sub(/\(%rsp\)$/, "", disp)
+                out = out slot_token(disp) "(%rsp)"
+                rest = substr(rest, RSTART + RLENGTH)
+            }
+            return out rest
+        }
+        function emit(s) {
+            body[body_n++] = s
+            if (s ~ /-[0-9]+\(%rsp\)/) body_has_red_zone_slot = 1
+            if (s == "FRAME_TEARDOWN") body_has_teardown = 1
+        }
+        function flush_func(    i, line, synth) {
+            # T1-6 red zone: a call-free SysV leaf whose frame fits in the
+            # 128 ABI-reserved bytes below %rsp addresses its slots at
+            # NEGATIVE displacements and emits no frame setup or teardown at
+            # all, while
+            # Win64 (which has no red zone) keeps the framed form. A negative
+            # %rsp displacement is producible ONLY by that rebase -- every
+            # framed and FPO layout biases its slots non-negative -- so it is a
+            # sound, target-agnostic signature. When it fires without a
+            # teardown, hand the body the teardown token the framed side
+            # spells, so the two forms compare on their BODIES.
+            # check_frame_form_parity re-pins what this stops comparing.
+            synth = (body_has_red_zone_slot && !body_has_teardown)
+            split("", slot_index)
+            slot_count = 0
+            for (i = 0; i < body_n; i++) {
+                line = body[i]
+                if (synth && line == "ret") print "FRAME_TEARDOWN"
+                print tokenize_slots(line)
+            }
+            body_n = 0
+            body_has_red_zone_slot = 0
+            body_has_teardown = 0
+        }
         function stop_func() {
             flush_pending_stack_arg()
+            flush_func()
             active = 0
             current = ""
             skip_prologue = 0
@@ -269,6 +324,10 @@ normalize_asm() {
             }
             active = 0
             pending = ""
+            body_n = 0
+            body_has_red_zone_slot = 0
+            body_has_teardown = 0
+            slot_count = 0
         }
         {
             line = trim($0)
@@ -288,7 +347,7 @@ normalize_asm() {
                 active = 1
                 skip_prologue = 1
                 pending = ""
-                print "FUNC " current
+                emit("FUNC " current)
                 next
             }
 
@@ -315,7 +374,7 @@ normalize_asm() {
 
             if (skip_prologue) {
                 if (line ~ /^\.Lf[0-9]+_entry:$/) {
-                    print "ENTRY"
+                    emit("ENTRY")
                     entry_seen[current] = 1
                     skip_prologue = 0
                 }
@@ -334,10 +393,11 @@ normalize_asm() {
             if (maybe_capture_stack_arg_load(line)) {
                 next
             }
-            print line
+            emit(line)
         }
         END {
             flush_pending_stack_arg()
+            flush_func()
             missing = 0
             for (i = 1; i <= wanted_count; i++) {
                 symbol = symbol_order[i]
@@ -420,16 +480,27 @@ check_register_group_phi_return_opt2_shapes() {
 
     # Both match arms are terminal after trivial-phi folding. Pin the live
     # two-word returns instead of an unreachable merge block: CFG cleanup may
-    # (and should) delete that block once both arms return directly.
+    # (and should) delete that block once both arms return directly. The
+    # normalizer rewrites every stack slot to a per-function SLOTn token and
+    # gives a red-zone leaf the teardown token the framed side spells, so this
+    # shape is now identical on both targets -- and the two returned words must
+    # come from DISTINCT slots.
     for _assembly in "$_linux" "$_windows"; do
         if ! awk '
+            function slot_of(s,    t) {
+                t = s
+                sub(/^movq /, "", t)
+                sub(/\(%rsp\).*$/, "", t)
+                return t
+            }
             function group_return_ok(    word0, word1, teardown, terminator) {
                 if ((getline word0) <= 0) return 0
                 if ((getline word1) <= 0) return 0
                 if ((getline teardown) <= 0) return 0
                 if ((getline terminator) <= 0) return 0
-                return (word0 ~ /^movq [0-9]+\(%rsp\), %rax$/ &&
-                        word1 ~ /^movq [0-9]+\(%rsp\), %rdx$/ &&
+                return (word0 ~ /^movq SLOT[0-9]+\(%rsp\), %rax$/ &&
+                        word1 ~ /^movq SLOT[0-9]+\(%rsp\), %rdx$/ &&
+                        slot_of(word0) != slot_of(word1) &&
                         teardown == "FRAME_TEARDOWN" &&
                         terminator == "ret")
             }
@@ -442,6 +513,96 @@ check_register_group_phi_return_opt2_shapes() {
             return 1
         fi
     done
+}
+
+# Classify one raw (un-normalized) function body as "CLASS BELOW_RSP":
+#   CLASS     redzone   -- addresses slots BELOW %rsp and never moves %rsp
+#             framed    -- moves %rsp (subq/addq/leave/pop-run leaq)
+#             frameless -- neither
+#             missing   -- the symbol is not in this assembly
+#   BELOW_RSP 1 when the body references any negative %rsp displacement at all,
+#             independently of whether it also moves %rsp.
+frame_form_class() {
+    _ffc_asm=$1
+    _ffc_sym=$2
+    awk -v sym="$_ffc_sym" '
+        function trim(s) {
+            gsub(/^[ \t\r]+/, "", s)
+            gsub(/[ \t\r]+$/, "", s)
+            return s
+        }
+        BEGIN { active = 0; adj = 0; neg = 0; found = 0 }
+        {
+            line = trim($0)
+            if (line == sym ":") { active = 1; found = 1; next }
+            if (!active) next
+            if (line ~ /^\.size[ \t]/ || line ~ /^\.globl[ \t]/ ||
+                    line ~ /^\.section[ \t]/) { active = 0; next }
+            if (line ~ /^subq \$[0-9]+, %rsp$/) adj = 1
+            if (line ~ /^addq \$[0-9]+, %rsp$/) adj = 1
+            if (line == "leave") adj = 1
+            if (line ~ /^leaq -?[0-9]+\(%rsp\), %rsp$/) adj = 1
+            if (line ~ /-[0-9]+\(%rsp\)/) neg = 1
+        }
+        END {
+            if (!found) { print "missing 0"; exit 0 }
+            if (adj) { printf("framed %d\n", neg); exit 0 }
+            if (neg) { print "redzone 1"; exit 0 }
+            print "frameless 0"
+        }
+    ' "$_ffc_asm"
+}
+
+# Re-pin exactly what the slot tokens and synthesized teardown stop
+# comparing: that the red zone is a SysV-only frame form. For every corpus
+# symbol, Win64 may never produce a red-zone body, and wherever the SysV side
+# IS a red-zone leaf the Win64 side must still carry a real frame.
+check_frame_form_parity() {
+    _ffp_marker="$WORKDIR/.backend-target-asm-frame-form-failed"
+    rm -f "$_ffp_marker"
+
+    opt_levels | while read -r opt_level; do
+        corpus | while read -r name _source symbols; do
+            [ -n "$name" ] || continue
+            _ffp_lin="$LINUX_ASM_DIR/opt${opt_level}_$name.s"
+            _ffp_win="$WINDOWS_ASM_DIR/opt${opt_level}_$name.s"
+            echo "$symbols" | tr ',' '\n' | while read -r _ffp_sym; do
+                [ -n "$_ffp_sym" ] || continue
+                _ffp_l=$(frame_form_class "$_ffp_lin" "$_ffp_sym")
+                _ffp_w=$(frame_form_class "$_ffp_win" "$_ffp_sym")
+                _ffp_lclass=${_ffp_l% *}
+                _ffp_lbelow=${_ffp_l#* }
+                _ffp_wclass=${_ffp_w% *}
+                _ffp_wbelow=${_ffp_w#* }
+                if [ "$_ffp_lclass" = missing ] || [ "$_ffp_wclass" = missing ]; then
+                    echo "frame-form parity: symbol not found: opt$opt_level $name $_ffp_sym" >&2
+                    : > "$_ffp_marker"
+                    continue
+                fi
+                # The x64 ABI has no red zone: the kernel may write below %rsp
+                # at any time, so a Win64 body must never address a slot there,
+                # framed or not.
+                if [ "$_ffp_wbelow" != 0 ]; then
+                    echo "frame-form parity: Win64 has no red zone, but opt$opt_level $name $_ffp_sym addresses a slot below %rsp" >&2
+                    : > "$_ffp_marker"
+                fi
+                # Addressing a slot below %rsp and moving %rsp are mutually
+                # exclusive: the red-zone rebase anchors the slots against the
+                # ENTRY %rsp, so any adjustment would move them out from under
+                # every reference.
+                if [ "$_ffp_lbelow" != 0 ] && [ "$_ffp_lclass" != redzone ]; then
+                    echo "frame-form parity: opt$opt_level $name $_ffp_sym addresses a slot below %rsp and still moves %rsp" >&2
+                    : > "$_ffp_marker"
+                fi
+                if [ "$_ffp_lclass" = redzone ] && [ "$_ffp_wclass" != framed ]; then
+                    echo "frame-form parity: opt$opt_level $name $_ffp_sym is a SysV red-zone leaf but its Win64 body is $_ffp_wclass, not framed" >&2
+                    : > "$_ffp_marker"
+                fi
+            done
+        done
+    done
+
+    [ ! -f "$_ffp_marker" ]
 }
 
 expected_target_asm_mismatch() {
@@ -463,6 +624,12 @@ expected_target_asm_mismatch() {
     # the other). Both sides execute one `imulq` per iteration, so the
     # divergence is home-choice only and instruction-count neutral; the loop
     # structure, unroll guard, and magic-number sequences are identical.
+    #
+    # #6846 red-zone leaf frames are NOT an expected mismatch: the normalizer
+    # canonicalizes stack slots to per-function SLOTn tokens and hands a
+    # red-zone leaf the teardown token the framed side spells, so the SysV and
+    # Win64 forms compare on their bodies again. check_frame_form_parity pins
+    # the frame forms themselves.
     case "${_etm_opt}:${_etm_name}" in
         2:functions) return 0 ;;
         2:lambda_capture_struct_enum) return 0 ;;
@@ -480,6 +647,9 @@ compile_all "$WINDOWS_ASM_DIR" windows-x86_64
 normalize_all "$LINUX_ASM_DIR" "$LINUX_NORM_DIR" linux-x86_64
 normalize_all "$WINDOWS_ASM_DIR" "$WINDOWS_NORM_DIR" windows-x86_64
 check_register_group_phi_return_opt2_shapes
+if ! check_frame_form_parity; then
+    exit 1
+fi
 
 if [ "$self_test" -eq 1 ]; then
     if ! compare_outputs; then

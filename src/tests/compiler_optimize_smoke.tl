@@ -2774,7 +2774,13 @@
       [(not (= fixed 0)) 1]
       [(not (= borrowed-backing 0)) 2]
       [(not (= negative-start 1)) 3]
-      [(not (= different-upper 1)) 4]
+      ;; A check whose literal bound is merely IMPLIED by the guard's (`i < 8`
+      ;; on every edge, checked against 9) is retired by the phi-inductive rule:
+      ;; each incoming value is proved below 9 on its own edge -- the seed by
+      ;; the literal comparison, the stepped value by the backedge's own `< 8`
+      ;; read through the literal-implication masks. The guard and the check no
+      ;; longer have to name the SAME bound, only ordered ones.
+      [(not (= different-upper 0)) 4]
       [(not (= different-provenance 1)) 5]
       [(not (= inclusive-upper 1)) 6]
       [(not (= nondominating-backedge 1)) 7]

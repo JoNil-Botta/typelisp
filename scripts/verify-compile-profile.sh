@@ -1428,6 +1428,11 @@ fi
 #
 # Keep both the logical
 # capacity and physical payload bytes exact so an accidental return to eager or
+# #6846's optimizer/backend packets (non-negativity lattice, compare-chain
+# threading and block merge, sentinel exit flags, red-zone leaves,
+# phi-inductive checks) crossed ast_type_pool.macro_expand from 26 to 27
+# segments; the authoritative Windows probe measured 26,710 used nodes
+# (capacity 27,648; segment bytes 663,552).
 # copy-on-grow storage is visible.
 if [ "$NL_HOST_OS" = windows ]; then
     echo "[compile-profile] selfhost embedded-stdlib allocation probe"
@@ -1707,7 +1712,7 @@ if [ "$NL_HOST_OS" = windows ]; then
     # measures 27,698 used nodes and crosses to 28 segments, 28,672 capacity,
     # and 688,128 physical payload bytes on the authoritative Windows probe.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_type_pool macro_expand 28 1024 24 \
+        "$SELFHOST_STDERR" ast_type_pool macro_expand 27 1024 24 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # #6828's dense flag-exit/BCE storage declarations cross the next type-pool
     # typecheck boundary: the authoritative Windows probe measured 9,221 used

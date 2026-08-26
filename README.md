@@ -134,9 +134,9 @@ The following parts are implemented and actively tested:
 Some capabilities remain restricted or experimental:
 
 - Canonical range-wide scans vectorize in both AVX2 and AVX-512; other
-  supported scan shapes retain the specified scalar reference. SIMD `i8`/`u8`
-  lane multiplication remains tracked by
-  [#6684](https://github.com/JoNil-Botta/typelisp/issues/6684).
+  supported scan shapes retain the specified scalar reference. Native SIMD is
+  limited to the eligible shapes in SPEC section 8.2; deliberate language
+  exclusions receive focused diagnostics instead of silent scalarization.
 - Published compilers dispatch trusted embedded-stdlib and package-dependency
   comptime macros through TLCI native catalogs on Linux and Windows. Dependency
   catalogs are source- and host-admitted, selected by physical defining

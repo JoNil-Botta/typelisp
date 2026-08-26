@@ -1,8 +1,7 @@
 (import stdlib.io)
 (import stdlib.string)
-(import compiler_owned_view as owned_view)
 
-(define (scan-once [text : String]) : i64
+(define (scan-once [text : (& text str)]) : i64
   (let
     [i : i64 0]
     [n : i64 (string.string-length text)]
@@ -25,9 +24,7 @@
     (begin
       (while (< i rounds)
         (begin
-          (set!
-            acc
-            (+ acc (scan-once (owned_view.compiler-owned-shared-view text))))
+          (set! acc (+ acc (scan-once text)))
           (set! i (+ i 1))))
       acc)))
 

@@ -7133,6 +7133,235 @@
         operand)]
     [(CompilerBackendMaybeStackOperand.No) ""]))
 
+;; A plain IR Mov can carry a SIMD identity after CSE/GVN. Recover its shape
+;; from the direct definition at the root of the copy chain; the current
+;; backend mode then selects YMM, ZMM, or k-register emission. A function-sized
+;; step budget admits every valid copy chain and still terminates on malformed
+;; cyclic hand-authored IR.
+(defenum CompilerBackendSimdCopyShape
+  (No)
+  (Vector i64 compiler_ast_types.AstType)
+  (Mask i64))
+
+(define (compiler-backend-simd-copy-shape-seq
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [var : i64]
+  [remaining : i64]
+  [index : i64]) : CompilerBackendSimdCopyShape
+  (if (>= index (compiler_ir_types.compiler-ir-instr-seq-count instrs))
+    (CompilerBackendSimdCopyShape.No)
+    (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
+      [(compiler_ir_types.CompilerIrInstr.Splat dst _ lanes elem-ty)
+        (if (= dst var)
+          (CompilerBackendSimdCopyShape.Vector lanes elem-ty)
+          (compiler-backend-simd-copy-shape-seq
+            blocks
+            instrs
+            var
+            remaining
+            (+ index 1)))]
+      [(compiler_ir_types.CompilerIrInstr.VectorBinOp payload-box)
+        (let
+          [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+          [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+          [elem-ty (__tl-project-field (__tl-box-place payload-box) ty)]
+          (if (= dst var)
+            (CompilerBackendSimdCopyShape.Vector lanes elem-ty)
+            (compiler-backend-simd-copy-shape-seq
+              blocks
+              instrs
+              var
+              remaining
+              (+ index 1))))]
+      [(compiler_ir_types.CompilerIrInstr.VectorCompare payload-box)
+        (let
+          [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+          [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+          (if (= dst var)
+            (CompilerBackendSimdCopyShape.Mask lanes)
+            (compiler-backend-simd-copy-shape-seq
+              blocks
+              instrs
+              var
+              remaining
+              (+ index 1))))]
+      [(compiler_ir_types.CompilerIrInstr.Mov dst src _)
+        (if (= dst var)
+          (if (<= remaining 0)
+            (CompilerBackendSimdCopyShape.No)
+            (match src
+              [(compiler_ir_types.CompilerIrValue.Var source)
+                (compiler-backend-simd-copy-shape-blocks
+                  blocks
+                  blocks
+                  source
+                  (- remaining 1))]
+              [_ (CompilerBackendSimdCopyShape.No)]))
+          (compiler-backend-simd-copy-shape-seq
+            blocks
+            instrs
+            var
+            remaining
+            (+ index 1)))]
+      [_
+        (compiler-backend-simd-copy-shape-seq
+          blocks
+          instrs
+          var
+          remaining
+          (+ index 1))])))
+
+(define (compiler-backend-simd-copy-shape-blocks
+  [all-blocks : compiler_ir_types.CompilerIrBlockList]
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [var : i64]
+  [remaining : i64]) : CompilerBackendSimdCopyShape
+  (match blocks
+    [(compiler_ir_types.CompilerIrBlockList.Nil)
+      (CompilerBackendSimdCopyShape.No)]
+    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (match (compiler-backend-simd-copy-shape-seq
+            all-blocks
+            instrs
+            var
+            remaining
+            0)
+            [(CompilerBackendSimdCopyShape.No)
+              (compiler-backend-simd-copy-shape-blocks
+                all-blocks
+                (__tl-box-place rest)
+                var
+                remaining)]
+            [(CompilerBackendSimdCopyShape.Vector lanes elem-ty)
+              (CompilerBackendSimdCopyShape.Vector lanes elem-ty)]
+            [(CompilerBackendSimdCopyShape.Mask lanes)
+              (CompilerBackendSimdCopyShape.Mask lanes)])])]
+    [(compiler_ir_types.CompilerIrBlockList.Array seq)
+      (compiler-backend-simd-copy-shape-blocks
+        all-blocks
+        (compiler_ir_types.compiler-ir-block-seq-to-list seq)
+        var
+        remaining)]))
+
+(define (compiler-backend-simd-copy-shape
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [dst : i64]
+  [vars : i64]) : CompilerBackendSimdCopyShape
+  (compiler-backend-simd-copy-shape-blocks blocks blocks dst (+ vars 1)))
+
+(define (compiler-backend-emit-vector-copy
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [dst : i64]
+  [src : compiler_ir_types.CompilerIrValue]
+  [width : String]
+  [elem-ty : compiler_ast_types.AstType]
+  [backend-state : CompilerBackendState]) : ResultCompilerBackend
+  (let
+    [source-scratch : String (compiler-backend-vector-spill-scratch width 0)]
+    [dst-scratch : String (compiler-backend-vector-spill-scratch width 1)]
+    (match (compiler-backend-vector-register-use
+      assignments
+      src
+      "copy source"
+      width
+      elem-ty
+      source-scratch
+      backend-state)
+      [(ResultBackendVectorUse.Ok source-use)
+        (match source-use
+          [(CompilerBackendVectorUse.Use load-asm source-reg)
+            (match (compiler-backend-vector-dst-reg
+              assignments
+              dst
+              "copy destination"
+              width
+              dst-scratch
+              backend-state)
+              [(ResultBackendReg.Ok dst-reg)
+                (ResultCompilerBackend.Ok
+                  (str_cat.str-cat
+                    (str_cat.str-cat
+                      load-asm
+                      (if (string.eq source-reg dst-reg)
+                        ""
+                        (str_cat.str-cat
+                          (str_cat.str-cat
+                            (str_cat.str-cat
+                              (str_cat.str-cat
+                                "    "
+                                (compiler-backend-vector-move-for-width
+                                  width
+                                  elem-ty))
+                              " ")
+                            source-reg)
+                          (str_cat.str-cat ", " (str_cat.str-cat dst-reg "\n")))))
+                    (compiler-backend-vector-store-dst
+                      assignments
+                      dst
+                      width
+                      elem-ty
+                      dst-reg
+                      backend-state)))]
+              [(ResultBackendReg.Err message)
+                (ResultCompilerBackend.Err (box message))])])]
+      [(ResultBackendVectorUse.Err message)
+        (ResultCompilerBackend.Err (box message))])))
+
+(define (compiler-backend-emit-avx512-mask-copy
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [dst : i64]
+  [src : compiler_ir_types.CompilerIrValue]
+  [lanes : i64]
+  [backend-state : CompilerBackendState]) : ResultCompilerBackend
+  (let
+    [scratch : String (compiler-backend-mask-spill-scratch 0)]
+    (match (compiler-backend-avx512-mask-register-use
+      assignments
+      src
+      "copy source"
+      lanes
+      scratch
+      backend-state)
+      [(ResultBackendMaskUse.Ok source-use)
+        (match source-use
+          [(CompilerBackendMaskUse.Use load-asm source-reg)
+            (match (compiler-backend-avx512-mask-dst-reg
+              assignments
+              dst
+              "copy destination"
+              scratch
+              backend-state)
+              [(ResultBackendReg.Ok dst-reg)
+                (ResultCompilerBackend.Ok
+                  (str_cat.str-cat
+                    (str_cat.str-cat
+                      load-asm
+                      (if (string.eq source-reg dst-reg)
+                        ""
+                        (str_cat.str-cat
+                          (str_cat.str-cat
+                            (str_cat.str-cat
+                              (str_cat.str-cat
+                                "    "
+                                (compiler-backend-avx512-mask-move-mnemonic
+                                  lanes))
+                              " ")
+                            source-reg)
+                          (str_cat.str-cat ", " (str_cat.str-cat dst-reg "\n")))))
+                    (compiler-backend-avx512-mask-store-dst
+                      assignments
+                      dst
+                      lanes
+                      dst-reg
+                      backend-state)))]
+              [(ResultBackendReg.Err message)
+                (ResultCompilerBackend.Err (box message))])])]
+      [(ResultBackendMaskUse.Err message)
+        (ResultCompilerBackend.Err (box message))])))
+
 (define (compiler-backend-avx512-vector-binop-mnemonic
   [op : compiler_ir_types.CompilerIrBinOp]
   [elem-ty : compiler_ast_types.AstType]) : String
@@ -45438,6 +45667,76 @@
           [(compiler_regalloc.CompilerRegMaybeLocation.No) ""]))]
     [_ ""]))
 
+(define (compiler-backend-emit-class-correct-mov-with-plan
+  [type-segment-bases : i64]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [dst : i64]
+  [src : compiler_ir_types.CompilerIrValue]
+  [ty : compiler_ast_types.AstType]
+  [program-index : CompilerBackendProgramIndex]
+  [vars : i64]
+  [planned0 : String]
+  [planned1 : String]
+  [backend-state : CompilerBackendState]) : ResultCompilerBackend
+  (let
+    [function-state : CompilerBackendFunctionState
+      (compiler-backend-state-function-state backend-state)]
+    [mode : CompilerBackendMode
+      (compiler-backend-function-state-current-mode function-state)]
+    (if (or
+      (compiler-backend-mode-scalar? mode)
+      (compiler-backend-value-same-home? backend-state assignments dst src))
+      (compiler-backend-emit-mov-with-plan
+        type-segment-bases
+        assignments
+        dst
+        src
+        ty
+        program-index
+        vars
+        planned0
+        planned1
+        backend-state)
+      (match (compiler-backend-simd-copy-shape blocks dst vars)
+        [(CompilerBackendSimdCopyShape.No)
+          (compiler-backend-emit-mov-with-plan
+            type-segment-bases
+            assignments
+            dst
+            src
+            ty
+            program-index
+            vars
+            planned0
+            planned1
+            backend-state)]
+        [(CompilerBackendSimdCopyShape.Vector _ elem-ty)
+          (compiler-backend-emit-vector-copy
+            assignments
+            dst
+            src
+            (if (compiler-backend-mode-avx2? mode)
+              "ymm"
+              "zmm")
+            elem-ty
+            backend-state)]
+        [(CompilerBackendSimdCopyShape.Mask lanes)
+          (if (compiler-backend-mode-avx2? mode)
+            (compiler-backend-emit-vector-copy
+              assignments
+              dst
+              src
+              "ymm"
+              (compiler_ast_types.AstType.Bool)
+              backend-state)
+            (compiler-backend-emit-avx512-mask-copy
+              assignments
+              dst
+              src
+              lanes
+              backend-state))]))))
+
 (define (compiler-backend-emit-mov-with-plan
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -49099,9 +49398,10 @@
         (compiler-backend-current-instr-reserved-mask ctx.function-state))]
     (match instr
       [(compiler_ir_types.CompilerIrInstr.Mov dst src ty)
-        (match (compiler-backend-emit-mov-with-plan
+        (match (compiler-backend-emit-class-correct-mov-with-plan
           ctx.type-segment-bases
           ctx.assignments
+          ctx.blocks
           dst
           src
           ty

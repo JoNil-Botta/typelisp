@@ -5016,11 +5016,10 @@
 ;; --- block-local common subexpression elimination ---------------------------
 ;;
 ;; Within a single basic block, track an available-expression table mapping a
-;; pure scalar `BinOp`/`UnOp` expression (operator + operand values) or a
-;; repeatable CPU feature probe to the var that first computed it. A later
-;; identical expression is rewritten to an `CompilerIrInstr.Mov` from that earlier var.
-;; Scope is intentionally block-local and only covers pure scalar arithmetic
-;; plus process-stable `cpuid`/`xgetbv` results; memory ops are not CSE'd.
+;; pure scalar or initial SIMD expression (operator + operand values + shape),
+;; or a repeatable CPU feature probe to the var that first computed it. A later
+;; identical expression is rewritten to an `CompilerIrInstr.Mov` from that
+;; earlier var. Memory ops are not CSE'd.
 ;;
 ;; Invalidation keeps this correct even though the IR is not strictly SSA: when
 ;; an instruction (re)defines a var, every table entry whose key references that
@@ -5033,7 +5032,20 @@
   (UnKey ir.CompilerIrUnOp ir.CompilerIrValue ast.AstType)
   (CpuIdKey ir.CompilerIrValue ir.CompilerIrValue i64)
   (XgetbvKey ir.CompilerIrValue)
-  (WordKey ir.CompilerIrValue i64 ast.AstType))
+  (WordKey ir.CompilerIrValue i64 ast.AstType)
+  (SplatKey ir.CompilerIrValue i64 ast.AstType)
+  (VectorBinKey
+    ir.CompilerIrBinOp
+    ir.CompilerIrValue
+    ir.CompilerIrValue
+    i64
+    ast.AstType)
+  (VectorCompareKey
+    ir.CompilerIrBinOp
+    ir.CompilerIrValue
+    ir.CompilerIrValue
+    i64
+    ast.AstType))
 
 (defenum OptExprTable
   (Nil)
@@ -5526,7 +5538,33 @@
         5
         (hash.combine
           (opt-type-hash type-segment-bases ty)
-          (hash.combine (opt-value-hash source) (hash.i64 index))))]))
+          (hash.combine (opt-value-hash source) (hash.i64 index))))]
+    [(OptExprKey.SplatKey value lanes ty)
+      (hash.combine
+        6
+        (hash.combine
+          (opt-type-hash type-segment-bases ty)
+          (hash.combine (hash.i64 lanes) (opt-value-hash value))))]
+    [(OptExprKey.VectorBinKey op lhs rhs lanes ty)
+      (hash.combine
+        7
+        (hash.combine
+          (opt-type-hash type-segment-bases ty)
+          (hash.combine
+            (hash.i64 lanes)
+            (hash.combine
+              (hash.i64 (opt-binop-tag op))
+              (hash.combine (opt-value-hash lhs) (opt-value-hash rhs))))))]
+    [(OptExprKey.VectorCompareKey op lhs rhs lanes ty)
+      (hash.combine
+        8
+        (hash.combine
+          (opt-type-hash type-segment-bases ty)
+          (hash.combine
+            (hash.i64 lanes)
+            (hash.combine
+              (hash.i64 (opt-binop-tag op))
+              (hash.combine (opt-value-hash lhs) (opt-value-hash rhs))))))]))
 
 (define (opt-type-list-hash-at
   [type-segment-bases : i64]
@@ -6789,6 +6827,34 @@
             (= aindex bindex)
             (opt-value-eq asource bsource)
             (opt-type-eq type-segment-bases aty bty))]
+        [_ false])]
+    [(OptExprKey.SplatKey avalue alanes aty)
+      (match b
+        [(OptExprKey.SplatKey bvalue blanes bty)
+          (and
+            (= alanes blanes)
+            (opt-value-eq avalue bvalue)
+            (opt-type-eq type-segment-bases aty bty))]
+        [_ false])]
+    [(OptExprKey.VectorBinKey aop al ar alanes aty)
+      (match b
+        [(OptExprKey.VectorBinKey bop bl br blanes bty)
+          (and
+            (opt-binop-eq aop bop)
+            (= alanes blanes)
+            (opt-value-eq al bl)
+            (opt-value-eq ar br)
+            (opt-type-eq type-segment-bases aty bty))]
+        [_ false])]
+    [(OptExprKey.VectorCompareKey aop al ar alanes aty)
+      (match b
+        [(OptExprKey.VectorCompareKey bop bl br blanes bty)
+          (and
+            (opt-binop-eq aop bop)
+            (= alanes blanes)
+            (opt-value-eq al bl)
+            (opt-value-eq ar br)
+            (opt-type-eq type-segment-bases aty bty))]
         [_ false])]))
 
 (define (opt-expr-lookup
@@ -6817,7 +6883,12 @@
     [(OptExprKey.CpuIdKey leaf subleaf _)
       (or (opt-value-is-var? leaf var) (opt-value-is-var? subleaf var))]
     [(OptExprKey.XgetbvKey index) (opt-value-is-var? index var)]
-    [(OptExprKey.WordKey source _ _) (opt-value-is-var? source var)]))
+    [(OptExprKey.WordKey source _ _) (opt-value-is-var? source var)]
+    [(OptExprKey.SplatKey value _ _) (opt-value-is-var? value var)]
+    [(OptExprKey.VectorBinKey _ lhs rhs _ _)
+      (or (opt-value-is-var? lhs var) (opt-value-is-var? rhs var))]
+    [(OptExprKey.VectorCompareKey _ lhs rhs _ _)
+      (or (opt-value-is-var? lhs var) (opt-value-is-var? rhs var))]))
 
 ;; Drop every entry whose key references `var` (a stale operand) or whose result
 ;; is `var` (a stale definition).
@@ -6885,6 +6956,47 @@
               (ir.CompilerIrInstr.Mov dst earlier (ast.AstType.I64)))]
           [(ir.CompilerIrMaybeValue.No)
             (OptCseResult.Result (OptExprTable.Cons key dst (box t1)) instr)]))]
+    [(ir.CompilerIrInstr.Splat dst value lanes ty)
+      (let
+        [t1 : OptExprTable (opt-expr-invalidate-var table dst)]
+        [key : OptExprKey (OptExprKey.SplatKey value lanes ty)]
+        (match (opt-expr-lookup type-segment-bases t1 key)
+          [(ir.CompilerIrMaybeValue.Some earlier)
+            (OptCseResult.Result t1 (ir.CompilerIrInstr.Mov dst earlier ty))]
+          [(ir.CompilerIrMaybeValue.No)
+            (OptCseResult.Result (OptExprTable.Cons key dst (box t1)) instr)]))]
+    [(ir.CompilerIrInstr.VectorBinOp payload-box)
+      (let
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [op (__tl-project-field (__tl-box-place payload-box) op)]
+        [lhs (__tl-project-field (__tl-box-place payload-box) lhs)]
+        [rhs (__tl-project-field (__tl-box-place payload-box) rhs)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [ty (__tl-project-field (__tl-box-place payload-box) ty)]
+        [t1 : OptExprTable (opt-expr-invalidate-var table dst)]
+        [key : OptExprKey (OptExprKey.VectorBinKey op lhs rhs lanes ty)]
+        (match (opt-expr-lookup type-segment-bases t1 key)
+          [(ir.CompilerIrMaybeValue.Some earlier)
+            (OptCseResult.Result t1 (ir.CompilerIrInstr.Mov dst earlier ty))]
+          [(ir.CompilerIrMaybeValue.No)
+            (OptCseResult.Result (OptExprTable.Cons key dst (box t1)) instr)]))]
+    [(ir.CompilerIrInstr.VectorCompare payload-box)
+      (let
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [op (__tl-project-field (__tl-box-place payload-box) op)]
+        [lhs (__tl-project-field (__tl-box-place payload-box) lhs)]
+        [rhs (__tl-project-field (__tl-box-place payload-box) rhs)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [ty (__tl-project-field (__tl-box-place payload-box) ty)]
+        [t1 : OptExprTable (opt-expr-invalidate-var table dst)]
+        [key : OptExprKey (OptExprKey.VectorCompareKey op lhs rhs lanes ty)]
+        (match (opt-expr-lookup type-segment-bases t1 key)
+          [(ir.CompilerIrMaybeValue.Some earlier)
+            (OptCseResult.Result
+              t1
+              (ir.CompilerIrInstr.Mov dst earlier (ast.AstType.Bool)))]
+          [(ir.CompilerIrMaybeValue.No)
+            (OptCseResult.Result (OptExprTable.Cons key dst (box t1)) instr)]))]
     ;; Other defining instructions: invalidate their dst, keep the instruction.
     [(ir.CompilerIrInstr.Mov dst _ _)
       (OptCseResult.Result (opt-expr-invalidate-var table dst) instr)]
@@ -6904,22 +7016,12 @@
       (OptCseResult.Result (opt-expr-invalidate-var table dst) instr)]
     [(ir.CompilerIrInstr.LaneId dst _ _)
       (OptCseResult.Result (opt-expr-invalidate-var table dst) instr)]
-    [(ir.CompilerIrInstr.Splat dst _ _ _)
-      (OptCseResult.Result (opt-expr-invalidate-var table dst) instr)]
-    [(ir.CompilerIrInstr.VectorBinOp payload-box)
-      (let
-        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
-        (OptCseResult.Result (opt-expr-invalidate-var table dst) instr))]
     [(ir.CompilerIrInstr.VectorPrefix payload-box)
       (let
         [dst (__tl-project-field (__tl-box-place payload-box) dst)]
         (OptCseResult.Result (opt-expr-invalidate-var table dst) instr))]
     [(ir.CompilerIrInstr.VectorReduce dst _ _ _ _)
       (OptCseResult.Result (opt-expr-invalidate-var table dst) instr)]
-    [(ir.CompilerIrInstr.VectorCompare payload-box)
-      (let
-        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
-        (OptCseResult.Result (opt-expr-invalidate-var table dst) instr))]
     [(ir.CompilerIrInstr.MaskBinOp dst _ _ _ _)
       (OptCseResult.Result (opt-expr-invalidate-var table dst) instr)]
     [(ir.CompilerIrInstr.MaskNot dst _ _)
@@ -7278,14 +7380,61 @@
       (ir.CompilerIrInstr.UnOp dst op (opt-copy-resolve env v) ty)]
     [(ir.CompilerIrInstr.Splat dst value lanes ty)
       (ir.CompilerIrInstr.Splat dst (opt-copy-resolve env value) lanes ty)]
-    ;; Vector IR uses private aggregate values that the scalar copy pass cannot
-    ;; type-check yet, so leave those operands untouched until a vector-aware
-    ;; propagation pass exists. Mask operands are private too, so only var-to-var
-    ;; mask copies are substituted; scalar bool literals are not mask constants.
-    [(ir.CompilerIrInstr.VectorBinOp _) instr]
-    [(ir.CompilerIrInstr.VectorPrefix _) instr]
-    [(ir.CompilerIrInstr.VectorReduce _ _ _ _ _) instr]
-    [(ir.CompilerIrInstr.VectorCompare _) instr]
+    ;; Vector and mask values are private aggregates. Only propagate var-to-var
+    ;; identities through them: scalar literals recorded by the general copy
+    ;; environment are not valid SIMD constants.
+    [(ir.CompilerIrInstr.VectorBinOp payload-box)
+      (let
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [op (__tl-project-field (__tl-box-place payload-box) op)]
+        [lhs (__tl-project-field (__tl-box-place payload-box) lhs)]
+        [rhs (__tl-project-field (__tl-box-place payload-box) rhs)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [ty (__tl-project-field (__tl-box-place payload-box) ty)]
+        (ir.ir-instr-vector-bin-op
+          dst
+          op
+          (opt-copy-resolve-mask env lhs)
+          (opt-copy-resolve-mask env rhs)
+          lanes
+          ty))]
+    [(ir.CompilerIrInstr.VectorPrefix payload-box)
+      (let
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [op (__tl-project-field (__tl-box-place payload-box) op)]
+        [src (__tl-project-field (__tl-box-place payload-box) src)]
+        [carry (__tl-project-field (__tl-box-place payload-box) carry)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [ty (__tl-project-field (__tl-box-place payload-box) ty)]
+        (ir.ir-instr-vector-prefix
+          dst
+          op
+          (opt-copy-resolve-mask env src)
+          carry
+          lanes
+          ty))]
+    [(ir.CompilerIrInstr.VectorReduce dst op src lanes ty)
+      (ir.CompilerIrInstr.VectorReduce
+        dst
+        op
+        (opt-copy-resolve-mask env src)
+        lanes
+        ty)]
+    [(ir.CompilerIrInstr.VectorCompare payload-box)
+      (let
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [op (__tl-project-field (__tl-box-place payload-box) op)]
+        [lhs (__tl-project-field (__tl-box-place payload-box) lhs)]
+        [rhs (__tl-project-field (__tl-box-place payload-box) rhs)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [ty (__tl-project-field (__tl-box-place payload-box) ty)]
+        (ir.ir-instr-vector-compare
+          dst
+          op
+          (opt-copy-resolve-mask env lhs)
+          (opt-copy-resolve-mask env rhs)
+          lanes
+          ty))]
     [(ir.CompilerIrInstr.MaskBinOp dst op lhs rhs lanes)
       (ir.CompilerIrInstr.MaskBinOp
         dst
@@ -7301,11 +7450,65 @@
         op
         (opt-copy-resolve-mask env src)
         lanes)]
-    [(ir.CompilerIrInstr.Select _) instr]
+    [(ir.CompilerIrInstr.Select payload-box)
+      (let
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [mask (__tl-project-field (__tl-box-place payload-box) mask)]
+        [on-true (__tl-project-field (__tl-box-place payload-box) on-true)]
+        [on-false (__tl-project-field (__tl-box-place payload-box) on-false)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [ty (__tl-project-field (__tl-box-place payload-box) ty)]
+        (ir.ir-instr-select
+          dst
+          (opt-copy-resolve-mask env mask)
+          (opt-copy-resolve-mask env on-true)
+          (opt-copy-resolve-mask env on-false)
+          lanes
+          ty))]
     [(ir.CompilerIrInstr.VectorLoad _ _ _ _ _) instr]
-    [(ir.CompilerIrInstr.VectorStore _) instr]
-    [(ir.CompilerIrInstr.PredicatedStore _) instr]
-    [(ir.CompilerIrInstr.PredicatedLoad _) instr]
+    [(ir.CompilerIrInstr.VectorStore payload-box)
+      (let
+        [base (__tl-project-field (__tl-box-place payload-box) base)]
+        [index (__tl-project-field (__tl-box-place payload-box) index)]
+        [value (__tl-project-field (__tl-box-place payload-box) value)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [ty (__tl-project-field (__tl-box-place payload-box) ty)]
+        (ir.ir-instr-vector-store
+          base
+          index
+          (opt-copy-resolve-mask env value)
+          lanes
+          ty))]
+    [(ir.CompilerIrInstr.PredicatedStore payload-box)
+      (let
+        [base (__tl-project-field (__tl-box-place payload-box) base)]
+        [index (__tl-project-field (__tl-box-place payload-box) index)]
+        [value (__tl-project-field (__tl-box-place payload-box) value)]
+        [mask (__tl-project-field (__tl-box-place payload-box) mask)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [ty (__tl-project-field (__tl-box-place payload-box) ty)]
+        (ir.ir-instr-predicated-store
+          base
+          index
+          (opt-copy-resolve-mask env value)
+          (opt-copy-resolve-mask env mask)
+          lanes
+          ty))]
+    [(ir.CompilerIrInstr.PredicatedLoad payload-box)
+      (let
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [base (__tl-project-field (__tl-box-place payload-box) base)]
+        [index (__tl-project-field (__tl-box-place payload-box) index)]
+        [mask (__tl-project-field (__tl-box-place payload-box) mask)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [ty (__tl-project-field (__tl-box-place payload-box) ty)]
+        (ir.ir-instr-predicated-load
+          dst
+          base
+          index
+          (opt-copy-resolve-mask env mask)
+          lanes
+          ty))]
     [(ir.CompilerIrInstr.GatherLoad _) instr]
     [(ir.CompilerIrInstr.VectorShuffle _) instr]
     [(ir.CompilerIrInstr.TailMask _ _ _ _) instr]
@@ -41657,6 +41860,9 @@
     [(ir.CompilerIrInstr.UnOp _ _ _ _) true]
     [(ir.CompilerIrInstr.CpuId _ _ _ _) true]
     [(ir.CompilerIrInstr.Xgetbv _ _) true]
+    [(ir.CompilerIrInstr.Splat _ _ _ _) true]
+    [(ir.CompilerIrInstr.VectorBinOp _) true]
+    [(ir.CompilerIrInstr.VectorCompare _) true]
     [_ false]))
 
 (define (opt-gvn-block-id [doms : OptDomInfo] [label : i64]) : i64
@@ -41684,6 +41890,28 @@
       (and
         (opt-gvn-stable-var? sources dst)
         (opt-gvn-value-stable? sources index))]
+    [(ir.CompilerIrInstr.Splat dst value _ _)
+      (and
+        (opt-gvn-stable-var? sources dst)
+        (opt-gvn-value-stable? sources value))]
+    [(ir.CompilerIrInstr.VectorBinOp payload-box)
+      (let
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [lhs (__tl-project-field (__tl-box-place payload-box) lhs)]
+        [rhs (__tl-project-field (__tl-box-place payload-box) rhs)]
+        (and
+          (opt-gvn-stable-var? sources dst)
+          (opt-gvn-value-stable? sources lhs)
+          (opt-gvn-value-stable? sources rhs)))]
+    [(ir.CompilerIrInstr.VectorCompare payload-box)
+      (let
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [lhs (__tl-project-field (__tl-box-place payload-box) lhs)]
+        [rhs (__tl-project-field (__tl-box-place payload-box) rhs)]
+        (and
+          (opt-gvn-stable-var? sources dst)
+          (opt-gvn-value-stable? sources lhs)
+          (opt-gvn-value-stable? sources rhs)))]
     [_ false]))
 
 (define (opt-gvn-bucket-capacity [count : i64]) : i64
@@ -41801,6 +42029,53 @@
           (OptGvnEntry.Entry (OptExprKey.XgetbvKey index) dst def-block-id)
           changes)
         changes)]
+    [(ir.CompilerIrInstr.Splat dst value lanes ty)
+      (if (opt-gvn-recordable-instr? instr sources)
+        (opt-gvn-table-push!
+          type-segment-bases
+          table
+          (OptGvnEntry.Entry
+            (OptExprKey.SplatKey value lanes ty)
+            dst
+            def-block-id)
+          changes)
+        changes)]
+    [(ir.CompilerIrInstr.VectorBinOp payload-box)
+      (let
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [op (__tl-project-field (__tl-box-place payload-box) op)]
+        [lhs (__tl-project-field (__tl-box-place payload-box) lhs)]
+        [rhs (__tl-project-field (__tl-box-place payload-box) rhs)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [ty (__tl-project-field (__tl-box-place payload-box) ty)]
+        (if (opt-gvn-recordable-instr? instr sources)
+          (opt-gvn-table-push!
+            type-segment-bases
+            table
+            (OptGvnEntry.Entry
+              (OptExprKey.VectorBinKey op lhs rhs lanes ty)
+              dst
+              def-block-id)
+            changes)
+          changes))]
+    [(ir.CompilerIrInstr.VectorCompare payload-box)
+      (let
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [op (__tl-project-field (__tl-box-place payload-box) op)]
+        [lhs (__tl-project-field (__tl-box-place payload-box) lhs)]
+        [rhs (__tl-project-field (__tl-box-place payload-box) rhs)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [ty (__tl-project-field (__tl-box-place payload-box) ty)]
+        (if (opt-gvn-recordable-instr? instr sources)
+          (opt-gvn-table-push!
+            type-segment-bases
+            table
+            (OptGvnEntry.Entry
+              (OptExprKey.VectorCompareKey op lhs rhs lanes ty)
+              dst
+              def-block-id)
+            changes)
+          changes))]
     [_ changes]))
 
 (define (opt-gvn-record-scope-instr-seq-from
@@ -41933,6 +42208,66 @@
                 (ast.AstType.I64)))
             (OptMaybeInstr.No)))
         (OptMaybeInstr.No))]
+    [(ir.CompilerIrInstr.Splat dst value lanes ty)
+      (if (opt-gvn-value-stable? sources value)
+        (let
+          [earlier : i64
+            (opt-gvn-lookup
+              type-segment-bases
+              table
+              (OptExprKey.SplatKey value lanes ty))]
+          (if (and (not (= earlier (- 0 1))) (not (= earlier dst)))
+            (OptMaybeInstr.Some
+              (ir.CompilerIrInstr.Mov dst (ir.CompilerIrValue.Var earlier) ty))
+            (OptMaybeInstr.No)))
+        (OptMaybeInstr.No))]
+    [(ir.CompilerIrInstr.VectorBinOp payload-box)
+      (let
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [op (__tl-project-field (__tl-box-place payload-box) op)]
+        [lhs (__tl-project-field (__tl-box-place payload-box) lhs)]
+        [rhs (__tl-project-field (__tl-box-place payload-box) rhs)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [ty (__tl-project-field (__tl-box-place payload-box) ty)]
+        (if (and
+          (opt-gvn-value-stable? sources lhs)
+          (opt-gvn-value-stable? sources rhs))
+          (let
+            [earlier : i64
+              (opt-gvn-lookup
+                type-segment-bases
+                table
+                (OptExprKey.VectorBinKey op lhs rhs lanes ty))]
+            (if (and (not (= earlier (- 0 1))) (not (= earlier dst)))
+              (OptMaybeInstr.Some
+                (ir.CompilerIrInstr.Mov dst (ir.CompilerIrValue.Var earlier) ty))
+              (OptMaybeInstr.No)))
+          (OptMaybeInstr.No)))]
+    [(ir.CompilerIrInstr.VectorCompare payload-box)
+      (let
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [op (__tl-project-field (__tl-box-place payload-box) op)]
+        [lhs (__tl-project-field (__tl-box-place payload-box) lhs)]
+        [rhs (__tl-project-field (__tl-box-place payload-box) rhs)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [ty (__tl-project-field (__tl-box-place payload-box) ty)]
+        (if (and
+          (opt-gvn-value-stable? sources lhs)
+          (opt-gvn-value-stable? sources rhs))
+          (let
+            [earlier : i64
+              (opt-gvn-lookup
+                type-segment-bases
+                table
+                (OptExprKey.VectorCompareKey op lhs rhs lanes ty))]
+            (if (and (not (= earlier (- 0 1))) (not (= earlier dst)))
+              (OptMaybeInstr.Some
+                (ir.CompilerIrInstr.Mov
+                  dst
+                  (ir.CompilerIrValue.Var earlier)
+                  (ast.AstType.Bool)))
+              (OptMaybeInstr.No)))
+          (OptMaybeInstr.No)))]
     [_ (OptMaybeInstr.No)]))
 
 (define (opt-gvn-seq-rewrite-changed?
@@ -51125,6 +51460,49 @@
       (match b
         [(ir.CompilerIrInstr.Xgetbv _ bindex) (opt-value-eq aindex bindex)]
         [_ false])]
+    [(ir.CompilerIrInstr.Splat _ avalue alanes _)
+      (match b
+        [(ir.CompilerIrInstr.Splat _ bvalue blanes _)
+          (and (= alanes blanes) (opt-value-eq avalue bvalue))]
+        [_ false])]
+    [(ir.CompilerIrInstr.VectorBinOp apayload-box)
+      (let
+        [aop (__tl-project-field (__tl-box-place apayload-box) op)]
+        [alhs (__tl-project-field (__tl-box-place apayload-box) lhs)]
+        [arhs (__tl-project-field (__tl-box-place apayload-box) rhs)]
+        [alanes (__tl-project-field (__tl-box-place apayload-box) lanes)]
+        (match b
+          [(ir.CompilerIrInstr.VectorBinOp bpayload-box)
+            (let
+              [bop (__tl-project-field (__tl-box-place bpayload-box) op)]
+              [blhs (__tl-project-field (__tl-box-place bpayload-box) lhs)]
+              [brhs (__tl-project-field (__tl-box-place bpayload-box) rhs)]
+              [blanes (__tl-project-field (__tl-box-place bpayload-box) lanes)]
+              (and
+                (opt-binop-eq aop bop)
+                (= alanes blanes)
+                (opt-value-eq alhs blhs)
+                (opt-value-eq arhs brhs)))]
+          [_ false]))]
+    [(ir.CompilerIrInstr.VectorCompare apayload-box)
+      (let
+        [aop (__tl-project-field (__tl-box-place apayload-box) op)]
+        [alhs (__tl-project-field (__tl-box-place apayload-box) lhs)]
+        [arhs (__tl-project-field (__tl-box-place apayload-box) rhs)]
+        [alanes (__tl-project-field (__tl-box-place apayload-box) lanes)]
+        (match b
+          [(ir.CompilerIrInstr.VectorCompare bpayload-box)
+            (let
+              [bop (__tl-project-field (__tl-box-place bpayload-box) op)]
+              [blhs (__tl-project-field (__tl-box-place bpayload-box) lhs)]
+              [brhs (__tl-project-field (__tl-box-place bpayload-box) rhs)]
+              [blanes (__tl-project-field (__tl-box-place bpayload-box) lanes)]
+              (and
+                (opt-binop-eq aop bop)
+                (= alanes blanes)
+                (opt-value-eq alhs blhs)
+                (opt-value-eq arhs brhs)))]
+          [_ false]))]
     [_ false]))
 
 ;; Nested-loop duplicate scan over the first `limit` instructions; block sizes
@@ -51146,6 +51524,12 @@
           [(ir.CompilerIrInstr.CpuId _ _ _ _)
             (opt-scan-cse-dup-inner slots instr (+ outer 1) limit)]
           [(ir.CompilerIrInstr.Xgetbv _ _)
+            (opt-scan-cse-dup-inner slots instr (+ outer 1) limit)]
+          [(ir.CompilerIrInstr.Splat _ _ _ _)
+            (opt-scan-cse-dup-inner slots instr (+ outer 1) limit)]
+          [(ir.CompilerIrInstr.VectorBinOp _)
+            (opt-scan-cse-dup-inner slots instr (+ outer 1) limit)]
+          [(ir.CompilerIrInstr.VectorCompare _)
             (opt-scan-cse-dup-inner slots instr (+ outer 1) limit)]
           [_ false])]
       (if dup

@@ -21858,6 +21858,160 @@ g:
     (compiler-backend-avx512-mask-spill-plan-ok?)
     (compiler-backend-avx512-mask-spill-compile-ok?)))
 
+(define (compiler-backend-simd-copy-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
+    (compiler_regalloc.CompilerRegAssignment
+      0
+      (compiler_regalloc.CompilerRegLocation.Register
+        (compiler_abi.compiler-abi-vector-register-id 6)))
+    (compiler_regalloc.compiler-reg-assignments-prepend
+      (compiler_regalloc.CompilerRegAssignment
+        1
+        (compiler_regalloc.CompilerRegLocation.Register
+          (compiler_abi.compiler-abi-vector-register-id 7)))
+      (compiler_regalloc.compiler-reg-assignments-prepend
+        (compiler_regalloc.CompilerRegAssignment
+          2
+          (compiler_regalloc.CompilerRegLocation.Spill -64))
+        (compiler_regalloc.compiler-reg-assignments-prepend
+          (compiler_regalloc.CompilerRegAssignment
+            3
+            (compiler_regalloc.CompilerRegLocation.Register
+              (compiler_abi.compiler-abi-vector-register-id 8)))
+          (compiler_regalloc.compiler-reg-assignments-prepend
+            (compiler_regalloc.CompilerRegAssignment
+              4
+              (compiler_regalloc.CompilerRegLocation.Spill -128))
+            (compiler_regalloc.compiler-reg-assignments-prepend
+              (compiler_regalloc.CompilerRegAssignment
+                5
+                (compiler_regalloc.CompilerRegLocation.Register
+                  (compiler_abi.compiler-abi-mask-register-id 1)))
+              (compiler_regalloc.compiler-reg-assignments-prepend
+                (compiler_regalloc.CompilerRegAssignment
+                  6
+                  (compiler_regalloc.CompilerRegLocation.Register
+                    (compiler_abi.compiler-abi-mask-register-id 2)))
+                (compiler_regalloc.compiler-reg-assignments-prepend
+                  (compiler_regalloc.CompilerRegAssignment
+                    7
+                    (compiler_regalloc.CompilerRegLocation.Spill -8))
+                  (compiler_regalloc.compiler-reg-assignments-prepend
+                    (compiler_regalloc.CompilerRegAssignment
+                      8
+                      (compiler_regalloc.CompilerRegLocation.Register
+                        (compiler_abi.compiler-abi-mask-register-id 3)))
+                    (compiler_regalloc.compiler-reg-assignments-prepend
+                      (compiler_regalloc.CompilerRegAssignment
+                        9
+                        (compiler_regalloc.CompilerRegLocation.Spill -16))
+                      (compiler_regalloc.compiler-reg-assignment-table-empty))))))))))))
+
+(define (compiler-backend-vector-copy-emits?
+  [dst : i64]
+  [src : i64]
+  [width : String]
+  [want : String]) : bool
+  (match (compiler_backend.compiler-backend-emit-vector-copy
+    (compiler-backend-simd-copy-assignments)
+    dst
+    (compiler_ir_types.CompilerIrValue.Var src)
+    width
+    (compiler_ast_types.AstType.I64)
+    (compiler_backend.compiler-backend-state-new
+      (ci.intern-compat-state-capture-active)))
+    [(compiler_backend.ResultCompilerBackend.Ok asm) (string.eq asm want)]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-vector-copy-line
+  [move : String]
+  [src : String]
+  [dst : String]) : String
+  (str_cat.str-cat
+    "    "
+    (str_cat.str-cat
+      move
+      (str_cat.str-cat
+        " "
+        (str_cat.str-cat src (str_cat.str-cat ", " (str_cat.str-cat dst "\n")))))))
+
+(define (compiler-backend-vector-copy-paths-ok? [width : String]) : bool
+  (let
+    [move : String
+      (if (string.eq width "zmm")
+        "vmovdqu64"
+        "vmovdqu")]
+    [r6 : String (str_cat.str-cat "%" (str_cat.str-cat width "6"))]
+    [r7 : String (str_cat.str-cat "%" (str_cat.str-cat width "7"))]
+    [r8 : String (str_cat.str-cat "%" (str_cat.str-cat width "8"))]
+    [r14 : String (str_cat.str-cat "%" (str_cat.str-cat width "14"))]
+    [r15 : String (str_cat.str-cat "%" (str_cat.str-cat width "15"))]
+    (and
+      (compiler-backend-vector-copy-emits?
+        1
+        0
+        width
+        (compiler-backend-vector-copy-line move r6 r7))
+      (compiler-backend-vector-copy-emits?
+        2
+        0
+        width
+        (str_cat.str-cat
+          (compiler-backend-vector-copy-line move r6 r15)
+          (compiler-backend-vector-copy-line move r15 "-64(%rbp)")))
+      (compiler-backend-vector-copy-emits?
+        3
+        2
+        width
+        (str_cat.str-cat
+          (compiler-backend-vector-copy-line move "-64(%rbp)" r14)
+          (compiler-backend-vector-copy-line move r14 r8)))
+      (compiler-backend-vector-copy-emits?
+        4
+        2
+        width
+        (str_cat.str-cat
+          (compiler-backend-vector-copy-line move "-64(%rbp)" r14)
+          (str_cat.str-cat
+            (compiler-backend-vector-copy-line move r14 r15)
+            (compiler-backend-vector-copy-line move r15 "-128(%rbp)")))))))
+
+(define (compiler-backend-mask-copy-emits?
+  [dst : i64]
+  [src : i64]
+  [want : String]) : bool
+  (match (compiler_backend.compiler-backend-emit-avx512-mask-copy
+    (compiler-backend-simd-copy-assignments)
+    dst
+    (compiler_ir_types.CompilerIrValue.Var src)
+    8
+    (compiler_backend.compiler-backend-state-new
+      (ci.intern-compat-state-capture-active)))
+    [(compiler_backend.ResultCompilerBackend.Ok asm) (string.eq asm want)]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-mask-copy-paths-ok?) : bool
+  (and
+    (compiler-backend-mask-copy-emits? 6 5 "    kmovw %k1, %k2\n")
+    (compiler-backend-mask-copy-emits?
+      7
+      5
+      "    kmovw %k1, %k7\n    kmovw %k7, -8(%rbp)\n")
+    (compiler-backend-mask-copy-emits?
+      8
+      7
+      "    kmovw -8(%rbp), %k7\n    kmovw %k7, %k3\n")
+    (compiler-backend-mask-copy-emits?
+      9
+      7
+      "    kmovw -8(%rbp), %k7\n    kmovw %k7, -16(%rbp)\n")))
+
+(define (compiler-backend-simd-copy-paths-ok?) : bool
+  (and
+    (compiler-backend-vector-copy-paths-ok? "ymm")
+    (compiler-backend-vector-copy-paths-ok? "zmm")
+    (compiler-backend-mask-copy-paths-ok?)))
+
 (define (compiler-backend-vector-call-lifetime-spill-ok?) : bool
   (match (compiler_backend.compiler-backend-emit-program-target-with-mode
     (compiler-backend-vector-home-program
@@ -22725,6 +22879,7 @@ g:
     (compiler-backend-avx512-mask-binop-same-registers-ok?)
     (compiler-backend-avx512-mask-reduce-ok?)
     (compiler-backend-avx512-mask-spill-ok?)
+    (compiler-backend-simd-copy-paths-ok?)
     (compiler-backend-vector-load-binop-folding-ok?)
     (compiler-backend-avx2-data-pointer-cse-ok?)
     (compiler-backend-avx2-native-mask-emission-ok?)

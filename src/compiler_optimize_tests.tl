@@ -4065,13 +4065,17 @@
         1]
       [(not (= (compiler_ir_types.compiler-ir-instr-seq-count dce) 8)) 2]
       [(not (= (compiler_ir_types.compiler-ir-instr-seq-count bounds) 8)) 3]
-      [(not (= (opt-count-vector-binop-instrs vector-cse) 2)) 4]
-      [(not (= (opt-mov-dst-type-tag vector-cse 3) 0)) 5]
+      [(not (= (opt-count-vector-binop-instrs vector-cse) 1)) 4]
+      [(not
+          (=
+            (opt-mov-dst-type-tag vector-cse 3)
+            (compiler_ast_types.ast-type-tag (compiler_ast_types.AstType.I64))))
+        5]
       [(not (= (opt-count-vector-reduce-instrs vector-reduce-cse) 2)) 6]
       [(not (= (opt-mov-dst-type-tag vector-reduce-cse 2) 0)) 7]
       [(not (= (opt-count-arith-instr-seq vector-stale) 1)) 8]
       [(not (= (opt-count-mov-i64-value-instr-seq vector-stale 11) 0)) 9]
-      [(not (= (opt-vector-binop-lhs-var vector-copy 3) 2)) 10]
+      [(not (= (opt-vector-binop-lhs-var vector-copy 3) 0)) 10]
       [(not (= (opt-mask-binop-lhs-var mask-copy 3) 0)) 11]
       [(not (= (opt-mask-reduce-src-var mask-reduce-copy 2) 0)) 12]
       [(not (= (opt-mask-not-src-var mask-not-copy 2) 0)) 13]
@@ -6122,6 +6126,127 @@
       6
       (compiler_ir_types.CompilerIrValue.I64 1))))
 
+(define (opt-simd-cse-instrs) : compiler_ir_types.CompilerIrInstrSeq
+  (opt-test-instrs
+    (compiler_ir_types.CompilerIrInstr.Splat
+      20
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      4
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.CompilerIrInstr.Splat
+      21
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      4
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.CompilerIrInstr.Splat
+      22
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      8
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.ir-instr-vector-bin-op
+      30
+      (compiler_ir_types.CompilerIrBinOp.Add)
+      (compiler_ir_types.CompilerIrValue.Var 2)
+      (compiler_ir_types.CompilerIrValue.Var 3)
+      4
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.ir-instr-vector-bin-op
+      31
+      (compiler_ir_types.CompilerIrBinOp.Add)
+      (compiler_ir_types.CompilerIrValue.Var 2)
+      (compiler_ir_types.CompilerIrValue.Var 3)
+      4
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.ir-instr-vector-bin-op
+      32
+      (compiler_ir_types.CompilerIrBinOp.Sub)
+      (compiler_ir_types.CompilerIrValue.Var 2)
+      (compiler_ir_types.CompilerIrValue.Var 3)
+      4
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.ir-instr-vector-bin-op
+      33
+      (compiler_ir_types.CompilerIrBinOp.Add)
+      (compiler_ir_types.CompilerIrValue.Var 2)
+      (compiler_ir_types.CompilerIrValue.Var 3)
+      8
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.ir-instr-vector-bin-op
+      34
+      (compiler_ir_types.CompilerIrBinOp.Add)
+      (compiler_ir_types.CompilerIrValue.Var 2)
+      (compiler_ir_types.CompilerIrValue.Var 3)
+      4
+      (compiler_ast_types.AstType.U64))
+    (compiler_ir_types.ir-instr-vector-compare
+      40
+      (compiler_ir_types.CompilerIrBinOp.Eq)
+      (compiler_ir_types.CompilerIrValue.Var 4)
+      (compiler_ir_types.CompilerIrValue.Var 5)
+      4
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.ir-instr-vector-compare
+      41
+      (compiler_ir_types.CompilerIrBinOp.Eq)
+      (compiler_ir_types.CompilerIrValue.Var 4)
+      (compiler_ir_types.CompilerIrValue.Var 5)
+      4
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.ir-instr-vector-compare
+      42
+      (compiler_ir_types.CompilerIrBinOp.Ne)
+      (compiler_ir_types.CompilerIrValue.Var 4)
+      (compiler_ir_types.CompilerIrValue.Var 5)
+      4
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.ir-instr-vector-compare
+      43
+      (compiler_ir_types.CompilerIrBinOp.Eq)
+      (compiler_ir_types.CompilerIrValue.Var 4)
+      (compiler_ir_types.CompilerIrValue.Var 5)
+      8
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.ir-instr-vector-compare
+      44
+      (compiler_ir_types.CompilerIrBinOp.Eq)
+      (compiler_ir_types.CompilerIrValue.Var 4)
+      (compiler_ir_types.CompilerIrValue.Var 5)
+      4
+      (compiler_ast_types.AstType.U64))
+    (compiler_ir_types.ir-instr-vector-bin-op
+      50
+      (compiler_ir_types.CompilerIrBinOp.Mul)
+      (compiler_ir_types.CompilerIrValue.Var 21)
+      (compiler_ir_types.CompilerIrValue.Var 31)
+      4
+      (compiler_ast_types.AstType.I64))))
+
+(define (compiler-optimize-simd-local-cse-self-test) : i64
+  (let
+    [input : compiler_ir_types.CompilerIrInstrSeq (opt-simd-cse-instrs)]
+    [rewritten : compiler_ir_types.CompilerIrInstrSeq
+      (opt-test-cse-instrs
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (compiler_optimize.OptExprTable.Nil)
+        input)]
+    [copied : compiler_ir_types.CompilerIrInstrSeq
+      (opt-test-copy-instrs (compiler_optimize.OptCopyEnv.Nil) rewritten)]
+    (cond
+      [(not (compiler_optimize.opt-scan-cse-dup-from input.slots 0 input.len))
+        1]
+      [(not (= (opt-mov-src-var-instr-seq rewritten 21 (- 0 1)) 20)) 2]
+      [(not (= (opt-mov-src-var-instr-seq rewritten 31 (- 0 1)) 30)) 3]
+      [(not (= (opt-mov-src-var-instr-seq rewritten 41 (- 0 1)) 40)) 4]
+      [(not (= (opt-count-mov-dst-instr-seq rewritten 22) 0)) 5]
+      [(not (= (opt-count-mov-dst-instr-seq rewritten 32) 0)) 6]
+      [(not (= (opt-count-mov-dst-instr-seq rewritten 33) 0)) 7]
+      [(not (= (opt-count-mov-dst-instr-seq rewritten 34) 0)) 8]
+      [(not (= (opt-count-mov-dst-instr-seq rewritten 42) 0)) 9]
+      [(not (= (opt-count-mov-dst-instr-seq rewritten 43) 0)) 10]
+      [(not (= (opt-count-mov-dst-instr-seq rewritten 44) 0)) 11]
+      [(not (= (opt-vector-binop-lhs-var copied 50) 20)) 12]
+      [else 42])))
+
 ;; Returns 42 when CSE eliminates the repeated pure expression (2 arithmetic
 ;; instrs -> 1) yet preserves the second expression both across an intervening
 ;; store and across an operand redefinition (still 2 arithmetic instrs each).
@@ -7034,6 +7159,292 @@
       (unless (= (opt-count-cpuid-blocks probe-different) 3) (return 9))
       (unless (= (opt-count-xgetbv-blocks probe-different) 2) (return 10))
       42)))
+
+(define (opt-simd-gvn-kind-count-instr
+  [instr : compiler_ir_types.CompilerIrInstr]
+  [kind : i64]) : i64
+  (match instr
+    [(compiler_ir_types.CompilerIrInstr.Splat _ _ _ _)
+      (if (= kind 0)
+        1
+        0)]
+    [(compiler_ir_types.CompilerIrInstr.VectorBinOp _)
+      (if (= kind 1)
+        1
+        0)]
+    [(compiler_ir_types.CompilerIrInstr.VectorCompare _)
+      (if (= kind 2)
+        1
+        0)]
+    [_ 0]))
+
+(define (opt-simd-gvn-kind-count-seq
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [kind : i64]
+  [index : i64]) : i64
+  (if (>= index (compiler_ir_types.compiler-ir-instr-seq-count instrs))
+    0
+    (+
+      (opt-simd-gvn-kind-count-instr
+        (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
+        kind)
+      (opt-simd-gvn-kind-count-seq instrs kind (+ index 1)))))
+
+(define (opt-simd-gvn-kind-count-blocks
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [kind : i64]) : i64
+  (match blocks
+    [(compiler_ir_types.CompilerIrBlockList.Nil) 0]
+    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (+
+            (opt-simd-gvn-kind-count-seq instrs kind 0)
+            (opt-simd-gvn-kind-count-blocks (__tl-box-place rest) kind))])]
+    [(compiler_ir_types.CompilerIrBlockList.Array seq)
+      (opt-simd-gvn-kind-count-blocks
+        (compiler_ir_types.compiler-ir-block-seq-to-list seq)
+        kind)]))
+
+(define (opt-simd-gvn-dominated-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Splat
+          10
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          4
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.ir-instr-vector-bin-op
+          11
+          (compiler_ir_types.CompilerIrBinOp.Add)
+          (compiler_ir_types.CompilerIrValue.Var 10)
+          (compiler_ir_types.CompilerIrValue.Var 10)
+          4
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.ir-instr-vector-compare
+          12
+          (compiler_ir_types.CompilerIrBinOp.Eq)
+          (compiler_ir_types.CompilerIrValue.Var 11)
+          (compiler_ir_types.CompilerIrValue.Var 11)
+          4
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "child"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "child")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Splat
+            20
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            4
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.ir-instr-vector-bin-op
+            21
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            (compiler_ir_types.CompilerIrValue.Var 10)
+            (compiler_ir_types.CompilerIrValue.Var 10)
+            4
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.ir-instr-vector-compare
+            22
+            (compiler_ir_types.CompilerIrBinOp.Eq)
+            (compiler_ir_types.CompilerIrValue.Var 11)
+            (compiler_ir_types.CompilerIrValue.Var 11)
+            4
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Return
+            (compiler_ir_types.CompilerIrMaybeValue.Some
+              (compiler_ir_types.CompilerIrValue.Var 22)))))
+      (compiler_ir_types.CompilerIrBlockList.Nil))))
+
+(define (opt-simd-gvn-sibling-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Splat
+          10
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          4
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ir_types.compiler-ir-label "left")
+          (compiler_ir_types.compiler-ir-label "right"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "left")
+        (opt-test-instrs
+          (compiler_ir_types.ir-instr-vector-bin-op
+            20
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            (compiler_ir_types.CompilerIrValue.Var 10)
+            (compiler_ir_types.CompilerIrValue.Var 10)
+            4
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "exit"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "right")
+          (opt-test-instrs
+            (compiler_ir_types.ir-instr-vector-bin-op
+              21
+              (compiler_ir_types.CompilerIrBinOp.Add)
+              (compiler_ir_types.CompilerIrValue.Var 10)
+              (compiler_ir_types.CompilerIrValue.Var 10)
+              4
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "exit"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "exit")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.Var 10)))))
+          (compiler_ir_types.CompilerIrBlockList.Nil))))))
+
+(define (opt-simd-gvn-redefined-operand-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Splat
+          10
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          4
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.ir-instr-vector-bin-op
+          20
+          (compiler_ir_types.CompilerIrBinOp.Add)
+          (compiler_ir_types.CompilerIrValue.Var 10)
+          (compiler_ir_types.CompilerIrValue.Var 10)
+          4
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "child"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "child")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Splat
+            10
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            4
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.ir-instr-vector-bin-op
+            21
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            (compiler_ir_types.CompilerIrValue.Var 10)
+            (compiler_ir_types.CompilerIrValue.Var 10)
+            4
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Return
+            (compiler_ir_types.CompilerIrMaybeValue.Some
+              (compiler_ir_types.CompilerIrValue.Var 21)))))
+      (compiler_ir_types.CompilerIrBlockList.Nil))))
+
+(define (opt-simd-gvn-current-block-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Splat
+          20
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          4
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Splat
+          21
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          4
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Return
+          (compiler_ir_types.CompilerIrMaybeValue.Some
+            (compiler_ir_types.CompilerIrValue.Var 20)))))
+    (compiler_ir_types.CompilerIrBlockList.Nil)))
+
+(define (opt-simd-gvn-redefined-dst-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.ir-instr-vector-bin-op
+          20
+          (compiler_ir_types.CompilerIrBinOp.Add)
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          4
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "child"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "child")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Mov
+            20
+            (compiler_ir_types.CompilerIrValue.I64 0)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.ir-instr-vector-bin-op
+            21
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            4
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Return
+            (compiler_ir_types.CompilerIrMaybeValue.Some
+              (compiler_ir_types.CompilerIrValue.Var 21)))))
+      (compiler_ir_types.CompilerIrBlockList.Nil))))
+
+(define (compiler-optimize-simd-gvn-self-test) : i64
+  (let
+    [type-segment-bases : i64
+      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)]
+    [dominated : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-gvn-blocks
+        type-segment-bases
+        (opt-gvn-test-params)
+        (opt-simd-gvn-dominated-blocks))]
+    [siblings : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-gvn-blocks
+        type-segment-bases
+        (opt-gvn-test-params)
+        (opt-simd-gvn-sibling-blocks))]
+    [redefined : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-gvn-blocks
+        type-segment-bases
+        (opt-gvn-test-params)
+        (opt-simd-gvn-redefined-operand-blocks))]
+    [current : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-gvn-blocks
+        type-segment-bases
+        (opt-gvn-test-params)
+        (opt-simd-gvn-current-block-blocks))]
+    [dst-redefined : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-gvn-blocks
+        type-segment-bases
+        (opt-gvn-test-params)
+        (opt-simd-gvn-redefined-dst-blocks))]
+    (cond
+      [(not (= (opt-simd-gvn-kind-count-blocks dominated 0) 1)) 1]
+      [(not (= (opt-simd-gvn-kind-count-blocks dominated 1) 1)) 2]
+      [(not (= (opt-simd-gvn-kind-count-blocks dominated 2) 1)) 3]
+      [(not (= (opt-blocks-mov-src-var dominated 20 (- 0 1)) 10)) 4]
+      [(not (= (opt-blocks-mov-src-var dominated 21 (- 0 1)) 11)) 5]
+      [(not (= (opt-blocks-mov-src-var dominated 22 (- 0 1)) 12)) 6]
+      [(not (= (opt-simd-gvn-kind-count-blocks siblings 1) 2)) 7]
+      [(not (= (opt-simd-gvn-kind-count-blocks redefined 1) 2)) 8]
+      [(not (= (opt-simd-gvn-kind-count-blocks current 0) 2)) 9]
+      [(not (= (opt-blocks-mov-src-var current 20 (- 0 1)) (- 0 1))) 10]
+      [(not (= (opt-simd-gvn-kind-count-blocks dst-redefined 1) 2)) 11]
+      [else 42])))
 
 (define (opt-word-instr-count [instr : compiler_ir_types.CompilerIrInstr]) : i64
   (match instr
@@ -63645,6 +64056,20 @@
     (compiler-optimize-cse-self-test)
     42
     "CSE keeps otherwise-identical shifts with distinct RHS count types"))
+
+(test
+  simd-local-cse-keys-and-fast-scan
+  (test.assert-i64-eq
+    (compiler-optimize-simd-local-cse-self-test)
+    42
+    "local CSE and its fast scan recognize exact Splat/VectorBinOp/VectorCompare duplicates while keeping distinct op, lane and element-type keys"))
+
+(test
+  simd-gvn-strict-dominators
+  (test.assert-i64-eq
+    (compiler-optimize-simd-gvn-self-test)
+    42
+    "SIMD GVN reuses strict-dominator expressions, not siblings, redefined operands/destinations, or later same-block definitions"))
 
 (test
   commute-constant-lhs

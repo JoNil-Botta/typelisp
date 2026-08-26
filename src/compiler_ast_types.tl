@@ -477,7 +477,7 @@
 
 (defenum AstFieldCleanup
   (No)
-  (Fn i64)
+  (Fn ci.InternSyntaxId)
   (Owned))
 
 (defenum AstFieldDef
@@ -618,15 +618,15 @@
 
 (defenum AstStructCleanup
   (No)
-  (Fn i64))
+  (Fn ci.InternSyntaxId))
 
 (defenum AstEnumCleanup
   (No)
-  (Fn i64))
+  (Fn ci.InternSyntaxId))
 
 (defenum AstVariantPayloadCleanup
   (No)
-  (Fn i64)
+  (Fn ci.InternSyntaxId)
   (Owned))
 
 (defstruct AstVariantPayloadCleanupList
@@ -5160,7 +5160,7 @@
         (set! (array-ref v.slots index) value)
         (set! v.len (+ index 1))))))
 
-(define (ast-field-cleanup-fn-id [name : i64]) : AstFieldCleanup
+(define (ast-field-cleanup-fn-id [name : ci.InternSyntaxId]) : AstFieldCleanup
   (AstFieldCleanup.Fn name))
 
 (define (ast-field-def-id
@@ -5739,13 +5739,13 @@
       (AstSpmdCallable.Callable (__tl-box-place items))]
     [_ AstSpmdCallable.No]))
 
-(define (ast-struct-cleanup-fn-id [name : i64]) : AstStructCleanup
+(define (ast-struct-cleanup-fn-id [name : ci.InternSyntaxId]) : AstStructCleanup
   (AstStructCleanup.Fn name))
 
-(define (ast-enum-cleanup-fn-id [name : i64]) : AstEnumCleanup
+(define (ast-enum-cleanup-fn-id [name : ci.InternSyntaxId]) : AstEnumCleanup
   (AstEnumCleanup.Fn name))
 
-(define (ast-variant-payload-cleanup-fn-id [name : i64]) : AstVariantPayloadCleanup
+(define (ast-variant-payload-cleanup-fn-id [name : ci.InternSyntaxId]) : AstVariantPayloadCleanup
   (AstVariantPayloadCleanup.Fn name))
 
 (define (ast-variant-payload-cleanup-fallback) : AstVariantPayloadCleanup

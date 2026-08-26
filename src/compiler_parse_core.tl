@@ -4885,8 +4885,7 @@
                       (match (reader.sexpr-view cleanup-node)
                         [(reader.SexprView.Sym cleanup-fn)
                           (ResultAstFieldCleanup.Ok
-                            (ast.ast-field-cleanup-fn-id
-                              (ci.intern-syntax-id-value cleanup-fn)))]
+                            (ast.ast-field-cleanup-fn-id cleanup-fn))]
                         [_
                           (ResultAstFieldCleanup.Err
                             "parse: malformed field :cleanup metadata")])]
@@ -4935,8 +4934,7 @@
                       (match (reader.sexpr-view cleanup-node)
                         [(reader.SexprView.Sym cleanup-fn)
                           (ResultAstVariantPayloadCleanup.Ok
-                            (ast.ast-variant-payload-cleanup-fn-id
-                              (ci.intern-syntax-id-value cleanup-fn)))]
+                            (ast.ast-variant-payload-cleanup-fn-id cleanup-fn))]
                         [_
                           (ResultAstVariantPayloadCleanup.Err
                             "parse: malformed enum payload :cleanup metadata")])]
@@ -5074,8 +5072,7 @@
           (match (reader.sexpr-view cleanup-node)
             [(reader.SexprView.Sym cleanup-fn)
               (ResultAstStructCleanup.Ok
-                (ast.ast-struct-cleanup-fn-id
-                  (ci.intern-syntax-id-value cleanup-fn)))]
+                (ast.ast-struct-cleanup-fn-id cleanup-fn))]
             [_
               (ResultAstStructCleanup.Err
                 "parse: malformed defstruct :cleanup metadata")])]
@@ -5093,9 +5090,7 @@
         [(reader.SexprView.Nil)
           (match (reader.sexpr-view cleanup-node)
             [(reader.SexprView.Sym cleanup-fn)
-              (ResultAstEnumCleanup.Ok
-                (ast.ast-enum-cleanup-fn-id
-                  (ci.intern-syntax-id-value cleanup-fn)))]
+              (ResultAstEnumCleanup.Ok (ast.ast-enum-cleanup-fn-id cleanup-fn))]
             [_
               (ResultAstEnumCleanup.Err
                 "parse: malformed defenum :cleanup metadata")])]
@@ -14791,7 +14786,7 @@
                     (match cleanup
                       [(ast.AstStructCleanup.Fn cleanup-name)
                         (=
-                          cleanup-name
+                          (ci.intern-syntax-id-value cleanup-name)
                           (reader.stable-symbol-id "close-resource"))]
                       [_ false])
                     (=
@@ -14826,7 +14821,7 @@
                     (match cleanup
                       [(ast.AstEnumCleanup.Fn cleanup-name)
                         (=
-                          cleanup-name
+                          (ci.intern-syntax-id-value cleanup-name)
                           (reader.stable-symbol-id "close-resource"))]
                       [_ false])
                     (= (compiler-parse-variant-list-cleanup-score variants) 110))]

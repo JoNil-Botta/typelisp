@@ -1567,6 +1567,53 @@
               (arena.tl_arena_destroy b-base)))
           ok)))))
 
+(define (compiler-ast-cleanup-syntax-id-round-trip?
+  [expected : ci.InternSyntaxId]) : bool
+  (and
+    (match (ast.AstFieldCleanup.Fn expected)
+      [(ast.AstFieldCleanup.Fn name) (ci.intern-syntax-id-eq? name expected)]
+      [_ false])
+    (match (ast.AstStructCleanup.Fn expected)
+      [(ast.AstStructCleanup.Fn name) (ci.intern-syntax-id-eq? name expected)]
+      [_ false])
+    (match (ast.AstEnumCleanup.Fn expected)
+      [(ast.AstEnumCleanup.Fn name) (ci.intern-syntax-id-eq? name expected)]
+      [_ false])
+    (match (ast.AstVariantPayloadCleanup.Fn expected)
+      [(ast.AstVariantPayloadCleanup.Fn name)
+        (ci.intern-syntax-id-eq? name expected)]
+      [_ false])))
+
+(define (compiler-ast-cleanup-syntax-identity-smoke?) : bool
+  (let
+    [source-id : i64 (ci.intern "cleanup-source")]
+    [module-id : i64 (ci.intern "cleanup-module")]
+    [base-id : i64 (ci.intern "cleanup-base")]
+    [source : ci.InternSyntaxId (ci.intern-syntax-id-from-raw source-id)]
+    [generated : ci.InternSyntaxId
+      (ci.intern-syntax-id-from-raw
+        (ci.intern-generated-name "cleanup-generated"))]
+    [qualified : ci.InternSyntaxId
+      (ci.intern-syntax-id-from-raw
+        (ci.intern-generated-qualified-name
+          "cleanup-module/cleanup-base"
+          module-id
+          base-id))]
+    [builtin : ci.InternSyntaxId
+      (ci.intern-syntax-id-from-raw cbi.compiler-builtin-id-fix-main)]
+    [hygiene : ci.InternSyntaxId
+      (ci.intern-syntax-id-from-raw (ci.intern-structural-local-id 7 source-id))]
+    [structural : ci.InternSyntaxId
+      (ci.intern-syntax-id-from-raw
+        (ci.intern-composite-pair-id module-id base-id))]
+    (and
+      (compiler-ast-cleanup-syntax-id-round-trip? source)
+      (compiler-ast-cleanup-syntax-id-round-trip? generated)
+      (compiler-ast-cleanup-syntax-id-round-trip? qualified)
+      (compiler-ast-cleanup-syntax-id-round-trip? builtin)
+      (compiler-ast-cleanup-syntax-id-round-trip? hygiene)
+      (compiler-ast-cleanup-syntax-id-round-trip? structural))))
+
 (define (main) : i64
   (begin
     (unless (= (ast.compiler-ast-smoke) 23) (return 2))
@@ -1591,4 +1638,5 @@
     (unless (compiler-ast-expression-span-sidecar-smoke?) (return 19))
     (unless (compiler-ast-segmented-growth-isolation-smoke?) (return 15))
     (unless (compiler-ast-macro-type-kind-dense-compaction-smoke?) (return 16))
+    (unless (compiler-ast-cleanup-syntax-identity-smoke?) (return 20))
     42))

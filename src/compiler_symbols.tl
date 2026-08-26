@@ -1480,7 +1480,7 @@
       (compiler-symbols-add-value-in-module-id
         symbols
         module-id
-        cleanup-name
+        (ci.intern-syntax-id-value cleanup-name)
         (compiler-symbol-make-handle
           (compiler-symbol-kind-struct-cleanup)
           index))]))
@@ -1496,7 +1496,7 @@
       (compiler-symbols-add-value-in-module-id
         symbols
         module-id
-        cleanup-name
+        (ci.intern-syntax-id-value cleanup-name)
         (compiler-symbol-make-handle (compiler-symbol-kind-enum-cleanup) index))]))
 
 (define (compiler-symbols-add-decl-in-module-inner
@@ -1714,7 +1714,9 @@
     [(ast.AstStructCleanup.Fn cleanup-name)
       (compiler-symbols-add-value-alias-key-id
         symbols
-        (compiler-symbol-module-key-id-by-id alias-id cleanup-name)
+        (compiler-symbol-module-key-id-by-id
+          alias-id
+          (ci.intern-syntax-id-value cleanup-name))
         (compiler-symbol-make-handle
           (compiler-symbol-kind-struct-cleanup)
           index))]))
@@ -1729,7 +1731,9 @@
     [(ast.AstEnumCleanup.Fn cleanup-name)
       (compiler-symbols-add-value-alias-key-id
         symbols
-        (compiler-symbol-module-key-id-by-id alias-id cleanup-name)
+        (compiler-symbol-module-key-id-by-id
+          alias-id
+          (ci.intern-syntax-id-value cleanup-name))
         (compiler-symbol-make-handle (compiler-symbol-kind-enum-cleanup) index))]))
 
 (define (compiler-symbols-add-decl-alias-in-module

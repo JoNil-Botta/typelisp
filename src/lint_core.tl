@@ -3303,7 +3303,7 @@
     [(ast.AstFieldCleanup.No) false]
     [(ast.AstFieldCleanup.Fn name)
       (lint-name-id-uses-import?
-        name
+        (ci.intern-syntax-id-value name)
         (owned_view.compiler-owned-shared-view alias)
         (owned_view.compiler-owned-shared-view module-name))]
     [(ast.AstFieldCleanup.Owned) false]))
@@ -3350,7 +3350,7 @@
     [(ast.AstStructCleanup.No) false]
     [(ast.AstStructCleanup.Fn name)
       (lint-name-id-uses-import?
-        name
+        (ci.intern-syntax-id-value name)
         (owned_view.compiler-owned-shared-view alias)
         (owned_view.compiler-owned-shared-view module-name))]))
 
@@ -3362,7 +3362,7 @@
     [(ast.AstEnumCleanup.No) false]
     [(ast.AstEnumCleanup.Fn name)
       (lint-name-id-uses-import?
-        name
+        (ci.intern-syntax-id-value name)
         (owned_view.compiler-owned-shared-view alias)
         (owned_view.compiler-owned-shared-view module-name))]))
 
@@ -3374,7 +3374,7 @@
     [(ast.AstVariantPayloadCleanup.No) false]
     [(ast.AstVariantPayloadCleanup.Fn name)
       (lint-name-id-uses-import?
-        name
+        (ci.intern-syntax-id-value name)
         (owned_view.compiler-owned-shared-view alias)
         (owned_view.compiler-owned-shared-view module-name))]
     [(ast.AstVariantPayloadCleanup.Owned) false]))

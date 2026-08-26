@@ -14198,7 +14198,9 @@
     [(ast.AstStructCleanup.Fn cleanup-name)
       (tc-bind-id
         env
-        (tc-module-name-id-by-id module-id cleanup-name)
+        (tc-module-name-id-by-id
+          module-id
+          (ci.intern-syntax-id-value cleanup-name))
         (tc-struct-cleanup-function-type struct-ty))]))
 
 (define (tc-bind-enum-cleanup-module-id
@@ -14211,7 +14213,9 @@
     [(ast.AstEnumCleanup.Fn cleanup-name)
       (tc-bind-id
         env
-        (tc-module-name-id-by-id module-id cleanup-name)
+        (tc-module-name-id-by-id
+          module-id
+          (ci.intern-syntax-id-value cleanup-name))
         (tc-enum-cleanup-function-type enum-ty))]))
 
 (define (tc-bind-struct-cleanup-import-alias
@@ -14233,7 +14237,7 @@
         importer-module-id
         source-module-id
         import-unqualified
-        cleanup-name
+        (ci.intern-syntax-id-value cleanup-name)
         (tc-struct-cleanup-function-type struct-ty))]))
 
 (define (tc-bind-enum-cleanup-import-alias
@@ -14255,7 +14259,7 @@
         importer-module-id
         source-module-id
         import-unqualified
-        cleanup-name
+        (ci.intern-syntax-id-value cleanup-name)
         (tc-enum-cleanup-function-type enum-ty))]))
 
 (define (tc-default-boundary-id) : i64
@@ -36655,7 +36659,10 @@
   (match cleanup-name
     [(ast.AstStructCleanup.No) unit]
     [(ast.AstStructCleanup.Fn name)
-      (tc-module-local-root-shadow-name-note! session seen name)]))
+      (tc-module-local-root-shadow-name-note!
+        session
+        seen
+        (ci.intern-syntax-id-value name))]))
 
 (define (tc-module-local-root-shadow-enum-cleanup-note!
   [session : cis.InternStructuralSessionHandle]
@@ -36664,7 +36671,10 @@
   (match cleanup-name
     [(ast.AstEnumCleanup.No) unit]
     [(ast.AstEnumCleanup.Fn name)
-      (tc-module-local-root-shadow-name-note! session seen name)]))
+      (tc-module-local-root-shadow-name-note!
+        session
+        seen
+        (ci.intern-syntax-id-value name))]))
 
 (define (tc-module-local-root-shadow-decl-note!
   [session : cis.InternStructuralSessionHandle]
@@ -36760,12 +36770,14 @@
   (match cleanup
     [(ast.AstStructCleanup.No) env]
     [(ast.AstStructCleanup.Fn cleanup-name)
-      (if (tc-module-local-name-should-bind! ctx env seen cleanup-name)
-        (tc-bind-id
-          env
-          cleanup-name
-          (tc-struct-cleanup-function-type struct-ty))
-        env)]))
+      (let
+        [raw-cleanup-name : i64 (ci.intern-syntax-id-value cleanup-name)]
+        (if (tc-module-local-name-should-bind! ctx env seen raw-cleanup-name)
+          (tc-bind-id
+            env
+            raw-cleanup-name
+            (tc-struct-cleanup-function-type struct-ty))
+          env))]))
 
 (define (tc-bind-enum-cleanup-local-shadowed!
   [ctx : TcContext]
@@ -36776,9 +36788,14 @@
   (match cleanup
     [(ast.AstEnumCleanup.No) env]
     [(ast.AstEnumCleanup.Fn cleanup-name)
-      (if (tc-module-local-name-should-bind! ctx env seen cleanup-name)
-        (tc-bind-id env cleanup-name (tc-enum-cleanup-function-type enum-ty))
-        env)]))
+      (let
+        [raw-cleanup-name : i64 (ci.intern-syntax-id-value cleanup-name)]
+        (if (tc-module-local-name-should-bind! ctx env seen raw-cleanup-name)
+          (tc-bind-id
+            env
+            raw-cleanup-name
+            (tc-enum-cleanup-function-type enum-ty))
+          env))]))
 
 (define (tc-bind-enum-variants-local-shadowed-at!
   [ctx : TcContext]
@@ -125430,14 +125447,15 @@
   [struct-name : String]
   [struct-name-id : i64]
   [field-name : String]
-  [cleanup-name : i64]
+  [cleanup-name : ci.InternSyntaxId]
   [field-ty : ast.AstType]) : ResultTcUnit
   (let
+    [cleanup-name-id : i64 (ci.intern-syntax-id-value cleanup-name)]
     [lookup-name : i64
       (tc-cleanup-field-helper-name
         (tc-global-shared-view ctx)
         struct-name-id
-        cleanup-name)]
+        cleanup-name-id)]
     (match (tc-lookup-visible-id ctx env lookup-name)
       [(ResultTcType.Ok cleanup-ty)
         (tc-expect
@@ -125446,7 +125464,7 @@
           (tc-struct-field-cleanup-fn-mismatch-message
             struct-name
             field-name
-            (ci.intern-str cleanup-name)))]
+            (ci.intern-syntax-name-text-or cleanup-name-id "<structural-name>")))]
       [(ResultTcType.Err message) (ResultTcUnit.Err message)])))
 
 (define (tc-check-cleanup-struct-field
@@ -125631,14 +125649,15 @@
   [enum-name : String]
   [enum-name-id : i64]
   [variant-name : String]
-  [cleanup-name : i64]
+  [cleanup-name : ci.InternSyntaxId]
   [payload-ty : ast.AstType]) : ResultTcUnit
   (let
+    [cleanup-name-id : i64 (ci.intern-syntax-id-value cleanup-name)]
     [lookup-name : i64
       (tc-cleanup-field-helper-name
         (tc-global-shared-view ctx)
         enum-name-id
-        cleanup-name)]
+        cleanup-name-id)]
     (match (tc-lookup-visible-id ctx env lookup-name)
       [(ResultTcType.Ok cleanup-ty)
         (tc-expect
@@ -125647,7 +125666,7 @@
           (tc-enum-payload-cleanup-fn-mismatch-message
             enum-name
             variant-name
-            (ci.intern-str cleanup-name)))]
+            (ci.intern-syntax-name-text-or cleanup-name-id "<structural-name>")))]
       [(ResultTcType.Err message) (ResultTcUnit.Err message)])))
 
 (define (tc-check-cleanup-enum-payloads

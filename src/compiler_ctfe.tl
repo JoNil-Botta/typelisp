@@ -2667,10 +2667,16 @@
     [(ast.AstStructCleanup.No) CtfeReflectCleanup.No]
     [(ast.AstStructCleanup.Fn name)
       (CtfeReflectCleanup.Fn
-        (ctfe-symbol-module-key (clone module) (ci.intern-str name))
+        (ctfe-symbol-module-key
+          (clone module)
+          (ci.intern-syntax-name-text-or
+            (ci.intern-syntax-id-value name)
+            "<structural-name>"))
         (if (= (string.string-length module) 0)
-          name
-          (ctfe-qualified-name-key-id module-id name)))]))
+          (ci.intern-syntax-id-value name)
+          (ctfe-qualified-name-key-id
+            module-id
+            (ci.intern-syntax-id-value name))))]))
 
 (define (ctfe-reflect-enum-cleanup
   [module : String]
@@ -2680,10 +2686,16 @@
     [(ast.AstEnumCleanup.No) CtfeReflectCleanup.No]
     [(ast.AstEnumCleanup.Fn name)
       (CtfeReflectCleanup.Fn
-        (ctfe-symbol-module-key (clone module) (ci.intern-str name))
+        (ctfe-symbol-module-key
+          (clone module)
+          (ci.intern-syntax-name-text-or
+            (ci.intern-syntax-id-value name)
+            "<structural-name>"))
         (if (= (string.string-length module) 0)
-          name
-          (ctfe-qualified-name-key-id module-id name)))]))
+          (ci.intern-syntax-id-value name)
+          (ctfe-qualified-name-key-id
+            module-id
+            (ci.intern-syntax-id-value name))))]))
 
 (define (ctfe-reflect-info-add-names
   [infos : CtfeReflectInfoList]

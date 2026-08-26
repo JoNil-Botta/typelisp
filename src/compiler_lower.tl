@@ -6418,7 +6418,8 @@
     [(ast.AstStructCleanup.No) names]
     [(ast.AstStructCleanup.Fn cleanup-name)
       (let
-        [cleanup-str : String (lower-name-id-text lower-state cleanup-name)]
+        [cleanup-name-id : i64 (ci.intern-syntax-id-value cleanup-name)]
+        [cleanup-str : String (lower-name-id-text lower-state cleanup-name-id)]
         (lower-name-env-add-decl-module-binding-id
           lower-state
           (lower-global-shared-view names)
@@ -6427,7 +6428,7 @@
           module
           module-id
           cleanup-str
-          cleanup-name))]))
+          cleanup-name-id))]))
 
 (define (lower-name-env-add-enum-cleanup-in-module
   [lower-state : CompilerLowerState]
@@ -6441,7 +6442,8 @@
     [(ast.AstEnumCleanup.No) names]
     [(ast.AstEnumCleanup.Fn cleanup-name)
       (let
-        [cleanup-str : String (lower-name-id-text lower-state cleanup-name)]
+        [cleanup-name-id : i64 (ci.intern-syntax-id-value cleanup-name)]
+        [cleanup-str : String (lower-name-id-text lower-state cleanup-name-id)]
         (lower-name-env-add-decl-module-binding-id
           lower-state
           names
@@ -6450,7 +6452,7 @@
           module
           module-id
           cleanup-str
-          cleanup-name))]))
+          cleanup-name-id))]))
 
 (define (lower-name-has-clone-prefix? [name : String]) : bool
   (let
@@ -7502,19 +7504,23 @@
       (LowerNameCacheMaybeId.Some name)]
     [(ast.AstDecl.DefEnum decl-meta _ cleanup _)
       (match cleanup
-        [(ast.AstEnumCleanup.Fn name) (LowerNameCacheMaybeId.Some name)]
+        [(ast.AstEnumCleanup.Fn name)
+          (LowerNameCacheMaybeId.Some (ci.intern-syntax-id-value name))]
         [(ast.AstEnumCleanup.No) (LowerNameCacheMaybeId.No)])]
     [(ast.AstDecl.DefEnumLifetimes decl-meta _ _ cleanup _)
       (match cleanup
-        [(ast.AstEnumCleanup.Fn name) (LowerNameCacheMaybeId.Some name)]
+        [(ast.AstEnumCleanup.Fn name)
+          (LowerNameCacheMaybeId.Some (ci.intern-syntax-id-value name))]
         [(ast.AstEnumCleanup.No) (LowerNameCacheMaybeId.No)])]
     [(ast.AstDecl.DefStruct decl-meta _ _ cleanup _)
       (match cleanup
-        [(ast.AstStructCleanup.Fn name) (LowerNameCacheMaybeId.Some name)]
+        [(ast.AstStructCleanup.Fn name)
+          (LowerNameCacheMaybeId.Some (ci.intern-syntax-id-value name))]
         [(ast.AstStructCleanup.No) (LowerNameCacheMaybeId.No)])]
     [(ast.AstDecl.DefStructLifetimes decl-meta _ _ _ cleanup _)
       (match cleanup
-        [(ast.AstStructCleanup.Fn name) (LowerNameCacheMaybeId.Some name)]
+        [(ast.AstStructCleanup.Fn name)
+          (LowerNameCacheMaybeId.Some (ci.intern-syntax-id-value name))]
         [(ast.AstStructCleanup.No) (LowerNameCacheMaybeId.No)])]
     [(ast.AstDecl.Unsafe inner-box)
       (lower-decl-lexical-binding-id (lower-box-shared-view inner-box))]
@@ -7983,7 +7989,9 @@
         [(ast.AstEnumCleanup.No) names]
         [(ast.AstEnumCleanup.Fn cleanup-name)
           (let
-            [cleanup-str : String (lower-name-id-text lower-state cleanup-name)]
+            [cleanup-name-id : i64 (ci.intern-syntax-id-value cleanup-name)]
+            [cleanup-str : String
+              (lower-name-id-text lower-state cleanup-name-id)]
             (lower-name-env-add-decl-import-alias-binding-base-id
               lower-state
               names
@@ -7995,14 +8003,16 @@
               module
               module-id
               cleanup-str
-              cleanup-name
+              cleanup-name-id
               path-aware))])]
     [(ast.AstDecl.DefEnumLifetimes decl-meta _ _ cleanup _)
       (match cleanup
         [(ast.AstEnumCleanup.No) names]
         [(ast.AstEnumCleanup.Fn cleanup-name)
           (let
-            [cleanup-str : String (lower-name-id-text lower-state cleanup-name)]
+            [cleanup-name-id : i64 (ci.intern-syntax-id-value cleanup-name)]
+            [cleanup-str : String
+              (lower-name-id-text lower-state cleanup-name-id)]
             (lower-name-env-add-decl-import-alias-binding-base-id
               lower-state
               names
@@ -8014,14 +8024,16 @@
               module
               module-id
               cleanup-str
-              cleanup-name
+              cleanup-name-id
               path-aware))])]
     [(ast.AstDecl.DefStruct decl-meta _ _ cleanup _)
       (match cleanup
         [(ast.AstStructCleanup.No) names]
         [(ast.AstStructCleanup.Fn cleanup-name)
           (let
-            [cleanup-str : String (lower-name-id-text lower-state cleanup-name)]
+            [cleanup-name-id : i64 (ci.intern-syntax-id-value cleanup-name)]
+            [cleanup-str : String
+              (lower-name-id-text lower-state cleanup-name-id)]
             (lower-name-env-add-decl-import-alias-binding-base-id
               lower-state
               names
@@ -8033,14 +8045,16 @@
               module
               module-id
               cleanup-str
-              cleanup-name
+              cleanup-name-id
               path-aware))])]
     [(ast.AstDecl.DefStructLifetimes decl-meta _ _ _ cleanup _)
       (match cleanup
         [(ast.AstStructCleanup.No) names]
         [(ast.AstStructCleanup.Fn cleanup-name)
           (let
-            [cleanup-str : String (lower-name-id-text lower-state cleanup-name)]
+            [cleanup-name-id : i64 (ci.intern-syntax-id-value cleanup-name)]
+            [cleanup-str : String
+              (lower-name-id-text lower-state cleanup-name-id)]
             (lower-name-env-add-decl-import-alias-binding-base-id
               lower-state
               names
@@ -8052,7 +8066,7 @@
               module
               module-id
               cleanup-str
-              cleanup-name
+              cleanup-name-id
               path-aware))])]
     [(ast.AstDecl.Unsafe inner-box)
       (let
@@ -8166,11 +8180,12 @@
         [(ast.AstEnumCleanup.No) names]
         [(ast.AstEnumCleanup.Fn cleanup-name)
           (let
+            [cleanup-name-id : i64 (ci.intern-syntax-id-value cleanup-name)]
             [cleanup-str : String
               (lower-name-id-text
                 (compiler-lower-state-from-name-cache
                   (lower-global-shared-view base-cache))
-                cleanup-name)]
+                cleanup-name-id)]
             (lower-name-env-add-import-alias-binding-base-cache-id
               names
               base-cache
@@ -8178,21 +8193,22 @@
               alias
               alias-id
               (lower-global-shared-view cleanup-str)
-              cleanup-name
-              (lower-module-name-key-id-by-id module-id cleanup-name)
+              cleanup-name-id
+              (lower-module-name-key-id-by-id module-id cleanup-name-id)
               module
               cleanup-str
-              cleanup-name))])]
+              cleanup-name-id))])]
     [(ast.AstDecl.DefEnumLifetimes decl-meta _ _ cleanup _)
       (match cleanup
         [(ast.AstEnumCleanup.No) names]
         [(ast.AstEnumCleanup.Fn cleanup-name)
           (let
+            [cleanup-name-id : i64 (ci.intern-syntax-id-value cleanup-name)]
             [cleanup-str : String
               (lower-name-id-text
                 (compiler-lower-state-from-name-cache
                   (lower-global-shared-view base-cache))
-                cleanup-name)]
+                cleanup-name-id)]
             (lower-name-env-add-import-alias-binding-base-cache-id
               names
               base-cache
@@ -8200,21 +8216,22 @@
               alias
               alias-id
               (lower-global-shared-view cleanup-str)
-              cleanup-name
-              (lower-module-name-key-id-by-id module-id cleanup-name)
+              cleanup-name-id
+              (lower-module-name-key-id-by-id module-id cleanup-name-id)
               module
               cleanup-str
-              cleanup-name))])]
+              cleanup-name-id))])]
     [(ast.AstDecl.DefStruct decl-meta _ _ cleanup _)
       (match cleanup
         [(ast.AstStructCleanup.No) names]
         [(ast.AstStructCleanup.Fn cleanup-name)
           (let
+            [cleanup-name-id : i64 (ci.intern-syntax-id-value cleanup-name)]
             [cleanup-str : String
               (lower-name-id-text
                 (compiler-lower-state-from-name-cache
                   (lower-global-shared-view base-cache))
-                cleanup-name)]
+                cleanup-name-id)]
             (lower-name-env-add-import-alias-binding-base-cache-id
               names
               base-cache
@@ -8222,21 +8239,22 @@
               alias
               alias-id
               (lower-global-shared-view cleanup-str)
-              cleanup-name
-              (lower-module-name-key-id-by-id module-id cleanup-name)
+              cleanup-name-id
+              (lower-module-name-key-id-by-id module-id cleanup-name-id)
               module
               cleanup-str
-              cleanup-name))])]
+              cleanup-name-id))])]
     [(ast.AstDecl.DefStructLifetimes decl-meta _ _ _ cleanup _)
       (match cleanup
         [(ast.AstStructCleanup.No) names]
         [(ast.AstStructCleanup.Fn cleanup-name)
           (let
+            [cleanup-name-id : i64 (ci.intern-syntax-id-value cleanup-name)]
             [cleanup-str : String
               (lower-name-id-text
                 (compiler-lower-state-from-name-cache
                   (lower-global-shared-view base-cache))
-                cleanup-name)]
+                cleanup-name-id)]
             (lower-name-env-add-import-alias-binding-base-cache-id
               names
               base-cache
@@ -8244,11 +8262,11 @@
               alias
               alias-id
               (lower-global-shared-view cleanup-str)
-              cleanup-name
-              (lower-module-name-key-id-by-id module-id cleanup-name)
+              cleanup-name-id
+              (lower-module-name-key-id-by-id module-id cleanup-name-id)
               module
               cleanup-str
-              cleanup-name))])]
+              cleanup-name-id))])]
     [(ast.AstDecl.Unsafe inner-box)
       (let
         [inner : ast.AstDecl (lower-box-shared-view inner-box)]
@@ -9047,7 +9065,7 @@
                 next-env
                 next-local-env
                 module
-                cleanup-name)])]
+                (ci.intern-syntax-id-value cleanup-name))])]
         [(ResultLowerModuleTypeEnvs.Err message)
           (ResultLowerModuleTypeEnvs.Err message)])]
     [(ast.AstDecl.DefEnumLifetimes decl-meta _ _ cleanup variants)
@@ -9067,7 +9085,7 @@
                 next-env
                 next-local-env
                 module
-                cleanup-name)])]
+                (ci.intern-syntax-id-value cleanup-name))])]
         [(ResultLowerModuleTypeEnvs.Err message)
           (ResultLowerModuleTypeEnvs.Err message)])]
     [(ast.AstDecl.DefStruct decl-meta name _ cleanup _)
@@ -9087,7 +9105,7 @@
                 next-env
                 next-local-env
                 module
-                cleanup-name)])]
+                (ci.intern-syntax-id-value cleanup-name))])]
         [(ResultLowerModuleTypeEnvs.Err message)
           (ResultLowerModuleTypeEnvs.Err message)])]
     [(ast.AstDecl.DefStructLifetimes decl-meta name _ _ cleanup _)
@@ -9107,7 +9125,7 @@
                 next-env
                 next-local-env
                 module
-                cleanup-name)])]
+                (ci.intern-syntax-id-value cleanup-name))])]
         [(ResultLowerModuleTypeEnvs.Err message)
           (ResultLowerModuleTypeEnvs.Err message)])]
     [(ast.AstDecl.Unsafe inner-box)
@@ -13964,18 +13982,20 @@
             (match cleanup
               [(ast.AstFieldCleanup.Fn cleanup-name)
                 (let
+                  [cleanup-name-id : i64
+                    (ci.intern-syntax-id-value cleanup-name)]
                   [logical-id : i64
                     (if (tc_core.tc-name-qualified-id?
                       (lower-name-cache-structural-session (& names))
-                      cleanup-name)
+                      cleanup-name-id)
                       (lower-name-cache-resolve-logical-id
                         (& names)
                         (tc_core.macro-hygiene-global-source-name-id-or
                           (lower-name-cache-structural-session (& names))
-                          cleanup-name
-                          cleanup-name)
+                          cleanup-name-id
+                          cleanup-name-id)
                         -1)
-                      (lower-module-name-key-id-by-id module-id cleanup-name))]
+                      (lower-module-name-key-id-by-id module-id cleanup-name-id))]
                   (lower-reach-add-logical
                     (lower-global-shared-view all-functions)
                     state
@@ -14053,18 +14073,22 @@
                 (ast.ast-variant-payload-cleanup-fallback))
                 [(ast.AstVariantPayloadCleanup.Fn cleanup-name)
                   (let
+                    [cleanup-name-id : i64
+                      (ci.intern-syntax-id-value cleanup-name)]
                     [logical-id : i64
                       (if (tc_core.tc-name-qualified-id?
                         (lower-name-cache-structural-session (& names))
-                        cleanup-name)
+                        cleanup-name-id)
                         (lower-name-cache-resolve-logical-id
                           (& names)
                           (tc_core.macro-hygiene-global-source-name-id-or
                             (lower-name-cache-structural-session (& names))
-                            cleanup-name
-                            cleanup-name)
+                            cleanup-name-id
+                            cleanup-name-id)
                           -1)
-                        (lower-module-name-key-id-by-id module-id cleanup-name))]
+                        (lower-module-name-key-id-by-id
+                          module-id
+                          cleanup-name-id))]
                     (lower-reach-add-logical
                       (lower-global-shared-view all-functions)
                       state
@@ -74499,7 +74523,7 @@
                   lower-state
                   ctx
                   struct-id
-                  cleanup-name))]
+                  (ci.intern-syntax-id-value cleanup-name)))]
             [(ast.AstStructCleanup.No)
               (tc_core.ResultTcNameId.Err
                 (str_cat.str-cat
@@ -74523,7 +74547,7 @@
                   lower-state
                   ctx
                   enum-id
-                  cleanup-name))]
+                  (ci.intern-syntax-id-value cleanup-name)))]
             [(ast.AstEnumCleanup.No)
               (tc_core.ResultTcNameId.Err
                 (str_cat.str-cat
@@ -74590,7 +74614,7 @@
             (ast.ast-expr-cons
               (lower-struct-cleanup-call-expr
                 pools
-                cleanup-name
+                (ci.intern-syntax-id-value cleanup-name)
                 value-name-id
                 field-name)
               acc))]
@@ -74840,7 +74864,10 @@
             cleanups
             (+ index 1)
             (ast.ast-expr-cons
-              (lower-enum-cleanup-call-expr pools cleanup-name value-name-id)
+              (lower-enum-cleanup-call-expr
+                pools
+                (ci.intern-syntax-id-value cleanup-name)
+                value-name-id)
               acc))]
         [(ast.AstVariantPayloadCleanup.Owned)
           (match (lower-struct-cleanup-id-for-type
@@ -76955,22 +76982,24 @@
                         [(ast.AstEnumCleanup.No) -1]
                         [(ast.AstEnumCleanup.Fn cleanup-name)
                           (let
+                            [cleanup-name-id : i64
+                              (ci.intern-syntax-id-value cleanup-name)]
                             [key-id : i64
                               (lower-module-name-key-id-by-id
                                 logical-module-id
-                                cleanup-name)]
+                                cleanup-name-id)]
                             (lower-name-cache-ir-symbol
                               (lower-global-shared-view decl-name-cache)
                               (lower-name-cache-lookup-logical-id
                                 (& decl-name-cache)
                                 key-id
                                 key-id)
-                              cleanup-name
+                              cleanup-name-id
                               (lower-current-decl-logical-name-cache-id
                                 (lower-global-shared-view decl-name-cache)
                                 (lower-global-shared-view logical-module)
-                                (lower-name-id-text lower-state cleanup-name)
-                                cleanup-name)))])]
+                                (lower-name-id-text lower-state cleanup-name-id)
+                                cleanup-name-id)))])]
                     [enum-id : i64
                       (csym.compiler-symbol-module-key-id-by-id
                         cur-module-id
@@ -77038,22 +77067,24 @@
                         [(ast.AstEnumCleanup.No) -1]
                         [(ast.AstEnumCleanup.Fn cleanup-name)
                           (let
+                            [cleanup-name-id : i64
+                              (ci.intern-syntax-id-value cleanup-name)]
                             [key-id : i64
                               (lower-module-name-key-id-by-id
                                 logical-module-id
-                                cleanup-name)]
+                                cleanup-name-id)]
                             (lower-name-cache-ir-symbol
                               (lower-global-shared-view decl-name-cache)
                               (lower-name-cache-lookup-logical-id
                                 (& decl-name-cache)
                                 key-id
                                 key-id)
-                              cleanup-name
+                              cleanup-name-id
                               (lower-current-decl-logical-name-cache-id
                                 (lower-global-shared-view decl-name-cache)
                                 (lower-global-shared-view logical-module)
-                                (lower-name-id-text lower-state cleanup-name)
-                                cleanup-name)))])]
+                                (lower-name-id-text lower-state cleanup-name-id)
+                                cleanup-name-id)))])]
                     [enum-id : i64
                       (csym.compiler-symbol-module-key-id-by-id
                         cur-module-id
@@ -77116,22 +77147,24 @@
                         [(ast.AstStructCleanup.No) -1]
                         [(ast.AstStructCleanup.Fn cleanup-name)
                           (let
+                            [cleanup-name-id : i64
+                              (ci.intern-syntax-id-value cleanup-name)]
                             [key-id : i64
                               (lower-module-name-key-id-by-id
                                 logical-module-id
-                                cleanup-name)]
+                                cleanup-name-id)]
                             (lower-name-cache-ir-symbol
                               (lower-global-shared-view decl-name-cache)
                               (lower-name-cache-lookup-logical-id
                                 (& decl-name-cache)
                                 key-id
                                 key-id)
-                              cleanup-name
+                              cleanup-name-id
                               (lower-current-decl-logical-name-cache-id
                                 (lower-global-shared-view decl-name-cache)
                                 logical-module
-                                (lower-name-id-text lower-state cleanup-name)
-                                cleanup-name)))])]
+                                (lower-name-id-text lower-state cleanup-name-id)
+                                cleanup-name-id)))])]
                     [struct-ty : ast.AstType
                       (ast.AstType.Struct
                         (csym.compiler-symbol-module-key-id-by-id
@@ -77177,22 +77210,24 @@
                         [(ast.AstStructCleanup.No) -1]
                         [(ast.AstStructCleanup.Fn cleanup-name)
                           (let
+                            [cleanup-name-id : i64
+                              (ci.intern-syntax-id-value cleanup-name)]
                             [key-id : i64
                               (lower-module-name-key-id-by-id
                                 logical-module-id
-                                cleanup-name)]
+                                cleanup-name-id)]
                             (lower-name-cache-ir-symbol
                               (lower-global-shared-view decl-name-cache)
                               (lower-name-cache-lookup-logical-id
                                 (& decl-name-cache)
                                 key-id
                                 key-id)
-                              cleanup-name
+                              cleanup-name-id
                               (lower-current-decl-logical-name-cache-id
                                 (lower-global-shared-view decl-name-cache)
                                 logical-module
-                                (lower-name-id-text lower-state cleanup-name)
-                                cleanup-name)))])]
+                                (lower-name-id-text lower-state cleanup-name-id)
+                                cleanup-name-id)))])]
                     [struct-ty : ast.AstType
                       (ast.ast-ty-struct-args
                         (csym.compiler-symbol-module-key-id-by-id

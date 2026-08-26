@@ -2187,21 +2187,24 @@
   [cleanup : ast.AstStructCleanup]
   [names : tltest_name_map.Map]) : tltest_name_map.Map
   (match cleanup
-    [(ast.AstStructCleanup.Fn name) (tltest-reach-mark-name-id names name)]
+    [(ast.AstStructCleanup.Fn name)
+      (tltest-reach-mark-name-id names (ci.intern-syntax-id-value name))]
     [(ast.AstStructCleanup.No) names]))
 
 (define (tltest-reach-mark-enum-cleanup
   [cleanup : ast.AstEnumCleanup]
   [names : tltest_name_map.Map]) : tltest_name_map.Map
   (match cleanup
-    [(ast.AstEnumCleanup.Fn name) (tltest-reach-mark-name-id names name)]
+    [(ast.AstEnumCleanup.Fn name)
+      (tltest-reach-mark-name-id names (ci.intern-syntax-id-value name))]
     [(ast.AstEnumCleanup.No) names]))
 
 (define (tltest-reach-mark-field-cleanup
   [cleanup : ast.AstFieldCleanup]
   [names : tltest_name_map.Map]) : tltest_name_map.Map
   (match cleanup
-    [(ast.AstFieldCleanup.Fn name) (tltest-reach-mark-name-id names name)]
+    [(ast.AstFieldCleanup.Fn name)
+      (tltest-reach-mark-name-id names (ci.intern-syntax-id-value name))]
     [_ names]))
 
 (define (tltest-reach-mark-field-cleanups
@@ -2230,7 +2233,7 @@
   [names : tltest_name_map.Map]) : tltest_name_map.Map
   (match cleanup
     [(ast.AstVariantPayloadCleanup.Fn name)
-      (tltest-reach-mark-name-id names name)]
+      (tltest-reach-mark-name-id names (ci.intern-syntax-id-value name))]
     [_ names]))
 
 (define (tltest-reach-mark-variant-payload-cleanups

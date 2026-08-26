@@ -1436,69 +1436,59 @@
       (ir.compiler-ir-block-cons
         (ir.compiler-ir-block
           (ir.compiler-ir-label "entry")
-          (ir.compiler-ir-instr-cons
+          (ir.compiler-ir-instr-seq3
             (ir.CompilerIrInstr.Mov
               0
               (ir.CompilerIrValue.I64 7)
               (compiler-reg-i64-ty))
-            (ir.compiler-ir-instr-cons
-              (ir.CompilerIrInstr.Call
-                1
-                (ir.compiler-ir-test-symbol "f")
-                (ir.CompilerIrCallArgs.Nil)
-                (compiler-reg-i64-ty))
-              (ir.compiler-ir-instr-cons
-                (ir.CompilerIrInstr.Branch
-                  (ir.CompilerIrValue.Bool false)
-                  (ir.compiler-ir-label "then")
-                  (ir.compiler-ir-label "else"))
-                ir.CompilerIrInstrList.Nil))))
+            (ir.CompilerIrInstr.Call
+              1
+              (ir.compiler-ir-test-symbol "f")
+              (ir.CompilerIrCallArgs.Nil)
+              (compiler-reg-i64-ty))
+            (ir.CompilerIrInstr.Branch
+              (ir.CompilerIrValue.Bool false)
+              (ir.compiler-ir-label "then")
+              (ir.compiler-ir-label "else"))))
         (ir.compiler-ir-block-cons
           (ir.compiler-ir-block
             (ir.compiler-ir-label "then")
-            (ir.compiler-ir-instr-cons
+            (ir.compiler-ir-instr-seq4
               (ir.CompilerIrInstr.Call
                 2
                 (ir.compiler-ir-test-symbol "g")
                 (ir.CompilerIrCallArgs.Nil)
                 (compiler-reg-i64-ty))
-              (ir.compiler-ir-instr-cons
-                (ir.CompilerIrInstr.Call
-                  6
-                  (ir.compiler-ir-test-symbol "k")
-                  (ir.CompilerIrCallArgs.Nil)
-                  (compiler-reg-i64-ty))
-                (ir.compiler-ir-instr-cons
-                  (ir.CompilerIrInstr.BinOp
-                    3
-                    (ir.CompilerIrBinOp.Mul)
-                    (ir.CompilerIrValue.Var 0)
-                    (ir.CompilerIrValue.Var 0)
-                    (compiler-reg-i64-ty))
-                  (ir.compiler-ir-instr-cons
-                    (ir.CompilerIrInstr.Return
-                      (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 3)))
-                    ir.CompilerIrInstrList.Nil)))))
+              (ir.CompilerIrInstr.Call
+                6
+                (ir.compiler-ir-test-symbol "k")
+                (ir.CompilerIrCallArgs.Nil)
+                (compiler-reg-i64-ty))
+              (ir.CompilerIrInstr.BinOp
+                3
+                (ir.CompilerIrBinOp.Mul)
+                (ir.CompilerIrValue.Var 0)
+                (ir.CompilerIrValue.Var 0)
+                (compiler-reg-i64-ty))
+              (ir.CompilerIrInstr.Return
+                (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 3)))))
           (ir.compiler-ir-block-cons
             (ir.compiler-ir-block
               (ir.compiler-ir-label "else")
-              (ir.compiler-ir-instr-cons
+              (ir.compiler-ir-instr-seq3
                 (ir.CompilerIrInstr.Call
                   4
                   (ir.compiler-ir-test-symbol "h")
                   (ir.CompilerIrCallArgs.Nil)
                   (compiler-reg-i64-ty))
-                (ir.compiler-ir-instr-cons
-                  (ir.CompilerIrInstr.BinOp
-                    5
-                    (ir.CompilerIrBinOp.Add)
-                    (ir.CompilerIrValue.Var 0)
-                    (ir.CompilerIrValue.Var 0)
-                    (compiler-reg-i64-ty))
-                  (ir.compiler-ir-instr-cons
-                    (ir.CompilerIrInstr.Return
-                      (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 5)))
-                    ir.CompilerIrInstrList.Nil))))
+                (ir.CompilerIrInstr.BinOp
+                  5
+                  (ir.CompilerIrBinOp.Add)
+                  (ir.CompilerIrValue.Var 0)
+                  (ir.CompilerIrValue.Var 0)
+                  (compiler-reg-i64-ty))
+                (ir.CompilerIrInstr.Return
+                  (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 5)))))
             ir.CompilerIrBlockList.Nil))))))
 
 (cfg
@@ -1577,61 +1567,51 @@
       (ir.compiler-ir-block-cons
         (ir.compiler-ir-block
           (ir.compiler-ir-label "entry")
-          (ir.compiler-ir-instr-cons
+          (ir.compiler-ir-instr-seq1
             (ir.CompilerIrInstr.Branch
               (ir.CompilerIrValue.Bool false)
               (ir.compiler-ir-label "a")
-              (ir.compiler-ir-label "b"))
-            ir.CompilerIrInstrList.Nil))
+              (ir.compiler-ir-label "b"))))
         (ir.compiler-ir-block-cons
           (ir.compiler-ir-block
             (ir.compiler-ir-label "a")
-            (ir.compiler-ir-instr-cons
+            (ir.compiler-ir-instr-seq3
               (ir.CompilerIrInstr.Mov
                 0
                 (ir.CompilerIrValue.I64 7)
                 (compiler-reg-i64-ty))
-              (ir.compiler-ir-instr-cons
-                (ir.CompilerIrInstr.Call
-                  1
-                  (ir.compiler-ir-test-symbol "f")
-                  (ir.CompilerIrCallArgs.Nil)
-                  (compiler-reg-i64-ty))
-                (ir.compiler-ir-instr-cons
-                  (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "join"))
-                  ir.CompilerIrInstrList.Nil))))
+              (ir.CompilerIrInstr.Call
+                1
+                (ir.compiler-ir-test-symbol "f")
+                (ir.CompilerIrCallArgs.Nil)
+                (compiler-reg-i64-ty))
+              (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "join"))))
           (ir.compiler-ir-block-cons
             (ir.compiler-ir-block
               (ir.compiler-ir-label "b")
-              (ir.compiler-ir-instr-cons
+              (ir.compiler-ir-instr-seq2
                 (ir.CompilerIrInstr.Mov
                   0
                   (ir.CompilerIrValue.I64 8)
                   (compiler-reg-i64-ty))
-                (ir.compiler-ir-instr-cons
-                  (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "join"))
-                  ir.CompilerIrInstrList.Nil)))
+                (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "join"))))
             (ir.compiler-ir-block-cons
               (ir.compiler-ir-block
                 (ir.compiler-ir-label "join")
-                (ir.compiler-ir-instr-cons
+                (ir.compiler-ir-instr-seq3
                   (ir.CompilerIrInstr.Call
                     2
                     (ir.compiler-ir-test-symbol "g")
                     (ir.CompilerIrCallArgs.Nil)
                     (compiler-reg-i64-ty))
-                  (ir.compiler-ir-instr-cons
-                    (ir.CompilerIrInstr.BinOp
-                      3
-                      (ir.CompilerIrBinOp.Mul)
-                      (ir.CompilerIrValue.Var 0)
-                      (ir.CompilerIrValue.Var 0)
-                      (compiler-reg-i64-ty))
-                    (ir.compiler-ir-instr-cons
-                      (ir.CompilerIrInstr.Return
-                        (ir.CompilerIrMaybeValue.Some
-                          (ir.CompilerIrValue.Var 3)))
-                      ir.CompilerIrInstrList.Nil))))
+                  (ir.CompilerIrInstr.BinOp
+                    3
+                    (ir.CompilerIrBinOp.Mul)
+                    (ir.CompilerIrValue.Var 0)
+                    (ir.CompilerIrValue.Var 0)
+                    (compiler-reg-i64-ty))
+                  (ir.CompilerIrInstr.Return
+                    (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 3)))))
               ir.CompilerIrBlockList.Nil)))))))
 
 (cfg
@@ -1692,53 +1672,44 @@
       (ir.compiler-ir-block-cons
         (ir.compiler-ir-block
           (ir.compiler-ir-label "entry")
-          (ir.compiler-ir-instr-cons
+          (ir.compiler-ir-instr-seq3
             (ir.CompilerIrInstr.Mov
               0
               (ir.CompilerIrValue.I64 7)
               (compiler-reg-i64-ty))
-            (ir.compiler-ir-instr-cons
-              (ir.CompilerIrInstr.Call
-                1
-                (ir.compiler-ir-test-symbol "f")
-                (ir.CompilerIrCallArgs.Nil)
-                (compiler-reg-i64-ty))
-              (ir.compiler-ir-instr-cons
-                (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "next"))
-                ir.CompilerIrInstrList.Nil))))
+            (ir.CompilerIrInstr.Call
+              1
+              (ir.compiler-ir-test-symbol "f")
+              (ir.CompilerIrCallArgs.Nil)
+              (compiler-reg-i64-ty))
+            (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "next"))))
         (ir.compiler-ir-block-cons
           (ir.compiler-ir-block
             (ir.compiler-ir-label "next")
-            (ir.compiler-ir-instr-cons
+            (ir.compiler-ir-instr-seq5
               (ir.CompilerIrInstr.BinOp
                 3
                 (ir.CompilerIrBinOp.Mul)
                 (ir.CompilerIrValue.Var 0)
                 (ir.CompilerIrValue.Var 0)
                 (compiler-reg-i64-ty))
-              (ir.compiler-ir-instr-cons
-                (ir.CompilerIrInstr.Mov
-                  0
-                  (ir.CompilerIrValue.I64 9)
-                  (compiler-reg-i64-ty))
-                (ir.compiler-ir-instr-cons
-                  (ir.CompilerIrInstr.Call
-                    2
-                    (ir.compiler-ir-test-symbol "g")
-                    (ir.CompilerIrCallArgs.Nil)
-                    (compiler-reg-i64-ty))
-                  (ir.compiler-ir-instr-cons
-                    (ir.CompilerIrInstr.BinOp
-                      4
-                      (ir.CompilerIrBinOp.Add)
-                      (ir.CompilerIrValue.Var 3)
-                      (ir.CompilerIrValue.Var 0)
-                      (compiler-reg-i64-ty))
-                    (ir.compiler-ir-instr-cons
-                      (ir.CompilerIrInstr.Return
-                        (ir.CompilerIrMaybeValue.Some
-                          (ir.CompilerIrValue.Var 4)))
-                      ir.CompilerIrInstrList.Nil))))))
+              (ir.CompilerIrInstr.Mov
+                0
+                (ir.CompilerIrValue.I64 9)
+                (compiler-reg-i64-ty))
+              (ir.CompilerIrInstr.Call
+                2
+                (ir.compiler-ir-test-symbol "g")
+                (ir.CompilerIrCallArgs.Nil)
+                (compiler-reg-i64-ty))
+              (ir.CompilerIrInstr.BinOp
+                4
+                (ir.CompilerIrBinOp.Add)
+                (ir.CompilerIrValue.Var 3)
+                (ir.CompilerIrValue.Var 0)
+                (compiler-reg-i64-ty))
+              (ir.CompilerIrInstr.Return
+                (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 4)))))
           ir.CompilerIrBlockList.Nil)))))
 
 (cfg
@@ -5880,16 +5851,13 @@
       (ir.compiler-ir-block-cons
         (ir.compiler-ir-block
           (ir.compiler-ir-label "entry")
-          (ir.compiler-ir-instr-cons
+          (ir.compiler-ir-instr-seq3
             (ir.CompilerIrInstr.Mov
               0
               (ir.CompilerIrValue.I64 7)
               (compiler-reg-i64-ty))
-            (ir.compiler-ir-instr-cons
-              (ir.CompilerIrInstr.AddrOf 1 0)
-              (ir.compiler-ir-instr-cons
-                (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
-                ir.CompilerIrInstrList.Nil))))
+            (ir.CompilerIrInstr.AddrOf 1 0)
+            (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)))
         ir.CompilerIrBlockList.Nil))))
 
 (cfg
@@ -5903,7 +5871,7 @@
       (ir.compiler-ir-block-cons
         (ir.compiler-ir-block
           (ir.compiler-ir-label "entry")
-          (ir.compiler-ir-instr-cons
+          (ir.compiler-ir-instr-seq3
             (if load-shape?
               (ir.CompilerIrInstr.Load
                 0
@@ -5915,14 +5883,11 @@
                 (ir.CompilerIrValue.Global
                   (ir.compiler-ir-test-symbol "frozen"))
                 (compiler-reg-i64-ty)))
-            (ir.compiler-ir-instr-cons
-              (ir.CompilerIrInstr.Store
-                (ir.compiler-ir-test-symbol "sink")
-                (ir.CompilerIrValue.Var 0)
-                (compiler-reg-i64-ty))
-              (ir.compiler-ir-instr-cons
-                (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
-                ir.CompilerIrInstrList.Nil))))
+            (ir.CompilerIrInstr.Store
+              (ir.compiler-ir-test-symbol "sink")
+              (ir.CompilerIrValue.Var 0)
+              (compiler-reg-i64-ty))
+            (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)))
         ir.CompilerIrBlockList.Nil))))
 
 ;; W3 step (c). The frozen-global answer is a PROGRAM fact the backend seeds, so

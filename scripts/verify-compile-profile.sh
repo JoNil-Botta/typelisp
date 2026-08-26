@@ -416,13 +416,14 @@ assert_fired_decl_attribution_in() {
     # The unattributed remainder tracks the size of the compiler's own source
     # (the selfhost compile is the probe): the authoritative Windows probe
     # measured 4,148,928 bytes on the #6701 tree and 4,194,720 bytes with the
-    # instruction-count campaign series (#6702), which crossed the original
-    # 4 MiB bound by 416 bytes. 6 MiB keeps the reconciliation exact above
-    # while leaving ordinary source growth room; the pool-family pins remain
-    # the exact boundaries.
-    [ "$_fda_unattributed" -le 6291456 ] || {
+    # instruction-count campaign series (#6702). #6215's source-wide ownership
+    # cutover grows the checked compiler graph by 3,687,018 source bytes and
+    # measures 10,103,968 residual bytes. 12 MiB retains about 2.5 MiB of
+    # ordinary source-growth room; the pool-family pins remain the exact
+    # boundaries.
+    [ "$_fda_unattributed" -le 12582912 ] || {
         show_failure_logs "$_fda_stdout" "$_fda_stderr"
-        fail "fired-declaration unattributed residual exceeds 6 MiB: $_fda_unattributed"
+        fail "fired-declaration unattributed residual exceeds 12 MiB: $_fda_unattributed"
     }
 
     # #5893's batch-8 cadence measured non-output retention at 18.9% of
@@ -1611,8 +1612,12 @@ if [ "$NL_HOST_OS" = windows ]; then
     # and rematerialisation helpers cross the next boundary: the authoritative
     # Windows CI probe measured 3,021,008 used nodes, 3,080,192 capacity, and
     # 98,566,144 physical payload bytes.
+    # #6215's source-wide by-value ownership cutover replaces compatibility
+    # moves throughout the compiler and carries the authoritative Windows
+    # probe to 4,624,578 used nodes, 4,653,056 capacity, and 148,897,792
+    # physical payload bytes.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool macro_expand 47 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool macro_expand 71 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # The three dense optimizer plan containers crossed the checked expression
     # graph into its 33rd segment; the accessor-admission/absorption/fold/sinking
@@ -1660,8 +1665,11 @@ if [ "$NL_HOST_OS" = windows ]; then
     # crosses the next boundary: the direct Windows selfhost probe measured
     # 2,425,185 used nodes, 2,490,368 capacity, and 79,691,776 physical payload
     # bytes.
+    # #6215's ownership cutover moves this boundary to 3,574,471 used nodes,
+    # 3,604,480 capacity, and 115,343,360 physical payload bytes on the
+    # authoritative Windows probe.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool typecheck 38 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool typecheck 55 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # This is the tightest of the four and the one to check first when a series
     # adds compiler source: the copy-call / unsigned-bound-narrowing / chain
@@ -1690,14 +1698,18 @@ if [ "$NL_HOST_OS" = windows ]; then
     # The instruction-gap bank's optimizer, regalloc, and backend test surface
     # crosses that line: its authoritative Windows probe measured 25,643 used
     # nodes, 26 segments, 26,624 capacity, and 638,976 physical payload bytes.
+    # #6215's ownership annotations and view types cross one further boundary:
+    # 27,582 used nodes, 27,648 capacity, and 663,552 physical payload bytes.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_type_pool macro_expand 26 1024 24 \
+        "$SELFHOST_STDERR" ast_type_pool macro_expand 27 1024 24 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # #6828's dense flag-exit/BCE storage declarations cross the next type-pool
     # typecheck boundary: the authoritative Windows probe measured 9,221 used
     # nodes, 10 segments, 10,240 capacity, and 245,760 physical payload bytes.
+    # #6215's checked ownership surface measures 10,378 used nodes and crosses
+    # to 11 segments, 11,264 capacity, and 270,336 physical payload bytes.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_type_pool typecheck 10 1024 24 \
+        "$SELFHOST_STDERR" ast_type_pool typecheck 11 1024 24 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # Each ownership boundary must expose used nodes, logical capacity, and
     # physical segmentation for both pools. Values vary with the source graph;

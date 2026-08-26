@@ -1,0 +1,18 @@
+{
+  "exit": 0,
+  "stderr_exact": "",
+  "message_checks": [
+    {"jsonpath_id": 1, "raw_contains": "\"completionProvider\":{\"resolveProvider\":false}"},
+    {"jsonpath_id": 2, "raw_contains": "\"label\":\"local-value\"", "json_contains": "\"textEdit\":{\"range\":{\"start\":{\"line\":12,\"character\":27},\"end\":{\"line\":12,\"character\":30}},\"newText\":\"local-value\"}"},
+    {"jsonpath_id": 3, "raw_contains": "\"label\":\"local-wrap\"", "raw_not_contains": "\"label\":\"LocalBox\""},
+    {"jsonpath_id": 4, "raw_contains": "\"label\":\"combine\"", "raw_not_contains": "\"label\":\"local-value\""},
+    {"jsonpath_id": 5, "raw_contains": "\"label\":\"LocalBox\"", "raw_not_contains": "\"label\":\"local-value\""},
+    {"jsonpath_id": 6, "raw_contains": "\"label\":\"value\"", "raw_not_contains": "\"label\":\"other\""},
+    {"jsonpath_id": 7, "raw_contains": "\"label\":\"completion\"", "raw_not_contains": "\"label\":\"combine\""},
+    {"jsonpath_id": 8, "json_contains": "\"result\":{\"isIncomplete\":false,\"items\":[]}"},
+    {"jsonpath_id": 9, "json_contains": "\"result\":{\"isIncomplete\":false,\"items\":[]}"},
+    {"jsonpath_id": 10, "raw_contains": "\"label\":\"compose\"", "raw_not_contains": "\"label\":\"combine\""},
+    {"jsonpath_id": 11, "raw_contains": "\"label\":\"local-value\"", "json_contains": "\"textEdit\":{\"range\":{\"start\":{\"line\":15,\"character\":32},\"end\":{\"line\":15,\"character\":35}},\"newText\":\"local-value\"}"},
+    {"jsonpath_id": 12, "json_contains": "\"result\":null", "jsonpath_result": null}
+  ]
+}

@@ -1,0 +1,18 @@
+[
+  {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"rootUri":"${{TMP_URI}}","capabilities":{}}},
+  {"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"${{TMP_URI}}/main.tl","languageId":"typelisp","version":1,"text":"(module app.main)\n(import feature.completion as dep)\n;: Local box documentation.\n(defstruct LocalBox (value i64) (other bool))\n(defmacro (local-wrap [value : Expr]) : Expr value)\n(define (local-fn [box : LocalBox]) : i64\n  box.value)\n(define local-value : i64 1)\n(define qualified-value : i64 (dep.combine 1 2))\n(define macro-value : i64 (local-wrap 1))\n(define box : LocalBox (LocalBox 1 true))\n(define field-value : i64 box.value)\n(define local-result : i64 local-value)\n(define typed : LocalBox box)\n; local-value is suppressed here"}}},
+  {"jsonrpc":"2.0","id":2,"method":"textDocument/completion","params":{"textDocument":{"uri":"${{TMP_URI}}/main.tl"},"position":{"line":12,"character":30}}},
+  {"jsonrpc":"2.0","id":3,"method":"textDocument/completion","params":{"textDocument":{"uri":"${{TMP_URI}}/main.tl"},"position":{"line":9,"character":34}}},
+  {"jsonrpc":"2.0","id":4,"method":"textDocument/completion","params":{"textDocument":{"uri":"${{TMP_URI}}/main.tl"},"position":{"line":8,"character":37}}},
+  {"jsonrpc":"2.0","id":5,"method":"textDocument/completion","params":{"textDocument":{"uri":"${{TMP_URI}}/main.tl"},"position":{"line":13,"character":19}}},
+  {"jsonrpc":"2.0","id":6,"method":"textDocument/completion","params":{"textDocument":{"uri":"${{TMP_URI}}/main.tl"},"position":{"line":11,"character":33}}},
+  {"jsonrpc":"2.0","id":7,"method":"textDocument/completion","params":{"textDocument":{"uri":"${{TMP_URI}}/main.tl"},"position":{"line":1,"character":18}}},
+  {"jsonrpc":"2.0","id":8,"method":"textDocument/completion","params":{"textDocument":{"uri":"${{TMP_URI}}/main.tl"},"position":{"line":14,"character":9}}},
+  {"jsonrpc":"2.0","id":9,"method":"textDocument/completion","params":{"textDocument":{"uri":"${{TMP_URI}}/main.tl"},"position":{"line":99,"character":0}}},
+  {"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"${{TMP_URI}}/feature/completion.tl","languageId":"typelisp","version":2,"text":"(module feature.completion)\n;: Compose documentation.\n(define (compose [left : i64] [right : i64]) : i64 (+ left right))\n"}}},
+  {"jsonrpc":"2.0","id":10,"method":"textDocument/completion","params":{"textDocument":{"uri":"${{TMP_URI}}/main.tl"},"position":{"line":8,"character":37}}},
+  {"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"${{TMP_URI}}/main.tl","version":2},"contentChanges":[{"text":"(module app.main)\n(import feature.completion as dep)\n;: Local box documentation.\n(defstruct LocalBox (value i64) (other bool))\n(defmacro (local-wrap [value : Expr]) : Expr value)\n(define (local-fn [box : LocalBox]) : i64\n  box.value)\n(define local-value : i64 1)\n(define qualified-value : i64 (dep.combine 1 2))\n(define macro-value : i64 (local-wrap 1))\n(define box : LocalBox (LocalBox 1 true))\n(define field-value : i64 box.value)\n(define local-result : i64 local-value)\n(define typed : LocalBox box)\n; local-value is suppressed here\n(define incomplete-result : i64 loc"}]}},
+  {"jsonrpc":"2.0","id":11,"method":"textDocument/completion","params":{"textDocument":{"uri":"${{TMP_URI}}/main.tl"},"position":{"line":15,"character":35}}},
+  {"jsonrpc":"2.0","id":12,"method":"shutdown","params":null},
+  {"jsonrpc":"2.0","method":"exit"}
+]

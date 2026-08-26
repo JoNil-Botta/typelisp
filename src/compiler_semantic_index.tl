@@ -1219,7 +1219,11 @@
   [index : (& index CompilerSemanticSourceIndex)]
   [path : String]
   [byte-offset : i64]) : CompilerSemanticMaybeVisibleBindingQuery
-  (if (or (<= index.owner-arena 0) (not index.complete) (< byte-offset 0))
+  ;; Recovery indexes retain only identities and visibility boundaries proven
+  ;; against the current buffer.  They are therefore safe for completion even
+  ;; though consumers that require a fully checked program still distinguish
+  ;; them through `compiler-semantic-source-index-complete?`.
+  (if (or (<= index.owner-arena 0) (< byte-offset 0))
     CompilerSemanticMaybeVisibleBindingQuery.None
     (let
       [normalized : String (cload.compiler-load-normalize-path path)]
@@ -1399,7 +1403,6 @@
   [query : CompilerSemanticVisibleBindingQuery]) : bool
   (and
     (> index.owner-arena 0)
-    index.complete
     (>= query.path-index 0)
     (< query.path-index index.path-len)
     (>= query.module-index 0)
@@ -6953,7 +6956,10 @@
               (box
                 (compiler-semantic-binding-vec-new
                   (* (ast.ast-decl-list-len (& decls)) 2)))
-              complete
+              ;; Recovery walks already omit locals whose checked facts are
+              ;; unavailable. Retain the remaining proven visibility graph so
+              ;; immutable tooling can serve the current partial snapshot.
+              true
               -1
               -1
               (box
@@ -7041,11 +7047,9 @@
                   (if module-changed
                     (set!
                       walk-state.module-index
-                      (if complete
-                        (compiler-semantic-module-index-ensure!
-                          walk-state
-                          module-id)
-                        -1))
+                      (compiler-semantic-module-index-ensure!
+                        walk-state
+                        module-id))
                     unit)
                   (if path-changed
                     (set!
@@ -7318,14 +7322,9 @@
                 (array.make-array String top-capacity)]
               [raw-scope-events : CompilerSemanticScopeEventVec
                 (__tl-box-place visibility-storage.scope-events)]
-              [scope-event-count : i64
-                (if complete
-                  raw-scope-events.len
-                  0)]
+              [scope-event-count : i64 raw-scope-events.len]
               [module-event-count : i64
-                (if complete
-                  (__tl-box-place visibility-storage.module-event-len)
-                  0)]
+                (__tl-box-place visibility-storage.module-event-len)]
               [scope-events : (__tl_dyn-array CompilerSemanticScopeEvent)
                 (array.make-array CompilerSemanticScopeEvent scope-event-count)]
               [module-events : (__tl_dyn-array CompilerSemanticModuleEvent)
@@ -7334,32 +7333,31 @@
                   module-event-count)]
               [top-candidate-count : i64 0]
               (begin
+                (compiler-semantic-bucket-scope-events!
+                  paths-out
+                  path-count
+                  raw-scope-events.items
+                  scope-event-count
+                  scope-events)
+                (compiler-semantic-bucket-module-events!
+                  paths-out
+                  path-count
+                  module-events-out
+                  module-event-count
+                  module-events)
                 (if complete
-                  (begin
-                    (compiler-semantic-bucket-scope-events!
-                      paths-out
-                      path-count
-                      raw-scope-events.items
-                      scope-event-count
-                      scope-events)
-                    (compiler-semantic-bucket-module-events!
-                      paths-out
-                      path-count
-                      module-events-out
-                      module-event-count
-                      module-events)
-                    (set!
-                      top-candidate-count
-                      (compiler-semantic-build-top-candidates!
-                        ctx
-                        modules-out
-                        module-count
-                        decl-record-indices
-                        (__tl-project-field
-                          (__tl-box-place walk-state.records)
-                          items)
-                        top-candidates
-                        top-labels)))
+                  (set!
+                    top-candidate-count
+                    (compiler-semantic-build-top-candidates!
+                      ctx
+                      modules-out
+                      module-count
+                      decl-record-indices
+                      (__tl-project-field
+                        (__tl-box-place walk-state.records)
+                        items)
+                      top-candidates
+                      top-labels))
                   unit)
                 (let
                   [top-visible-bindings : (__tl_dyn-array
@@ -7402,18 +7400,13 @@
                           module-event-count
                           scope-events
                           scope-event-count
-                          (if complete
-                            (__tl-box-place
-                              visibility-storage.scope-region-count)
-                            0)
+                          (__tl-box-place visibility-storage.scope-region-count)
                           (__tl-project-field
                             (__tl-box-place walk-state.bindings)
                             items)
-                          (if complete
-                            (__tl-project-field
-                              (__tl-box-place walk-state.bindings)
-                              len)
-                            0)
+                          (__tl-project-field
+                            (__tl-box-place walk-state.bindings)
+                            len)
                           top-candidates
                           top-labels
                           top-visible-bindings
@@ -7855,6 +7848,18 @@
         left.symbol.declaration-ordinal)
       (csym.compiler-registry-handle-owner-index
         right.symbol.declaration-ordinal))))
+
+;; Public, identity-only member lookup for immutable tooling consumers.  A
+;; field or enum-member handle encodes its owning struct/enum declaration;
+;; callers never need access to the compiler registry that produced it.
+(define (compiler-semantic-member-symbol-owned-by?
+  [owner : (& owner CompilerSemanticSymbolId)]
+  [member : (& member CompilerSemanticSymbolId)]) : bool
+  (and
+    (= owner.module-id member.module-id)
+    (=
+      owner.declaration-ordinal
+      (csym.compiler-registry-handle-owner-index member.declaration-ordinal))))
 
 (define (compiler-semantic-rename-kind-eq?
   [left : (& left CompilerSemanticSymbolKind)]
@@ -10400,8 +10405,14 @@
                     (match (compiler-semantic-source-index-query
                       (& partial)
                       path
-                      0)
-                      [(CompilerSemanticMaybeVisibleBindingQuery.None) true]
+                      partial-same-local.span.end-byte)
+                      [(CompilerSemanticMaybeVisibleBindingQuery.Some query)
+                        (>
+                          (compiler-semantic-source-index-visible-binding-count
+                            (& partial)
+                            query
+                            (compiler-semantic-binding-namespace-value-mask))
+                          0)]
                       [_ false])
                     (>= partial-good-index 0)
                     (>= partial-broken-index 0)

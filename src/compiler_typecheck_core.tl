@@ -209,6 +209,51 @@
 (defstruct TcMacroCallSiteState
   (address i64))
 
+;; Semantic indexing runs after body-local checker facts have been released.
+;; Retain only the successful let binding's final type and the scalar inputs
+;; needed to reproduce its lexical environment transition. The full identity
+;; deliberately includes the flattened declaration and enclosing let body: AST
+;; expression ids may be shared by generated/contextual nodes.
+(defstruct TcCheckedLetBindingTransition
+  (arena-owner-kind i64)
+  ;; -1 means that the initializer did not produce an arena phase token.
+  (phase-owner-id i64)
+  (raw-c-fnptr bool))
+
+(defstruct TcCheckedLetBindingFact
+  (declaration-ordinal i64)
+  (body-id i64)
+  (binding-ordinal i64)
+  (name-id i64)
+  (init-id i64)
+  (binding-ty ast.AstType)
+  (transition TcCheckedLetBindingTransition)
+  ;; Previous fact with the same composite hash. Full identity is compared on
+  ;; lookup, so hash collisions cannot alias bindings.
+  (hash-next i64))
+
+(defenum TcMaybeCheckedLetBindingFact
+  (Hit ast.AstType TcCheckedLetBindingTransition)
+  (Missing)
+  (Inconsistent))
+
+(defstruct TcCheckedLetBindingFactStateData
+  (enabled bool)
+  (current-declaration-ordinal i64)
+  (facts (__tl_dyn-array TcCheckedLetBindingFact))
+  (capacity i64)
+  (len i64)
+  (by-hash tc_i64_i64_map.Map)
+  ;; Facts can contain aggregate AstType payloads. Keep the whole generation in
+  ;; a separately resettable arena rather than leaking boxes into the job arena.
+  (payload-arena i64)
+  (return-arena i64)
+  (owner-arena i64)
+  (inconsistent bool))
+
+(defstruct TcCheckedLetBindingFactState
+  (address i64))
+
 (defstruct TcScratchArenaStateData
   ;; Reusable arenas are isolated per typecheck job. Each entry records the
   ;; caller arena it must restore if teardown is requested while scratch is
@@ -321,6 +366,10 @@
   ;; the two live words in separate registers made high-frequency wrappers
   ;; spill and rebuild both words on every call.
   (abi-pad i64))
+
+(defstruct TcCheckedLetBindingApplied
+  (env TcTypeEnv)
+  (transition TcCheckedLetBindingTransition))
 
 (defenum TcTypeEnvView
   (Nil)
@@ -474,6 +523,7 @@
   (thread-name-kind TcThreadNameKindState)
   (inlay-hints TcInlayHintState)
   (macro-call-sites TcMacroCallSiteState)
+  (checked-let-binding-facts TcCheckedLetBindingFactState)
   (scratch-arenas TcScratchArenaState)
   (unused-unsafe TcUnusedUnsafeState)
   (type-resolution-cache TcTypeResolutionCacheState)
@@ -593,6 +643,33 @@
           (unsafe
             (ptr->int
               (ptr-cast (__tl_array-data cell) : (Ptr TcMacroCallSiteStateData))))
+          : i64)))))
+
+(define (tc-checked-let-binding-fact-state-new) : TcCheckedLetBindingFactState
+  (let
+    [cell : (__tl_dyn-array TcCheckedLetBindingFactStateData)
+      (array.make-array TcCheckedLetBindingFactStateData 1)]
+    (begin
+      (set!
+        (array-ref cell 0)
+        (TcCheckedLetBindingFactStateData
+          false
+          -1
+          (array.make-array TcCheckedLetBindingFact 0)
+          0
+          0
+          (tc_i64_i64_map.with-capacity 1)
+          0
+          0
+          (arena.tl_arena_current)
+          false))
+      (TcCheckedLetBindingFactState
+        (cast
+          (unsafe
+            (ptr->int
+              (ptr-cast
+                (__tl_array-data cell)
+                : (Ptr TcCheckedLetBindingFactStateData))))
           : i64)))))
 
 (define (tc-source-key-cache-state-new) : TcSourceKeyCacheState
@@ -716,6 +793,7 @@
           (tc-thread-name-kind-state-new)
           (tc-inlay-hint-state-new)
           (tc-macro-call-site-state-new)
+          (tc-checked-let-binding-fact-state-new)
           (tc-scratch-arena-state-new)
           (tc-unused-unsafe-state-new)
           (tc-type-resolution-cache-state-new)
@@ -828,6 +906,12 @@
 (define (tc-job-state-macro-call-sites [state : TcJobState]) : TcMacroCallSiteState
   (tc-job-state-field state macro-call-sites TcMacroCallSiteState))
 
+(define (tc-job-state-checked-let-binding-facts [state : TcJobState]) : TcCheckedLetBindingFactState
+  (tc-job-state-field
+    state
+    checked-let-binding-facts
+    TcCheckedLetBindingFactState))
+
 (define (tc-job-state-scratch-arenas [state : TcJobState]) : TcScratchArenaState
   (__tl-project-field (tc-job-state-data state) scratch-arenas))
 
@@ -922,6 +1006,452 @@
     (ptr-write!
       (int->ptr (cast state.address : u64) : (MutPtr TcMacroCallSiteStateData))
       data)))
+
+(define (tc-checked-let-binding-fact-state-data
+  [state : TcCheckedLetBindingFactState]) : TcCheckedLetBindingFactStateData
+  (unsafe
+    (ptr-read
+      (int->ptr
+        (cast state.address : u64)
+        : (Ptr TcCheckedLetBindingFactStateData)))))
+
+(define (tc-checked-let-binding-fact-state-data-set!
+  [state : TcCheckedLetBindingFactState]
+  [data : TcCheckedLetBindingFactStateData]) : unit
+  (unsafe
+    (ptr-write!
+      (int->ptr
+        (cast state.address : u64)
+        : (MutPtr TcCheckedLetBindingFactStateData))
+      data)))
+
+(define (tc-checked-let-binding-key-hash
+  [declaration-ordinal : i64]
+  [body-id : i64]
+  [binding-ordinal : i64]
+  [name-id : i64]
+  [init-id : i64]) : i64
+  (hash.combine
+    (hash.combine
+      (hash.combine
+        (hash.combine (hash.i64 declaration-ordinal) (hash.i64 body-id))
+        (hash.i64 binding-ordinal))
+      (hash.i64 name-id))
+    (hash.i64 init-id)))
+
+(define (tc-checked-let-binding-fact-key-eq?
+  [fact : TcCheckedLetBindingFact]
+  [declaration-ordinal : i64]
+  [body-id : i64]
+  [binding-ordinal : i64]
+  [name-id : i64]
+  [init-id : i64]) : bool
+  (and
+    (= fact.declaration-ordinal declaration-ordinal)
+    (= fact.body-id body-id)
+    (= fact.binding-ordinal binding-ordinal)
+    (= fact.name-id name-id)
+    (= fact.init-id init-id)))
+
+(define (tc-checked-let-binding-transition-eq?
+  [left : TcCheckedLetBindingTransition]
+  [right : TcCheckedLetBindingTransition]) : bool
+  (and
+    (= left.arena-owner-kind right.arena-owner-kind)
+    (= left.phase-owner-id right.phase-owner-id)
+    (= left.raw-c-fnptr right.raw-c-fnptr)))
+
+(define (tc-checked-let-binding-fact-state-release-storage!
+  [state : TcCheckedLetBindingFactState]) : unit
+  (let
+    [data : TcCheckedLetBindingFactStateData
+      (tc-checked-let-binding-fact-state-data state)]
+    [payload : i64 data.payload-arena]
+    (if (= payload 0)
+      (begin
+        (set! data.enabled false)
+        (set! data.current-declaration-ordinal -1)
+        (set! data.len 0)
+        (set! data.inconsistent false)
+        (tc-checked-let-binding-fact-state-data-set! state data))
+      (begin
+        (if (= (arena.tl_arena_current) payload)
+          (unsafe
+            (arena.tl_arena_set data.return-arena))
+          unit)
+        ;; Detach every payload-owned carrier before destroying the generation.
+        (in-arena
+          (arena.Arena data.owner-arena)
+          (begin
+            (set! data.facts (array.make-array TcCheckedLetBindingFact 0))
+            (set! data.by-hash (tc_i64_i64_map.with-capacity 1))))
+        (set! data.enabled false)
+        (set! data.current-declaration-ordinal -1)
+        (set! data.capacity 0)
+        (set! data.len 0)
+        (set! data.payload-arena 0)
+        (set! data.return-arena 0)
+        (set! data.inconsistent false)
+        (tc-checked-let-binding-fact-state-data-set! state data)
+        (unsafe
+          (arena.tl_arena_destroy payload))))))
+
+(define (tc-checked-let-binding-facts-begin!
+  [state : TcCheckedLetBindingFactState]) : unit
+  (begin
+    (tc-checked-let-binding-fact-state-release-storage! state)
+    (let
+      [return-arena : i64 (arena.tl_arena_current)]
+      [payload : i64 (arena.tl_arena_make)]
+      (in-arena
+        (arena.Arena payload)
+        (let
+          [data : TcCheckedLetBindingFactStateData
+            (tc-checked-let-binding-fact-state-data state)]
+          (begin
+            (set! data.enabled true)
+            (set! data.current-declaration-ordinal -1)
+            (set! data.facts (array.make-array TcCheckedLetBindingFact 64))
+            (set! data.capacity 64)
+            (set! data.len 0)
+            (set! data.by-hash (tc_i64_i64_map.with-capacity 128))
+            (set! data.payload-arena payload)
+            (set! data.return-arena return-arena)
+            (set! data.inconsistent false)
+            (tc-checked-let-binding-fact-state-data-set! state data)))))))
+
+(define (tc-checked-let-binding-facts-finish!
+  [state : TcCheckedLetBindingFactState]) : unit
+  (tc-checked-let-binding-fact-state-release-storage! state))
+
+(define (tc-checked-let-binding-facts-enabled?
+  [state : TcCheckedLetBindingFactState]) : bool
+  (__tl-project-field (tc-checked-let-binding-fact-state-data state) enabled))
+
+(define (tc-checked-let-binding-facts-set-current-declaration!
+  [state : TcCheckedLetBindingFactState]
+  [ordinal : i64]) : unit
+  (let
+    [data : TcCheckedLetBindingFactStateData
+      (tc-checked-let-binding-fact-state-data state)]
+    (if data.enabled
+      (begin
+        (set! data.current-declaration-ordinal ordinal)
+        (tc-checked-let-binding-fact-state-data-set! state data))
+      unit)))
+
+(define (tc-checked-let-binding-fact-grow!
+  [state : TcCheckedLetBindingFactState]) : unit
+  (let
+    [data : TcCheckedLetBindingFactStateData
+      (tc-checked-let-binding-fact-state-data state)]
+    [old : (__tl_dyn-array TcCheckedLetBindingFact) data.facts]
+    [next-capacity : i64
+      (if (< data.capacity 1)
+        64
+        (* data.capacity 2))]
+    (in-arena
+      (arena.Arena data.payload-arena)
+      (let
+        [next : (__tl_dyn-array TcCheckedLetBindingFact)
+          (array.make-array TcCheckedLetBindingFact next-capacity)]
+        [index : i64 0]
+        (begin
+          (while (< index data.len)
+            (begin
+              (set! (array-ref next index) (array-ref old index))
+              (set! index (+ index 1))))
+          (set! data.facts next)
+          (set! data.capacity next-capacity)
+          (tc-checked-let-binding-fact-state-data-set! state data))))))
+
+(define (tc-checked-let-binding-fact-record!
+  [state : TcCheckedLetBindingFactState]
+  [body-id : i64]
+  [binding-ordinal : i64]
+  [name-id : i64]
+  [init-id : i64]
+  [binding-ty : ast.AstType]
+  [transition : TcCheckedLetBindingTransition]) : unit
+  (let
+    [data : TcCheckedLetBindingFactStateData
+      (tc-checked-let-binding-fact-state-data state)]
+    [declaration-ordinal : i64 data.current-declaration-ordinal]
+    (if (and data.enabled (>= declaration-ordinal 0))
+      (let
+        [key-hash : i64
+          (tc-checked-let-binding-key-hash
+            declaration-ordinal
+            body-id
+            binding-ordinal
+            name-id
+            init-id)]
+        [head : i64 (tc_i64_i64_map.get-value-or (& data.by-hash) key-hash -1)]
+        [cursor : i64 head]
+        (begin
+          (while (>= cursor 0)
+            (let
+              [fact : TcCheckedLetBindingFact
+                (tc-global-array-element-shared-view data.facts cursor)]
+              (if (tc-checked-let-binding-fact-key-eq?
+                (tc-global-shared-view fact)
+                declaration-ordinal
+                body-id
+                binding-ordinal
+                name-id
+                init-id)
+                (begin
+                  ;; Repeated contextual checks are allowed only when they prove
+                  ;; the same final binding and transition.
+                  (if (and
+                    (tc-type-eq fact.binding-ty binding-ty)
+                    (tc-checked-let-binding-transition-eq?
+                      fact.transition
+                      transition))
+                    unit
+                    (begin
+                      (set! data.inconsistent true)
+                      (tc-checked-let-binding-fact-state-data-set! state data)))
+                  (return unit))
+                (set! cursor fact.hash-next))))
+          (if (>= data.len data.capacity)
+            (tc-checked-let-binding-fact-grow! state)
+            unit)
+          (let
+            [ready : TcCheckedLetBindingFactStateData
+              (tc-checked-let-binding-fact-state-data state)]
+            [slot : i64 ready.len]
+            [persisted : ast.AstType
+              (in-arena
+                (arena.Arena ready.payload-arena)
+                (ast.ty-node-persist binding-ty))]
+            (begin
+              (set!
+                (array-ref ready.facts slot)
+                (TcCheckedLetBindingFact
+                  declaration-ordinal
+                  body-id
+                  binding-ordinal
+                  name-id
+                  init-id
+                  persisted
+                  transition
+                  head))
+              ;; Hashmap growth allocates in the active arena. Force it into the
+              ;; retained generation rather than the function/decl scratch that
+              ;; happened to check this binding.
+              (in-arena
+                (arena.Arena ready.payload-arena)
+                (tc_i64_i64_map.insert-ref! (&mut ready.by-hash) key-hash slot))
+              (set! ready.len (+ slot 1))
+              (tc-checked-let-binding-fact-state-data-set! state ready)))))
+      unit)))
+
+(define (tc-checked-let-binding-fact-lookup
+  [state : TcCheckedLetBindingFactState]
+  [declaration-ordinal : i64]
+  [body-id : i64]
+  [binding-ordinal : i64]
+  [name-id : i64]
+  [init-id : i64]) : TcMaybeCheckedLetBindingFact
+  (let
+    [data : TcCheckedLetBindingFactStateData
+      (tc-checked-let-binding-fact-state-data state)]
+    (if (or (not data.enabled) data.inconsistent)
+      (if data.inconsistent
+        (TcMaybeCheckedLetBindingFact.Inconsistent)
+        (TcMaybeCheckedLetBindingFact.Missing))
+      (let
+        [key-hash : i64
+          (tc-checked-let-binding-key-hash
+            declaration-ordinal
+            body-id
+            binding-ordinal
+            name-id
+            init-id)]
+        [cursor : i64
+          (tc_i64_i64_map.get-value-or (& data.by-hash) key-hash -1)]
+        (begin
+          (while (>= cursor 0)
+            (let
+              [fact : TcCheckedLetBindingFact
+                (tc-global-array-element-shared-view data.facts cursor)]
+              (if (tc-checked-let-binding-fact-key-eq?
+                (tc-global-shared-view fact)
+                declaration-ordinal
+                body-id
+                binding-ordinal
+                name-id
+                init-id)
+                (return
+                  (TcMaybeCheckedLetBindingFact.Hit
+                    fact.binding-ty
+                    fact.transition))
+                (set! cursor fact.hash-next))))
+          (TcMaybeCheckedLetBindingFact.Missing))))))
+
+(define (tc-checked-let-binding-fact-count
+  [state : TcCheckedLetBindingFactState]) : i64
+  (__tl-project-field (tc-checked-let-binding-fact-state-data state) len))
+
+(define (tc-checked-let-binding-facts-self-test) : bool
+  (let
+    [job-a : TcJobState (tc-job-state-new)]
+    [job-b : TcJobState (tc-job-state-new)]
+    [job-c : TcJobState (tc-job-state-new)]
+    [a : TcCheckedLetBindingFactState
+      (tc-job-state-checked-let-binding-facts job-a)]
+    [b : TcCheckedLetBindingFactState
+      (tc-job-state-checked-let-binding-facts job-b)]
+    [c : TcCheckedLetBindingFactState
+      (tc-job-state-checked-let-binding-facts job-c)]
+    [ordinary : TcCheckedLetBindingTransition
+      (TcCheckedLetBindingTransition 1 -1 false)]
+    [special : TcCheckedLetBindingTransition
+      (TcCheckedLetBindingTransition 2 91 true)]
+    (begin
+      (tc-checked-let-binding-facts-begin! a)
+      (tc-checked-let-binding-facts-begin! b)
+      (tc-checked-let-binding-facts-begin! c)
+      (tc-checked-let-binding-facts-set-current-declaration! a 7)
+      ;; Reused init ids and same-spelled bindings remain distinct by enclosing
+      ;; body and ordinal. Re-recording the same proof does not grow the store.
+      (tc-checked-let-binding-fact-record!
+        a
+        11
+        0
+        13
+        17
+        (ast.AstType.I64)
+        ordinary)
+      (tc-checked-let-binding-fact-record!
+        a
+        12
+        0
+        13
+        17
+        (ast.AstType.Bool)
+        special)
+      (tc-checked-let-binding-fact-record!
+        a
+        11
+        0
+        13
+        17
+        (ast.AstType.I64)
+        ordinary)
+      (tc-checked-let-binding-facts-set-current-declaration! b 7)
+      (tc-checked-let-binding-fact-record!
+        b
+        11
+        0
+        13
+        17
+        (ast.AstType.I64)
+        ordinary)
+      ;; A conflicting contextual proof fails closed without altering job A.
+      (tc-checked-let-binding-fact-record!
+        b
+        11
+        0
+        13
+        17
+        (ast.AstType.Bool)
+        ordinary)
+      ;; Grow both retained containers while an unrelated scratch arena is
+      ;; active, then destroy that scratch. Every fact and hashmap slot must
+      ;; remain owned by the fact generation and storage stays one entry per
+      ;; successful binding.
+      (tc-checked-let-binding-facts-set-current-declaration! c 19)
+      (let
+        [scratch : i64 (arena.tl_arena_make)]
+        (begin
+          (in-arena
+            (arena.Arena scratch)
+            (let
+              [index : i64 0]
+              (while (< index 257)
+                (begin
+                  (tc-checked-let-binding-fact-record!
+                    c
+                    (+ 100 index)
+                    index
+                    (+ 200 index)
+                    (+ 300 index)
+                    (ast.AstType.I64)
+                    ordinary)
+                  (set! index (+ index 1))))))
+          (unsafe
+            (arena.tl_arena_destroy scratch))))
+      (let
+        [initial : bool
+          (and
+            (= (tc-checked-let-binding-fact-count a) 2)
+            (= (tc-checked-let-binding-fact-count b) 1)
+            (match (tc-checked-let-binding-fact-lookup a 7 11 0 13 17)
+              [(TcMaybeCheckedLetBindingFact.Hit (ast.AstType.I64) transition)
+                (tc-checked-let-binding-transition-eq? transition ordinary)]
+              [_ false])
+            (match (tc-checked-let-binding-fact-lookup a 7 12 0 13 17)
+              [(TcMaybeCheckedLetBindingFact.Hit (ast.AstType.Bool) transition)
+                (tc-checked-let-binding-transition-eq? transition special)]
+              [_ false])
+            (match (tc-checked-let-binding-fact-lookup a 8 11 0 13 17)
+              [(TcMaybeCheckedLetBindingFact.Missing) true]
+              [_ false])
+            (match (tc-checked-let-binding-fact-lookup b 7 11 0 13 17)
+              [(TcMaybeCheckedLetBindingFact.Inconsistent) true]
+              [_ false])
+            (= (tc-checked-let-binding-fact-count c) 257)
+            (match (tc-checked-let-binding-fact-lookup c 19 356 256 456 556)
+              [(TcMaybeCheckedLetBindingFact.Hit (ast.AstType.I64) transition)
+                (tc-checked-let-binding-transition-eq? transition ordinary)]
+              [_ false]))]
+        (begin
+          (tc-checked-let-binding-facts-finish! a)
+          (tc-checked-let-binding-facts-finish! b)
+          (tc-checked-let-binding-facts-finish! c)
+          (let
+            [cleared : bool
+              (and
+                (= (tc-checked-let-binding-fact-count a) 0)
+                (not (tc-checked-let-binding-facts-enabled? a))
+                (match (tc-checked-let-binding-fact-lookup a 7 11 0 13 17)
+                  [(TcMaybeCheckedLetBindingFact.Missing) true]
+                  [_ false]))]
+            (begin
+              ;; A second generation must not see the first generation's keys.
+              (tc-checked-let-binding-facts-begin! a)
+              (tc-checked-let-binding-facts-set-current-declaration! a 8)
+              (tc-checked-let-binding-fact-record!
+                a
+                11
+                0
+                13
+                17
+                (ast.AstType.Bool)
+                ordinary)
+              (let
+                [reused : bool
+                  (and
+                    (match (tc-checked-let-binding-fact-lookup a 7 11 0 13 17)
+                      [(TcMaybeCheckedLetBindingFact.Missing) true]
+                      [_ false])
+                    (match (tc-checked-let-binding-fact-lookup a 8 11 0 13 17)
+                      [(TcMaybeCheckedLetBindingFact.Hit (ast.AstType.Bool) _)
+                        true]
+                      [_ false]))]
+                (begin
+                  (tc-checked-let-binding-facts-finish! a)
+                  (and initial cleared reused))))))))))
+
+(cfg
+  test
+  (test
+    tc-checked-let-binding-facts-identity-reset
+    (unless
+      (tc-checked-let-binding-facts-self-test)
+      (io.panic "typecheck: checked let-binding fact identity/reset failed"))))
 
 (define (tc-macro-call-site-state-enabled? [state : TcMacroCallSiteState]) : bool
   (__tl-project-field (tc-macro-call-site-state-data state) enabled))
@@ -1404,7 +1934,8 @@
     (tc-macro-call-site-field-for-state state index 11 -1)))
 
 ;; Internal macro/typecheck pass boundaries reset file lookup carriers but must
-;; not tear down a caller-owned inlay generation active for the whole request.
+;; not tear down caller-owned inlay or retained-let-fact generations active for
+;; the whole request. The explicit compiler file reset releases both.
 (define (tc-job-state-reset-derived-caches! [state : TcJobState]) : unit
   (begin
     (tc-source-key-cache-state-reset! (tc-job-state-source-key-cache state))
@@ -37663,6 +38194,7 @@
               (tc-global-shared-view ctx)
               env
               (tc-global-shared-view bindings)
+              body-box
               (tc-global-shared-view body))
               [(ResultTcEnv.Ok next-env)
                 (match (tc-expr-with-expected-or-actual-id
@@ -41173,6 +41705,7 @@
               (tc-global-shared-view ctx)
               env
               (tc-global-shared-view bindings)
+              body-box
               (tc-global-shared-view body))
               [(ResultTcEnv.Ok next-env)
                 (tc-expr-c-abi-fnptr? ctx next-env body)]
@@ -41613,18 +42146,13 @@
         (TcMaybeNameId.No))]
     [_ (TcMaybeNameId.No)]))
 
-(define (tc-bind-arena-owner-if-needed-id
+(define (tc-bind-arena-owner-from-kind-id
   [ctx : TcContext]
   [env : TcTypeEnv]
   [name : i64]
   [ty : ast.AstType]
-  [init : ast.AstExpr]) : TcTypeEnv
+  [kind : i64]) : TcTypeEnv
   (let
-    [kind : i64
-      (tc-arena-owner-call-kind
-        (tc-global-shared-view ctx)
-        (tc-global-shared-view env)
-        (tc-global-shared-view init))]
     [brand-env : TcTypeEnv
       (match (tc-type-strip-region
         (tc-resolve-type (tc-global-shared-view ctx) (tc-global-shared-view ty)))
@@ -41661,6 +42189,22 @@
       [(= kind (tc-arena-owner-kind-ordinary))
         (tc-bind-ordinary-arena-owner brand-env name)]
       [else brand-env])))
+
+(define (tc-bind-arena-owner-if-needed-id
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : i64]
+  [ty : ast.AstType]
+  [init : ast.AstExpr]) : TcTypeEnv
+  (tc-bind-arena-owner-from-kind-id
+    (tc-global-shared-view ctx)
+    (tc-global-shared-view env)
+    name
+    (tc-global-shared-view ty)
+    (tc-arena-owner-call-kind
+      (tc-global-shared-view ctx)
+      (tc-global-shared-view env)
+      (tc-global-shared-view init))))
 
 (define (tc-bind-arena-phase-if-needed-id
   [ctx : TcContext]
@@ -41709,6 +42253,87 @@
         (tc-global-shared-view init)))
       (tc-bind-c-abi-fnptr-id phase-env name ty)
       (tc-bind-id phase-env name ty))))
+
+(define (tc-bind-checked-let-transition-id
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : i64]
+  [ty : ast.AstType]
+  [transition : TcCheckedLetBindingTransition]) : TcTypeEnv
+  (let
+    [owner-env : TcTypeEnv
+      (if (or
+        (tc-type-eq
+          (tc-type-strip-region (tc-global-shared-view ty))
+          (ast.AstType.I64))
+        (tc-arena-type? (tc-global-shared-view ctx) (tc-global-shared-view ty)))
+        (tc-bind-arena-owner-from-kind-id
+          (tc-global-shared-view ctx)
+          (tc-global-shared-view env)
+          name
+          (tc-global-shared-view ty)
+          transition.arena-owner-kind)
+        (tc-global-shared-view env))]
+    [phase-env : TcTypeEnv
+      (if (>= transition.phase-owner-id 0)
+        (tc-bind-arena-phase-token owner-env name transition.phase-owner-id)
+        owner-env)]
+    (if transition.raw-c-fnptr
+      (tc-bind-c-abi-fnptr-id phase-env name (tc-global-shared-view ty))
+      (tc-bind-id phase-env name (tc-global-shared-view ty)))))
+
+(define (tc-checked-let-binding-apply
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : i64]
+  [ty : ast.AstType]
+  [init : ast.AstExpr]) : TcCheckedLetBindingApplied
+  (let
+    [owner-kind : i64
+      (tc-arena-owner-call-kind
+        (tc-global-shared-view ctx)
+        (tc-global-shared-view env)
+        (tc-global-shared-view init))]
+    [owner-env : TcTypeEnv
+      (if (or
+        (tc-type-eq
+          (tc-type-strip-region (tc-global-shared-view ty))
+          (ast.AstType.I64))
+        (tc-arena-type? (tc-global-shared-view ctx) (tc-global-shared-view ty)))
+        (tc-bind-arena-owner-from-kind-id
+          (tc-global-shared-view ctx)
+          (tc-global-shared-view env)
+          name
+          (tc-global-shared-view ty)
+          owner-kind)
+        (tc-global-shared-view env))]
+    [phase-owner : TcMaybeNameId
+      (tc-phase-call-owner
+        (tc-global-shared-view ctx)
+        (tc-global-shared-view owner-env)
+        (tc-global-shared-view init))]
+    [phase-owner-id : i64
+      (match phase-owner
+        [(TcMaybeNameId.Some owner-id) owner-id]
+        [(TcMaybeNameId.No) -1])]
+    [phase-env : TcTypeEnv
+      (if (>= phase-owner-id 0)
+        (tc-bind-arena-phase-token owner-env name phase-owner-id)
+        owner-env)]
+    [raw-c-fnptr : bool
+      (and
+        (tc-c-abi-fnptr-type? (tc-global-shared-view ty))
+        (tc-expr-c-abi-fnptr?
+          (tc-global-shared-view ctx)
+          (tc-global-shared-view env)
+          (tc-global-shared-view init)))]
+    [transition : TcCheckedLetBindingTransition
+      (TcCheckedLetBindingTransition owner-kind phase-owner-id raw-c-fnptr)]
+    (TcCheckedLetBindingApplied
+      (if raw-c-fnptr
+        (tc-bind-c-abi-fnptr-id phase-env name (tc-global-shared-view ty))
+        (tc-bind-id phase-env name (tc-global-shared-view ty)))
+      transition)))
 
 (define (tc-raw-c-fnptr-flow-ok
   [ctx : TcContext]
@@ -47261,6 +47886,16 @@
         (tc-type-render ty))]
     [_ unit]))
 
+(cfg
+  test
+  (define tc-let-binding-init-type-call-count : i64
+    0))
+
+(cfg
+  test
+  (define (tc-let-binding-init-type-call-count-for-test) : i64
+    tc-let-binding-init-type-call-count))
+
 (define (tc-let-binding-init-type-at
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -47270,42 +47905,98 @@
   [bindings : (& bindings ast.AstLetBindingList)]
   [index : i64]
   [body : ast.AstExpr]) : ResultTcType
-  (let
-    [expr-bases : i64 (tc-context-expr-bases (tc-global-shared-view ctx))]
-    [init : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases init-id)]
-    [ref-capturing-lambda : bool
-      (tc-ref-capturing-lambda-init?
-        expr-bases
-        env
-        (tc-global-shared-view init))]
-    [copyable-ref-capturing-lambda : bool
-      (and
-        ref-capturing-lambda
-        (not
-          (tc-move-only-capturing-lambda-init?
-            (tc-global-shared-view ctx)
-            env
-            (tc-global-shared-view init))))]
-    [move-only-capturing-lambda : bool
-      (tc-move-only-capturing-lambda-init?
-        (tc-global-shared-view ctx)
-        env
-        (tc-global-shared-view init))]
-    [consuming-capturing-lambda : bool
-      (tc-consuming-capturing-lambda-init?
-        (tc-global-shared-view ctx)
-        env
-        (tc-global-shared-view init))]
-    [capability-capturing-lambda : bool
-      (or
-        ref-capturing-lambda
-        move-only-capturing-lambda
-        consuming-capturing-lambda)]
-    (match maybe-ty
-      [(ast.AstMaybeType.Some want)
-        (let
-          [resolved-want : ast.AstType
-            (tc-resolve-type (tc-global-shared-view ctx) want)]
+  (begin
+    (cfg
+      test
+      (set!
+        tc-let-binding-init-type-call-count
+        (+ tc-let-binding-init-type-call-count 1))
+      unit)
+    (let
+      [expr-bases : i64 (tc-context-expr-bases (tc-global-shared-view ctx))]
+      [init : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases init-id)]
+      [ref-capturing-lambda : bool
+        (tc-ref-capturing-lambda-init?
+          expr-bases
+          env
+          (tc-global-shared-view init))]
+      [copyable-ref-capturing-lambda : bool
+        (and
+          ref-capturing-lambda
+          (not
+            (tc-move-only-capturing-lambda-init?
+              (tc-global-shared-view ctx)
+              env
+              (tc-global-shared-view init))))]
+      [move-only-capturing-lambda : bool
+        (tc-move-only-capturing-lambda-init?
+          (tc-global-shared-view ctx)
+          env
+          (tc-global-shared-view init))]
+      [consuming-capturing-lambda : bool
+        (tc-consuming-capturing-lambda-init?
+          (tc-global-shared-view ctx)
+          env
+          (tc-global-shared-view init))]
+      [capability-capturing-lambda : bool
+        (or
+          ref-capturing-lambda
+          move-only-capturing-lambda
+          consuming-capturing-lambda)]
+      (match maybe-ty
+        [(ast.AstMaybeType.Some want)
+          (let
+            [resolved-want : ast.AstType
+              (tc-resolve-type (tc-global-shared-view ctx) want)]
+            (if capability-capturing-lambda
+              (match (cond
+                [ref-capturing-lambda
+                  (tc-let-binding-ref-closure-scope-ok-at
+                    expr-bases
+                    bindings
+                    index
+                    body
+                    name
+                    copyable-ref-capturing-lambda)]
+                [consuming-capturing-lambda
+                  (tc-let-binding-capability-closure-scope-ok-at
+                    expr-bases
+                    bindings
+                    index
+                    body
+                    name)]
+                [else
+                  (tc-let-binding-move-closure-scope-ok-at
+                    expr-bases
+                    bindings
+                    index
+                    body
+                    name)])
+                [(ResultTcUnit.Ok)
+                  (match (ast.ast-expr-unspan init)
+                    [(ast.AstExpr.Lambda lambda-box)
+                      (match (__tl-box-place lambda-box)
+                        [(ast.AstLambda.Lambda params maybe-ret lambda-body-box)
+                          (let
+                            [lambda-body : ast.AstExpr
+                              (tc-context-expr-get
+                                (tc-global-shared-view ctx)
+                                lambda-body-box)]
+                            (tc-lambda-expr-allow-ref-captures
+                              ctx
+                              env
+                              params
+                              maybe-ret
+                              lambda-body))])]
+                    [_
+                      (tc-expr-with-expected-or-actual-id
+                        ctx
+                        env
+                        init-id
+                        resolved-want)])]
+                [(ResultTcUnit.Err message) (ResultTcType.Err message)])
+              (tc-expr-with-expected-or-actual-id ctx env init-id resolved-want)))]
+        [(ast.AstMaybeType.No)
           (if capability-capturing-lambda
             (match (cond
               [ref-capturing-lambda
@@ -47346,70 +48037,23 @@
                             params
                             maybe-ret
                             lambda-body))])]
-                  [_
-                    (tc-expr-with-expected-or-actual-id
-                      ctx
-                      env
-                      init-id
-                      resolved-want)])]
+                  [_ (tc-expr-id (tc-global-shared-view ctx) env init-id)])]
               [(ResultTcUnit.Err message) (ResultTcType.Err message)])
-            (tc-expr-with-expected-or-actual-id ctx env init-id resolved-want)))]
-      [(ast.AstMaybeType.No)
-        (if capability-capturing-lambda
-          (match (cond
-            [ref-capturing-lambda
-              (tc-let-binding-ref-closure-scope-ok-at
-                expr-bases
-                bindings
-                index
-                body
-                name
-                copyable-ref-capturing-lambda)]
-            [consuming-capturing-lambda
-              (tc-let-binding-capability-closure-scope-ok-at
-                expr-bases
-                bindings
-                index
-                body
-                name)]
-            [else
-              (tc-let-binding-move-closure-scope-ok-at
-                expr-bases
-                bindings
-                index
-                body
-                name)])
-            [(ResultTcUnit.Ok)
-              (match (ast.ast-expr-unspan init)
-                [(ast.AstExpr.Lambda lambda-box)
-                  (match (__tl-box-place lambda-box)
-                    [(ast.AstLambda.Lambda params maybe-ret lambda-body-box)
-                      (let
-                        [lambda-body : ast.AstExpr
-                          (tc-context-expr-get
-                            (tc-global-shared-view ctx)
-                            lambda-body-box)]
-                        (tc-lambda-expr-allow-ref-captures
-                          ctx
-                          env
-                          params
-                          maybe-ret
-                          lambda-body))])]
-                [_ (tc-expr-id (tc-global-shared-view ctx) env init-id)])]
-            [(ResultTcUnit.Err message) (ResultTcType.Err message)])
-          (tc-expr-id (tc-global-shared-view ctx) env init-id))])))
+            (tc-expr-id (tc-global-shared-view ctx) env init-id))]))))
 
 (define (tc-let-bindings-for-body
   [ctx : TcContext]
   [env : TcTypeEnv]
   [bindings : ast.AstLetBindingList]
+  [body-id : i64]
   [body : ast.AstExpr]) : ResultTcEnv
-  (tc-let-bindings-for-body-at ctx env (& bindings) body 0))
+  (tc-let-bindings-for-body-at ctx env (& bindings) body-id body 0))
 
 (define (tc-let-bindings-for-body-at
   [ctx : TcContext]
   [env : TcTypeEnv]
   [bindings : (& bindings ast.AstLetBindingList)]
+  [body-id : i64]
   [body : ast.AstExpr]
   [index : i64]) : ResultTcEnv
   (if (>= index (ast.ast-let-binding-list-len bindings))
@@ -47471,23 +48115,52 @@
                                   env
                                   (tc-global-shared-view init-ty))
                                   [(ResultTcUnit.Ok)
-                                    (tc-let-bindings-for-body-at
-                                      (tc-global-shared-view ctx)
-                                      (let
-                                        [binding-ty : ast.AstType
-                                          (if (tc-type-contains-any-region
-                                            (tc-global-shared-view init-ty))
-                                            init-ty
-                                            resolved-want)]
-                                        (tc-bind-c-abi-fnptr-if-needed-id
-                                          ctx
-                                          env
-                                          name
-                                          binding-ty
-                                          init))
-                                      bindings
-                                      body
-                                      (+ index 1))]
+                                    (let
+                                      [binding-ty : ast.AstType
+                                        (if (tc-type-contains-any-region
+                                          (tc-global-shared-view init-ty))
+                                          init-ty
+                                          resolved-want)]
+                                      [facts : TcCheckedLetBindingFactState
+                                        (tc-job-state-checked-let-binding-facts
+                                          (tc-context-job-state
+                                            (tc-global-shared-view ctx)))]
+                                      [next-env : TcTypeEnv
+                                        (if (tc-checked-let-binding-facts-enabled?
+                                          facts)
+                                          (let
+                                            [applied : TcCheckedLetBindingApplied
+                                              (tc-checked-let-binding-apply
+                                                (tc-global-shared-view ctx)
+                                                (tc-global-shared-view env)
+                                                name
+                                                (tc-global-shared-view
+                                                  binding-ty)
+                                                (tc-global-shared-view init))]
+                                            (begin
+                                              (tc-checked-let-binding-fact-record!
+                                                (tc-global-shared-view facts)
+                                                body-id
+                                                index
+                                                name
+                                                init-box
+                                                (tc-global-shared-view
+                                                  binding-ty)
+                                                applied.transition)
+                                              applied.env))
+                                          (tc-bind-c-abi-fnptr-if-needed-id
+                                            (tc-global-shared-view ctx)
+                                            (tc-global-shared-view env)
+                                            name
+                                            (tc-global-shared-view binding-ty)
+                                            (tc-global-shared-view init)))]
+                                      (tc-let-bindings-for-body-at
+                                        ctx
+                                        next-env
+                                        bindings
+                                        body-id
+                                        body
+                                        (+ index 1)))]
                                   [(ResultTcUnit.Err message)
                                     (ResultTcEnv.Err message)])]
                               [(ResultTcUnit.Err message)
@@ -47504,17 +48177,46 @@
                             env
                             (tc-global-shared-view init-ty))
                             [(ResultTcUnit.Ok)
-                              (tc-let-bindings-for-body-at
-                                (tc-global-shared-view ctx)
-                                (tc-bind-c-abi-fnptr-if-needed-id
+                              (let
+                                [binding-ty : ast.AstType init-ty]
+                                [facts : TcCheckedLetBindingFactState
+                                  (tc-job-state-checked-let-binding-facts
+                                    (tc-context-job-state
+                                      (tc-global-shared-view ctx)))]
+                                [next-env : TcTypeEnv
+                                  (if (tc-checked-let-binding-facts-enabled?
+                                    facts)
+                                    (let
+                                      [applied : TcCheckedLetBindingApplied
+                                        (tc-checked-let-binding-apply
+                                          (tc-global-shared-view ctx)
+                                          (tc-global-shared-view env)
+                                          name
+                                          (tc-global-shared-view binding-ty)
+                                          (tc-global-shared-view init))]
+                                      (begin
+                                        (tc-checked-let-binding-fact-record!
+                                          (tc-global-shared-view facts)
+                                          body-id
+                                          index
+                                          name
+                                          init-box
+                                          (tc-global-shared-view binding-ty)
+                                          applied.transition)
+                                        applied.env))
+                                    (tc-bind-c-abi-fnptr-if-needed-id
+                                      (tc-global-shared-view ctx)
+                                      (tc-global-shared-view env)
+                                      name
+                                      (tc-global-shared-view binding-ty)
+                                      (tc-global-shared-view init)))]
+                                (tc-let-bindings-for-body-at
                                   ctx
-                                  env
-                                  name
-                                  init-ty
-                                  init)
-                                bindings
-                                body
-                                (+ index 1))]
+                                  next-env
+                                  bindings
+                                  body-id
+                                  body
+                                  (+ index 1)))]
                             [(ResultTcUnit.Err message)
                               (ResultTcEnv.Err message)])]
                         [(ResultTcUnit.Err message) (ResultTcEnv.Err message)])])))]
@@ -66824,6 +67526,7 @@
               (tc-global-shared-view ctx)
               env
               (tc-global-shared-view bindings)
+              body-box
               (tc-global-shared-view body))
               [(ResultTcEnv.Ok next-env)
                 (match (tc-expr-id
@@ -126110,67 +126813,73 @@
   [stdlib-roots : svec.Vec]
   [cache-scope : String]) : ResultCompilerTypecheck
   ;; A cached prefix contains only its summary, not semantic observations from
-  ;; the declarations it skipped. Clone-root collection therefore takes the
-  ;; ordinary declaration walk even when the interactive prefix cache is on.
-  (if (surface_facts.surface-typecheck-facts-active?)
-    (match (if (surface_facts.surface-typecheck-facts-composite-active?)
-      (tc-dependency-surface-prefix-candidate
-        (tc-global-shared-view load-state)
-        (tc-global-shared-view decls)
-        (tc-global-shared-view paths)
-        (tc-global-shared-view cache-scope)
-        (cload.compiler-load-session-state-dependency-surface-provenance-count
-          (tc-global-shared-view load-state)))
-      (tc-prefix-candidate
-        (tc-global-shared-view decls)
-        (tc-global-shared-view paths)
-        (tc-global-shared-view stdlib-roots)
-        (tc-global-shared-view cache-scope)))
-      [(TcPrefixCandidate.Some _ count module module-id)
-        (let
-          [rebased : bool
-            (if (surface_facts.surface-typecheck-facts-composite-active?)
-              (match (tc-summary-decl-prefix
-                (tc-global-shared-view decls)
-                count)
-                [(CompilerTypecheckSummary values functions externs)
-                  (surface_facts.surface-typecheck-facts-rebase-composite-typecheck-prefix!
-                    count
-                    values
-                    functions
-                    externs)])
-              true)]
-          [facts : surface_facts.SurfaceTypecheckFacts
-            (surface_facts.surface-typecheck-facts-current)]
-          (if (and rebased (= count facts.prefix-decl-count))
-            (begin
+  ;; the declarations it skipped. Retained let facts and clone-root collection
+  ;; therefore take the ordinary declaration walk even when an interactive
+  ;; prefix cache is on.
+  (cond
+    [(tc-checked-let-binding-facts-enabled?
+        (tc-job-state-checked-let-binding-facts
+          (tc-context-job-state (tc-global-shared-view ctx))))
+      (tc-check-decls-with-paths-cold ctx top-env decls paths summary)]
+    [(surface_facts.surface-typecheck-facts-active?)
+      (match (if (surface_facts.surface-typecheck-facts-composite-active?)
+        (tc-dependency-surface-prefix-candidate
+          (tc-global-shared-view load-state)
+          (tc-global-shared-view decls)
+          (tc-global-shared-view paths)
+          (tc-global-shared-view cache-scope)
+          (cload.compiler-load-session-state-dependency-surface-provenance-count
+            (tc-global-shared-view load-state)))
+        (tc-prefix-candidate
+          (tc-global-shared-view decls)
+          (tc-global-shared-view paths)
+          (tc-global-shared-view stdlib-roots)
+          (tc-global-shared-view cache-scope)))
+        [(TcPrefixCandidate.Some _ count module module-id)
+          (let
+            [rebased : bool
               (if (surface_facts.surface-typecheck-facts-composite-active?)
-                (cload.compiler-load-session-state-dependency-surface-note-typecheck-skip!
-                  (tc-global-shared-view load-state)
+                (match (tc-summary-decl-prefix
+                  (tc-global-shared-view decls)
                   count)
-                unit)
-              (tc-check-decls-with-surface-prefix-hit
-                (tc-global-shared-view ctx)
-                (tc-global-shared-view top-env)
-                (tc-global-shared-view decls)
-                (tc-global-shared-view paths)
-                count
-                module
-                module-id
-                facts))
-            (begin
-              (surface_facts.surface-typecheck-facts-clear!)
-              (tc-check-decls-with-paths-cold ctx top-env decls paths summary))))]
-      [(TcPrefixCandidate.No)
-        (begin
-          (surface_facts.surface-typecheck-facts-clear!)
-          (tc-check-decls-with-paths-cold ctx top-env decls paths summary))])
-    (if (and prefix-cache-active (not tc-clone-root-collection-active))
+                  [(CompilerTypecheckSummary values functions externs)
+                    (surface_facts.surface-typecheck-facts-rebase-composite-typecheck-prefix!
+                      count
+                      values
+                      functions
+                      externs)])
+                true)]
+            [facts : surface_facts.SurfaceTypecheckFacts
+              (surface_facts.surface-typecheck-facts-current)]
+            (if (and rebased (= count facts.prefix-decl-count))
+              (begin
+                (if (surface_facts.surface-typecheck-facts-composite-active?)
+                  (cload.compiler-load-session-state-dependency-surface-note-typecheck-skip!
+                    load-state
+                    count)
+                  unit)
+                (tc-check-decls-with-surface-prefix-hit
+                  ctx
+                  top-env
+                  decls
+                  paths
+                  count
+                  module
+                  module-id
+                  facts))
+              (begin
+                (surface_facts.surface-typecheck-facts-clear!)
+                (tc-check-decls-with-paths-cold ctx top-env decls paths summary))))]
+        [(TcPrefixCandidate.No)
+          (begin
+            (surface_facts.surface-typecheck-facts-clear!)
+            (tc-check-decls-with-paths-cold ctx top-env decls paths summary))])]
+    [(and prefix-cache-active (not tc-clone-root-collection-active))
       (match (tc-prefix-candidate
         (tc-global-shared-view decls)
         (tc-global-shared-view paths)
         (tc-global-shared-view stdlib-roots)
-        cache-scope)
+        (tc-global-shared-view cache-scope))
         [(TcPrefixCandidate.Some key count module module-id)
           (match (tc-prefix-snapshot-cache-lookup-for-state
             prefix-cache
@@ -126202,8 +126911,8 @@
                 module
                 module-id)])]
         [(TcPrefixCandidate.No)
-          (tc-check-decls-with-paths-cold ctx top-env decls paths summary)])
-      (tc-check-decls-with-paths-cold ctx top-env decls paths summary))))
+          (tc-check-decls-with-paths-cold ctx top-env decls paths summary)])]
+    [else (tc-check-decls-with-paths-cold ctx top-env decls paths summary)]))
 
 (define (tc-typecheck-diag-with-maybe-origin-and-path
   [origin : parser.CompilerParseMaybeDeclSpan]
@@ -126342,6 +127051,22 @@
             (set! (array-ref next len) name)
             (TcPoisonNameList next (+ len 1)))))]))
 
+;; Generated clone-root helper declarations are already proven by the clone
+;; pipeline and deliberately bypass the ordinary declaration checker. Tooling
+;; uses the same predicate to avoid demanding checked body facts that cannot
+;; exist for this lane.
+(define (tc-decl-unchecked-clone? [path : String] [decl : ast.AstDecl]) : bool
+  (and
+    (string.eq path "")
+    (match decl
+      [(ast.AstDecl.DefFn _ name _ _ _ _)
+        (let
+          [name-text : String (tc-env-key-name-text name)]
+          (and
+            (>= (string.string-length name-text) 6)
+            (string.eq (string.substring name-text 0 6) "clone$")))]
+      [_ false])))
+
 (define (tc-check-decls-with-paths-in-module
   [ctx : TcContext]
   [top-env : TcTypeEnv]
@@ -126467,6 +127192,11 @@
                 (tc-clone-root-collection-select-decl!
                   (tc-global-shared-view decl)
                   cur-module-id)]
+              [_select-checked-let-declaration : unit
+                (tc-checked-let-binding-facts-set-current-declaration!
+                  (tc-job-state-checked-let-binding-facts
+                    (tc-context-job-state (tc-global-shared-view ctx)))
+                  (- rest.offset 1))]
               (match (tc-global-shared-view decl)
                 [(ast.AstDecl.Module next-module)
                   (begin
@@ -126546,18 +127276,9 @@
                               (box (tc-global-shared-view diagnostics))))
                           (set! done true))]))]
                 [_
-                  (if (and
-                    (string.eq decl-path "")
-                    (match (tc-global-shared-view decl)
-                      [(ast.AstDecl.DefFn decl-meta name _ _ _ _)
-                        (let
-                          [name-text : String (tc-env-key-name-text name)]
-                          (and
-                            (>= (string.string-length name-text) 6)
-                            (string.eq
-                              (string.substring name-text 0 6)
-                              "clone$")))]
-                      [_ false]))
+                  (if (tc-decl-unchecked-clone?
+                    (tc-global-shared-view decl-path)
+                    (tc-global-shared-view decl))
                     (begin
                       (set! cur-decls rest)
                       (set! cur-paths rest-paths)
@@ -126971,6 +127692,8 @@
   (let
     [macro-state : TcMacroState (tc-job-state-macro-state job-state)]
     (begin
+      (tc-checked-let-binding-facts-finish!
+        (tc-job-state-checked-let-binding-facts job-state))
       (surface_facts.surface-typecheck-facts-clear!)
       (cfg
         (any

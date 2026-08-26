@@ -37843,6 +37843,116 @@
                 true-label
                 false-label))))])))
 
+;; The single-predecessor form of the compare fuse. `phi_cmp_fold` above leaves
+;; exactly this shape behind: a merge whose literal edges have all been threaded
+;; to their decided target, one predecessor left, and that predecessor's last
+;; instruction the compare whose result the merge phi forwards to the branch.
+;; Moving the branch onto the predecessor puts the load, its cast, the compare
+;; and the branch in one block -- the contiguous run the backend's M6 cluster
+;; folds into `cmpb $K,(mem); jcc` -- and leaves the merge with no predecessor
+;; for the `cfg` cleanup to retire.
+;;
+;; Unlike the two-input form above, the merge's own edges into the branch
+;; targets are TAKEN OVER by the predecessor rather than kept beside it, so
+;; successor phis do have to be repaired: the input each one keys on the branch
+;; block moves to the predecessor's label. That is the same repair (and the same
+;; helper) the all-constant form performs, which is why this form does not need
+;; its targets to be phi-free. The predecessor ends in a `Jump` to the merge and
+;; so has no other successor, which is what makes the target's existing inputs
+;; free of its label.
+(defenum OptBoolBranchOnlyInput
+  (No)
+  (Some ir.CompilerIrValue i64))
+
+(define (opt-bool-branch-only-phi-input [inputs : ir.CompilerIrPhiInputList]) : OptBoolBranchOnlyInput
+  (match (ir.compiler-ir-phi-input-list-force-cons
+    (compiler-opt-global-shared-view inputs))
+    [(ir.CompilerIrPhiInputList.Cons value label rest)
+      (match (ir.compiler-ir-phi-input-list-force-cons
+        (compiler-opt-box-shared-view rest))
+        [(ir.CompilerIrPhiInputList.Nil)
+          (OptBoolBranchOnlyInput.Some value label)]
+        [_ (OptBoolBranchOnlyInput.No)])]
+    [_ (OptBoolBranchOnlyInput.No)]))
+
+(define (opt-bool-branch-fuse-single-compare-phi!
+  [type-segment-bases : i64]
+  [blocks : ir.CompilerIrBlockList]
+  [index : OptCfgIndex]
+  [uses : (__tl_dyn-array i64)]
+  [merge-label : i64]
+  [branch-label : i64]
+  [dst : i64]
+  [inputs : ir.CompilerIrPhiInputList]
+  [ty : ast.AstType]
+  [cond-var : i64]
+  [true-label : i64]
+  [false-label : i64]) : bool
+  (if (or
+    (not (= dst cond-var))
+    (not (= (opt-bool-branch-use-count uses dst) 1))
+    (not (opt-type-eq type-segment-bases ty (ast.AstType.Bool)))
+    (= merge-label true-label)
+    (= merge-label false-label))
+    false
+    (match (opt-bool-branch-only-phi-input inputs)
+      [(OptBoolBranchOnlyInput.No) false]
+      [(OptBoolBranchOnlyInput.Some value pred-label)
+        (let
+          [preds : OptLabelSet (opt-cfg-index-predecessors index merge-label)]
+          [new-preds : OptLabelSet (opt-label-add (OptLabelSet.Nil) pred-label)]
+          [same-target? : bool (= true-label false-label)]
+          (if (or
+            (not
+              (= (opt-label-count (compiler-opt-global-shared-view preds)) 1))
+            (not
+              (opt-label-contains
+                (compiler-opt-global-shared-view preds)
+                pred-label))
+            (= pred-label merge-label)
+            (= pred-label branch-label)
+            (not
+              (opt-bool-branch-target-phis-repairable?
+                (compiler-opt-global-shared-view blocks)
+                true-label
+                branch-label
+                (compiler-opt-global-shared-view new-preds)))
+            (if same-target?
+              false
+              (not
+                (opt-bool-branch-target-phis-repairable?
+                  (compiler-opt-global-shared-view blocks)
+                  false-label
+                  branch-label
+                  (compiler-opt-global-shared-view new-preds)))))
+            false
+            (match (opt-bool-branch-pred-rewrite
+              (compiler-opt-global-shared-view blocks)
+              merge-label
+              value
+              pred-label
+              true-label
+              false-label)
+              [(OptBoolBranchPredRewrite.No) false]
+              [(OptBoolBranchPredRewrite.Some pred-instrs pos term compare?)
+                (if (not compare?)
+                  false
+                  (begin
+                    (ir.compiler-ir-instr-seq-set! pred-instrs pos term)
+                    (opt-bool-branch-repair-target-phis!
+                      (compiler-opt-global-shared-view blocks)
+                      true-label
+                      branch-label
+                      (compiler-opt-global-shared-view new-preds))
+                    (if same-target?
+                      unit
+                      (opt-bool-branch-repair-target-phis!
+                        (compiler-opt-global-shared-view blocks)
+                        false-label
+                        branch-label
+                        (compiler-opt-global-shared-view new-preds)))
+                    true))])))])))
+
 (define (opt-bool-branch-fuse-phi!
   [type-segment-bases : i64]
   [blocks : ir.CompilerIrBlockList]
@@ -37870,18 +37980,32 @@
     true-label
     false-label)
     true
-    (opt-bool-branch-fuse-compare-phi!
+    (if (opt-bool-branch-fuse-compare-phi!
       type-segment-bases
-      blocks
+      (compiler-opt-global-shared-view blocks)
       (compiler-opt-global-shared-view index)
-      uses
+      (compiler-opt-global-shared-view uses)
       merge-label
       dst
-      inputs
-      ty
+      (compiler-opt-global-shared-view inputs)
+      (compiler-opt-global-shared-view ty)
       cond-var
       true-label
-      false-label)))
+      false-label)
+      true
+      (opt-bool-branch-fuse-single-compare-phi!
+        type-segment-bases
+        blocks
+        index
+        uses
+        merge-label
+        branch-label
+        dst
+        inputs
+        ty
+        cond-var
+        true-label
+        false-label))))
 
 ;; A merge phi and the branch that consumes it do not have to share a block. The
 ;; front end routinely emits the boolean merge and the `if` it feeds as two
@@ -38353,6 +38477,778 @@
                     (match (opt-verify-function-with-context
                       (compiler-opt-global-shared-view next)
                       next-context)
+                      [(ResultCompilerOptimizeVerify.Ok)
+                        (OptFunctionPassResult.Result next true)]
+                      [(ResultCompilerOptimizeVerify.Err _)
+                        (OptFunctionPassResult.Result func false)]))
+                  (OptFunctionPassResult.Result func false))])]))]))
+
+;; --- compare-of-sentinel-phi fold (phi_cmp_fold) ----------------------------
+;;
+;; A checked accessor that returns a sentinel joins its two arms in a merge
+;; block and compares the joined value there. `peephole_lines`' inlined
+;; `pl-byte-at` is the shape verbatim (target/diag/pl_tl.ir):
+;;
+;;   if_then.6:  %46 = gep %41, %4 : char ; %47 = load %46 : char
+;;               %38 = cast %47 : char to i64 ; jump cont
+;;   if_else.7:  jump cont
+;;   cont:       %5 = phi [%38, if_then.6], [-1, if_else.7] : i64
+;;               %7 = eq %5, 37 : i64 ; branch %7, if_then.2, if_else.3
+;;
+;; Every reader of the loaded byte is behind the phi, so the backend's M6-C fold
+;; (`Load ; Cast ; compare ; Branch` as one contiguous run, compiler_backend.tl
+;; :53703) never sees its shape: the byte is widened into a register, the
+;; sentinel arm materializes `-1` into the same home, and the compare runs on
+;; the join -- 11 instructions per site where the same source in C is 7. The
+;; sentinel edge also walks through the merge to reach a branch whose verdict
+;; `-1` already decided.
+;;
+;; The rewrite is LLVM's `foldOpIntoPhi` (InstructionCombining.cpp:1935-2110)
+;; followed by SimplifyCFG's `foldCondBranchOnValueKnownInPredecessor`
+;; (SimplifyCFG.cpp:3619): evaluate the compare on every literal edge at compile
+;; time and thread that predecessor straight to the branch target it picked;
+;; move the compare itself onto the one edge that carries a variable, so it ends
+;; up adjacent to the load and its cast. `cont` above becomes
+;;
+;;   if_then.6:  ... %38 = cast %47 ; %5 = eq %38, 37 : i64 ; jump cont
+;;   if_else.7:  jump if_else.3
+;;   cont:       %7 = phi [%5, if_then.6] : bool ; branch %7, if_then.2,
+;;               if_else.3
+;;
+;; and `opt-bool-branch-fuse-compare-phi!` right below (the bool_branch pass runs
+;; in the same pipeline slot, immediately after this one) folds that single-input
+;; merge into `if_then.6`'s own `branch %5`, which is the contiguous run M6-C
+;; folds to `cmpb $0x25,(%r10,%r11,1); jne`.
+;;
+;; Nothing is duplicated: the compare MOVES (the loads and the casts stay where
+;; they are), and the literal edges only have their existing jump retargeted with
+;; the successor-phi repair `opt-thread-apply-edge!` already implements.
+;;
+;; The rails:
+;;   - the merge is exactly `[phi, compare, branch]`, the compare's only operands
+;;     are the phi and a literal, and the phi and the compare each have exactly
+;;     one use (the compare and the branch). So no value defined in the merge is
+;;     live in a successor and the repair never has to forward a merge-defined
+;;     value -- the same property thread_branch's single-phi rule buys there.
+;;   - the phi carries exactly one Var input, from a predecessor that ends in an
+;;     unconditional `Jump` to the merge (LLVM's `SeenNonSimplifiedInVal` budget
+;;     of one, InstructionCombining.cpp:2035), and at least one literal input,
+;;     each of which the constant folder decides.
+;;   - EVERY predecessor edge of the merge runs forward in reverse postorder.
+;;     A back edge into the merge would make it a loop header, whose phi
+;;     JumpThreading refuses outright (JumpThreading.cpp:753); a back edge on the
+;;     variable input would move the compare across the latch. Retreating edges
+;;     are a superset of back edges in any RPO numbering, so refusing them
+;;     refuses both without a loop analysis of its own.
+;;   - the phi type is integer/char/bool and equals the compare's operand type,
+;;     so a literal input is folded at exactly the width the compare reads.
+;;
+;; A literal edge whose predecessor does not end in a plain `Jump` (or whose
+;; target phis the repair cannot serve) keeps its input: it stays in the merge as
+;; a folded `true`/`false`, which is strictly better than the integer it was and
+;; is what thread_branch consumes downstream.
+;; The one Var input's predecessor label and value, plus the number of literal
+;; inputs beside it.
+(defenum OptPhiCmpFoldInputs
+  (No)
+  (Some i64 ir.CompilerIrValue i64))
+
+(defenum OptPhiCmpFoldRewrite
+  (No)
+  (Some ir.CompilerIrBlockList))
+
+(define (opt-phi-cmp-fold-label-rpo [index : OptCfgIndex] [label : i64]) : i64
+  (match (opt-cfg-index-id (compiler-opt-global-shared-view index) label)
+    [(option_i64.Some id)
+      (opt-cfg-index-rpo-num (compiler-opt-global-shared-view index) id)]
+    [(option_i64.None) (- 0 1)]))
+
+;; Every predecessor reaches the merge on a forward edge. An unreachable
+;; predecessor has no RPO number and answers no, which is the conservative side.
+(define (opt-phi-cmp-fold-preds-forward?
+  [index : OptCfgIndex]
+  [preds : OptLabelSet]
+  [merge-rpo : i64]) : bool
+  (match (compiler-opt-global-shared-view preds)
+    [(OptLabelSet.Nil) true]
+    [(OptLabelSet.Dense _ _)
+      (let
+        [rpo : i64
+          (opt-phi-cmp-fold-label-rpo
+            (compiler-opt-global-shared-view index)
+            (opt-label-ref (compiler-opt-global-shared-view preds) 0))]
+        (and
+          (>= rpo 0)
+          (< rpo merge-rpo)
+          (opt-phi-cmp-fold-preds-forward?
+            (compiler-opt-global-shared-view index)
+            (opt-label-tail (compiler-opt-global-shared-view preds))
+            merge-rpo)))]))
+
+(define (opt-phi-cmp-fold-value-is-var?
+  [value : ir.CompilerIrValue]
+  [var : i64]) : bool
+  (match value
+    [(ir.CompilerIrValue.Var id) (= id var)]
+    [_ false]))
+
+;; The compare with `input` substituted for the phi, decided by the same folder
+;; sccp uses for a literal comparison. `No` when the pair does not fold, which
+;; refuses the whole site.
+(define (opt-phi-cmp-fold-verdict
+  [type-segment-bases : i64]
+  [op : ir.CompilerIrBinOp]
+  [phi-left : bool]
+  [literal : ir.CompilerIrValue]
+  [ty : ast.AstType]
+  [input : ir.CompilerIrValue]) : OptMaybeBool
+  (let
+    [lhs : ir.CompilerIrValue
+      (if phi-left
+        input
+        literal)]
+    [rhs : ir.CompilerIrValue
+      (if phi-left
+        literal
+        input)]
+    (match (opt-fold-binop
+      type-segment-bases
+      op
+      (opt-normalize-const lhs (compiler-opt-global-shared-view ty))
+      (opt-normalize-const rhs (compiler-opt-global-shared-view ty))
+      (compiler-opt-global-shared-view ty))
+      [(ir.CompilerIrMaybeValue.Some folded) (opt-value-to-bool folded)]
+      [(ir.CompilerIrMaybeValue.No) (OptMaybeBool.No)])))
+
+;; Exactly one Var input, at least one literal input, and every literal input
+;; decided by the folder.
+(define (opt-phi-cmp-fold-classify
+  [type-segment-bases : i64]
+  [op : ir.CompilerIrBinOp]
+  [phi-left : bool]
+  [literal : ir.CompilerIrValue]
+  [ty : ast.AstType]
+  [inputs : ir.CompilerIrPhiInputList]
+  [var-label : i64]
+  [var-value : ir.CompilerIrValue]
+  [var-count : i64]
+  [literal-count : i64]) : OptPhiCmpFoldInputs
+  (match (ir.compiler-ir-phi-input-list-force-cons
+    (compiler-opt-global-shared-view inputs))
+    [(ir.CompilerIrPhiInputList.Nil)
+      (if (and (= var-count 1) (> literal-count 0))
+        (OptPhiCmpFoldInputs.Some var-label var-value literal-count)
+        (OptPhiCmpFoldInputs.No))]
+    [(ir.CompilerIrPhiInputList.Array seq)
+      (opt-phi-cmp-fold-classify
+        type-segment-bases
+        op
+        phi-left
+        literal
+        ty
+        (ir.compiler-ir-phi-input-seq-to-list seq)
+        var-label
+        var-value
+        var-count
+        literal-count)]
+    [(ir.CompilerIrPhiInputList.Cons value label rest)
+      (match (compiler-opt-global-shared-view value)
+        [(ir.CompilerIrValue.Var _)
+          (if (> var-count 0)
+            (OptPhiCmpFoldInputs.No)
+            (opt-phi-cmp-fold-classify
+              type-segment-bases
+              (compiler-opt-global-shared-view op)
+              phi-left
+              (compiler-opt-global-shared-view literal)
+              (compiler-opt-global-shared-view ty)
+              (compiler-opt-box-shared-view rest)
+              label
+              value
+              1
+              literal-count))]
+        [_
+          (match (opt-phi-cmp-fold-verdict
+            type-segment-bases
+            (compiler-opt-global-shared-view op)
+            phi-left
+            (compiler-opt-global-shared-view literal)
+            (compiler-opt-global-shared-view ty)
+            (compiler-opt-global-shared-view value))
+            [(OptMaybeBool.No) (OptPhiCmpFoldInputs.No)]
+            [(OptMaybeBool.Some _)
+              (opt-phi-cmp-fold-classify
+                type-segment-bases
+                (compiler-opt-global-shared-view op)
+                phi-left
+                (compiler-opt-global-shared-view literal)
+                (compiler-opt-global-shared-view ty)
+                (compiler-opt-box-shared-view rest)
+                var-label
+                var-value
+                var-count
+                (+ literal-count 1))])])]))
+
+;; The merge block's predecessor list, rewritten. The variable edge keeps its
+;; place and now carries the moved compare's result; a literal edge that
+;; threaded leaves the phi entirely, and one that could not keeps its decided
+;; boolean.
+(define (opt-phi-cmp-fold-thread-inputs!
+  [type-segment-bases : i64]
+  [index : OptCfgIndex]
+  [uses : (__tl_dyn-array i64)]
+  [merge-label : i64]
+  [merge-instrs : ir.CompilerIrInstrSeq]
+  [op : ir.CompilerIrBinOp]
+  [phi-left : bool]
+  [literal : ir.CompilerIrValue]
+  [ty : ast.AstType]
+  [true-label : i64]
+  [false-label : i64]
+  [var-label : i64]
+  [cmp-var : i64]
+  [inputs : ir.CompilerIrPhiInputList]
+  [acc : ir.CompilerIrPhiInputList]) : ir.CompilerIrPhiInputList
+  (match (ir.compiler-ir-phi-input-list-force-cons inputs)
+    [(ir.CompilerIrPhiInputList.Nil) acc]
+    [(ir.CompilerIrPhiInputList.Array seq)
+      (opt-phi-cmp-fold-thread-inputs!
+        type-segment-bases
+        index
+        uses
+        merge-label
+        merge-instrs
+        op
+        phi-left
+        literal
+        ty
+        true-label
+        false-label
+        var-label
+        cmp-var
+        (ir.compiler-ir-phi-input-seq-to-list seq)
+        acc)]
+    [(ir.CompilerIrPhiInputList.Cons value label rest)
+      (let
+        [next : ir.CompilerIrPhiInputList
+          (if (= label var-label)
+            (ir.compiler-ir-phi-input-cons
+              (ir.CompilerIrValue.Var cmp-var)
+              label
+              acc)
+            (match (opt-phi-cmp-fold-verdict
+              type-segment-bases
+              (compiler-opt-global-shared-view op)
+              phi-left
+              (compiler-opt-global-shared-view literal)
+              (compiler-opt-global-shared-view ty)
+              (compiler-opt-global-shared-view value))
+              [(OptMaybeBool.No) acc]
+              [(OptMaybeBool.Some known)
+                (if (opt-thread-apply-edge!
+                  (compiler-opt-global-shared-view index)
+                  (compiler-opt-global-shared-view uses)
+                  label
+                  merge-label
+                  merge-label
+                  (if known
+                    true-label
+                    false-label)
+                  (compiler-opt-global-shared-view merge-instrs)
+                  1
+                  (compiler-opt-global-shared-view merge-instrs)
+                  0)
+                  acc
+                  (ir.compiler-ir-phi-input-cons
+                    (ir.CompilerIrValue.Bool known)
+                    label
+                    acc))]))]
+        (opt-phi-cmp-fold-thread-inputs!
+          type-segment-bases
+          index
+          uses
+          merge-label
+          (compiler-opt-global-shared-view merge-instrs)
+          op
+          phi-left
+          literal
+          ty
+          true-label
+          false-label
+          var-label
+          cmp-var
+          (compiler-opt-box-shared-view rest)
+          next))]))
+
+(define (opt-phi-cmp-fold-replace-blocks
+  [blocks : ir.CompilerIrBlockList]
+  [merge-label : i64]
+  [merge-instrs : ir.CompilerIrInstrSeq]
+  [var-label : i64]
+  [var-instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrBlockList
+  (match (compiler-opt-global-shared-view blocks)
+    [(ir.CompilerIrBlockList.Nil) (ir.CompilerIrBlockList.Nil)]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match (compiler-opt-global-shared-view block)
+        [(ir.CompilerIrBlock.Block label _)
+          (ir.compiler-ir-block-cons
+            (cond
+              [(= label merge-label)
+                (ir.CompilerIrBlock.Block
+                  label
+                  (compiler-opt-global-shared-view merge-instrs))]
+              [(= label var-label)
+                (ir.CompilerIrBlock.Block
+                  label
+                  (compiler-opt-global-shared-view var-instrs))]
+              [else block])
+            (opt-phi-cmp-fold-replace-blocks
+              (compiler-opt-box-shared-view rest)
+              merge-label
+              (compiler-opt-global-shared-view merge-instrs)
+              var-label
+              (compiler-opt-global-shared-view var-instrs)))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-phi-cmp-fold-replace-blocks
+        (ir.compiler-ir-block-seq-to-list seq)
+        merge-label
+        merge-instrs
+        var-label
+        var-instrs)]))
+
+;; The rewrite itself. `phi-var` is dead the moment the compare stops reading it
+;; -- its only use WAS that compare -- so the moved compare takes it over as its
+;; own destination and the pass adds no variable to the frame; the merge phi
+;; keeps the compare's old destination, which was already a boolean.
+(define (opt-phi-cmp-fold-apply!
+  [type-segment-bases : i64]
+  [blocks : ir.CompilerIrBlockList]
+  [index : OptCfgIndex]
+  [uses : (__tl_dyn-array i64)]
+  [merge-label : i64]
+  [merge-instrs : ir.CompilerIrInstrSeq]
+  [phi-var : i64]
+  [inputs : ir.CompilerIrPhiInputList]
+  [cmp-var : i64]
+  [op : ir.CompilerIrBinOp]
+  [cmp-ty : ast.AstType]
+  [phi-left : bool]
+  [literal : ir.CompilerIrValue]
+  [true-label : i64]
+  [false-label : i64]
+  [var-label : i64]
+  [var-value : ir.CompilerIrValue]
+  [var-instrs : ir.CompilerIrInstrSeq]) : OptPhiCmpFoldRewrite
+  (let
+    [threaded : ir.CompilerIrPhiInputList
+      (opt-phi-cmp-fold-thread-inputs!
+        type-segment-bases
+        (compiler-opt-global-shared-view index)
+        (compiler-opt-global-shared-view uses)
+        merge-label
+        (compiler-opt-global-shared-view merge-instrs)
+        (compiler-opt-global-shared-view op)
+        phi-left
+        (compiler-opt-global-shared-view literal)
+        (compiler-opt-global-shared-view cmp-ty)
+        true-label
+        false-label
+        var-label
+        phi-var
+        (compiler-opt-global-shared-view inputs)
+        (ir.CompilerIrPhiInputList.Nil))]
+    [merged : ir.CompilerIrInstrSeq
+      (ir.compiler-ir-instr-seq2
+        (ir.CompilerIrInstr.Phi cmp-var threaded (ast.AstType.Bool))
+        (ir.CompilerIrInstr.Branch
+          (ir.CompilerIrValue.Var cmp-var)
+          true-label
+          false-label))]
+    [moved : ir.CompilerIrInstrSeq
+      (opt-instr-seq-insert-before-terminator
+        (ir.compiler-ir-instr-seq1
+          (ir.CompilerIrInstr.BinOp
+            phi-var
+            op
+            (if phi-left
+              (compiler-opt-global-shared-view var-value)
+              literal)
+            (if phi-left
+              literal
+              var-value)
+            cmp-ty))
+        var-instrs)]
+    (OptPhiCmpFoldRewrite.Some
+      (opt-phi-cmp-fold-replace-blocks
+        blocks
+        merge-label
+        merged
+        var-label
+        moved))))
+
+;; Everything the shape needs that a single block cannot answer: the predecessor
+;; set, the RPO refusals, the input classification, and the variable edge's own
+;; terminator.
+(define (opt-phi-cmp-fold-try-shape!
+  [type-segment-bases : i64]
+  [blocks : ir.CompilerIrBlockList]
+  [index : OptCfgIndex]
+  [uses : (__tl_dyn-array i64)]
+  [merge-label : i64]
+  [merge-instrs : ir.CompilerIrInstrSeq]
+  [phi-var : i64]
+  [inputs : ir.CompilerIrPhiInputList]
+  [phi-ty : ast.AstType]
+  [cmp-var : i64]
+  [op : ir.CompilerIrBinOp]
+  [lhs : ir.CompilerIrValue]
+  [rhs : ir.CompilerIrValue]
+  [cmp-ty : ast.AstType]
+  [true-label : i64]
+  [false-label : i64]) : OptPhiCmpFoldRewrite
+  (let
+    [phi-left : bool
+      (opt-phi-cmp-fold-value-is-var?
+        (compiler-opt-global-shared-view lhs)
+        phi-var)]
+    [literal : ir.CompilerIrValue
+      (if phi-left
+        (compiler-opt-global-shared-view rhs)
+        (compiler-opt-global-shared-view lhs))]
+    (if (or
+      (not (opt-bool-branch-compare-op? (compiler-opt-global-shared-view op)))
+      (not
+        (=
+          (opt-bool-branch-use-count
+            (compiler-opt-global-shared-view uses)
+            phi-var)
+          1))
+      (not
+        (=
+          (opt-bool-branch-use-count
+            (compiler-opt-global-shared-view uses)
+            cmp-var)
+          1))
+      (not
+        (opt-type-eq
+          type-segment-bases
+          (compiler-opt-global-shared-view phi-ty)
+          (compiler-opt-global-shared-view cmp-ty)))
+      (not
+        (or
+          (opt-int-or-char-type? (compiler-opt-global-shared-view phi-ty))
+          (opt-bool-type? (compiler-opt-global-shared-view phi-ty))))
+      (= true-label merge-label)
+      (= false-label merge-label)
+      (not
+        (or
+          phi-left
+          (opt-phi-cmp-fold-value-is-var?
+            (compiler-opt-global-shared-view rhs)
+            phi-var)))
+      (not
+        (opt-const-value?
+          (compiler-opt-global-shared-view literal)
+          (compiler-opt-global-shared-view cmp-ty))))
+      (OptPhiCmpFoldRewrite.No)
+      (let
+        [preds : OptLabelSet
+          (opt-cfg-index-predecessors
+            (compiler-opt-global-shared-view index)
+            merge-label)]
+        [merge-rpo : i64
+          (opt-phi-cmp-fold-label-rpo
+            (compiler-opt-global-shared-view index)
+            merge-label)]
+        (if (or
+          (< merge-rpo 0)
+          (not
+            (opt-phi-cmp-fold-preds-forward?
+              (compiler-opt-global-shared-view index)
+              (compiler-opt-global-shared-view preds)
+              merge-rpo)))
+          (OptPhiCmpFoldRewrite.No)
+          (match (opt-phi-cmp-fold-classify
+            type-segment-bases
+            (compiler-opt-global-shared-view op)
+            phi-left
+            (compiler-opt-global-shared-view literal)
+            (compiler-opt-global-shared-view cmp-ty)
+            (compiler-opt-global-shared-view inputs)
+            (ir.compiler-ir-label-none)
+            (ir.CompilerIrValue.Unit)
+            0
+            0)
+            [(OptPhiCmpFoldInputs.No) (OptPhiCmpFoldRewrite.No)]
+            [(OptPhiCmpFoldInputs.Some var-label var-value literal-count)
+              (if (not
+                (=
+                  (+ literal-count 1)
+                  (opt-label-count (compiler-opt-global-shared-view preds))))
+                (OptPhiCmpFoldRewrite.No)
+                (match (opt-cfg-index-find-block
+                  (compiler-opt-global-shared-view index)
+                  var-label)
+                  [(OptMaybeBlock.No) (OptPhiCmpFoldRewrite.No)]
+                  [(OptMaybeBlock.Some var-block)
+                    (match var-block
+                      [(ir.CompilerIrBlock.Block _ var-instrs)
+                        (if (not
+                          (=
+                            (opt-thread-jump-target
+                              (compiler-opt-global-shared-view var-instrs))
+                            merge-label))
+                          (OptPhiCmpFoldRewrite.No)
+                          (opt-phi-cmp-fold-apply!
+                            type-segment-bases
+                            blocks
+                            index
+                            uses
+                            merge-label
+                            merge-instrs
+                            phi-var
+                            inputs
+                            cmp-var
+                            op
+                            cmp-ty
+                            phi-left
+                            literal
+                            true-label
+                            false-label
+                            var-label
+                            var-value
+                            var-instrs))])]))]))))))
+
+(define (opt-phi-cmp-fold-try-block!
+  [type-segment-bases : i64]
+  [blocks : ir.CompilerIrBlockList]
+  [index : OptCfgIndex]
+  [uses : (__tl_dyn-array i64)]
+  [block : ir.CompilerIrBlock]) : OptPhiCmpFoldRewrite
+  (match block
+    [(ir.CompilerIrBlock.Block merge-label instrs)
+      (if (not (= (ir.compiler-ir-instr-seq-count instrs) 3))
+        (OptPhiCmpFoldRewrite.No)
+        (match (ir.compiler-ir-instr-seq-ref instrs 0)
+          [(ir.CompilerIrInstr.Phi phi-var inputs phi-ty)
+            (match (ir.compiler-ir-instr-seq-ref instrs 1)
+              [(ir.CompilerIrInstr.BinOp cmp-var op lhs rhs cmp-ty)
+                (match (ir.compiler-ir-instr-seq-ref instrs 2)
+                  [(ir.CompilerIrInstr.Branch
+                      (ir.CompilerIrValue.Var cond-var)
+                      true-label
+                      false-label)
+                    (if (not (= cond-var cmp-var))
+                      (OptPhiCmpFoldRewrite.No)
+                      (opt-phi-cmp-fold-try-shape!
+                        type-segment-bases
+                        blocks
+                        index
+                        uses
+                        merge-label
+                        instrs
+                        phi-var
+                        inputs
+                        phi-ty
+                        cmp-var
+                        op
+                        lhs
+                        rhs
+                        cmp-ty
+                        true-label
+                        false-label))]
+                  [_ (OptPhiCmpFoldRewrite.No)])]
+              [_ (OptPhiCmpFoldRewrite.No)])]
+          [_ (OptPhiCmpFoldRewrite.No)]))]))
+
+(define (opt-phi-cmp-fold-first-list!
+  [type-segment-bases : i64]
+  [all-blocks : ir.CompilerIrBlockList]
+  [index : OptCfgIndex]
+  [uses : (__tl_dyn-array i64)]
+  [blocks : ir.CompilerIrBlockList]) : OptPhiCmpFoldRewrite
+  (match (compiler-opt-global-shared-view blocks)
+    [(ir.CompilerIrBlockList.Nil) (OptPhiCmpFoldRewrite.No)]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match (opt-phi-cmp-fold-try-block!
+        type-segment-bases
+        (compiler-opt-global-shared-view all-blocks)
+        (compiler-opt-global-shared-view index)
+        (compiler-opt-global-shared-view uses)
+        (compiler-opt-global-shared-view block))
+        [(OptPhiCmpFoldRewrite.Some next) (OptPhiCmpFoldRewrite.Some next)]
+        [(OptPhiCmpFoldRewrite.No)
+          (opt-phi-cmp-fold-first-list!
+            type-segment-bases
+            (compiler-opt-global-shared-view all-blocks)
+            (compiler-opt-global-shared-view index)
+            (compiler-opt-global-shared-view uses)
+            (compiler-opt-box-shared-view rest))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-phi-cmp-fold-first-list!
+        type-segment-bases
+        (compiler-opt-global-shared-view all-blocks)
+        (compiler-opt-global-shared-view index)
+        (compiler-opt-global-shared-view uses)
+        (ir.compiler-ir-block-seq-to-list seq))]))
+
+;; One site per round: the rewrite retargets edges and repairs phis through the
+;; CFG index, so the index and the use census are rebuilt for the next one. The
+;; cap only bounds the loop; a function with more sentinel sites than this is
+;; not represented in the corpus (peephole_lines' `pl-parse-line`, the densest,
+;; holds twelve).
+(define (opt-phi-cmp-fold-fuel) : i64
+  64)
+
+(define (opt-phi-cmp-fold-blocks-raw
+  [type-segment-bases : i64]
+  [blocks : ir.CompilerIrBlockList]
+  [frame : i64]
+  [remaining : i64]) : OptBlockListPassResult
+  (if (<= remaining 0)
+    (OptBlockListPassResult.Result blocks false)
+    (let
+      [index : OptCfgIndex
+        (opt-cfg-index-build (compiler-opt-global-shared-view blocks))]
+      [uses : (__tl_dyn-array i64)
+        (opt-collect-blocks-uses-array
+          frame
+          (compiler-opt-global-shared-view blocks))]
+      (match (opt-phi-cmp-fold-first-list!
+        type-segment-bases
+        (compiler-opt-global-shared-view blocks)
+        (compiler-opt-global-shared-view index)
+        (compiler-opt-global-shared-view uses)
+        (compiler-opt-global-shared-view blocks))
+        [(OptPhiCmpFoldRewrite.No) (OptBlockListPassResult.Result blocks false)]
+        [(OptPhiCmpFoldRewrite.Some next)
+          (match (opt-phi-cmp-fold-blocks-raw
+            type-segment-bases
+            next
+            frame
+            (- remaining 1))
+            [(OptBlockListPassResult.Result final _)
+              (OptBlockListPassResult.Result final true)])]))))
+
+;; The edge retargeting and the phi repair mutate instruction sequences in
+;; place, so the pass works on a deep block/instruction clone and a rejected
+;; post-pass verify hands back the byte-for-byte input function.
+(define (opt-phi-cmp-fold-blocks
+  [type-segment-bases : i64]
+  [blocks : ir.CompilerIrBlockList]
+  [frame : i64]
+  [remaining : i64]) : OptBlockListPassResult
+  (opt-phi-cmp-fold-blocks-raw
+    type-segment-bases
+    (opt-bool-branch-clone-blocks blocks)
+    frame
+    remaining))
+
+;; Cheap admission test, run over every block of every function: the whole
+;; matched shape minus the questions that need the CFG index or the use census
+;; (predecessors, RPO, the other uses of the phi and the compare). Admitting a
+;; function the matcher then declines is only wasted work; rejecting one it
+;; would have rewritten would be a miss, so this stays strictly weaker than the
+;; matcher.
+(define (opt-phi-cmp-fold-block-candidate? [block : ir.CompilerIrBlock]) : bool
+  (match block
+    [(ir.CompilerIrBlock.Block _ instrs)
+      (and
+        (= (ir.compiler-ir-instr-seq-count instrs) 3)
+        (match (ir.compiler-ir-instr-seq-ref instrs 0)
+          [(ir.CompilerIrInstr.Phi phi-var _ phi-ty)
+            (and
+              (or
+                (opt-int-or-char-type? (compiler-opt-global-shared-view phi-ty))
+                (opt-bool-type? (compiler-opt-global-shared-view phi-ty)))
+              (match (ir.compiler-ir-instr-seq-ref instrs 1)
+                [(ir.CompilerIrInstr.BinOp cmp-var op lhs rhs cmp-ty)
+                  (and
+                    (opt-bool-branch-compare-op? op)
+                    (if (opt-phi-cmp-fold-value-is-var?
+                      (compiler-opt-global-shared-view lhs)
+                      phi-var)
+                      (opt-const-value?
+                        (compiler-opt-global-shared-view rhs)
+                        (compiler-opt-global-shared-view cmp-ty))
+                      (and
+                        (opt-phi-cmp-fold-value-is-var?
+                          (compiler-opt-global-shared-view rhs)
+                          phi-var)
+                        (opt-const-value?
+                          (compiler-opt-global-shared-view lhs)
+                          (compiler-opt-global-shared-view cmp-ty))))
+                    (match (ir.compiler-ir-instr-seq-ref instrs 2)
+                      [(ir.CompilerIrInstr.Branch
+                          (ir.CompilerIrValue.Var cond-var)
+                          _
+                          _)
+                        (= cond-var cmp-var)]
+                      [_ false]))]
+                [_ false]))]
+          [_ false]))]))
+
+(define (opt-phi-cmp-fold-blocks-have-candidate?
+  [blocks : ir.CompilerIrBlockList]) : bool
+  (match (compiler-opt-global-shared-view blocks)
+    [(ir.CompilerIrBlockList.Nil) false]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (if (opt-phi-cmp-fold-block-candidate?
+        (compiler-opt-global-shared-view block))
+        true
+        (opt-phi-cmp-fold-blocks-have-candidate?
+          (compiler-opt-box-shared-view rest)))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (let
+        [pos : i64 0]
+        [count : i64 (ir.compiler-ir-block-seq-count seq)]
+        (begin
+          (while (< pos count)
+            (if (opt-phi-cmp-fold-block-candidate?
+              (ir.compiler-ir-block-seq-ref seq pos))
+              (return true)
+              (set! pos (+ pos 1))))
+          false))]))
+
+(define (opt-phi-cmp-fold-function-with-context-result
+  [type-segment-bases : i64]
+  [context : OptCfgContext]
+  [verified? : bool]
+  [func : ir.CompilerIrFunction]) : OptFunctionPassResult
+  (match (compiler-opt-global-shared-view func)
+    [(ir.CompilerIrFunction.Function name params ret-ty frame blocks)
+      (if (not
+        (opt-phi-cmp-fold-blocks-have-candidate?
+          (compiler-opt-global-shared-view blocks)))
+        (OptFunctionPassResult.Result func false)
+        (match (opt-verify-gate
+          verified?
+          (compiler-opt-global-shared-view func)
+          (compiler-opt-global-shared-view context))
+          [(ResultCompilerOptimizeVerify.Err _)
+            (OptFunctionPassResult.Result func false)]
+          [(ResultCompilerOptimizeVerify.Ok)
+            (match (opt-phi-cmp-fold-blocks
+              type-segment-bases
+              (compiler-opt-global-shared-view blocks)
+              frame
+              (opt-phi-cmp-fold-fuel))
+              [(OptBlockListPassResult.Result next-blocks changed)
+                (if changed
+                  (let
+                    [next : ir.CompilerIrFunction
+                      (ir.CompilerIrFunction.Function
+                        (compiler-opt-global-shared-view name)
+                        (compiler-opt-global-shared-view params)
+                        (compiler-opt-global-shared-view ret-ty)
+                        frame
+                        (compiler-opt-global-shared-view next-blocks))]
+                    [next-context : OptCfgContext
+                      (opt-cfg-context-build
+                        (compiler-opt-global-shared-view next-blocks))]
+                    (match (opt-verify-function-with-context
+                      (compiler-opt-global-shared-view next)
+                      (compiler-opt-global-shared-view next-context))
                       [(ResultCompilerOptimizeVerify.Ok)
                         (OptFunctionPassResult.Result next true)]
                       [(ResultCompilerOptimizeVerify.Err _)
@@ -43802,7 +44698,7 @@
                   (compiler-opt-box-shared-view rest)
                   all-blocks
                   index
-                  uses
+                  (compiler-opt-global-shared-view uses)
                   skip)
                   [(OptSwitchRewriteResult.Result tail final-skip changed)
                     (OptSwitchRewriteResult.Result
@@ -92634,6 +93530,62 @@
                             (compiler-opt-global-shared-view name)
                             _t-sccp)
                           unit)]
+                      ;; Ahead of the bool-branch fuser on purpose: this pass
+                      ;; turns a `[sentinel phi, compare, branch]` merge into
+                      ;; the `[bool phi, branch]` shape the fuser was written
+                      ;; for, so a site that reaches here as an integer join
+                      ;; leaves the slot as a compare and branch adjacent to the
+                      ;; load they read. It also wants sccp's constant
+                      ;; substitution above it (a phi input that only became a
+                      ;; literal there is one more edge it can decide) and the
+                      ;; `cfg` stage below it, which retires the merge once the
+                      ;; fuser has taken its last predecessor.
+                      [_t-phi-cmp-fold : i64
+                        (cfg compile-profile (profile.now-ms) 0)]
+                      [phi-cmp-fold-input : ir.CompilerIrFunction
+                        (ir.CompilerIrFunction.Function
+                          (compiler-opt-global-shared-view name)
+                          (compiler-opt-global-shared-view params)
+                          (compiler-opt-global-shared-view ret-ty)
+                          bd-frame
+                          (compiler-opt-global-shared-view sccp))]
+                      [phi-cmp-fold-result : OptFunctionPassResult
+                        (opt-phi-cmp-fold-function-with-context-result
+                          type-segment-bases
+                          (if sccp-context-valid
+                            (compiler-opt-global-shared-view sccp-context)
+                            (if (opt-phi-cmp-fold-blocks-have-candidate?
+                              (compiler-opt-global-shared-view sccp))
+                              (opt-cfg-context-build
+                                (compiler-opt-global-shared-view sccp))
+                              (opt-cfg-context-empty)))
+                          false
+                          phi-cmp-fold-input)]
+                      [phi-cmp-fold : ir.CompilerIrBlockList
+                        (compiler-opt-debug-observe-blocks
+                          type-segment-bases
+                          "phi_cmp_fold"
+                          (compiler-opt-global-shared-view name)
+                          (compiler-opt-global-shared-view params)
+                          (compiler-opt-global-shared-view ret-ty)
+                          bd-frame
+                          (match (compiler-opt-global-shared-view
+                            phi-cmp-fold-result)
+                            [(OptFunctionPassResult.Result f _)
+                              (opt-function-blocks f)]))]
+                      [phi-cmp-fold-changed : bool
+                        (match (compiler-opt-global-shared-view
+                          phi-cmp-fold-result)
+                          [(OptFunctionPassResult.Result _ changed) changed])]
+                      [_p-phi-cmp-fold : unit
+                        (cfg
+                          compile-profile
+                          (compiler-opt-profile-pass-finish
+                            summaries.profile-state
+                            "phi_cmp_fold"
+                            name
+                            _t-phi-cmp-fold)
+                          unit)]
                       [_t-bool-branch : i64
                         (cfg compile-profile (profile.now-ms) 0)]
                       [bool-branch-input : ir.CompilerIrFunction
@@ -92642,15 +93594,15 @@
                           (compiler-opt-global-shared-view params)
                           (compiler-opt-global-shared-view ret-ty)
                           bd-frame
-                          (compiler-opt-global-shared-view sccp))]
+                          (compiler-opt-global-shared-view phi-cmp-fold))]
                       [bool-branch-context : OptCfgContext
-                        (if sccp-context-valid
+                        (if (and sccp-context-valid (not phi-cmp-fold-changed))
                           (compiler-opt-global-shared-view sccp-context)
                           (if (opt-bool-branch-blocks-have-candidate?
                             type-segment-bases
-                            (compiler-opt-global-shared-view sccp))
+                            (compiler-opt-global-shared-view phi-cmp-fold))
                             (opt-cfg-context-build
-                              (compiler-opt-global-shared-view sccp))
+                              (compiler-opt-global-shared-view phi-cmp-fold))
                             (opt-cfg-context-empty)))]
                       [bool-branch-result : OptFunctionPassResult
                         (opt-bool-branch-function-with-context-result
@@ -92715,7 +93667,10 @@
                       [thread-branch-result : OptFunctionPassResult
                         (opt-thread-const-branch-function-with-context-result
                           type-segment-bases
-                          (if (and sccp-context-valid (not bool-branch-changed))
+                          (if (and
+                            sccp-context-valid
+                            (not phi-cmp-fold-changed)
+                            (not bool-branch-changed))
                             (compiler-opt-global-shared-view sccp-context)
                             (if (opt-thread-const-branch-blocks-have-candidate?
                               type-segment-bases
@@ -92759,6 +93714,7 @@
                             (compiler-opt-global-shared-view sccp-context)
                             (and
                               sccp-context-valid
+                              (not phi-cmp-fold-changed)
                               (not bool-branch-changed)
                               (not thread-branch-changed))))]
                       [cfg : ir.CompilerIrBlockList
@@ -118603,9 +119559,32 @@
 ;;        mirrored) and same-base entries at provably disjoint byte ranges
 ;;        (two fields of one object cannot overlap).
 ;;      - a generic FIELD store (const-offset gep off a non-descriptor base)
-;;        keeps only same-base disjoint-range entries: two handles may name
-;;        the same object, and structs can live inline inside array buffers,
-;;        so neither element nor other-base entries are safe.
+;;        keeps same-base disjoint-range entries: two handles may name the
+;;        same object, and structs can live inline inside array buffers, so
+;;        addresses alone justify nothing else.
+;;      - TYPED-WORD FILTERING, on top of all of the above: TypeLisp memory is
+;;        typed, so a store of static type Ts writes only words whose static
+;;        type is Ts, and an entry whose LOADED type Te falls in a different
+;;        known alias class (opt-load-alias-classes-distinct?) names a
+;;        different word -- whatever the addresses look like. That keeps a
+;;        `Vec.slots` handle entry alive across a loop of i64 element stores,
+;;        and keeps an i64 entry alive across handle stores. It is the same
+;;        trust level as the "data buffers never hold descriptor headers"
+;;        rule above; SPEC.md section 2 lets optimizations rely on the static
+;;        type facts.
+;;        Soundness fences, all three necessary:
+;;          * BYTE and UNMODELLED stores prove nothing. u8/i8/bool/char and
+;;            every aggregate type map to class 0, and CopyBytes and
+;;            summarized-callee writes are classified with a byte type, so
+;;            those keep exactly their old (full) kill sets. A word can only
+;;            be re-typed through such a write.
+;;          * SAME OBJECT keeps the byte-range rule ONLY: for a Field store
+;;            and a Field entry on the SAME un-redefined base var there is no
+;;            class exemption, because a Bitcast can hand out two differently
+;;            typed views of one object's own storage.
+;;          * A 16-byte fat reference (`&`/`&mut` to a Slice) is class 0: it
+;;            is two words, one of them a plain length, not one typed handle
+;;            word, so its halves may legitimately be written separately.
 ;;    Alias facts (OptAliasFacts) are threaded exactly as before; they gate
 ;;    nothing here and keep their conservative store-clears semantics.
 ;;
@@ -119081,6 +120060,62 @@
     [(ast.AstType.Bytes) 8]
     [(ast.AstType.Var _) 8]
     [(ast.AstType.VarArgs _ _) 8]))
+
+;; --- typed-word alias classes ----------------------------------------------
+;;
+;; TypeLisp memory is TYPED: the word that holds a `(__tl_dyn-array T)` handle
+;; is only ever written by a store of that handle type, an i64 slot only by an
+;; i64-typed store, and so on (SPEC.md section 2 -- optimizations may rely on
+;; the static type, move, borrow and region facts). The only writes that cross
+;; a word's static type are BYTE-level ones (u8/i8 stores, CopyBytes) and
+;; stores whose type this pass does not model; both land in the unknown class
+;; below, which proves nothing and keeps today's conservative behaviour.
+;;
+;; Class codes: 0 = unknown-or-byte (proves nothing), 1 = 64-bit integer,
+;; 2 = 32-bit integer, 3 = 16-bit integer, 4 = f64, 5 = f32, 6 = pointer-sized
+;; handle word. A 16-byte fat reference (a `&`/`&mut` to a Slice) is
+;; deliberately class 0: it is TWO words, one of which is a plain length, so it
+;; is not a single typed handle word and its halves may be written separately.
+(define (opt-load-type-alias-class
+  [type-segment-bases : i64]
+  [ty : ast.AstType]) : i64
+  (match ty
+    [(ast.AstType.I64) 1]
+    [(ast.AstType.U64) 1]
+    [(ast.AstType.I32) 2]
+    [(ast.AstType.U32) 2]
+    [(ast.AstType.I16) 3]
+    [(ast.AstType.U16) 3]
+    [(ast.AstType.F64) 4]
+    [(ast.AstType.F32) 5]
+    [(ast.AstType.DynArray _) 6]
+    [(ast.AstType.String) 6]
+    [(ast.AstType.Box _) 6]
+    [(ast.AstType.Ptr _) 6]
+    [(ast.AstType.MutPtr _) 6]
+    [(ast.AstType.Func _ _) 6]
+    [(ast.AstType.Ref _ inner)
+      (if (opt-reference-to-slice? type-segment-bases inner)
+        0
+        6)]
+    [(ast.AstType.MutRef _ inner)
+      (if (opt-reference-to-slice? type-segment-bases inner)
+        0
+        6)]
+    [_ 0]))
+
+;; Two static types that can never name one word: both classes known (non-zero)
+;; and different. Symmetric, and false whenever either side is the byte/unknown
+;; class, so a u8 store or an unmodelled store still kills everything it did
+;; before.
+(define (opt-load-alias-classes-distinct?
+  [type-segment-bases : i64]
+  [a : ast.AstType]
+  [b : ast.AstType]) : bool
+  (let
+    [ca : i64 (opt-load-type-alias-class type-segment-bases a)]
+    [cb : i64 (opt-load-type-alias-class type-segment-bases b)]
+    (and (> ca 0) (> cb 0) (not (= ca cb)))))
 
 ;; What memory a pointer-valued var addresses:
 ;;   Element          -- points at/into some array/string DATA BUFFER (the
@@ -120177,7 +121212,7 @@
         (let
           [entry : OptLoadGlobalBaseEntry (array-ref slots read)]
           (begin
-            (match entry
+            (match (compiler-opt-global-shared-view entry)
               [(OptLoadGlobalBaseEntry.Entry bound _ _ _)
                 (if (= bound var)
                   unit
@@ -120262,7 +121297,7 @@
         (let
           [entry : OptLoadGlobalBaseEntry (array-ref a-slots read)]
           (begin
-            (match entry
+            (match (compiler-opt-global-shared-view entry)
               [(OptLoadGlobalBaseEntry.Entry var global off value-base?)
                 (if (opt-load-global-base-fields-eq?
                   global
@@ -120351,11 +121386,14 @@
           [(option_i64.Some dst) (opt-load-global-bases-drop-var bases dst)]
           [(option_i64.None) bases]))]))
 
-;; How a classified store writes memory (Unknown clears the whole table).
+;; How a classified store writes memory (Unknown clears the whole table). Both
+;; classified forms carry the STORED TYPE: the typed-word rule in
+;; `opt-load-entry-survives-store-location?` compares it against the loaded type
+;; of each table entry.
 (defenum OptLoadStoreClass
   (OptLoadStoreUnknown)
-  (OptLoadStoreElement)
-  (OptLoadStoreField i64 i64 i64 bool))
+  (OptLoadStoreElement ast.AstType)
+  (OptLoadStoreField i64 i64 i64 bool ast.AstType))
 
 (define (opt-load-key-eq
   [type-segment-bases : i64]
@@ -120796,10 +121834,13 @@
   [class : OptLoadStoreClass]
   [entry : OptLoadEntry]) : bool
   (match class
-    [(OptLoadStoreElement)
-      ;; Element stores write data-buffer memory; only descriptor-field
-      ;; entries (header-typed base) and named global CELLS are provably
-      ;; outside every buffer.
+    [(OptLoadStoreElement sty)
+      ;; Element stores write data-buffer memory. Descriptor-field entries
+      ;; (header-typed base) and named global CELLS are provably outside every
+      ;; buffer whatever the stored type is; everything else survives only on
+      ;; the TYPED-WORD rule -- a store of class C writes only words whose
+      ;; static type is class C, so an entry read at a different known class
+      ;; names a different word even inside the same buffer.
       ;;
       ;; The global-cell arm is the same allocation-layer argument the header
       ;; arm makes, one level up the descriptor chain: an element address is
@@ -120811,31 +121852,49 @@
       ;; binding (opt-load-global-bases-step), so only constant-offset cell
       ;; words are ever keyed this way.
       (match (opt-load-entry-key entry)
-        [(OptLoadKey.Field _ _ _ header?) header?]
+        [(OptLoadKey.Field _ _ ety header?)
+          (or
+            header?
+            (opt-load-alias-classes-distinct? type-segment-bases sty ety))]
         [(OptLoadKey.GlobalField _ _ _ _) true]
-        [_ false])]
-    [(OptLoadStoreField sbase slo swidth sheader?)
+        ;; An element or unclassified address may name a word inside the very
+        ;; buffer this store writes -- but not a word of a different class.
+        [(OptLoadKey.Raw _ ety _)
+          (opt-load-alias-classes-distinct? type-segment-bases sty ety)]
+        [(OptLoadKey.ScaledField _ _ ety _)
+          (opt-load-alias-classes-distinct? type-segment-bases sty ety)])]
+    [(OptLoadStoreField sbase slo swidth sheader? sty)
       (match (opt-load-entry-key entry)
-        [(OptLoadKey.Raw _ _ element?)
+        [(OptLoadKey.Raw _ ety element?)
           ;; A descriptor-field store cannot touch buffer memory; a generic
-          ;; field store might (inline structs live inside buffers).
-          (and element? sheader?)]
+          ;; field store might (inline structs live inside buffers) -- unless
+          ;; the two static types are different known classes.
+          (or
+            (and element? sheader?)
+            (opt-load-alias-classes-distinct? type-segment-bases sty ety))]
         [(OptLoadKey.Field ebase eoff ety _)
-          ;; Same object (same un-redefined base var) at disjoint byte
-          ;; ranges. Different base vars may name the same object -- drop.
-          (and
-            (= ebase sbase)
+          (if (= ebase sbase)
+            ;; SAME object (same un-redefined base var): byte ranges only. No
+            ;; class exemption here -- a Bitcast can hand out two differently
+            ;; typed views of one object's own storage, and the range rule is
+            ;; what already covers the honest field-vs-field case.
             (opt-load-ranges-disjoint?
               slo
               swidth
               eoff
-              (opt-load-loc-type-size type-segment-bases ety)))]
-        ;; A var-offset key cannot prove disjointness from any store: drop
-        ;; (conservative, matching a generic Raw).
-        [(OptLoadKey.ScaledField _ _ _ _) false]
+              (opt-load-loc-type-size type-segment-bases ety))
+            ;; DIFFERENT base vars may name the same object, so offsets prove
+            ;; nothing; different known type classes still do.
+            (opt-load-alias-classes-distinct? type-segment-bases sty ety))]
+        ;; A var-offset key cannot prove disjointness from any store by
+        ;; address; only the typed-word rule applies.
+        [(OptLoadKey.ScaledField _ _ ety _)
+          (opt-load-alias-classes-distinct? type-segment-bases sty ety)]
         ;; A field store's base var may hold the global's own address, so a
-        ;; global-keyed entry is never provably outside it: drop.
-        [(OptLoadKey.GlobalField _ _ _ _) false])]
+        ;; global-keyed entry is never provably outside it by address; the
+        ;; typed-word rule is the only thing that separates them.
+        [(OptLoadKey.GlobalField _ _ ety _)
+          (opt-load-alias-classes-distinct? type-segment-bases sty ety)])]
     [(OptLoadStoreUnknown) false]))
 
 ;; Epoch-ordering rule: freshly allocated storage is disjoint from every address
@@ -120932,35 +121991,39 @@
             type-segment-bases
             (compiler-opt-box-shared-view rest)
             (compiler-opt-global-shared-view facts)
-            store-root
-            class)]
+            (compiler-opt-global-shared-view store-root)
+            (compiler-opt-global-shared-view class))]
         (if (opt-load-entry-survives-store?
           type-segment-bases
-          facts
-          store-root
-          class
+          (compiler-opt-global-shared-view facts)
+          (compiler-opt-global-shared-view store-root)
+          (compiler-opt-global-shared-view class)
           (compiler-opt-global-shared-view entry))
           (OptLoadTable.Cons entry (box tail))
           tail))]))
 
 ;; Classify a store's target from the pointer kinds; `width` is the byte size
-;; actually written (StorePtr type width / CopyBytes size).
+;; actually written (StorePtr type width / CopyBytes size) and `ty` is the
+;; STORED TYPE, which the typed-word rule compares against entry types. A
+;; caller with no single static type for the write (CopyBytes, a summarized
+;; callee) passes a byte type, whose class proves nothing.
 (define (opt-load-classify-store
   [kinds : OptLoadPtrKinds]
   [ptr : ir.CompilerIrValue]
-  [width : i64]) : OptLoadStoreClass
+  [width : i64]
+  [ty : ast.AstType]) : OptLoadStoreClass
   (if (<= width 0)
     (OptLoadStoreUnknown)
     (match ptr
       [(ir.CompilerIrValue.Var p)
         (match (opt-load-kinds-lookup kinds p)
-          [(OptLoadLocElement) (OptLoadStoreElement)]
+          [(OptLoadLocElement) (OptLoadStoreElement ty)]
           [(OptLoadLocField base off _ header?)
-            (OptLoadStoreField base off width header?)]
+            (OptLoadStoreField base off width header? ty)]
           ;; A scaled element store writes data-buffer memory (base is the
           ;; loaded data pointer), exactly like an Element store: descriptor
           ;; fields are provably outside it, so header-typed entries survive.
-          [(OptLoadLocScaledField _ _ _ _) (OptLoadStoreElement)]
+          [(OptLoadLocScaledField _ _ _ _) (OptLoadStoreElement ty)]
           [(OptLoadLocUnknown) (OptLoadStoreUnknown)])]
       [_ (OptLoadStoreUnknown)])))
 
@@ -120979,18 +122042,20 @@
 (define (opt-dead-store-set-clear [pending : OptDeadStoreSet]) : OptDeadStoreSet
   (OptDeadStoreSet pending.slots 0))
 
+;; DSE deliberately ignores the stored type carried by the class: it stays
+;; exactly as conservative as before the typed-word rule.
 (define (opt-dead-store-trackable? [class : OptLoadStoreClass]) : bool
   (match class
-    [(OptLoadStoreField _ _ _ _) true]
+    [(OptLoadStoreField _ _ _ _ _) true]
     [_ false]))
 
 (define (opt-dead-store-classes-exact?
   [a : OptLoadStoreClass]
   [b : OptLoadStoreClass]) : bool
   (match a
-    [(OptLoadStoreField abase aoff awidth aheader?)
+    [(OptLoadStoreField abase aoff awidth aheader? _)
       (match b
-        [(OptLoadStoreField bbase boff bwidth bheader?)
+        [(OptLoadStoreField bbase boff bwidth bheader? _)
           (and
             (= abase bbase)
             (= aoff boff)
@@ -121010,14 +122075,14 @@
   [candidate : OptLoadStoreClass]) : bool
   (match access
     [(OptLoadStoreUnknown) false]
-    [(OptLoadStoreElement)
+    [(OptLoadStoreElement _)
       (match candidate
-        [(OptLoadStoreField _ _ _ header?) header?]
+        [(OptLoadStoreField _ _ _ header? _) header?]
         [_ false])]
-    [(OptLoadStoreField abase aoff awidth aheader?)
+    [(OptLoadStoreField abase aoff awidth aheader? _)
       (match candidate
-        [(OptLoadStoreElement) aheader?]
-        [(OptLoadStoreField bbase boff bwidth _)
+        [(OptLoadStoreElement _) aheader?]
+        [(OptLoadStoreField bbase boff bwidth _ _)
           (and
             (= abase bbase)
             (opt-load-ranges-disjoint? aoff awidth boff bwidth))]
@@ -121035,13 +122100,18 @@
     (begin
       (while (< read count)
         (let
-          [entry : OptDeadStoreEntry (array-ref slots read)]
+          [entry : OptDeadStoreEntry
+            (compiler-opt-global-array-element-shared-view slots read)]
           (begin
-            (match entry
+            (match (compiler-opt-global-shared-view entry)
               [(OptDeadStoreEntry.Entry old-index old-class)
-                (if (opt-dead-store-classes-exact? old-class class)
+                (if (opt-dead-store-classes-exact?
+                  (compiler-opt-global-shared-view old-class)
+                  (compiler-opt-global-shared-view class))
                   (set! (array-ref dead old-index) 1)
-                  (if (opt-dead-store-classes-disjoint? class old-class)
+                  (if (opt-dead-store-classes-disjoint?
+                    (compiler-opt-global-shared-view class)
+                    (compiler-opt-global-shared-view old-class))
                     (begin
                       (if (not (= write read))
                         (set! (array-ref slots write) entry)
@@ -121056,7 +122126,7 @@
   [index : i64]
   [class : OptLoadStoreClass]) : OptDeadStoreSet
   (if (and
-    (opt-dead-store-trackable? class)
+    (opt-dead-store-trackable? (compiler-opt-global-shared-view class))
     (< pending.len (array-length pending.slots)))
     (let
       [slots : (__tl_dyn-array OptDeadStoreEntry) pending.slots]
@@ -121077,11 +122147,14 @@
     (begin
       (while (< read count)
         (let
-          [entry : OptDeadStoreEntry (array-ref slots read)]
+          [entry : OptDeadStoreEntry
+            (compiler-opt-global-array-element-shared-view slots read)]
           (begin
-            (match entry
+            (match (compiler-opt-global-shared-view entry)
               [(OptDeadStoreEntry.Entry _ old-class)
-                (if (opt-dead-store-classes-disjoint? class old-class)
+                (if (opt-dead-store-classes-disjoint?
+                  (compiler-opt-global-shared-view class)
+                  (compiler-opt-global-shared-view old-class))
                   (begin
                     (if (not (= write read))
                       (set! (array-ref slots write) entry)
@@ -121093,7 +122166,7 @@
 
 (define (opt-dead-store-class-uses-var? [class : OptLoadStoreClass] [var : i64]) : bool
   (match class
-    [(OptLoadStoreField base _ _ _) (= base var)]
+    [(OptLoadStoreField base _ _ _ _) (= base var)]
     [_ false]))
 
 (define (opt-dead-store-filter-def [pending : OptDeadStoreSet] [var : i64]) : OptDeadStoreSet
@@ -121105,11 +122178,14 @@
     (begin
       (while (< read count)
         (let
-          [entry : OptDeadStoreEntry (array-ref slots read)]
+          [entry : OptDeadStoreEntry
+            (compiler-opt-global-array-element-shared-view slots read)]
           (begin
-            (match entry
+            (match (compiler-opt-global-shared-view entry)
               [(OptDeadStoreEntry.Entry _ class)
-                (if (opt-dead-store-class-uses-var? class var)
+                (if (opt-dead-store-class-uses-var?
+                  (compiler-opt-global-shared-view class)
+                  var)
                   unit
                   (begin
                     (if (not (= write read))
@@ -121145,9 +122221,15 @@
               (opt-load-classify-store
                 kinds
                 ptr
-                (opt-load-loc-type-size type-segment-bases ty))]
+                (opt-load-loc-type-size
+                  type-segment-bases
+                  (compiler-opt-global-shared-view ty))
+                ty)]
             (opt-dead-store-add-current
-              (opt-dead-store-filter-store pending dead class)
+              (opt-dead-store-filter-store
+                pending
+                dead
+                (compiler-opt-global-shared-view class))
               index
               class))]
         [(ir.CompilerIrInstr.Load _ src ty)
@@ -121156,7 +122238,10 @@
             (opt-load-classify-store
               kinds
               src
-              (opt-load-loc-type-size type-segment-bases ty)))]
+              (opt-load-loc-type-size
+                type-segment-bases
+                (compiler-opt-global-shared-view ty))
+              ty))]
         [(ir.CompilerIrInstr.CopyBytes _ _ _)
           (opt-dead-store-set-clear pending)]
         [_
@@ -121551,7 +122636,10 @@
     table
     facts
     (OptAliasRoot.NoRoot)
-    (OptLoadStoreElement)))
+    ;; A summarized callee has no single stored type, so the element class
+    ;; carries a byte type: the typed-word rule proves nothing here and the
+    ;; verdict is exactly the pre-existing one.
+    (OptLoadStoreElement (ast.AstType.U8))))
 
 (define (opt-load-cse-state-direct-call
   [type-segment-bases : i64]
@@ -121676,7 +122764,8 @@
           (opt-load-classify-store
             (compiler-opt-global-shared-view kinds)
             (compiler-opt-global-shared-view ptr)
-            width)]
+            width
+            (compiler-opt-global-shared-view ty))]
         [store-root : OptAliasRoot
           (opt-alias-root-of-value
             (compiler-opt-global-shared-view facts)
@@ -121697,10 +122786,10 @@
           (opt-load-table-filter-store
             type-segment-bases
             (compiler-opt-global-shared-view table)
-            facts
-            store-root
-            class)]
-        (match class
+            (compiler-opt-global-shared-view facts)
+            (compiler-opt-global-shared-view store-root)
+            (compiler-opt-global-shared-view class))]
+        (match (compiler-opt-global-shared-view class)
           [(OptLoadStoreUnknown)
             ;; Unknown offset/location still preserves entries rooted at a
             ;; different exclusive checked or fresh allocation root, and entries
@@ -121790,16 +122879,20 @@
         bases
         profile-state)
       (let
+        ;; CopyBytes writes raw bytes: the byte class keeps its kill set
+        ;; exactly as wide as it was before the typed-word rule.
         [class : OptLoadStoreClass
           (opt-load-classify-store
             (compiler-opt-global-shared-view kinds)
             (compiler-opt-global-shared-view dst)
-            size)]
+            size
+            (ast.AstType.U8))]
         [src-class : OptLoadStoreClass
           (opt-load-classify-store
             (compiler-opt-global-shared-view kinds)
-            src
-            size)]
+            (compiler-opt-global-shared-view src)
+            size
+            (ast.AstType.U8))]
         [store-root : OptAliasRoot
           (opt-alias-root-of-value (compiler-opt-global-shared-view facts) dst)]
         [next-epoch : i64
@@ -121817,11 +122910,11 @@
         [filtered : OptLoadTable
           (opt-load-table-filter-store
             type-segment-bases
-            table
-            facts
-            store-root
-            class)]
-        (match class
+            (compiler-opt-global-shared-view table)
+            (compiler-opt-global-shared-view facts)
+            (compiler-opt-global-shared-view store-root)
+            (compiler-opt-global-shared-view class))]
+        (match (compiler-opt-global-shared-view class)
           [(OptLoadStoreUnknown)
             (OptLoadCseState.State
               facts2
@@ -121831,7 +122924,7 @@
               next-epoch
               (opt-load-global-bases-clear bases)
               profile-state)]
-          [(OptLoadStoreElement)
+          [(OptLoadStoreElement _)
             (OptLoadCseState.State
               facts2
               filtered
@@ -121840,11 +122933,11 @@
               next-epoch
               (opt-load-global-bases-clear bases)
               profile-state)]
-          [(OptLoadStoreField dst-base dst-off _ dst-header?)
+          [(OptLoadStoreField dst-base dst-off _ dst-header? _)
             (let
               [copied : OptLoadTable
                 (match src-class
-                  [(OptLoadStoreField src-base src-off _ src-header?)
+                  [(OptLoadStoreField src-base src-off _ src-header? _)
                     (if (and
                       (= src-base dst-base)
                       (=

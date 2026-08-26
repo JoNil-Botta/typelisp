@@ -320,6 +320,11 @@
   (form-start i64)
   (module-id i64)
   (declaration-ordinal i64)
+  ;; Physical slot in the flattened declaration storage. Unlike the public
+  ;; logical ordinal, this matches the successful checker's stable walk key even
+  ;; when the retained AstProgram is a non-zero-offset list view.
+  (checked-declaration-ordinal i64)
+  (declaration-retains-let-facts bool)
   (generated bool)
   (provenance CompilerSemanticProvenance)
   (records (Box CompilerSemanticRecordVec))
@@ -330,6 +335,10 @@
   (visibility-storage (Box CompilerSemanticVisibilityBuildStorage))
   (visited-expr-ids (__tl_dyn-array i64))
   (next-local-ordinal (Box i64))
+  ;; A complete checked walk must find an exact retained fact for every let.
+  ;; Partial indexes deliberately omit locals after the first missing fact;
+  ;; complete callers turn this flag into an owned diagnostic and no index.
+  (checked-let-fact-mismatch (Box bool))
   ;; Exact parser occurrences are a contiguous run per flattened declaration.
   ;; One cursor per origin kind makes claiming an occurrence amortized O(1)
   ;; while allowing the semantic AST walk to interleave type, member, and
@@ -2076,6 +2085,26 @@
         (string.copy (& item))
         (string.copy (& key)))]))
 
+(define (compiler-semantic-decl-retains-checked-let-facts?
+  [path : String]
+  [decl : ast.AstDecl]) : bool
+  (if (tc.tc-decl-unchecked-clone?
+    (owned_view.compiler-owned-shared-view path)
+    (owned_view.compiler-owned-shared-view decl))
+    false
+    (match (owned_view.compiler-owned-shared-view decl)
+      ;; DefMacro templates are checked by CTFE/macro expansion rather than the
+      ;; final runtime body checker that publishes retained let facts.
+      [(ast.AstDecl.DefMacro _ _ _ _ _) false]
+      ;; Test bodies stay in the parsed program for tooling but ordinary source
+      ;; checking deliberately does not execute/typecheck them.
+      [(ast.AstDecl.Test _ _ _) false]
+      [(ast.AstDecl.Unsafe inner)
+        (compiler-semantic-decl-retains-checked-let-facts?
+          (owned_view.compiler-owned-shared-view path)
+          (owned_view.compiler-owned-box-shared-view inner))]
+      [_ true])))
+
 (define (compiler-semantic-use-span-from-origin
   [path : String]
   [source : String]
@@ -2811,7 +2840,7 @@
   [span : CompilerSemanticSpan]
   [access : CompilerSemanticAccess]) : unit
   (let
-    [ctx : tc.TcContext state.ctx]
+    [ctx : tc.TcContext (owned_view.compiler-owned-shared-view state.ctx)]
     [owner-handle : i64 (csym.compiler-registry-variant-owner-handle handle)]
     [display-name : String
       (compiler-semantic-variant-display-name
@@ -3539,40 +3568,23 @@
   [search-limit : i64]) : CompilerSemanticBindResult
   (let
     [ctx : tc.TcContext (owned_view.compiler-owned-shared-view state.ctx)]
-    [expr-bases : i64
-      (tc.tc-context-expr-bases (owned_view.compiler-owned-shared-view ctx))]
-    [init : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases init-id)]
-    [body : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases body-id)]
-    (match (tc.tc-let-binding-init-type-at
-      (owned_view.compiler-owned-shared-view ctx)
-      env
-      (tc.tc-env-key-name-text-for-session
-        (tc.tc-context-structural-session ctx)
-        name-id)
-      (owned_view.compiler-owned-shared-view maybe-ty)
-      init-id
-      bindings
-      (+ binding-index 1)
-      body)
-      [(tc.ResultTcType.Ok init-ty)
+    [facts : tc.TcCheckedLetBindingFactState
+      (tc.tc-job-state-checked-let-binding-facts
+        (tc.tc-context-job-state (owned_view.compiler-owned-shared-view ctx)))]
+    (match (tc.tc-checked-let-binding-fact-lookup
+      facts
+      state.checked-declaration-ordinal
+      body-id
+      binding-index
+      name-id
+      init-id)
+      [(tc.TcMaybeCheckedLetBindingFact.Hit binding-ty transition)
         (let
-          [resolved-maybe-ty : ast.AstMaybeType
-            (tc.tc-let-binding-resolve-maybe-type
-              (owned_view.compiler-owned-shared-view ctx)
-              (owned_view.compiler-owned-shared-view maybe-ty))]
-          [binding-ty : ast.AstType
-            (tc.tc-let-binding-plain-bind-type
-              (owned_view.compiler-owned-shared-view ctx)
-              (owned_view.compiler-owned-shared-view resolved-maybe-ty)
-              init-ty)]
           [recorded-maybe-ty : ast.AstMaybeType
-            (match resolved-maybe-ty
-              [(ast.AstMaybeType.Some ty) (ast.AstMaybeType.Some ty)]
-              [(ast.AstMaybeType.No)
-                (ast.AstMaybeType.Some
-                  (tc.tc-resolve-type
-                    (owned_view.compiler-owned-shared-view ctx)
-                    (owned_view.compiler-owned-shared-view binding-ty)))])]
+            (ast.AstMaybeType.Some
+              (tc.tc-resolve-type
+                (owned_view.compiler-owned-shared-view ctx)
+                (owned_view.compiler-owned-shared-view binding-ty)))]
           [bound : CompilerSemanticBindResult
             (compiler-semantic-bind-local!
               (owned_view.compiler-owned-shared-view state)
@@ -3592,37 +3604,28 @@
               [(ast.AstMaybeType.No) unit])
             (CompilerSemanticBindResult
               bound.scope
-              ;; Reproduce the successful checker's special arena-owner,
-              ;; arena-phase, and raw C function-pointer binding transition so a
-              ;; later inferred binding sees the same exact lexical environment.
-              (tc.tc-bind-c-abi-fnptr-if-needed-id
-                ctx
+              ;; Apply the successful checker's retained arena-owner, arena-phase,
+              ;; and raw C-function-pointer decision without inspecting or
+              ;; typechecking the initializer again.
+              (tc.tc-bind-checked-let-transition-id
+                (owned_view.compiler-owned-shared-view ctx)
                 env
                 name-id
                 binding-ty
-                init)
+                transition)
               bound.next-search)))]
-      [(tc.ResultTcType.Err _)
-        ;; A complete check reached this walk successfully, so this is only a
-        ;; fail-closed fallback for facts the replay cannot reproduce.
+      [_
+        ;; Partial checks can legitimately lack a fact after their first error.
+        ;; Do not fabricate an annotation-only binding: retain syntax records,
+        ;; leave the environment unchanged, and make complete callers fail.
         (begin
-          (match (owned_view.compiler-owned-shared-view maybe-ty)
-            [(ast.AstMaybeType.Some ty)
-              (compiler-semantic-walk-type!
-                (owned_view.compiler-owned-shared-view state)
-                ty)]
+          (if state.declaration-retains-let-facts
+            (set! (deref state.checked-let-fact-mismatch) true)
+            unit)
+          (match maybe-ty
+            [(ast.AstMaybeType.Some ty) (compiler-semantic-walk-type! state ty)]
             [(ast.AstMaybeType.No) unit])
-          (compiler-semantic-bind-local!
-            (owned_view.compiler-owned-shared-view state)
-            scope
-            env
-            name-id
-            CompilerSemanticSymbolKind.Local
-            (tc.tc-let-binding-resolve-maybe-type
-              ctx
-              (owned_view.compiler-owned-shared-view maybe-ty))
-            search-start
-            search-limit))])))
+          (CompilerSemanticBindResult scope env search-start))])))
 
 (define (compiler-semantic-expr-start-offset
   [state : CompilerSemanticWalkState]
@@ -3672,7 +3675,11 @@
     (begin
       ;; Atomic expression spans may end at their first or final byte. Advance
       ;; only through the token so a sequential binder starts after its RHS.
+      ;; Generated nodes can have no source span and deliberately preserve a
+      ;; negative fallback; leave it for the scope-region guard instead of
+      ;; indexing the source at -1.
       (while (and
+        (>= cursor 0)
         (< cursor source-len)
         (not
           (compiler-semantic-delimiter? (string.string-ref state.source cursor))))
@@ -8189,297 +8196,301 @@
       (set!
         compiler-semantic-source-index-live-owners
         (+ compiler-semantic-source-index-live-owners 1))
-      (unsafe
-        (arena.tl_arena_set owner))
-      (let
-        [decls : ast.AstDeclList
-          (match (tc.tc-context-program
-            (owned_view.compiler-owned-shared-view ctx))
-            [(ast.AstProgram.Program decls-box)
-              (ast.ast-decl-list-box-shared-view decls-box)])]
-        [decl-count : i64 (ast.ast-decl-list-len (& decls))]
-        [symbol-count : i64
-          (csym.compiler-symbols-decl-count (tc.tc-context-symbols (& ctx)))]
-        [path-capacity : i64 (+ decl-count 4)]
-        [module-capacity : i64 (+ decl-count 4)]
-        [paths-out : (__tl_dyn-array CompilerSemanticSourcePathInfo)
-          (array.make-array CompilerSemanticSourcePathInfo path-capacity)]
-        [modules-out : (__tl_dyn-array CompilerSemanticModuleInfo)
-          (array.make-array CompilerSemanticModuleInfo module-capacity)]
-        [module-events-out : (__tl_dyn-array CompilerSemanticModuleEvent)
-          (array.make-array CompilerSemanticModuleEvent (+ (* decl-count 2) 8))]
-        [decl-record-indices : (__tl_dyn-array i64)
-          (array.make-array i64 symbol-count)]
-        [walk-state : CompilerSemanticWalkState
-          (CompilerSemanticWalkState
-            (owned_view.compiler-owned-shared-view ctx)
-            (owned_view.compiler-owned-shared-view env)
-            ""
-            ""
-            -1
-            cbi.compiler-builtin-id-fix-empty
-            -1
-            false
-            CompilerSemanticProvenance.EditableSource
-            (box
-              (compiler-semantic-record-vec-new
-                (* (ast.ast-decl-list-len (& decls)) 2)))
-            (box
-              (compiler-semantic-binding-vec-new
-                (* (ast.ast-decl-list-len (& decls)) 2)))
-            complete
-            -1
-            -1
-            (box
-              (CompilerSemanticVisibilityBuildStorage
-                (owned_view.compiler-owned-shared-view paths-out)
-                (box 0)
-                (owned_view.compiler-owned-shared-view modules-out)
-                (box 0)
-                (owned_view.compiler-owned-shared-view module-events-out)
-                (box 0)
-                (box
-                  (compiler-semantic-scope-event-vec-new (+ (* decl-count 2) 8)))
-                (box 0)
-                (box 0)
-                (box 1)
-                (box 1)))
+      (in-arena
+        (arena.Arena owner)
+        (let
+          [decls : ast.AstDeclList
+            (match (tc.tc-context-program
+              (owned_view.compiler-owned-shared-view ctx))
+              [(ast.AstProgram.Program decls-box)
+                (ast.ast-decl-list-box-shared-view decls-box)])]
+          [decl-count : i64 (ast.ast-decl-list-len (& decls))]
+          [symbol-count : i64
+            (csym.compiler-symbols-decl-count (tc.tc-context-symbols (& ctx)))]
+          [path-capacity : i64 (+ decl-count 4)]
+          [module-capacity : i64 (+ decl-count 4)]
+          [paths-out : (__tl_dyn-array CompilerSemanticSourcePathInfo)
+            (array.make-array CompilerSemanticSourcePathInfo path-capacity)]
+          [modules-out : (__tl_dyn-array CompilerSemanticModuleInfo)
+            (array.make-array CompilerSemanticModuleInfo module-capacity)]
+          [module-events-out : (__tl_dyn-array CompilerSemanticModuleEvent)
             (array.make-array
-              i64
-              (ast.ast-node-pool-context-expr-len
-                (tc.tc-context-pools
-                  (owned_view.compiler-owned-shared-view ctx))))
-            (box 0)
-            parse_core.CompilerParseMaybeSemanticOriginRun.None
-            (array.make-array i64 12))]
-        [index : i64 0]
-        [cached-path : String ""]
-        [cached-source : String ""]
-        [form-search-start : i64 0]
-        (begin
-          (while (< index (ast.ast-decl-list-len (& decls)))
-            (let
-              [decl : ast.AstDecl
-                (ast.ast-decl-list-get (& decls) index (ast.ast-decl-fallback))]
-              [path : String
-                (ast.ast-decl-path-list-get
-                  (& paths)
-                  index
-                  (owned_view.compiler-owned-shared-view entry-path))]
-              [module-id : i64
-                (ast.ast-decl-path-list-owner-id
-                  (& paths)
-                  index
-                  cbi.compiler-builtin-id-fix-empty)]
-              [decl-ctx : tc.TcContext
-                (if (= module-id cbi.compiler-builtin-id-fix-empty)
-                  (tc.tc-context-with-module-id
-                    (owned_view.compiler-owned-shared-view ctx)
-                    ""
-                    cbi.compiler-builtin-id-fix-empty)
-                  (tc.tc-context-with-module-id
-                    (owned_view.compiler-owned-shared-view ctx)
-                    (tc.macro-decl-module-display module-id)
-                    module-id))]
-              [generated : bool
-                (match (ast.ast-decl-generated-meta
-                  (owned_view.compiler-owned-shared-view decl))
-                  [(ast.AstGeneratedDeclMeta.No) false]
-                  [(ast.AstGeneratedDeclMeta.Some _ _ _ _) true])]
-              [provenance : CompilerSemanticProvenance
-                (compiler-semantic-decl-provenance
-                  (owned_view.compiler-owned-shared-view decl))]
-              [path-changed : bool (not (string.eq path cached-path))]
-              [module-changed : bool
-                (or path-changed (!= module-id walk-state.module-id))]
-              (begin
-                (if path-changed
-                  (begin
-                    (set! cached-path (string.copy (& path)))
-                    (set! form-search-start 0)
-                    (set!
-                      cached-source
-                      (cond
-                        [(string.eq path entry-path)
-                          (string.copy (& entry-source))]
-                        [(and
-                            (not (string.eq path ""))
-                            (io.file-exists?
-                              (owned_view.compiler-owned-shared-view path)))
-                          (byte_buf.to-string
-                            (io.read-file
-                              (owned_view.compiler-owned-shared-view path)))]
-                        [else ""]))
-                    (set! walk-state.path (string.copy (& path)))
-                    (set! walk-state.source (string.copy (& cached-source))))
-                  unit)
-                (set!
-                  walk-state.ctx
-                  (owned_view.compiler-owned-shared-view decl-ctx))
-                (set!
-                  walk-state.top-env
-                  (owned_view.compiler-owned-shared-view env))
-                (set! walk-state.form-start -1)
-                (set! walk-state.module-id module-id)
-                (if module-changed
-                  (set!
-                    walk-state.module-index
-                    (if complete
-                      (compiler-semantic-module-index-ensure!
-                        (owned_view.compiler-owned-shared-view walk-state)
-                        module-id)
-                      -1))
-                  unit)
-                (if path-changed
-                  (set!
-                    walk-state.path-index
-                    (compiler-semantic-path-index-ensure!
-                      (owned_view.compiler-owned-shared-view walk-state)
-                      (owned_view.compiler-owned-shared-view path)
-                      (string.string-length cached-source)
-                      walk-state.module-index))
-                  unit)
-                (set! walk-state.declaration-ordinal index)
-                (set! walk-state.generated generated)
-                (set! walk-state.provenance provenance)
-                (set! (deref walk-state.next-local-ordinal) 0)
-                (set!
-                  walk-state.semantic-origin-run
-                  (parse_core.compiler-parse-semantic-origin-run
+              CompilerSemanticModuleEvent
+              (+ (* decl-count 2) 8))]
+          [decl-record-indices : (__tl_dyn-array i64)
+            (array.make-array i64 symbol-count)]
+          [walk-state : CompilerSemanticWalkState
+            (CompilerSemanticWalkState
+              (owned_view.compiler-owned-shared-view ctx)
+              (owned_view.compiler-owned-shared-view env)
+              ""
+              ""
+              -1
+              cbi.compiler-builtin-id-fix-empty
+              -1
+              -1
+              true
+              false
+              CompilerSemanticProvenance.EditableSource
+              (box
+                (compiler-semantic-record-vec-new
+                  (* (ast.ast-decl-list-len (& decls)) 2)))
+              (box
+                (compiler-semantic-binding-vec-new
+                  (* (ast.ast-decl-list-len (& decls)) 2)))
+              complete
+              -1
+              -1
+              (box
+                (CompilerSemanticVisibilityBuildStorage
+                  (owned_view.compiler-owned-shared-view paths-out)
+                  (box 0)
+                  (owned_view.compiler-owned-shared-view modules-out)
+                  (box 0)
+                  (owned_view.compiler-owned-shared-view module-events-out)
+                  (box 0)
+                  (box
+                    (compiler-semantic-scope-event-vec-new
+                      (+ (* decl-count 2) 8)))
+                  (box 0)
+                  (box 0)
+                  (box 1)
+                  (box 1)))
+              (array.make-array
+                i64
+                (ast.ast-node-pool-context-expr-len
+                  (tc.tc-context-pools
+                    (owned_view.compiler-owned-shared-view ctx))))
+              (box 0)
+              (box false)
+              parse_core.CompilerParseMaybeSemanticOriginRun.None
+              (array.make-array i64 12))]
+          [index : i64 0]
+          [cached-path : String ""]
+          [cached-source : String ""]
+          [form-search-start : i64 0]
+          (begin
+            (while (< index (ast.ast-decl-list-len (& decls)))
+              (let
+                [decl : ast.AstDecl
+                  (ast.ast-decl-list-get
                     (& decls)
-                    index))
-                (compiler-semantic-origin-cursors-reset!
-                  (owned_view.compiler-owned-shared-view walk-state))
-                (compiler-semantic-source-anchor-set!
-                  (owned_view.compiler-owned-shared-view walk-state)
-                  0
-                  1
-                  1)
-                ;; Imports and module markers have no semantic definition row,
-                ;; but their checked path owner still changes the module that
-                ;; a cursor at that form observes.
-                (match (compiler-semantic-decl-symbol
-                  (owned_view.compiler-owned-shared-view decl))
-                  [(CompilerSemanticMaybeDecl.Some _ _) unit]
-                  [(CompilerSemanticMaybeDecl.None)
-                    (match (compiler-semantic-decl-origin
+                    index
+                    (ast.ast-decl-fallback))]
+                [path : String
+                  (ast.ast-decl-path-list-get
+                    (& paths)
+                    index
+                    (owned_view.compiler-owned-shared-view entry-path))]
+                [module-id : i64
+                  (ast.ast-decl-path-list-owner-id
+                    (& paths)
+                    index
+                    cbi.compiler-builtin-id-fix-empty)]
+                [decl-ctx : tc.TcContext
+                  (if (= module-id cbi.compiler-builtin-id-fix-empty)
+                    (tc.tc-context-with-module-id
+                      (owned_view.compiler-owned-shared-view ctx)
+                      ""
+                      cbi.compiler-builtin-id-fix-empty)
+                    (tc.tc-context-with-module-id
+                      (owned_view.compiler-owned-shared-view ctx)
+                      (tc.macro-decl-module-display module-id)
+                      module-id))]
+                [generated : bool
+                  (match (ast.ast-decl-generated-meta
+                    (owned_view.compiler-owned-shared-view decl))
+                    [(ast.AstGeneratedDeclMeta.No) false]
+                    [(ast.AstGeneratedDeclMeta.Some _ _ _ _) true])]
+                [provenance : CompilerSemanticProvenance
+                  (compiler-semantic-decl-provenance
+                    (owned_view.compiler-owned-shared-view decl))]
+                [path-changed : bool (not (string.eq path cached-path))]
+                [module-changed : bool
+                  (or path-changed (!= module-id walk-state.module-id))]
+                (begin
+                  (if path-changed
+                    (begin
+                      (set! cached-path (string.copy (& path)))
+                      (set! form-search-start 0)
+                      (set!
+                        cached-source
+                        (cond
+                          [(string.eq path entry-path)
+                            (string.copy (& entry-source))]
+                          [(and
+                              (not (string.eq path ""))
+                              (io.file-exists?
+                                (owned_view.compiler-owned-shared-view path)))
+                            (byte_buf.to-string
+                              (io.read-file
+                                (owned_view.compiler-owned-shared-view path)))]
+                          [else ""]))
+                      (set! walk-state.path (string.copy (& path)))
+                      (set! walk-state.source (string.copy (& cached-source))))
+                    unit)
+                  (set!
+                    walk-state.ctx
+                    (owned_view.compiler-owned-shared-view decl-ctx))
+                  (set!
+                    walk-state.top-env
+                    (owned_view.compiler-owned-shared-view env))
+                  (set! walk-state.form-start -1)
+                  (set! walk-state.module-id module-id)
+                  (if module-changed
+                    (set!
+                      walk-state.module-index
+                      (if complete
+                        (compiler-semantic-module-index-ensure!
+                          (owned_view.compiler-owned-shared-view walk-state)
+                          module-id)
+                        -1))
+                    unit)
+                  (if path-changed
+                    (set!
+                      walk-state.path-index
+                      (compiler-semantic-path-index-ensure!
+                        (owned_view.compiler-owned-shared-view walk-state)
+                        (owned_view.compiler-owned-shared-view path)
+                        (string.string-length cached-source)
+                        walk-state.module-index))
+                    unit)
+                  (set! walk-state.declaration-ordinal index)
+                  (set!
+                    walk-state.checked-declaration-ordinal
+                    (+ decls.offset index))
+                  (set!
+                    walk-state.declaration-retains-let-facts
+                    (compiler-semantic-decl-retains-checked-let-facts?
+                      (owned_view.compiler-owned-shared-view path)
+                      (owned_view.compiler-owned-shared-view decl)))
+                  (set! walk-state.generated generated)
+                  (set! walk-state.provenance provenance)
+                  (set! (deref walk-state.next-local-ordinal) 0)
+                  (set!
+                    walk-state.semantic-origin-run
+                    (parse_core.compiler-parse-semantic-origin-run
                       (& decls)
-                      index
-                      (owned_view.compiler-owned-shared-view decl))
-                      [(parse_core.CompilerParseMaybeDeclSpan.Some origin)
-                        (let
-                          [form-start : i64
-                            (if (or generated (string.eq cached-source ""))
-                              -1
-                              (compiler-semantic-top-level-form-start
-                                (owned_view.compiler-owned-shared-view
-                                  cached-source)
-                                (compiler-semantic-source-offset
+                      index))
+                  (compiler-semantic-origin-cursors-reset!
+                    (owned_view.compiler-owned-shared-view walk-state))
+                  (compiler-semantic-source-anchor-set!
+                    (owned_view.compiler-owned-shared-view walk-state)
+                    0
+                    1
+                    1)
+                  ;; Imports and module markers have no semantic definition row,
+                  ;; but their checked path owner still changes the module that
+                  ;; a cursor at that form observes.
+                  (match (compiler-semantic-decl-symbol
+                    (owned_view.compiler-owned-shared-view decl))
+                    [(CompilerSemanticMaybeDecl.Some _ _) unit]
+                    [(CompilerSemanticMaybeDecl.None)
+                      (match (compiler-semantic-decl-origin
+                        (& decls)
+                        index
+                        (owned_view.compiler-owned-shared-view decl))
+                        [(parse_core.CompilerParseMaybeDeclSpan.Some origin)
+                          (let
+                            [form-start : i64
+                              (if (or generated (string.eq cached-source ""))
+                                -1
+                                (compiler-semantic-top-level-form-start
                                   (owned_view.compiler-owned-shared-view
                                     cached-source)
-                                  (ast.ast-source-span-start-line origin)
-                                  (ast.ast-source-span-start-col origin))
-                                form-search-start))]
-                          (begin
-                            (compiler-semantic-module-event-push!
-                              (owned_view.compiler-owned-shared-view walk-state)
-                              walk-state.path-index
-                              form-start
-                              walk-state.module-index)
-                            (if (>= form-start 0)
-                              (set! form-search-start form-start)
-                              unit)))]
-                      [(parse_core.CompilerParseMaybeDeclSpan.None) unit])])
-                (match (compiler-semantic-decl-symbol
-                  (owned_view.compiler-owned-shared-view decl))
-                  [(CompilerSemanticMaybeDecl.Some name-id kind)
-                    (let
-                      [name : String
-                        (tc.tc-env-key-name-text-for-session
-                          (tc.tc-context-structural-session walk-state.ctx)
-                          name-id)]
-                      [maybe-origin : parse_core.CompilerParseMaybeDeclSpan
-                        (compiler-semantic-decl-origin
-                          (& decls)
-                          index
-                          (owned_view.compiler-owned-shared-view decl))]
-                      [semantic-origin : CompilerSemanticMaybeOrigin
-                        (match kind
-                          [(CompilerSemanticSymbolKind.Struct)
-                            (compiler-semantic-origin-take!
-                              (owned_view.compiler-owned-shared-view walk-state)
-                              parse_core.CompilerParseSemanticOriginKind.TypeDefinition)]
-                          [(CompilerSemanticSymbolKind.Enum)
-                            (compiler-semantic-origin-take!
-                              (owned_view.compiler-owned-shared-view walk-state)
-                              parse_core.CompilerParseSemanticOriginKind.TypeDefinition)]
-                          [_ CompilerSemanticMaybeOrigin.None])]
-                      [form-start : i64
-                        (match maybe-origin
-                          [(parse_core.CompilerParseMaybeDeclSpan.Some origin)
-                            (if (or generated (string.eq cached-source ""))
-                              -1
-                              (compiler-semantic-top-level-form-start
-                                (owned_view.compiler-owned-shared-view
-                                  cached-source)
-                                (compiler-semantic-source-offset
-                                  (owned_view.compiler-owned-shared-view
-                                    cached-source)
-                                  (ast.ast-source-span-start-line origin)
-                                  (ast.ast-source-span-start-col origin))
-                                form-search-start))]
-                          [(parse_core.CompilerParseMaybeDeclSpan.None)
-                            (if (and
-                              (not generated)
-                              (not (string.eq cached-source "")))
-                              0
-                              -1)])]
-                      [has-origin : bool
-                        (match semantic-origin
-                          [(CompilerSemanticMaybeOrigin.Some _) true]
-                          [(CompilerSemanticMaybeOrigin.None)
-                            (match maybe-origin
-                              [(parse_core.CompilerParseMaybeDeclSpan.Some _)
-                                true]
-                              [(parse_core.CompilerParseMaybeDeclSpan.None)
-                                (and
-                                  (not generated)
-                                  (not (string.eq cached-source "")))])])]
-                      [span : CompilerSemanticSpan
-                        (match semantic-origin
-                          [(CompilerSemanticMaybeOrigin.Some origin)
-                            (compiler-semantic-exact-span-from-origin
-                              (owned_view.compiler-owned-shared-view walk-state)
-                              origin)]
-                          [(CompilerSemanticMaybeOrigin.None)
-                            (match maybe-origin
-                              [(parse_core.CompilerParseMaybeDeclSpan.Some
-                                  origin)
-                                (if (string.eq cached-source "")
-                                  (CompilerSemanticSpan
-                                    (string.copy (& path))
-                                    -1
-                                    -1
-                                    origin
-                                    -1
-                                    -1)
-                                  (compiler-semantic-definition-span
-                                    (owned_view.compiler-owned-shared-view path)
+                                  (compiler-semantic-source-offset
                                     (owned_view.compiler-owned-shared-view
                                       cached-source)
-                                    (owned_view.compiler-owned-shared-view name)
-                                    origin
-                                    form-start))]
-                              [(parse_core.CompilerParseMaybeDeclSpan.None)
-                                (if (and
-                                  (not generated)
-                                  (not (string.eq cached-source "")))
-                                  (let
-                                    [end-position : ast.AstSourceSpan
-                                      (compiler-semantic-source-position
-                                        (owned_view.compiler-owned-shared-view
-                                          cached-source)
-                                        (string.string-length cached-source))]
+                                    (ast.ast-source-span-start-line origin)
+                                    (ast.ast-source-span-start-col origin))
+                                  form-search-start))]
+                            (begin
+                              (compiler-semantic-module-event-push!
+                                (owned_view.compiler-owned-shared-view
+                                  walk-state)
+                                walk-state.path-index
+                                form-start
+                                walk-state.module-index)
+                              (if (>= form-start 0)
+                                (set! form-search-start form-start)
+                                unit)))]
+                        [(parse_core.CompilerParseMaybeDeclSpan.None) unit])])
+                  (match (compiler-semantic-decl-symbol
+                    (owned_view.compiler-owned-shared-view decl))
+                    [(CompilerSemanticMaybeDecl.Some name-id kind)
+                      (let
+                        [name : String
+                          (tc.tc-env-key-name-text-for-session
+                            (tc.tc-context-structural-session walk-state.ctx)
+                            name-id)]
+                        [maybe-origin : parse_core.CompilerParseMaybeDeclSpan
+                          (compiler-semantic-decl-origin
+                            (& decls)
+                            index
+                            (owned_view.compiler-owned-shared-view decl))]
+                        [semantic-origin : CompilerSemanticMaybeOrigin
+                          (match kind
+                            [(CompilerSemanticSymbolKind.Struct)
+                              (compiler-semantic-origin-take!
+                                (owned_view.compiler-owned-shared-view
+                                  walk-state)
+                                parse_core.CompilerParseSemanticOriginKind.TypeDefinition)]
+                            [(CompilerSemanticSymbolKind.Enum)
+                              (compiler-semantic-origin-take!
+                                (owned_view.compiler-owned-shared-view
+                                  walk-state)
+                                parse_core.CompilerParseSemanticOriginKind.TypeDefinition)]
+                            [_ CompilerSemanticMaybeOrigin.None])]
+                        [form-start : i64
+                          (match maybe-origin
+                            [(parse_core.CompilerParseMaybeDeclSpan.Some origin)
+                              (if (or generated (string.eq cached-source ""))
+                                -1
+                                (compiler-semantic-top-level-form-start
+                                  (owned_view.compiler-owned-shared-view
+                                    cached-source)
+                                  (compiler-semantic-source-offset
+                                    (owned_view.compiler-owned-shared-view
+                                      cached-source)
+                                    (ast.ast-source-span-start-line origin)
+                                    (ast.ast-source-span-start-col origin))
+                                  form-search-start))]
+                            [(parse_core.CompilerParseMaybeDeclSpan.None)
+                              (if (and
+                                (not generated)
+                                (not (string.eq cached-source "")))
+                                0
+                                -1)])]
+                        [has-origin : bool
+                          (match semantic-origin
+                            [(CompilerSemanticMaybeOrigin.Some _) true]
+                            [(CompilerSemanticMaybeOrigin.None)
+                              (match maybe-origin
+                                [(parse_core.CompilerParseMaybeDeclSpan.Some _)
+                                  true]
+                                [(parse_core.CompilerParseMaybeDeclSpan.None)
+                                  (and
+                                    (not generated)
+                                    (not (string.eq cached-source "")))])])]
+                        [span : CompilerSemanticSpan
+                          (match semantic-origin
+                            [(CompilerSemanticMaybeOrigin.Some origin)
+                              (compiler-semantic-exact-span-from-origin
+                                (owned_view.compiler-owned-shared-view
+                                  walk-state)
+                                origin)]
+                            [(CompilerSemanticMaybeOrigin.None)
+                              (match maybe-origin
+                                [(parse_core.CompilerParseMaybeDeclSpan.Some
+                                    origin)
+                                  (if (string.eq cached-source "")
+                                    (CompilerSemanticSpan
+                                      (string.copy (& path))
+                                      -1
+                                      -1
+                                      origin
+                                      -1
+                                      -1)
                                     (compiler-semantic-definition-span
                                       (owned_view.compiler-owned-shared-view
                                         path)
@@ -8487,234 +8498,257 @@
                                         cached-source)
                                       (owned_view.compiler-owned-shared-view
                                         name)
-                                      (ast.ast-source-span
-                                        1
-                                        1
-                                        (ast.ast-source-span-start-line
-                                          end-position)
-                                        (ast.ast-source-span-start-col
-                                          end-position))
-                                      form-start))
-                                  (CompilerSemanticSpan
-                                    (string.copy (& path))
-                                    -1
-                                    -1
-                                    (ast.ast-source-span 1 1 1 1)
-                                    -1
-                                    -1))])])]
-                      [symbol : CompilerSemanticSymbolId
-                        (compiler-semantic-symbol-for-decl
-                          (owned_view.compiler-owned-shared-view decl-ctx)
-                          module-id
-                          index
-                          name-id
-                          kind)]
-                      [type-text : String
-                        (compiler-semantic-decl-type
-                          decl-ctx
-                          env
-                          (owned_view.compiler-owned-shared-view decl)
-                          kind
-                          name-id
-                          (owned_view.compiler-owned-shared-view name))]
-                      [documentation : String
-                        (if (and
-                          (not generated)
-                          (not (string.eq cached-source ""))
-                          (>= span.start-byte 0))
-                          (compiler-semantic-documentation-above
-                            (owned_view.compiler-owned-shared-view
-                              cached-source)
-                            form-start)
-                          "")]
-                      (begin
-                        (match semantic-origin
-                          [(CompilerSemanticMaybeOrigin.Some origin)
-                            (compiler-semantic-record-module-origins-before!
-                              (owned_view.compiler-owned-shared-view walk-state)
-                              origin.ordinal
-                              symbol.module-id)]
-                          [(CompilerSemanticMaybeOrigin.None) unit])
-                        (if (>= span.start-byte 0)
-                          (compiler-semantic-source-anchor-set!
-                            (owned_view.compiler-owned-shared-view walk-state)
-                            span.start-byte
-                            (ast.ast-source-span-start-line span.source)
-                            (ast.ast-source-span-start-col span.source))
-                          unit)
-                        (set! walk-state.form-start form-start)
-                        (compiler-semantic-module-event-push!
-                          (owned_view.compiler-owned-shared-view walk-state)
-                          walk-state.path-index
-                          form-start
-                          walk-state.module-index)
-                        (if (>= form-start 0)
-                          (set! form-search-start form-start)
-                          unit)
-                        ;; Local identities are anchored to the resolved
-                        ;; declaration handle, not the flattened AST position.
-                        (set! walk-state.module-id symbol.module-id)
-                        (set!
-                          walk-state.declaration-ordinal
-                          symbol.declaration-ordinal)
-                        (let
-                          [record-index : i64
-                            (compiler-semantic-record-vec-push-index!
-                              (&mut (__tl-box-place walk-state.records))
-                              (CompilerSemanticRecord
-                                symbol
-                                -1
-                                CompilerSemanticRecordRole.Definition
-                                CompilerSemanticAccess.None
-                                kind
-                                (string.copy (& name))
-                                (string.copy (& type-text))
-                                (string.copy (& documentation))
-                                symbol.module-id
-                                (owned_view.compiler-owned-shared-view span)
-                                (and
-                                  (not generated)
-                                  has-origin
-                                  (>= span.start-byte 0))
-                                provenance))]
+                                      origin
+                                      form-start))]
+                                [(parse_core.CompilerParseMaybeDeclSpan.None)
+                                  (if (and
+                                    (not generated)
+                                    (not (string.eq cached-source "")))
+                                    (let
+                                      [end-position : ast.AstSourceSpan
+                                        (compiler-semantic-source-position
+                                          (owned_view.compiler-owned-shared-view
+                                            cached-source)
+                                          (string.string-length cached-source))]
+                                      (compiler-semantic-definition-span
+                                        (owned_view.compiler-owned-shared-view
+                                          path)
+                                        (owned_view.compiler-owned-shared-view
+                                          cached-source)
+                                        (owned_view.compiler-owned-shared-view
+                                          name)
+                                        (ast.ast-source-span
+                                          1
+                                          1
+                                          (ast.ast-source-span-start-line
+                                            end-position)
+                                          (ast.ast-source-span-start-col
+                                            end-position))
+                                        form-start))
+                                    (CompilerSemanticSpan
+                                      (string.copy (& path))
+                                      -1
+                                      -1
+                                      (ast.ast-source-span 1 1 1 1)
+                                      -1
+                                      -1))])])]
+                        [symbol : CompilerSemanticSymbolId
+                          (compiler-semantic-symbol-for-decl
+                            (owned_view.compiler-owned-shared-view decl-ctx)
+                            module-id
+                            index
+                            name-id
+                            kind)]
+                        [type-text : String
+                          (compiler-semantic-decl-type
+                            decl-ctx
+                            env
+                            (owned_view.compiler-owned-shared-view decl)
+                            kind
+                            name-id
+                            (owned_view.compiler-owned-shared-view name))]
+                        [documentation : String
                           (if (and
-                            (>= symbol.declaration-ordinal 0)
-                            (< symbol.declaration-ordinal symbol-count))
-                            (set!
-                              (array-ref
-                                decl-record-indices
-                                symbol.declaration-ordinal)
-                              (+ record-index 1))
-                            unit))))]
-                  [(CompilerSemanticMaybeDecl.None) unit])
-                (compiler-semantic-walk-decl!
-                  (owned_view.compiler-owned-shared-view walk-state)
-                  decl)
-                (set! index (+ index 1)))))
-          (compiler-semantic-record-macro-call-sites!
-            (owned_view.compiler-owned-shared-view walk-state)
-            entry-path
-            entry-source)
-          (let
-            [visibility-storage : CompilerSemanticVisibilityBuildStorage
-              (owned_view.compiler-owned-box-shared-view
-                walk-state.visibility-storage)]
-            [path-count : i64 (__tl-box-place visibility-storage.path-len)]
-            [module-count : i64 (__tl-box-place visibility-storage.module-len)]
-            [top-capacity : i64
-              (if complete
-                (compiler-semantic-top-candidate-capacity
-                  (owned_view.compiler-owned-shared-view ctx)
-                  module-count)
-                0)]
-            [top-candidates : (__tl_dyn-array CompilerSemanticTopCandidateRef)
-              (array.make-array CompilerSemanticTopCandidateRef top-capacity)]
-            [top-labels : (__tl_dyn-array String)
-              (array.make-array String top-capacity)]
-            [raw-scope-events : CompilerSemanticScopeEventVec
-              (owned_view.compiler-owned-box-shared-view
-                visibility-storage.scope-events)]
-            [scope-event-count : i64
-              (if complete
-                raw-scope-events.len
-                0)]
-            [module-event-count : i64
-              (if complete
-                (__tl-box-place visibility-storage.module-event-len)
-                0)]
-            [scope-events : (__tl_dyn-array CompilerSemanticScopeEvent)
-              (array.make-array CompilerSemanticScopeEvent scope-event-count)]
-            [module-events : (__tl_dyn-array CompilerSemanticModuleEvent)
-              (array.make-array CompilerSemanticModuleEvent module-event-count)]
-            [records : CompilerSemanticRecordVec
-              (owned_view.compiler-owned-box-shared-view walk-state.records)]
-            [record-items : (__tl_dyn-array CompilerSemanticRecord)
-              (owned_view.compiler-owned-shared-view records.items)]
-            [record-count : i64 records.len]
-            [canonical-build : CompilerSemanticCanonicalBuildResult
-              (compiler-semantic-canonical-build
-                (owned_view.compiler-owned-shared-view record-items)
-                record-count)]
-            [bindings : CompilerSemanticBindingVec
-              (owned_view.compiler-owned-box-shared-view walk-state.bindings)]
-            [binding-items : (__tl_dyn-array CompilerSemanticBinding)
-              (owned_view.compiler-owned-shared-view bindings.items)]
-            [binding-count : i64
-              (if complete
-                bindings.len
-                0)]
-            [top-candidate-count : i64 0]
-            (begin
-              (if complete
-                (begin
-                  (compiler-semantic-bucket-scope-events!
-                    (owned_view.compiler-owned-shared-view paths-out)
-                    path-count
-                    raw-scope-events.items
-                    scope-event-count
-                    (owned_view.compiler-owned-shared-view scope-events))
-                  (compiler-semantic-bucket-module-events!
-                    (owned_view.compiler-owned-shared-view paths-out)
-                    path-count
-                    (owned_view.compiler-owned-shared-view module-events-out)
-                    module-event-count
-                    (owned_view.compiler-owned-shared-view module-events))
-                  (set!
-                    top-candidate-count
-                    (compiler-semantic-build-top-candidates!
-                      ctx
-                      (owned_view.compiler-owned-shared-view modules-out)
-                      module-count
-                      decl-record-indices
-                      (owned_view.compiler-owned-shared-view record-items)
-                      (owned_view.compiler-owned-shared-view top-candidates)
-                      (owned_view.compiler-owned-shared-view top-labels))))
-                unit)
-              (let
-                [top-visible-bindings : (__tl_dyn-array
-                  CompilerSemanticVisibleBinding)
-                  (array.make-array
-                    CompilerSemanticVisibleBinding
-                    top-candidate-count)]
-                (begin
-                  (if complete
-                    (compiler-semantic-top-visible-bindings-fill!
-                      (& record-items)
-                      (& top-candidates)
-                      (& top-labels)
+                            (not generated)
+                            (not (string.eq cached-source ""))
+                            (>= span.start-byte 0))
+                            (compiler-semantic-documentation-above
+                              (owned_view.compiler-owned-shared-view
+                                cached-source)
+                              form-start)
+                            "")]
+                        (begin
+                          (match semantic-origin
+                            [(CompilerSemanticMaybeOrigin.Some origin)
+                              (compiler-semantic-record-module-origins-before!
+                                (owned_view.compiler-owned-shared-view
+                                  walk-state)
+                                origin.ordinal
+                                symbol.module-id)]
+                            [(CompilerSemanticMaybeOrigin.None) unit])
+                          (if (>= span.start-byte 0)
+                            (compiler-semantic-source-anchor-set!
+                              (owned_view.compiler-owned-shared-view walk-state)
+                              span.start-byte
+                              (ast.ast-source-span-start-line span.source)
+                              (ast.ast-source-span-start-col span.source))
+                            unit)
+                          (set! walk-state.form-start form-start)
+                          (compiler-semantic-module-event-push!
+                            (owned_view.compiler-owned-shared-view walk-state)
+                            walk-state.path-index
+                            form-start
+                            walk-state.module-index)
+                          (if (>= form-start 0)
+                            (set! form-search-start form-start)
+                            unit)
+                          ;; Local identities are anchored to the resolved
+                          ;; declaration handle, not the flattened AST position.
+                          (set! walk-state.module-id symbol.module-id)
+                          (set!
+                            walk-state.declaration-ordinal
+                            symbol.declaration-ordinal)
+                          (let
+                            [record-index : i64
+                              (compiler-semantic-record-vec-push-index!
+                                (&mut (__tl-box-place walk-state.records))
+                                (CompilerSemanticRecord
+                                  symbol
+                                  -1
+                                  CompilerSemanticRecordRole.Definition
+                                  CompilerSemanticAccess.None
+                                  kind
+                                  (string.copy (& name))
+                                  (string.copy (& type-text))
+                                  (string.copy (& documentation))
+                                  symbol.module-id
+                                  (owned_view.compiler-owned-shared-view span)
+                                  (and
+                                    (not generated)
+                                    has-origin
+                                    (>= span.start-byte 0))
+                                  provenance))]
+                            (if (and
+                              (>= symbol.declaration-ordinal 0)
+                              (< symbol.declaration-ordinal symbol-count))
+                              (set!
+                                (array-ref
+                                  decl-record-indices
+                                  symbol.declaration-ordinal)
+                                (+ record-index 1))
+                              unit))))]
+                    [(CompilerSemanticMaybeDecl.None) unit])
+                  (compiler-semantic-walk-decl!
+                    (owned_view.compiler-owned-shared-view walk-state)
+                    decl)
+                  (set! index (+ index 1)))))
+            (compiler-semantic-record-macro-call-sites!
+              (owned_view.compiler-owned-shared-view walk-state)
+              entry-path
+              entry-source)
+            (let
+              [visibility-storage : CompilerSemanticVisibilityBuildStorage
+                (owned_view.compiler-owned-box-shared-view
+                  walk-state.visibility-storage)]
+              [path-count : i64 (__tl-box-place visibility-storage.path-len)]
+              [module-count : i64
+                (__tl-box-place visibility-storage.module-len)]
+              [top-capacity : i64
+                (if complete
+                  (compiler-semantic-top-candidate-capacity
+                    (owned_view.compiler-owned-shared-view ctx)
+                    module-count)
+                  0)]
+              [top-candidates : (__tl_dyn-array CompilerSemanticTopCandidateRef)
+                (array.make-array CompilerSemanticTopCandidateRef top-capacity)]
+              [top-labels : (__tl_dyn-array String)
+                (array.make-array String top-capacity)]
+              [raw-scope-events : CompilerSemanticScopeEventVec
+                (owned_view.compiler-owned-box-shared-view
+                  visibility-storage.scope-events)]
+              [scope-event-count : i64
+                (if complete
+                  raw-scope-events.len
+                  0)]
+              [module-event-count : i64
+                (if complete
+                  (__tl-box-place visibility-storage.module-event-len)
+                  0)]
+              [scope-events : (__tl_dyn-array CompilerSemanticScopeEvent)
+                (array.make-array CompilerSemanticScopeEvent scope-event-count)]
+              [module-events : (__tl_dyn-array CompilerSemanticModuleEvent)
+                (array.make-array
+                  CompilerSemanticModuleEvent
+                  module-event-count)]
+              [records : CompilerSemanticRecordVec
+                (owned_view.compiler-owned-box-shared-view walk-state.records)]
+              [record-items : (__tl_dyn-array CompilerSemanticRecord)
+                (owned_view.compiler-owned-shared-view records.items)]
+              [record-count : i64 records.len]
+              [canonical-build : CompilerSemanticCanonicalBuildResult
+                (compiler-semantic-canonical-build
+                  (owned_view.compiler-owned-shared-view record-items)
+                  record-count)]
+              [bindings : CompilerSemanticBindingVec
+                (owned_view.compiler-owned-box-shared-view walk-state.bindings)]
+              [binding-items : (__tl_dyn-array CompilerSemanticBinding)
+                (owned_view.compiler-owned-shared-view bindings.items)]
+              [binding-count : i64
+                (if complete
+                  bindings.len
+                  0)]
+              [top-candidate-count : i64 0]
+              (begin
+                (if complete
+                  (begin
+                    (compiler-semantic-bucket-scope-events!
+                      (owned_view.compiler-owned-shared-view paths-out)
+                      path-count
+                      raw-scope-events.items
+                      scope-event-count
+                      (owned_view.compiler-owned-shared-view scope-events))
+                    (compiler-semantic-bucket-module-events!
+                      (owned_view.compiler-owned-shared-view paths-out)
+                      path-count
+                      (owned_view.compiler-owned-shared-view module-events-out)
+                      module-event-count
+                      (owned_view.compiler-owned-shared-view module-events))
+                    (set!
                       top-candidate-count
-                      (owned_view.compiler-owned-shared-view
-                        top-visible-bindings))
-                    unit)
-                  (let
-                    [result : CompilerSemanticSourceIndex
-                      (CompilerSemanticSourceIndex
-                        owner
-                        record-items
-                        record-count
-                        canonical-build.symbols
-                        canonical-build.len
-                        complete
-                        paths-out
-                        path-count
-                        modules-out
+                      (compiler-semantic-build-top-candidates!
+                        ctx
+                        (owned_view.compiler-owned-shared-view modules-out)
                         module-count
-                        module-events
-                        module-event-count
-                        scope-events
-                        scope-event-count
-                        (if complete
-                          (__tl-box-place visibility-storage.scope-region-count)
-                          0)
-                        binding-items
-                        binding-count
-                        top-candidates
-                        top-labels
-                        top-visible-bindings
-                        top-candidate-count)]
-                    (begin
-                      (unsafe
-                        (arena.tl_arena_set previous))
+                        decl-record-indices
+                        (owned_view.compiler-owned-shared-view record-items)
+                        (owned_view.compiler-owned-shared-view top-candidates)
+                        (owned_view.compiler-owned-shared-view top-labels))))
+                  unit)
+                (let
+                  [top-visible-bindings : (__tl_dyn-array
+                    CompilerSemanticVisibleBinding)
+                    (array.make-array
+                      CompilerSemanticVisibleBinding
+                      top-candidate-count)]
+                  (begin
+                    (if complete
+                      (compiler-semantic-top-visible-bindings-fill!
+                        (& record-items)
+                        (& top-candidates)
+                        (& top-labels)
+                        top-candidate-count
+                        (owned_view.compiler-owned-shared-view
+                          top-visible-bindings))
+                      unit)
+                    (let
+                      [result : CompilerSemanticSourceIndex
+                        (CompilerSemanticSourceIndex
+                          owner
+                          record-items
+                          record-count
+                          canonical-build.symbols
+                          canonical-build.len
+                          (and
+                            complete
+                            (not (deref walk-state.checked-let-fact-mismatch)))
+                          paths-out
+                          path-count
+                          modules-out
+                          module-count
+                          module-events
+                          module-event-count
+                          scope-events
+                          scope-event-count
+                          (if complete
+                            (__tl-box-place
+                              visibility-storage.scope-region-count)
+                            0)
+                          binding-items
+                          binding-count
+                          top-candidates
+                          top-labels
+                          top-visible-bindings
+                          top-candidate-count)]
                       result)))))))))))
 
 (define (compiler-check-program-with-paths-index-cache
@@ -8725,9 +8759,13 @@
   [stdlib-roots : svec.Vec]
   [cache-scope : String]) : ResultCompilerCheckWithSemanticIndex
   (let
+    [job-state : tc.TcJobState (tc.tc-serial-job-state)]
     [macro-sites : tc.TcMacroCallSiteState
-      (tc.tc-job-state-macro-call-sites (tc.tc-serial-job-state))]
+      (tc.tc-job-state-macro-call-sites job-state)]
+    [let-facts : tc.TcCheckedLetBindingFactState
+      (tc.tc-job-state-checked-let-binding-facts job-state)]
     (begin
+      (tc.tc-checked-let-binding-facts-begin! let-facts)
       (tc.tc-macro-call-site-state-set-enabled! macro-sites true)
       (cfg compile-profile (check_core.compiler-check-profile-start))
       (match (tc_api.typecheck-compiler-program-with-paths-checked-cache
@@ -8737,6 +8775,8 @@
         cache-scope)
         [(tc.ResultCompilerTypecheckChecked.Ok summary ctx env checked-paths)
           (let
+            [_let-check-count-before : i64
+              (cfg test (tc.tc-let-binding-init-type-call-count-for-test) 0)]
             [index : CompilerSemanticSourceIndex
               (compiler-semantic-index-build-owned
                 ctx
@@ -8747,12 +8787,32 @@
                 true)]
             (begin
               (cfg
+                test
+                (unless
+                  (=
+                    _let-check-count-before
+                    (tc.tc-let-binding-init-type-call-count-for-test))
+                  (io.panic
+                    "semantic index: let initializer was typechecked during index construction"))
+                unit)
+              (cfg
                 compile-profile
                 (check_core.compiler-check-profile-finish "typecheck"))
               (tc.tc-macro-call-site-state-set-enabled! macro-sites false)
-              (ResultCompilerCheckWithSemanticIndex.Ok summary index)))]
+              (tc.tc-checked-let-binding-facts-finish! let-facts)
+              (if (compiler-semantic-source-index-complete? (& index))
+                (ResultCompilerCheckWithSemanticIndex.Ok summary index)
+                (begin
+                  (compiler-semantic-source-index-release! (&mut index))
+                  (ResultCompilerCheckWithSemanticIndex.Err
+                    (box
+                      (cdiag.compiler-diagnostic-list-single
+                        (tc.tc-diag-at-start
+                          "semantic index: missing or inconsistent retained checked let-binding fact"))))))))]
         [(tc.ResultCompilerTypecheckChecked.Partial diag ctx env checked-paths)
           (let
+            [_let-check-count-before : i64
+              (cfg test (tc.tc-let-binding-init-type-call-count-for-test) 0)]
             [index : CompilerSemanticSourceIndex
               (compiler-semantic-index-build-owned
                 ctx
@@ -8763,9 +8823,19 @@
                 false)]
             (begin
               (cfg
+                test
+                (unless
+                  (=
+                    _let-check-count-before
+                    (tc.tc-let-binding-init-type-call-count-for-test))
+                  (io.panic
+                    "semantic index: let initializer was typechecked during partial index construction"))
+                unit)
+              (cfg
                 compile-profile
                 (check_core.compiler-check-profile-finish "typecheck"))
               (tc.tc-macro-call-site-state-set-enabled! macro-sites false)
+              (tc.tc-checked-let-binding-facts-finish! let-facts)
               (ResultCompilerCheckWithSemanticIndex.Partial
                 (box
                   (check_core.compiler-check-diagnostics-with-fallback-path
@@ -8778,6 +8848,7 @@
               compile-profile
               (check_core.compiler-check-profile-finish "typecheck"))
             (tc.tc-macro-call-site-state-set-enabled! macro-sites false)
+            (tc.tc-checked-let-binding-facts-finish! let-facts)
             (ResultCompilerCheckWithSemanticIndex.Err
               (box
                 (check_core.compiler-check-diagnostics-with-fallback-path
@@ -11163,6 +11234,122 @@
           false)]
       [(ResultCompilerCheckWithSemanticIndex.Err _) false])))
 
+(define (compiler-check-semantic-index-retained-transitions-ok?) : bool
+  (let
+    [path : String "src/tests/semantic_index_retained_transitions.tl"]
+    [source : String
+      "(import stdlib.arena)
+(import stdlib.string)
+(extern raw-fn (:symbol \"semantic_index_raw_fn\") : (-> i64 i64))
+(define (read-ref [value : (& owner i64)]) : i64 1)
+(define (read-owned [value : String]) : i64 1)
+(define (probe [n : i64]) : i64
+  (let
+    [ref (& n)]
+    [ref-closure (lambda () : i64 (read-ref ref))]
+    [owned : String \"repeat\"]
+    [move-closure (lambda () : i64 (read-owned owned))]
+    [once : String \"once\"]
+    [consume-closure (lambda () : String once)]
+    [owner (arena.make)]
+    [phase (arena.phase owner)]
+    [raw-copy raw-fn]
+    [score (+ (ref-closure) (+ (move-closure) (raw-copy 39)))]
+    [taken (consume-closure)]
+    (begin
+      (arena.rewind-safe! phase)
+      (arena.destroy-safe! owner)
+      (+ score (string.string-length taken)))))"]
+    [roots : svec.Vec
+      (let
+        [items : svec.Vec (svec.new)]
+        (begin
+          (svec.push-ref! (&mut items) "stdlib")
+          items))]
+    (match (compiler-check-source-index-with-roots
+      (owned_view.compiler-owned-shared-view path)
+      (owned_view.compiler-owned-shared-view source)
+      (owned_view.compiler-owned-shared-view roots))
+      [(ResultCompilerCheckWithSemanticIndex.Ok _ index)
+        (let
+          [ref-index : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& index)
+              (owned_view.compiler-owned-shared-view path)
+              "ref"
+              CompilerSemanticRecordRole.Definition
+              0)]
+          [ref-closure-index : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& index)
+              (owned_view.compiler-owned-shared-view path)
+              "ref-closure"
+              CompilerSemanticRecordRole.Definition
+              0)]
+          [move-closure-index : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& index)
+              (owned_view.compiler-owned-shared-view path)
+              "move-closure"
+              CompilerSemanticRecordRole.Definition
+              0)]
+          [consume-closure-index : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& index)
+              (owned_view.compiler-owned-shared-view path)
+              "consume-closure"
+              CompilerSemanticRecordRole.Definition
+              0)]
+          [owner-index : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& index)
+              (owned_view.compiler-owned-shared-view path)
+              "owner"
+              CompilerSemanticRecordRole.Definition
+              0)]
+          [phase-index : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& index)
+              (owned_view.compiler-owned-shared-view path)
+              "phase"
+              CompilerSemanticRecordRole.Definition
+              0)]
+          [raw-index : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& index)
+              (owned_view.compiler-owned-shared-view path)
+              "raw-copy"
+              CompilerSemanticRecordRole.Definition
+              0)]
+          [taken-index : i64
+            (compiler-semantic-source-index-find-name-occurrence
+              (& index)
+              (owned_view.compiler-owned-shared-view path)
+              "taken"
+              CompilerSemanticRecordRole.Definition
+              0)]
+          [ok : bool
+            (and
+              (>= ref-index 0)
+              (>= ref-closure-index 0)
+              (>= move-closure-index 0)
+              (>= consume-closure-index 0)
+              (>= owner-index 0)
+              (>= phase-index 0)
+              (>= raw-index 0)
+              (>= taken-index 0)
+              (string.eq
+                (compiler-semantic-source-index-get (& index) raw-index).resolved-type
+                "(-> i64 i64)"))]
+          (begin
+            (compiler-semantic-source-index-release! (&mut index))
+            (and ok (= (compiler-semantic-source-index-len (& index)) 0))))]
+      [(ResultCompilerCheckWithSemanticIndex.Partial _ partial)
+        (begin
+          (compiler-semantic-source-index-release! (&mut partial))
+          false)]
+      [(ResultCompilerCheckWithSemanticIndex.Err _) false])))
+
 (define (compiler-check-semantic-index-dense-visibility-ok?
   [index : (& index CompilerSemanticSourceIndex)]
   [path : String]
@@ -13030,6 +13217,7 @@
     (compiler-check-semantic-index-base-ok?)
     (compiler-check-semantic-index-macro-call-sites-ok?)
     (compiler-check-semantic-index-inferred-locals-ok?)
+    (compiler-check-semantic-index-retained-transitions-ok?)
     (compiler-check-semantic-index-dense-scopes-ok?)
     (compiler-check-semantic-index-partial-ok?)
     (compiler-check-semantic-index-canonical-ok?)

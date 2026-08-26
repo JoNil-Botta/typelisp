@@ -18,8 +18,10 @@ native_link_detect_host
 # Target-conditioned prefix declarations change how much source work the
 # hydrated dependency surface bypasses.
 case "$NL_HOST_OS" in
-    windows) TRUSTED_PREFIX_SKIPPED=223 ;;
-    *) TRUSTED_PREFIX_SKIPPED=218 ;;
+    # #6215's explicit compiler-owned-view import adds one declaration to the
+    # hydrated dependency prefix on both hosts.
+    windows) TRUSTED_PREFIX_SKIPPED=224 ;;
+    *) TRUSTED_PREFIX_SKIPPED=219 ;;
 esac
 
 COMPILER=${1:-${TYPELISP_BIN:-}}

@@ -36811,14 +36811,14 @@
                   index
                   uses
                   label
-                  merge-label
+                  (OptThreadVia.Nil)
                   merge-label
                   (if known
                     true-label
                     false-label)
                   merge-instrs
                   1
-                  merge-instrs
+                  1
                   0)
                   acc
                   (ir.compiler-ir-phi-input-cons
@@ -37488,12 +37488,15 @@
                             index
                             uses
                             label
-                            merge-label
+                            (OptThreadVia.Cons
+                              merge-label
+                              merge-instrs
+                              (box (OptThreadVia.Nil)))
                             from-label
                             exit-label
                             from-instrs
                             0
-                            merge-instrs
+                            0
                             0)
                             true
                             changed)])])])])]
@@ -38224,14 +38227,29 @@
   (Some bool))
 
 ;; `Some` carries the cond var, the phi slot (-1 when the condition is defined
-;; outside the merge), and the two labels. `Compare` is the D2 form: the block
-;; is a phi prefix, one comparison defining the branch condition, and the
-;; branch; the payload is the comparison's slot -- which is also the phi count
-;; -- and the two labels.
+;; outside the merge), the phi-prefix count, the successor no edge may be
+;; threaded to (`label-none` when none is), and the two labels. `Compare` is the
+;; D2 form: the block is a phi prefix, pure Movs, one comparison defining the
+;; branch condition, and the branch; the payload is the phi-prefix count, the
+;; blocked successor, and the two labels.
 (defenum OptThreadMerge
   (No)
-  (Some i64 i64 i64 i64)
-  (Compare i64 i64 i64))
+  (Some i64 i64 i64 i64 i64 i64)
+  (Compare i64 i64 i64 i64))
+
+;; The verdict of the live-out rule over everything a merge defines: `No`
+;; refuses the merge, `Some label` admits it with the one successor no edge may
+;; be threaded to (`label-none` when every definition is edge-local).
+(defenum OptThreadBlocked
+  (No)
+  (Some i64))
+
+;; The `[phi; jump]` forwarding blocks between the merge and the predecessor
+;; being redirected, merge-first: `C1` is the block the merge's own phi input
+;; names, `Ck` is the block the origin jumps into. `Nil` is a direct edge.
+(defenum OptThreadVia
+  (Nil)
+  (Cons i64 ir.CompilerIrInstrSeq (Box OptThreadVia)))
 
 (defenum OptThreadForward
   (No)
@@ -38397,63 +38415,258 @@
             (+
               (opt-thread-count-value-var left var)
               (opt-thread-count-value-var right var)))]
+        [(ir.CompilerIrInstr.Mov _ src _)
+          (+ found (opt-thread-count-value-var src var))]
         [_ (- 0 1)]))))
 
-;; Everything the merge defines has to die on the merge's own out-edges: the
-;; block's own tail reading it, plus phi inputs the two successors carry under
-;; the merge's label. Any other reader sits in a block the merge dominates
-;; today, and redirecting a predecessor past the merge would reach it without
-;; passing the definition. LLVM states the same rule as `NonLocalUseBlocks` plus
-;; the bounded backward `findReaching` walk it feeds
-;; (`SimplifyCFG.cpp:3477-3530`, `:3584-3607`); counting the successors' edge
-;; inputs is the exact form of it available here, because a merge whose phis are
-;; read only across its own out-edges has no live-out value at all once
-;; `opt-thread-repair-target-phis!` re-expresses those inputs at the new
-;; predecessor.
-(define (opt-thread-merge-defs-edge-local?
-  [index : OptCfgIndex]
-  [uses : (__tl_dyn-array i64)]
+;; SimplifyCFG's `MaxSmallBlockSize` (`blockIsSimpleEnoughToThreadThrough`,
+;; SimplifyCFG.cpp:3494-3535). Phis are not counted there -- threading deletes
+;; them -- and are not counted here either; what the cap bounds is the run
+;; between the phi prefix and the terminator, which LLVM clones into the
+;; predecessor and this pass re-expresses on the redirected edge.
+(define (opt-thread-max-body-instrs) : i64
+  10)
+
+;; Depth of the `[phi; jump]` forwarding chain the input walk resolves.
+;; JumpThreading recurses through phi operands under a `RecursionSet`
+;; (JumpThreading.cpp:558, 607-625); the compiler's own `cond` ladders build
+;; chains 13 deep (`pl-single-dest?`), so 16 covers the corpus with room over.
+(define (opt-thread-chain-depth) : i64
+  16)
+
+;; Slot of the body Mov that defines `var`, or -1. `limit` ends the Mov run: the
+;; terminator for the plain form, the comparison for the D2 form.
+(define (opt-thread-mov-slot-for-var
   [instrs : ir.CompilerIrInstrSeq]
   [slot : i64]
+  [limit : i64]
+  [var : i64]) : i64
+  (if (>= slot limit)
+    (- 0 1)
+    (match (ir.compiler-ir-instr-seq-ref instrs slot)
+      [(ir.CompilerIrInstr.Mov dst _ _)
+        (if (= dst var)
+          slot
+          (opt-thread-mov-slot-for-var instrs (+ slot 1) limit var))]
+      [_ (- 0 1)])))
+
+;; The widened merge body: pure `Mov`s between the phi prefix and the run's end.
+;; A Mov is the copy SSA construction leaves at a loop exit -- `%205 = mov %174`
+;; in gvn-facts-insert's `while_exit.2` -- and it is re-expressed on a threaded
+;; edge exactly like a phi: what it names is either one of the merge's own phis
+;; (resolved per edge) or a value defined before the merge, which therefore
+;; dominates every predecessor of it. Nothing else is admitted: an instruction
+;; with an effect, or one whose result the edge cannot reproduce, would have to
+;; be cloned into the predecessor the way LLVM clones it, and this pass never
+;; duplicates.
+(define (opt-thread-body-movs?
+  [instrs : ir.CompilerIrInstrSeq]
+  [slot : i64]
+  [limit : i64]) : bool
+  (if (>= slot limit)
+    true
+    (match (ir.compiler-ir-instr-seq-ref instrs slot)
+      [(ir.CompilerIrInstr.Mov _ _ _)
+        (opt-thread-body-movs? instrs (+ slot 1) limit)]
+      [_ false])))
+
+;; Does this block read `var` anywhere other than as a phi input it carries
+;; under the merge's own label? `scratch` is a use census the round owns; only
+;; the one slot this asks about is zeroed and read, so the rest of it is free to
+;; hold whatever an earlier question left there.
+(define (opt-thread-def-foreign-block?
+  [scratch : (__tl_dyn-array i64)]
+  [merge-label : i64]
+  [instrs : ir.CompilerIrInstrSeq]
+  [var : i64]) : bool
+  (if (or (< var 0) (>= var (array-length scratch)))
+    true
+    (begin
+      (set! (array-ref scratch var) 0)
+      (opt-collect-instr-seq-uses-array scratch instrs)
+      (>
+        (array-ref scratch var)
+        (opt-thread-count-instrs-edge-uses instrs 0 merge-label var 0)))))
+
+(define (opt-thread-sole-pred?
+  [index : OptCfgIndex]
+  [label : i64]
+  [pred-label : i64]) : bool
+  (let
+    [preds : OptLabelSet (opt-cfg-index-predecessors index label)]
+    (and (= (opt-label-count preds) 1) (= (opt-label-ref preds 0) pred-label))))
+
+;; The successor whose region holds every foreign reader of `var`, or `No` when
+;; there is no single such successor. A block dominated by a successor `S` whose
+;; only predecessor is the merge is entered only through `S`, and `S` only
+;; through the merge, so the definition is still on every path into it -- as
+;; long as no edge is threaded past the merge INTO `S`, which is what the
+;; returned label blocks. SimplifyCFG proves the same thing with
+;; `NonLocalUseBlocks` plus a bounded backward `findReaching` walk
+;; (SimplifyCFG.cpp:3477-3530, :3584-3607); it may clone the block into the
+;; edge, so it can accept both sides where this refuses one.
+(define (opt-thread-def-blocked
+  [index : OptCfgIndex]
+  [doms : OptDomInfo]
+  [scratch : (__tl_dyn-array i64)]
+  [merge-label : i64]
+  [true-label : i64]
+  [false-label : i64]
+  [var : i64]) : OptThreadBlocked
+  (let
+    [count : i64 (opt-cfg-index-block-count index)]
+    [slot : i64 0]
+    [blocked : i64 (ir.compiler-ir-label-none)]
+    (begin
+      (while (< slot count)
+        (begin
+          (match (opt-cfg-index-block index slot)
+            [(OptMaybeBlock.No) unit]
+            [(OptMaybeBlock.Some block)
+              (match block
+                [(ir.CompilerIrBlock.Block label instrs)
+                  (if (or
+                    (= label merge-label)
+                    (not
+                      (opt-thread-def-foreign-block?
+                        scratch
+                        merge-label
+                        instrs
+                        var)))
+                    unit
+                    (let
+                      [owner : i64
+                        (cond
+                          [(opt-dom-dominates? doms true-label label)
+                            true-label]
+                          [(opt-dom-dominates? doms false-label label)
+                            false-label]
+                          [else (ir.compiler-ir-label-none)])]
+                      (if (or
+                        (= owner (ir.compiler-ir-label-none))
+                        (and
+                          (not (= blocked (ir.compiler-ir-label-none)))
+                          (not (= blocked owner))))
+                        (return (OptThreadBlocked.No))
+                        (set! blocked owner))))])])
+          (set! slot (+ slot 1))))
+      (if (= blocked (ir.compiler-ir-label-none))
+        (OptThreadBlocked.Some blocked)
+        (if (opt-thread-sole-pred? index blocked merge-label)
+          (OptThreadBlocked.Some blocked)
+          (OptThreadBlocked.No))))))
+
+(define (opt-thread-def-admissible
+  [index : OptCfgIndex]
+  [doms : OptDomInfo]
+  [uses : (__tl_dyn-array i64)]
+  [scratch : (__tl_dyn-array i64)]
+  [instrs : ir.CompilerIrInstrSeq]
   [phi-count : i64]
   [merge-label : i64]
   [true-label : i64]
-  [false-label : i64]) : bool
-  (if (>= slot phi-count)
-    true
-    (match (ir.compiler-ir-instr-seq-ref instrs slot)
-      [(ir.CompilerIrInstr.Phi dst _ _)
-        (let
-          [edge-uses : i64
-            (+
-              (opt-thread-count-block-edge-uses
-                index
-                true-label
-                merge-label
-                dst)
-              (if (= true-label false-label)
-                0
-                (opt-thread-count-block-edge-uses
-                  index
-                  false-label
-                  merge-label
-                  dst)))]
-          [tail-uses : i64 (opt-thread-count-tail-uses instrs phi-count dst 0)]
-          (if (or
-            (< tail-uses 0)
-            (not
-              (= (opt-bool-branch-use-count uses dst) (+ tail-uses edge-uses))))
-            false
-            (opt-thread-merge-defs-edge-local?
+  [false-label : i64]
+  [dst : i64]
+  [blocked : i64]) : OptThreadBlocked
+  (let
+    [edge-uses : i64
+      (+
+        (opt-thread-count-block-edge-uses index true-label merge-label dst)
+        (if (= true-label false-label)
+          0
+          (opt-thread-count-block-edge-uses index false-label merge-label dst)))]
+    [tail-uses : i64 (opt-thread-count-tail-uses instrs phi-count dst 0)]
+    (if (< tail-uses 0)
+      (OptThreadBlocked.No)
+      (if (= (opt-bool-branch-use-count uses dst) (+ tail-uses edge-uses))
+        (OptThreadBlocked.Some blocked)
+        (match (opt-thread-def-blocked
+          index
+          doms
+          scratch
+          merge-label
+          true-label
+          false-label
+          dst)
+          [(OptThreadBlocked.No) (OptThreadBlocked.No)]
+          [(OptThreadBlocked.Some owner)
+            (if (or
+              (= owner (ir.compiler-ir-label-none))
+              (= blocked (ir.compiler-ir-label-none))
+              (= blocked owner))
+              (OptThreadBlocked.Some
+                (if (= owner (ir.compiler-ir-label-none))
+                  blocked
+                  owner))
+              (OptThreadBlocked.No))])))))
+
+;; Everything the merge defines -- its phis and the body Movs -- has to be
+;; re-expressible at the redirected predecessor. Two ways to be so, and the walk
+;; folds one blocked successor out of both:
+;;   - EDGE-LOCAL: every reader is the merge's own body, its terminator, or a
+;;     phi input one of the two successors carries under the merge's label. The
+;;     threaded edge takes over that input with the value the definition's own
+;;     edge carried, which is what `opt-thread-repair-target-phis!` installs.
+;;   - REGION-LOCAL: the remaining readers all sit in blocks one successor
+;;     dominates, and that successor is entered only from the merge. The
+;;     definition is then still reached on every path into the region, provided
+;;     no edge is threaded past the merge into that successor.
+(define (opt-thread-merge-defs-admissible?
+  [index : OptCfgIndex]
+  [doms : OptDomInfo]
+  [uses : (__tl_dyn-array i64)]
+  [scratch : (__tl_dyn-array i64)]
+  [instrs : ir.CompilerIrInstrSeq]
+  [slot : i64]
+  [phi-count : i64]
+  [body-end : i64]
+  [merge-label : i64]
+  [true-label : i64]
+  [false-label : i64]
+  [blocked : i64]) : OptThreadBlocked
+  (if (>= slot body-end)
+    (OptThreadBlocked.Some blocked)
+    (let
+      [dst : i64
+        (match (ir.compiler-ir-instr-seq-ref instrs slot)
+          [(ir.CompilerIrInstr.Phi phi-dst _ _)
+            (if (< slot phi-count)
+              phi-dst
+              (- 0 1))]
+          [(ir.CompilerIrInstr.Mov mov-dst _ _)
+            (if (>= slot phi-count)
+              mov-dst
+              (- 0 1))]
+          [_ (- 0 1)])]
+      (if (< dst 0)
+        (OptThreadBlocked.No)
+        (match (opt-thread-def-admissible
+          index
+          doms
+          uses
+          scratch
+          instrs
+          phi-count
+          merge-label
+          true-label
+          false-label
+          dst
+          blocked)
+          [(OptThreadBlocked.No) (OptThreadBlocked.No)]
+          [(OptThreadBlocked.Some next)
+            (opt-thread-merge-defs-admissible?
               index
+              doms
               uses
+              scratch
               instrs
               (+ slot 1)
               phi-count
+              body-end
               merge-label
               true-label
-              false-label)))]
-      [_ false])))
+              false-label
+              next)])))))
 
 ;; Only an ordering comparison is threaded. The row this widening targets is
 ;; "a constant is materialised on an early-exit edge and re-tested at the
@@ -38491,16 +38704,18 @@
         1)]
     [_ (- 0 1)]))
 
-;; D2: a phi prefix, one comparison the branch reads, and the branch. The
-;; comparison's operands must each be a literal or one of the block's own phis,
-;; with at least one phi so that some edge can decide it. LLVM reaches the same
-;; shape by cloning the block into the split edge and running
+;; D2: a phi prefix, pure Movs, one comparison the branch reads, and the branch.
+;; The comparison's operands must each be a literal or one of the block's own
+;; phis, with at least one phi so that some edge can decide it. LLVM reaches the
+;; same shape by cloning the block into the split edge and running
 ;; `simplifyInstruction` over the clone (`SimplifyCFG.cpp:3636-3688`); with the
 ;; tail restricted to a single comparison the fold is exact and no clone is
 ;; needed.
 (define (opt-thread-compare-shape
   [index : OptCfgIndex]
+  [doms : OptDomInfo]
   [uses : (__tl_dyn-array i64)]
+  [scratch : (__tl_dyn-array i64)]
   [merge-label : i64]
   [instrs : ir.CompilerIrInstrSeq]
   [count : i64]
@@ -38510,10 +38725,13 @@
   (if (< count 3)
     (OptThreadMerge.No)
     (let
-      [phi-count : i64 (- count 2)]
-      (if (not (= (opt-thread-phi-prefix-count instrs 0) phi-count))
+      [body-end : i64 (- count 2)]
+      [phi-count : i64 (opt-thread-phi-prefix-count instrs 0)]
+      (if (or
+        (> (- (- count 1) phi-count) (opt-thread-max-body-instrs))
+        (not (opt-thread-body-movs? instrs phi-count body-end)))
         (OptThreadMerge.No)
-        (match (ir.compiler-ir-instr-seq-ref instrs phi-count)
+        (match (ir.compiler-ir-instr-seq-ref instrs body-end)
           [(ir.CompilerIrInstr.BinOp dst op left right _)
             (let
               [left-kind : i64
@@ -38526,32 +38744,45 @@
                 (= (opt-bool-branch-use-count uses cond-var) 1)
                 (>= left-kind 0)
                 (>= right-kind 0)
-                (> (+ left-kind right-kind) 0)
-                (opt-thread-merge-defs-edge-local?
+                (> (+ left-kind right-kind) 0))
+                (match (opt-thread-merge-defs-admissible?
                   index
+                  doms
                   uses
+                  scratch
                   instrs
                   0
                   phi-count
+                  body-end
                   merge-label
                   true-label
-                  false-label))
-                (OptThreadMerge.Compare phi-count true-label false-label)
+                  false-label
+                  (ir.compiler-ir-label-none))
+                  [(OptThreadBlocked.No) (OptThreadMerge.No)]
+                  [(OptThreadBlocked.Some blocked)
+                    (OptThreadMerge.Compare
+                      phi-count
+                      blocked
+                      true-label
+                      false-label)])
                 (OptThreadMerge.No)))]
           [_ (OptThreadMerge.No)])))))
 
 ;; The merge may hold any number of phis ahead of its branch -- LLVM does not
 ;; count phis against `MaxSmallBlockSize` either, because threading deletes them
-;; (`SimplifyCFG.cpp:3489-3491`). The phi the branch reads has to be `Bool`;
-;; every phi, that one included, then answers to the same live-out rule, which
-;; is what admits a condition phi a successor also reads on the merge edge --
-;; LLVM's version likewise works "on a phi with any number of predecessors and
-;; any use count", because it duplicates the branch instead of demanding a
-;; single use.
+;; (`SimplifyCFG.cpp:3489-3491`) -- and, since T2-5, up to `MaxSmallBlockSize`
+;; pure Movs between them and the branch. The phi the branch reads has to be
+;; `Bool`; every phi and every Mov, that one included, then answers to the same
+;; live-out rule, which is what admits a condition phi a successor also reads on
+;; the merge edge -- LLVM's version likewise works "on a phi with any number of
+;; predecessors and any use count", because it duplicates the branch instead of
+;; demanding a single use.
 (define (opt-thread-merge-shape
   [type-segment-bases : i64]
   [index : OptCfgIndex]
+  [doms : OptDomInfo]
   [uses : (__tl_dyn-array i64)]
+  [scratch : (__tl_dyn-array i64)]
   [merge-label : i64]
   [instrs : ir.CompilerIrInstrSeq]) : OptThreadMerge
   (let
@@ -38567,49 +38798,66 @@
             [(or (= true-label merge-label) (= false-label merge-label))
               (OptThreadMerge.No)]
             [(= count 1)
-              (OptThreadMerge.Some cond-var (- 0 1) true-label false-label)]
-            [(not (= (opt-thread-phi-prefix-count instrs 0) (- count 1)))
-              (opt-thread-compare-shape
-                index
-                uses
-                merge-label
-                instrs
-                count
+              (OptThreadMerge.Some
                 cond-var
+                (- 0 1)
+                0
+                (ir.compiler-ir-label-none)
                 true-label
                 false-label)]
             [else
               (let
-                [phi-count : i64 (- count 1)]
+                [body-end : i64 (- count 1)]
+                [phi-count : i64 (opt-thread-phi-prefix-count instrs 0)]
                 [slot : i64
                   (opt-thread-phi-slot-for-var instrs 0 phi-count cond-var)]
-                (if (< slot 0)
-                  (OptThreadMerge.No)
+                (if (or
+                  (< slot 0)
+                  (> (- body-end phi-count) (opt-thread-max-body-instrs))
+                  (not (opt-thread-body-movs? instrs phi-count body-end)))
+                  (opt-thread-compare-shape
+                    index
+                    doms
+                    uses
+                    scratch
+                    merge-label
+                    instrs
+                    count
+                    cond-var
+                    true-label
+                    false-label)
                   (match (ir.compiler-ir-instr-seq-ref instrs slot)
                     [(ir.CompilerIrInstr.Phi _ _ ty)
-                      (if (and
-                        (opt-type-eq type-segment-bases ty (ast.AstType.Bool))
-                        (opt-thread-merge-defs-edge-local?
+                      (if (opt-type-eq type-segment-bases ty (ast.AstType.Bool))
+                        (match (opt-thread-merge-defs-admissible?
                           index
+                          doms
                           uses
+                          scratch
                           instrs
                           0
                           phi-count
+                          body-end
                           merge-label
                           true-label
-                          false-label))
-                        (OptThreadMerge.Some
-                          cond-var
-                          slot
-                          true-label
-                          false-label)
+                          false-label
+                          (ir.compiler-ir-label-none))
+                          [(OptThreadBlocked.No) (OptThreadMerge.No)]
+                          [(OptThreadBlocked.Some blocked)
+                            (OptThreadMerge.Some
+                              cond-var
+                              slot
+                              phi-count
+                              blocked
+                              true-label
+                              false-label)])
                         (OptThreadMerge.No))]
                     [_ (OptThreadMerge.No)])))])]
         [_ (OptThreadMerge.No)]))))
 
-;; A depth-2 chain hop: `forward` must be exactly one bool phi defining `var`
-;; plus the jump into the merge, and that phi's only use must be the merge phi
-;; input we arrived through.
+;; One chain hop: `forward` must be exactly one bool phi defining `var` plus the
+;; jump into the block that named it, and that phi's only use must be the input
+;; we arrived through.
 (define (opt-thread-forward-shape
   [type-segment-bases : i64]
   [uses : (__tl_dyn-array i64)]
@@ -38638,58 +38886,135 @@
           [_ (OptThreadForward.No)]))]))
 
 ;; Re-express a value the target's phi carried for the merge edge at the
-;; redirected origin. A value the merge itself defines is one of its phis, and
-;; that phi's own input for the edge we came in on is what it would have held;
-;; anything defined outside the merge dominates the merge and therefore
-;; dominates every predecessor of it, so it is already correct where it stands.
-;; LLVM performs the same substitution while cloning:
-;; `TranslateMap[PN] = PN->getIncomingValueForBlock(EdgeBB)`
+;; redirected origin. A value the merge itself defines is one of its phis or one
+;; of its body Movs: the phi's own input for the edge we came in on is what it
+;; would have held, and a Mov names whatever it copies (resolved again, since
+;; that may be a phi of the same block). Anything defined outside the merge
+;; dominates the merge and therefore dominates every predecessor of it, so it is
+;; already correct where it stands. LLVM performs the same substitution while
+;; cloning: `TranslateMap[PN] = PN->getIncomingValueForBlock(EdgeBB)`
 ;; (`SimplifyCFG.cpp:3646-3649`).
-(define (opt-thread-translate-through-phis
+(define (opt-thread-translate-through-defs
   [instrs : ir.CompilerIrInstrSeq]
   [phi-count : i64]
+  [mov-limit : i64]
   [value : ir.CompilerIrValue]
-  [label : i64]) : ir.CompilerIrMaybeValue
-  (match value
-    [(ir.CompilerIrValue.Var var)
-      (let
-        [slot : i64 (opt-thread-phi-slot-for-var instrs 0 phi-count var)]
-        (if (< slot 0)
-          (ir.CompilerIrMaybeValue.Some value)
-          (match (ir.compiler-ir-instr-seq-ref instrs slot)
-            [(ir.CompilerIrInstr.Phi _ inputs _)
-              (opt-thread-phi-input-value inputs label)]
-            [_ (ir.CompilerIrMaybeValue.No)])))]
-    [_ (ir.CompilerIrMaybeValue.Some value)]))
+  [label : i64]
+  [fuel : i64]) : ir.CompilerIrMaybeValue
+  (if (<= fuel 0)
+    (ir.CompilerIrMaybeValue.No)
+    (match value
+      [(ir.CompilerIrValue.Var var)
+        (let
+          [mov-slot : i64
+            (opt-thread-mov-slot-for-var instrs phi-count mov-limit var)]
+          (if (>= mov-slot 0)
+            (match (ir.compiler-ir-instr-seq-ref instrs mov-slot)
+              [(ir.CompilerIrInstr.Mov _ src _)
+                (opt-thread-translate-through-defs
+                  instrs
+                  phi-count
+                  mov-limit
+                  src
+                  label
+                  (- fuel 1))]
+              [_ (ir.CompilerIrMaybeValue.No)])
+            (let
+              [slot : i64 (opt-thread-phi-slot-for-var instrs 0 phi-count var)]
+              (if (< slot 0)
+                (ir.CompilerIrMaybeValue.Some value)
+                (match (ir.compiler-ir-instr-seq-ref instrs slot)
+                  [(ir.CompilerIrInstr.Phi _ inputs _)
+                    (match (opt-thread-phi-input-value inputs label)
+                      [(ir.CompilerIrMaybeValue.No)
+                        (ir.CompilerIrMaybeValue.No)]
+                      [(ir.CompilerIrMaybeValue.Some carried)
+                        (opt-thread-translate-through-defs
+                          instrs
+                          phi-count
+                          mov-limit
+                          carried
+                          label
+                          (- fuel 1))])]
+                  [_ (ir.CompilerIrMaybeValue.No)])))))]
+      [_ (ir.CompilerIrMaybeValue.Some value)])))
 
-;; The threaded edge skips the merge, and on a depth-2 chain the forwarding
-;; block as well, so a value has to be resolved through both in that order.
-(define (opt-thread-translate-edge-value
+(define (opt-thread-translate-fuel [instrs : ir.CompilerIrInstrSeq]) : i64
+  (+ (ir.compiler-ir-instr-seq-count instrs) 2))
+
+(define (opt-thread-chain-append
+  [chain : OptThreadVia]
+  [label : i64]
+  [instrs : ir.CompilerIrInstrSeq]) : OptThreadVia
+  (match chain
+    [(OptThreadVia.Nil)
+      (OptThreadVia.Cons label instrs (box (OptThreadVia.Nil)))]
+    [(OptThreadVia.Cons head head-instrs rest)
+      (OptThreadVia.Cons
+        head
+        head-instrs
+        (box (opt-thread-chain-append (__tl-box-place rest) label instrs)))]))
+
+;; The block the redirected origin actually jumps into: the last forwarding
+;; block of the chain, or the merge itself for a direct edge.
+(define (opt-thread-chain-last-label [merge-label : i64] [chain : OptThreadVia]) : i64
+  (match chain
+    [(OptThreadVia.Nil) merge-label]
+    [(OptThreadVia.Cons label _ rest)
+      (opt-thread-chain-last-label label (__tl-box-place rest))]))
+
+(define (opt-thread-chain-last-instrs
   [merge-instrs : ir.CompilerIrInstrSeq]
-  [merge-phi-count : i64]
-  [via-instrs : ir.CompilerIrInstrSeq]
-  [merge-label : i64]
-  [via-label : i64]
+  [chain : OptThreadVia]) : ir.CompilerIrInstrSeq
+  (match chain
+    [(OptThreadVia.Nil) merge-instrs]
+    [(OptThreadVia.Cons _ instrs rest)
+      (opt-thread-chain-last-instrs instrs (__tl-box-place rest))]))
+
+;; A direct edge drops the origin from every phi of the merge; a chained one
+;; drops it from the single phi of the last forwarding block.
+(define (opt-thread-chain-drop-slot [chain : OptThreadVia]) : i64
+  (match chain
+    [(OptThreadVia.Nil) (opt-thread-drop-all-phi-inputs)]
+    [(OptThreadVia.Cons _ _ _) 0]))
+
+;; The threaded edge skips the merge, and every forwarding block on the chain
+;; between them, so a value has to be resolved through all of them in order.
+(define (opt-thread-translate-chain-value
+  [instrs : ir.CompilerIrInstrSeq]
+  [phi-count : i64]
+  [mov-limit : i64]
+  [chain : OptThreadVia]
   [origin-label : i64]
   [value : ir.CompilerIrValue]) : ir.CompilerIrMaybeValue
-  (if (= via-label merge-label)
-    (opt-thread-translate-through-phis
-      merge-instrs
-      merge-phi-count
-      value
-      origin-label)
-    (match (opt-thread-translate-through-phis
-      merge-instrs
-      merge-phi-count
-      value
-      via-label)
-      [(ir.CompilerIrMaybeValue.No) (ir.CompilerIrMaybeValue.No)]
-      [(ir.CompilerIrMaybeValue.Some carried)
-        (opt-thread-translate-through-phis
-          via-instrs
-          (opt-thread-phi-prefix-count via-instrs 0)
-          carried
-          origin-label)])))
+  (match chain
+    [(OptThreadVia.Nil)
+      (opt-thread-translate-through-defs
+        instrs
+        phi-count
+        mov-limit
+        value
+        origin-label
+        (opt-thread-translate-fuel instrs))]
+    [(OptThreadVia.Cons label next-instrs rest)
+      (match (opt-thread-translate-through-defs
+        instrs
+        phi-count
+        mov-limit
+        value
+        label
+        (opt-thread-translate-fuel instrs))
+        [(ir.CompilerIrMaybeValue.No) (ir.CompilerIrMaybeValue.No)]
+        [(ir.CompilerIrMaybeValue.Some carried)
+          (let
+            [next-phi-count : i64 (opt-thread-phi-prefix-count next-instrs 0)]
+            (opt-thread-translate-chain-value
+              next-instrs
+              next-phi-count
+              next-phi-count
+              (__tl-box-place rest)
+              origin-label
+              carried))])]))
 
 (define (opt-thread-value-literal-int [value : ir.CompilerIrValue]) : option_i64.Option
   (match value
@@ -38709,15 +39034,28 @@
 (define (opt-thread-fold-edge-compare
   [instrs : ir.CompilerIrInstrSeq]
   [phi-count : i64]
+  [mov-limit : i64]
   [op : ir.CompilerIrBinOp]
   [left : ir.CompilerIrValue]
   [right : ir.CompilerIrValue]
   [ty : ast.AstType]
   [label : i64]) : OptThreadConstBool
-  (match (opt-thread-translate-through-phis instrs phi-count left label)
+  (match (opt-thread-translate-through-defs
+    instrs
+    phi-count
+    mov-limit
+    left
+    label
+    (opt-thread-translate-fuel instrs))
     [(ir.CompilerIrMaybeValue.No) (OptThreadConstBool.No)]
     [(ir.CompilerIrMaybeValue.Some edge-left)
-      (match (opt-thread-translate-through-phis instrs phi-count right label)
+      (match (opt-thread-translate-through-defs
+        instrs
+        phi-count
+        mov-limit
+        right
+        label
+        (opt-thread-translate-fuel instrs))
         [(ir.CompilerIrMaybeValue.No) (OptThreadConstBool.No)]
         [(ir.CompilerIrMaybeValue.Some edge-right)
           (match (opt-thread-value-literal-int edge-left)
@@ -38737,9 +39075,9 @@
   [slot : i64]
   [merge-instrs : ir.CompilerIrInstrSeq]
   [merge-phi-count : i64]
-  [via-instrs : ir.CompilerIrInstrSeq]
+  [merge-mov-limit : i64]
+  [chain : OptThreadVia]
   [merge-label : i64]
-  [via-label : i64]
   [origin-label : i64]) : bool
   (if (>= slot (ir.compiler-ir-instr-seq-count instrs))
     true
@@ -38748,12 +39086,11 @@
         (and
           (match (opt-thread-phi-input-value inputs merge-label)
             [(ir.CompilerIrMaybeValue.Some carried)
-              (match (opt-thread-translate-edge-value
+              (match (opt-thread-translate-chain-value
                 merge-instrs
                 merge-phi-count
-                via-instrs
-                merge-label
-                via-label
+                merge-mov-limit
+                chain
                 origin-label
                 carried)
                 [(ir.CompilerIrMaybeValue.Some _) true]
@@ -38764,15 +39101,15 @@
             (+ slot 1)
             merge-instrs
             merge-phi-count
-            via-instrs
+            merge-mov-limit
+            chain
             merge-label
-            via-label
             origin-label))]
       [_ true])))
 
 ;; The threaded edge takes the place of the merge's own edge into `target`, so
 ;; every target phi gains the value it already forwards for the merge, resolved
-;; through the merge's -- and the forwarding block's -- own phis for the edge
+;; through the merge's -- and every forwarding block's -- own phis for the edge
 ;; being redirected. `opt-thread-target-phis-repairable?` has already proved
 ;; every one of those lookups succeeds.
 (define (opt-thread-repair-target-phis!
@@ -38781,9 +39118,9 @@
   [uses : (__tl_dyn-array i64)]
   [merge-instrs : ir.CompilerIrInstrSeq]
   [merge-phi-count : i64]
-  [via-instrs : ir.CompilerIrInstrSeq]
+  [merge-mov-limit : i64]
+  [chain : OptThreadVia]
   [merge-label : i64]
-  [via-label : i64]
   [origin-label : i64]) : unit
   (if (>= slot (ir.compiler-ir-instr-seq-count instrs))
     unit
@@ -38792,12 +39129,11 @@
         (begin
           (match (opt-thread-phi-input-value inputs merge-label)
             [(ir.CompilerIrMaybeValue.Some carried)
-              (match (opt-thread-translate-edge-value
+              (match (opt-thread-translate-chain-value
                 merge-instrs
                 merge-phi-count
-                via-instrs
-                merge-label
-                via-label
+                merge-mov-limit
+                chain
                 origin-label
                 carried)
                 [(ir.CompilerIrMaybeValue.Some value)
@@ -38821,9 +39157,9 @@
             uses
             merge-instrs
             merge-phi-count
-            via-instrs
+            merge-mov-limit
+            chain
             merge-label
-            via-label
             origin-label))]
       [_ unit])))
 
@@ -38897,85 +39233,135 @@
         [(ir.CompilerIrInstr.Jump target) target]
         [_ (ir.compiler-ir-label-none)]))))
 
-;; Retarget `origin`'s unconditional jump (currently landing on `via`) straight
-;; onto `target`, taking over the merge's `merge -> target` edge. `drop-instrs`
-;; / `drop-slot` name the phi that loses `origin` as an input: every phi of the
-;; merge for a direct edge (slot `opt-thread-drop-all-phi-inputs`), the
-;; forwarding phi for a depth-2 chain, and slot -1 when the merge has no phi at
-;; all. The target repair reads the merge's phis, so it runs before the drop.
+(defenum OptThreadRetarget
+  (No)
+  (Some ir.CompilerIrInstr))
+
+;; The origin's terminator with its edge into `via` pointed at `target`. A plain
+;; `Jump` is the shape the first version of this pass took; a `Branch` with ONE
+;; side landing on `via` is the or/and-ladder shape -- `if_else.129` in
+;; `pl-single-dest?` ends `branch %205, if_merge.133, if_else.132` and the
+;; literal the ladder decides sits on its `if_merge.133` edge -- and retargeting
+;; that side is the same edge redirect: nothing is cloned and the other side is
+;; untouched. Both sides landing on `via`, or the other side already landing on
+;; `target`, would leave the origin with two edges into one block and its phis
+;; with two inputs under one label, so both are refused. `TotalEnumBranch`
+;; carries the switch former's exhaustiveness proof and is never rewritten here.
+(define (opt-thread-origin-retarget
+  [instrs : ir.CompilerIrInstrSeq]
+  [via-label : i64]
+  [target-label : i64]) : OptThreadRetarget
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    (if (= count 0)
+      (OptThreadRetarget.No)
+      (match (ir.compiler-ir-instr-seq-ref instrs (- count 1))
+        [(ir.CompilerIrInstr.Jump target)
+          (if (= target via-label)
+            (OptThreadRetarget.Some (ir.CompilerIrInstr.Jump target-label))
+            (OptThreadRetarget.No))]
+        [(ir.CompilerIrInstr.Branch cond true-label false-label)
+          (cond
+            [(= true-label false-label) (OptThreadRetarget.No)]
+            [(and (= true-label via-label) (not (= false-label target-label)))
+              (OptThreadRetarget.Some
+                (ir.CompilerIrInstr.Branch cond target-label false-label))]
+            [(and (= false-label via-label) (not (= true-label target-label)))
+              (OptThreadRetarget.Some
+                (ir.CompilerIrInstr.Branch cond true-label target-label))]
+            [else (OptThreadRetarget.No)])]
+        [_ (OptThreadRetarget.No)]))))
+
+;; Retarget `origin`'s edge into the last block of `chain` (the merge itself for
+;; a direct edge) straight onto `target`, taking over the merge's
+;; `merge -> target` edge. `drop-slot` names the phi that loses `origin` as an
+;; input: every phi of the merge for a direct edge (the sentinel
+;; `opt-thread-drop-all-phi-inputs`), the forwarding phi for a chained one, and
+;; -1 when the merge has no phi at all. The target repair reads the merge's phis
+;; and the chain's, so it runs before the drop.
 (define (opt-thread-apply-edge!
   [index : OptCfgIndex]
   [uses : (__tl_dyn-array i64)]
   [origin-label : i64]
-  [via-label : i64]
+  [chain : OptThreadVia]
   [merge-label : i64]
   [target-label : i64]
   [merge-instrs : ir.CompilerIrInstrSeq]
   [merge-phi-count : i64]
-  [drop-instrs : ir.CompilerIrInstrSeq]
+  [merge-mov-limit : i64]
   [drop-slot : i64]) : bool
-  (if (or
-    (= target-label merge-label)
-    (= target-label via-label)
-    (= target-label origin-label)
-    (= origin-label via-label)
-    (= origin-label merge-label))
-    false
-    (match (opt-cfg-index-find-block index origin-label)
-      [(OptMaybeBlock.No) false]
-      [(OptMaybeBlock.Some origin-block)
-        (match origin-block
-          [(ir.CompilerIrBlock.Block _ origin-instrs)
-            (if (not (= (opt-thread-jump-target origin-instrs) via-label))
-              false
-              (match (opt-cfg-index-find-block index target-label)
-                [(OptMaybeBlock.No) false]
-                [(OptMaybeBlock.Some target-block)
-                  (match target-block
-                    [(ir.CompilerIrBlock.Block _ target-instrs)
-                      (if (not
-                        (opt-thread-target-phis-repairable?
-                          target-instrs
-                          0
-                          merge-instrs
-                          merge-phi-count
-                          drop-instrs
-                          merge-label
-                          via-label
-                          origin-label))
-                        false
-                        (begin
-                          (opt-thread-repair-target-phis!
-                            target-instrs
-                            0
-                            uses
-                            merge-instrs
-                            merge-phi-count
-                            drop-instrs
-                            merge-label
-                            via-label
-                            origin-label)
-                          (ir.compiler-ir-instr-seq-set!
-                            origin-instrs
-                            (- (ir.compiler-ir-instr-seq-count origin-instrs) 1)
-                            (ir.CompilerIrInstr.Jump target-label))
-                          (opt-thread-drop-phi-input!
-                            drop-instrs
-                            drop-slot
-                            origin-label)
-                          true))])]))])])))
+  (let
+    [via-label : i64 (opt-thread-chain-last-label merge-label chain)]
+    [drop-instrs : ir.CompilerIrInstrSeq
+      (opt-thread-chain-last-instrs merge-instrs chain)]
+    (if (or
+      (= target-label merge-label)
+      (= target-label via-label)
+      (= target-label origin-label)
+      (= origin-label via-label)
+      (= origin-label merge-label))
+      false
+      (match (opt-cfg-index-find-block index origin-label)
+        [(OptMaybeBlock.No) false]
+        [(OptMaybeBlock.Some origin-block)
+          (match origin-block
+            [(ir.CompilerIrBlock.Block _ origin-instrs)
+              (match (opt-thread-origin-retarget
+                origin-instrs
+                via-label
+                target-label)
+                [(OptThreadRetarget.No) false]
+                [(OptThreadRetarget.Some terminator)
+                  (match (opt-cfg-index-find-block index target-label)
+                    [(OptMaybeBlock.No) false]
+                    [(OptMaybeBlock.Some target-block)
+                      (match target-block
+                        [(ir.CompilerIrBlock.Block _ target-instrs)
+                          (if (not
+                            (opt-thread-target-phis-repairable?
+                              target-instrs
+                              0
+                              merge-instrs
+                              merge-phi-count
+                              merge-mov-limit
+                              chain
+                              merge-label
+                              origin-label))
+                            false
+                            (begin
+                              (opt-thread-repair-target-phis!
+                                target-instrs
+                                0
+                                uses
+                                merge-instrs
+                                merge-phi-count
+                                merge-mov-limit
+                                chain
+                                merge-label
+                                origin-label)
+                              (ir.compiler-ir-instr-seq-set!
+                                origin-instrs
+                                (-
+                                  (ir.compiler-ir-instr-seq-count origin-instrs)
+                                  1)
+                                terminator)
+                              (opt-thread-drop-phi-input!
+                                drop-instrs
+                                drop-slot
+                                origin-label)
+                              true))])])])])]))))
 
 (define (opt-thread-apply-edge-budgeted!
   [budget : (__tl_dyn-array i64)]
   [index : OptCfgIndex]
   [uses : (__tl_dyn-array i64)]
   [origin-label : i64]
-  [via-label : i64]
+  [chain : OptThreadVia]
   [merge-label : i64]
   [target-label : i64]
   [merge-instrs : ir.CompilerIrInstrSeq]
   [merge-phi-count : i64]
-  [drop-instrs : ir.CompilerIrInstrSeq]
+  [merge-mov-limit : i64]
   [drop-slot : i64]) : bool
   (if (not (opt-thread-budget-available? budget))
     false
@@ -38985,81 +39371,25 @@
           index
           uses
           origin-label
-          via-label
+          chain
           merge-label
           target-label
           merge-instrs
           merge-phi-count
-          drop-instrs
+          merge-mov-limit
           drop-slot)]
       (begin
         (when threaded (opt-thread-budget-spend! budget))
         threaded))))
 
-(define (opt-thread-scan-forward-inputs!
-  [budget : (__tl_dyn-array i64)]
-  [index : OptCfgIndex]
-  [uses : (__tl_dyn-array i64)]
-  [merge-label : i64]
-  [merge-instrs : ir.CompilerIrInstrSeq]
-  [merge-phi-count : i64]
-  [forward-label : i64]
-  [forward-instrs : ir.CompilerIrInstrSeq]
-  [true-label : i64]
-  [false-label : i64]
-  [inputs : ir.CompilerIrPhiInputList]
-  [changed : bool]) : bool
-  (match (ir.compiler-ir-phi-input-list-force-cons inputs)
-    [(ir.CompilerIrPhiInputList.Nil) changed]
-    [(ir.CompilerIrPhiInputList.Array seq)
-      (opt-thread-scan-forward-inputs!
-        budget
-        index
-        uses
-        merge-label
-        merge-instrs
-        merge-phi-count
-        forward-label
-        forward-instrs
-        true-label
-        false-label
-        (ir.compiler-ir-phi-input-seq-to-list seq)
-        changed)]
-    [(ir.CompilerIrPhiInputList.Cons value label rest)
-      (let
-        [step : bool
-          (match value
-            [(ir.CompilerIrValue.Bool known)
-              (opt-thread-apply-edge-budgeted!
-                budget
-                index
-                uses
-                label
-                forward-label
-                merge-label
-                (if known
-                  true-label
-                  false-label)
-                merge-instrs
-                merge-phi-count
-                forward-instrs
-                0)]
-            [_ false])]
-        (opt-thread-scan-forward-inputs!
-          budget
-          index
-          uses
-          merge-label
-          merge-instrs
-          merge-phi-count
-          forward-label
-          forward-instrs
-          true-label
-          false-label
-          (__tl-box-place rest)
-          (or changed step)))]))
-
-(define (opt-thread-scan-merge-inputs!
+;; One phi input list, edge by edge: a literal decides the merge's branch and
+;; its predecessor takes the decided target directly, and a variable input that
+;; a `[phi; jump]` forwarding block defines is walked into, so the literals one
+;; level further back decide the same branch from one block further away. That
+;; recursion is JumpThreading's phi-operand walk (JumpThreading.cpp:607-625) and
+;; it is what collapses the compiler's own `cond` ladders, whose 13 forwarding
+;; merges the depth-1 version stopped at after the first hop.
+(define (opt-thread-scan-chain-inputs!
   [budget : (__tl_dyn-array i64)]
   [type-segment-bases : i64]
   [index : OptCfgIndex]
@@ -39067,14 +39397,18 @@
   [merge-label : i64]
   [merge-instrs : ir.CompilerIrInstrSeq]
   [merge-phi-count : i64]
+  [merge-mov-limit : i64]
+  [blocked-label : i64]
   [true-label : i64]
   [false-label : i64]
+  [chain : OptThreadVia]
   [inputs : ir.CompilerIrPhiInputList]
+  [depth : i64]
   [changed : bool]) : bool
   (match (ir.compiler-ir-phi-input-list-force-cons inputs)
     [(ir.CompilerIrPhiInputList.Nil) changed]
     [(ir.CompilerIrPhiInputList.Array seq)
-      (opt-thread-scan-merge-inputs!
+      (opt-thread-scan-chain-inputs!
         budget
         type-segment-bases
         index
@@ -39082,58 +39416,75 @@
         merge-label
         merge-instrs
         merge-phi-count
+        merge-mov-limit
+        blocked-label
         true-label
         false-label
+        chain
         (ir.compiler-ir-phi-input-seq-to-list seq)
+        depth
         changed)]
     [(ir.CompilerIrPhiInputList.Cons value label rest)
       (let
         [step : bool
           (match value
             [(ir.CompilerIrValue.Bool known)
-              (opt-thread-apply-edge-budgeted!
-                budget
-                index
-                uses
-                label
-                merge-label
-                merge-label
-                (if known
-                  true-label
-                  false-label)
-                merge-instrs
-                merge-phi-count
-                merge-instrs
-                (opt-thread-drop-all-phi-inputs))]
-            [(ir.CompilerIrValue.Var var)
-              (match (opt-cfg-index-find-block index label)
-                [(OptMaybeBlock.No) false]
-                [(OptMaybeBlock.Some forward-block)
-                  (match (opt-thread-forward-shape
-                    type-segment-bases
+              (let
+                [target : i64
+                  (if known
+                    true-label
+                    false-label)]
+                (if (= target blocked-label)
+                  false
+                  (opt-thread-apply-edge-budgeted!
+                    budget
+                    index
                     uses
-                    forward-block
+                    label
+                    chain
                     merge-label
-                    var)
-                    [(OptThreadForward.No) false]
-                    [(OptThreadForward.Some forward-inputs)
-                      (match forward-block
-                        [(ir.CompilerIrBlock.Block _ forward-instrs)
-                          (opt-thread-scan-forward-inputs!
-                            budget
-                            index
-                            uses
-                            merge-label
-                            merge-instrs
-                            merge-phi-count
-                            label
-                            forward-instrs
-                            true-label
-                            false-label
-                            forward-inputs
-                            false)])])])]
+                    target
+                    merge-instrs
+                    merge-phi-count
+                    merge-mov-limit
+                    (opt-thread-chain-drop-slot chain))))]
+            [(ir.CompilerIrValue.Var var)
+              (if (<= depth 0)
+                false
+                (match (opt-cfg-index-find-block index label)
+                  [(OptMaybeBlock.No) false]
+                  [(OptMaybeBlock.Some forward-block)
+                    (match (opt-thread-forward-shape
+                      type-segment-bases
+                      uses
+                      forward-block
+                      (opt-thread-chain-last-label merge-label chain)
+                      var)
+                      [(OptThreadForward.No) false]
+                      [(OptThreadForward.Some forward-inputs)
+                        (match forward-block
+                          [(ir.CompilerIrBlock.Block _ forward-instrs)
+                            (opt-thread-scan-chain-inputs!
+                              budget
+                              type-segment-bases
+                              index
+                              uses
+                              merge-label
+                              merge-instrs
+                              merge-phi-count
+                              merge-mov-limit
+                              blocked-label
+                              true-label
+                              false-label
+                              (opt-thread-chain-append
+                                chain
+                                label
+                                forward-instrs)
+                              forward-inputs
+                              (- depth 1)
+                              false)])])]))]
             [_ false])]
-        (opt-thread-scan-merge-inputs!
+        (opt-thread-scan-chain-inputs!
           budget
           type-segment-bases
           index
@@ -39141,9 +39492,13 @@
           merge-label
           merge-instrs
           merge-phi-count
+          merge-mov-limit
+          blocked-label
           true-label
           false-label
+          chain
           (__tl-box-place rest)
+          depth
           (or changed step)))]))
 
 ;; Last definition of `var` in the block body (its terminator excluded). Any
@@ -39179,6 +39534,7 @@
   [merge-label : i64]
   [merge-instrs : ir.CompilerIrInstrSeq]
   [cond-var : i64]
+  [blocked-label : i64]
   [true-label : i64]
   [false-label : i64]
   [preds : OptLabelSet]
@@ -39201,20 +39557,25 @@
                     (OptThreadConstBool.No))
                     [(OptThreadConstBool.No) false]
                     [(OptThreadConstBool.Some known)
-                      (opt-thread-apply-edge-budgeted!
-                        budget
-                        index
-                        uses
-                        pred-label
-                        merge-label
-                        merge-label
-                        (if known
-                          true-label
-                          false-label)
-                        merge-instrs
-                        0
-                        pred-instrs
-                        (- 0 1))])])])]
+                      (let
+                        [target : i64
+                          (if known
+                            true-label
+                            false-label)]
+                        (if (= target blocked-label)
+                          false
+                          (opt-thread-apply-edge-budgeted!
+                            budget
+                            index
+                            uses
+                            pred-label
+                            (OptThreadVia.Nil)
+                            merge-label
+                            target
+                            merge-instrs
+                            0
+                            0
+                            (- 0 1))))])])])]
         (opt-thread-scan-mov-preds!
           budget
           index
@@ -39222,6 +39583,7 @@
           merge-label
           merge-instrs
           cond-var
+          blocked-label
           true-label
           false-label
           (opt-label-tail preds)
@@ -39238,6 +39600,8 @@
   [merge-label : i64]
   [merge-instrs : ir.CompilerIrInstrSeq]
   [phi-count : i64]
+  [mov-limit : i64]
+  [blocked-label : i64]
   [true-label : i64]
   [false-label : i64]
   [preds : OptLabelSet]
@@ -39248,11 +39612,12 @@
       (let
         [pred-label : i64 (opt-label-ref preds 0)]
         [step : bool
-          (match (ir.compiler-ir-instr-seq-ref merge-instrs phi-count)
+          (match (ir.compiler-ir-instr-seq-ref merge-instrs mov-limit)
             [(ir.CompilerIrInstr.BinOp _ op left right ty)
               (match (opt-thread-fold-edge-compare
                 merge-instrs
                 phi-count
+                mov-limit
                 op
                 left
                 right
@@ -39260,20 +39625,25 @@
                 pred-label)
                 [(OptThreadConstBool.No) false]
                 [(OptThreadConstBool.Some known)
-                  (opt-thread-apply-edge-budgeted!
-                    budget
-                    index
-                    uses
-                    pred-label
-                    merge-label
-                    merge-label
-                    (if known
-                      true-label
-                      false-label)
-                    merge-instrs
-                    phi-count
-                    merge-instrs
-                    (opt-thread-drop-all-phi-inputs))])]
+                  (let
+                    [target : i64
+                      (if known
+                        true-label
+                        false-label)]
+                    (if (= target blocked-label)
+                      false
+                      (opt-thread-apply-edge-budgeted!
+                        budget
+                        index
+                        uses
+                        pred-label
+                        (OptThreadVia.Nil)
+                        merge-label
+                        target
+                        merge-instrs
+                        phi-count
+                        mov-limit
+                        (opt-thread-drop-all-phi-inputs))))])]
             [_ false])]
         (opt-thread-scan-compare-preds!
           budget
@@ -39282,6 +39652,8 @@
           merge-label
           merge-instrs
           phi-count
+          mov-limit
+          blocked-label
           true-label
           false-label
           (opt-label-tail preds)
@@ -39291,7 +39663,9 @@
   [budget : (__tl_dyn-array i64)]
   [type-segment-bases : i64]
   [index : OptCfgIndex]
+  [doms : OptDomInfo]
   [uses : (__tl_dyn-array i64)]
+  [scratch : (__tl_dyn-array i64)]
   [block : ir.CompilerIrBlock]) : bool
   (match block
     [(ir.CompilerIrBlock.Block merge-label instrs)
@@ -39300,11 +39674,19 @@
         (match (opt-thread-merge-shape
           type-segment-bases
           index
+          doms
           uses
+          scratch
           merge-label
           instrs)
           [(OptThreadMerge.No) false]
-          [(OptThreadMerge.Some cond-var phi-slot true-label false-label)
+          [(OptThreadMerge.Some
+              cond-var
+              phi-slot
+              phi-count
+              blocked-label
+              true-label
+              false-label)
             (if (< phi-slot 0)
               (opt-thread-scan-mov-preds!
                 budget
@@ -39313,26 +39695,35 @@
                 merge-label
                 instrs
                 cond-var
+                blocked-label
                 true-label
                 false-label
                 (opt-cfg-index-predecessors index merge-label)
                 false)
               (match (ir.compiler-ir-instr-seq-ref instrs phi-slot)
                 [(ir.CompilerIrInstr.Phi _ inputs _)
-                  (opt-thread-scan-merge-inputs!
+                  (opt-thread-scan-chain-inputs!
                     budget
                     type-segment-bases
                     index
                     uses
                     merge-label
                     instrs
+                    phi-count
                     (- (ir.compiler-ir-instr-seq-count instrs) 1)
+                    blocked-label
                     true-label
                     false-label
+                    (OptThreadVia.Nil)
                     inputs
+                    (opt-thread-chain-depth)
                     false)]
                 [_ false]))]
-          [(OptThreadMerge.Compare phi-count true-label false-label)
+          [(OptThreadMerge.Compare
+              phi-count
+              blocked-label
+              true-label
+              false-label)
             (opt-thread-scan-compare-preds!
               budget
               index
@@ -39340,6 +39731,8 @@
               merge-label
               instrs
               phi-count
+              (- (ir.compiler-ir-instr-seq-count instrs) 2)
+              blocked-label
               true-label
               false-label
               (opt-cfg-index-predecessors index merge-label)
@@ -39349,7 +39742,9 @@
   [budget : (__tl_dyn-array i64)]
   [type-segment-bases : i64]
   [index : OptCfgIndex]
+  [doms : OptDomInfo]
   [uses : (__tl_dyn-array i64)]
+  [scratch : (__tl_dyn-array i64)]
   [blocks : ir.CompilerIrBlockList]
   [changed : bool]) : bool
   (match blocks
@@ -39359,11 +39754,20 @@
         budget
         type-segment-bases
         index
+        doms
         uses
+        scratch
         (__tl-box-place rest)
         (or
           changed
-          (opt-thread-try-block! budget type-segment-bases index uses block)))]
+          (opt-thread-try-block!
+            budget
+            type-segment-bases
+            index
+            doms
+            uses
+            scratch
+            block)))]
     [(ir.CompilerIrBlockList.Array seq)
       (let
         [slot : i64 0]
@@ -39377,21 +39781,38 @@
                   budget
                   type-segment-bases
                   index
+                  doms
                   uses
+                  scratch
                   (ir.compiler-ir-block-seq-ref seq slot))
                 (set! any true))
               (set! slot (+ slot 1))))
           any))]))
 
+;; The dominator tree is what the live-out rule reads when a definition is not
+;; edge-local (`opt-thread-def-blocked`); it is built once per round, from the
+;; same index the round's predecessor rows come from, and a round only runs at
+;; all once the function-level screen has found a candidate merge.
 (define (opt-thread-const-branch-round!
   [type-segment-bases : i64]
   [blocks : ir.CompilerIrBlockList]
   [frame : i64]) : bool
   (let
     [index : OptCfgIndex (opt-cfg-index-build blocks)]
+    [doms : OptDomInfo
+      (opt-cfg-dominators-with index (opt-cfg-entry-label blocks))]
     [uses : (__tl_dyn-array i64) (opt-collect-blocks-uses-array frame blocks)]
+    [scratch : (__tl_dyn-array i64) (opt-used-array-new frame)]
     [budget : (__tl_dyn-array i64) (array.make-array i64 1)]
-    (opt-thread-scan-blocks! budget type-segment-bases index uses blocks false)))
+    (opt-thread-scan-blocks!
+      budget
+      type-segment-bases
+      index
+      doms
+      uses
+      scratch
+      blocks
+      false)))
 
 ;; One round threads every edge it can prove, so the fixpoint only has to
 ;; re-run for the opportunities the previous round's cleanup exposed: a depth-2
@@ -39444,8 +39865,9 @@
           (match (ir.compiler-ir-instr-seq-ref instrs (- count 1))
             [(ir.CompilerIrInstr.Branch (ir.CompilerIrValue.Var cond-var) _ _)
               (let
+                [phi-count : i64 (opt-thread-phi-prefix-count instrs 0)]
                 [slot : i64
-                  (opt-thread-phi-slot-for-var instrs 0 (- count 1) cond-var)]
+                  (opt-thread-phi-slot-for-var instrs 0 phi-count cond-var)]
                 (if (< slot 0)
                   false
                   (match (ir.compiler-ir-instr-seq-ref instrs slot)
@@ -39469,23 +39891,25 @@
             [(ir.CompilerIrInstr.Branch (ir.CompilerIrValue.Var cond-var) _ _)
               (match (ir.compiler-ir-instr-seq-ref instrs (- count 2))
                 [(ir.CompilerIrInstr.BinOp dst op left right _)
-                  (and
-                    (= dst cond-var)
-                    (opt-thread-compare-threadable-op? op)
-                    (= (opt-thread-phi-prefix-count instrs 0) (- count 2))
-                    (or
-                      (=
-                        (opt-thread-compare-operand-kind
-                          instrs
-                          (- count 2)
-                          left)
-                        1)
-                      (=
-                        (opt-thread-compare-operand-kind
-                          instrs
-                          (- count 2)
-                          right)
-                        1)))]
+                  (let
+                    [phi-count : i64 (opt-thread-phi-prefix-count instrs 0)]
+                    (and
+                      (= dst cond-var)
+                      (opt-thread-compare-threadable-op? op)
+                      (<= phi-count (- count 2))
+                      (or
+                        (=
+                          (opt-thread-compare-operand-kind
+                            instrs
+                            phi-count
+                            left)
+                          1)
+                        (=
+                          (opt-thread-compare-operand-kind
+                            instrs
+                            phi-count
+                            right)
+                          1))))]
                 [_ false])]
             [_ false])))]))
 
@@ -39815,8 +40239,8 @@
                     0
                     target-instrs
                     0
-                    target-instrs
-                    via
+                    0
+                    (OptThreadVia.Nil)
                     via
                     pred-label))
                   successor
@@ -39827,8 +40251,8 @@
                       uses
                       target-instrs
                       0
-                      target-instrs
-                      via
+                      0
+                      (OptThreadVia.Nil)
                       via
                       pred-label)
                     (opt-cfg-straighten-mark! flag)
@@ -92845,6 +93269,694 @@
                 (opt-dce-block-list-array-fixpoint frame blocks 8))))
           true))]))
 
+;; --- and/or chain flatten (FoldBranchToCommonDest) --------------------------
+;;
+;; A short-circuit `and` leaves two conditional branches with the SAME false
+;; target:
+;;
+;;   X:  %c1 = ...            ; branch %c1, Y, F
+;;   Y:  %c2 = ...            ; branch %c2, T, F
+;;
+;; and a short-circuit `or` the mirror image, with the same TRUE target. When
+;; `Y` is entered only from `X` and computes `%c2` with a handful of pure
+;; instructions, the pair is one branch on `%c1 && %c2` (`|| ` for the or form)
+;; and `F` loses a predecessor. That last part is the point: T2-3 measured 19
+;; surviving `phi [true, ..], [false, ..]` joins in peephole_lines and found 18
+;; of them refused because the join's arm has TWO predecessors -- the inlined
+;; checked accessor's range test and its value test both jump to it -- which is
+;; exactly the shape this fold retires. LLVM does the same thing in SimplifyCFG
+;; (`FoldBranchToCommonDest`, SimplifyCFG.cpp:3900-4200) under a bonus-
+;; instruction budget; `BonusInstThreshold` is 1 there, four here.
+;;
+;; The rails, in the order they are checked:
+;;   - `Y`'s only predecessor is `X`, so nothing else reaches the speculated
+;;     instructions and everything `Y` dominates is dominated by `X` after the
+;;     fold: moving `Y`'s body to the end of `X` keeps every definition ahead of
+;;     every use.
+;;   - `Y` holds at most `opt-fold-common-max-bonus` instructions ahead of its
+;;     branch and every one of them is SPECULATABLE: a Mov, a cast, a unary op
+;;     or an arithmetic/compare BinOp. Nothing that reads memory (`Load`, and
+;;     with it every `Gep` that would feed one), nothing that can trap or abort
+;;     (`Div`/`Mod`/`SafeDiv`/`SafeMod`, `BoundsCheck`), no call, no store, no
+;;     shift (the backend guards its count), no phi. This rail is the soundness
+;;     one: after the fold `Y`'s body runs on the path that used to skip it, so
+;;     an instruction that could fault, abort, or read memory the guard was
+;;     protecting must never be admitted.
+;;   - `F`'s phis carry the SAME value for the `X` edge and the `Y` edge. The
+;;     folded block reaches `F` once, over `X`'s label, so a phi that
+;;     distinguished the two edges could not be repaired without a select.
+;;   - `T`'s phis carry an input for `Y` (its edge is re-keyed to `X`) and none
+;;     for `X` (which would be a second input under one label).
+;;   - neither block is one of the `__bool_and.` blocks `opt-bool-branch`'s own
+;;     And-chain rewrite emits. That rewrite is the exact inverse of this one --
+;;     it expands a materialised And into short-circuit blocks and was measured
+;;     as a win for the bounds-check guard chains -- so folding its output back
+;;     would undo a deliberate rewrite. For the same reason this pass runs BELOW
+;;     the optimizer fixpoint, next to `if_convert`, where no later iteration of
+;;     `bool_branch` can expand what it folded.
+(defenum OptFoldCommonPlan
+  (No)
+  (Some i64 ir.CompilerIrBinOp i64 i64 i64))
+
+;; How many instructions the fold may speculate out of `Y` into `X`. LLVM's
+;; `BonusInstThreshold` (SimplifyCFG.cpp:130) defaults to 1 and counts the same
+;; thing; the mechanism here admits up to four, and every one of them still has
+;; to pass the speculation rail above.
+;;
+;; The budget is a PARAMETER of the rewrite
+;; (`opt-fold-common-function-pass-with-bonus`) because two placements of this
+;; pass were measured and both of the ones that fire cost Ir on this backend:
+;;
+;;   - budget 4, below `cfg_straighten` (where the corpus's sites are): the
+;;     fold fires on 102 sites across the four hot benchmarks and nearly every
+;;     one is a short-circuit guard chain inside a loop. This backend has no
+;;     and-of-flags form, so a fused condition is spelled
+;;     `cmp; setcc; cmp; setcc; and; test; jcc` where the pair it replaced is
+;;     `cmp; jcc; cmp; jcc`, and the second compare now runs on the path that
+;;     used to skip it: lex_source +280.4M (+58%), gvn_table +66.9M,
+;;     peephole_lines +42.1M.
+;;   - budget 0, same position (both conditions already materialised, so the
+;;     fold only trades `test; jcc; test; jcc` for `and; test; jcc`): still
+;;     gvn_table +9.1M and peephole_lines +2.9M, because the first test
+;;     short-circuits most executions and the fold makes both run.
+;;
+;; What it CANNOT do is the case the packet aimed it at: T2-3's 18
+;; two-predecessor bool joins in peephole_lines are the inlined checked
+;; accessor, whose second test reads the byte the first test's range check
+;; guards, so the speculation rail above refuses them -- soundly, and LLVM
+;; refuses them too. The pass therefore ships in the slot the packet names,
+;; ahead of `if_convert`, where the lowering's own jump-only arms still stand
+;; between each branch and its target and no corpus site presents the same
+;; label on both edges.
+(define (opt-fold-common-max-bonus) : i64
+  4)
+
+(define (opt-fold-common-safe-binop? [op : ir.CompilerIrBinOp]) : bool
+  (match op
+    [(ir.CompilerIrBinOp.Div) false]
+    [(ir.CompilerIrBinOp.Mod) false]
+    [(ir.CompilerIrBinOp.SafeDiv) false]
+    [(ir.CompilerIrBinOp.SafeMod) false]
+    [(ir.CompilerIrBinOp.Shl _) false]
+    [(ir.CompilerIrBinOp.Shr _) false]
+    [_ true]))
+
+(define (opt-fold-common-safe-unop? [op : ir.CompilerIrUnOp]) : bool
+  (match op
+    [(ir.CompilerIrUnOp.Sqrt) false]
+    [_ true]))
+
+(define (opt-fold-common-speculatable? [instr : ir.CompilerIrInstr]) : bool
+  (match instr
+    [(ir.CompilerIrInstr.Mov _ _ _) true]
+    [(ir.CompilerIrInstr.Cast _ _ _ _) true]
+    [(ir.CompilerIrInstr.Bitcast _ _ _ _) true]
+    [(ir.CompilerIrInstr.UnOp _ op _ _) (opt-fold-common-safe-unop? op)]
+    [(ir.CompilerIrInstr.BinOp _ op _ _ _) (opt-fold-common-safe-binop? op)]
+    [_ false]))
+
+(define (opt-fold-common-body-speculatable?
+  [instrs : ir.CompilerIrInstrSeq]
+  [slot : i64]
+  [limit : i64]) : bool
+  (if (>= slot limit)
+    true
+    (and
+      (opt-fold-common-speculatable? (ir.compiler-ir-instr-seq-ref instrs slot))
+      (opt-fold-common-body-speculatable? instrs (+ slot 1) limit))))
+
+(define (opt-fold-common-phi-inputs-agree?
+  [instrs : ir.CompilerIrInstrSeq]
+  [slot : i64]
+  [x-label : i64]
+  [y-label : i64]) : bool
+  (if (>= slot (ir.compiler-ir-instr-seq-count instrs))
+    true
+    (match (ir.compiler-ir-instr-seq-ref instrs slot)
+      [(ir.CompilerIrInstr.Phi _ inputs _)
+        (and
+          (match (opt-thread-phi-input-value inputs x-label)
+            [(ir.CompilerIrMaybeValue.No) false]
+            [(ir.CompilerIrMaybeValue.Some from-x)
+              (match (opt-thread-phi-input-value inputs y-label)
+                [(ir.CompilerIrMaybeValue.No) false]
+                [(ir.CompilerIrMaybeValue.Some from-y)
+                  (opt-value-eq from-x from-y)])])
+          (opt-fold-common-phi-inputs-agree? instrs (+ slot 1) x-label y-label))]
+      [_ true])))
+
+(define (opt-fold-common-phis-rekeyable?
+  [instrs : ir.CompilerIrInstrSeq]
+  [slot : i64]
+  [x-label : i64]
+  [y-label : i64]) : bool
+  (if (>= slot (ir.compiler-ir-instr-seq-count instrs))
+    true
+    (match (ir.compiler-ir-instr-seq-ref instrs slot)
+      [(ir.CompilerIrInstr.Phi _ inputs _)
+        (and
+          (match (opt-thread-phi-input-value inputs y-label)
+            [(ir.CompilerIrMaybeValue.No) false]
+            [(ir.CompilerIrMaybeValue.Some _) true])
+          (match (opt-thread-phi-input-value inputs x-label)
+            [(ir.CompilerIrMaybeValue.No) true]
+            [(ir.CompilerIrMaybeValue.Some _) false])
+          (opt-fold-common-phis-rekeyable? instrs (+ slot 1) x-label y-label))]
+      [_ true])))
+
+(define (opt-fold-common-block-phis?
+  [instrs : ir.CompilerIrInstrSeq]
+  [slot : i64]
+  [limit : i64]) : bool
+  (if (>= slot limit)
+    false
+    (match (ir.compiler-ir-instr-seq-ref instrs slot)
+      [(ir.CompilerIrInstr.Phi _ _ _) true]
+      [_ (opt-fold-common-block-phis? instrs (+ slot 1) limit)])))
+
+(define (opt-fold-common-target-phis?
+  [index : OptCfgIndex]
+  [label : i64]
+  [x-label : i64]
+  [y-label : i64]
+  [agree? : bool]) : bool
+  (match (opt-cfg-index-find-block index label)
+    [(OptMaybeBlock.No) false]
+    [(OptMaybeBlock.Some block)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (if agree?
+            (opt-fold-common-phi-inputs-agree? instrs 0 x-label y-label)
+            (opt-fold-common-phis-rekeyable? instrs 0 x-label y-label))])]))
+
+;; One side of `X`'s branch, taken as the candidate `Y`. `common` is the target
+;; `X` keeps, `far` the one `Y` owns; the fused branch tests `%c1 op %c2` and
+;; goes to (`far`, `common`) for an and-chain and (`common`, `far`) for an or.
+(define (opt-fold-common-side-plan
+  [index : OptCfgIndex]
+  [bonus : i64]
+  [x-label : i64]
+  [y-label : i64]
+  [common : i64]
+  [and-form? : bool]) : OptFoldCommonPlan
+  (if (or
+    (= y-label x-label)
+    (= y-label common)
+    (= common x-label)
+    (opt-bool-branch-chain-generated-label? x-label)
+    (opt-bool-branch-chain-generated-label? y-label)
+    (not (opt-thread-sole-pred? index y-label x-label)))
+    (OptFoldCommonPlan.No)
+    (match (opt-cfg-index-find-block index y-label)
+      [(OptMaybeBlock.No) (OptFoldCommonPlan.No)]
+      [(OptMaybeBlock.Some y-block)
+        (match y-block
+          [(ir.CompilerIrBlock.Block _ y-instrs)
+            (let
+              [y-count : i64 (ir.compiler-ir-instr-seq-count y-instrs)]
+              (if (= y-count 0)
+                (OptFoldCommonPlan.No)
+                (match (ir.compiler-ir-instr-seq-ref y-instrs (- y-count 1))
+                  [(ir.CompilerIrInstr.Branch
+                      (ir.CompilerIrValue.Var _)
+                      y-true
+                      y-false)
+                    (let
+                      [far : i64
+                        (if and-form?
+                          y-true
+                          y-false)]
+                      [y-common : i64
+                        (if and-form?
+                          y-false
+                          y-true)]
+                      (if (or
+                        (not (= y-common common))
+                        (= far common)
+                        (= far x-label)
+                        (= far y-label)
+                        (> (- y-count 1) bonus)
+                        (not
+                          (opt-fold-common-body-speculatable?
+                            y-instrs
+                            0
+                            (- y-count 1)))
+                        (not
+                          (opt-fold-common-target-phis?
+                            index
+                            common
+                            x-label
+                            y-label
+                            true))
+                        (not
+                          (opt-fold-common-target-phis?
+                            index
+                            far
+                            x-label
+                            y-label
+                            false)))
+                        (OptFoldCommonPlan.No)
+                        (OptFoldCommonPlan.Some
+                          y-label
+                          (if and-form?
+                            (ir.CompilerIrBinOp.And)
+                            (ir.CompilerIrBinOp.Or))
+                          (if and-form?
+                            far
+                            common)
+                          (if and-form?
+                            common
+                            far)
+                          common)))]
+                  [_ (OptFoldCommonPlan.No)])))])])))
+
+(define (opt-fold-common-plan
+  [index : OptCfgIndex]
+  [bonus : i64]
+  [x-label : i64]
+  [instrs : ir.CompilerIrInstrSeq]) : OptFoldCommonPlan
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    (if (= count 0)
+      (OptFoldCommonPlan.No)
+      (match (ir.compiler-ir-instr-seq-ref instrs (- count 1))
+        [(ir.CompilerIrInstr.Branch
+            (ir.CompilerIrValue.Var _)
+            true-label
+            false-label)
+          (match (opt-fold-common-side-plan
+            index
+            bonus
+            x-label
+            true-label
+            false-label
+            true)
+            [(OptFoldCommonPlan.Some y op t f c)
+              (OptFoldCommonPlan.Some y op t f c)]
+            [(OptFoldCommonPlan.No)
+              (opt-fold-common-side-plan
+                index
+                bonus
+                x-label
+                false-label
+                true-label
+                false)])]
+        [_ (OptFoldCommonPlan.No)]))))
+
+(define (opt-fold-common-rekey-inputs
+  [inputs : ir.CompilerIrPhiInputList]
+  [from-label : i64]
+  [to-label : i64]) : ir.CompilerIrPhiInputList
+  (match (ir.compiler-ir-phi-input-list-force-cons inputs)
+    [(ir.CompilerIrPhiInputList.Nil) (ir.CompilerIrPhiInputList.Nil)]
+    [(ir.CompilerIrPhiInputList.Array seq)
+      (opt-fold-common-rekey-inputs
+        (ir.compiler-ir-phi-input-seq-to-list seq)
+        from-label
+        to-label)]
+    [(ir.CompilerIrPhiInputList.Cons value label rest)
+      (ir.compiler-ir-phi-input-cons
+        value
+        (if (= label from-label)
+          to-label
+          label)
+        (opt-fold-common-rekey-inputs (__tl-box-place rest) from-label to-label))]))
+
+(define (opt-fold-common-repair-phis!
+  [instrs : ir.CompilerIrInstrSeq]
+  [slot : i64]
+  [from-label : i64]
+  [to-label : i64]
+  [drop? : bool]) : unit
+  (if (>= slot (ir.compiler-ir-instr-seq-count instrs))
+    unit
+    (match (ir.compiler-ir-instr-seq-ref instrs slot)
+      [(ir.CompilerIrInstr.Phi dst inputs ty)
+        (begin
+          (ir.compiler-ir-instr-seq-set!
+            instrs
+            slot
+            (ir.CompilerIrInstr.Phi
+              dst
+              (if drop?
+                (opt-thread-phi-inputs-drop inputs from-label)
+                (opt-fold-common-rekey-inputs inputs from-label to-label))
+              ty))
+          (opt-fold-common-repair-phis!
+            instrs
+            (+ slot 1)
+            from-label
+            to-label
+            drop?))]
+      [_ unit])))
+
+(define (opt-fold-common-repair-block!
+  [index : OptCfgIndex]
+  [label : i64]
+  [from-label : i64]
+  [to-label : i64]
+  [drop? : bool]) : unit
+  (match (opt-cfg-index-find-block index label)
+    [(OptMaybeBlock.No) unit]
+    [(OptMaybeBlock.Some block)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (opt-fold-common-repair-phis! instrs 0 from-label to-label drop?)])]))
+
+;; `X`'s body, then `Y`'s speculated body, then the fused condition and the one
+;; branch that replaces both.
+(define (opt-fold-common-block-instrs
+  [x-instrs : ir.CompilerIrInstrSeq]
+  [y-instrs : ir.CompilerIrInstrSeq]
+  [op : ir.CompilerIrBinOp]
+  [fused : i64]
+  [true-label : i64]
+  [false-label : i64]) : ir.CompilerIrInstrSeq
+  (let
+    [x-count : i64 (ir.compiler-ir-instr-seq-count x-instrs)]
+    [y-count : i64 (ir.compiler-ir-instr-seq-count y-instrs)]
+    [x-cond : ir.CompilerIrValue
+      (match (ir.compiler-ir-instr-seq-ref x-instrs (- x-count 1))
+        [(ir.CompilerIrInstr.Branch cond _ _) cond]
+        [_ (ir.CompilerIrValue.Bool false)])]
+    [y-cond : ir.CompilerIrValue
+      (match (ir.compiler-ir-instr-seq-ref y-instrs (- y-count 1))
+        [(ir.CompilerIrInstr.Branch cond _ _) cond]
+        [_ (ir.CompilerIrValue.Bool false)])]
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity (+ (+ x-count y-count) 1))]
+    (begin
+      (ir.compiler-ir-instr-builder-append-seq-range!
+        (&mut builder)
+        x-instrs
+        0
+        (- x-count 1))
+      (ir.compiler-ir-instr-builder-append-seq-range!
+        (&mut builder)
+        y-instrs
+        0
+        (- y-count 1))
+      (ir.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (ir.CompilerIrInstr.BinOp fused op x-cond y-cond (ast.AstType.Bool)))
+      (ir.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (ir.CompilerIrInstr.Branch
+          (ir.CompilerIrValue.Var fused)
+          true-label
+          false-label))
+      (ir.compiler-ir-instr-builder-to-seq builder))))
+
+(define (opt-fold-common-rebuild
+  [blocks : ir.CompilerIrBlockList]
+  [x-label : i64]
+  [y-label : i64]
+  [x-instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrBlockList
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) (ir.CompilerIrBlockList.Nil)]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block label instrs)
+          (if (= label y-label)
+            (opt-fold-common-rebuild
+              (__tl-box-place rest)
+              x-label
+              y-label
+              x-instrs)
+            (ir.compiler-ir-block-cons
+              (if (= label x-label)
+                (ir.CompilerIrBlock.Block label x-instrs)
+                block)
+              (opt-fold-common-rebuild
+                (__tl-box-place rest)
+                x-label
+                y-label
+                x-instrs)))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-fold-common-rebuild
+        (ir.compiler-ir-block-seq-to-list seq)
+        x-label
+        y-label
+        x-instrs)]))
+
+(defenum OptFoldCommonRound
+  (No)
+  (Some ir.CompilerIrBlockList i64))
+
+(define (opt-fold-common-try-block
+  [index : OptCfgIndex]
+  [bonus : i64]
+  [blocks : ir.CompilerIrBlockList]
+  [frame : i64]
+  [block : ir.CompilerIrBlock]) : OptFoldCommonRound
+  (match block
+    [(ir.CompilerIrBlock.Block x-label x-instrs)
+      (match (opt-fold-common-plan index bonus x-label x-instrs)
+        [(OptFoldCommonPlan.No) (OptFoldCommonRound.No)]
+        [(OptFoldCommonPlan.Some y-label op true-label false-label common)
+          (match (opt-cfg-index-find-block index y-label)
+            [(OptMaybeBlock.No) (OptFoldCommonRound.No)]
+            [(OptMaybeBlock.Some y-block)
+              (match y-block
+                [(ir.CompilerIrBlock.Block _ y-instrs)
+                  (let
+                    [far : i64
+                      (if (= common true-label)
+                        false-label
+                        true-label)]
+                    [fused : i64 frame]
+                    [next-instrs : ir.CompilerIrInstrSeq
+                      (opt-fold-common-block-instrs
+                        x-instrs
+                        y-instrs
+                        op
+                        fused
+                        true-label
+                        false-label)]
+                    (begin
+                      (opt-fold-common-repair-block!
+                        index
+                        common
+                        y-label
+                        x-label
+                        true)
+                      (opt-fold-common-repair-block!
+                        index
+                        far
+                        y-label
+                        x-label
+                        false)
+                      (OptFoldCommonRound.Some
+                        (opt-fold-common-rebuild
+                          blocks
+                          x-label
+                          y-label
+                          next-instrs)
+                        (+ frame 1))))])])])]))
+
+(define (opt-fold-common-first-list
+  [index : OptCfgIndex]
+  [bonus : i64]
+  [all-blocks : ir.CompilerIrBlockList]
+  [frame : i64]
+  [blocks : ir.CompilerIrBlockList]) : OptFoldCommonRound
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) (OptFoldCommonRound.No)]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match (opt-fold-common-try-block index bonus all-blocks frame block)
+        [(OptFoldCommonRound.Some next next-frame)
+          (OptFoldCommonRound.Some next next-frame)]
+        [(OptFoldCommonRound.No)
+          (opt-fold-common-first-list
+            index
+            bonus
+            all-blocks
+            frame
+            (__tl-box-place rest))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-fold-common-first-list
+        index
+        bonus
+        all-blocks
+        frame
+        (ir.compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-fold-common-fuel) : i64
+  32)
+
+(defenum OptFoldCommonResult
+  (Result ir.CompilerIrBlockList i64 bool))
+
+(define (opt-fold-common-blocks-raw
+  [bonus : i64]
+  [blocks : ir.CompilerIrBlockList]
+  [frame : i64]
+  [remaining : i64]) : OptFoldCommonResult
+  (if (<= remaining 0)
+    (OptFoldCommonResult.Result blocks frame false)
+    (let
+      [index : OptCfgIndex (opt-cfg-index-build blocks)]
+      (match (opt-fold-common-first-list index bonus blocks frame blocks)
+        [(OptFoldCommonRound.No)
+          (OptFoldCommonResult.Result blocks frame false)]
+        [(OptFoldCommonRound.Some next next-frame)
+          (match (opt-fold-common-blocks-raw
+            bonus
+            next
+            next-frame
+            (- remaining 1))
+            [(OptFoldCommonResult.Result final final-frame _)
+              (OptFoldCommonResult.Result final final-frame true)])]))))
+
+;; A block whose branch has a successor that is a conditional branch of its own,
+;; entered only from it: the cheap linear screen that keeps the clone, the index
+;; and the verify off every function with nothing to fold.
+(define (opt-fold-common-block-candidate?
+  [index : OptCfgIndex]
+  [bonus : i64]
+  [block : ir.CompilerIrBlock]) : bool
+  (match block
+    [(ir.CompilerIrBlock.Block label instrs)
+      (match (opt-fold-common-plan index bonus label instrs)
+        [(OptFoldCommonPlan.No) false]
+        [(OptFoldCommonPlan.Some _ _ _ _ _) true])]))
+
+(define (opt-fold-common-blocks-have-candidate-from?
+  [index : OptCfgIndex]
+  [bonus : i64]
+  [blocks : ir.CompilerIrBlockList]) : bool
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) false]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (if (opt-fold-common-block-candidate? index bonus block)
+        true
+        (opt-fold-common-blocks-have-candidate-from?
+          index
+          bonus
+          (__tl-box-place rest)))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-fold-common-blocks-have-candidate-from?
+        index
+        bonus
+        (ir.compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-fold-common-blocks-have-candidate?
+  [bonus : i64]
+  [blocks : ir.CompilerIrBlockList]) : bool
+  (opt-fold-common-blocks-have-candidate-from?
+    (opt-cfg-index-build blocks)
+    bonus
+    blocks))
+
+;; The rewrite mutates the phi input lists of the two targets, so it always
+;; works on a deep block/instruction clone and a rejected post-pass verify hands
+;; back the byte-for-byte input function.
+(define (opt-fold-common-function-pass-with-bonus
+  [bonus : i64]
+  [func : ir.CompilerIrFunction]) : OptFunctionPassResult
+  (match func
+    [(ir.CompilerIrFunction.Function name params ret-ty frame blocks)
+      (if (not (opt-fold-common-blocks-have-candidate? bonus blocks))
+        (OptFunctionPassResult.Result func false)
+        (match (opt-fold-common-blocks-raw
+          bonus
+          (opt-bool-branch-clone-blocks blocks)
+          frame
+          (opt-fold-common-fuel))
+          [(OptFoldCommonResult.Result next-blocks next-frame changed)
+            (if (not changed)
+              (OptFunctionPassResult.Result func false)
+              (let
+                [next : ir.CompilerIrFunction
+                  (ir.CompilerIrFunction.Function
+                    name
+                    params
+                    ret-ty
+                    next-frame
+                    next-blocks)]
+                [next-context : OptCfgContext
+                  (opt-cfg-context-build next-blocks)]
+                (match (opt-verify-function-with-context next next-context)
+                  [(ResultCompilerOptimizeVerify.Ok)
+                    (OptFunctionPassResult.Result next true)]
+                  [(ResultCompilerOptimizeVerify.Err _)
+                    (OptFunctionPassResult.Result func false)])))]))]))
+
+(define (opt-fold-common-function-pass [func : ir.CompilerIrFunction]) : OptFunctionPassResult
+  (opt-fold-common-function-pass-with-bonus (opt-fold-common-max-bonus) func))
+
+(define (opt-fold-common-final-pass
+  [type-segment-bases : i64]
+  [func : ir.CompilerIrFunction]) : OptFunctionPassResult
+  (match (opt-fold-common-function-pass func)
+    [(OptFunctionPassResult.Result next changed)
+      (OptFunctionPassResult.Result
+        (compiler-opt-debug-observe-function
+          type-segment-bases
+          "fold_common"
+          next)
+        changed)]))
+
+(define (opt-fold-common-final
+  [type-segment-bases : i64]
+  [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
+  (match (opt-fold-common-final-pass type-segment-bases func)
+    [(OptFunctionPassResult.Result next _) next]))
+
+;; The same jump-threading pass the fixpoint runs early, given one last look at
+;; the straightened CFG. The exit-flag join it exists for is BUILT below its
+;; early slot: `flag_exit` mints `%f = phi [true, ..], [true, ..], [%c, ..]` at
+;; a loop exit (gvn-facts-insert's `while_exit.2`), the two-iteration fixpoint
+;; cap means no later iteration reaches the early slot with that shape in hand,
+;; and until `opt-cfg-straighten-final-pass` has retired the jump-only arm
+;; between the merge and its join the merge's sibling phi is read across a
+;; SECOND block's edge, which the live-out rule refuses. After straightening the
+;; join carries the merge's own label and every literal edge threads, which is
+;; what retires the `mov $1,%ecx; jmp ... test %rcx,%rcx; jne` quadruple the
+;; flag costs per call. Only `cmp_dup` runs below, and it moves instructions
+;; inside blocks, never blocks.
+(define (opt-thread-const-branch-final-pass
+  [type-segment-bases : i64]
+  [func : ir.CompilerIrFunction]) : OptFunctionPassResult
+  (let
+    ;; `sccp` is the constant lattice this slot's input has never been through:
+    ;; `flag_exit` mints the exit flag BELOW the fixpoint's own sccp stage, and
+    ;; in gvn-facts-insert every value it feeds the loop-carried phi is `false`,
+    ;; so the join reaches here as `phi [true, ..], [true, ..], [%f, ..]` with
+    ;; `%f` a phi of `false`s. Folding that lattice is what turns the last edge
+    ;; into a literal and lets the merge retire outright instead of surviving as
+    ;; a one-input copy the loop header then has to keep live (measured:
+    ;; gvn_table -9.7M with this line, -0.7M without).
+    [folded : ir.CompilerIrFunction
+      (match func
+        [(ir.CompilerIrFunction.Function name params ret-ty frame blocks)
+          (ir.CompilerIrFunction.Function
+            name
+            params
+            ret-ty
+            frame
+            (opt-sccp-blocks type-segment-bases params blocks))])]
+    [folded-changed : bool
+      (not (opt-function-eq type-segment-bases func folded))]
+    (match folded
+      [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
+        (match (opt-thread-const-branch-function-with-context-result
+          type-segment-bases
+          (if (opt-thread-const-branch-blocks-have-candidate?
+            type-segment-bases
+            blocks)
+            (opt-cfg-context-build blocks)
+            (opt-cfg-context-empty))
+          false
+          folded)
+          [(OptFunctionPassResult.Result next changed)
+            (OptFunctionPassResult.Result
+              (compiler-opt-debug-observe-function
+                type-segment-bases
+                "thread_branch_late"
+                next)
+              (or changed folded-changed))])])))
+
 (define (opt-if-convert-final-pass
   [type-segment-bases : i64]
   [func : ir.CompilerIrFunction]) : OptFunctionPassResult
@@ -92867,13 +93979,18 @@
   [pools : ast.AstNodePoolContext]
   [type-segment-bases : i64]
   [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
-  (opt-if-convert-final
+  (match (opt-thread-const-branch-final-pass
     type-segment-bases
-    (optimize-function-fixed
-      pools
+    (opt-if-convert-final
       type-segment-bases
-      func
-      (optimize-function-max-iterations))))
+      (opt-fold-common-final
+        type-segment-bases
+        (optimize-function-fixed
+          pools
+          type-segment-bases
+          func
+          (optimize-function-max-iterations)))))
+    [(OptFunctionPassResult.Result next _) next]))
 
 ;; Opt levels (0/1/2): 0 = none, 1 = cheap stack-only (the fast self-compile
 ;; path), 2 = the full optimizer + scalar register allocation + inlining (the
@@ -92920,40 +94037,58 @@
         (optimize-function-max-iterations)
         summaries)
         [(OptFunctionPassResult.Result fixed fixed-changed)
-          (match (opt-if-convert-final-pass type-segment-bases fixed)
-            [(OptFunctionPassResult.Result final if-convert-changed)
-              (let
-                [unswitched : ir.CompilerIrFunction
-                  (compiler-opt-debug-observe-function
-                    type-segment-bases
-                    "licm_unswitch"
-                    (opt-licm-unswitch-final type-segment-bases final))]
-                [unswitch-changed : bool
-                  (not (opt-function-eq type-segment-bases final unswitched))]
-                ;; Last CFG pass in the pipeline on purpose: the arm blocks
-                ;; this removes are lowering artifacts, but versioning,
-                ;; unrolling and unswitching all clone blocks after the last CFG
-                ;; cleanup, so running anywhere earlier would leave their copies
-                ;; behind. Only compare/branch fusion runs below it, and that
-                ;; moves instructions inside blocks, never blocks.
-                (match (opt-cfg-straighten-final-pass
-                  type-segment-bases
-                  unswitched)
-                  [(OptFunctionPassResult.Result
-                      straightened
-                      straighten-changed)
-                    (match (opt-cmp-dup-final-pass
+          ;; Below the fixpoint on purpose: `opt-bool-branch`'s And-chain
+          ;; rewrite is this fold's exact inverse, so a next iteration would
+          ;; expand what was just folded. Ahead of `if_convert` on purpose too:
+          ;; the arm whose second predecessor the fold retires is what
+          ;; `opt-if-convert-sole-pred?` was refusing.
+          (match (opt-fold-common-final-pass type-segment-bases fixed)
+            [(OptFunctionPassResult.Result folded fold-changed)
+              (match (opt-if-convert-final-pass type-segment-bases folded)
+                [(OptFunctionPassResult.Result final if-convert-changed)
+                  (let
+                    [unswitched : ir.CompilerIrFunction
+                      (compiler-opt-debug-observe-function
+                        type-segment-bases
+                        "licm_unswitch"
+                        (opt-licm-unswitch-final type-segment-bases final))]
+                    [unswitch-changed : bool
+                      (not
+                        (opt-function-eq type-segment-bases final unswitched))]
+                    ;; Last CFG pass in the pipeline on purpose: the arm blocks
+                    ;; this removes are lowering artifacts, but versioning,
+                    ;; unrolling and unswitching all clone blocks after the last CFG
+                    ;; cleanup, so running anywhere earlier would leave their copies
+                    ;; behind. Only compare/branch fusion runs below it, and that
+                    ;; moves instructions inside blocks, never blocks.
+                    (match (opt-cfg-straighten-final-pass
                       type-segment-bases
-                      straightened)
-                      [(OptFunctionPassResult.Result fused cmp-dup-changed)
-                        (OptFunctionPassResult.Result
-                          fused
-                          (or
-                            fixed-changed
-                            if-convert-changed
-                            unswitch-changed
-                            straighten-changed
-                            cmp-dup-changed))])]))])]))))
+                      unswitched)
+                      [(OptFunctionPassResult.Result
+                          straightened
+                          straighten-changed)
+                        (match (opt-thread-const-branch-final-pass
+                          type-segment-bases
+                          straightened)
+                          [(OptFunctionPassResult.Result
+                              threaded
+                              thread-changed)
+                            (match (opt-cmp-dup-final-pass
+                              type-segment-bases
+                              threaded)
+                              [(OptFunctionPassResult.Result
+                                  fused
+                                  cmp-dup-changed)
+                                (OptFunctionPassResult.Result
+                                  fused
+                                  (or
+                                    fixed-changed
+                                    fold-changed
+                                    if-convert-changed
+                                    unswitch-changed
+                                    straighten-changed
+                                    thread-changed
+                                    cmp-dup-changed))])])]))])])]))))
 
 (define (optimize-function-with-level-and-summaries
   [pools : ast.AstNodePoolContext]

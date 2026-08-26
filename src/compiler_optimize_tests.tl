@@ -53479,12 +53479,16 @@
               (compiler_ir_types.compiler-ir-label "tp-merge")))
           (opt-thread-pass-verified? thread-multi-phi-blocks))
         (return 69))
-      ;; D1 rail: `%4` is read by an ordinary instruction in `tv-yes`, so no
-      ;; predecessor may be redirected past its definition and the pass reports
-      ;; no change at all.
+      ;; D1 rail, widened by T2-5: `%4` is read by an ordinary instruction in
+      ;; `tv-yes`, which is entered only from the merge and dominates every
+      ;; reader, so the merge's definition still reaches them on every path
+      ;; INTO `tv-yes` -- as long as no edge is threaded past the merge into
+      ;; that side. `tv-a` carries the `true` that would do exactly that and is
+      ;; refused; `tv-b` carries `false`, whose side reads nothing the merge
+      ;; defines, and threads. The merge survives holding `tv-a`.
       (unless
         (and
-          (not thread-live-out-changed)
+          thread-live-out-changed
           (opt-block-list-has-label?
             thread-live-out-blocks
             (compiler_ir_types.compiler-ir-label "tv-merge"))
@@ -53492,6 +53496,11 @@
             (opt-count-jump-to-blocks
               thread-live-out-blocks
               (compiler_ir_types.compiler-ir-label "tv-merge"))
+            1)
+          (=
+            (opt-count-jump-to-blocks
+              thread-live-out-blocks
+              (compiler_ir_types.compiler-ir-label "tv-no"))
             2)
           (opt-thread-pass-verified? thread-live-out-blocks))
         (return 70))
@@ -70657,3 +70666,1084 @@
     (compiler-optimize-t22-load-cse-precision-self-test)
     42
     "load keys resolve the copies the pass makes and the inliner's parameter copies, a repeated scalar cell read materializes one Mov per write-free region (ended by a Store or by a call whose mod-ref row holds the cell, not by one whose row does not), an element-only callee's stored class keeps a differently classed handle entry, a cell word survives a call whose row excludes it, and the constant-global table still refuses wide literals"))
+
+;; --- T2-5: sibling phis, merge-body Movs, deep chains, and-chain flatten ----
+;;
+;; The fixtures below drive the two rewrites this packet widened, each through
+;; its own entry point rather than the whole pipeline, so what they pin is the
+;; pass's own decision: which edges it redirects, which value each redirected
+;; predecessor takes over, and which shapes it still refuses.
+(define (opt-t25-function
+  [name : String]
+  [frame : i64]
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol name)
+    (opt-thread-three-cond-params)
+    (compiler_ast_types.AstType.I64)
+    frame
+    blocks))
+
+(define (opt-t25-thread-result
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [frame : i64]) : compiler_optimize.OptBlockListPassResult
+  (compiler_optimize.opt-thread-const-branch-blocks
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    blocks
+    frame
+    64))
+
+(define (opt-t25-thread-blocks
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [frame : i64]) : compiler_ir_types.CompilerIrBlockList
+  (match (opt-t25-thread-result blocks frame)
+    [(compiler_optimize.OptBlockListPassResult.Result next _) next]))
+
+(define (opt-t25-thread-changed?
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [frame : i64]) : bool
+  (match (opt-t25-thread-result blocks frame)
+    [(compiler_optimize.OptBlockListPassResult.Result _ changed) changed]))
+
+(define (opt-t25-verified?
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [frame : i64]) : bool
+  (compiler_optimize.opt-verify-ok?
+    (compiler_optimize.opt-verify-function
+      (opt-t25-function "t25-verify" frame blocks))))
+
+;; The fold's own budget is a parameter, so the suite drives the speculation
+;; rails at the four instructions the mechanism admits even though the shipped
+;; pipeline budget is measured elsewhere.
+(define (opt-t25-fold-bonus) : i64
+  4)
+
+(define (opt-t25-fold-result
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [frame : i64]) : compiler_optimize.OptFunctionPassResult
+  (compiler_optimize.opt-fold-common-function-pass-with-bonus
+    (opt-t25-fold-bonus)
+    (opt-t25-function "t25-fold" frame blocks)))
+
+(define (opt-t25-fold-blocks
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [frame : i64]) : compiler_ir_types.CompilerIrBlockList
+  (match (opt-t25-fold-result blocks frame)
+    [(compiler_optimize.OptFunctionPassResult.Result func _)
+      (compiler_optimize.opt-function-blocks func)]))
+
+(define (opt-t25-fold-changed?
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [frame : i64]) : bool
+  (match (opt-t25-fold-result blocks frame)
+    [(compiler_optimize.OptFunctionPassResult.Result _ changed) changed]))
+
+(define (opt-t25-count-bool-binop-seq
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [slot : i64]
+  [found : i64]) : i64
+  (if (>= slot (compiler_ir_types.compiler-ir-instr-seq-count instrs))
+    found
+    (opt-t25-count-bool-binop-seq
+      instrs
+      (+ slot 1)
+      (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs slot)
+        [(compiler_ir_types.CompilerIrInstr.BinOp _ op _ _ _)
+          (match op
+            [(compiler_ir_types.CompilerIrBinOp.And) (+ found 1)]
+            [(compiler_ir_types.CompilerIrBinOp.Or) (+ found 1)]
+            [_ found])]
+        [_ found]))))
+
+(define (opt-t25-count-bool-binops
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : i64
+  (match blocks
+    [(compiler_ir_types.CompilerIrBlockList.Nil) 0]
+    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (+
+            (opt-t25-count-bool-binop-seq instrs 0 0)
+            (opt-t25-count-bool-binops (__tl-box-place rest)))])]
+    [(compiler_ir_types.CompilerIrBlockList.Array seq)
+      (opt-t25-count-bool-binops
+        (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-t25-sibling-mov-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.compiler-ir-label "tm-alt")
+          (compiler_ir_types.compiler-ir-label "tm-guard"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "tm-alt")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            (compiler_ir_types.compiler-ir-label "tm-yes")
+            (compiler_ir_types.compiler-ir-label "tm-no"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "tm-guard")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              (compiler_ir_types.compiler-ir-label "tm-a")
+              (compiler_ir_types.compiler-ir-label "tm-b"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "tm-a")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "tm-merge"))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "tm-b")
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "tm-merge"))))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.CompilerIrBlock.Block
+                (compiler_ir_types.compiler-ir-label "tm-merge")
+                (opt-test-instrs
+                  (compiler_ir_types.CompilerIrInstr.Phi
+                    4
+                    (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.CompilerIrValue.I64 10)
+                      (compiler_ir_types.compiler-ir-label "tm-a")
+                      (compiler_ir_types.compiler-ir-phi-input-cons
+                        (compiler_ir_types.CompilerIrValue.I64 20)
+                        (compiler_ir_types.compiler-ir-label "tm-b")
+                        (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                    (compiler_ast_types.AstType.I64))
+                  (compiler_ir_types.CompilerIrInstr.Phi
+                    5
+                    (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.CompilerIrValue.Bool true)
+                      (compiler_ir_types.compiler-ir-label "tm-a")
+                      (compiler_ir_types.compiler-ir-phi-input-cons
+                        (compiler_ir_types.CompilerIrValue.Bool false)
+                        (compiler_ir_types.compiler-ir-label "tm-b")
+                        (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                    (compiler_ast_types.AstType.Bool))
+                  (compiler_ir_types.CompilerIrInstr.Mov
+                    6
+                    (compiler_ir_types.CompilerIrValue.Var 4)
+                    (compiler_ast_types.AstType.I64))
+                  (compiler_ir_types.CompilerIrInstr.Branch
+                    (compiler_ir_types.CompilerIrValue.Var 5)
+                    (compiler_ir_types.compiler-ir-label "tm-yes")
+                    (compiler_ir_types.compiler-ir-label "tm-no"))))
+              (compiler_ir_types.compiler-ir-block-cons
+                (compiler_ir_types.CompilerIrBlock.Block
+                  (compiler_ir_types.compiler-ir-label "tm-yes")
+                  (opt-test-instrs
+                    (compiler_ir_types.CompilerIrInstr.Phi
+                      7
+                      (compiler_ir_types.compiler-ir-phi-input-cons
+                        (compiler_ir_types.CompilerIrValue.Var 6)
+                        (compiler_ir_types.compiler-ir-label "tm-merge")
+                        (compiler_ir_types.compiler-ir-phi-input-cons
+                          (compiler_ir_types.CompilerIrValue.I64 1)
+                          (compiler_ir_types.compiler-ir-label "tm-alt")
+                          (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                      (compiler_ast_types.AstType.I64))
+                    (compiler_ir_types.CompilerIrInstr.Return
+                      (compiler_ir_types.CompilerIrMaybeValue.Some
+                        (compiler_ir_types.CompilerIrValue.Var 7)))))
+                (compiler_ir_types.compiler-ir-block-cons
+                  (compiler_ir_types.CompilerIrBlock.Block
+                    (compiler_ir_types.compiler-ir-label "tm-no")
+                    (opt-test-instrs
+                      (compiler_ir_types.CompilerIrInstr.Phi
+                        8
+                        (compiler_ir_types.compiler-ir-phi-input-cons
+                          (compiler_ir_types.CompilerIrValue.Var 4)
+                          (compiler_ir_types.compiler-ir-label "tm-merge")
+                          (compiler_ir_types.compiler-ir-phi-input-cons
+                            (compiler_ir_types.CompilerIrValue.I64 2)
+                            (compiler_ir_types.compiler-ir-label "tm-alt")
+                            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                        (compiler_ast_types.AstType.I64))
+                      (compiler_ir_types.CompilerIrInstr.Return
+                        (compiler_ir_types.CompilerIrMaybeValue.Some
+                          (compiler_ir_types.CompilerIrValue.Var 8)))))
+                  (compiler_ir_types.CompilerIrBlockList.Nil))))))))))
+
+(define (opt-t25-sibling-foreign-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ir_types.compiler-ir-label "tn-a")
+          (compiler_ir_types.compiler-ir-label "tn-b"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "tn-a")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "tn-merge"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "tn-b")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "tn-merge"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "tn-merge")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Phi
+                4
+                (compiler_ir_types.compiler-ir-phi-input-cons
+                  (compiler_ir_types.CompilerIrValue.I64 10)
+                  (compiler_ir_types.compiler-ir-label "tn-a")
+                  (compiler_ir_types.compiler-ir-phi-input-cons
+                    (compiler_ir_types.CompilerIrValue.I64 20)
+                    (compiler_ir_types.compiler-ir-label "tn-b")
+                    (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.CompilerIrInstr.Phi
+                5
+                (compiler_ir_types.compiler-ir-phi-input-cons
+                  (compiler_ir_types.CompilerIrValue.Bool true)
+                  (compiler_ir_types.compiler-ir-label "tn-a")
+                  (compiler_ir_types.compiler-ir-phi-input-cons
+                    (compiler_ir_types.CompilerIrValue.Bool false)
+                    (compiler_ir_types.compiler-ir-label "tn-b")
+                    (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                (compiler_ast_types.AstType.Bool))
+              (compiler_ir_types.CompilerIrInstr.Branch
+                (compiler_ir_types.CompilerIrValue.Var 5)
+                (compiler_ir_types.compiler-ir-label "tn-yes")
+                (compiler_ir_types.compiler-ir-label "tn-no"))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "tn-yes")
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "tn-join"))))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.CompilerIrBlock.Block
+                (compiler_ir_types.compiler-ir-label "tn-no")
+                (opt-test-instrs
+                  (compiler_ir_types.CompilerIrInstr.Jump
+                    (compiler_ir_types.compiler-ir-label "tn-join"))))
+              (compiler_ir_types.compiler-ir-block-cons
+                (compiler_ir_types.CompilerIrBlock.Block
+                  (compiler_ir_types.compiler-ir-label "tn-join")
+                  (opt-test-instrs
+                    (compiler_ir_types.CompilerIrInstr.BinOp
+                      6
+                      (compiler_ir_types.CompilerIrBinOp.Add)
+                      (compiler_ir_types.CompilerIrValue.Var 4)
+                      (compiler_ir_types.CompilerIrValue.I64 1)
+                      (compiler_ast_types.AstType.I64))
+                    (compiler_ir_types.CompilerIrInstr.Return
+                      (compiler_ir_types.CompilerIrMaybeValue.Some
+                        (compiler_ir_types.CompilerIrValue.Var 6)))))
+                (compiler_ir_types.CompilerIrBlockList.Nil)))))))))
+
+(define (opt-t25-body-ten-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.compiler-ir-label "tz-alt")
+          (compiler_ir_types.compiler-ir-label "tz-guard"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "tz-alt")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            (compiler_ir_types.compiler-ir-label "tz-yes")
+            (compiler_ir_types.compiler-ir-label "tz-no"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "tz-guard")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              (compiler_ir_types.compiler-ir-label "tz-a")
+              (compiler_ir_types.compiler-ir-label "tz-b"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "tz-a")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "tz-merge"))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "tz-b")
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "tz-merge"))))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.CompilerIrBlock.Block
+                (compiler_ir_types.compiler-ir-label "tz-merge")
+                (opt-test-instrs
+                  (compiler_ir_types.CompilerIrInstr.Phi
+                    4
+                    (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.CompilerIrValue.I64 10)
+                      (compiler_ir_types.compiler-ir-label "tz-a")
+                      (compiler_ir_types.compiler-ir-phi-input-cons
+                        (compiler_ir_types.CompilerIrValue.I64 20)
+                        (compiler_ir_types.compiler-ir-label "tz-b")
+                        (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                    (compiler_ast_types.AstType.I64))
+                  (compiler_ir_types.CompilerIrInstr.Phi
+                    5
+                    (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.CompilerIrValue.Bool true)
+                      (compiler_ir_types.compiler-ir-label "tz-a")
+                      (compiler_ir_types.compiler-ir-phi-input-cons
+                        (compiler_ir_types.CompilerIrValue.Bool false)
+                        (compiler_ir_types.compiler-ir-label "tz-b")
+                        (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                    (compiler_ast_types.AstType.Bool))
+                  (compiler_ir_types.CompilerIrInstr.Mov
+                    6
+                    (compiler_ir_types.CompilerIrValue.Var 4)
+                    (compiler_ast_types.AstType.I64))
+                  (compiler_ir_types.CompilerIrInstr.Mov
+                    7
+                    (compiler_ir_types.CompilerIrValue.Var 6)
+                    (compiler_ast_types.AstType.I64))
+                  (compiler_ir_types.CompilerIrInstr.Mov
+                    8
+                    (compiler_ir_types.CompilerIrValue.Var 7)
+                    (compiler_ast_types.AstType.I64))
+                  (compiler_ir_types.CompilerIrInstr.Mov
+                    9
+                    (compiler_ir_types.CompilerIrValue.Var 8)
+                    (compiler_ast_types.AstType.I64))
+                  (compiler_ir_types.CompilerIrInstr.Mov
+                    10
+                    (compiler_ir_types.CompilerIrValue.Var 9)
+                    (compiler_ast_types.AstType.I64))
+                  (compiler_ir_types.CompilerIrInstr.Mov
+                    11
+                    (compiler_ir_types.CompilerIrValue.Var 10)
+                    (compiler_ast_types.AstType.I64))
+                  (compiler_ir_types.CompilerIrInstr.Mov
+                    12
+                    (compiler_ir_types.CompilerIrValue.Var 11)
+                    (compiler_ast_types.AstType.I64))
+                  (compiler_ir_types.CompilerIrInstr.Mov
+                    13
+                    (compiler_ir_types.CompilerIrValue.Var 12)
+                    (compiler_ast_types.AstType.I64))
+                  (compiler_ir_types.CompilerIrInstr.Mov
+                    14
+                    (compiler_ir_types.CompilerIrValue.Var 13)
+                    (compiler_ast_types.AstType.I64))
+                  (compiler_ir_types.CompilerIrInstr.Mov
+                    15
+                    (compiler_ir_types.CompilerIrValue.Var 14)
+                    (compiler_ast_types.AstType.I64))
+                  (compiler_ir_types.CompilerIrInstr.Branch
+                    (compiler_ir_types.CompilerIrValue.Var 5)
+                    (compiler_ir_types.compiler-ir-label "tz-yes")
+                    (compiler_ir_types.compiler-ir-label "tz-no"))))
+              (compiler_ir_types.compiler-ir-block-cons
+                (compiler_ir_types.CompilerIrBlock.Block
+                  (compiler_ir_types.compiler-ir-label "tz-yes")
+                  (opt-test-instrs
+                    (compiler_ir_types.CompilerIrInstr.Phi
+                      30
+                      (compiler_ir_types.compiler-ir-phi-input-cons
+                        (compiler_ir_types.CompilerIrValue.Var 15)
+                        (compiler_ir_types.compiler-ir-label "tz-merge")
+                        (compiler_ir_types.compiler-ir-phi-input-cons
+                          (compiler_ir_types.CompilerIrValue.I64 1)
+                          (compiler_ir_types.compiler-ir-label "tz-alt")
+                          (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                      (compiler_ast_types.AstType.I64))
+                    (compiler_ir_types.CompilerIrInstr.Return
+                      (compiler_ir_types.CompilerIrMaybeValue.Some
+                        (compiler_ir_types.CompilerIrValue.Var 30)))))
+                (compiler_ir_types.compiler-ir-block-cons
+                  (compiler_ir_types.CompilerIrBlock.Block
+                    (compiler_ir_types.compiler-ir-label "tz-no")
+                    (opt-test-instrs
+                      (compiler_ir_types.CompilerIrInstr.Phi
+                        31
+                        (compiler_ir_types.compiler-ir-phi-input-cons
+                          (compiler_ir_types.CompilerIrValue.Var 4)
+                          (compiler_ir_types.compiler-ir-label "tz-merge")
+                          (compiler_ir_types.compiler-ir-phi-input-cons
+                            (compiler_ir_types.CompilerIrValue.I64 2)
+                            (compiler_ir_types.compiler-ir-label "tz-alt")
+                            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                        (compiler_ast_types.AstType.I64))
+                      (compiler_ir_types.CompilerIrInstr.Return
+                        (compiler_ir_types.CompilerIrMaybeValue.Some
+                          (compiler_ir_types.CompilerIrValue.Var 31)))))
+                  (compiler_ir_types.CompilerIrBlockList.Nil))))))))))
+
+(define (opt-t25-body-twelve-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.compiler-ir-label "tz-alt")
+          (compiler_ir_types.compiler-ir-label "tz-guard"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "tz-alt")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            (compiler_ir_types.compiler-ir-label "tz-yes")
+            (compiler_ir_types.compiler-ir-label "tz-no"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "tz-guard")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              (compiler_ir_types.compiler-ir-label "tz-a")
+              (compiler_ir_types.compiler-ir-label "tz-b"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "tz-a")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "tz-merge"))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "tz-b")
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "tz-merge"))))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.CompilerIrBlock.Block
+                (compiler_ir_types.compiler-ir-label "tz-merge")
+                (opt-test-instrs
+                  (compiler_ir_types.CompilerIrInstr.Phi
+                    4
+                    (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.CompilerIrValue.I64 10)
+                      (compiler_ir_types.compiler-ir-label "tz-a")
+                      (compiler_ir_types.compiler-ir-phi-input-cons
+                        (compiler_ir_types.CompilerIrValue.I64 20)
+                        (compiler_ir_types.compiler-ir-label "tz-b")
+                        (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                    (compiler_ast_types.AstType.I64))
+                  (compiler_ir_types.CompilerIrInstr.Phi
+                    5
+                    (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.CompilerIrValue.Bool true)
+                      (compiler_ir_types.compiler-ir-label "tz-a")
+                      (compiler_ir_types.compiler-ir-phi-input-cons
+                        (compiler_ir_types.CompilerIrValue.Bool false)
+                        (compiler_ir_types.compiler-ir-label "tz-b")
+                        (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                    (compiler_ast_types.AstType.Bool))
+                  (compiler_ir_types.CompilerIrInstr.Mov
+                    6
+                    (compiler_ir_types.CompilerIrValue.Var 4)
+                    (compiler_ast_types.AstType.I64))
+                  (compiler_ir_types.CompilerIrInstr.Mov
+                    7
+                    (compiler_ir_types.CompilerIrValue.Var 6)
+                    (compiler_ast_types.AstType.I64))
+                  (compiler_ir_types.CompilerIrInstr.Mov
+                    8
+                    (compiler_ir_types.CompilerIrValue.Var 7)
+                    (compiler_ast_types.AstType.I64))
+                  (compiler_ir_types.CompilerIrInstr.Mov
+                    9
+                    (compiler_ir_types.CompilerIrValue.Var 8)
+                    (compiler_ast_types.AstType.I64))
+                  (compiler_ir_types.CompilerIrInstr.Mov
+                    10
+                    (compiler_ir_types.CompilerIrValue.Var 9)
+                    (compiler_ast_types.AstType.I64))
+                  (compiler_ir_types.CompilerIrInstr.Mov
+                    11
+                    (compiler_ir_types.CompilerIrValue.Var 10)
+                    (compiler_ast_types.AstType.I64))
+                  (compiler_ir_types.CompilerIrInstr.Mov
+                    12
+                    (compiler_ir_types.CompilerIrValue.Var 11)
+                    (compiler_ast_types.AstType.I64))
+                  (compiler_ir_types.CompilerIrInstr.Mov
+                    13
+                    (compiler_ir_types.CompilerIrValue.Var 12)
+                    (compiler_ast_types.AstType.I64))
+                  (compiler_ir_types.CompilerIrInstr.Mov
+                    14
+                    (compiler_ir_types.CompilerIrValue.Var 13)
+                    (compiler_ast_types.AstType.I64))
+                  (compiler_ir_types.CompilerIrInstr.Mov
+                    15
+                    (compiler_ir_types.CompilerIrValue.Var 14)
+                    (compiler_ast_types.AstType.I64))
+                  (compiler_ir_types.CompilerIrInstr.Mov
+                    16
+                    (compiler_ir_types.CompilerIrValue.Var 15)
+                    (compiler_ast_types.AstType.I64))
+                  (compiler_ir_types.CompilerIrInstr.Mov
+                    17
+                    (compiler_ir_types.CompilerIrValue.Var 16)
+                    (compiler_ast_types.AstType.I64))
+                  (compiler_ir_types.CompilerIrInstr.Branch
+                    (compiler_ir_types.CompilerIrValue.Var 5)
+                    (compiler_ir_types.compiler-ir-label "tz-yes")
+                    (compiler_ir_types.compiler-ir-label "tz-no"))))
+              (compiler_ir_types.compiler-ir-block-cons
+                (compiler_ir_types.CompilerIrBlock.Block
+                  (compiler_ir_types.compiler-ir-label "tz-yes")
+                  (opt-test-instrs
+                    (compiler_ir_types.CompilerIrInstr.Phi
+                      30
+                      (compiler_ir_types.compiler-ir-phi-input-cons
+                        (compiler_ir_types.CompilerIrValue.Var 17)
+                        (compiler_ir_types.compiler-ir-label "tz-merge")
+                        (compiler_ir_types.compiler-ir-phi-input-cons
+                          (compiler_ir_types.CompilerIrValue.I64 1)
+                          (compiler_ir_types.compiler-ir-label "tz-alt")
+                          (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                      (compiler_ast_types.AstType.I64))
+                    (compiler_ir_types.CompilerIrInstr.Return
+                      (compiler_ir_types.CompilerIrMaybeValue.Some
+                        (compiler_ir_types.CompilerIrValue.Var 30)))))
+                (compiler_ir_types.compiler-ir-block-cons
+                  (compiler_ir_types.CompilerIrBlock.Block
+                    (compiler_ir_types.compiler-ir-label "tz-no")
+                    (opt-test-instrs
+                      (compiler_ir_types.CompilerIrInstr.Phi
+                        31
+                        (compiler_ir_types.compiler-ir-phi-input-cons
+                          (compiler_ir_types.CompilerIrValue.Var 4)
+                          (compiler_ir_types.compiler-ir-label "tz-merge")
+                          (compiler_ir_types.compiler-ir-phi-input-cons
+                            (compiler_ir_types.CompilerIrValue.I64 2)
+                            (compiler_ir_types.compiler-ir-label "tz-alt")
+                            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                        (compiler_ast_types.AstType.I64))
+                      (compiler_ir_types.CompilerIrInstr.Return
+                        (compiler_ir_types.CompilerIrMaybeValue.Some
+                          (compiler_ir_types.CompilerIrValue.Var 31)))))
+                  (compiler_ir_types.CompilerIrBlockList.Nil))))))))))
+
+(define (opt-t25-chain-depth-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.compiler-ir-label "tc3-d0")
+          (compiler_ir_types.compiler-ir-label "tc3-g1"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "tc3-d0")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "tc3-merge"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "tc3-g1")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              (compiler_ir_types.compiler-ir-label "tc3-d1")
+              (compiler_ir_types.compiler-ir-label "tc3-g2"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "tc3-d1")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "tc3-f1"))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "tc3-g2")
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.Branch
+                  (compiler_ir_types.CompilerIrValue.Var 2)
+                  (compiler_ir_types.compiler-ir-label "tc3-d2")
+                  (compiler_ir_types.compiler-ir-label "tc3-d3"))))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.CompilerIrBlock.Block
+                (compiler_ir_types.compiler-ir-label "tc3-d2")
+                (opt-test-instrs
+                  (compiler_ir_types.CompilerIrInstr.Jump
+                    (compiler_ir_types.compiler-ir-label "tc3-f2"))))
+              (compiler_ir_types.compiler-ir-block-cons
+                (compiler_ir_types.CompilerIrBlock.Block
+                  (compiler_ir_types.compiler-ir-label "tc3-d3")
+                  (opt-test-instrs
+                    (compiler_ir_types.CompilerIrInstr.Jump
+                      (compiler_ir_types.compiler-ir-label "tc3-f3"))))
+                (compiler_ir_types.compiler-ir-block-cons
+                  (compiler_ir_types.CompilerIrBlock.Block
+                    (compiler_ir_types.compiler-ir-label "tc3-f3")
+                    (opt-test-instrs
+                      (compiler_ir_types.CompilerIrInstr.Phi
+                        4
+                        (compiler_ir_types.compiler-ir-phi-input-cons
+                          (compiler_ir_types.CompilerIrValue.Bool true)
+                          (compiler_ir_types.compiler-ir-label "tc3-d3")
+                          (compiler_ir_types.CompilerIrPhiInputList.Nil))
+                        (compiler_ast_types.AstType.Bool))
+                      (compiler_ir_types.CompilerIrInstr.Jump
+                        (compiler_ir_types.compiler-ir-label "tc3-f2"))))
+                  (compiler_ir_types.compiler-ir-block-cons
+                    (compiler_ir_types.CompilerIrBlock.Block
+                      (compiler_ir_types.compiler-ir-label "tc3-f2")
+                      (opt-test-instrs
+                        (compiler_ir_types.CompilerIrInstr.Phi
+                          5
+                          (compiler_ir_types.compiler-ir-phi-input-cons
+                            (compiler_ir_types.CompilerIrValue.Bool false)
+                            (compiler_ir_types.compiler-ir-label "tc3-d2")
+                            (compiler_ir_types.compiler-ir-phi-input-cons
+                              (compiler_ir_types.CompilerIrValue.Var 4)
+                              (compiler_ir_types.compiler-ir-label "tc3-f3")
+                              (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                          (compiler_ast_types.AstType.Bool))
+                        (compiler_ir_types.CompilerIrInstr.Jump
+                          (compiler_ir_types.compiler-ir-label "tc3-f1"))))
+                    (compiler_ir_types.compiler-ir-block-cons
+                      (compiler_ir_types.CompilerIrBlock.Block
+                        (compiler_ir_types.compiler-ir-label "tc3-f1")
+                        (opt-test-instrs
+                          (compiler_ir_types.CompilerIrInstr.Phi
+                            6
+                            (compiler_ir_types.compiler-ir-phi-input-cons
+                              (compiler_ir_types.CompilerIrValue.Bool true)
+                              (compiler_ir_types.compiler-ir-label "tc3-d1")
+                              (compiler_ir_types.compiler-ir-phi-input-cons
+                                (compiler_ir_types.CompilerIrValue.Var 5)
+                                (compiler_ir_types.compiler-ir-label "tc3-f2")
+                                (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                            (compiler_ast_types.AstType.Bool))
+                          (compiler_ir_types.CompilerIrInstr.Jump
+                            (compiler_ir_types.compiler-ir-label "tc3-merge"))))
+                      (compiler_ir_types.compiler-ir-block-cons
+                        (compiler_ir_types.CompilerIrBlock.Block
+                          (compiler_ir_types.compiler-ir-label "tc3-merge")
+                          (opt-test-instrs
+                            (compiler_ir_types.CompilerIrInstr.Phi
+                              7
+                              (compiler_ir_types.compiler-ir-phi-input-cons
+                                (compiler_ir_types.CompilerIrValue.Bool true)
+                                (compiler_ir_types.compiler-ir-label "tc3-d0")
+                                (compiler_ir_types.compiler-ir-phi-input-cons
+                                  (compiler_ir_types.CompilerIrValue.Var 6)
+                                  (compiler_ir_types.compiler-ir-label "tc3-f1")
+                                  (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                              (compiler_ast_types.AstType.Bool))
+                            (compiler_ir_types.CompilerIrInstr.Branch
+                              (compiler_ir_types.CompilerIrValue.Var 7)
+                              (compiler_ir_types.compiler-ir-label "tc3-yes")
+                              (compiler_ir_types.compiler-ir-label "tc3-no"))))
+                        (compiler_ir_types.compiler-ir-block-cons
+                          (compiler_ir_types.CompilerIrBlock.Block
+                            (compiler_ir_types.compiler-ir-label "tc3-yes")
+                            (opt-test-instrs
+                              (compiler_ir_types.CompilerIrInstr.Return
+                                (compiler_ir_types.CompilerIrMaybeValue.Some
+                                  (compiler_ir_types.CompilerIrValue.I64 1)))))
+                          (compiler_ir_types.compiler-ir-block-cons
+                            (compiler_ir_types.CompilerIrBlock.Block
+                              (compiler_ir_types.compiler-ir-label "tc3-no")
+                              (opt-test-instrs
+                                (compiler_ir_types.CompilerIrInstr.Return
+                                  (compiler_ir_types.CompilerIrMaybeValue.Some
+                                    (compiler_ir_types.CompilerIrValue.I64 0)))))
+                            (compiler_ir_types.CompilerIrBlockList.Nil)))))))))))))))
+
+(define (opt-t25-fold-pure-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Mov
+          3
+          (compiler_ir_types.CompilerIrValue.I64 7)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.compiler-ir-label "fc-x")
+          (compiler_ir_types.compiler-ir-label "fc-alt"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "fc-alt")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "fc-f"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "fc-x")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              (compiler_ir_types.compiler-ir-label "fc-y")
+              (compiler_ir_types.compiler-ir-label "fc-f"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "fc-y")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                4
+                (compiler_ir_types.CompilerIrBinOp.Eq)
+                (compiler_ir_types.CompilerIrValue.Var 3)
+                (compiler_ir_types.CompilerIrValue.I64 7)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.CompilerIrInstr.Branch
+                (compiler_ir_types.CompilerIrValue.Var 4)
+                (compiler_ir_types.compiler-ir-label "fc-t")
+                (compiler_ir_types.compiler-ir-label "fc-f"))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "fc-t")
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.Return
+                  (compiler_ir_types.CompilerIrMaybeValue.Some
+                    (compiler_ir_types.CompilerIrValue.I64 1)))))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.CompilerIrBlock.Block
+                (compiler_ir_types.compiler-ir-label "fc-f")
+                (opt-test-instrs
+                  (compiler_ir_types.CompilerIrInstr.Phi
+                    5
+                    (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.CompilerIrValue.I64 10)
+                      (compiler_ir_types.compiler-ir-label "fc-x")
+                      (compiler_ir_types.compiler-ir-phi-input-cons
+                        (compiler_ir_types.CompilerIrValue.I64 10)
+                        (compiler_ir_types.compiler-ir-label "fc-y")
+                        (compiler_ir_types.compiler-ir-phi-input-cons
+                          (compiler_ir_types.CompilerIrValue.I64 20)
+                          (compiler_ir_types.compiler-ir-label "fc-alt")
+                          (compiler_ir_types.CompilerIrPhiInputList.Nil))))
+                    (compiler_ast_types.AstType.I64))
+                  (compiler_ir_types.CompilerIrInstr.Return
+                    (compiler_ir_types.CompilerIrMaybeValue.Some
+                      (compiler_ir_types.CompilerIrValue.Var 5)))))
+              (compiler_ir_types.CompilerIrBlockList.Nil))))))))
+
+(define (opt-t25-fold-trap-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Mov
+          3
+          (compiler_ir_types.CompilerIrValue.I64 7)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.compiler-ir-label "fc-x")
+          (compiler_ir_types.compiler-ir-label "fc-alt"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "fc-alt")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "fc-f"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "fc-x")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              (compiler_ir_types.compiler-ir-label "fc-y")
+              (compiler_ir_types.compiler-ir-label "fc-f"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "fc-y")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.BoundsCheck
+                (compiler_ir_types.CompilerIrValue.Var 3)
+                (compiler_ir_types.CompilerIrValue.Var 3)
+                (compiler_ir_types.compiler-ir-label "fc-bounds"))
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                4
+                (compiler_ir_types.CompilerIrBinOp.Eq)
+                (compiler_ir_types.CompilerIrValue.Var 3)
+                (compiler_ir_types.CompilerIrValue.I64 7)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.CompilerIrInstr.Branch
+                (compiler_ir_types.CompilerIrValue.Var 4)
+                (compiler_ir_types.compiler-ir-label "fc-t")
+                (compiler_ir_types.compiler-ir-label "fc-f"))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "fc-t")
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.Return
+                  (compiler_ir_types.CompilerIrMaybeValue.Some
+                    (compiler_ir_types.CompilerIrValue.I64 1)))))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.CompilerIrBlock.Block
+                (compiler_ir_types.compiler-ir-label "fc-f")
+                (opt-test-instrs
+                  (compiler_ir_types.CompilerIrInstr.Phi
+                    5
+                    (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.CompilerIrValue.I64 10)
+                      (compiler_ir_types.compiler-ir-label "fc-x")
+                      (compiler_ir_types.compiler-ir-phi-input-cons
+                        (compiler_ir_types.CompilerIrValue.I64 10)
+                        (compiler_ir_types.compiler-ir-label "fc-y")
+                        (compiler_ir_types.compiler-ir-phi-input-cons
+                          (compiler_ir_types.CompilerIrValue.I64 20)
+                          (compiler_ir_types.compiler-ir-label "fc-alt")
+                          (compiler_ir_types.CompilerIrPhiInputList.Nil))))
+                    (compiler_ast_types.AstType.I64))
+                  (compiler_ir_types.CompilerIrInstr.Return
+                    (compiler_ir_types.CompilerIrMaybeValue.Some
+                      (compiler_ir_types.CompilerIrValue.Var 5)))))
+              (compiler_ir_types.CompilerIrBlockList.Nil))))))))
+
+(define (opt-t25-fold-disagree-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Mov
+          3
+          (compiler_ir_types.CompilerIrValue.I64 7)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.compiler-ir-label "fc-x")
+          (compiler_ir_types.compiler-ir-label "fc-alt"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "fc-alt")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "fc-f"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "fc-x")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              (compiler_ir_types.compiler-ir-label "fc-y")
+              (compiler_ir_types.compiler-ir-label "fc-f"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "fc-y")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                4
+                (compiler_ir_types.CompilerIrBinOp.Eq)
+                (compiler_ir_types.CompilerIrValue.Var 3)
+                (compiler_ir_types.CompilerIrValue.I64 7)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.CompilerIrInstr.Branch
+                (compiler_ir_types.CompilerIrValue.Var 4)
+                (compiler_ir_types.compiler-ir-label "fc-t")
+                (compiler_ir_types.compiler-ir-label "fc-f"))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "fc-t")
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.Return
+                  (compiler_ir_types.CompilerIrMaybeValue.Some
+                    (compiler_ir_types.CompilerIrValue.I64 1)))))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.CompilerIrBlock.Block
+                (compiler_ir_types.compiler-ir-label "fc-f")
+                (opt-test-instrs
+                  (compiler_ir_types.CompilerIrInstr.Phi
+                    5
+                    (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.CompilerIrValue.I64 10)
+                      (compiler_ir_types.compiler-ir-label "fc-x")
+                      (compiler_ir_types.compiler-ir-phi-input-cons
+                        (compiler_ir_types.CompilerIrValue.I64 11)
+                        (compiler_ir_types.compiler-ir-label "fc-y")
+                        (compiler_ir_types.compiler-ir-phi-input-cons
+                          (compiler_ir_types.CompilerIrValue.I64 20)
+                          (compiler_ir_types.compiler-ir-label "fc-alt")
+                          (compiler_ir_types.CompilerIrPhiInputList.Nil))))
+                    (compiler_ast_types.AstType.I64))
+                  (compiler_ir_types.CompilerIrInstr.Return
+                    (compiler_ir_types.CompilerIrMaybeValue.Some
+                      (compiler_ir_types.CompilerIrValue.Var 5)))))
+              (compiler_ir_types.CompilerIrBlockList.Nil))))))))
+
+(define (compiler-optimize-t25-thread-sibling-self-test) : i64
+  (let
+    [sibling : compiler_ir_types.CompilerIrBlockList
+      (opt-t25-thread-blocks (opt-t25-sibling-mov-blocks) 16)]
+    [sibling-changed : bool
+      (opt-t25-thread-changed? (opt-t25-sibling-mov-blocks) 16)]
+    [foreign : compiler_ir_types.CompilerIrBlockList
+      (opt-t25-thread-blocks (opt-t25-sibling-foreign-blocks) 16)]
+    [foreign-changed : bool
+      (opt-t25-thread-changed? (opt-t25-sibling-foreign-blocks) 16)]
+    [ten : compiler_ir_types.CompilerIrBlockList
+      (opt-t25-thread-blocks (opt-t25-body-ten-blocks) 40)]
+    [ten-changed : bool (opt-t25-thread-changed? (opt-t25-body-ten-blocks) 40)]
+    [twelve : compiler_ir_types.CompilerIrBlockList
+      (opt-t25-thread-blocks (opt-t25-body-twelve-blocks) 40)]
+    [twelve-changed : bool
+      (opt-t25-thread-changed? (opt-t25-body-twelve-blocks) 40)]
+    [chain : compiler_ir_types.CompilerIrBlockList
+      (opt-t25-thread-blocks (opt-t25-chain-depth-blocks) 16)]
+    [chain-changed : bool
+      (opt-t25-thread-changed? (opt-t25-chain-depth-blocks) 16)]
+    [fold : compiler_ir_types.CompilerIrBlockList
+      (opt-t25-fold-blocks (opt-t25-fold-pure-blocks) 16)]
+    [fold-changed : bool (opt-t25-fold-changed? (opt-t25-fold-pure-blocks) 16)]
+    [trap-changed : bool (opt-t25-fold-changed? (opt-t25-fold-trap-blocks) 16)]
+    [disagree-changed : bool
+      (opt-t25-fold-changed? (opt-t25-fold-disagree-blocks) 16)]
+    (begin
+      ;; (a) The merge holds the bool phi that decides the branch, one sibling
+      ;; i64 phi, and a Mov of that sibling. Both predecessors thread, and the
+      ;; value each successor's phi takes over is the sibling's own input for
+      ;; the edge being redirected -- resolved through the Mov for `tm-yes`
+      ;; (`%6 -> %4 -> 10`) and through the phi alone for `tm-no` (`%4 -> 20`).
+      (unless
+        (and
+          sibling-changed
+          (not
+            (opt-block-list-has-label?
+              sibling
+              (compiler_ir_types.compiler-ir-label "tm-merge")))
+          (opt-thread-first-phi-input-i64?
+            sibling
+            (compiler_ir_types.compiler-ir-label "tm-yes")
+            (compiler_ir_types.compiler-ir-label "tm-a")
+            10)
+          (opt-thread-first-phi-input-i64?
+            sibling
+            (compiler_ir_types.compiler-ir-label "tm-no")
+            (compiler_ir_types.compiler-ir-label "tm-b")
+            20)
+          (opt-t25-verified? sibling 16))
+        (return 1))
+      ;; (b) The same shape with the sibling phi read from a join BELOW both
+      ;; successors: no successor dominates the reader, so no edge can be
+      ;; redirected past the definition and the pass reports no change at all.
+      (unless
+        (and
+          (not foreign-changed)
+          (opt-block-list-has-label?
+            foreign
+            (compiler_ir_types.compiler-ir-label "tn-merge"))
+          (=
+            (opt-count-jump-to-blocks
+              foreign
+              (compiler_ir_types.compiler-ir-label "tn-merge"))
+            2)
+          (opt-t25-verified? foreign 16))
+        (return 2))
+      ;; (c) Ten non-phi instructions ahead of the branch is SimplifyCFG's
+      ;; `MaxSmallBlockSize` exactly and threads; twelve is over it and the
+      ;; merge keeps both predecessors.
+      (unless
+        (and
+          ten-changed
+          (not
+            (opt-block-list-has-label?
+              ten
+              (compiler_ir_types.compiler-ir-label "tz-merge")))
+          (opt-thread-first-phi-input-i64?
+            ten
+            (compiler_ir_types.compiler-ir-label "tz-yes")
+            (compiler_ir_types.compiler-ir-label "tz-a")
+            10)
+          (opt-t25-verified? ten 40))
+        (return 3))
+      (unless
+        (and
+          (not twelve-changed)
+          (opt-block-list-has-label?
+            twelve
+            (compiler_ir_types.compiler-ir-label "tz-merge"))
+          (=
+            (opt-count-jump-to-blocks
+              twelve
+              (compiler_ir_types.compiler-ir-label "tz-merge"))
+            2)
+          (opt-t25-verified? twelve 40))
+        (return 4))
+      ;; (d) A three-deep `[phi; jump]` chain: the literal `tc3-d3` carries is
+      ;; resolved through `tc3-f3`, `tc3-f2` and `tc3-f1` before it decides the
+      ;; merge's branch, so all four predecessors thread to the side their own
+      ;; literal picked and every forwarding block goes with the merge.
+      (unless
+        (and
+          chain-changed
+          (not
+            (opt-block-list-has-label?
+              chain
+              (compiler_ir_types.compiler-ir-label "tc3-merge")))
+          (not
+            (opt-block-list-has-label?
+              chain
+              (compiler_ir_types.compiler-ir-label "tc3-f1")))
+          (not
+            (opt-block-list-has-label?
+              chain
+              (compiler_ir_types.compiler-ir-label "tc3-f3")))
+          (=
+            (opt-count-jump-to-blocks
+              chain
+              (compiler_ir_types.compiler-ir-label "tc3-yes"))
+            3)
+          (=
+            (opt-count-jump-to-blocks
+              chain
+              (compiler_ir_types.compiler-ir-label "tc3-no"))
+            1)
+          (opt-t25-verified? chain 16))
+        (return 5))
+      ;; (e) An and-chain whose two branches share their false target folds to
+      ;; one branch on an `And`, with `fc-y`'s pure compare speculated into
+      ;; `fc-x` and the common target's duplicate input dropped.
+      (unless
+        (and
+          fold-changed
+          (not
+            (opt-block-list-has-label?
+              fold
+              (compiler_ir_types.compiler-ir-label "fc-y")))
+          (= (opt-t25-count-bool-binops fold) 1)
+          (opt-thread-first-phi-input-i64?
+            fold
+            (compiler_ir_types.compiler-ir-label "fc-f")
+            (compiler_ir_types.compiler-ir-label "fc-x")
+            10)
+          (not
+            (opt-thread-first-phi-has-input?
+              fold
+              (compiler_ir_types.compiler-ir-label "fc-f")
+              (compiler_ir_types.compiler-ir-label "fc-y")))
+          (opt-t25-verified? fold 17))
+        (return 6))
+      ;; ... and refuses the same site when the block it would speculate holds
+      ;; a `bounds_check` (which aborts) ...
+      (unless (not trap-changed) (return 7))
+      ;; ... or when the common target's phi distinguishes the two edges.
+      (unless (not disagree-changed) (return 8))
+      42)))
+
+(test
+  thread-sibling-phis-movs-chains-and-common-dest
+  (test.assert-i64-eq
+    (compiler-optimize-t25-thread-sibling-self-test)
+    42
+    "a merge holding a bool phi, sibling phis and pure Movs threads every literal edge with the sibling's own edge value substituted into the successors' phis, refuses when a definition is read from a join below both successors, admits ten non-phi instructions and refuses twelve, resolves a three-deep forwarding chain, and the and-chain flatten folds a common false target while refusing a trapping speculation and a disagreeing target phi"))

@@ -67824,3 +67824,523 @@
     (compiler-optimize-bounds-dom-nonneg-self-test)
     42
     "the non-negativity lattice proves a counter reassigned through an inner loop, a difference under a dominating lower bound and a fenced increment, refuses an unfenced increment and a phi with one open input, folds `>= 0` on a proved value, and leaves every comparison's signed spelling alone"))
+
+;; --- sentinel exit-flag conversion self-tests ---------------------------------
+;; The shape `benchmarks/peephole_lines`' `pl-first-rsp-read` and
+;; `pl-find-comma-space` are built out of: the flag is an i64 SENTINEL rather
+;; than a bool, the header carries it beside the counter, a block inside the
+;; loop re-tests it against the sentinel and leaves on a mismatch, and the
+;; assignment site gives it a value the pass cannot decide against K here. The
+;; redirect therefore copies the gate to the assignment site -- `ne w, K`,
+;; exiting on a mismatch and falling back into the edge's own target -- after
+;; which every path into the header carries K and the header's test is
+;; vacuous. The variant selector perturbs one thing at a time:
+;;   0  the plain sentinel shape: K is the literal `-1`, the flag is read past
+;;      the loop on BOTH exit edges, so the gate's arm collapses through its
+;;      spacer onto the merge and the redirected edge delivers the value the
+;;      skipped run would have left in the flag
+;;   1  K is a GLOBAL read hoisted above the loop and the gate tests a second
+;;      read of the same global -- two names for one value, which is how a
+;;      `(define pl-none -1)` sentinel reaches this pass
+;;   2  a second assignment site sits on an edge whose predecessor already
+;;      reaches X, which the redirect cannot take, so the loop is left alone
+;;   3  the gate tests the flag against a DIFFERENT literal, so it is not
+;;      flag_exit's gate at all: nothing to defer to, and the rotation that
+;;      variant 0 defers takes this loop instead
+;;   4  a SECOND assignment site whose value is a literal: K is one too, so
+;;      that edge is decided here and redirected outright, while the computed
+;;      one beside it still goes through a copy of the gate
+(define (opt-flag-exit-sent-seed [variant : i64]) : compiler_ir_types.CompilerIrValue
+  (if (= variant 1)
+    (compiler_ir_types.CompilerIrValue.Var 20)
+    (compiler_ir_types.CompilerIrValue.I64 (- 0 1))))
+
+(define (opt-flag-exit-sent-gate-value [variant : i64]) : compiler_ir_types.CompilerIrValue
+  (cond
+    [(= variant 1) (compiler_ir_types.CompilerIrValue.Var 21)]
+    [(= variant 3) (compiler_ir_types.CompilerIrValue.I64 7)]
+    [else (compiler_ir_types.CompilerIrValue.I64 (- 0 1))]))
+
+(define (opt-flag-exit-sent-entry-instrs [variant : i64]) : compiler_ir_types.CompilerIrInstrSeq
+  (if (= variant 1)
+    (opt-test-instrs
+      (compiler_ir_types.CompilerIrInstr.Mov
+        20
+        (compiler_ir_types.CompilerIrValue.Global (opt-test-symbol "pl_none"))
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.CompilerIrInstr.Mov
+        21
+        (compiler_ir_types.CompilerIrValue.Global (opt-test-symbol "pl_none"))
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.CompilerIrInstr.Jump
+        (compiler_ir_types.compiler-ir-label "header")))
+    (opt-test-instrs
+      (compiler_ir_types.CompilerIrInstr.Jump
+        (compiler_ir_types.compiler-ir-label "header")))))
+
+(define (opt-flag-exit-sent-header-instrs [variant : i64]) : compiler_ir_types.CompilerIrInstrSeq
+  (opt-test-instrs
+    (compiler_ir_types.CompilerIrInstr.Phi
+      1
+      (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.CompilerIrValue.I64 0)
+        (compiler_ir_types.compiler-ir-label "entry")
+        (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.CompilerIrValue.Var 2)
+          (compiler_ir_types.compiler-ir-label "latch")
+          (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.CompilerIrInstr.Phi
+      3
+      (compiler_ir_types.compiler-ir-phi-input-cons
+        (opt-flag-exit-sent-seed variant)
+        (compiler_ir_types.compiler-ir-label "entry")
+        (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.CompilerIrValue.Var 4)
+          (compiler_ir_types.compiler-ir-label "latch")
+          (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.CompilerIrInstr.BinOp
+      5
+      (compiler_ir_types.CompilerIrBinOp.Lt)
+      (compiler_ir_types.CompilerIrValue.Var 1)
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      (compiler_ast_types.AstType.Bool))
+    (compiler_ir_types.CompilerIrInstr.Branch
+      (compiler_ir_types.CompilerIrValue.Var 5)
+      (compiler_ir_types.compiler-ir-label "gate")
+      (compiler_ir_types.compiler-ir-label "exit"))))
+
+(define (opt-flag-exit-sent-gate-instrs [variant : i64]) : compiler_ir_types.CompilerIrInstrSeq
+  (opt-test-instrs
+    (compiler_ir_types.CompilerIrInstr.BinOp
+      8
+      (compiler_ir_types.CompilerIrBinOp.Eq)
+      (compiler_ir_types.CompilerIrValue.Var 3)
+      (opt-flag-exit-sent-gate-value variant)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.CompilerIrInstr.Branch
+      (compiler_ir_types.CompilerIrValue.Var 8)
+      (compiler_ir_types.compiler-ir-label "cont")
+      (compiler_ir_types.compiler-ir-label "escape"))))
+
+;; `%9` is the value the assignment site gives the flag: computed inside the
+;; loop, so the redirect has to test it rather than decide it.
+(define (opt-flag-exit-sent-cont-instrs) : compiler_ir_types.CompilerIrInstrSeq
+  (opt-test-instrs
+    (compiler_ir_types.CompilerIrInstr.BinOp
+      9
+      (compiler_ir_types.CompilerIrBinOp.Add)
+      (compiler_ir_types.CompilerIrValue.Var 1)
+      (compiler_ir_types.CompilerIrValue.I64 5)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.CompilerIrInstr.BinOp
+      6
+      (compiler_ir_types.CompilerIrBinOp.Lt)
+      (compiler_ir_types.CompilerIrValue.Var 1)
+      (compiler_ir_types.CompilerIrValue.I64 7)
+      (compiler_ast_types.AstType.Bool))
+    (compiler_ir_types.CompilerIrInstr.Branch
+      (compiler_ir_types.CompilerIrValue.Var 6)
+      (compiler_ir_types.compiler-ir-label "match")
+      (compiler_ir_types.compiler-ir-label "mismatch"))))
+
+;; Variant 2's match arm reaches a second assignment site whose block also
+;; leaves the loop for X: an edge the redirect cannot take, since arriving at X
+;; twice from one predecessor is an edge the phis cannot tell apart.
+(define (opt-flag-exit-sent-match-instrs [variant : i64]) : compiler_ir_types.CompilerIrInstrSeq
+  (if (or (= variant 2) (= variant 4))
+    (opt-test-instrs
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        12
+        (compiler_ir_types.CompilerIrBinOp.Lt)
+        (compiler_ir_types.CompilerIrValue.Var 1)
+        (compiler_ir_types.CompilerIrValue.I64 2)
+        (compiler_ast_types.AstType.Bool))
+      (compiler_ir_types.CompilerIrInstr.Branch
+        (compiler_ir_types.CompilerIrValue.Var 12)
+        (compiler_ir_types.compiler-ir-label
+          (if (= variant 2)
+            "probe"
+            "hit"))
+        (compiler_ir_types.compiler-ir-label "latch")))
+    (opt-test-instrs
+      (compiler_ir_types.CompilerIrInstr.Jump
+        (compiler_ir_types.compiler-ir-label "latch")))))
+
+(define (opt-flag-exit-sent-probe-instrs) : compiler_ir_types.CompilerIrInstrSeq
+  (opt-test-instrs
+    (compiler_ir_types.CompilerIrInstr.BinOp
+      11
+      (compiler_ir_types.CompilerIrBinOp.Add)
+      (compiler_ir_types.CompilerIrValue.Var 1)
+      (compiler_ir_types.CompilerIrValue.I64 9)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.CompilerIrInstr.BinOp
+      13
+      (compiler_ir_types.CompilerIrBinOp.Lt)
+      (compiler_ir_types.CompilerIrValue.Var 1)
+      (compiler_ir_types.CompilerIrValue.I64 3)
+      (compiler_ast_types.AstType.Bool))
+    (compiler_ir_types.CompilerIrInstr.Branch
+      (compiler_ir_types.CompilerIrValue.Var 13)
+      (compiler_ir_types.compiler-ir-label "latch")
+      (compiler_ir_types.compiler-ir-label "done"))))
+
+(define (opt-flag-exit-sent-latch-extra-inputs [variant : i64]) : compiler_ir_types.CompilerIrPhiInputList
+  (let
+    [tail : compiler_ir_types.CompilerIrPhiInputList
+      (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.CompilerIrValue.Var 3)
+        (compiler_ir_types.compiler-ir-label "match")
+        (compiler_ir_types.CompilerIrPhiInputList.Nil))]
+    (cond
+      [(= variant 2)
+        (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.CompilerIrValue.Var 11)
+          (compiler_ir_types.compiler-ir-label "probe")
+          tail)]
+      [(= variant 4)
+        (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.CompilerIrValue.I64 (- 0 2))
+          (compiler_ir_types.compiler-ir-label "hit")
+          tail)]
+      [else tail])))
+
+(define (opt-flag-exit-sent-latch-instrs [variant : i64]) : compiler_ir_types.CompilerIrInstrSeq
+  (opt-test-instrs
+    (compiler_ir_types.CompilerIrInstr.Phi
+      4
+      (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.CompilerIrValue.Var 9)
+        (compiler_ir_types.compiler-ir-label "mismatch")
+        (opt-flag-exit-sent-latch-extra-inputs variant))
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.CompilerIrInstr.BinOp
+      2
+      (compiler_ir_types.CompilerIrBinOp.Add)
+      (compiler_ir_types.CompilerIrValue.Var 1)
+      (compiler_ir_types.CompilerIrValue.I64 1)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.CompilerIrInstr.Jump
+      (compiler_ir_types.compiler-ir-label "header"))))
+
+;; The flag is read past the loop on BOTH exit edges, which is what makes the
+;; gate's own arm unusable as X -- the fold there would need one value for
+;; every redirected edge, and a computed clear value has none -- and sends the
+;; collapse on to the merge instead.
+(define (opt-flag-exit-sent-done-instrs [variant : i64]) : compiler_ir_types.CompilerIrInstrSeq
+  (opt-test-instrs
+    (compiler_ir_types.CompilerIrInstr.Phi
+      7
+      (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.CompilerIrValue.Var 3)
+        (compiler_ir_types.compiler-ir-label "exit")
+        (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.CompilerIrValue.Var 3)
+          (compiler_ir_types.compiler-ir-label "escape")
+          (if (= variant 2)
+            (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.CompilerIrValue.Var 3)
+              (compiler_ir_types.compiler-ir-label "probe")
+              (compiler_ir_types.CompilerIrPhiInputList.Nil))
+            (compiler_ir_types.CompilerIrPhiInputList.Nil))))
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.CompilerIrInstr.Return
+      (compiler_ir_types.CompilerIrMaybeValue.Some
+        (compiler_ir_types.CompilerIrValue.Var 7)))))
+
+(define (opt-flag-exit-sent-tail-blocks [variant : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "latch")
+      (opt-flag-exit-sent-latch-instrs variant))
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-flag-exit-test-jump-block "escape" "done")
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-flag-exit-test-jump-block "exit" "done")
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "done")
+            (opt-flag-exit-sent-done-instrs variant))
+          (compiler_ir_types.CompilerIrBlockList.Nil))))))
+
+(define (opt-flag-exit-sent-body-blocks [variant : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "match")
+      (opt-flag-exit-sent-match-instrs variant))
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-flag-exit-test-jump-block "mismatch" "latch")
+      (cond
+        [(= variant 2)
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "probe")
+              (opt-flag-exit-sent-probe-instrs))
+            (opt-flag-exit-sent-tail-blocks variant))]
+        [(= variant 4)
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-flag-exit-test-jump-block "hit" "latch")
+            (opt-flag-exit-sent-tail-blocks variant))]
+        [else (opt-flag-exit-sent-tail-blocks variant)]))))
+
+(define (opt-flag-exit-sent-blocks [variant : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-flag-exit-sent-entry-instrs variant))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "header")
+        (opt-flag-exit-sent-header-instrs variant))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "gate")
+          (opt-flag-exit-sent-gate-instrs variant))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "cont")
+            (opt-flag-exit-sent-cont-instrs))
+          (opt-flag-exit-sent-body-blocks variant))))))
+
+(define (opt-flag-exit-sent-function [variant : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "flag_exit_sentinel")
+    (compiler_ir_types.compiler-ir-param-cons
+      (compiler_ir_types.CompilerIrParam.Param
+        "n"
+        (compiler_ast_types.AstType.I64)
+        0)
+      (compiler_ir_types.CompilerIrParamList.Nil))
+    (compiler_ast_types.AstType.I64)
+    22
+    (opt-flag-exit-sent-blocks variant)))
+
+(define (opt-flag-exit-sent-run [variant : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_optimize.opt-flag-exit-function
+    (opt-flag-exit-sent-function variant)))
+
+(define (opt-flag-exit-sent-rejects? [variant : i64]) : bool
+  (and
+    (compiler_optimize.opt-verify-ok?
+      (compiler_optimize.opt-verify-function
+        (opt-flag-exit-sent-function variant)))
+    (compiler_optimize.opt-block-list-eq
+      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+      (compiler_optimize.opt-function-blocks (opt-flag-exit-sent-run variant))
+      (opt-flag-exit-sent-blocks variant))))
+
+;; One rotation pass over the sentinel fixture, with nothing below it.
+(define (opt-flag-exit-sent-rotate [variant : i64]) : compiler_ir_types.CompilerIrBlockList
+  (let
+    [blocks : compiler_ir_types.CompilerIrBlockList
+      (opt-flag-exit-sent-blocks variant)]
+    (match (compiler_optimize.opt-rotate-ssa-function-with-context-result
+      (compiler_optimize.opt-cfg-context-build blocks)
+      false
+      (opt-flag-exit-sent-function variant))
+      [(compiler_optimize.OptFunctionCtxResult.Result next _)
+        (compiler_optimize.opt-function-blocks next)])))
+
+(define (opt-flag-exit-sent-rotated? [variant : i64]) : bool
+  (not
+    (compiler_optimize.opt-block-list-eq
+      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+      (opt-flag-exit-sent-rotate variant)
+      (opt-flag-exit-sent-blocks variant))))
+
+;; The label the copied gate takes: both ends of the edge it splits.
+(define (opt-flag-exit-sent-gate-label) : String
+  "mismatch__flagexit__latch")
+
+;; The var a copied gate's `ne` reads, or -1 when the block does not open with
+;; one.
+(define (opt-flag-exit-sent-gate-lhs
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : String]) : i64
+  (match (compiler_optimize.opt-cfg-find-block
+    blocks
+    (compiler_ir_types.compiler-ir-label label))
+    [(compiler_optimize.OptMaybeBlock.No) (- 0 1)]
+    [(compiler_optimize.OptMaybeBlock.Some block)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (if (< (compiler_ir_types.compiler-ir-instr-seq-count instrs) 1)
+            (- 0 1)
+            (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs 0)
+              [(compiler_ir_types.CompilerIrInstr.BinOp _ op lhs _ _)
+                (if (match op
+                  [(compiler_ir_types.CompilerIrBinOp.Ne) true]
+                  [_ false])
+                  (match lhs
+                    [(compiler_ir_types.CompilerIrValue.Var var) var]
+                    [_ (- 0 1)])
+                  (- 0 1))]
+              [_ (- 0 1)]))])]))
+
+;; The value that `ne` compares it against, as a var id, or the literal it
+;; carries offset into the negatives so the two cannot be confused.
+(define (opt-flag-exit-sent-gate-rhs
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : String]) : i64
+  (match (compiler_optimize.opt-cfg-find-block
+    blocks
+    (compiler_ir_types.compiler-ir-label label))
+    [(compiler_optimize.OptMaybeBlock.No) (- 0 99)]
+    [(compiler_optimize.OptMaybeBlock.Some block)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (if (< (compiler_ir_types.compiler-ir-instr-seq-count instrs) 1)
+            (- 0 99)
+            (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs 0)
+              [(compiler_ir_types.CompilerIrInstr.BinOp _ _ _ rhs _)
+                (match rhs
+                  [(compiler_ir_types.CompilerIrValue.Var var) var]
+                  [(compiler_ir_types.CompilerIrValue.I64 literal) literal]
+                  [_ (- 0 99)])]
+              [_ (- 0 99)]))])]))
+
+;; A phi input as an i64 literal, or -99 when the edge is missing or carries
+;; anything else.
+(define (opt-flag-exit-test-phi-i64
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : String]
+  [dst : i64]
+  [pred : String]) : i64
+  (match (compiler_optimize.opt-thread-phi-input-value
+    (opt-flag-exit-test-phi-inputs blocks label dst)
+    (compiler_ir_types.compiler-ir-label pred))
+    [(compiler_ir_types.CompilerIrMaybeValue.No) (- 0 99)]
+    [(compiler_ir_types.CompilerIrMaybeValue.Some value)
+      (match value
+        [(compiler_ir_types.CompilerIrValue.I64 literal) literal]
+        [_ (- 0 99)])]))
+
+(define (compiler-optimize-flag-exit-sentinel-self-test) : i64
+  (let
+    [bases : i64 (compiler_ast_types.ast-node-pool-reader-type-segment-bases)]
+    [gate-label : String (opt-flag-exit-sent-gate-label)]
+    [converted : compiler_ir_types.CompilerIrFunction
+      (opt-flag-exit-sent-run 0)]
+    [blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks converted)]
+    [twice : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.opt-flag-exit-function converted))]
+    [global : compiler_ir_types.CompilerIrFunction (opt-flag-exit-sent-run 1)]
+    [global-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks global)]
+    [mixed : compiler_ir_types.CompilerIrFunction (opt-flag-exit-sent-run 4)]
+    [mixed-blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks mixed)]
+    (cond
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function
+              (opt-flag-exit-sent-function 0))))
+        1]
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function converted)))
+        2]
+      ;; (a) the header's gate stopped testing the flag, and the test moved to
+      ;; the assignment site
+      [(not (opt-flag-exit-test-jumps-to? blocks "gate" "cont")) 3]
+      [(not (= (opt-flag-exit-test-instr-count blocks "gate") 1)) 4]
+      [(not (opt-flag-exit-test-jumps-to? blocks "mismatch" gate-label)) 5]
+      [(not (= (opt-flag-exit-sent-gate-lhs blocks gate-label) 9)) 6]
+      [(not (= (opt-flag-exit-sent-gate-rhs blocks gate-label) (- 0 1))) 7]
+      ;; the copied gate leaves for X on a mismatch and falls back into the
+      ;; edge's own target otherwise
+      [(not
+          (=
+            (opt-flag-exit-test-branch-true blocks gate-label)
+            (compiler_ir_types.compiler-ir-label "done")))
+        8]
+      [(not
+          (=
+            (opt-flag-exit-test-branch-false blocks gate-label)
+            (compiler_ir_types.compiler-ir-label "latch")))
+        9]
+      ;; the gate's arm collapsed onto the merge and went with the branch
+      [(not (= (opt-flag-exit-test-instr-count blocks "escape") (- 0 1))) 10]
+      ;; the exit phi reads the value the skipped run would have left in the
+      ;; flag on the redirected edge, and K on the counter exit's
+      [(not (= (opt-flag-exit-test-phi-input-count blocks "done" 7) 2)) 11]
+      [(not (= (opt-flag-exit-test-phi-var blocks "done" 7 gate-label) 9)) 12]
+      [(not (= (opt-flag-exit-test-phi-i64 blocks "done" 7 "exit") (- 0 1))) 13]
+      ;; the clear edge keeps its place in the latch phi under the copied
+      ;; gate's name, pinned to K like every other path that keeps going
+      [(not (= (opt-flag-exit-test-phi-input-count blocks "latch" 4) 2)) 14]
+      [(not
+          (= (opt-flag-exit-test-phi-i64 blocks "latch" 4 gate-label) (- 0 1)))
+        15]
+      [(not (= (opt-flag-exit-test-phi-i64 blocks "latch" 4 "match") (- 0 1)))
+        16]
+      [(not (= (opt-flag-exit-test-phi-i64 blocks "header" 3 "entry") (- 0 1)))
+        17]
+      [(not (= (opt-flag-exit-test-phi-i64 blocks "header" 3 "latch") (- 0 1)))
+        18]
+      ;; idempotence: the next pipeline iteration finds nothing left to convert
+      [(not (compiler_optimize.opt-block-list-eq bases blocks twice)) 19]
+      ;; (b) K as a global read, tested against a second read of the same
+      ;; global in the same straight line: one value under two names
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function global)))
+        20]
+      [(not (opt-flag-exit-test-jumps-to? global-blocks "gate" "cont")) 21]
+      [(not (opt-flag-exit-test-jumps-to? global-blocks "mismatch" gate-label))
+        22]
+      [(not (= (opt-flag-exit-sent-gate-lhs global-blocks gate-label) 9)) 23]
+      [(not (= (opt-flag-exit-sent-gate-rhs global-blocks gate-label) 20)) 24]
+      [(not
+          (= (opt-flag-exit-test-phi-var global-blocks "done" 7 gate-label) 9))
+        25]
+      [(not (= (opt-flag-exit-test-phi-var global-blocks "done" 7 "exit") 20))
+        26]
+      [(not (= (opt-flag-exit-test-phi-var global-blocks "latch" 4 "match") 20))
+        27]
+      ;; (c) a second assignment site on an edge the redirect cannot take
+      [(not (opt-flag-exit-sent-rejects? 2)) 28]
+      ;; (e) the rotation defers to this conversion: the sentinel gate is
+      ;; flag_exit's, and rotating first moves the flag phi out of the header
+      ;; where C1 would stop matching, so the conversion would never fire again
+      [(opt-flag-exit-sent-rotated? 0) 29]
+      ;; ... and the same loop whose gate tests the flag against something else
+      ;; is not a loop flag_exit converts, so it rotates here -- which is what
+      ;; makes the refusal above the deferral rather than the shape
+      [(not (opt-flag-exit-sent-rotated? 3)) 30]
+      [(not (opt-flag-exit-sent-rejects? 3)) 31]
+      ;; two assignment sites, one decided here and one not: the decided edge
+      ;; is redirected outright and leaves its phi, the computed one keeps its
+      ;; place under the copied gate's name, and X hears from both
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function mixed)))
+        32]
+      [(not (opt-flag-exit-test-jumps-to? mixed-blocks "gate" "cont")) 33]
+      [(not (opt-flag-exit-test-jumps-to? mixed-blocks "hit" "done")) 34]
+      [(not (opt-flag-exit-test-jumps-to? mixed-blocks "mismatch" gate-label))
+        35]
+      [(not (= (opt-flag-exit-test-phi-input-count mixed-blocks "latch" 4) 2))
+        36]
+      [(not (= (opt-flag-exit-test-phi-input-count mixed-blocks "done" 7) 3))
+        37]
+      [(not
+          (= (opt-flag-exit-test-phi-i64 mixed-blocks "done" 7 "hit") (- 0 2)))
+        38]
+      [(not (= (opt-flag-exit-test-phi-var mixed-blocks "done" 7 gate-label) 9))
+        39]
+      [(not
+          (= (opt-flag-exit-test-phi-i64 mixed-blocks "done" 7 "exit") (- 0 1)))
+        40]
+      [else 42])))
+
+(test
+  flag-exit-sentinel-loop-exit
+  (test.assert-i64-eq
+    (compiler-optimize-flag-exit-sentinel-self-test)
+    42
+    "an i64 sentinel flag cleared to a computed value converts by copying the header's gate to the assignment site, K may be a global read under two names, an assignment site that already reaches the exit refuses, and the rotation defers to the conversion"))

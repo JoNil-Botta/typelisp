@@ -40,6 +40,7 @@ implicit_core_prelude|tests/integration/implicit_core_prelude.tl|42|-|-|-
 core_macros_headerless_prelude_import|tests/integration/core_macros_headerless_prelude_import.tl|42|-|-|-
 implicit_scratch_loop|tests/integration/implicit_scratch_loop.tl|42|-|-|-
 macro_forward_order|tests/integration/macro_forward_order.tl|42|-|-|-
+macro_value_same_spelling|tests/integration/macro_value_same_spelling.tl|42|-|-|-
 macro_module_local_shadow_provider|tests/integration/macro_module_local_shadow_provider.tl|42|-|-|stdlib/string.tl stdlib/str_cat_runtime.tl
 macro_module_local_shadow|tests/integration/macro_module_local_shadow.tl|42|-|-|macro_module_local_shadow_provider.tl stdlib/io.tl stdlib/string.tl stdlib/array.tl stdlib/arena.tl stdlib/hash.tl stdlib/byte_buf_core.tl stdlib/option.tl stdlib/text_buf.tl stdlib/str_cat_runtime.tl
 compile_profile_macro_detach_unchanged|tests/integration/compile_profile_macro_detach_unchanged.tl|42|-|-|compile_profile_macro_detach_unchanged_dep.tl
@@ -117,6 +118,9 @@ wide_const_hoist|tests/integration/wide_const_hoist.tl|42|-|-|stdlib/io.tl
 target_asm_loop_divmod_parity|tests/integration/target_asm_loop_divmod_parity.tl|42|-|-|stdlib/io.tl
 csr_push_prologue|tests/integration/csr_push_prologue.tl|42|-|-|stdlib/io.tl
 dead_frame_boundary|tests/integration/dead_frame_boundary.tl|42|-|-|stdlib/io.tl stdlib/array.tl
+red_zone_leaf|tests/integration/red_zone_leaf.tl|42|-|-|stdlib/io.tl stdlib/array.tl
+red_zone_abort_ok|tests/integration/red_zone_abort_trap.tl|42|-|-|stdlib/io.tl stdlib/array.tl
+red_zone_abort_trap|tests/integration/red_zone_abort_trap.tl|134|-|1|stdlib/io.tl stdlib/array.tl|expected-stderr:tl: target/integration-verify/linux/red_zone_abort_trap/red_zone_abort_trap.tl:69:25: array index out of bounds: index=4 length=4\n
 group_copy_direct|tests/integration/group_copy_direct.tl|42|-|-|stdlib/io.tl
 group_pair_home|tests/integration/group_pair_home.tl|42|-|-|stdlib/io.tl
 group_pair_phi_home|tests/integration/group_pair_phi_home.tl|42|-|-|stdlib/io.tl

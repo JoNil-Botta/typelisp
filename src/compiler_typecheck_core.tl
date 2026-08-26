@@ -274,6 +274,12 @@
 (defstruct TcUnusedUnsafeState
   (address i64))
 
+;; SPMD helper recursion detection is a mutable traversal stack. Keep only a
+;; small capability in the compiler job header; the typed stack cell and any
+;; persistent dense spine it grows live in that job's lifetime arena.
+(defstruct TcSpmdTraversalState
+  (address i64))
+
 ;; The immutable type-node resolution predicate is memoized per compiler job.
 ;; Numeric type ids are meaningful only within one type-pool segment table, so
 ;; the owner identity travels with the cache instead of following whichever
@@ -515,6 +521,7 @@
   (checked-let-binding-facts TcCheckedLetBindingFactState)
   (scratch-arenas TcScratchArenaState)
   (unused-unsafe TcUnusedUnsafeState)
+  (spmd-traversal TcSpmdTraversalState)
   (type-resolution-cache TcTypeResolutionCacheState)
   (agg-scalar-caches TcAggScalarCacheState)
   ;; Lazily allocated typed complete-layout state. Its slot table belongs to
@@ -785,6 +792,7 @@
           (tc-checked-let-binding-fact-state-new)
           (tc-scratch-arena-state-new)
           (tc-unused-unsafe-state-new)
+          (tc-spmd-traversal-state-new)
           (tc-type-resolution-cache-state-new)
           (tc-agg-scalar-cache-state-new)
           0
@@ -906,6 +914,9 @@
 
 (define (tc-job-state-unused-unsafe [state : TcJobState]) : TcUnusedUnsafeState
   (tc-job-state-field state unused-unsafe TcUnusedUnsafeState))
+
+(define (tc-job-state-spmd-traversal [state : TcJobState]) : TcSpmdTraversalState
+  (tc-job-state-field state spmd-traversal TcSpmdTraversalState))
 
 (define (tc-job-state-type-resolution-cache [state : TcJobState]) : TcTypeResolutionCacheState
   (tc-job-state-field state type-resolution-cache TcTypeResolutionCacheState))
@@ -1929,7 +1940,8 @@
   (begin
     (tc-job-state-reset-derived-caches! state)
     (tc-inlay-hints-reset-for-state! (tc-job-state-inlay-hints state))
-    (tc-unused-unsafe-tracking-clear! (tc-job-state-unused-unsafe state))))
+    (tc-unused-unsafe-tracking-clear! (tc-job-state-unused-unsafe state))
+    (tc-spmd-inline-helper-stack-reset-for-job! state)))
 
 ;; Scratch destruction is a lifetime boundary, not a generic cache reset.
 ;; Lowering performs internal file-state resets while a caller still owns an
@@ -2877,6 +2889,38 @@
   (Nil)
   (One i64)
   (Dense i64 i64 i64))
+
+(defstruct TcSpmdTraversalStateData
+  (owner-arena i64)
+  (inline-helper-stack TcNameIdList))
+
+(define (tc-spmd-traversal-state-new) : TcSpmdTraversalState
+  (let
+    [cell : (__tl_dyn-array TcSpmdTraversalStateData)
+      (array.make-array TcSpmdTraversalStateData 1)]
+    (begin
+      (set!
+        (array-ref cell 0)
+        (TcSpmdTraversalStateData (arena.tl_arena_current) TcNameIdList.Nil))
+      (TcSpmdTraversalState
+        (cast
+          (unsafe
+            (ptr->int
+              (ptr-cast (__tl_array-data cell) : (Ptr TcSpmdTraversalStateData))))
+          : i64)))))
+
+(define (tc-spmd-traversal-state-data [state : TcSpmdTraversalState]) : TcSpmdTraversalStateData
+  (unsafe
+    (ptr-read
+      (int->ptr (cast state.address : u64) : (Ptr TcSpmdTraversalStateData)))))
+
+(define (tc-spmd-traversal-state-data-set!
+  [state : TcSpmdTraversalState]
+  [data : TcSpmdTraversalStateData]) : unit
+  (unsafe
+    (ptr-write!
+      (int->ptr (cast state.address : u64) : (MutPtr TcSpmdTraversalStateData))
+      data)))
 
 ;; Lazy import aliases and their summary-use counters are mutable, intern-owned
 ;; typecheck state. Keep one lazily allocated table per compiler job so a reset
@@ -45523,11 +45567,155 @@
 (define (tc-spmd-inline-helper-empty-stack) : TcNameIdList
   TcNameIdList.Nil)
 
-(define tc-spmd-inline-helper-stack : TcNameIdList
-  (tc-spmd-inline-helper-empty-stack))
+(define (tc-spmd-inline-helper-stack-for-state [state : TcSpmdTraversalState]) : TcNameIdList
+  (__tl-project-field (tc-spmd-traversal-state-data state) inline-helper-stack))
 
+(define (tc-spmd-inline-helper-stack-restore-for-state!
+  [state : TcSpmdTraversalState]
+  [stack : TcNameIdList]) : unit
+  (let
+    [data : TcSpmdTraversalStateData (tc-spmd-traversal-state-data state)]
+    (begin
+      (set! data.inline-helper-stack stack)
+      (tc-spmd-traversal-state-data-set! state data))))
+
+(define (tc-spmd-inline-helper-stack-push-for-state!
+  [state : TcSpmdTraversalState]
+  [name-id : i64]) : TcNameIdList
+  (let
+    [data : TcSpmdTraversalStateData (tc-spmd-traversal-state-data state)]
+    [previous : TcNameIdList data.inline-helper-stack]
+    (begin
+      ;; The first two names create the persistent dense spine. Allocate that
+      ;; store in the compiler job's arena even if traversal currently runs in
+      ;; a disposable function scratch arena.
+      (set!
+        data.inline-helper-stack
+        (in-arena
+          (arena.Arena data.owner-arena)
+          (tc-name-id-list-add previous name-id)))
+      (tc-spmd-traversal-state-data-set! state data)
+      previous)))
+
+(define (tc-spmd-inline-helper-stack-contains-for-state?
+  [state : TcSpmdTraversalState]
+  [name-id : i64]) : bool
+  (tc-name-id-list-contains
+    (tc-spmd-inline-helper-stack-for-state state)
+    name-id))
+
+(define (tc-spmd-inline-helper-stack-reset-for-state!
+  [state : TcSpmdTraversalState]) : unit
+  (tc-spmd-inline-helper-stack-restore-for-state!
+    state
+    (tc-spmd-inline-helper-empty-stack)))
+
+(define (tc-spmd-inline-helper-stack-reset-for-job! [job-state : TcJobState]) : unit
+  (tc-spmd-inline-helper-stack-reset-for-state!
+    (tc-job-state-spmd-traversal job-state)))
+
+;; Serial/test compatibility adapter. Production entrypoints and walks recover
+;; the explicit traversal owner from their TcJobState or TcContext.
 (define (tc-spmd-inline-helper-stack-reset!) : unit
-  (set! tc-spmd-inline-helper-stack (tc-spmd-inline-helper-empty-stack)))
+  (tc-spmd-inline-helper-stack-reset-for-job! (tc-serial-job-state)))
+
+(define (tc-spmd-traversal-state-isolation-self-test) : bool
+  (let
+    [caller : arena.Arena (arena.current)]
+    [owner-a : arena.Arena (arena.make)]
+    [owner-b : arena.Arena (arena.make)]
+    [job-a-address : i64
+      (in-arena owner-a (__tl-project-field (tc-job-state-new) address))]
+    [job-b-address : i64
+      (in-arena owner-b (__tl-project-field (tc-job-state-new) address))]
+    [job-a : TcJobState (TcJobState job-a-address)]
+    [job-b : TcJobState (TcJobState job-b-address)]
+    [state-a : TcSpmdTraversalState (tc-job-state-spmd-traversal job-a)]
+    [state-b : TcSpmdTraversalState (tc-job-state-spmd-traversal job-b)]
+    [scratch : arena.Arena (arena.make)]
+    [saved-a : TcNameIdList TcNameIdList.Nil]
+    [owned-dense? : bool false]
+    [interleaved? : bool false]
+    [reset-isolated? : bool false]
+    [reuse-isolated? : bool false]
+    [survives-other-owner-destroy? : bool false]
+    (begin
+      (unsafe
+        (arena.set! scratch))
+      (tc-spmd-inline-helper-stack-push-for-state! state-a 101)
+      (tc-spmd-inline-helper-stack-push-for-state! state-a 102)
+      (set! saved-a (tc-spmd-inline-helper-stack-for-state state-a))
+      (tc-spmd-inline-helper-stack-push-for-state! state-a 103)
+      (tc-spmd-inline-helper-stack-push-for-state! state-b 201)
+      (tc-spmd-inline-helper-stack-push-for-state! state-b 202)
+      (set!
+        owned-dense?
+        (match (tc-spmd-inline-helper-stack-for-state state-a)
+          [(TcNameIdList.Dense address _ 3)
+            (=
+              (__tl-project-field
+                (tc-name-id-list-store-read address)
+                owner-arena)
+              (arena.raw-handle owner-a))]
+          [_ false]))
+      (unsafe
+        (arena.set! caller))
+      (unsafe
+        (arena.destroy scratch))
+      (set!
+        interleaved?
+        (and
+          (tc-spmd-inline-helper-stack-contains-for-state? state-a 101)
+          (tc-spmd-inline-helper-stack-contains-for-state? state-a 103)
+          (not (tc-spmd-inline-helper-stack-contains-for-state? state-a 201))
+          (tc-spmd-inline-helper-stack-contains-for-state? state-b 201)
+          (not (tc-spmd-inline-helper-stack-contains-for-state? state-b 101))))
+      (tc-spmd-inline-helper-stack-restore-for-state! state-a saved-a)
+      (tc-job-state-reset-file-state! job-a)
+      (set!
+        reset-isolated?
+        (and
+          (tc-name-id-list-empty?
+            (tc-spmd-inline-helper-stack-for-state state-a))
+          (tc-spmd-inline-helper-stack-contains-for-state? state-b 201)
+          (tc-spmd-inline-helper-stack-contains-for-state? state-b 202)))
+      (tc-spmd-inline-helper-stack-push-for-state! state-a 104)
+      (set!
+        reuse-isolated?
+        (and
+          (tc-spmd-inline-helper-stack-contains-for-state? state-a 104)
+          (not (tc-spmd-inline-helper-stack-contains-for-state? state-a 101))
+          (not (tc-spmd-inline-helper-stack-contains-for-state? state-b 104))))
+      (unsafe
+        (arena.destroy owner-a))
+      (set!
+        survives-other-owner-destroy?
+        (and
+          (tc-spmd-inline-helper-stack-contains-for-state? state-b 201)
+          (tc-spmd-inline-helper-stack-contains-for-state? state-b 202)))
+      (tc-spmd-inline-helper-stack-reset-for-job! job-b)
+      (let
+        [b-reset? : bool
+          (tc-name-id-list-empty?
+            (tc-spmd-inline-helper-stack-for-state state-b))]
+        (begin
+          (unsafe
+            (arena.destroy owner-b))
+          (and
+            owned-dense?
+            interleaved?
+            reset-isolated?
+            reuse-isolated?
+            survives-other-owner-destroy?
+            b-reset?))))))
+
+(cfg
+  test
+  (test
+    spmd-traversal-state-isolation
+    (if (tc-spmd-traversal-state-isolation-self-test)
+      unit
+      (io.panic "typecheck: job-owned SPMD traversal isolation failed"))))
 
 (define (tc-spmd-inline-helper-recursive-message) : String
   "typecheck: recursive SPMD helper call is not supported")
@@ -45599,7 +45787,9 @@
   [func : ast.AstExpr]) : ResultTcSpmdInlineHelper
   (match (tc-spmd-inline-helper-resolve-name ctx env spmd-env func)
     [(TcNameLookup.Ok _ lookup-id)
-      (if (tc-name-id-list-contains tc-spmd-inline-helper-stack lookup-id)
+      (if (tc-spmd-inline-helper-stack-contains-for-state?
+        (tc-job-state-spmd-traversal (tc-context-job-state ctx))
+        lookup-id)
         (ResultTcSpmdInlineHelper.Err (tc-spmd-inline-helper-recursive-message))
         (let
           [handle : i64
@@ -45793,15 +45983,17 @@
   [name-id : i64]
   [body : ast.AstExpr]) : ResultTcSpmdExprInfo
   (let
-    [previous : TcNameIdList tc-spmd-inline-helper-stack]
+    [traversal : TcSpmdTraversalState
+      (tc-job-state-spmd-traversal (tc-context-job-state ctx))]
+    [previous : TcNameIdList
+      (tc-spmd-inline-helper-stack-push-for-state! traversal name-id)]
     [result : ResultTcSpmdExprInfo
       (ResultTcSpmdExprInfo.Err (tc-spmd-inline-helper-recursive-message))]
     (begin
-      (set! tc-spmd-inline-helper-stack (tc-name-id-list-add previous name-id))
       (set!
         result
         (tc-spmd-expr ctx expr-bases helper-env helper-spmd-env body))
-      (set! tc-spmd-inline-helper-stack previous)
+      (tc-spmd-inline-helper-stack-restore-for-state! traversal previous)
       result)))
 
 (define (tc-spmd-call-uniform-only
@@ -46273,15 +46465,17 @@
   [name-id : i64]
   [body : ast.AstExpr]) : ResultTcUnit
   (let
-    [previous : TcNameIdList tc-spmd-inline-helper-stack]
+    [traversal : TcSpmdTraversalState
+      (tc-job-state-spmd-traversal (tc-context-job-state ctx))]
+    [previous : TcNameIdList
+      (tc-spmd-inline-helper-stack-push-for-state! traversal name-id)]
     [result : ResultTcUnit
       (ResultTcUnit.Err (tc-spmd-inline-helper-recursive-message))]
     (begin
-      (set! tc-spmd-inline-helper-stack (tc-name-id-list-add previous name-id))
       (set!
         result
         (tc-spmd-masked-if-expr ctx expr-bases helper-env helper-spmd-env body))
-      (set! tc-spmd-inline-helper-stack previous)
+      (tc-spmd-inline-helper-stack-restore-for-state! traversal previous)
       result)))
 
 (define (tc-spmd-masked-if-inline-call-inner
@@ -47373,13 +47567,13 @@
         TcSpmdRole.ForeachIndex)]
     [result : ResultTcUnit ResultTcUnit.Ok]
     (begin
-      (tc-spmd-inline-helper-stack-reset!)
+      (tc-spmd-inline-helper-stack-reset-for-job! (tc-context-job-state ctx))
       (set!
         result
         (match (tc-spmd-expr ctx expr-bases body-env body-spmd-env body)
           [(ResultTcSpmdExprInfo.Ok _) ResultTcUnit.Ok]
           [(ResultTcSpmdExprInfo.Err message) (ResultTcUnit.Err message)]))
-      (tc-spmd-inline-helper-stack-reset!)
+      (tc-spmd-inline-helper-stack-reset-for-job! (tc-context-job-state ctx))
       result)))
 
 (define (tc-spmd-check-foreach-body
@@ -47842,13 +48036,15 @@
     (match (tc-spmd-scan-body-no-nested-spmd expr-bases body)
       [(ResultTcUnit.Ok)
         (begin
-          (tc-spmd-inline-helper-stack-reset!)
+          (tc-spmd-inline-helper-stack-reset-for-job!
+            (tc-context-job-state ctx))
           (set!
             result
             (match (tc-spmd-expr ctx expr-bases body-env body-spmd-env body)
               [(ResultTcSpmdExprInfo.Ok _) ResultTcUnit.Ok]
               [(ResultTcSpmdExprInfo.Err message) (ResultTcUnit.Err message)]))
-          (tc-spmd-inline-helper-stack-reset!)
+          (tc-spmd-inline-helper-stack-reset-for-job!
+            (tc-context-job-state ctx))
           result)]
       [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])))
 
@@ -118290,7 +118486,7 @@
       (tc-clone-able-cache-reset!)
       (tc-macro-helper-env-cache-reset! macro-state)
       (tc-macro-module-env-cache-clear! macro-state)
-      (tc-spmd-inline-helper-stack-reset!)
+      (tc-spmd-inline-helper-stack-reset-for-job! job-state)
       (tc-agg-caches-reset-for-job! job-state)
       (tc-nominal-owner-cache-reset!)
       (tc-stdlib-comptime-macro-surface-ok-reset! macro-state)
@@ -118338,7 +118534,7 @@
       (tc-clone-able-cache-reset!)
       (tc-macro-helper-env-cache-reset! macro-state)
       (tc-macro-module-env-cache-clear! macro-state)
-      (tc-spmd-inline-helper-stack-reset!)
+      (tc-spmd-inline-helper-stack-reset-for-job! job-state)
       (tc-agg-caches-reset-for-job! job-state)
       (tc-nominal-owner-cache-reset!)
       (tc-stdlib-comptime-macro-surface-ok-reset! macro-state)

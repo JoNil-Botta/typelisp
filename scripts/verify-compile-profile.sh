@@ -1427,6 +1427,11 @@ fi
 #
 # Keep both the logical
 # capacity and physical payload bytes exact so an accidental return to eager or
+# #6846's optimizer/backend packets (non-negativity lattice, compare-chain
+# threading and block merge, sentinel exit flags, red-zone leaves,
+# phi-inductive checks) crossed ast_type_pool.macro_expand from 26 to 27
+# segments; the authoritative Windows probe measured 26,710 used nodes
+# (capacity 27,648; segment bytes 663,552).
 # copy-on-grow storage is visible.
 if [ "$NL_HOST_OS" = windows ]; then
     echo "[compile-profile] selfhost embedded-stdlib allocation probe"

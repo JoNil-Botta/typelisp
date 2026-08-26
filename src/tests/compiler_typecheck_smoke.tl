@@ -6736,6 +6736,9 @@
       (tc_core.tc-unused-unsafe-state-isolation-self-test)
       (io.panic "typecheck: unused unsafe state isolation smoke failed"))
     (unless
+      (tc_core.tc-spmd-traversal-state-isolation-self-test)
+      (io.panic "typecheck: SPMD traversal state isolation smoke failed"))
+    (unless
       (and
         (compiler-typecheck-smoke-registry-member-diagnostic-ok?
           "(define support : i64 0)

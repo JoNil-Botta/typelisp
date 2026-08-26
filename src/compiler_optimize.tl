@@ -5016,11 +5016,10 @@
 ;; --- block-local common subexpression elimination ---------------------------
 ;;
 ;; Within a single basic block, track an available-expression table mapping a
-;; pure scalar `BinOp`/`UnOp` expression (operator + operand values) or a
-;; repeatable CPU feature probe to the var that first computed it. A later
-;; identical expression is rewritten to an `CompilerIrInstr.Mov` from that earlier var.
-;; Scope is intentionally block-local and only covers pure scalar arithmetic
-;; plus process-stable `cpuid`/`xgetbv` results; memory ops are not CSE'd.
+;; pure scalar or initial SIMD expression (operator + operand values + shape),
+;; or a repeatable CPU feature probe to the var that first computed it. A later
+;; identical expression is rewritten to an `CompilerIrInstr.Mov` from that
+;; earlier var. Memory ops are not CSE'd.
 ;;
 ;; Invalidation keeps this correct even though the IR is not strictly SSA: when
 ;; an instruction (re)defines a var, every table entry whose key references that
@@ -5033,7 +5032,20 @@
   (UnKey ir.CompilerIrUnOp ir.CompilerIrValue ast.AstType)
   (CpuIdKey ir.CompilerIrValue ir.CompilerIrValue i64)
   (XgetbvKey ir.CompilerIrValue)
-  (WordKey ir.CompilerIrValue i64 ast.AstType))
+  (WordKey ir.CompilerIrValue i64 ast.AstType)
+  (SplatKey ir.CompilerIrValue i64 ast.AstType)
+  (VectorBinKey
+    ir.CompilerIrBinOp
+    ir.CompilerIrValue
+    ir.CompilerIrValue
+    i64
+    ast.AstType)
+  (VectorCompareKey
+    ir.CompilerIrBinOp
+    ir.CompilerIrValue
+    ir.CompilerIrValue
+    i64
+    ast.AstType))
 
 (defenum OptExprTable
   (Nil)
@@ -5526,7 +5538,33 @@
         5
         (hash.combine
           (opt-type-hash type-segment-bases ty)
-          (hash.combine (opt-value-hash source) (hash.i64 index))))]))
+          (hash.combine (opt-value-hash source) (hash.i64 index))))]
+    [(OptExprKey.SplatKey value lanes ty)
+      (hash.combine
+        6
+        (hash.combine
+          (opt-type-hash type-segment-bases ty)
+          (hash.combine (hash.i64 lanes) (opt-value-hash value))))]
+    [(OptExprKey.VectorBinKey op lhs rhs lanes ty)
+      (hash.combine
+        7
+        (hash.combine
+          (opt-type-hash type-segment-bases ty)
+          (hash.combine
+            (hash.i64 lanes)
+            (hash.combine
+              (hash.i64 (opt-binop-tag op))
+              (hash.combine (opt-value-hash lhs) (opt-value-hash rhs))))))]
+    [(OptExprKey.VectorCompareKey op lhs rhs lanes ty)
+      (hash.combine
+        8
+        (hash.combine
+          (opt-type-hash type-segment-bases ty)
+          (hash.combine
+            (hash.i64 lanes)
+            (hash.combine
+              (hash.i64 (opt-binop-tag op))
+              (hash.combine (opt-value-hash lhs) (opt-value-hash rhs))))))]))
 
 (define (opt-type-list-hash-at
   [type-segment-bases : i64]
@@ -6789,6 +6827,34 @@
             (= aindex bindex)
             (opt-value-eq asource bsource)
             (opt-type-eq type-segment-bases aty bty))]
+        [_ false])]
+    [(OptExprKey.SplatKey avalue alanes aty)
+      (match b
+        [(OptExprKey.SplatKey bvalue blanes bty)
+          (and
+            (= alanes blanes)
+            (opt-value-eq avalue bvalue)
+            (opt-type-eq type-segment-bases aty bty))]
+        [_ false])]
+    [(OptExprKey.VectorBinKey aop al ar alanes aty)
+      (match b
+        [(OptExprKey.VectorBinKey bop bl br blanes bty)
+          (and
+            (opt-binop-eq aop bop)
+            (= alanes blanes)
+            (opt-value-eq al bl)
+            (opt-value-eq ar br)
+            (opt-type-eq type-segment-bases aty bty))]
+        [_ false])]
+    [(OptExprKey.VectorCompareKey aop al ar alanes aty)
+      (match b
+        [(OptExprKey.VectorCompareKey bop bl br blanes bty)
+          (and
+            (opt-binop-eq aop bop)
+            (= alanes blanes)
+            (opt-value-eq al bl)
+            (opt-value-eq ar br)
+            (opt-type-eq type-segment-bases aty bty))]
         [_ false])]))
 
 (define (opt-expr-lookup
@@ -6817,7 +6883,12 @@
     [(OptExprKey.CpuIdKey leaf subleaf _)
       (or (opt-value-is-var? leaf var) (opt-value-is-var? subleaf var))]
     [(OptExprKey.XgetbvKey index) (opt-value-is-var? index var)]
-    [(OptExprKey.WordKey source _ _) (opt-value-is-var? source var)]))
+    [(OptExprKey.WordKey source _ _) (opt-value-is-var? source var)]
+    [(OptExprKey.SplatKey value _ _) (opt-value-is-var? value var)]
+    [(OptExprKey.VectorBinKey _ lhs rhs _ _)
+      (or (opt-value-is-var? lhs var) (opt-value-is-var? rhs var))]
+    [(OptExprKey.VectorCompareKey _ lhs rhs _ _)
+      (or (opt-value-is-var? lhs var) (opt-value-is-var? rhs var))]))
 
 ;; Drop every entry whose key references `var` (a stale operand) or whose result
 ;; is `var` (a stale definition).
@@ -6885,6 +6956,47 @@
               (ir.CompilerIrInstr.Mov dst earlier (ast.AstType.I64)))]
           [(ir.CompilerIrMaybeValue.No)
             (OptCseResult.Result (OptExprTable.Cons key dst (box t1)) instr)]))]
+    [(ir.CompilerIrInstr.Splat dst value lanes ty)
+      (let
+        [t1 : OptExprTable (opt-expr-invalidate-var table dst)]
+        [key : OptExprKey (OptExprKey.SplatKey value lanes ty)]
+        (match (opt-expr-lookup type-segment-bases t1 key)
+          [(ir.CompilerIrMaybeValue.Some earlier)
+            (OptCseResult.Result t1 (ir.CompilerIrInstr.Mov dst earlier ty))]
+          [(ir.CompilerIrMaybeValue.No)
+            (OptCseResult.Result (OptExprTable.Cons key dst (box t1)) instr)]))]
+    [(ir.CompilerIrInstr.VectorBinOp payload-box)
+      (let
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [op (__tl-project-field (__tl-box-place payload-box) op)]
+        [lhs (__tl-project-field (__tl-box-place payload-box) lhs)]
+        [rhs (__tl-project-field (__tl-box-place payload-box) rhs)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [ty (__tl-project-field (__tl-box-place payload-box) ty)]
+        [t1 : OptExprTable (opt-expr-invalidate-var table dst)]
+        [key : OptExprKey (OptExprKey.VectorBinKey op lhs rhs lanes ty)]
+        (match (opt-expr-lookup type-segment-bases t1 key)
+          [(ir.CompilerIrMaybeValue.Some earlier)
+            (OptCseResult.Result t1 (ir.CompilerIrInstr.Mov dst earlier ty))]
+          [(ir.CompilerIrMaybeValue.No)
+            (OptCseResult.Result (OptExprTable.Cons key dst (box t1)) instr)]))]
+    [(ir.CompilerIrInstr.VectorCompare payload-box)
+      (let
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [op (__tl-project-field (__tl-box-place payload-box) op)]
+        [lhs (__tl-project-field (__tl-box-place payload-box) lhs)]
+        [rhs (__tl-project-field (__tl-box-place payload-box) rhs)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [ty (__tl-project-field (__tl-box-place payload-box) ty)]
+        [t1 : OptExprTable (opt-expr-invalidate-var table dst)]
+        [key : OptExprKey (OptExprKey.VectorCompareKey op lhs rhs lanes ty)]
+        (match (opt-expr-lookup type-segment-bases t1 key)
+          [(ir.CompilerIrMaybeValue.Some earlier)
+            (OptCseResult.Result
+              t1
+              (ir.CompilerIrInstr.Mov dst earlier (ast.AstType.Bool)))]
+          [(ir.CompilerIrMaybeValue.No)
+            (OptCseResult.Result (OptExprTable.Cons key dst (box t1)) instr)]))]
     ;; Other defining instructions: invalidate their dst, keep the instruction.
     [(ir.CompilerIrInstr.Mov dst _ _)
       (OptCseResult.Result (opt-expr-invalidate-var table dst) instr)]
@@ -6904,22 +7016,12 @@
       (OptCseResult.Result (opt-expr-invalidate-var table dst) instr)]
     [(ir.CompilerIrInstr.LaneId dst _ _)
       (OptCseResult.Result (opt-expr-invalidate-var table dst) instr)]
-    [(ir.CompilerIrInstr.Splat dst _ _ _)
-      (OptCseResult.Result (opt-expr-invalidate-var table dst) instr)]
-    [(ir.CompilerIrInstr.VectorBinOp payload-box)
-      (let
-        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
-        (OptCseResult.Result (opt-expr-invalidate-var table dst) instr))]
     [(ir.CompilerIrInstr.VectorPrefix payload-box)
       (let
         [dst (__tl-project-field (__tl-box-place payload-box) dst)]
         (OptCseResult.Result (opt-expr-invalidate-var table dst) instr))]
     [(ir.CompilerIrInstr.VectorReduce dst _ _ _ _)
       (OptCseResult.Result (opt-expr-invalidate-var table dst) instr)]
-    [(ir.CompilerIrInstr.VectorCompare payload-box)
-      (let
-        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
-        (OptCseResult.Result (opt-expr-invalidate-var table dst) instr))]
     [(ir.CompilerIrInstr.MaskBinOp dst _ _ _ _)
       (OptCseResult.Result (opt-expr-invalidate-var table dst) instr)]
     [(ir.CompilerIrInstr.MaskNot dst _ _)
@@ -7278,14 +7380,61 @@
       (ir.CompilerIrInstr.UnOp dst op (opt-copy-resolve env v) ty)]
     [(ir.CompilerIrInstr.Splat dst value lanes ty)
       (ir.CompilerIrInstr.Splat dst (opt-copy-resolve env value) lanes ty)]
-    ;; Vector IR uses private aggregate values that the scalar copy pass cannot
-    ;; type-check yet, so leave those operands untouched until a vector-aware
-    ;; propagation pass exists. Mask operands are private too, so only var-to-var
-    ;; mask copies are substituted; scalar bool literals are not mask constants.
-    [(ir.CompilerIrInstr.VectorBinOp _) instr]
-    [(ir.CompilerIrInstr.VectorPrefix _) instr]
-    [(ir.CompilerIrInstr.VectorReduce _ _ _ _ _) instr]
-    [(ir.CompilerIrInstr.VectorCompare _) instr]
+    ;; Vector and mask values are private aggregates. Only propagate var-to-var
+    ;; identities through them: scalar literals recorded by the general copy
+    ;; environment are not valid SIMD constants.
+    [(ir.CompilerIrInstr.VectorBinOp payload-box)
+      (let
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [op (__tl-project-field (__tl-box-place payload-box) op)]
+        [lhs (__tl-project-field (__tl-box-place payload-box) lhs)]
+        [rhs (__tl-project-field (__tl-box-place payload-box) rhs)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [ty (__tl-project-field (__tl-box-place payload-box) ty)]
+        (ir.ir-instr-vector-bin-op
+          dst
+          op
+          (opt-copy-resolve-mask env lhs)
+          (opt-copy-resolve-mask env rhs)
+          lanes
+          ty))]
+    [(ir.CompilerIrInstr.VectorPrefix payload-box)
+      (let
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [op (__tl-project-field (__tl-box-place payload-box) op)]
+        [src (__tl-project-field (__tl-box-place payload-box) src)]
+        [carry (__tl-project-field (__tl-box-place payload-box) carry)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [ty (__tl-project-field (__tl-box-place payload-box) ty)]
+        (ir.ir-instr-vector-prefix
+          dst
+          op
+          (opt-copy-resolve-mask env src)
+          carry
+          lanes
+          ty))]
+    [(ir.CompilerIrInstr.VectorReduce dst op src lanes ty)
+      (ir.CompilerIrInstr.VectorReduce
+        dst
+        op
+        (opt-copy-resolve-mask env src)
+        lanes
+        ty)]
+    [(ir.CompilerIrInstr.VectorCompare payload-box)
+      (let
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [op (__tl-project-field (__tl-box-place payload-box) op)]
+        [lhs (__tl-project-field (__tl-box-place payload-box) lhs)]
+        [rhs (__tl-project-field (__tl-box-place payload-box) rhs)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [ty (__tl-project-field (__tl-box-place payload-box) ty)]
+        (ir.ir-instr-vector-compare
+          dst
+          op
+          (opt-copy-resolve-mask env lhs)
+          (opt-copy-resolve-mask env rhs)
+          lanes
+          ty))]
     [(ir.CompilerIrInstr.MaskBinOp dst op lhs rhs lanes)
       (ir.CompilerIrInstr.MaskBinOp
         dst
@@ -7301,11 +7450,65 @@
         op
         (opt-copy-resolve-mask env src)
         lanes)]
-    [(ir.CompilerIrInstr.Select _) instr]
+    [(ir.CompilerIrInstr.Select payload-box)
+      (let
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [mask (__tl-project-field (__tl-box-place payload-box) mask)]
+        [on-true (__tl-project-field (__tl-box-place payload-box) on-true)]
+        [on-false (__tl-project-field (__tl-box-place payload-box) on-false)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [ty (__tl-project-field (__tl-box-place payload-box) ty)]
+        (ir.ir-instr-select
+          dst
+          (opt-copy-resolve-mask env mask)
+          (opt-copy-resolve-mask env on-true)
+          (opt-copy-resolve-mask env on-false)
+          lanes
+          ty))]
     [(ir.CompilerIrInstr.VectorLoad _ _ _ _ _) instr]
-    [(ir.CompilerIrInstr.VectorStore _) instr]
-    [(ir.CompilerIrInstr.PredicatedStore _) instr]
-    [(ir.CompilerIrInstr.PredicatedLoad _) instr]
+    [(ir.CompilerIrInstr.VectorStore payload-box)
+      (let
+        [base (__tl-project-field (__tl-box-place payload-box) base)]
+        [index (__tl-project-field (__tl-box-place payload-box) index)]
+        [value (__tl-project-field (__tl-box-place payload-box) value)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [ty (__tl-project-field (__tl-box-place payload-box) ty)]
+        (ir.ir-instr-vector-store
+          base
+          index
+          (opt-copy-resolve-mask env value)
+          lanes
+          ty))]
+    [(ir.CompilerIrInstr.PredicatedStore payload-box)
+      (let
+        [base (__tl-project-field (__tl-box-place payload-box) base)]
+        [index (__tl-project-field (__tl-box-place payload-box) index)]
+        [value (__tl-project-field (__tl-box-place payload-box) value)]
+        [mask (__tl-project-field (__tl-box-place payload-box) mask)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [ty (__tl-project-field (__tl-box-place payload-box) ty)]
+        (ir.ir-instr-predicated-store
+          base
+          index
+          (opt-copy-resolve-mask env value)
+          (opt-copy-resolve-mask env mask)
+          lanes
+          ty))]
+    [(ir.CompilerIrInstr.PredicatedLoad payload-box)
+      (let
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [base (__tl-project-field (__tl-box-place payload-box) base)]
+        [index (__tl-project-field (__tl-box-place payload-box) index)]
+        [mask (__tl-project-field (__tl-box-place payload-box) mask)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [ty (__tl-project-field (__tl-box-place payload-box) ty)]
+        (ir.ir-instr-predicated-load
+          dst
+          base
+          index
+          (opt-copy-resolve-mask env mask)
+          lanes
+          ty))]
     [(ir.CompilerIrInstr.GatherLoad _) instr]
     [(ir.CompilerIrInstr.VectorShuffle _) instr]
     [(ir.CompilerIrInstr.TailMask _ _ _ _) instr]
@@ -19054,6 +19257,22 @@
 ;; still has two exits and still carries the (now constant) flag phis until
 ;; SCCP retires them, and a deferral keyed on the seed alone would refuse the
 ;; rotation flag_exit exists to enable.
+;; THE SENTINEL SHAPE. flag_exit's C1 no longer wants a bool: an i64 phi seeded
+;; with a literal or with a name the loop cannot redefine (`-1`, a `mov
+;; @sentinel` read hoisted above the loop) and cleared to a computed value
+;; converts the same way, with the gate copied to the assignment site. The
+;; deferral has to cover it or the rotation wins the race and the conversion is
+;; lost for good. What keeps this deferral from outliving its conversion is the
+;; same thing as in the bool case, read one step differently: the pin puts K
+;; itself on the back edge, so a back edge that still DIFFERS from the seed is
+;; the mark of a flag that has not been converted yet -- the bool pin makes it
+;; a literal, and this one makes it the seed's own name.
+(define (opt-rotate-ssa-flag-invariant-init? [init : ir.CompilerIrValue]) : bool
+  (match init
+    [(ir.CompilerIrValue.Global _) false]
+    [(ir.CompilerIrValue.RuntimeGlobal _) false]
+    [_ true]))
+
 (define (opt-rotate-ssa-flag-seeded-rec?
   [init : ir.CompilerIrValue]
   [back : ir.CompilerIrValue]
@@ -19066,6 +19285,13 @@
             [(ir.CompilerIrValue.Var _) true]
             [_ false])]
         [_ false])]
+    [(ast.AstType.I64)
+      (and
+        (opt-rotate-ssa-flag-invariant-init? init)
+        (match back
+          [(ir.CompilerIrValue.Var _) true]
+          [_ false])
+        (not (opt-value-eq init back)))]
     [_ false]))
 
 (define (opt-rotate-ssa-rec-flag-seeded?
@@ -19086,6 +19312,78 @@
               (opt-rotate-ssa-phi-recs-tail recs)
               var
               nonphi-uses))])]))
+
+;; The same rec, plus the value flag_exit's C3 gate has to compare it against:
+;; K itself, spelled as the seed spells it. Looking through the copies a global
+;; sentinel leaves is flag_exit's business -- a deferral that guessed would pay
+;; for the guess with a rotation, and the loop that needs the looking-through
+;; gates in its own header, which this pass never reads as a second exit.
+(define (opt-rotate-ssa-rec-flag-seeded-against?
+  [recs : OptRotateSsaPhiRecs]
+  [var : i64]
+  [other : ir.CompilerIrValue]
+  [nonphi-uses : opt_i64_i64_map.Map]) : bool
+  (match recs
+    [(OptRotateSsaPhiRecs.Nil) false]
+    [(OptRotateSsaPhiRecs.Dense _ _)
+      (match (opt-rotate-ssa-phi-rec-ref recs 0)
+        [(OptRotateSsaPhiRec.Rec dst init back ty)
+          (or
+            (and
+              (= dst var)
+              (opt-value-eq init other)
+              (opt-rotate-ssa-flag-seeded-rec? init back ty)
+              (not (opt-used-contains nonphi-uses dst)))
+            (opt-rotate-ssa-rec-flag-seeded-against?
+              (opt-rotate-ssa-phi-recs-tail recs)
+              var
+              other
+              nonphi-uses))])]))
+
+;; C3's helper, in the sentinel form: the branch tests `eq f, K` or `ne f, K`
+;; through one instruction of this block rather than reading a bool flag
+;; straight.
+(define (opt-rotate-ssa-flag-gate-helper-instr?
+  [instr : ir.CompilerIrInstr]
+  [recs : OptRotateSsaPhiRecs]
+  [nonphi-uses : opt_i64_i64_map.Map]) : bool
+  (match instr
+    [(ir.CompilerIrInstr.BinOp _ op lhs rhs _)
+      (and
+        (match op
+          [(ir.CompilerIrBinOp.Eq) true]
+          [(ir.CompilerIrBinOp.Ne) true]
+          [_ false])
+        (match lhs
+          [(ir.CompilerIrValue.Var var)
+            (opt-rotate-ssa-rec-flag-seeded-against? recs var rhs nonphi-uses)]
+          [_ false]))]
+    [_ false]))
+
+(define (opt-rotate-ssa-flag-gate-helper?
+  [instrs : ir.CompilerIrInstrSeq]
+  [pos : i64]
+  [dst : i64]
+  [recs : OptRotateSsaPhiRecs]
+  [nonphi-uses : opt_i64_i64_map.Map]) : bool
+  (if (>= pos (ir.compiler-ir-instr-seq-count instrs))
+    false
+    (let
+      [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs pos)]
+      (if (match (opt-instr-def-var instr)
+        [(option_i64.Some found) (= found dst)]
+        [(option_i64.None) false])
+        (opt-rotate-ssa-flag-gate-helper-instr? instr recs nonphi-uses)
+        (opt-rotate-ssa-flag-gate-helper? instrs (+ pos 1) dst recs nonphi-uses)))))
+
+(define (opt-rotate-ssa-flag-gate-var?
+  [instrs : ir.CompilerIrInstrSeq]
+  [gate-var : i64]
+  [recs : OptRotateSsaPhiRecs]
+  [nonphi-uses : opt_i64_i64_map.Map]) : bool
+  (or
+    (opt-rotate-ssa-rec-flag-seeded? recs gate-var nonphi-uses)
+    (opt-rotate-ssa-flag-gate-helper? instrs 0 gate-var recs nonphi-uses)))
 
 ;; flag_exit's C3 gate, in the direct form: a block inside the loop ending in a
 ;; branch ON THE FLAG ITSELF with one arm leaving the loop. C3 wants the branch
@@ -19111,7 +19409,7 @@
             (opt-label-contains body false-label)
             (match cond-value
               [(ir.CompilerIrValue.Var gate-var)
-                (opt-rotate-ssa-rec-flag-seeded? recs gate-var nonphi-uses)]
+                (opt-rotate-ssa-flag-gate-var? instrs gate-var recs nonphi-uses)]
               [_ false]))]
         [_ false]))))
 
@@ -19133,7 +19431,11 @@
               (opt-label-contains body true-label)
               (match cond-value
                 [(ir.CompilerIrValue.Var gate-var)
-                  (opt-rotate-ssa-rec-flag-seeded? recs gate-var nonphi-uses)]
+                  (opt-rotate-ssa-flag-gate-var?
+                    instrs
+                    gate-var
+                    recs
+                    nonphi-uses)]
                 [_ false])))]
         [_ false]))))
 
@@ -27277,13 +27579,33 @@
 ;; `benchmarks/intern_table`'s `it-slice-eq?` byte compare spends two of its ten
 ;; instructions per byte on the re-test and its C twin spends none.
 ;;
-;; The flag is monotone: it starts at a constant K in the preheader and the only
-;; value the body can give it is the opposite constant C, which makes the gate
-;; branch leave the loop. Redirecting each clear edge straight to the gate's
-;; exit arm therefore preserves meaning and makes the header's flag test
-;; vacuous: nothing can leave the flag at C while continuing, so the gate always
-;; continues and becomes an unconditional jump. The flag phis then have no
-;; readers left and the pipeline's SCCP/DCE retire them.
+;; The flag starts at a loop-invariant value K in the preheader, the gate tests
+;; it against K, and the body's only other business with it is to ASSIGN it.
+;; Give the gate's verdict at each assignment site instead of at the top of the
+;; next iteration and the header's test is vacuous: nothing reaches the header
+;; carrying anything but K, so the gate always continues and becomes an
+;; unconditional jump. The flag phis then have no readers left and the
+;; pipeline's SCCP/DCE retire them.
+;;
+;; Two shapes of assignment site, and the difference is only how much of the
+;; gate has to move with the edge:
+;;   * both K and the assigned value are decidable here -- the bool
+;;     `(set! ok false)` against a `true` seed, or one sentinel literal against
+;;     another -- and the verdict is known now: the edge is redirected outright
+;;     to the gate's exit arm, which is the conversion this pass has always
+;;     done.
+;;   * the assigned value is computed, or K is a name rather than a literal --
+;;     `benchmarks/peephole_lines`' `found = pl-none` cleared to a register
+;;     index, `pl-find-comma-space`'s `-1` cleared to `i` -- and the verdict
+;;     needs the compare. The edge is routed through a fresh block holding a
+;;     COPY of the gate, `c = ne w, K; branch c, X, <the edge's own target>`,
+;;     which is what LLVM's JumpThreading does with the same shape: the compare
+;;     the header ran once per iteration now runs once per assignment, and the
+;;     path that keeps going arrives at the header with the flag proved equal
+;;     to K.
+;; Either way the invariant the rest of this pass rests on is the same -- every
+;; surviving path into a flag definition carries K -- and step 5 pins them all
+;; to it.
 ;;
 ;; Exit phis and the phi-web budget. An earlier phi-block-collapse experiment on
 ;; this tree regressed 10% by duplicating phi copies, so any rewrite near a loop
@@ -27325,20 +27647,34 @@
 ;; for the masked-index derivation to name it.
 ;;
 ;; Conditions, all required:
-;;   C1 monotone seed: a header phi `f = phi [K, preheader], [v, latch]` with
-;;      exactly one input from outside the loop carrying a bool literal K and
-;;      exactly one from inside it carrying `v`. C is the opposite literal.
-;;   C2 monotone closure: descending from `v` through phis and Movs defined in
-;;      the loop, every leaf is `f` itself or the literal C, and at least one is
-;;      C. A leaf of K would re-establish the continuing value and is rejected;
-;;      so is a Mov of C, whose clear happens mid-block with no edge to redirect.
+;;   C1 invariant seed: a header phi `f = phi [K, preheader], [v, latch]` with
+;;      exactly one input from outside the loop carrying a LOOP-INVARIANT K --
+;;      a literal, or a name the loop cannot redefine -- and exactly one from
+;;      inside it carrying `v`. That K arrives on the phi's own incoming edge
+;;      is what makes its definition dominate the whole loop, so every site the
+;;      gate is copied to may name it.
+;;   C2 closure: descending from `v` through the phis and Movs in the loop that
+;;      can carry the FLAG's own value, every leaf is `f` itself -- an
+;;      iteration that left the flag alone -- or a value the edge carrying it
+;;      assigns to it, and there is at least one of the latter. A leaf of K
+;;      itself is rejected: it re-establishes the continuing value on an edge
+;;      with nothing to test. The descent stops at any phi that cannot reach
+;;      the flag, because that phi is one whole new value and the edge that
+;;      assigns it is the one edge the gate has to be copied to; descending
+;;      into it would splinter one copy into one per arm of a join that has
+;;      nothing to do with the flag.
 ;;   C3 gate: some block G in the loop ends `Branch g, T, X` with T inside the
-;;      loop, X outside it, and the CLEARED flag selecting X. `g` is a closure
-;;      var, or one single-use helper over one -- `not f'` (which swaps the
-;;      arms) or `eq f', <bool literal>` (which selects by the literal). The
-;;      helper shapes are how `(while (and (< i n) (not done)) ...)` lowers, and
-;;      refusing them left intern_table's and gvn_table's probe loops testing a
-;;      stack slot every trip.
+;;      loop, X outside it, and the flag's NOT being K selecting X. `g` is
+;;      `eq f', K` or `ne f', K` over a closure var, or -- for a bool flag,
+;;      which has exactly one other value to have -- the closure var itself or
+;;      one single-use helper over it: `not f'` (which swaps the arms) or
+;;      `eq f', <bool literal>` (which selects by the literal). K is matched
+;;      through the copies lowering leaves, so a sentinel seeded from one
+;;      `mov @pl-none` and tested against another read of the same global in
+;;      the same straight line is one K. The helper shapes are how
+;;      `(while (and (< i n) (not done)) ...)` and `(while (= found pl-none)
+;;      ...)` lower, and refusing them left intern_table's and gvn_table's
+;;      probe loops testing a stack slot every trip.
 ;;   C4 uses: the flag and every closure var are read only by the closure, by
 ;;      the gate branch and its helper, by phis outside the loop keyed on one of
 ;;      the loop's exit blocks, by X's own phis, and from the region X dominates
@@ -27391,22 +27727,31 @@
 ;; the whole loop is left alone.
 ;;
 ;; The rewrite is: retarget each clear edge (the whole Jump, or just the Branch
-;; arm that carries it) to X; drop those predecessors from the phis they fed;
+;; arm that carries it) to X, or to the copied gate that decides for it; drop
+;; the decided predecessors from the phis they fed and re-key the gated ones
+;; onto the copy, which still reaches those phis whenever the flag is still K;
 ;; replace the gate branch with `Jump T`, drop its helper and delete the spacers
 ;; the arm collapsed through; give X's phis an input per redirected predecessor
 ;; and take away the one the gate's path arrived on; prepend the minted exit
 ;; phis and rewrite the reads under X to them; fold the closure
-;; inputs of phis outside the loop to C on X's edge and to K on every other exit
-;; edge; and pin the closure's own definitions to K, which is what every
-;; remaining path into them now carries.
+;; inputs of phis outside the loop to the cleared value on X's edge and to K on
+;; every other exit edge; and pin the closure's own definitions to K, which is
+;; what every remaining path into them now carries. The fold on X's edge needs
+;; ONE cleared value for the whole loop, so a loop whose redirected edges
+;; disagree -- which any computed assignment does -- converts only when no phi
+;; past X reads the flag across it; the same loop with the reads under X
+;; instead is served by the minted exit phis of C8, which answer per edge.
 ;;
 ;; C4 and C8 count EFFECTIVE uses (`opt-gep-offset-effective-uses`). At this
 ;; slot the dead Casts that removed BoundsChecks strand are still in the IR --
 ;; the pipeline DCE is far below -- and counting them would reject loops whose
 ;; only outside reader is already retired.
 (defenum OptFlagExitEdge
-  ;; the clearing predecessor, then the phi block its edge flows into.
-  (Edge i64 i64))
+  ;; The clearing predecessor, the phi block its edge flows into, the value the
+  ;; edge gives the flag, and -- when that value is not one the pass can decide
+  ;; against K here -- the fresh block the redirect routes through and the var
+  ;; its copy of the gate defines. Both are -1 for an outright redirect.
+  (Edge i64 i64 ir.CompilerIrValue i64 i64))
 
 (defenum OptFlagExitEdgeList
   (Nil)
@@ -27416,7 +27761,8 @@
 
 (define (opt-flag-exit-edge-ref [edges : OptFlagExitEdgeList] [index : i64]) : OptFlagExitEdge
   (match edges
-    [(OptFlagExitEdgeList.Nil) (OptFlagExitEdge.Edge -1 -1)]
+    [(OptFlagExitEdgeList.Nil)
+      (OptFlagExitEdge.Edge -1 -1 (ir.CompilerIrValue.Unit) -1 -1)]
     [(OptFlagExitEdgeList.Dense items len)
       (array-ref items (- (- len 1) index))]))
 
@@ -27431,9 +27777,13 @@
 (define (opt-flag-exit-edge-cons
   [pred : i64]
   [target : i64]
+  [value : ir.CompilerIrValue]
+  [fresh : i64]
+  [fresh-var : i64]
   [edges : OptFlagExitEdgeList]) : OptFlagExitEdgeList
   (let
-    [edge : OptFlagExitEdge (OptFlagExitEdge.Edge pred target)]
+    [edge : OptFlagExitEdge
+      (OptFlagExitEdge.Edge pred target value fresh fresh-var)]
     (match edges
       [(OptFlagExitEdgeList.Nil)
         (let
@@ -27469,7 +27819,15 @@
       (begin
         (while (< index 9)
           (begin
-            (set! edges (opt-flag-exit-edge-cons index (+ index 100) edges))
+            (set!
+              edges
+              (opt-flag-exit-edge-cons
+                index
+                (+ index 100)
+                (ir.CompilerIrValue.I64 index)
+                (- 0 1)
+                (- 0 1)
+                edges))
             (set! index (+ index 1))))
         (match edges
           [(OptFlagExitEdgeList.Nil)
@@ -27484,7 +27842,7 @@
                 (>= (array-length items) 9)
                 "flag-exit edge storage expands capacity"))])
         (match (opt-flag-exit-edge-ref edges 0)
-          [(OptFlagExitEdge.Edge pred target)
+          [(OptFlagExitEdge.Edge pred target _ _ _)
             (begin
               (test.assert-i64-eq
                 pred
@@ -27495,7 +27853,7 @@
                 108
                 "flag-exit newest target stays first"))])
         (match (opt-flag-exit-edge-ref edges 8)
-          [(OptFlagExitEdge.Edge pred target)
+          [(OptFlagExitEdge.Edge pred target _ _ _)
             (begin
               (test.assert-i64-eq
                 pred
@@ -27526,10 +27884,10 @@
   (No)
   (Some i64))
 
-;; the continuing literal K, then the latch value the closure walk starts from.
+;; the continuing value K, then the latch value the closure walk starts from.
 (defenum OptFlagExitSeed
   (No)
-  (Some bool i64))
+  (Some ir.CompilerIrValue i64))
 
 ;; One redirected predecessor and the value it must deliver at X. Dense plan
 ;; storage retains cons-order through reverse logical indexing: appending a
@@ -27735,7 +28093,12 @@
   (gate i64)
   (continue-label i64)
   (exit-label i64)
-  (keep bool)
+  ;; K, the value every path that keeps going now carries, and the value every
+  ;; redirected edge delivers at X -- the second only when every clear edge
+  ;; agrees on one literal, which is what lets a phi past X fold the flag.
+  (seed ir.CompilerIrValue)
+  (cleared ir.CompilerIrMaybeValue)
+  (flag-ty ast.AstType)
   (closure (__tl_dyn-array i64))
   (clear-preds OptLabelSet)
   (clear-targets OptLabelSet)
@@ -27753,19 +28116,23 @@
   (No)
   (Some OptFlagExitPlan))
 
-(define (opt-flag-exit-bool-value [flag : bool]) : ir.CompilerIrValue
-  (if flag
-    (ir.CompilerIrValue.Bool true)
-    (ir.CompilerIrValue.Bool false)))
-
-(define (opt-flag-exit-value-is-bool?
-  [value : ir.CompilerIrValue]
-  [want : bool]) : bool
+;; A value the pass can decide against K on the spot: no name to look up, no
+;; memory to re-read. Both K and a clear value being one is what lets an edge
+;; redirect outright instead of through a copy of the gate.
+(define (opt-flag-exit-decidable-value? [value : ir.CompilerIrValue]) : bool
   (match value
-    [(ir.CompilerIrValue.Bool literal)
-      (if want
-        literal
-        (not literal))]
+    [(ir.CompilerIrValue.Var _) false]
+    [(ir.CompilerIrValue.Global _) false]
+    [(ir.CompilerIrValue.RuntimeGlobal _) false]
+    [_ true]))
+
+;; The flag type a copy of the gate can be built for: `ne w, K` has to be an
+;; instruction the backend can emit. Everything else may still convert, but
+;; only with every clear edge decided here.
+(define (opt-flag-exit-comparable-type? [ty : ast.AstType]) : bool
+  (match ty
+    [(ast.AstType.I64) true]
+    [(ast.AstType.Bool) true]
     [_ false]))
 
 (define (opt-flag-exit-closure-var?
@@ -27782,21 +28149,29 @@
 ;; --- prescan -----------------------------------------------------------------
 ;;
 ;; Runs on every function on every pipeline iteration, so it stays one
-;; allocation-free instruction walk: without a phi carrying a bool literal there
-;; is no monotone seed anywhere in the function.
-(define (opt-flag-exit-phi-inputs-have-bool?
-  [inputs : ir.CompilerIrPhiInputList]) : bool
+;; allocation-free instruction walk: C1 wants a phi joining a seed from outside
+;; the loop with a var carried round the back edge, so a function whose phis
+;; never pair a var with a second input has no monotone seed anywhere.
+(define (opt-flag-exit-phi-inputs-seedable?
+  [inputs : ir.CompilerIrPhiInputList]
+  [var? : bool]
+  [count : i64]) : bool
   (match (ir.compiler-ir-phi-input-list-force-cons inputs)
-    [(ir.CompilerIrPhiInputList.Nil) false]
+    [(ir.CompilerIrPhiInputList.Nil) (and var? (>= count 2))]
     [(ir.CompilerIrPhiInputList.Array seq)
-      (opt-flag-exit-phi-inputs-have-bool?
-        (ir.compiler-ir-phi-input-seq-to-list seq))]
+      (opt-flag-exit-phi-inputs-seedable?
+        (ir.compiler-ir-phi-input-seq-to-list seq)
+        var?
+        count)]
     [(ir.CompilerIrPhiInputList.Cons value _ rest)
-      (or
-        (match value
-          [(ir.CompilerIrValue.Bool _) true]
-          [_ false])
-        (opt-flag-exit-phi-inputs-have-bool? (__tl-box-place rest)))]))
+      (opt-flag-exit-phi-inputs-seedable?
+        (__tl-box-place rest)
+        (or
+          var?
+          (match value
+            [(ir.CompilerIrValue.Var _) true]
+            [_ false]))
+        (+ count 1))]))
 
 (define (opt-flag-exit-instrs-have-candidate?
   [instrs : ir.CompilerIrInstrSeq]
@@ -27806,7 +28181,7 @@
     (or
       (match (ir.compiler-ir-instr-seq-ref instrs index)
         [(ir.CompilerIrInstr.Phi _ inputs _)
-          (opt-flag-exit-phi-inputs-have-bool? inputs)]
+          (opt-flag-exit-phi-inputs-seedable? inputs false 0)]
         [_ false])
       (opt-flag-exit-instrs-have-candidate? instrs (+ index 1)))))
 
@@ -27906,19 +28281,167 @@
 
 ;; --- C2: the monotone closure ------------------------------------------------
 ;;
-;; Descend the phi/Mov web that feeds the header flag from the latch. Every leaf
-;; must be the flag itself or the clearing literal; a clear leaf records the edge
-;; that carries it. `bad` latches any other shape.
+;; Descend the phi/Mov web that carries the header flag round the back edge.
+;; Every leaf is the flag itself -- an iteration that left it alone -- or a
+;; value the edge carrying it gives it, and that edge is the one the redirect
+;; moves. `bad` latches a leaf of K itself, which would put the continuing
+;; value back on an edge with nothing to test, and an edge the walk reaches
+;; twice carrying two different values.
+;; Can this var carry the FLAG's own value? Only such a var belongs to the web
+;; the walk descends. A phi that cannot reach the flag is one whole new value,
+;; and stopping at it puts the copied gate on the edge that assigns it instead
+;; of splintering it over the phis that computed it -- the difference between
+;; one copy and one per arm of an unrelated join. Memoised in `web`: 0 unknown,
+;; 1 yes, 2 no, 3 on the stack, since a var that reaches the flag only through
+;; itself reaches it on no finite path.
+(define (opt-flag-exit-web-inputs?
+  [blocks : ir.CompilerIrBlockList]
+  [body : OptLoopBody]
+  [index : OptCfgIndex]
+  [def-label : (__tl_dyn-array i64)]
+  [flag : i64]
+  [web : (__tl_dyn-array i64)]
+  [inputs : ir.CompilerIrPhiInputList]
+  [fuel : i64]) : bool
+  (match (ir.compiler-ir-phi-input-list-force-cons inputs)
+    [(ir.CompilerIrPhiInputList.Nil) false]
+    [(ir.CompilerIrPhiInputList.Array seq)
+      (opt-flag-exit-web-inputs?
+        blocks
+        body
+        index
+        def-label
+        flag
+        web
+        (ir.compiler-ir-phi-input-seq-to-list seq)
+        fuel)]
+    [(ir.CompilerIrPhiInputList.Cons value _ rest)
+      (or
+        (match value
+          [(ir.CompilerIrValue.Var var)
+            (opt-flag-exit-web? blocks body index def-label flag web var fuel)]
+          [_ false])
+        (opt-flag-exit-web-inputs?
+          blocks
+          body
+          index
+          def-label
+          flag
+          web
+          (__tl-box-place rest)
+          fuel))]))
+
+(define (opt-flag-exit-web?
+  [blocks : ir.CompilerIrBlockList]
+  [body : OptLoopBody]
+  [index : OptCfgIndex]
+  [def-label : (__tl_dyn-array i64)]
+  [flag : i64]
+  [web : (__tl_dyn-array i64)]
+  [var : i64]
+  [fuel : i64]) : bool
+  (cond
+    [(= var flag) true]
+    [(or (< var 0) (>= var (array-length web))) false]
+    [(= (array-ref web var) 1) true]
+    [(> (array-ref web var) 1) false]
+    [(<= fuel 0) false]
+    [else
+      (let
+        [label : i64 (array-ref def-label var)]
+        [answer : bool
+          (if (or
+            (< label 0)
+            (not (opt-loop-body-label-member? body index label)))
+            false
+            (begin
+              (set! (array-ref web var) 3)
+              (match (opt-flag-exit-instr-at blocks label var)
+                [(OptFlagExitMaybeInstr.No) false]
+                [(OptFlagExitMaybeInstr.Some instr)
+                  (match instr
+                    [(ir.CompilerIrInstr.Phi _ inputs _)
+                      (opt-flag-exit-web-inputs?
+                        blocks
+                        body
+                        index
+                        def-label
+                        flag
+                        web
+                        inputs
+                        (- fuel 1))]
+                    [(ir.CompilerIrInstr.Mov _ src _)
+                      (match src
+                        [(ir.CompilerIrValue.Var source)
+                          (opt-flag-exit-web?
+                            blocks
+                            body
+                            index
+                            def-label
+                            flag
+                            web
+                            source
+                            (- fuel 1))]
+                        [_ false])]
+                    [_ false])])))]
+        (begin
+          (set!
+            (array-ref web var)
+            (if answer
+              1
+              2))
+          answer))]))
+
+;; The value a clear edge already carries, when the walk has met it before.
+(define (opt-flag-exit-edge-value-at
+  [edges : OptFlagExitEdgeList]
+  [pred : i64]
+  [target : i64]) : ir.CompilerIrMaybeValue
+  (match edges
+    [(OptFlagExitEdgeList.Nil) (ir.CompilerIrMaybeValue.No)]
+    [(OptFlagExitEdgeList.Dense _ _)
+      (match (opt-flag-exit-edge-ref edges 0)
+        [(OptFlagExitEdge.Edge found-pred found-target value _ _)
+          (if (and (= found-pred pred) (= found-target target))
+            (ir.CompilerIrMaybeValue.Some value)
+            (opt-flag-exit-edge-value-at
+              (opt-flag-exit-edge-tail edges)
+              pred
+              target))])]))
+
+;; One record per clearing EDGE. Two closure phis in one block fed by the same
+;; predecessor name the same edge, and the redirect can only give that edge one
+;; verdict: the same value twice is the same record, two different values is an
+;; edge whose flag value nothing can name, and the loop is refused.
+(define (opt-flag-exit-record-clear!
+  [pred : i64]
+  [target : i64]
+  [value : ir.CompilerIrValue]
+  [bad : (__tl_dyn-array i64)]
+  [acc : OptFlagExitEdgeList]) : OptFlagExitEdgeList
+  (match (opt-flag-exit-edge-value-at acc pred target)
+    [(ir.CompilerIrMaybeValue.Some found)
+      (begin
+        (if (opt-value-eq found value)
+          unit
+          (begin
+            (set! (array-ref bad 0) 1)
+            unit))
+        acc)]
+    [(ir.CompilerIrMaybeValue.No)
+      (opt-flag-exit-edge-cons pred target value (- 0 1) (- 0 1) acc)]))
+
 (define (opt-flag-exit-walk-inputs
   [blocks : ir.CompilerIrBlockList]
   [body : OptLoopBody]
   [index : OptCfgIndex]
   [def-label : (__tl_dyn-array i64)]
   [flag : i64]
-  [clear-const : bool]
+  [seed : ir.CompilerIrValue]
   [at-label : i64]
   [inputs : ir.CompilerIrPhiInputList]
   [closure : (__tl_dyn-array i64)]
+  [web : (__tl_dyn-array i64)]
   [bad : (__tl_dyn-array i64)]
   [acc : OptFlagExitEdgeList]) : OptFlagExitEdgeList
   (match (ir.compiler-ir-phi-input-list-force-cons inputs)
@@ -27930,10 +28453,11 @@
         index
         def-label
         flag
-        clear-const
+        seed
         at-label
         (ir.compiler-ir-phi-input-seq-to-list seq)
         closure
+        web
         bad
         acc)]
     [(ir.CompilerIrPhiInputList.Cons value input-label rest)
@@ -27943,30 +28467,41 @@
         index
         def-label
         flag
-        clear-const
+        seed
         at-label
         (__tl-box-place rest)
         closure
+        web
         bad
-        (if (opt-flag-exit-value-is-bool? value clear-const)
-          (opt-flag-exit-edge-cons input-label at-label acc)
+        (if (opt-value-eq value seed)
+          (begin
+            (set! (array-ref bad 0) 1)
+            acc)
           (match value
             [(ir.CompilerIrValue.Var var)
-              (opt-flag-exit-walk
+              (if (opt-flag-exit-web?
                 blocks
                 body
                 index
                 def-label
                 flag
-                clear-const
+                web
                 var
-                closure
-                bad
-                acc)]
-            [_
-              (begin
-                (set! (array-ref bad 0) 1)
-                acc)])))]))
+                (array-length web))
+                (opt-flag-exit-walk
+                  blocks
+                  body
+                  index
+                  def-label
+                  flag
+                  seed
+                  var
+                  closure
+                  web
+                  bad
+                  acc)
+                (opt-flag-exit-record-clear! input-label at-label value bad acc))]
+            [_ (opt-flag-exit-record-clear! input-label at-label value bad acc)])))]))
 
 (define (opt-flag-exit-walk
   [blocks : ir.CompilerIrBlockList]
@@ -27974,9 +28509,10 @@
   [index : OptCfgIndex]
   [def-label : (__tl_dyn-array i64)]
   [flag : i64]
-  [clear-const : bool]
+  [seed : ir.CompilerIrValue]
   [var : i64]
   [closure : (__tl_dyn-array i64)]
+  [web : (__tl_dyn-array i64)]
   [bad : (__tl_dyn-array i64)]
   [acc : OptFlagExitEdgeList]) : OptFlagExitEdgeList
   (cond
@@ -27989,56 +28525,208 @@
     [else
       (let
         [label : i64 (array-ref def-label var)]
-        (if (or
-          (< label 0)
-          (not (opt-loop-body-label-member? body index label)))
-          (begin
-            (set! (array-ref bad 0) 1)
-            acc)
-          (match (opt-flag-exit-instr-at blocks label var)
-            [(OptFlagExitMaybeInstr.No)
-              (begin
-                (set! (array-ref bad 0) 1)
+        (match (opt-flag-exit-instr-at blocks label var)
+          [(OptFlagExitMaybeInstr.No)
+            (begin
+              (set! (array-ref bad 0) 1)
+              acc)]
+          [(OptFlagExitMaybeInstr.Some instr)
+            (begin
+              (set! (array-ref closure var) 1)
+              (match instr
+                [(ir.CompilerIrInstr.Phi _ inputs _)
+                  (opt-flag-exit-walk-inputs
+                    blocks
+                    body
+                    index
+                    def-label
+                    flag
+                    seed
+                    label
+                    inputs
+                    closure
+                    web
+                    bad
+                    acc)]
+                [(ir.CompilerIrInstr.Mov _ src _)
+                  (match src
+                    [(ir.CompilerIrValue.Var source)
+                      (opt-flag-exit-walk
+                        blocks
+                        body
+                        index
+                        def-label
+                        flag
+                        seed
+                        source
+                        closure
+                        web
+                        bad
+                        acc)]
+                    [_
+                      (begin
+                        (set! (array-ref bad 0) 1)
+                        acc)])]
+                [_
+                  (begin
+                    (set! (array-ref bad 0) 1)
+                    acc)]))]))]))
+
+;; --- the redirect's two shapes ------------------------------------------------
+;;
+;; An edge whose value and K are both decidable here redirects outright: they
+;; differ (a leaf of K was refused above), so the gate's verdict on that edge
+;; is already known. Any other edge gets a copy of the gate at the assignment
+;; site -- `c = ne w, K; branch c, X, <the edge's own target>` -- which is what
+;; JumpThreading does with the same shape, and leaves the header's test
+;; vacuous either way.
+(define (opt-flag-exit-edge-decided?
+  [seed : ir.CompilerIrValue]
+  [value : ir.CompilerIrValue]) : bool
+  (and
+    (opt-flag-exit-decidable-value? seed)
+    (opt-flag-exit-decidable-value? value)))
+
+(define (opt-flag-exit-clears-need-gate?
+  [seed : ir.CompilerIrValue]
+  [edges : OptFlagExitEdgeList]) : bool
+  (match edges
+    [(OptFlagExitEdgeList.Nil) false]
+    [(OptFlagExitEdgeList.Dense _ _)
+      (or
+        (match (opt-flag-exit-edge-ref edges 0)
+          [(OptFlagExitEdge.Edge _ _ value _ _)
+            (not (opt-flag-exit-edge-decided? seed value))])
+        (opt-flag-exit-clears-need-gate? seed (opt-flag-exit-edge-tail edges)))]))
+
+;; The one value every redirected edge delivers at X, when they agree on a
+;; decidable one. A phi past X that reads the flag on X's edge folds to it;
+;; without it, such a phi has no single answer and C7 refuses the loop.
+(define (opt-flag-exit-cleared-value
+  [seed : ir.CompilerIrValue]
+  [edges : OptFlagExitEdgeList]
+  [acc : ir.CompilerIrMaybeValue]) : ir.CompilerIrMaybeValue
+  (match edges
+    [(OptFlagExitEdgeList.Nil) acc]
+    [(OptFlagExitEdgeList.Dense _ _)
+      (match (opt-flag-exit-edge-ref edges 0)
+        [(OptFlagExitEdge.Edge _ _ value _ _)
+          (if (not (opt-flag-exit-edge-decided? seed value))
+            (ir.CompilerIrMaybeValue.No)
+            (match acc
+              [(ir.CompilerIrMaybeValue.No)
+                (opt-flag-exit-cleared-value
+                  seed
+                  (opt-flag-exit-edge-tail edges)
+                  (ir.CompilerIrMaybeValue.Some value))]
+              [(ir.CompilerIrMaybeValue.Some found)
+                (if (opt-value-eq found value)
+                  (opt-flag-exit-cleared-value
+                    seed
+                    (opt-flag-exit-edge-tail edges)
+                    acc)
+                  (ir.CompilerIrMaybeValue.No))]))])]))
+
+(define (opt-flag-exit-cleared-known? [cleared : ir.CompilerIrMaybeValue]) : bool
+  (match cleared
+    [(ir.CompilerIrMaybeValue.No) false]
+    [(ir.CompilerIrMaybeValue.Some _) true]))
+
+;; The predecessors an outright redirect takes away from their phi block; a
+;; gated one leaves its own behind under the fresh block's name.
+(define (opt-flag-exit-dropped-preds
+  [seed : ir.CompilerIrValue]
+  [edges : OptFlagExitEdgeList]
+  [acc : OptLabelSet]) : OptLabelSet
+  (match edges
+    [(OptFlagExitEdgeList.Nil) acc]
+    [(OptFlagExitEdgeList.Dense _ _)
+      (match (opt-flag-exit-edge-ref edges 0)
+        [(OptFlagExitEdge.Edge pred _ value _ _)
+          (opt-flag-exit-dropped-preds
+            seed
+            (opt-flag-exit-edge-tail edges)
+            (if (opt-flag-exit-edge-decided? seed value)
+              (opt-label-add acc pred)
+              acc))])]))
+
+;; Names for the copied gates, and the vars they define. The label is built
+;; from both ends of the edge it sits on, so two edges never want the same one
+;; and a re-run of a refused candidate asks for the same names again.
+(define (opt-flag-exit-candidate-label
+  [pred : i64]
+  [target : i64]
+  [suffix : i64]) : i64
+  (ir.compiler-ir-label
+    (if (= suffix 0)
+      (str_cat.str-cat
+        (ir.compiler-ir-label-text pred)
+        "__flagexit__"
+        (ir.compiler-ir-label-text target))
+      (str_cat.str-cat
+        (ir.compiler-ir-label-text pred)
+        "__flagexit__"
+        (ir.compiler-ir-label-text target)
+        (string.int->string suffix)))))
+
+(define (opt-flag-exit-fresh-label
+  [blocks : ir.CompilerIrBlockList]
+  [pred : i64]
+  [target : i64]
+  [suffix : i64]
+  [fuel : i64]) : i64
+  (let
+    [candidate : i64 (opt-flag-exit-candidate-label pred target suffix)]
+    (if (and (> fuel 0) (opt-cfg-block-exists? blocks candidate))
+      (opt-flag-exit-fresh-label blocks pred target (+ suffix 1) (- fuel 1))
+      candidate)))
+
+;; Give every gated edge its block and its var, keeping the list's order so the
+;; phi inputs the plan builds land in a stable one. `next-var` is the frame
+;; size the conversion starts from; the mints take the numbers after these.
+(define (opt-flag-exit-assign-gates
+  [blocks : ir.CompilerIrBlockList]
+  [seed : ir.CompilerIrValue]
+  [next-var : i64]
+  [edges : OptFlagExitEdgeList]
+  [acc : OptFlagExitEdgeList]) : OptFlagExitEdgeList
+  (match edges
+    [(OptFlagExitEdgeList.Nil) acc]
+    [(OptFlagExitEdgeList.Dense _ _)
+      (match (opt-flag-exit-edge-ref edges 0)
+        [(OptFlagExitEdge.Edge pred target value _ _)
+          (let
+            [decided? : bool (opt-flag-exit-edge-decided? seed value)]
+            [rest : OptFlagExitEdgeList
+              (opt-flag-exit-assign-gates
+                blocks
+                seed
+                (if decided?
+                  next-var
+                  (+ next-var 1))
+                (opt-flag-exit-edge-tail edges)
                 acc)]
-            [(OptFlagExitMaybeInstr.Some instr)
-              (begin
-                (set! (array-ref closure var) 1)
-                (match instr
-                  [(ir.CompilerIrInstr.Phi _ inputs _)
-                    (opt-flag-exit-walk-inputs
-                      blocks
-                      body
-                      index
-                      def-label
-                      flag
-                      clear-const
-                      label
-                      inputs
-                      closure
-                      bad
-                      acc)]
-                  [(ir.CompilerIrInstr.Mov _ src _)
-                    (match src
-                      [(ir.CompilerIrValue.Var source)
-                        (opt-flag-exit-walk
-                          blocks
-                          body
-                          index
-                          def-label
-                          flag
-                          clear-const
-                          source
-                          closure
-                          bad
-                          acc)]
-                      [_
-                        (begin
-                          (set! (array-ref bad 0) 1)
-                          acc)])]
-                  [_
-                    (begin
-                      (set! (array-ref bad 0) 1)
-                      acc)]))])))]))
+            (if decided?
+              (opt-flag-exit-edge-cons pred target value (- 0 1) (- 0 1) rest)
+              (opt-flag-exit-edge-cons
+                pred
+                target
+                value
+                (opt-flag-exit-fresh-label blocks pred target 0 64)
+                next-var
+                rest)))])]))
+
+(define (opt-flag-exit-gate-count [edges : OptFlagExitEdgeList] [acc : i64]) : i64
+  (match edges
+    [(OptFlagExitEdgeList.Nil) acc]
+    [(OptFlagExitEdgeList.Dense _ _)
+      (opt-flag-exit-gate-count
+        (opt-flag-exit-edge-tail edges)
+        (match (opt-flag-exit-edge-ref edges 0)
+          [(OptFlagExitEdge.Edge _ _ _ fresh _)
+            (if (< fresh 0)
+              acc
+              (+ acc 1))]))]))
 
 (define (opt-flag-exit-edges-empty? [edges : OptFlagExitEdgeList]) : bool
   (match edges
@@ -28052,7 +28740,7 @@
     [(OptFlagExitEdgeList.Nil) acc]
     [(OptFlagExitEdgeList.Dense _ _)
       (match (opt-flag-exit-edge-ref edges 0)
-        [(OptFlagExitEdge.Edge pred _)
+        [(OptFlagExitEdge.Edge pred _ _ _ _)
           (opt-flag-exit-edge-preds
             (opt-flag-exit-edge-tail edges)
             (opt-label-add acc pred))])]))
@@ -28064,69 +28752,270 @@
     [(OptFlagExitEdgeList.Nil) acc]
     [(OptFlagExitEdgeList.Dense _ _)
       (match (opt-flag-exit-edge-ref edges 0)
-        [(OptFlagExitEdge.Edge _ target)
+        [(OptFlagExitEdge.Edge _ target _ _ _)
           (opt-flag-exit-edge-targets
             (opt-flag-exit-edge-tail edges)
             (opt-label-add acc target))])]))
 
 ;; --- C3: the gate -------------------------------------------------------------
 ;;
-;; The branch may test the flag through one helper. `not f'` inverts the arm the
-;; cleared flag selects; `eq f', <bool literal>` selects by the literal. Either
-;; way what matters is the condition's value once the flag is C, and the arms
-;; are read off that. The helper is pure and single-use (its only reader is the
-;; branch this rewrite retires), so the redirect skipping it is free and the
-;; rewrite drops it along with the branch.
+;; The branch tests the flag against K -- `eq f', K` continues on true, `ne f',
+;; K` on false -- or, for a bool flag, through one helper over the flag itself:
+;; `not f'` inverts the arm the cleared flag selects and `eq f', <bool
+;; literal>` selects by the literal. Either way what matters is the condition's
+;; value once the flag is not K, and the arms are read off that. The helper is
+;; pure and single-use (its only reader is the branch this rewrite retires), so
+;; the redirect skipping it is free and the rewrite drops it along with the
+;; branch.
+;; K as a bool literal, when that is what it is: the two shapes below that read
+;; the flag rather than compare it only decide an arm when the flag has exactly
+;; one other value to have.
+(define (opt-flag-exit-bool-seed? [seed : ir.CompilerIrValue]) : bool
+  (match seed
+    [(ir.CompilerIrValue.Bool _) true]
+    [_ false]))
+
+(define (opt-flag-exit-bool-seed-literal [seed : ir.CompilerIrValue]) : bool
+  (match seed
+    [(ir.CompilerIrValue.Bool literal) literal]
+    [_ false]))
+
+(define (opt-flag-exit-bool-other?
+  [seed : ir.CompilerIrValue]
+  [other : ir.CompilerIrValue]) : bool
+  (match other
+    [(ir.CompilerIrValue.Bool literal)
+      (if (opt-flag-exit-bool-seed-literal seed)
+        (not literal)
+        literal)]
+    [_ false]))
+
+;; The `Mov` copies lowering leaves between a literal and its use: a var
+;; defined outside the loop by a copy of a value that is neither a name nor a
+;; memory read IS that value, so a seed written as a literal and a gate testing
+;; the copy of one are the same K.
+(define (opt-flag-exit-copy-source
+  [blocks : ir.CompilerIrBlockList]
+  [def-label : (__tl_dyn-array i64)]
+  [body : OptLoopBody]
+  [index : OptCfgIndex]
+  [value : ir.CompilerIrValue]) : ir.CompilerIrValue
+  (match value
+    [(ir.CompilerIrValue.Var var)
+      (if (or (< var 0) (>= var (array-length def-label)))
+        value
+        (let
+          [label : i64 (array-ref def-label var)]
+          (if (or (< label 0) (opt-loop-body-label-member? body index label))
+            value
+            (match (opt-flag-exit-instr-at blocks label var)
+              [(OptFlagExitMaybeInstr.No) value]
+              [(OptFlagExitMaybeInstr.Some instr)
+                (match instr
+                  [(ir.CompilerIrInstr.Mov _ src _)
+                    (if (opt-flag-exit-decidable-value? src)
+                      src
+                      value)]
+                  [_ value])]))))]
+    [_ value]))
+
+(define (opt-flag-exit-global-read-of [instr : ir.CompilerIrInstr]) : ir.CompilerIrMaybeValue
+  (match instr
+    [(ir.CompilerIrInstr.Mov _ src _)
+      (match src
+        [(ir.CompilerIrValue.Global _) (ir.CompilerIrMaybeValue.Some src)]
+        [_ (ir.CompilerIrMaybeValue.No)])]
+    [_ (ir.CompilerIrMaybeValue.No)]))
+
+(define (opt-flag-exit-writes-nothing? [instr : ir.CompilerIrInstr]) : bool
+  (or
+    (opt-flag-exit-pure-instr? instr)
+    (match instr
+      [(ir.CompilerIrInstr.Load _ _ _) true]
+      [(ir.CompilerIrInstr.BoundsCheck _ _ _) true]
+      [_ false])))
+
+;; Two reads of one global with nothing between them that could have written
+;; it read one value. Both are outside the loop and in the same block, so the
+;; window is a straight line and this is the whole of the argument -- and it is
+;; the shape a global sentinel arrives in, seeded from one `mov @g` and tested
+;; against another the earlier passes never had a reason to merge.
+(define (opt-flag-exit-same-global-scan?
+  [instrs : ir.CompilerIrInstrSeq]
+  [pos : i64]
+  [a : i64]
+  [b : i64]
+  [want : ir.CompilerIrMaybeValue]) : bool
+  (if (>= pos (ir.compiler-ir-instr-seq-count instrs))
+    false
+    (let
+      [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs pos)]
+      [hit? : bool
+        (match (opt-instr-def-var instr)
+          [(option_i64.Some dst) (or (= dst a) (= dst b))]
+          [(option_i64.None) false])]
+      (match want
+        [(ir.CompilerIrMaybeValue.No)
+          (if hit?
+            (match (opt-flag-exit-global-read-of instr)
+              [(ir.CompilerIrMaybeValue.No) false]
+              [(ir.CompilerIrMaybeValue.Some global)
+                (opt-flag-exit-same-global-scan?
+                  instrs
+                  (+ pos 1)
+                  a
+                  b
+                  (ir.CompilerIrMaybeValue.Some global))])
+            (opt-flag-exit-same-global-scan? instrs (+ pos 1) a b want))]
+        [(ir.CompilerIrMaybeValue.Some global)
+          (if hit?
+            (match (opt-flag-exit-global-read-of instr)
+              [(ir.CompilerIrMaybeValue.No) false]
+              [(ir.CompilerIrMaybeValue.Some other) (opt-value-eq global other)])
+            (and
+              (opt-flag-exit-writes-nothing? instr)
+              (opt-flag-exit-same-global-scan? instrs (+ pos 1) a b want)))]))))
+
+(define (opt-flag-exit-same-global-read?
+  [blocks : ir.CompilerIrBlockList]
+  [def-label : (__tl_dyn-array i64)]
+  [body : OptLoopBody]
+  [index : OptCfgIndex]
+  [seed : ir.CompilerIrValue]
+  [value : ir.CompilerIrValue]) : bool
+  (match seed
+    [(ir.CompilerIrValue.Var a)
+      (match value
+        [(ir.CompilerIrValue.Var b)
+          (and
+            (not (= a b))
+            (>= a 0)
+            (< a (array-length def-label))
+            (>= b 0)
+            (< b (array-length def-label))
+            (>= (array-ref def-label a) 0)
+            (= (array-ref def-label a) (array-ref def-label b))
+            (not
+              (opt-loop-body-label-member? body index (array-ref def-label a)))
+            (match (opt-cfg-find-block blocks (array-ref def-label a))
+              [(OptMaybeBlock.No) false]
+              [(OptMaybeBlock.Some block)
+                (match block
+                  [(ir.CompilerIrBlock.Block _ instrs)
+                    (opt-flag-exit-same-global-scan?
+                      instrs
+                      0
+                      a
+                      b
+                      (ir.CompilerIrMaybeValue.No))])]))]
+        [_ false])]
+    [_ false]))
+
+(define (opt-flag-exit-same-invariant?
+  [blocks : ir.CompilerIrBlockList]
+  [def-label : (__tl_dyn-array i64)]
+  [body : OptLoopBody]
+  [index : OptCfgIndex]
+  [seed : ir.CompilerIrValue]
+  [value : ir.CompilerIrValue]) : bool
+  (or
+    (opt-value-eq seed value)
+    (opt-value-eq
+      (opt-flag-exit-copy-source blocks def-label body index seed)
+      (opt-flag-exit-copy-source blocks def-label body index value))
+    (opt-flag-exit-same-global-read? blocks def-label body index seed value)))
+
+;; What the gate's condition is worth once the flag is not K.
+(define (opt-flag-exit-gate-verdict
+  [blocks : ir.CompilerIrBlockList]
+  [def-label : (__tl_dyn-array i64)]
+  [body : OptLoopBody]
+  [index : OptCfgIndex]
+  [eq? : bool]
+  [other : ir.CompilerIrValue]
+  [seed : ir.CompilerIrValue]
+  [dst : i64]) : OptFlagExitGateCond
+  (cond
+    [(opt-flag-exit-same-invariant? blocks def-label body index seed other)
+      (OptFlagExitGateCond.Some (not eq?) dst)]
+    [(and
+        (opt-flag-exit-bool-seed? seed)
+        (opt-flag-exit-bool-other? seed other))
+      (OptFlagExitGateCond.Some eq? dst)]
+    [else (OptFlagExitGateCond.No)]))
+
+(define (opt-flag-exit-eq-op? [op : ir.CompilerIrBinOp]) : bool
+  (match op
+    [(ir.CompilerIrBinOp.Eq) true]
+    [_ false]))
+
+(define (opt-flag-exit-ne-op? [op : ir.CompilerIrBinOp]) : bool
+  (match op
+    [(ir.CompilerIrBinOp.Ne) true]
+    [_ false]))
+
 (define (opt-flag-exit-gate-cond-of
+  [blocks : ir.CompilerIrBlockList]
+  [def-label : (__tl_dyn-array i64)]
+  [body : OptLoopBody]
+  [index : OptCfgIndex]
   [instr : ir.CompilerIrInstr]
   [dst : i64]
   [closure : (__tl_dyn-array i64)]
-  [clear-const : bool]) : OptFlagExitGateCond
+  [seed : ir.CompilerIrValue]) : OptFlagExitGateCond
   (match instr
     [(ir.CompilerIrInstr.UnOp _ op operand _)
       (if (and
         (match op
           [(ir.CompilerIrUnOp.Not) true]
           [_ false])
-        (opt-flag-exit-closure-var? operand closure))
-        (OptFlagExitGateCond.Some (not clear-const) dst)
+        (opt-flag-exit-closure-var? operand closure)
+        (opt-flag-exit-bool-seed? seed))
+        (OptFlagExitGateCond.Some (opt-flag-exit-bool-seed-literal seed) dst)
         (OptFlagExitGateCond.No))]
     [(ir.CompilerIrInstr.BinOp _ op lhs rhs _)
-      (if (not
-        (match op
-          [(ir.CompilerIrBinOp.Eq) true]
-          [_ false]))
+      (if (not (or (opt-flag-exit-eq-op? op) (opt-flag-exit-ne-op? op)))
         (OptFlagExitGateCond.No)
         (cond
           [(opt-flag-exit-closure-var? lhs closure)
-            (match rhs
-              [(ir.CompilerIrValue.Bool literal)
-                (OptFlagExitGateCond.Some
-                  (if literal
-                    clear-const
-                    (not clear-const))
-                  dst)]
-              [_ (OptFlagExitGateCond.No)])]
+            (opt-flag-exit-gate-verdict
+              blocks
+              def-label
+              body
+              index
+              (opt-flag-exit-eq-op? op)
+              rhs
+              seed
+              dst)]
           [(opt-flag-exit-closure-var? rhs closure)
-            (match lhs
-              [(ir.CompilerIrValue.Bool literal)
-                (OptFlagExitGateCond.Some
-                  (if literal
-                    clear-const
-                    (not clear-const))
-                  dst)]
-              [_ (OptFlagExitGateCond.No)])]
+            (opt-flag-exit-gate-verdict
+              blocks
+              def-label
+              body
+              index
+              (opt-flag-exit-eq-op? op)
+              lhs
+              seed
+              dst)]
           [else (OptFlagExitGateCond.No)]))]
     [_ (OptFlagExitGateCond.No)]))
 
 (define (opt-flag-exit-gate-cond
+  [blocks : ir.CompilerIrBlockList]
+  [def-label : (__tl_dyn-array i64)]
+  [body : OptLoopBody]
+  [index : OptCfgIndex]
   [instrs : ir.CompilerIrInstrSeq]
   [condition : ir.CompilerIrValue]
   [closure : (__tl_dyn-array i64)]
-  [clear-const : bool]
+  [seed : ir.CompilerIrValue]
   [uses : (__tl_dyn-array i64)]) : OptFlagExitGateCond
   (if (opt-flag-exit-closure-var? condition closure)
-    (OptFlagExitGateCond.Some clear-const (- 0 1))
+    (if (opt-flag-exit-bool-seed? seed)
+      (OptFlagExitGateCond.Some
+        (not (opt-flag-exit-bool-seed-literal seed))
+        (- 0 1))
+      (OptFlagExitGateCond.No))
     (match condition
       [(ir.CompilerIrValue.Var dst)
         (if (or
@@ -28137,16 +29026,26 @@
           (match (opt-flag-exit-instr-at-scan instrs 0 dst)
             [(OptFlagExitMaybeInstr.No) (OptFlagExitGateCond.No)]
             [(OptFlagExitMaybeInstr.Some instr)
-              (opt-flag-exit-gate-cond-of instr dst closure clear-const)]))]
+              (opt-flag-exit-gate-cond-of
+                blocks
+                def-label
+                body
+                index
+                instr
+                dst
+                closure
+                seed)]))]
       [_ (OptFlagExitGateCond.No)])))
 
 (define (opt-flag-exit-block-gate
+  [blocks : ir.CompilerIrBlockList]
+  [def-label : (__tl_dyn-array i64)]
   [instrs : ir.CompilerIrInstrSeq]
   [label : i64]
   [body : OptLoopBody]
   [index : OptCfgIndex]
   [closure : (__tl_dyn-array i64)]
-  [clear-const : bool]
+  [seed : ir.CompilerIrValue]
   [uses : (__tl_dyn-array i64)]) : OptFlagExitGate
   (let
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
@@ -28155,10 +29054,14 @@
       (match (ir.compiler-ir-instr-seq-ref instrs (- count 1))
         [(ir.CompilerIrInstr.Branch condition true-label false-label)
           (match (opt-flag-exit-gate-cond
+            blocks
+            def-label
+            body
+            index
             instrs
             condition
             closure
-            clear-const
+            seed
             uses)
             [(OptFlagExitGateCond.No) (OptFlagExitGate.No)]
             [(OptFlagExitGateCond.Some selects extra)
@@ -28179,11 +29082,13 @@
         [_ (OptFlagExitGate.No)]))))
 
 (define (opt-flag-exit-find-gate
+  [blocks : ir.CompilerIrBlockList]
+  [def-label : (__tl_dyn-array i64)]
   [body-blocks : ir.CompilerIrBlockList]
   [body : OptLoopBody]
   [index : OptCfgIndex]
   [closure : (__tl_dyn-array i64)]
-  [clear-const : bool]
+  [seed : ir.CompilerIrValue]
   [uses : (__tl_dyn-array i64)]) : OptFlagExitGate
   (match body-blocks
     [(ir.CompilerIrBlockList.Nil) (OptFlagExitGate.No)]
@@ -28193,31 +29098,37 @@
           (match block
             [(ir.CompilerIrBlock.Block label instrs)
               (opt-flag-exit-block-gate
+                blocks
+                def-label
                 instrs
                 label
                 body
                 index
                 closure
-                clear-const
+                seed
                 uses)])]
         (match here
           [(OptFlagExitGate.Some gate continue-label exit-label extra)
             (OptFlagExitGate.Some gate continue-label exit-label extra)]
           [(OptFlagExitGate.No)
             (opt-flag-exit-find-gate
+              blocks
+              def-label
               (__tl-box-place rest)
               body
               index
               closure
-              clear-const
+              seed
               uses)]))]
     [(ir.CompilerIrBlockList.Array seq)
       (opt-flag-exit-find-gate
+        blocks
+        def-label
         (ir.compiler-ir-block-seq-to-list seq)
         body
         index
         closure
-        clear-const
+        seed
         uses)]))
 
 ;; --- C6: the skipped path -----------------------------------------------------
@@ -28350,7 +29261,7 @@
     [(OptFlagExitEdgeList.Nil) unit]
     [(OptFlagExitEdgeList.Dense _ _)
       (match (opt-flag-exit-edge-ref edges 0)
-        [(OptFlagExitEdge.Edge _ target)
+        [(OptFlagExitEdge.Edge _ target _ _ _)
           (begin
             (opt-flag-exit-mark-path! body index pred-map gate target seen alt)
             (opt-flag-exit-mark-clears!
@@ -29097,7 +30008,7 @@
     [(OptFlagExitEdgeList.Nil) true]
     [(OptFlagExitEdgeList.Dense _ _)
       (match (opt-flag-exit-edge-ref edges 0)
-        [(OptFlagExitEdge.Edge pred target)
+        [(OptFlagExitEdge.Edge pred target _ _ _)
           (and
             (opt-loop-body-label-member? body index pred)
             (opt-flag-exit-block-edges-to? blocks pred target)
@@ -29550,11 +30461,15 @@
 (define (opt-flag-exit-mint-count [mints : OptFlagExitMints] [acc : i64]) : i64
   (+ acc (opt-flag-exit-mints-count mints)))
 
+;; `pred` is where the redirected run starts, and so what a value has to
+;; dominate to be nameable on it; `arrival` is the label X sees that edge
+;; under, which is the copied gate when the redirect goes through one.
 (define (opt-flag-exit-extend-phi-fixes
   [ctx : OptFlagExitFixCtx]
   [pos : (__tl_dyn-array i64)]
   [labels : (__tl_dyn-array i64)]
   [pred : i64]
+  [arrival : i64]
   [at : i64]
   [fixes : OptFlagExitPhiFixes]) : OptFlagExitMaybePhiFixes
   (match fixes
@@ -29581,6 +30496,7 @@
               pos
               labels
               pred
+              arrival
               at
               (opt-flag-exit-phi-fixes-tail fixes))
               [(OptFlagExitMaybePhiFixes.No) (OptFlagExitMaybePhiFixes.No)]
@@ -29589,7 +30505,7 @@
                   (opt-flag-exit-phi-fixes-cons
                     fix.dst
                     fix.value
-                    (opt-flag-exit-edge-values-cons pred resolved fix.values)
+                    (opt-flag-exit-edge-values-cons arrival resolved fix.values)
                     tail))])]))]))
 
 (define (opt-flag-exit-extend-mints
@@ -29597,6 +30513,7 @@
   [pos : (__tl_dyn-array i64)]
   [labels : (__tl_dyn-array i64)]
   [pred : i64]
+  [arrival : i64]
   [at : i64]
   [mints : OptFlagExitMints]) : OptFlagExitMaybeMints
   (match mints
@@ -29622,6 +30539,7 @@
               pos
               labels
               pred
+              arrival
               at
               (opt-flag-exit-mints-tail mints))
               [(OptFlagExitMaybeMints.No) (OptFlagExitMaybeMints.No)]
@@ -29631,7 +30549,10 @@
                     mint.source
                     mint.fresh
                     mint.ty
-                    (opt-flag-exit-edge-values-cons pred resolved mint.values)
+                    (opt-flag-exit-edge-values-cons
+                      arrival
+                      resolved
+                      mint.values)
                     tail))])]))]))
 
 (define (opt-flag-exit-fix-edges
@@ -29645,8 +30566,12 @@
     [(OptFlagExitEdgeList.Nil) (OptFlagExitFixes.Some fixes mints)]
     [(OptFlagExitEdgeList.Dense _ _)
       (match (opt-flag-exit-edge-ref edges 0)
-        [(OptFlagExitEdge.Edge pred target)
+        [(OptFlagExitEdge.Edge pred target _ fresh _)
           (let
+            [arrival : i64
+              (if (< fresh 0)
+                pred
+                fresh)]
             [_reset : unit (opt-cfg-fill-i64! pos ctx.count (- 0 1))]
             [len : i64
               (opt-flag-exit-path-fill!
@@ -29668,6 +30593,7 @@
                 pos
                 labels
                 pred
+                arrival
                 (- len 1)
                 fixes)
                 [(OptFlagExitMaybePhiFixes.No) (OptFlagExitFixes.No)]
@@ -29677,6 +30603,7 @@
                     pos
                     labels
                     pred
+                    arrival
                     (- len 1)
                     mints)
                     [(OptFlagExitMaybeMints.No) (OptFlagExitFixes.No)]
@@ -30299,15 +31226,56 @@
     (not (opt-label-contains folded exit-label))))
 
 ;; --- rewrite ------------------------------------------------------------------
-(define (opt-flag-exit-drop-inputs
+;; What became of one predecessor's edge into a phi block the walk cleared the
+;; flag on.
+(defenum OptFlagExitEdgeKind
+  (None)
+  (Drop)
+  (Gated i64))
+
+(define (opt-flag-exit-edge-kind
+  [edges : OptFlagExitEdgeList]
+  [pred : i64]
+  [target : i64]) : OptFlagExitEdgeKind
+  (match edges
+    [(OptFlagExitEdgeList.Nil) (OptFlagExitEdgeKind.None)]
+    [(OptFlagExitEdgeList.Dense _ _)
+      (match (opt-flag-exit-edge-ref edges 0)
+        [(OptFlagExitEdge.Edge found-pred found-target _ fresh _)
+          (if (and (= found-pred pred) (= found-target target))
+            (if (< fresh 0)
+              (OptFlagExitEdgeKind.Drop)
+              (OptFlagExitEdgeKind.Gated fresh))
+            (opt-flag-exit-edge-kind
+              (opt-flag-exit-edge-tail edges)
+              pred
+              target))])]))
+
+;; The clear target's phis. An outright redirect takes its predecessor's input
+;; away with the edge; a gated one keeps the input under the copied gate's
+;; name, because the run still arrives there on every iteration the compare
+;; finds the flag still at K.
+(define (opt-flag-exit-clear-inputs
   [inputs : ir.CompilerIrPhiInputList]
-  [preds : OptLabelSet]) : ir.CompilerIrPhiInputList
-  (match preds
-    [(OptLabelSet.Nil) inputs]
-    [(OptLabelSet.Dense _ _)
-      (opt-flag-exit-drop-inputs
-        (opt-thread-phi-inputs-drop inputs (opt-label-ref preds 0))
-        (opt-label-tail preds))]))
+  [target : i64]
+  [clears : OptFlagExitEdgeList]) : ir.CompilerIrPhiInputList
+  (match (ir.compiler-ir-phi-input-list-force-cons inputs)
+    [(ir.CompilerIrPhiInputList.Nil) (ir.CompilerIrPhiInputList.Nil)]
+    [(ir.CompilerIrPhiInputList.Array seq)
+      (opt-flag-exit-clear-inputs
+        (ir.compiler-ir-phi-input-seq-to-list seq)
+        target
+        clears)]
+    [(ir.CompilerIrPhiInputList.Cons value label rest)
+      (let
+        [tail : ir.CompilerIrPhiInputList
+          (opt-flag-exit-clear-inputs (__tl-box-place rest) target clears)]
+        (match (opt-flag-exit-edge-kind clears label target)
+          [(OptFlagExitEdgeKind.None)
+            (ir.compiler-ir-phi-input-cons value label tail)]
+          [(OptFlagExitEdgeKind.Drop) tail]
+          [(OptFlagExitEdgeKind.Gated fresh)
+            (ir.compiler-ir-phi-input-cons value fresh tail)]))]))
 
 (define (opt-flag-exit-literalize-inputs
   [inputs : ir.CompilerIrPhiInputList]
@@ -30323,10 +31291,13 @@
         (if (and
           (opt-label-contains plan.exits label)
           (opt-flag-exit-closure-var? value plan.closure))
-          (opt-flag-exit-bool-value
-            (if (= label plan.exit-label)
-              (not plan.keep)
-              plan.keep))
+          (if (= label plan.exit-label)
+            ;; C7 refused the loop unless every redirected edge agrees on one
+            ;; value here, so the fallback is unreachable.
+            (match plan.cleared
+              [(ir.CompilerIrMaybeValue.Some cleared) cleared]
+              [(ir.CompilerIrMaybeValue.No) value])
+            plan.seed)
           value)
         label
         (opt-flag-exit-literalize-inputs (__tl-box-place rest) plan))]))
@@ -30339,18 +31310,18 @@
 ;; cost its `mov $K` and a loop-live register.
 (define (opt-flag-exit-const-inputs
   [inputs : ir.CompilerIrPhiInputList]
-  [keep : bool]) : ir.CompilerIrPhiInputList
+  [seed : ir.CompilerIrValue]) : ir.CompilerIrPhiInputList
   (match (ir.compiler-ir-phi-input-list-force-cons inputs)
     [(ir.CompilerIrPhiInputList.Nil) (ir.CompilerIrPhiInputList.Nil)]
     [(ir.CompilerIrPhiInputList.Array seq)
       (opt-flag-exit-const-inputs
         (ir.compiler-ir-phi-input-seq-to-list seq)
-        keep)]
+        seed)]
     [(ir.CompilerIrPhiInputList.Cons _ label rest)
       (ir.compiler-ir-phi-input-cons
-        (opt-flag-exit-bool-value keep)
+        seed
         label
-        (opt-flag-exit-const-inputs (__tl-box-place rest) keep))]))
+        (opt-flag-exit-const-inputs (__tl-box-place rest) seed))]))
 
 (define (opt-flag-exit-closure-dst? [dst : i64] [plan : OptFlagExitPlan]) : bool
   (let
@@ -30360,36 +31331,31 @@
       (< dst (array-length closure))
       (= (array-ref closure dst) 1))))
 
-;; Is `pred -> target` one of the redirected clear edges? A clear predecessor
-;; ending in a Branch keeps its other arm, so only the named edge moves.
-(define (opt-flag-exit-clear-edge?
-  [edges : OptFlagExitEdgeList]
+;; Where `pred -> target` goes now: unchanged when it is not a clear edge, X
+;; itself when the redirect was decided here, and the copied gate when it was
+;; not. A clear predecessor ending in a Branch keeps its other arm, so only the
+;; named edge moves.
+(define (opt-flag-exit-retarget-to
+  [plan : OptFlagExitPlan]
   [pred : i64]
-  [target : i64]) : bool
-  (match edges
-    [(OptFlagExitEdgeList.Nil) false]
-    [(OptFlagExitEdgeList.Dense _ _)
-      (or
-        (match (opt-flag-exit-edge-ref edges 0)
-          [(OptFlagExitEdge.Edge found-pred found-target)
-            (and (= found-pred pred) (= found-target target))])
-        (opt-flag-exit-clear-edge? (opt-flag-exit-edge-tail edges) pred target))]))
+  [target : i64]) : i64
+  (match (opt-flag-exit-edge-kind plan.clears pred target)
+    [(OptFlagExitEdgeKind.None) target]
+    [(OptFlagExitEdgeKind.Drop) plan.exit-label]
+    [(OptFlagExitEdgeKind.Gated fresh) fresh]))
 
 (define (opt-flag-exit-retarget
   [instr : ir.CompilerIrInstr]
   [label : i64]
   [plan : OptFlagExitPlan]) : ir.CompilerIrInstr
   (match instr
-    [(ir.CompilerIrInstr.Jump _) (ir.CompilerIrInstr.Jump plan.exit-label)]
+    [(ir.CompilerIrInstr.Jump target)
+      (ir.CompilerIrInstr.Jump (opt-flag-exit-retarget-to plan label target))]
     [(ir.CompilerIrInstr.Branch condition true-label false-label)
       (ir.CompilerIrInstr.Branch
         condition
-        (if (opt-flag-exit-clear-edge? plan.clears label true-label)
-          plan.exit-label
-          true-label)
-        (if (opt-flag-exit-clear-edge? plan.clears label false-label)
-          plan.exit-label
-          false-label))]
+        (opt-flag-exit-retarget-to plan label true-label)
+        (opt-flag-exit-retarget-to plan label false-label))]
     [_ instr]))
 
 ;; The redirected predecessors' inputs, added to a phi in X once its G input has
@@ -30603,21 +31569,21 @@
   (match instr
     [(ir.CompilerIrInstr.Phi dst inputs ty)
       (cond
-        ;; a flag definition: pinned to the continuing constant
+        ;; a flag definition: pinned to the continuing value
         [(opt-flag-exit-closure-dst? dst plan)
           (ir.CompilerIrInstr.Phi
             dst
             (opt-flag-exit-const-inputs
               (if clear-target?
-                (opt-flag-exit-drop-inputs inputs plan.clear-preds)
+                (opt-flag-exit-clear-inputs inputs label plan.clears)
                 inputs)
-              plan.keep)
+              plan.seed)
             ty)]
-        ;; a phi the redirected edge no longer reaches
+        ;; a phi the redirected edge reaches differently, or no longer at all
         [clear-target?
           (ir.CompilerIrInstr.Phi
             dst
-            (opt-flag-exit-drop-inputs inputs plan.clear-preds)
+            (opt-flag-exit-clear-inputs inputs label plan.clears)
             ty)]
         [in-body? instr]
         ;; a phi in X: the edge the gate's path arrived on is replaced by the
@@ -30642,7 +31608,7 @@
             ty)])]
     [(ir.CompilerIrInstr.Mov dst _ ty)
       (if (opt-flag-exit-closure-dst? dst plan)
-        (ir.CompilerIrInstr.Mov dst (opt-flag-exit-bool-value plan.keep) ty)
+        (ir.CompilerIrInstr.Mov dst plan.seed ty)
         (if class1?
           (opt-copy-subst-instr plan.mint-env instr)
           instr))]
@@ -30714,6 +31680,54 @@
             (set! index (+ index 1)))))
       (ir.compiler-ir-instr-builder-to-seq builder))))
 
+;; The gate, copied to an assignment site the redirect could not decide here:
+;; the edge's own value against K, X on a mismatch, and the edge's original
+;; target when the flag is still K after all. It sits right after the
+;; predecessor whose edge it splits, so the block it was cut out of still falls
+;; into it.
+(define (opt-flag-exit-gate-block
+  [plan : OptFlagExitPlan]
+  [target : i64]
+  [value : ir.CompilerIrValue]
+  [fresh : i64]
+  [fresh-var : i64]) : ir.CompilerIrBlock
+  (ir.CompilerIrBlock.Block
+    fresh
+    (ir.compiler-ir-instr-seq2
+      (ir.CompilerIrInstr.BinOp
+        fresh-var
+        (ir.CompilerIrBinOp.Ne)
+        value
+        plan.seed
+        plan.flag-ty)
+      (ir.CompilerIrInstr.Branch
+        (ir.CompilerIrValue.Var fresh-var)
+        plan.exit-label
+        target))))
+
+(define (opt-flag-exit-gate-blocks
+  [plan : OptFlagExitPlan]
+  [edges : OptFlagExitEdgeList]
+  [pred : i64]
+  [rest : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
+  (match edges
+    [(OptFlagExitEdgeList.Nil) rest]
+    [(OptFlagExitEdgeList.Dense _ _)
+      (match (opt-flag-exit-edge-ref edges 0)
+        [(OptFlagExitEdge.Edge found-pred target value fresh fresh-var)
+          (let
+            [tail : ir.CompilerIrBlockList
+              (opt-flag-exit-gate-blocks
+                plan
+                (opt-flag-exit-edge-tail edges)
+                pred
+                rest)]
+            (if (or (not (= found-pred pred)) (< fresh 0))
+              tail
+              (ir.compiler-ir-block-cons
+                (opt-flag-exit-gate-block plan target value fresh fresh-var)
+                tail)))])]))
+
 (define (opt-flag-exit-rewrite-blocks
   [blocks : ir.CompilerIrBlockList]
   [body : OptLoopBody]
@@ -30747,7 +31761,17 @@
                       (opt-flag-exit-minted? plan)
                       (opt-flag-exit-xdom? plan.doms plan.exit-label label))
                     plan)))])
-          (opt-flag-exit-rewrite-blocks (__tl-box-place rest) body index plan)))]
+          (match block
+            [(ir.CompilerIrBlock.Block label _)
+              (opt-flag-exit-gate-blocks
+                plan
+                plan.clears
+                label
+                (opt-flag-exit-rewrite-blocks
+                  (__tl-box-place rest)
+                  body
+                  index
+                  plan))])))]
     [(ir.CompilerIrBlockList.Array seq)
       (opt-flag-exit-rewrite-blocks
         (ir.compiler-ir-block-seq-to-list seq)
@@ -30767,7 +31791,8 @@
   [gate-extra : i64]
   [exit-label : i64]
   [clears : OptFlagExitEdgeList]
-  [clear-preds : OptLabelSet]
+  [drop-preds : OptLabelSet]
+  [cleared : ir.CompilerIrMaybeValue]
   [clear-targets : OptLabelSet]
   [alt-labels : OptLabelSet]
   [exits : OptLabelSet]
@@ -30788,7 +31813,13 @@
         gate
         exit-label
         clears)
-      (opt-flag-exit-preds-survive? pred-map clear-preds clear-targets)
+      ;; A phi past X that reads the flag on X's edge folds to the value the
+      ;; redirected run left it at, so the redirected runs have to agree on
+      ;; one -- which a computed clear value never does.
+      (or
+        (opt-flag-exit-cleared-known? cleared)
+        (not (opt-label-contains folded exit-label)))
+      (opt-flag-exit-preds-survive? pred-map drop-preds clear-targets)
       (opt-flag-exit-marked-pure? blocks index seen)
       (opt-flag-exit-gate-clean-at? blocks gate gate-extra)
       (opt-flag-exit-exit-preds-ok? pred-map exit-label folded)
@@ -30859,7 +31890,9 @@
   [frame : i64]
   [def-label : (__tl_dyn-array i64)]
   [body : OptLoopBody]
-  [keep : bool]
+  [seed : ir.CompilerIrValue]
+  [cleared : ir.CompilerIrMaybeValue]
+  [flag-ty : ast.AstType]
   [closure : (__tl_dyn-array i64)]
   [clears : OptFlagExitEdgeList]
   [gate : i64]
@@ -30905,7 +31938,7 @@
           def-label
           mint
           0
-          frame
+          (+ frame (opt-flag-exit-gate-count clears 0))
           (OptFlagExitMints.Nil))
           [(OptFlagExitMaybeMints.No) (OptFlagExitMaybePlan.No)]
           [(OptFlagExitMaybeMints.Some mint-seeds)
@@ -30932,7 +31965,9 @@
                         gate
                         continue-label
                         exit-label
-                        keep
+                        seed
+                        cleared
+                        flag-ty
                         closure
                         clear-preds
                         clear-targets
@@ -30954,9 +31989,10 @@
   [def-label : (__tl_dyn-array i64)]
   [body : OptLoopBody]
   [latch : i64]
-  [keep : bool]
+  [seed : ir.CompilerIrValue]
+  [flag-ty : ast.AstType]
   [closure : (__tl_dyn-array i64)]
-  [clears : OptFlagExitEdgeList]
+  [raw-clears : OptFlagExitEdgeList]
   [gate : i64]
   [gate-extra : i64]
   [arm-pred : i64]
@@ -30967,6 +32003,19 @@
     [index : OptCfgIndex context.index]
     [pred-map : OptPredMap context.pred-map]
     [count : i64 (opt-cfg-index-block-count index)]
+    ;; Give the edges the redirect cannot decide here their copied gates first:
+    ;; the block one of them lands on is the label X knows that edge by.
+    [clears : OptFlagExitEdgeList
+      (opt-flag-exit-assign-gates
+        blocks
+        seed
+        frame
+        raw-clears
+        (OptFlagExitEdgeList.Nil))]
+    [cleared : ir.CompilerIrMaybeValue
+      (opt-flag-exit-cleared-value seed clears (ir.CompilerIrMaybeValue.No))]
+    [drop-preds : OptLabelSet
+      (opt-flag-exit-dropped-preds seed clears (OptLabelSet.Nil))]
     [seen : (__tl_dyn-array i64) (array.make-array i64 count)]
     [alt : (__tl_dyn-array i64) (array.make-array i64 count)]
     [mint : (__tl_dyn-array i64) (array.make-array i64 frame)]
@@ -31019,7 +32068,8 @@
         gate-extra
         exit-label
         clears
-        clear-preds
+        drop-preds
+        cleared
         clear-targets
         alt-labels
         exits
@@ -31045,7 +32095,9 @@
         frame
         def-label
         body
-        keep
+        seed
+        cleared
+        flag-ty
         closure
         clears
         gate
@@ -31071,12 +32123,14 @@
   [def-label : (__tl_dyn-array i64)]
   [loop : OptNaturalLoop]
   [flag : i64]
-  [keep : bool]
-  [seed : i64]) : OptFlagExitMaybePlan
+  [seed : ir.CompilerIrValue]
+  [flag-ty : ast.AstType]
+  [latch-var : i64]) : OptFlagExitMaybePlan
   (let
     [index : OptCfgIndex context.index]
     [body : OptLoopBody (opt-natural-loop-body-info loop)]
     [closure : (__tl_dyn-array i64) (array.make-array i64 frame)]
+    [web : (__tl_dyn-array i64) (array.make-array i64 frame)]
     [bad : (__tl_dyn-array i64) (array.make-array i64 1)]
     [clears : OptFlagExitEdgeList
       (opt-flag-exit-walk
@@ -31085,21 +32139,31 @@
         index
         def-label
         flag
-        (not keep)
         seed
+        latch-var
         closure
+        web
         bad
         (OptFlagExitEdgeList.Nil))]
-    (if (or (= (array-ref bad 0) 1) (opt-flag-exit-edges-empty? clears))
+    (if (or
+      (= (array-ref bad 0) 1)
+      (opt-flag-exit-edges-empty? clears)
+      ;; a copied gate has to be an instruction, so a flag of a type `ne`
+      ;; cannot be built for converts only when every edge is decided here
+      (and
+        (opt-flag-exit-clears-need-gate? seed clears)
+        (not (opt-flag-exit-comparable-type? flag-ty))))
       (OptFlagExitMaybePlan.No)
       (begin
         (set! (array-ref closure flag) 1)
         (match (opt-flag-exit-find-gate
+          blocks
+          def-label
           (opt-loop-body-blocks body)
           body
           index
           closure
-          (not keep)
+          seed
           uses)
           [(OptFlagExitGate.No) (OptFlagExitMaybePlan.No)]
           [(OptFlagExitGate.Some gate continue-label exit-label gate-extra)
@@ -31112,7 +32176,8 @@
               def-label
               body
               (opt-natural-loop-latch loop)
-              keep
+              seed
+              flag-ty
               closure
               clears
               gate
@@ -31133,7 +32198,8 @@
   [def-label : (__tl_dyn-array i64)]
   [body : OptLoopBody]
   [latch : i64]
-  [keep : bool]
+  [seed : ir.CompilerIrValue]
+  [flag-ty : ast.AstType]
   [closure : (__tl_dyn-array i64)]
   [clears : OptFlagExitEdgeList]
   [gate : i64]
@@ -31148,7 +32214,8 @@
     def-label
     body
     latch
-    keep
+    seed
+    flag-ty
     closure
     clears
     gate
@@ -31180,7 +32247,8 @@
               def-label
               body
               latch
-              keep
+              seed
+              flag-ty
               closure
               clears
               gate
@@ -31191,15 +32259,38 @@
               exit-label))])]))
 
 ;; --- per-loop scan ------------------------------------------------------------
-;; C1: exactly one input from outside the loop carrying a bool literal, exactly
-;; one from inside it carrying a var.
+;; C1: exactly one input from outside the loop carrying a LOOP-INVARIANT value
+;; K, exactly one from inside it carrying a var. K is a literal, or a name the
+;; loop cannot have redefined -- a parameter, or anything defined outside it,
+;; which is where a `mov @sentinel` global read lands. That the phi's own
+;; incoming edge carries it is what makes K's definition dominate the whole
+;; loop, so the redirect may name K at every site it copies the gate to.
+(define (opt-flag-exit-invariant-seed?
+  [value : ir.CompilerIrValue]
+  [body : OptLoopBody]
+  [index : OptCfgIndex]
+  [def-label : (__tl_dyn-array i64)]) : bool
+  (match value
+    [(ir.CompilerIrValue.Var var)
+      (and
+        (>= var 0)
+        (< var (array-length def-label))
+        (let
+          [label : i64 (array-ref def-label var)]
+          (or (< label 0) (not (opt-loop-body-label-member? body index label)))))]
+    ;; a memory read evaluated on the edge itself, not a value the loop carries
+    [(ir.CompilerIrValue.Global _) false]
+    [(ir.CompilerIrValue.RuntimeGlobal _) false]
+    [_ true]))
+
 (define (opt-flag-exit-seed-scan
   [inputs : ir.CompilerIrPhiInputList]
   [body : OptLoopBody]
   [index : OptCfgIndex]
+  [def-label : (__tl_dyn-array i64)]
   [outside : i64]
   [inside : i64]
-  [keep : bool]
+  [keep : ir.CompilerIrValue]
   [seed : i64]) : OptFlagExitSeed
   (match (ir.compiler-ir-phi-input-list-force-cons inputs)
     [(ir.CompilerIrPhiInputList.Nil)
@@ -31211,6 +32302,7 @@
         (ir.compiler-ir-phi-input-seq-to-list seq)
         body
         index
+        def-label
         outside
         inside
         keep
@@ -31223,22 +32315,23 @@
               (__tl-box-place rest)
               body
               index
+              def-label
               outside
               (+ inside 1)
               keep
               var)]
           [_ (OptFlagExitSeed.No)])
-        (match value
-          [(ir.CompilerIrValue.Bool literal)
-            (opt-flag-exit-seed-scan
-              (__tl-box-place rest)
-              body
-              index
-              (+ outside 1)
-              inside
-              literal
-              seed)]
-          [_ (OptFlagExitSeed.No)]))]))
+        (if (opt-flag-exit-invariant-seed? value body index def-label)
+          (opt-flag-exit-seed-scan
+            (__tl-box-place rest)
+            body
+            index
+            def-label
+            (+ outside 1)
+            inside
+            value
+            seed)
+          (OptFlagExitSeed.No)))]))
 
 (define (opt-flag-exit-scan-header
   [blocks : ir.CompilerIrBlockList]
@@ -31255,28 +32348,40 @@
     (let
       [here : OptFlagExitMaybePlan
         (match (ir.compiler-ir-instr-seq-ref instrs pos)
-          [(ir.CompilerIrInstr.Phi dst inputs _)
+          [(ir.CompilerIrInstr.Phi dst inputs ty)
             (match (opt-flag-exit-seed-scan
               inputs
               (opt-natural-loop-body-info loop)
               context.index
+              def-label
               0
               0
-              false
+              (ir.CompilerIrValue.Unit)
               (- 0 1))
               [(OptFlagExitSeed.No) (OptFlagExitMaybePlan.No)]
               [(OptFlagExitSeed.Some keep seed)
-                (opt-flag-exit-plan-candidate
-                  blocks
-                  context
-                  frame
-                  uses
-                  raw-uses
-                  def-label
-                  loop
-                  dst
-                  keep
-                  seed)])]
+                ;; the same one-lookup filter the prescan uses, so the counter
+                ;; phi beside the flag does not pay for the walk's arrays
+                (if (not
+                  (opt-flag-exit-latch-web-shape?
+                    blocks
+                    (opt-natural-loop-body-info loop)
+                    context.index
+                    def-label
+                    seed))
+                  (OptFlagExitMaybePlan.No)
+                  (opt-flag-exit-plan-candidate
+                    blocks
+                    context
+                    frame
+                    uses
+                    raw-uses
+                    def-label
+                    loop
+                    dst
+                    keep
+                    ty
+                    seed))])]
           [_ (OptFlagExitMaybePlan.No)])]
       (match here
         [(OptFlagExitMaybePlan.Some plan) (OptFlagExitMaybePlan.Some plan)]
@@ -31345,7 +32450,11 @@
               (opt-natural-loop-body-info loop)
               context.index
               plan)
-            (+ frame (opt-flag-exit-mint-count plan.mints 0))
+            (+
+              frame
+              (opt-flag-exit-mint-count
+                plan.mints
+                (opt-flag-exit-gate-count plan.clears 0)))
             true)]
         [(OptFlagExitMaybePlan.No)
           (opt-flag-exit-convert-loops
@@ -31358,6 +32467,106 @@
             (__tl-box-place rest))])]))
 
 ;; --- driver -------------------------------------------------------------------
+;; --- the second prescan, once the loops are known -----------------------------
+;;
+;; C1's edge shape is the shape of every COUNTER phi as well, so the walk above
+;; cannot tell them apart and a function full of counted loops would pay the
+;; two effective-use sweeps and a frame-sized array per header phi to be told
+;; so. C2's first step separates them for the price of one definition lookup:
+;; the value the latch carries has to be a phi or a copy INSIDE the loop, which
+;; is what a flag's web is made of and what a counter's `i + 1` is not. That is
+;; a necessary condition of the walk below (which latches `bad` on anything
+;; else), so nothing convertible is lost by asking it here first.
+(define (opt-flag-exit-latch-web-shape?
+  [blocks : ir.CompilerIrBlockList]
+  [body : OptLoopBody]
+  [index : OptCfgIndex]
+  [def-label : (__tl_dyn-array i64)]
+  [var : i64]) : bool
+  (and
+    (>= var 0)
+    (< var (array-length def-label))
+    (let
+      [label : i64 (array-ref def-label var)]
+      (and
+        (>= label 0)
+        (opt-loop-body-label-member? body index label)
+        (match (opt-flag-exit-instr-at blocks label var)
+          [(OptFlagExitMaybeInstr.No) false]
+          [(OptFlagExitMaybeInstr.Some instr)
+            (match instr
+              [(ir.CompilerIrInstr.Phi _ _ _) true]
+              [(ir.CompilerIrInstr.Mov _ src _)
+                (match src
+                  [(ir.CompilerIrValue.Var _) true]
+                  [_ false])]
+              [_ false])])))))
+
+(define (opt-flag-exit-header-candidate?
+  [blocks : ir.CompilerIrBlockList]
+  [context : OptCfgContext]
+  [def-label : (__tl_dyn-array i64)]
+  [body : OptLoopBody]
+  [instrs : ir.CompilerIrInstrSeq]
+  [pos : i64]) : bool
+  (if (>= pos (ir.compiler-ir-instr-seq-count instrs))
+    false
+    (or
+      (match (ir.compiler-ir-instr-seq-ref instrs pos)
+        [(ir.CompilerIrInstr.Phi _ inputs _)
+          (match (opt-flag-exit-seed-scan
+            inputs
+            body
+            context.index
+            def-label
+            0
+            0
+            (ir.CompilerIrValue.Unit)
+            (- 0 1))
+            [(OptFlagExitSeed.No) false]
+            [(OptFlagExitSeed.Some _ seed)
+              (opt-flag-exit-latch-web-shape?
+                blocks
+                body
+                context.index
+                def-label
+                seed)])]
+        [_ false])
+      (opt-flag-exit-header-candidate?
+        blocks
+        context
+        def-label
+        body
+        instrs
+        (+ pos 1)))))
+
+(define (opt-flag-exit-loops-have-candidate?
+  [blocks : ir.CompilerIrBlockList]
+  [context : OptCfgContext]
+  [def-label : (__tl_dyn-array i64)]
+  [loops : OptNaturalLoopList]) : bool
+  (match loops
+    [(OptNaturalLoopList.Nil) false]
+    [(OptNaturalLoopList.Cons loop rest)
+      (or
+        (match (opt-cfg-find-block blocks (opt-natural-loop-header loop))
+          [(OptMaybeBlock.No) false]
+          [(OptMaybeBlock.Some block)
+            (match block
+              [(ir.CompilerIrBlock.Block _ instrs)
+                (opt-flag-exit-header-candidate?
+                  blocks
+                  context
+                  def-label
+                  (opt-natural-loop-body-info loop)
+                  instrs
+                  0)])])
+        (opt-flag-exit-loops-have-candidate?
+          blocks
+          context
+          def-label
+          (__tl-box-place rest)))]))
+
 (define (opt-flag-exit-blocks-once-with-context
   [blocks : ir.CompilerIrBlockList]
   [context : OptCfgContext]
@@ -31372,21 +32581,29 @@
           (OptFlagExitPassResult.Result blocks frame false)]
         [(OptNaturalLoopList.Cons _ _)
           (let
-            [uses : (__tl_dyn-array i64)
-              (opt-gep-offset-effective-uses blocks frame)]
-            [raw-uses : (__tl_dyn-array i64)
-              (opt-collect-blocks-uses-array frame blocks)]
             [def-label : (__tl_dyn-array i64) (array.make-array i64 frame)]
             [_fill : unit (opt-cfg-fill-i64! def-label frame (- 0 1))]
             [_defs : unit (opt-flag-exit-def-labels! blocks def-label)]
-            (opt-flag-exit-convert-loops
-              blocks
-              context
-              frame
-              uses
-              raw-uses
-              def-label
-              loops))]))))
+            (if (not
+              (opt-flag-exit-loops-have-candidate?
+                blocks
+                context
+                def-label
+                loops))
+              (OptFlagExitPassResult.Result blocks frame false)
+              (let
+                [uses : (__tl_dyn-array i64)
+                  (opt-gep-offset-effective-uses blocks frame)]
+                [raw-uses : (__tl_dyn-array i64)
+                  (opt-collect-blocks-uses-array frame blocks)]
+                (opt-flag-exit-convert-loops
+                  blocks
+                  context
+                  frame
+                  uses
+                  raw-uses
+                  def-label
+                  loops))))]))))
 
 ;; One conversion per round, then a fresh context: the rewrite changes the CFG,
 ;; so the loop set and the dominance facts have to be rebuilt before the next
@@ -32774,6 +33991,642 @@
             simplified
             (opt-cfg-context-build simplified)
             true)))]))
+
+;; --- T1-2b part C: merge a block into its unique predecessor ----------------
+;;
+;; LLVM's `MergeBlockIntoPredecessor` (Local.cpp), which SimplifyCFG runs after
+;; every edge it folds. Nothing here did it: `opt-cfg-straighten` only DELETES a
+;; block that is nothing but a `jump`, and the rest of the CFG cleanup never
+;; moves an instruction between blocks. So a run that arrives split --
+;;
+;;   A: ... %47 = load %46 ; %38 = cast %47 ; jump M
+;;   M: %5 = mov %38 ; jump C1                    (M's phi lost its other edges)
+;;   C1: %7 = ge %5, 48 ; branch C2, F
+;;
+;; -- stays split, and the backend's M6-C cluster (compiler_backend.tl) only
+;; folds `load ; cast ; compare ; branch` when the four are CONTIGUOUS in one
+;; block. Concatenating A, M and C1 is what puts them back in one block, and it
+;; is what makes phi_cmp_fold's chain rewrite above pay: that rewrite moves no
+;; compare, so without this the merge is left as a `mov` in a block of its own.
+;;
+;; The rails, and why each one is needed:
+;;   - B has exactly one predecessor P, and P ends in `Jump B`. P therefore has
+;;     no other successor, so no edge is lost and no value B defines can reach a
+;;     block by a path that skips P.
+;;   - B is forward of P in reverse postorder. A block with one predecessor
+;;     cannot be a loop header (a header carries a back edge from its own body,
+;;     and a self loop makes the block its own second predecessor), and the RPO
+;;     test states that directly rather than relying on it.
+;;   - B does not branch back to P: merging would turn the pair into a
+;;     self-looping block whose phis reference their own block.
+;;   - Neither block is the entry. B cannot be (it has a predecessor), and
+;;     leaving P out keeps the block that owns the frame exactly where it is.
+;;   - B holds no phi with more than one input. With one predecessor every phi
+;;     of B has one input; it becomes a `mov` of the value that edge carried,
+;;     which is defined before P's terminator and so still dominates its new
+;;     position. Anything else is malformed and refused.
+;;   - B ENDS the run: its terminator is not an unconditional `Jump`. A block
+;;     that ends in one is either a trampoline, which is `opt-cfg-straighten`'s
+;;     (and which it deliberately keeps when it already falls through, because
+;;     every preheader `opt-loop-preheaders` emits and the backend's
+;;     loop-hoisted constant materializations depend on the block in front of a
+;;     loop header surviving), or an interior link of a longer run. Interior
+;;     links are not lost: the fixpoint below absorbs a run from its tail
+;;     backwards, one link per round, so `A -> M -> C1` still collapses whole --
+;;     `C1` into `M` first, then the `M` that now ends in `C1`'s branch into
+;;     `A`. Absorbing them head-first instead let the merge run away with blocks
+;;     that gained nothing, and a longer block is a longer live range: it cost
+;;     `intern_table`'s `it_hash_words` a spilled bounds-group limit (+0.87%).
+;;   - and the rail that keeps this from being a general block-layout rewrite:
+;;     B's FIRST instruction must read the value P's last instruction defines.
+;;     That is precisely the def/use pair the merge exists to make adjacent, and
+;;     it is the only thing the backend's contiguous-run folds can act on.
+;;     Merging on structure alone measured badly and for a structural reason:
+;;     the register allocator sees longer blocks as longer live ranges, so a
+;;     merge that gains no adjacency still costs spills. `lex_source`'s
+;;     `ls_scan_symbol_end` lost its whole `btq` bit-test fold to exactly that
+;;     (+3.7% on the row, a 224-byte frame where it had none), `cfg_domloops`'
+;;     `cfg_dfs_postorder` gained a spill/reload pair in its hottest store, and
+;;     `hashmap_get` flipped an inline verdict (the checked inline tier prices a
+;;     candidate by OPTIMIZING it, so every change here moves that measurement)
+;;     and lost 15.8%. With the adjacency rail those rows are flat and the rows
+;;     the merge was written for keep their gains.
+;; Phi keys: B's label disappears, so every phi input keyed on B in B's
+;; successors is re-keyed to P. Only the LAST block of a merged run has
+;; surviving successors -- every earlier one ends in the `Jump` that is dropped
+;; -- so no successor can end up with two inputs from the same run.
+(define (opt-cfg-merge-phis-foldable?
+  [instrs : ir.CompilerIrInstrSeq]
+  [slot : i64]
+  [pred-label : i64]) : bool
+  (if (>= slot (ir.compiler-ir-instr-seq-count instrs))
+    true
+    (match (ir.compiler-ir-instr-seq-ref instrs slot)
+      [(ir.CompilerIrInstr.Phi _ inputs _)
+        (and
+          (match (opt-bool-branch-only-phi-input inputs)
+            [(OptBoolBranchOnlyInput.Some _ label) (= label pred-label)]
+            [(OptBoolBranchOnlyInput.No) false])
+          (opt-cfg-merge-phis-foldable? instrs (+ slot 1) pred-label))]
+      [_ true])))
+
+(define (opt-cfg-merge-targets-label?
+  [instrs : ir.CompilerIrInstrSeq]
+  [label : i64]) : bool
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    (if (= count 0)
+      false
+      (opt-cfg-straighten-instr-contains?
+        (ir.compiler-ir-instr-seq-ref instrs (- count 1))
+        label))))
+
+;; The instruction kinds this merge exists to move: a compare, because the
+;; backend folds `... ; compare ; branch` only as one contiguous run, and the
+;; mov (or the one-input phi the `cfg` cleanup has not folded to one yet) that a
+;; threaded sentinel merge leaves holding that compare's operand. Absorbing on
+;; adjacency alone still let the merge take blocks whose head is a load, a gep
+;; or an arithmetic op -- runs the backend has no fold for -- and paid for them
+;; in live-range length: `intern_table`'s `it_hash_words` grew its inner byte
+;; loop past the size at which loop versioning admits, and the bounds-group
+;; limit that versioning then materialized cost eleven instructions and a spill
+;; on every entry of a loop that runs a handful of iterations (+0.87%).
+(define (opt-cfg-merge-absorbable-head? [instrs : ir.CompilerIrInstrSeq]) : bool
+  (if (= (ir.compiler-ir-instr-seq-count instrs) 0)
+    false
+    (match (ir.compiler-ir-instr-seq-ref instrs 0)
+      [(ir.CompilerIrInstr.Phi _ _ _) true]
+      [(ir.CompilerIrInstr.Mov _ _ _) true]
+      [(ir.CompilerIrInstr.BinOp _ op _ _ _) (opt-bool-branch-compare-op? op)]
+      [_ false])))
+
+;; The value the merge would make adjacent to its reader: what the instruction
+;; just before the block's terminator defines.
+(define (opt-cfg-merge-tail-def [instrs : ir.CompilerIrInstrSeq]) : i64
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    (if (< count 2)
+      (- 0 1)
+      (match (opt-instr-def-var
+        (ir.compiler-ir-instr-seq-ref instrs (- count 2)))
+        [(option_i64.Some dst) dst]
+        [(option_i64.None) (- 0 1)]))))
+
+;; Does the block's first instruction read `var`? `scratch` is a use census the
+;; round owns; only the one slot this asks about is zeroed and read, so the rest
+;; of it is free to hold whatever an earlier question left there.
+(define (opt-cfg-merge-reads-def?
+  [scratch : (__tl_dyn-array i64)]
+  [instrs : ir.CompilerIrInstrSeq]
+  [var : i64]) : bool
+  (if (or
+    (< var 0)
+    (>= var (array-length scratch))
+    (= (ir.compiler-ir-instr-seq-count instrs) 0))
+    false
+    (begin
+      (set! (array-ref scratch var) 0)
+      (opt-collect-instr-uses-array
+        scratch
+        (ir.compiler-ir-instr-seq-ref instrs 0))
+      (> (array-ref scratch var) 0))))
+
+(define (opt-cfg-merge-mergeable?
+  [index : OptCfgIndex]
+  [scratch : (__tl_dyn-array i64)]
+  [entry-label : i64]
+  [pred-label : i64]
+  [pred-instrs : ir.CompilerIrInstrSeq]
+  [label : i64]) : bool
+  (if (or
+    (= label pred-label)
+    (= label entry-label)
+    (= pred-label entry-label)
+    (= label (ir.compiler-ir-label-none)))
+    false
+    (let
+      [preds : OptLabelSet (opt-cfg-index-predecessors index label)]
+      [pred-rpo : i64 (opt-phi-cmp-fold-label-rpo index pred-label)]
+      [rpo : i64 (opt-phi-cmp-fold-label-rpo index label)]
+      (if (or
+        (not (= (opt-thread-jump-target pred-instrs) label))
+        (not (= (opt-label-count preds) 1))
+        (not (= (opt-label-ref preds 0) pred-label))
+        (< pred-rpo 0)
+        (<= rpo pred-rpo))
+        false
+        (match (opt-cfg-index-find-block index label)
+          [(OptMaybeBlock.No) false]
+          [(OptMaybeBlock.Some block)
+            (match block
+              [(ir.CompilerIrBlock.Block _ instrs)
+                (and
+                  (=
+                    (opt-thread-jump-target instrs)
+                    (ir.compiler-ir-label-none))
+                  (opt-cfg-merge-absorbable-head? instrs)
+                  (not (opt-cfg-merge-targets-label? instrs pred-label))
+                  (opt-cfg-merge-reads-def?
+                    scratch
+                    instrs
+                    (opt-cfg-merge-tail-def pred-instrs))
+                  (opt-cfg-merge-phis-foldable? instrs 0 pred-label))])])))))
+
+;; The block `label` absorbs, or `label-none`.
+(define (opt-cfg-merge-target
+  [index : OptCfgIndex]
+  [scratch : (__tl_dyn-array i64)]
+  [entry-label : i64]
+  [label : i64]
+  [instrs : ir.CompilerIrInstrSeq]) : i64
+  (let
+    [target : i64 (opt-thread-jump-target instrs)]
+    (if (opt-cfg-merge-mergeable? index scratch entry-label label instrs target)
+      target
+      (ir.compiler-ir-label-none))))
+
+;; Is `label` itself absorbed by its own predecessor? Only a block that is not
+;; heads a merged run.
+(define (opt-cfg-merge-absorbed?
+  [index : OptCfgIndex]
+  [scratch : (__tl_dyn-array i64)]
+  [entry-label : i64]
+  [label : i64]) : bool
+  (let
+    [preds : OptLabelSet (opt-cfg-index-predecessors index label)]
+    (if (not (= (opt-label-count preds) 1))
+      false
+      (let
+        [pred-label : i64 (opt-label-ref preds 0)]
+        (match (opt-cfg-index-find-block index pred-label)
+          [(OptMaybeBlock.No) false]
+          [(OptMaybeBlock.Some block)
+            (match block
+              [(ir.CompilerIrBlock.Block _ pred-instrs)
+                (opt-cfg-merge-mergeable?
+                  index
+                  scratch
+                  entry-label
+                  pred-label
+                  pred-instrs
+                  label)])])))))
+
+(define (opt-cfg-merge-block-candidate?
+  [index : OptCfgIndex]
+  [scratch : (__tl_dyn-array i64)]
+  [entry-label : i64]
+  [block : ir.CompilerIrBlock]) : bool
+  (match block
+    [(ir.CompilerIrBlock.Block label instrs)
+      (not
+        (=
+          (opt-cfg-merge-target index scratch entry-label label instrs)
+          (ir.compiler-ir-label-none)))]))
+
+;; One linear scan over the blocks the `cfg` stage just produced, reading the
+;; predecessor rows of the context index it already built. A function with
+;; nothing to merge -- the common case -- pays that and nothing else.
+(define (opt-cfg-merge-blocks-have-candidate-from?
+  [index : OptCfgIndex]
+  [scratch : (__tl_dyn-array i64)]
+  [entry-label : i64]
+  [blocks : ir.CompilerIrBlockList]) : bool
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) false]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (if (opt-cfg-merge-block-candidate? index scratch entry-label block)
+        true
+        (opt-cfg-merge-blocks-have-candidate-from?
+          index
+          scratch
+          entry-label
+          (__tl-box-place rest)))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (let
+        [slot : i64 0]
+        [count : i64 (ir.compiler-ir-block-seq-count seq)]
+        (begin
+          (while (< slot count)
+            (if (opt-cfg-merge-block-candidate?
+              index
+              scratch
+              entry-label
+              (ir.compiler-ir-block-seq-ref seq slot))
+              (return true)
+              (set! slot (+ slot 1))))
+          false))]))
+
+(define (opt-cfg-merge-blocks-have-candidate?
+  [index : OptCfgIndex]
+  [entry-label : i64]
+  [frame : i64]
+  [blocks : ir.CompilerIrBlockList]) : bool
+  (opt-cfg-merge-blocks-have-candidate-from?
+    index
+    (opt-used-array-new frame)
+    entry-label
+    blocks))
+
+(define (opt-cfg-merge-phi-to-mov [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstr
+  (match instr
+    [(ir.CompilerIrInstr.Phi dst inputs ty)
+      (match (opt-bool-branch-only-phi-input inputs)
+        [(OptBoolBranchOnlyInput.Some value _)
+          (ir.CompilerIrInstr.Mov dst value ty)]
+        [(OptBoolBranchOnlyInput.No) instr])]
+    [_ instr]))
+
+;; The head of a run keeps its phis (its own predecessors are unchanged); every
+;; absorbed block's phis become movs.
+(define (opt-cfg-merge-append-range!
+  [builder : (&mut builder ir.CompilerIrInstrBuilder)]
+  [instrs : ir.CompilerIrInstrSeq]
+  [end : i64]
+  [head? : bool]) : unit
+  (if head?
+    (ir.compiler-ir-instr-builder-append-seq-range! builder instrs 0 end)
+    (let
+      [pos : i64 0]
+      (while (< pos end)
+        (begin
+          (ir.compiler-ir-instr-builder-push!
+            builder
+            (opt-cfg-merge-phi-to-mov (ir.compiler-ir-instr-seq-ref instrs pos)))
+          (set! pos (+ pos 1)))))))
+
+(define (opt-cfg-merge-append-chain!
+  [index : OptCfgIndex]
+  [scratch : (__tl_dyn-array i64)]
+  [entry-label : i64]
+  [builder : (&mut builder ir.CompilerIrInstrBuilder)]
+  [label : i64]
+  [instrs : ir.CompilerIrInstrSeq]
+  [head? : bool]
+  [fuel : i64]) : unit
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [target : i64
+      (if (<= fuel 0)
+        (ir.compiler-ir-label-none)
+        (opt-cfg-merge-target index scratch entry-label label instrs))]
+    (if (= target (ir.compiler-ir-label-none))
+      (opt-cfg-merge-append-range! builder instrs count head?)
+      (begin
+        (opt-cfg-merge-append-range! builder instrs (- count 1) head?)
+        (match (opt-cfg-index-find-block index target)
+          [(OptMaybeBlock.No) unit]
+          [(OptMaybeBlock.Some block)
+            (match block
+              [(ir.CompilerIrBlock.Block _ next-instrs)
+                (opt-cfg-merge-append-chain!
+                  index
+                  scratch
+                  entry-label
+                  builder
+                  target
+                  next-instrs
+                  false
+                  (- fuel 1))])])))))
+
+(define (opt-cfg-merge-chain-instrs
+  [index : OptCfgIndex]
+  [scratch : (__tl_dyn-array i64)]
+  [entry-label : i64]
+  [label : i64]
+  [instrs : ir.CompilerIrInstrSeq]
+  [fuel : i64]) : ir.CompilerIrInstrSeq
+  (let
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity
+        (ir.compiler-ir-instr-seq-count instrs))]
+    (begin
+      (opt-cfg-merge-append-chain!
+        index
+        scratch
+        entry-label
+        (&mut builder)
+        label
+        instrs
+        true
+        fuel)
+      (ir.compiler-ir-instr-builder-to-seq builder))))
+
+(define (opt-cfg-merge-redirect-label
+  [index : OptCfgIndex]
+  [redirect : (__tl_dyn-array i64)]
+  [label : i64]) : i64
+  (match (opt-cfg-index-id index label)
+    [(option_i64.None) label]
+    [(option_i64.Some id)
+      (let
+        [mapped : i64 (array-ref redirect id)]
+        (if (= mapped (ir.compiler-ir-label-none))
+          label
+          mapped))]))
+
+(define (opt-cfg-merge-rekey-inputs
+  [index : OptCfgIndex]
+  [redirect : (__tl_dyn-array i64)]
+  [inputs : ir.CompilerIrPhiInputList]) : ir.CompilerIrPhiInputList
+  (match (ir.compiler-ir-phi-input-list-force-cons inputs)
+    [(ir.CompilerIrPhiInputList.Nil) (ir.CompilerIrPhiInputList.Nil)]
+    [(ir.CompilerIrPhiInputList.Array seq)
+      (opt-cfg-merge-rekey-inputs
+        index
+        redirect
+        (ir.compiler-ir-phi-input-seq-to-list seq))]
+    [(ir.CompilerIrPhiInputList.Cons value label rest)
+      (ir.compiler-ir-phi-input-cons
+        value
+        (opt-cfg-merge-redirect-label index redirect label)
+        (opt-cfg-merge-rekey-inputs index redirect (__tl-box-place rest)))]))
+
+(define (opt-cfg-merge-rekey-block!
+  [index : OptCfgIndex]
+  [redirect : (__tl_dyn-array i64)]
+  [instrs : ir.CompilerIrInstrSeq]
+  [slot : i64]) : unit
+  (if (>= slot (ir.compiler-ir-instr-seq-count instrs))
+    unit
+    (match (ir.compiler-ir-instr-seq-ref instrs slot)
+      [(ir.CompilerIrInstr.Phi dst inputs ty)
+        (begin
+          (ir.compiler-ir-instr-seq-set!
+            instrs
+            slot
+            (ir.CompilerIrInstr.Phi
+              dst
+              (opt-cfg-merge-rekey-inputs index redirect inputs)
+              ty))
+          (opt-cfg-merge-rekey-block! index redirect instrs (+ slot 1)))]
+      [_ unit])))
+
+;; Walk the run that leaves `root-label` and record every block it absorbs.
+(define (opt-cfg-merge-mark-chain!
+  [index : OptCfgIndex]
+  [scratch : (__tl_dyn-array i64)]
+  [entry-label : i64]
+  [redirect : (__tl_dyn-array i64)]
+  [root-label : i64]
+  [label : i64]
+  [instrs : ir.CompilerIrInstrSeq]
+  [fuel : i64]) : bool
+  (let
+    [target : i64
+      (if (<= fuel 0)
+        (ir.compiler-ir-label-none)
+        (opt-cfg-merge-target index scratch entry-label label instrs))]
+    (if (= target (ir.compiler-ir-label-none))
+      false
+      (match (opt-cfg-index-id index target)
+        [(option_i64.None) false]
+        [(option_i64.Some id)
+          (begin
+            (set! (array-ref redirect id) root-label)
+            (match (opt-cfg-index-find-block index target)
+              [(OptMaybeBlock.No) unit]
+              [(OptMaybeBlock.Some block)
+                (match block
+                  [(ir.CompilerIrBlock.Block _ next-instrs)
+                    (begin
+                      (opt-cfg-merge-mark-chain!
+                        index
+                        scratch
+                        entry-label
+                        redirect
+                        root-label
+                        target
+                        next-instrs
+                        (- fuel 1))
+                      unit)])])
+            true)]))))
+
+(define (opt-cfg-merge-fill-none!
+  [redirect : (__tl_dyn-array i64)]
+  [count : i64]) : unit
+  (let
+    [id : i64 0]
+    (while (< id count)
+      (begin
+        (set! (array-ref redirect id) (ir.compiler-ir-label-none))
+        (set! id (+ id 1))))))
+
+(define (opt-cfg-merge-mark-all!
+  [index : OptCfgIndex]
+  [scratch : (__tl_dyn-array i64)]
+  [entry-label : i64]
+  [redirect : (__tl_dyn-array i64)]) : bool
+  (let
+    [count : i64 (opt-cfg-index-block-count index)]
+    [id : i64 0]
+    [changed : bool false]
+    (begin
+      (while (< id count)
+        (begin
+          (let
+            [label : i64 (opt-cfg-index-label index id)]
+            (when
+              (not (opt-cfg-merge-absorbed? index scratch entry-label label))
+              (match (opt-cfg-index-block index id)
+                [(OptMaybeBlock.No) unit]
+                [(OptMaybeBlock.Some block)
+                  (match block
+                    [(ir.CompilerIrBlock.Block _ instrs)
+                      (when
+                        (opt-cfg-merge-mark-chain!
+                          index
+                          scratch
+                          entry-label
+                          redirect
+                          label
+                          label
+                          instrs
+                          count)
+                        (set! changed true))])])))
+          (set! id (+ id 1))))
+      changed)))
+
+(define (opt-cfg-merge-rekey-all!
+  [index : OptCfgIndex]
+  [redirect : (__tl_dyn-array i64)]) : unit
+  (let
+    [count : i64 (opt-cfg-index-block-count index)]
+    [id : i64 0]
+    (while (< id count)
+      (begin
+        (when
+          (= (array-ref redirect id) (ir.compiler-ir-label-none))
+          (match (opt-cfg-index-block index id)
+            [(OptMaybeBlock.No) unit]
+            [(OptMaybeBlock.Some block)
+              (match block
+                [(ir.CompilerIrBlock.Block _ instrs)
+                  (opt-cfg-merge-rekey-block! index redirect instrs 0)])]))
+        (set! id (+ id 1))))))
+
+;; Block ids are assigned in list order, so emitting the surviving heads by
+;; ascending id keeps the entry first and the layout the backend's fallthrough
+;; rules read unchanged.
+(define (opt-cfg-merge-build-blocks
+  [index : OptCfgIndex]
+  [scratch : (__tl_dyn-array i64)]
+  [entry-label : i64]
+  [redirect : (__tl_dyn-array i64)]) : ir.CompilerIrBlockList
+  (let
+    [count : i64 (opt-cfg-index-block-count index)]
+    [builder : ir.CompilerIrBlockBuilder
+      (ir.compiler-ir-block-builder-with-capacity count)]
+    [id : i64 0]
+    (begin
+      (while (< id count)
+        (begin
+          (when
+            (= (array-ref redirect id) (ir.compiler-ir-label-none))
+            (match (opt-cfg-index-block index id)
+              [(OptMaybeBlock.No) unit]
+              [(OptMaybeBlock.Some block)
+                (match block
+                  [(ir.CompilerIrBlock.Block label instrs)
+                    (ir.compiler-ir-block-builder-push!
+                      (&mut builder)
+                      (ir.CompilerIrBlock.Block
+                        label
+                        (opt-cfg-merge-chain-instrs
+                          index
+                          scratch
+                          entry-label
+                          label
+                          instrs
+                          count)))])]))
+          (set! id (+ id 1))))
+      (ir.compiler-ir-block-builder-to-list builder))))
+
+;; The structural half of the optimizer verifier, which is all this rewrite can
+;; break: labels stay unique, successors stay known, and every phi input keys a
+;; real predecessor. Dominance is unchanged by construction -- concatenating B
+;; onto its only predecessor moves no instruction across an edge.
+(define (opt-cfg-merge-verified?
+  [blocks : ir.CompilerIrBlockList]
+  [context : OptCfgContext]) : bool
+  (and
+    (opt-verify-ok? (opt-verify-structure context))
+    (opt-verify-ok?
+      (opt-verify-phi-predecessors-blocks context.pred-map blocks))))
+
+;; The rewrite mutates phi input lists in place, so it works on a deep clone and
+;; hands back the untouched input list when it merges nothing.
+(define (opt-cfg-merge-blocks-round
+  [blocks : ir.CompilerIrBlockList]
+  [frame : i64]) : OptBlockListPassResult
+  (let
+    [work : ir.CompilerIrBlockList (opt-bool-branch-clone-blocks blocks)]
+    [index : OptCfgIndex (opt-cfg-index-build work)]
+    [entry-label : i64 (opt-cfg-entry-label work)]
+    [count : i64 (opt-cfg-index-block-count index)]
+    [scratch : (__tl_dyn-array i64) (opt-used-array-new frame)]
+    (if (or (not (opt-cfg-index-labels-unique? index)) (< count 1))
+      (OptBlockListPassResult.Result blocks false)
+      (let
+        [redirect : (__tl_dyn-array i64) (array.make-array i64 count)]
+        (begin
+          (opt-cfg-merge-fill-none! redirect count)
+          (if (not (opt-cfg-merge-mark-all! index scratch entry-label redirect))
+            (OptBlockListPassResult.Result blocks false)
+            (begin
+              (opt-cfg-merge-rekey-all! index redirect)
+              (let
+                [merged : ir.CompilerIrBlockList
+                  (opt-cfg-merge-build-blocks
+                    index
+                    scratch
+                    entry-label
+                    redirect)]
+                [merged-context : OptCfgContext (opt-cfg-context-build merged)]
+                (if (opt-cfg-merge-verified? merged merged-context)
+                  (OptBlockListPassResult.Result
+                    (opt-cfg-simplify-blocks merged)
+                    true)
+                  (OptBlockListPassResult.Result blocks false))))))))))
+
+;; A run is absorbed whole in one round, so the fixpoint only re-runs for the
+;; opportunities the trailing simplify opens (a phi folded to a mov, a block the
+;; merge orphaned). Four rounds is far past what the corpus needs.
+(define (opt-cfg-merge-blocks-fuel) : i64
+  6)
+
+(define (opt-cfg-merge-blocks
+  [blocks : ir.CompilerIrBlockList]
+  [frame : i64]
+  [remaining : i64]) : OptBlockListPassResult
+  (if (<= remaining 0)
+    (OptBlockListPassResult.Result blocks false)
+    (match (opt-cfg-merge-blocks-round blocks frame)
+      [(OptBlockListPassResult.Result next changed)
+        (if (not changed)
+          (OptBlockListPassResult.Result blocks false)
+          (match (opt-cfg-merge-blocks next frame (- remaining 1))
+            [(OptBlockListPassResult.Result final _)
+              (OptBlockListPassResult.Result final true)]))])))
+
+(define (opt-cfg-merge-blocks-with-context-result
+  [frame : i64]
+  [input : OptBlockCtxResult]) : OptBlockCtxResult
+  (match input
+    [(OptBlockCtxResult.Result blocks context context-valid)
+      (if (or
+        (not context-valid)
+        (not
+          (opt-cfg-merge-blocks-have-candidate?
+            context.index
+            context.entry-label
+            frame
+            blocks)))
+        input
+        (match (opt-cfg-merge-blocks blocks frame (opt-cfg-merge-blocks-fuel))
+          [(OptBlockListPassResult.Result next changed)
+            (if (not changed)
+              input
+              (OptBlockCtxResult.Result next (opt-cfg-context-build next) true))]))]))
 
 ;; A short-circuit boolean lowered as `(if c1 c2 false)` has this late SSA
 ;; shape after inlining and scalar cleanup:
@@ -35143,6 +36996,669 @@
                             var-value
                             var-instrs))])]))]))))))
 
+;; --- T1-2b: jump-separated merges and compare chains ------------------------
+;;
+;; The three-instruction rail above matches a merge that IS the compare's block.
+;; Lowering leaves two shapes that carry the same sentinel but miss it:
+;;
+;;   (i)  JUMP-SEPARATED. The merge holds nothing but the phi and falls through
+;;        into the block that compares it (`cfg_domloops`' scan-ints:
+;;        `inl.while_header.27.0.cont = [phi %42; jump next]`,
+;;        `next = [ge %42, 48; branch ...]`).
+;;   (ii) A COMPARE CHAIN. `(cfg-digit? b)` is `(and (>= b 48) (<= b 57))`, which
+;;        reads the joined byte TWICE, from two single-predecessor blocks:
+;;        `C1 = [ge %p, 48; branch C2, F]`, `C2 = [le %p, 57; branch T, F]`.
+;;        The phi's use count is 2, so the single-use rail refuses outright.
+;;
+;; Both are the same fact: a literal input decides not one compare but the whole
+;; run of them, so its edge can be threaded past every block in the run to the
+;; target its last verdict picks. That is LLVM's JumpThreading across multiple
+;; blocks (JumpThreading.cpp's ThreadEdge, driven by the same
+;; "condition known on the edge" fact SimplifyCFG's
+;; foldCondBranchOnValueKnownInPredecessor uses at depth one).
+;;
+;; The chain C1..Ck is discovered structurally, ahead of any literal: Ci+1 is the
+;; one successor of Ci that compares %p against a literal AND has Ci as its only
+;; predecessor. Requiring `use-count(%p) = k` then proves the run is ALL of %p's
+;; readers, which is what makes threading past it sound:
+;;   - every Ci defines exactly its own compare result, whose only reader is its
+;;     own branch, so nothing defined inside the run is live at any exit;
+;;   - the merge defines only %p, and %p is read by the k compares alone;
+;;   - therefore a value live on the edge Ci -> exit is defined in a block that
+;;     strictly dominates the merge, and a strict dominator of a block dominates
+;;     every predecessor of that block -- so it dominates the threaded edge's
+;;     origin too, and the successor-phi repair `opt-thread-apply-edge!` performs
+;;     (copy the input keyed on Ci onto the origin's label) stays in SSA.
+;; The RPO rail is the merge's, unchanged: every predecessor edge runs forward,
+;; and each chain link runs forward from the previous one, so no back edge is
+;; ever threaded and no loop header is ever the merge.
+;;
+;; Unlike the single-compare case this rewrite MOVES NOTHING: the compares stay
+;; where they are and the merge is left holding its one variable input. Part C's
+;; block merge below is what then makes `[load; cast; compare; branch]`
+;; contiguous again, which is what the backend's M6-C cluster folds.
+(defenum OptPhiCmpFoldLink
+  (No)
+  (Some ir.CompilerIrBinOp bool ir.CompilerIrValue ast.AstType i64 i64))
+
+;; The chain block whose branch selected the exit, and the exit itself. The
+;; first is what the successor-phi repair reads its forwarded value from.
+(defenum OptPhiCmpFoldExit
+  (No)
+  (Some i64 i64))
+
+;; One chain link, read out of `instrs` at `slot`: `%c = op %p, K` (or `K, %p`)
+;; immediately followed by `branch %c, T, F`, with nothing after it and the
+;; compare read by that branch alone.
+(define (opt-phi-cmp-fold-link
+  [type-segment-bases : i64]
+  [uses : (__tl_dyn-array i64)]
+  [phi-var : i64]
+  [phi-ty : ast.AstType]
+  [instrs : ir.CompilerIrInstrSeq]
+  [slot : i64]) : OptPhiCmpFoldLink
+  (if (not (= (ir.compiler-ir-instr-seq-count instrs) (+ slot 2)))
+    (OptPhiCmpFoldLink.No)
+    (match (ir.compiler-ir-instr-seq-ref instrs slot)
+      [(ir.CompilerIrInstr.BinOp cmp-var op lhs rhs cmp-ty)
+        (match (ir.compiler-ir-instr-seq-ref instrs (+ slot 1))
+          [(ir.CompilerIrInstr.Branch
+              (ir.CompilerIrValue.Var cond-var)
+              true-label
+              false-label)
+            (let
+              [phi-left : bool (opt-phi-cmp-fold-value-is-var? lhs phi-var)]
+              [literal : ir.CompilerIrValue
+                (if phi-left
+                  rhs
+                  lhs)]
+              (if (or
+                (not (= cond-var cmp-var))
+                (not (opt-bool-branch-compare-op? op))
+                (not (= (opt-bool-branch-use-count uses cmp-var) 1))
+                (not (opt-type-eq type-segment-bases phi-ty cmp-ty))
+                (not (or phi-left (opt-phi-cmp-fold-value-is-var? rhs phi-var)))
+                (not (opt-const-value? literal cmp-ty)))
+                (OptPhiCmpFoldLink.No)
+                (OptPhiCmpFoldLink.Some
+                  op
+                  phi-left
+                  literal
+                  cmp-ty
+                  true-label
+                  false-label)))]
+          [_ (OptPhiCmpFoldLink.No)])]
+      [_ (OptPhiCmpFoldLink.No)])))
+
+;; Is `label` the next link of the run that leaves `from-label`? It must be a
+;; link block of its own, reached only from `from-label`, and forward of it in
+;; reverse postorder -- which is what keeps the walk finite and keeps a loop
+;; header out of the run.
+(define (opt-phi-cmp-fold-chain-block?
+  [type-segment-bases : i64]
+  [index : OptCfgIndex]
+  [uses : (__tl_dyn-array i64)]
+  [phi-var : i64]
+  [phi-ty : ast.AstType]
+  [from-label : i64]
+  [label : i64]) : bool
+  (if (or (= label from-label) (= label (ir.compiler-ir-label-none)))
+    false
+    (let
+      [preds : OptLabelSet (opt-cfg-index-predecessors index label)]
+      [from-rpo : i64 (opt-phi-cmp-fold-label-rpo index from-label)]
+      [rpo : i64 (opt-phi-cmp-fold-label-rpo index label)]
+      (if (or
+        (not (= (opt-label-count preds) 1))
+        (not (= (opt-label-ref preds 0) from-label))
+        (< from-rpo 0)
+        (<= rpo from-rpo))
+        false
+        (match (opt-cfg-index-find-block index label)
+          [(OptMaybeBlock.No) false]
+          [(OptMaybeBlock.Some block)
+            (match block
+              [(ir.CompilerIrBlock.Block _ instrs)
+                (match (opt-phi-cmp-fold-link
+                  type-segment-bases
+                  uses
+                  phi-var
+                  phi-ty
+                  instrs
+                  0)
+                  [(OptPhiCmpFoldLink.No) false]
+                  [(OptPhiCmpFoldLink.Some _ _ _ _ _ _) true])])])))))
+
+;; The successor that continues the run, or `label-none`. Two continuing
+;; successors would make the run a tree rather than a chain; reporting none
+;; leaves the other compares as readers of %p outside the run, which the reader
+;; count below then refuses.
+(define (opt-phi-cmp-fold-chain-next
+  [type-segment-bases : i64]
+  [index : OptCfgIndex]
+  [uses : (__tl_dyn-array i64)]
+  [phi-var : i64]
+  [phi-ty : ast.AstType]
+  [from-label : i64]
+  [true-label : i64]
+  [false-label : i64]) : i64
+  (let
+    [true-link? : bool
+      (opt-phi-cmp-fold-chain-block?
+        type-segment-bases
+        index
+        uses
+        phi-var
+        phi-ty
+        from-label
+        true-label)]
+    [false-link? : bool
+      (opt-phi-cmp-fold-chain-block?
+        type-segment-bases
+        index
+        uses
+        phi-var
+        phi-ty
+        from-label
+        false-label)]
+    (cond
+      [(and true-link? false-link?) (ir.compiler-ir-label-none)]
+      [true-link? true-label]
+      [false-link? false-label]
+      [else (ir.compiler-ir-label-none)])))
+
+;; Longer than this and the site is not a classifier chain; the corpus' longest
+;; is the two links of `(and (>= b 48) (<= b 57))`.
+(define (opt-phi-cmp-fold-chain-fuel) : i64
+  8)
+
+;; How many links the run holds, or 0 when the head is not a link at all (or the
+;; run is longer than the fuel allows).
+(define (opt-phi-cmp-fold-chain-length
+  [type-segment-bases : i64]
+  [index : OptCfgIndex]
+  [uses : (__tl_dyn-array i64)]
+  [phi-var : i64]
+  [phi-ty : ast.AstType]
+  [label : i64]
+  [slot : i64]
+  [instrs : ir.CompilerIrInstrSeq]
+  [fuel : i64]) : i64
+  (if (<= fuel 0)
+    0
+    (match (opt-phi-cmp-fold-link
+      type-segment-bases
+      uses
+      phi-var
+      phi-ty
+      instrs
+      slot)
+      [(OptPhiCmpFoldLink.No) 0]
+      [(OptPhiCmpFoldLink.Some _ _ _ _ true-label false-label)
+        (let
+          [next : i64
+            (opt-phi-cmp-fold-chain-next
+              type-segment-bases
+              index
+              uses
+              phi-var
+              phi-ty
+              label
+              true-label
+              false-label)]
+          (if (= next (ir.compiler-ir-label-none))
+            1
+            (match (opt-cfg-index-find-block index next)
+              [(OptMaybeBlock.No) 0]
+              [(OptMaybeBlock.Some block)
+                (match block
+                  [(ir.CompilerIrBlock.Block _ next-instrs)
+                    (let
+                      [rest : i64
+                        (opt-phi-cmp-fold-chain-length
+                          type-segment-bases
+                          index
+                          uses
+                          phi-var
+                          phi-ty
+                          next
+                          0
+                          next-instrs
+                          (- fuel 1))]
+                      (if (= rest 0)
+                        0
+                        (+ 1 rest)))])])))])))
+
+;; Run `input` through the chain: take the branch each verdict decides and keep
+;; going while that target is the next link. `No` when a verdict does not fold,
+;; which refuses the whole site -- a partially decided chain would leave the
+;; phi's literal input in place with nothing gained.
+(define (opt-phi-cmp-fold-chain-exit
+  [type-segment-bases : i64]
+  [index : OptCfgIndex]
+  [uses : (__tl_dyn-array i64)]
+  [phi-var : i64]
+  [phi-ty : ast.AstType]
+  [label : i64]
+  [slot : i64]
+  [instrs : ir.CompilerIrInstrSeq]
+  [input : ir.CompilerIrValue]
+  [fuel : i64]) : OptPhiCmpFoldExit
+  (if (<= fuel 0)
+    (OptPhiCmpFoldExit.No)
+    (match (opt-phi-cmp-fold-link
+      type-segment-bases
+      uses
+      phi-var
+      phi-ty
+      instrs
+      slot)
+      [(OptPhiCmpFoldLink.No) (OptPhiCmpFoldExit.No)]
+      [(OptPhiCmpFoldLink.Some
+          op
+          phi-left
+          literal
+          cmp-ty
+          true-label
+          false-label)
+        (match (opt-phi-cmp-fold-verdict
+          type-segment-bases
+          op
+          phi-left
+          literal
+          cmp-ty
+          input)
+          [(OptMaybeBool.No) (OptPhiCmpFoldExit.No)]
+          [(OptMaybeBool.Some known)
+            (let
+              [target : i64
+                (if known
+                  true-label
+                  false-label)]
+              [next : i64
+                (opt-phi-cmp-fold-chain-next
+                  type-segment-bases
+                  index
+                  uses
+                  phi-var
+                  phi-ty
+                  label
+                  true-label
+                  false-label)]
+              (if (not (= target next))
+                (OptPhiCmpFoldExit.Some label target)
+                (match (opt-cfg-index-find-block index next)
+                  [(OptMaybeBlock.No) (OptPhiCmpFoldExit.No)]
+                  [(OptMaybeBlock.Some block)
+                    (match block
+                      [(ir.CompilerIrBlock.Block _ next-instrs)
+                        (opt-phi-cmp-fold-chain-exit
+                          type-segment-bases
+                          index
+                          uses
+                          phi-var
+                          phi-ty
+                          next
+                          0
+                          next-instrs
+                          input
+                          (- fuel 1))])])))])])))
+
+;; Exactly one Var input, at least one literal input, and every literal input
+;; carried all the way to an exit by the chain.
+(define (opt-phi-cmp-fold-chain-classify
+  [type-segment-bases : i64]
+  [index : OptCfgIndex]
+  [uses : (__tl_dyn-array i64)]
+  [phi-var : i64]
+  [phi-ty : ast.AstType]
+  [head-label : i64]
+  [head-slot : i64]
+  [head-instrs : ir.CompilerIrInstrSeq]
+  [inputs : ir.CompilerIrPhiInputList]
+  [var-label : i64]
+  [var-value : ir.CompilerIrValue]
+  [var-count : i64]
+  [literal-count : i64]) : OptPhiCmpFoldInputs
+  (match (ir.compiler-ir-phi-input-list-force-cons inputs)
+    [(ir.CompilerIrPhiInputList.Nil)
+      (if (and (= var-count 1) (> literal-count 0))
+        (OptPhiCmpFoldInputs.Some var-label var-value literal-count)
+        (OptPhiCmpFoldInputs.No))]
+    [(ir.CompilerIrPhiInputList.Array seq)
+      (opt-phi-cmp-fold-chain-classify
+        type-segment-bases
+        index
+        uses
+        phi-var
+        phi-ty
+        head-label
+        head-slot
+        head-instrs
+        (ir.compiler-ir-phi-input-seq-to-list seq)
+        var-label
+        var-value
+        var-count
+        literal-count)]
+    [(ir.CompilerIrPhiInputList.Cons value label rest)
+      (match value
+        [(ir.CompilerIrValue.Var _)
+          (if (> var-count 0)
+            (OptPhiCmpFoldInputs.No)
+            (opt-phi-cmp-fold-chain-classify
+              type-segment-bases
+              index
+              uses
+              phi-var
+              phi-ty
+              head-label
+              head-slot
+              head-instrs
+              (__tl-box-place rest)
+              label
+              value
+              1
+              literal-count))]
+        [_
+          (match (opt-phi-cmp-fold-chain-exit
+            type-segment-bases
+            index
+            uses
+            phi-var
+            phi-ty
+            head-label
+            head-slot
+            head-instrs
+            value
+            (opt-phi-cmp-fold-chain-fuel))
+            [(OptPhiCmpFoldExit.No) (OptPhiCmpFoldInputs.No)]
+            [(OptPhiCmpFoldExit.Some _ _)
+              (opt-phi-cmp-fold-chain-classify
+                type-segment-bases
+                index
+                uses
+                phi-var
+                phi-ty
+                head-label
+                head-slot
+                head-instrs
+                (__tl-box-place rest)
+                var-label
+                var-value
+                var-count
+                (+ literal-count 1))])])]))
+
+;; Retarget every literal predecessor's jump onto the exit its value reaches.
+;; The phi input it leaves behind is dropped by the same helper (slot 0 of the
+;; merge is the phi), so the merge is left with its Var input alone. An edge the
+;; repair cannot serve -- a target phi with no input keyed on the deciding chain
+;; block -- keeps its input exactly as it stands, which is the T1-2 rule.
+(define (opt-phi-cmp-fold-chain-thread!
+  [type-segment-bases : i64]
+  [index : OptCfgIndex]
+  [uses : (__tl_dyn-array i64)]
+  [phi-var : i64]
+  [phi-ty : ast.AstType]
+  [merge-label : i64]
+  [merge-instrs : ir.CompilerIrInstrSeq]
+  [head-label : i64]
+  [head-slot : i64]
+  [head-instrs : ir.CompilerIrInstrSeq]
+  [inputs : ir.CompilerIrPhiInputList]
+  [changed : bool]) : bool
+  (match (ir.compiler-ir-phi-input-list-force-cons inputs)
+    [(ir.CompilerIrPhiInputList.Nil) changed]
+    [(ir.CompilerIrPhiInputList.Array seq)
+      (opt-phi-cmp-fold-chain-thread!
+        type-segment-bases
+        index
+        uses
+        phi-var
+        phi-ty
+        merge-label
+        merge-instrs
+        head-label
+        head-slot
+        head-instrs
+        (ir.compiler-ir-phi-input-seq-to-list seq)
+        changed)]
+    [(ir.CompilerIrPhiInputList.Cons value label rest)
+      (let
+        [next : bool
+          (match value
+            [(ir.CompilerIrValue.Var _) changed]
+            [_
+              (match (opt-phi-cmp-fold-chain-exit
+                type-segment-bases
+                index
+                uses
+                phi-var
+                phi-ty
+                head-label
+                head-slot
+                head-instrs
+                value
+                (opt-phi-cmp-fold-chain-fuel))
+                [(OptPhiCmpFoldExit.No) changed]
+                [(OptPhiCmpFoldExit.Some from-label exit-label)
+                  ;; The chain block `from-label` owns the edge into the exit
+                  ;; and carries no phi (chain rail), so it is the merge the
+                  ;; repair translates through with zero phis; the sentinel
+                  ;; block is the forwarding block whose phi loses `label`.
+                  (match (opt-cfg-index-find-block index from-label)
+                    [(OptMaybeBlock.No) changed]
+                    [(OptMaybeBlock.Some from-block)
+                      (match from-block
+                        [(ir.CompilerIrBlock.Block _ from-instrs)
+                          (if (opt-thread-apply-edge!
+                            index
+                            uses
+                            label
+                            merge-label
+                            from-label
+                            exit-label
+                            from-instrs
+                            0
+                            merge-instrs
+                            0)
+                            true
+                            changed)])])])])]
+        (opt-phi-cmp-fold-chain-thread!
+          type-segment-bases
+          index
+          uses
+          phi-var
+          phi-ty
+          merge-label
+          merge-instrs
+          head-label
+          head-slot
+          head-instrs
+          (__tl-box-place rest)
+          next))]))
+
+;; The chain form of the site. `head-label`/`head-slot` name C1: the merge's own
+;; tail when the compare shares the merge block, otherwise the block the merge
+;; jumps into. Everything the rewrite mutates it mutates in place (the edges'
+;; terminators, the merge phi's input list, the exits' phis), so the caller's
+;; block list is the answer.
+(define (opt-phi-cmp-fold-chain-try!
+  [type-segment-bases : i64]
+  [blocks : ir.CompilerIrBlockList]
+  [index : OptCfgIndex]
+  [uses : (__tl_dyn-array i64)]
+  [merge-label : i64]
+  [merge-instrs : ir.CompilerIrInstrSeq]
+  [phi-var : i64]
+  [inputs : ir.CompilerIrPhiInputList]
+  [phi-ty : ast.AstType]
+  [head-label : i64]
+  [head-slot : i64]
+  [head-instrs : ir.CompilerIrInstrSeq]) : OptPhiCmpFoldRewrite
+  (let
+    [links : i64
+      (opt-phi-cmp-fold-chain-length
+        type-segment-bases
+        index
+        uses
+        phi-var
+        phi-ty
+        head-label
+        head-slot
+        head-instrs
+        (opt-phi-cmp-fold-chain-fuel))]
+    [preds : OptLabelSet (opt-cfg-index-predecessors index merge-label)]
+    [merge-rpo : i64 (opt-phi-cmp-fold-label-rpo index merge-label)]
+    (if (or
+      (= links 0)
+      (not (= (opt-bool-branch-use-count uses phi-var) links))
+      (not (or (opt-int-or-char-type? phi-ty) (opt-bool-type? phi-ty)))
+      (< merge-rpo 0)
+      (not (opt-phi-cmp-fold-preds-forward? index preds merge-rpo)))
+      (OptPhiCmpFoldRewrite.No)
+      (match (opt-phi-cmp-fold-chain-classify
+        type-segment-bases
+        index
+        uses
+        phi-var
+        phi-ty
+        head-label
+        head-slot
+        head-instrs
+        inputs
+        (ir.compiler-ir-label-none)
+        (ir.CompilerIrValue.Unit)
+        0
+        0)
+        [(OptPhiCmpFoldInputs.No) (OptPhiCmpFoldRewrite.No)]
+        [(OptPhiCmpFoldInputs.Some var-label _ literal-count)
+          (if (not (= (+ literal-count 1) (opt-label-count preds)))
+            (OptPhiCmpFoldRewrite.No)
+            (match (opt-cfg-index-find-block index var-label)
+              [(OptMaybeBlock.No) (OptPhiCmpFoldRewrite.No)]
+              [(OptMaybeBlock.Some var-block)
+                (match var-block
+                  [(ir.CompilerIrBlock.Block _ var-instrs)
+                    (if (not
+                      (= (opt-thread-jump-target var-instrs) merge-label))
+                      (OptPhiCmpFoldRewrite.No)
+                      (if (opt-phi-cmp-fold-chain-thread!
+                        type-segment-bases
+                        index
+                        uses
+                        phi-var
+                        phi-ty
+                        merge-label
+                        merge-instrs
+                        head-label
+                        head-slot
+                        head-instrs
+                        inputs
+                        false)
+                        (OptPhiCmpFoldRewrite.Some blocks)
+                        (OptPhiCmpFoldRewrite.No)))])]))]))))
+
+;; The chain entry from a merge block that ends in a plain `jump`: C1 is the
+;; block it lands on, which must be a link block reached from the merge alone.
+(define (opt-phi-cmp-fold-chain-try-forward!
+  [type-segment-bases : i64]
+  [blocks : ir.CompilerIrBlockList]
+  [index : OptCfgIndex]
+  [uses : (__tl_dyn-array i64)]
+  [merge-label : i64]
+  [merge-instrs : ir.CompilerIrInstrSeq]
+  [phi-var : i64]
+  [inputs : ir.CompilerIrPhiInputList]
+  [phi-ty : ast.AstType]
+  [head-label : i64]) : OptPhiCmpFoldRewrite
+  (if (not
+    (opt-phi-cmp-fold-chain-block?
+      type-segment-bases
+      index
+      uses
+      phi-var
+      phi-ty
+      merge-label
+      head-label))
+    (OptPhiCmpFoldRewrite.No)
+    (match (opt-cfg-index-find-block index head-label)
+      [(OptMaybeBlock.No) (OptPhiCmpFoldRewrite.No)]
+      [(OptMaybeBlock.Some head-block)
+        (match head-block
+          [(ir.CompilerIrBlock.Block _ head-instrs)
+            (opt-phi-cmp-fold-chain-try!
+              type-segment-bases
+              blocks
+              index
+              uses
+              merge-label
+              merge-instrs
+              phi-var
+              inputs
+              phi-ty
+              head-label
+              0
+              head-instrs)])])))
+
+;; A merge that holds the compare itself. T1-2's rewrite keeps first refusal on
+;; the shape it owns -- it is the one that MOVES the compare down onto the
+;; variable edge -- and the chain matcher picks up what it declines, which is
+;; every site whose phi has a second reader further along the run.
+(define (opt-phi-cmp-fold-try-merge!
+  [type-segment-bases : i64]
+  [blocks : ir.CompilerIrBlockList]
+  [index : OptCfgIndex]
+  [uses : (__tl_dyn-array i64)]
+  [merge-label : i64]
+  [instrs : ir.CompilerIrInstrSeq]
+  [phi-var : i64]
+  [inputs : ir.CompilerIrPhiInputList]
+  [phi-ty : ast.AstType]) : OptPhiCmpFoldRewrite
+  (match (ir.compiler-ir-instr-seq-ref instrs 1)
+    [(ir.CompilerIrInstr.BinOp cmp-var op lhs rhs cmp-ty)
+      (match (ir.compiler-ir-instr-seq-ref instrs 2)
+        [(ir.CompilerIrInstr.Branch
+            (ir.CompilerIrValue.Var cond-var)
+            true-label
+            false-label)
+          (if (not (= cond-var cmp-var))
+            (OptPhiCmpFoldRewrite.No)
+            (match (opt-phi-cmp-fold-try-shape!
+              type-segment-bases
+              blocks
+              index
+              uses
+              merge-label
+              instrs
+              phi-var
+              inputs
+              phi-ty
+              cmp-var
+              op
+              lhs
+              rhs
+              cmp-ty
+              true-label
+              false-label)
+              [(OptPhiCmpFoldRewrite.Some next)
+                (OptPhiCmpFoldRewrite.Some next)]
+              [(OptPhiCmpFoldRewrite.No)
+                (opt-phi-cmp-fold-chain-try!
+                  type-segment-bases
+                  blocks
+                  index
+                  uses
+                  merge-label
+                  instrs
+                  phi-var
+                  inputs
+                  phi-ty
+                  merge-label
+                  1
+                  instrs)]))]
+        [_ (OptPhiCmpFoldRewrite.No)])]
+    [_ (OptPhiCmpFoldRewrite.No)]))
+
 (define (opt-phi-cmp-fold-try-block!
   [type-segment-bases : i64]
   [blocks : ir.CompilerIrBlockList]
@@ -35151,39 +37667,38 @@
   [block : ir.CompilerIrBlock]) : OptPhiCmpFoldRewrite
   (match block
     [(ir.CompilerIrBlock.Block merge-label instrs)
-      (if (not (= (ir.compiler-ir-instr-seq-count instrs) 3))
-        (OptPhiCmpFoldRewrite.No)
-        (match (ir.compiler-ir-instr-seq-ref instrs 0)
-          [(ir.CompilerIrInstr.Phi phi-var inputs phi-ty)
-            (match (ir.compiler-ir-instr-seq-ref instrs 1)
-              [(ir.CompilerIrInstr.BinOp cmp-var op lhs rhs cmp-ty)
-                (match (ir.compiler-ir-instr-seq-ref instrs 2)
-                  [(ir.CompilerIrInstr.Branch
-                      (ir.CompilerIrValue.Var cond-var)
-                      true-label
-                      false-label)
-                    (if (not (= cond-var cmp-var))
-                      (OptPhiCmpFoldRewrite.No)
-                      (opt-phi-cmp-fold-try-shape!
-                        type-segment-bases
-                        blocks
-                        index
-                        uses
-                        merge-label
-                        instrs
-                        phi-var
-                        inputs
-                        phi-ty
-                        cmp-var
-                        op
-                        lhs
-                        rhs
-                        cmp-ty
-                        true-label
-                        false-label))]
-                  [_ (OptPhiCmpFoldRewrite.No)])]
-              [_ (OptPhiCmpFoldRewrite.No)])]
-          [_ (OptPhiCmpFoldRewrite.No)]))]))
+      (let
+        [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+        (if (not (or (= count 2) (= count 3)))
+          (OptPhiCmpFoldRewrite.No)
+          (match (ir.compiler-ir-instr-seq-ref instrs 0)
+            [(ir.CompilerIrInstr.Phi phi-var inputs phi-ty)
+              (if (= count 3)
+                (opt-phi-cmp-fold-try-merge!
+                  type-segment-bases
+                  blocks
+                  index
+                  uses
+                  merge-label
+                  instrs
+                  phi-var
+                  inputs
+                  phi-ty)
+                (match (ir.compiler-ir-instr-seq-ref instrs 1)
+                  [(ir.CompilerIrInstr.Jump head-label)
+                    (opt-phi-cmp-fold-chain-try-forward!
+                      type-segment-bases
+                      blocks
+                      index
+                      uses
+                      merge-label
+                      instrs
+                      phi-var
+                      inputs
+                      phi-ty
+                      head-label)]
+                  [_ (OptPhiCmpFoldRewrite.No)]))]
+            [_ (OptPhiCmpFoldRewrite.No)])))]))
 
 (define (opt-phi-cmp-fold-first-list!
   [type-segment-bases : i64]
@@ -35270,33 +37785,72 @@
 ;; function the matcher then declines is only wasted work; rejecting one it
 ;; would have rewritten would be a miss, so this stays strictly weaker than the
 ;; matcher.
+(define (opt-phi-cmp-fold-merge-candidate?
+  [instrs : ir.CompilerIrInstrSeq]
+  [phi-var : i64]) : bool
+  (match (ir.compiler-ir-instr-seq-ref instrs 1)
+    [(ir.CompilerIrInstr.BinOp cmp-var op lhs rhs cmp-ty)
+      (and
+        (opt-bool-branch-compare-op? op)
+        (if (opt-phi-cmp-fold-value-is-var? lhs phi-var)
+          (opt-const-value? rhs cmp-ty)
+          (and
+            (opt-phi-cmp-fold-value-is-var? rhs phi-var)
+            (opt-const-value? lhs cmp-ty)))
+        (match (ir.compiler-ir-instr-seq-ref instrs 2)
+          [(ir.CompilerIrInstr.Branch (ir.CompilerIrValue.Var cond-var) _ _)
+            (= cond-var cmp-var)]
+          [_ false]))]
+    [_ false]))
+
+;; The jump-separated form is admitted on the phi alone -- whether the block it
+;; falls into compares the join is a question for the matcher, which owns the
+;; CFG index this scan deliberately does not build. Requiring BOTH a variable
+;; and a literal input keeps the scan off every ordinary merge: a sentinel join
+;; is exactly the phi that mixes the two.
+(define (opt-phi-cmp-fold-inputs-mixed?
+  [inputs : ir.CompilerIrPhiInputList]
+  [var? : bool]
+  [literal? : bool]) : bool
+  (if (and var? literal?)
+    true
+    (match (ir.compiler-ir-phi-input-list-force-cons inputs)
+      [(ir.CompilerIrPhiInputList.Nil) false]
+      [(ir.CompilerIrPhiInputList.Array seq)
+        (opt-phi-cmp-fold-inputs-mixed?
+          (ir.compiler-ir-phi-input-seq-to-list seq)
+          var?
+          literal?)]
+      [(ir.CompilerIrPhiInputList.Cons value _ rest)
+        (match value
+          [(ir.CompilerIrValue.Var _)
+            (opt-phi-cmp-fold-inputs-mixed? (__tl-box-place rest) true literal?)]
+          [_ (opt-phi-cmp-fold-inputs-mixed? (__tl-box-place rest) var? true)])])))
+
+(define (opt-phi-cmp-fold-forward-candidate?
+  [instrs : ir.CompilerIrInstrSeq]
+  [inputs : ir.CompilerIrPhiInputList]) : bool
+  (and
+    (match (ir.compiler-ir-instr-seq-ref instrs 1)
+      [(ir.CompilerIrInstr.Jump _) true]
+      [_ false])
+    (opt-phi-cmp-fold-inputs-mixed? inputs false false)))
+
 (define (opt-phi-cmp-fold-block-candidate? [block : ir.CompilerIrBlock]) : bool
   (match block
     [(ir.CompilerIrBlock.Block _ instrs)
-      (and
-        (= (ir.compiler-ir-instr-seq-count instrs) 3)
-        (match (ir.compiler-ir-instr-seq-ref instrs 0)
-          [(ir.CompilerIrInstr.Phi phi-var _ phi-ty)
-            (and
-              (or (opt-int-or-char-type? phi-ty) (opt-bool-type? phi-ty))
-              (match (ir.compiler-ir-instr-seq-ref instrs 1)
-                [(ir.CompilerIrInstr.BinOp cmp-var op lhs rhs cmp-ty)
-                  (and
-                    (opt-bool-branch-compare-op? op)
-                    (if (opt-phi-cmp-fold-value-is-var? lhs phi-var)
-                      (opt-const-value? rhs cmp-ty)
-                      (and
-                        (opt-phi-cmp-fold-value-is-var? rhs phi-var)
-                        (opt-const-value? lhs cmp-ty)))
-                    (match (ir.compiler-ir-instr-seq-ref instrs 2)
-                      [(ir.CompilerIrInstr.Branch
-                          (ir.CompilerIrValue.Var cond-var)
-                          _
-                          _)
-                        (= cond-var cmp-var)]
-                      [_ false]))]
-                [_ false]))]
-          [_ false]))]))
+      (let
+        [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+        (and
+          (or (= count 2) (= count 3))
+          (match (ir.compiler-ir-instr-seq-ref instrs 0)
+            [(ir.CompilerIrInstr.Phi phi-var inputs phi-ty)
+              (and
+                (or (opt-int-or-char-type? phi-ty) (opt-bool-type? phi-ty))
+                (if (= count 3)
+                  (opt-phi-cmp-fold-merge-candidate? instrs phi-var)
+                  (opt-phi-cmp-fold-forward-candidate? instrs inputs)))]
+            [_ false])))]))
 
 (define (opt-phi-cmp-fold-blocks-have-candidate?
   [blocks : ir.CompilerIrBlockList]) : bool
@@ -41657,6 +44211,9 @@
     [(ir.CompilerIrInstr.UnOp _ _ _ _) true]
     [(ir.CompilerIrInstr.CpuId _ _ _ _) true]
     [(ir.CompilerIrInstr.Xgetbv _ _) true]
+    [(ir.CompilerIrInstr.Splat _ _ _ _) true]
+    [(ir.CompilerIrInstr.VectorBinOp _) true]
+    [(ir.CompilerIrInstr.VectorCompare _) true]
     [_ false]))
 
 (define (opt-gvn-block-id [doms : OptDomInfo] [label : i64]) : i64
@@ -41684,6 +44241,28 @@
       (and
         (opt-gvn-stable-var? sources dst)
         (opt-gvn-value-stable? sources index))]
+    [(ir.CompilerIrInstr.Splat dst value _ _)
+      (and
+        (opt-gvn-stable-var? sources dst)
+        (opt-gvn-value-stable? sources value))]
+    [(ir.CompilerIrInstr.VectorBinOp payload-box)
+      (let
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [lhs (__tl-project-field (__tl-box-place payload-box) lhs)]
+        [rhs (__tl-project-field (__tl-box-place payload-box) rhs)]
+        (and
+          (opt-gvn-stable-var? sources dst)
+          (opt-gvn-value-stable? sources lhs)
+          (opt-gvn-value-stable? sources rhs)))]
+    [(ir.CompilerIrInstr.VectorCompare payload-box)
+      (let
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [lhs (__tl-project-field (__tl-box-place payload-box) lhs)]
+        [rhs (__tl-project-field (__tl-box-place payload-box) rhs)]
+        (and
+          (opt-gvn-stable-var? sources dst)
+          (opt-gvn-value-stable? sources lhs)
+          (opt-gvn-value-stable? sources rhs)))]
     [_ false]))
 
 (define (opt-gvn-bucket-capacity [count : i64]) : i64
@@ -41801,6 +44380,53 @@
           (OptGvnEntry.Entry (OptExprKey.XgetbvKey index) dst def-block-id)
           changes)
         changes)]
+    [(ir.CompilerIrInstr.Splat dst value lanes ty)
+      (if (opt-gvn-recordable-instr? instr sources)
+        (opt-gvn-table-push!
+          type-segment-bases
+          table
+          (OptGvnEntry.Entry
+            (OptExprKey.SplatKey value lanes ty)
+            dst
+            def-block-id)
+          changes)
+        changes)]
+    [(ir.CompilerIrInstr.VectorBinOp payload-box)
+      (let
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [op (__tl-project-field (__tl-box-place payload-box) op)]
+        [lhs (__tl-project-field (__tl-box-place payload-box) lhs)]
+        [rhs (__tl-project-field (__tl-box-place payload-box) rhs)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [ty (__tl-project-field (__tl-box-place payload-box) ty)]
+        (if (opt-gvn-recordable-instr? instr sources)
+          (opt-gvn-table-push!
+            type-segment-bases
+            table
+            (OptGvnEntry.Entry
+              (OptExprKey.VectorBinKey op lhs rhs lanes ty)
+              dst
+              def-block-id)
+            changes)
+          changes))]
+    [(ir.CompilerIrInstr.VectorCompare payload-box)
+      (let
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [op (__tl-project-field (__tl-box-place payload-box) op)]
+        [lhs (__tl-project-field (__tl-box-place payload-box) lhs)]
+        [rhs (__tl-project-field (__tl-box-place payload-box) rhs)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [ty (__tl-project-field (__tl-box-place payload-box) ty)]
+        (if (opt-gvn-recordable-instr? instr sources)
+          (opt-gvn-table-push!
+            type-segment-bases
+            table
+            (OptGvnEntry.Entry
+              (OptExprKey.VectorCompareKey op lhs rhs lanes ty)
+              dst
+              def-block-id)
+            changes)
+          changes))]
     [_ changes]))
 
 (define (opt-gvn-record-scope-instr-seq-from
@@ -41933,6 +44559,66 @@
                 (ast.AstType.I64)))
             (OptMaybeInstr.No)))
         (OptMaybeInstr.No))]
+    [(ir.CompilerIrInstr.Splat dst value lanes ty)
+      (if (opt-gvn-value-stable? sources value)
+        (let
+          [earlier : i64
+            (opt-gvn-lookup
+              type-segment-bases
+              table
+              (OptExprKey.SplatKey value lanes ty))]
+          (if (and (not (= earlier (- 0 1))) (not (= earlier dst)))
+            (OptMaybeInstr.Some
+              (ir.CompilerIrInstr.Mov dst (ir.CompilerIrValue.Var earlier) ty))
+            (OptMaybeInstr.No)))
+        (OptMaybeInstr.No))]
+    [(ir.CompilerIrInstr.VectorBinOp payload-box)
+      (let
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [op (__tl-project-field (__tl-box-place payload-box) op)]
+        [lhs (__tl-project-field (__tl-box-place payload-box) lhs)]
+        [rhs (__tl-project-field (__tl-box-place payload-box) rhs)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [ty (__tl-project-field (__tl-box-place payload-box) ty)]
+        (if (and
+          (opt-gvn-value-stable? sources lhs)
+          (opt-gvn-value-stable? sources rhs))
+          (let
+            [earlier : i64
+              (opt-gvn-lookup
+                type-segment-bases
+                table
+                (OptExprKey.VectorBinKey op lhs rhs lanes ty))]
+            (if (and (not (= earlier (- 0 1))) (not (= earlier dst)))
+              (OptMaybeInstr.Some
+                (ir.CompilerIrInstr.Mov dst (ir.CompilerIrValue.Var earlier) ty))
+              (OptMaybeInstr.No)))
+          (OptMaybeInstr.No)))]
+    [(ir.CompilerIrInstr.VectorCompare payload-box)
+      (let
+        [dst (__tl-project-field (__tl-box-place payload-box) dst)]
+        [op (__tl-project-field (__tl-box-place payload-box) op)]
+        [lhs (__tl-project-field (__tl-box-place payload-box) lhs)]
+        [rhs (__tl-project-field (__tl-box-place payload-box) rhs)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        [ty (__tl-project-field (__tl-box-place payload-box) ty)]
+        (if (and
+          (opt-gvn-value-stable? sources lhs)
+          (opt-gvn-value-stable? sources rhs))
+          (let
+            [earlier : i64
+              (opt-gvn-lookup
+                type-segment-bases
+                table
+                (OptExprKey.VectorCompareKey op lhs rhs lanes ty))]
+            (if (and (not (= earlier (- 0 1))) (not (= earlier dst)))
+              (OptMaybeInstr.Some
+                (ir.CompilerIrInstr.Mov
+                  dst
+                  (ir.CompilerIrValue.Var earlier)
+                  (ast.AstType.Bool)))
+              (OptMaybeInstr.No)))
+          (OptMaybeInstr.No)))]
     [_ (OptMaybeInstr.No)]))
 
 (define (opt-gvn-seq-rewrite-changed?
@@ -43000,6 +45686,15 @@
             (if (and (>= dst 0) (< dst (array-length defs)))
               (set! (array-ref defs dst) (OptBoolBranchDef.Some instr label))
               unit)]
+          ;; A `select` joins two bounds without a control-flow join -- the
+          ;; `min(len_a, len_b)` the ubound narrowing leaves in a loop header is
+          ;; one -- and the range rules below split it into its arms.
+          [(ir.CompilerIrInstr.Select payload-box)
+            (let
+              [dst : i64 (__tl-project-field (__tl-box-place payload-box) dst)]
+              (if (and (>= dst 0) (< dst (array-length defs)))
+                (set! (array-ref defs dst) (OptBoolBranchDef.Some instr label))
+                unit))]
           [_ unit])
         (opt-bounds-dom-phi-defs-fill-instrs! defs label instrs (+ index 1))))))
 
@@ -43472,200 +46167,1938 @@
               self
               latch-id))])]))
 
-;; One value reaching the counter phi, on the edge it arrives by. `self` (the
-;; loop-carried value unchanged on this path) and a nonnegative literal are
-;; nonnegative outright. `self + 1` needs the no-wrap bound at that edge. A
-;; further phi is the shape a body-level `if` leaves behind -- `(if hit (set!
-;; found true) (set! i (+ i 1)))` merges `i` and `i + 1` before the latch -- and
-;; is discharged input by input on ITS edges, under `fuel` so the recursion is
-;; bounded regardless of how the phis are wired.
-(define (opt-bounds-dom-nonneg-counter-input-ok?
-  [type-segment-bases : i64]
-  [index : OptCfgIndex]
-  [doms : OptDomInfo]
-  [defs : (__tl_dyn-array OptBoolBranchDef)]
-  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
-  [copies : opt_i64_i64_map.Map]
-  [cmp-facts : OptDomCmpFacts]
-  [self : ir.CompilerIrValue]
-  [value : ir.CompilerIrValue]
-  [from-label : i64]
-  [fuel : i64]) : bool
-  (if (opt-value-eq value self)
-    true
-    (match value
-      [(ir.CompilerIrValue.I64 seed) (>= seed 0)]
-      [(ir.CompilerIrValue.Var var)
-        (or
-          (and
-            (match (opt-bool-branch-def defs var)
-              [(OptBoolBranchDef.No) false]
-              [(OptBoolBranchDef.Some instr _)
-                (match instr
-                  [(ir.CompilerIrInstr.BinOp _ op lhs rhs ty)
-                    (and
-                      (opt-binop-eq op (ir.CompilerIrBinOp.Add))
-                      (opt-integer-type? ty)
-                      (match rhs
-                        [(ir.CompilerIrValue.I64 step) (= step 1)]
-                        [_ false])
-                      (opt-value-eq (opt-bounds-dom-resolve copies lhs) self))]
-                  [_ false])])
-            (match (opt-cfg-index-id index from-label)
-              [(option_i64.None) false]
-              [(option_i64.Some from-id)
-                (opt-bounds-dom-counter-upper-bounded?
-                  type-segment-bases
-                  doms
-                  cmp-facts
-                  self
-                  from-id)]))
-          (and
-            (> fuel 0)
-            (match (opt-bool-branch-def phi-defs var)
-              [(OptBoolBranchDef.No) false]
-              [(OptBoolBranchDef.Some instr _)
-                (match instr
-                  [(ir.CompilerIrInstr.Phi _ inputs ty)
-                    (and
-                      (opt-integer-type? ty)
-                      (opt-bounds-dom-nonneg-counter-inputs-ok?
-                        type-segment-bases
-                        index
-                        doms
-                        defs
-                        phi-defs
-                        copies
-                        cmp-facts
-                        self
-                        inputs
-                        (- fuel 1)))]
-                  [_ false])])))]
-      [_ false])))
+;; --- the non-negativity lattice ----------------------------------------------
+;;
+;; An unsigned `bounds_check i, len` is `0 <= i AND i < len` read as one
+;; comparison, so a dominating SIGNED `i < len` only ever supplies the upper
+;; half. Everything above turns on the other half, `i >= 0`, and the rules below
+;; are the proof of it. They come in two halves, split by WHERE the facts that
+;; decide them live:
+;;
+;;   * The DERIVED forms (`x - k`, `x + k`, `x * c`) are decided by the facts
+;;     dominating the instruction that derives them, which the walk asking the
+;;     question cannot see -- see the pre-pass below. Their answers are
+;;     properties of the VALUE and are read off `var-facts` from anywhere.
+;;   * The STRUCTURAL rules -- literals, phis, zero extensions, lengths -- plus
+;;     the use-site `>= 0` guard are asked here, on demand, at a block. A guard
+;;     is a property of the PROGRAM POINT, not of the var, so every query
+;;     carries `at-id`, the block the answer is needed at, and a fact may answer
+;;     it only when the fact's own block dominates that one -- the dominance
+;;     test the counter induction above already makes at a latch, sound for the
+;;     same reason: the fact's operands are single-source vars whose defining
+;;     block dominates the fact, so the last execution of the fact's block
+;;     before `at-id` saw the value `at-id` sees. (`at-id` is the check's own
+;;     block at the top of a query and the EDGE SOURCE inside a phi, where the
+;;     input value is the one that edge carries.)
+;;
+;; OPTIMISM OVER PHIS. A loop-carried phi cannot be proven bottom-up -- its own
+;; step feeds it. `phis` carries the phis the current proof has already entered,
+;; and a reference back to any of them counts as non-negative. That is the
+;; GREATEST fixed point, and it is discharged by induction on EXECUTION ORDER
+;; rather than on the SSA graph: every dynamic value of a group member is
+;; selected from an input computed earlier in time, so the EARLIEST value any
+;; member takes cannot have come from the group at all (every group value is
+;; later than it) and must come from an input proven outright; each later one
+;; then inherits from an already-non-negative predecessor. Nothing is assumed
+;; about a phi whose inputs are not ALL discharged: one input the recursion
+;; cannot prove refuses the phi. That refusal is the verification an optimistic
+;; table would need a separate clearing pass for -- the recursion never records
+;; an assumption anywhere, so an unproven input can never leave one behind.
+;;
+;; WRAP FENCES. TypeLisp integer arithmetic WRAPS (SPEC 5.4), so every derived
+;; form carries an explicit no-overflow argument and none of them is admitted
+;; without one:
+;;
+;;   * `x - k`, k > 0: admitted only under a dominating `x >= k`. Then
+;;     `x - k` lies in [0, x] -- the subtraction cannot wrap and the sign is
+;;     decided outright. `x >= 0` alone would NOT do: `3 - 48` is negative.
+;;   * `x + k`, k > 0: `x >= 0` proves nothing, because `MAX + 1` is negative.
+;;     Admitted only with an upper fence pinning `x + k <= MAX`: a dominating
+;;     STRICT `x < Y` for k = 1 (any i64 Y is at most MAX, so x <= MAX - 1 --
+;;     the existing counter argument, reused verbatim), or a fact deciding
+;;     `x <= MAX - k` for a larger literal step. The fence is what the value's
+;;     own block decides; `x >= 0` is then still required of `x` structurally.
+;;   * `x * c`, c > 0: admitted under `x >= 0` and `x <= MAX / c`, so the
+;;     product is at most `(MAX / c) * c <= MAX`.
+;;
+;; A container length is `< 2^63` (the ubound header argument, O:79715), so a
+;; value some `bounds_check` uses as its LENGTH is non-negative read as an i64
+;; wherever it is live -- that is what gives a scanner's `len` operand a sign
+;; with no guard at all. Which values those are is collected once per function
+;; (`opt-bounds-dom-var-facts`).
+;;
+;; WHAT THIS LATTICE DOES NOT DO: RETYPE. Proving both operands of a signed
+;; `lt/le/gt/ge` non-negative also proves the SAME bool comes out of the
+;; unsigned spelling -- both sign bits are clear, `cmpq` is one instruction and
+;; `jl`/`jb` answer identically -- so rewriting `: i64` to `: u64` there would
+;; be value-preserving, and CVP's `processICmp` does exactly that to let the
+;; unsigned `bounds_check` on the same pair unify with it. It is still WRONG
+;; HERE, and not marginally: the passes BELOW this one match loop shapes on the
+;; SIGNED spelling, so the retyping silently switches them off.
+;;
+;;   * `opt-ubound-latch-shape` wants `lt back, n : i64` at the latch; retyping
+;;     a scanner's loop test cost lex_source +38.5M Ir (+7.7%, measured) by
+;;     losing the min(n, len) narrowing, plus gvn_table +1.2M.
+;;   * `lftr` wants the exit compare signed; retyping it left the counter phi
+;;     and its `add ..., 1` un-retired and broke the
+;;     `check_lftr_counter_retire` asm-shape gate outright.
+;;
+;; Restricting the rewrite to a compare against a CONTAINER LENGTH removed the
+;; first regression and not the second: the lftr counter is compared against a
+;; length too. A retyping pass wants to run below every signed-shape matcher,
+;; not here.
+;;
+;; Recursion budget. A byte scanner's counter is reassigned through the phis of
+;; every inner skip loop it runs, so the group it belongs to is a chain of phis,
+;; not a nest of two: `cfg-scan-ints`' digit cursor reaches its seed through
+;; four of them (digit loop, sign adjust, outer counter, the merge of the two
+;; comment-skip clones) and each derived step costs one unit on top. The budget
+;; is what bounds the work, not what makes the recursion terminate -- the phi
+;; group itself does that.
+(define (opt-bounds-dom-nonneg-fuel) : i64
+  8)
 
-(define (opt-bounds-dom-nonneg-counter-inputs-ok?
-  [type-segment-bases : i64]
-  [index : OptCfgIndex]
+;; The phis the current proof has entered, innermost first.
+(defenum OptNonnegPhis
+  (Nil)
+  (Cons i64 (Box OptNonnegPhis)))
+
+(define (opt-nonneg-phis-member? [phis : OptNonnegPhis] [var : i64]) : bool
+  (match phis
+    [(OptNonnegPhis.Nil) false]
+    [(OptNonnegPhis.Cons head rest)
+      (if (= head var)
+        true
+        (opt-nonneg-phis-member? (deref rest) var))]))
+
+;; A fact answers a question asked at `at-id` only if the block it became valid
+;; at dominates `at-id`. Facts read at the block the walk is IN all pass this
+;; (they were collected along the path to it); a phi input discharged at its own
+;; edge's source is the query that needs the filter.
+(define (opt-dom-cmp-fact-holds-at?
   [doms : OptDomInfo]
-  [defs : (__tl_dyn-array OptBoolBranchDef)]
-  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
-  [copies : opt_i64_i64_map.Map]
-  [cmp-facts : OptDomCmpFacts]
-  [self : ir.CompilerIrValue]
-  [inputs : ir.CompilerIrPhiInputList]
-  [fuel : i64]) : bool
-  (match inputs
-    [(ir.CompilerIrPhiInputList.Nil) false]
-    [(ir.CompilerIrPhiInputList.Cons value from-label rest)
-      (and
-        (opt-bounds-dom-nonneg-counter-input-ok?
+  [fact : OptDomCmpFact]
+  [at-id : i64]) : bool
+  (match fact
+    [(OptDomCmpFact.Fact _ _ _ _ _ fact-block)
+      (opt-dom-info-dominates-id? doms fact-block at-id)]))
+
+(define (opt-dom-cmp-lookup-at-mask
+  [type-segment-bases : i64]
+  [doms : OptDomInfo]
+  [at-id : i64]
+  [facts : OptDomCmpFacts]
+  [query : i64]
+  [lhs : ir.CompilerIrValue]
+  [rhs : ir.CompilerIrValue]
+  [query-var-lit : OptDomCmpVarLit]
+  [ty : ast.AstType]) : OptDomCmpLookup
+  (match facts
+    [(OptDomCmpFacts.Nil) (OptDomCmpLookup.No)]
+    [(OptDomCmpFacts.Cons fact rest)
+      (match (if (opt-dom-cmp-fact-holds-at? doms fact at-id)
+        (opt-dom-cmp-fact-verdict
           type-segment-bases
-          index
-          doms
-          defs
-          phi-defs
-          copies
-          cmp-facts
-          self
-          (opt-bounds-dom-resolve copies value)
-          from-label
-          fuel)
-        (match (__tl-box-place rest)
-          [(ir.CompilerIrPhiInputList.Nil) true]
-          [_
-            (opt-bounds-dom-nonneg-counter-inputs-ok?
-              type-segment-bases
-              index
-              doms
-              defs
-              phi-defs
-              copies
-              cmp-facts
-              self
-              (__tl-box-place rest)
-              fuel)]))]
-    [(ir.CompilerIrPhiInputList.Array seq)
-      (opt-bounds-dom-nonneg-counter-inputs-ok?
-        type-segment-bases
-        index
-        doms
-        defs
-        phi-defs
-        copies
-        cmp-facts
-        self
-        (ir.compiler-ir-phi-input-seq-to-list seq)
-        fuel)]))
+          fact
+          query
+          lhs
+          rhs
+          query-var-lit
+          ty)
+        (OptDomCmpLookup.No))
+        [(OptDomCmpLookup.Some decided) (OptDomCmpLookup.Some decided)]
+        [(OptDomCmpLookup.No)
+          (opt-dom-cmp-lookup-at-mask
+            type-segment-bases
+            doms
+            at-id
+            (deref rest)
+            query
+            lhs
+            rhs
+            query-var-lit
+            ty)])]))
 
-;; `idx >= 0` (counter induction) plus a dominating signed `idx < len` decides
-;; the unsigned check: both operands are then nonnegative i64s, where unsigned
-;; and signed order agree. The phi lookup is one array read and runs first, so
-;; the ordinary non-counter check pays only that.
+;; Do the facts that hold at `at-id` decide this i64 comparison TRUE?
+(define (opt-dom-cmp-decided-at?
+  [type-segment-bases : i64]
+  [doms : OptDomInfo]
+  [at-id : i64]
+  [facts : OptDomCmpFacts]
+  [op : ir.CompilerIrBinOp]
+  [lhs : ir.CompilerIrValue]
+  [rhs : ir.CompilerIrValue]) : bool
+  (let
+    [query : i64 (opt-dom-cmp-op-mask op)]
+    (if (= query 0)
+      false
+      (match (opt-dom-cmp-lookup-at-mask
+        type-segment-bases
+        doms
+        at-id
+        facts
+        query
+        lhs
+        rhs
+        (opt-dom-cmp-var-lit lhs rhs)
+        (ast.AstType.I64))
+        [(OptDomCmpLookup.Some decided) decided]
+        [(OptDomCmpLookup.No) false]))))
+
+;; `x + k` for a positive literal k, fenced against wrapping (see WRAP FENCES).
+(define (opt-bounds-dom-add-no-wrap?
+  [type-segment-bases : i64]
+  [doms : OptDomInfo]
+  [cmp-facts : OptDomCmpFacts]
+  [at-id : i64]
+  [value : ir.CompilerIrValue]
+  [offset : i64]) : bool
+  (or
+    (and
+      (= offset 1)
+      (opt-bounds-dom-counter-upper-bounded?
+        type-segment-bases
+        doms
+        cmp-facts
+        value
+        at-id))
+    (opt-dom-cmp-decided-at?
+      type-segment-bases
+      doms
+      at-id
+      cmp-facts
+      (ir.CompilerIrBinOp.Le)
+      value
+      (ir.CompilerIrValue.I64 (- 9223372036854775807 offset)))))
+
 ;; A WIDENING cast out of an unsigned type is a zero-extension, so its result
 ;; occupies at most the source width and cannot reach the destination's sign
-;; bit. The equal-width case is a reinterpret and proves nothing.
+;; bit. The equal-width case is a reinterpret and proves nothing on its own --
+;; unless what it reinterprets is a length.
 (define (opt-bounds-dom-zero-extend? [from : ast.AstType] [to : ast.AstType]) : bool
   (and
     (opt-unsigned-integer-type? from)
     (opt-integer-type? to)
     (< (opt-int-width from) (opt-int-width to))))
 
-;; Is `value` provably nonnegative when the check is reached?
+;; Is `value` provably non-negative at `at-id`?
+(define (opt-bounds-dom-nonneg-at?
+  [type-segment-bases : i64]
+  [index : OptCfgIndex]
+  [doms : OptDomInfo]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [var-facts : (__tl_dyn-array i64)]
+  [checks : OptBoundsDomChecks]
+  [copies : opt_i64_i64_map.Map]
+  [cmp-facts : OptDomCmpFacts]
+  [phis : OptNonnegPhis]
+  [at-id : i64]
+  [value : ir.CompilerIrValue]
+  [fuel : i64]) : bool
+  (match value
+    [(ir.CompilerIrValue.I64 literal) (>= literal 0)]
+    [(ir.CompilerIrValue.Var var)
+      (or
+        (opt-nonneg-phis-member? phis var)
+        ;; A container length: `< 2^63` by the premise the check itself carries.
+        (opt-bounds-dom-length-value? var-facts value)
+        ;; Derived at its own definition site by the pre-pass below.
+        (opt-bounds-dom-var-fact?
+          var-facts
+          var
+          (opt-bounds-dom-var-fact-nonneg))
+        ;; Proved by a `bounds_check` this point is dominated by.
+        (opt-bounds-dom-checked-any? doms checks at-id value)
+        (and
+          (> fuel 0)
+          (opt-bounds-dom-nonneg-def?
+            type-segment-bases
+            index
+            doms
+            defs
+            phi-defs
+            var-facts
+            checks
+            copies
+            cmp-facts
+            phis
+            at-id
+            var
+            (- fuel 1)))
+        ;; An explicit dominating `(>= x 0)` / `(< x 0)` guard, in either
+        ;; spelling: the implication masks read both off one query.
+        (opt-dom-cmp-decided-at?
+          type-segment-bases
+          doms
+          at-id
+          cmp-facts
+          (ir.CompilerIrBinOp.Ge)
+          value
+          (ir.CompilerIrValue.I64 0)))]
+    [_ false]))
+
+;; The var's own definition: a zero extension, a length load, a phi (optimistic
+;; over the group), or a fenced affine/scaled derivation.
+(define (opt-bounds-dom-nonneg-def?
+  [type-segment-bases : i64]
+  [index : OptCfgIndex]
+  [doms : OptDomInfo]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [var-facts : (__tl_dyn-array i64)]
+  [checks : OptBoundsDomChecks]
+  [copies : opt_i64_i64_map.Map]
+  [cmp-facts : OptDomCmpFacts]
+  [phis : OptNonnegPhis]
+  [at-id : i64]
+  [var : i64]
+  [fuel : i64]) : bool
+  (match (opt-bool-branch-def phi-defs var)
+    [(OptBoolBranchDef.Some instr _)
+      (match instr
+        [(ir.CompilerIrInstr.Cast _ _ from to)
+          (opt-bounds-dom-zero-extend? from to)]
+        [(ir.CompilerIrInstr.Phi _ inputs ty)
+          (and
+            (opt-integer-type? ty)
+            (opt-bounds-dom-nonneg-inputs?
+              type-segment-bases
+              index
+              doms
+              defs
+              phi-defs
+              var-facts
+              checks
+              copies
+              cmp-facts
+              (OptNonnegPhis.Cons var (box phis))
+              inputs
+              fuel))]
+        [_ false])]
+    [(OptBoolBranchDef.No)
+      (match (opt-bool-branch-def defs var)
+        [(OptBoolBranchDef.No) false]
+        [(OptBoolBranchDef.Some instr _)
+          (match instr
+            [(ir.CompilerIrInstr.BinOp _ op lhs rhs ty)
+              (and
+                (opt-type-eq type-segment-bases ty (ast.AstType.I64))
+                (opt-bounds-dom-nonneg-binop?
+                  type-segment-bases
+                  index
+                  doms
+                  defs
+                  phi-defs
+                  var-facts
+                  checks
+                  copies
+                  cmp-facts
+                  phis
+                  at-id
+                  var
+                  op
+                  lhs
+                  rhs
+                  fuel))]
+            [_ false])])]))
+
+(define (opt-bounds-dom-nonneg-binop?
+  [type-segment-bases : i64]
+  [index : OptCfgIndex]
+  [doms : OptDomInfo]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [var-facts : (__tl_dyn-array i64)]
+  [checks : OptBoundsDomChecks]
+  [copies : opt_i64_i64_map.Map]
+  [cmp-facts : OptDomCmpFacts]
+  [phis : OptNonnegPhis]
+  [at-id : i64]
+  [dst : i64]
+  [op : ir.CompilerIrBinOp]
+  [lhs : ir.CompilerIrValue]
+  [rhs : ir.CompilerIrValue]
+  [fuel : i64]) : bool
+  (cond
+    [(or
+        (opt-binop-eq op (ir.CompilerIrBinOp.Add))
+        (opt-binop-eq op (ir.CompilerIrBinOp.Sub)))
+      (match (opt-bounds-dom-affine-parts op lhs rhs)
+        [(OptBoundsDomOffset.No) false]
+        [(OptBoundsDomOffset.Some raw-base offset)
+          (let
+            [base : ir.CompilerIrValue (opt-bounds-dom-resolve copies raw-base)]
+            (cond
+              [(= offset 0)
+                (opt-bounds-dom-nonneg-at?
+                  type-segment-bases
+                  index
+                  doms
+                  defs
+                  phi-defs
+                  var-facts
+                  checks
+                  copies
+                  cmp-facts
+                  phis
+                  at-id
+                  base
+                  fuel)]
+              ;; `base - |offset|` is decided outright by the pre-pass, from the
+              ;; `base >= |offset|` dominating its own definition; there is
+              ;; nothing structural left to add here.
+              [(< offset 0) false]
+              [else
+                (and
+                  (opt-bounds-dom-var-fact?
+                    var-facts
+                    dst
+                    (opt-bounds-dom-var-fact-fenced))
+                  (opt-bounds-dom-nonneg-at?
+                    type-segment-bases
+                    index
+                    doms
+                    defs
+                    phi-defs
+                    var-facts
+                    checks
+                    copies
+                    cmp-facts
+                    phis
+                    at-id
+                    base
+                    fuel))]))])]
+    [(opt-binop-eq op (ir.CompilerIrBinOp.Mul))
+      (match (opt-affine-var-const lhs rhs)
+        [(OptAffineOperands.No) false]
+        [(OptAffineOperands.Some raw-var scale)
+          (and
+            (> scale 0)
+            (opt-bounds-dom-var-fact?
+              var-facts
+              dst
+              (opt-bounds-dom-var-fact-fenced))
+            (opt-bounds-dom-nonneg-at?
+              type-segment-bases
+              index
+              doms
+              defs
+              phi-defs
+              var-facts
+              checks
+              copies
+              cmp-facts
+              phis
+              at-id
+              (opt-bounds-dom-resolve copies (ir.CompilerIrValue.Var raw-var))
+              fuel))])]
+    [else false]))
+
+;; One phi input, discharged at the block whose edge carries it: that is where
+;; the value it names is live, and the facts that may discharge it are the ones
+;; that block is dominated by. An edge no execution takes carries nothing.
+(define (opt-bounds-dom-nonneg-edge?
+  [type-segment-bases : i64]
+  [index : OptCfgIndex]
+  [doms : OptDomInfo]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [var-facts : (__tl_dyn-array i64)]
+  [checks : OptBoundsDomChecks]
+  [copies : opt_i64_i64_map.Map]
+  [cmp-facts : OptDomCmpFacts]
+  [phis : OptNonnegPhis]
+  [value : ir.CompilerIrValue]
+  [from-label : i64]
+  [fuel : i64]) : bool
+  (match (opt-cfg-index-id index from-label)
+    [(option_i64.None) false]
+    [(option_i64.Some from-id)
+      (if (or (< from-id 0) (>= from-id (opt-cfg-index-block-count index)))
+        false
+        (if (not (array-ref index.reachable from-id))
+          true
+          (opt-bounds-dom-nonneg-at?
+            type-segment-bases
+            index
+            doms
+            defs
+            phi-defs
+            var-facts
+            checks
+            copies
+            cmp-facts
+            phis
+            from-id
+            (opt-bounds-dom-resolve copies value)
+            fuel)))]))
+
+(define (opt-bounds-dom-nonneg-inputs?
+  [type-segment-bases : i64]
+  [index : OptCfgIndex]
+  [doms : OptDomInfo]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [var-facts : (__tl_dyn-array i64)]
+  [checks : OptBoundsDomChecks]
+  [copies : opt_i64_i64_map.Map]
+  [cmp-facts : OptDomCmpFacts]
+  [phis : OptNonnegPhis]
+  [inputs : ir.CompilerIrPhiInputList]
+  [fuel : i64]) : bool
+  (match inputs
+    [(ir.CompilerIrPhiInputList.Nil) false]
+    [(ir.CompilerIrPhiInputList.Cons value from-label rest)
+      (and
+        (opt-bounds-dom-nonneg-edge?
+          type-segment-bases
+          index
+          doms
+          defs
+          phi-defs
+          var-facts
+          checks
+          copies
+          cmp-facts
+          phis
+          value
+          from-label
+          fuel)
+        (match (__tl-box-place rest)
+          [(ir.CompilerIrPhiInputList.Nil) true]
+          [_
+            (opt-bounds-dom-nonneg-inputs?
+              type-segment-bases
+              index
+              doms
+              defs
+              phi-defs
+              var-facts
+              checks
+              copies
+              cmp-facts
+              phis
+              (__tl-box-place rest)
+              fuel)]))]
+    [(ir.CompilerIrPhiInputList.Array seq)
+      (opt-bounds-dom-nonneg-inputs?
+        type-segment-bases
+        index
+        doms
+        defs
+        phi-defs
+        var-facts
+        checks
+        copies
+        cmp-facts
+        phis
+        (ir.compiler-ir-phi-input-seq-to-list seq)
+        fuel)]))
+
+;; `idx >= 0` plus a dominating signed `idx < len` decides the unsigned check:
+;; both operands are then non-negative i64s, where unsigned and signed order
+;; agree. `block-id` is the block the check sits in, which is where the question
+;; is asked.
 (define (opt-bounds-dom-nonneg?
   [type-segment-bases : i64]
   [index : OptCfgIndex]
   [doms : OptDomInfo]
   [defs : (__tl_dyn-array OptBoolBranchDef)]
   [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [var-facts : (__tl_dyn-array i64)]
+  [checks : OptBoundsDomChecks]
   [copies : opt_i64_i64_map.Map]
   [cmp-facts : OptDomCmpFacts]
+  [block-id : i64]
+  [value : ir.CompilerIrValue]) : bool
+  (opt-bounds-dom-nonneg-at?
+    type-segment-bases
+    index
+    doms
+    defs
+    phi-defs
+    var-facts
+    checks
+    copies
+    cmp-facts
+    (OptNonnegPhis.Nil)
+    block-id
+    value
+    (opt-bounds-dom-nonneg-fuel)))
+
+;; --- passed checks recorded on the checked value's definition ----------------
+;;
+;; Facts flow DOWN the dominator tree, so a check that a LATER iteration's index
+;; passed -- `bounds_check sp + 1, len` at an explicit stack's push, read back at
+;; the loop header as `stack[sp]` -- is invisible to the walk: the push block
+;; sits INSIDE the loop and dominates nothing the header is above. Collect every
+;; passed check once per function, keyed on the DEFINITION of the value it
+;; checked, so a consumer can ask whether one of them holds at some other block.
+;; Each row is a `(length, block)` pair; the consumer's dominance test is what
+;; turns it into an implication. The rows are a CSR indexed by var, so a query
+;; scans only the checks of the value it asks about.
+;;
+;; SOUNDNESS. `BoundsCheck` is a trap-or-continue, so reaching any point block B
+;; dominates means B's check PASSED, and a GVN-stable var names one runtime
+;; value everywhere: `0 <= v < len` therefore holds at every such point. The
+;; statement is about the program this pass READS, in which every check is still
+;; present, so it stays true no matter which checks the pass then deletes --
+;; there is no circularity even where two checks discharge each other, because
+;; neither proof ever assumes a deletion.
+;;
+;; The dominance test comes in two flavours:
+;;   * asked AT an instruction (the check being decided, or a value derived
+;;     there): B must STRICTLY dominate the asking block. A check LATER in the
+;;     same block runs after the one being decided and may not retire it -- the
+;;     trap would move to a different index and message.
+;;   * asked at the END of a block (a phi input, which the edge out of that
+;;     block consumes): B = that block itself is admitted, since all of it runs
+;;     before the edge is taken.
+(defstruct OptBoundsDomChecks
+  (offsets (__tl_dyn-array i64))
+  (lens (__tl_dyn-array ir.CompilerIrValue))
+  (blocks (__tl_dyn-array i64)))
+
+;; The var a check is keyed on: its index operand after copy resolution and the
+;; same-width reinterpret strip, which is the spelling every query below speaks.
+;; -1 when that is not a single-source var -- a var with more than one
+;; definition names more than one runtime value, so no fact may follow it.
+(define (opt-bounds-dom-checks-key
+  [type-segment-bases : i64]
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [copies : opt_i64_i64_map.Map]
+  [sources : opt_i64_i64_map.Map]
+  [idx : ir.CompilerIrValue]) : i64
+  (match (opt-bounds-dom-strip-int-cast
+    type-segment-bases
+    phi-defs
+    copies
+    (opt-bounds-dom-resolve copies idx))
+    [(ir.CompilerIrValue.Var var)
+      (if (opt-gvn-stable-var? sources var)
+        var
+        (- 0 1))]
+    [_ (- 0 1)]))
+
+;; The length a check is recorded under, in the same canonical spelling.
+(define (opt-bounds-dom-checks-len
+  [type-segment-bases : i64]
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [copies : opt_i64_i64_map.Map]
+  [len : ir.CompilerIrValue]) : ir.CompilerIrValue
+  (opt-bounds-dom-strip-int-cast
+    type-segment-bases
+    phi-defs
+    copies
+    (opt-bounds-dom-resolve copies len)))
+
+;; One block, twice: `fill?` false counts the rows on `cursor[key + 1]`, true
+;; writes them at `cursor[key]` and bumps that cursor.
+(define (opt-bounds-dom-checks-scan!
+  [type-segment-bases : i64]
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [copies : opt_i64_i64_map.Map]
+  [sources : opt_i64_i64_map.Map]
+  [cursor : (__tl_dyn-array i64)]
+  [lens : (__tl_dyn-array ir.CompilerIrValue)]
+  [rows : (__tl_dyn-array i64)]
+  [fill? : bool]
+  [block-id : i64]
+  [instrs : ir.CompilerIrInstrSeq]) : unit
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [pos : i64 0]
+    (while (< pos count)
+      (begin
+        (match (ir.compiler-ir-instr-seq-ref instrs pos)
+          [(ir.CompilerIrInstr.BoundsCheck idx len _)
+            (let
+              [key : i64
+                (opt-bounds-dom-checks-key
+                  type-segment-bases
+                  phi-defs
+                  copies
+                  sources
+                  idx)]
+              [clen : ir.CompilerIrValue
+                (opt-bounds-dom-checks-len
+                  type-segment-bases
+                  phi-defs
+                  copies
+                  len)]
+              (if (or
+                (< key 0)
+                (not (opt-gvn-value-stable? sources clen))
+                (>= (+ key 1) (array-length cursor)))
+                unit
+                (if fill?
+                  (let
+                    [slot : i64 (array-ref cursor key)]
+                    (if (or (< slot 0) (>= slot (array-length rows)))
+                      unit
+                      (begin
+                        (set! (array-ref lens slot) clen)
+                        (set! (array-ref rows slot) block-id)
+                        (set! (array-ref cursor key) (+ slot 1)))))
+                  (set!
+                    (array-ref cursor (+ key 1))
+                    (+ (array-ref cursor (+ key 1)) 1)))))]
+          [_ unit])
+        (set! pos (+ pos 1))))))
+
+(define (opt-bounds-dom-checks-blocks!
+  [type-segment-bases : i64]
+  [index : OptCfgIndex]
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [copies : opt_i64_i64_map.Map]
+  [sources : opt_i64_i64_map.Map]
+  [cursor : (__tl_dyn-array i64)]
+  [lens : (__tl_dyn-array ir.CompilerIrValue)]
+  [rows : (__tl_dyn-array i64)]
+  [fill? : bool]
+  [blocks : ir.CompilerIrBlockList]) : unit
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) unit]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (begin
+        (match block
+          [(ir.CompilerIrBlock.Block label instrs)
+            (match (opt-cfg-index-id index label)
+              [(option_i64.None) unit]
+              [(option_i64.Some id)
+                (if (or (< id 0) (>= id (opt-cfg-index-block-count index)))
+                  unit
+                  (opt-bounds-dom-checks-scan!
+                    type-segment-bases
+                    phi-defs
+                    copies
+                    sources
+                    cursor
+                    lens
+                    rows
+                    fill?
+                    id
+                    instrs))])])
+        (opt-bounds-dom-checks-blocks!
+          type-segment-bases
+          index
+          phi-defs
+          copies
+          sources
+          cursor
+          lens
+          rows
+          fill?
+          (__tl-box-place rest)))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-bounds-dom-checks-blocks!
+        type-segment-bases
+        index
+        phi-defs
+        copies
+        sources
+        cursor
+        lens
+        rows
+        fill?
+        (ir.compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-bounds-dom-checks
+  [type-segment-bases : i64]
+  [index : OptCfgIndex]
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [copies : opt_i64_i64_map.Map]
+  [sources : opt_i64_i64_map.Map]
+  [frame : i64]
+  [blocks : ir.CompilerIrBlockList]) : OptBoundsDomChecks
+  (let
+    [offsets : (__tl_dyn-array i64) (array.make-array i64 (+ frame 1))]
+    [empty-lens : (__tl_dyn-array ir.CompilerIrValue)
+      (array.make-array ir.CompilerIrValue 0)]
+    [empty-rows : (__tl_dyn-array i64) (array.make-array i64 0)]
+    (begin
+      (opt-bounds-dom-checks-blocks!
+        type-segment-bases
+        index
+        phi-defs
+        copies
+        sources
+        offsets
+        empty-lens
+        empty-rows
+        false
+        blocks)
+      (let
+        [slot : i64 0]
+        (while (< slot frame)
+          (begin
+            (set!
+              (array-ref offsets (+ slot 1))
+              (+ (array-ref offsets (+ slot 1)) (array-ref offsets slot)))
+            (set! slot (+ slot 1)))))
+      (let
+        [total : i64 (array-ref offsets frame)]
+        [lens : (__tl_dyn-array ir.CompilerIrValue)
+          (array.make-array ir.CompilerIrValue total)]
+        [rows : (__tl_dyn-array i64) (array.make-array i64 total)]
+        [cursor : (__tl_dyn-array i64) (array.make-array i64 (+ frame 1))]
+        (begin
+          (let
+            [slot : i64 0]
+            (while (<= slot frame)
+              (begin
+                (set! (array-ref cursor slot) (array-ref offsets slot))
+                (set! slot (+ slot 1)))))
+          (opt-bounds-dom-checks-blocks!
+            type-segment-bases
+            index
+            phi-defs
+            copies
+            sources
+            cursor
+            lens
+            rows
+            true
+            blocks)
+          (OptBoundsDomChecks offsets lens rows))))))
+
+;; Was `value` the index of a passed `bounds_check` at a block that STRICTLY
+;; dominates `at-id`? An unsigned check proves the SIGN as firmly as it proves
+;; the bound, whatever length it used, so this is the non-negativity the lattice
+;; cannot see: a byte scanner's cursor is checked once per outer character and
+;; the inner loop reads the sign of that check back off the definition. Strict
+;; dominance, because a check later in `at-id`'s own block runs after the
+;; question is asked.
+(define (opt-bounds-dom-checked-any?
+  [doms : OptDomInfo]
+  [checks : OptBoundsDomChecks]
+  [at-id : i64]
   [value : ir.CompilerIrValue]) : bool
   (match value
-    [(ir.CompilerIrValue.I64 literal) (>= literal 0)]
+    [(ir.CompilerIrValue.Var var)
+      (let
+        [offsets : (__tl_dyn-array i64) checks.offsets]
+        (if (or (< var 0) (>= (+ var 1) (array-length offsets)))
+          false
+          (let
+            [rows : (__tl_dyn-array i64) checks.blocks]
+            [row : i64 (array-ref offsets var)]
+            [end : i64 (array-ref offsets (+ var 1))]
+            [found : bool false]
+            (begin
+              (while (and (not found) (< row end))
+                (begin
+                  (let
+                    [block : i64 (array-ref rows row)]
+                    (if (and
+                      (not (= block at-id))
+                      (opt-dom-info-dominates-id? doms block at-id))
+                      (set! found true)
+                      unit))
+                  (set! row (+ row 1))))
+              found))))]
+    [_ false]))
+
+;; Does a passed `bounds_check` of `value` against exactly `len` hold at
+;; `at-id`? `end?` admits a check in `at-id`'s own block (the phi-input query,
+;; consumed by the edge out of it); otherwise the check's block must strictly
+;; dominate.
+(define (opt-bounds-dom-checked-below?
+  [doms : OptDomInfo]
+  [checks : OptBoundsDomChecks]
+  [at-id : i64]
+  [end? : bool]
+  [value : ir.CompilerIrValue]
+  [len : ir.CompilerIrValue]) : bool
+  (match value
+    [(ir.CompilerIrValue.Var var)
+      (let
+        [offsets : (__tl_dyn-array i64) checks.offsets]
+        (if (or (< var 0) (>= (+ var 1) (array-length offsets)))
+          false
+          (let
+            [lens : (__tl_dyn-array ir.CompilerIrValue) checks.lens]
+            [rows : (__tl_dyn-array i64) checks.blocks]
+            [row : i64 (array-ref offsets var)]
+            [end : i64 (array-ref offsets (+ var 1))]
+            [found : bool false]
+            (begin
+              (while (and (not found) (< row end))
+                (begin
+                  (let
+                    [block : i64 (array-ref rows row)]
+                    (if (and
+                      (opt-value-eq (array-ref lens row) len)
+                      (opt-dom-info-dominates-id? doms block at-id)
+                      (or end? (not (= block at-id))))
+                      (set! found true)
+                      unit))
+                  (set! row (+ row 1))))
+              found))))]
+    [_ false]))
+
+;; --- phi-inductive range proof (ABCD cycle rule) ------------------------------
+;;
+;; The rules above prove a check from facts that DOMINATE it. An explicit stack,
+;; an output cursor and a reversed copy have none: the index is a loop-header
+;; phi whose in-range-ness is carried around the cycle, one edge at a time.
+;;
+;;   sp = phi [0, preheader], [sp + 1, push], [sp - 1, pop]
+;;
+;; and the property `0 <= sp < len` holds of EVERY value the phi can take,
+;; because each incoming edge either establishes it outright or inherits it from
+;; the value the previous iteration already had. That is the ABCD cycle rule
+;; (Bodik-Gupta-Sarkar) with our own fact database in place of their inequality
+;; graph, and it is discharged by induction on EXECUTION ORDER, not on the SSA
+;; graph: the FIRST value any member of the phi group takes cannot have come
+;; from the group (every group value is later in time than it), so it comes from
+;; an input proved outright; every later one is derived from a group value that
+;; already satisfied the property when its own header entry happened. `phis`
+;; carries the group members the current proof has entered and a reference back
+;; to one of them is the induction hypothesis. Nothing is recorded anywhere:
+;; ONE input the recursion cannot discharge refuses the whole phi, so an
+;; unproven assumption can never be left behind.
+;;
+;; The inputs it accepts, at the block the edge LEAVES (that is where the value
+;; it names is live and where the facts that discharge it are in scope):
+;;   (i)   a literal `c` with `c < len` (or `len >= 1` for `c = 0`) known there;
+;;   (ii)  a value with a passed `bounds_check v, len` dominating the edge --
+;;         `sp + 1` checked at the push, read back at the header;
+;;   (iii) `p - k` (k > 0 literal) for a group member `p`, on an edge carrying
+;;         `p - k >= 0`: with `0 <= p < len` from the hypothesis, `p - k` cannot
+;;         wrap and lies in [0, p], so it is in range too;
+;;   (iv)  the phi itself, through Movs (`opt-bounds-dom-resolve`);
+;;   (v)   another phi, proved by this same rule (fuel-bounded; a cycle that
+;;         closes back onto a member stops at the hypothesis).
+;;
+;; WHY AN EDGE MAY USE THE BRANCH THAT SELECTED IT. A phi input is taken only
+;; when control arrives along its edge, and arriving is exactly what the branch
+;; at the edge's source decided. `while (>= sp 0)` is what keeps `sp - 1 = -1`
+;; out of the header: that value reaches the phi's edge but the branch does not
+;; take it. The `nonneg?` flag carries such an edge fact DOWN through further
+;; phi substitutions -- on the path through that edge the nested phi IS the
+;; value the fact spoke about -- while the fact list itself is not carried, so a
+;; fact can never be read at a block the edge does not lead through.
+;;
+;; NO-WRAP. TypeLisp integer arithmetic wraps (SPEC 5.4), so `p - k` is admitted
+;; only with `p >= 0` established (the hypothesis gives it, or the pre-pass's
+;; non-negativity bit on the difference, or a dominating `p >= k`): a `p` at
+;; i64 MIN would wrap `p - 1` to a huge positive value that passes no check.
+;;
+;; STRICTNESS. `strict?` proves `0 <= v < bound`; without it, `0 <= v <= bound`,
+;; which is what an output cursor satisfies at the loop it FILLED (`post <= len`
+;; -- every stored element was checked and the step is `+ 1`) and what the
+;; decreasing rule below consumes.
+(define (opt-bounds-dom-induct-fuel) : i64
+  8)
+
+;; The two arms of a scalar `select`, resolved: a bound this pass meets as
+;; `min(len_a, len_b)` (the ubound narrowing) is below both of them, so proving
+;; the property against each arm proves it against the select.
+(defenum OptBoundsDomArms
+  (No)
+  (Some ir.CompilerIrValue ir.CompilerIrValue))
+
+(define (opt-bounds-dom-select-arms
+  [type-segment-bases : i64]
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [copies : opt_i64_i64_map.Map]
+  [value : ir.CompilerIrValue]) : OptBoundsDomArms
+  (match value
+    [(ir.CompilerIrValue.Var var)
+      (match (opt-bool-branch-def phi-defs var)
+        [(OptBoolBranchDef.No) (OptBoundsDomArms.No)]
+        [(OptBoolBranchDef.Some instr _)
+          (match instr
+            [(ir.CompilerIrInstr.Select payload-box)
+              (let
+                [payload : ir.CompilerIrInstrSelectPayload
+                  (__tl-box-place payload-box)]
+                [lanes : i64 (__tl-project-field payload lanes)]
+                [ty : ast.AstType (__tl-project-field payload ty)]
+                (if (and
+                  (= lanes 0)
+                  (opt-type-eq type-segment-bases ty (ast.AstType.I64)))
+                  (OptBoundsDomArms.Some
+                    (opt-bounds-dom-resolve
+                      copies
+                      (__tl-project-field payload on-true))
+                    (opt-bounds-dom-resolve
+                      copies
+                      (__tl-project-field payload on-false)))
+                  (OptBoundsDomArms.No)))]
+            [_ (OptBoundsDomArms.No)])])]
+    [_ (OptBoundsDomArms.No)]))
+
+;; The literal-offset split of a value's own definition, or the value itself.
+(define (opt-bounds-dom-induct-term
+  [type-segment-bases : i64]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [copies : opt_i64_i64_map.Map]
+  [value : ir.CompilerIrValue]) : OptBoundsDomOffset
+  (match value
+    [(ir.CompilerIrValue.Var var)
+      (match (opt-bool-branch-def defs var)
+        [(OptBoolBranchDef.No) (OptBoundsDomOffset.Some value 0)]
+        [(OptBoolBranchDef.Some instr _)
+          (match instr
+            [(ir.CompilerIrInstr.BinOp _ op lhs rhs ty)
+              (if (opt-type-eq type-segment-bases ty (ast.AstType.I64))
+                (match (opt-bounds-dom-affine-parts op lhs rhs)
+                  [(OptBoundsDomOffset.No) (OptBoundsDomOffset.Some value 0)]
+                  [(OptBoundsDomOffset.Some base offset)
+                    (OptBoundsDomOffset.Some
+                      (opt-bounds-dom-resolve copies base)
+                      offset)])
+                (OptBoundsDomOffset.Some value 0))]
+            [_ (OptBoundsDomOffset.Some value 0)])])]
+    [_ (OptBoundsDomOffset.Some value 0)]))
+
+;; Do the facts in scope put `value` below `bound` at `at-id`, in the signed
+;; domain the facts are recorded in? A `select` bound is split into its arms.
+(define (opt-bounds-dom-below-fact?
+  [type-segment-bases : i64]
+  [doms : OptDomInfo]
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [copies : opt_i64_i64_map.Map]
+  [cmp-facts : OptDomCmpFacts]
+  [at-id : i64]
+  [strict? : bool]
+  [value : ir.CompilerIrValue]
+  [bound : ir.CompilerIrValue]
+  [depth : i64]) : bool
+  (match (if (> depth 0)
+    (opt-bounds-dom-select-arms type-segment-bases phi-defs copies bound)
+    (OptBoundsDomArms.No))
+    [(OptBoundsDomArms.Some on-true on-false)
+      (and
+        (opt-bounds-dom-below-fact?
+          type-segment-bases
+          doms
+          phi-defs
+          copies
+          cmp-facts
+          at-id
+          strict?
+          value
+          on-true
+          (- depth 1))
+        (opt-bounds-dom-below-fact?
+          type-segment-bases
+          doms
+          phi-defs
+          copies
+          cmp-facts
+          at-id
+          strict?
+          value
+          on-false
+          (- depth 1)))]
+    [(OptBoundsDomArms.No)
+      (opt-dom-cmp-decided-at?
+        type-segment-bases
+        doms
+        at-id
+        cmp-facts
+        (if strict?
+          (ir.CompilerIrBinOp.Lt)
+          (ir.CompilerIrBinOp.Le))
+        value
+        bound)]))
+
+;; A passed check of `value` against `bound` (or against both arms of a select
+;; bound) holding at `at-id`.
+(define (opt-bounds-dom-checked-in-range?
+  [type-segment-bases : i64]
+  [doms : OptDomInfo]
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [copies : opt_i64_i64_map.Map]
+  [checks : OptBoundsDomChecks]
+  [at-id : i64]
+  [end? : bool]
+  [value : ir.CompilerIrValue]
+  [bound : ir.CompilerIrValue]
+  [depth : i64]) : bool
+  (match (if (> depth 0)
+    (opt-bounds-dom-select-arms type-segment-bases phi-defs copies bound)
+    (OptBoundsDomArms.No))
+    [(OptBoundsDomArms.Some on-true on-false)
+      (and
+        (opt-bounds-dom-checked-in-range?
+          type-segment-bases
+          doms
+          phi-defs
+          copies
+          checks
+          at-id
+          end?
+          value
+          on-true
+          (- depth 1))
+        (opt-bounds-dom-checked-in-range?
+          type-segment-bases
+          doms
+          phi-defs
+          copies
+          checks
+          at-id
+          end?
+          value
+          on-false
+          (- depth 1)))]
+    [(OptBoundsDomArms.No)
+      (opt-bounds-dom-checked-below? doms checks at-id end? value bound)]))
+
+;; `0 <= bound` -- what a container length always satisfies, and what makes a
+;; literal-zero seed in range without any other fact.
+(define (opt-bounds-dom-bound-positive?
+  [type-segment-bases : i64]
+  [index : OptCfgIndex]
+  [doms : OptDomInfo]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [var-facts : (__tl_dyn-array i64)]
+  [checks : OptBoundsDomChecks]
+  [copies : opt_i64_i64_map.Map]
+  [cmp-facts : OptDomCmpFacts]
+  [at-id : i64]
+  [bound : ir.CompilerIrValue]
+  [depth : i64]) : bool
+  (match (if (> depth 0)
+    (opt-bounds-dom-select-arms type-segment-bases phi-defs copies bound)
+    (OptBoundsDomArms.No))
+    [(OptBoundsDomArms.Some on-true on-false)
+      (and
+        (opt-bounds-dom-bound-positive?
+          type-segment-bases
+          index
+          doms
+          defs
+          phi-defs
+          var-facts
+          checks
+          copies
+          cmp-facts
+          at-id
+          on-true
+          (- depth 1))
+        (opt-bounds-dom-bound-positive?
+          type-segment-bases
+          index
+          doms
+          defs
+          phi-defs
+          var-facts
+          checks
+          copies
+          cmp-facts
+          at-id
+          on-false
+          (- depth 1)))]
+    [(OptBoundsDomArms.No)
+      (opt-bounds-dom-nonneg-at?
+        type-segment-bases
+        index
+        doms
+        defs
+        phi-defs
+        var-facts
+        checks
+        copies
+        cmp-facts
+        (OptNonnegPhis.Nil)
+        at-id
+        bound
+        (opt-bounds-dom-nonneg-fuel))]))
+
+;; Is `0 <= value < bound` (`<= bound` when not `strict?`) provable at `at-id`?
+;; `end?` says the question is asked at the END of `at-id` (a phi input), which
+;; is what admits a passed check sitting in that same block. `nonneg?` is the
+;; path fact `value >= 0` inherited from the branch that selected this edge.
+(define (opt-bounds-dom-induct-in-range?
+  [type-segment-bases : i64]
+  [index : OptCfgIndex]
+  [doms : OptDomInfo]
+  [terms : (__tl_dyn-array OptBoolBranchDef)]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [var-facts : (__tl_dyn-array i64)]
+  [checks : OptBoundsDomChecks]
+  [copies : opt_i64_i64_map.Map]
+  [sources : opt_i64_i64_map.Map]
+  [cmp-facts : OptDomCmpFacts]
+  [phis : OptNonnegPhis]
+  [at-id : i64]
+  [end? : bool]
+  [nonneg? : bool]
+  [below? : bool]
+  [strict? : bool]
+  [value : ir.CompilerIrValue]
+  [bound : ir.CompilerIrValue]
+  [fuel : i64]) : bool
+  (match value
+    [(ir.CompilerIrValue.I64 literal)
+      (and
+        (>= literal 0)
+        (or
+          below?
+          (opt-bounds-dom-below-fact?
+            type-segment-bases
+            doms
+            phi-defs
+            copies
+            cmp-facts
+            at-id
+            strict?
+            value
+            bound
+            2)
+          ;; `0` is in range of any bound the length premise already covers:
+          ;; below it when the bound is positive, at most it when nonnegative.
+          (and
+            (= literal 0)
+            (if strict?
+              (opt-bounds-dom-len-positive? type-segment-bases cmp-facts bound)
+              (opt-bounds-dom-bound-positive?
+                type-segment-bases
+                index
+                doms
+                defs
+                phi-defs
+                var-facts
+                checks
+                copies
+                cmp-facts
+                at-id
+                bound
+                2)))))]
+    [(ir.CompilerIrValue.Var var)
+      (or
+        ;; The induction hypothesis: a value the group already carries.
+        (opt-nonneg-phis-member? phis var)
+        ;; A passed check gives both halves at once.
+        (opt-bounds-dom-checked-in-range?
+          type-segment-bases
+          doms
+          phi-defs
+          copies
+          checks
+          at-id
+          end?
+          value
+          bound
+          2)
+        (and
+          (or
+            nonneg?
+            (opt-bounds-dom-nonneg-at?
+              type-segment-bases
+              index
+              doms
+              defs
+              phi-defs
+              var-facts
+              checks
+              copies
+              cmp-facts
+              (OptNonnegPhis.Nil)
+              at-id
+              value
+              (opt-bounds-dom-nonneg-fuel)))
+          (or
+            below?
+            (opt-bounds-dom-below-fact?
+              type-segment-bases
+              doms
+              phi-defs
+              copies
+              cmp-facts
+              at-id
+              strict?
+              value
+              bound
+              2)))
+        (and
+          (> fuel 0)
+          (opt-bounds-dom-induct-def?
+            type-segment-bases
+            index
+            doms
+            terms
+            defs
+            phi-defs
+            var-facts
+            checks
+            copies
+            sources
+            cmp-facts
+            phis
+            at-id
+            end?
+            nonneg?
+            below?
+            strict?
+            var
+            bound
+            (- fuel 1))))]
+    [_ false]))
+
+;; The value's own definition: a phi (every input discharged on its own edge) or
+;; an affine step off one.
+(define (opt-bounds-dom-induct-def?
+  [type-segment-bases : i64]
+  [index : OptCfgIndex]
+  [doms : OptDomInfo]
+  [terms : (__tl_dyn-array OptBoolBranchDef)]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [var-facts : (__tl_dyn-array i64)]
+  [checks : OptBoundsDomChecks]
+  [copies : opt_i64_i64_map.Map]
+  [sources : opt_i64_i64_map.Map]
+  [cmp-facts : OptDomCmpFacts]
+  [phis : OptNonnegPhis]
+  [at-id : i64]
+  [end? : bool]
+  [nonneg? : bool]
+  [below? : bool]
+  [strict? : bool]
+  [var : i64]
+  [bound : ir.CompilerIrValue]
+  [fuel : i64]) : bool
+  (match (opt-bool-branch-def phi-defs var)
+    [(OptBoolBranchDef.Some instr label)
+      (match instr
+        [(ir.CompilerIrInstr.Phi dst inputs ty)
+          (and
+            (= dst var)
+            (opt-integer-type? ty)
+            (opt-bounds-dom-induct-inputs?
+              type-segment-bases
+              index
+              doms
+              terms
+              defs
+              phi-defs
+              var-facts
+              checks
+              copies
+              sources
+              cmp-facts
+              (OptNonnegPhis.Cons var (box phis))
+              label
+              nonneg?
+              below?
+              strict?
+              inputs
+              bound
+              fuel))]
+        [_ false])]
+    [(OptBoolBranchDef.No)
+      (match (opt-bool-branch-def defs var)
+        [(OptBoolBranchDef.No) false]
+        [(OptBoolBranchDef.Some instr _)
+          (match instr
+            [(ir.CompilerIrInstr.BinOp _ op lhs rhs ty)
+              (if (not (opt-type-eq type-segment-bases ty (ast.AstType.I64)))
+                false
+                (match (opt-bounds-dom-affine-parts op lhs rhs)
+                  [(OptBoundsDomOffset.No) false]
+                  [(OptBoundsDomOffset.Some raw-base offset)
+                    (let
+                      [base : ir.CompilerIrValue
+                        (opt-bounds-dom-resolve copies raw-base)]
+                      (cond
+                        ;; `base - k`: in [0, base] once `base >= 0` is known,
+                        ;; so the base's own range carries over unchanged.
+                        [(< offset 0)
+                          (and
+                            (or
+                              nonneg?
+                              (opt-bounds-dom-var-fact?
+                                var-facts
+                                var
+                                (opt-bounds-dom-var-fact-nonneg))
+                              (opt-dom-cmp-decided-at?
+                                type-segment-bases
+                                doms
+                                at-id
+                                cmp-facts
+                                (ir.CompilerIrBinOp.Ge)
+                                base
+                                (ir.CompilerIrValue.I64 (- 0 offset))))
+                            (opt-bounds-dom-induct-in-range?
+                              type-segment-bases
+                              index
+                              doms
+                              terms
+                              defs
+                              phi-defs
+                              var-facts
+                              checks
+                              copies
+                              sources
+                              cmp-facts
+                              phis
+                              at-id
+                              end?
+                              false
+                              false
+                              strict?
+                              base
+                              bound
+                              fuel))]
+                        [(= offset 0)
+                          (opt-bounds-dom-induct-in-range?
+                            type-segment-bases
+                            index
+                            doms
+                            terms
+                            defs
+                            phi-defs
+                            var-facts
+                            checks
+                            copies
+                            sources
+                            cmp-facts
+                            phis
+                            at-id
+                            end?
+                            nonneg?
+                            below?
+                            strict?
+                            base
+                            bound
+                            fuel)]
+                        ;; `base + 1` is at most the bound once `base` is
+                        ;; STRICTLY below it -- an output cursor stepped past
+                        ;; the element it just checked. The hypothesis is not
+                        ;; allowed to supply that half: it carries this call's
+                        ;; own (weaker) strictness, and `<= bound` plus one is
+                        ;; not `<= bound`.
+                        [else
+                          (and
+                            (not strict?)
+                            (= offset 1)
+                            (or
+                              (opt-bounds-dom-checked-in-range?
+                                type-segment-bases
+                                doms
+                                phi-defs
+                                copies
+                                checks
+                                at-id
+                                end?
+                                base
+                                bound
+                                2)
+                              (and
+                                (opt-bounds-dom-nonneg-at?
+                                  type-segment-bases
+                                  index
+                                  doms
+                                  defs
+                                  phi-defs
+                                  var-facts
+                                  checks
+                                  copies
+                                  cmp-facts
+                                  (OptNonnegPhis.Nil)
+                                  at-id
+                                  base
+                                  (opt-bounds-dom-nonneg-fuel))
+                                (opt-bounds-dom-below-fact?
+                                  type-segment-bases
+                                  doms
+                                  phi-defs
+                                  copies
+                                  cmp-facts
+                                  at-id
+                                  true
+                                  base
+                                  bound
+                                  2))))]))]))]
+            [_ false])])]))
+
+;; One phi input, discharged at the block its edge leaves. An edge no execution
+;; takes carries nothing.
+(define (opt-bounds-dom-induct-edge?
+  [type-segment-bases : i64]
+  [index : OptCfgIndex]
+  [doms : OptDomInfo]
+  [terms : (__tl_dyn-array OptBoolBranchDef)]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [var-facts : (__tl_dyn-array i64)]
+  [checks : OptBoundsDomChecks]
+  [copies : opt_i64_i64_map.Map]
+  [sources : opt_i64_i64_map.Map]
+  [cmp-facts : OptDomCmpFacts]
+  [phis : OptNonnegPhis]
+  [home-label : i64]
+  [nonneg? : bool]
+  [below? : bool]
+  [strict? : bool]
+  [raw-value : ir.CompilerIrValue]
+  [from-label : i64]
+  [bound : ir.CompilerIrValue]
+  [fuel : i64]) : bool
+  (match (opt-cfg-index-id index from-label)
+    [(option_i64.None) false]
+    [(option_i64.Some from-id)
+      (if (or (< from-id 0) (>= from-id (opt-cfg-index-block-count index)))
+        false
+        (if (not (array-ref index.reachable from-id))
+          true
+          (let
+            [value : ir.CompilerIrValue
+              (opt-bounds-dom-strip-int-cast
+                type-segment-bases
+                phi-defs
+                copies
+                (opt-bounds-dom-resolve copies raw-value))]
+            ;; The branch that selected this edge decides its own condition of
+            ;; the value the edge carries. The fact list is NOT threaded further
+            ;; down -- it holds on this edge only -- but what it proves about
+            ;; the value travels with the value through further substitutions.
+            [edge-facts : OptDomCmpFacts
+              (opt-bounds-dom-induct-edge-facts
+                terms
+                defs
+                sources
+                copies
+                cmp-facts
+                from-id
+                home-label)]
+            (and
+              (opt-gvn-value-stable? sources value)
+              (opt-bounds-dom-induct-in-range?
+                type-segment-bases
+                index
+                doms
+                terms
+                defs
+                phi-defs
+                var-facts
+                checks
+                copies
+                sources
+                cmp-facts
+                phis
+                from-id
+                true
+                (or
+                  nonneg?
+                  (opt-dom-cmp-decided-at?
+                    type-segment-bases
+                    doms
+                    from-id
+                    edge-facts
+                    (ir.CompilerIrBinOp.Ge)
+                    value
+                    (ir.CompilerIrValue.I64 0)))
+                (or
+                  below?
+                  (opt-bounds-dom-below-fact?
+                    type-segment-bases
+                    doms
+                    phi-defs
+                    copies
+                    edge-facts
+                    from-id
+                    strict?
+                    value
+                    bound
+                    2))
+                strict?
+                value
+                bound
+                fuel)))))]))
+
+;; The fact the branch ending `from-id` establishes on its edge into
+;; `home-label`, prepended to the facts already in scope. A branch whose two
+;; edges share one label decides nothing about it.
+(define (opt-bounds-dom-induct-edge-facts
+  [terms : (__tl_dyn-array OptBoolBranchDef)]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [sources : opt_i64_i64_map.Map]
+  [copies : opt_i64_i64_map.Map]
+  [cmp-facts : OptDomCmpFacts]
+  [from-id : i64]
+  [home-label : i64]) : OptDomCmpFacts
+  (if (or (< from-id 0) (>= from-id (array-length terms)))
+    cmp-facts
+    (match (array-ref terms from-id)
+      [(OptBoolBranchDef.No) cmp-facts]
+      [(OptBoolBranchDef.Some instr _)
+        (match instr
+          [(ir.CompilerIrInstr.Branch cond true-label false-label)
+            (if (= true-label false-label)
+              cmp-facts
+              (cond
+                [(= true-label home-label)
+                  (opt-dom-cmp-edge-fact
+                    defs
+                    copies
+                    sources
+                    cond
+                    true
+                    from-id
+                    cmp-facts)]
+                [(= false-label home-label)
+                  (opt-dom-cmp-edge-fact
+                    defs
+                    copies
+                    sources
+                    cond
+                    false
+                    from-id
+                    cmp-facts)]
+                [else cmp-facts]))]
+          [_ cmp-facts])])))
+
+(define (opt-bounds-dom-induct-inputs?
+  [type-segment-bases : i64]
+  [index : OptCfgIndex]
+  [doms : OptDomInfo]
+  [terms : (__tl_dyn-array OptBoolBranchDef)]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [var-facts : (__tl_dyn-array i64)]
+  [checks : OptBoundsDomChecks]
+  [copies : opt_i64_i64_map.Map]
+  [sources : opt_i64_i64_map.Map]
+  [cmp-facts : OptDomCmpFacts]
+  [phis : OptNonnegPhis]
+  [home-label : i64]
+  [nonneg? : bool]
+  [below? : bool]
+  [strict? : bool]
+  [inputs : ir.CompilerIrPhiInputList]
+  [bound : ir.CompilerIrValue]
+  [fuel : i64]) : bool
+  (match inputs
+    [(ir.CompilerIrPhiInputList.Nil) false]
+    [(ir.CompilerIrPhiInputList.Cons value from-label rest)
+      (and
+        (opt-bounds-dom-induct-edge?
+          type-segment-bases
+          index
+          doms
+          terms
+          defs
+          phi-defs
+          var-facts
+          checks
+          copies
+          sources
+          cmp-facts
+          phis
+          home-label
+          nonneg?
+          below?
+          strict?
+          value
+          from-label
+          bound
+          fuel)
+        (match (__tl-box-place rest)
+          [(ir.CompilerIrPhiInputList.Nil) true]
+          [_
+            (opt-bounds-dom-induct-inputs?
+              type-segment-bases
+              index
+              doms
+              terms
+              defs
+              phi-defs
+              var-facts
+              checks
+              copies
+              sources
+              cmp-facts
+              phis
+              home-label
+              nonneg?
+              below?
+              strict?
+              (__tl-box-place rest)
+              bound
+              fuel)]))]
+    [(ir.CompilerIrPhiInputList.Array seq)
+      (opt-bounds-dom-induct-inputs?
+        type-segment-bases
+        index
+        doms
+        terms
+        defs
+        phi-defs
+        var-facts
+        checks
+        copies
+        sources
+        cmp-facts
+        phis
+        home-label
+        nonneg?
+        below?
+        strict?
+        (ir.compiler-ir-phi-input-seq-to-list seq)
+        bound
+        fuel)]))
+
+;; --- the decreasing affine index ---------------------------------------------
+;;
+;; A reversed copy indexes `postorder[post - 1 - i]` under `0 <= i < post`, and
+;; the cursor it counts down from is the one the FILLING loop left behind: every
+;; `postorder[post]` was checked and the step was `post + 1`, so `post <= len`
+;; -- the non-strict half of the induction above. Then
+;;
+;;     0 <= i <= post - 1  and  post <= len
+;;     =>  0 <= (post - 1) - i <= post - 1 <= len - 1 < len
+;;
+;; with no wrap anywhere: `post >= 1` follows from `0 <= i < post`, so `post - 1`
+;; is nonnegative, and subtracting an `i` that is at most `post - 1` stays in
+;; [0, post - 1]. The rule reads the index as `A - B` with `A = base + off`:
+;; `off = -1` needs only `base <= bound`, while `off = 0` (a plain `p - q`)
+;; needs `base < bound`, since `q >= 1` is not known.
+(define (opt-bounds-dom-difference-in-range?
+  [type-segment-bases : i64]
+  [index : OptCfgIndex]
+  [doms : OptDomInfo]
+  [terms : (__tl_dyn-array OptBoolBranchDef)]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [var-facts : (__tl_dyn-array i64)]
+  [checks : OptBoundsDomChecks]
+  [copies : opt_i64_i64_map.Map]
+  [sources : opt_i64_i64_map.Map]
+  [cmp-facts : OptDomCmpFacts]
+  [at-id : i64]
+  [idx : ir.CompilerIrValue]
+  [bound : ir.CompilerIrValue]) : bool
+  (match idx
+    [(ir.CompilerIrValue.Var var)
+      (match (opt-bool-branch-def defs var)
+        [(OptBoolBranchDef.No) false]
+        [(OptBoolBranchDef.Some instr _)
+          (match instr
+            [(ir.CompilerIrInstr.BinOp _ op lhs rhs ty)
+              (if (not
+                (and
+                  (opt-binop-eq op (ir.CompilerIrBinOp.Sub))
+                  (opt-type-eq type-segment-bases ty (ast.AstType.I64))))
+                false
+                (let
+                  [minuend : ir.CompilerIrValue
+                    (opt-bounds-dom-resolve copies lhs)]
+                  [subtrahend : ir.CompilerIrValue
+                    (opt-bounds-dom-resolve copies rhs)]
+                  (match (opt-bounds-dom-induct-term
+                    type-segment-bases
+                    defs
+                    copies
+                    minuend)
+                    [(OptBoundsDomOffset.No) false]
+                    [(OptBoundsDomOffset.Some base offset)
+                      (and
+                        (<= offset 0)
+                        (>= offset (- 0 1))
+                        ;; `0 <= B < base` is the whole of the index's own
+                        ;; range; the loop that walks `i` supplies both halves.
+                        (opt-bounds-dom-nonneg-at?
+                          type-segment-bases
+                          index
+                          doms
+                          defs
+                          phi-defs
+                          var-facts
+                          checks
+                          copies
+                          cmp-facts
+                          (OptNonnegPhis.Nil)
+                          at-id
+                          subtrahend
+                          (opt-bounds-dom-nonneg-fuel))
+                        (opt-dom-cmp-decided-at?
+                          type-segment-bases
+                          doms
+                          at-id
+                          cmp-facts
+                          (ir.CompilerIrBinOp.Lt)
+                          subtrahend
+                          base)
+                        (opt-bounds-dom-induct-in-range?
+                          type-segment-bases
+                          index
+                          doms
+                          terms
+                          defs
+                          phi-defs
+                          var-facts
+                          checks
+                          copies
+                          sources
+                          cmp-facts
+                          (OptNonnegPhis.Nil)
+                          at-id
+                          false
+                          false
+                          false
+                          (= offset 0)
+                          base
+                          bound
+                          (opt-bounds-dom-induct-fuel)))])))]
+            [_ false])])]
+    [_ false]))
+
+;; The whole ABCD verdict for one `(index, length)` pair: the cycle rule on the
+;; index itself, then the decreasing form built out of one.
+(define (opt-bounds-dom-inductive-in-range?
+  [type-segment-bases : i64]
+  [index : OptCfgIndex]
+  [doms : OptDomInfo]
+  [terms : (__tl_dyn-array OptBoolBranchDef)]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [var-facts : (__tl_dyn-array i64)]
+  [checks : OptBoundsDomChecks]
+  [copies : opt_i64_i64_map.Map]
+  [sources : opt_i64_i64_map.Map]
+  [cmp-facts : OptDomCmpFacts]
+  [at-id : i64]
+  [strict? : bool]
+  [idx : ir.CompilerIrValue]
+  [bound : ir.CompilerIrValue]) : bool
+  (and
+    (opt-bounds-dom-induct-candidate? phi-defs defs idx)
+    (or
+      (opt-bounds-dom-induct-in-range?
+        type-segment-bases
+        index
+        doms
+        terms
+        defs
+        phi-defs
+        var-facts
+        checks
+        copies
+        sources
+        cmp-facts
+        (OptNonnegPhis.Nil)
+        at-id
+        false
+        false
+        false
+        strict?
+        idx
+        bound
+        (opt-bounds-dom-induct-fuel))
+      (opt-bounds-dom-difference-in-range?
+        type-segment-bases
+        index
+        doms
+        terms
+        defs
+        phi-defs
+        var-facts
+        checks
+        copies
+        sources
+        cmp-facts
+        at-id
+        idx
+        bound))))
+
+;; Only a phi or an affine derivation can carry an induction, and every query
+;; that reaches here has already failed the cheaper rules; this gate is what
+;; keeps the walk off every other index.
+(define (opt-bounds-dom-induct-candidate?
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [idx : ir.CompilerIrValue]) : bool
+  (match idx
     [(ir.CompilerIrValue.Var var)
       (or
         (match (opt-bool-branch-def phi-defs var)
           [(OptBoolBranchDef.No) false]
           [(OptBoolBranchDef.Some instr _)
             (match instr
-              [(ir.CompilerIrInstr.Cast _ _ from to)
-                (opt-bounds-dom-zero-extend? from to)]
-              [(ir.CompilerIrInstr.Phi _ inputs ty)
-                (and
-                  (opt-integer-type? ty)
-                  (opt-bounds-dom-nonneg-counter-inputs-ok?
-                    type-segment-bases
-                    index
-                    doms
-                    defs
-                    phi-defs
-                    copies
-                    cmp-facts
-                    value
-                    inputs
-                    2))]
+              [(ir.CompilerIrInstr.Phi _ _ _) true]
               [_ false])])
-        ;; An explicit dominating `(>= i 0)` / `(< i 0)` guard, in either
-        ;; spelling. Two fact-list scans, so this runs last.
-        (match (opt-dom-cmp-lookup
-          type-segment-bases
-          cmp-facts
-          (ir.CompilerIrBinOp.Le)
-          (ir.CompilerIrValue.I64 0)
-          value
-          (ast.AstType.I64))
-          [(OptDomCmpLookup.Some decided) decided]
-          [(OptDomCmpLookup.No) false])
-        (match (opt-dom-cmp-lookup
-          type-segment-bases
-          cmp-facts
-          (ir.CompilerIrBinOp.Lt)
-          value
-          (ir.CompilerIrValue.I64 0)
-          (ast.AstType.I64))
-          [(OptDomCmpLookup.Some decided) (not decided)]
-          [(OptDomCmpLookup.No) false]))]
+        (match (opt-bool-branch-def defs var)
+          [(OptBoolBranchDef.No) false]
+          [(OptBoolBranchDef.Some instr _)
+            (match instr
+              [(ir.CompilerIrInstr.BinOp _ op _ _ _)
+                (or
+                  (opt-binop-eq op (ir.CompilerIrBinOp.Add))
+                  (opt-binop-eq op (ir.CompilerIrBinOp.Sub)))]
+              [_ false])]))]
     [_ false]))
+
+;; Is this value a var? Only then can anything above name it in a fact.
+(define (opt-bounds-dom-value-var? [value : ir.CompilerIrValue]) : bool
+  (match value
+    [(ir.CompilerIrValue.Var _) true]
+    [_ false]))
+
+;; The same proof read as a COMPARISON verdict. `0 <= v < X` makes `lt v, X`
+;; true in BOTH spellings -- signed and unsigned agree once both operands are
+;; nonnegative -- and `0 <= v <= X` does the same for `le`. Only TRUE is ever
+;; decided: failing to prove the range says nothing about the compare. The gate
+;; is a 64-bit compare of two vars, which is what a versioned loop header's
+;; `lt sp, min(len_a, len_b) : u64` is; nothing is retyped here, the compare is
+;; replaced by the bool it computes, exactly as every other verdict in this pass
+;; does.
+(define (opt-bounds-dom-induct-verdict
+  [type-segment-bases : i64]
+  [doms : OptDomInfo]
+  [index : OptCfgIndex]
+  [terms : (__tl_dyn-array OptBoolBranchDef)]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [var-facts : (__tl_dyn-array i64)]
+  [checks : OptBoundsDomChecks]
+  [sources : opt_i64_i64_map.Map]
+  [block-id : i64]
+  [cmp-facts : OptDomCmpFacts]
+  [copies : opt_i64_i64_map.Map]
+  [op : ir.CompilerIrBinOp]
+  [lhs : ir.CompilerIrValue]
+  [rhs : ir.CompilerIrValue]
+  [ty : ast.AstType]) : OptDomCmpLookup
+  (let
+    [strict? : bool (opt-binop-eq op (ir.CompilerIrBinOp.Lt))]
+    [idx : ir.CompilerIrValue
+      (opt-bounds-dom-strip-int-cast type-segment-bases phi-defs copies lhs)]
+    [bound : ir.CompilerIrValue
+      (opt-bounds-dom-strip-int-cast type-segment-bases phi-defs copies rhs)]
+    (if (and
+      (or strict? (opt-binop-eq op (ir.CompilerIrBinOp.Le)))
+      (opt-integer-type? ty)
+      (= (opt-int-width ty) 64)
+      (opt-bounds-dom-value-var? idx)
+      (opt-bounds-dom-value-var? bound)
+      (opt-bounds-dom-inductive-in-range?
+        type-segment-bases
+        index
+        doms
+        terms
+        defs
+        phi-defs
+        var-facts
+        checks
+        copies
+        sources
+        cmp-facts
+        block-id
+        strict?
+        idx
+        bound))
+      (OptDomCmpLookup.Some true)
+      (OptDomCmpLookup.No))))
 
 ;; A dominating SIGNED `idx < len` plus `idx >= 0` decides the unsigned check:
 ;; both operands are then nonnegative i64s, where unsigned and signed order
@@ -43711,34 +48144,53 @@
   [doms : OptDomInfo]
   [defs : (__tl_dyn-array OptBoolBranchDef)]
   [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [var-facts : (__tl_dyn-array i64)]
+  [checks : OptBoundsDomChecks]
   [copies : opt_i64_i64_map.Map]
   [cmp-facts : OptDomCmpFacts]
   [facts : OptBoundsFacts]
+  [block-id : i64]
   [raw-idx : ir.CompilerIrValue]
   [idx : ir.CompilerIrValue]
   [len : ir.CompilerIrValue]) : bool
-  (and
+  (or
+    (and
+      (match (opt-dom-cmp-lookup-chained
+        type-segment-bases
+        cmp-facts
+        (ir.CompilerIrBinOp.Lt)
+        idx
+        len
+        (ast.AstType.I64))
+        [(OptDomCmpLookup.Some decided) decided]
+        [(OptDomCmpLookup.No) false])
+      (or
+        (opt-bounds-index-checked? facts raw-idx)
+        (opt-bounds-index-checked? facts idx)
+        (opt-bounds-dom-nonneg?
+          type-segment-bases
+          index
+          doms
+          defs
+          phi-defs
+          var-facts
+          checks
+          copies
+          cmp-facts
+          block-id
+          idx)))
+    ;; A dominating UNSIGNED `idx < len` IS this check, with no sign reasoning
+    ;; in between -- that is the fact the retyped compare below leaves behind,
+    ;; and the fixpoint's later rounds read it back here.
     (match (opt-dom-cmp-lookup-chained
       type-segment-bases
       cmp-facts
       (ir.CompilerIrBinOp.Lt)
       idx
       len
-      (ast.AstType.I64))
+      (ast.AstType.U64))
       [(OptDomCmpLookup.Some decided) decided]
-      [(OptDomCmpLookup.No) false])
-    (or
-      (opt-bounds-index-checked? facts raw-idx)
-      (opt-bounds-index-checked? facts idx)
-      (opt-bounds-dom-nonneg?
-        type-segment-bases
-        index
-        doms
-        defs
-        phi-defs
-        copies
-        cmp-facts
-        idx))))
+      [(OptDomCmpLookup.No) false])))
 
 ;; `bit-and X m` lands in [0, m] for every nonnegative m: bit-and only clears
 ;; bits, so the result cannot exceed m, and a nonnegative m has a clear sign bit
@@ -44100,8 +48552,11 @@
   [doms : OptDomInfo]
   [defs : (__tl_dyn-array OptBoolBranchDef)]
   [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [var-facts : (__tl_dyn-array i64)]
+  [checks : OptBoundsDomChecks]
   [copies : opt_i64_i64_map.Map]
   [cmp-facts : OptDomCmpFacts]
+  [block-id : i64]
   [mask : i64]
   [base : ir.CompilerIrValue]
   [offset : i64]) : bool
@@ -44115,8 +48570,11 @@
         doms
         defs
         phi-defs
+        var-facts
+        checks
         copies
         cmp-facts
+        block-id
         base)]))
 
 ;; Is this check implied by dominating checks of the same base and length
@@ -44127,10 +48585,13 @@
   [doms : OptDomInfo]
   [defs : (__tl_dyn-array OptBoolBranchDef)]
   [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [var-facts : (__tl_dyn-array i64)]
+  [checks : OptBoundsDomChecks]
   [copies : opt_i64_i64_map.Map]
   [sources : opt_i64_i64_map.Map]
   [cmp-facts : OptDomCmpFacts]
   [facts : OptBoundsFacts]
+  [block-id : i64]
   [idx : ir.CompilerIrValue]
   [len : ir.CompilerIrValue]) : bool
   (let
@@ -44156,8 +48617,11 @@
         doms
         defs
         phi-defs
+        var-facts
+        checks
         copies
         cmp-facts
+        block-id
         mask
         term.base
         term.offset))))
@@ -44569,6 +49033,8 @@
   [defs : (__tl_dyn-array OptBoolBranchDef)]
   [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
   [terms : (__tl_dyn-array OptBoolBranchDef)]
+  [var-facts : (__tl_dyn-array i64)]
+  [checks : OptBoundsDomChecks]
   [cfg-index : OptCfgIndex]
   [doms : OptDomInfo]
   [block-label : i64]
@@ -44644,10 +49110,13 @@
                       doms
                       defs
                       phi-defs
+                      var-facts
+                      checks
                       copies
                       sources
                       cur-cmp-facts
                       cur-facts
+                      block-id
                       sidx
                       (opt-bounds-dom-slice-length-key slice-lengths slen))
                     (opt-bounds-dom-mask-in-range?
@@ -44675,10 +49144,32 @@
                       doms
                       defs
                       phi-defs
+                      var-facts
+                      checks
                       copies
                       cur-cmp-facts
                       cur-facts
+                      block-id
                       cidx
+                      sidx
+                      slen)
+                    ;; Last, because it is the only rule that walks the phi
+                    ;; graph: the ABCD cycle proof and the decreasing index
+                    ;; built out of one.
+                    (opt-bounds-dom-inductive-in-range?
+                      type-segment-bases
+                      cfg-index
+                      doms
+                      terms
+                      defs
+                      phi-defs
+                      var-facts
+                      checks
+                      copies
+                      sources
+                      cur-cmp-facts
+                      block-id
+                      true
                       sidx
                       slen))
                     unit
@@ -44737,6 +49228,8 @@
                     defs
                     phi-defs
                     sources
+                    var-facts
+                    checks
                     block-id
                     cur-cmp-facts
                     copies
@@ -45134,6 +49627,516 @@
                 ty
                 header-id))])])))
 
+;; --- a compare one non-negative operand already decides ----------------------
+;;
+;; `(and (>= i 0) (< i n))` is how the range test is written by hand next to
+;; every accessor, and `(< i 0)` is how the sentinel is tested; both halves are
+;; constants wherever the lattice has already proved the operand's sign. Read
+;; that proof as a FACT and hand it to the same implication masks a dominating
+;; branch is read through, so nothing new decides anything: `x >= 0` proves
+;; `x >= 0` and `x >= -3`, refutes `x < 0` and `x = -1`, and leaves `x <= 0`
+;; alone (x may be zero). Only a literal at or below zero can be decided that
+;; way, which is the gate that keeps the lattice query off every other compare.
+;;
+;; The result is a Mov of a literal, not a jump: this pass promises `sccp` and
+;; the passes below it that it leaves every terminator alone, and `cfg` folds
+;; the branch that reads the literal one pass later.
+(define (opt-bounds-dom-nonneg-literal-verdict
+  [type-segment-bases : i64]
+  [doms : OptDomInfo]
+  [index : OptCfgIndex]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [var-facts : (__tl_dyn-array i64)]
+  [checks : OptBoundsDomChecks]
+  [copies : opt_i64_i64_map.Map]
+  [cmp-facts : OptDomCmpFacts]
+  [block-id : i64]
+  [op : ir.CompilerIrBinOp]
+  [lhs : ir.CompilerIrValue]
+  [rhs : ir.CompilerIrValue]
+  [ty : ast.AstType]) : OptDomCmpLookup
+  (if (not (opt-type-eq type-segment-bases ty (ast.AstType.I64)))
+    (OptDomCmpLookup.No)
+    (match (opt-dom-cmp-var-lit lhs rhs)
+      [(OptDomCmpVarLit.No) (OptDomCmpLookup.No)]
+      [(OptDomCmpVarLit.Some var literal _)
+        (if (or
+          (> literal 0)
+          (not
+            (opt-bounds-dom-nonneg?
+              type-segment-bases
+              index
+              doms
+              defs
+              phi-defs
+              var-facts
+              checks
+              copies
+              cmp-facts
+              block-id
+              (ir.CompilerIrValue.Var var))))
+          (OptDomCmpLookup.No)
+          (opt-dom-cmp-fact-verdict
+            type-segment-bases
+            (OptDomCmpFact.Fact
+              (ir.CompilerIrBinOp.Ge)
+              (ir.CompilerIrValue.Var var)
+              (ir.CompilerIrValue.I64 0)
+              (ast.AstType.I64)
+              true
+              block-id)
+            (opt-dom-cmp-op-mask op)
+            lhs
+            rhs
+            (opt-dom-cmp-var-lit lhs rhs)
+            ty))])))
+
+;; --- per-var facts the walk reads off the whole function ---------------------
+;;
+;; Bit 0, CONTAINER LENGTH, collected once before the dominator walk: a var used
+;; as the LENGTH operand of some `bounds_check` in this function. Lowering emits
+;; that operand only from a runtime container's length, which is `< 2^63` --
+;; the premise this pass already states where it records `0 <= idx < len` for a
+;; check that PASSED (see the fact recording in `opt-bounds-dom-instrs-from`)
+;; and the one the ubound narrowing's header argument rests on. The value is
+;; therefore non-negative read as an i64 wherever it is live, which is what
+;; gives a scanner's `len` operand a sign with no guard anywhere.
+;;
+;; Reading the sign off the length's SHAPE instead -- a Load through a Gep at
+;; the descriptor's length slot -- is NOT sound here: that Gep is `offset 1,
+;; i64`, which is also every ordinary struct's second i64 field, and nothing at
+;; the Gep says which of the two it addresses. The `bounds_check` operand says
+;; it.
+;;
+;; The pre-pass below writes bits 1 and 2 into the same array, keyed on the
+;; instruction that DERIVES a value rather than on a use of it.
+(define (opt-bounds-dom-var-fact-length) : i64
+  1)
+
+(define (opt-bounds-dom-var-fact?
+  [var-facts : (__tl_dyn-array i64)]
+  [var : i64]
+  [bit : i64]) : bool
+  (and
+    (>= var 0)
+    (< var (array-length var-facts))
+    (not (= (bit-and (array-ref var-facts var) bit) 0))))
+
+;; Is this value the length operand of a `bounds_check`, and therefore a
+;; container length below 2^63?
+(define (opt-bounds-dom-length-value?
+  [var-facts : (__tl_dyn-array i64)]
+  [value : ir.CompilerIrValue]) : bool
+  (match value
+    [(ir.CompilerIrValue.Var var)
+      (opt-bounds-dom-var-fact? var-facts var (opt-bounds-dom-var-fact-length))]
+    [_ false]))
+
+;; A length is recorded under every spelling the walk canonicalizes to: the
+;; operand as written, its copy-resolved form, and the same-width reinterpret
+;; stripped off that -- the three the check's own query uses.
+(define (opt-bounds-dom-var-facts-length!
+  [type-segment-bases : i64]
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [copies : opt_i64_i64_map.Map]
+  [sources : opt_i64_i64_map.Map]
+  [var-facts : (__tl_dyn-array i64)]
+  [len : ir.CompilerIrValue]) : unit
+  (let
+    [bit : i64 (opt-bounds-dom-var-fact-length)]
+    [resolved : ir.CompilerIrValue (opt-bounds-dom-resolve copies len)]
+    [stripped : ir.CompilerIrValue
+      (opt-bounds-dom-strip-int-cast
+        type-segment-bases
+        phi-defs
+        copies
+        resolved)]
+    ;; A var with more than one definition names more than one runtime value,
+    ;; so no fact may follow it; that is the pass-wide stability rule.
+    (if (not (opt-gvn-value-stable? sources resolved))
+      unit
+      (begin
+        (opt-bounds-dom-var-facts-set-value! var-facts len bit)
+        (opt-bounds-dom-var-facts-set-value! var-facts resolved bit)
+        (if (opt-gvn-value-stable? sources stripped)
+          (opt-bounds-dom-var-facts-set-value! var-facts stripped bit)
+          unit)))))
+
+(define (opt-bounds-dom-var-facts-seq!
+  [type-segment-bases : i64]
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [copies : opt_i64_i64_map.Map]
+  [sources : opt_i64_i64_map.Map]
+  [var-facts : (__tl_dyn-array i64)]
+  [instrs : ir.CompilerIrInstrSeq]) : unit
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [i : i64 0]
+    (while (< i count)
+      (begin
+        (match (ir.compiler-ir-instr-seq-ref instrs i)
+          [(ir.CompilerIrInstr.BoundsCheck _ len _)
+            (opt-bounds-dom-var-facts-length!
+              type-segment-bases
+              phi-defs
+              copies
+              sources
+              var-facts
+              len)]
+          [_ unit])
+        (set! i (+ i 1))))))
+
+(define (opt-bounds-dom-var-facts-blocks!
+  [type-segment-bases : i64]
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [copies : opt_i64_i64_map.Map]
+  [sources : opt_i64_i64_map.Map]
+  [var-facts : (__tl_dyn-array i64)]
+  [blocks : ir.CompilerIrBlockList]) : unit
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) unit]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (begin
+        (match block
+          [(ir.CompilerIrBlock.Block _ instrs)
+            (opt-bounds-dom-var-facts-seq!
+              type-segment-bases
+              phi-defs
+              copies
+              sources
+              var-facts
+              instrs)])
+        (opt-bounds-dom-var-facts-blocks!
+          type-segment-bases
+          phi-defs
+          copies
+          sources
+          var-facts
+          (__tl-box-place rest)))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-bounds-dom-var-facts-blocks!
+        type-segment-bases
+        phi-defs
+        copies
+        sources
+        var-facts
+        (ir.compiler-ir-block-seq-to-list seq))]))
+
+;; One linear pass: a check's length operand is a length wherever it is live, so
+;; nothing here propagates and nothing needs a second round.
+(define (opt-bounds-dom-var-facts
+  [type-segment-bases : i64]
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [copies : opt_i64_i64_map.Map]
+  [sources : opt_i64_i64_map.Map]
+  [frame : i64]
+  [blocks : ir.CompilerIrBlockList]) : (__tl_dyn-array i64)
+  (let
+    [var-facts : (__tl_dyn-array i64) (array.make-array i64 frame)]
+    (begin
+      (opt-bounds-dom-var-facts-blocks!
+        type-segment-bases
+        phi-defs
+        copies
+        sources
+        var-facts
+        blocks)
+      var-facts)))
+
+;; --- derivation decided at the definition site -------------------------------
+;;
+;; The facts that discharge a DERIVED value are the ones dominating the
+;; instruction that derives it, and the walk cannot reach them from where the
+;; question is asked: a counter's phi input is computed in a block that is
+;; usually NOT an ancestor of the check asking about it -- a lexer's outer
+;; counter takes its next value from an inner skip loop's latch, off to the side
+;; of the dominator path the walk is on, and the `i < n` that fences that latch's
+;; `+ 1` is recorded inside the inner loop where the walk has not been and will
+;; not be while it is here.
+;;
+;; So each derivation is decided ONCE per function, at its own block, by a walk
+;; carrying exactly the facts the main walk carries. What it decides is a
+;; property of the VALUE -- `x - 48` computed where `x >= 48` is known is
+;; non-negative wherever that value is read afterwards, because SSA gives it one
+;; value -- so the answer travels anywhere, which is precisely what the phi
+;; recursion needs and what a fact in a list cannot do.
+;;
+;; Two bits come out of it, both keyed on the derived instruction's destination:
+;;
+;;   bit 1, NON-NEGATIVE OUTRIGHT: `x - k` (k > 0) under a dominating `x >= k`.
+;;
+;;     A `Mov dst, <literal >= 0>` deliberately does NOT set it. The rule would
+;;     be sound and is free, but it is not free downstream: a counted loop whose
+;;     seed reaches its phi as such a Mov (`i = 0` before an inlined `while`)
+;;     becomes provably in range HERE, its `bounds_check` goes, and `bce_version`
+;;     -- which runs BELOW this pass -- then has nothing to version, so the
+;;     `__bce_guard`/`__bce_fast` pair that `copy_call` matches on is never
+;;     built and a 25-slot `dst[i] = src[i]` loop that used to become one
+;;     `tl_mem_copy8_fwd` call stays a scalar loop (peephole_lines +6.0M Ir,
+;;     measured). Copy/fill recognition of a CHECK-FREE counted loop is the
+;;     fix; until it exists, this pass does not take that check away.
+;;   bit 2, FENCED: `x + k` (k > 0) or `x * c` (c > 0) whose overflow fence is
+;;     discharged here (see WRAP FENCES). The value is then non-negative exactly
+;;     when `x` is, which the structural recursion decides.
+(define (opt-bounds-dom-var-fact-nonneg) : i64
+  2)
+
+(define (opt-bounds-dom-var-fact-fenced) : i64
+  4)
+
+(define (opt-bounds-dom-var-facts-set!
+  [var-facts : (__tl_dyn-array i64)]
+  [var : i64]
+  [bit : i64]) : unit
+  (if (or (< var 0) (>= var (array-length var-facts)))
+    unit
+    (set! (array-ref var-facts var) (bit-or (array-ref var-facts var) bit))))
+
+(define (opt-bounds-dom-var-facts-set-value!
+  [var-facts : (__tl_dyn-array i64)]
+  [value : ir.CompilerIrValue]
+  [bit : i64]) : unit
+  (match value
+    [(ir.CompilerIrValue.Var var)
+      (opt-bounds-dom-var-facts-set! var-facts var bit)]
+    [_ unit]))
+
+;; `x * c` for a positive literal c, fenced against wrapping: `x <= MAX / c`
+;; keeps the product at or below `(MAX / c) * c <= MAX`.
+(define (opt-bounds-dom-mul-no-wrap?
+  [type-segment-bases : i64]
+  [doms : OptDomInfo]
+  [cmp-facts : OptDomCmpFacts]
+  [at-id : i64]
+  [value : ir.CompilerIrValue]
+  [scale : i64]) : bool
+  (and
+    (> scale 0)
+    (opt-dom-cmp-decided-at?
+      type-segment-bases
+      doms
+      at-id
+      cmp-facts
+      (ir.CompilerIrBinOp.Le)
+      value
+      (ir.CompilerIrValue.I64 (/ 9223372036854775807 scale)))))
+
+(define (opt-bounds-dom-nonneg-prepass-binop!
+  [type-segment-bases : i64]
+  [doms : OptDomInfo]
+  [copies : opt_i64_i64_map.Map]
+  [var-facts : (__tl_dyn-array i64)]
+  [cmp-facts : OptDomCmpFacts]
+  [block-id : i64]
+  [dst : i64]
+  [op : ir.CompilerIrBinOp]
+  [lhs : ir.CompilerIrValue]
+  [rhs : ir.CompilerIrValue]) : unit
+  (cond
+    [(or
+        (opt-binop-eq op (ir.CompilerIrBinOp.Add))
+        (opt-binop-eq op (ir.CompilerIrBinOp.Sub)))
+      (match (opt-bounds-dom-affine-parts op lhs rhs)
+        [(OptBoundsDomOffset.No) unit]
+        [(OptBoundsDomOffset.Some raw-base offset)
+          (let
+            [base : ir.CompilerIrValue (opt-bounds-dom-resolve copies raw-base)]
+            (cond
+              [(= offset 0) unit]
+              ;; `base - |offset|`: a dominating `base >= |offset|` is the whole
+              ;; proof, and it rules the wrap out at the same time.
+              [(< offset 0)
+                (if (and
+                  (> offset (- (- 0 9223372036854775807) 1))
+                  (opt-dom-cmp-decided-at?
+                    type-segment-bases
+                    doms
+                    block-id
+                    cmp-facts
+                    (ir.CompilerIrBinOp.Ge)
+                    base
+                    (ir.CompilerIrValue.I64 (- 0 offset))))
+                  (opt-bounds-dom-var-facts-set!
+                    var-facts
+                    dst
+                    (opt-bounds-dom-var-fact-nonneg))
+                  unit)]
+              [else
+                (if (opt-bounds-dom-add-no-wrap?
+                  type-segment-bases
+                  doms
+                  cmp-facts
+                  block-id
+                  base
+                  offset)
+                  (opt-bounds-dom-var-facts-set!
+                    var-facts
+                    dst
+                    (opt-bounds-dom-var-fact-fenced))
+                  unit)]))])]
+    [(opt-binop-eq op (ir.CompilerIrBinOp.Mul))
+      (match (opt-affine-var-const lhs rhs)
+        [(OptAffineOperands.No) unit]
+        [(OptAffineOperands.Some raw-var scale)
+          (if (opt-bounds-dom-mul-no-wrap?
+            type-segment-bases
+            doms
+            cmp-facts
+            block-id
+            (opt-bounds-dom-resolve copies (ir.CompilerIrValue.Var raw-var))
+            scale)
+            (opt-bounds-dom-var-facts-set!
+              var-facts
+              dst
+              (opt-bounds-dom-var-fact-fenced))
+            unit)])]
+    [else unit]))
+
+;; One block of the pre-pass: derive what this block's instructions decide, and
+;; thread the facts a passed `bounds_check` adds the way the main walk does --
+;; `idx < len` in the signed domain is the fence a body-level `i + 1` needs when
+;; the loop tests nothing else.
+(define (opt-bounds-dom-nonneg-prepass-instrs
+  [type-segment-bases : i64]
+  [doms : OptDomInfo]
+  [sources : opt_i64_i64_map.Map]
+  [copies : opt_i64_i64_map.Map]
+  [var-facts : (__tl_dyn-array i64)]
+  [cmp-facts : OptDomCmpFacts (:consume)]
+  [block-id : i64]
+  [instrs : ir.CompilerIrInstrSeq]) : OptDomCmpFacts
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [pos : i64 0]
+    [cur : OptDomCmpFacts cmp-facts]
+    (begin
+      (while (< pos count)
+        (begin
+          (match (ir.compiler-ir-instr-seq-ref instrs pos)
+            [(ir.CompilerIrInstr.BinOp dst op lhs rhs ty)
+              (if (opt-type-eq type-segment-bases ty (ast.AstType.I64))
+                (opt-bounds-dom-nonneg-prepass-binop!
+                  type-segment-bases
+                  doms
+                  copies
+                  var-facts
+                  cur
+                  block-id
+                  dst
+                  op
+                  lhs
+                  rhs)
+                unit)]
+            [(ir.CompilerIrInstr.BoundsCheck idx len _)
+              (let
+                [cidx : ir.CompilerIrValue (opt-bounds-dom-resolve copies idx)]
+                [clen : ir.CompilerIrValue (opt-bounds-dom-resolve copies len)]
+                (if (and
+                  (opt-gvn-value-stable? sources cidx)
+                  (opt-gvn-value-stable? sources clen))
+                  (set!
+                    cur
+                    (OptDomCmpFacts.Cons
+                      (OptDomCmpFact.Fact
+                        (ir.CompilerIrBinOp.Lt)
+                        cidx
+                        clen
+                        (ast.AstType.I64)
+                        true
+                        block-id)
+                      (box cur)))
+                  unit))]
+            [_ unit])
+          (set! pos (+ pos 1))))
+      cur)))
+
+(define (opt-bounds-dom-nonneg-prepass-id!
+  [type-segment-bases : i64]
+  [context : OptCfgContext]
+  [children : OptCfgCsr]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [sources : opt_i64_i64_map.Map]
+  [copies : opt_i64_i64_map.Map]
+  [var-facts : (__tl_dyn-array i64)]
+  [cmp-facts : OptDomCmpFacts (:consume)]
+  [id : i64]) : unit
+  (let
+    [index : OptCfgIndex context.index]
+    (if (or (< id 0) (>= id (opt-cfg-index-block-count index)))
+      unit
+      (match (opt-cfg-index-block index id)
+        [(OptMaybeBlock.No) unit]
+        [(OptMaybeBlock.Some block)
+          (match block
+            [(ir.CompilerIrBlock.Block _ instrs)
+              (let
+                [out-facts : OptDomCmpFacts
+                  (opt-bounds-dom-nonneg-prepass-instrs
+                    type-segment-bases
+                    context.doms
+                    sources
+                    copies
+                    var-facts
+                    cmp-facts
+                    id
+                    instrs)]
+                [offsets : (__tl_dyn-array i64) children.offsets]
+                [edges : (__tl_dyn-array i64) children.edges]
+                [edge : i64 (array-ref offsets id)]
+                [end : i64 (array-ref offsets (+ id 1))]
+                (while (< edge end)
+                  (begin
+                    (let
+                      [child-id : i64 (array-ref edges edge)]
+                      (opt-bounds-dom-nonneg-prepass-id!
+                        type-segment-bases
+                        context
+                        children
+                        defs
+                        sources
+                        copies
+                        var-facts
+                        (opt-bounds-dom-child-cmp-facts
+                          context.doms
+                          index
+                          defs
+                          sources
+                          copies
+                          out-facts
+                          instrs
+                          id
+                          child-id)
+                        child-id))
+                    (set! edge (+ edge 1)))))])]))))
+
+(define (opt-bounds-dom-nonneg-prepass!
+  [type-segment-bases : i64]
+  [context : OptCfgContext]
+  [children : OptCfgCsr]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [sources : opt_i64_i64_map.Map]
+  [copies : opt_i64_i64_map.Map]
+  [var-facts : (__tl_dyn-array i64)]) : unit
+  (match (opt-cfg-index-id context.index context.entry-label)
+    [(option_i64.None) unit]
+    [(option_i64.Some entry-id)
+      (if (and
+        (>= entry-id 0)
+        (< entry-id (opt-cfg-index-block-count context.index))
+        (array-ref context.index.reachable entry-id))
+        (opt-bounds-dom-nonneg-prepass-id!
+          type-segment-bases
+          context
+          children
+          defs
+          sources
+          copies
+          var-facts
+          (OptDomCmpFacts.Nil)
+          entry-id)
+        unit)]))
+
 ;; What the facts in scope say about one comparison, canonicalized the way the
 ;; facts themselves are: the direct/implied/chained lookup first, and the
 ;; joining-edge rule above when that returns nothing. Shared by the compare fold
@@ -45145,6 +50148,8 @@
   [terms : (__tl_dyn-array OptBoolBranchDef)]
   [defs : (__tl_dyn-array OptBoolBranchDef)]
   [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [var-facts : (__tl_dyn-array i64)]
+  [checks : OptBoundsDomChecks]
   [sources : opt_i64_i64_map.Map]
   [block-id : i64]
   [cmp-facts : OptDomCmpFacts]
@@ -45170,7 +50175,7 @@
         ty)
         [(OptDomCmpLookup.Some value) (OptDomCmpLookup.Some value)]
         [(OptDomCmpLookup.No)
-          (opt-bounds-dom-phi-carried-verdict
+          (match (opt-bounds-dom-phi-carried-verdict
             type-segment-bases
             info
             index
@@ -45183,7 +50188,43 @@
             canon-op
             canon-lhs
             canon-rhs
-            ty)]))))
+            ty)
+            [(OptDomCmpLookup.Some value) (OptDomCmpLookup.Some value)]
+            [(OptDomCmpLookup.No)
+              (match (opt-bounds-dom-nonneg-literal-verdict
+                type-segment-bases
+                info
+                index
+                defs
+                phi-defs
+                var-facts
+                checks
+                copies
+                cmp-facts
+                block-id
+                canon-op
+                canon-lhs
+                canon-rhs
+                ty)
+                [(OptDomCmpLookup.Some value) (OptDomCmpLookup.Some value)]
+                [(OptDomCmpLookup.No)
+                  (opt-bounds-dom-induct-verdict
+                    type-segment-bases
+                    info
+                    index
+                    terms
+                    defs
+                    phi-defs
+                    var-facts
+                    checks
+                    sources
+                    block-id
+                    cmp-facts
+                    copies
+                    canon-op
+                    canon-lhs
+                    canon-rhs
+                    ty)])])]))))
 
 ;; --- a branch whose condition a dominating branch already decided ------------
 ;;
@@ -45223,6 +50264,8 @@
   [terms : (__tl_dyn-array OptBoolBranchDef)]
   [defs : (__tl_dyn-array OptBoolBranchDef)]
   [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [var-facts : (__tl_dyn-array i64)]
+  [checks : OptBoundsDomChecks]
   [sources : opt_i64_i64_map.Map]
   [block-id : i64]
   [cmp-facts : OptDomCmpFacts]
@@ -45251,6 +50294,8 @@
                     terms
                     defs
                     phi-defs
+                    var-facts
+                    checks
                     sources
                     block-id
                     cmp-facts
@@ -45276,6 +50321,8 @@
   [defs : (__tl_dyn-array OptBoolBranchDef)]
   [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
   [sources : opt_i64_i64_map.Map]
+  [var-facts : (__tl_dyn-array i64)]
+  [checks : OptBoundsDomChecks]
   [block-id : i64]
   [cmp-facts : OptDomCmpFacts]
   [copies : opt_i64_i64_map.Map]
@@ -45289,6 +50336,8 @@
         terms
         defs
         phi-defs
+        var-facts
+        checks
         sources
         block-id
         cmp-facts
@@ -45311,6 +50360,8 @@
         terms
         defs
         phi-defs
+        var-facts
+        checks
         sources
         block-id
         cmp-facts
@@ -45641,11 +50692,14 @@
   [doms : OptDomInfo]
   [defs : (__tl_dyn-array OptBoolBranchDef)]
   [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [var-facts : (__tl_dyn-array i64)]
+  [checks : OptBoundsDomChecks]
   [copies : opt_i64_i64_map.Map]
   [cmp-facts : OptDomCmpFacts]
   [facts : OptBoundsFacts]
   [known : (__tl_dyn-array bool)]
   [nonneg : opt_i64_i64_map.Map]
+  [block-id : i64]
   [bound : ir.CompilerIrValue]) : bool
   (or
     (opt-bounds-dom-range-known-nonneg? known bound)
@@ -45656,8 +50710,11 @@
       doms
       defs
       phi-defs
+      var-facts
+      checks
       copies
       cmp-facts
+      block-id
       bound)
     (opt-bounds-dom-len-positive? type-segment-bases cmp-facts bound)
     (opt-bounds-length-checked? facts bound)
@@ -45805,6 +50862,8 @@
   [context : OptCfgContext]
   [defs : (__tl_dyn-array OptBoolBranchDef)]
   [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [var-facts : (__tl_dyn-array i64)]
+  [checks : OptBoundsDomChecks]
   [sources : opt_i64_i64_map.Map]
   [copies : opt_i64_i64_map.Map]
   [cmp-facts : OptDomCmpFacts]
@@ -45875,11 +50934,14 @@
                           context.doms
                           defs
                           phi-defs
+                          var-facts
+                          checks
                           copies
                           cmp-facts
                           facts
                           known
                           nonneg
+                          id
                           canon-bound))
                         (OptRangeMergePlan.Some
                           merged-op
@@ -45897,6 +50959,8 @@
   [context : OptCfgContext]
   [defs : (__tl_dyn-array OptBoolBranchDef)]
   [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [var-facts : (__tl_dyn-array i64)]
+  [checks : OptBoundsDomChecks]
   [sources : opt_i64_i64_map.Map]
   [copies : opt_i64_i64_map.Map]
   [cmp-facts : OptDomCmpFacts]
@@ -45932,6 +50996,8 @@
                       context
                       defs
                       phi-defs
+                      var-facts
+                      checks
                       sources
                       copies
                       cmp-facts
@@ -45954,6 +51020,8 @@
   [context : OptCfgContext]
   [defs : (__tl_dyn-array OptBoolBranchDef)]
   [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [var-facts : (__tl_dyn-array i64)]
+  [checks : OptBoundsDomChecks]
   [sources : opt_i64_i64_map.Map]
   [copies : opt_i64_i64_map.Map]
   [uses : (__tl_dyn-array i64)]
@@ -45992,6 +51060,8 @@
                             context
                             defs
                             phi-defs
+                            var-facts
+                            checks
                             sources
                             copies
                             cmp-facts
@@ -46119,6 +51189,8 @@
   [context : OptCfgContext]
   [defs : (__tl_dyn-array OptBoolBranchDef)]
   [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [var-facts : (__tl_dyn-array i64)]
+  [checks : OptBoundsDomChecks]
   [sources : opt_i64_i64_map.Map]
   [copies : opt_i64_i64_map.Map]
   [state : OptRangeMergeState]
@@ -46134,6 +51206,8 @@
       context
       defs
       phi-defs
+      var-facts
+      checks
       sources
       copies
       state.uses
@@ -46156,6 +51230,8 @@
   [defs : (__tl_dyn-array OptBoolBranchDef)]
   [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
   [terms : (__tl_dyn-array OptBoolBranchDef)]
+  [var-facts : (__tl_dyn-array i64)]
+  [checks : OptBoundsDomChecks]
   [sources : opt_i64_i64_map.Map]
   [copies : opt_i64_i64_map.Map]
   [slice-lengths : opt_i64_i64_map.Map]
@@ -46195,6 +51271,8 @@
                     defs
                     phi-defs
                     terms
+                    var-facts
+                    checks
                     index
                     context.doms
                     label
@@ -46223,6 +51301,8 @@
                                 context
                                 defs
                                 phi-defs
+                                var-facts
+                                checks
                                 sources
                                 copies
                                 range
@@ -46237,6 +51317,8 @@
                           defs
                           phi-defs
                           terms
+                          var-facts
+                          checks
                           sources
                           copies
                           slice-lengths
@@ -46340,6 +51422,8 @@
   [defs : (__tl_dyn-array OptBoolBranchDef)]
   [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
   [terms : (__tl_dyn-array OptBoolBranchDef)]
+  [var-facts : (__tl_dyn-array i64)]
+  [checks : OptBoundsDomChecks]
   [sources : opt_i64_i64_map.Map]
   [copies : opt_i64_i64_map.Map]
   [slice-lengths : opt_i64_i64_map.Map]
@@ -46368,6 +51452,8 @@
               defs
               phi-defs
               terms
+              var-facts
+              checks
               sources
               copies
               slice-lengths
@@ -46444,6 +51530,25 @@
       (opt-bounds-dom-phi-defs frame blocks)]
     [terms : (__tl_dyn-array OptBoolBranchDef)
       (opt-bounds-dom-terms index blocks)]
+    [var-facts : (__tl_dyn-array i64)
+      (opt-bounds-dom-var-facts
+        type-segment-bases
+        phi-defs
+        copies
+        sources
+        frame
+        blocks)]
+    ;; Every passed check, keyed on the value it checked: the facts a phi input
+    ;; needs are not on the walk's path to the check that asks about it.
+    [checks : OptBoundsDomChecks
+      (opt-bounds-dom-checks
+        type-segment-bases
+        index
+        phi-defs
+        copies
+        sources
+        frame
+        blocks)]
     [out : (__tl_dyn-array OptGvnBlockResult)
       (array.make-array OptGvnBlockResult count)]
     [next-var : (__tl_dyn-array i64) (array.make-array i64 1)]
@@ -46463,6 +51568,16 @@
         next-var)]
     (begin
       (opt-cfg-index-refresh-blocks! index blocks)
+      ;; Decide every derived value at its own definition site first; the walk
+      ;; below reads the answers wherever it needs them.
+      (opt-bounds-dom-nonneg-prepass!
+        type-segment-bases
+        context
+        children
+        defs
+        sources
+        copies
+        var-facts)
       (match (opt-cfg-index-id index context.entry-label)
         [(option_i64.Some entry-id)
           (if (and (>= entry-id 0) (array-ref index.reachable entry-id))
@@ -46473,6 +51588,8 @@
               defs
               phi-defs
               terms
+              var-facts
+              checks
               sources
               copies
               slice-lengths
@@ -51125,6 +56242,49 @@
       (match b
         [(ir.CompilerIrInstr.Xgetbv _ bindex) (opt-value-eq aindex bindex)]
         [_ false])]
+    [(ir.CompilerIrInstr.Splat _ avalue alanes _)
+      (match b
+        [(ir.CompilerIrInstr.Splat _ bvalue blanes _)
+          (and (= alanes blanes) (opt-value-eq avalue bvalue))]
+        [_ false])]
+    [(ir.CompilerIrInstr.VectorBinOp apayload-box)
+      (let
+        [aop (__tl-project-field (__tl-box-place apayload-box) op)]
+        [alhs (__tl-project-field (__tl-box-place apayload-box) lhs)]
+        [arhs (__tl-project-field (__tl-box-place apayload-box) rhs)]
+        [alanes (__tl-project-field (__tl-box-place apayload-box) lanes)]
+        (match b
+          [(ir.CompilerIrInstr.VectorBinOp bpayload-box)
+            (let
+              [bop (__tl-project-field (__tl-box-place bpayload-box) op)]
+              [blhs (__tl-project-field (__tl-box-place bpayload-box) lhs)]
+              [brhs (__tl-project-field (__tl-box-place bpayload-box) rhs)]
+              [blanes (__tl-project-field (__tl-box-place bpayload-box) lanes)]
+              (and
+                (opt-binop-eq aop bop)
+                (= alanes blanes)
+                (opt-value-eq alhs blhs)
+                (opt-value-eq arhs brhs)))]
+          [_ false]))]
+    [(ir.CompilerIrInstr.VectorCompare apayload-box)
+      (let
+        [aop (__tl-project-field (__tl-box-place apayload-box) op)]
+        [alhs (__tl-project-field (__tl-box-place apayload-box) lhs)]
+        [arhs (__tl-project-field (__tl-box-place apayload-box) rhs)]
+        [alanes (__tl-project-field (__tl-box-place apayload-box) lanes)]
+        (match b
+          [(ir.CompilerIrInstr.VectorCompare bpayload-box)
+            (let
+              [bop (__tl-project-field (__tl-box-place bpayload-box) op)]
+              [blhs (__tl-project-field (__tl-box-place bpayload-box) lhs)]
+              [brhs (__tl-project-field (__tl-box-place bpayload-box) rhs)]
+              [blanes (__tl-project-field (__tl-box-place bpayload-box) lanes)]
+              (and
+                (opt-binop-eq aop bop)
+                (= alanes blanes)
+                (opt-value-eq alhs blhs)
+                (opt-value-eq arhs brhs)))]
+          [_ false]))]
     [_ false]))
 
 ;; Nested-loop duplicate scan over the first `limit` instructions; block sizes
@@ -51146,6 +56306,12 @@
           [(ir.CompilerIrInstr.CpuId _ _ _ _)
             (opt-scan-cse-dup-inner slots instr (+ outer 1) limit)]
           [(ir.CompilerIrInstr.Xgetbv _ _)
+            (opt-scan-cse-dup-inner slots instr (+ outer 1) limit)]
+          [(ir.CompilerIrInstr.Splat _ _ _ _)
+            (opt-scan-cse-dup-inner slots instr (+ outer 1) limit)]
+          [(ir.CompilerIrInstr.VectorBinOp _)
+            (opt-scan-cse-dup-inner slots instr (+ outer 1) limit)]
+          [(ir.CompilerIrInstr.VectorCompare _)
             (opt-scan-cse-dup-inner slots instr (+ outer 1) limit)]
           [_ false])]
       (if dup
@@ -84871,16 +90037,27 @@
                             _t-thread-branch)
                           unit)]
                       [_t-cfg2 : i64 (cfg compile-profile (profile.now-ms) 0)]
+                      ;; The block merge closes the same stage: `phi_cmp_fold`
+                      ;; and the fuser above leave a merge holding one input and
+                      ;; the compare that reads it one block further on, and the
+                      ;; cleanup right above is what turns that phi into a mov.
+                      ;; Concatenating the run is what the backend's contiguous
+                      ;; `load ; cast ; compare ; branch` fold needs, and doing
+                      ;; it here -- rather than after `switch` and the loop
+                      ;; cluster -- means every one of those passes admits and
+                      ;; shapes the merged blocks.
                       [cfg-result : OptBlockCtxResult
-                        (opt-cfg-simplify-blocks-with-context-result
-                          (OptBlockCtxResult.Result
-                            thread-branch
-                            sccp-context
-                            (and
-                              sccp-context-valid
-                              (not phi-cmp-fold-changed)
-                              (not bool-branch-changed)
-                              (not thread-branch-changed))))]
+                        (opt-cfg-merge-blocks-with-context-result
+                          ssa-frame
+                          (opt-cfg-simplify-blocks-with-context-result
+                            (OptBlockCtxResult.Result
+                              thread-branch
+                              sccp-context
+                              (and
+                                sccp-context-valid
+                                (not phi-cmp-fold-changed)
+                                (not bool-branch-changed)
+                                (not thread-branch-changed)))))]
                       [cfg : ir.CompilerIrBlockList
                         (compiler-opt-debug-observe-blocks
                           type-segment-bases

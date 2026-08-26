@@ -70763,11 +70763,11 @@
     42
     "load keys resolve the copies the pass makes and the inliner's parameter copies, a repeated scalar cell read materializes one Mov per write-free region (ended by a Store or by a call whose mod-ref row holds the cell, not by one whose row does not), an element-only callee's stored class keeps a differently classed handle entry, a cell word survives a call whose row excludes it, and the constant-global table still refuses wide literals"))
 
-;; --- T2-5: sibling phis, merge-body Movs, deep chains, and-chain flatten ----
+;; --- T2-5: sibling phis, merge-body Movs, and deep forwarding chains --------
 ;;
-;; The fixtures below drive the two rewrites this packet widened, each through
-;; its own entry point rather than the whole pipeline, so what they pin is the
-;; pass's own decision: which edges it redirects, which value each redirected
+;; The fixtures below drive the rewrite this packet widened through its own
+;; entry point rather than the whole pipeline, so what they pin is the pass's
+;; own decision: which edges it redirects, which value each redirected
 ;; predecessor takes over, and which shapes it still refuses.
 (define (opt-t25-function
   [name : String]
@@ -70807,63 +70807,6 @@
   (compiler_optimize.opt-verify-ok?
     (compiler_optimize.opt-verify-function
       (opt-t25-function "t25-verify" frame blocks))))
-
-;; The fold's own budget is a parameter, so the suite drives the speculation
-;; rails at the four instructions the mechanism admits even though the shipped
-;; pipeline budget is measured elsewhere.
-(define (opt-t25-fold-bonus) : i64
-  4)
-
-(define (opt-t25-fold-result
-  [blocks : compiler_ir_types.CompilerIrBlockList]
-  [frame : i64]) : compiler_optimize.OptFunctionPassResult
-  (compiler_optimize.opt-fold-common-function-pass-with-bonus
-    (opt-t25-fold-bonus)
-    (opt-t25-function "t25-fold" frame blocks)))
-
-(define (opt-t25-fold-blocks
-  [blocks : compiler_ir_types.CompilerIrBlockList]
-  [frame : i64]) : compiler_ir_types.CompilerIrBlockList
-  (match (opt-t25-fold-result blocks frame)
-    [(compiler_optimize.OptFunctionPassResult.Result func _)
-      (compiler_optimize.opt-function-blocks func)]))
-
-(define (opt-t25-fold-changed?
-  [blocks : compiler_ir_types.CompilerIrBlockList]
-  [frame : i64]) : bool
-  (match (opt-t25-fold-result blocks frame)
-    [(compiler_optimize.OptFunctionPassResult.Result _ changed) changed]))
-
-(define (opt-t25-count-bool-binop-seq
-  [instrs : compiler_ir_types.CompilerIrInstrSeq]
-  [slot : i64]
-  [found : i64]) : i64
-  (if (>= slot (compiler_ir_types.compiler-ir-instr-seq-count instrs))
-    found
-    (opt-t25-count-bool-binop-seq
-      instrs
-      (+ slot 1)
-      (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs slot)
-        [(compiler_ir_types.CompilerIrInstr.BinOp _ op _ _ _)
-          (match op
-            [(compiler_ir_types.CompilerIrBinOp.And) (+ found 1)]
-            [(compiler_ir_types.CompilerIrBinOp.Or) (+ found 1)]
-            [_ found])]
-        [_ found]))))
-
-(define (opt-t25-count-bool-binops
-  [blocks : compiler_ir_types.CompilerIrBlockList]) : i64
-  (match blocks
-    [(compiler_ir_types.CompilerIrBlockList.Nil) 0]
-    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
-      (match block
-        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
-          (+
-            (opt-t25-count-bool-binop-seq instrs 0 0)
-            (opt-t25-count-bool-binops (__tl-box-place rest)))])]
-    [(compiler_ir_types.CompilerIrBlockList.Array seq)
-      (opt-t25-count-bool-binops
-        (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-t25-sibling-mov-blocks) : compiler_ir_types.CompilerIrBlockList
   (compiler_ir_types.compiler-ir-block-cons
@@ -71464,220 +71407,6 @@
                                     (compiler_ir_types.CompilerIrValue.I64 0)))))
                             (compiler_ir_types.CompilerIrBlockList.Nil)))))))))))))))
 
-(define (opt-t25-fold-pure-blocks) : compiler_ir_types.CompilerIrBlockList
-  (compiler_ir_types.compiler-ir-block-cons
-    (compiler_ir_types.CompilerIrBlock.Block
-      (compiler_ir_types.compiler-ir-label "entry")
-      (opt-test-instrs
-        (compiler_ir_types.CompilerIrInstr.Mov
-          3
-          (compiler_ir_types.CompilerIrValue.I64 7)
-          (compiler_ast_types.AstType.I64))
-        (compiler_ir_types.CompilerIrInstr.Branch
-          (compiler_ir_types.CompilerIrValue.Var 0)
-          (compiler_ir_types.compiler-ir-label "fc-x")
-          (compiler_ir_types.compiler-ir-label "fc-alt"))))
-    (compiler_ir_types.compiler-ir-block-cons
-      (compiler_ir_types.CompilerIrBlock.Block
-        (compiler_ir_types.compiler-ir-label "fc-alt")
-        (opt-test-instrs
-          (compiler_ir_types.CompilerIrInstr.Jump
-            (compiler_ir_types.compiler-ir-label "fc-f"))))
-      (compiler_ir_types.compiler-ir-block-cons
-        (compiler_ir_types.CompilerIrBlock.Block
-          (compiler_ir_types.compiler-ir-label "fc-x")
-          (opt-test-instrs
-            (compiler_ir_types.CompilerIrInstr.Branch
-              (compiler_ir_types.CompilerIrValue.Var 1)
-              (compiler_ir_types.compiler-ir-label "fc-y")
-              (compiler_ir_types.compiler-ir-label "fc-f"))))
-        (compiler_ir_types.compiler-ir-block-cons
-          (compiler_ir_types.CompilerIrBlock.Block
-            (compiler_ir_types.compiler-ir-label "fc-y")
-            (opt-test-instrs
-              (compiler_ir_types.CompilerIrInstr.BinOp
-                4
-                (compiler_ir_types.CompilerIrBinOp.Eq)
-                (compiler_ir_types.CompilerIrValue.Var 3)
-                (compiler_ir_types.CompilerIrValue.I64 7)
-                (compiler_ast_types.AstType.I64))
-              (compiler_ir_types.CompilerIrInstr.Branch
-                (compiler_ir_types.CompilerIrValue.Var 4)
-                (compiler_ir_types.compiler-ir-label "fc-t")
-                (compiler_ir_types.compiler-ir-label "fc-f"))))
-          (compiler_ir_types.compiler-ir-block-cons
-            (compiler_ir_types.CompilerIrBlock.Block
-              (compiler_ir_types.compiler-ir-label "fc-t")
-              (opt-test-instrs
-                (compiler_ir_types.CompilerIrInstr.Return
-                  (compiler_ir_types.CompilerIrMaybeValue.Some
-                    (compiler_ir_types.CompilerIrValue.I64 1)))))
-            (compiler_ir_types.compiler-ir-block-cons
-              (compiler_ir_types.CompilerIrBlock.Block
-                (compiler_ir_types.compiler-ir-label "fc-f")
-                (opt-test-instrs
-                  (compiler_ir_types.CompilerIrInstr.Phi
-                    5
-                    (compiler_ir_types.compiler-ir-phi-input-cons
-                      (compiler_ir_types.CompilerIrValue.I64 10)
-                      (compiler_ir_types.compiler-ir-label "fc-x")
-                      (compiler_ir_types.compiler-ir-phi-input-cons
-                        (compiler_ir_types.CompilerIrValue.I64 10)
-                        (compiler_ir_types.compiler-ir-label "fc-y")
-                        (compiler_ir_types.compiler-ir-phi-input-cons
-                          (compiler_ir_types.CompilerIrValue.I64 20)
-                          (compiler_ir_types.compiler-ir-label "fc-alt")
-                          (compiler_ir_types.CompilerIrPhiInputList.Nil))))
-                    (compiler_ast_types.AstType.I64))
-                  (compiler_ir_types.CompilerIrInstr.Return
-                    (compiler_ir_types.CompilerIrMaybeValue.Some
-                      (compiler_ir_types.CompilerIrValue.Var 5)))))
-              (compiler_ir_types.CompilerIrBlockList.Nil))))))))
-
-(define (opt-t25-fold-trap-blocks) : compiler_ir_types.CompilerIrBlockList
-  (compiler_ir_types.compiler-ir-block-cons
-    (compiler_ir_types.CompilerIrBlock.Block
-      (compiler_ir_types.compiler-ir-label "entry")
-      (opt-test-instrs
-        (compiler_ir_types.CompilerIrInstr.Mov
-          3
-          (compiler_ir_types.CompilerIrValue.I64 7)
-          (compiler_ast_types.AstType.I64))
-        (compiler_ir_types.CompilerIrInstr.Branch
-          (compiler_ir_types.CompilerIrValue.Var 0)
-          (compiler_ir_types.compiler-ir-label "fc-x")
-          (compiler_ir_types.compiler-ir-label "fc-alt"))))
-    (compiler_ir_types.compiler-ir-block-cons
-      (compiler_ir_types.CompilerIrBlock.Block
-        (compiler_ir_types.compiler-ir-label "fc-alt")
-        (opt-test-instrs
-          (compiler_ir_types.CompilerIrInstr.Jump
-            (compiler_ir_types.compiler-ir-label "fc-f"))))
-      (compiler_ir_types.compiler-ir-block-cons
-        (compiler_ir_types.CompilerIrBlock.Block
-          (compiler_ir_types.compiler-ir-label "fc-x")
-          (opt-test-instrs
-            (compiler_ir_types.CompilerIrInstr.Branch
-              (compiler_ir_types.CompilerIrValue.Var 1)
-              (compiler_ir_types.compiler-ir-label "fc-y")
-              (compiler_ir_types.compiler-ir-label "fc-f"))))
-        (compiler_ir_types.compiler-ir-block-cons
-          (compiler_ir_types.CompilerIrBlock.Block
-            (compiler_ir_types.compiler-ir-label "fc-y")
-            (opt-test-instrs
-              (compiler_ir_types.CompilerIrInstr.BoundsCheck
-                (compiler_ir_types.CompilerIrValue.Var 3)
-                (compiler_ir_types.CompilerIrValue.Var 3)
-                (compiler_ir_types.compiler-ir-label "fc-bounds"))
-              (compiler_ir_types.CompilerIrInstr.BinOp
-                4
-                (compiler_ir_types.CompilerIrBinOp.Eq)
-                (compiler_ir_types.CompilerIrValue.Var 3)
-                (compiler_ir_types.CompilerIrValue.I64 7)
-                (compiler_ast_types.AstType.I64))
-              (compiler_ir_types.CompilerIrInstr.Branch
-                (compiler_ir_types.CompilerIrValue.Var 4)
-                (compiler_ir_types.compiler-ir-label "fc-t")
-                (compiler_ir_types.compiler-ir-label "fc-f"))))
-          (compiler_ir_types.compiler-ir-block-cons
-            (compiler_ir_types.CompilerIrBlock.Block
-              (compiler_ir_types.compiler-ir-label "fc-t")
-              (opt-test-instrs
-                (compiler_ir_types.CompilerIrInstr.Return
-                  (compiler_ir_types.CompilerIrMaybeValue.Some
-                    (compiler_ir_types.CompilerIrValue.I64 1)))))
-            (compiler_ir_types.compiler-ir-block-cons
-              (compiler_ir_types.CompilerIrBlock.Block
-                (compiler_ir_types.compiler-ir-label "fc-f")
-                (opt-test-instrs
-                  (compiler_ir_types.CompilerIrInstr.Phi
-                    5
-                    (compiler_ir_types.compiler-ir-phi-input-cons
-                      (compiler_ir_types.CompilerIrValue.I64 10)
-                      (compiler_ir_types.compiler-ir-label "fc-x")
-                      (compiler_ir_types.compiler-ir-phi-input-cons
-                        (compiler_ir_types.CompilerIrValue.I64 10)
-                        (compiler_ir_types.compiler-ir-label "fc-y")
-                        (compiler_ir_types.compiler-ir-phi-input-cons
-                          (compiler_ir_types.CompilerIrValue.I64 20)
-                          (compiler_ir_types.compiler-ir-label "fc-alt")
-                          (compiler_ir_types.CompilerIrPhiInputList.Nil))))
-                    (compiler_ast_types.AstType.I64))
-                  (compiler_ir_types.CompilerIrInstr.Return
-                    (compiler_ir_types.CompilerIrMaybeValue.Some
-                      (compiler_ir_types.CompilerIrValue.Var 5)))))
-              (compiler_ir_types.CompilerIrBlockList.Nil))))))))
-
-(define (opt-t25-fold-disagree-blocks) : compiler_ir_types.CompilerIrBlockList
-  (compiler_ir_types.compiler-ir-block-cons
-    (compiler_ir_types.CompilerIrBlock.Block
-      (compiler_ir_types.compiler-ir-label "entry")
-      (opt-test-instrs
-        (compiler_ir_types.CompilerIrInstr.Mov
-          3
-          (compiler_ir_types.CompilerIrValue.I64 7)
-          (compiler_ast_types.AstType.I64))
-        (compiler_ir_types.CompilerIrInstr.Branch
-          (compiler_ir_types.CompilerIrValue.Var 0)
-          (compiler_ir_types.compiler-ir-label "fc-x")
-          (compiler_ir_types.compiler-ir-label "fc-alt"))))
-    (compiler_ir_types.compiler-ir-block-cons
-      (compiler_ir_types.CompilerIrBlock.Block
-        (compiler_ir_types.compiler-ir-label "fc-alt")
-        (opt-test-instrs
-          (compiler_ir_types.CompilerIrInstr.Jump
-            (compiler_ir_types.compiler-ir-label "fc-f"))))
-      (compiler_ir_types.compiler-ir-block-cons
-        (compiler_ir_types.CompilerIrBlock.Block
-          (compiler_ir_types.compiler-ir-label "fc-x")
-          (opt-test-instrs
-            (compiler_ir_types.CompilerIrInstr.Branch
-              (compiler_ir_types.CompilerIrValue.Var 1)
-              (compiler_ir_types.compiler-ir-label "fc-y")
-              (compiler_ir_types.compiler-ir-label "fc-f"))))
-        (compiler_ir_types.compiler-ir-block-cons
-          (compiler_ir_types.CompilerIrBlock.Block
-            (compiler_ir_types.compiler-ir-label "fc-y")
-            (opt-test-instrs
-              (compiler_ir_types.CompilerIrInstr.BinOp
-                4
-                (compiler_ir_types.CompilerIrBinOp.Eq)
-                (compiler_ir_types.CompilerIrValue.Var 3)
-                (compiler_ir_types.CompilerIrValue.I64 7)
-                (compiler_ast_types.AstType.I64))
-              (compiler_ir_types.CompilerIrInstr.Branch
-                (compiler_ir_types.CompilerIrValue.Var 4)
-                (compiler_ir_types.compiler-ir-label "fc-t")
-                (compiler_ir_types.compiler-ir-label "fc-f"))))
-          (compiler_ir_types.compiler-ir-block-cons
-            (compiler_ir_types.CompilerIrBlock.Block
-              (compiler_ir_types.compiler-ir-label "fc-t")
-              (opt-test-instrs
-                (compiler_ir_types.CompilerIrInstr.Return
-                  (compiler_ir_types.CompilerIrMaybeValue.Some
-                    (compiler_ir_types.CompilerIrValue.I64 1)))))
-            (compiler_ir_types.compiler-ir-block-cons
-              (compiler_ir_types.CompilerIrBlock.Block
-                (compiler_ir_types.compiler-ir-label "fc-f")
-                (opt-test-instrs
-                  (compiler_ir_types.CompilerIrInstr.Phi
-                    5
-                    (compiler_ir_types.compiler-ir-phi-input-cons
-                      (compiler_ir_types.CompilerIrValue.I64 10)
-                      (compiler_ir_types.compiler-ir-label "fc-x")
-                      (compiler_ir_types.compiler-ir-phi-input-cons
-                        (compiler_ir_types.CompilerIrValue.I64 11)
-                        (compiler_ir_types.compiler-ir-label "fc-y")
-                        (compiler_ir_types.compiler-ir-phi-input-cons
-                          (compiler_ir_types.CompilerIrValue.I64 20)
-                          (compiler_ir_types.compiler-ir-label "fc-alt")
-                          (compiler_ir_types.CompilerIrPhiInputList.Nil))))
-                    (compiler_ast_types.AstType.I64))
-                  (compiler_ir_types.CompilerIrInstr.Return
-                    (compiler_ir_types.CompilerIrMaybeValue.Some
-                      (compiler_ir_types.CompilerIrValue.Var 5)))))
-              (compiler_ir_types.CompilerIrBlockList.Nil))))))))
-
 (define (compiler-optimize-t25-thread-sibling-self-test) : i64
   (let
     [sibling : compiler_ir_types.CompilerIrBlockList
@@ -71699,12 +71428,6 @@
       (opt-t25-thread-blocks (opt-t25-chain-depth-blocks) 16)]
     [chain-changed : bool
       (opt-t25-thread-changed? (opt-t25-chain-depth-blocks) 16)]
-    [fold : compiler_ir_types.CompilerIrBlockList
-      (opt-t25-fold-blocks (opt-t25-fold-pure-blocks) 16)]
-    [fold-changed : bool (opt-t25-fold-changed? (opt-t25-fold-pure-blocks) 16)]
-    [trap-changed : bool (opt-t25-fold-changed? (opt-t25-fold-trap-blocks) 16)]
-    [disagree-changed : bool
-      (opt-t25-fold-changed? (opt-t25-fold-disagree-blocks) 16)]
     (begin
       ;; (a) The merge holds the bool phi that decides the branch, one sibling
       ;; i64 phi, and a Mov of that sibling. Both predecessors thread, and the
@@ -71807,39 +71530,11 @@
             1)
           (opt-t25-verified? chain 16))
         (return 5))
-      ;; (e) An and-chain whose two branches share their false target folds to
-      ;; one branch on an `And`, with `fc-y`'s pure compare speculated into
-      ;; `fc-x` and the common target's duplicate input dropped.
-      (unless
-        (and
-          fold-changed
-          (not
-            (opt-block-list-has-label?
-              fold
-              (compiler_ir_types.compiler-ir-label "fc-y")))
-          (= (opt-t25-count-bool-binops fold) 1)
-          (opt-thread-first-phi-input-i64?
-            fold
-            (compiler_ir_types.compiler-ir-label "fc-f")
-            (compiler_ir_types.compiler-ir-label "fc-x")
-            10)
-          (not
-            (opt-thread-first-phi-has-input?
-              fold
-              (compiler_ir_types.compiler-ir-label "fc-f")
-              (compiler_ir_types.compiler-ir-label "fc-y")))
-          (opt-t25-verified? fold 17))
-        (return 6))
-      ;; ... and refuses the same site when the block it would speculate holds
-      ;; a `bounds_check` (which aborts) ...
-      (unless (not trap-changed) (return 7))
-      ;; ... or when the common target's phi distinguishes the two edges.
-      (unless (not disagree-changed) (return 8))
       42)))
 
 (test
-  thread-sibling-phis-movs-chains-and-common-dest
+  thread-sibling-phis-movs-and-chains
   (test.assert-i64-eq
     (compiler-optimize-t25-thread-sibling-self-test)
     42
-    "a merge holding a bool phi, sibling phis and pure Movs threads every literal edge with the sibling's own edge value substituted into the successors' phis, refuses when a definition is read from a join below both successors, admits ten non-phi instructions and refuses twelve, resolves a three-deep forwarding chain, and the and-chain flatten folds a common false target while refusing a trapping speculation and a disagreeing target phi"))
+    "a merge holding a bool phi, sibling phis and pure Movs threads every literal edge with the sibling's own edge value substituted into the successors' phis, refuses when a definition is read from a join below both successors, admits ten non-phi instructions and refuses twelve, and resolves a three-deep forwarding chain"))

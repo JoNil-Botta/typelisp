@@ -13420,12 +13420,20 @@
               type-segment-bases
               conditional-reg
               cmov-ty)))]
+      ;; SS-P5(c): the `cmov` is a two-address move whose destination already
+      ;; holds the false value whenever the allocator homed the result where
+      ;; the false operand lives -- the base copy is then `movq %rX, %rX` and
+      ;; is dropped outright rather than left to the load helper.
       [base-asm : String
-        (compiler-backend-load-value-asm
-          assignments
-          on-false
-          result-reg
-          backend-state)]
+        (if (and
+          (not (string.eq false-home ""))
+          (string.eq false-home result-reg))
+          ""
+          (compiler-backend-load-value-asm
+            assignments
+            on-false
+            result-reg
+            backend-state))]
       [conditional-asm : String
         (if conditional-direct?
           ""
@@ -13475,6 +13483,350 @@
             dst
             result-reg
             backend-state))))))
+
+;; True when a register a fused select may write is safe: it exists and is
+;; neither of the two comparison operand homes whose values the `cmp` still has
+;; to read.
+(define (compiler-backend-flags-select-reg-ok?
+  [reg : String]
+  [dest-reg : String]
+  [guard-b : String]) : bool
+  (and
+    (not (string.eq reg ""))
+    (not (string.eq reg dest-reg))
+    (not (string.eq reg guard-b))))
+
+;; The fused select's register choice in its two forms. `peek?` is the PURE
+;; twin used by the admission test (compiler-backend-scavenge-reg-peek is
+;; documented as side-effect-free and returns what the committing call will);
+;; the committing form books the emergency save/restore and the planned
+;; preservation exactly as compiler-backend-planned-or-scavenge-reg does. A
+;; missing modelled scratch under scratch-vreg returns "" -- the admission test
+;; reads that as a decline instead of inventing a register the plan never
+;; reserved.
+(define (compiler-backend-flags-select-reg
+  [peek? : bool]
+  [planned : String]
+  [dst : i64]
+  [exclude : (__tl_dyn-array String)]
+  [exclude-n : i64]
+  [fallback : String]
+  [backend-state : CompilerBackendState]) : String
+  (if (string.eq planned "")
+    (if (compiler-backend-scratch-vreg-enabled?)
+      ""
+      (if peek?
+        (compiler-backend-scavenge-reg-peek
+          dst
+          exclude
+          exclude-n
+          fallback
+          backend-state)
+        (compiler-backend-scavenge-reg
+          dst
+          exclude
+          exclude-n
+          fallback
+          backend-state)))
+    (if peek?
+      planned
+      (begin
+        (compiler-backend-preserve-planned-register! planned backend-state)
+        planned))))
+
+;; SS-P5(b) / VG-P-B: a scalar Select whose mask is the comparison IMMEDIATELY
+;; in front of it and is wanted nowhere else. The mask never becomes a value:
+;; the select's operands are staged first, the comparison then sets EFLAGS, and
+;; a single `cmov<cc>` reads them --
+;;
+;;     cmpq %rcx, %rdx ; movq %rcx, %r15 ; cmovb %rdx, %r15
+;;
+;; where the materialising form spends seven instructions re-deriving the same
+;; condition through a register:
+;;
+;;     movq %rdx, %rax ; cmpq %rcx, %rax ; setb %al ; movzbq %al, %rax ;
+;;     movq %rcx, %r15 ; testq %rax, %rax ; cmovne %rdx, %r15
+;;
+;; CLOBBER SAFETY -- which is the whole of the admission test. Two things must
+;; hold.
+;;
+;; (1) Nothing may write EFLAGS between the `cmp` and the `cmov`. This path
+;;     emits NOTHING between them, so it holds structurally; there is no
+;;     sequence to reason about.
+;;
+;; (2) Nothing emitted BEFORE the `cmp` may disturb the comparison's operands.
+;;     The only instructions ahead of the `cmp` are the two operand stages, and
+;;     the only registers they write are `result-reg` and (when the true
+;;     operand needs staging at all) `conditional-reg`. Memory operands and
+;;     immediates write nothing. So it suffices that neither register is a
+;;     comparison operand home, and that is enforced twice over: both homes go
+;;     into the scavenge exclusion set, AND the register that comes back is
+;;     re-checked against them -- necessary because a PLANNED scratch ignores
+;;     the exclusion set, and the allocator may legitimately hand out a
+;;     comparison operand's register when that operand dies at the comparison.
+;;
+;; Both comparison operands must additionally be register-homed or immediates,
+;; so the comparison stages nothing of its own and really is one instruction.
+;; `result-reg` must also differ from the true operand's home, because the
+;; false value is written into it before the `cmov` reads the true one; and the
+;; two staging registers must differ from each other.
+;;
+;; Every failure returns `No` and the caller emits the ordinary materialising
+;; form, so nothing is lost when the shape does not fit. The peeked (pure)
+;; register queries mean a decline never leaves a booked emergency save behind.
+(define (compiler-backend-emit-select-on-flags
+  [type-segment-bases : i64]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [dst : i64]
+  [on-true : compiler_ir_types.CompilerIrValue]
+  [on-false : compiler_ir_types.CompilerIrValue]
+  [ty : compiler_ast_types.AstType]
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [cmp-lhs : compiler_ir_types.CompilerIrValue]
+  [cmp-rhs : compiler_ir_types.CompilerIrValue]
+  [cmp-ty : compiler_ast_types.AstType]
+  [planned-result : String]
+  [planned-value : String]
+  [backend-state : CompilerBackendState]) : CompilerBackendMaybeAsm
+  (if (not (compiler-backend-intlike-scalar-type? ty))
+    (CompilerBackendMaybeAsm.No)
+    (let
+      [lhs-home : String
+        (compiler-backend-value-scalar-register-home
+          backend-state
+          assignments
+          cmp-lhs)]
+      [rhs-home : String
+        (compiler-backend-value-scalar-register-home
+          backend-state
+          assignments
+          cmp-rhs)]
+      [lhs-immediate : String
+        (match (compiler-backend-immediate-operand backend-state cmp-lhs)
+          [(CompilerBackendMaybeImmediate.Some text) text]
+          [(CompilerBackendMaybeImmediate.No) ""])]
+      [rhs-immediate : String
+        (match (compiler-backend-immediate-operand backend-state cmp-rhs)
+          [(CompilerBackendMaybeImmediate.Some text) text]
+          [(CompilerBackendMaybeImmediate.No) ""])]
+      ;; x86 spells the immediate as the SOURCE of `cmp`, so an immediate on
+      ;; the IR's left is taken by reversing the predicate against the register
+      ;; right -- the same exchange the compare/branch lowering performs.
+      [swap? : bool
+        (and
+          (string.eq lhs-home "")
+          (not (string.eq lhs-immediate ""))
+          (not (string.eq rhs-home "")))]
+      [cmov : String
+        (compiler-backend-compare-cmov
+          (if swap?
+            (compiler-backend-compare-swapped-op op)
+            op)
+          cmp-ty)]
+      [dest-reg : String
+        (if swap?
+          rhs-home
+          lhs-home)]
+      [source-operand : String
+        (if swap?
+          lhs-immediate
+          (if (not (string.eq rhs-home ""))
+            (compiler-backend-sized-reg type-segment-bases rhs-home cmp-ty)
+            rhs-immediate))]
+      ;; The comparison's live operand homes are `dest-reg` (always a register)
+      ;; and, when the source is not an immediate, the source register. A copy
+      ;; is taken because the binding would otherwise move the home out of the
+      ;; operand spellings above.
+      [guard-b : String
+        (if swap?
+          ""
+          (string.copy rhs-home))]
+      [dst-home : String
+        (compiler-backend-value-scalar-register-home
+          backend-state
+          assignments
+          (compiler_ir_types.CompilerIrValue.Var dst))]
+      [true-home : String
+        (compiler-backend-value-scalar-register-home
+          backend-state
+          assignments
+          on-true)]
+      [false-home : String
+        (compiler-backend-value-scalar-register-home
+          backend-state
+          assignments
+          on-false)]
+      ;; x86 conditional moves have no byte form. Use the full GP home for byte
+      ;; and Bool selects; all typed consumers observe the low byte.
+      [cmov-ty : compiler_ast_types.AstType
+        (if (= (compiler-backend-type-size type-segment-bases ty) 1)
+          (compiler_ast_types.AstType.U64)
+          ty)]
+      ;; The mask is gone, so the result may take its own home even where the
+      ;; materialising form had to step around the mask's register. Taking
+      ;; dst-home is also what makes SS-P5(c) reachable: when the allocator
+      ;; homed the result where the false operand lives, the base copy is gone.
+      ;;
+      ;; That last case is also the one exception to the "not a comparison
+      ;; operand home" rule, and it is not really an exception: when the result
+      ;; register IS the false operand's home the base copy is elided, so
+      ;; NOTHING is written ahead of the `cmp` and there is no clobber to
+      ;; avoid. `min(a, b)` reaches this on every call -- the false arm and the
+      ;; comparison's right operand are the same value.
+      [use-dst-home? : bool
+        (and
+          (not (string.eq dst-home ""))
+          (not (string.eq dst-home true-home))
+          (or
+            (and
+              (not (string.eq false-home ""))
+              (string.eq dst-home false-home))
+            (and
+              (not (string.eq dst-home dest-reg))
+              (not (string.eq dst-home guard-b)))))]
+      [result-exclude : (__tl_dyn-array String)
+        (compiler-backend-four-exclude true-home false-home dest-reg guard-b)]
+      [result-peek : String
+        (if use-dst-home?
+          dst-home
+          (compiler-backend-flags-select-reg
+            true
+            planned-result
+            dst
+            result-exclude
+            4
+            "%rax"
+            backend-state))]
+      [conditional-address : String
+        (compiler-backend-value-read-memory-operand
+          assignments
+          on-true
+          backend-state)]
+      [conditional-direct? : bool
+        (or
+          (not (string.eq true-home ""))
+          (not (string.eq conditional-address "")))]
+      [conditional-exclude : (__tl_dyn-array String)
+        (compiler-backend-four-exclude result-peek false-home dest-reg guard-b)]
+      [conditional-peek : String
+        (if conditional-direct?
+          ""
+          (compiler-backend-flags-select-reg
+            true
+            planned-value
+            dst
+            conditional-exclude
+            4
+            "%r8"
+            backend-state))]
+      [admissible? : bool
+        (and
+          (not (string.eq cmov ""))
+          (not (string.eq dest-reg ""))
+          (not (string.eq source-operand ""))
+          (or
+            (and
+              (not (string.eq result-peek ""))
+              (not (string.eq false-home ""))
+              (string.eq result-peek false-home))
+            (compiler-backend-flags-select-reg-ok? result-peek dest-reg guard-b))
+          (or
+            conditional-direct?
+            (and
+              (compiler-backend-flags-select-reg-ok?
+                conditional-peek
+                dest-reg
+                guard-b)
+              (not (string.eq conditional-peek result-peek)))))]
+      (if (not admissible?)
+        (CompilerBackendMaybeAsm.No)
+        (let
+          [result-reg : String
+            (if use-dst-home?
+              dst-home
+              (compiler-backend-flags-select-reg
+                false
+                planned-result
+                dst
+                result-exclude
+                4
+                "%rax"
+                backend-state))]
+          [conditional-reg : String
+            (if conditional-direct?
+              ""
+              (compiler-backend-flags-select-reg
+                false
+                planned-value
+                dst
+                conditional-exclude
+                4
+                "%r8"
+                backend-state))]
+          ;; The two register queries above are the committing twins of the
+          ;; peeks the admission test read, so they must answer the same. The
+          ;; only thing that runs between the peeks and the commits is the
+          ;; result commit itself, and the emergency booking it may perform
+          ;; touches the save SET, not the occupancy the pick reads. Assert it
+          ;; rather than assume it: a divergence would mean the emission was
+          ;; admitted on registers it did not get, which is precisely the
+          ;; clobber this path exists to avoid, and it must never be silent.
+          [_twin-check : unit
+            (if (and
+              (string.eq result-reg result-peek)
+              (string.eq conditional-reg conditional-peek))
+              unit
+              (io.panic
+                "backend: select-on-flags register peek/commit divergence"))]
+          [conditional-operand : String
+            (if (not (string.eq true-home ""))
+              (compiler-backend-sized-reg type-segment-bases true-home cmov-ty)
+              (if (not (string.eq conditional-address ""))
+                conditional-address
+                (compiler-backend-sized-reg
+                  type-segment-bases
+                  conditional-reg
+                  cmov-ty)))]
+          ;; SS-P5(c).
+          [base-asm : String
+            (if (and
+              (not (string.eq false-home ""))
+              (string.eq false-home result-reg))
+              ""
+              (compiler-backend-load-value-asm
+                assignments
+                on-false
+                result-reg
+                backend-state))]
+          [conditional-asm : String
+            (if conditional-direct?
+              ""
+              (compiler-backend-load-value-asm
+                assignments
+                on-true
+                conditional-reg
+                backend-state))]
+          (CompilerBackendMaybeAsm.Some
+            (str_cat.str-cat
+              base-asm
+              conditional-asm
+              (compiler-backend-binop-cmp-reg-asm
+                type-segment-bases
+                cmp-ty
+                source-operand
+                (compiler-backend-sized-reg type-segment-bases dest-reg cmp-ty))
+              "    "
+              cmov
+              " "
+              conditional-operand
+              ", "
+              (compiler-backend-sized-reg type-segment-bases result-reg cmov-ty)
+              "\n"
+              (compiler-backend-emit-store-var-with-plan
+                assignments
+                dst
+                result-reg
+                backend-state))))))))
 
 (define (compiler-backend-emit-select
   [type-segment-bases : i64]
@@ -30670,6 +31022,37 @@
     [(compiler_ir_types.CompilerIrBinOp.BitTestNe) "je"]
     [_ ""]))
 
+;; SS-P5(b) / VG-P-B: the `cmov` mnemonic that reads a comparison's own flags.
+;; `cmov<cc>` and `j<cc>` name the SAME condition codes, so this is the branch
+;; table above with the mnemonic prefix exchanged and it inherits its
+;; signed/unsigned split unchanged -- an unsigned `lt` is `jb`/`cmovb`, a signed
+;; one `jl`/`cmovl`. The two bit-test predicates are deliberately absent: their
+;; flags come from `bt`/`test`, not from the `cmp` the select-on-flags path
+;; emits, and "" is that path's decline.
+(define (compiler-backend-compare-cmov
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [ty : compiler_ast_types.AstType]) : String
+  (match op
+    [(compiler_ir_types.CompilerIrBinOp.Eq) "cmove"]
+    [(compiler_ir_types.CompilerIrBinOp.Ne) "cmovne"]
+    [(compiler_ir_types.CompilerIrBinOp.Lt)
+      (if (compiler-backend-unsigned-rel-ty? ty)
+        "cmovb"
+        "cmovl")]
+    [(compiler_ir_types.CompilerIrBinOp.Le)
+      (if (compiler-backend-unsigned-rel-ty? ty)
+        "cmovbe"
+        "cmovle")]
+    [(compiler_ir_types.CompilerIrBinOp.Gt)
+      (if (compiler-backend-unsigned-rel-ty? ty)
+        "cmova"
+        "cmovg")]
+    [(compiler_ir_types.CompilerIrBinOp.Ge)
+      (if (compiler-backend-unsigned-rel-ty? ty)
+        "cmovae"
+        "cmovge")]
+    [_ ""]))
+
 ;; x86 encodes an immediate only as the source of cmp.  When the IR puts the
 ;; immediate on the LHS, reverse the predicate and compare it directly against
 ;; the register RHS instead of materialising it in a scavenged register.
@@ -32250,24 +32633,42 @@
 
 ;; GAP9 disp-aware staged address: compose base+index*scale as before, then
 ;; add the folded displacement into the base register.
+;;
+;; SS-P5(a): when the scale is one the SIB byte can spell, the displacement is
+;; the SIB form's OWN field -- `leaq D(base,index,s), base` is the whole of
+;; `leaq (base,index,s), base ; addq $D, base`, and for scale 1 the whole of
+;; `addq index, base ; addq $D, base`. The fold needs D to fit the signed
+;; 32-bit displacement field; anything wider keeps the two-instruction form,
+;; where the `addq $D` at least reaches the imm32-or-wider encodings the
+;; assembler picks.
 (define (compiler-backend-gep-index-base-asm-disp
   [disp : i64]
   [base-reg : String]
   [scale : i64]
   [index-reg : String]) : String
-  (let
-    [tail : String
-      (if (= disp 0)
-        ""
-        (str_cat.str-cat
-          "    addq $"
-          (string.int->string disp)
-          ", "
-          base-reg
-          "\n"))]
+  (if (and
+    (not (= disp 0))
+    (compiler-backend-gep-sib-scale? scale)
+    (compiler-backend-imm32? disp))
     (str_cat.str-cat
-      (compiler-backend-gep-index-base-asm base-reg scale index-reg)
-      tail)))
+      "    leaq "
+      (compiler-backend-gep-index-address-disp disp base-reg scale index-reg)
+      ", "
+      base-reg
+      "\n")
+    (let
+      [tail : String
+        (if (= disp 0)
+          ""
+          (str_cat.str-cat
+            "    addq $"
+            (string.int->string disp)
+            ", "
+            base-reg
+            "\n"))]
+      (str_cat.str-cat
+        (compiler-backend-gep-index-base-asm base-reg scale index-reg)
+        tail))))
 
 (define (compiler-backend-gep-index-address
   [base-reg : String]
@@ -32506,6 +32907,23 @@
               backend-state
               assignments
               offset)]
+          ;; SS-P5(a): the index only ever needs a staging register when the
+          ;; index-composing form WRITES it. `addq idx, base` (scale 1) and
+          ;; `leaq disp(base,idx,s), base` (scale 2/4/8) both READ the index and
+          ;; write only the base, so a register-homed index goes straight into
+          ;; the SIB/add slot and the `movq %rX, %r8` staging copy disappears.
+          ;; The non-SIB scales are excluded because their composition
+          ;; (`shlq $c, idx` / `imulq $c, idx`) scales the index IN PLACE and
+          ;; would destroy the live home; a spilled index has no home to use;
+          ;; and %rbp is refused for the same reason GAP7 refuses it as a base,
+          ;; keeping every staged address off the frame register. `avoid1` and
+          ;; `avoid2` need no test: they name registers this emitter must not
+          ;; WRITE, and the index is only ever read.
+          [direct-index? : bool
+            (and
+              (not (string.eq offset-home ""))
+              (not (string.eq offset-home "%rbp"))
+              (compiler-backend-gep-sib-scale? scale))]
           [use-dst-home? : bool
             (and
               (not (string.eq dst-home ""))
@@ -32522,25 +32940,32 @@
                 3
                 "%r10"
                 backend-state))]
+          ;; result-reg is never offset-home (use-dst-home? refuses it, and the
+          ;; scavenge excludes it), so loading the base cannot disturb the index
+          ;; this path is about to read.
           [scav-idx : String
-            (compiler-backend-planned-or-scavenge-reg
-              planned-index
-              dst
-              (compiler-backend-three-exclude result-reg avoid1 avoid2)
-              3
-              "%r8"
-              backend-state)]
+            (if direct-index?
+              offset-home
+              (compiler-backend-planned-or-scavenge-reg
+                planned-index
+                dst
+                (compiler-backend-three-exclude result-reg avoid1 avoid2)
+                3
+                "%r8"
+                backend-state))]
           (match (compiler-backend-emit-load-value-with-plan
             assignments
             base
             result-reg
             backend-state)
             [(ResultCompilerBackend.Ok base-asm)
-              (match (compiler-backend-emit-load-value-with-plan
-                assignments
-                offset
-                scav-idx
-                backend-state)
+              (match (if direct-index?
+                (ResultCompilerBackend.Ok "")
+                (compiler-backend-emit-load-value-with-plan
+                  assignments
+                  offset
+                  scav-idx
+                  backend-state))
                 [(ResultCompilerBackend.Ok offset-asm)
                   (ResultCompilerBackend.Ok
                     (str_cat.str-cat
@@ -32828,6 +33253,16 @@
   [r2 : String]
   [r3 : String]) : (__tl_dyn-array String)
   (__tl_make-array r1 r2 r3))
+
+;; Four live-through registers to keep a scavenge off. The select-on-flags path
+;; needs both select operand homes AND both compare operand homes excluded at
+;; once; "" entries are inert (no register spells as the empty string).
+(define (compiler-backend-four-exclude
+  [r1 : String]
+  [r2 : String]
+  [r3 : String]
+  [r4 : String]) : (__tl_dyn-array String)
+  (__tl_make-array r1 r2 r3 r4))
 
 (define (compiler-backend-param-register-exclude-location-count
   [location : compiler_regalloc.CompilerRegLocation]) : i64
@@ -51527,9 +51962,16 @@
       [(>= var (array-length use-counts)) false]
       [else (= (array-ref use-counts var) (array-ref free-counts var))])))
 
-;; The branch condition var at slot `j` when that branch is fed by the
-;; immediately preceding compare or boolean negation (a "free branch" whose
-;; result need not be materialized); otherwise -1.
+;; The condition var at slot `j` when the consumer there is fed by the
+;; immediately preceding compare or boolean negation (a "free" consumer whose
+;; boolean need not be materialized); otherwise -1.
+;;
+;; Two consumers qualify. A BRANCH reads the comparison's flags with its own
+;; `jcc`. A scalar SELECT (SS-P5(b)) reads them with a `cmov<cc>`; the
+;; adjacency requirement is identical, because in both cases the comparison is
+;; re-emitted at the consumer and nothing may sit between them. A vector select
+;; is excluded (its mask is a real ymm/zmm value), as is a select reached
+;; through a copy of the boolean rather than the boolean itself.
 (define (compiler-backend-fuse-free-branch-var
   [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)]
   [j : i64]) : i64
@@ -51554,7 +51996,30 @@
                   (- 0 1))]
               [_ (- 0 1)])]
           [_ (- 0 1)])]
-      [_ (- 0 1)])))
+      [_ (compiler-backend-fuse-free-select-var slots j)])))
+
+;; The Select half of the adjacency test above, kept separate so the branch
+;; shape stays one flat match.
+(define (compiler-backend-fuse-free-select-var
+  [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)]
+  [j : i64]) : i64
+  (match (array-ref slots j)
+    [(compiler_ir_types.CompilerIrInstr.Select payload-box)
+      (let
+        [mask (__tl-project-field (__tl-box-place payload-box) mask)]
+        [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+        (if (not (= lanes 0))
+          (- 0 1)
+          (match mask
+            [(compiler_ir_types.CompilerIrValue.Var v)
+              (match (array-ref slots (- j 1))
+                [(compiler_ir_types.CompilerIrInstr.BinOp dst op _ _ _)
+                  (if (and (compiler-backend-compare-op? op) (= dst v))
+                    v
+                    (- 0 1))]
+                [_ (- 0 1)])]
+            [_ (- 0 1)])))]
+    [_ (- 0 1)]))
 
 (define (compiler-backend-count-instr-seq-use-facts
   [counts : (__tl_dyn-array i64)]
@@ -61511,6 +61976,75 @@
                   instrs
                   index
                   out))]
+            ;; SS-P5(b) / VG-P-B: a scalar Select reading this comparison's
+            ;; result and nothing else needs no boolean at all -- the compare's
+            ;; own flags drive one `cmov<cc>`. The scratch registers come from
+            ;; the SELECT's planned ordinals (one instruction ahead), exactly
+            ;; the ones its ordinary emission would have consumed, so the
+            ;; scratch-vreg plan is honoured unchanged. The emitter declines by
+            ;; returning `No` whenever the operand shapes cannot guarantee the
+            ;; compare's operands survive the two staging loads.
+            [(compiler_ir_types.CompilerIrInstr.Select payload-box)
+              (let
+                [select-dst
+                  (__tl-project-field (__tl-box-place payload-box) dst)]
+                [select-mask
+                  (__tl-project-field (__tl-box-place payload-box) mask)]
+                [select-true
+                  (__tl-project-field (__tl-box-place payload-box) on-true)]
+                [select-false
+                  (__tl-project-field (__tl-box-place payload-box) on-false)]
+                [select-lanes
+                  (__tl-project-field (__tl-box-place payload-box) lanes)]
+                [select-ty (__tl-project-field (__tl-box-place payload-box) ty)]
+                (match (if (and
+                  (= select-lanes 0)
+                  (compiler-backend-branch-uses-var? select-mask dst))
+                  (compiler-backend-emit-select-on-flags
+                    ctx.type-segment-bases
+                    ctx.assignments
+                    select-dst
+                    select-true
+                    select-false
+                    select-ty
+                    op
+                    lhs
+                    rhs
+                    (compiler-backend-binop-operand-ty
+                      ctx.types
+                      ctx.global-types
+                      op
+                      lhs
+                      rhs
+                      ty)
+                    (compiler-backend-scratch-plan-register-ahead
+                      (compiler-backend-runtime-plan-scratch ctx.plan)
+                      1
+                      0
+                      ctx.backend-state)
+                    (compiler-backend-scratch-plan-register-ahead
+                      (compiler-backend-runtime-plan-scratch ctx.plan)
+                      1
+                      1
+                      ctx.backend-state)
+                    ctx.backend-state)
+                  (CompilerBackendMaybeAsm.No))
+                  [(CompilerBackendMaybeAsm.Some head)
+                    (compiler-backend-emit-fused-result-rest
+                      ctx
+                      fallthrough
+                      (ResultCompilerBackend.Ok head)
+                      instrs
+                      after-branch
+                      out)]
+                  [(CompilerBackendMaybeAsm.No)
+                    (compiler-backend-emit-instrs-normal
+                      ctx
+                      fallthrough
+                      instr
+                      instrs
+                      index
+                      out)]))]
             [(compiler_ir_types.CompilerIrInstr.UnOp
                 not-dst
                 (compiler_ir_types.CompilerIrUnOp.Not)

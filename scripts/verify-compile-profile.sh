@@ -1703,8 +1703,11 @@ if [ "$NL_HOST_OS" = windows ]; then
     # nodes, 26 segments, 26,624 capacity, and 638,976 physical payload bytes.
     # #6215's ownership annotations and view types cross one further boundary:
     # 27,582 used nodes, 27,648 capacity, and 663,552 physical payload bytes.
+    # Rebasing that cutover over #6843's dense-only instruction sequence surface
+    # measures 27,698 used nodes and crosses to 28 segments, 28,672 capacity,
+    # and 688,128 physical payload bytes on the authoritative Windows probe.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_type_pool macro_expand 27 1024 24 \
+        "$SELFHOST_STDERR" ast_type_pool macro_expand 28 1024 24 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # #6828's dense flag-exit/BCE storage declarations cross the next type-pool
     # typecheck boundary: the authoritative Windows probe measured 9,221 used

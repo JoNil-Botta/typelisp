@@ -3522,20 +3522,9 @@
       acc)))
 
 (define (lower-test-function-spmd-call-count
-  [funcs : compiler_ir_types.CompilerIrFunctionList]
+  [funcs : compiler_ir_types.CompilerIrFunctionSeq]
   [name : String]) : i64
-  (match funcs
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) (- 0 1)]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
-      (match func
-        [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
-            (lower-test-blocks-spmd-call-count blocks)
-            (lower-test-function-spmd-call-count
-              (compiler_ir_types.compiler-ir-box-shared-view rest)
-              name))])]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (lower-test-function-seq-spmd-call-count seq name)]))
+  (lower-test-function-seq-spmd-call-count funcs name))
 
 (define (lower-test-function-seq-spmd-call-count
   [funcs : compiler_ir_types.CompilerIrFunctionSeq]
@@ -5392,41 +5381,48 @@
 
 ;; Phi count of the function named `name`, or -1 when no such function exists
 ;; (so a missing function fails both the `> 0` and `= 0` assertions below).
-(define (lower-test-function-defined?
-  [funcs : compiler_ir_types.CompilerIrFunctionList]
-  [name : String]) : bool
-  (match funcs
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) false]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
-      (match func
+(defenum LowerTestMaybeFunction
+  (No)
+  (Some compiler_ir_types.CompilerIrFunction))
+
+(define (lower-test-function-seq-find-from
+  [funcs : compiler_ir_types.CompilerIrFunctionSeq]
+  [name : String]
+  [index : i64]) : LowerTestMaybeFunction
+  (if (>= index funcs.len)
+    (LowerTestMaybeFunction.No)
+    (let
+      [func : compiler_ir_types.CompilerIrFunction
+        (compiler_ir_types.compiler-ir-function-seq-ref
+          (compiler_ir_types.compiler-ir-global-shared-view funcs)
+          index)]
+      (match (compiler_ir_types.compiler-ir-global-shared-view func)
         [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ _)
           (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
-            true
-            (lower-test-function-defined?
-              (compiler_ir_types.compiler-ir-box-shared-view rest)
-              name))])]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (lower-test-function-defined?
-        (compiler_ir_types.compiler-ir-function-seq-to-list seq)
-        name)]))
+            (LowerTestMaybeFunction.Some func)
+            (lower-test-function-seq-find-from funcs name (+ index 1)))]))))
+
+(define (lower-test-function-seq-find
+  [funcs : compiler_ir_types.CompilerIrFunctionSeq]
+  [name : String]) : LowerTestMaybeFunction
+  (lower-test-function-seq-find-from funcs name 0))
+
+(define (lower-test-function-defined?
+  [funcs : compiler_ir_types.CompilerIrFunctionSeq]
+  [name : String]) : bool
+  (match (lower-test-function-seq-find funcs name)
+    [(LowerTestMaybeFunction.No) false]
+    [(LowerTestMaybeFunction.Some _) true]))
 
 (define (lower-test-function-param-count
-  [funcs : compiler_ir_types.CompilerIrFunctionList]
+  [funcs : compiler_ir_types.CompilerIrFunctionSeq]
   [name : String]) : i64
-  (match funcs
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) (- 0 1)]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
+  (match (lower-test-function-seq-find funcs name)
+    [(LowerTestMaybeFunction.No) (- 0 1)]
+    [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function fname params _ _ _)
-          (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
-            (compiler_ir_types.compiler-ir-param-list-count params)
-            (lower-test-function-param-count
-              (compiler_ir_types.compiler-ir-box-shared-view rest)
-              name))])]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (lower-test-function-param-count
-        (compiler_ir_types.compiler-ir-function-seq-to-list seq)
-        name)]))
+        [(compiler_ir_types.CompilerIrFunction.Function _ params _ _ _)
+          (compiler_ir_types.compiler-ir-param-list-count params)])]))
 
 (define (lower-test-param-name-at
   [params : compiler_ir_types.CompilerIrParamList]
@@ -5446,290 +5442,200 @@
           (- index 1)))]))
 
 (define (lower-test-function-param-name
-  [funcs : compiler_ir_types.CompilerIrFunctionList]
+  [funcs : compiler_ir_types.CompilerIrFunctionSeq]
   [name : String]
   [index : i64]) : String
-  (match funcs
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) ""]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
+  (match (lower-test-function-seq-find funcs name)
+    [(LowerTestMaybeFunction.No) ""]
+    [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function fname params _ _ _)
-          (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
-            (lower-test-param-name-at params index)
-            (lower-test-function-param-name
-              (compiler_ir_types.compiler-ir-box-shared-view rest)
-              name
-              index))])]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (lower-test-function-param-name
-        (compiler_ir_types.compiler-ir-function-seq-to-list seq)
-        name
-        index)]))
+        [(compiler_ir_types.CompilerIrFunction.Function _ params _ _ _)
+          (lower-test-param-name-at params index)])]))
 
 (define (lower-test-function-phi-count
-  [funcs : compiler_ir_types.CompilerIrFunctionList]
+  [funcs : compiler_ir_types.CompilerIrFunctionSeq]
   [name : String]) : i64
-  (match funcs
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) (- 0 1)]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
+  (match (lower-test-function-seq-find funcs name)
+    [(LowerTestMaybeFunction.No) (- 0 1)]
+    [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
-            (lower-test-blocks-phi-count blocks)
-            (lower-test-function-phi-count
-              (compiler_ir_types.compiler-ir-box-shared-view rest)
-              name))])]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (lower-test-function-phi-count
-        (compiler_ir_types.compiler-ir-function-seq-to-list seq)
-        name)]))
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+          (lower-test-blocks-phi-count blocks)])]))
 
 (define (lower-test-function-load-count
-  [funcs : compiler_ir_types.CompilerIrFunctionList]
+  [funcs : compiler_ir_types.CompilerIrFunctionSeq]
   [name : String]) : i64
-  (match funcs
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) (- 0 1)]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
+  (match (lower-test-function-seq-find funcs name)
+    [(LowerTestMaybeFunction.No) (- 0 1)]
+    [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
-            (lower-test-blocks-load-count blocks)
-            (lower-test-function-load-count
-              (compiler_ir_types.compiler-ir-box-shared-view rest)
-              name))])]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (lower-test-function-load-count
-        (compiler_ir_types.compiler-ir-function-seq-to-list seq)
-        name)]))
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+          (lower-test-blocks-load-count blocks)])]))
 
 (define (lower-test-function-splat-shape-count
-  [funcs : compiler_ir_types.CompilerIrFunctionList]
+  [funcs : compiler_ir_types.CompilerIrFunctionSeq]
   [name : String]
   [lanes : i64]
   [elem-ty : compiler_ast_types.AstType]) : i64
-  (match funcs
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) (- 0 1)]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
+  (match (lower-test-function-seq-find funcs name)
+    [(LowerTestMaybeFunction.No) (- 0 1)]
+    [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
-            (lower-test-blocks-splat-shape-count blocks lanes elem-ty)
-            (lower-test-function-splat-shape-count
-              (compiler_ir_types.compiler-ir-box-shared-view rest)
-              name
-              lanes
-              elem-ty))])]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (lower-test-function-splat-shape-count
-        (compiler_ir_types.compiler-ir-function-seq-to-list seq)
-        name
-        lanes
-        elem-ty)]))
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+          (lower-test-blocks-splat-shape-count blocks lanes elem-ty)])]))
 
 (define (lower-test-function-label-load-count
-  [funcs : compiler_ir_types.CompilerIrFunctionList]
+  [funcs : compiler_ir_types.CompilerIrFunctionSeq]
   [name : String]
   [want-label : String]) : i64
-  (match funcs
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) (- 0 1)]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
+  (match (lower-test-function-seq-find funcs name)
+    [(LowerTestMaybeFunction.No) (- 0 1)]
+    [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
-            (lower-test-blocks-label-load-count blocks want-label)
-            (lower-test-function-label-load-count
-              (compiler_ir_types.compiler-ir-box-shared-view rest)
-              name
-              want-label))])]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (lower-test-function-label-load-count
-        (compiler_ir_types.compiler-ir-function-seq-to-list seq)
-        name
-        want-label)]))
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+          (lower-test-blocks-label-load-count blocks want-label)])]))
 
 (define (lower-test-function-branch-count
-  [funcs : compiler_ir_types.CompilerIrFunctionList]
+  [funcs : compiler_ir_types.CompilerIrFunctionSeq]
   [name : String]) : i64
-  (match funcs
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) (- 0 1)]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
+  (match (lower-test-function-seq-find funcs name)
+    [(LowerTestMaybeFunction.No) (- 0 1)]
+    [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
-            (lower-test-blocks-branch-count blocks)
-            (lower-test-function-branch-count
-              (compiler_ir_types.compiler-ir-box-shared-view rest)
-              name))])]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (lower-test-function-branch-count
-        (compiler_ir_types.compiler-ir-function-seq-to-list seq)
-        name)]))
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+          (lower-test-blocks-branch-count blocks)])]))
 
 (define (lower-test-function-total-enum-branch-count
-  [funcs : compiler_ir_types.CompilerIrFunctionList]
+  [funcs : compiler_ir_types.CompilerIrFunctionSeq]
   [name : String]) : i64
-  (match funcs
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) (- 0 1)]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
+  (match (lower-test-function-seq-find funcs name)
+    [(LowerTestMaybeFunction.No) (- 0 1)]
+    [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
-            (lower-test-blocks-total-enum-branch-count blocks)
-            (lower-test-function-total-enum-branch-count
-              (compiler_ir_types.compiler-ir-box-shared-view rest)
-              name))])]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (lower-test-function-total-enum-branch-count
-        (compiler_ir_types.compiler-ir-function-seq-to-list seq)
-        name)]))
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+          (lower-test-blocks-total-enum-branch-count blocks)])]))
 
 (define (lower-test-function-bounds-count
-  [funcs : compiler_ir_types.CompilerIrFunctionList]
+  [funcs : compiler_ir_types.CompilerIrFunctionSeq]
   [name : String]) : i64
-  (match funcs
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) (- 0 1)]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
+  (match (lower-test-function-seq-find funcs name)
+    [(LowerTestMaybeFunction.No) (- 0 1)]
+    [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
-            (lower-test-blocks-bounds-count blocks)
-            (lower-test-function-bounds-count
-              (compiler_ir_types.compiler-ir-box-shared-view rest)
-              name))])]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (lower-test-function-bounds-count
-        (compiler_ir_types.compiler-ir-function-seq-to-list seq)
-        name)]))
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+          (lower-test-blocks-bounds-count blocks)])]))
 
 (define (lower-test-function-return-count
-  [funcs : compiler_ir_types.CompilerIrFunctionList]
+  [funcs : compiler_ir_types.CompilerIrFunctionSeq]
   [name : String]) : i64
-  (match funcs
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) (- 0 1)]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
+  (match (lower-test-function-seq-find funcs name)
+    [(LowerTestMaybeFunction.No) (- 0 1)]
+    [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
-            (lower-test-blocks-return-count blocks)
-            (lower-test-function-return-count
-              (compiler_ir_types.compiler-ir-box-shared-view rest)
-              name))])]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (lower-test-function-return-count
-        (compiler_ir_types.compiler-ir-function-seq-to-list seq)
-        name)]))
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+          (lower-test-blocks-return-count blocks)])]))
 
 (define (lower-test-function-pack-count
-  [funcs : compiler_ir_types.CompilerIrFunctionList]
+  [funcs : compiler_ir_types.CompilerIrFunctionSeq]
   [name : String]) : i64
-  (match funcs
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) (- 0 1)]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
+  (match (lower-test-function-seq-find funcs name)
+    [(LowerTestMaybeFunction.No) (- 0 1)]
+    [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
-            (lower-test-blocks-pack-count blocks)
-            (lower-test-function-pack-count
-              (compiler_ir_types.compiler-ir-box-shared-view rest)
-              name))])]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (lower-test-function-pack-count
-        (compiler_ir_types.compiler-ir-function-seq-to-list seq)
-        name)]))
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+          (lower-test-blocks-pack-count blocks)])]))
 
 (define (lower-test-function-pack-shape-count
-  [funcs : compiler_ir_types.CompilerIrFunctionList]
+  [funcs : compiler_ir_types.CompilerIrFunctionSeq]
   [name : String]
   [pools : compiler_ast_types.AstNodePoolContext]) : i64
-  (match funcs
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) (- 0 1)]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
+  (match (lower-test-function-seq-find funcs name)
+    [(LowerTestMaybeFunction.No) (- 0 1)]
+    [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
-            (lower-test-blocks-pack-shape-count blocks pools)
-            (lower-test-function-pack-shape-count
-              (compiler_ir_types.compiler-ir-box-shared-view rest)
-              name
-              pools))])]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (lower-test-function-pack-shape-count
-        (compiler_ir_types.compiler-ir-function-seq-to-list seq)
-        name
-        pools)]))
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+          (lower-test-blocks-pack-shape-count blocks pools)])]))
 
 (define (lower-test-functions-call-count
-  [funcs : compiler_ir_types.CompilerIrFunctionList]
+  [funcs : compiler_ir_types.CompilerIrFunctionSeq]
   [name : String]) : i64
-  (match funcs
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) 0]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
-      (match func
-        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
-          (+
-            (lower-test-blocks-call-count
-              blocks
-              (owned_view.compiler-owned-shared-view name))
-            (lower-test-functions-call-count
-              (compiler_ir_types.compiler-ir-box-shared-view rest)
-              name))])]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (lower-test-functions-call-count
-        (compiler_ir_types.compiler-ir-function-seq-to-list seq)
-        name)]))
+  (let
+    [index : i64 0]
+    [count : i64 0]
+    (begin
+      (while (< index funcs.len)
+        (begin
+          (match (compiler_ir_types.compiler-ir-function-seq-ref
+            (compiler_ir_types.compiler-ir-global-shared-view funcs)
+            index)
+            [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+              (set!
+                count
+                (+
+                  count
+                  (lower-test-blocks-call-count
+                    blocks
+                    (compiler_ir_types.compiler-ir-global-shared-view name))))])
+          (set! index (+ index 1))))
+      count)))
 
 (define (lower-test-functions-branch-count
-  [funcs : compiler_ir_types.CompilerIrFunctionList]) : i64
-  (match funcs
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) 0]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
-      (match func
-        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
-          (+
-            (lower-test-blocks-branch-count blocks)
-            (lower-test-functions-branch-count
-              (compiler_ir_types.compiler-ir-box-shared-view rest)))])]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (lower-test-functions-branch-count
-        (compiler_ir_types.compiler-ir-function-seq-to-list seq))]))
+  [funcs : compiler_ir_types.CompilerIrFunctionSeq]) : i64
+  (let
+    [index : i64 0]
+    [count : i64 0]
+    (begin
+      (while (< index funcs.len)
+        (begin
+          (match (compiler_ir_types.compiler-ir-function-seq-ref
+            (compiler_ir_types.compiler-ir-global-shared-view funcs)
+            index)
+            [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+              (set! count (+ count (lower-test-blocks-branch-count blocks)))])
+          (set! index (+ index 1))))
+      count)))
 
 (define (lower-test-functions-return-count
-  [funcs : compiler_ir_types.CompilerIrFunctionList]) : i64
-  (match funcs
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) 0]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
-      (match func
-        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
-          (+
-            (lower-test-blocks-return-count blocks)
-            (lower-test-functions-return-count
-              (compiler_ir_types.compiler-ir-box-shared-view rest)))])]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (lower-test-functions-return-count
-        (compiler_ir_types.compiler-ir-function-seq-to-list seq))]))
+  [funcs : compiler_ir_types.CompilerIrFunctionSeq]) : i64
+  (let
+    [index : i64 0]
+    [count : i64 0]
+    (begin
+      (while (< index funcs.len)
+        (begin
+          (match (compiler_ir_types.compiler-ir-function-seq-ref
+            (compiler_ir_types.compiler-ir-global-shared-view funcs)
+            index)
+            [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+              (set! count (+ count (lower-test-blocks-return-count blocks)))])
+          (set! index (+ index 1))))
+      count)))
 
 (define (lower-test-functions-tail-call-count
-  [funcs : compiler_ir_types.CompilerIrFunctionList]
+  [funcs : compiler_ir_types.CompilerIrFunctionSeq]
   [name : String]) : i64
-  (match funcs
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) 0]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
-      (match func
-        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
-          (+
-            (lower-test-blocks-tail-call-count
-              blocks
-              (owned_view.compiler-owned-shared-view name))
-            (lower-test-functions-tail-call-count
-              (compiler_ir_types.compiler-ir-box-shared-view rest)
-              name))])]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (lower-test-functions-tail-call-count
-        (compiler_ir_types.compiler-ir-function-seq-to-list seq)
-        name)]))
+  (let
+    [index : i64 0]
+    [count : i64 0]
+    (begin
+      (while (< index funcs.len)
+        (begin
+          (match (compiler_ir_types.compiler-ir-function-seq-ref
+            (compiler_ir_types.compiler-ir-global-shared-view funcs)
+            index)
+            [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+              (set!
+                count
+                (+
+                  count
+                  (lower-test-blocks-tail-call-count
+                    blocks
+                    (compiler_ir_types.compiler-ir-global-shared-view name))))])
+          (set! index (+ index 1))))
+      count)))
 
 (define (lower-test-functions-direct-call-count
-  [funcs : compiler_ir_types.CompilerIrFunctionList]
+  [funcs : compiler_ir_types.CompilerIrFunctionSeq]
   [name : String]) : i64
   (+
     (lower-test-functions-call-count
@@ -5738,246 +5644,152 @@
     (lower-test-functions-tail-call-count funcs name)))
 
 (define (lower-test-functions-cpuid-count
-  [funcs : compiler_ir_types.CompilerIrFunctionList]) : i64
-  (match funcs
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) 0]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
-      (match func
-        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
-          (+
-            (lower-test-blocks-cpuid-count blocks)
-            (lower-test-functions-cpuid-count
-              (compiler_ir_types.compiler-ir-box-shared-view rest)))])]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (lower-test-functions-cpuid-count
-        (compiler_ir_types.compiler-ir-function-seq-to-list seq))]))
+  [funcs : compiler_ir_types.CompilerIrFunctionSeq]) : i64
+  (let
+    [index : i64 0]
+    [count : i64 0]
+    (begin
+      (while (< index funcs.len)
+        (begin
+          (match (compiler_ir_types.compiler-ir-function-seq-ref
+            (compiler_ir_types.compiler-ir-global-shared-view funcs)
+            index)
+            [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+              (set! count (+ count (lower-test-blocks-cpuid-count blocks)))])
+          (set! index (+ index 1))))
+      count)))
 
 (define (lower-test-functions-xgetbv-count
-  [funcs : compiler_ir_types.CompilerIrFunctionList]) : i64
-  (match funcs
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) 0]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
-      (match func
-        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
-          (+
-            (lower-test-blocks-xgetbv-count blocks)
-            (lower-test-functions-xgetbv-count
-              (compiler_ir_types.compiler-ir-box-shared-view rest)))])]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (lower-test-functions-xgetbv-count
-        (compiler_ir_types.compiler-ir-function-seq-to-list seq))]))
+  [funcs : compiler_ir_types.CompilerIrFunctionSeq]) : i64
+  (let
+    [index : i64 0]
+    [count : i64 0]
+    (begin
+      (while (< index funcs.len)
+        (begin
+          (match (compiler_ir_types.compiler-ir-function-seq-ref
+            (compiler_ir_types.compiler-ir-global-shared-view funcs)
+            index)
+            [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+              (set! count (+ count (lower-test-blocks-xgetbv-count blocks)))])
+          (set! index (+ index 1))))
+      count)))
 
 (define (lower-test-function-call-count
-  [funcs : compiler_ir_types.CompilerIrFunctionList]
+  [funcs : compiler_ir_types.CompilerIrFunctionSeq]
   [name : String]
   [call-name : String]) : i64
-  (match funcs
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) (- 0 1)]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
+  (match (lower-test-function-seq-find funcs name)
+    [(LowerTestMaybeFunction.No) (- 0 1)]
+    [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
-            (lower-test-blocks-call-count blocks call-name)
-            (lower-test-function-call-count
-              (compiler_ir_types.compiler-ir-box-shared-view rest)
-              name
-              call-name))])]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (lower-test-function-call-count
-        (compiler_ir_types.compiler-ir-function-seq-to-list seq)
-        name
-        call-name)]))
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+          (lower-test-blocks-call-count blocks call-name)])]))
 
 (define (lower-test-function-call-before?
-  [funcs : compiler_ir_types.CompilerIrFunctionList]
+  [funcs : compiler_ir_types.CompilerIrFunctionSeq]
   [name : String]
   [first : String]
   [second : String]) : bool
-  (match funcs
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) false]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
+  (match (lower-test-function-seq-find funcs name)
+    [(LowerTestMaybeFunction.No) false]
+    [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
-            (lower-test-blocks-call-before? blocks first second)
-            (lower-test-function-call-before?
-              (compiler_ir_types.compiler-ir-box-shared-view rest)
-              name
-              first
-              second))])]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (lower-test-function-call-before?
-        (compiler_ir_types.compiler-ir-function-seq-to-list seq)
-        name
-        first
-        second)]))
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+          (lower-test-blocks-call-before? blocks first second)])]))
 
 (define (lower-test-function-indirect-call-count
-  [funcs : compiler_ir_types.CompilerIrFunctionList]
+  [funcs : compiler_ir_types.CompilerIrFunctionSeq]
   [name : String]) : i64
-  (match funcs
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) (- 0 1)]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
+  (match (lower-test-function-seq-find funcs name)
+    [(LowerTestMaybeFunction.No) (- 0 1)]
+    [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
-            (lower-test-blocks-indirect-call-count blocks)
-            (lower-test-function-indirect-call-count
-              (compiler_ir_types.compiler-ir-box-shared-view rest)
-              name))])]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (lower-test-function-indirect-call-count
-        (compiler_ir_types.compiler-ir-function-seq-to-list seq)
-        name)]))
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+          (lower-test-blocks-indirect-call-count blocks)])]))
 
 (define (lower-test-function-indirect-tail-call-count
-  [funcs : compiler_ir_types.CompilerIrFunctionList]
+  [funcs : compiler_ir_types.CompilerIrFunctionSeq]
   [name : String]) : i64
-  (match funcs
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) (- 0 1)]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
+  (match (lower-test-function-seq-find funcs name)
+    [(LowerTestMaybeFunction.No) (- 0 1)]
+    [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
-            (lower-test-blocks-indirect-tail-call-count blocks)
-            (lower-test-function-indirect-tail-call-count
-              (compiler_ir_types.compiler-ir-box-shared-view rest)
-              name))])]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (lower-test-function-indirect-tail-call-count
-        (compiler_ir_types.compiler-ir-function-seq-to-list seq)
-        name)]))
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+          (lower-test-blocks-indirect-tail-call-count blocks)])]))
 
 (define (lower-test-function-indirect-c-call-count
-  [funcs : compiler_ir_types.CompilerIrFunctionList]
+  [funcs : compiler_ir_types.CompilerIrFunctionSeq]
   [name : String]) : i64
-  (match funcs
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) (- 0 1)]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
+  (match (lower-test-function-seq-find funcs name)
+    [(LowerTestMaybeFunction.No) (- 0 1)]
+    [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
-            (lower-test-blocks-indirect-c-call-count blocks)
-            (lower-test-function-indirect-c-call-count
-              (compiler_ir_types.compiler-ir-box-shared-view rest)
-              name))])]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (lower-test-function-indirect-c-call-count
-        (compiler_ir_types.compiler-ir-function-seq-to-list seq)
-        name)]))
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+          (lower-test-blocks-indirect-c-call-count blocks)])]))
 
 (define (lower-test-function-indirect-unit-count
-  [funcs : compiler_ir_types.CompilerIrFunctionList]
+  [funcs : compiler_ir_types.CompilerIrFunctionSeq]
   [name : String]) : i64
-  (match funcs
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) (- 0 1)]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
+  (match (lower-test-function-seq-find funcs name)
+    [(LowerTestMaybeFunction.No) (- 0 1)]
+    [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
-            (lower-test-blocks-indirect-unit-count blocks)
-            (lower-test-function-indirect-unit-count
-              (compiler_ir_types.compiler-ir-box-shared-view rest)
-              name))])]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (lower-test-function-indirect-unit-count
-        (compiler_ir_types.compiler-ir-function-seq-to-list seq)
-        name)]))
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+          (lower-test-blocks-indirect-unit-count blocks)])]))
 
 (define (lower-test-function-return-function-count
-  [funcs : compiler_ir_types.CompilerIrFunctionList]
+  [funcs : compiler_ir_types.CompilerIrFunctionSeq]
   [name : String]
   [function-name : String]) : i64
-  (match funcs
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) (- 0 1)]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
+  (match (lower-test-function-seq-find funcs name)
+    [(LowerTestMaybeFunction.No) (- 0 1)]
+    [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
-            (lower-test-blocks-return-function-count blocks function-name)
-            (lower-test-function-return-function-count
-              (compiler_ir_types.compiler-ir-box-shared-view rest)
-              name
-              function-name))])]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (lower-test-function-return-function-count
-        (compiler_ir_types.compiler-ir-function-seq-to-list seq)
-        name
-        function-name)]))
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+          (lower-test-blocks-return-function-count blocks function-name)])]))
 
 (define (lower-test-function-indirect-callee-function-count
-  [funcs : compiler_ir_types.CompilerIrFunctionList]
+  [funcs : compiler_ir_types.CompilerIrFunctionSeq]
   [name : String]
   [function-name : String]) : i64
-  (match funcs
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) (- 0 1)]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
+  (match (lower-test-function-seq-find funcs name)
+    [(LowerTestMaybeFunction.No) (- 0 1)]
+    [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
-            (lower-test-blocks-indirect-callee-function-count
-              blocks
-              function-name)
-            (lower-test-function-indirect-callee-function-count
-              (compiler_ir_types.compiler-ir-box-shared-view rest)
-              name
-              function-name))])]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (lower-test-function-indirect-callee-function-count
-        (compiler_ir_types.compiler-ir-function-seq-to-list seq)
-        name
-        function-name)]))
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+          (lower-test-blocks-indirect-callee-function-count
+            blocks
+            function-name)])]))
 
 (define (lower-test-function-call-arg-function-count
-  [funcs : compiler_ir_types.CompilerIrFunctionList]
+  [funcs : compiler_ir_types.CompilerIrFunctionSeq]
   [name : String]
   [call-name : String]
   [function-name : String]) : i64
-  (match funcs
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) (- 0 1)]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
+  (match (lower-test-function-seq-find funcs name)
+    [(LowerTestMaybeFunction.No) (- 0 1)]
+    [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
-            (lower-test-blocks-call-arg-function-count
-              blocks
-              call-name
-              function-name)
-            (lower-test-function-call-arg-function-count
-              (compiler_ir_types.compiler-ir-box-shared-view rest)
-              name
-              call-name
-              function-name))])]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (lower-test-function-call-arg-function-count
-        (compiler_ir_types.compiler-ir-function-seq-to-list seq)
-        name
-        call-name
-        function-name)]))
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+          (lower-test-blocks-call-arg-function-count
+            blocks
+            call-name
+            function-name)])]))
 
 (define (lower-test-function-tail-call-count
-  [funcs : compiler_ir_types.CompilerIrFunctionList]
+  [funcs : compiler_ir_types.CompilerIrFunctionSeq]
   [name : String]
   [call-name : String]) : i64
-  (match funcs
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) (- 0 1)]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
+  (match (lower-test-function-seq-find funcs name)
+    [(LowerTestMaybeFunction.No) (- 0 1)]
+    [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
-            (lower-test-blocks-tail-call-count blocks call-name)
-            (lower-test-function-tail-call-count
-              (compiler_ir_types.compiler-ir-box-shared-view rest)
-              name
-              call-name))])]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (lower-test-function-tail-call-count
-        (compiler_ir_types.compiler-ir-function-seq-to-list seq)
-        name
-        call-name)]))
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+          (lower-test-blocks-tail-call-count blocks call-name)])]))
 
 (define (lower-test-function-direct-call-count
-  [funcs : compiler_ir_types.CompilerIrFunctionList]
+  [funcs : compiler_ir_types.CompilerIrFunctionSeq]
   [name : String]
   [call-name : String]) : i64
   (+
@@ -5988,397 +5800,226 @@
     (lower-test-function-tail-call-count funcs name call-name)))
 
 (define (lower-test-function-store-ptr-count
-  [funcs : compiler_ir_types.CompilerIrFunctionList]
+  [funcs : compiler_ir_types.CompilerIrFunctionSeq]
   [name : String]) : i64
-  (match funcs
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) (- 0 1)]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
+  (match (lower-test-function-seq-find funcs name)
+    [(LowerTestMaybeFunction.No) (- 0 1)]
+    [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
-            (lower-test-blocks-store-ptr-count blocks)
-            (lower-test-function-store-ptr-count
-              (compiler_ir_types.compiler-ir-box-shared-view rest)
-              name))])]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (lower-test-function-store-ptr-count
-        (compiler_ir_types.compiler-ir-function-seq-to-list seq)
-        name)]))
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+          (lower-test-blocks-store-ptr-count blocks)])]))
 
 (define (lower-test-function-copy-bytes-count
-  [funcs : compiler_ir_types.CompilerIrFunctionList]
+  [funcs : compiler_ir_types.CompilerIrFunctionSeq]
   [name : String]) : i64
-  (match funcs
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) (- 0 1)]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
+  (match (lower-test-function-seq-find funcs name)
+    [(LowerTestMaybeFunction.No) (- 0 1)]
+    [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
-            (lower-test-blocks-copy-bytes-count blocks)
-            (lower-test-function-copy-bytes-count
-              (compiler_ir_types.compiler-ir-box-shared-view rest)
-              name))])]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (lower-test-function-copy-bytes-count
-        (compiler_ir_types.compiler-ir-function-seq-to-list seq)
-        name)]))
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+          (lower-test-blocks-copy-bytes-count blocks)])]))
 
 (define (lower-test-function-alloc-count
-  [funcs : compiler_ir_types.CompilerIrFunctionList]
+  [funcs : compiler_ir_types.CompilerIrFunctionSeq]
   [name : String]) : i64
-  (match funcs
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) (- 0 1)]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
+  (match (lower-test-function-seq-find funcs name)
+    [(LowerTestMaybeFunction.No) (- 0 1)]
+    [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
-            (lower-test-blocks-alloc-count blocks)
-            (lower-test-function-alloc-count
-              (compiler_ir_types.compiler-ir-box-shared-view rest)
-              name))])]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (lower-test-function-alloc-count
-        (compiler_ir_types.compiler-ir-function-seq-to-list seq)
-        name)]))
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+          (lower-test-blocks-alloc-count blocks)])]))
 
 (define (lower-test-function-addr-of-count
-  [funcs : compiler_ir_types.CompilerIrFunctionList]
+  [funcs : compiler_ir_types.CompilerIrFunctionSeq]
   [name : String]) : i64
-  (match funcs
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) (- 0 1)]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
+  (match (lower-test-function-seq-find funcs name)
+    [(LowerTestMaybeFunction.No) (- 0 1)]
+    [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
-            (lower-test-blocks-addr-of-count blocks)
-            (lower-test-function-addr-of-count
-              (compiler_ir_types.compiler-ir-box-shared-view rest)
-              name))])]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (lower-test-function-addr-of-count
-        (compiler_ir_types.compiler-ir-function-seq-to-list seq)
-        name)]))
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+          (lower-test-blocks-addr-of-count blocks)])]))
 
 (define (lower-test-function-vector-load-count
-  [funcs : compiler_ir_types.CompilerIrFunctionList]
+  [funcs : compiler_ir_types.CompilerIrFunctionSeq]
   [name : String]) : i64
-  (match funcs
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) (- 0 1)]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
+  (match (lower-test-function-seq-find funcs name)
+    [(LowerTestMaybeFunction.No) (- 0 1)]
+    [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
-            (lower-test-blocks-vector-load-count blocks)
-            (lower-test-function-vector-load-count
-              (compiler_ir_types.compiler-ir-box-shared-view rest)
-              name))])]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (lower-test-function-vector-load-count
-        (compiler_ir_types.compiler-ir-function-seq-to-list seq)
-        name)]))
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+          (lower-test-blocks-vector-load-count blocks)])]))
 
 (define (lower-test-function-vector-binop-count
-  [funcs : compiler_ir_types.CompilerIrFunctionList]
+  [funcs : compiler_ir_types.CompilerIrFunctionSeq]
   [name : String]) : i64
-  (match funcs
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) (- 0 1)]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
+  (match (lower-test-function-seq-find funcs name)
+    [(LowerTestMaybeFunction.No) (- 0 1)]
+    [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
-            (lower-test-blocks-vector-binop-count blocks)
-            (lower-test-function-vector-binop-count
-              (compiler_ir_types.compiler-ir-box-shared-view rest)
-              name))])]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (lower-test-function-vector-binop-count
-        (compiler_ir_types.compiler-ir-function-seq-to-list seq)
-        name)]))
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+          (lower-test-blocks-vector-binop-count blocks)])]))
 
 (define (lower-test-function-vector-binop-op-count
-  [funcs : compiler_ir_types.CompilerIrFunctionList]
+  [funcs : compiler_ir_types.CompilerIrFunctionSeq]
   [name : String]
   [want : compiler_ir_types.CompilerIrBinOp]) : i64
-  (match funcs
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) (- 0 1)]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
+  (match (lower-test-function-seq-find funcs name)
+    [(LowerTestMaybeFunction.No) (- 0 1)]
+    [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
-            (lower-test-blocks-vector-binop-op-count blocks want)
-            (lower-test-function-vector-binop-op-count
-              (compiler_ir_types.compiler-ir-box-shared-view rest)
-              name
-              want))])]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (lower-test-function-vector-binop-op-count
-        (compiler_ir_types.compiler-ir-function-seq-to-list seq)
-        name
-        want)]))
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+          (lower-test-blocks-vector-binop-op-count blocks want)])]))
 
 (define (lower-test-function-vector-reduce-count
-  [funcs : compiler_ir_types.CompilerIrFunctionList]
+  [funcs : compiler_ir_types.CompilerIrFunctionSeq]
   [name : String]) : i64
-  (match funcs
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) (- 0 1)]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
+  (match (lower-test-function-seq-find funcs name)
+    [(LowerTestMaybeFunction.No) (- 0 1)]
+    [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
-            (lower-test-blocks-vector-reduce-count blocks)
-            (lower-test-function-vector-reduce-count
-              (compiler_ir_types.compiler-ir-box-shared-view rest)
-              name))])]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (lower-test-function-vector-reduce-count
-        (compiler_ir_types.compiler-ir-function-seq-to-list seq)
-        name)]))
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+          (lower-test-blocks-vector-reduce-count blocks)])]))
 
 (define (lower-test-function-vector-store-count
-  [funcs : compiler_ir_types.CompilerIrFunctionList]
+  [funcs : compiler_ir_types.CompilerIrFunctionSeq]
   [name : String]) : i64
-  (match funcs
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) (- 0 1)]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
+  (match (lower-test-function-seq-find funcs name)
+    [(LowerTestMaybeFunction.No) (- 0 1)]
+    [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
-            (lower-test-blocks-vector-store-count blocks)
-            (lower-test-function-vector-store-count
-              (compiler_ir_types.compiler-ir-box-shared-view rest)
-              name))])]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (lower-test-function-vector-store-count
-        (compiler_ir_types.compiler-ir-function-seq-to-list seq)
-        name)]))
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+          (lower-test-blocks-vector-store-count blocks)])]))
 
 (define (lower-test-function-predicated-load-count
-  [funcs : compiler_ir_types.CompilerIrFunctionList]
+  [funcs : compiler_ir_types.CompilerIrFunctionSeq]
   [name : String]) : i64
-  (match funcs
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) (- 0 1)]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
+  (match (lower-test-function-seq-find funcs name)
+    [(LowerTestMaybeFunction.No) (- 0 1)]
+    [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
-            (lower-test-blocks-predicated-load-count blocks)
-            (lower-test-function-predicated-load-count
-              (compiler_ir_types.compiler-ir-box-shared-view rest)
-              name))])]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (lower-test-function-predicated-load-count
-        (compiler_ir_types.compiler-ir-function-seq-to-list seq)
-        name)]))
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+          (lower-test-blocks-predicated-load-count blocks)])]))
 
 (define (lower-test-function-predicated-store-count
-  [funcs : compiler_ir_types.CompilerIrFunctionList]
+  [funcs : compiler_ir_types.CompilerIrFunctionSeq]
   [name : String]) : i64
-  (match funcs
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) (- 0 1)]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
+  (match (lower-test-function-seq-find funcs name)
+    [(LowerTestMaybeFunction.No) (- 0 1)]
+    [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
-            (lower-test-blocks-predicated-store-count blocks)
-            (lower-test-function-predicated-store-count
-              (compiler_ir_types.compiler-ir-box-shared-view rest)
-              name))])]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (lower-test-function-predicated-store-count
-        (compiler_ir_types.compiler-ir-function-seq-to-list seq)
-        name)]))
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+          (lower-test-blocks-predicated-store-count blocks)])]))
 
 (define (lower-test-function-select-count
-  [funcs : compiler_ir_types.CompilerIrFunctionList]
+  [funcs : compiler_ir_types.CompilerIrFunctionSeq]
   [name : String]) : i64
-  (match funcs
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) (- 0 1)]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
+  (match (lower-test-function-seq-find funcs name)
+    [(LowerTestMaybeFunction.No) (- 0 1)]
+    [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
-            (lower-test-blocks-select-count blocks)
-            (lower-test-function-select-count
-              (compiler_ir_types.compiler-ir-box-shared-view rest)
-              name))])]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (lower-test-function-select-count
-        (compiler_ir_types.compiler-ir-function-seq-to-list seq)
-        name)]))
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+          (lower-test-blocks-select-count blocks)])]))
 
 (define (lower-test-function-tail-mask-count
-  [funcs : compiler_ir_types.CompilerIrFunctionList]
+  [funcs : compiler_ir_types.CompilerIrFunctionSeq]
   [name : String]) : i64
-  (match funcs
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) (- 0 1)]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
+  (match (lower-test-function-seq-find funcs name)
+    [(LowerTestMaybeFunction.No) (- 0 1)]
+    [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
-            (lower-test-blocks-tail-mask-count blocks)
-            (lower-test-function-tail-mask-count
-              (compiler_ir_types.compiler-ir-box-shared-view rest)
-              name))])]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (lower-test-function-tail-mask-count
-        (compiler_ir_types.compiler-ir-function-seq-to-list seq)
-        name)]))
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+          (lower-test-blocks-tail-mask-count blocks)])]))
 
 (define (lower-test-function-vector-shape-count
-  [funcs : compiler_ir_types.CompilerIrFunctionList]
+  [funcs : compiler_ir_types.CompilerIrFunctionSeq]
   [name : String]
   [lanes : i64]
   [elem-ty : compiler_ast_types.AstType]) : i64
-  (match funcs
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) (- 0 1)]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
-      (match func
-        [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
-            (lower-test-blocks-vector-shape-count blocks lanes elem-ty)
-            (lower-test-function-vector-shape-count
-              (compiler_ir_types.compiler-ir-box-shared-view rest)
-              name
-              lanes
-              elem-ty))])]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (lower-test-function-vector-shape-count
-        (compiler_ir_types.compiler-ir-function-seq-to-list seq)
-        name
-        lanes
-        elem-ty)]))
-
-(define (lower-test-function-u64-mov-count
-  [funcs : compiler_ir_types.CompilerIrFunctionList]
-  [name : String]) : i64
-  (match funcs
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) (- 0 1)]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
-      (match func
-        [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
-            (lower-test-blocks-u64-mov-count blocks)
-            (lower-test-function-u64-mov-count
-              (compiler_ir_types.compiler-ir-box-shared-view rest)
-              name))])]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (lower-test-function-u64-mov-count
-        (compiler_ir_types.compiler-ir-function-seq-to-list seq)
-        name)]))
-
-(define (lower-test-function-binop-op-count
-  [funcs : compiler_ir_types.CompilerIrFunctionList]
-  [name : String]
-  [op : compiler_ir_types.CompilerIrBinOp]) : i64
-  (match funcs
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) (- 0 1)]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
-      (match func
-        [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
-            (lower-test-blocks-binop-op-count blocks op)
-            (lower-test-function-binop-op-count
-              (compiler_ir_types.compiler-ir-box-shared-view rest)
-              name
-              op))])]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (lower-test-function-binop-op-count
-        (compiler_ir_types.compiler-ir-function-seq-to-list seq)
-        name
-        op)]))
-
-(define (lower-test-function-i64-binop-op-count
-  [funcs : compiler_ir_types.CompilerIrFunctionList]
-  [name : String]
-  [op : compiler_ir_types.CompilerIrBinOp]) : i64
-  (match funcs
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) (- 0 1)]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
-      (match func
-        [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
-            (lower-test-blocks-i64-binop-op-count blocks op)
-            (lower-test-function-i64-binop-op-count
-              (compiler_ir_types.compiler-ir-box-shared-view rest)
-              name
-              op))])]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (lower-test-function-i64-binop-op-count
-        (compiler_ir_types.compiler-ir-function-seq-to-list seq)
-        name
-        op)]))
-
-(define (lower-test-function-cast-count
-  [funcs : compiler_ir_types.CompilerIrFunctionList]
-  [name : String]) : i64
-  (match funcs
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) (- 0 1)]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
-      (match func
-        [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
-            (lower-test-blocks-cast-count blocks)
-            (lower-test-function-cast-count
-              (compiler_ir_types.compiler-ir-box-shared-view rest)
-              name))])]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (lower-test-function-cast-count
-        (compiler_ir_types.compiler-ir-function-seq-to-list seq)
-        name)]))
-
-(define (lower-test-function-bitcast-count
-  [funcs : compiler_ir_types.CompilerIrFunctionList]
-  [name : String]) : i64
-  (match funcs
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) (- 0 1)]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
-      (match func
-        [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
-            (lower-test-blocks-bitcast-count blocks)
-            (lower-test-function-bitcast-count
-              (compiler_ir_types.compiler-ir-box-shared-view rest)
-              name))])]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (lower-test-function-bitcast-count
-        (compiler_ir_types.compiler-ir-function-seq-to-list seq)
-        name)]))
-
-(define (lower-test-functions-bitcast-count
-  [funcs : compiler_ir_types.CompilerIrFunctionList]) : i64
-  (match funcs
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) 0]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
+  (match (lower-test-function-seq-find funcs name)
+    [(LowerTestMaybeFunction.No) (- 0 1)]
+    [(LowerTestMaybeFunction.Some func)
       (match func
         [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
-          (+
-            (lower-test-blocks-bitcast-count blocks)
-            (lower-test-functions-bitcast-count
-              (compiler_ir_types.compiler-ir-box-shared-view rest)))])]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (lower-test-functions-bitcast-count
-        (compiler_ir_types.compiler-ir-function-seq-to-list seq))]))
+          (lower-test-blocks-vector-shape-count blocks lanes elem-ty)])]))
+
+(define (lower-test-function-u64-mov-count
+  [funcs : compiler_ir_types.CompilerIrFunctionSeq]
+  [name : String]) : i64
+  (match (lower-test-function-seq-find funcs name)
+    [(LowerTestMaybeFunction.No) (- 0 1)]
+    [(LowerTestMaybeFunction.Some func)
+      (match func
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+          (lower-test-blocks-u64-mov-count blocks)])]))
+
+(define (lower-test-function-binop-op-count
+  [funcs : compiler_ir_types.CompilerIrFunctionSeq]
+  [name : String]
+  [op : compiler_ir_types.CompilerIrBinOp]) : i64
+  (match (lower-test-function-seq-find funcs name)
+    [(LowerTestMaybeFunction.No) (- 0 1)]
+    [(LowerTestMaybeFunction.Some func)
+      (match func
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+          (lower-test-blocks-binop-op-count blocks op)])]))
+
+(define (lower-test-function-i64-binop-op-count
+  [funcs : compiler_ir_types.CompilerIrFunctionSeq]
+  [name : String]
+  [op : compiler_ir_types.CompilerIrBinOp]) : i64
+  (match (lower-test-function-seq-find funcs name)
+    [(LowerTestMaybeFunction.No) (- 0 1)]
+    [(LowerTestMaybeFunction.Some func)
+      (match func
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+          (lower-test-blocks-i64-binop-op-count blocks op)])]))
+
+(define (lower-test-function-cast-count
+  [funcs : compiler_ir_types.CompilerIrFunctionSeq]
+  [name : String]) : i64
+  (match (lower-test-function-seq-find funcs name)
+    [(LowerTestMaybeFunction.No) (- 0 1)]
+    [(LowerTestMaybeFunction.Some func)
+      (match func
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+          (lower-test-blocks-cast-count blocks)])]))
+
+(define (lower-test-function-bitcast-count
+  [funcs : compiler_ir_types.CompilerIrFunctionSeq]
+  [name : String]) : i64
+  (match (lower-test-function-seq-find funcs name)
+    [(LowerTestMaybeFunction.No) (- 0 1)]
+    [(LowerTestMaybeFunction.Some func)
+      (match func
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+          (lower-test-blocks-bitcast-count blocks)])]))
+
+(define (lower-test-functions-bitcast-count
+  [funcs : compiler_ir_types.CompilerIrFunctionSeq]) : i64
+  (let
+    [index : i64 0]
+    [count : i64 0]
+    (begin
+      (while (< index funcs.len)
+        (begin
+          (match (compiler_ir_types.compiler-ir-function-seq-ref
+            (compiler_ir_types.compiler-ir-global-shared-view funcs)
+            index)
+            [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+              (set! count (+ count (lower-test-blocks-bitcast-count blocks)))])
+          (set! index (+ index 1))))
+      count)))
 
 (define (lower-test-function-store-global-count
-  [funcs : compiler_ir_types.CompilerIrFunctionList]
+  [funcs : compiler_ir_types.CompilerIrFunctionSeq]
   [name : String]
   [global-name : String]) : i64
-  (match funcs
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) (- 0 1)]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
+  (match (lower-test-function-seq-find funcs name)
+    [(LowerTestMaybeFunction.No) (- 0 1)]
+    [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
-            (lower-test-blocks-store-global-count blocks global-name)
-            (lower-test-function-store-global-count
-              (compiler_ir_types.compiler-ir-box-shared-view rest)
-              name
-              global-name))])]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (lower-test-function-store-global-count
-        (compiler_ir_types.compiler-ir-function-seq-to-list seq)
-        name
-        global-name)]))
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+          (lower-test-blocks-store-global-count blocks global-name)])]))
 
 (define (lower-test-global-seq-has-name-at?
   [globals : compiler_ir_types.CompilerIrGlobalSeq]
@@ -8483,85 +8124,47 @@
         want)]))
 
 (define (lower-test-function-i64-mov-count
-  [funcs : compiler_ir_types.CompilerIrFunctionList]
+  [funcs : compiler_ir_types.CompilerIrFunctionSeq]
   [name : String]
   [want : i64]) : i64
-  (match funcs
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) 0]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
+  (match (lower-test-function-seq-find funcs name)
+    [(LowerTestMaybeFunction.No) 0]
+    [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
-            (lower-test-blocks-i64-mov-count blocks want)
-            (lower-test-function-i64-mov-count
-              (compiler_ir_types.compiler-ir-box-shared-view rest)
-              name
-              want))])]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (lower-test-function-i64-mov-count
-        (compiler_ir_types.compiler-ir-function-seq-to-list seq)
-        name
-        want)]))
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+          (lower-test-blocks-i64-mov-count blocks want)])]))
 
 (define (lower-test-function-f64-mov-count-bits
-  [funcs : compiler_ir_types.CompilerIrFunctionList]
+  [funcs : compiler_ir_types.CompilerIrFunctionSeq]
   [name : String]
   [want : u64]) : i64
-  (match funcs
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) 0]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
+  (match (lower-test-function-seq-find funcs name)
+    [(LowerTestMaybeFunction.No) 0]
+    [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
-            (lower-test-blocks-f64-mov-count blocks want)
-            (lower-test-function-f64-mov-count-bits
-              (compiler_ir_types.compiler-ir-box-shared-view rest)
-              name
-              want))])]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (lower-test-function-f64-mov-count-bits
-        (compiler_ir_types.compiler-ir-function-seq-to-list seq)
-        name
-        want)]))
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+          (lower-test-blocks-f64-mov-count blocks want)])]))
 
 (define (lower-test-function-binop-count
-  [funcs : compiler_ir_types.CompilerIrFunctionList]
+  [funcs : compiler_ir_types.CompilerIrFunctionSeq]
   [name : String]) : i64
-  (match funcs
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) (- 0 1)]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
+  (match (lower-test-function-seq-find funcs name)
+    [(LowerTestMaybeFunction.No) (- 0 1)]
+    [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
-            (lower-test-blocks-binop-count blocks)
-            (lower-test-function-binop-count
-              (compiler_ir_types.compiler-ir-box-shared-view rest)
-              name))])]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (lower-test-function-binop-count
-        (compiler_ir_types.compiler-ir-function-seq-to-list seq)
-        name)]))
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+          (lower-test-blocks-binop-count blocks)])]))
 
 (define (lower-test-function-gep-offset-count
-  [funcs : compiler_ir_types.CompilerIrFunctionList]
+  [funcs : compiler_ir_types.CompilerIrFunctionSeq]
   [name : String]
   [want : i64]) : i64
-  (match funcs
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) (- 0 1)]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
+  (match (lower-test-function-seq-find funcs name)
+    [(LowerTestMaybeFunction.No) (- 0 1)]
+    [(LowerTestMaybeFunction.Some func)
       (match func
-        [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
-            (lower-test-blocks-gep-offset-count blocks want)
-            (lower-test-function-gep-offset-count
-              (compiler_ir_types.compiler-ir-box-shared-view rest)
-              name
-              want))])]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (lower-test-function-gep-offset-count
-        (compiler_ir_types.compiler-ir-function-seq-to-list seq)
-        name
-        want)]))
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+          (lower-test-blocks-gep-offset-count blocks want)])]))
 
 (define (compiler-lower-comptime-fold-ok? [src : String] [want : i64]) : bool
   (match (compiler_lower.lower-compiler-source src)
@@ -9371,7 +8974,9 @@
                 unit
                 (set! ok false))
               (if (=
-                (lower-test-functions-direct-call-count functions "io.emit-str")
+                (lower-test-functions-direct-call-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "io.emit-str")
                 1)
                 unit
                 (set! ok false))
@@ -9438,7 +9043,9 @@
                 "io.emit-string")
               2)
             (=
-              (lower-test-functions-direct-call-count functions "io.emit-str")
+              (lower-test-functions-direct-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "io.emit-str")
               1))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
@@ -9760,7 +9367,7 @@
             [lambda-name : String "__tl_lambda_get-fn_0"]
             (and
               (=
-                (compiler_ir_types.compiler-ir-function-list-count
+                (compiler_ir_types.compiler-ir-function-seq-count
                   (compiler_ir_types.compiler-ir-global-shared-view functions))
                 2)
               (=
@@ -9786,7 +9393,7 @@
             [lambda-name : String "__tl_lambda_main_0"]
             (and
               (=
-                (compiler_ir_types.compiler-ir-function-list-count
+                (compiler_ir_types.compiler-ir-function-seq-count
                   (compiler_ir_types.compiler-ir-global-shared-view functions))
                 2)
               (=
@@ -9818,7 +9425,7 @@
             [lambda-name : String "__tl_lambda_main_0"]
             (and
               (=
-                (compiler_ir_types.compiler-ir-function-list-count
+                (compiler_ir_types.compiler-ir-function-seq-count
                   (compiler_ir_types.compiler-ir-global-shared-view functions))
                 2)
               (=
@@ -9851,7 +9458,7 @@
             [ok : bool true]
             (begin
               (if (=
-                (compiler_ir_types.compiler-ir-function-list-count
+                (compiler_ir_types.compiler-ir-function-seq-count
                   (compiler_ir_types.compiler-ir-global-shared-view functions))
                 2)
                 unit
@@ -9898,7 +9505,7 @@
             [ok : bool true]
             (begin
               (if (=
-                (compiler_ir_types.compiler-ir-function-list-count
+                (compiler_ir_types.compiler-ir-function-seq-count
                   (compiler_ir_types.compiler-ir-global-shared-view functions))
                 3)
                 unit
@@ -9938,7 +9545,7 @@
             [ok : bool true]
             (begin
               (if (=
-                (compiler_ir_types.compiler-ir-function-list-count
+                (compiler_ir_types.compiler-ir-function-seq-count
                   (compiler_ir_types.compiler-ir-global-shared-view functions))
                 2)
                 unit
@@ -9978,7 +9585,7 @@
             [ok : bool true]
             (begin
               (if (=
-                (compiler_ir_types.compiler-ir-function-list-count
+                (compiler_ir_types.compiler-ir-function-seq-count
                   (compiler_ir_types.compiler-ir-global-shared-view functions))
                 2)
                 unit
@@ -10022,7 +9629,7 @@
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
             (=
-              (compiler_ir_types.compiler-ir-function-list-count
+              (compiler_ir_types.compiler-ir-function-seq-count
                 (compiler_ir_types.compiler-ir-global-shared-view functions))
               2)
             (=
@@ -10045,7 +9652,7 @@
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
             (=
-              (compiler_ir_types.compiler-ir-function-list-count
+              (compiler_ir_types.compiler-ir-function-seq-count
                 (compiler_ir_types.compiler-ir-global-shared-view functions))
               2)
             (string.eq
@@ -10070,7 +9677,11 @@
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
             (=
-              (compiler_ir_types.compiler-ir-function-list-count
+              (compiler_ir_types.compiler-ir-function-seq-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions))
+              2)
+            (=
+              (compiler_ir_types.compiler-ir-function-seq-count
                 (compiler_ir_types.compiler-ir-global-shared-view functions))
               2)
             (=
@@ -10091,7 +9702,7 @@
             [ok : bool true]
             (begin
               (if (=
-                (compiler_ir_types.compiler-ir-function-list-count
+                (compiler_ir_types.compiler-ir-function-seq-count
                   (compiler_ir_types.compiler-ir-global-shared-view functions))
                 2)
                 unit
@@ -10124,7 +9735,7 @@
             [ok : bool true]
             (begin
               (if (=
-                (compiler_ir_types.compiler-ir-function-list-count
+                (compiler_ir_types.compiler-ir-function-seq-count
                   (compiler_ir_types.compiler-ir-global-shared-view functions))
                 2)
                 unit
@@ -10445,7 +10056,7 @@
               (box (string.int->string 4)))))))))"))
 
 (define (compiler-lower-with-escape-arena-functions-shape-ok?
-  [functions : compiler_ir_types.CompilerIrFunctionList]) : bool
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]) : bool
   (and
     (>=
       (lower-test-functions-call-count
@@ -10660,7 +10271,7 @@
             (box (string.int->string 4))))))))"))
 
 (define (compiler-lower-with-scratch-arena-functions-shape-ok?
-  [functions : compiler_ir_types.CompilerIrFunctionList]) : bool
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]) : bool
   (and
     (>=
       (lower-test-functions-call-count
@@ -11877,7 +11488,9 @@
                 (owned_view.compiler-owned-shared-view functions)
                 "fill")]
             [actual-predicated-loads : i64
-              (lower-test-function-predicated-load-count functions "fill")]
+              (lower-test-function-predicated-load-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             (and
               (= actual-vector-loads vector-loads)
               (= actual-predicated-loads predicated-loads)))])]
@@ -12858,7 +12471,7 @@
     [(compiler_lower.ResultCompilerLower.Ok program _)
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
-          (compiler_ir_types.compiler-ir-function-list-count
+          (compiler_ir_types.compiler-ir-function-seq-count
             (compiler_ir_types.compiler-ir-global-shared-view functions))])]
     [(compiler_lower.ResultCompilerLower.Err _) (- 0 1)]))
 
@@ -13098,7 +12711,18 @@
           [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
             (and
               (>
-                (compiler_ir_types.compiler-ir-function-list-count functions)
+                (lower-test-function-spmd-call-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "fill-value")
+                0)
+              (>
+                (lower-test-function-spmd-call-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "fill-unit")
+                0)
+              (>
+                (compiler_ir_types.compiler-ir-function-seq-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions))
                 4))])]
       [(compiler_lower.ResultCompilerLower.Err _) false])))
 
@@ -15415,11 +15039,13 @@
         [(compiler_ir_types.CompilerIrProgram.Program _ functions externs)
           (and
             (=
-              (compiler_ir_types.compiler-ir-function-list-count
-                (owned_view.compiler-owned-shared-view functions))
+              (compiler_ir_types.compiler-ir-function-seq-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions))
               1)
             (= (compiler_ir_types.compiler-ir-extern-seq-count externs) 0)
-            (lower-test-function-defined? functions "main"))])]
+            (lower-test-function-defined?
+              (compiler_ir_types.compiler-ir-global-shared-view functions)
+              "main"))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-unsafe-ast-dce-kept-ok?
@@ -17269,7 +16895,7 @@
 (define (main) : i64 0)")
 
 (define (compiler-lower-bounds-operand-counts-ok?
-  [functions : compiler_ir_types.CompilerIrFunctionList]) : bool
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]) : bool
   (let
     [ok : bool true]
     (begin

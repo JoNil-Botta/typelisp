@@ -4016,24 +4016,23 @@
           false)])))
 
 (define (tltest-function-base-defined?
-  [funcs : ir.CompilerIrFunctionList]
+  [funcs : ir.CompilerIrFunctionSeq]
   [base : String]) : bool
-  (match funcs
-    [(ir.CompilerIrFunctionList.Nil) false]
-    [(ir.CompilerIrFunctionList.Cons func rest)
-      (match func
-        [(ir.CompilerIrFunction.Function name _ _ _ _)
-          (let
-            [name-text : String (ir.compiler-ir-symbol-text name)]
-            (if (string.contains (& name-text) (& base))
-              true
-              (tltest-function-base-defined?
-                (owned_view.compiler-owned-box-shared-view rest)
-                base)))])]
-    [(ir.CompilerIrFunctionList.Array seq)
-      (tltest-function-base-defined?
-        (ir.compiler-ir-function-seq-to-list seq)
-        base)]))
+  (let
+    [index : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (< index funcs.len) (not found))
+        (begin
+          (match (array-ref funcs.slots index)
+            [(ir.CompilerIrFunction.Function name _ _ _ _)
+              (let
+                [name-text : String (ir.compiler-ir-symbol-text name)]
+                (if (string.contains (& name-text) (& base))
+                  (set! found true)
+                  unit))])
+          (set! index (+ index 1))))
+      found)))
 
 (define (tltest-nested-module-macro-vector-lower-roots-ok?
   [source : String]

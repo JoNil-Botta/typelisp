@@ -27,40 +27,41 @@
   (+ x scale))")
 
 (define (compiler-lower-spmd-package-helper-count
-  [functions : compiler_ir_types.CompilerIrFunctionList]) : i64
-  (match functions
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) 0]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (compiler-lower-spmd-package-helper-count
-        (compiler_ir_types.compiler-ir-function-seq-to-list seq))]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons function rest)
-      (+
-        (match function
-          [(compiler_ir_types.CompilerIrFunction.Function name _ _ _ _)
-            (let
-              [name-text : String
-                (compiler_ir_types.compiler-ir-symbol-text name)]
-              (if (or
-                (compiler_lower.lower-string-prefix-at?
-                  (owned_view.compiler-owned-shared-view name-text)
-                  "__tl_spmd_pkg_"
-                  0)
-                (compiler_lower.lower-string-prefix-at?
-                  (owned_view.compiler-owned-shared-view name-text)
-                  "__tl_spmd_ret_uniform___tl_spmd_pkg_"
-                  0)
-                (compiler_lower.lower-string-prefix-at?
-                  (owned_view.compiler-owned-shared-view name-text)
-                  "__tl_spmd_ret_varying___tl_spmd_pkg_"
-                  0)
-                (compiler_lower.lower-string-prefix-at?
-                  name-text
-                  "__tl_spmd_ret_mask___tl_spmd_pkg_"
-                  0))
-                1
-                0))])
-        (compiler-lower-spmd-package-helper-count
-          (compiler_ir_types.compiler-ir-function-list-box-shared-view rest)))]))
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]) : i64
+  (let
+    [index : i64 0]
+    [count : i64 0]
+    (begin
+      (while (< index functions.len)
+        (begin
+          (match (compiler_ir_types.compiler-ir-function-seq-ref
+            (compiler_ir_types.compiler-ir-global-shared-view functions)
+            index)
+            [(compiler_ir_types.CompilerIrFunction.Function name _ _ _ _)
+              (let
+                [name-text : String
+                  (compiler_ir_types.compiler-ir-symbol-text name)]
+                (if (or
+                  (compiler_lower.lower-string-prefix-at?
+                    (compiler_ir_types.compiler-ir-global-shared-view name-text)
+                    "__tl_spmd_pkg_"
+                    0)
+                  (compiler_lower.lower-string-prefix-at?
+                    (compiler_ir_types.compiler-ir-global-shared-view name-text)
+                    "__tl_spmd_ret_uniform___tl_spmd_pkg_"
+                    0)
+                  (compiler_lower.lower-string-prefix-at?
+                    (compiler_ir_types.compiler-ir-global-shared-view name-text)
+                    "__tl_spmd_ret_varying___tl_spmd_pkg_"
+                    0)
+                  (compiler_lower.lower-string-prefix-at?
+                    name-text
+                    "__tl_spmd_ret_mask___tl_spmd_pkg_"
+                    0))
+                  (set! count (+ count 1))
+                  unit))])
+          (set! index (+ index 1))))
+      count)))
 
 (define (compiler-lower-spmd-package-helper-count-ok?
   [source : String]
@@ -104,14 +105,16 @@
   : i64
   (cast 7 : i64))")
 
-(define (compiler-lower-spmd-package-uniform-helper-render
-  [functions : compiler_ir_types.CompilerIrFunctionList]) : String
-  (match functions
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) ""]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (compiler-lower-spmd-package-uniform-helper-render
-        (compiler_ir_types.compiler-ir-function-seq-to-list seq))]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons function rest)
+(define (compiler-lower-spmd-package-uniform-helper-render-from
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
+  [index : i64]) : String
+  (if (>= index functions.len)
+    ""
+    (let
+      [function : compiler_ir_types.CompilerIrFunction
+        (compiler_ir_types.compiler-ir-function-seq-ref
+          (compiler_ir_types.compiler-ir-global-shared-view functions)
+          index)]
       (match (compiler_ir_types.compiler-ir-global-shared-view function)
         [(compiler_ir_types.CompilerIrFunction.Function name _ _ _ _)
           (if (compiler_lower.lower-string-prefix-at?
@@ -122,8 +125,13 @@
               (cis.InternStructuralSessionHandle 0)
               (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
               function)
-            (compiler-lower-spmd-package-uniform-helper-render
-              (compiler_ir_types.compiler-ir-function-list-box-shared-view rest)))])]))
+            (compiler-lower-spmd-package-uniform-helper-render-from
+              functions
+              (+ index 1)))]))))
+
+(define (compiler-lower-spmd-package-uniform-helper-render
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]) : String
+  (compiler-lower-spmd-package-uniform-helper-render-from functions 0))
 
 (define (compiler-lower-spmd-package-return-context-source-ok?
   [source : String]) : bool

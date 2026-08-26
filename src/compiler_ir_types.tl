@@ -1090,11 +1090,6 @@
   (slots (__tl_dyn-array CompilerIrFunction))
   (len i64))
 
-(defenum CompilerIrFunctionList
-  (Nil)
-  (Cons CompilerIrFunction (Box CompilerIrFunctionList))
-  (Array CompilerIrFunctionSeq))
-
 (defenum CompilerIrGlobal
   (Global i64 ast.AstType CompilerIrValue))
 
@@ -1121,7 +1116,7 @@
   (len i64))
 
 (defenum CompilerIrProgram
-  (Program CompilerIrGlobalSeq CompilerIrFunctionList CompilerIrExternSeq))
+  (Program CompilerIrGlobalSeq CompilerIrFunctionSeq CompilerIrExternSeq))
 
 ;; Immutable, job-owned nominal representation facts captured from lowered
 ;; whole-program IR before optimization. The count map uses 0 for conflicting
@@ -1943,125 +1938,8 @@
         (compiler-ir-param-seq-from-list
           (compiler-ir-global-shared-view params)))]))
 
-(define (compiler-ir-function-cons
-  [func : CompilerIrFunction]
-  [rest : CompilerIrFunctionList]) : CompilerIrFunctionList
-  (CompilerIrFunctionList.Cons func (box rest)))
-
-(define (compiler-ir-function-list-count-cons
-  [functions : CompilerIrFunctionList]) : i64
-  (match (compiler-ir-global-shared-view functions)
-    [(CompilerIrFunctionList.Nil) 0]
-    [(CompilerIrFunctionList.Cons _ rest)
-      (+
-        1
-        (compiler-ir-function-list-count-cons
-          (compiler-ir-function-list-box-shared-view rest)))]
-    [(CompilerIrFunctionList.Array seq) seq.len]))
-
-(define (compiler-ir-function-list-fill-array
-  [functions : CompilerIrFunctionList]
-  [slots : (__tl_dyn-array CompilerIrFunction)]
-  [index : i64]) : unit
-  (match (compiler-ir-global-shared-view functions)
-    [(CompilerIrFunctionList.Nil) unit]
-    [(CompilerIrFunctionList.Cons func rest)
-      (begin
-        (set! (array-ref slots index) func)
-        (compiler-ir-function-list-fill-array
-          (compiler-ir-function-list-box-shared-view rest)
-          slots
-          (+ index 1)))]
-    [(CompilerIrFunctionList.Array seq)
-      (let
-        [i : i64 0]
-        [n : i64 seq.len]
-        [src : (__tl_dyn-array CompilerIrFunction) seq.slots]
-        (while (< i n)
-          (begin
-            (set!
-              (array-ref slots (+ index i))
-              (compiler-ir-array-shared-view src i))
-            (set! i (+ i 1)))))]))
-
-(define (compiler-ir-function-list-fill-array-reversed
-  [functions : CompilerIrFunctionList]
-  [slots : (__tl_dyn-array CompilerIrFunction)]
-  [index : i64]) : unit
-  (match (compiler-ir-global-shared-view functions)
-    [(CompilerIrFunctionList.Nil) unit]
-    [(CompilerIrFunctionList.Cons func rest)
-      (begin
-        (set! (array-ref slots index) func)
-        (compiler-ir-function-list-fill-array-reversed
-          (compiler-ir-function-list-box-shared-view rest)
-          slots
-          (- index 1)))]
-    [(CompilerIrFunctionList.Array seq)
-      (let
-        [i : i64 0]
-        [n : i64 seq.len]
-        [write : i64 index]
-        [src : (__tl_dyn-array CompilerIrFunction) seq.slots]
-        (while (< i n)
-          (begin
-            (set! (array-ref slots write) (compiler-ir-array-shared-view src i))
-            (set! write (- write 1))
-            (set! i (+ i 1)))))]))
-
-(define (compiler-ir-function-seq-from-list
-  [functions : CompilerIrFunctionList]) : CompilerIrFunctionSeq
-  (let
-    [count : i64
-      (compiler-ir-function-list-count-cons
-        (compiler-ir-global-shared-view functions))]
-    [slots : (__tl_dyn-array CompilerIrFunction)
-      (array.make-array CompilerIrFunction count)]
-    (begin
-      (compiler-ir-function-list-fill-array
-        (compiler-ir-global-shared-view functions)
-        (compiler-ir-global-shared-view slots)
-        0)
-      (CompilerIrFunctionSeq slots count))))
-
-(define (compiler-ir-function-seq-from-reversed-list
-  [functions : CompilerIrFunctionList]) : CompilerIrFunctionSeq
-  (let
-    [count : i64
-      (compiler-ir-function-list-count-cons
-        (compiler-ir-global-shared-view functions))]
-    [slots : (__tl_dyn-array CompilerIrFunction)
-      (array.make-array CompilerIrFunction count)]
-    (begin
-      (compiler-ir-function-list-fill-array-reversed
-        (compiler-ir-global-shared-view functions)
-        (compiler-ir-global-shared-view slots)
-        (- count 1))
-      (CompilerIrFunctionSeq slots count))))
-
-(define (compiler-ir-function-seq-to-list-rev
-  [slots : (__tl_dyn-array CompilerIrFunction)]
-  [index : i64]
-  [acc : CompilerIrFunctionList]) : CompilerIrFunctionList
-  (let
-    [cursor : i64 index]
-    [out : CompilerIrFunctionList acc]
-    (begin
-      (while (>= cursor 0)
-        (begin
-          (set!
-            out
-            (compiler-ir-function-cons
-              (compiler-ir-array-shared-view slots cursor)
-              out))
-          (set! cursor (- cursor 1))))
-      out)))
-
-(define (compiler-ir-function-seq-to-list [functions : CompilerIrFunctionSeq]) : CompilerIrFunctionList
-  (compiler-ir-function-seq-to-list-rev
-    (compiler-ir-global-shared-view functions.slots)
-    (- functions.len 1)
-    CompilerIrFunctionList.Nil))
+(define (compiler-ir-function-seq-empty) : CompilerIrFunctionSeq
+  (CompilerIrFunctionSeq (__tl_make-array CompilerIrFunction 0) 0))
 
 (define (compiler-ir-function-seq-count [functions : CompilerIrFunctionSeq]) : i64
   functions.len)
@@ -2072,27 +1950,6 @@
   [functions : CompilerIrFunctionSeq]
   [index : i64]) : CompilerIrFunction
   (compiler-ir-array-shared-view functions.slots index))
-
-(define (compiler-ir-function-list-force-cons
-  [functions : CompilerIrFunctionList]) : CompilerIrFunctionList
-  (match (compiler-ir-global-shared-view functions)
-    [(CompilerIrFunctionList.Array seq) (compiler-ir-function-seq-to-list seq)]
-    [_ (compiler-ir-global-shared-view functions)]))
-
-(define (compiler-ir-function-list-compact [functions : CompilerIrFunctionList]) : CompilerIrFunctionList
-  (match (compiler-ir-global-shared-view functions)
-    [(CompilerIrFunctionList.Array _)
-      (compiler-ir-global-shared-view functions)]
-    [_
-      (CompilerIrFunctionList.Array
-        (compiler-ir-function-seq-from-list
-          (compiler-ir-global-shared-view functions)))]))
-
-(define (compiler-ir-function-list-compact-reversed
-  [functions : CompilerIrFunctionList]) : CompilerIrFunctionList
-  (CompilerIrFunctionList.Array
-    (compiler-ir-function-seq-from-reversed-list
-      (compiler-ir-global-shared-view functions))))
 
 (defstruct CompilerIrInstrBuilder
   (slots (__tl_dyn-array CompilerIrInstr))
@@ -2443,49 +2300,33 @@
         (set! (array-ref builder.slots index) func)
         (set! builder.len (+ index 1))))))
 
-(define (compiler-ir-function-builder-append-list!
+(define (compiler-ir-function-builder-append-seq!
   [builder : (&mut builder CompilerIrFunctionBuilder)]
-  [functions : CompilerIrFunctionList]) : unit
-  (match (compiler-ir-global-shared-view functions)
-    [(CompilerIrFunctionList.Nil) unit]
-    [(CompilerIrFunctionList.Cons func rest)
+  [functions : CompilerIrFunctionSeq]) : unit
+  (let
+    [index : i64 0]
+    (while (< index functions.len)
       (begin
-        (compiler-ir-function-builder-push! builder func)
-        (compiler-ir-function-builder-append-list!
+        (compiler-ir-function-builder-push!
           builder
-          (compiler-ir-function-list-box-shared-view rest)))]
-    [(CompilerIrFunctionList.Array seq)
-      (let
-        [index : i64 0]
-        [count : i64 seq.len]
-        [src : (__tl_dyn-array CompilerIrFunction) seq.slots]
-        (while (< index count)
-          (begin
-            (compiler-ir-function-builder-push!
-              builder
-              (compiler-ir-array-shared-view src index))
-            (set! index (+ index 1)))))]))
+          (compiler-ir-array-shared-view functions.slots index))
+        (set! index (+ index 1))))))
 
-(define (compiler-ir-function-builder-from-list
-  [functions : CompilerIrFunctionList]) : CompilerIrFunctionBuilder
+(define (compiler-ir-function-builder-from-seq
+  [functions : CompilerIrFunctionSeq]) : CompilerIrFunctionBuilder
   (let
     [builder : CompilerIrFunctionBuilder
-      (compiler-ir-function-builder-with-capacity
-        (compiler-ir-function-list-count-cons
-          (compiler-ir-global-shared-view functions)))]
+      (compiler-ir-function-builder-with-capacity functions.len)]
     (begin
-      (compiler-ir-function-builder-append-list!
-        (&mut builder)
-        (compiler-ir-global-shared-view functions))
+      (compiler-ir-function-builder-append-seq! (&mut builder) functions)
       builder)))
 
-(define (compiler-ir-function-builder-to-list
-  [builder : CompilerIrFunctionBuilder]) : CompilerIrFunctionList
-  (CompilerIrFunctionList.Array
-    (CompilerIrFunctionSeq builder.slots builder.len)))
+(define (compiler-ir-function-builder-to-seq
+  [builder : CompilerIrFunctionBuilder]) : CompilerIrFunctionSeq
+  (CompilerIrFunctionSeq builder.slots builder.len))
 
-(define (compiler-ir-function-builder-snapshot-list
-  [builder : (& builder CompilerIrFunctionBuilder)]) : CompilerIrFunctionList
+(define (compiler-ir-function-builder-snapshot
+  [builder : (& builder CompilerIrFunctionBuilder)]) : CompilerIrFunctionSeq
   (let
     [count : i64 builder.len]
     [slots : (__tl_dyn-array CompilerIrFunction)
@@ -2495,15 +2336,26 @@
         (&mut slots)
         (& builder.slots)
         count)
-      (CompilerIrFunctionList.Array (CompilerIrFunctionSeq slots count)))))
+      (CompilerIrFunctionSeq slots count))))
 
-(define (compiler-ir-function-list-single [func : CompilerIrFunction]) : CompilerIrFunctionList
+(define (compiler-ir-function-seq1 [func : CompilerIrFunction]) : CompilerIrFunctionSeq
   (let
     [builder : CompilerIrFunctionBuilder
       (compiler-ir-function-builder-with-capacity 1)]
     (begin
       (compiler-ir-function-builder-push! (&mut builder) func)
-      (compiler-ir-function-builder-to-list builder))))
+      (compiler-ir-function-builder-to-seq builder))))
+
+(define (compiler-ir-function-seq-prepend
+  [func : CompilerIrFunction]
+  [functions : CompilerIrFunctionSeq]) : CompilerIrFunctionSeq
+  (let
+    [builder : CompilerIrFunctionBuilder
+      (compiler-ir-function-builder-with-capacity (+ functions.len 1))]
+    (begin
+      (compiler-ir-function-builder-push! (&mut builder) func)
+      (compiler-ir-function-builder-append-seq! (&mut builder) functions)
+      (compiler-ir-function-builder-to-seq builder))))
 
 (define (compiler-ir-global-seq-empty) : CompilerIrGlobalSeq
   (CompilerIrGlobalSeq (__tl_make-array CompilerIrGlobal 0) 0))
@@ -3642,51 +3494,23 @@
             (compiler-ir-global-shared-view pools)
             blocks)))]))
 
-(define (compiler-ir-clone-function-list-acc
+(define (compiler-ir-clone-function-seq
   [pools : ast.AstNodePoolContext]
-  [functions : CompilerIrFunctionList]
-  [acc : CompilerIrFunctionList]) : CompilerIrFunctionList
-  (match (compiler-ir-global-shared-view functions)
-    [(CompilerIrFunctionList.Nil) acc]
-    [(CompilerIrFunctionList.Cons func rest)
-      (compiler-ir-clone-function-list-acc
-        (compiler-ir-global-shared-view pools)
-        (compiler-ir-function-list-box-shared-view rest)
-        (compiler-ir-function-cons
-          (compiler-ir-clone-function
-            (compiler-ir-global-shared-view pools)
-            func)
-          acc))]
-    [(CompilerIrFunctionList.Array seq)
-      (compiler-ir-clone-function-list-acc
-        (compiler-ir-global-shared-view pools)
-        (compiler-ir-function-seq-to-list seq)
-        acc)]))
-
-(define (compiler-ir-function-list-reverse-onto
-  [functions : CompilerIrFunctionList]
-  [acc : CompilerIrFunctionList]) : CompilerIrFunctionList
-  (match (compiler-ir-global-shared-view functions)
-    [(CompilerIrFunctionList.Nil) acc]
-    [(CompilerIrFunctionList.Cons func rest)
-      (compiler-ir-function-list-reverse-onto
-        (compiler-ir-function-list-box-shared-view rest)
-        (compiler-ir-function-cons func acc))]
-    [(CompilerIrFunctionList.Array seq)
-      (compiler-ir-function-list-reverse-onto
-        (compiler-ir-function-seq-to-list seq)
-        acc)]))
-
-(define (compiler-ir-clone-function-list
-  [pools : ast.AstNodePoolContext]
-  [functions : CompilerIrFunctionList]) : CompilerIrFunctionList
-  (compiler-ir-function-list-compact
-    (compiler-ir-function-list-reverse-onto
-      (compiler-ir-clone-function-list-acc
-        pools
-        functions
-        CompilerIrFunctionList.Nil)
-      CompilerIrFunctionList.Nil)))
+  [functions : CompilerIrFunctionSeq]) : CompilerIrFunctionSeq
+  (let
+    [slots : (__tl_dyn-array CompilerIrFunction)
+      (__tl_make-array CompilerIrFunction functions.len)]
+    [index : i64 0]
+    (begin
+      (while (< index functions.len)
+        (begin
+          (set!
+            (array-ref slots index)
+            (compiler-ir-clone-function
+              (compiler-ir-global-shared-view pools)
+              (compiler-ir-array-shared-view functions.slots index)))
+          (set! index (+ index 1))))
+      (CompilerIrFunctionSeq slots functions.len))))
 
 (define (compiler-ir-clone-global
   [pools : ast.AstNodePoolContext]
@@ -3778,20 +3602,6 @@
           (set! i (+ i 1))))
       (CompilerIrFunctionSeq dest count))))
 
-(define (compiler-ir-clone-function-list-shell
-  [functions : CompilerIrFunctionList]) : CompilerIrFunctionList
-  (match (compiler-ir-global-shared-view functions)
-    [(CompilerIrFunctionList.Array seq)
-      (CompilerIrFunctionList.Array (compiler-ir-clone-function-seq-shell seq))]
-    [(CompilerIrFunctionList.Nil) CompilerIrFunctionList.Nil]
-    [_
-      (compiler-ir-function-list-compact
-        (compiler-ir-function-list-reverse-onto
-          (compiler-ir-function-list-reverse-onto
-            (compiler-ir-global-shared-view functions)
-            CompilerIrFunctionList.Nil)
-          CompilerIrFunctionList.Nil))]))
-
 (define (compiler-ir-clone-program-shell
   [pools : ast.AstNodePoolContext]
   [program : CompilerIrProgram]) : CompilerIrProgram
@@ -3801,7 +3611,7 @@
         (compiler-ir-clone-global-seq
           (compiler-ir-global-shared-view pools)
           globals)
-        (compiler-ir-clone-function-list-shell functions)
+        (compiler-ir-clone-function-seq-shell functions)
         (compiler-ir-clone-extern-seq pools externs))]))
 
 (define (compiler-ir-type-list-render-at
@@ -5152,42 +4962,42 @@
           blocks)
         "}\n")]))
 
-(define (compiler-ir-function-list-render-into
+(define (compiler-ir-function-seq-render-into-from
   [structural-session : cis.InternStructuralSessionHandle]
   [type-segment-bases : i64]
   [buf : text_buf.TextBuf]
-  [functions : CompilerIrFunctionList]) : text_buf.TextBuf
-  (match (compiler-ir-function-list-force-cons functions)
-    [(CompilerIrFunctionList.Nil) buf]
-    [(CompilerIrFunctionList.Array seq)
-      (compiler-ir-function-list-render-into
-        structural-session
-        type-segment-bases
-        buf
-        (compiler-ir-function-seq-to-list seq))]
-    [(CompilerIrFunctionList.Cons func rest)
-      (compiler-ir-function-list-render-into
-        structural-session
-        type-segment-bases
-        (match (compiler-ir-function-list-force-cons
-          (compiler-ir-box-shared-view rest))
-          [(CompilerIrFunctionList.Nil)
-            (text_buf.append
-              buf
-              (compiler-ir-function-render
-                structural-session
-                type-segment-bases
-                func))]
-          [_
-            (text_buf.append
-              (text_buf.append
-                buf
-                (compiler-ir-function-render
-                  structural-session
-                  type-segment-bases
-                  func))
-              "\n")])
-        (compiler-ir-box-shared-view rest))]))
+  [functions : CompilerIrFunctionSeq]
+  [index : i64]) : text_buf.TextBuf
+  (if (>= index functions.len)
+    buf
+    (compiler-ir-function-seq-render-into-from
+      structural-session
+      type-segment-bases
+      (let
+        [rendered : text_buf.TextBuf
+          (text_buf.append
+            buf
+            (compiler-ir-function-render
+              structural-session
+              type-segment-bases
+              (compiler-ir-array-shared-view functions.slots index)))]
+        (if (= (+ index 1) functions.len)
+          rendered
+          (text_buf.append rendered "\n")))
+      functions
+      (+ index 1))))
+
+(define (compiler-ir-function-seq-render-into
+  [structural-session : cis.InternStructuralSessionHandle]
+  [type-segment-bases : i64]
+  [buf : text_buf.TextBuf]
+  [functions : CompilerIrFunctionSeq]) : text_buf.TextBuf
+  (compiler-ir-function-seq-render-into-from
+    structural-session
+    type-segment-bases
+    buf
+    functions
+    0))
 
 (define (compiler-ir-global-render
   [structural-session : cis.InternStructuralSessionHandle]
@@ -5315,7 +5125,7 @@
             externs-buf
             (text_buf.append externs-buf "\n"))]
         (text_buf.render
-          (compiler-ir-function-list-render-into
+          (compiler-ir-function-seq-render-into
             structural-session
             type-segment-bases
             externs-sep-buf
@@ -6957,131 +6767,29 @@
           (set! index (+ index 1))))
       acc)))
 
-(define (compiler-ir-function-list-count [functions : CompilerIrFunctionList]) : i64
-  (match (compiler-ir-global-shared-view functions)
-    [(CompilerIrFunctionList.Nil) 0]
-    [(CompilerIrFunctionList.Cons _ rest)
-      (+ 1 (compiler-ir-function-list-count (compiler-ir-box-shared-view rest)))]
-    [(CompilerIrFunctionList.Array seq) (compiler-ir-function-seq-count seq)]))
-
-(define (compiler-ir-function-list-block-count
-  [functions : CompilerIrFunctionList]) : i64
-  (match (compiler-ir-global-shared-view functions)
-    [(CompilerIrFunctionList.Nil) 0]
-    [(CompilerIrFunctionList.Cons func rest)
-      (+
-        (compiler-ir-function-block-count func)
-        (compiler-ir-function-list-block-count
-          (compiler-ir-box-shared-view rest)))]
-    [(CompilerIrFunctionList.Array seq)
-      (compiler-ir-function-seq-block-count seq)]))
-
-(define (compiler-ir-function-list-instruction-count
-  [functions : CompilerIrFunctionList]) : i64
-  (match (compiler-ir-global-shared-view functions)
-    [(CompilerIrFunctionList.Nil) 0]
-    [(CompilerIrFunctionList.Cons func rest)
-      (+
-        (compiler-ir-function-instruction-count func)
-        (compiler-ir-function-list-instruction-count
-          (compiler-ir-box-shared-view rest)))]
-    [(CompilerIrFunctionList.Array seq)
-      (compiler-ir-function-seq-instruction-count seq)]))
-
-(define (compiler-ir-function-list-empty-block-count
-  [functions : CompilerIrFunctionList]) : i64
-  (match (compiler-ir-global-shared-view functions)
-    [(CompilerIrFunctionList.Nil) 0]
-    [(CompilerIrFunctionList.Cons func rest)
-      (+
-        (compiler-ir-function-empty-block-count func)
-        (compiler-ir-function-list-empty-block-count
-          (compiler-ir-box-shared-view rest)))]
-    [(CompilerIrFunctionList.Array seq)
-      (compiler-ir-function-seq-empty-block-count seq)]))
-
-(define (compiler-ir-function-list-max-instruction-count
-  [functions : CompilerIrFunctionList]) : i64
-  (match (compiler-ir-global-shared-view functions)
-    [(CompilerIrFunctionList.Nil) 0]
-    [(CompilerIrFunctionList.Cons func rest)
-      (compiler-ir-max-i64
-        (compiler-ir-function-max-instruction-count func)
-        (compiler-ir-function-list-max-instruction-count
-          (compiler-ir-box-shared-view rest)))]
-    [(CompilerIrFunctionList.Array seq)
-      (compiler-ir-function-seq-max-instruction-count seq)]))
-
-(define (compiler-ir-function-list-max-block-instruction-count
-  [functions : CompilerIrFunctionList]) : i64
-  (match (compiler-ir-global-shared-view functions)
-    [(CompilerIrFunctionList.Nil) 0]
-    [(CompilerIrFunctionList.Cons func rest)
-      (compiler-ir-max-i64
-        (compiler-ir-function-max-block-instruction-count func)
-        (compiler-ir-function-list-max-block-instruction-count
-          (compiler-ir-box-shared-view rest)))]
-    [(CompilerIrFunctionList.Array seq)
-      (compiler-ir-function-seq-max-block-instruction-count seq)]))
-
-(define (compiler-ir-function-list-call-arg-count
-  [functions : CompilerIrFunctionList]) : i64
-  (match (compiler-ir-global-shared-view functions)
-    [(CompilerIrFunctionList.Nil) 0]
-    [(CompilerIrFunctionList.Cons func rest)
-      (+
-        (compiler-ir-function-call-arg-count func)
-        (compiler-ir-function-list-call-arg-count
-          (compiler-ir-box-shared-view rest)))]
-    [(CompilerIrFunctionList.Array seq)
-      (compiler-ir-function-seq-call-arg-count seq)]))
-
-(define (compiler-ir-function-list-phi-input-count
-  [functions : CompilerIrFunctionList]) : i64
-  (match (compiler-ir-global-shared-view functions)
-    [(CompilerIrFunctionList.Nil) 0]
-    [(CompilerIrFunctionList.Cons func rest)
-      (+
-        (compiler-ir-function-phi-input-count func)
-        (compiler-ir-function-list-phi-input-count
-          (compiler-ir-box-shared-view rest)))]
-    [(CompilerIrFunctionList.Array seq)
-      (compiler-ir-function-seq-phi-input-count seq)]))
-
-(define (compiler-ir-function-list-var-count
-  [functions : CompilerIrFunctionList]) : i64
-  (match (compiler-ir-global-shared-view functions)
-    [(CompilerIrFunctionList.Nil) 0]
-    [(CompilerIrFunctionList.Cons func rest)
-      (+
-        (compiler-ir-function-var-count func)
-        (compiler-ir-function-list-var-count (compiler-ir-box-shared-view rest)))]
-    [(CompilerIrFunctionList.Array seq)
-      (compiler-ir-function-seq-var-count seq)]))
-
 (define (compiler-ir-program-summary [program : CompilerIrProgram]) : CompilerIrSummary
   (match (compiler-ir-global-shared-view program)
     [(CompilerIrProgram.Program globals functions externs)
       (CompilerIrSummary.Summary
         (compiler-ir-global-seq-count globals)
-        (compiler-ir-function-list-count
+        (compiler-ir-function-seq-count
           (compiler-ir-global-shared-view functions))
         (compiler-ir-extern-seq-count externs)
-        (compiler-ir-function-list-block-count
+        (compiler-ir-function-seq-block-count
           (compiler-ir-global-shared-view functions))
-        (compiler-ir-function-list-instruction-count
+        (compiler-ir-function-seq-instruction-count
           (compiler-ir-global-shared-view functions))
-        (compiler-ir-function-list-var-count
+        (compiler-ir-function-seq-var-count
           (compiler-ir-global-shared-view functions))
-        (compiler-ir-function-list-empty-block-count
+        (compiler-ir-function-seq-empty-block-count
           (compiler-ir-global-shared-view functions))
-        (compiler-ir-function-list-max-instruction-count
+        (compiler-ir-function-seq-max-instruction-count
           (compiler-ir-global-shared-view functions))
-        (compiler-ir-function-list-max-block-instruction-count
+        (compiler-ir-function-seq-max-block-instruction-count
           (compiler-ir-global-shared-view functions))
-        (compiler-ir-function-list-call-arg-count
+        (compiler-ir-function-seq-call-arg-count
           (compiler-ir-global-shared-view functions))
-        (compiler-ir-function-list-phi-input-count functions))]))
+        (compiler-ir-function-seq-phi-input-count functions))]))
 
 (define (compiler-ir-type-list-name-at
   [type-segment-bases : i64]
@@ -8733,32 +8441,19 @@
       (compiler-ir-representation-collect-group-function
         type-segment-bases
         index
-        (compiler-ir-function-seq-ref
-          (compiler-ir-global-shared-view functions)
-          position))
-      (compiler-ir-global-shared-view functions)
+        (compiler-ir-array-shared-view functions.slots position))
+      functions
       (+ position 1))))
 
 (define (compiler-ir-representation-collect-group-functions
   [type-segment-bases : i64]
   [index : CompilerIrRepresentationIndex]
-  [functions : CompilerIrFunctionList]) : CompilerIrRepresentationIndex
-  (match (compiler-ir-global-shared-view functions)
-    [(CompilerIrFunctionList.Nil) index]
-    [(CompilerIrFunctionList.Cons func rest)
-      (compiler-ir-representation-collect-group-functions
-        type-segment-bases
-        (compiler-ir-representation-collect-group-function
-          type-segment-bases
-          index
-          func)
-        (compiler-ir-box-shared-view rest))]
-    [(CompilerIrFunctionList.Array seq)
-      (compiler-ir-representation-collect-group-function-seq-from
-        type-segment-bases
-        index
-        seq
-        0)]))
+  [functions : CompilerIrFunctionSeq]) : CompilerIrRepresentationIndex
+  (compiler-ir-representation-collect-group-function-seq-from
+    type-segment-bases
+    index
+    functions
+    0))
 
 (define (compiler-ir-representation-collect-one-type-list-from
   [type-segment-bases : i64]
@@ -9048,32 +8743,19 @@
       (compiler-ir-representation-collect-one-function
         type-segment-bases
         index
-        (compiler-ir-function-seq-ref
-          (compiler-ir-global-shared-view functions)
-          position))
-      (compiler-ir-global-shared-view functions)
+        (compiler-ir-array-shared-view functions.slots position))
+      functions
       (+ position 1))))
 
 (define (compiler-ir-representation-collect-one-functions
   [type-segment-bases : i64]
   [index : CompilerIrRepresentationIndex]
-  [functions : CompilerIrFunctionList]) : CompilerIrRepresentationIndex
-  (match (compiler-ir-global-shared-view functions)
-    [(CompilerIrFunctionList.Nil) index]
-    [(CompilerIrFunctionList.Cons func rest)
-      (compiler-ir-representation-collect-one-functions
-        type-segment-bases
-        (compiler-ir-representation-collect-one-function
-          type-segment-bases
-          index
-          func)
-        (compiler-ir-box-shared-view rest))]
-    [(CompilerIrFunctionList.Array seq)
-      (compiler-ir-representation-collect-one-function-seq-from
-        type-segment-bases
-        index
-        seq
-        0)]))
+  [functions : CompilerIrFunctionSeq]) : CompilerIrRepresentationIndex
+  (compiler-ir-representation-collect-one-function-seq-from
+    type-segment-bases
+    index
+    functions
+    0))
 
 (define (compiler-ir-representation-collect-one-globals-from
   [type-segment-bases : i64]
@@ -9485,31 +9167,15 @@
     index
     want))
 
-(define (compiler-ir-function-list-name-at-cons?
-  [functions : CompilerIrFunctionList]
+(define (compiler-ir-function-seq-name-at?
+  [functions : CompilerIrFunctionSeq]
   [index : i64]
   [want : String]) : bool
-  (match (compiler-ir-global-shared-view functions)
-    [(CompilerIrFunctionList.Nil) false]
-    [(CompilerIrFunctionList.Cons func rest)
-      (if (= index 0)
-        (match func
-          [(CompilerIrFunction.Function name _ _ _ _)
-            (string.eq (compiler-ir-symbol-text name) want)])
-        (compiler-ir-function-list-name-at-cons?
-          (compiler-ir-box-shared-view rest)
-          (- index 1)
-          want))]
-    [(CompilerIrFunctionList.Array _) false]))
-
-(define (compiler-ir-function-list-name-at?
-  [functions : CompilerIrFunctionList]
-  [index : i64]
-  [want : String]) : bool
-  (compiler-ir-function-list-name-at-cons?
-    (compiler-ir-function-list-force-cons functions)
-    index
-    want))
+  (if (or (< index 0) (>= index functions.len))
+    false
+    (match (array-ref functions.slots index)
+      [(CompilerIrFunction.Function name _ _ _ _)
+        (string.eq (compiler-ir-symbol-text name) want)])))
 
 (define (compiler-ir-test-function [name : String]) : CompilerIrFunction
   (CompilerIrFunction.Function
@@ -9529,7 +9195,7 @@
       (compiler-ir-function-builder-with-capacity 1)]
     [instrs : CompilerIrInstrSeq (compiler-ir-instr-seq-empty)]
     [blocks : CompilerIrBlockList CompilerIrBlockList.Nil]
-    [functions : CompilerIrFunctionList CompilerIrFunctionList.Nil]
+    [functions : CompilerIrFunctionSeq (compiler-ir-function-seq-empty)]
     (begin
       (compiler-ir-instr-builder-push!
         (&mut instr-builder)
@@ -9567,7 +9233,7 @@
       (compiler-ir-function-builder-push!
         (&mut function-builder)
         (compiler-ir-test-function "third"))
-      (set! functions (compiler-ir-function-builder-to-list function-builder))
+      (set! functions (compiler-ir-function-builder-to-seq function-builder))
       (and
         (=
           (compiler-ir-instr-seq-count (compiler-ir-global-shared-view instrs))
@@ -9600,18 +9266,18 @@
           2
           "done")
         (=
-          (compiler-ir-function-list-count
+          (compiler-ir-function-seq-count
             (compiler-ir-global-shared-view functions))
           3)
-        (compiler-ir-function-list-name-at?
+        (compiler-ir-function-seq-name-at?
           (compiler-ir-global-shared-view functions)
           0
           "first")
-        (compiler-ir-function-list-name-at?
+        (compiler-ir-function-seq-name-at?
           (compiler-ir-global-shared-view functions)
           1
           "second")
-        (compiler-ir-function-list-name-at? functions 2 "third")))))
+        (compiler-ir-function-seq-name-at? functions 2 "third")))))
 
 (define (compiler-ir-param-seq-entry-i64?
   [seq : CompilerIrParamSeq]

@@ -30,7 +30,7 @@
 (define (bounds-check-smoke-program) : ir.CompilerIrProgram
   (ir.CompilerIrProgram.Program
     (ir.compiler-ir-global-seq-empty)
-    (ir.compiler-ir-function-cons
+    (ir.compiler-ir-function-seq-prepend
       (ir.CompilerIrFunction.Function
         (ir.compiler-ir-label "main")
         (ir.compiler-ir-param-cons
@@ -58,7 +58,7 @@
                     (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 42)))
                   (ir.compiler-ir-instr-seq-empty)))))
           (ir.CompilerIrBlockList.Nil)))
-      (ir.CompilerIrFunctionList.Nil))
+      (ir.compiler-ir-function-seq-empty))
     (ir.compiler-ir-extern-seq-empty)))
 
 (define (main) : i64

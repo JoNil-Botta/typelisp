@@ -144,33 +144,24 @@
       (compiler-ir-smoke-runtime-effect-identity-ok?)
       (compiler-ir-smoke-runtime-effect-reset-ok?))))
 
-(define (compiler-ir-smoke-function-list-first-name?
-  [functions : compiler_ir_types.CompilerIrFunctionList]
+(define (compiler-ir-smoke-function-seq-first-name?
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [want : String]) : bool
-  (match (compiler_ir_types.compiler-ir-function-list-force-cons functions)
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func _)
-      (match func
-        [(compiler_ir_types.CompilerIrFunction.Function name _ _ _ _)
-          (string.eq (ci.intern-str name) want)])]
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) false]
-    [(compiler_ir_types.CompilerIrFunctionList.Array _) false]))
+  (if (= functions.len 0)
+    false
+    (match (compiler_ir_types.compiler-ir-function-seq-ref functions 0)
+      [(compiler_ir_types.CompilerIrFunction.Function name _ _ _ _)
+        (string.eq (ci.intern-str name) want)])))
 
-(define (compiler-ir-smoke-function-list-name-at?
-  [functions : compiler_ir_types.CompilerIrFunctionList]
+(define (compiler-ir-smoke-function-seq-name-at?
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [index : i64]
   [want : String]) : bool
-  (match (compiler_ir_types.compiler-ir-function-list-force-cons functions)
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
-      (if (= index 0)
-        (match func
-          [(compiler_ir_types.CompilerIrFunction.Function name _ _ _ _)
-            (string.eq (ci.intern-str name) want)])
-        (compiler-ir-smoke-function-list-name-at?
-          (__tl-box-place rest)
-          (- index 1)
-          want))]
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) false]
-    [(compiler_ir_types.CompilerIrFunctionList.Array _) false]))
+  (if (or (< index 0) (>= index functions.len))
+    false
+    (match (compiler_ir_types.compiler-ir-function-seq-ref functions index)
+      [(compiler_ir_types.CompilerIrFunction.Function name _ _ _ _)
+        (string.eq (ci.intern-str name) want)])))
 
 (define (compiler-ir-smoke-block-list-label-at?
   [blocks : compiler_ir_types.CompilerIrBlockList]
@@ -263,12 +254,9 @@
                 (compiler-ir-smoke-param-seq-entry-bool? seq 1 "flag" 5))]
             [_ false])]))))
 
-(define (compiler-ir-smoke-function-list-compact-kind?
-  [functions : compiler_ir_types.CompilerIrFunctionList]) : bool
-  (match functions
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (= (compiler_ir_types.compiler-ir-function-seq-count seq) 2)]
-    [_ false]))
+(define (compiler-ir-smoke-function-seq-count-two?
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]) : bool
+  (= functions.len 2))
 
 (define (compiler-ir-smoke-global-seq-count?
   [globals : compiler_ir_types.CompilerIrGlobalSeq]
@@ -360,7 +348,7 @@
       (compiler_ir_types.compiler-ir-program-summary
         (compiler_ir_types.CompilerIrProgram.Program
           compact-globals
-          compiler_ir_types.CompilerIrFunctionList.Nil
+          (compiler_ir_types.compiler-ir-function-seq-empty)
           compact-externs))]
     (and
       (compiler-ir-smoke-global-seq-count? compact-globals 2)
@@ -410,16 +398,15 @@
         (ast.AstType.I64)
         2
         blocks)]
-    [functions : compiler_ir_types.CompilerIrFunctionList
-      (compiler_ir_types.compiler-ir-function-cons
+    [functions : compiler_ir_types.CompilerIrFunctionSeq
+      (compiler_ir_types.compiler-ir-function-seq-prepend
         first
-        (compiler_ir_types.compiler-ir-function-cons
+        (compiler_ir_types.compiler-ir-function-seq-prepend
           second
-          compiler_ir_types.CompilerIrFunctionList.Nil))]
-    [compact : compiler_ir_types.CompilerIrFunctionList
-      (compiler_ir_types.compiler-ir-function-list-compact functions)]
-    [cloned : compiler_ir_types.CompilerIrFunctionList
-      (compiler_ir_types.compiler-ir-clone-function-list
+          (compiler_ir_types.compiler-ir-function-seq-empty)))]
+    [compact : compiler_ir_types.CompilerIrFunctionSeq functions]
+    [cloned : compiler_ir_types.CompilerIrFunctionSeq
+      (compiler_ir_types.compiler-ir-clone-function-seq
         (ast.ast-node-pool-reader-context-current)
         compact)]
     [summary : compiler_ir_types.CompilerIrSummary
@@ -429,13 +416,13 @@
           compact
           (compiler_ir_types.compiler-ir-extern-seq-empty)))]
     (and
-      (compiler-ir-smoke-function-list-compact-kind? compact)
-      (compiler-ir-smoke-function-list-compact-kind? cloned)
-      (= (compiler_ir_types.compiler-ir-function-list-count compact) 2)
-      (compiler-ir-smoke-function-list-first-name? compact "first")
-      (= (compiler_ir_types.compiler-ir-function-list-block-count compact) 2)
+      (compiler-ir-smoke-function-seq-count-two? compact)
+      (compiler-ir-smoke-function-seq-count-two? cloned)
+      (= (compiler_ir_types.compiler-ir-function-seq-count compact) 2)
+      (compiler-ir-smoke-function-seq-first-name? compact "first")
+      (= (compiler_ir_types.compiler-ir-function-seq-block-count compact) 2)
       (=
-        (compiler_ir_types.compiler-ir-function-list-instruction-count compact)
+        (compiler_ir_types.compiler-ir-function-seq-instruction-count compact)
         4)
       (= (compiler_ir_types.compiler-ir-summary-functions summary) 2)
       (= (compiler_ir_types.compiler-ir-summary-blocks summary) 2)
@@ -489,20 +476,24 @@
         (ast.AstType.Unit)
         0
         compact-blocks)]
-    [reversed-functions : compiler_ir_types.CompilerIrFunctionList
-      (compiler_ir_types.compiler-ir-function-cons
+    [reversed-functions : compiler_ir_types.CompilerIrFunctionSeq
+      (compiler_ir_types.compiler-ir-function-seq-prepend
         third-func
-        (compiler_ir_types.compiler-ir-function-cons
+        (compiler_ir_types.compiler-ir-function-seq-prepend
           second-func
-          (compiler_ir_types.compiler-ir-function-cons
+          (compiler_ir_types.compiler-ir-function-seq-prepend
             first-func
-            compiler_ir_types.CompilerIrFunctionList.Nil)))]
-    [compact-functions : compiler_ir_types.CompilerIrFunctionList
-      (compiler_ir_types.compiler-ir-function-list-compact-reversed
-        reversed-functions)]
-    [array-reversed-functions : compiler_ir_types.CompilerIrFunctionList
-      (compiler_ir_types.compiler-ir-function-list-compact-reversed
-        compact-functions)]
+            (compiler_ir_types.compiler-ir-function-seq-empty))))]
+    [compact-functions : compiler_ir_types.CompilerIrFunctionSeq
+      (compiler_ir_types.compiler-ir-function-seq-prepend
+        first-func
+        (compiler_ir_types.compiler-ir-function-seq-prepend
+          second-func
+          (compiler_ir_types.compiler-ir-function-seq-prepend
+            third-func
+            (compiler_ir_types.compiler-ir-function-seq-empty))))]
+    [array-reversed-functions : compiler_ir_types.CompilerIrFunctionSeq
+      reversed-functions]
     (and
       (= (compiler_ir_types.compiler-ir-block-list-count compact-blocks) 3)
       (compiler-ir-smoke-block-list-label-at?
@@ -525,26 +516,18 @@
         array-reversed-blocks
         2
         (compiler_ir_types.compiler-ir-label "first"))
-      (=
-        (compiler_ir_types.compiler-ir-function-list-count compact-functions)
-        3)
-      (compiler-ir-smoke-function-list-name-at?
-        compact-functions
-        0
-        "first-func")
-      (compiler-ir-smoke-function-list-name-at?
+      (= (compiler_ir_types.compiler-ir-function-seq-count compact-functions) 3)
+      (compiler-ir-smoke-function-seq-name-at? compact-functions 0 "first-func")
+      (compiler-ir-smoke-function-seq-name-at?
         compact-functions
         1
         "second-func")
-      (compiler-ir-smoke-function-list-name-at?
-        compact-functions
-        2
-        "third-func")
-      (compiler-ir-smoke-function-list-name-at?
+      (compiler-ir-smoke-function-seq-name-at? compact-functions 2 "third-func")
+      (compiler-ir-smoke-function-seq-name-at?
         array-reversed-functions
         0
         "third-func")
-      (compiler-ir-smoke-function-list-name-at?
+      (compiler-ir-smoke-function-seq-name-at?
         array-reversed-functions
         2
         "first-func"))))
@@ -1117,7 +1100,7 @@
     [program : compiler_ir_types.CompilerIrProgram
       (compiler_ir_types.CompilerIrProgram.Program
         (compiler_ir_types.compiler-ir-global-seq-empty)
-        (compiler_ir_types.compiler-ir-function-cons
+        (compiler_ir_types.compiler-ir-function-seq-prepend
           (compiler_ir_types.CompilerIrFunction.Function
             (ci.intern "representation_index")
             params
@@ -1128,7 +1111,7 @@
                 (compiler_ir_types.compiler-ir-label "entry")
                 instrs)
               compiler_ir_types.CompilerIrBlockList.Nil))
-          compiler_ir_types.CompilerIrFunctionList.Nil)
+          (compiler_ir_types.compiler-ir-function-seq-empty))
         (compiler_ir_types.compiler-ir-extern-seq-empty))]
     [bases : i64 (ast.ast-node-pool-context-type-segment-bases pools)]
     [index : compiler_ir_types.CompilerIrRepresentationIndex

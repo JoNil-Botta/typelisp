@@ -2923,15 +2923,15 @@
     [plain : String "plain"]
     [index : opt.OptFunctionIndex
       (opt.opt-function-index-build
-        (ir.compiler-ir-function-cons
+        (ir.compiler-ir-function-seq-prepend
           (compiler_optimize_tests.opt-test-function-named
             qualified
             (ir.compiler-ir-instr-seq-empty))
-          (ir.compiler-ir-function-cons
+          (ir.compiler-ir-function-seq-prepend
             (compiler_optimize_tests.opt-test-function-named
               plain
               (ir.compiler-ir-instr-seq-empty))
-            (ir.CompilerIrFunctionList.Nil))))]
+            (ir.compiler-ir-function-seq-empty))))]
     [starts : (__tl_dyn-array i64) index.leaf-starts]
     (cond
       [(not (= (array-length starts) 2)) 1]
@@ -3343,12 +3343,12 @@
   (smoke-inline-phi-caller-with-call symbols (smoke-inline-phi-call symbols)))
 
 (define (smoke-inline-phi-functions
-  [symbols : compiler_optimize_tests.OptInlineMultiTestSymbols]) : ir.CompilerIrFunctionList
-  (ir.compiler-ir-function-cons
+  [symbols : compiler_optimize_tests.OptInlineMultiTestSymbols]) : ir.CompilerIrFunctionSeq
+  (ir.compiler-ir-function-seq-prepend
     (smoke-inline-phi-caller symbols)
-    (ir.compiler-ir-function-cons
+    (ir.compiler-ir-function-seq-prepend
       (smoke-inline-phi-callee symbols)
-      ir.CompilerIrFunctionList.Nil)))
+      (ir.compiler-ir-function-seq-empty))))
 
 (define (smoke-inline-phi-loop-repaired? [blocks : ir.CompilerIrBlockList]) : bool
   (match (opt.opt-cfg-find-block blocks (ir.compiler-ir-label "header"))
@@ -3387,12 +3387,12 @@
   (let
     [symbols : compiler_optimize_tests.OptInlineMultiTestSymbols
       (compiler_optimize_tests.opt-inline-multi-test-symbols)]
-    [optimized : ir.CompilerIrFunctionList
+    [optimized : ir.CompilerIrFunctionSeq
       (opt.opt-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (smoke-inline-phi-functions symbols)
         2)]
-    (match (opt.opt-function-list-find optimized "main")
+    (match (opt.opt-function-seq-find optimized "main")
       [(opt.OptMaybeFunction.Some main)
         (let
           [blocks : ir.CompilerIrBlockList (opt.opt-function-blocks main)]
@@ -3448,7 +3448,7 @@
       2
       spans)
       [(opt.OptInlineSpanProgram.Program optimized optimized-spans)
-        (match (opt.opt-function-list-find optimized "main")
+        (match (opt.opt-function-seq-find optimized "main")
           [(opt.OptMaybeFunction.Some main)
             (let
               [blocks : ir.CompilerIrBlockList (opt.opt-function-blocks main)]
@@ -3485,12 +3485,14 @@
     [symbols : compiler_optimize_tests.OptInlineMultiTestSymbols
       (compiler_optimize_tests.opt-inline-multi-test-symbols)]
     [caller : ir.CompilerIrFunction (smoke-inline-phi-caller symbols)]
-    [optimized : ir.CompilerIrFunctionList
+    [optimized : ir.CompilerIrFunctionSeq
       (opt.opt-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
-        (ir.compiler-ir-function-cons caller ir.CompilerIrFunctionList.Nil)
+        (ir.compiler-ir-function-seq-prepend
+          caller
+          (ir.compiler-ir-function-seq-empty))
         2)]
-    (match (opt.opt-function-list-find optimized "main")
+    (match (opt.opt-function-seq-find optimized "main")
       [(opt.OptMaybeFunction.Some main)
         (opt.opt-function-eq
           (ast.ast-node-pool-reader-type-segment-bases)
@@ -3510,16 +3512,16 @@
           symbols.inline-nonleaf
           ir.CompilerIrCallArgs.Nil
           (ast.AstType.I64)))]
-    [optimized : ir.CompilerIrFunctionList
+    [optimized : ir.CompilerIrFunctionSeq
       (opt.opt-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
-        (ir.compiler-ir-function-cons
+        (ir.compiler-ir-function-seq-prepend
           caller
-          (ir.compiler-ir-function-cons
+          (ir.compiler-ir-function-seq-prepend
             (compiler_optimize_tests.opt-inline-nonleaf-callee symbols)
-            ir.CompilerIrFunctionList.Nil))
+            (ir.compiler-ir-function-seq-empty)))
         2)]
-    (match (opt.opt-function-list-find optimized "main")
+    (match (opt.opt-function-seq-find optimized "main")
       [(opt.OptMaybeFunction.Some main)
         (opt.opt-function-eq
           (ast.ast-node-pool-reader-type-segment-bases)

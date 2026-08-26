@@ -1136,7 +1136,7 @@
 (define (compiler-backend-state-representations
   [state : CompilerBackendState]
   [type-segment-bases : i64]
-  [functions : compiler_ir_types.CompilerIrFunctionList]
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [externs : compiler_ir_types.CompilerIrExternSeq]) : compiler_ir_types.CompilerIrRepresentationIndex
   (let
     [data : CompilerBackendStateData (compiler-backend-state-data state)]
@@ -2085,7 +2085,7 @@
   (global-types CompilerBackendGlobalTypeTable)
   (ret-ty compiler_ast_types.AstType)
   (plan CompilerBackendRuntimePlan)
-  (functions compiler_ir_types.CompilerIrFunctionList)
+  (functions compiler_ir_types.CompilerIrFunctionSeq)
   (externs compiler_ir_types.CompilerIrExternSeq)
   (program-index CompilerBackendProgramIndex)
   (spans compiler_ir_types.CompilerSourceSpans)
@@ -17520,48 +17520,55 @@
                   (set! path-index (+ path-index 1)))))
             (text_buf.render buf)))])))
 
+(define (compiler-backend-debug-cv-function-seq-from
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
+  [program-index : CompilerBackendProgramIndex]
+  [line-tables : bool]
+  [index : i64]) : String
+  (if (>= index functions.len)
+    ""
+    (match (array-ref functions.slots index)
+      [(compiler_ir_types.CompilerIrFunction.Function name _ _ _ _)
+        (match (compiler-backend-index-function-slot program-index name)
+          [(backend_i64_i64_map.LookupFound function-id)
+            (str_cat.str-cat
+              (if line-tables
+                (str_cat.str-cat
+                  "    .cv_linetable "
+                  (string.int->string function-id)
+                  ", "
+                  (compiler-backend-function-symbol-index program-index name)
+                  ", .Lcv_func_end_"
+                  (string.int->string function-id))
+                (str_cat.str-cat
+                  "    .cv_func_id "
+                  (string.int->string function-id)))
+              "\n"
+              (compiler-backend-debug-cv-function-seq-from
+                functions
+                program-index
+                line-tables
+                (+ index 1)))]
+          [(backend_i64_i64_map.LookupMissing)
+            (compiler-backend-debug-cv-function-seq-from
+              functions
+              program-index
+              line-tables
+              (+ index 1))])])))
+
 (define (compiler-backend-debug-cv-functions
-  [functions : compiler_ir_types.CompilerIrFunctionList]
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [program-index : CompilerBackendProgramIndex]
   [line-tables : bool]) : String
-  (match functions
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) ""]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
-      (match func
-        [(compiler_ir_types.CompilerIrFunction.Function name _ _ _ _)
-          (match (compiler-backend-index-function-slot program-index name)
-            [(backend_i64_i64_map.LookupFound function-id)
-              (str_cat.str-cat
-                (if line-tables
-                  (str_cat.str-cat
-                    "    .cv_linetable "
-                    (string.int->string function-id)
-                    ", "
-                    (compiler-backend-function-symbol-index program-index name)
-                    ", .Lcv_func_end_"
-                    (string.int->string function-id))
-                  (str_cat.str-cat
-                    "    .cv_func_id "
-                    (string.int->string function-id)))
-                "\n"
-                (compiler-backend-debug-cv-functions
-                  (__tl-box-place rest)
-                  program-index
-                  line-tables))]
-            [(backend_i64_i64_map.LookupMissing)
-              (compiler-backend-debug-cv-functions
-                (__tl-box-place rest)
-                program-index
-                line-tables)])])]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (compiler-backend-debug-cv-functions
-        (compiler_ir_types.compiler-ir-function-seq-to-list seq)
-        program-index
-        line-tables)]))
+  (compiler-backend-debug-cv-function-seq-from
+    functions
+    program-index
+    line-tables
+    0))
 
 (define (compiler-backend-debug-prefix
   [target : CompilerBackendTarget]
-  [functions : compiler_ir_types.CompilerIrFunctionList]
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [program-index : CompilerBackendProgramIndex]
   [span-index : CompilerBackendSourceSpanIndex]) : String
   (if (not (compiler_ir_types.compiler-debug-info-enabled?))
@@ -17680,7 +17687,7 @@
 
 (define (compiler-backend-debug-trailer
   [target : CompilerBackendTarget]
-  [functions : compiler_ir_types.CompilerIrFunctionList]
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [program-index : CompilerBackendProgramIndex]) : String
   (if (and
     (compiler_ir_types.compiler-debug-info-enabled?)
@@ -31155,7 +31162,7 @@
   [length : compiler_ir_types.CompilerIrValue]
   [ok-label : i64]
   [plan : CompilerBackendRuntimePlan]
-  [_functions : compiler_ir_types.CompilerIrFunctionList]
+  [_functions : compiler_ir_types.CompilerIrFunctionSeq]
   [_externs : compiler_ir_types.CompilerIrExternSeq]
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
   (let
@@ -35908,14 +35915,9 @@
           (set! offset (+ offset 1))))
       (compiler_ir_types.CompilerIrValueSeq slots remaining))))
 
-(define (compiler-backend-function-list-count
-  [functions : compiler_ir_types.CompilerIrFunctionList]) : i64
-  (match functions
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) 0]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons _ rest)
-      (+ 1 (compiler-backend-function-list-count (__tl-box-place rest)))]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (compiler_ir_types.compiler-ir-function-seq-count seq)]))
+(define (compiler-backend-function-seq-count
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]) : i64
+  functions.len)
 
 (define (compiler-backend-extern-seq-count
   [externs : compiler_ir_types.CompilerIrExternSeq]) : i64
@@ -35959,45 +35961,19 @@
 
 (define (compiler-backend-program-index-functions-into
   [backend-state : CompilerBackendState]
-  [functions : compiler_ir_types.CompilerIrFunctionList]
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [ids : backend_i64_i64_map.Map (:consume)]
   [names : (__tl_dyn-array String)]
   [signatures : (__tl_dyn-array CompilerBackendMaybeSignature)]
   [index : i64]) : backend_i64_i64_map.Map
-  (match functions
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) ids]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
-      (match func
-        [(compiler_ir_types.CompilerIrFunction.Function name params ret-ty _ _)
-          (begin
-            (set!
-              (array-ref names index)
-              (compiler-backend-symbol-text-state backend-state name))
-            (set!
-              (array-ref signatures index)
-              (CompilerBackendMaybeSignature.Some
-                (compiler-backend-param-type-list params)
-                ret-ty))
-            (compiler-backend-program-index-functions-into
-              backend-state
-              (__tl-box-place rest)
-              (compiler-backend-program-index-bind-name
-                backend-state
-                ids
-                name
-                index)
-              names
-              signatures
-              (+ index 1)))])]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (compiler-backend-program-index-function-seq-into
-        backend-state
-        seq
-        ids
-        names
-        signatures
-        index
-        0)]))
+  (compiler-backend-program-index-function-seq-into
+    backend-state
+    functions
+    ids
+    names
+    signatures
+    index
+    0))
 
 (define (compiler-backend-program-index-function-seq-into
   [backend-state : CompilerBackendState]
@@ -36011,7 +35987,7 @@
     seq-index
     (compiler_ir_types.compiler-ir-function-seq-count functions))
     ids
-    (match (compiler_ir_types.compiler-ir-function-seq-ref functions seq-index)
+    (match (array-ref functions.slots seq-index)
       [(compiler_ir_types.CompilerIrFunction.Function name params ret-ty _ _)
         (begin
           (set!
@@ -36405,21 +36381,14 @@
     (compiler-backend-collect-function-seq-shared
       (compiler-backend-collect-function-shared
         state
-        (compiler_ir_types.compiler-ir-function-seq-ref seq index))
+        (array-ref seq.slots index))
       seq
       (+ index 1))))
 
 (define (compiler-backend-collect-functions-shared
   [state : CompilerBackendCollectState]
-  [functions : compiler_ir_types.CompilerIrFunctionList]) : CompilerBackendCollectState
-  (match functions
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) state]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
-      (compiler-backend-collect-functions-shared
-        (compiler-backend-collect-function-shared state func)
-        (__tl-box-place rest))]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (compiler-backend-collect-function-seq-shared state seq 0)]))
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]) : CompilerBackendCollectState
+  (compiler-backend-collect-function-seq-shared state functions 0))
 
 (define (compiler-backend-param-list-has-private-memory?
   [type-segment-bases : i64]
@@ -36441,26 +36410,11 @@
 
 (define (compiler-backend-seed-private-memory-call-names
   [type-segment-bases : i64]
-  [functions : compiler_ir_types.CompilerIrFunctionList]) : unit
-  (match functions
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) unit]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
-      (begin
-        (match func
-          [(compiler_ir_types.CompilerIrFunction.Function name params _ _ _)
-            (if (compiler-backend-param-list-has-private-memory?
-              type-segment-bases
-              params)
-              (compiler_regalloc.compiler-reg-add-c-memory-call-name! name)
-              unit)])
-        (compiler-backend-seed-private-memory-call-names
-          type-segment-bases
-          (__tl-box-place rest)))]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (compiler-backend-seed-private-memory-call-names-seq
-        type-segment-bases
-        seq
-        0)]))
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]) : unit
+  (compiler-backend-seed-private-memory-call-names-seq
+    type-segment-bases
+    functions
+    0))
 
 (define (compiler-backend-seed-private-memory-call-names-seq
   [type-segment-bases : i64]
@@ -36469,7 +36423,7 @@
   (if (>= index (compiler_ir_types.compiler-ir-function-seq-count functions))
     unit
     (begin
-      (match (compiler_ir_types.compiler-ir-function-seq-ref functions index)
+      (match (array-ref functions.slots index)
         [(compiler_ir_types.CompilerIrFunction.Function name params _ _ _)
           (if (compiler-backend-param-list-has-private-memory?
             type-segment-bases
@@ -36484,7 +36438,7 @@
 (define (compiler-backend-program-index-build-with-backend-state-and-profile-state
   [backend-state : CompilerBackendState]
   [type-segment-bases : i64]
-  [functions : compiler_ir_types.CompilerIrFunctionList]
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [externs : compiler_ir_types.CompilerIrExternSeq]
   [profile-state : profile_state.CompilerProfileState]) : CompilerBackendProgramIndex
   (let
@@ -36495,7 +36449,7 @@
     ;; The whole-program walk below re-seeds and re-publishes it.
     [_reset-frozen-globals : unit
       (compiler_regalloc.compiler-reg-frozen-globals-begin!)]
-    [function-count : i64 (compiler-backend-function-list-count functions)]
+    [function-count : i64 (compiler-backend-function-seq-count functions)]
     [extern-count : i64 (compiler-backend-extern-seq-count externs)]
     [function-names : (__tl_dyn-array String)
       (array.make-array String function-count)]
@@ -36569,7 +36523,7 @@
 
 (define (compiler-backend-program-index-build-with-profile-state
   [type-segment-bases : i64]
-  [functions : compiler_ir_types.CompilerIrFunctionList]
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [externs : compiler_ir_types.CompilerIrExternSeq]
   [profile-state : profile_state.CompilerProfileState]) : CompilerBackendProgramIndex
   (compiler-backend-program-index-build-with-backend-state-and-profile-state
@@ -36581,7 +36535,7 @@
 
 (define (compiler-backend-program-index-build
   [type-segment-bases : i64]
-  [functions : compiler_ir_types.CompilerIrFunctionList]
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [externs : compiler_ir_types.CompilerIrExternSeq]) : CompilerBackendProgramIndex
   (compiler-backend-program-index-build-with-profile-state
     type-segment-bases
@@ -37200,67 +37154,16 @@
         (cbi.compiler-builtin-backend-tl-int-to-string-id? symbol-id)))))
 
 (define (compiler-backend-validate-function-symbols-into
-  [functions : compiler_ir_types.CompilerIrFunctionList]
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [_plan : CompilerBackendRuntimePlan]
   [index : CompilerBackendProgramIndex]
   [seen : backend_string_i64_map.Map (:consume)]) : ResultCompilerBackendSymbolValidation
-  (match functions
-    [(compiler_ir_types.CompilerIrFunctionList.Nil)
-      (ResultCompilerBackendSymbolValidation.Ok seen)]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
-      (match func
-        [(compiler_ir_types.CompilerIrFunction.Function name _ _ _ _)
-          (let
-            [symbol : String
-              (compiler-backend-function-symbol-index index name)]
-            (cond
-              [(and
-                  (string.eq
-                    (compiler-backend-symbol-text-index index name)
-                    "main")
-                  (compiler-backend-index-extern-provided? index name))
-                (compiler-backend-symbol-validation-error
-                  "backend: main cannot use :export-symbol")]
-              [(backend_string_i64_map.contains? (& seen) symbol)
-                (compiler-backend-symbol-validation-error
-                  (str_cat.str-cat
-                    "backend: duplicate emitted function symbol "
-                    symbol))]
-              [(and
-                  (compiler-backend-index-extern-provided? index name)
-                  (not (compiler-backend-valid-export-symbol? symbol)))
-                (compiler-backend-symbol-validation-error
-                  (str_cat.str-cat
-                    "backend: invalid exported function symbol "
-                    symbol))]
-              [(and
-                  (compiler-backend-index-extern-provided? index name)
-                  (compiler-backend-runtime-helper-known-id?
-                    (compiler-backend-index-extern-link-symbol-id index name))
-                  (not
-                    (compiler-backend-runtime-prelude-string-helper-export?
-                      index.backend-state
-                      name
-                      (compiler-backend-index-extern-link-symbol-id index name))))
-                (compiler-backend-symbol-validation-error
-                  (str_cat.str-cat
-                    "backend: exported function symbol collides with runtime symbol "
-                    symbol))]
-              [else
-                (begin
-                  (backend_string_i64_map.insert-ref! (&mut seen) symbol 1)
-                  (compiler-backend-validate-function-symbols-into
-                    (__tl-box-place rest)
-                    _plan
-                    index
-                    seen))]))])]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (compiler-backend-validate-function-symbol-seq-into
-        seq
-        _plan
-        index
-        seen
-        0)]))
+  (compiler-backend-validate-function-symbol-seq-into
+    functions
+    _plan
+    index
+    seen
+    0))
 
 (define (compiler-backend-validate-function-symbol-seq-into
   [functions : compiler_ir_types.CompilerIrFunctionSeq]
@@ -37272,7 +37175,7 @@
     seq-index
     (compiler_ir_types.compiler-ir-function-seq-count functions))
     (ResultCompilerBackendSymbolValidation.Ok seen)
-    (match (compiler_ir_types.compiler-ir-function-seq-ref functions seq-index)
+    (match (array-ref functions.slots seq-index)
       [(compiler_ir_types.CompilerIrFunction.Function name _ _ _ _)
         (let
           [symbol : String (compiler-backend-function-symbol-index index name)]
@@ -37381,7 +37284,7 @@
 
 (define (compiler-backend-validate-function-symbols
   [globals : compiler_ir_types.CompilerIrGlobalSeq]
-  [functions : compiler_ir_types.CompilerIrFunctionList]
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [externs : compiler_ir_types.CompilerIrExternSeq]
   [plan : CompilerBackendRuntimePlan]
   [index : CompilerBackendProgramIndex]) : ResultCompilerBackendSymbolValidation
@@ -37393,7 +37296,7 @@
         (*
           (+
             (compiler_ir_types.compiler-ir-global-seq-count globals)
-            (compiler-backend-function-list-count functions))
+            (compiler-backend-function-seq-count functions))
           2)
         1)))
     [(ResultCompilerBackendSymbolValidation.Ok seen)
@@ -44992,7 +44895,7 @@
   [global-types : CompilerBackendGlobalTypeTable]
   [vars : i64]
   [plan : CompilerBackendRuntimePlan]
-  [_functions : compiler_ir_types.CompilerIrFunctionList]
+  [_functions : compiler_ir_types.CompilerIrFunctionSeq]
   [_externs : compiler_ir_types.CompilerIrExternSeq]
   [program-index : CompilerBackendProgramIndex]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
@@ -48364,47 +48267,14 @@
       (compiler-backend-emit-switch-tables-seq-into function targets seq 0 buf)]))
 
 (define (compiler-backend-emit-switch-tables-functions-into
-  [functions : compiler_ir_types.CompilerIrFunctionList]
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [program-index : CompilerBackendProgramIndex]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
-  (match functions
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) buf]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
-      (match func
-        [(compiler_ir_types.CompilerIrFunction.Function name _ _ _ blocks)
-          (let
-            [_phi-targets : unit
-              (compiler-backend-function-state-install-phi-targets!
-                (compiler-backend-state-function-state
-                  program-index.backend-state)
-                (compiler-backend-phi-target-labels-for-blocks blocks))]
-            (compiler-backend-emit-switch-tables-functions-into
-              (__tl-box-place rest)
-              program-index
-              (match blocks
-                [(compiler_ir_types.CompilerIrBlockList.Array seq)
-                  (compiler-backend-emit-switch-tables-seq-into
-                    (compiler-backend-function-label-scope program-index name)
-                    (compiler-backend-function-state-phi-targets
-                      (compiler-backend-state-function-state
-                        program-index.backend-state))
-                    seq
-                    0
-                    buf)]
-                [_
-                  (compiler-backend-emit-switch-tables-blocks-into
-                    (compiler-backend-function-label-scope program-index name)
-                    (compiler-backend-function-state-phi-targets
-                      (compiler-backend-state-function-state
-                        program-index.backend-state))
-                    blocks
-                    buf)])))])]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (compiler-backend-emit-switch-tables-function-seq-into
-        seq
-        program-index
-        0
-        buf)]))
+  (compiler-backend-emit-switch-tables-function-seq-into
+    functions
+    program-index
+    0
+    buf))
 
 (define (compiler-backend-emit-switch-tables-function-seq-into
   [functions : compiler_ir_types.CompilerIrFunctionSeq]
@@ -48413,7 +48283,7 @@
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
   (if (>= index (compiler_ir_types.compiler-ir-function-seq-count functions))
     buf
-    (match (compiler_ir_types.compiler-ir-function-seq-ref functions index)
+    (match (array-ref functions.slots index)
       [(compiler_ir_types.CompilerIrFunction.Function name _ _ _ blocks)
         (let
           [_phi-targets : unit
@@ -49115,31 +48985,15 @@
             (CompilerBackendSwitchValidation.Err message)])])))
 
 (define (compiler-backend-switch-validate-functions
-  [functions : compiler_ir_types.CompilerIrFunctionList]) : CompilerBackendSwitchValidation
-  (match functions
-    [(compiler_ir_types.CompilerIrFunctionList.Nil)
-      (CompilerBackendSwitchValidation.Ok)]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
-      (match func
-        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
-          (let
-            [targets : BackendSymbolSeq
-              (compiler-backend-phi-target-labels-for-blocks blocks)]
-            (match (compiler-backend-switch-validate-blocks targets blocks)
-              [(CompilerBackendSwitchValidation.Ok)
-                (compiler-backend-switch-validate-functions
-                  (__tl-box-place rest))]
-              [(CompilerBackendSwitchValidation.Err message)
-                (CompilerBackendSwitchValidation.Err message)]))])]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (compiler-backend-switch-validate-function-seq seq 0)]))
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]) : CompilerBackendSwitchValidation
+  (compiler-backend-switch-validate-function-seq functions 0))
 
 (define (compiler-backend-switch-validate-function-seq
   [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [index : i64]) : CompilerBackendSwitchValidation
   (if (>= index (compiler_ir_types.compiler-ir-function-seq-count functions))
     (CompilerBackendSwitchValidation.Ok)
-    (match (compiler_ir_types.compiler-ir-function-seq-ref functions index)
+    (match (array-ref functions.slots index)
       [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
         (let
           [targets : BackendSymbolSeq
@@ -55912,7 +55766,7 @@
   [global-types : CompilerBackendGlobalTypeTable]
   [vars : i64]
   [plan : CompilerBackendRuntimePlan]
-  [_functions : compiler_ir_types.CompilerIrFunctionList]
+  [_functions : compiler_ir_types.CompilerIrFunctionSeq]
   [_externs : compiler_ir_types.CompilerIrExternSeq]
   [program-index : CompilerBackendProgramIndex]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]) : ResultCompilerBackend
@@ -56034,7 +55888,7 @@
 (define (compiler-backend-indirect-call-param-types
   [types : compiler_regalloc.CompilerRegVarTypes]
   [func : compiler_ir_types.CompilerIrValue]
-  [_functions : compiler_ir_types.CompilerIrFunctionList]
+  [_functions : compiler_ir_types.CompilerIrFunctionSeq]
   [_externs : compiler_ir_types.CompilerIrExternSeq]
   [program-index : CompilerBackendProgramIndex]) : compiler_ast_types.AstTypeList
   (match func
@@ -56093,7 +55947,7 @@
   [types : compiler_regalloc.CompilerRegVarTypes]
   [func : compiler_ir_types.CompilerIrValue]
   [args : compiler_ir_types.CompilerIrCallArgs]
-  [functions : compiler_ir_types.CompilerIrFunctionList]
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [externs : compiler_ir_types.CompilerIrExternSeq]
   [program-index : CompilerBackendProgramIndex]) : compiler_ast_types.AstTypeList
   (let
@@ -56199,7 +56053,7 @@
   [planned-target : String]
   [planned-stage : String]
   [types : compiler_regalloc.CompilerRegVarTypes]
-  [functions : compiler_ir_types.CompilerIrFunctionList]
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [externs : compiler_ir_types.CompilerIrExternSeq]
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]
@@ -56398,7 +56252,7 @@
   [planned-target : String]
   [planned-stage : String]
   [types : compiler_regalloc.CompilerRegVarTypes]
-  [functions : compiler_ir_types.CompilerIrFunctionList]
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [externs : compiler_ir_types.CompilerIrExternSeq]
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]
@@ -56436,7 +56290,7 @@
   [planned-stage : String]
   [types : compiler_regalloc.CompilerRegVarTypes]
   [vars : i64]
-  [functions : compiler_ir_types.CompilerIrFunctionList]
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [externs : compiler_ir_types.CompilerIrExternSeq]
   [program-index : CompilerBackendProgramIndex]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
@@ -56607,7 +56461,7 @@
   [planned-target : String]
   [planned-stage : String]
   [types : compiler_regalloc.CompilerRegVarTypes]
-  [functions : compiler_ir_types.CompilerIrFunctionList]
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [externs : compiler_ir_types.CompilerIrExternSeq]
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]
@@ -56856,7 +56710,7 @@
   [planned-target : String]
   [planned-stage : String]
   [types : compiler_regalloc.CompilerRegVarTypes]
-  [functions : compiler_ir_types.CompilerIrFunctionList]
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [externs : compiler_ir_types.CompilerIrExternSeq]
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]
@@ -61539,7 +61393,7 @@
   [global-types : CompilerBackendGlobalTypeTable]
   [ret-ty : compiler_ast_types.AstType]
   [plan : CompilerBackendRuntimePlan]
-  [functions : compiler_ir_types.CompilerIrFunctionList]
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [externs : compiler_ir_types.CompilerIrExternSeq]
   [program-index : CompilerBackendProgramIndex]
   [spans : compiler_ir_types.CompilerSourceSpans]
@@ -61677,7 +61531,7 @@
   [global-types : CompilerBackendGlobalTypeTable]
   [ret-ty : compiler_ast_types.AstType]
   [plan : CompilerBackendRuntimePlan]
-  [functions : compiler_ir_types.CompilerIrFunctionList]
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [externs : compiler_ir_types.CompilerIrExternSeq]
   [program-index : CompilerBackendProgramIndex]
   [spans : compiler_ir_types.CompilerSourceSpans]
@@ -61770,7 +61624,7 @@
   [global-types : CompilerBackendGlobalTypeTable]
   [ret-ty : compiler_ast_types.AstType]
   [plan : CompilerBackendRuntimePlan]
-  [functions : compiler_ir_types.CompilerIrFunctionList]
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [externs : compiler_ir_types.CompilerIrExternSeq]
   [program-index : CompilerBackendProgramIndex]
   [spans : compiler_ir_types.CompilerSourceSpans]
@@ -61884,7 +61738,7 @@
   [global-types : CompilerBackendGlobalTypeTable]
   [ret-ty : compiler_ast_types.AstType]
   [plan : CompilerBackendRuntimePlan]
-  [functions : compiler_ir_types.CompilerIrFunctionList]
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [externs : compiler_ir_types.CompilerIrExternSeq]
   [program-index : CompilerBackendProgramIndex]
   [spans : compiler_ir_types.CompilerSourceSpans]
@@ -70057,7 +69911,7 @@
   [target : CompilerBackendTarget]
   [mode : CompilerBackendMode]
   [func : compiler_ir_types.CompilerIrFunction]
-  [functions : compiler_ir_types.CompilerIrFunctionList]
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [globals : compiler_ir_types.CompilerIrGlobalSeq]
   [global-types : CompilerBackendGlobalTypeTable]
   [externs : compiler_ir_types.CompilerIrExternSeq]
@@ -71888,7 +71742,7 @@
   [target : CompilerBackendTarget]
   [mode : CompilerBackendMode]
   [func : compiler_ir_types.CompilerIrFunction]
-  [all-functions : compiler_ir_types.CompilerIrFunctionList]
+  [all-functions : compiler_ir_types.CompilerIrFunctionSeq]
   [globals : compiler_ir_types.CompilerIrGlobalSeq]
   [global-types : CompilerBackendGlobalTypeTable]
   [externs : compiler_ir_types.CompilerIrExternSeq]
@@ -71954,7 +71808,7 @@
   [target : CompilerBackendTarget]
   [mode : CompilerBackendMode]
   [func : compiler_ir_types.CompilerIrFunction]
-  [all-functions : compiler_ir_types.CompilerIrFunctionList]
+  [all-functions : compiler_ir_types.CompilerIrFunctionSeq]
   [globals : compiler_ir_types.CompilerIrGlobalSeq]
   [global-types : CompilerBackendGlobalTypeTable]
   [externs : compiler_ir_types.CompilerIrExternSeq]
@@ -72045,15 +71899,15 @@
         compiler_ir_types.CompilerIrBlockList.Nil))))
 
 (define (compiler-backend-functions-with-implicit-main
-  [functions : compiler_ir_types.CompilerIrFunctionList]
-  [emit-entry : bool]) : compiler_ir_types.CompilerIrFunctionList
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
+  [emit-entry : bool]) : compiler_ir_types.CompilerIrFunctionSeq
   (if (and
     emit-entry
     (not
-      (compiler-backend-function-list-defines?
+      (compiler-backend-function-seq-defines?
         functions
         cbi.compiler-builtin-id-fix-main)))
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (compiler-backend-implicit-main-function)
       functions)
     functions))
@@ -72062,8 +71916,8 @@
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [mode : CompilerBackendMode]
-  [functions : compiler_ir_types.CompilerIrFunctionList]
-  [all-functions : compiler_ir_types.CompilerIrFunctionList]
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
+  [all-functions : compiler_ir_types.CompilerIrFunctionSeq]
   [globals : compiler_ir_types.CompilerIrGlobalSeq]
   [global-types : CompilerBackendGlobalTypeTable]
   [externs : compiler_ir_types.CompilerIrExternSeq]
@@ -72075,90 +71929,24 @@
   [crt-entry : bool]
   [scratch : i64]
   [buf : text_buf.TextBuf]) : ResultCompilerBackendBuffer
-  (match functions
-    [(compiler_ir_types.CompilerIrFunctionList.Nil)
-      (ResultCompilerBackendBuffer.Ok buf)]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
-      (begin
-        (cfg
-          compile-profile
-          (compiler-backend-profile-detail-start program-index.profile-state))
-        (match (compiler-backend-emit-function-escaping
-          type-segment-bases
-          target
-          (compiler-backend-effective-function-mode
-            mode
-            program-index.backend-state
-            func)
-          func
-          all-functions
-          globals
-          global-types
-          externs
-          plan
-          program-index
-          spans
-          span-index
-          emit-entry
-          crt-entry
-          scratch)
-          [(ResultCompilerBackend.Ok head)
-            (begin
-              (cfg
-                compile-profile
-                (compiler-backend-profile-detail-finish
-                  program-index.profile-state
-                  "function"
-                  (compiler-backend-profile-function-name
-                    program-index.backend-state
-                    func)))
-              (compiler-backend-emit-functions-buffer-raw-into
-                type-segment-bases
-                target
-                mode
-                (__tl-box-place rest)
-                all-functions
-                globals
-                global-types
-                externs
-                plan
-                program-index
-                spans
-                span-index
-                emit-entry
-                crt-entry
-                scratch
-                (text_buf.append buf head)))]
-          [(ResultCompilerBackend.Err message)
-            (begin
-              (cfg
-                compile-profile
-                (compiler-backend-profile-detail-finish
-                  program-index.profile-state
-                  "function"
-                  (compiler-backend-profile-function-name
-                    program-index.backend-state
-                    func)))
-              (ResultCompilerBackendBuffer.Err message))]))]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (compiler-backend-emit-function-seq-buffer-into
-        type-segment-bases
-        target
-        mode
-        seq
-        0
-        all-functions
-        globals
-        global-types
-        externs
-        plan
-        program-index
-        spans
-        span-index
-        emit-entry
-        crt-entry
-        scratch
-        buf)]))
+  (compiler-backend-emit-function-seq-buffer-into
+    type-segment-bases
+    target
+    mode
+    functions
+    0
+    all-functions
+    globals
+    global-types
+    externs
+    plan
+    program-index
+    spans
+    span-index
+    emit-entry
+    crt-entry
+    scratch
+    buf))
 
 (define (compiler-backend-emit-function-seq-buffer-into
   [type-segment-bases : i64]
@@ -72166,7 +71954,7 @@
   [mode : CompilerBackendMode]
   [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [index : i64]
-  [all-functions : compiler_ir_types.CompilerIrFunctionList]
+  [all-functions : compiler_ir_types.CompilerIrFunctionSeq]
   [globals : compiler_ir_types.CompilerIrGlobalSeq]
   [global-types : CompilerBackendGlobalTypeTable]
   [externs : compiler_ir_types.CompilerIrExternSeq]
@@ -72182,7 +71970,7 @@
     (ResultCompilerBackendBuffer.Ok buf)
     (let
       [func : compiler_ir_types.CompilerIrFunction
-        (compiler_ir_types.compiler-ir-function-seq-ref functions index)]
+        (array-ref functions.slots index)]
       (begin
         (cfg
           compile-profile
@@ -72252,8 +72040,8 @@
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [mode : CompilerBackendMode]
-  [functions : compiler_ir_types.CompilerIrFunctionList]
-  [all-functions : compiler_ir_types.CompilerIrFunctionList]
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
+  [all-functions : compiler_ir_types.CompilerIrFunctionSeq]
   [globals : compiler_ir_types.CompilerIrGlobalSeq]
   [global-types : CompilerBackendGlobalTypeTable]
   [externs : compiler_ir_types.CompilerIrExternSeq]
@@ -72265,107 +72053,24 @@
   [crt-entry : bool]
   [scratch : i64]
   [buf : text_buf.TextBuf]) : ResultCompilerBackendBuffer
-  (match functions
-    [(compiler_ir_types.CompilerIrFunctionList.Nil)
-      (ResultCompilerBackendBuffer.Ok buf)]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
-      (let
-        [caller-arena : arena.Arena (arena.current)]
-        (begin
-          (compiler-backend-assembly-stream-begin-raw!
-            program-index.backend-state
-            (compiler-backend-state-stream-state program-index.backend-state))
-          (cfg
-            compile-profile
-            (compiler-backend-profile-detail-start program-index.profile-state))
-          (match (compiler-backend-emit-function-escaping
-            type-segment-bases
-            target
-            (compiler-backend-effective-function-mode
-              mode
-              program-index.backend-state
-              func)
-            func
-            all-functions
-            globals
-            global-types
-            externs
-            plan
-            program-index
-            spans
-            span-index
-            emit-entry
-            crt-entry
-            scratch)
-            [(ResultCompilerBackend.Ok head)
-              (begin
-                (cfg
-                  compile-profile
-                  (compiler-backend-profile-detail-finish
-                    program-index.profile-state
-                    "function"
-                    (compiler-backend-profile-function-name
-                      program-index.backend-state
-                      func)))
-                (compiler-backend-assembly-stream-process-string!
-                  head
-                  program-index.backend-state
-                  (compiler-backend-state-stream-state
-                    program-index.backend-state))
-                (compiler-backend-assembly-stream-rewind-raw!
-                  (compiler-backend-state-stream-state
-                    program-index.backend-state))
-                (unsafe
-                  (arena.set! caller-arena))
-                (compiler-backend-emit-functions-stream-into
-                  type-segment-bases
-                  target
-                  mode
-                  (__tl-box-place rest)
-                  all-functions
-                  globals
-                  global-types
-                  externs
-                  plan
-                  program-index
-                  spans
-                  span-index
-                  emit-entry
-                  crt-entry
-                  scratch
-                  buf))]
-            [(ResultCompilerBackend.Err message)
-              (begin
-                (cfg
-                  compile-profile
-                  (compiler-backend-profile-detail-finish
-                    program-index.profile-state
-                    "function"
-                    (compiler-backend-profile-function-name
-                      program-index.backend-state
-                      func)))
-                (unsafe
-                  (arena.set! caller-arena))
-                (ResultCompilerBackendBuffer.Err message))])))]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (compiler-backend-emit-function-seq-stream-into
-        type-segment-bases
-        target
-        mode
-        seq
-        0
-        all-functions
-        globals
-        global-types
-        externs
-        plan
-        program-index
-        spans
-        span-index
-        emit-entry
-        crt-entry
-        scratch
-        buf)]))
+  (compiler-backend-emit-function-seq-stream-into
+    type-segment-bases
+    target
+    mode
+    functions
+    0
+    all-functions
+    globals
+    global-types
+    externs
+    plan
+    program-index
+    spans
+    span-index
+    emit-entry
+    crt-entry
+    scratch
+    buf))
 
 (define (compiler-backend-emit-function-seq-stream-into
   [type-segment-bases : i64]
@@ -72373,7 +72078,7 @@
   [mode : CompilerBackendMode]
   [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [index : i64]
-  [all-functions : compiler_ir_types.CompilerIrFunctionList]
+  [all-functions : compiler_ir_types.CompilerIrFunctionSeq]
   [globals : compiler_ir_types.CompilerIrGlobalSeq]
   [global-types : CompilerBackendGlobalTypeTable]
   [externs : compiler_ir_types.CompilerIrExternSeq]
@@ -72389,7 +72094,7 @@
     (ResultCompilerBackendBuffer.Ok buf)
     (let
       [func : compiler_ir_types.CompilerIrFunction
-        (compiler_ir_types.compiler-ir-function-seq-ref functions index)]
+        (array-ref functions.slots index)]
       [caller-arena : arena.Arena (arena.current)]
       (begin
         (compiler-backend-assembly-stream-begin-raw!
@@ -72473,8 +72178,8 @@
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [mode : CompilerBackendMode]
-  [functions : compiler_ir_types.CompilerIrFunctionList]
-  [all-functions : compiler_ir_types.CompilerIrFunctionList]
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
+  [all-functions : compiler_ir_types.CompilerIrFunctionSeq]
   [globals : compiler_ir_types.CompilerIrGlobalSeq]
   [global-types : CompilerBackendGlobalTypeTable]
   [externs : compiler_ir_types.CompilerIrExternSeq]
@@ -72538,7 +72243,7 @@
 
 (define (compiler-backend-emit-closure-descriptor-entry-into
   [name : i64]
-  [_functions : compiler_ir_types.CompilerIrFunctionList]
+  [_functions : compiler_ir_types.CompilerIrFunctionSeq]
   [_externs : compiler_ir_types.CompilerIrExternSeq]
   [program-index : CompilerBackendProgramIndex]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
@@ -72553,7 +72258,7 @@
 (define (compiler-backend-emit-closure-descriptor-entries-into
   [names : BackendSymbolSeq]
   [index : i64]
-  [functions : compiler_ir_types.CompilerIrFunctionList]
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [externs : compiler_ir_types.CompilerIrExternSeq]
   [program-index : CompilerBackendProgramIndex]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
@@ -72574,7 +72279,7 @@
 
 (define (compiler-backend-emit-closure-descriptors-into
   [names : BackendSymbolSeq]
-  [functions : compiler_ir_types.CompilerIrFunctionList]
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [externs : compiler_ir_types.CompilerIrExternSeq]
   [program-index : CompilerBackendProgramIndex]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
@@ -72623,7 +72328,7 @@
   [param-types : compiler_ast_types.AstTypeList]
   [_ret-ty : compiler_ast_types.AstType]
   [plan : CompilerBackendRuntimePlan]
-  [_functions : compiler_ir_types.CompilerIrFunctionList]
+  [_functions : compiler_ir_types.CompilerIrFunctionSeq]
   [_externs : compiler_ir_types.CompilerIrExternSeq]
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
   (let
@@ -72763,7 +72468,7 @@
   [param-types : compiler_ast_types.AstTypeList]
   [ret-ty : compiler_ast_types.AstType]
   [plan : CompilerBackendRuntimePlan]
-  [functions : compiler_ir_types.CompilerIrFunctionList]
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [externs : compiler_ir_types.CompilerIrExternSeq]
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
   (let
@@ -72824,7 +72529,7 @@
   [target : CompilerBackendTarget]
   [names : BackendSymbolSeq]
   [index : i64]
-  [functions : compiler_ir_types.CompilerIrFunctionList]
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [externs : compiler_ir_types.CompilerIrExternSeq]
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]
@@ -72875,7 +72580,7 @@
   [target : CompilerBackendTarget]
   [names : BackendSymbolSeq]
   [index : i64]
-  [functions : compiler_ir_types.CompilerIrFunctionList]
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [externs : compiler_ir_types.CompilerIrExternSeq]
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]
@@ -72946,7 +72651,7 @@
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [names : BackendSymbolSeq]
-  [functions : compiler_ir_types.CompilerIrFunctionList]
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [externs : compiler_ir_types.CompilerIrExternSeq]
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]
@@ -73430,7 +73135,7 @@
 
 (define (compiler-backend-collect-function-collections
   [collections : CompilerBackendProgramCollections]
-  [functions : compiler_ir_types.CompilerIrFunctionList]) : CompilerBackendProgramCollections
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]) : CompilerBackendProgramCollections
   (match (compiler-backend-collect-functions-shared
     (CompilerBackendCollectState.Collections collections)
     functions)
@@ -73959,31 +73664,25 @@
     program-index
     0))
 
-(define (compiler-backend-function-list-defines?
-  [functions : compiler_ir_types.CompilerIrFunctionList]
-  [name : i64]) : bool
-  (match functions
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) false]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
-      (match func
-        [(compiler_ir_types.CompilerIrFunction.Function func-name _ _ _ _)
-          (if (compiler_ir_types.compiler-ir-symbol-eq? func-name name)
-            true
-            (compiler-backend-function-list-defines? (__tl-box-place rest) name))])]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (compiler-backend-function-seq-defines? seq name 0)]))
-
 (define (compiler-backend-function-seq-defines?
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
+  [name : i64]) : bool
+  (compiler-backend-function-seq-defines-from? functions name 0))
+
+(define (compiler-backend-function-seq-defines-from?
   [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [name : i64]
   [index : i64]) : bool
   (if (>= index (compiler_ir_types.compiler-ir-function-seq-count functions))
     false
-    (match (compiler_ir_types.compiler-ir-function-seq-ref functions index)
+    (match (array-ref functions.slots index)
       [(compiler_ir_types.CompilerIrFunction.Function func-name _ _ _ _)
         (if (compiler_ir_types.compiler-ir-symbol-eq? func-name name)
           true
-          (compiler-backend-function-seq-defines? functions name (+ index 1)))])))
+          (compiler-backend-function-seq-defines-from?
+            functions
+            name
+            (+ index 1)))])))
 
 (define (compiler-backend-runtime-prelude-helper-function?
   [name : String]
@@ -73992,44 +73691,30 @@
     (string.eq (compiler-backend-symbol-leaf name) helper)
     (compiler-backend-stdlib-runtime-function-name? name)))
 
-(define (compiler-backend-function-list-defines-runtime-prelude-helper?
-  [backend-state : CompilerBackendState]
-  [functions : compiler_ir_types.CompilerIrFunctionList]
-  [helper : String]) : bool
-  (match functions
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) false]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
-      (match func
-        [(compiler_ir_types.CompilerIrFunction.Function name _ _ _ _)
-          (if (compiler-backend-runtime-prelude-helper-function?
-            (compiler-backend-symbol-text-state backend-state name)
-            helper)
-            true
-            (compiler-backend-function-list-defines-runtime-prelude-helper?
-              backend-state
-              (__tl-box-place rest)
-              helper))])]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (compiler-backend-function-seq-defines-runtime-prelude-helper?
-        backend-state
-        seq
-        helper
-        0)]))
-
 (define (compiler-backend-function-seq-defines-runtime-prelude-helper?
+  [backend-state : CompilerBackendState]
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
+  [helper : String]) : bool
+  (compiler-backend-function-seq-defines-runtime-prelude-helper-from?
+    backend-state
+    functions
+    helper
+    0))
+
+(define (compiler-backend-function-seq-defines-runtime-prelude-helper-from?
   [backend-state : CompilerBackendState]
   [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [helper : String]
   [index : i64]) : bool
   (if (>= index (compiler_ir_types.compiler-ir-function-seq-count functions))
     false
-    (match (compiler_ir_types.compiler-ir-function-seq-ref functions index)
+    (match (array-ref functions.slots index)
       [(compiler_ir_types.CompilerIrFunction.Function name _ _ _ _)
         (if (compiler-backend-runtime-prelude-helper-function?
           (compiler-backend-symbol-text-state backend-state name)
           helper)
           true
-          (compiler-backend-function-seq-defines-runtime-prelude-helper?
+          (compiler-backend-function-seq-defines-runtime-prelude-helper-from?
             backend-state
             functions
             helper
@@ -74188,19 +73873,8 @@
 
 (define (compiler-backend-runtime-index-functions
   [index : CompilerBackendRuntimeIndex]
-  [functions : compiler_ir_types.CompilerIrFunctionList]) : CompilerBackendRuntimeIndex
-  (match functions
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) index]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
-      (match func
-        [(compiler_ir_types.CompilerIrFunction.Function name _ _ _ blocks)
-          (compiler-backend-runtime-index-functions
-            (compiler-backend-runtime-index-blocks
-              (compiler-backend-runtime-index-add-define index name)
-              blocks)
-            (__tl-box-place rest))])]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (compiler-backend-runtime-index-function-seq index seq 0)]))
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]) : CompilerBackendRuntimeIndex
+  (compiler-backend-runtime-index-function-seq index functions 0))
 
 (define (compiler-backend-runtime-index-function-seq
   [index : CompilerBackendRuntimeIndex]
@@ -74210,7 +73884,7 @@
     seq-index
     (compiler_ir_types.compiler-ir-function-seq-count functions))
     index
-    (match (compiler_ir_types.compiler-ir-function-seq-ref functions seq-index)
+    (match (array-ref functions.slots seq-index)
       [(compiler_ir_types.CompilerIrFunction.Function name _ _ _ blocks)
         (compiler-backend-runtime-index-function-seq
           (compiler-backend-runtime-index-blocks
@@ -74299,7 +73973,7 @@
 
 (define (compiler-backend-runtime-index
   [backend-state : CompilerBackendState]
-  [functions : compiler_ir_types.CompilerIrFunctionList]
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [externs : compiler_ir_types.CompilerIrExternSeq]) : CompilerBackendRuntimeIndex
   (compiler-backend-runtime-index-arena-debug-call-links
     (compiler-backend-runtime-index-functions
@@ -74403,7 +74077,7 @@
 
 (define (compiler-backend-runtime-plan-with-index-for-with-backend-state
   [backend-state : CompilerBackendState]
-  [functions : compiler_ir_types.CompilerIrFunctionList]
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [externs : compiler_ir_types.CompilerIrExternSeq]) : ResultBackendRuntimePlanWithIndex
   (let
     [index : CompilerBackendRuntimeIndex
@@ -74439,35 +74113,35 @@
         index
         cbi.compiler-builtin-id-tl-int-to-string)]
     [provides-substring : bool
-      (compiler-backend-function-list-defines-runtime-prelude-helper?
+      (compiler-backend-function-seq-defines-runtime-prelude-helper?
         backend-state
         functions
         "substring")]
     [provides-str-view : bool
-      (compiler-backend-function-list-defines-runtime-prelude-helper?
+      (compiler-backend-function-seq-defines-runtime-prelude-helper?
         backend-state
         functions
         "str-view")]
     [provides-concat : bool
       (backend-or4
-        (compiler-backend-function-list-defines-runtime-prelude-helper?
+        (compiler-backend-function-seq-defines-runtime-prelude-helper?
           backend-state
           functions
           "string-concat")
-        (compiler-backend-function-list-defines-runtime-prelude-helper?
+        (compiler-backend-function-seq-defines-runtime-prelude-helper?
           backend-state
           functions
           "string-concat3")
-        (compiler-backend-function-list-defines-runtime-prelude-helper?
+        (compiler-backend-function-seq-defines-runtime-prelude-helper?
           backend-state
           functions
           "string-concat4")
-        (compiler-backend-function-list-defines-runtime-prelude-helper?
+        (compiler-backend-function-seq-defines-runtime-prelude-helper?
           backend-state
           functions
           "string-concat5"))]
     [provides-int-to-string : bool
-      (compiler-backend-function-list-defines-runtime-prelude-helper?
+      (compiler-backend-function-seq-defines-runtime-prelude-helper?
         backend-state
         functions
         "int-to-string")]
@@ -74644,7 +74318,7 @@
 
 (define (compiler-backend-runtime-plan-for-with-backend-state
   [backend-state : CompilerBackendState]
-  [functions : compiler_ir_types.CompilerIrFunctionList]
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [externs : compiler_ir_types.CompilerIrExternSeq]) : ResultBackendRuntimePlan
   (match (compiler-backend-runtime-plan-with-index-for-with-backend-state
     backend-state
@@ -74656,7 +74330,7 @@
       (ResultBackendRuntimePlan.Err message)]))
 
 (define (compiler-backend-runtime-plan-for
-  [functions : compiler_ir_types.CompilerIrFunctionList]
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [externs : compiler_ir_types.CompilerIrExternSeq]) : ResultBackendRuntimePlan
   (compiler-backend-runtime-plan-for-with-backend-state
     (compiler-backend-state-new (ci.intern-compat-state-capture-active))
@@ -75169,7 +74843,7 @@
 
 (define (compiler-backend-emit-program-prefix-buffer
   [target : CompilerBackendTarget]
-  [entry-functions : compiler_ir_types.CompilerIrFunctionList]
+  [entry-functions : compiler_ir_types.CompilerIrFunctionSeq]
   [externs : compiler_ir_types.CompilerIrExternSeq]
   [plan : CompilerBackendRuntimePlan]
   [runtime-features
@@ -75332,7 +75006,7 @@
   [program : compiler_ir_types.CompilerIrProgram]
   [target : CompilerBackendTarget]
   [mode : CompilerBackendMode]
-  [entry-functions : compiler_ir_types.CompilerIrFunctionList]
+  [entry-functions : compiler_ir_types.CompilerIrFunctionSeq]
   [globals : compiler_ir_types.CompilerIrGlobalSeq]
   [externs : compiler_ir_types.CompilerIrExternSeq]
   [plan : CompilerBackendRuntimePlan]
@@ -75750,7 +75424,7 @@
                 ;; no global initializer can reference), so globals resolve
                 ;; identically against the shared index.
                 (let
-                  [entry-functions : compiler_ir_types.CompilerIrFunctionList
+                  [entry-functions : compiler_ir_types.CompilerIrFunctionSeq
                     (compiler-backend-functions-with-implicit-main
                       functions
                       emit-entry)]
@@ -78292,99 +77966,17 @@
   [type-segment-bases : i64]
   [parts : object_target.CompilerBackendObjectTargetParts]
   [target : CompilerBackendTarget]
-  [functions : compiler_ir_types.CompilerIrFunctionList]
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]) : object_target.CompilerBackendObjectTargetParts
-  (match functions
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) parts]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
-      (match func
-        [(compiler_ir_types.CompilerIrFunction.Function
-            name
-            params
-            ret-ty
-            vars
-            blocks)
-          (let
-            [symbol : String
-              (compiler-backend-function-symbol-index program-index name)]
-            [label-scope : String
-              (compiler-backend-function-label-scope program-index name)]
-            [types : compiler_regalloc.CompilerRegVarTypes
-              (compiler_regalloc.compiler-reg-function-var-types-with-metrics
-                (compiler_ir_types.CompilerIrFunction.Function
-                  name
-                  params
-                  ret-ty
-                  vars
-                  blocks)
-                (compiler-backend-state-metrics program-index.backend-state))]
-            [groups : compiler_liveness.CompilerLiveI64Set
-              (compiler_regalloc.compiler-reg-function-group-vars
-                type-segment-bases
-                (compiler_ir_types.CompilerIrFunction.Function
-                  name
-                  params
-                  ret-ty
-                  vars
-                  blocks)
-                types)]
-            [_group-enable : unit
-              (begin
-                (compiler-backend-current-slot-vars-set!
-                  program-index.backend-state
-                  vars)
-                (compiler-backend-group-vars-enable!
-                  program-index.backend-state
-                  groups
-                  (compiler_liveness.compiler-live-set-empty)))]
-            [emitted : object_target.CompilerBackendObjectTargetParts
-              (compiler-backend-object-blocks
-                type-segment-bases
-                (compiler-backend-object-param-spills
-                  (compiler-backend-object-add-nonempty-bytes
-                    (object_target.compiler-backend-object-add-text
-                      (object_target.compiler-backend-object-symbol-export-section
-                        parts
-                        symbol
-                        (cobj.CompilerObjectSectionKind.Text)
-                        (cobj.CompilerObjectSymbolKind.Function))
-                      (cobj.CompilerObjectX64Instr.Label symbol))
-                    (compiler-backend-object-prologue-bytes
-                      target
-                      (compiler-backend-frame-size
-                        (if (>
-                          (compiler_liveness.compiler-live-set-count groups)
-                          0)
-                          (* vars 2)
-                          vars))))
-                  target
-                  params
-                  0)
-                target
-                symbol
-                label-scope
-                blocks
-                plan
-                program-index)]
-            [_group-disable : unit
-              (compiler-backend-group-vars-disable! program-index.backend-state)]
-            (compiler-backend-object-functions
-              type-segment-bases
-              emitted
-              target
-              (__tl-box-place rest)
-              plan
-              program-index))])]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (compiler-backend-object-function-seq
-        type-segment-bases
-        parts
-        target
-        seq
-        plan
-        program-index
-        0)]))
+  (compiler-backend-object-function-seq
+    type-segment-bases
+    parts
+    target
+    functions
+    plan
+    program-index
+    0))
 
 (define (compiler-backend-object-function-seq
   [type-segment-bases : i64]
@@ -78396,7 +77988,7 @@
   [index : i64]) : object_target.CompilerBackendObjectTargetParts
   (if (>= index (compiler_ir_types.compiler-ir-function-seq-count functions))
     parts
-    (match (compiler_ir_types.compiler-ir-function-seq-ref functions index)
+    (match (array-ref functions.slots index)
       [(compiler_ir_types.CompilerIrFunction.Function
           name
           params
@@ -79024,7 +78616,7 @@
   [program : compiler_ir_types.CompilerIrProgram]
   [target : CompilerBackendTarget]
   [_mode : CompilerBackendMode]
-  [entry-functions : compiler_ir_types.CompilerIrFunctionList]
+  [entry-functions : compiler_ir_types.CompilerIrFunctionSeq]
   [globals : compiler_ir_types.CompilerIrGlobalSeq]
   [externs : compiler_ir_types.CompilerIrExternSeq]
   [plan : CompilerBackendRuntimePlan]
@@ -79330,55 +78922,25 @@
 
 (define (compiler-backend-object-functions-semantically-supported?
   [backend-state : CompilerBackendState]
-  [functions : compiler_ir_types.CompilerIrFunctionList]) : bool
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]) : bool
   (let
-    [cursor : compiler_ir_types.CompilerIrFunctionList functions]
+    [index : i64 0]
     (begin
-      (while true
-        (match cursor
-          [(compiler_ir_types.CompilerIrFunctionList.Nil) (return true)]
-          [(compiler_ir_types.CompilerIrFunctionList.Cons function rest)
-            (match function
-              [(compiler_ir_types.CompilerIrFunction.Function name _ _ _ blocks)
-                (if (or
-                  (compiler-backend-stdlib-runtime-function-name?
-                    (compiler-backend-symbol-text-state backend-state name))
-                  (compiler-backend-object-blocks-semantically-supported?
-                    backend-state
-                    blocks))
-                  (set! cursor (__tl-box-place rest))
-                  (return false))])]
-          [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-            (let
-              [index : i64 0]
-              [count : i64
-                (compiler_ir_types.compiler-ir-function-seq-count seq)]
-              (begin
-                (while (< index count)
-                  (begin
-                    (match (compiler_ir_types.compiler-ir-function-seq-ref
-                      seq
-                      index)
-                      [(compiler_ir_types.CompilerIrFunction.Function
-                          name
-                          _
-                          _
-                          _
-                          blocks)
-                        (when
-                          (not
-                            (or
-                              (compiler-backend-stdlib-runtime-function-name?
-                                (compiler-backend-symbol-text-state
-                                  backend-state
-                                  name))
-                              (compiler-backend-object-blocks-semantically-supported?
-                                backend-state
-                                blocks)))
-                          (return false))])
-                    (set! index (+ index 1))))
-                (return true)))]))
-      false)))
+      (while (< index functions.len)
+        (begin
+          (match (array-ref functions.slots index)
+            [(compiler_ir_types.CompilerIrFunction.Function name _ _ _ blocks)
+              (when
+                (not
+                  (or
+                    (compiler-backend-stdlib-runtime-function-name?
+                      (compiler-backend-symbol-text-state backend-state name))
+                    (compiler-backend-object-blocks-semantically-supported?
+                      backend-state
+                      blocks)))
+                (return false))])
+          (set! index (+ index 1))))
+      true)))
 
 (define (compiler-backend-object-program-eligibility
   [backend-state : CompilerBackendState]
@@ -79421,7 +78983,7 @@
               functions
               externs)
             (let
-              [entry-functions : compiler_ir_types.CompilerIrFunctionList
+              [entry-functions : compiler_ir_types.CompilerIrFunctionSeq
                 (compiler-backend-functions-with-implicit-main
                   functions
                   emit-entry)]
@@ -88147,7 +87709,7 @@
 (define (compiler-backend-runtime-helper-program) : compiler_ir_types.CompilerIrProgram
   (compiler_ir_types.CompilerIrProgram.Program
     (compiler_ir_types.compiler-ir-global-seq-empty)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (compiler_ir_types.CompilerIrFunction.Function
         cbi.compiler-builtin-id-fix-main
         compiler_ir_types.CompilerIrParamList.Nil
@@ -88186,7 +87748,7 @@
                 (compiler_ir_types.CompilerIrMaybeValue.Some
                   (compiler_ir_types.CompilerIrValue.I64 42)))))
           compiler_ir_types.CompilerIrBlockList.Nil))
-      compiler_ir_types.CompilerIrFunctionList.Nil)
+      (compiler_ir_types.compiler-ir-function-seq-empty))
     (compiler-backend-runtime-helper-externs)))
 
 (define (compiler-backend-runtime-helper-source) : String
@@ -88419,7 +87981,7 @@
 (define (compiler-backend-unused-str-view-extern-program) : compiler_ir_types.CompilerIrProgram
   (compiler_ir_types.CompilerIrProgram.Program
     (compiler_ir_types.compiler-ir-global-seq-empty)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (compiler_ir_types.CompilerIrFunction.Function
         (compiler-backend-test-symbol "stdlib/runtime.tl::str-view")
         compiler_ir_types.CompilerIrParamList.Nil
@@ -88433,7 +87995,7 @@
                 (compiler_ir_types.CompilerIrMaybeValue.Some
                   (compiler_ir_types.CompilerIrValue.I64 7)))))
           compiler_ir_types.CompilerIrBlockList.Nil))
-      (compiler_ir_types.compiler-ir-function-cons
+      (compiler_ir_types.compiler-ir-function-seq-prepend
         (compiler_ir_types.CompilerIrFunction.Function
           cbi.compiler-builtin-id-fix-main
           compiler_ir_types.CompilerIrParamList.Nil
@@ -88447,7 +88009,7 @@
                   (compiler_ir_types.CompilerIrMaybeValue.Some
                     (compiler_ir_types.CompilerIrValue.I64 42)))))
             compiler_ir_types.CompilerIrBlockList.Nil))
-        compiler_ir_types.CompilerIrFunctionList.Nil))
+        (compiler_ir_types.compiler-ir-function-seq-empty)))
     (compiler_ir_types.compiler-ir-extern-seq1
       (compiler_ir_types.compiler-ir-extern-default-id
         cbi.compiler-builtin-id-tl-str-view
@@ -88471,7 +88033,7 @@
       (compiler-backend-test-symbol "unused_foreign_symbol")]
     (compiler_ir_types.CompilerIrProgram.Program
       (compiler_ir_types.compiler-ir-global-seq-empty)
-      (compiler_ir_types.compiler-ir-function-cons
+      (compiler_ir_types.compiler-ir-function-seq-prepend
         (compiler_ir_types.CompilerIrFunction.Function
           cbi.compiler-builtin-id-fix-main
           compiler_ir_types.CompilerIrParamList.Nil
@@ -88485,7 +88047,7 @@
                   (compiler_ir_types.CompilerIrMaybeValue.Some
                     (compiler_ir_types.CompilerIrValue.I64 42)))))
             compiler_ir_types.CompilerIrBlockList.Nil))
-        compiler_ir_types.CompilerIrFunctionList.Nil)
+        (compiler_ir_types.compiler-ir-function-seq-empty))
       (compiler_ir_types.compiler-ir-extern-seq1
         (compiler_ir_types.CompilerIrExtern.Extern
           name-id
@@ -88524,7 +88086,7 @@
           (compiler_ir_types.CompilerIrValue.Function source-name-id)))
       (compiler_ir_types.CompilerIrProgram.Program
         (compiler_ir_types.compiler-ir-global-builder-to-seq globals)
-        (compiler_ir_types.compiler-ir-function-cons
+        (compiler_ir_types.compiler-ir-function-seq-prepend
           (compiler_ir_types.CompilerIrFunction.Function
             cbi.compiler-builtin-id-fix-main
             compiler_ir_types.CompilerIrParamList.Nil
@@ -88538,7 +88100,7 @@
                     (compiler_ir_types.CompilerIrMaybeValue.Some
                       (compiler_ir_types.CompilerIrValue.I64 42)))))
               compiler_ir_types.CompilerIrBlockList.Nil))
-          compiler_ir_types.CompilerIrFunctionList.Nil)
+          (compiler_ir_types.compiler-ir-function-seq-empty))
         (compiler_ir_types.compiler-ir-extern-seq1
           (compiler_ir_types.CompilerIrExtern.Extern
             name-id
@@ -88709,7 +88271,7 @@
 (define (compiler-backend-user-helper-name-program) : compiler_ir_types.CompilerIrProgram
   (compiler_ir_types.CompilerIrProgram.Program
     (compiler_ir_types.compiler-ir-global-seq-empty)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (compiler_ir_types.CompilerIrFunction.Function
         (compiler-backend-test-symbol "tl_alloc")
         compiler_ir_types.CompilerIrParamList.Nil
@@ -88723,7 +88285,7 @@
                 (compiler_ir_types.CompilerIrMaybeValue.Some
                   (compiler_ir_types.CompilerIrValue.I64 7)))))
           compiler_ir_types.CompilerIrBlockList.Nil))
-      (compiler_ir_types.compiler-ir-function-cons
+      (compiler_ir_types.compiler-ir-function-seq-prepend
         (compiler_ir_types.CompilerIrFunction.Function
           cbi.compiler-builtin-id-fix-main
           compiler_ir_types.CompilerIrParamList.Nil
@@ -88742,7 +88304,7 @@
                   (compiler_ir_types.CompilerIrMaybeValue.Some
                     (compiler_ir_types.CompilerIrValue.Var 0)))))
             compiler_ir_types.CompilerIrBlockList.Nil))
-        compiler_ir_types.CompilerIrFunctionList.Nil))
+        (compiler_ir_types.compiler-ir-function-seq-empty)))
     (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
 (define (compiler-backend-user-helper-name-ok?) : bool
@@ -88762,7 +88324,7 @@
 (define (compiler-backend-runtime-coexist-program) : compiler_ir_types.CompilerIrProgram
   (compiler_ir_types.CompilerIrProgram.Program
     (compiler_ir_types.compiler-ir-global-seq-empty)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (compiler_ir_types.CompilerIrFunction.Function
         (compiler-backend-test-symbol "tl_alloc")
         compiler_ir_types.CompilerIrParamList.Nil
@@ -88776,7 +88338,7 @@
                 (compiler_ir_types.CompilerIrMaybeValue.Some
                   (compiler_ir_types.CompilerIrValue.I64 7)))))
           compiler_ir_types.CompilerIrBlockList.Nil))
-      (compiler_ir_types.compiler-ir-function-cons
+      (compiler_ir_types.compiler-ir-function-seq-prepend
         (compiler_ir_types.CompilerIrFunction.Function
           cbi.compiler-builtin-id-fix-main
           compiler_ir_types.CompilerIrParamList.Nil
@@ -88804,7 +88366,7 @@
                   (compiler_ir_types.CompilerIrMaybeValue.Some
                     (compiler_ir_types.CompilerIrValue.Var 0)))))
             compiler_ir_types.CompilerIrBlockList.Nil))
-        compiler_ir_types.CompilerIrFunctionList.Nil))
+        (compiler_ir_types.compiler-ir-function-seq-empty)))
     (compiler_ir_types.compiler-ir-extern-seq1
       (compiler_ir_types.compiler-ir-extern-default-id
         cbi.compiler-builtin-id-tl-substring
@@ -88832,7 +88394,7 @@
 (define (compiler-backend-module-symbol-program) : compiler_ir_types.CompilerIrProgram
   (compiler_ir_types.CompilerIrProgram.Program
     (compiler_ir_types.compiler-ir-global-seq-empty)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (compiler_ir_types.CompilerIrFunction.Function
         (compiler-backend-test-symbol "lib.tl::helper")
         compiler_ir_types.CompilerIrParamList.Nil
@@ -88846,7 +88408,7 @@
                 (compiler_ir_types.CompilerIrMaybeValue.Some
                   (compiler_ir_types.CompilerIrValue.I64 7)))))
           compiler_ir_types.CompilerIrBlockList.Nil))
-      (compiler_ir_types.compiler-ir-function-cons
+      (compiler_ir_types.compiler-ir-function-seq-prepend
         (compiler_ir_types.CompilerIrFunction.Function
           cbi.compiler-builtin-id-fix-main
           compiler_ir_types.CompilerIrParamList.Nil
@@ -88865,7 +88427,7 @@
                   (compiler_ir_types.CompilerIrMaybeValue.Some
                     (compiler_ir_types.CompilerIrValue.Var 0)))))
             compiler_ir_types.CompilerIrBlockList.Nil))
-        compiler_ir_types.CompilerIrFunctionList.Nil))
+        (compiler_ir_types.compiler-ir-function-seq-empty)))
     (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
 (define (compiler-backend-module-symbol-ok?) : bool

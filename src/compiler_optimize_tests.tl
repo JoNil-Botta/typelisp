@@ -1412,20 +1412,23 @@
         needle)]))
 
 (define (opt-count-exact-instr-functions
-  [functions : compiler_ir_types.CompilerIrFunctionList]
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [needle : compiler_ir_types.CompilerIrInstr]) : i64
-  (match functions
-    [(compiler_ir_types.CompilerIrFunctionList.Nil) 0]
-    [(compiler_ir_types.CompilerIrFunctionList.Cons func rest)
-      (match func
-        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
-          (+
-            (opt-count-exact-instr-blocks blocks needle)
-            (opt-count-exact-instr-functions (__tl-box-place rest) needle))])]
-    [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-      (opt-count-exact-instr-functions
-        (compiler_ir_types.compiler-ir-function-seq-to-list seq)
-        needle)]))
+  (let
+    [index : i64 0]
+    [count : i64 0]
+    (begin
+      (while (< index functions.len)
+        (begin
+          (match (compiler_ir_types.compiler-ir-function-seq-ref
+            functions
+            index)
+            [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+              (set!
+                count
+                (+ count (opt-count-exact-instr-blocks blocks needle)))])
+          (set! index (+ index 1))))
+      count)))
 
 (define (opt-count-exact-instr-program
   [program : compiler_ir_types.CompilerIrProgram]
@@ -1871,9 +1874,9 @@
   [frame : i64]) : compiler_ir_types.CompilerIrProgram
   (compiler_ir_types.CompilerIrProgram.Program
     (compiler_ir_types.compiler-ir-global-seq-empty)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (opt-spans-function-with-frame instrs frame)
-      compiler_ir_types.CompilerIrFunctionList.Nil)
+      (compiler_ir_types.compiler-ir-function-seq-empty))
     (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
 (define (opt-spans-program [instrs : compiler_ir_types.CompilerIrInstrSeq]) : compiler_ir_types.CompilerIrProgram
@@ -2140,11 +2143,11 @@
 (define (opt-inline-span-program [symbols : OptInlineSpanTestSymbols]) : compiler_ir_types.CompilerIrProgram
   (compiler_ir_types.CompilerIrProgram.Program
     (compiler_ir_types.compiler-ir-global-seq-empty)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (opt-inline-span-caller symbols)
-      (compiler_ir_types.compiler-ir-function-cons
+      (compiler_ir_types.compiler-ir-function-seq-prepend
         (opt-inline-span-callee symbols)
-        compiler_ir_types.CompilerIrFunctionList.Nil))
+        (compiler_ir_types.compiler-ir-function-seq-empty)))
     (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
 (define (compiler-optimize-spans-inline-callee-ok?) : bool
@@ -2261,7 +2264,7 @@
       [(compiler_optimize.OptInlineSpanProgram.Program
           optimized
           optimized-spans)
-        (match (compiler_optimize.opt-function-list-find optimized "main")
+        (match (compiler_optimize.opt-function-seq-find optimized "main")
           [(compiler_optimize.OptMaybeFunction.Some main)
             (and
               (=
@@ -2778,14 +2781,14 @@
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (compiler_ir_types.CompilerIrProgram.Program
           (compiler_ir_types.compiler-ir-global-seq-empty)
-          (compiler_ir_types.compiler-ir-function-cons
+          (compiler_ir_types.compiler-ir-function-seq-prepend
             (compiler_ir_types.CompilerIrFunction.Function
               (opt-test-symbol "main")
               compiler_ir_types.CompilerIrParamList.Nil
               (compiler_ast_types.AstType.I64)
               4
               (opt-aggregate-phi-flowed-blocks))
-            compiler_ir_types.CompilerIrFunctionList.Nil)
+            (compiler_ir_types.compiler-ir-function-seq-empty))
           (compiler_ir_types.compiler-ir-extern-seq-empty))))
     0))
 
@@ -3424,14 +3427,14 @@
     [program : compiler_ir_types.CompilerIrProgram
       (compiler_ir_types.CompilerIrProgram.Program
         (compiler_ir_types.compiler-ir-global-seq-empty)
-        (compiler_ir_types.compiler-ir-function-cons
+        (compiler_ir_types.compiler-ir-function-seq-prepend
           (compiler_ir_types.CompilerIrFunction.Function
             (opt-test-symbol "main")
             compiler_ir_types.CompilerIrParamList.Nil
             (compiler_ast_types.AstType.I64)
             4
             blocks)
-          compiler_ir_types.CompilerIrFunctionList.Nil)
+          (compiler_ir_types.compiler-ir-function-seq-empty))
         (compiler_ir_types.compiler-ir-extern-seq-empty))]
     [candidates : opt_aggregate_candidate_vec.Vec
       (compiler_optimize.opt-aggregate-allocation-candidates
@@ -4129,14 +4132,14 @@
     [program : compiler_ir_types.CompilerIrProgram
       (compiler_ir_types.CompilerIrProgram.Program
         (compiler_ir_types.compiler-ir-global-seq-empty)
-        (compiler_ir_types.compiler-ir-function-cons
+        (compiler_ir_types.compiler-ir-function-seq-prepend
           (compiler_ir_types.CompilerIrFunction.Function
             name
             compiler_ir_types.CompilerIrParamList.Nil
             (compiler_ast_types.AstType.I64)
             1
             blocks)
-          compiler_ir_types.CompilerIrFunctionList.Nil)
+          (compiler_ir_types.compiler-ir-function-seq-empty))
         (compiler_ir_types.compiler-ir-extern-seq-empty))]
     (match (compiler_optimize.opt-verify-program program)
       [(compiler_optimize.ResultCompilerOptimizeVerify.Err message)
@@ -6506,15 +6509,15 @@
       (opt-const-divisor-test-globals symbols)]
     [blocks : compiler_ir_types.CompilerIrBlockList
       (opt-const-divisor-test-blocks symbols)]
-    [functions : compiler_ir_types.CompilerIrFunctionList
-      (compiler_ir_types.compiler-ir-function-cons
+    [functions : compiler_ir_types.CompilerIrFunctionSeq
+      (compiler_ir_types.compiler-ir-function-seq-prepend
         (compiler_ir_types.CompilerIrFunction.Function
           (opt-test-symbol "f")
           compiler_ir_types.CompilerIrParamList.Nil
           (compiler_ast_types.AstType.I64)
           16
           blocks)
-        compiler_ir_types.CompilerIrFunctionList.Nil)]
+        (compiler_ir_types.compiler-ir-function-seq-empty))]
     [table : opt_i64_i64_map.Map
       (compiler_optimize.opt-const-divisors-build globals functions)]
     [rewritten : compiler_ir_types.CompilerIrBlockList
@@ -11440,8 +11443,8 @@
       (compiler_ir_types.CompilerIrMaybeValue.Some
         (compiler_ir_types.CompilerIrValue.Var 2)))))
 
-(define (opt-nonneg-test-functions [symbols : OptNonnegTestSymbols]) : compiler_ir_types.CompilerIrFunctionList
-  (compiler_ir_types.compiler-ir-function-cons
+(define (opt-nonneg-test-functions [symbols : OptNonnegTestSymbols]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
     (compiler_ir_types.CompilerIrFunction.Function
       (opt-test-symbol "nn_f")
       (compiler_ir_types.compiler-ir-param-cons
@@ -11457,14 +11460,14 @@
           (compiler_ir_types.compiler-ir-label "entry")
           (opt-nonneg-test-instrs symbols))
         (compiler_ir_types.CompilerIrBlockList.Nil)))
-    (compiler_ir_types.CompilerIrFunctionList.Nil)))
+    (compiler_ir_types.compiler-ir-function-seq-empty)))
 
 (define (compiler-optimize-nonneg-globals-self-test) : i64
   (let
     [symbols : OptNonnegTestSymbols (opt-nonneg-test-symbols)]
     [globals : compiler_ir_types.CompilerIrGlobalSeq
       (opt-nonneg-test-globals symbols)]
-    [functions : compiler_ir_types.CompilerIrFunctionList
+    [functions : compiler_ir_types.CompilerIrFunctionSeq
       (opt-nonneg-test-functions symbols)]
     [cell : compiler_optimize.OptGlobalCellSummary
       (compiler_optimize.opt-global-cell-summary-build
@@ -13210,9 +13213,9 @@
 (define (opt-test-program [instrs : compiler_ir_types.CompilerIrInstrSeq]) : compiler_ir_types.CompilerIrProgram
   (compiler_ir_types.CompilerIrProgram.Program
     (compiler_ir_types.compiler-ir-global-seq-empty)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (opt-test-function instrs)
-      (compiler_ir_types.CompilerIrFunctionList.Nil))
+      (compiler_ir_types.compiler-ir-function-seq-empty))
     (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
 ;; Self-test helper: exposes the first optimized block as a list for existing
@@ -13234,18 +13237,12 @@
   [program : compiler_ir_types.CompilerIrProgram]) : compiler_ir_types.CompilerIrInstrSeq
   (match program
     [(compiler_ir_types.CompilerIrProgram.Program _ funcs _)
-      (match funcs
-        [(compiler_ir_types.CompilerIrFunctionList.Cons func _)
-          (opt-function-first-instrs func)]
-        [(compiler_ir_types.CompilerIrFunctionList.Nil)
-          (compiler_ir_types.compiler-ir-instr-seq-empty)]
-        [(compiler_ir_types.CompilerIrFunctionList.Array seq)
-          (if (> (compiler_ir_types.compiler-ir-function-seq-count seq) 0)
-            (opt-function-first-instrs
-              (compiler_ir_types.compiler-ir-function-seq-ref seq 0))
-            (compiler_ir_types.compiler-ir-instr-seq-empty))])]))
+      (if (> funcs.len 0)
+        (opt-function-first-instrs
+          (compiler_ir_types.compiler-ir-function-seq-ref funcs 0))
+        (compiler_ir_types.compiler-ir-instr-seq-empty))]))
 
-(define (opt-program-functions [program : compiler_ir_types.CompilerIrProgram]) : compiler_ir_types.CompilerIrFunctionList
+(define (opt-program-functions [program : compiler_ir_types.CompilerIrProgram]) : compiler_ir_types.CompilerIrFunctionSeq
   (match program
     [(compiler_ir_types.CompilerIrProgram.Program _ funcs _) funcs]))
 
@@ -13532,39 +13529,39 @@
 (define (opt-global-dce-program [symbols : OptGlobalDceTestSymbols]) : compiler_ir_types.CompilerIrProgram
   (compiler_ir_types.CompilerIrProgram.Program
     (opt-global-dce-globals symbols)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (opt-test-function-symbol
         symbols.main
         (opt-global-dce-main-instrs symbols))
-      (compiler_ir_types.compiler-ir-function-cons
+      (compiler_ir_types.compiler-ir-function-seq-prepend
         (opt-global-dce-large-callee symbols.helper 7)
-        (compiler_ir_types.compiler-ir-function-cons
+        (compiler_ir_types.compiler-ir-function-seq-prepend
           (opt-test-function-symbol
             symbols.dead
             (opt-global-dce-return-instrs 9))
-          (compiler_ir_types.compiler-ir-function-cons
+          (compiler_ir_types.compiler-ir-function-seq-prepend
             (opt-test-function-symbol
               symbols.callback-target
               (opt-global-dce-return-instrs 11))
-            (compiler_ir_types.compiler-ir-function-cons
+            (compiler_ir_types.compiler-ir-function-seq-prepend
               (opt-test-function-named
                 "C:/repo/stdlib/runtime.tl::substring"
                 (opt-global-dce-return-instrs 13))
-              (compiler_ir_types.compiler-ir-function-cons
+              (compiler_ir_types.compiler-ir-function-seq-prepend
                 (opt-test-function-named
                   "C:/repo/stdlib/runtime.tl::int-to-string"
                   (opt-global-dce-return-instrs 17))
-                (compiler_ir_types.CompilerIrFunctionList.Nil)))))))
+                (compiler_ir_types.compiler-ir-function-seq-empty)))))))
     (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
 (define (opt-global-dce-no-main-program) : compiler_ir_types.CompilerIrProgram
   (compiler_ir_types.CompilerIrProgram.Program
     (compiler_ir_types.compiler-ir-global-seq-empty)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (opt-test-function-named "helper" (opt-global-dce-return-instrs 7))
-      (compiler_ir_types.compiler-ir-function-cons
+      (compiler_ir_types.compiler-ir-function-seq-prepend
         (opt-test-function-named "dead" (opt-global-dce-return-instrs 9))
-        (compiler_ir_types.CompilerIrFunctionList.Nil)))
+        (compiler_ir_types.compiler-ir-function-seq-empty)))
     (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
 (define (compiler-optimize-global-dce-ok?) : bool
@@ -13582,43 +13579,41 @@
       (compiler_optimize.optimize-program-with-level
         (opt-global-dce-no-main-program)
         1)]
-    [level0-functions : compiler_ir_types.CompilerIrFunctionList
+    [level0-functions : compiler_ir_types.CompilerIrFunctionSeq
       (opt-program-functions level0)]
-    [level1-functions : compiler_ir_types.CompilerIrFunctionList
+    [level1-functions : compiler_ir_types.CompilerIrFunctionSeq
       (opt-program-functions level1)]
-    [no-main-functions : compiler_ir_types.CompilerIrFunctionList
+    [no-main-functions : compiler_ir_types.CompilerIrFunctionSeq
       (opt-program-functions no-main)]
     [level0-globals : compiler_ir_types.CompilerIrGlobalSeq
       (opt-program-globals level0)]
     [level1-globals : compiler_ir_types.CompilerIrGlobalSeq
       (opt-program-globals level1)]
     (and
-      (= (compiler_ir_types.compiler-ir-function-list-count level0-functions) 6)
-      (= (compiler_ir_types.compiler-ir-function-list-count level1-functions) 4)
+      (= (compiler_ir_types.compiler-ir-function-seq-count level0-functions) 6)
+      (= (compiler_ir_types.compiler-ir-function-seq-count level1-functions) 4)
       (= (compiler_ir_types.compiler-ir-global-seq-count level0-globals) 5)
       (= (compiler_ir_types.compiler-ir-global-seq-count level1-globals) 3)
-      (compiler_optimize.opt-function-list-defines? level1-functions "main")
-      (compiler_optimize.opt-function-list-defines? level1-functions "helper")
-      (compiler_optimize.opt-function-list-defines?
+      (compiler_optimize.opt-function-seq-defines? level1-functions "main")
+      (compiler_optimize.opt-function-seq-defines? level1-functions "helper")
+      (compiler_optimize.opt-function-seq-defines?
         level1-functions
         "callback-target")
-      (compiler_optimize.opt-function-list-defines?
+      (compiler_optimize.opt-function-seq-defines?
         level1-functions
         "C:/repo/stdlib/runtime.tl::substring")
       (not
-        (compiler_optimize.opt-function-list-defines?
+        (compiler_optimize.opt-function-seq-defines?
           level1-functions
           "C:/repo/stdlib/runtime.tl::int-to-string"))
       (not
-        (compiler_optimize.opt-function-list-defines? level1-functions "dead"))
+        (compiler_optimize.opt-function-seq-defines? level1-functions "dead"))
       (opt-global-list-defines? level1-globals "used-global")
       (opt-global-list-defines? level1-globals "stored-global")
       (opt-global-list-defines? level1-globals "runtime-global")
       (not (opt-global-list-defines? level1-globals "dead-global"))
       (not (opt-global-list-defines? level1-globals "callback"))
-      (=
-        (compiler_ir_types.compiler-ir-function-list-count no-main-functions)
-        2))))
+      (= (compiler_ir_types.compiler-ir-function-seq-count no-main-functions) 2))))
 
 (define (compiler-optimize-global-dce-self-test) : i64
   (if (compiler-optimize-global-dce-ok?)
@@ -13727,22 +13722,22 @@
       (compiler_ir_types.CompilerIrMaybeValue.Some
         (compiler_ir_types.CompilerIrValue.I64 0)))))
 
-(define (opt-callgraph-acyclic-functions [symbols : OptCallgraphTestSymbols]) : compiler_ir_types.CompilerIrFunctionList
-  (compiler_ir_types.compiler-ir-function-cons
+(define (opt-callgraph-acyclic-functions [symbols : OptCallgraphTestSymbols]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
     (opt-test-function-symbol symbols.main (opt-callgraph-main-instrs symbols))
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (opt-test-function-symbol symbols.a (opt-callgraph-call-instrs symbols.c))
-      (compiler_ir_types.compiler-ir-function-cons
+      (compiler_ir_types.compiler-ir-function-seq-prepend
         (opt-test-function-symbol symbols.b (opt-callgraph-return-instrs))
-        (compiler_ir_types.compiler-ir-function-cons
+        (compiler_ir_types.compiler-ir-function-seq-prepend
           (opt-test-function-symbol
             symbols.c
             (opt-callgraph-tail-instrs symbols.b))
-          (compiler_ir_types.compiler-ir-function-cons
+          (compiler_ir_types.compiler-ir-function-seq-prepend
             (opt-test-function-symbol
               symbols.address-taken
               (opt-callgraph-return-instrs))
-            compiler_ir_types.CompilerIrFunctionList.Nil))))))
+            (compiler_ir_types.compiler-ir-function-seq-empty)))))))
 
 (define (opt-callgraph-rec-even-instrs [symbols : OptCallgraphTestSymbols]) : compiler_ir_types.CompilerIrInstrSeq
   (opt-test-instrs
@@ -13760,23 +13755,23 @@
       (compiler_ir_types.CompilerIrMaybeValue.Some
         (compiler_ir_types.CompilerIrValue.I64 0)))))
 
-(define (opt-callgraph-recursive-functions [symbols : OptCallgraphTestSymbols]) : compiler_ir_types.CompilerIrFunctionList
-  (compiler_ir_types.compiler-ir-function-cons
+(define (opt-callgraph-recursive-functions [symbols : OptCallgraphTestSymbols]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
     (opt-test-function-symbol
       symbols.rec-even
       (opt-callgraph-rec-even-instrs symbols))
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (opt-test-function-symbol
         symbols.rec-odd
         (opt-callgraph-tail-instrs symbols.rec-even))
-      (compiler_ir_types.compiler-ir-function-cons
+      (compiler_ir_types.compiler-ir-function-seq-prepend
         (opt-test-function-symbol symbols.lonely (opt-callgraph-return-instrs))
-        compiler_ir_types.CompilerIrFunctionList.Nil))))
+        (compiler_ir_types.compiler-ir-function-seq-empty)))))
 
 (define (compiler-optimize-callgraph-acyclic-ok?) : bool
   (let
     [symbols : OptCallgraphTestSymbols (opt-callgraph-test-symbols)]
-    [functions : compiler_ir_types.CompilerIrFunctionList
+    [functions : compiler_ir_types.CompilerIrFunctionSeq
       (opt-callgraph-acyclic-functions symbols)]
     [index : compiler_optimize.OptFunctionIndex
       (compiler_optimize.opt-function-index-build functions)]
@@ -13808,7 +13803,7 @@
 (define (compiler-optimize-callgraph-recursive-ok?) : bool
   (let
     [symbols : OptCallgraphTestSymbols (opt-callgraph-test-symbols)]
-    [functions : compiler_ir_types.CompilerIrFunctionList
+    [functions : compiler_ir_types.CompilerIrFunctionSeq
       (opt-callgraph-recursive-functions symbols)]
     [index : compiler_optimize.OptFunctionIndex
       (compiler_optimize.opt-function-index-build functions)]
@@ -13888,19 +13883,19 @@
     [right-pos : i64 (opt-scc-order-position result right)]
     (and (>= left-pos 0) (>= right-pos 0) (< left-pos right-pos))))
 
-(define (opt-scc-self-recursive-functions [symbols : OptCallgraphTestSymbols]) : compiler_ir_types.CompilerIrFunctionList
-  (compiler_ir_types.compiler-ir-function-cons
+(define (opt-scc-self-recursive-functions [symbols : OptCallgraphTestSymbols]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
     (opt-test-function-symbol
       symbols.self
       (opt-callgraph-tail-instrs symbols.self))
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (opt-test-function-symbol symbols.leaf (opt-callgraph-return-instrs))
-      compiler_ir_types.CompilerIrFunctionList.Nil)))
+      (compiler_ir_types.compiler-ir-function-seq-empty))))
 
 (define (compiler-optimize-scc-self-recursive-ok?) : bool
   (let
     [symbols : OptCallgraphTestSymbols (opt-callgraph-test-symbols)]
-    [functions : compiler_ir_types.CompilerIrFunctionList
+    [functions : compiler_ir_types.CompilerIrFunctionSeq
       (opt-scc-self-recursive-functions symbols)]
     [index : compiler_optimize.OptFunctionIndex
       (compiler_optimize.opt-function-index-build functions)]
@@ -13926,7 +13921,7 @@
 (define (compiler-optimize-scc-mutual-recursive-ok?) : bool
   (let
     [symbols : OptCallgraphTestSymbols (opt-callgraph-test-symbols)]
-    [functions : compiler_ir_types.CompilerIrFunctionList
+    [functions : compiler_ir_types.CompilerIrFunctionSeq
       (opt-callgraph-recursive-functions symbols)]
     [index : compiler_optimize.OptFunctionIndex
       (compiler_optimize.opt-function-index-build functions)]
@@ -13951,7 +13946,7 @@
 (define (compiler-optimize-scc-reverse-topo-ok?) : bool
   (let
     [symbols : OptCallgraphTestSymbols (opt-callgraph-test-symbols)]
-    [functions : compiler_ir_types.CompilerIrFunctionList
+    [functions : compiler_ir_types.CompilerIrFunctionSeq
       (opt-callgraph-acyclic-functions symbols)]
     [index : compiler_optimize.OptFunctionIndex
       (compiler_optimize.opt-function-index-build functions)]
@@ -14084,12 +14079,12 @@
               (compiler_ir_types.CompilerIrValue.Var 2)))))
       compiler_ir_types.CompilerIrBlockList.Nil)))
 
-(define (opt-inline-frame-functions [symbols : OptInlineFrameTestSymbols]) : compiler_ir_types.CompilerIrFunctionList
-  (compiler_ir_types.compiler-ir-function-cons
+(define (opt-inline-frame-functions [symbols : OptInlineFrameTestSymbols]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
     (opt-inline-frame-caller symbols)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (opt-inline-frame-callee symbols)
-      compiler_ir_types.CompilerIrFunctionList.Nil)))
+      (compiler_ir_types.compiler-ir-function-seq-empty))))
 
 (define (opt-inline-known-indirect-caller [symbols : OptInlineFrameTestSymbols]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
@@ -14122,12 +14117,12 @@
       compiler_ir_types.CompilerIrBlockList.Nil)))
 
 (define (opt-inline-known-indirect-functions
-  [symbols : OptInlineFrameTestSymbols]) : compiler_ir_types.CompilerIrFunctionList
-  (compiler_ir_types.compiler-ir-function-cons
+  [symbols : OptInlineFrameTestSymbols]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
     (opt-inline-known-indirect-caller symbols)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (opt-inline-frame-callee symbols)
-      compiler_ir_types.CompilerIrFunctionList.Nil)))
+      (compiler_ir_types.compiler-ir-function-seq-empty))))
 
 (define (opt-inline-pack-word-callee [symbols : OptInlineFrameTestSymbols]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
@@ -14196,14 +14191,14 @@
               (compiler_ir_types.CompilerIrValue.Var 3)))))
       compiler_ir_types.CompilerIrBlockList.Nil)))
 
-(define (opt-inline-pack-word-functions [symbols : OptInlineFrameTestSymbols]) : compiler_ir_types.CompilerIrFunctionList
-  (compiler_ir_types.compiler-ir-function-cons
+(define (opt-inline-pack-word-functions [symbols : OptInlineFrameTestSymbols]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
     (opt-inline-pack-word-caller symbols)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (opt-inline-pack-word-callee symbols)
-      compiler_ir_types.CompilerIrFunctionList.Nil)))
+      (compiler_ir_types.compiler-ir-function-seq-empty))))
 
-(define (opt-inline-level-functions [level : i64]) : compiler_ir_types.CompilerIrFunctionList
+(define (opt-inline-level-functions [level : i64]) : compiler_ir_types.CompilerIrFunctionSeq
   (let
     [symbols : OptInlineFrameTestSymbols (opt-inline-frame-test-symbols)]
     (compiler_optimize.opt-inline-program-functions
@@ -14400,27 +14395,27 @@
               (compiler_ir_types.CompilerIrValue.I64 0)))))
       compiler_ir_types.CompilerIrBlockList.Nil)))
 
-(define (opt-inline-large-functions [symbols : OptInlineBoundsTestSymbols]) : compiler_ir_types.CompilerIrFunctionList
-  (compiler_ir_types.compiler-ir-function-cons
+(define (opt-inline-large-functions [symbols : OptInlineBoundsTestSymbols]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
     (opt-inline-call-large symbols)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (opt-inline-large-callee symbols)
-      compiler_ir_types.CompilerIrFunctionList.Nil)))
+      (compiler_ir_types.compiler-ir-function-seq-empty))))
 
-(define (opt-inline-bounds-functions [symbols : OptInlineBoundsTestSymbols]) : compiler_ir_types.CompilerIrFunctionList
-  (compiler_ir_types.compiler-ir-function-cons
+(define (opt-inline-bounds-functions [symbols : OptInlineBoundsTestSymbols]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
     (opt-inline-call-bounds symbols)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (opt-inline-bounds-callee symbols)
-      compiler_ir_types.CompilerIrFunctionList.Nil)))
+      (compiler_ir_types.compiler-ir-function-seq-empty))))
 
 (define (opt-inline-bounds-twice-functions
-  [symbols : OptInlineBoundsTestSymbols]) : compiler_ir_types.CompilerIrFunctionList
-  (compiler_ir_types.compiler-ir-function-cons
+  [symbols : OptInlineBoundsTestSymbols]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
     (opt-inline-call-bounds-twice symbols)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (opt-inline-bounds-callee symbols)
-      compiler_ir_types.CompilerIrFunctionList.Nil)))
+      (compiler_ir_types.compiler-ir-function-seq-empty))))
 
 (define (opt-inline-bounds-leaf-instrs [index : i64] [limit : i64]) : compiler_ir_types.CompilerIrInstrSeq
   (if (>= index limit)
@@ -14496,12 +14491,12 @@
 
 (define (opt-inline-bounds-leaf-functions
   [symbols : OptInlineBoundsTestSymbols]
-  [body : i64]) : compiler_ir_types.CompilerIrFunctionList
-  (compiler_ir_types.compiler-ir-function-cons
+  [body : i64]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
     (opt-inline-call-bounds-leaf symbols)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (opt-inline-bounds-leaf-callee symbols body)
-      compiler_ir_types.CompilerIrFunctionList.Nil)))
+      (compiler_ir_types.compiler-ir-function-seq-empty))))
 
 ;; Two ordinary call sites with variable arguments: the callee is neither
 ;; absorbable (refcount 2) nor all-const-args, so opt-inline-bounds-inline-ok?
@@ -14546,12 +14541,12 @@
 
 (define (opt-inline-bounds-leaf-twice-functions
   [symbols : OptInlineBoundsTestSymbols]
-  [body : i64]) : compiler_ir_types.CompilerIrFunctionList
-  (compiler_ir_types.compiler-ir-function-cons
+  [body : i64]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
     (opt-inline-call-bounds-leaf-twice symbols)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (opt-inline-bounds-leaf-callee symbols body)
-      compiler_ir_types.CompilerIrFunctionList.Nil)))
+      (compiler_ir_types.compiler-ir-function-seq-empty))))
 
 (define (opt-inline-bounds-leaf-call-symbol) : i64
   (opt-test-symbol "bounds_leaf_call_inline"))
@@ -14636,12 +14631,12 @@
       compiler_ir_types.CompilerIrBlockList.Nil)))
 
 (define (opt-inline-bounds-leaf-call-functions
-  [symbols : OptInlineBoundsTestSymbols]) : compiler_ir_types.CompilerIrFunctionList
-  (compiler_ir_types.compiler-ir-function-cons
+  [symbols : OptInlineBoundsTestSymbols]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
     (opt-inline-call-bounds-leaf-call-twice symbols)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (opt-inline-bounds-leaf-call-callee)
-      compiler_ir_types.CompilerIrFunctionList.Nil)))
+      (compiler_ir_types.compiler-ir-function-seq-empty))))
 
 (define (opt-inline-bounds-leaf-char-symbol) : i64
   (opt-test-symbol "bounds_leaf_char_inline"))
@@ -14731,32 +14726,32 @@
       compiler_ir_types.CompilerIrBlockList.Nil)))
 
 (define (opt-inline-bounds-leaf-char-functions
-  [symbols : OptInlineBoundsTestSymbols]) : compiler_ir_types.CompilerIrFunctionList
-  (compiler_ir_types.compiler-ir-function-cons
+  [symbols : OptInlineBoundsTestSymbols]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
     (opt-inline-call-bounds-leaf-typed-twice
       symbols
       (opt-inline-bounds-leaf-char-symbol)
       (compiler_ast_types.AstType.Char))
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (opt-inline-bounds-leaf-typed-callee
         (opt-inline-bounds-leaf-char-symbol)
         (compiler_ast_types.AstType.Char)
         (compiler_ir_types.CompilerIrValue.Char 'A'))
-      compiler_ir_types.CompilerIrFunctionList.Nil)))
+      (compiler_ir_types.compiler-ir-function-seq-empty))))
 
 (define (opt-inline-bounds-leaf-owned-functions
-  [symbols : OptInlineBoundsTestSymbols]) : compiler_ir_types.CompilerIrFunctionList
-  (compiler_ir_types.compiler-ir-function-cons
+  [symbols : OptInlineBoundsTestSymbols]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
     (opt-inline-call-bounds-leaf-typed-twice
       symbols
       (opt-inline-bounds-leaf-owned-symbol)
       (compiler_ast_types.AstType.String))
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (opt-inline-bounds-leaf-typed-callee
         (opt-inline-bounds-leaf-owned-symbol)
         (compiler_ast_types.AstType.String)
         (compiler_ir_types.CompilerIrValue.String "leaf"))
-      compiler_ir_types.CompilerIrFunctionList.Nil)))
+      (compiler_ir_types.compiler-ir-function-seq-empty))))
 
 (define (opt-inline-band-symbol) : i64
   (opt-test-symbol "band_inline"))
@@ -14856,12 +14851,12 @@
               (compiler_ir_types.CompilerIrValue.Var 3)))))
       compiler_ir_types.CompilerIrBlockList.Nil)))
 
-(define (opt-inline-band-functions [body : i64] [const-args? : bool]) : compiler_ir_types.CompilerIrFunctionList
-  (compiler_ir_types.compiler-ir-function-cons
+(define (opt-inline-band-functions [body : i64] [const-args? : bool]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
     (opt-inline-band-caller const-args?)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (opt-inline-band-callee body)
-      compiler_ir_types.CompilerIrFunctionList.Nil)))
+      (compiler_ir_types.compiler-ir-function-seq-empty))))
 
 (define (opt-inline-multi-call-caller [symbols : OptInlineFrameTestSymbols]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
@@ -14900,12 +14895,12 @@
               (compiler_ir_types.CompilerIrValue.Var 3)))))
       compiler_ir_types.CompilerIrBlockList.Nil)))
 
-(define (opt-inline-multi-call-functions [symbols : OptInlineFrameTestSymbols]) : compiler_ir_types.CompilerIrFunctionList
-  (compiler_ir_types.compiler-ir-function-cons
+(define (opt-inline-multi-call-functions [symbols : OptInlineFrameTestSymbols]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
     (opt-inline-multi-call-caller symbols)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (opt-inline-frame-callee symbols)
-      compiler_ir_types.CompilerIrFunctionList.Nil)))
+      (compiler_ir_types.compiler-ir-function-seq-empty))))
 
 (define (opt-inline-cascade-mid [symbols : OptInlineFrameTestSymbols]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
@@ -14959,14 +14954,14 @@
               (compiler_ir_types.CompilerIrValue.Var 2)))))
       compiler_ir_types.CompilerIrBlockList.Nil)))
 
-(define (opt-inline-cascade-functions [symbols : OptInlineFrameTestSymbols]) : compiler_ir_types.CompilerIrFunctionList
-  (compiler_ir_types.compiler-ir-function-cons
+(define (opt-inline-cascade-functions [symbols : OptInlineFrameTestSymbols]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
     (opt-inline-cascade-main symbols)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (opt-inline-cascade-mid symbols)
-      (compiler_ir_types.compiler-ir-function-cons
+      (compiler_ir_types.compiler-ir-function-seq-prepend
         (opt-inline-frame-callee symbols)
-        compiler_ir_types.CompilerIrFunctionList.Nil))))
+        (compiler_ir_types.compiler-ir-function-seq-empty)))))
 
 (define (opt-inline-mutual-a) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
@@ -15008,12 +15003,12 @@
               (compiler_ir_types.CompilerIrValue.Var 0)))))
       compiler_ir_types.CompilerIrBlockList.Nil)))
 
-(define (opt-inline-mutual-functions) : compiler_ir_types.CompilerIrFunctionList
-  (compiler_ir_types.compiler-ir-function-cons
+(define (opt-inline-mutual-functions) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
     (opt-inline-mutual-a)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (opt-inline-mutual-b)
-      compiler_ir_types.CompilerIrFunctionList.Nil)))
+      (compiler_ir_types.compiler-ir-function-seq-empty))))
 
 (define (opt-devirt-dynamic-caller) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
@@ -15129,13 +15124,13 @@
 (define (opt-devirt-reach-program) : compiler_ir_types.CompilerIrProgram
   (compiler_ir_types.CompilerIrProgram.Program
     (compiler_ir_types.compiler-ir-global-seq-empty)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (opt-devirt-reach-main)
-      (compiler_ir_types.compiler-ir-function-cons
+      (compiler_ir_types.compiler-ir-function-seq-prepend
         (opt-devirt-reach-target)
-        (compiler_ir_types.compiler-ir-function-cons
+        (compiler_ir_types.compiler-ir-function-seq-prepend
           (opt-test-function-named "dead" (opt-global-dce-return-instrs 9))
-          compiler_ir_types.CompilerIrFunctionList.Nil)))
+          (compiler_ir_types.compiler-ir-function-seq-empty))))
     (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
 (define (opt-inline-count-binop-dst-from
@@ -15203,11 +15198,11 @@
         (compiler_ir_types.compiler-ir-block-seq-to-list seq)
         name)]))
 
-(define (opt-count-direct-call-name-function-list
-  [functions : compiler_ir_types.CompilerIrFunctionList]
+(define (opt-count-direct-call-name-function-seq
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [func-name : String]
   [call-name : String]) : i64
-  (match (compiler_optimize.opt-function-list-find functions func-name)
+  (match (compiler_optimize.opt-function-seq-find functions func-name)
     [(compiler_optimize.OptMaybeFunction.Some func)
       (opt-count-direct-call-name-blocks
         (compiler_optimize.opt-function-blocks func)
@@ -15268,18 +15263,18 @@
   (opt-inline-mov-dst-src-from? instrs 0 dst src))
 
 (define (opt-inline-function-instrs
-  [functions : compiler_ir_types.CompilerIrFunctionList]
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [name : String]) : compiler_ir_types.CompilerIrInstrSeq
-  (match (compiler_optimize.opt-function-list-find functions name)
+  (match (compiler_optimize.opt-function-seq-find functions name)
     [(compiler_optimize.OptMaybeFunction.Some func)
       (opt-function-first-instrs func)]
     [(compiler_optimize.OptMaybeFunction.No)
       (compiler_ir_types.compiler-ir-instr-seq-empty)]))
 
 (define (opt-inline-function-frame
-  [functions : compiler_ir_types.CompilerIrFunctionList]
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [name : String]) : i64
-  (match (compiler_optimize.opt-function-list-find functions name)
+  (match (compiler_optimize.opt-function-seq-find functions name)
     [(compiler_optimize.OptMaybeFunction.Some func)
       (compiler_optimize.opt-function-frame func)]
     [(compiler_optimize.OptMaybeFunction.No) (- 0 1)]))
@@ -15301,11 +15296,11 @@
 
 (define (compiler-optimize-inline-self-recursive-ok?) : bool
   (let
-    [functions : compiler_ir_types.CompilerIrFunctionList
-      (compiler_ir_types.compiler-ir-function-cons
+    [functions : compiler_ir_types.CompilerIrFunctionSeq
+      (compiler_ir_types.compiler-ir-function-seq-prepend
         (opt-inline-self-recursive)
-        compiler_ir_types.CompilerIrFunctionList.Nil)]
-    [optimized : compiler_ir_types.CompilerIrFunctionList
+        (compiler_ir_types.compiler-ir-function-seq-empty))]
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         functions
@@ -15317,7 +15312,7 @@
 (define (compiler-optimize-inline-large-callee-ok?) : bool
   (let
     [symbols : OptInlineBoundsTestSymbols (opt-inline-bounds-test-symbols)]
-    [optimized : compiler_ir_types.CompilerIrFunctionList
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (opt-inline-large-functions symbols)
@@ -15442,16 +15437,16 @@
 (define (opt-inline-mb2-program
   [caller : compiler_ir_types.CompilerIrFunction]
   [first : compiler_ir_types.CompilerIrFunction]
-  [second : compiler_ir_types.CompilerIrFunction]) : compiler_ir_types.CompilerIrFunctionList
+  [second : compiler_ir_types.CompilerIrFunction]) : compiler_ir_types.CompilerIrFunctionSeq
   (compiler_optimize.opt-inline-program-functions
     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       caller
-      (compiler_ir_types.compiler-ir-function-cons
+      (compiler_ir_types.compiler-ir-function-seq-prepend
         first
-        (compiler_ir_types.compiler-ir-function-cons
+        (compiler_ir_types.compiler-ir-function-seq-prepend
           second
-          compiler_ir_types.CompilerIrFunctionList.Nil)))
+          (compiler_ir_types.compiler-ir-function-seq-empty))))
     2))
 
 (define (opt-inline-mb2-extra-caller [name : i64] [callee : i64]) : compiler_ir_types.CompilerIrFunction
@@ -15480,35 +15475,35 @@
   [first : compiler_ir_types.CompilerIrFunction]
   [second : compiler_ir_types.CompilerIrFunction]
   [extra1 : compiler_ir_types.CompilerIrFunction]
-  [extra2 : compiler_ir_types.CompilerIrFunction]) : compiler_ir_types.CompilerIrFunctionList
+  [extra2 : compiler_ir_types.CompilerIrFunction]) : compiler_ir_types.CompilerIrFunctionSeq
   (compiler_optimize.opt-inline-program-functions
     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       caller
-      (compiler_ir_types.compiler-ir-function-cons
+      (compiler_ir_types.compiler-ir-function-seq-prepend
         first
-        (compiler_ir_types.compiler-ir-function-cons
+        (compiler_ir_types.compiler-ir-function-seq-prepend
           second
-          (compiler_ir_types.compiler-ir-function-cons
+          (compiler_ir_types.compiler-ir-function-seq-prepend
             extra1
-            (compiler_ir_types.compiler-ir-function-cons
+            (compiler_ir_types.compiler-ir-function-seq-prepend
               extra2
-              compiler_ir_types.CompilerIrFunctionList.Nil)))))
+              (compiler_ir_types.compiler-ir-function-seq-empty))))))
     2))
 
 (define (opt-inline-mb2-main-blocks
-  [functions : compiler_ir_types.CompilerIrFunctionList]
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [name : String]) : compiler_ir_types.CompilerIrBlockList
-  (match (compiler_optimize.opt-function-list-find functions name)
+  (match (compiler_optimize.opt-function-seq-find functions name)
     [(compiler_optimize.OptMaybeFunction.Some func)
       (compiler_optimize.opt-function-blocks func)]
     [(compiler_optimize.OptMaybeFunction.No)
       compiler_ir_types.CompilerIrBlockList.Nil]))
 
 (define (opt-inline-mb2-main-verified?
-  [functions : compiler_ir_types.CompilerIrFunctionList]
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [name : String]) : bool
-  (match (compiler_optimize.opt-function-list-find functions name)
+  (match (compiler_optimize.opt-function-seq-find functions name)
     [(compiler_optimize.OptMaybeFunction.Some func)
       (compiler_optimize.opt-verify-ok?
         (compiler_optimize.opt-verify-function func))]
@@ -15520,7 +15515,7 @@
     [a-name : i64 (opt-test-symbol "mb2_a")]
     [b-name : i64 (opt-test-symbol "mb2_b")]
     [big-name : i64 (opt-test-symbol "mb2_big")]
-    [both : compiler_ir_types.CompilerIrFunctionList
+    [both : compiler_ir_types.CompilerIrFunctionSeq
       (opt-inline-mb2-program
         (opt-inline-mb2-caller main-name a-name b-name)
         (opt-inline-mb2-small-callee a-name 7)
@@ -15529,7 +15524,7 @@
       (opt-inline-mb2-main-blocks both "mb2_main")]
     ;; `mb2_big` is referenced three times, so no site can claim it by
     ;; absorption, and its body is far past what the duplicating clauses buy.
-    [fuel : compiler_ir_types.CompilerIrFunctionList
+    [fuel : compiler_ir_types.CompilerIrFunctionSeq
       (opt-inline-mb2-shared-program
         (opt-inline-mb2-caller main-name a-name big-name)
         (opt-inline-mb2-small-callee a-name 7)
@@ -15558,7 +15553,7 @@
 (define (compiler-optimize-inline-bounds-callee-ok?) : bool
   (let
     [symbols : OptInlineBoundsTestSymbols (opt-inline-bounds-test-symbols)]
-    [optimized : compiler_ir_types.CompilerIrFunctionList
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (opt-inline-bounds-functions symbols)
@@ -15585,7 +15580,7 @@
 (define (compiler-optimize-inline-bounds-labels-distinct-ok?) : bool
   (let
     [symbols : OptInlineBoundsTestSymbols (opt-inline-bounds-test-symbols)]
-    [optimized : compiler_ir_types.CompilerIrFunctionList
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (opt-inline-bounds-twice-functions symbols)
@@ -15630,7 +15625,7 @@
 (define (compiler-optimize-inline-bounds-label-guard-ok?) : bool
   (let
     [symbols : OptInlineBoundsTestSymbols (opt-inline-bounds-test-symbols)]
-    [optimized : compiler_ir_types.CompilerIrFunctionList
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (opt-inline-bounds-twice-functions symbols)
@@ -15639,7 +15634,7 @@
       (opt-inline-duplicate-bounds-label-function symbols)]
     [fallback : compiler_ir_types.CompilerIrFunction
       (opt-inline-frame-caller (opt-inline-frame-test-symbols))]
-    (match (compiler_optimize.opt-function-list-find optimized "main")
+    (match (compiler_optimize.opt-function-seq-find optimized "main")
       [(compiler_optimize.OptMaybeFunction.Some main)
         (and
           (compiler_optimize.opt-inline-structure-ok?
@@ -15659,14 +15654,14 @@
       (opt-inline-bounds-test-symbols)]
     [rejected-symbols : OptInlineBoundsTestSymbols
       (opt-inline-bounds-test-symbols)]
-    [accepted : compiler_ir_types.CompilerIrFunctionList
+    [accepted : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (opt-inline-bounds-leaf-functions
           accepted-symbols
           (compiler_optimize.opt-inline-bounds-leaf-max-body))
         2)]
-    [rejected : compiler_ir_types.CompilerIrFunctionList
+    [rejected : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (opt-inline-bounds-leaf-functions
@@ -15700,19 +15695,19 @@
 (define (compiler-optimize-inline-small-bounds-leaf-ok?) : bool
   (let
     [symbols : OptInlineBoundsTestSymbols (opt-inline-bounds-test-symbols)]
-    [minimal : compiler_ir_types.CompilerIrFunctionList
+    [minimal : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (opt-inline-bounds-leaf-twice-functions symbols 1)
         2)]
-    [boundary : compiler_ir_types.CompilerIrFunctionList
+    [boundary : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (opt-inline-bounds-leaf-twice-functions
           symbols
           (compiler_optimize.opt-inline-max-body))
         2)]
-    [leaf-call : compiler_ir_types.CompilerIrFunctionList
+    [leaf-call : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (opt-inline-bounds-leaf-call-functions symbols)
@@ -15757,12 +15752,12 @@
 (define (compiler-optimize-inline-bounds-leaf-char-return-ok?) : bool
   (let
     [symbols : OptInlineBoundsTestSymbols (opt-inline-bounds-test-symbols)]
-    [char-program : compiler_ir_types.CompilerIrFunctionList
+    [char-program : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (opt-inline-bounds-leaf-char-functions symbols)
         2)]
-    [owned-program : compiler_ir_types.CompilerIrFunctionList
+    [owned-program : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (opt-inline-bounds-leaf-owned-functions symbols)
@@ -15829,7 +15824,7 @@
 (define (compiler-optimize-inline-multi-call-ok?) : bool
   (let
     [symbols : OptInlineFrameTestSymbols (opt-inline-frame-test-symbols)]
-    [optimized : compiler_ir_types.CompilerIrFunctionList
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (opt-inline-multi-call-functions symbols)
@@ -15851,7 +15846,7 @@
 (define (compiler-optimize-inline-bottom-up-writeback-ok?) : bool
   (let
     [symbols : OptInlineFrameTestSymbols (opt-inline-frame-test-symbols)]
-    [optimized : compiler_ir_types.CompilerIrFunctionList
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (opt-inline-cascade-functions symbols)
@@ -15869,7 +15864,7 @@
 
 (define (compiler-optimize-inline-mutual-scc-refusal-ok?) : bool
   (let
-    [optimized : compiler_ir_types.CompilerIrFunctionList
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (opt-inline-mutual-functions)
@@ -15941,12 +15936,12 @@
 (define (compiler-optimize-inline-pack-word-ok?) : bool
   (let
     [symbols : OptInlineFrameTestSymbols (opt-inline-frame-test-symbols)]
-    [optimized : compiler_ir_types.CompilerIrFunctionList
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (opt-inline-pack-word-functions symbols)
         2)]
-    (match (compiler_optimize.opt-function-list-find optimized "main")
+    (match (compiler_optimize.opt-function-seq-find optimized "main")
       [(compiler_optimize.OptMaybeFunction.Some main)
         (and
           (=
@@ -16059,12 +16054,12 @@
               (compiler_ir_types.CompilerIrValue.Var 0)))))
       compiler_ir_types.CompilerIrBlockList.Nil)))
 
-(define (opt-inline-branch-functions [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunctionList
-  (compiler_ir_types.compiler-ir-function-cons
+(define (opt-inline-branch-functions [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
     (opt-inline-branch-caller symbols)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (opt-inline-branch-callee symbols)
-      compiler_ir_types.CompilerIrFunctionList.Nil)))
+      (compiler_ir_types.compiler-ir-function-seq-empty))))
 
 (define (opt-inline-repeated-predicate-callee
   [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunction
@@ -16152,47 +16147,47 @@
           compiler_ir_types.CompilerIrBlockList.Nil)))))
 
 (define (opt-inline-repeated-predicate-functions
-  [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunctionList
-  (compiler_ir_types.compiler-ir-function-cons
+  [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
     (opt-inline-repeated-predicate-caller symbols)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (opt-inline-repeated-predicate-callee symbols)
-      compiler_ir_types.CompilerIrFunctionList.Nil)))
+      (compiler_ir_types.compiler-ir-function-seq-empty))))
 
 (define (compiler-optimize-inline-repeated-tiny-predicate-ok?) : bool
   (let
     [level0-symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [level1-symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [level2-symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
-    [level0 : compiler_ir_types.CompilerIrFunctionList
+    [level0 : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (opt-inline-repeated-predicate-functions level0-symbols)
         0)]
-    [level1 : compiler_ir_types.CompilerIrFunctionList
+    [level1 : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (opt-inline-repeated-predicate-functions level1-symbols)
         1)]
-    [level2 : compiler_ir_types.CompilerIrFunctionList
+    [level2 : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (opt-inline-repeated-predicate-functions level2-symbols)
         2)]
-    (match (compiler_optimize.opt-function-list-find level2 "main")
+    (match (compiler_optimize.opt-function-seq-find level2 "main")
       [(compiler_optimize.OptMaybeFunction.Some main)
         (let
           [blocks : compiler_ir_types.CompilerIrBlockList
             (compiler_optimize.opt-function-blocks main)]
           (and
             (=
-              (opt-count-direct-call-name-function-list
+              (opt-count-direct-call-name-function-seq
                 level0
                 "main"
                 "inline_tiny_predicate")
               2)
             (=
-              (opt-count-direct-call-name-function-list
+              (opt-count-direct-call-name-function-seq
                 level1
                 "main"
                 "inline_tiny_predicate")
@@ -16206,12 +16201,12 @@
 (define (compiler-optimize-inline-multiblock-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
-    [optimized : compiler_ir_types.CompilerIrFunctionList
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (opt-inline-branch-functions symbols)
         2)]
-    (match (compiler_optimize.opt-function-list-find optimized "main")
+    (match (compiler_optimize.opt-function-seq-find optimized "main")
       [(compiler_optimize.OptMaybeFunction.Some main)
         (let
           [blocks : compiler_ir_types.CompilerIrBlockList
@@ -16273,22 +16268,22 @@
               (compiler_ir_types.CompilerIrValue.Var 0)))))
       compiler_ir_types.CompilerIrBlockList.Nil)))
 
-(define (opt-inline-loop-functions [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunctionList
-  (compiler_ir_types.compiler-ir-function-cons
+(define (opt-inline-loop-functions [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
     (opt-inline-loop-caller symbols)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (opt-inline-loop-callee symbols)
-      compiler_ir_types.CompilerIrFunctionList.Nil)))
+      (compiler_ir_types.compiler-ir-function-seq-empty))))
 
 (define (compiler-optimize-inline-multiblock-acyclic-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
-    [optimized : compiler_ir_types.CompilerIrFunctionList
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (opt-inline-loop-functions symbols)
         2)]
-    (match (compiler_optimize.opt-function-list-find optimized "main")
+    (match (compiler_optimize.opt-function-seq-find optimized "main")
       [(compiler_optimize.OptMaybeFunction.Some main)
         (let
           [blocks : compiler_ir_types.CompilerIrBlockList
@@ -16383,16 +16378,16 @@
 (define (compiler-optimize-inline-multiblock-bounds-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
-    [optimized : compiler_ir_types.CompilerIrFunctionList
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        (compiler_ir_types.compiler-ir-function-cons
+        (compiler_ir_types.compiler-ir-function-seq-prepend
           (opt-inline-mb-bounds-caller symbols)
-          (compiler_ir_types.compiler-ir-function-cons
+          (compiler_ir_types.compiler-ir-function-seq-prepend
             (opt-inline-mb-bounds-callee symbols)
-            compiler_ir_types.CompilerIrFunctionList.Nil))
+            (compiler_ir_types.compiler-ir-function-seq-empty)))
         2)]
-    (match (compiler_optimize.opt-function-list-find optimized "main")
+    (match (compiler_optimize.opt-function-seq-find optimized "main")
       [(compiler_optimize.OptMaybeFunction.Some main)
         (let
           [blocks : compiler_ir_types.CompilerIrBlockList
@@ -16679,16 +16674,16 @@
 (define (compiler-optimize-inline-multiblock-switch-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
-    [optimized : compiler_ir_types.CompilerIrFunctionList
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        (compiler_ir_types.compiler-ir-function-cons
+        (compiler_ir_types.compiler-ir-function-seq-prepend
           (opt-inline-switch-caller symbols)
-          (compiler_ir_types.compiler-ir-function-cons
+          (compiler_ir_types.compiler-ir-function-seq-prepend
             (opt-inline-acyclic-switch-callee symbols)
-            compiler_ir_types.CompilerIrFunctionList.Nil))
+            (compiler_ir_types.compiler-ir-function-seq-empty)))
         2)]
-    (match (compiler_optimize.opt-function-list-find optimized "main")
+    (match (compiler_optimize.opt-function-seq-find optimized "main")
       [(compiler_optimize.OptMaybeFunction.Some main)
         (let
           [blocks : compiler_ir_types.CompilerIrBlockList
@@ -16714,16 +16709,16 @@
 (define (compiler-optimize-inline-multiblock-cyclic-bounds-switch-admission-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
-    [optimized : compiler_ir_types.CompilerIrFunctionList
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        (compiler_ir_types.compiler-ir-function-cons
+        (compiler_ir_types.compiler-ir-function-seq-prepend
           (opt-inline-switch-caller symbols)
-          (compiler_ir_types.compiler-ir-function-cons
+          (compiler_ir_types.compiler-ir-function-seq-prepend
             (opt-inline-switch-callee symbols)
-            compiler_ir_types.CompilerIrFunctionList.Nil))
+            (compiler_ir_types.compiler-ir-function-seq-empty)))
         2)]
-    (match (compiler_optimize.opt-function-list-find optimized "main")
+    (match (compiler_optimize.opt-function-seq-find optimized "main")
       [(compiler_optimize.OptMaybeFunction.Some main)
         (let
           [blocks : compiler_ir_types.CompilerIrBlockList
@@ -16736,19 +16731,19 @@
 
 (define (opt-inline-switch-functions-named
   [symbols : OptInlineMultiTestSymbols]
-  [callee-name : i64]) : compiler_ir_types.CompilerIrFunctionList
-  (compiler_ir_types.compiler-ir-function-cons
+  [callee-name : i64]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
     (opt-inline-switch-caller-named symbols callee-name)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (opt-inline-switch-callee-named callee-name)
-      compiler_ir_types.CompilerIrFunctionList.Nil)))
+      (compiler_ir_types.compiler-ir-function-seq-empty))))
 
 (define (opt-inline-switch-case-result-ok?
-  [functions : compiler_ir_types.CompilerIrFunctionList]
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [callee-text : String]
   [expected-calls : i64]
   [expected-bounds : i64]) : bool
-  (match (compiler_optimize.opt-function-list-find functions "main")
+  (match (compiler_optimize.opt-function-seq-find functions "main")
     [(compiler_optimize.OptMaybeFunction.Some main)
       (let
         [blocks : compiler_ir_types.CompilerIrBlockList
@@ -16768,17 +16763,17 @@
     [other-text : String "bench.tl::qs-partition"]
     [vm-name : i64 (opt-test-symbol vm-text)]
     [other-name : i64 (opt-test-symbol other-text)]
-    [vm-opt2 : compiler_ir_types.CompilerIrFunctionList
+    [vm-opt2 : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (opt-inline-switch-functions-named symbols vm-name)
         2)]
-    [other-opt2 : compiler_ir_types.CompilerIrFunctionList
+    [other-opt2 : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (opt-inline-switch-functions-named symbols other-name)
         2)]
-    [vm-opt1 : compiler_ir_types.CompilerIrFunctionList
+    [vm-opt1 : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (opt-inline-switch-functions-named symbols vm-name)
@@ -16907,19 +16902,19 @@
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [callee-name : i64 symbols.inline-switch]
-    [optimized : compiler_ir_types.CompilerIrFunctionList
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        (compiler_ir_types.compiler-ir-function-cons
+        (compiler_ir_types.compiler-ir-function-seq-prepend
           (opt-inline-loop-site-function
             symbols.main
             callee-name
             (opt-inline-loop-site-entry-instrs))
-          (compiler_ir_types.compiler-ir-function-cons
+          (compiler_ir_types.compiler-ir-function-seq-prepend
             (opt-inline-switch-callee-named callee-name)
-            compiler_ir_types.CompilerIrFunctionList.Nil))
+            (compiler_ir_types.compiler-ir-function-seq-empty)))
         2)]
-    (match (compiler_optimize.opt-function-list-find optimized "main")
+    (match (compiler_optimize.opt-function-seq-find optimized "main")
       [(compiler_optimize.OptMaybeFunction.Some main)
         (let
           [blocks : compiler_ir_types.CompilerIrBlockList
@@ -16943,16 +16938,16 @@
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [callee-name : i64 symbols.inline-switch]
-    [optimized : compiler_ir_types.CompilerIrFunctionList
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        (compiler_ir_types.compiler-ir-function-cons
+        (compiler_ir_types.compiler-ir-function-seq-prepend
           (opt-inline-switch-caller-named symbols callee-name)
-          (compiler_ir_types.compiler-ir-function-cons
+          (compiler_ir_types.compiler-ir-function-seq-prepend
             (opt-inline-switch-callee-named callee-name)
-            compiler_ir_types.CompilerIrFunctionList.Nil))
+            (compiler_ir_types.compiler-ir-function-seq-empty)))
         2)]
-    (match (compiler_optimize.opt-function-list-find optimized "main")
+    (match (compiler_optimize.opt-function-seq-find optimized "main")
       [(compiler_optimize.OptMaybeFunction.Some main)
         (let
           [blocks : compiler_ir_types.CompilerIrBlockList
@@ -16973,17 +16968,17 @@
 ;; body moves; between them the two fixtures isolate call-freedom.
 (define (opt-inline-cascade-program
   [symbols : OptInlineMultiTestSymbols]
-  [mid-entry : compiler_ir_types.CompilerIrInstrSeq]) : compiler_ir_types.CompilerIrFunctionList
+  [mid-entry : compiler_ir_types.CompilerIrInstrSeq]) : compiler_ir_types.CompilerIrFunctionSeq
   (let
     [mid-name : i64 symbols.inline-nonleaf]
     [leaf-name : i64 symbols.inline-switch]
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (opt-inline-switch-caller-named symbols mid-name)
-      (compiler_ir_types.compiler-ir-function-cons
+      (compiler_ir_types.compiler-ir-function-seq-prepend
         (opt-inline-loop-site-function mid-name leaf-name mid-entry)
-        (compiler_ir_types.compiler-ir-function-cons
+        (compiler_ir_types.compiler-ir-function-seq-prepend
           (opt-inline-dup-leaf-calling leaf-name symbols.external-helper)
-          compiler_ir_types.CompilerIrFunctionList.Nil)))))
+          (compiler_ir_types.compiler-ir-function-seq-empty))))))
 
 ;; `mid` is single-reference and carries no bounds checks, so it is inlined at
 ;; its own call site for free. Importing the bounds-carrying loop leaf would
@@ -16992,12 +16987,12 @@
 (define (compiler-optimize-inline-bounds-loop-cascade-refusal-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
-    [refused : compiler_ir_types.CompilerIrFunctionList
+    [refused : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (opt-inline-cascade-program symbols (opt-inline-loop-site-entry-instrs))
         2)]
-    [admitted : compiler_ir_types.CompilerIrFunctionList
+    [admitted : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (opt-inline-cascade-program
@@ -17006,13 +17001,13 @@
         2)]
     (and
       (=
-        (opt-count-direct-call-name-function-list
+        (opt-count-direct-call-name-function-seq
           refused
           "inline_nonleaf"
           "inline_switch")
         1)
       (=
-        (opt-count-direct-call-name-function-list
+        (opt-count-direct-call-name-function-seq
           admitted
           "inline_nonleaf"
           "inline_switch")
@@ -17109,11 +17104,11 @@
 (define (opt-inline-dup-caller-chain
   [names : compiler_optimize.OptSlotList]
   [callee-name : i64]
-  [tail : compiler_ir_types.CompilerIrFunctionList]) : compiler_ir_types.CompilerIrFunctionList
+  [tail : compiler_ir_types.CompilerIrFunctionSeq]) : compiler_ir_types.CompilerIrFunctionSeq
   (match names
     [(compiler_optimize.OptSlotList.Nil) tail]
     [(compiler_optimize.OptSlotList.Cons name rest)
-      (compiler_ir_types.compiler-ir-function-cons
+      (compiler_ir_types.compiler-ir-function-seq-prepend
         (opt-inline-loop-site-function
           name
           callee-name
@@ -17137,15 +17132,15 @@
 (define (opt-inline-dup-optimized
   [callers : compiler_optimize.OptSlotList]
   [callee-name : i64]
-  [leaf : compiler_ir_types.CompilerIrFunction]) : compiler_ir_types.CompilerIrFunctionList
+  [leaf : compiler_ir_types.CompilerIrFunction]) : compiler_ir_types.CompilerIrFunctionSeq
   (compiler_optimize.opt-inline-program-functions
     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
     (opt-inline-dup-caller-chain
       callers
       callee-name
-      (compiler_ir_types.compiler-ir-function-cons
+      (compiler_ir_types.compiler-ir-function-seq-prepend
         leaf
-        compiler_ir_types.CompilerIrFunctionList.Nil))
+        (compiler_ir_types.compiler-ir-function-seq-empty)))
     2))
 
 ;; Two in-loop callers duplicate the leaf into both. The three-reference shape
@@ -17158,17 +17153,15 @@
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [callee-name : i64 symbols.inline-switch]
-    [two : compiler_ir_types.CompilerIrFunctionList
+    [two : compiler_ir_types.CompilerIrFunctionSeq
       (opt-inline-dup-optimized
         (opt-inline-dup-two-caller-names symbols)
         callee-name
         (opt-inline-dup-leaf-plain callee-name))]
     (and
+      (= (opt-count-direct-call-name-function-seq two "main" "inline_switch") 0)
       (=
-        (opt-count-direct-call-name-function-list two "main" "inline_switch")
-        0)
-      (=
-        (opt-count-direct-call-name-function-list
+        (opt-count-direct-call-name-function-seq
           two
           "inline_nonleaf"
           "inline_switch")
@@ -17190,34 +17183,34 @@
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [callee-name : i64 symbols.inline-switch]
     [mid-name : i64 symbols.inline-nonleaf]
-    [optimized : compiler_ir_types.CompilerIrFunctionList
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        (compiler_ir_types.compiler-ir-function-cons
+        (compiler_ir_types.compiler-ir-function-seq-prepend
           (opt-inline-switch-caller-named symbols mid-name)
-          (compiler_ir_types.compiler-ir-function-cons
+          (compiler_ir_types.compiler-ir-function-seq-prepend
             (opt-inline-loop-site-function
               mid-name
               callee-name
               (opt-inline-loop-site-entry-instrs))
-            (compiler_ir_types.compiler-ir-function-cons
+            (compiler_ir_types.compiler-ir-function-seq-prepend
               (opt-inline-loop-site-function
                 symbols.inline-loop
                 callee-name
                 (opt-inline-loop-site-entry-instrs))
-              (compiler_ir_types.compiler-ir-function-cons
+              (compiler_ir_types.compiler-ir-function-seq-prepend
                 (opt-inline-dup-leaf-plain callee-name)
-                compiler_ir_types.CompilerIrFunctionList.Nil))))
+                (compiler_ir_types.compiler-ir-function-seq-empty)))))
         2)]
     (and
       (=
-        (opt-count-direct-call-name-function-list
+        (opt-count-direct-call-name-function-seq
           optimized
           "inline_nonleaf"
           "inline_switch")
         1)
       (=
-        (opt-count-direct-call-name-function-list
+        (opt-count-direct-call-name-function-seq
           optimized
           "inline_loop"
           "inline_switch")
@@ -17364,7 +17357,7 @@
       (begin
         (compiler_optimize.opt-inline-checked-set-active! true)
         (compiler_optimize.opt-inline-checked-program-begin!))]
-    [optimized : compiler_ir_types.CompilerIrFunctionList
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
       (opt-inline-dup-optimized
         (opt-inline-dup-two-caller-names symbols)
         callee-name
@@ -17379,7 +17372,7 @@
       ;; asked and the budget is untouched
       (= spent 0)
       (=
-        (opt-count-direct-call-name-function-list
+        (opt-count-direct-call-name-function-seq
           optimized
           "main"
           "inline_switch")
@@ -17411,7 +17404,7 @@
       (begin
         (compiler_optimize.opt-inline-checked-program-begin!)
         (compiler_optimize.opt-inline-checked-set-active! false))]
-    [banked : compiler_ir_types.CompilerIrFunctionList
+    [banked : compiler_ir_types.CompilerIrFunctionSeq
       (opt-inline-dup-optimized
         (opt-inline-dup-three-caller-names symbols)
         callee-name
@@ -17420,18 +17413,18 @@
       (+
         (*
           100
-          (opt-count-direct-call-name-function-list
+          (opt-count-direct-call-name-function-seq
             banked
             "main"
             "inline_switch"))
         (+
           (*
             10
-            (opt-count-direct-call-name-function-list
+            (opt-count-direct-call-name-function-seq
               banked
               "inline_nonleaf"
               "inline_switch"))
-          (opt-count-direct-call-name-function-list
+          (opt-count-direct-call-name-function-seq
             banked
             "inline_loop"
             "inline_switch")))]
@@ -17439,7 +17432,7 @@
       (begin
         (compiler_optimize.opt-inline-checked-set-active! true)
         (compiler_optimize.opt-inline-checked-program-begin!))]
-    [armed : compiler_ir_types.CompilerIrFunctionList
+    [armed : compiler_ir_types.CompilerIrFunctionSeq
       (opt-inline-dup-optimized
         (opt-inline-dup-three-caller-names symbols)
         callee-name
@@ -17448,18 +17441,15 @@
       (+
         (*
           100
-          (opt-count-direct-call-name-function-list
-            armed
-            "main"
-            "inline_switch"))
+          (opt-count-direct-call-name-function-seq armed "main" "inline_switch"))
         (+
           (*
             10
-            (opt-count-direct-call-name-function-list
+            (opt-count-direct-call-name-function-seq
               armed
               "inline_nonleaf"
               "inline_switch"))
-          (opt-count-direct-call-name-function-list
+          (opt-count-direct-call-name-function-seq
             armed
             "inline_loop"
             "inline_switch")))]
@@ -17592,28 +17582,25 @@
       (begin
         (compiler_optimize.opt-inline-checked-set-active! true)
         (compiler_optimize.opt-inline-checked-program-begin!))]
-    [armed : compiler_ir_types.CompilerIrFunctionList
+    [armed : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        (compiler_ir_types.compiler-ir-function-cons
+        (compiler_ir_types.compiler-ir-function-seq-prepend
           (opt-inline-nested-loop-site-function symbols.main callee-name)
-          (compiler_ir_types.compiler-ir-function-cons
+          (compiler_ir_types.compiler-ir-function-seq-prepend
             (opt-inline-nested-loop-site-function
               symbols.inline-nonleaf
               callee-name)
-            (compiler_ir_types.compiler-ir-function-cons
+            (compiler_ir_types.compiler-ir-function-seq-prepend
               (opt-inline-dup-leaf-calling callee-name symbols.external-helper)
-              compiler_ir_types.CompilerIrFunctionList.Nil)))
+              (compiler_ir_types.compiler-ir-function-seq-empty))))
         2)]
     [code : i64
       (+
         (*
           10
-          (opt-count-direct-call-name-function-list
-            armed
-            "main"
-            "inline_switch"))
-        (opt-count-direct-call-name-function-list
+          (opt-count-direct-call-name-function-seq armed "main" "inline_switch"))
+        (opt-count-direct-call-name-function-seq
           armed
           "inline_nonleaf"
           "inline_switch"))]
@@ -17902,20 +17889,20 @@
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [callee-name : i64 symbols.inline-switch]
-    [optimized : compiler_ir_types.CompilerIrFunctionList
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
       (opt-inline-dup-optimized
         (opt-inline-dup-two-caller-names symbols)
         callee-name
         (opt-inline-dup-leaf-calling callee-name symbols.external-helper))]
     (and
       (=
-        (opt-count-direct-call-name-function-list
+        (opt-count-direct-call-name-function-seq
           optimized
           "main"
           "inline_switch")
         1)
       (=
-        (opt-count-direct-call-name-function-list
+        (opt-count-direct-call-name-function-seq
           optimized
           "inline_nonleaf"
           "inline_switch")
@@ -18235,7 +18222,7 @@
           compiler_ir_types.CompilerIrBlockList.Nil)))))
 
 (define (opt-inline-wide-optimized
-  [functions : compiler_ir_types.CompilerIrFunctionList]) : compiler_ir_types.CompilerIrFunctionList
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]) : compiler_ir_types.CompilerIrFunctionSeq
   (compiler_optimize.opt-inline-program-functions
     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
     functions
@@ -18243,17 +18230,17 @@
 
 (define (opt-inline-wide-two-function-optimized
   [caller : compiler_ir_types.CompilerIrFunction]
-  [callee : compiler_ir_types.CompilerIrFunction]) : compiler_ir_types.CompilerIrFunctionList
+  [callee : compiler_ir_types.CompilerIrFunction]) : compiler_ir_types.CompilerIrFunctionSeq
   (opt-inline-wide-optimized
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       caller
-      (compiler_ir_types.compiler-ir-function-cons
+      (compiler_ir_types.compiler-ir-function-seq-prepend
         callee
-        compiler_ir_types.CompilerIrFunctionList.Nil))))
+        (compiler_ir_types.compiler-ir-function-seq-empty)))))
 
 (define (opt-inline-wide-remaining-calls
-  [optimized : compiler_ir_types.CompilerIrFunctionList]) : i64
-  (opt-count-direct-call-name-function-list optimized "main" "inline_switch"))
+  [optimized : compiler_ir_types.CompilerIrFunctionSeq]) : i64
+  (opt-count-direct-call-name-function-seq optimized "main" "inline_switch"))
 
 ;; The headline case: a 220-instruction, ten-parameter, single-site callee is
 ;; absorbed whole at its one straight-line site. The call disappears, the body
@@ -18262,14 +18249,14 @@
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [callee-name : i64 symbols.inline-switch]
-    [optimized : compiler_ir_types.CompilerIrFunctionList
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
       (opt-inline-wide-two-function-optimized
         (opt-inline-wide-cold-caller
           symbols.main
           callee-name
           (opt-inline-wide-param-count))
         (opt-inline-wide-callee callee-name))]
-    (match (compiler_optimize.opt-function-list-find optimized "main")
+    (match (compiler_optimize.opt-function-seq-find optimized "main")
       [(compiler_optimize.OptMaybeFunction.Some main)
         (let
           [blocks : compiler_ir_types.CompilerIrBlockList
@@ -18293,11 +18280,11 @@
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [callee-name : i64 symbols.inline-switch]
-    [optimized : compiler_ir_types.CompilerIrFunctionList
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
       (opt-inline-wide-two-function-optimized
         (opt-inline-wide-loop-caller symbols.main callee-name)
         (opt-inline-wide-callee callee-name))]
-    (match (compiler_optimize.opt-function-list-find optimized "main")
+    (match (compiler_optimize.opt-function-seq-find optimized "main")
       [(compiler_optimize.OptMaybeFunction.Some main)
         (let
           [blocks : compiler_ir_types.CompilerIrBlockList
@@ -18443,19 +18430,19 @@
 (define (opt-inline-narrow-site-program
   [symbols : OptInlineMultiTestSymbols]
   [mid : compiler_ir_types.CompilerIrFunction]
-  [leaf : compiler_ir_types.CompilerIrFunction]) : compiler_ir_types.CompilerIrFunctionList
-  (compiler_ir_types.compiler-ir-function-cons
+  [leaf : compiler_ir_types.CompilerIrFunction]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
     (opt-inline-switch-caller-named symbols symbols.inline-nonleaf)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       mid
-      (compiler_ir_types.compiler-ir-function-cons
+      (compiler_ir_types.compiler-ir-function-seq-prepend
         leaf
-        compiler_ir_types.CompilerIrFunctionList.Nil))))
+        (compiler_ir_types.compiler-ir-function-seq-empty)))))
 
 (define (opt-inline-narrow-site-optimized
   [symbols : OptInlineMultiTestSymbols]
   [mid : compiler_ir_types.CompilerIrFunction]
-  [leaf : compiler_ir_types.CompilerIrFunction]) : compiler_ir_types.CompilerIrFunctionList
+  [leaf : compiler_ir_types.CompilerIrFunction]) : compiler_ir_types.CompilerIrFunctionSeq
   (compiler_optimize.opt-inline-program-functions
     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
     (opt-inline-narrow-site-program symbols mid leaf)
@@ -18466,8 +18453,8 @@
 ;; standing for global DCE to remove afterwards, so `mid` is the one place that
 ;; answers whether the import happened.
 (define (opt-inline-narrow-site-remaining-calls
-  [optimized : compiler_ir_types.CompilerIrFunctionList]) : i64
-  (opt-count-direct-call-name-function-list
+  [optimized : compiler_ir_types.CompilerIrFunctionSeq]) : i64
+  (opt-count-direct-call-name-function-seq
     optimized
     "inline_nonleaf"
     "inline_switch"))
@@ -18728,19 +18715,19 @@
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [big-name : i64 symbols.inline-switch]
     [tiny-name : i64 symbols.external-helper]
-    [optimized : compiler_ir_types.CompilerIrFunctionList
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
       (opt-inline-wide-optimized
-        (compiler_ir_types.compiler-ir-function-cons
+        (compiler_ir_types.compiler-ir-function-seq-prepend
           (opt-inline-fuel-caller symbols.main big-name tiny-name)
-          (compiler_ir_types.compiler-ir-function-cons
+          (compiler_ir_types.compiler-ir-function-seq-prepend
             (opt-inline-chain-callee big-name (opt-inline-wide-param-count) 34)
-            (compiler_ir_types.compiler-ir-function-cons
+            (compiler_ir_types.compiler-ir-function-seq-prepend
               (opt-inline-fuel-tiny-leaf tiny-name)
-              compiler_ir_types.CompilerIrFunctionList.Nil))))]
+              (compiler_ir_types.compiler-ir-function-seq-empty)))))]
     (and
       (= (opt-inline-wide-remaining-calls optimized) 0)
       (=
-        (opt-count-direct-call-name-function-list
+        (opt-count-direct-call-name-function-seq
           optimized
           "main"
           "external_helper")
@@ -18753,25 +18740,25 @@
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [callee-name : i64 symbols.inline-switch]
-    [optimized : compiler_ir_types.CompilerIrFunctionList
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
       (opt-inline-wide-optimized
-        (compiler_ir_types.compiler-ir-function-cons
+        (compiler_ir_types.compiler-ir-function-seq-prepend
           (opt-inline-wide-cold-caller
             symbols.main
             callee-name
             (opt-inline-wide-param-count))
-          (compiler_ir_types.compiler-ir-function-cons
+          (compiler_ir_types.compiler-ir-function-seq-prepend
             (opt-inline-wide-cold-caller
               symbols.inline-loop
               callee-name
               (opt-inline-wide-param-count))
-            (compiler_ir_types.compiler-ir-function-cons
+            (compiler_ir_types.compiler-ir-function-seq-prepend
               (opt-inline-wide-callee callee-name)
-              compiler_ir_types.CompilerIrFunctionList.Nil))))]
+              (compiler_ir_types.compiler-ir-function-seq-empty)))))]
     (and
       (= (opt-inline-wide-remaining-calls optimized) 1)
       (=
-        (opt-count-direct-call-name-function-list
+        (opt-count-direct-call-name-function-seq
           optimized
           "inline_loop"
           "inline_switch")
@@ -18863,19 +18850,19 @@
 ;; collide.
 (define (opt-inline-single-site-cascade-clause-program
   [symbols : OptInlineMultiTestSymbols]
-  [mid : compiler_ir_types.CompilerIrFunction]) : compiler_ir_types.CompilerIrFunctionList
-  (compiler_ir_types.compiler-ir-function-cons
+  [mid : compiler_ir_types.CompilerIrFunction]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
     (opt-inline-switch-caller-named symbols symbols.inline-nonleaf)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       mid
-      (compiler_ir_types.compiler-ir-function-cons
+      (compiler_ir_types.compiler-ir-function-seq-prepend
         (opt-inline-wide-callee symbols.inline-switch)
-        compiler_ir_types.CompilerIrFunctionList.Nil))))
+        (compiler_ir_types.compiler-ir-function-seq-empty)))))
 
 (define (compiler-optimize-inline-single-site-cascade-site-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
-    [refused : compiler_ir_types.CompilerIrFunctionList
+    [refused : compiler_ir_types.CompilerIrFunctionSeq
       (opt-inline-wide-optimized
         (opt-inline-single-site-cascade-clause-program
           symbols
@@ -18883,7 +18870,7 @@
             symbols.inline-nonleaf
             symbols.inline-switch
             (opt-inline-wide-param-count))))]
-    [admitted : compiler_ir_types.CompilerIrFunctionList
+    [admitted : compiler_ir_types.CompilerIrFunctionSeq
       (opt-inline-wide-optimized
         (opt-inline-single-site-cascade-clause-program
           symbols
@@ -18892,13 +18879,13 @@
             symbols.inline-switch)))]
     (and
       (=
-        (opt-count-direct-call-name-function-list
+        (opt-count-direct-call-name-function-seq
           refused
           "inline_nonleaf"
           "inline_switch")
         1)
       (=
-        (opt-count-direct-call-name-function-list
+        (opt-count-direct-call-name-function-seq
           admitted
           "inline_nonleaf"
           "inline_switch")
@@ -18918,28 +18905,28 @@
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [leaf-name : i64 symbols.inline-switch]
     [mid-name : i64 symbols.inline-nonleaf]
-    [optimized : compiler_ir_types.CompilerIrFunctionList
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
       (opt-inline-wide-optimized
-        (compiler_ir_types.compiler-ir-function-cons
+        (compiler_ir_types.compiler-ir-function-seq-prepend
           (opt-inline-wide-cold-caller
             symbols.main
             mid-name
             (opt-inline-wide-param-count))
-          (compiler_ir_types.compiler-ir-function-cons
+          (compiler_ir_types.compiler-ir-function-seq-prepend
             (opt-inline-wide-cascade-middle mid-name leaf-name)
-            (compiler_ir_types.compiler-ir-function-cons
+            (compiler_ir_types.compiler-ir-function-seq-prepend
               (opt-inline-wide-callee leaf-name)
-              compiler_ir_types.CompilerIrFunctionList.Nil))))]
+              (compiler_ir_types.compiler-ir-function-seq-empty)))))]
     (+
       (*
         10
-        (opt-count-direct-call-name-function-list
+        (opt-count-direct-call-name-function-seq
           optimized
           "main"
           "inline_nonleaf"))
       (+
         (opt-inline-wide-remaining-calls optimized)
-        (opt-count-direct-call-name-function-list
+        (opt-count-direct-call-name-function-seq
           optimized
           "inline_nonleaf"
           "inline_switch")))))
@@ -19078,11 +19065,11 @@
 (define (opt-inline-shared-flat-caller-chain
   [names : compiler_optimize.OptSlotList]
   [callee-name : i64]
-  [tail : compiler_ir_types.CompilerIrFunctionList]) : compiler_ir_types.CompilerIrFunctionList
+  [tail : compiler_ir_types.CompilerIrFunctionSeq]) : compiler_ir_types.CompilerIrFunctionSeq
   (match names
     [(compiler_optimize.OptSlotList.Nil) tail]
     [(compiler_optimize.OptSlotList.Cons name rest)
-      (compiler_ir_types.compiler-ir-function-cons
+      (compiler_ir_types.compiler-ir-function-seq-prepend
         (compiler_ir_types.CompilerIrFunction.Function
           name
           (opt-inline-switch-params)
@@ -19125,7 +19112,7 @@
 
 ;; Total direct calls to `call-name` left across the first `count` caller names.
 (define (opt-inline-shared-remaining-calls
-  [functions : compiler_ir_types.CompilerIrFunctionList]
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [count : i64]) : i64
   (let
     [names : (__tl_dyn-array String) (array.make-array String 5)]
@@ -19143,7 +19130,7 @@
             total
             (+
               total
-              (opt-count-direct-call-name-function-list
+              (opt-count-direct-call-name-function-seq
                 functions
                 (array-ref names i)
                 "inline_switch")))
@@ -19154,15 +19141,15 @@
   [symbols : OptInlineMultiTestSymbols]
   [count : i64]
   [in-loop? : bool]
-  [leaf : compiler_ir_types.CompilerIrFunction]) : compiler_ir_types.CompilerIrFunctionList
+  [leaf : compiler_ir_types.CompilerIrFunction]) : compiler_ir_types.CompilerIrFunctionSeq
   (let
     [callee-name : i64 symbols.inline-switch]
     [names : compiler_optimize.OptSlotList
       (opt-inline-shared-caller-names symbols count)]
-    [tail : compiler_ir_types.CompilerIrFunctionList
-      (compiler_ir_types.compiler-ir-function-cons
+    [tail : compiler_ir_types.CompilerIrFunctionSeq
+      (compiler_ir_types.compiler-ir-function-seq-prepend
         leaf
-        compiler_ir_types.CompilerIrFunctionList.Nil)]
+        (compiler_ir_types.compiler-ir-function-seq-empty))]
     (compiler_optimize.opt-inline-program-functions
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
       (if in-loop?
@@ -19176,13 +19163,13 @@
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [callee-name : i64 symbols.inline-switch]
-    [admitted : compiler_ir_types.CompilerIrFunctionList
+    [admitted : compiler_ir_types.CompilerIrFunctionSeq
       (opt-inline-shared-accessor-optimized
         symbols
         5
         true
         (opt-inline-shared-accessor-leaf callee-name))]
-    [refused : compiler_ir_types.CompilerIrFunctionList
+    [refused : compiler_ir_types.CompilerIrFunctionSeq
       (opt-inline-shared-accessor-optimized
         symbols
         4
@@ -19199,7 +19186,7 @@
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [callee-name : i64 symbols.inline-switch]
-    [refused : compiler_ir_types.CompilerIrFunctionList
+    [refused : compiler_ir_types.CompilerIrFunctionSeq
       (opt-inline-shared-accessor-optimized
         symbols
         5
@@ -19219,7 +19206,7 @@
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [callee-name : i64 symbols.inline-switch]
-    [refused : compiler_ir_types.CompilerIrFunctionList
+    [refused : compiler_ir_types.CompilerIrFunctionSeq
       (opt-inline-shared-accessor-optimized
         symbols
         5
@@ -19235,7 +19222,7 @@
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [callee-name : i64 symbols.inline-switch]
-    [refused : compiler_ir_types.CompilerIrFunctionList
+    [refused : compiler_ir_types.CompilerIrFunctionSeq
       (opt-inline-shared-accessor-optimized
         symbols
         5
@@ -19261,27 +19248,27 @@
       (box (opt-inline-dominant-caller-names-from (+ index 1) count)))))
 
 (define (opt-inline-dominant-remaining-calls
-  [functions : compiler_ir_types.CompilerIrFunctionList]
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [index : i64]
   [count : i64]) : i64
   (if (>= index count)
     0
     (+
-      (opt-count-direct-call-name-function-list
+      (opt-count-direct-call-name-function-seq
         functions
         (opt-inline-dominant-caller-text index)
         "inline_switch")
       (opt-inline-dominant-remaining-calls functions (+ index 1) count))))
 
-(define (opt-inline-dominant-optimized [callee-name : i64] [count : i64]) : compiler_ir_types.CompilerIrFunctionList
+(define (opt-inline-dominant-optimized [callee-name : i64] [count : i64]) : compiler_ir_types.CompilerIrFunctionSeq
   (compiler_optimize.opt-inline-program-functions
     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
     (opt-inline-shared-flat-caller-chain
       (opt-inline-dominant-caller-names-from 0 count)
       callee-name
-      (compiler_ir_types.compiler-ir-function-cons
+      (compiler_ir_types.compiler-ir-function-seq-prepend
         (opt-inline-shared-accessor-leaf callee-name)
-        compiler_ir_types.CompilerIrFunctionList.Nil))
+        (compiler_ir_types.compiler-ir-function-seq-empty)))
     2))
 
 ;; 64 straight-line callers put the leaf at the dominant floor and every site
@@ -19292,9 +19279,9 @@
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [callee-name : i64 symbols.inline-switch]
-    [admitted : compiler_ir_types.CompilerIrFunctionList
+    [admitted : compiler_ir_types.CompilerIrFunctionSeq
       (opt-inline-dominant-optimized callee-name 64)]
-    [refused : compiler_ir_types.CompilerIrFunctionList
+    [refused : compiler_ir_types.CompilerIrFunctionSeq
       (opt-inline-dominant-optimized callee-name 63)]
     (and
       (= (opt-inline-dominant-remaining-calls admitted 0 64) 0)
@@ -19307,17 +19294,17 @@
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [callee-name : i64 symbols.inline-switch]
-    [refused : compiler_ir_types.CompilerIrFunctionList
+    [refused : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (opt-inline-shared-flat-caller-chain
           (opt-inline-dominant-caller-names-from 0 64)
           callee-name
-          (compiler_ir_types.compiler-ir-function-cons
+          (compiler_ir_types.compiler-ir-function-seq-prepend
             (opt-inline-shared-accessor-calling-leaf
               callee-name
               symbols.external-helper)
-            compiler_ir_types.CompilerIrFunctionList.Nil))
+            (compiler_ir_types.compiler-ir-function-seq-empty)))
         2)]
     (= (opt-inline-dominant-remaining-calls refused 0 64) 64)))
 
@@ -19561,11 +19548,11 @@
   [names : compiler_optimize.OptSlotList]
   [callee-name : i64]
   [nested? : bool]
-  [tail : compiler_ir_types.CompilerIrFunctionList]) : compiler_ir_types.CompilerIrFunctionList
+  [tail : compiler_ir_types.CompilerIrFunctionSeq]) : compiler_ir_types.CompilerIrFunctionSeq
   (match names
     [(compiler_optimize.OptSlotList.Nil) tail]
     [(compiler_optimize.OptSlotList.Cons name rest)
-      (compiler_ir_types.compiler-ir-function-cons
+      (compiler_ir_types.compiler-ir-function-seq-prepend
         (if nested?
           (opt-inline-depth-nested-caller name callee-name)
           (opt-inline-loop-site-function
@@ -19581,16 +19568,16 @@
 (define (opt-inline-depth-optimized
   [callee-name : i64]
   [nested? : bool]
-  [leaf : compiler_ir_types.CompilerIrFunction]) : compiler_ir_types.CompilerIrFunctionList
+  [leaf : compiler_ir_types.CompilerIrFunction]) : compiler_ir_types.CompilerIrFunctionSeq
   (compiler_optimize.opt-inline-program-functions
     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
     (opt-inline-depth-caller-chain
       (opt-inline-dominant-caller-names-from 0 2)
       callee-name
       nested?
-      (compiler_ir_types.compiler-ir-function-cons
+      (compiler_ir_types.compiler-ir-function-seq-prepend
         leaf
-        compiler_ir_types.CompilerIrFunctionList.Nil))
+        (compiler_ir_types.compiler-ir-function-seq-empty)))
     2))
 
 ;; Two nested-loop sites weigh 128 and take the leaf; the identical leaf at two
@@ -19601,12 +19588,12 @@
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [callee-name : i64 symbols.inline-switch]
-    [admitted : compiler_ir_types.CompilerIrFunctionList
+    [admitted : compiler_ir_types.CompilerIrFunctionSeq
       (opt-inline-depth-optimized
         callee-name
         true
         (opt-inline-depth-leaf callee-name))]
-    [refused : compiler_ir_types.CompilerIrFunctionList
+    [refused : compiler_ir_types.CompilerIrFunctionSeq
       (opt-inline-depth-optimized
         callee-name
         false
@@ -19622,7 +19609,7 @@
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [callee-name : i64 symbols.inline-switch]
-    [refused : compiler_ir_types.CompilerIrFunctionList
+    [refused : compiler_ir_types.CompilerIrFunctionSeq
       (opt-inline-depth-optimized
         callee-name
         true
@@ -19640,12 +19627,12 @@
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [callee-name : i64 symbols.inline-switch]
-    [admitted : compiler_ir_types.CompilerIrFunctionList
+    [admitted : compiler_ir_types.CompilerIrFunctionSeq
       (opt-inline-depth-optimized
         callee-name
         true
         (opt-inline-depth-bounds-leaf callee-name))]
-    [refused : compiler_ir_types.CompilerIrFunctionList
+    [refused : compiler_ir_types.CompilerIrFunctionSeq
       (opt-inline-depth-optimized
         callee-name
         false
@@ -19820,10 +19807,10 @@
             compiler_ir_types.CompilerIrBlockList.Nil))))))
 
 (define (opt-inline-chain-remaining-calls
-  [functions : compiler_ir_types.CompilerIrFunctionList]) : i64
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]) : i64
   (+
-    (opt-count-direct-call-name-function-list functions "main" "inline_switch")
-    (opt-count-direct-call-name-function-list
+    (opt-count-direct-call-name-function-seq functions "main" "inline_switch")
+    (opt-count-direct-call-name-function-seq
       functions
       "inline_nonleaf"
       "inline_switch")))
@@ -19835,7 +19822,7 @@
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [callee-name : i64 symbols.inline-switch]
-    [optimized : compiler_ir_types.CompilerIrFunctionList
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
       (opt-inline-dup-optimized
         (opt-inline-dup-two-caller-names symbols)
         callee-name
@@ -19850,7 +19837,7 @@
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [callee-name : i64 symbols.inline-switch]
-    [optimized : compiler_ir_types.CompilerIrFunctionList
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
       (opt-inline-dup-optimized
         (opt-inline-dup-two-caller-names symbols)
         callee-name
@@ -19870,26 +19857,26 @@
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [callee-name : i64 symbols.inline-switch]
-    [optimized : compiler_ir_types.CompilerIrFunctionList
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
       (opt-inline-dup-optimized
         (opt-inline-dup-three-caller-names symbols)
         callee-name
         (opt-inline-dup-leaf-plain callee-name))]
     (and
       (=
-        (opt-count-direct-call-name-function-list
+        (opt-count-direct-call-name-function-seq
           optimized
           "main"
           "inline_switch")
         0)
       (=
-        (opt-count-direct-call-name-function-list
+        (opt-count-direct-call-name-function-seq
           optimized
           "inline_nonleaf"
           "inline_switch")
         0)
       (=
-        (opt-count-direct-call-name-function-list
+        (opt-count-direct-call-name-function-seq
           optimized
           "inline_loop"
           "inline_switch")
@@ -19903,26 +19890,26 @@
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [callee-name : i64 symbols.inline-switch]
-    [optimized : compiler_ir_types.CompilerIrFunctionList
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
       (opt-inline-dup-optimized
         (opt-inline-dup-three-caller-names symbols)
         callee-name
         (opt-inline-dup-leaf-calling callee-name symbols.external-helper))]
     (and
       (=
-        (opt-count-direct-call-name-function-list
+        (opt-count-direct-call-name-function-seq
           optimized
           "main"
           "inline_switch")
         1)
       (=
-        (opt-count-direct-call-name-function-list
+        (opt-count-direct-call-name-function-seq
           optimized
           "inline_nonleaf"
           "inline_switch")
         1)
       (=
-        (opt-count-direct-call-name-function-list
+        (opt-count-direct-call-name-function-seq
           optimized
           "inline_loop"
           "inline_switch")
@@ -19966,26 +19953,26 @@
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [callee-name : i64 symbols.inline-switch]
-    [optimized : compiler_ir_types.CompilerIrFunctionList
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
       (opt-inline-dup-optimized
         (opt-inline-dup-three-caller-names symbols)
         callee-name
         (opt-inline-hot-loop-big-leaf callee-name))]
     (and
       (=
-        (opt-count-direct-call-name-function-list
+        (opt-count-direct-call-name-function-seq
           optimized
           "main"
           "inline_switch")
         1)
       (=
-        (opt-count-direct-call-name-function-list
+        (opt-count-direct-call-name-function-seq
           optimized
           "inline_nonleaf"
           "inline_switch")
         1)
       (=
-        (opt-count-direct-call-name-function-list
+        (opt-count-direct-call-name-function-seq
           optimized
           "inline_loop"
           "inline_switch")
@@ -20014,26 +20001,26 @@
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [callee-name : i64 symbols.inline-switch]
-    [optimized : compiler_ir_types.CompilerIrFunctionList
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
       (opt-inline-dup-optimized
         (opt-inline-dup-three-caller-names symbols)
         callee-name
         (opt-inline-hot-loop-mid-leaf callee-name))]
     (and
       (=
-        (opt-count-direct-call-name-function-list
+        (opt-count-direct-call-name-function-seq
           optimized
           "main"
           "inline_switch")
         0)
       (=
-        (opt-count-direct-call-name-function-list
+        (opt-count-direct-call-name-function-seq
           optimized
           "inline_nonleaf"
           "inline_switch")
         0)
       (=
-        (opt-count-direct-call-name-function-list
+        (opt-count-direct-call-name-function-seq
           optimized
           "inline_loop"
           "inline_switch")
@@ -20127,11 +20114,11 @@
 (define (opt-inline-hot-loop-big-caller-chain
   [names : compiler_optimize.OptSlotList]
   [callee-name : i64]
-  [tail : compiler_ir_types.CompilerIrFunctionList]) : compiler_ir_types.CompilerIrFunctionList
+  [tail : compiler_ir_types.CompilerIrFunctionSeq]) : compiler_ir_types.CompilerIrFunctionSeq
   (match names
     [(compiler_optimize.OptSlotList.Nil) tail]
     [(compiler_optimize.OptSlotList.Cons name rest)
-      (compiler_ir_types.compiler-ir-function-cons
+      (compiler_ir_types.compiler-ir-function-seq-prepend
         (opt-inline-hot-loop-big-caller-function name callee-name)
         (opt-inline-hot-loop-big-caller-chain
           (__tl-box-place rest)
@@ -20145,31 +20132,31 @@
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [callee-name : i64 symbols.inline-switch]
-    [optimized : compiler_ir_types.CompilerIrFunctionList
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (opt-inline-hot-loop-big-caller-chain
           (opt-inline-dup-three-caller-names symbols)
           callee-name
-          (compiler_ir_types.compiler-ir-function-cons
+          (compiler_ir_types.compiler-ir-function-seq-prepend
             (opt-inline-hot-loop-mid-leaf callee-name)
-            compiler_ir_types.CompilerIrFunctionList.Nil))
+            (compiler_ir_types.compiler-ir-function-seq-empty)))
         2)]
     (and
       (=
-        (opt-count-direct-call-name-function-list
+        (opt-count-direct-call-name-function-seq
           optimized
           "main"
           "inline_switch")
         1)
       (=
-        (opt-count-direct-call-name-function-list
+        (opt-count-direct-call-name-function-seq
           optimized
           "inline_nonleaf"
           "inline_switch")
         1)
       (=
-        (opt-count-direct-call-name-function-list
+        (opt-count-direct-call-name-function-seq
           optimized
           "inline_loop"
           "inline_switch")
@@ -20182,7 +20169,7 @@
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [callee-name : i64 symbols.inline-switch]
-    [optimized : compiler_ir_types.CompilerIrFunctionList
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
       (opt-inline-shared-accessor-optimized
         symbols
         3
@@ -20253,11 +20240,11 @@
 (define (opt-inline-hot-loop-cold-site-chain
   [names : compiler_optimize.OptSlotList]
   [callee-name : i64]
-  [tail : compiler_ir_types.CompilerIrFunctionList]) : compiler_ir_types.CompilerIrFunctionList
+  [tail : compiler_ir_types.CompilerIrFunctionSeq]) : compiler_ir_types.CompilerIrFunctionSeq
   (match names
     [(compiler_optimize.OptSlotList.Nil) tail]
     [(compiler_optimize.OptSlotList.Cons name rest)
-      (compiler_ir_types.compiler-ir-function-cons
+      (compiler_ir_types.compiler-ir-function-seq-prepend
         (opt-inline-hot-loop-cold-site-caller name callee-name)
         (opt-inline-hot-loop-cold-site-chain
           (__tl-box-place rest)
@@ -20268,31 +20255,31 @@
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [callee-name : i64 symbols.inline-switch]
-    [optimized : compiler_ir_types.CompilerIrFunctionList
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (opt-inline-hot-loop-cold-site-chain
           (opt-inline-dup-three-caller-names symbols)
           callee-name
-          (compiler_ir_types.compiler-ir-function-cons
+          (compiler_ir_types.compiler-ir-function-seq-prepend
             (opt-inline-dup-leaf-plain callee-name)
-            compiler_ir_types.CompilerIrFunctionList.Nil))
+            (compiler_ir_types.compiler-ir-function-seq-empty)))
         2)]
     (and
       (=
-        (opt-count-direct-call-name-function-list
+        (opt-count-direct-call-name-function-seq
           optimized
           "main"
           "inline_switch")
         1)
       (=
-        (opt-count-direct-call-name-function-list
+        (opt-count-direct-call-name-function-seq
           optimized
           "inline_nonleaf"
           "inline_switch")
         1)
       (=
-        (opt-count-direct-call-name-function-list
+        (opt-count-direct-call-name-function-seq
           optimized
           "inline_loop"
           "inline_switch")
@@ -20333,25 +20320,22 @@
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [callee-name : i64 symbols.inline-switch]
-    [optimized : compiler_ir_types.CompilerIrFunctionList
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        (compiler_ir_types.compiler-ir-function-cons
+        (compiler_ir_types.compiler-ir-function-seq-prepend
           (compiler_ir_types.CompilerIrFunction.Function
             symbols.main
             (opt-inline-switch-params)
             (compiler_ast_types.AstType.I64)
             9
             (opt-inline-hot-loop-budget-blocks-from callee-name 0 6))
-          (compiler_ir_types.compiler-ir-function-cons
+          (compiler_ir_types.compiler-ir-function-seq-prepend
             (opt-inline-dup-leaf-plain callee-name)
-            compiler_ir_types.CompilerIrFunctionList.Nil))
+            (compiler_ir_types.compiler-ir-function-seq-empty)))
         2)]
     (=
-      (opt-count-direct-call-name-function-list
-        optimized
-        "main"
-        "inline_switch")
+      (opt-count-direct-call-name-function-seq optimized "main" "inline_switch")
       1)))
 
 ;; --- the single-reference sites the band now takes ---------------------------
@@ -20378,16 +20362,13 @@
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [callee-name : i64 symbols.inline-switch]
-    [optimized : compiler_ir_types.CompilerIrFunctionList
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
       (opt-inline-dup-optimized
         (opt-inline-hot-loop-one-caller-names symbols)
         callee-name
         (opt-inline-hot-loop-mid-leaf callee-name))]
     (=
-      (opt-count-direct-call-name-function-list
-        optimized
-        "main"
-        "inline_switch")
+      (opt-count-direct-call-name-function-seq optimized "main" "inline_switch")
       0)))
 
 ;; The SIZE clause at the newly opened reference class: the same single in-loop
@@ -20398,16 +20379,13 @@
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [callee-name : i64 symbols.inline-switch]
-    [optimized : compiler_ir_types.CompilerIrFunctionList
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
       (opt-inline-dup-optimized
         (opt-inline-hot-loop-one-caller-names symbols)
         callee-name
         (opt-inline-hot-loop-big-leaf callee-name))]
     (=
-      (opt-count-direct-call-name-function-list
-        optimized
-        "main"
-        "inline_switch")
+      (opt-count-direct-call-name-function-seq optimized "main" "inline_switch")
       1)))
 
 ;; The big-tier leaf with one call in its body: past the legacy absorb band on
@@ -20447,7 +20425,7 @@
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [callee-name : i64 symbols.inline-switch]
-    [optimized : compiler_ir_types.CompilerIrFunctionList
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
       (opt-inline-dup-optimized
         (opt-inline-hot-loop-one-caller-names symbols)
         callee-name
@@ -20455,10 +20433,7 @@
           callee-name
           symbols.external-helper))]
     (=
-      (opt-count-direct-call-name-function-list
-        optimized
-        "main"
-        "inline_switch")
+      (opt-count-direct-call-name-function-seq optimized "main" "inline_switch")
       1)))
 
 (define (opt-inline-phi-span-ok-instr-seq-from?
@@ -20559,7 +20534,7 @@
           [(compiler_optimize.OptInlineSpanProgram.Program
               optimized
               optimized-spans)
-            (match (compiler_optimize.opt-function-list-find optimized "main")
+            (match (compiler_optimize.opt-function-seq-find optimized "main")
               [(compiler_optimize.OptMaybeFunction.Some main)
                 (let
                   [blocks : compiler_ir_types.CompilerIrBlockList
@@ -20708,16 +20683,16 @@
 (define (compiler-optimize-inline-multiblock-switch-cost-refusal-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
-    [optimized : compiler_ir_types.CompilerIrFunctionList
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        (compiler_ir_types.compiler-ir-function-cons
+        (compiler_ir_types.compiler-ir-function-seq-prepend
           (opt-inline-costly-switch-caller symbols)
-          (compiler_ir_types.compiler-ir-function-cons
+          (compiler_ir_types.compiler-ir-function-seq-prepend
             (opt-inline-costly-switch-callee symbols)
-            compiler_ir_types.CompilerIrFunctionList.Nil))
+            (compiler_ir_types.compiler-ir-function-seq-empty)))
         2)]
-    (match (compiler_optimize.opt-function-list-find optimized "main")
+    (match (compiler_optimize.opt-function-seq-find optimized "main")
       [(compiler_optimize.OptMaybeFunction.Some main)
         (let
           [blocks : compiler_ir_types.CompilerIrBlockList
@@ -20793,22 +20768,22 @@
               (compiler_ir_types.CompilerIrValue.Var 0)))))
       compiler_ir_types.CompilerIrBlockList.Nil)))
 
-(define (opt-inline-mut-param-functions [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunctionList
-  (compiler_ir_types.compiler-ir-function-cons
+(define (opt-inline-mut-param-functions [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
     (opt-inline-mut-param-caller symbols)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (opt-inline-mut-param-callee symbols)
-      compiler_ir_types.CompilerIrFunctionList.Nil)))
+      (compiler_ir_types.compiler-ir-function-seq-empty))))
 
 (define (compiler-optimize-inline-mut-param-loop-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
-    [optimized : compiler_ir_types.CompilerIrFunctionList
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (opt-inline-mut-param-functions symbols)
         2)]
-    (match (compiler_optimize.opt-function-list-find optimized "main")
+    (match (compiler_optimize.opt-function-seq-find optimized "main")
       [(compiler_optimize.OptMaybeFunction.Some main)
         (let
           [blocks : compiler_ir_types.CompilerIrBlockList
@@ -20874,22 +20849,22 @@
             compiler_ir_types.CompilerIrBlockList.Nil))))))
 
 (define (opt-inline-caller-phi-loop-functions
-  [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunctionList
-  (compiler_ir_types.compiler-ir-function-cons
+  [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
     (opt-inline-caller-phi-loop-caller symbols)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (opt-inline-loop-callee symbols)
-      compiler_ir_types.CompilerIrFunctionList.Nil)))
+      (compiler_ir_types.compiler-ir-function-seq-empty))))
 
 (define (compiler-optimize-inline-caller-phi-loop-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
-    [optimized : compiler_ir_types.CompilerIrFunctionList
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (opt-inline-caller-phi-loop-functions symbols)
         2)]
-    (match (compiler_optimize.opt-function-list-find optimized "main")
+    (match (compiler_optimize.opt-function-seq-find optimized "main")
       [(compiler_optimize.OptMaybeFunction.Some main)
         (let
           [blocks : compiler_ir_types.CompilerIrBlockList
@@ -20961,21 +20936,21 @@
               (compiler_ir_types.CompilerIrValue.Var 0)))))
       compiler_ir_types.CompilerIrBlockList.Nil)))
 
-(define (opt-inline-nonleaf-functions [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunctionList
-  (compiler_ir_types.compiler-ir-function-cons
+(define (opt-inline-nonleaf-functions [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
     (opt-inline-nonleaf-caller symbols)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (opt-inline-nonleaf-callee symbols)
-      compiler_ir_types.CompilerIrFunctionList.Nil)))
+      (compiler_ir_types.compiler-ir-function-seq-empty))))
 
 (define (opt-inline-nonleaf-functions-named
   [symbols : OptInlineMultiTestSymbols]
-  [helper-name : i64]) : compiler_ir_types.CompilerIrFunctionList
-  (compiler_ir_types.compiler-ir-function-cons
+  [helper-name : i64]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
     (opt-inline-nonleaf-caller symbols)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (opt-inline-nonleaf-callee-named symbols helper-name)
-      compiler_ir_types.CompilerIrFunctionList.Nil)))
+      (compiler_ir_types.compiler-ir-function-seq-empty))))
 
 ;; The caller's call to the multiblock call-carrying callee, and the callee's
 ;; own call, as span keys.
@@ -21035,7 +21010,7 @@
           [(compiler_optimize.OptInlineSpanProgram.Program
               optimized
               optimized-spans)
-            (match (compiler_optimize.opt-function-list-find optimized "main")
+            (match (compiler_optimize.opt-function-seq-find optimized "main")
               [(compiler_optimize.OptMaybeFunction.Some main)
                 (let
                   [blocks : compiler_ir_types.CompilerIrBlockList
@@ -21118,7 +21093,7 @@
           [(compiler_optimize.OptInlineSpanProgram.Program
               optimized
               optimized-spans)
-            (match (compiler_optimize.opt-function-list-find optimized "main")
+            (match (compiler_optimize.opt-function-seq-find optimized "main")
               [(compiler_optimize.OptMaybeFunction.Some main)
                 (let
                   [blocks : compiler_ir_types.CompilerIrBlockList
@@ -21211,18 +21186,18 @@
 (define (compiler-optimize-inline-chain-second-import-call-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
-    [optimized : compiler_ir_types.CompilerIrFunctionList
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        (compiler_ir_types.compiler-ir-function-cons
+        (compiler_ir_types.compiler-ir-function-seq-prepend
           (opt-inline-chain-main symbols)
-          (compiler_ir_types.compiler-ir-function-cons
+          (compiler_ir_types.compiler-ir-function-seq-prepend
             (opt-inline-chain-mid symbols)
-            (compiler_ir_types.compiler-ir-function-cons
+            (compiler_ir_types.compiler-ir-function-seq-prepend
               (opt-inline-nonleaf-callee symbols)
-              compiler_ir_types.CompilerIrFunctionList.Nil)))
+              (compiler_ir_types.compiler-ir-function-seq-empty))))
         2)]
-    (match (compiler_optimize.opt-function-list-find optimized "main")
+    (match (compiler_optimize.opt-function-seq-find optimized "main")
       [(compiler_optimize.OptMaybeFunction.Some main)
         (let
           [blocks : compiler_ir_types.CompilerIrBlockList
@@ -21238,12 +21213,12 @@
 (define (compiler-optimize-inline-multiblock-nonleaf-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
-    [optimized : compiler_ir_types.CompilerIrFunctionList
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (opt-inline-nonleaf-functions symbols)
         2)]
-    (match (compiler_optimize.opt-function-list-find optimized "main")
+    (match (compiler_optimize.opt-function-seq-find optimized "main")
       [(compiler_optimize.OptMaybeFunction.Some main)
         (let
           [blocks : compiler_ir_types.CompilerIrBlockList
@@ -21339,20 +21314,20 @@
                   (compiler_ir_types.CompilerIrValue.I64 3)))))
           compiler_ir_types.CompilerIrBlockList.Nil)))))
 
-(define (opt-inline-tail-call-functions [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunctionList
-  (compiler_ir_types.compiler-ir-function-cons
+(define (opt-inline-tail-call-functions [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
     (opt-inline-nonleaf-caller symbols)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (opt-inline-tail-call-callee symbols)
-      compiler_ir_types.CompilerIrFunctionList.Nil)))
+      (compiler_ir_types.compiler-ir-function-seq-empty))))
 
 (define (opt-inline-tail-call-indirect-functions
-  [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunctionList
-  (compiler_ir_types.compiler-ir-function-cons
+  [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
     (opt-inline-nonleaf-caller symbols)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (opt-inline-tail-call-indirect-callee symbols)
-      compiler_ir_types.CompilerIrFunctionList.Nil)))
+      (compiler_ir_types.compiler-ir-function-seq-empty))))
 
 ;; A body whose exit arm is a direct tail call inlines, and the merged caller
 ;; carries the CONVERTED shape: the callee is gone, its tail call is an
@@ -21362,12 +21337,12 @@
 (define (compiler-optimize-inline-multiblock-tail-call-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
-    [optimized : compiler_ir_types.CompilerIrFunctionList
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (opt-inline-tail-call-functions symbols)
         2)]
-    (match (compiler_optimize.opt-function-list-find optimized "main")
+    (match (compiler_optimize.opt-function-seq-find optimized "main")
       [(compiler_optimize.OptMaybeFunction.Some main)
         (let
           [blocks : compiler_ir_types.CompilerIrBlockList
@@ -21384,12 +21359,12 @@
 (define (compiler-optimize-inline-multiblock-tail-call-indirect-refusal-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
-    [optimized : compiler_ir_types.CompilerIrFunctionList
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (opt-inline-tail-call-indirect-functions symbols)
         2)]
-    (match (compiler_optimize.opt-function-list-find optimized "main")
+    (match (compiler_optimize.opt-function-seq-find optimized "main")
       [(compiler_optimize.OptMaybeFunction.Some main)
         (let
           [blocks : compiler_ir_types.CompilerIrBlockList
@@ -21405,19 +21380,19 @@
 (define (compiler-optimize-inline-multiblock-tail-call-idempotent-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
-    [once : compiler_ir_types.CompilerIrFunctionList
+    [once : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (opt-inline-tail-call-functions symbols)
         2)]
-    [twice : compiler_ir_types.CompilerIrFunctionList
+    [twice : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         once
         2)]
-    (match (compiler_optimize.opt-function-list-find once "main")
+    (match (compiler_optimize.opt-function-seq-find once "main")
       [(compiler_optimize.OptMaybeFunction.Some once-main)
-        (match (compiler_optimize.opt-function-list-find twice "main")
+        (match (compiler_optimize.opt-function-seq-find twice "main")
           [(compiler_optimize.OptMaybeFunction.Some twice-main)
             (let
               [once-blocks : compiler_ir_types.CompilerIrBlockList
@@ -21541,36 +21516,36 @@
       compiler_ir_types.CompilerIrBlockList.Nil)))
 
 (define (opt-inline-single-block-tail-call-functions
-  [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunctionList
-  (compiler_ir_types.compiler-ir-function-cons
+  [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
     (opt-inline-nonleaf-caller symbols)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (opt-inline-single-block-tail-call-callee symbols)
-      compiler_ir_types.CompilerIrFunctionList.Nil)))
+      (compiler_ir_types.compiler-ir-function-seq-empty))))
 
 (define (opt-inline-single-block-tail-call-indirect-functions
-  [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunctionList
-  (compiler_ir_types.compiler-ir-function-cons
+  [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
     (opt-inline-nonleaf-caller symbols)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (opt-inline-single-block-tail-call-indirect-callee symbols)
-      compiler_ir_types.CompilerIrFunctionList.Nil)))
+      (compiler_ir_types.compiler-ir-function-seq-empty))))
 
 (define (opt-inline-single-block-self-tail-call-functions
-  [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunctionList
-  (compiler_ir_types.compiler-ir-function-cons
+  [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
     (opt-inline-nonleaf-caller symbols)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (opt-inline-single-block-self-tail-call-callee symbols)
-      compiler_ir_types.CompilerIrFunctionList.Nil)))
+      (compiler_ir_types.compiler-ir-function-seq-empty))))
 
 (define (opt-inline-single-block-tail-call-to-caller-functions
-  [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunctionList
-  (compiler_ir_types.compiler-ir-function-cons
+  [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
     (opt-inline-nonleaf-caller symbols)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (opt-inline-single-block-tail-call-to-caller-callee symbols)
-      compiler_ir_types.CompilerIrFunctionList.Nil)))
+      (compiler_ir_types.compiler-ir-function-seq-empty))))
 
 ;; The wrapper inlines, and what lands at the site is the TAIL TARGET's call:
 ;; `%0 = call external_helper(7)`, in the caller's one block, with no tail call
@@ -21580,12 +21555,12 @@
 (define (compiler-optimize-inline-single-block-tail-call-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
-    [optimized : compiler_ir_types.CompilerIrFunctionList
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (opt-inline-single-block-tail-call-functions symbols)
         2)]
-    (match (compiler_optimize.opt-function-list-find optimized "main")
+    (match (compiler_optimize.opt-function-seq-find optimized "main")
       [(compiler_optimize.OptMaybeFunction.Some main)
         (let
           [blocks : compiler_ir_types.CompilerIrBlockList
@@ -21604,12 +21579,12 @@
 (define (compiler-optimize-inline-single-block-tail-call-level1-refusal-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
-    [optimized : compiler_ir_types.CompilerIrFunctionList
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (opt-inline-single-block-tail-call-functions symbols)
         1)]
-    (match (compiler_optimize.opt-function-list-find optimized "main")
+    (match (compiler_optimize.opt-function-seq-find optimized "main")
       [(compiler_optimize.OptMaybeFunction.Some main)
         (let
           [blocks : compiler_ir_types.CompilerIrBlockList
@@ -21624,12 +21599,12 @@
 (define (compiler-optimize-inline-single-block-tail-call-indirect-refusal-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
-    [optimized : compiler_ir_types.CompilerIrFunctionList
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (opt-inline-single-block-tail-call-indirect-functions symbols)
         2)]
-    (match (compiler_optimize.opt-function-list-find optimized "main")
+    (match (compiler_optimize.opt-function-seq-find optimized "main")
       [(compiler_optimize.OptMaybeFunction.Some main)
         (let
           [blocks : compiler_ir_types.CompilerIrBlockList
@@ -21645,14 +21620,14 @@
 (define (compiler-optimize-inline-single-block-self-tail-call-refusal-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
-    [optimized : compiler_ir_types.CompilerIrFunctionList
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (opt-inline-single-block-self-tail-call-functions symbols)
         2)]
-    (match (compiler_optimize.opt-function-list-find optimized "main")
+    (match (compiler_optimize.opt-function-seq-find optimized "main")
       [(compiler_optimize.OptMaybeFunction.Some main)
-        (match (compiler_optimize.opt-function-list-find
+        (match (compiler_optimize.opt-function-seq-find
           optimized
           "inline_nonleaf")
           [(compiler_optimize.OptMaybeFunction.Some callee)
@@ -21674,12 +21649,12 @@
 (define (compiler-optimize-inline-single-block-tail-call-to-caller-refusal-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
-    [optimized : compiler_ir_types.CompilerIrFunctionList
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (opt-inline-single-block-tail-call-to-caller-functions symbols)
         2)]
-    (match (compiler_optimize.opt-function-list-find optimized "main")
+    (match (compiler_optimize.opt-function-seq-find optimized "main")
       [(compiler_optimize.OptMaybeFunction.Some main)
         (let
           [blocks : compiler_ir_types.CompilerIrBlockList
@@ -21811,44 +21786,44 @@
       compiler_ir_types.CompilerIrBlockList.Nil)))
 
 (define (opt-inline-tail-site-return-functions
-  [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunctionList
-  (compiler_ir_types.compiler-ir-function-cons
+  [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
     (opt-inline-tail-site-caller symbols)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (opt-inline-tail-site-return-callee symbols)
-      compiler_ir_types.CompilerIrFunctionList.Nil)))
+      (compiler_ir_types.compiler-ir-function-seq-empty))))
 
 (define (opt-inline-tail-site-tail-functions
-  [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunctionList
-  (compiler_ir_types.compiler-ir-function-cons
+  [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
     (opt-inline-tail-site-caller symbols)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (opt-inline-single-block-tail-call-callee symbols)
-      compiler_ir_types.CompilerIrFunctionList.Nil)))
+      (compiler_ir_types.compiler-ir-function-seq-empty))))
 
 (define (opt-inline-tail-site-indirect-functions
-  [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunctionList
-  (compiler_ir_types.compiler-ir-function-cons
+  [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
     (opt-inline-tail-site-indirect-caller symbols)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (opt-inline-tail-site-return-callee symbols)
-      compiler_ir_types.CompilerIrFunctionList.Nil)))
+      (compiler_ir_types.compiler-ir-function-seq-empty))))
 
 (define (opt-inline-tail-site-self-recursive-functions
-  [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunctionList
-  (compiler_ir_types.compiler-ir-function-cons
+  [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
     (opt-inline-tail-site-caller symbols)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (opt-inline-self-tail-recursive-callee symbols)
-      compiler_ir_types.CompilerIrFunctionList.Nil)))
+      (compiler_ir_types.compiler-ir-function-seq-empty))))
 
 (define (opt-inline-tail-site-mutual-functions
-  [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunctionList
-  (compiler_ir_types.compiler-ir-function-cons
+  [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
     (opt-inline-tail-site-caller symbols)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (opt-inline-tail-site-mutual-callee symbols)
-      compiler_ir_types.CompilerIrFunctionList.Nil)))
+      (compiler_ir_types.compiler-ir-function-seq-empty))))
 
 ;; (a) A `Return`-exit callee at a tail site: the body lands in the caller's one
 ;; block and the callee's `Return` IS the caller's `Return`. No call and no tail
@@ -21856,12 +21831,12 @@
 (define (compiler-optimize-inline-tail-site-return-exit-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
-    [optimized : compiler_ir_types.CompilerIrFunctionList
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (opt-inline-tail-site-return-functions symbols)
         2)]
-    (match (compiler_optimize.opt-function-list-find optimized "main")
+    (match (compiler_optimize.opt-function-seq-find optimized "main")
       [(compiler_optimize.OptMaybeFunction.Some main)
         (let
           [blocks : compiler_ir_types.CompilerIrBlockList
@@ -21883,12 +21858,12 @@
 (define (compiler-optimize-inline-tail-site-tail-exit-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
-    [optimized : compiler_ir_types.CompilerIrFunctionList
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (opt-inline-tail-site-tail-functions symbols)
         2)]
-    (match (compiler_optimize.opt-function-list-find optimized "main")
+    (match (compiler_optimize.opt-function-seq-find optimized "main")
       [(compiler_optimize.OptMaybeFunction.Some main)
         (let
           [blocks : compiler_ir_types.CompilerIrBlockList
@@ -21910,12 +21885,12 @@
 (define (compiler-optimize-inline-tail-site-indirect-refusal-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
-    [optimized : compiler_ir_types.CompilerIrFunctionList
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (opt-inline-tail-site-indirect-functions symbols)
         2)]
-    (match (compiler_optimize.opt-function-list-find optimized "main")
+    (match (compiler_optimize.opt-function-seq-find optimized "main")
       [(compiler_optimize.OptMaybeFunction.Some main)
         (let
           [blocks : compiler_ir_types.CompilerIrBlockList
@@ -21935,12 +21910,12 @@
 (define (compiler-optimize-inline-tail-site-self-recursion-refusal-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
-    [optimized : compiler_ir_types.CompilerIrFunctionList
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (opt-inline-tail-site-self-recursive-functions symbols)
         2)]
-    (match (compiler_optimize.opt-function-list-find optimized "inline_nonleaf")
+    (match (compiler_optimize.opt-function-seq-find optimized "inline_nonleaf")
       [(compiler_optimize.OptMaybeFunction.Some callee)
         (let
           [callee-blocks : compiler_ir_types.CompilerIrBlockList
@@ -21959,14 +21934,14 @@
 (define (compiler-optimize-inline-tail-site-mutual-recursion-refusal-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
-    [optimized : compiler_ir_types.CompilerIrFunctionList
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (opt-inline-tail-site-mutual-functions symbols)
         2)]
-    (match (compiler_optimize.opt-function-list-find optimized "main")
+    (match (compiler_optimize.opt-function-seq-find optimized "main")
       [(compiler_optimize.OptMaybeFunction.Some main)
-        (match (compiler_optimize.opt-function-list-find
+        (match (compiler_optimize.opt-function-seq-find
           optimized
           "inline_nonleaf")
           [(compiler_optimize.OptMaybeFunction.Some callee)
@@ -21989,12 +21964,12 @@
 (define (compiler-optimize-inline-tail-site-level1-refusal-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
-    [optimized : compiler_ir_types.CompilerIrFunctionList
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (opt-inline-tail-site-return-functions symbols)
         1)]
-    (match (compiler_optimize.opt-function-list-find optimized "main")
+    (match (compiler_optimize.opt-function-seq-find optimized "main")
       [(compiler_optimize.OptMaybeFunction.Some main)
         (let
           [blocks : compiler_ir_types.CompilerIrBlockList
@@ -22084,22 +22059,22 @@
           compiler_ir_types.CompilerIrBlockList.Nil)))))
 
 (define (opt-inline-repeated-nonleaf-predicate-functions
-  [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunctionList
-  (compiler_ir_types.compiler-ir-function-cons
+  [symbols : OptInlineMultiTestSymbols]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
     (opt-inline-repeated-nonleaf-predicate-caller symbols)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (opt-inline-repeated-nonleaf-predicate-callee symbols)
-      compiler_ir_types.CompilerIrFunctionList.Nil)))
+      (compiler_ir_types.compiler-ir-function-seq-empty))))
 
 (define (compiler-optimize-inline-repeated-nonleaf-predicate-refusal-ok?) : bool
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
-    [optimized : compiler_ir_types.CompilerIrFunctionList
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (opt-inline-repeated-nonleaf-predicate-functions symbols)
         2)]
-    (match (compiler_optimize.opt-function-list-find optimized "main")
+    (match (compiler_optimize.opt-function-seq-find optimized "main")
       [(compiler_optimize.OptMaybeFunction.Some main)
         (let
           [blocks : compiler_ir_types.CompilerIrBlockList
@@ -22116,7 +22091,7 @@
 (define (compiler-optimize-inline-census-direct-ok?) : bool
   (let
     [symbols : OptInlineFrameTestSymbols (opt-inline-frame-test-symbols)]
-    [functions : compiler_ir_types.CompilerIrFunctionList
+    [functions : compiler_ir_types.CompilerIrFunctionSeq
       (opt-inline-frame-functions symbols)]
     [index : compiler_optimize.OptFunctionIndex
       (compiler_optimize.opt-function-index-build functions)]
@@ -22143,7 +22118,7 @@
 (define (compiler-optimize-inline-census-address-ok?) : bool
   (let
     [symbols : OptInlineFrameTestSymbols (opt-inline-frame-test-symbols)]
-    [functions : compiler_ir_types.CompilerIrFunctionList
+    [functions : compiler_ir_types.CompilerIrFunctionSeq
       (opt-inline-known-indirect-functions symbols)]
     [index : compiler_optimize.OptFunctionIndex
       (compiler_optimize.opt-function-index-build functions)]
@@ -22429,12 +22404,12 @@
 (define (opt-inline-private-memory-test-functions
   [caller-name : i64]
   [callee-name : i64]
-  [value-ty : compiler_ast_types.AstType]) : compiler_ir_types.CompilerIrFunctionList
-  (compiler_ir_types.compiler-ir-function-cons
+  [value-ty : compiler_ast_types.AstType]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
     (opt-inline-private-memory-test-caller caller-name callee-name value-ty)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (opt-inline-private-memory-test-callee callee-name value-ty)
-      compiler_ir_types.CompilerIrFunctionList.Nil)))
+      (compiler_ir_types.compiler-ir-function-seq-empty))))
 
 (define (compiler-optimize-inline-private-memory-boundary-ok?) : bool
   (let
@@ -22465,7 +22440,7 @@
       (opt-inline-private-memory-test-callee private-callee-name private-ty)]
     [source-callee : compiler_ir_types.CompilerIrFunction
       (opt-inline-private-memory-test-callee source-callee-name source-ty)]
-    [private-level1 : compiler_ir_types.CompilerIrFunctionList
+    [private-level1 : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (opt-inline-private-memory-test-functions
@@ -22473,7 +22448,7 @@
           private-callee-name
           private-ty)
         1)]
-    [private-level2 : compiler_ir_types.CompilerIrFunctionList
+    [private-level2 : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (opt-inline-private-memory-test-functions
@@ -22481,7 +22456,7 @@
           private-callee-name
           private-ty)
         2)]
-    [source-level1 : compiler_ir_types.CompilerIrFunctionList
+    [source-level1 : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (opt-inline-private-memory-test-functions
@@ -22489,15 +22464,15 @@
           source-callee-name
           source-ty)
         1)]
-    (match (compiler_optimize.opt-function-list-find
+    (match (compiler_optimize.opt-function-seq-find
       private-level1
       "private_memory_main")
       [(compiler_optimize.OptMaybeFunction.Some private-main-level1)
-        (match (compiler_optimize.opt-function-list-find
+        (match (compiler_optimize.opt-function-seq-find
           private-level2
           "private_memory_main")
           [(compiler_optimize.OptMaybeFunction.Some private-main-level2)
-            (match (compiler_optimize.opt-function-list-find
+            (match (compiler_optimize.opt-function-seq-find
               source-level1
               "source_collision_main")
               [(compiler_optimize.OptMaybeFunction.Some source-main-level1)
@@ -22563,7 +22538,7 @@
 (define (compiler-optimize-inline-self-test) : i64
   (let
     [symbols : OptInlineFrameTestSymbols (opt-inline-frame-test-symbols)]
-    [optimized : compiler_ir_types.CompilerIrFunctionList
+    [optimized : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (opt-inline-frame-functions symbols)
@@ -22580,12 +22555,12 @@
     [devirt-duplicate-alias : compiler_ir_types.CompilerIrFunction
       (compiler_optimize.opt-devirt-known-function-function
         (opt-devirt-local-alias-caller true))]
-    [devirt-inlined : compiler_ir_types.CompilerIrFunctionList
+    [devirt-inlined : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (opt-inline-known-indirect-functions symbols)
         2)]
-    [devirt-reach : compiler_ir_types.CompilerIrFunctionList
+    [devirt-reach : compiler_ir_types.CompilerIrFunctionSeq
       (opt-program-functions
         (compiler_optimize.optimize-program-with-level
           (opt-devirt-reach-program)
@@ -22613,7 +22588,7 @@
       (compiler_optimize.opt-inline-revert-or-keep
         (opt-inline-frame-caller symbols)
         (opt-inline-frame-callee symbols))]
-    (match (compiler_optimize.opt-function-list-find optimized "main")
+    (match (compiler_optimize.opt-function-seq-find optimized "main")
       [(compiler_optimize.OptMaybeFunction.Some main)
         (let
           [instrs : compiler_ir_types.CompilerIrInstrSeq
@@ -22678,7 +22653,7 @@
                   (compiler_optimize.opt-function-blocks devirt-duplicate-alias))
                 1)
               (return 113))
-            (match (compiler_optimize.opt-function-list-find
+            (match (compiler_optimize.opt-function-seq-find
               devirt-inlined
               "main")
               [(compiler_optimize.OptMaybeFunction.Some indirect-main)
@@ -22706,22 +22681,22 @@
                       (return 15))
                     (unless
                       (=
-                        (compiler_ir_types.compiler-ir-function-list-count
+                        (compiler_ir_types.compiler-ir-function-seq-count
                           devirt-reach)
                         1)
                       (return 16))
                     (unless
-                      (compiler_optimize.opt-function-list-defines?
+                      (compiler_optimize.opt-function-seq-defines?
                         devirt-reach
                         "main")
                       (return 17))
                     (when
-                      (compiler_optimize.opt-function-list-defines?
+                      (compiler_optimize.opt-function-seq-defines?
                         devirt-reach
                         "kept_target")
                       (return 18))
                     (when
-                      (compiler_optimize.opt-function-list-defines?
+                      (compiler_optimize.opt-function-seq-defines?
                         devirt-reach
                         "dead")
                       (return 19))
@@ -29281,7 +29256,7 @@
           (compiler_ast_types.ast-lifetime-list-new))))))
 
 (define (opt-ssa-representation-index-for-functions
-  [functions : compiler_ir_types.CompilerIrFunctionList]) : compiler_ir_types.CompilerIrRepresentationIndex
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]) : compiler_ir_types.CompilerIrRepresentationIndex
   (let
     [bases : i64 (compiler_ast_types.ast-node-pool-reader-type-segment-bases)]
     (compiler_ir_types.compiler-ir-representation-index-build
@@ -29294,9 +29269,9 @@
 (define (opt-ssa-representation-index-for-function
   [func : compiler_ir_types.CompilerIrFunction]) : compiler_ir_types.CompilerIrRepresentationIndex
   (opt-ssa-representation-index-for-functions
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       func
-      (compiler_ir_types.CompilerIrFunctionList.Nil))))
+      (compiler_ir_types.compiler-ir-function-seq-empty))))
 
 (define (opt-ssa-representation-group-evidence-function
   [ty : compiler_ast_types.AstType]) : compiler_ir_types.CompilerIrFunction
@@ -29429,11 +29404,11 @@
       (opt-ssa-fixed-handle-diamond-function group-ty)]
     [group-index : compiler_ir_types.CompilerIrRepresentationIndex
       (opt-ssa-representation-index-for-functions
-        (compiler_ir_types.compiler-ir-function-cons
+        (compiler_ir_types.compiler-ir-function-seq-prepend
           group-diamond
-          (compiler_ir_types.compiler-ir-function-cons
+          (compiler_ir_types.compiler-ir-function-seq-prepend
             (opt-ssa-representation-group-evidence-function group-ty)
-            (compiler_ir_types.CompilerIrFunctionList.Nil))))]
+            (compiler_ir_types.compiler-ir-function-seq-empty))))]
     [missing-index : compiler_ir_types.CompilerIrRepresentationIndex
       (compiler_ir_types.compiler-ir-representation-index-empty)]
     [nominal-address-taken : compiler_ir_types.CompilerIrFunction
@@ -31349,8 +31324,8 @@
     8))
 
 (define (opt-licm-direct-call-clean-test-functions
-  [symbols : OptLicmTestSymbols]) : compiler_ir_types.CompilerIrFunctionList
-  (compiler_ir_types.compiler-ir-function-cons
+  [symbols : OptLicmTestSymbols]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
     (opt-test-function-symbol
       symbols.probe
       (opt-test-instrs
@@ -31362,7 +31337,7 @@
         (compiler_ir_types.CompilerIrInstr.Return
           (compiler_ir_types.CompilerIrMaybeValue.Some
             (compiler_ir_types.CompilerIrValue.Var 90)))))
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (opt-test-function-symbol
         symbols.writer
         (opt-test-instrs
@@ -31373,14 +31348,14 @@
           (compiler_ir_types.CompilerIrInstr.Return
             (compiler_ir_types.CompilerIrMaybeValue.Some
               (compiler_ir_types.CompilerIrValue.I64 0)))))
-      (compiler_ir_types.compiler-ir-function-cons
+      (compiler_ir_types.compiler-ir-function-seq-prepend
         (opt-test-function-symbol
           symbols.leaf
           (opt-test-instrs
             (compiler_ir_types.CompilerIrInstr.Return
               (compiler_ir_types.CompilerIrMaybeValue.Some
                 (compiler_ir_types.CompilerIrValue.I64 7)))))
-        (compiler_ir_types.CompilerIrFunctionList.Nil)))))
+        (compiler_ir_types.compiler-ir-function-seq-empty)))))
 
 (cfg
   test
@@ -52929,9 +52904,9 @@
 (define (opt-scratch-reset-level-program) : compiler_ir_types.CompilerIrProgram
   (compiler_ir_types.CompilerIrProgram.Program
     (compiler_ir_types.compiler-ir-global-seq-empty)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (opt-scratch-reset-level-function)
-      (compiler_ir_types.CompilerIrFunctionList.Nil))
+      (compiler_ir_types.compiler-ir-function-seq-empty))
     (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
 (define (opt-scratch-reset-call-blocked-blocks) : compiler_ir_types.CompilerIrBlockList
@@ -53039,7 +53014,7 @@
     (opt-scratch-reset-level-program)
     level)
     [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
-      (match (compiler_optimize.opt-function-list-find functions "main")
+      (match (compiler_optimize.opt-function-seq-find functions "main")
         [(compiler_optimize.OptMaybeFunction.No) (- 0 1)]
         [(compiler_optimize.OptMaybeFunction.Some func)
           (opt-scratch-reset-call-count func name)])]))
@@ -55595,11 +55570,11 @@
   [raw-writer : i64]
   [indirect-writer : i64]
   [recursive : i64]
-  [clean : i64]) : compiler_ir_types.CompilerIrFunctionList
+  [clean : i64]) : compiler_ir_types.CompilerIrFunctionSeq
   (let
     [params : compiler_ir_types.CompilerIrParamList
       (opt-load-cse-mixed-ref-params)]
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       ;; Wrapper precedes its leaf so the leaf-to-caller fixed point needs a
       ;; later round; leaf param 0 is wrapper argument/root 1.
       (opt-call-memory-test-function
@@ -55613,7 +55588,7 @@
               (compiler_ir_types.CompilerIrValue.Var 1)
               (compiler_ir_types.CompilerIrValue.Var 0))
             (compiler_ast_types.AstType.Unit))))
-      (compiler_ir_types.compiler-ir-function-cons
+      (compiler_ir_types.compiler-ir-function-seq-prepend
         (opt-call-memory-test-function
           leaf
           params
@@ -55622,7 +55597,7 @@
               (compiler_ir_types.CompilerIrValue.Var 0)
               (compiler_ir_types.CompilerIrValue.I64 9)
               (compiler_ast_types.AstType.I64))))
-        (compiler_ir_types.compiler-ir-function-cons
+        (compiler_ir_types.compiler-ir-function-seq-prepend
           (opt-call-memory-test-function
             global-writer
             params
@@ -55631,7 +55606,7 @@
                 (opt-test-symbol "call_memory_global")
                 (compiler_ir_types.CompilerIrValue.I64 9)
                 (compiler_ast_types.AstType.I64))))
-          (compiler_ir_types.compiler-ir-function-cons
+          (compiler_ir_types.compiler-ir-function-seq-prepend
             (opt-call-memory-test-function
               raw-writer
               params
@@ -55640,7 +55615,7 @@
                   (compiler_ir_types.CompilerIrValue.Var 99)
                   (compiler_ir_types.CompilerIrValue.I64 9)
                   (compiler_ast_types.AstType.I64))))
-            (compiler_ir_types.compiler-ir-function-cons
+            (compiler_ir_types.compiler-ir-function-seq-prepend
               (opt-call-memory-test-function
                 indirect-writer
                 params
@@ -55650,7 +55625,7 @@
                     (compiler_ir_types.CompilerIrValue.Function leaf)
                     (compiler_ir_types.CompilerIrCallArgs.Nil)
                     (compiler_ast_types.AstType.Unit))))
-              (compiler_ir_types.compiler-ir-function-cons
+              (compiler_ir_types.compiler-ir-function-seq-prepend
                 (opt-call-memory-test-function
                   recursive
                   params
@@ -55662,12 +55637,12 @@
                         (compiler_ir_types.CompilerIrValue.Var 0)
                         (compiler_ir_types.CompilerIrValue.Var 1))
                       (compiler_ast_types.AstType.Unit))))
-                (compiler_ir_types.compiler-ir-function-cons
+                (compiler_ir_types.compiler-ir-function-seq-prepend
                   (opt-call-memory-test-function
                     clean
                     params
                     (compiler_ir_types.compiler-ir-instr-seq-empty))
-                  (compiler_ir_types.CompilerIrFunctionList.Nil))))))))))
+                  (compiler_ir_types.compiler-ir-function-seq-empty))))))))))
 
 ;; A CYCLE of two mutually recursive writers. Each stores through the element
 ;; buffer its own descriptor parameter names and hands that same descriptor to
@@ -55721,18 +55696,18 @@
   [first : i64]
   [second : i64]
   [cell : i64]
-  [global? : bool]) : compiler_ir_types.CompilerIrFunctionList
-  (compiler_ir_types.compiler-ir-function-cons
+  [global? : bool]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
     (opt-call-memory-test-function
       first
       (opt-load-cse-descriptor-params)
       (opt-call-memory-cycle-body second cell false))
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (opt-call-memory-test-function
         second
         (opt-load-cse-descriptor-params)
         (opt-call-memory-cycle-body first cell global?))
-      (compiler_ir_types.CompilerIrFunctionList.Nil))))
+      (compiler_ir_types.compiler-ir-function-seq-empty))))
 
 ;; The optimistic phase driven directly, so its BUDGET can be pinned: with no
 ;; rounds left it must hand back the pessimistic map it was given rather than
@@ -58135,15 +58110,15 @@
       (opt-const-divisor-test-globals symbols)]
     [blocks : compiler_ir_types.CompilerIrBlockList
       (opt-const-global-early-test-blocks symbols)]
-    [functions : compiler_ir_types.CompilerIrFunctionList
-      (compiler_ir_types.compiler-ir-function-cons
+    [functions : compiler_ir_types.CompilerIrFunctionSeq
+      (compiler_ir_types.compiler-ir-function-seq-prepend
         (compiler_ir_types.CompilerIrFunction.Function
           (opt-test-symbol "f")
           compiler_ir_types.CompilerIrParamList.Nil
           (compiler_ast_types.AstType.I64)
           17
           blocks)
-        compiler_ir_types.CompilerIrFunctionList.Nil)]
+        (compiler_ir_types.compiler-ir-function-seq-empty))]
     [table : opt_i64_i64_map.Map
       (compiler_optimize.opt-const-divisors-build globals functions)]
     [rewritten : compiler_ir_types.CompilerIrBlockList
@@ -58416,29 +58391,31 @@
               (compiler_ir_types.CompilerIrValue.I64 0)))))
       compiler_ir_types.CompilerIrBlockList.Nil)))
 
-(define (opt-gc-test-functions1 [f : compiler_ir_types.CompilerIrFunction]) : compiler_ir_types.CompilerIrFunctionList
-  (compiler_ir_types.compiler-ir-function-cons
+(define (opt-gc-test-functions1 [f : compiler_ir_types.CompilerIrFunction]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
     f
-    compiler_ir_types.CompilerIrFunctionList.Nil))
+    (compiler_ir_types.compiler-ir-function-seq-empty)))
 
 (define (opt-gc-test-functions2
   [f : compiler_ir_types.CompilerIrFunction]
-  [g : compiler_ir_types.CompilerIrFunction]) : compiler_ir_types.CompilerIrFunctionList
-  (compiler_ir_types.compiler-ir-function-cons
+  [g : compiler_ir_types.CompilerIrFunction]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
     f
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       g
-      compiler_ir_types.CompilerIrFunctionList.Nil)))
+      (compiler_ir_types.compiler-ir-function-seq-empty))))
 
 (define (opt-gc-test-functions3
   [f : compiler_ir_types.CompilerIrFunction]
   [g : compiler_ir_types.CompilerIrFunction]
-  [h : compiler_ir_types.CompilerIrFunction]) : compiler_ir_types.CompilerIrFunctionList
-  (compiler_ir_types.compiler-ir-function-cons f (opt-gc-test-functions2 g h)))
+  [h : compiler_ir_types.CompilerIrFunction]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
+    f
+    (opt-gc-test-functions2 g h)))
 
 (define (opt-gc-test-summaries
   [symbols : OptGcTestSymbols]
-  [functions : compiler_ir_types.CompilerIrFunctionList]) : compiler_optimize.OptLoopBceSummaries
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]) : compiler_optimize.OptLoopBceSummaries
   (compiler_optimize.opt-loop-bce-summaries-set-global-cell
     (compiler_optimize.opt-loop-bce-empty-summaries)
     (compiler_optimize.opt-global-cell-summary-build
@@ -60840,7 +60817,7 @@
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)]
     [fixture : compiler_ir_types.CompilerIrFunction
       (opt-gc-test-while-function symbols)]
-    [functions : compiler_ir_types.CompilerIrFunctionList
+    [functions : compiler_ir_types.CompilerIrFunctionSeq
       (opt-gc-test-functions1 fixture)]
     [summaries : compiler_optimize.OptLoopBceSummaries
       (compiler_optimize.opt-build-program-summaries
@@ -60983,12 +60960,12 @@
             (compiler_ir_types.compiler-ir-instr-seq-empty))))
       compiler_ir_types.CompilerIrBlockList.Nil)))
 
-(define (opt-lp-test-program-functions [symbols : OptLpTestSymbols]) : compiler_ir_types.CompilerIrFunctionList
-  (compiler_ir_types.compiler-ir-function-cons
+(define (opt-lp-test-program-functions [symbols : OptLpTestSymbols]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
     (opt-lp-test-writer-function symbols)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (opt-lp-test-opaque-callee-function symbols)
-      compiler_ir_types.CompilerIrFunctionList.Nil)))
+      (compiler_ir_types.compiler-ir-function-seq-empty))))
 
 (define (opt-lp-test-cells [symbols : OptLpTestSymbols]) : compiler_optimize.OptGlobalCellSummary
   (compiler_optimize.opt-global-cell-summary-build
@@ -61945,21 +61922,21 @@
         (compiler_ast_types.AstType.U64))
       (opt-mr-return-zero))))
 
-(define (opt-mr-test-functions [symbols : OptMrTestSymbols]) : compiler_ir_types.CompilerIrFunctionList
-  (compiler_ir_types.compiler-ir-function-cons
+(define (opt-mr-test-functions [symbols : OptMrTestSymbols]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
     (opt-mr-write-function symbols.write-a symbols.a)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (opt-mr-write-via-function symbols)
-      (compiler_ir_types.compiler-ir-function-cons
+      (compiler_ir_types.compiler-ir-function-seq-prepend
         (opt-mr-write-function symbols.write-b symbols.b)
-        (compiler_ir_types.compiler-ir-function-cons
+        (compiler_ir_types.compiler-ir-function-seq-prepend
           (opt-mr-elem-function symbols)
-          (compiler_ir_types.compiler-ir-function-cons
+          (compiler_ir_types.compiler-ir-function-seq-prepend
             (opt-mr-opaque-function symbols)
-            compiler_ir_types.CompilerIrFunctionList.Nil))))))
+            (compiler_ir_types.compiler-ir-function-seq-empty)))))))
 
-(define (opt-mr-addr-functions [symbols : OptMrTestSymbols]) : compiler_ir_types.CompilerIrFunctionList
-  (compiler_ir_types.compiler-ir-function-cons
+(define (opt-mr-addr-functions [symbols : OptMrTestSymbols]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
     (opt-mr-addr-function symbols)
     (opt-mr-test-functions symbols)))
 
@@ -62585,68 +62562,68 @@
 (define (opt-fz-sink-function [symbols : OptFzTestSymbols]) : compiler_ir_types.CompilerIrFunction
   (opt-fz-one-param-function symbols.sink (opt-mr-return-zero)))
 
-(define (opt-fz-test-functions [symbols : OptFzTestSymbols]) : compiler_ir_types.CompilerIrFunctionList
-  (compiler_ir_types.compiler-ir-function-cons
+(define (opt-fz-test-functions [symbols : OptFzTestSymbols]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
     (opt-fz-init-function symbols.init-box symbols.builder)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (opt-fz-init-function symbols.init-box2 symbols.builder)
-      (compiler_ir_types.compiler-ir-function-cons
+      (compiler_ir_types.compiler-ir-function-seq-prepend
         (opt-fz-init-function symbols.init-box3 symbols.builder)
-        (compiler_ir_types.compiler-ir-function-cons
+        (compiler_ir_types.compiler-ir-function-seq-prepend
           (opt-fz-init-function symbols.init-setg symbols.builder)
-          (compiler_ir_types.compiler-ir-function-cons
+          (compiler_ir_types.compiler-ir-function-seq-prepend
             (opt-fz-init-function symbols.init-setbad symbols.builder)
-            (compiler_ir_types.compiler-ir-function-cons
+            (compiler_ir_types.compiler-ir-function-seq-prepend
               (opt-fz-init-function symbols.init-written symbols.builder)
-              (compiler_ir_types.compiler-ir-function-cons
+              (compiler_ir_types.compiler-ir-function-seq-prepend
                 (opt-fz-init-function
                   symbols.init-passed-extern
                   symbols.builder)
-                (compiler_ir_types.compiler-ir-function-cons
+                (compiler_ir_types.compiler-ir-function-seq-prepend
                   (opt-fz-init-function
                     symbols.init-passed-written
                     symbols.builder)
-                  (compiler_ir_types.compiler-ir-function-cons
+                  (compiler_ir_types.compiler-ir-function-seq-prepend
                     (opt-fz-init-function
                       symbols.init-dirty
                       symbols.dirty-builder)
                     (opt-fz-test-helper-functions symbols)))))))))))
 
-(define (opt-fz-test-helper-functions [symbols : OptFzTestSymbols]) : compiler_ir_types.CompilerIrFunctionList
-  (compiler_ir_types.compiler-ir-function-cons
+(define (opt-fz-test-helper-functions [symbols : OptFzTestSymbols]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
     (opt-fz-builder-function symbols)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (opt-fz-dirty-builder-function symbols)
-      (compiler_ir_types.compiler-ir-function-cons
+      (compiler_ir_types.compiler-ir-function-seq-prepend
         (opt-fz-reader-function symbols)
-        (compiler_ir_types.compiler-ir-function-cons
+        (compiler_ir_types.compiler-ir-function-seq-prepend
           (opt-fz-writer-function symbols)
-          (compiler_ir_types.compiler-ir-function-cons
+          (compiler_ir_types.compiler-ir-function-seq-prepend
             (opt-fz-param-writer-function symbols)
-            (compiler_ir_types.compiler-ir-function-cons
+            (compiler_ir_types.compiler-ir-function-seq-prepend
               (opt-fz-call-with-global
                 symbols.pass-extern
                 symbols.extern
                 symbols.passed-extern)
-              (compiler_ir_types.compiler-ir-function-cons
+              (compiler_ir_types.compiler-ir-function-seq-prepend
                 (opt-fz-call-with-global
                   symbols.pass-written
                   symbols.param-writer
                   symbols.passed-written)
-                (compiler_ir_types.compiler-ir-function-cons
+                (compiler_ir_types.compiler-ir-function-seq-prepend
                   (opt-fz-call-with-global
                     symbols.pass-box
                     symbols.reader
                     symbols.box)
-                  (compiler_ir_types.compiler-ir-function-cons
+                  (compiler_ir_types.compiler-ir-function-seq-prepend
                     (opt-fz-setter-function symbols)
-                    (compiler_ir_types.compiler-ir-function-cons
+                    (compiler_ir_types.compiler-ir-function-seq-prepend
                       (opt-fz-setter-bad-function symbols)
-                      (compiler_ir_types.compiler-ir-function-cons
+                      (compiler_ir_types.compiler-ir-function-seq-prepend
                         (opt-fz-sink-function symbols)
-                        (compiler_ir_types.compiler-ir-function-cons
+                        (compiler_ir_types.compiler-ir-function-seq-prepend
                           (opt-fz-opaque-function symbols)
-                          compiler_ir_types.CompilerIrFunctionList.Nil)))))))))))))
+                          (compiler_ir_types.compiler-ir-function-seq-empty))))))))))))))
 
 (define (opt-fz-test-cells [symbols : OptFzTestSymbols]) : compiler_optimize.OptGlobalCellSummary
   (compiler_optimize.opt-global-cell-summary-build
@@ -62985,25 +62962,25 @@
     (opt-test-symbol "cm_elem_rebound")
     (opt-test-symbol "cm_elem_caller")))
 
-(define (opt-cm-elem-functions [symbols : OptCmElemSymbols]) : compiler_ir_types.CompilerIrFunctionList
-  (compiler_ir_types.compiler-ir-function-cons
+(define (opt-cm-elem-functions [symbols : OptCmElemSymbols]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
     (opt-cm-elem-function symbols.slot (opt-cm-elem-slot-instrs))
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (opt-cm-elem-function symbols.length (opt-cm-elem-length-instrs))
-      (compiler_ir_types.compiler-ir-function-cons
+      (compiler_ir_types.compiler-ir-function-seq-prepend
         (opt-cm-elem-function symbols.raw (opt-cm-elem-raw-instrs))
-        (compiler_ir_types.compiler-ir-function-cons
+        (compiler_ir_types.compiler-ir-function-seq-prepend
           (opt-cm-elem-function symbols.rebound (opt-cm-elem-rebound-instrs))
-          (compiler_ir_types.compiler-ir-function-cons
+          (compiler_ir_types.compiler-ir-function-seq-prepend
             (opt-cm-elem-function
               symbols.caller
               (opt-cm-elem-caller-instrs symbols.slot))
-            (compiler_ir_types.CompilerIrFunctionList.Nil)))))))
+            (compiler_ir_types.compiler-ir-function-seq-empty)))))))
 
 ;; The pipeline's own composition: call-memory summaries unioned into the
 ;; syntactic clean walk, which is what a LICM call site reads.
 (define (opt-cm-elem-clean-map
-  [functions : compiler_ir_types.CompilerIrFunctionList]) : opt_i64_i64_map.Map
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]) : opt_i64_i64_map.Map
   (compiler_optimize.opt-loop-bce-direct-call-clean-add-memory-clean
     functions
     (compiler_optimize.opt-call-memory-build
@@ -63029,11 +63006,11 @@
         16)]
     ;; The same accessor-writing body under `lp_callee`, so the loop fixture
     ;; from the test above calls it and the clean map is the pipeline's.
-    [lp-functions : compiler_ir_types.CompilerIrFunctionList
+    [lp-functions : compiler_ir_types.CompilerIrFunctionSeq
       (opt-gc-test-functions2
         (opt-cm-elem-function lp.callee (opt-cm-elem-slot-instrs))
         (opt-lp-test-writer-function lp))]
-    [lp-length-functions : compiler_ir_types.CompilerIrFunctionList
+    [lp-length-functions : compiler_ir_types.CompilerIrFunctionSeq
       (opt-gc-test-functions2
         (opt-cm-elem-function lp.callee (opt-cm-elem-length-instrs))
         (opt-lp-test-writer-function lp))]
@@ -63176,8 +63153,8 @@
     ;; sits in the entry block and not in the loop.
     [call-fixture : compiler_ir_types.CompilerIrFunction
       (opt-lp-test-call-function symbols)]
-    [call-functions : compiler_ir_types.CompilerIrFunctionList
-      (compiler_ir_types.compiler-ir-function-cons
+    [call-functions : compiler_ir_types.CompilerIrFunctionSeq
+      (compiler_ir_types.compiler-ir-function-seq-prepend
         call-fixture
         (opt-lp-test-program-functions symbols))]
     [call-summaries : compiler_optimize.OptLoopBceSummaries
@@ -63204,7 +63181,7 @@
     ;; is what `opt-bce-version-invariant-operand` accepts
     [version-fixture : compiler_ir_types.CompilerIrFunction
       (opt-lp-test-version-function symbols)]
-    [version-functions : compiler_ir_types.CompilerIrFunctionList
+    [version-functions : compiler_ir_types.CompilerIrFunctionSeq
       (opt-gc-test-functions2
         version-fixture
         (opt-lp-test-writer-function symbols))]
@@ -64411,10 +64388,10 @@
           (string.string-length
             (compiler_optimize.compiler-opt-debug-verification-error))
           0))]
-    [functions : compiler_ir_types.CompilerIrFunctionList
-      (compiler_ir_types.compiler-ir-function-cons
+    [functions : compiler_ir_types.CompilerIrFunctionSeq
+      (compiler_ir_types.compiler-ir-function-seq-prepend
         (opt-test-function (compiler_ir_types.compiler-ir-instr-seq-empty))
-        (compiler_ir_types.CompilerIrFunctionList.Nil))]
+        (compiler_ir_types.compiler-ir-function-seq-empty))]
     [index : compiler_optimize.OptFunctionIndex
       (compiler_optimize.opt-function-index-build functions)]
     [_install : unit (compiler_optimize.opt-inline-owned-state-install! index)]

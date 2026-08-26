@@ -23123,10 +23123,10 @@
 
 (define (opt-licm-return-alias-add-functions-from
   [functions : ir.CompilerIrFunctionSeq]
-  [out : opt_i64_i64_map.Map]
-  [position : i64]) : opt_i64_i64_map.Map
+  [out : (&mut out opt_i64_i64_map.Map)]
+  [position : i64]) : unit
   (if (>= position functions.len)
-    out
+    unit
     (let
       [func : ir.CompilerIrFunction
         (compiler-opt-global-array-element-shared-view functions.slots position)]
@@ -23138,7 +23138,7 @@
               (if (< index 0)
                 unit
                 (opt_i64_i64_map.insert-ref!
-                  (&mut out)
+                  out
                   (ir.compiler-ir-symbol-id name)
                   (+ index 1)))]
             (opt-licm-return-alias-add-functions-from
@@ -23146,17 +23146,14 @@
               out
               (+ position 1)))]))))
 
-(define (opt-licm-return-alias-add-functions
-  [functions : ir.CompilerIrFunctionSeq]
-  [out : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
-  (opt-licm-return-alias-add-functions-from functions out 0))
-
 (define (opt-licm-return-alias-map
   [functions : ir.CompilerIrFunctionSeq]
   [capacity : i64]) : opt_i64_i64_map.Map
-  (opt-licm-return-alias-add-functions
-    functions
-    (opt_i64_i64_map.with-capacity capacity)))
+  (let
+    [out : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity capacity)]
+    (begin
+      (opt-licm-return-alias-add-functions-from functions (&mut out) 0)
+      out)))
 
 ;; The argument a direct call returns unchanged, if the table proves it does.
 (define (opt-licm-root-env-return-alias-value
@@ -108028,6 +108025,7 @@
   [map : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
   (let
     [index : i64 0]
+    [out : opt_i64_i64_map.Map (compiler-opt-global-shared-view map)]
     (begin
       (while (< index functions.len)
         (let
@@ -108042,12 +108040,12 @@
                   type-segment-bases
                   func)
                   (opt_i64_i64_map.insert-ref!
-                    (&mut map)
+                    (&mut out)
                     (ir.compiler-ir-symbol-id name)
                     1)
                   unit)])
             (set! index (+ index 1)))))
-      map)))
+      out)))
 
 (define (opt-loop-bce-clean-storeptr-safe?
   [state : OptLoopBceState]
@@ -108245,7 +108243,7 @@
   (let
     [index : i64 (- functions.len 1)]
     [added : bool false]
-    [out : opt_i64_i64_map.Map clean]
+    [out : opt_i64_i64_map.Map (compiler-opt-global-shared-view clean)]
     (begin
       (while (>= index 0)
         (let
@@ -108400,6 +108398,7 @@
   [map : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
   (let
     [index : i64 0]
+    [out : opt_i64_i64_map.Map (compiler-opt-global-shared-view map)]
     (begin
       (while (< index functions.len)
         (begin
@@ -108408,11 +108407,11 @@
             index)
             [(ir.CompilerIrFunction.Function name _ _ _ _)
               (opt_i64_i64_map.insert-ref!
-                (&mut map)
+                (&mut out)
                 (ir.compiler-ir-symbol-id name)
                 1)])
           (set! index (+ index 1))))
-      map)))
+      out)))
 
 (define (opt-loop-bce-direct-call-clean-filter-from
   [functions : ir.CompilerIrFunctionSeq]
@@ -108436,14 +108435,15 @@
                 (opt-loop-bce-function-direct-call-hoist-target?
                   func
                   (compiler-opt-global-shared-view current)))]
+            [next : opt_i64_i64_map.Map (compiler-opt-global-shared-view out)]
             [_record : unit
               (if keep
-                (opt_i64_i64_map.insert-ref! (&mut out) name-id 1)
+                (opt_i64_i64_map.insert-ref! (&mut next) name-id 1)
                 unit)]
             (opt-loop-bce-direct-call-clean-filter-from
               functions
               current
-              out
+              next
               (or changed (and was-clean (not keep)))
               (+ index 1)))]))))
 
@@ -108571,6 +108571,7 @@
   [set : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
   (let
     [index : i64 0]
+    [out : opt_i64_i64_map.Map (compiler-opt-global-shared-view set)]
     (begin
       (while (< index functions.len)
         (begin
@@ -108579,11 +108580,11 @@
             index)
             [(ir.CompilerIrFunction.Function name _ _ _ _)
               (opt_i64_i64_map.insert-ref!
-                (&mut set)
+                (&mut out)
                 (ir.compiler-ir-symbol-id name)
                 1)])
           (set! index (+ index 1))))
-      set)))
+      out)))
 
 ;; Find the source-level parameter index for a canonical checked-reference root
 ;; var. Fresh allocation roots deliberately have no parameter index.
@@ -109367,16 +109368,17 @@
         [(ir.CompilerIrFunction.Function name _ _ _ _)
           (let
             [name-id : i64 (ir.compiler-ir-symbol-id name)]
+            [next : opt_i64_i64_map.Map (compiler-opt-global-shared-view out)]
             (match (opt_i64_i64_map.get (& current) name-id)
               [(opt_i64_i64_map.LookupFound summary)
                 (begin
-                  (opt_i64_i64_map.insert-ref! (&mut out) name-id summary)
+                  (opt_i64_i64_map.insert-ref! (&mut next) name-id summary)
                   (opt-call-memory-build-pass-from
                     type-segment-bases
                     functions
                     (compiler-opt-global-shared-view current)
                     (compiler-opt-global-shared-view function-set)
-                    out
+                    next
                     changed
                     (+ index 1)))]
               [(opt_i64_i64_map.LookupMissing)
@@ -109391,18 +109393,18 @@
                       functions
                       current
                       function-set
-                      out
+                      next
                       changed
                       (+ index 1))]
                   [(OptCallMemoryCandidate.Known summary)
                     (begin
-                      (opt_i64_i64_map.insert-ref! (&mut out) name-id summary)
+                      (opt_i64_i64_map.insert-ref! (&mut next) name-id summary)
                       (opt-call-memory-build-pass-from
                         type-segment-bases
                         functions
                         current
                         function-set
-                        out
+                        next
                         true
                         (+ index 1)))])]))]))))
 
@@ -109560,6 +109562,7 @@
   [out : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
   (let
     [index : i64 0]
+    [next : opt_i64_i64_map.Map (compiler-opt-global-shared-view out)]
     (begin
       (while (< index functions.len)
         (begin
@@ -109573,9 +109576,9 @@
                   (match (opt_i64_i64_map.get (& resolved) name-id)
                     [(opt_i64_i64_map.LookupFound summary) summary]
                     [(opt_i64_i64_map.LookupMissing) 0])]
-                (opt_i64_i64_map.insert-ref! (&mut out) name-id seed))])
+                (opt_i64_i64_map.insert-ref! (&mut next) name-id seed))])
           (set! index (+ index 1))))
-      out)))
+      next)))
 
 (define (opt-call-memory-unresolved-count
   [functions : ir.CompilerIrFunctionSeq]
@@ -109623,20 +109626,21 @@
         [(ir.CompilerIrFunction.Function name _ _ _ _)
           (let
             [name-id : i64 (ir.compiler-ir-symbol-id name)]
+            [next : opt_i64_i64_map.Map (compiler-opt-global-shared-view out)]
             (match (opt_i64_i64_map.get (& resolved) name-id)
               ;; A pessimistically resolved row was computed from callees that
               ;; were themselves already committed, so no residue row can reach
               ;; it: it is a constant of this iteration.
               [(opt_i64_i64_map.LookupFound summary)
                 (begin
-                  (opt_i64_i64_map.insert-ref! (&mut out) name-id summary)
+                  (opt_i64_i64_map.insert-ref! (&mut next) name-id summary)
                   (opt-call-memory-optimistic-pass-from
                     type-segment-bases
                     functions
                     resolved
                     (compiler-opt-global-shared-view current)
                     (compiler-opt-global-shared-view function-set)
-                    out
+                    next
                     changed
                     usable?
                     (+ index 1)))]
@@ -109653,17 +109657,20 @@
                     func)
                     ;; Unreachable in practice; taking it abandons the round.
                     [(OptCallMemoryCandidate.Unresolved)
-                      (OptCallMemoryOptimisticPass.Pass out changed false)]
+                      (OptCallMemoryOptimisticPass.Pass next changed false)]
                     [(OptCallMemoryCandidate.Known summary)
                       (begin
-                        (opt_i64_i64_map.insert-ref! (&mut out) name-id summary)
+                        (opt_i64_i64_map.insert-ref!
+                          (&mut next)
+                          name-id
+                          summary)
                         (opt-call-memory-optimistic-pass-from
                           type-segment-bases
                           functions
                           resolved
                           current
                           function-set
-                          out
+                          next
                           (or changed (not (= summary previous)))
                           usable?
                           (+ index 1)))]))]))]))))
@@ -110397,6 +110404,7 @@
   [out : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
   (let
     [index : i64 0]
+    [next : opt_i64_i64_map.Map (compiler-opt-global-shared-view out)]
     (begin
       (while (< index functions.len)
         (begin
@@ -110413,19 +110421,19 @@
                         [bits : i64
                           (opt-loop-bce-direct-call-clean-bits summary)]
                         [existing : i64
-                          (match (opt_i64_i64_map.get (& out) name-id)
+                          (match (opt_i64_i64_map.get (& next) name-id)
                             [(opt_i64_i64_map.LookupFound old) old]
                             [(opt_i64_i64_map.LookupMissing) 0])]
                         (if (= (bit-or existing bits) existing)
                           unit
                           (opt_i64_i64_map.insert-ref!
-                            (&mut out)
+                            (&mut next)
                             name-id
                             (bit-or existing bits))))]
                     [(opt_i64_i64_map.LookupMissing) unit])]
                 unit)])
           (set! index (+ index 1))))
-      out)))
+      next)))
 
 (define (opt-loop-bce-build-summaries-with-direct-call-clean
   [type-segment-bases : i64]
@@ -111971,7 +111979,7 @@
               (compiler-opt-global-shared-view function-set)
               blocks
               previous)]
-          [next : opt_i64_i64_map.Map out]
+          [next : opt_i64_i64_map.Map (compiler-opt-global-shared-view out)]
           (begin
             (opt_i64_i64_map.insert-ref! (&mut next) name-id mask)
             (opt-global-mod-ref-pass-from

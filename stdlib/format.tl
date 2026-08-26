@@ -5,7 +5,8 @@
 ;# selections; escapes use `{{` / `}}`. Format specifications share one parsed
 ;# plan supporting byte fill, alignment, sign, alternate/zero flags, width, and
 ;# literal/dollar/star precision counts. The generated expression evaluates
-;# each supplied value once and uses one flat `str-cat` expansion.
+;# each supplied value once and uses one flat `str-cat` expansion. Nonnumeric
+;# Display precision truncates rendered TypeLisp bytes before padding.
 ;#
 ;# Nominal structs and enums participate through their canonical owner module.
 ;# A module's common primary type defines `to-string`; additional nominal types
@@ -120,17 +121,37 @@
           (ptr-offset (string-data rendered) source-start))]
       (string.str-copy-bytes-into source dst destination-start count))))
 
-;: Apply shared byte-width, alignment, sign, and sign-aware zero padding.
+;: Resolve the byte length visible to shared Display padding.
+;:
+;: Numeric renderers own their precision semantics, so this shared fallback
+;: truncates only nonnumeric output. TypeLisp text and `char` are byte-oriented:
+;: the precision boundary neither decodes nor validates UTF-8.
+(define (format-rendered-display-length
+  [rendered-len : i64]
+  [numeric? : bool]
+  [options : FormatOptions]) : i64
+  (if (if numeric?
+    false
+    (if options.precision-present
+      (< options.precision rendered-len)
+      false))
+    options.precision
+    rendered-len))
+
+;: Apply shared Display precision, byte width, alignment, sign, and zero padding.
 ;:
 ;: The value renderer has already chosen Display/type-specific text. Padding
-;: therefore composes with owner-module `to-string`. Numeric zero padding keeps
-;: a leading sign and a `0x`/`0X`/`0o`/`0b` prefix before the inserted zeroes.
+;: therefore follows nonnumeric byte truncation and composes with owner-module
+;: `to-string`. Numeric zero padding keeps a leading sign and a
+;: `0x`/`0X`/`0o`/`0b` prefix before the inserted zeroes.
 (define (format-apply-options
   [rendered : String]
   [numeric? : bool]
   [options : FormatOptions]) : String
   (let
     [rendered-len : i64 (string.string-length (& rendered))]
+    [display-len : i64
+      (format-rendered-display-length rendered-len numeric? options)]
     [source-sign-len : i64
       (if (if numeric?
         (> rendered-len 0)
@@ -166,13 +187,13 @@
             unit))
         unit)
       (let
-        [content-len : i64 (+ (- rendered-len source-sign-len) output-sign-len)]
+        [content-len : i64 (+ (- display-len source-sign-len) output-sign-len)]
         [output-len : i64
           (if (> options.width content-len)
             options.width
             content-len)]
         [padding : i64 (- output-len content-len)]
-        (if (and (= padding 0) (not add-plus?))
+        (if (and (= display-len rendered-len) (= padding 0) (not add-plus?))
           rendered
           (let
             [dst : (MutPtr u8) (string.string-runtime-alloc output-len)]
@@ -245,7 +266,7 @@
                       source-sign-len
                       dst
                       cursor
-                      (- rendered-len source-sign-len))
+                      (- display-len source-sign-len))
                     (format-write-fill!
                       dst
                       (- output-len right-padding)
@@ -562,18 +583,7 @@
                                         (string.eq value-kind "f32"))
                                         (comptime.comptime-error
                                           "format: precision for float Display output is not supported yet")
-                                        (if (if (string.eq value-kind "string")
-                                          true
-                                          (string.eq value-kind "str"))
-                                          (comptime.comptime-error
-                                            "format: precision for text Display output is not supported yet")
-                                          (if nominal?
-                                            (comptime.comptime-error
-                                              "format: precision for owner Display output is not supported yet")
-                                            (comptime.comptime-error
-                                              (comptime.string-append
-                                                "format: precision for Display type is not supported yet: "
-                                                value-key)))))))
+                                        unit)))
                                   (if (string.eq selector "")
                                     unit
                                     (comptime.comptime-error
@@ -656,13 +666,19 @@
                                                   (deref ,precision-value))
                                                 (comptime.comptime-error
                                                   "format: dynamic precision argument must have exact type i64"))))))]
+                                    [precision-applies? : bool
+                                      (if (= precision-kind 0)
+                                        false
+                                        (not integral?))]
                                     [default-options? : bool
                                       (if (= fill-code 32)
                                         (if (= alignment 0)
                                           (if (= sign 0)
                                             (if (= alternate 0)
                                               (if (= zero 0)
-                                                (= width-kind 0)
+                                                (if (= width-kind 0)
+                                                  (not precision-applies?)
+                                                  false)
                                                 false)
                                               false)
                                             false)

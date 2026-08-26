@@ -1299,11 +1299,17 @@
               2))
           (not (reg.compiler-reg-call-hole-qualifies? scores 3)))))))
 
-;; The rewrite shape. One value crosses three calls in one block: the first two
-;; are consecutive with no intervening def, so the SECOND store is elided and the
-;; carrier is read straight back; the third follows a redefinition of the value,
-;; so its store is emitted again. Every crossing gets its own reload, because the
-;; value is live after each call by the definition of spanning.
+;; --- E-1 carrier store and reload placement ---------------------------------
+;; The single-block fixture: three calls and one spilled value `%0`. The first
+;; crossing stores the carrier and the third stores it again because `%0` is
+;; redefined in between; the second crossing's store is elided because the
+;; carrier already holds the value on this path.
+;;
+;; The reload after `call f` is DEAD -- nothing reads `%0` before `call g`
+;; restores it -- and after E-1 that is decided for BOTH candidate classes, so
+;; the run costs two stores and two reloads rather than two stores and three.
+;; It used to be a csr-only relaxation gated on the `csr` flags array; the flow
+;; answers the same question exactly, and the class no longer enters into it.
 (cfg
   test
   (define (compiler-reg-call-hole-rewrite-function) : ir.CompilerIrFunction
@@ -1364,173 +1370,707 @@
                           (ir.compiler-ir-instr-seq-empty))))))))))
         ir.CompilerIrBlockList.Nil))))
 
+;; Run the rewrite over a whole function with `%0..%(selected-count-1)` carried,
+;; building the flow the same way `compiler-reg-call-hole-split-round` does.
+(cfg
+  test
+  (define (compiler-reg-call-hole-test-rewrite
+    [func : ir.CompilerIrFunction]
+    [selected : (__tl_dyn-array i64)]
+    [selected-count : i64]) : ir.CompilerIrBlockSeq
+    (match (reg.compiler-reg-global-shared-view func)
+      [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
+        (let
+          [width : i64 (+ vars selected-count)]
+          [carrier : (__tl_dyn-array i64) (array.make-array i64 width)]
+          [valid : (__tl_dyn-array bool) (array.make-array bool width)]
+          [seq : ir.CompilerIrBlockSeq
+            (live.compiler-live-ir-block-list-to-seq blocks)]
+          [liveness : live.CompilerFunctionLiveness
+            (live.compiler-live-analyze-function-edge-precise
+              (reg.compiler-reg-global-shared-view func))]
+          [index : i64 0]
+          (begin
+            (reg.compiler-reg-fill-i64-array
+              (reg.compiler-reg-global-shared-view carrier)
+              (- 0 1))
+            (while (< index selected-count)
+              (begin
+                (set!
+                  (array-ref
+                    (reg.compiler-reg-global-shared-view carrier)
+                    (array-ref
+                      (reg.compiler-reg-global-shared-view selected)
+                      index))
+                  (+ vars index))
+                (set! index (+ index 1))))
+            (live.compiler-live-ir-block-list-to-seq
+              (reg.compiler-reg-call-hole-rewrite-blocks
+                (ast.ast-node-pool-reader-type-segment-bases)
+                (reg.compiler-reg-global-shared-view seq)
+                (reg.compiler-reg-global-shared-view liveness)
+                (reg.compiler-reg-function-var-types
+                  (reg.compiler-reg-global-shared-view func))
+                (reg.compiler-reg-global-shared-view carrier)
+                (reg.compiler-reg-global-shared-view selected)
+                selected-count
+                (reg.compiler-reg-call-hole-flow-build
+                  (ast.ast-node-pool-reader-type-segment-bases)
+                  (reg.compiler-reg-global-shared-view seq)
+                  (reg.compiler-reg-global-shared-view liveness)
+                  (reg.compiler-reg-global-shared-view selected)
+                  selected-count)
+                (reg.compiler-reg-call-hole-flow-full selected-count)
+                valid))))])))
+
+(cfg
+  test
+  (define (compiler-reg-call-hole-test-block
+    [seq : ir.CompilerIrBlockSeq]
+    [index : i64]) : ir.CompilerIrInstrSeq
+    (match (ir.compiler-ir-block-seq-ref seq index)
+      [(ir.CompilerIrBlock.Block _ found) found])))
+
+(cfg
+  test
+  (define (compiler-reg-call-hole-test-selection [var : i64]) : (__tl_dyn-array
+      i64)
+    (let
+      [selected : (__tl_dyn-array i64) (array.make-array i64 1)]
+      (begin
+        (set! (array-ref selected 0) var)
+        selected))))
+
 (cfg
   test
   (define (compiler-reg-call-hole-rewrite-shape-ok?) : bool
     (let
-      [func : ir.CompilerIrFunction (compiler-reg-call-hole-rewrite-function)]
-      [carrier : (__tl_dyn-array i64) (array.make-array i64 7)]
-      [selected : (__tl_dyn-array i64) (array.make-array i64 1)]
-      [csr : (__tl_dyn-array bool) (array.make-array bool 7)]
-      [valid : (__tl_dyn-array bool) (array.make-array bool 7)]
-      (match (reg.compiler-reg-global-shared-view func)
-        [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
-          (begin
-            (reg.compiler-reg-fill-i64-array
-              (reg.compiler-reg-global-shared-view carrier)
-              (- 0 1))
-            (set! (array-ref carrier 0) vars)
-            (set! (array-ref selected 0) 0)
-            (let
-              [rewritten : ir.CompilerIrBlockList
-                (reg.compiler-reg-call-hole-rewrite-blocks
-                  (ast.ast-node-pool-reader-type-segment-bases)
-                  csr
-                  (live.compiler-live-ir-block-list-to-seq blocks)
-                  (live.compiler-live-analyze-function-edge-precise
-                    (reg.compiler-reg-global-shared-view func))
-                  (reg.compiler-reg-function-var-types
-                    (reg.compiler-reg-global-shared-view func))
-                  carrier
-                  selected
-                  1
-                  valid)]
-              (let
-                [seq : ir.CompilerIrBlockSeq
-                  (live.compiler-live-ir-block-list-to-seq rewritten)]
-                [instrs : ir.CompilerIrInstrSeq
-                  (match (ir.compiler-ir-block-seq-ref seq 0)
-                    [(ir.CompilerIrBlock.Block _ found) found])]
-                (and
-                  ;; 8 original + 2 stores + 3 reloads
-                  (= (ir.compiler-ir-instr-seq-count instrs) 13)
-                  ;; def, store, call f, reload
-                  (compiler-reg-call-hole-mov-const?
-                    (ir.compiler-ir-instr-seq-ref instrs 0)
-                    0)
-                  (compiler-reg-cold-call-test-mov?
-                    (ir.compiler-ir-instr-seq-ref instrs 1)
-                    6
-                    0)
-                  (compiler-reg-call-hole-call?
-                    (ir.compiler-ir-instr-seq-ref instrs 2))
-                  (compiler-reg-cold-call-test-mov?
-                    (ir.compiler-ir-instr-seq-ref instrs 3)
-                    0
-                    6)
-                  ;; call g: the store is ELIDED, the reload is not
-                  (compiler-reg-call-hole-call?
-                    (ir.compiler-ir-instr-seq-ref instrs 4))
-                  (compiler-reg-cold-call-test-mov?
-                    (ir.compiler-ir-instr-seq-ref instrs 5)
-                    0
-                    6)
-                  (compiler-reg-call-hole-binop?
-                    (ir.compiler-ir-instr-seq-ref instrs 6)
-                    3)
-                  ;; the redefinition invalidates the carrier ...
-                  (compiler-reg-call-hole-mov-const?
-                    (ir.compiler-ir-instr-seq-ref instrs 7)
-                    0)
-                  ;; ... so call h stores again
-                  (compiler-reg-cold-call-test-mov?
-                    (ir.compiler-ir-instr-seq-ref instrs 8)
-                    6
-                    0)
-                  (compiler-reg-call-hole-call?
-                    (ir.compiler-ir-instr-seq-ref instrs 9))
-                  (compiler-reg-cold-call-test-mov?
-                    (ir.compiler-ir-instr-seq-ref instrs 10)
-                    0
-                    6)
-                  (compiler-reg-call-hole-binop?
-                    (ir.compiler-ir-instr-seq-ref instrs 11)
-                    5)
-                  (compiler-reg-call-hole-return?
-                    (ir.compiler-ir-instr-seq-ref instrs 12))
-                  (compiler-reg-call-hole-elided-shape-ok?)))))]))))
+      [instrs : ir.CompilerIrInstrSeq
+        (compiler-reg-call-hole-test-block
+          (compiler-reg-call-hole-test-rewrite
+            (compiler-reg-call-hole-rewrite-function)
+            (compiler-reg-call-hole-test-selection 0)
+            1)
+          0)]
+      (and
+        ;; 8 original + 2 stores + 2 reloads
+        (= (ir.compiler-ir-instr-seq-count instrs) 12)
+        (compiler-reg-call-hole-mov-const?
+          (ir.compiler-ir-instr-seq-ref instrs 0)
+          0)
+        (compiler-reg-cold-call-test-mov?
+          (ir.compiler-ir-instr-seq-ref instrs 1)
+          6
+          0)
+        (compiler-reg-call-hole-call? (ir.compiler-ir-instr-seq-ref instrs 2))
+        ;; the reload after `call f` is DEAD and is not emitted
+        (compiler-reg-call-hole-call? (ir.compiler-ir-instr-seq-ref instrs 3))
+        ;; `call g` re-uses the carrier the first crossing filled: no store
+        (compiler-reg-cold-call-test-mov?
+          (ir.compiler-ir-instr-seq-ref instrs 4)
+          0
+          6)
+        (compiler-reg-call-hole-binop?
+          (ir.compiler-ir-instr-seq-ref instrs 5)
+          3)
+        ;; the redefinition invalidates the carrier ...
+        (compiler-reg-call-hole-mov-const?
+          (ir.compiler-ir-instr-seq-ref instrs 6)
+          0)
+        ;; ... so `call h` stores again
+        (compiler-reg-cold-call-test-mov?
+          (ir.compiler-ir-instr-seq-ref instrs 7)
+          6
+          0)
+        (compiler-reg-call-hole-call? (ir.compiler-ir-instr-seq-ref instrs 8))
+        (compiler-reg-cold-call-test-mov?
+          (ir.compiler-ir-instr-seq-ref instrs 9)
+          0
+          6)
+        (compiler-reg-call-hole-binop?
+          (ir.compiler-ir-instr-seq-ref instrs 10)
+          5)
+        (compiler-reg-call-hole-return?
+          (ir.compiler-ir-instr-seq-ref instrs 11))))))
 
-;; The same fixture read as a CSR candidate. The reload after `call f` is dead --
-;; nothing reads %0 before `call g` overwrites it again -- so it is not emitted,
-;; and the run costs one store and one reload instead of one store and two
-;; reloads. The reload after `call g` survives: %0 is multiplied right after it.
+;; --- E-1 across the CFG ------------------------------------------------------
+;; `entry` stores the carrier at `call f` and both successors inherit it, so
+;; neither `call g` nor `call h` stores again: the store elision is available
+;; expressions over the carrier stores and the meet is an intersection, which
+;; holds here because EVERY path into `then` and `else` runs entry's store.
+;;
+;; Two reload facts sit in the same fixture. Nothing reads `%0` before `call g`
+;; on the `then` path or before `call h` on the `else` path, so entry's reload
+;; is not emitted at all -- the live-through-with-no-use crossing that
+;; `SplitEditor::splitLiveThroughBlock` gives neither store nor reload. And
+;; inside `then`, `call g` is followed by `call k` with no read between, so its
+;; reload is dropped too, while `call k`'s reload survives because the
+;; multiplication reads `%0` immediately.
 (cfg
   test
-  (define (compiler-reg-call-hole-elided-shape-ok?) : bool
+  (define (compiler-reg-call-hole-cross-block-function) : ir.CompilerIrFunction
+    (ir.CompilerIrFunction.Function
+      (ir.compiler-ir-test-symbol "call_hole_cross_block")
+      ir.CompilerIrParamList.Nil
+      (ast.AstType.I64)
+      7
+      (ir.compiler-ir-block-cons
+        (ir.compiler-ir-block
+          (ir.compiler-ir-label "entry")
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.Mov
+              0
+              (ir.CompilerIrValue.I64 7)
+              (compiler-reg-i64-ty))
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.Call
+                1
+                (ir.compiler-ir-test-symbol "f")
+                (ir.CompilerIrCallArgs.Nil)
+                (compiler-reg-i64-ty))
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.Branch
+                  (ir.CompilerIrValue.Bool false)
+                  (ir.compiler-ir-label "then")
+                  (ir.compiler-ir-label "else"))
+                ir.CompilerIrInstrList.Nil))))
+        (ir.compiler-ir-block-cons
+          (ir.compiler-ir-block
+            (ir.compiler-ir-label "then")
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.Call
+                2
+                (ir.compiler-ir-test-symbol "g")
+                (ir.CompilerIrCallArgs.Nil)
+                (compiler-reg-i64-ty))
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.Call
+                  6
+                  (ir.compiler-ir-test-symbol "k")
+                  (ir.CompilerIrCallArgs.Nil)
+                  (compiler-reg-i64-ty))
+                (ir.compiler-ir-instr-cons
+                  (ir.CompilerIrInstr.BinOp
+                    3
+                    (ir.CompilerIrBinOp.Mul)
+                    (ir.CompilerIrValue.Var 0)
+                    (ir.CompilerIrValue.Var 0)
+                    (compiler-reg-i64-ty))
+                  (ir.compiler-ir-instr-cons
+                    (ir.CompilerIrInstr.Return
+                      (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 3)))
+                    ir.CompilerIrInstrList.Nil)))))
+          (ir.compiler-ir-block-cons
+            (ir.compiler-ir-block
+              (ir.compiler-ir-label "else")
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.Call
+                  4
+                  (ir.compiler-ir-test-symbol "h")
+                  (ir.CompilerIrCallArgs.Nil)
+                  (compiler-reg-i64-ty))
+                (ir.compiler-ir-instr-cons
+                  (ir.CompilerIrInstr.BinOp
+                    5
+                    (ir.CompilerIrBinOp.Add)
+                    (ir.CompilerIrValue.Var 0)
+                    (ir.CompilerIrValue.Var 0)
+                    (compiler-reg-i64-ty))
+                  (ir.compiler-ir-instr-cons
+                    (ir.CompilerIrInstr.Return
+                      (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 5)))
+                    ir.CompilerIrInstrList.Nil))))
+            ir.CompilerIrBlockList.Nil))))))
+
+(cfg
+  test
+  (define (compiler-reg-call-hole-cross-block-ok?) : bool
     (let
-      [func : ir.CompilerIrFunction (compiler-reg-call-hole-rewrite-function)]
-      [carrier : (__tl_dyn-array i64) (array.make-array i64 7)]
-      [selected : (__tl_dyn-array i64) (array.make-array i64 1)]
-      [csr : (__tl_dyn-array bool) (array.make-array bool 7)]
-      [valid : (__tl_dyn-array bool) (array.make-array bool 7)]
-      (match (reg.compiler-reg-global-shared-view func)
-        [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
-          (begin
-            (reg.compiler-reg-fill-i64-array
-              (reg.compiler-reg-global-shared-view carrier)
-              (- 0 1))
-            (set! (array-ref carrier 0) vars)
-            (set! (array-ref selected 0) 0)
-            (set! (array-ref csr 0) true)
-            (let
-              [rewritten : ir.CompilerIrBlockList
-                (reg.compiler-reg-call-hole-rewrite-blocks
-                  (ast.ast-node-pool-reader-type-segment-bases)
-                  csr
-                  (live.compiler-live-ir-block-list-to-seq blocks)
-                  (live.compiler-live-analyze-function-edge-precise
-                    (reg.compiler-reg-global-shared-view func))
-                  (reg.compiler-reg-function-var-types func)
-                  carrier
-                  selected
+      [seq : ir.CompilerIrBlockSeq
+        (compiler-reg-call-hole-test-rewrite
+          (compiler-reg-call-hole-cross-block-function)
+          (compiler-reg-call-hole-test-selection 0)
+          1)]
+      [entry : ir.CompilerIrInstrSeq
+        (compiler-reg-call-hole-test-block
+          (reg.compiler-reg-global-shared-view seq)
+          0)]
+      [then-block : ir.CompilerIrInstrSeq
+        (compiler-reg-call-hole-test-block
+          (reg.compiler-reg-global-shared-view seq)
+          1)]
+      [else-block : ir.CompilerIrInstrSeq
+        (compiler-reg-call-hole-test-block
+          (reg.compiler-reg-global-shared-view seq)
+          2)]
+      (and
+        ;; entry: def, store, call, branch -- and NO reload
+        (=
+          (ir.compiler-ir-instr-seq-count
+            (reg.compiler-reg-global-shared-view entry))
+          4)
+        (compiler-reg-call-hole-mov-const?
+          (ir.compiler-ir-instr-seq-ref
+            (reg.compiler-reg-global-shared-view entry)
+            0)
+          0)
+        (compiler-reg-cold-call-test-mov?
+          (ir.compiler-ir-instr-seq-ref
+            (reg.compiler-reg-global-shared-view entry)
+            1)
+          7
+          0)
+        (compiler-reg-call-hole-call?
+          (ir.compiler-ir-instr-seq-ref
+            (reg.compiler-reg-global-shared-view entry)
+            2))
+        (compiler-reg-call-hole-branch?
+          (ir.compiler-ir-instr-seq-ref
+            (reg.compiler-reg-global-shared-view entry)
+            3))
+        ;; then: call g (no store, no reload), call k (no store), reload, mul
+        (=
+          (ir.compiler-ir-instr-seq-count
+            (reg.compiler-reg-global-shared-view then-block))
+          5)
+        (compiler-reg-call-hole-call?
+          (ir.compiler-ir-instr-seq-ref
+            (reg.compiler-reg-global-shared-view then-block)
+            0))
+        (compiler-reg-call-hole-call?
+          (ir.compiler-ir-instr-seq-ref
+            (reg.compiler-reg-global-shared-view then-block)
+            1))
+        (compiler-reg-cold-call-test-mov?
+          (ir.compiler-ir-instr-seq-ref
+            (reg.compiler-reg-global-shared-view then-block)
+            2)
+          0
+          7)
+        (compiler-reg-call-hole-binop?
+          (ir.compiler-ir-instr-seq-ref
+            (reg.compiler-reg-global-shared-view then-block)
+            3)
+          3)
+        (compiler-reg-call-hole-return?
+          (ir.compiler-ir-instr-seq-ref
+            (reg.compiler-reg-global-shared-view then-block)
+            4))
+        ;; else: call h (no store), reload, add
+        (=
+          (ir.compiler-ir-instr-seq-count
+            (reg.compiler-reg-global-shared-view else-block))
+          4)
+        (compiler-reg-call-hole-call?
+          (ir.compiler-ir-instr-seq-ref
+            (reg.compiler-reg-global-shared-view else-block)
+            0))
+        (compiler-reg-cold-call-test-mov?
+          (ir.compiler-ir-instr-seq-ref
+            (reg.compiler-reg-global-shared-view else-block)
+            1)
+          0
+          7)
+        (compiler-reg-call-hole-binop?
+          (ir.compiler-ir-instr-seq-ref
+            (reg.compiler-reg-global-shared-view else-block)
+            2)
+          5)
+        (compiler-reg-call-hole-return?
+          (ir.compiler-ir-instr-seq-ref else-block 3))))))
+
+;; --- E-1, the two negative cases --------------------------------------------
+;; `a` reaches `join` having stored the carrier; `b` reaches it having only
+;; redefined `%0`. The meet is an intersection, so `join` may NOT claim the
+;; carrier holds `%0` and `call g` stores it again.
+;;
+;; The same fixture pins the fact whose absence is a MISCOMPILE rather than a
+;; missed elision: the reload after `call f` in `a` is KEPT, because the store
+;; `join` emits READS `%0`'s register. A reload rule that only looked for
+;; ordinary uses would elide it and `join` would spill whatever the register
+;; happened to hold after the call.
+(cfg
+  test
+  (define (compiler-reg-call-hole-join-function) : ir.CompilerIrFunction
+    (ir.CompilerIrFunction.Function
+      (ir.compiler-ir-test-symbol "call_hole_join")
+      ir.CompilerIrParamList.Nil
+      (ast.AstType.I64)
+      4
+      (ir.compiler-ir-block-cons
+        (ir.compiler-ir-block
+          (ir.compiler-ir-label "entry")
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.Branch
+              (ir.CompilerIrValue.Bool false)
+              (ir.compiler-ir-label "a")
+              (ir.compiler-ir-label "b"))
+            ir.CompilerIrInstrList.Nil))
+        (ir.compiler-ir-block-cons
+          (ir.compiler-ir-block
+            (ir.compiler-ir-label "a")
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.Mov
+                0
+                (ir.CompilerIrValue.I64 7)
+                (compiler-reg-i64-ty))
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.Call
                   1
-                  valid)]
-              (let
-                [seq : ir.CompilerIrBlockSeq
-                  (live.compiler-live-ir-block-list-to-seq rewritten)]
-                [instrs : ir.CompilerIrInstrSeq
-                  (match (ir.compiler-ir-block-seq-ref seq 0)
-                    [(ir.CompilerIrBlock.Block _ found) found])]
-                (and
-                  ;; 8 original + 2 stores + 2 reloads
-                  (= (ir.compiler-ir-instr-seq-count instrs) 12)
-                  (compiler-reg-call-hole-mov-const?
-                    (ir.compiler-ir-instr-seq-ref instrs 0)
-                    0)
-                  (compiler-reg-cold-call-test-mov?
-                    (ir.compiler-ir-instr-seq-ref instrs 1)
-                    6
-                    0)
-                  (compiler-reg-call-hole-call?
-                    (ir.compiler-ir-instr-seq-ref instrs 2))
-                  ;; the reload after call f is DEAD and is not emitted
-                  (compiler-reg-call-hole-call?
-                    (ir.compiler-ir-instr-seq-ref instrs 3))
-                  (compiler-reg-cold-call-test-mov?
-                    (ir.compiler-ir-instr-seq-ref instrs 4)
-                    0
-                    6)
-                  (compiler-reg-call-hole-binop?
-                    (ir.compiler-ir-instr-seq-ref instrs 5)
-                    3)
-                  (compiler-reg-call-hole-mov-const?
-                    (ir.compiler-ir-instr-seq-ref instrs 6)
-                    0)
-                  (compiler-reg-cold-call-test-mov?
-                    (ir.compiler-ir-instr-seq-ref instrs 7)
-                    6
-                    0)
-                  (compiler-reg-call-hole-call?
-                    (ir.compiler-ir-instr-seq-ref instrs 8))
-                  (compiler-reg-cold-call-test-mov?
-                    (ir.compiler-ir-instr-seq-ref instrs 9)
-                    0
-                    6)
-                  (compiler-reg-call-hole-binop?
-                    (ir.compiler-ir-instr-seq-ref instrs 10)
-                    5)
-                  (compiler-reg-call-hole-return?
-                    (ir.compiler-ir-instr-seq-ref instrs 11))))))]))))
+                  (ir.compiler-ir-test-symbol "f")
+                  (ir.CompilerIrCallArgs.Nil)
+                  (compiler-reg-i64-ty))
+                (ir.compiler-ir-instr-cons
+                  (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "join"))
+                  ir.CompilerIrInstrList.Nil))))
+          (ir.compiler-ir-block-cons
+            (ir.compiler-ir-block
+              (ir.compiler-ir-label "b")
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.Mov
+                  0
+                  (ir.CompilerIrValue.I64 8)
+                  (compiler-reg-i64-ty))
+                (ir.compiler-ir-instr-cons
+                  (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "join"))
+                  ir.CompilerIrInstrList.Nil)))
+            (ir.compiler-ir-block-cons
+              (ir.compiler-ir-block
+                (ir.compiler-ir-label "join")
+                (ir.compiler-ir-instr-cons
+                  (ir.CompilerIrInstr.Call
+                    2
+                    (ir.compiler-ir-test-symbol "g")
+                    (ir.CompilerIrCallArgs.Nil)
+                    (compiler-reg-i64-ty))
+                  (ir.compiler-ir-instr-cons
+                    (ir.CompilerIrInstr.BinOp
+                      3
+                      (ir.CompilerIrBinOp.Mul)
+                      (ir.CompilerIrValue.Var 0)
+                      (ir.CompilerIrValue.Var 0)
+                      (compiler-reg-i64-ty))
+                    (ir.compiler-ir-instr-cons
+                      (ir.CompilerIrInstr.Return
+                        (ir.CompilerIrMaybeValue.Some
+                          (ir.CompilerIrValue.Var 3)))
+                      ir.CompilerIrInstrList.Nil))))
+              ir.CompilerIrBlockList.Nil)))))))
+
+(cfg
+  test
+  (define (compiler-reg-call-hole-join-ok?) : bool
+    (let
+      [seq : ir.CompilerIrBlockSeq
+        (compiler-reg-call-hole-test-rewrite
+          (compiler-reg-call-hole-join-function)
+          (compiler-reg-call-hole-test-selection 0)
+          1)]
+      [a-block : ir.CompilerIrInstrSeq
+        (compiler-reg-call-hole-test-block
+          (reg.compiler-reg-global-shared-view seq)
+          1)]
+      [b-block : ir.CompilerIrInstrSeq
+        (compiler-reg-call-hole-test-block
+          (reg.compiler-reg-global-shared-view seq)
+          2)]
+      [join : ir.CompilerIrInstrSeq
+        (compiler-reg-call-hole-test-block
+          (reg.compiler-reg-global-shared-view seq)
+          3)]
+      (and
+        ;; a: def, store, call, RELOAD, jump -- the reload survives because the
+        ;; store `join` emits reads the register
+        (=
+          (ir.compiler-ir-instr-seq-count
+            (reg.compiler-reg-global-shared-view a-block))
+          5)
+        (compiler-reg-cold-call-test-mov?
+          (ir.compiler-ir-instr-seq-ref
+            (reg.compiler-reg-global-shared-view a-block)
+            1)
+          4
+          0)
+        (compiler-reg-call-hole-call?
+          (ir.compiler-ir-instr-seq-ref
+            (reg.compiler-reg-global-shared-view a-block)
+            2))
+        (compiler-reg-cold-call-test-mov?
+          (ir.compiler-ir-instr-seq-ref
+            (reg.compiler-reg-global-shared-view a-block)
+            3)
+          0
+          4)
+        ;; b: untouched -- it crosses nothing
+        (= (ir.compiler-ir-instr-seq-count b-block) 2)
+        ;; join: the store is EMITTED, because `b` reaches it without one
+        (=
+          (ir.compiler-ir-instr-seq-count
+            (reg.compiler-reg-global-shared-view join))
+          5)
+        (compiler-reg-cold-call-test-mov?
+          (ir.compiler-ir-instr-seq-ref
+            (reg.compiler-reg-global-shared-view join)
+            0)
+          4
+          0)
+        (compiler-reg-call-hole-call?
+          (ir.compiler-ir-instr-seq-ref
+            (reg.compiler-reg-global-shared-view join)
+            1))
+        (compiler-reg-cold-call-test-mov?
+          (ir.compiler-ir-instr-seq-ref
+            (reg.compiler-reg-global-shared-view join)
+            2)
+          0
+          4)
+        (compiler-reg-call-hole-binop?
+          (ir.compiler-ir-instr-seq-ref
+            (reg.compiler-reg-global-shared-view join)
+            3)
+          3)
+        (compiler-reg-call-hole-return? (ir.compiler-ir-instr-seq-ref join 4))))))
+
+;; A redefinition of the value between two crossings takes the carrier's claim
+;; away even though the two crossings sit in different blocks, so the second
+;; crossing stores again. The multiplication at the head of `next` is what keeps
+;; `%0` live out of `entry` at all, and it is also what keeps entry's reload.
+(cfg
+  test
+  (define (compiler-reg-call-hole-redef-function) : ir.CompilerIrFunction
+    (ir.CompilerIrFunction.Function
+      (ir.compiler-ir-test-symbol "call_hole_redef")
+      ir.CompilerIrParamList.Nil
+      (ast.AstType.I64)
+      5
+      (ir.compiler-ir-block-cons
+        (ir.compiler-ir-block
+          (ir.compiler-ir-label "entry")
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.Mov
+              0
+              (ir.CompilerIrValue.I64 7)
+              (compiler-reg-i64-ty))
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.Call
+                1
+                (ir.compiler-ir-test-symbol "f")
+                (ir.CompilerIrCallArgs.Nil)
+                (compiler-reg-i64-ty))
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "next"))
+                ir.CompilerIrInstrList.Nil))))
+        (ir.compiler-ir-block-cons
+          (ir.compiler-ir-block
+            (ir.compiler-ir-label "next")
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.BinOp
+                3
+                (ir.CompilerIrBinOp.Mul)
+                (ir.CompilerIrValue.Var 0)
+                (ir.CompilerIrValue.Var 0)
+                (compiler-reg-i64-ty))
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.Mov
+                  0
+                  (ir.CompilerIrValue.I64 9)
+                  (compiler-reg-i64-ty))
+                (ir.compiler-ir-instr-cons
+                  (ir.CompilerIrInstr.Call
+                    2
+                    (ir.compiler-ir-test-symbol "g")
+                    (ir.CompilerIrCallArgs.Nil)
+                    (compiler-reg-i64-ty))
+                  (ir.compiler-ir-instr-cons
+                    (ir.CompilerIrInstr.BinOp
+                      4
+                      (ir.CompilerIrBinOp.Add)
+                      (ir.CompilerIrValue.Var 3)
+                      (ir.CompilerIrValue.Var 0)
+                      (compiler-reg-i64-ty))
+                    (ir.compiler-ir-instr-cons
+                      (ir.CompilerIrInstr.Return
+                        (ir.CompilerIrMaybeValue.Some
+                          (ir.CompilerIrValue.Var 4)))
+                      ir.CompilerIrInstrList.Nil))))))
+          ir.CompilerIrBlockList.Nil)))))
+
+(cfg
+  test
+  (define (compiler-reg-call-hole-redef-ok?) : bool
+    (let
+      [seq : ir.CompilerIrBlockSeq
+        (compiler-reg-call-hole-test-rewrite
+          (compiler-reg-call-hole-redef-function)
+          (compiler-reg-call-hole-test-selection 0)
+          1)]
+      [entry : ir.CompilerIrInstrSeq
+        (compiler-reg-call-hole-test-block
+          (reg.compiler-reg-global-shared-view seq)
+          0)]
+      [next : ir.CompilerIrInstrSeq
+        (compiler-reg-call-hole-test-block
+          (reg.compiler-reg-global-shared-view seq)
+          1)]
+      (and
+        ;; entry: def, store, call, reload, jump
+        (=
+          (ir.compiler-ir-instr-seq-count
+            (reg.compiler-reg-global-shared-view entry))
+          5)
+        (compiler-reg-call-hole-mov-const?
+          (ir.compiler-ir-instr-seq-ref
+            (reg.compiler-reg-global-shared-view entry)
+            0)
+          0)
+        (compiler-reg-cold-call-test-mov?
+          (ir.compiler-ir-instr-seq-ref
+            (reg.compiler-reg-global-shared-view entry)
+            1)
+          5
+          0)
+        (compiler-reg-call-hole-call?
+          (ir.compiler-ir-instr-seq-ref
+            (reg.compiler-reg-global-shared-view entry)
+            2))
+        (compiler-reg-cold-call-test-mov?
+          (ir.compiler-ir-instr-seq-ref
+            (reg.compiler-reg-global-shared-view entry)
+            3)
+          0
+          5)
+        ;; next: mul, redef, STORE again, call, reload, add, return
+        (=
+          (ir.compiler-ir-instr-seq-count
+            (reg.compiler-reg-global-shared-view next))
+          7)
+        (compiler-reg-call-hole-binop?
+          (ir.compiler-ir-instr-seq-ref
+            (reg.compiler-reg-global-shared-view next)
+            0)
+          3)
+        (compiler-reg-call-hole-mov-const?
+          (ir.compiler-ir-instr-seq-ref
+            (reg.compiler-reg-global-shared-view next)
+            1)
+          0)
+        (compiler-reg-cold-call-test-mov?
+          (ir.compiler-ir-instr-seq-ref
+            (reg.compiler-reg-global-shared-view next)
+            2)
+          5
+          0)
+        (compiler-reg-call-hole-call?
+          (ir.compiler-ir-instr-seq-ref
+            (reg.compiler-reg-global-shared-view next)
+            3))
+        (compiler-reg-cold-call-test-mov?
+          (ir.compiler-ir-instr-seq-ref
+            (reg.compiler-reg-global-shared-view next)
+            4)
+          0
+          5)
+        (compiler-reg-call-hole-binop?
+          (ir.compiler-ir-instr-seq-ref
+            (reg.compiler-reg-global-shared-view next)
+            5)
+          4)
+        (compiler-reg-call-hole-return? (ir.compiler-ir-instr-seq-ref next 6))))))
+
+;; Absence of information reads as "no carrier is available" and "every value
+;; may be read", never the other way round -- the rule
+;; `compiler-reg-call-region-stat-exit` states as "an extra dead store is safe;
+;; a missing live store is a miscompile". A selection the mask cannot represent
+;; and a block index the flow does not have both answer conservatively, and that
+;; degenerate answer is exactly the per-block behaviour E-1 generalises.
+(cfg
+  test
+  (define (compiler-reg-call-hole-flow-conservative-ok?) : bool
+    (match (compiler-reg-call-hole-cross-block-function)
+      [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
+        (let
+          [func : ir.CompilerIrFunction
+            (compiler-reg-call-hole-cross-block-function)]
+          [seq : ir.CompilerIrBlockSeq
+            (live.compiler-live-ir-block-list-to-seq blocks)]
+          [selected : (__tl_dyn-array i64)
+            (compiler-reg-call-hole-test-selection 0)]
+          [empty : reg.CompilerRegCallHoleFlow
+            (reg.compiler-reg-call-hole-flow-build
+              (ast.ast-node-pool-reader-type-segment-bases)
+              (reg.compiler-reg-global-shared-view seq)
+              (live.compiler-live-analyze-function-edge-precise
+                (reg.compiler-reg-global-shared-view func))
+              (reg.compiler-reg-global-shared-view selected)
+              0)]
+          [built : reg.CompilerRegCallHoleFlow
+            (reg.compiler-reg-call-hole-flow-build
+              (ast.ast-node-pool-reader-type-segment-bases)
+              (reg.compiler-reg-global-shared-view seq)
+              (live.compiler-live-analyze-function-edge-precise
+                (reg.compiler-reg-global-shared-view func))
+              (reg.compiler-reg-global-shared-view selected)
+              1)]
+          (and
+            ;; the mask itself, and its refusal above the selection cap
+            (= (reg.compiler-reg-call-hole-flow-full 1) 1)
+            (= (reg.compiler-reg-call-hole-flow-full 3) 7)
+            (= (reg.compiler-reg-call-hole-flow-full 0) 0)
+            (=
+              (reg.compiler-reg-call-hole-flow-full
+                (+ (reg.compiler-reg-call-hole-max-selected) 1))
+              0)
+            ;; an empty selection is the degenerate flow
+            (=
+              (reg.compiler-reg-call-hole-flow-store-in
+                (reg.compiler-reg-global-shared-view empty)
+                1)
+              0)
+            (=
+              (reg.compiler-reg-call-hole-flow-reload-out
+                (reg.compiler-reg-global-shared-view empty)
+                1
+                1)
+              1)
+            ;; out of range asks conservatively too
+            (=
+              (reg.compiler-reg-call-hole-flow-store-in
+                (reg.compiler-reg-global-shared-view built)
+                99)
+              0)
+            (=
+              (reg.compiler-reg-call-hole-flow-reload-out
+                (reg.compiler-reg-global-shared-view built)
+                99
+                1)
+              1)
+            ;; and the real answers this fixture is built to have: entry starts
+            ;; with nothing available and needs no reload on the way out, while
+            ;; both successors inherit the carrier
+            (=
+              (reg.compiler-reg-call-hole-flow-store-in
+                (reg.compiler-reg-global-shared-view built)
+                0)
+              0)
+            (=
+              (reg.compiler-reg-call-hole-flow-reload-out
+                (reg.compiler-reg-global-shared-view built)
+                0
+                1)
+              0)
+            (=
+              (reg.compiler-reg-call-hole-flow-store-in
+                (reg.compiler-reg-global-shared-view built)
+                1)
+              1)
+            (= (reg.compiler-reg-call-hole-flow-store-in built 2) 1)))])))
+
+(cfg
+  test
+  (define (compiler-reg-call-hole-branch? [instr : ir.CompilerIrInstr]) : bool
+    (match instr
+      [(ir.CompilerIrInstr.Branch _ _ _) true]
+      [_ false])))
 
 (cfg
   test
@@ -5871,12 +6411,19 @@
             23
             (ir.CompilerIrValue.Var 0)
             (compiler-reg-i64-ty))))
-      (not
-        (compiler-reg-remat-defn?
-          (ir.CompilerIrInstr.Mov
-            24
-            (ir.CompilerIrValue.String "heap")
-            (ast.AstType.String))))
+      ;; W3: a String/Function/Bytes mov materialises as one
+      ;; `leaq label(%rip)` and IS rematerialisable, so the spill-weight
+      ;; discount must see it as a candidate (it was missing before).
+      (compiler-reg-remat-defn?
+        (ir.CompilerIrInstr.Mov
+          24
+          (ir.CompilerIrValue.String "heap")
+          (ast.AstType.String)))
+      (compiler-reg-remat-defn?
+        (ir.CompilerIrInstr.Mov
+          26
+          (ir.CompilerIrValue.Function (ir.compiler-ir-test-symbol "fn"))
+          (ast.AstType.U64)))
       (not
         (compiler-reg-remat-defn?
           (ir.CompilerIrInstr.BinOp
@@ -5885,6 +6432,264 @@
             (ir.CompilerIrValue.I64 1)
             (ir.CompilerIrValue.I64 2)
             (compiler-reg-i64-ty)))))))
+
+(cfg
+  test
+  (define (compiler-reg-remat-recompute-classifier-ok?) : bool
+    (and
+      ;; Static address materialisations: admitted at any word type, unchanged.
+      (reg.compiler-reg-remat-recompute-value?
+        (ir.CompilerIrValue.GlobalAddr (ir.compiler-ir-test-symbol "global"))
+        (ast.AstType.U64))
+      (reg.compiler-reg-remat-recompute-value?
+        (ir.CompilerIrValue.Function (ir.compiler-ir-test-symbol "fn"))
+        (ast.AstType.U64))
+      (reg.compiler-reg-remat-recompute-value?
+        (ir.CompilerIrValue.String "s")
+        (ast.AstType.String))
+      ;; W3 step (a): integer/bool/char literals at a type whose reload is
+      ;; bit-identical to the immediate materialisation.
+      (reg.compiler-reg-remat-recompute-value?
+        (ir.CompilerIrValue.I64 7)
+        (compiler-reg-i64-ty))
+      (reg.compiler-reg-remat-recompute-value?
+        (ir.CompilerIrValue.I64 0)
+        (ast.AstType.U64))
+      (reg.compiler-reg-remat-recompute-value?
+        (ir.CompilerIrValue.I64 -1)
+        (compiler-reg-i64-ty))
+      (reg.compiler-reg-remat-recompute-value?
+        (ir.CompilerIrValue.Bool false)
+        (ast.AstType.Bool))
+      (reg.compiler-reg-remat-recompute-value?
+        (ir.CompilerIrValue.Bool true)
+        (compiler-reg-i64-ty))
+      (reg.compiler-reg-remat-recompute-value?
+        (ir.CompilerIrValue.Char 'x')
+        (ast.AstType.Char))
+      ;; NEGATIVE GATE. A narrow var reloads sign/zero-EXTENDED from its slot
+      ;; (movslq / movzbq), so an i64 literal homed there is not reproduced by
+      ;; `movl $K` and must be refused.
+      (not
+        (reg.compiler-reg-remat-recompute-value?
+          (ir.CompilerIrValue.I64 7)
+          (ast.AstType.I32)))
+      (not
+        (reg.compiler-reg-remat-recompute-value?
+          (ir.CompilerIrValue.I64 7)
+          (ast.AstType.U8)))
+      (not
+        (reg.compiler-reg-remat-recompute-value?
+          (ir.CompilerIrValue.Char 'x')
+          (ast.AstType.U8)))
+      ;; NEGATIVE GATE. A literal in a register-GROUP / handle type is refused:
+      ;; the backend errors on a rematerialised group var.
+      (not
+        (reg.compiler-reg-remat-recompute-value?
+          (ir.CompilerIrValue.I64 0)
+          (ast.AstType.String)))
+      ;; NEGATIVE GATE. No scalar backend materialisation for f64, and a LOAD
+      ;; of a global cell is not a static value.
+      (not
+        (reg.compiler-reg-remat-recompute-value?
+          (ir.CompilerIrValue.F64 0x3ff0000000000000)
+          (compiler-reg-f64-ty)))
+      (not
+        (reg.compiler-reg-remat-recompute-value?
+          (ir.CompilerIrValue.Global (ir.compiler-ir-test-symbol "global"))
+          (compiler-reg-i64-ty)))
+      (not
+        (reg.compiler-reg-remat-recompute-value?
+          (ir.CompilerIrValue.Var 0)
+          (compiler-reg-i64-ty))))))
+
+;; End-to-end for the assignment-level rewrite: a SPILLED single-def literal
+;; becomes CompilerRegLocation.Remat (so its def store dies and every use
+;; recomputes), a MULTI-def one does not, and an address-taken one does not.
+(cfg
+  test
+  (define (compiler-reg-remat-assignment-spill-location
+    [func : ir.CompilerIrFunction]
+    [vars : i64]
+    [var : i64]) : reg.CompilerRegLocation
+    (let
+      [assignments : reg.CompilerRegAssignmentTable
+        (reg.compiler-reg-assignment-table-make vars)]
+      [empty-coalesce : reg.CompilerRegCoalesceMap
+        (reg.CompilerRegCoalesceMap (array.make-array i64 0))]
+      (begin
+        (reg.compiler-reg-assignment-table-insert
+          (reg.compiler-reg-global-shared-view assignments)
+          var
+          (reg.CompilerRegLocation.Spill 0))
+        (let
+          [rewritten : reg.CompilerRegAssignmentTable
+            (reg.compiler-reg-rewrite-remat-assignments
+              assignments
+              func
+              empty-coalesce
+              (live.compiler-live-set-empty)
+              vars)]
+          (match (reg.compiler-reg-assignment-table-lookup rewritten var)
+            [(reg.CompilerRegMaybeLocation.Some location) location]
+            [(reg.CompilerRegMaybeLocation.No)
+              (reg.CompilerRegLocation.Spill -1)]))))))
+
+(cfg
+  test
+  (define (compiler-reg-remat-literal-assignment-ok?) : bool
+    (and
+      ;; NON-VACUITY: var0 is `mov v0 <- 7 : i64`, single-def and spilled, so
+      ;; the widened recompute set must turn it into a Remat. Reverting step
+      ;; (a) fails here.
+      (compiler-reg-location-remat?
+        (compiler-reg-remat-assignment-spill-location
+          (compiler-reg-remat-weight-function)
+          2
+          0))
+      ;; A multi-def var keeps its slot: recomputing at a use would drop the
+      ;; other definition's value.
+      (not
+        (compiler-reg-location-remat?
+          (compiler-reg-remat-assignment-spill-location
+            (compiler-reg-remat-multi-def-function)
+            1
+            0)))
+      ;; An address-taken var keeps its slot: a remat has no stable storage.
+      (not
+        (compiler-reg-location-remat?
+          (compiler-reg-remat-assignment-spill-location
+            (compiler-reg-remat-addr-taken-literal-function)
+            2
+            0))))))
+
+(cfg
+  test
+  (define (compiler-reg-remat-addr-taken-literal-function) : ir.CompilerIrFunction
+    (ir.CompilerIrFunction.Function
+      (ir.compiler-ir-test-symbol "remat_addr_taken")
+      ir.CompilerIrParamList.Nil
+      (ast.AstType.Unit)
+      2
+      (ir.compiler-ir-block-cons
+        (ir.compiler-ir-block
+          (ir.compiler-ir-label "entry")
+          (ir.compiler-ir-instr-cons
+            (ir.CompilerIrInstr.Mov
+              0
+              (ir.CompilerIrValue.I64 7)
+              (compiler-reg-i64-ty))
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.AddrOf 1 0)
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
+                ir.CompilerIrInstrList.Nil))))
+        ir.CompilerIrBlockList.Nil))))
+
+(cfg
+  test
+  (define (compiler-reg-remat-frozen-global-function [load-shape? : bool]) : ir.CompilerIrFunction
+    (ir.CompilerIrFunction.Function
+      (ir.compiler-ir-test-symbol "remat_frozen_global")
+      ir.CompilerIrParamList.Nil
+      (ast.AstType.Unit)
+      1
+      (ir.compiler-ir-block-cons
+        (ir.compiler-ir-block
+          (ir.compiler-ir-label "entry")
+          (ir.compiler-ir-instr-cons
+            (if load-shape?
+              (ir.CompilerIrInstr.Load
+                0
+                (ir.CompilerIrValue.GlobalAddr
+                  (ir.compiler-ir-test-symbol "frozen"))
+                (compiler-reg-i64-ty))
+              (ir.CompilerIrInstr.Mov
+                0
+                (ir.CompilerIrValue.Global
+                  (ir.compiler-ir-test-symbol "frozen"))
+                (compiler-reg-i64-ty)))
+            (ir.compiler-ir-instr-cons
+              (ir.CompilerIrInstr.Store
+                (ir.compiler-ir-test-symbol "sink")
+                (ir.CompilerIrValue.Var 0)
+                (compiler-reg-i64-ty))
+              (ir.compiler-ir-instr-cons
+                (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
+                ir.CompilerIrInstrList.Nil))))
+        ir.CompilerIrBlockList.Nil))))
+
+;; W3 step (c). The frozen-global answer is a PROGRAM fact the backend seeds, so
+;; the gates are: unseeded (the default) refuses; seeded-and-not-a-cell-writer
+;; admits; a global the seeding walk saw written or address-taken refuses; and a
+;; narrow var type refuses (the cell read is always a full word, a narrow slot
+;; reloads extended). Both spellings of the read -- `mov %v <- Global g` and
+;; `load %v, @g` -- must reach the same Remat payload.
+(cfg
+  test
+  (define (compiler-reg-remat-frozen-global-ok?) : bool
+    (let
+      [frozen : i64
+        (ir.compiler-ir-symbol-id (ir.compiler-ir-test-symbol "frozen"))]
+      [cell : ir.CompilerIrValue
+        (ir.CompilerIrValue.Global (ir.compiler-ir-test-symbol "frozen"))]
+      [unseeded? : bool
+        (not
+          (reg.compiler-reg-remat-recompute-value?
+            (reg.compiler-reg-global-shared-view cell)
+            (compiler-reg-i64-ty)))]
+      (begin
+        (reg.compiler-reg-frozen-globals-begin!)
+        (reg.compiler-reg-frozen-globals-finish!)
+        (let
+          [seeded? : bool
+            (reg.compiler-reg-remat-recompute-value?
+              (reg.compiler-reg-global-shared-view cell)
+              (compiler-reg-i64-ty))]
+          [narrow-refused? : bool
+            (not
+              (reg.compiler-reg-remat-recompute-value?
+                (reg.compiler-reg-global-shared-view cell)
+                (ast.AstType.I32)))]
+          [mov-remat? : bool
+            (compiler-reg-location-remat?
+              (compiler-reg-remat-assignment-spill-location
+                (compiler-reg-remat-frozen-global-function false)
+                1
+                0))]
+          [load-remat? : bool
+            (compiler-reg-location-remat?
+              (compiler-reg-remat-assignment-spill-location
+                (compiler-reg-remat-frozen-global-function true)
+                1
+                0))]
+          (begin
+            (reg.compiler-reg-add-nonfrozen-global! frozen)
+            (let
+              [written-refused? : bool
+                (not
+                  (reg.compiler-reg-remat-recompute-value?
+                    cell
+                    (compiler-reg-i64-ty)))]
+              [written-load-refused? : bool
+                (not
+                  (compiler-reg-location-remat?
+                    (compiler-reg-remat-assignment-spill-location
+                      (compiler-reg-remat-frozen-global-function true)
+                      1
+                      0)))]
+              (begin
+                ;; Leave the process-wide fact as the allocator's default so no
+                ;; later fixture inherits a seeded answer.
+                (reg.compiler-reg-frozen-globals-begin!)
+                (and
+                  unseeded?
+                  seeded?
+                  narrow-refused?
+                  mov-remat?
+                  load-remat?
+                  written-refused?
+                  written-load-refused?)))))))))
 
 (cfg
   test
@@ -6103,11 +6908,13 @@
               (reg.compiler-reg-assignment-lookup
                 (reg.compiler-reg-global-shared-view assignments)
                 0))
-            (compiler-reg-location-spill-offset?
+            ;; W3 step (a): var5's def is an i64 literal, so the victim keeps no
+            ;; frame slot at all -- it is rematerialised at its one use (was: a
+            ;; Spill at stack slot 5).
+            (compiler-reg-maybe-location-remat?
               (reg.compiler-reg-assignment-lookup
                 (reg.compiler-reg-global-shared-view assignments)
-                5)
-              (reg.compiler-reg-stack-slot-offset 5)))]))))
+                5)))]))))
 
 (cfg
   test
@@ -6296,11 +7103,12 @@
             (reg.compiler-reg-assignment-lookup
               (reg.compiler-reg-global-shared-view assignments)
               0))
-          (compiler-reg-location-spill-offset?
+          ;; W3 step (a): the victim's def is an i64 literal, so it leaves no
+          ;; frame slot behind (was: a Spill at stack slot 1).
+          (compiler-reg-maybe-location-remat?
             (reg.compiler-reg-assignment-lookup
               (reg.compiler-reg-global-shared-view assignments)
-              1)
-            (reg.compiler-reg-stack-slot-offset 1))
+              1))
           (compiler-reg-location-any-register?
             (reg.compiler-reg-assignment-lookup
               (reg.compiler-reg-global-shared-view assignments)
@@ -6435,11 +7243,12 @@
               (reg.compiler-reg-assignment-lookup
                 (reg.compiler-reg-global-shared-view assignments)
                 0))
-            (compiler-reg-location-spill-offset?
+            ;; W3 step (a): the victim's def is an i64 literal (was: a Spill at
+            ;; stack slot 1).
+            (compiler-reg-maybe-location-remat?
               (reg.compiler-reg-assignment-lookup
                 (reg.compiler-reg-global-shared-view assignments)
-                1)
-              (reg.compiler-reg-stack-slot-offset 1))
+                1))
             (compiler-reg-location-any-register?
               (reg.compiler-reg-assignment-lookup
                 (reg.compiler-reg-global-shared-view assignments)
@@ -7913,17 +8722,17 @@
           (and
             ;; Same capacity story as the single-block fixture: the greedy
             ;; register-homes the hot call-spanning value (spill-weight priority)
-            ;; and spills the single-use overflow (var 6) without a save/restore
-            ;; rescue.
+            ;; and the single-use overflow (var 6) takes no register. W3 step
+            ;; (a): both overflows are i64 literals, so they rematerialise
+            ;; instead of taking frame slots (was: 2 spills, var 6 at slot 6).
             (=
               (reg.compiler-reg-spill-count
                 (reg.compiler-reg-global-shared-view assignments))
-              2)
-            (compiler-reg-location-spill-offset?
+              0)
+            (compiler-reg-maybe-location-remat?
               (reg.compiler-reg-assignment-lookup
                 (reg.compiler-reg-global-shared-view assignments)
-                6)
-              (reg.compiler-reg-stack-slot-offset 6))
+                6))
             (not
               (live.compiler-live-set-contains?
                 (reg.compiler-reg-call-split-shadows
@@ -12347,6 +13156,18 @@
     unit
     (io.panic (compiler-regalloc-self-test-failure-message name))))
 
+(define (compiler-reg-location-remat? [location : reg.CompilerRegLocation]) : bool
+  (match location
+    [(reg.CompilerRegLocation.Remat _) true]
+    [_ false]))
+
+(define (compiler-reg-maybe-location-remat?
+  [maybe-location : reg.CompilerRegMaybeLocation]) : bool
+  (match maybe-location
+    [(reg.CompilerRegMaybeLocation.Some location)
+      (compiler-reg-location-remat? location)]
+    [(reg.CompilerRegMaybeLocation.No) false]))
+
 (define (compiler-reg-location-spill-offset?
   [maybe-location : reg.CompilerRegMaybeLocation]
   [offset : i64]) : bool
@@ -16668,15 +17489,19 @@
     (compiler-reg-syscall-clobber-overlap-function))
     [(reg.CompilerRegPlan.Plan assignments _ _ _ _ _)
       (and
+        ;; W3 step (a) NON-VACUITY. The one value the syscall's clobber pushes
+        ;; out is a single-def i64 LITERAL, so the assignment rewrite converts
+        ;; its spill into a rematerialisation: no frame slot, no def store, one
+        ;; `movl $5` at the use. Before the literal widening this asserted a
+        ;; single Spill at stack slot 5; reverting the widening fails here.
         (=
           (reg.compiler-reg-spill-count
             (reg.compiler-reg-global-shared-view assignments))
-          1)
-        (compiler-reg-location-spill-offset?
+          0)
+        (compiler-reg-maybe-location-remat?
           (reg.compiler-reg-assignment-lookup
             (reg.compiler-reg-global-shared-view assignments)
-            5)
-          (reg.compiler-reg-stack-slot-offset 5)))]))
+            5)))]))
 
 (define (compiler-reg-scalar-call-spanning-caller-saved-ok?) : bool
   (let
@@ -16693,15 +17518,17 @@
           ;; the stack and needs no save/restore rescue. (The old allocator spilled
           ;; var 5 then save/restored it; the unified greedy's weight ordering
           ;; avoids that round-trip -- a strict improvement.)
+          ;; W3 step (a): both overflow values are single-def i64 literals, so
+          ;; the spills the weight order picked become rematerialisations
+          ;; instead of frame slots (was: 2 spills, var 6 at stack slot 6).
           (=
             (reg.compiler-reg-spill-count
               (reg.compiler-reg-global-shared-view assignments))
-            2)
-          (compiler-reg-location-spill-offset?
+            0)
+          (compiler-reg-maybe-location-remat?
             (reg.compiler-reg-assignment-lookup
               (reg.compiler-reg-global-shared-view assignments)
-              6)
-            (reg.compiler-reg-stack-slot-offset 6))
+              6))
           (not
             (live.compiler-live-set-contains?
               (reg.compiler-reg-call-split-shadows
@@ -20461,6 +21288,18 @@
       "compiler-reg-call-hole-rewrite-shape-ok?"
       (cfg test (compiler-reg-call-hole-rewrite-shape-ok?) true))
     (compiler-regalloc-self-test-require!
+      "compiler-reg-call-hole-cross-block-ok?"
+      (cfg test (compiler-reg-call-hole-cross-block-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-call-hole-join-ok?"
+      (cfg test (compiler-reg-call-hole-join-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-call-hole-redef-ok?"
+      (cfg test (compiler-reg-call-hole-redef-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-call-hole-flow-conservative-ok?"
+      (cfg test (compiler-reg-call-hole-flow-conservative-ok?) true))
+    (compiler-regalloc-self-test-require!
       "compiler-reg-call-hole-drop-ok?"
       (cfg test (compiler-reg-call-hole-drop-ok?) true))
     (compiler-regalloc-self-test-require!
@@ -20728,6 +21567,15 @@
     (compiler-regalloc-self-test-require!
       "compiler-reg-remat-classifier-ok?"
       (cfg test (compiler-reg-remat-classifier-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-remat-recompute-classifier-ok?"
+      (cfg test (compiler-reg-remat-recompute-classifier-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-remat-literal-assignment-ok?"
+      (cfg test (compiler-reg-remat-literal-assignment-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-remat-frozen-global-ok?"
+      (cfg test (compiler-reg-remat-frozen-global-ok?) true))
     (compiler-regalloc-self-test-require!
       "compiler-reg-remat-discount-weights-ok?"
       (cfg test (compiler-reg-remat-discount-weights-ok?) true))

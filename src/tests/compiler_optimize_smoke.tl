@@ -3332,6 +3332,14 @@
       (compiler_optimize_tests.compiler-optimize-bounds-run-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-range-merge-self-test"
+      (compiler_optimize_tests.compiler-optimize-range-merge-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-nonneg-globals-self-test"
+      (compiler_optimize_tests.compiler-optimize-nonneg-globals-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-dom-cmp-rule-a-self-test"
       (compiler_optimize_tests.compiler-optimize-dom-cmp-rule-a-self-test)
       42)

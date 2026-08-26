@@ -206,10 +206,14 @@ Inline stdlib coverage:
   fill and left/center/right/default alignment; sign and sign-aware zero
   padding; short/equal/long widths; positional/named/captured dynamic counts;
   literal/dollar/star precision counts and Rust-compatible star counter
-  advancement; count reuse; and non-advancing dollar references.
+  advancement; count reuse; non-advancing dollar references; byte precision
+  for String/borrowed-str/bool/char/owner-hook output; truncation-before-padding
+  composition; and NUL/high-byte/mid-UTF-8-boundary behavior.
+  `format_precision_io.tl` proves the same precision path through stdout and
+  direct stderr output.
   `comptime_string_literal_reject.tl` keeps non-literal syntax inspection
   rejected at macro expansion. The `format_*_reject.tl` fixtures cover
-  non-literal templates, unsupported precision consumers/type semantics,
+  non-literal templates, unsupported float precision/type semantics,
   malformed or out-of-order options, static width/precision overflow, dynamic
   width/precision type/range/sign failures, both placeholder-count mismatches,
   invalid/overflowed indices, malformed/captured/raw/bare names,

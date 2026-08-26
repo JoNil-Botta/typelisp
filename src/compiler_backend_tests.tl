@@ -5725,13 +5725,17 @@
           "    movq %r12, _tl_g5b(%rip)\n")
         ;; %rbp is now the 6th callee-saved register (M-G3 stage 2), so the
         ;; call-spanning var 4 is homed in %rbp; var 6 remains rematerialised
-        ;; in caller-saved %r9d after the call.
+        ;; after the call. W3 step (a): the literal recompute is now decided
+        ;; in the ASSIGNMENT table, so the backend materialises it straight
+        ;; into the register the use scavenges (%r8d) instead of the fixed
+        ;; %r9 the use-site rewrite pipeline reserved. Same two instructions,
+        ;; one fewer constraint on the scavenger.
         (compiler_backend.compiler-backend-string-contains?
           (owned_view.compiler-owned-shared-view a1)
           "    movl $4, %ebp\n")
         (compiler_backend.compiler-backend-string-contains?
           (owned_view.compiler-owned-shared-view a1)
-          "    movl $6, %r9d\n"))]
+          "    movl $6, %r8d\n"))]
     (and
       (match a1-result
         [(compiler_backend.ResultCompilerBackend.Ok _) true]
@@ -52798,6 +52802,529 @@ b_keep:
       (compiler_backend.compiler-backend-test-get-compiler-backend-emit-instrs-continue-pending
         state-b))))
 
+;; ---------------------------------------------------------------------------
+;; #block-placement fixtures.
+;;
+;; The layout decision is read straight out of
+;; `compiler-backend-placement-order-for-blocks`, which runs the production
+;; planner over a hand-built block sequence and hands back the chosen order as
+;; indices into it. Every fixture below is the SAME five-block `while` CFG with
+;; one thing changed, so a check that passes for the wrong reason is visible as
+;; two fixtures agreeing when they should not.
+(define (compiler-backend-placement-test-block
+  [name : String]
+  [instrs : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.CompilerIrBlock.Block
+    (compiler_ir_types.compiler-ir-label name)
+    (compiler_ir_types.compiler-ir-instr-seq-from-list instrs)))
+
+(define (compiler-backend-placement-test-order-eq?
+  [order : (__tl_dyn-array i64)]
+  [expected : (__tl_dyn-array i64)]) : bool
+  (let
+    [n : i64 (array-length expected)]
+    [i : i64 0]
+    [same : bool (= (array-length order) n)]
+    (begin
+      (while (and same (< i n))
+        (begin
+          (if (= (array-ref order i) (array-ref expected i))
+            unit
+            (set! same false))
+          (set! i (+ i 1))))
+      same)))
+
+(define (compiler-backend-placement-test-expected
+  [a : i64]
+  [b : i64]
+  [c : i64]
+  [d : i64]
+  [e : i64]) : (__tl_dyn-array i64)
+  (__tl_make-array a b c d e))
+
+;; `%1 = phi [%0 from entry], [%3 from latch]` in the loop header.
+(define (compiler-backend-placement-test-carry-phi) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.Phi
+    1
+    (compiler_ir_types.compiler-ir-phi-input-cons
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.CompilerIrValue.Var 3)
+        (compiler_ir_types.compiler-ir-label "latch")
+        compiler_ir_types.CompilerIrPhiInputList.Nil))
+    (compiler_ast_types.AstType.I64)))
+
+;; entry: %0 = 0 ; jump header
+(define (compiler-backend-placement-test-entry-block) : compiler_ir_types.CompilerIrBlock
+  (compiler-backend-placement-test-block
+    "entry"
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Mov
+        0
+        (compiler_ir_types.CompilerIrValue.I64 0)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "header"))
+        compiler_ir_types.CompilerIrInstrList.Nil))))
+
+;; header: %1 = phi ... ; %2 = lt %1, %9 ; branch %2, body, exit
+;; Variable 9 is defined nowhere, so it is the loop-invariant bound.
+(define (compiler-backend-placement-test-header-block) : compiler_ir_types.CompilerIrBlock
+  (compiler-backend-placement-test-block
+    "header"
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler-backend-placement-test-carry-phi)
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          2
+          (compiler_ir_types.CompilerIrBinOp.Lt)
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ir_types.CompilerIrValue.Var 9)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            (compiler_ir_types.compiler-ir-label "body")
+            (compiler_ir_types.compiler-ir-label "exit"))
+          compiler_ir_types.CompilerIrInstrList.Nil)))))
+
+;; body: %4 = %1 ; jump latch  (or, with `terminated?` false, no jump at all)
+(define (compiler-backend-placement-test-body-block [terminated? : bool]) : compiler_ir_types.CompilerIrBlock
+  (compiler-backend-placement-test-block
+    "body"
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Mov
+        4
+        (compiler_ir_types.CompilerIrValue.Var 1)
+        (compiler_ast_types.AstType.I64))
+      (if terminated?
+        (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "latch"))
+          compiler_ir_types.CompilerIrInstrList.Nil)
+        compiler_ir_types.CompilerIrInstrList.Nil))))
+
+;; latch: %3 = <step> ; jump header. `counting?` picks the step: `%1 + 1` makes
+;; %1 an induction variable and the loop a counting one, while `load %1` is the
+;; `n = next[n]` bucket walk the admission has to refuse.
+(define (compiler-backend-placement-test-latch-block [counting? : bool]) : compiler_ir_types.CompilerIrBlock
+  (compiler-backend-placement-test-block
+    "latch"
+    (compiler_ir_types.compiler-ir-instr-cons
+      (if counting?
+        (compiler_ir_types.CompilerIrInstr.BinOp
+          3
+          (compiler_ir_types.CompilerIrBinOp.Add)
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ir_types.CompilerIrValue.I64 1)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Load
+          3
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ast_types.AstType.I64)))
+      (compiler_ir_types.compiler-ir-instr-cons
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "header"))
+        compiler_ir_types.CompilerIrInstrList.Nil))))
+
+(define (compiler-backend-placement-test-exit-block) : compiler_ir_types.CompilerIrBlock
+  (compiler-backend-placement-test-block
+    "exit"
+    (compiler_ir_types.compiler-ir-instr-cons
+      (compiler_ir_types.CompilerIrInstr.Return
+        (compiler_ir_types.CompilerIrMaybeValue.Some
+          (compiler_ir_types.CompilerIrValue.Var 1)))
+      compiler_ir_types.CompilerIrInstrList.Nil)))
+
+;; entry / header / body / latch / exit, in that order.
+(define (compiler-backend-placement-test-while-blocks
+  [counting? : bool]
+  [terminated? : bool]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.CompilerIrBlockList.Array
+    (compiler_ir_types.compiler-ir-block-seq-from-list
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler-backend-placement-test-entry-block)
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler-backend-placement-test-header-block)
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler-backend-placement-test-body-block terminated?)
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler-backend-placement-test-latch-block counting?)
+              (compiler_ir_types.compiler-ir-block-cons
+                (compiler-backend-placement-test-exit-block)
+                compiler_ir_types.CompilerIrBlockList.Nil))))))))
+
+;; A top-tested counting loop rotates: the exiting block (the header, the only
+;; block with one successor inside the loop and one outside) lands last, so the
+;; latch falls through into the exit test and the back edge is the header's own
+;; conditional jump. entry / body / latch / header / exit.
+(define (compiler-backend-placement-rotation-ok?) : bool
+  (compiler-backend-placement-test-order-eq?
+    (compiler_backend.compiler-backend-placement-order-for-blocks
+      (compiler-backend-placement-test-while-blocks true true))
+    (compiler-backend-placement-test-expected 0 2 3 1 4)))
+
+;; The same CFG whose carried value is reloaded rather than stepped is a search
+;; loop, which exits on its first test far more often than not: rotation would
+;; buy one jump per iteration and pay one per entry, so the admission refuses
+;; and the order is untouched.
+(define (compiler-backend-placement-search-loop-declines-ok?) : bool
+  (compiler-backend-placement-test-order-eq?
+    (compiler_backend.compiler-backend-placement-order-for-blocks
+      (compiler-backend-placement-test-while-blocks false true))
+    (compiler-backend-placement-test-expected 0 1 2 3 4)))
+
+;; A block with no terminator falls through to whatever the list puts next, so
+;; the function declines whole: no order at all.
+(define (compiler-backend-placement-open-block-declines-ok?) : bool
+  (=
+    (array-length
+      (compiler_backend.compiler-backend-placement-order-for-blocks
+        (compiler-backend-placement-test-while-blocks true false)))
+    0))
+
+;; entry / header(=body) / latch / exit, with the counting test at the BOTTOM:
+;; the header already has a fall-through predecessor and the bottom already
+;; exits, which is LLVM's ViableTopFallthrough decline -- the loop is rotated
+;; already and moving it would only relocate its jumps.
+(define (compiler-backend-placement-bottom-tested-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.CompilerIrBlockList.Array
+    (compiler_ir_types.compiler-ir-block-seq-from-list
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler-backend-placement-test-entry-block)
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler-backend-placement-test-block
+            "header"
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler-backend-placement-test-carry-phi)
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "latch"))
+                compiler_ir_types.CompilerIrInstrList.Nil)))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler-backend-placement-test-block
+              "latch"
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.BinOp
+                  3
+                  (compiler_ir_types.CompilerIrBinOp.Add)
+                  (compiler_ir_types.CompilerIrValue.Var 1)
+                  (compiler_ir_types.CompilerIrValue.I64 1)
+                  (compiler_ast_types.AstType.I64))
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (compiler_ir_types.CompilerIrInstr.BinOp
+                    2
+                    (compiler_ir_types.CompilerIrBinOp.Lt)
+                    (compiler_ir_types.CompilerIrValue.Var 3)
+                    (compiler_ir_types.CompilerIrValue.Var 9)
+                    (compiler_ast_types.AstType.I64))
+                  (compiler_ir_types.compiler-ir-instr-cons
+                    (compiler_ir_types.CompilerIrInstr.Branch
+                      (compiler_ir_types.CompilerIrValue.Var 2)
+                      (compiler_ir_types.compiler-ir-label "header")
+                      (compiler_ir_types.compiler-ir-label "exit"))
+                    compiler_ir_types.CompilerIrInstrList.Nil))))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler-backend-placement-test-exit-block)
+              compiler_ir_types.CompilerIrBlockList.Nil)))))))
+
+(define (compiler-backend-placement-viable-top-declines-ok?) : bool
+  (let
+    [order : (__tl_dyn-array i64)
+      (compiler_backend.compiler-backend-placement-order-for-blocks
+        (compiler-backend-placement-bottom-tested-blocks))]
+    (and
+      (= (array-length order) 4)
+      (= (array-ref order 0) 0)
+      (= (array-ref order 1) 1)
+      (= (array-ref order 2) 2)
+      (= (array-ref order 3) 3))))
+
+;; A loop the ENTRY block heads is never rotated: the prologue, the Windows SEH
+;; directives that describe it and the shrink-wrap splice all anchor on the
+;; first block of the function.
+(define (compiler-backend-placement-entry-loop-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.CompilerIrBlockList.Array
+    (compiler_ir_types.compiler-ir-block-seq-from-list
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler-backend-placement-test-block
+          "entry"
+          (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.CompilerIrInstr.Phi
+              1
+              (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.CompilerIrValue.I64 0)
+                (compiler_ir_types.compiler-ir-label "entry")
+                (compiler_ir_types.compiler-ir-phi-input-cons
+                  (compiler_ir_types.CompilerIrValue.Var 3)
+                  (compiler_ir_types.compiler-ir-label "body")
+                  compiler_ir_types.CompilerIrPhiInputList.Nil))
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                2
+                (compiler_ir_types.CompilerIrBinOp.Lt)
+                (compiler_ir_types.CompilerIrValue.Var 1)
+                (compiler_ir_types.CompilerIrValue.Var 9)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Branch
+                  (compiler_ir_types.CompilerIrValue.Var 2)
+                  (compiler_ir_types.compiler-ir-label "body")
+                  (compiler_ir_types.compiler-ir-label "exit"))
+                compiler_ir_types.CompilerIrInstrList.Nil))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler-backend-placement-test-block
+            "body"
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                3
+                (compiler_ir_types.CompilerIrBinOp.Add)
+                (compiler_ir_types.CompilerIrValue.Var 1)
+                (compiler_ir_types.CompilerIrValue.I64 1)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "entry"))
+                compiler_ir_types.CompilerIrInstrList.Nil)))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler-backend-placement-test-exit-block)
+            compiler_ir_types.CompilerIrBlockList.Nil))))))
+
+(define (compiler-backend-placement-entry-stays-first-ok?) : bool
+  (let
+    [order : (__tl_dyn-array i64)
+      (compiler_backend.compiler-backend-placement-order-for-blocks
+        (compiler-backend-placement-entry-loop-blocks))]
+    (and
+      (= (array-length order) 3)
+      (= (array-ref order 0) 0)
+      (= (array-ref order 1) 1)
+      (= (array-ref order 2) 2))))
+
+;; The Windows end of the pass, built at the IR level so no source-level
+;; transform (the unroller renames this exact loop) can move the shape out from
+;; under the check. One counting loop over a parameter bound, emitted for the
+;; SEH target:
+;;
+;;   entry:  %1 = 0            ; jump header
+;;   header: %2 = phi(%1, %4)  ; %3 = lt %2, %0 ; branch %3, body, exit
+;;   body:   %5 = %2           ; jump latch
+;;   latch:  %4 = %2 + 1       ; jump header
+;;   exit:   return %2
+(define (compiler-backend-placement-seh-function) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (ci.intern "placement_loop")
+    (compiler_ir_types.CompilerIrParamList.Cons
+      (compiler_ir_types.CompilerIrParam.Param
+        "n"
+        (compiler_ast_types.AstType.I64)
+        0)
+      (box compiler_ir_types.CompilerIrParamList.Nil))
+    (compiler_ast_types.AstType.I64)
+    6
+    (compiler_ir_types.CompilerIrBlockList.Array
+      (compiler_ir_types.compiler-ir-block-seq-from-list
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler-backend-placement-test-block
+            "entry"
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Mov
+                1
+                (compiler_ir_types.CompilerIrValue.I64 0)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "header"))
+                compiler_ir_types.CompilerIrInstrList.Nil)))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler-backend-placement-test-block
+              "header"
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Phi
+                  2
+                  (compiler_ir_types.compiler-ir-phi-input-cons
+                    (compiler_ir_types.CompilerIrValue.Var 1)
+                    (compiler_ir_types.compiler-ir-label "entry")
+                    (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.CompilerIrValue.Var 4)
+                      (compiler_ir_types.compiler-ir-label "latch")
+                      compiler_ir_types.CompilerIrPhiInputList.Nil))
+                  (compiler_ast_types.AstType.I64))
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (compiler_ir_types.CompilerIrInstr.BinOp
+                    3
+                    (compiler_ir_types.CompilerIrBinOp.Lt)
+                    (compiler_ir_types.CompilerIrValue.Var 2)
+                    (compiler_ir_types.CompilerIrValue.Var 0)
+                    (compiler_ast_types.AstType.I64))
+                  (compiler_ir_types.compiler-ir-instr-cons
+                    (compiler_ir_types.CompilerIrInstr.Branch
+                      (compiler_ir_types.CompilerIrValue.Var 3)
+                      (compiler_ir_types.compiler-ir-label "body")
+                      (compiler_ir_types.compiler-ir-label "exit"))
+                    compiler_ir_types.CompilerIrInstrList.Nil))))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler-backend-placement-test-block
+                "body"
+                (compiler_ir_types.compiler-ir-instr-cons
+                  (compiler_ir_types.CompilerIrInstr.Mov
+                    5
+                    (compiler_ir_types.CompilerIrValue.Var 2)
+                    (compiler_ast_types.AstType.I64))
+                  (compiler_ir_types.compiler-ir-instr-cons
+                    (compiler_ir_types.CompilerIrInstr.Jump
+                      (compiler_ir_types.compiler-ir-label "latch"))
+                    compiler_ir_types.CompilerIrInstrList.Nil)))
+              (compiler_ir_types.compiler-ir-block-cons
+                (compiler-backend-placement-test-block
+                  "latch"
+                  (compiler_ir_types.compiler-ir-instr-cons
+                    (compiler_ir_types.CompilerIrInstr.BinOp
+                      4
+                      (compiler_ir_types.CompilerIrBinOp.Add)
+                      (compiler_ir_types.CompilerIrValue.Var 2)
+                      (compiler_ir_types.CompilerIrValue.I64 1)
+                      (compiler_ast_types.AstType.I64))
+                    (compiler_ir_types.compiler-ir-instr-cons
+                      (compiler_ir_types.CompilerIrInstr.Jump
+                        (compiler_ir_types.compiler-ir-label "header"))
+                      compiler_ir_types.CompilerIrInstrList.Nil)))
+                (compiler_ir_types.compiler-ir-block-cons
+                  (compiler-backend-placement-test-block
+                    "exit"
+                    (compiler_ir_types.compiler-ir-instr-cons
+                      (compiler_ir_types.CompilerIrInstr.Return
+                        (compiler_ir_types.CompilerIrMaybeValue.Some
+                          (compiler_ir_types.CompilerIrValue.Var 2)))
+                      compiler_ir_types.CompilerIrInstrList.Nil))
+                  compiler_ir_types.CompilerIrBlockList.Nil)))))))))
+
+(define (compiler-backend-placement-seh-main) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (ci.intern "main")
+    compiler_ir_types.CompilerIrParamList.Nil
+    (compiler_ast_types.AstType.I64)
+    1
+    (compiler_ir_types.CompilerIrBlockList.Array
+      (compiler_ir_types.compiler-ir-block-seq-from-list
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler-backend-placement-test-block
+            "entry"
+            (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.CompilerIrInstr.Call
+                0
+                (ci.intern "placement_loop")
+                (compiler_ir_types.CompilerIrCallArgs.One
+                  (compiler_ir_types.CompilerIrValue.I64 4))
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.CompilerIrInstr.Return
+                  (compiler_ir_types.CompilerIrMaybeValue.Some
+                    (compiler_ir_types.CompilerIrValue.Var 0)))
+                compiler_ir_types.CompilerIrInstrList.Nil)))
+          compiler_ir_types.CompilerIrBlockList.Nil)))))
+
+;; This fixture reaches emission without lowering a source first, so nothing
+;; upstream has installed builtin ids for whatever intern table the checks
+;; before it left active -- the same install the smoke driver performs before
+;; the suite, and the one `compiler-builtin-refresh!` fails closed on.
+(define (compiler-backend-placement-seh-program) : compiler_ir_types.CompilerIrProgram
+  (begin
+    (cbi.compiler-builtin-initialize-for-parse!)
+    (compiler_ir_types.CompilerIrProgram.Program
+      (compiler_ir_types.compiler-ir-global-seq-empty)
+      (compiler_ir_types.CompilerIrFunctionList.Array
+        (compiler_ir_types.compiler-ir-function-seq-from-list
+          (compiler_ir_types.compiler-ir-function-cons
+            (compiler-backend-placement-seh-function)
+            (compiler_ir_types.compiler-ir-function-cons
+              (compiler-backend-placement-seh-main)
+              compiler_ir_types.CompilerIrFunctionList.Nil))))
+      (compiler_ir_types.compiler-ir-extern-seq-empty))))
+
+(define (compiler-backend-placement-test-last-before
+  [text : String]
+  [needle : String]
+  [limit : i64]) : i64
+  (let
+    [pos : i64 -1]
+    [scan : i64 0]
+    [next : i64 0]
+    (begin
+      (while (>= scan 0)
+        (begin
+          (set!
+            next
+            (compiler_backend.compiler-backend-string-find-from
+              (compiler_backend.compiler-backend-global-shared-view text)
+              (compiler_backend.compiler-backend-global-shared-view needle)
+              scan))
+          (if (and (>= next 0) (< next limit))
+            (begin
+              (set! pos next)
+              (set! scan (+ next 1)))
+            (set! scan -1))))
+      pos)))
+
+;; Rotation moves whole blocks, and on Windows the unwind description is
+;; positional: `.seh_` notes describe the prologue and nothing else may sit
+;; between them and `.seh_endprologue`. The entry-first rule is what guarantees
+;; that, and this is the check that it holds while a loop below it is rotated.
+(define (compiler-backend-placement-windows-seh-shape-ok?) : bool
+  (match (compiler_backend.compiler-backend-emit-program-for-target
+    (compiler-backend-placement-seh-program)
+    (compiler_backend.CompilerBackendTarget.Windows))
+    [(compiler_backend.ResultCompilerBackend.Ok asm)
+      (let
+        ;; the loop test's own label, and the first place anything JUMPS to it
+        ;; (a jump operand ends the line, a label definition ends in a colon)
+        [label : i64
+          (compiler_backend.compiler-backend-string-find-from
+            (compiler_backend.compiler-backend-global-shared-view asm)
+            "_header:\n"
+            0)]
+        [operand : i64
+          (compiler_backend.compiler-backend-string-find-from
+            (compiler_backend.compiler-backend-global-shared-view asm)
+            "_header\n"
+            0)]
+        [prologue : i64
+          (compiler-backend-placement-test-last-before
+            (compiler_backend.compiler-backend-global-shared-view asm)
+            "    .seh_endprologue\n"
+            (if (>= label 0)
+              label
+              0))]
+        (and
+          (>= label 0)
+          (>= operand 0)
+          (>= prologue 0)
+          ;; rotation put the test below the body, so the function reaches it by
+          ;; a jump before ever defining the label ...
+          (< operand label)
+          (< prologue operand)
+          ;; ... and no `.seh_` note travelled into the rotated body with a
+          ;; block: the next one is not until the test itself
+          (>=
+            (compiler_backend.compiler-backend-string-find-from
+              (compiler_backend.compiler-backend-global-shared-view asm)
+              "    .seh_"
+              (+ prologue 1))
+            label)))]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-placement-ok?) : bool
+  (and
+    (compiler-backend-placement-rotation-ok?)
+    (compiler-backend-placement-search-loop-declines-ok?)
+    (compiler-backend-placement-open-block-declines-ok?)
+    (compiler-backend-placement-viable-top-declines-ok?)
+    (compiler-backend-placement-entry-stays-first-ok?)
+    (compiler-backend-placement-windows-seh-shape-ok?)))
+
 (define (compiler-backend-self-test) : i64
   (if (and
     (compiler-backend-lazy-table-storage-ok?)
@@ -53166,7 +53693,8 @@ b_keep:
         (compiler-backend-runtime-leaf-user-symbol-ok?)
         (compiler-backend-program-index-id-maps-ok?)
         (compiler-backend-program-index-explicit-extern-ids-ok?)))
-    (compiler-backend-object-semantic-eligibility-ok?))
+    (compiler-backend-object-semantic-eligibility-ok?)
+    (compiler-backend-placement-ok?))
     42
     (io.panic "backend: smoke output mismatch")))
 

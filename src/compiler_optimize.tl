@@ -28970,13 +28970,19 @@
       [first : OptInductionDerived
         (OptInductionDerived.Mul 7 0 (ast.AstType.I64))]
       [one : OptInductionDerivedList
-        (opt-induction-derived-list-append-unique 0 empty first)]
+        (opt-induction-derived-list-append-unique
+          0
+          (compiler-opt-global-shared-view empty)
+          (compiler-opt-global-shared-view first))]
       [duplicate : OptInductionDerivedList
-        (opt-induction-derived-list-append-unique 0 one first)]
+        (opt-induction-derived-list-append-unique
+          0
+          (compiler-opt-global-shared-view one)
+          first)]
       [two : OptInductionDerivedList
         (opt-induction-derived-list-append-unique
           0
-          one
+          (compiler-opt-global-shared-view one)
           (OptInductionDerived.Mul 8 1 (ast.AstType.I64)))]
       [deriveds : OptInductionDerivedList (OptInductionDerivedList.Nil)]
       [index : i64 0]
@@ -28986,7 +28992,8 @@
           0
           "induction derived empty storage")
         (test.assert-i64-eq
-          (opt-induction-derived-list-count one)
+          (opt-induction-derived-list-count
+            (compiler-opt-global-shared-view one))
           1
           "induction derived retained singleton length")
         (test.assert-i64-eq
@@ -28994,7 +29001,8 @@
           1
           "induction derived duplicate is ignored")
         (test.assert-i64-eq
-          (opt-induction-derived-list-count two)
+          (opt-induction-derived-list-count
+            (compiler-opt-global-shared-view two))
           2
           "induction derived distinct append")
         (match (opt-induction-derived-list-ref one 0)
@@ -29018,7 +29026,7 @@
                 deriveds
                 (OptInductionDerived.Mul (+ index 10) index (ast.AstType.I64))))
             (set! index (+ index 1))))
-        (match deriveds
+        (match (compiler-opt-global-shared-view deriveds)
           [(OptInductionDerivedList.Nil)
             (test.assert-true false "induction derived storage is non-empty")]
           [(OptInductionDerivedList.Dense items len)
@@ -29027,11 +29035,15 @@
               (test.assert-true
                 (>= (array-length items) 9)
                 "induction derived storage grows past eight"))])
-        (match (opt-induction-derived-list-ref deriveds 0)
+        (match (opt-induction-derived-list-ref
+          (compiler-opt-global-shared-view deriveds)
+          0)
           [(OptInductionDerived.Mul scale _ _)
             (test.assert-i64-eq scale 10 "induction derived first source fact")]
           [_ (test.assert-true false "induction derived first shape")])
-        (match (opt-induction-derived-list-ref deriveds 8)
+        (match (opt-induction-derived-list-ref
+          (compiler-opt-global-shared-view deriveds)
+          8)
           [(OptInductionDerived.Mul scale _ _)
             (test.assert-i64-eq scale 18 "induction derived last source fact")]
           [_ (test.assert-true false "induction derived last shape")])

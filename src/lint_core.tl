@@ -2733,7 +2733,10 @@
   (match cleanup
     [(ast.AstFieldCleanup.No) false]
     [(ast.AstFieldCleanup.Fn name)
-      (lint-name-id-uses-import? name alias module-name)]
+      (lint-name-id-uses-import?
+        (ci.intern-syntax-id-value name)
+        alias
+        module-name)]
     [(ast.AstFieldCleanup.Owned) false]))
 
 (define (lint-field-def-list-uses-import?
@@ -2771,7 +2774,10 @@
   (match cleanup
     [(ast.AstStructCleanup.No) false]
     [(ast.AstStructCleanup.Fn name)
-      (lint-name-id-uses-import? name alias module-name)]))
+      (lint-name-id-uses-import?
+        (ci.intern-syntax-id-value name)
+        alias
+        module-name)]))
 
 (define (lint-enum-cleanup-uses-import?
   [cleanup : ast.AstEnumCleanup]
@@ -2780,7 +2786,10 @@
   (match cleanup
     [(ast.AstEnumCleanup.No) false]
     [(ast.AstEnumCleanup.Fn name)
-      (lint-name-id-uses-import? name alias module-name)]))
+      (lint-name-id-uses-import?
+        (ci.intern-syntax-id-value name)
+        alias
+        module-name)]))
 
 (define (lint-variant-payload-cleanup-uses-import?
   [cleanup : ast.AstVariantPayloadCleanup]
@@ -2789,7 +2798,10 @@
   (match cleanup
     [(ast.AstVariantPayloadCleanup.No) false]
     [(ast.AstVariantPayloadCleanup.Fn name)
-      (lint-name-id-uses-import? name alias module-name)]
+      (lint-name-id-uses-import?
+        (ci.intern-syntax-id-value name)
+        alias
+        module-name)]
     [(ast.AstVariantPayloadCleanup.Owned) false]))
 
 (define (lint-variant-payload-cleanup-list-uses-import?

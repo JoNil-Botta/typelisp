@@ -201,7 +201,10 @@
       [(ast.AstFieldCleanup.Fn name)
         (begin
           (codec.surface-ast-write-i64! out 1)
-          (codec.surface-ast-write-name! out context name))]
+          (codec.surface-ast-write-name!
+            out
+            context
+            (ci.intern-syntax-id-value name)))]
       [(ast.AstFieldCleanup.Owned) (codec.surface-ast-write-i64! out 2)])))
 
 (define (surface-ast-read-field-cleanup! [reader : codec.SurfaceAstReader]) : ast.AstFieldCleanup
@@ -209,7 +212,9 @@
     [tag : i64 (codec.surface-ast-read-i64! reader)]
     (cond
       [(= tag 0) ast.AstFieldCleanup.No]
-      [(= tag 1) (ast.AstFieldCleanup.Fn (codec.surface-ast-read-name! reader))]
+      [(= tag 1)
+        (ast.AstFieldCleanup.Fn
+          (ci.intern-syntax-id-from-raw (codec.surface-ast-read-name! reader)))]
       [(= tag 2) ast.AstFieldCleanup.Owned]
       [else
         (begin
@@ -789,7 +794,10 @@
       [(ast.AstVariantPayloadCleanup.Fn name)
         (begin
           (codec.surface-ast-write-i64! out 1)
-          (codec.surface-ast-write-name! out context name))]
+          (codec.surface-ast-write-name!
+            out
+            context
+            (ci.intern-syntax-id-value name)))]
       [(ast.AstVariantPayloadCleanup.Owned)
         (codec.surface-ast-write-i64! out 2)])))
 
@@ -799,7 +807,8 @@
     (cond
       [(= tag 0) ast.AstVariantPayloadCleanup.No]
       [(= tag 1)
-        (ast.AstVariantPayloadCleanup.Fn (codec.surface-ast-read-name! reader))]
+        (ast.AstVariantPayloadCleanup.Fn
+          (ci.intern-syntax-id-from-raw (codec.surface-ast-read-name! reader)))]
       [(= tag 2) ast.AstVariantPayloadCleanup.Owned]
       [else
         (begin
@@ -887,12 +896,16 @@
       [(ast.AstStructCleanup.Fn name)
         (begin
           (codec.surface-ast-write-i64! out 1)
-          (codec.surface-ast-write-name! out context name))])))
+          (codec.surface-ast-write-name!
+            out
+            context
+            (ci.intern-syntax-id-value name)))])))
 
 (define (surface-ast-read-struct-cleanup! [reader : codec.SurfaceAstReader]) : ast.AstStructCleanup
   (if (= (codec.surface-ast-read-i64! reader) 0)
     ast.AstStructCleanup.No
-    (ast.AstStructCleanup.Fn (codec.surface-ast-read-name! reader))))
+    (ast.AstStructCleanup.Fn
+      (ci.intern-syntax-id-from-raw (codec.surface-ast-read-name! reader)))))
 
 (cfg
   (any
@@ -909,12 +922,16 @@
       [(ast.AstEnumCleanup.Fn name)
         (begin
           (codec.surface-ast-write-i64! out 1)
-          (codec.surface-ast-write-name! out context name))])))
+          (codec.surface-ast-write-name!
+            out
+            context
+            (ci.intern-syntax-id-value name)))])))
 
 (define (surface-ast-read-enum-cleanup! [reader : codec.SurfaceAstReader]) : ast.AstEnumCleanup
   (if (= (codec.surface-ast-read-i64! reader) 0)
     ast.AstEnumCleanup.No
-    (ast.AstEnumCleanup.Fn (codec.surface-ast-read-name! reader))))
+    (ast.AstEnumCleanup.Fn
+      (ci.intern-syntax-id-from-raw (codec.surface-ast-read-name! reader)))))
 
 (cfg
   (any

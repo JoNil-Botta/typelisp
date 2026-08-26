@@ -2704,7 +2704,8 @@
   [refs : lint_svec.Vec (:consume)]) : lint_svec.Vec
   (match cleanup
     [(ast.AstFieldCleanup.No) refs]
-    [(ast.AstFieldCleanup.Fn name) (selfhost-lint-dead-ref-add-id refs name)]
+    [(ast.AstFieldCleanup.Fn name)
+      (selfhost-lint-dead-ref-add-id refs (ci.intern-syntax-id-value name))]
     [(ast.AstFieldCleanup.Owned) refs]))
 
 (define (selfhost-lint-dead-field-def-list-refs
@@ -2735,14 +2736,16 @@
   [refs : lint_svec.Vec (:consume)]) : lint_svec.Vec
   (match cleanup
     [(ast.AstStructCleanup.No) refs]
-    [(ast.AstStructCleanup.Fn name) (selfhost-lint-dead-ref-add-id refs name)]))
+    [(ast.AstStructCleanup.Fn name)
+      (selfhost-lint-dead-ref-add-id refs (ci.intern-syntax-id-value name))]))
 
 (define (selfhost-lint-dead-enum-cleanup-refs
   [cleanup : ast.AstEnumCleanup]
   [refs : lint_svec.Vec (:consume)]) : lint_svec.Vec
   (match cleanup
     [(ast.AstEnumCleanup.No) refs]
-    [(ast.AstEnumCleanup.Fn name) (selfhost-lint-dead-ref-add-id refs name)]))
+    [(ast.AstEnumCleanup.Fn name)
+      (selfhost-lint-dead-ref-add-id refs (ci.intern-syntax-id-value name))]))
 
 (define (selfhost-lint-dead-variant-cleanup-refs
   [cleanup : ast.AstVariantPayloadCleanup]
@@ -2750,7 +2753,7 @@
   (match cleanup
     [(ast.AstVariantPayloadCleanup.No) refs]
     [(ast.AstVariantPayloadCleanup.Fn name)
-      (selfhost-lint-dead-ref-add-id refs name)]
+      (selfhost-lint-dead-ref-add-id refs (ci.intern-syntax-id-value name))]
     [(ast.AstVariantPayloadCleanup.Owned) refs]))
 
 (define (selfhost-lint-dead-variant-cleanup-list-refs
@@ -3231,43 +3234,7 @@
     reportable
     (selfhost-lint-package-dead-cfgs)))
 
-(define (selfhost-lint-dead-clone-string-vec-from
-  [source : lint_svec.Vec]
-  [index : i64]
-  [items : lint_svec.Vec (:consume)]) : lint_svec.Vec
-  (if (>= index (lint_svec.len (& source)))
-    items
-    (let
-      [value : String (lint_svec.get (& source) index "")]
-      [owned : String (clone value)]
-      [next : lint_svec.Vec items]
-      (begin
-        (lint_svec.push-ref! (&mut next) owned)
-        (selfhost-lint-dead-clone-string-vec-from source (+ index 1) next)))))
-
-(define (selfhost-lint-dead-clone-string-vec [source : lint_svec.Vec]) : lint_svec.Vec
-  (selfhost-lint-dead-clone-string-vec-from source 0 (lint_svec.new)))
-
-(define (selfhost-lint-dead-clone-decl [decl : SelfhostLintDeadDecl]) : SelfhostLintDeadDecl
-  (let
-    [path : String decl.path]
-    [name : String decl.name]
-    [key : String decl.key]
-    [span : ast.AstSourceSpan decl.span]
-    (SelfhostLintDeadDecl
-      (clone path)
-      (clone name)
-      (clone key)
-      (ast.AstSourceSpan
-        span.start-line
-        span.start-col
-        span.end-line
-        span.end-col)
-      (selfhost-lint-dead-clone-string-vec decl.refs)
-      decl.root
-      decl.reportable)))
-
-(define (selfhost-lint-dead-scan-clone-decls-from
+(define (selfhost-lint-dead-scan-append-owned-decls-from
   [scan : SelfhostLintDeadScan]
   [source-scan : SelfhostLintDeadScan]
   [index : i64]) : SelfhostLintDeadScan
@@ -3276,33 +3243,20 @@
     (let
       [decl : SelfhostLintDeadDecl
         (selfhost-lint-dead-decls-ref source-scan.decls index)]
-      [owned : SelfhostLintDeadDecl (selfhost-lint-dead-clone-decl decl)]
-      (selfhost-lint-dead-scan-clone-decls-from
-        (selfhost-lint-dead-scan-add-decl scan owned)
+      (selfhost-lint-dead-scan-append-owned-decls-from
+        (selfhost-lint-dead-scan-add-decl scan decl)
         source-scan
         (+ index 1)))))
 
-(define (selfhost-lint-dead-scan-clone-roots-from
-  [scan : SelfhostLintDeadScan (:consume)]
-  [source-scan : SelfhostLintDeadScan]
-  [index : i64]) : SelfhostLintDeadScan
-  (if (>= index (lint_svec.len (& source-scan.roots)))
-    scan
-    (let
-      [root : String (lint_svec.get (& source-scan.roots) index "")]
-      [owned : String (clone root)]
-      (selfhost-lint-dead-scan-clone-roots-from
-        (selfhost-lint-dead-scan-add-root scan owned)
-        source-scan
-        (+ index 1)))))
-
-(define (selfhost-lint-dead-scan-clone-into
+(define (selfhost-lint-dead-scan-append-owned
   [scan : SelfhostLintDeadScan]
   [source-scan : SelfhostLintDeadScan]) : SelfhostLintDeadScan
-  (selfhost-lint-dead-scan-clone-roots-from
-    (selfhost-lint-dead-scan-clone-decls-from scan source-scan 0)
-    source-scan
-    0))
+  ;; with-scratch already cloned source-scan into the enclosing owner. Append
+  ;; those now-home-owned values directly so the growing package scan is never
+  ;; deep-cloned again for each input file.
+  (selfhost-lint-dead-scan-add-roots
+    (selfhost-lint-dead-scan-append-owned-decls-from scan source-scan 0)
+    source-scan.roots))
 
 (define (selfhost-lint-dead-scan-file-in-scratch
   [scan : SelfhostLintDeadScan]
@@ -3320,33 +3274,34 @@
         selfhost-lint-type-pool-initial-capacity
         pool-arena)]
     [_install-pools : unit (ast.ast-node-pool-compat-context-use! pools)]
-    [scratch : arena.Arena (arena.make)]
     [source-scan : SelfhostLintDeadScan
-      (begin
-        (unsafe
-          (arena.set! scratch))
-        (selfhost-lint-dead-scan-source
-          (SelfhostLintDeadScan
-            (selfhost-lint-dead-decls-empty)
-            (lint_svec.new))
-          path
-          (byte_buf.to-string (io.read-file path))
-          visible-root
-          reportable))]
-    [_restore-home : unit
-      (unsafe
-        (arena.set! home))]
+      (with-scratch
+        (let
+          [scratch-scan : SelfhostLintDeadScan
+            (selfhost-lint-dead-scan-source
+              (SelfhostLintDeadScan
+                (selfhost-lint-dead-decls-empty)
+                (lint_svec.new))
+              path
+              (byte_buf.to-string (io.read-file path))
+              visible-root
+              reportable)]
+          (begin
+            ;; Clear compiler globals while the scratch allocations they may
+            ;; reference are still mapped. Allocate any replacement state in
+            ;; the enclosing owner, then clone only this file's compact scan
+            ;; out before reclaiming its complete AST.
+            (in-arena home (selfhost-lint-reset-file-state!))
+            scratch-scan)))]
     [next : SelfhostLintDeadScan
-      (selfhost-lint-dead-scan-clone-into scan source-scan)]
+      (selfhost-lint-dead-scan-append-owned scan source-scan)]
     (begin
-      (selfhost-lint-reset-file-state!)
       (ast.ast-node-pool-context-reset-to! pools 0 0)
       (ast.ast-node-pool-compat-context-clear!)
       (ast.ast-node-pool-context-destroy-storage! pools)
       (unsafe
         (begin
           (arena.set! home)
-          (arena.destroy scratch)
           (arena.tl_arena_destroy (ast.ast-node-pool-context-base-arena pools))))
       next)))
 
@@ -3997,49 +3952,39 @@
         selfhost-lint-type-pool-initial-capacity
         pool-arena)]
     [_install-pools : unit (ast.ast-node-pool-compat-context-use! pools)]
-    [scratch : arena.Arena (arena.make)]
-    [scratch-result : ResultSelfhostLintDeadImportList
-      (begin
-        (unsafe
-          (arena.set! scratch))
-        (match (parser.parse-ast-source-diagnostic-with-cfg
-          path
-          (byte_buf.to-string (io.read-file path))
-          (selfhost-lint-package-dead-cfgs))
-          [(parser.ResultAstProgramDiagnostic.Err diag)
-            (ResultSelfhostLintDeadImportList.Err diag)]
-          [(parser.ResultAstProgramDiagnostic.Ok program)
-            (match program
-              [(ast.AstProgram.Program decls-box)
-                (selfhost-lint-package-dead-import-paths-from-decls
-                  (__tl-box-place decls-box)
-                  path
-                  import-root
-                  source-set
-                  root-sources
-                  stdlib-roots
-                  pools
-                  package-imports
-                  (lint_svec.new))])]))]
-    [_restore-home : unit
-      (unsafe
-        (arena.set! home))]
     [result : ResultSelfhostLintDeadImportList
-      (match scratch-result
-        [(ResultSelfhostLintDeadImportList.Ok imports)
-          (ResultSelfhostLintDeadImportList.Ok
-            (selfhost-lint-dead-clone-string-vec imports))]
-        [(ResultSelfhostLintDeadImportList.Err diag)
-          (ResultSelfhostLintDeadImportList.Err (clone diag))])]
+      (with-scratch
+        (let
+          [scratch-result : ResultSelfhostLintDeadImportList
+            (match (parser.parse-ast-source-diagnostic-with-cfg
+              path
+              (byte_buf.to-string (io.read-file path))
+              (selfhost-lint-package-dead-cfgs))
+              [(parser.ResultAstProgramDiagnostic.Err diag)
+                (ResultSelfhostLintDeadImportList.Err diag)]
+              [(parser.ResultAstProgramDiagnostic.Ok program)
+                (match program
+                  [(ast.AstProgram.Program decls-box)
+                    (selfhost-lint-package-dead-import-paths-from-decls
+                      (__tl-box-place decls-box)
+                      path
+                      import-root
+                      source-set
+                      root-sources
+                      stdlib-roots
+                      pools
+                      package-imports
+                      (lint_svec.new))])])]
+          (begin
+            (in-arena home (selfhost-lint-reset-file-state!))
+            scratch-result)))]
     (begin
-      (selfhost-lint-reset-file-state!)
       (ast.ast-node-pool-context-reset-to! pools 0 0)
       (ast.ast-node-pool-compat-context-clear!)
       (ast.ast-node-pool-context-destroy-storage! pools)
       (unsafe
         (begin
           (arena.set! home)
-          (arena.destroy scratch)
           (arena.tl_arena_destroy (ast.ast-node-pool-context-base-arena pools))))
       result)))
 
@@ -4383,39 +4328,37 @@
         selfhost-lint-type-pool-initial-capacity
         pool-arena)]
     [_install-pools : unit (ast.ast-node-pool-compat-context-use! pools)]
-    [scratch : arena.Arena (arena.make)]
     [status : i64
-      (begin
-        (unsafe
-          (arena.set! scratch))
-        (selfhost-lint-file
-          input-path
-          stdlib-roots
-          enforcing
-          deprecated-string-concat
-          redundant-function-name
-          prefer-dotted-field
-          name-case))]
+      (with-scratch
+        (let
+          [file-status : i64
+            (selfhost-lint-file
+              input-path
+              stdlib-roots
+              enforcing
+              deprecated-string-concat
+              redundant-function-name
+              prefer-dotted-field
+              name-case)]
+          (begin
+            ;; Without an explicit batch reset, the unsafe-surface cache was
+            ;; ensured into this file scratch. Release it before with-scratch
+            ;; reclaims the arena, and rebuild global state in the enclosing
+            ;; owner while the old scratch-backed nodes are still mapped.
+            (if (arena.eq?
+              (arena.Arena selfhost-lint-unsafe-surface-cache-arena)
+              (arena.current))
+              (selfhost-lint-unsafe-surface-cache-release!)
+              unit)
+            (in-arena home (selfhost-lint-reset-file-state!))
+            file-status)))]
     (begin
-      ;; Without an explicit batch reset, the unsafe-surface cache was ensured
-      ;; into this file's scratch arena; release it so the scratch teardown
-      ;; cannot leave the global cache pointing into freed memory. A batch
-      ;; installs the cache in its own outer arena, which outlives each file.
-      (if (= selfhost-lint-unsafe-surface-cache-arena (arena.tl_arena_current))
-        (selfhost-lint-unsafe-surface-cache-release!)
-        unit)
-      (unsafe
-        (arena.set! home))
-      ;; Reset compiler-check state while the file scratch arena is still mapped;
-      ;; typed lint rules can leave scratch-backed nodes in check/typecheck caches.
-      (selfhost-lint-reset-file-state!)
       (ast.ast-node-pool-context-reset-to! pools 0 0)
       (ast.ast-node-pool-compat-context-clear!)
       (ast.ast-node-pool-context-destroy-storage! pools)
       (unsafe
         (begin
           (arena.set! home)
-          (arena.destroy scratch)
           (arena.tl_arena_destroy (ast.ast-node-pool-context-base-arena pools))))
       status)))
 
@@ -4437,38 +4380,34 @@
         selfhost-lint-type-pool-initial-capacity
         pool-arena)]
     [_install-pools : unit (ast.ast-node-pool-compat-context-use! pools)]
-    [scratch : arena.Arena (arena.make)]
     [status : i64
-      (begin
-        (unsafe
-          (arena.set! scratch))
-        (selfhost-lint-file-with-package-dead
-          input-path
-          stdlib-roots
-          enforcing
-          deprecated-string-concat
-          redundant-function-name
-          prefer-dotted-field
-          name-case
-          dead-decls))]
+      (with-scratch
+        (let
+          [file-status : i64
+            (selfhost-lint-file-with-package-dead
+              input-path
+              stdlib-roots
+              enforcing
+              deprecated-string-concat
+              redundant-function-name
+              prefer-dotted-field
+              name-case
+              dead-decls)]
+          (begin
+            (if (arena.eq?
+              (arena.Arena selfhost-lint-unsafe-surface-cache-arena)
+              (arena.current))
+              (selfhost-lint-unsafe-surface-cache-release!)
+              unit)
+            (in-arena home (selfhost-lint-reset-file-state!))
+            file-status)))]
     (begin
-      ;; Without an explicit batch reset, the unsafe-surface cache was ensured
-      ;; into this file's scratch arena; release it so the scratch teardown
-      ;; cannot leave the global cache pointing into freed memory. A batch
-      ;; installs the cache in its own outer arena, which outlives each file.
-      (if (= selfhost-lint-unsafe-surface-cache-arena (arena.tl_arena_current))
-        (selfhost-lint-unsafe-surface-cache-release!)
-        unit)
-      (unsafe
-        (arena.set! home))
-      (selfhost-lint-reset-file-state!)
       (ast.ast-node-pool-context-reset-to! pools 0 0)
       (ast.ast-node-pool-compat-context-clear!)
       (ast.ast-node-pool-context-destroy-storage! pools)
       (unsafe
         (begin
           (arena.set! home)
-          (arena.destroy scratch)
           (arena.tl_arena_destroy (ast.ast-node-pool-context-base-arena pools))))
       status)))
 

@@ -50,7 +50,7 @@
     [intern-state : ci.InternCompatState
       (owned_view.compiler-owned-shared-view intern-state)]
     (begin
-      (tc_core.tc-spmd-inline-helper-stack-reset!)
+      (tc_core.tc-spmd-inline-helper-stack-reset-for-job! job-state)
       (tc_core.tc-macro-call-site-state-reset!
         (tc_core.tc-job-state-macro-call-sites job-state))
       (tc_core.tc-typecheck-result-with-pool-check
@@ -319,7 +319,7 @@
   [stdlib-roots : svec.Vec]
   [pools : ast.AstNodePoolContext]) : ResultCompilerDocExpand
   (begin
-    (tc_core.tc-spmd-inline-helper-stack-reset!)
+    (tc_core.tc-spmd-inline-helper-stack-reset-for-job! job-state)
     (tc_core.tc-macro-call-site-state-reset!
       (tc_core.tc-job-state-macro-call-sites job-state))
     (let
@@ -392,7 +392,7 @@
     [intern-state : ci.InternCompatState
       (owned_view.compiler-owned-shared-view intern-state)]
     (begin
-      (tc_core.tc-spmd-inline-helper-stack-reset!)
+      (tc_core.tc-spmd-inline-helper-stack-reset-for-job! job-state)
       (tc_core.tc-macro-call-site-state-reset!
         (tc_core.tc-job-state-macro-call-sites job-state))
       (tc_core.tc-typecheck-checked-result-with-pool-check

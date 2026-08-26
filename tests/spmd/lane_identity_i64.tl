@@ -4,12 +4,12 @@
 ;; tail. Each active lane writes `program-count * 10 + program-index`.
 (import stdlib.array)
 
-(define (fill [out : (__tl_dyn-array i64)] [n : i64]) : unit
+(define (fill [out : (&mut out (__tl_dyn-array i64))] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (set! (array-ref out i) (+ (* (program-count) 10) (program-index)))))
 
-(define (checksum [out : (__tl_dyn-array i64)] [n : i64]) : i64
+(define (checksum [out : (& out (__tl_dyn-array i64))] [n : i64]) : i64
   (let
     [i : i64 0]
     [acc : i64 0]
@@ -25,5 +25,5 @@
     [n : i64 13]
     [out : (__tl_dyn-array i64) (array.make-array i64 n)]
     (begin
-      (fill out n)
-      (bit-and (checksum out n) 0xff))))
+      (fill (&mut out) n)
+      (bit-and (checksum (& out) n) 0xff))))

@@ -4,7 +4,7 @@
 ; array-ref so the checker sees the compiler array-read AST.
 (import stdlib.array)
 
-(define (init [xs : (__tl_dyn-array i64)] [n : i64]) : unit
+(define (init [xs : (&mut xs (__tl_dyn-array i64))] [n : i64]) : unit
   (let
     [i : i64 0]
     (while (< i n)
@@ -13,14 +13,14 @@
         (set! i (+ i 1))))))
 
 (define (fill
-  [xs : (__tl_dyn-array i64)]
-  [out : (__tl_dyn-array i64)]
+  [xs : (& xs (__tl_dyn-array i64))]
+  [out : (&mut out (__tl_dyn-array i64))]
   [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (set! (array-ref out i) (spmd-broadcast (array-ref xs i) 1))))
 
-(define (checksum [out : (__tl_dyn-array i64)] [n : i64]) : i64
+(define (checksum [out : (& out (__tl_dyn-array i64))] [n : i64]) : i64
   (let
     [i : i64 0]
     [acc : i64 0]
@@ -37,6 +37,6 @@
     [xs : (__tl_dyn-array i64) (array.make-array i64 n)]
     [out : (__tl_dyn-array i64) (array.make-array i64 n)]
     (begin
-      (init xs n)
-      (fill xs out n)
-      (bit-and (checksum out n) 0xff))))
+      (init (&mut xs) n)
+      (fill (& xs) (&mut out) n)
+      (bit-and (checksum (& out) n) 0xff))))

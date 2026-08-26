@@ -12909,6 +12909,9 @@ g:
     (compiler-backend-zero-load-ok?)
     (compiler-backend-zero-compare-ok?)
     (compiler-backend-scalar-select-ok?)
+    (compiler-backend-select-on-flags-ok?)
+    (compiler-backend-select-false-home-result-ok?)
+    (compiler-backend-gep-direct-index-ok?)
     (compiler-backend-call-return-ok?)
     (compiler-backend-global-immediate-store-ok?)
     (compiler-backend-scratch-staging-direct-shapes-ok?)))
@@ -13127,6 +13130,314 @@ g:
             (compiler_backend.compiler-backend-string-contains?
               asm
               (cfg scratch-vreg "cmovne %sil" "cmovne %r8b"))))]
+      [(compiler_backend.ResultCompilerBackend.Err _) false])))
+
+;; SS-P5 fixtures. Var 1 is a SPILLED gep base (which is what routes the gep to
+;; the staged path at all), var 2 the index, var 3 the gep result.
+(define (compiler-backend-gep-direct-index-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
+    (compiler_regalloc.CompilerRegAssignment
+      1
+      (compiler_regalloc.CompilerRegLocation.Spill 40))
+    (compiler_regalloc.compiler-reg-assignments-prepend
+      (compiler_regalloc.CompilerRegAssignment
+        2
+        (compiler_regalloc.CompilerRegLocation.Register
+          compiler_abi.compiler-reg-id-r13))
+      (compiler_regalloc.compiler-reg-assignments-prepend
+        (compiler_regalloc.CompilerRegAssignment
+          3
+          (compiler_regalloc.CompilerRegLocation.Register
+            compiler_abi.compiler-reg-id-r12))
+        (compiler_regalloc.compiler-reg-assignment-table-empty)))))
+
+(define (compiler-backend-gep-spilled-index-assignments) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
+    (compiler_regalloc.CompilerRegAssignment
+      1
+      (compiler_regalloc.CompilerRegLocation.Spill 40))
+    (compiler_regalloc.compiler-reg-assignments-prepend
+      (compiler_regalloc.CompilerRegAssignment
+        2
+        (compiler_regalloc.CompilerRegLocation.Spill 48))
+      (compiler_regalloc.compiler-reg-assignments-prepend
+        (compiler_regalloc.CompilerRegAssignment
+          3
+          (compiler_regalloc.CompilerRegLocation.Register
+            compiler_abi.compiler-reg-id-r12))
+        (compiler_regalloc.compiler-reg-assignment-table-empty)))))
+
+(define (compiler-backend-gep-staged-asm
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [elem-ty : compiler_ast_types.AstType]) : compiler_backend.ResultCompilerBackend
+  (compiler-backend-emit-test-instrs
+    (compiler-backend-test-instr-seq-prepend
+      (compiler_ir_types.CompilerIrInstr.Gep
+        3
+        (compiler_ir_types.CompilerIrValue.Var 1)
+        (compiler_ir_types.CompilerIrValue.Var 2)
+        elem-ty)
+      (compiler_ir_types.compiler-ir-instr-seq-empty))
+    assignments
+    4))
+
+;; SS-P5(a). A register-homed index is READ by the composing instruction --
+;; `addq idx, base` at scale 1, `leaq (base,idx,s), base` at 2/4/8 -- so the
+;; staged path needs no copy of it into a scratch. A spilled index has no home
+;; to read and keeps the staging load. The displacement folds into the SIB
+;; form's own field, so a displaced gep is still ONE instruction.
+(define (compiler-backend-gep-direct-index-ok?) : bool
+  (and
+    ;; scale 1 -> addq, with no `movq %r13, <scratch>` staging copy left.
+    (match (compiler-backend-gep-staged-asm
+      (compiler-backend-gep-direct-index-assignments)
+      (compiler_ast_types.AstType.U8))
+      [(compiler_backend.ResultCompilerBackend.Ok asm)
+        (and
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    addq %r13, %r12\n")
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              asm
+              "    movq %r13, ")))]
+      [(compiler_backend.ResultCompilerBackend.Err _) false])
+    ;; scale 8 -> one leaq straight off the index home.
+    (match (compiler-backend-gep-staged-asm
+      (compiler-backend-gep-direct-index-assignments)
+      (compiler_ast_types.AstType.I64))
+      [(compiler_backend.ResultCompilerBackend.Ok asm)
+        (and
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    leaq (%r12,%r13,8), %r12\n")
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              asm
+              "    movq %r13, ")))]
+      [(compiler_backend.ResultCompilerBackend.Err _) false])
+    ;; scale 4 -> the same SIB form at the narrower stride.
+    (match (compiler-backend-gep-staged-asm
+      (compiler-backend-gep-direct-index-assignments)
+      (compiler_ast_types.AstType.I32))
+      [(compiler_backend.ResultCompilerBackend.Ok asm)
+        (compiler_backend.compiler-backend-string-contains?
+          asm
+          "    leaq (%r12,%r13,4), %r12\n")]
+      [(compiler_backend.ResultCompilerBackend.Err _) false])
+    ;; scale 2 -> likewise.
+    (match (compiler-backend-gep-staged-asm
+      (compiler-backend-gep-direct-index-assignments)
+      (compiler_ast_types.AstType.I16))
+      [(compiler_backend.ResultCompilerBackend.Ok asm)
+        (compiler_backend.compiler-backend-string-contains?
+          asm
+          "    leaq (%r12,%r13,2), %r12\n")]
+      [(compiler_backend.ResultCompilerBackend.Err _) false])
+    ;; A spilled index still stages: the slot is reloaded, and the composing
+    ;; instruction reads the staging register rather than a home.
+    (match (compiler-backend-gep-staged-asm
+      (compiler-backend-gep-spilled-index-assignments)
+      (compiler_ast_types.AstType.U8))
+      [(compiler_backend.ResultCompilerBackend.Ok asm)
+        (and
+          (compiler_backend.compiler-backend-string-contains? asm "48(%rbp), ")
+          (compiler_backend.compiler-backend-string-contains? asm ", %r12\n"))]
+      [(compiler_backend.ResultCompilerBackend.Err _) false])
+    ;; The displacement is the SIB form's own field at every spellable scale,
+    ;; and only there: a non-SIB stride keeps the separate `addq $D`.
+    (string.eq
+      (compiler_backend.compiler-backend-gep-index-base-asm-disp
+        16
+        "%r12"
+        8
+        "%r13")
+      "    leaq 16(%r12,%r13,8), %r12\n")
+    (string.eq
+      (compiler_backend.compiler-backend-gep-index-base-asm-disp
+        24
+        "%r12"
+        1
+        "%r13")
+      "    leaq 24(%r12,%r13,1), %r12\n")
+    (string.eq
+      (compiler_backend.compiler-backend-gep-index-base-asm-disp
+        0
+        "%r12"
+        1
+        "%r13")
+      "    addq %r13, %r12\n")
+    (compiler_backend.compiler-backend-string-contains?
+      (compiler_backend.compiler-backend-gep-index-base-asm-disp
+        16
+        "%r12"
+        24
+        "%r13")
+      "    addq $16, %r12\n")))
+
+;; SS-P5(b)/(c) fixtures. var 0 and var 1 are the comparison's operands (and,
+;; in the `min` shape, the select's two arms); var 3 is the mask; var 4 is the
+;; select result.
+(define (compiler-backend-select-flags-assignments [result-reg : i64]) : compiler_regalloc.CompilerRegAssignmentTable
+  (compiler_regalloc.compiler-reg-assignments-prepend
+    (compiler_regalloc.CompilerRegAssignment
+      0
+      (compiler_regalloc.CompilerRegLocation.Register
+        compiler_abi.compiler-reg-id-r13))
+    (compiler_regalloc.compiler-reg-assignments-prepend
+      (compiler_regalloc.CompilerRegAssignment
+        1
+        (compiler_regalloc.CompilerRegLocation.Register
+          compiler_abi.compiler-reg-id-rcx))
+      (compiler_regalloc.compiler-reg-assignments-prepend
+        (compiler_regalloc.CompilerRegAssignment
+          3
+          (compiler_regalloc.CompilerRegLocation.Register
+            compiler_abi.compiler-reg-id-rax))
+        (compiler_regalloc.compiler-reg-assignments-prepend
+          (compiler_regalloc.CompilerRegAssignment
+            4
+            (compiler_regalloc.CompilerRegLocation.Register result-reg))
+          (compiler_regalloc.compiler-reg-assignment-table-empty))))))
+
+;; `%3 = lt %0, %1 ; %4 = select %3, %0, %1` -- the `min` shape, with `tail`
+;; appended so a second use of the mask can be added.
+(define (compiler-backend-select-flags-instrs
+  [ty : compiler_ast_types.AstType]
+  [tail : compiler_ir_types.CompilerIrInstrSeq]) : compiler_ir_types.CompilerIrInstrSeq
+  (compiler-backend-test-instr-seq-prepend
+    (compiler_ir_types.CompilerIrInstr.BinOp
+      3
+      (compiler_ir_types.CompilerIrBinOp.Lt)
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      (compiler_ir_types.CompilerIrValue.Var 1)
+      ty)
+    (compiler-backend-test-instr-seq-prepend
+      (compiler_ir_types.ir-instr-select
+        4
+        (compiler_ir_types.CompilerIrValue.Var 3)
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (compiler_ir_types.CompilerIrValue.Var 1)
+        0
+        ty)
+      tail)))
+
+(define (compiler-backend-select-flags-asm
+  [ty : compiler_ast_types.AstType]
+  [result-reg : i64]
+  [tail : compiler_ir_types.CompilerIrInstrSeq]) : compiler_backend.ResultCompilerBackend
+  (compiler-backend-emit-test-instrs
+    (compiler-backend-select-flags-instrs ty tail)
+    (compiler-backend-select-flags-assignments result-reg)
+    6))
+
+;; SS-P5(b). A select whose mask is the comparison right in front of it and
+;; whose mask has no other reader spends `cmp` plus one `cmov<cc>`; the
+;; condition code is the branch table's, so the signed/unsigned split is the
+;; one the equivalent `jcc` would have used. A second reader of the mask puts
+;; the materialising form back.
+(define (compiler-backend-select-on-flags-ok?) : bool
+  (and
+    ;; unsigned lt -> cmovb, and no boolean is materialised at all.
+    (match (compiler-backend-select-flags-asm
+      (compiler_ast_types.AstType.U64)
+      compiler_abi.compiler-reg-id-r15
+      (compiler_ir_types.compiler-ir-instr-seq-empty))
+      [(compiler_backend.ResultCompilerBackend.Ok asm)
+        (and
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    movq %rcx, %r15\n    cmpq %rcx, %r13\n    cmovb %r13, %r15\n")
+          (not (compiler_backend.compiler-backend-string-contains? asm "setb"))
+          (not
+            (compiler_backend.compiler-backend-string-contains? asm "movzbq"))
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              asm
+              "    testq ")))]
+      [(compiler_backend.ResultCompilerBackend.Err _) false])
+    ;; signed lt -> cmovl off the same operands.
+    (match (compiler-backend-select-flags-asm
+      (compiler_ast_types.AstType.I64)
+      compiler_abi.compiler-reg-id-r15
+      (compiler_ir_types.compiler-ir-instr-seq-empty))
+      [(compiler_backend.ResultCompilerBackend.Ok asm)
+        (and
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    cmpq %rcx, %r13\n    cmovl %r13, %r15\n")
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              asm
+              "    cmovb ")))]
+      [(compiler_backend.ResultCompilerBackend.Err _) false])
+    ;; A second use of the mask forces it to materialise, and the select falls
+    ;; back to the test-and-cmovne form.
+    (match (compiler-backend-select-flags-asm
+      (compiler_ast_types.AstType.U64)
+      compiler_abi.compiler-reg-id-r15
+      (compiler-backend-test-instr-seq-prepend
+        (compiler_ir_types.CompilerIrInstr.Mov
+          5
+          (compiler_ir_types.CompilerIrValue.Var 3)
+          (compiler_ast_types.AstType.Bool))
+        (compiler_ir_types.compiler-ir-instr-seq-empty)))
+      [(compiler_backend.ResultCompilerBackend.Ok asm)
+        (and
+          (compiler_backend.compiler-backend-string-contains? asm "    setb ")
+          (compiler_backend.compiler-backend-string-contains? asm "    testq ")
+          (compiler_backend.compiler-backend-string-contains? asm "    cmovne ")
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              asm
+              "    cmovb ")))]
+      [(compiler_backend.ResultCompilerBackend.Err _) false])))
+
+;; SS-P5(c). When the allocator homed the select result where the false operand
+;; already lives, the `cmov`'s destination is loaded by construction and the
+;; base copy is dropped -- on the flags path and on the materialising one
+;; alike. The `%r15` fixture above is the control: there the copy is required
+;; and emitted.
+(define (compiler-backend-select-false-home-result-ok?) : bool
+  (and
+    (match (compiler-backend-select-flags-asm
+      (compiler_ast_types.AstType.U64)
+      compiler_abi.compiler-reg-id-rcx
+      (compiler_ir_types.compiler-ir-instr-seq-empty))
+      [(compiler_backend.ResultCompilerBackend.Ok asm)
+        (and
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    cmpq %rcx, %r13\n    cmovb %r13, %rcx\n")
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              asm
+              "    movq %rcx, %rcx\n")))]
+      [(compiler_backend.ResultCompilerBackend.Err _) false])
+    ;; The same rule on the materialising path: an isolated select whose result
+    ;; home is the false operand's home copies nothing.
+    (match (compiler-backend-emit-test-instrs
+      (compiler-backend-test-instr-seq-prepend
+        (compiler_ir_types.ir-instr-select
+          4
+          (compiler_ir_types.CompilerIrValue.Var 3)
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          0
+          (compiler_ast_types.AstType.U64))
+        (compiler_ir_types.compiler-ir-instr-seq-empty))
+      (compiler-backend-select-flags-assignments
+        compiler_abi.compiler-reg-id-rcx)
+      6)
+      [(compiler_backend.ResultCompilerBackend.Ok asm)
+        (and
+          (compiler_backend.compiler-backend-string-contains?
+            asm
+            "    cmovne %r13, %rcx\n")
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              asm
+              "    movq %rcx, %rcx\n")))]
       [(compiler_backend.ResultCompilerBackend.Err _) false])))
 
 (define (compiler-backend-global-immediate-store-ok?) : bool

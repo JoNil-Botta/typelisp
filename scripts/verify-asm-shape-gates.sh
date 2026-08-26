@@ -876,16 +876,21 @@ check_alu_mem_operand_tie() {
     assert_not_matches "$_body" \
         '^[[:space:]]+movq \(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r' alu-mem-operand-tie
     # The register-to-register copies left are the seed's entry home, the
-    # accumulator's move into the return register, and the three the CHECKED
+    # accumulator's move into the return register, and the two the CHECKED
     # clone's preheader spends on `bounds_group`'s bound: that clone still runs
     # four checks of one index against four lengths, so the pass builds
     # `min(len_a, len_b, len_c, len_d)` there once as three compare/`cmov`
-    # pairs, each staging its running minimum with one `movq`. All five sit
-    # outside both loops. A destination tied to the load instead would add one
-    # staging copy per op INSIDE them, which is what the count guards and what
-    # the two assertions above pin independently.
+    # pairs, each staging its running minimum with one `movq`. The first of the
+    # three lost a SECOND copy to SS-P5(b): its comparison feeds the select
+    # directly, so the mask never materialises and the compare no longer stages
+    # its LHS into the mask's home. The other two still materialise -- their
+    # comparison reads the running minimum out of its SPILL SLOT, and the
+    # flags path admits only register-homed or immediate operands. All four
+    # sit outside both loops. A destination tied to the load instead would add
+    # one staging copy per op INSIDE them, which is what the count guards and
+    # what the two assertions above pin independently.
     assert_regex_count_eq "$_body" \
-        '^[[:space:]]+movq %r[a-z0-9]+, %r[a-z0-9]+$' 5 alu-mem-operand-tie
+        '^[[:space:]]+movq %r[a-z0-9]+, %r[a-z0-9]+$' 4 alu-mem-operand-tie
 }
 
 check_alu_mem_operand_sink() {
@@ -902,14 +907,15 @@ check_alu_mem_operand_sink() {
     # No element load survives: the fold consumed all eight.
     assert_not_matches "$_body"         '^[[:space:]]+movq \(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r' alu-mem-operand-sink
     # The register-to-register copies left are the seed's entry home, the
-    # accumulator's move into the return register, and the three the CHECKED
+    # accumulator's move into the return register, and the two the CHECKED
     # clone's preheader spends on `bounds_group`'s bound, exactly as in
     # `check_alu_mem_operand_tie` above: four checks of one index against four
     # lengths become one `min(len_a, len_b, len_c, len_d)` built there as three
-    # compare/`cmov` pairs, each staging its running minimum with one `movq`.
-    # All five are outside the loops; a wrong tie would put one staging copy per
+    # compare/`cmov` pairs, each staging its running minimum with one `movq`,
+    # of which the first also lost the mask-materialising copy to SS-P5(b).
+    # All four are outside the loops; a wrong tie would put one staging copy per
     # op INSIDE them, which is what the two assertions above pin independently.
-    assert_regex_count_eq "$_body"         '^[[:space:]]+movq %r[a-z0-9]+, %r[a-z0-9]+$' 5 alu-mem-operand-sink
+    assert_regex_count_eq "$_body"         '^[[:space:]]+movq %r[a-z0-9]+, %r[a-z0-9]+$' 4 alu-mem-operand-sink
 }
 
 check_const_global_mask_unroll() {
@@ -1639,6 +1645,101 @@ check_jump_only_forward() {
 # slot -- which is why `rzl-abort` has no slot at -8 or -16 while the
 # push-free `rzl-slots` starts at -8. The runtime halves are the
 # red_zone_leaf / red_zone_abort_ok / red_zone_abort_trap manifest cases.
+# SS-P5 (T2-4): the flags-driven select and the staged gep's direct index.
+# tests/integration/select_flags_lea.tl carries both shapes; its runtime half
+# is the select_flags_lea manifest case, which checks every answer.
+#
+# (b)/(c) A scalar Select fed by the comparison immediately in front of it, with
+# no other reader of the mask, must read that comparison's own EFLAGS. The join
+# is then `mov ; cmp ; cmov<cc>` plus the allocator's spill store -- four
+# instructions -- against the seven the materialising form spent: the mask
+# built with `mov ; cmp ; setcc ; movzbq` and then RE-tested with
+# `mov ; testq ; cmovne`. So: no `setcc`, no `movzbq` OF A BYTE REGISTER (the
+# byte LOADS in sfl-scales are the other `movzbq` and are not this), no
+# `cmovne` (the mask test's own condition code), and every `cmov` sitting
+# directly under its own `cmp` -- which is what rules the `testq` re-test out
+# too, since a `cmov` under a `testq` fails that. A blanket `testq` count would
+# not do: the loop's own `n > 0` entry guard is one.
+# The mnemonic itself pins the condition-code table: signed `min` is `cmovl`,
+# signed `max` is `cmovg`, unsigned `min` is `cmovb` -- an inverted or
+# wrong-signedness entry assembles perfectly and only shows up as a wrong
+# answer, which is what the runtime case is for.
+#
+# (a) A variable-index gep whose base is spilled goes through the staged
+# emitter. `addq idx, base` and `leaq (base,idx,s), base` only READ the index,
+# so a register-homed index needs no staging copy -- and the copy was not free:
+# with the scratch occupied it dragged an emergency save/restore behind it.
+# assert_no_staged_index_copy pins the exact pair over the WHOLE fixture,
+# register names and all: 8 of them before the change, none after.
+assert_no_staged_index_copy() {
+    _file=$1
+    _label=$2
+    _got=$(awk '
+        {
+            if (prev ~ /^[[:space:]]+movq %r[a-z0-9]+, %r[a-z0-9]+$/) {
+                split(prev, p, ", ")
+                reg = p[2]
+                if ($0 ~ ("^[[:space:]]+addq " reg ", %r")) n++
+                else if ($0 ~ ("^[[:space:]]+leaq \\(%r[a-z0-9]+," reg ",[1248]\\), %r")) n++
+            }
+            prev = $0
+        }
+        END { print n + 0 }
+    ' "$_file")
+    if [ "$_got" -ne 0 ]; then
+        fail "$_label expected no staged gep index copy, got $_got"
+    fi
+}
+
+# Every `cmov` in the body must be the line directly under a `cmp`: that is the
+# whole content of "reads the comparison's own flags". A `cmov` under anything
+# else is reading flags this gate cannot account for.
+assert_cmov_reads_cmp() {
+    _file=$1
+    _label=$2
+    if ! awk '
+        /^[[:space:]]+cmov/ {
+            n++
+            if (prev !~ /^[[:space:]]+cmp[bwlq] /) bad = 1
+        }
+        { prev = $0 }
+        END { exit (bad || n == 0) ? 1 : 0 }
+    ' "$_file"; then
+        fail "$_label expected every cmov directly under its cmp"
+    fi
+}
+
+check_select_flags_lea() {
+    _asm=$(compile_gate select_flags_lea tests/integration/select_flags_lea.tl)
+
+    for _case in tl_sfl_min_scan:cmovl tl_sfl_max_scan:cmovg tl_sfl_umin_scan:cmovb; do
+        _fn=${_case%:*}
+        _cc=${_case#*:}
+        _body=$(function_body "$_asm" "$_fn")
+        assert_regex_count_eq "$_body" '^[[:space:]]+set[a-z]+ ' 0 "select-flags-$_fn"
+        assert_regex_count_eq "$_body" '^[[:space:]]+movzbq %r[a-z0-9]+b, ' 0 \
+            "select-flags-$_fn"
+        assert_regex_count_eq "$_body" '^[[:space:]]+cmovne ' 0 "select-flags-$_fn"
+        # The loop is versioned, so the join is emitted once per version.
+        assert_regex_count_eq "$_body" "^[[:space:]]+$_cc " 2 "select-flags-$_fn"
+        assert_regex_count_eq "$_body" '^[[:space:]]+cmov' 2 "select-flags-$_fn"
+        assert_cmov_reads_cmp "$_body" "select-flags-$_fn"
+    done
+
+    # The staged gep keeps no copy of a register-homed index, at any scale.
+    assert_no_staged_index_copy "$_asm" select-flags-gep
+    _scales=$(function_body "$_asm" tl_sfl_scales)
+    assert_matches "$_scales" '^[[:space:]]+leaq \(%r[a-z0-9]+,%r[a-z0-9]+,8\), ' \
+        select-flags-scales
+    assert_matches "$_scales" '^[[:space:]]+leaq \(%r[a-z0-9]+,%r[a-z0-9]+,4\), ' \
+        select-flags-scales
+    assert_matches "$_scales" '^[[:space:]]+leaq \(%r[a-z0-9]+,%r[a-z0-9]+,2\), ' \
+        select-flags-scales
+    _copy=$(function_body "$_asm" tl_sfl_copy)
+    assert_matches "$_copy" '^[[:space:]]+addq %r[a-z0-9]+, %r[a-z0-9]+$' \
+        select-flags-copy
+}
+
 check_red_zone_leaf() {
     _asm=$(compile_gate red_zone_leaf tests/integration/red_zone_leaf.tl)
 
@@ -1697,6 +1798,7 @@ check_red_zone_leaf_win64() {
     done
 }
 
+check_select_flags_lea
 check_mem_dest_rmw_fold
 check_word_merge_unroll
 check_copy_call_word

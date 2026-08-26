@@ -255,11 +255,17 @@
           [old-slots : (& map (__tl_dyn-array GeneratedHashmapSlot))
             (& map.slots)]
           [old-count : i64 (array_ops.length old-slots)]
+          [old-data : (Ptr GeneratedHashmapSlot)
+            (unsafe
+              (ptr-cast
+                (__tl_array-data map.slots)
+                : (Ptr GeneratedHashmapSlot)))]
           (while (< scan old-count)
             (begin
               (let
                 [old-slot : GeneratedHashmapSlot
-                  (clone (array-ref old-slots scan))]
+                  (unsafe
+                    (ptr-read (ptr-offset old-data scan)))]
                 (match (clone (__tl-project-field-name old-slot "state"))
                   [GeneratedHashmapSlotState.Occupied
                     (let

@@ -113169,27 +113169,29 @@
   [addr-taken : opt_i64_i64_map.Map]
   [out : opt_i64_i64_map.Map]
   [index : i64]) : opt_i64_i64_map.Map
-  (if (>= index globals.len)
-    out
-    (match (ir.compiler-ir-global-seq-ref
-      (compiler-opt-global-shared-view globals)
-      index)
-      [(ir.CompilerIrGlobal.Global name ty value)
-        (let
-          [id : i64 (ir.compiler-ir-symbol-id name)]
-          [_add : unit
-            (if (and
-              (opt-type-eq type-segment-bases ty (ast.AstType.I64))
-              (opt-nonneg-literal-value? value)
-              (not (opt_i64_i64_map.contains? (& addr-taken) id)))
-              (opt_i64_i64_map.insert-ref! (&mut out) id 1)
-              unit)]
-          (opt-nonneg-candidates-fill
-            type-segment-bases
-            (compiler-opt-global-shared-view globals)
-            (compiler-opt-global-shared-view addr-taken)
-            out
-            (+ index 1)))])))
+  (let
+    [next-out : opt_i64_i64_map.Map (compiler-opt-global-shared-view out)]
+    (if (>= index globals.len)
+      next-out
+      (match (ir.compiler-ir-global-seq-ref
+        (compiler-opt-global-shared-view globals)
+        index)
+        [(ir.CompilerIrGlobal.Global name ty value)
+          (let
+            [id : i64 (ir.compiler-ir-symbol-id name)]
+            [_add : unit
+              (if (and
+                (opt-type-eq type-segment-bases ty (ast.AstType.I64))
+                (opt-nonneg-literal-value? value)
+                (not (opt_i64_i64_map.contains? (& addr-taken) id)))
+                (opt_i64_i64_map.insert-ref! (&mut next-out) id 1)
+                unit)]
+            (opt-nonneg-candidates-fill
+              type-segment-bases
+              (compiler-opt-global-shared-view globals)
+              (compiler-opt-global-shared-view addr-taken)
+              next-out
+              (+ index 1)))]))))
 
 ;; One removal round over the edge list. An edge to -1 is an outright refusal;
 ;; an edge to another global refuses only while that global is out.
@@ -113202,7 +113204,7 @@
     [to-items : (__tl_dyn-array i64) edges.to]
     [count : i64 edges.len]
     [pos : i64 0]
-    [acc : opt_i64_i64_map.Map candidates]
+    [acc : opt_i64_i64_map.Map (compiler-opt-global-shared-view candidates)]
     (begin
       (set! (array-ref removed 0) 0)
       (while (< pos count)

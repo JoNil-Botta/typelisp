@@ -1649,12 +1649,16 @@
       (while (< index functions.len)
         (begin
           (match (compiler_ir_types.compiler-ir-function-seq-ref
-            functions
+            (compiler_ir_types.compiler-ir-global-shared-view functions)
             index)
             [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
               (set!
                 count
-                (+ count (opt-count-exact-instr-blocks blocks needle)))])
+                (+
+                  count
+                  (opt-count-exact-instr-blocks
+                    blocks
+                    (compiler_optimize.compiler-opt-global-shared-view needle))))])
           (set! index (+ index 1))))
       count)))
 
@@ -7224,7 +7228,7 @@
           compiler_ir_types.CompilerIrParamList.Nil
           (compiler_ast_types.AstType.I64)
           16
-          blocks)
+          (compiler_optimize.compiler-opt-global-shared-view blocks))
         (compiler_ir_types.compiler-ir-function-seq-empty))]
     [table : opt_i64_i64_map.Map
       (compiler_optimize.opt-const-divisors-build globals functions)]
@@ -14780,9 +14784,11 @@
         (opt-global-dce-no-main-program)
         1)]
     [level0-functions : compiler_ir_types.CompilerIrFunctionSeq
-      (opt-program-functions level0)]
+      (opt-program-functions
+        (compiler_ir_types.compiler-ir-global-shared-view level0))]
     [level1-functions : compiler_ir_types.CompilerIrFunctionSeq
-      (opt-program-functions level1)]
+      (opt-program-functions
+        (compiler_ir_types.compiler-ir-global-shared-view level1))]
     [no-main-functions : compiler_ir_types.CompilerIrFunctionSeq
       (opt-program-functions no-main)]
     [level0-globals : compiler_ir_types.CompilerIrGlobalSeq
@@ -14790,29 +14796,59 @@
     [level1-globals : compiler_ir_types.CompilerIrGlobalSeq
       (opt-program-globals level1)]
     (and
-      (= (compiler_ir_types.compiler-ir-function-seq-count level0-functions) 6)
-      (= (compiler_ir_types.compiler-ir-function-seq-count level1-functions) 4)
-      (= (compiler_ir_types.compiler-ir-global-seq-count level0-globals) 5)
-      (= (compiler_ir_types.compiler-ir-global-seq-count level1-globals) 3)
-      (compiler_optimize.opt-function-seq-defines? level1-functions "main")
-      (compiler_optimize.opt-function-seq-defines? level1-functions "helper")
+      (=
+        (compiler_ir_types.compiler-ir-function-seq-count
+          (compiler_ir_types.compiler-ir-global-shared-view level0-functions))
+        6)
+      (=
+        (compiler_ir_types.compiler-ir-function-seq-count
+          (compiler_ir_types.compiler-ir-global-shared-view level1-functions))
+        4)
+      (=
+        (compiler_ir_types.compiler-ir-global-seq-count
+          (compiler_ir_types.compiler-ir-global-shared-view level0-globals))
+        5)
+      (=
+        (compiler_ir_types.compiler-ir-global-seq-count
+          (compiler_ir_types.compiler-ir-global-shared-view level1-globals))
+        3)
       (compiler_optimize.opt-function-seq-defines?
-        level1-functions
+        (compiler_ir_types.compiler-ir-global-shared-view level1-functions)
+        "main")
+      (compiler_optimize.opt-function-seq-defines?
+        (compiler_ir_types.compiler-ir-global-shared-view level1-functions)
+        "helper")
+      (compiler_optimize.opt-function-seq-defines?
+        (compiler_ir_types.compiler-ir-global-shared-view level1-functions)
         "callback-target")
       (compiler_optimize.opt-function-seq-defines?
-        level1-functions
+        (compiler_ir_types.compiler-ir-global-shared-view level1-functions)
         "C:/repo/stdlib/runtime.tl::substring")
       (not
         (compiler_optimize.opt-function-seq-defines?
-          level1-functions
+          (compiler_ir_types.compiler-ir-global-shared-view level1-functions)
           "C:/repo/stdlib/runtime.tl::int-to-string"))
       (not
-        (compiler_optimize.opt-function-seq-defines? level1-functions "dead"))
-      (opt-global-list-defines? level1-globals "used-global")
-      (opt-global-list-defines? level1-globals "stored-global")
-      (opt-global-list-defines? level1-globals "runtime-global")
-      (not (opt-global-list-defines? level1-globals "dead-global"))
-      (not (opt-global-list-defines? level1-globals "callback"))
+        (compiler_optimize.opt-function-seq-defines?
+          (compiler_ir_types.compiler-ir-global-shared-view level1-functions)
+          "dead"))
+      (opt-global-list-defines?
+        (compiler_ir_types.compiler-ir-global-shared-view level1-globals)
+        "used-global")
+      (opt-global-list-defines?
+        (compiler_ir_types.compiler-ir-global-shared-view level1-globals)
+        "stored-global")
+      (opt-global-list-defines?
+        (compiler_ir_types.compiler-ir-global-shared-view level1-globals)
+        "runtime-global")
+      (not
+        (opt-global-list-defines?
+          (compiler_ir_types.compiler-ir-global-shared-view level1-globals)
+          "dead-global"))
+      (not
+        (opt-global-list-defines?
+          (compiler_ir_types.compiler-ir-global-shared-view level1-globals)
+          "callback"))
       (= (compiler_ir_types.compiler-ir-function-seq-count no-main-functions) 2))))
 
 (define (compiler-optimize-global-dce-self-test) : i64
@@ -24433,7 +24469,10 @@
   [callee-name : i64]
   [value-ty : compiler_ast_types.AstType]) : compiler_ir_types.CompilerIrFunctionSeq
   (compiler_ir_types.compiler-ir-function-seq-prepend
-    (opt-inline-private-memory-test-caller caller-name callee-name value-ty)
+    (opt-inline-private-memory-test-caller
+      caller-name
+      callee-name
+      (compiler_ir_types.compiler-ir-global-shared-view value-ty))
     (compiler_ir_types.compiler-ir-function-seq-prepend
       (opt-inline-private-memory-test-callee callee-name value-ty)
       (compiler_ir_types.compiler-ir-function-seq-empty))))
@@ -24472,7 +24511,9 @@
         private-callee-name
         (compiler_optimize.compiler-opt-global-shared-view private-ty))]
     [source-callee : compiler_ir_types.CompilerIrFunction
-      (opt-inline-private-memory-test-callee source-callee-name source-ty)]
+      (opt-inline-private-memory-test-callee
+        source-callee-name
+        (compiler_optimize.compiler-opt-global-shared-view source-ty))]
     [private-level1 : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_optimize.opt-inline-program-functions
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
@@ -24768,17 +24809,20 @@
                     (unless
                       (=
                         (compiler_ir_types.compiler-ir-function-seq-count
-                          devirt-reach)
+                          (compiler_ir_types.compiler-ir-global-shared-view
+                            devirt-reach))
                         1)
                       (return 16))
                     (unless
                       (compiler_optimize.opt-function-seq-defines?
-                        devirt-reach
+                        (compiler_ir_types.compiler-ir-global-shared-view
+                          devirt-reach)
                         "main")
                       (return 17))
                     (when
                       (compiler_optimize.opt-function-seq-defines?
-                        devirt-reach
+                        (compiler_ir_types.compiler-ir-global-shared-view
+                          devirt-reach)
                         "kept_target")
                       (return 18))
                     (when
@@ -31945,9 +31989,10 @@
     [group-index : compiler_ir_types.CompilerIrRepresentationIndex
       (opt-ssa-representation-index-for-functions
         (compiler_ir_types.compiler-ir-function-seq-prepend
-          group-diamond
+          (compiler_optimize.compiler-opt-global-shared-view group-diamond)
           (compiler_ir_types.compiler-ir-function-seq-prepend
-            (opt-ssa-representation-group-evidence-function group-ty)
+            (opt-ssa-representation-group-evidence-function
+              (compiler_ast_types.ast-global-shared-view group-ty))
             (compiler_ir_types.compiler-ir-function-seq-empty))))]
     [missing-index : compiler_ir_types.CompilerIrRepresentationIndex
       (compiler_ir_types.compiler-ir-representation-index-empty)]

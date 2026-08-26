@@ -1,7 +1,19 @@
 [
-  {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}},
-  {"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"${{TMP_URI}}/test.tl","languageId":"typelisp","version":1,"text":"(define (foo [x : i64]) : i64\n  (+ x foo-bar))\n\n(define (bar) : i64\n  foo)\n"}}},
-  {"jsonrpc":"2.0","id":2,"method":"tl/rename","params":{"textDocument":{"uri":"${{TMP_URI}}/test.tl"},"position":{"line":0,"character":9},"newName":"baz"}},
-  {"jsonrpc":"2.0","id":3,"method":"shutdown","params":null},
+  {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"workspaceFolders":[{"uri":"${{TMP_URI}}/root","name":"rename-surfaces"}],"capabilities":{}}},
+  {"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"${{TMP_URI}}/root/main.tl","languageId":"typelisp","version":11,"text":"(module surfaces.main)\n(import surfaces.lib.shared-value as chosen)\n(import surfaces.lib.Pair)\n(import stdlib.string as s)\n(define prefix : String \"😀\") (define alias-use : i64 (+ chosen chosen))\n(define pair : Pair (Pair 1 2))\n(define left-use : i64 pair.left)\n(define same : bool (s.eq \"a\" \"a\"))\n"}}},
+  {"jsonrpc":"2.0","id":2,"method":"textDocument/prepareRename","params":{"textDocument":{"uri":"${{TMP_URI}}/root/main.tl"},"position":{"line":4,"character":58}}},
+  {"jsonrpc":"2.0","id":3,"method":"textDocument/rename","params":{"textDocument":{"uri":"${{TMP_URI}}/root/main.tl"},"position":{"line":4,"character":58},"newName":"alias-value"}},
+  {"jsonrpc":"2.0","id":4,"method":"textDocument/rename","params":{"textDocument":{"uri":"${{TMP_URI}}/root/main.tl"},"position":{"line":5,"character":16},"newName":"NewPair"}},
+  {"jsonrpc":"2.0","id":5,"method":"textDocument/rename","params":{"textDocument":{"uri":"${{TMP_URI}}/root/main.tl"},"position":{"line":6,"character":30},"newName":"first-field"}},
+  {"jsonrpc":"2.0","id":6,"method":"textDocument/rename","params":{"textDocument":{"uri":"${{TMP_URI}}/root/main.tl"},"position":{"line":6,"character":30},"newName":"right"}},
+  {"jsonrpc":"2.0","id":7,"method":"textDocument/rename","params":{"textDocument":{"uri":"${{TMP_URI}}/root/main.tl"},"position":{"line":7,"character":24},"newName":"equal2"}},
+  {"jsonrpc":"2.0","id":8,"method":"textDocument/rename","params":{"textDocument":{"uri":"${{TMP_URI}}/root/main.tl"},"position":{"line":1,"character":18},"newName":"library"}},
+  {"jsonrpc":"2.0","id":9,"method":"textDocument/rename","params":{"textDocument":{"uri":"${{TMP_URI}}/root/main.tl"},"position":{"line":1,"character":18},"newName":"occupied"}},
+  {"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"${{TMP_URI}}/root/main.tl","version":12},"contentChanges":[{"text":"(define broken : i64 true)"}]}},
+  {"jsonrpc":"2.0","id":10,"method":"textDocument/prepareRename","params":{"textDocument":{"uri":"${{TMP_URI}}/root/main.tl"},"position":{"line":0,"character":9}}},
+  {"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"${{TMP_URI}}/root/main.tl"}}},
+  {"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"${{TMP_URI}}/root/no-version.tl","languageId":"typelisp","text":"(define local-value : i64 1)\n(define use : i64 local-value)\n"}}},
+  {"jsonrpc":"2.0","id":11,"method":"textDocument/rename","params":{"textDocument":{"uri":"${{TMP_URI}}/root/no-version.tl"},"position":{"line":0,"character":9},"newName":"renamed-local"}},
+  {"jsonrpc":"2.0","id":12,"method":"shutdown","params":null},
   {"jsonrpc":"2.0","method":"exit"}
 ]

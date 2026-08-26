@@ -1612,10 +1612,13 @@ if [ "$NL_HOST_OS" = windows ]; then
     # and rematerialisation helpers cross the next boundary: the authoritative
     # Windows CI probe measured 3,021,008 used nodes, 3,080,192 capacity, and
     # 98,566,144 physical payload bytes.
+    # #6840's semantic workspace rename provider raises the pre-ownership graph
+    # to 3,029,193 used nodes while retaining that same segment boundary.
     # #6215's source-wide by-value ownership cutover replaces compatibility
-    # moves throughout the compiler and carries the authoritative Windows
-    # probe to 4,624,578 used nodes, 4,653,056 capacity, and 148,897,792
-    # physical payload bytes.
+    # moves throughout the compiler. Its pre-#6840 authoritative Windows probe
+    # measured 4,624,578 used nodes, 4,653,056 capacity, and 148,897,792
+    # physical payload bytes; #6840's separately measured 8,185-node increase
+    # remains within the same exact 71-segment boundary.
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_expr_pool macro_expand 71 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"

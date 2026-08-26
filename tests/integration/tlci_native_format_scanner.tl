@@ -82,6 +82,11 @@
         "{value:.precision$}"
         (format.named value seven)
         (format.named precision two))]
+    [text-inline-precision : String (format.format "{:.3}" "seven")]
+    [text-dollar-precision : String (format.format "{0:.1$}:{1}" "seven" two)]
+    [text-star-precision : String (format.format "{:.*}" two "seven")]
+    [bool-precision : String (format.format "{:.3}" true)]
+    [char-zero-precision : String (format.format "{:.0}" 'x')]
     [rust-counter-one : String
       (format.format "Hello {} is {:.*}" "world" two seven)]
     [rust-counter-two : String
@@ -113,6 +118,11 @@
       (string.eq dollar-precision "7:2")
       (string.eq star-precision "7:2")
       (string.eq named-precision "7")
+      (string.eq text-inline-precision "sev")
+      (string.eq text-dollar-precision "se:2")
+      (string.eq text-star-precision "se")
+      (string.eq bool-precision "tru")
+      (string.eq char-zero-precision "")
       (string.eq rust-counter-one "Hello world is 7")
       (string.eq rust-counter-two "Hello world is 7")
       (string.eq rust-counter-three "Hello world is 7")
@@ -129,8 +139,8 @@
     ;; lint-allow: unused-variable
     [label : String "scanner"]
     (begin
-      (io.println "{label}: {1} {{}} {0}" two one)
-      (io.print-format "{word}\n" (format.named word "done"))
+      (io.println "{label:.3}: {1} {{}} {0}" two one)
+      (io.print-format "{word:.2}\n" (format.named word "done"))
       true)))
 
 (define (main) : i64

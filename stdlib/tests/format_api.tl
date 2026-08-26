@@ -1,14 +1,35 @@
+(import stdlib.array)
 (import stdlib.format)
 (import stdlib.string)
 
 (defstruct RootDisplay
   (value i64))
 
+(defstruct PrecisionDisplay
+  (value i64))
+
 (defstruct FormatEvalState
   (value i64))
 
+(define precision-display-value-evals : i64
+  0)
+(define precision-display-hook-calls : i64
+  0)
+
 (define (to-string [value : (& value RootDisplay)]) : String
   (format.format "root={}" value.value))
+
+;; lint-allow: function-name-case -- exact nominal suffix is the protocol key.
+(define (to-string-PrecisionDisplay [value : (& value PrecisionDisplay)]) : String
+  (begin
+    (set! precision-display-hook-calls (+ precision-display-hook-calls 1))
+    ;; Owner hooks may recursively use the same shared formatter.
+    (format.format "owner={}" value.value)))
+
+(define (precision-display-value [value : i64]) : PrecisionDisplay
+  (begin
+    (set! precision-display-value-evals (+ precision-display-value-evals 1))
+    (PrecisionDisplay value)))
 
 (define (format-counted [state : (&mut state FormatEvalState)] [digit : i64]) : i64
   (begin
@@ -44,6 +65,126 @@
     ;; lint-allow: unused-variable
     [precision : i64 5]
     (format.format "{:.precision$}" value)))
+
+(define (format-captured-text-precision [value : String]) : String
+  (let
+    ;; Referenced by generated call-site capture syntax.
+    ;; lint-allow: unused-variable
+    [precision : i64 3]
+    (format.format "{:.precision$}" value)))
+
+(define (format-binary-display-source) : String
+  (let
+    [bytes : (__tl_dyn-array u8) (array.make-array u8 5)]
+    (begin
+      (set! (array-ref bytes 0) (cast 65 : u8))
+      (set! (array-ref bytes 1) (cast 0 : u8))
+      (set! (array-ref bytes 2) (cast 128 : u8))
+      (set! (array-ref bytes 3) (cast 255 : u8))
+      (set! (array-ref bytes 4) (cast 66 : u8))
+      (unsafe
+        (string-from-bytes (ptr-cast (__tl_array-data bytes) : (Ptr u8)) 5)))))
+
+(define (format-utf8-display-source) : String
+  (let
+    [bytes : (__tl_dyn-array u8) (array.make-array u8 3)]
+    (begin
+      ;; UTF-8 for U+00E9 followed by ASCII x. Precision one deliberately
+      ;; retains only the first byte; TypeLisp precision does not decode UTF-8.
+      (set! (array-ref bytes 0) (cast 195 : u8))
+      (set! (array-ref bytes 1) (cast 169 : u8))
+      (set! (array-ref bytes 2) (cast 120 : u8))
+      (unsafe
+        (string-from-bytes (ptr-cast (__tl_array-data bytes) : (Ptr u8)) 3)))))
+
+(define (format-display-precision-ok?) : bool
+  (begin
+    (set! precision-display-value-evals 0)
+    (set! precision-display-hook-calls 0)
+    (let
+      [borrowed-owner : String "borrowed"]
+      [borrowed : (& borrowed-owner str)
+        (string.substring-view (& borrowed-owner) 0 8)]
+      [zero : String (format.format "{:.0}" "abcdef")]
+      [shorter : String (format.format "{:.3}" "abcdef")]
+      [equal : String (format.format "{:.6}" "abcdef")]
+      [longer : String (format.format "{:.9}" "abcdef")]
+      [indexed : String (format.format "{0:.1$}" "abcdef" (cast 2 : i64))]
+      [named : String
+        (format.format
+          "{value:.precision$}"
+          (format.named value "abcdef")
+          (format.named precision (cast 4 : i64)))]
+      [captured : String (format-captured-text-precision "abcdef")]
+      [star : String (format.format "{:.*}" (cast 5 : i64) "abcdef")]
+      [repeated : String
+        (format.format "{0:.1$}|{0:.1$}|{1}" "abcdef" (cast 2 : i64))]
+      [empty-zero : String (format.format "{:.0}" "")]
+      [empty-longer : String (format.format "{:.3}" "")]
+      [borrowed-output : String (format.format "{:.3}" borrowed)]
+      [bool-zero : String (format.format "{:.0}" true)]
+      [bool-short : String (format.format "{:.4}" false)]
+      [bool-equal : String (format.format "{:.4}" true)]
+      [bool-longer : String (format.format "{:.9}" false)]
+      [char-zero : String (format.format "{:.0}" 'x')]
+      [char-equal : String (format.format "{:.1}" 'x')]
+      [char-longer : String (format.format "{:.2}" 'x')]
+      [owner-output : String
+        (format.format "{:.7}" (precision-display-value 123))]
+      [left : String (format.format "{:<8.3}" "abcdef")]
+      [center : String (format.format "{:-^8.3}" "abcdef")]
+      [right : String (format.format "{:>8.3}" "abcdef")]
+      [width-below : String (format.format "{:<2.3}" "abcdef")]
+      [width-equal : String (format.format "{:<3.3}" "abcdef")]
+      [zero-ignored : String (format.format "{:08.3}" "abcdef")]
+      [minus-no-op : String (format.format "{:-.3}" "abcdef")]
+      [alternate-no-op : String (format.format "{:#.3}" "abcdef")]
+      [owner-width : String (format.format "{:>10.7}" (RootDisplay 123))]
+      [integer-ignored : String (format.format "{:.1}" (cast 12345 : i64))]
+      [binary-output : String
+        (format.format "{:.4}" (format-binary-display-source))]
+      [utf8-byte-output : String
+        (format.format "{:.1}" (format-utf8-display-source))]
+      (and
+        (string.eq zero "")
+        (string.eq shorter "abc")
+        (string.eq equal "abcdef")
+        (string.eq longer "abcdef")
+        (string.eq indexed "ab")
+        (string.eq named "abcd")
+        (string.eq captured "abc")
+        (string.eq star "abcde")
+        (string.eq repeated "ab|ab|2")
+        (string.eq empty-zero "")
+        (string.eq empty-longer "")
+        (string.eq borrowed-output "bor")
+        (string.eq bool-zero "")
+        (string.eq bool-short "fals")
+        (string.eq bool-equal "true")
+        (string.eq bool-longer "false")
+        (string.eq char-zero "")
+        (string.eq char-equal "x")
+        (string.eq char-longer "x")
+        (string.eq owner-output "owner=1")
+        (= precision-display-value-evals 1)
+        (= precision-display-hook-calls 1)
+        (string.eq left "abc     ")
+        (string.eq center "--abc---")
+        (string.eq right "     abc")
+        (string.eq width-below "abc")
+        (string.eq width-equal "abc")
+        (string.eq zero-ignored "abc     ")
+        (string.eq minus-no-op "abc")
+        (string.eq alternate-no-op "abc")
+        (string.eq owner-width "   root=12")
+        (string.eq integer-ignored "12345")
+        (= (string.string-length (& binary-output)) 4)
+        (= (cast (string.string-ref (& binary-output) 0) : i64) 65)
+        (= (cast (string.string-ref (& binary-output) 1) : i64) 0)
+        (= (cast (string.string-ref (& binary-output) 2) : i64) 128)
+        (= (cast (string.string-ref (& binary-output) 3) : i64) 255)
+        (= (string.string-length (& utf8-byte-output)) 1)
+        (= (cast (string.string-ref (& utf8-byte-output) 0) : i64) 195)))))
 
 (define (main) : i64
   (let
@@ -235,6 +376,7 @@
       (= star-state.value 34)
       (string.eq rust-counter-one "Hello world is 28")
       (string.eq rust-counter-two "Hello world is 29")
-      (string.eq rust-counter-three "Hello world is 30"))
+      (string.eq rust-counter-three "Hello world is 30")
+      (format-display-precision-ok?))
       42
       1)))

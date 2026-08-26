@@ -12545,6 +12545,179 @@
             (set! i (+ i 1)))))]))
 
 ;; ============================================================================
+;; LOCAL-FIRST PRIORITY BAND (RegAllocGreedy::enqueue).
+;;
+;; Ceiling on one spill weight, so the (weight, band) packing below has a proven
+;; bound and can never overflow an i64. The ladder sums 2^depth (capped at 256)
+;; over a value's mentions, so reaching 2^30 would take four million depth-8
+;; mentions of one variable in one function; the clamp is a proof obligation, not
+;; a policy.
+(define (compiler-reg-spill-weight-cap) : i64
+  1073741824)
+
+(define (compiler-reg-spill-weight-clamp [weight : i64]) : i64
+  (if (> weight (compiler-reg-spill-weight-cap))
+    (compiler-reg-spill-weight-cap)
+    weight))
+
+;; LLVM splits the worklist into two bands: an interval contained in a single
+;; basic block ("local") is enqueued below the global ones, and locals are
+;; allocated among themselves in linear instruction order -- "since they are
+;; singly defined, this produces optimal coloring in the absence of global
+;; interference and other constraints". The reason a local goes second is that it
+;; constrains only one block: whatever register is left after the globals have
+;; been placed is a register the local can still use, whereas a global denied its
+;; register pollutes every block it crosses. The reason locals go in START order
+;; rather than by weight is that a block's values are laid out in a chain -- each
+;; one's home is the next one's copy hint, and the fixed-register operands
+;; (rax/rdx for mul and div, the ABI argument registers) fall in program order --
+;; so colouring them in that order is what lets the chain keep its registers.
+;;
+;; The band sits BELOW the weight, not above it: a local that is genuinely hotter
+;; than a global still goes first. (The full LLVM ordering, where the band
+;; outranks the weight outright, was measured here and is a large regression:
+;; LLVM can afford it because a global that loses is SPLIT rather than spilled
+;; whole, and because its eviction picks the min-cost register instead of the
+;; first evictable one. See the packet report.)
+;;
+;; Our worklist key is one i64 per root, read by the heap AND by the eviction
+;; gate, so the band is packed into the low digits of that same key rather than
+;; threaded as a second array:
+;;
+;;   key  = weight * band-span + band
+;;   band = global ? band-span - 1                 [one value: globals tie, and
+;;                                                  the heap's var-id tie-break
+;;                                                  orders them as before]
+;;          local  ? local-span - 1 - start        [start order]
+;;
+;; The heap compares whole keys, so weight still dominates and the band only
+;; orders values of EQUAL weight. The eviction gate reads the weight back out
+;; with compiler-reg-priority-key-weight, so a strictly-lower-weight test keeps
+;; its exact meaning; the one case it gains is the tie, where a global may now
+;; evict a local of exactly equal weight and never the reverse -- which is the
+;; same statement the band makes.
+;;
+;; Bounds: a spill weight is clamped at compiler-reg-spill-weight-cap (2^30) and
+;; the combine packs it as `weight * 1024 + tie` (a 10-bit compressed raw
+;; tie-break), so a weight is under 2^40 and a key under 2^61 -- inside i64 and
+;; below compiler-reg-greedy-evict-inf.
+(define (compiler-reg-priority-band-span) : i64
+  2097152)
+
+;; Rank slots inside the local band: one per instruction point, so start order is
+;; exact for any function under 524288 instructions (a longer one clamps the tail
+;; of its local band to rank 0 and falls back to the heap's var-id tie-break
+;; there).
+(define (compiler-reg-priority-local-span) : i64
+  1048576)
+
+;; The band-free spill weight carried in a worklist key. Every eviction
+;; comparison uses this; only the heap order uses the whole key.
+(define (compiler-reg-priority-key-weight [key : i64]) : i64
+  (if (< key 0)
+    key
+    (/ key (compiler-reg-priority-band-span))))
+
+;; Start point (doubled instruction index, the interval-index scale) of every
+;; block, plus a terminator entry so points[n] is the end of the last block.
+(define (compiler-reg-block-start-points [blocks : ir.CompilerIrBlockList]) : (__tl_dyn-array
+    i64)
+  (let
+    [seq : ir.CompilerIrBlockSeq
+      (live.compiler-live-ir-block-list-to-seq blocks)]
+    [count : i64 (ir.compiler-ir-block-seq-count seq)]
+    [points : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
+    [i : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< i count)
+        (begin
+          (set! (array-ref points i) acc)
+          (set!
+            acc
+            (+
+              acc
+              (match (ir.compiler-ir-block-seq-ref seq i)
+                [(ir.CompilerIrBlock.Block _ instrs)
+                  (* 2 (ir.compiler-ir-instr-seq-count instrs))])))
+          (set! i (+ i 1))))
+      (set! (array-ref points count) acc)
+      points)))
+
+;; Index of the block owning instruction point `point`: the last block whose
+;; start point is <= it. A value that flows IN from a predecessor starts at
+;; `block-start - 1` (compiler-reg-live-in-block-point), which lands in the
+;; previous block and so reports the value global -- which it is.
+(define (compiler-reg-block-index-of-point
+  [points : (__tl_dyn-array i64)]
+  [block-count : i64]
+  [point : i64]) : i64
+  (let
+    [lo : i64 0]
+    [hi : i64 (- block-count 1)]
+    [best : i64 0]
+    (begin
+      (while (<= lo hi)
+        (let
+          [mid : i64 (/ (+ lo hi) 2)]
+          (if (<= (array-ref points mid) point)
+            (begin
+              (set! best mid)
+              (set! lo (+ mid 1)))
+            (set! hi (- mid 1)))))
+      best)))
+
+(define (compiler-reg-priority-band-value
+  [points : (__tl_dyn-array i64)]
+  [block-count : i64]
+  [index : CompilerRegIntervalIndex]
+  [var : i64]) : i64
+  (let
+    [span : i64 (compiler-reg-priority-band-span)]
+    [local-span : i64 (compiler-reg-priority-local-span)]
+    [starts : (__tl_dyn-array i64) index.starts]
+    (if (or (< block-count 1) (< var 0) (>= var (array-length starts)))
+      (- span 1)
+      (let
+        [s : i64 (array-ref starts var)]
+        (if (< s 0)
+          (- span 1)
+          (if (=
+            (compiler-reg-block-index-of-point points block-count s)
+            (compiler-reg-block-index-of-point
+              points
+              block-count
+              (array-ref index.ends var)))
+            (let
+              [limit : i64 (- local-span 1)]
+              (-
+                limit
+                (if (> s limit)
+                  limit
+                  s)))
+            (- span 1)))))))
+
+;; Rewrite `keys` in place from combined spill weights into worklist priority
+;; keys: weight * band-span + band (see the layout note above).
+(define (compiler-reg-priority-keys!
+  [keys : (__tl_dyn-array i64)]
+  [blocks : ir.CompilerIrBlockList]
+  [index : CompilerRegIntervalIndex]) : unit
+  (let
+    [points : (__tl_dyn-array i64) (compiler-reg-block-start-points blocks)]
+    [block-count : i64 (- (array-length points) 1)]
+    [span : i64 (compiler-reg-priority-band-span)]
+    [v : i64 0]
+    (while (< v (array-length keys))
+      (begin
+        (set!
+          (array-ref keys v)
+          (+
+            (* (array-ref keys v) span)
+            (compiler-reg-priority-band-value points block-count index v)))
+        (set! v (+ v 1))))))
+
+;; ============================================================================
 ;; MEMORY-OPERAND FOLDABILITY REBATE.
 ;;
 ;; The ladder above prices every mention at its block's loop-depth weight, on
@@ -26149,11 +26322,14 @@
       p
       p)))
 
+;; The greedy's worklist keys carry a priority band above the weight (see
+;; compiler-reg-priority-keys!); "coldest victim" means coldest by WEIGHT, so the
+;; band is stripped here exactly as the greedy's own eviction gate strips it.
 (define (compiler-reg-call-region-evict-weight
   [weights : (__tl_dyn-array i64)]
   [v : i64]) : i64
   (if (and (>= v 0) (< v (array-length weights)))
-    (array-ref weights v)
+    (compiler-reg-priority-key-weight (array-ref weights v))
     0))
 
 ;; PRICING. The invariant's uses run at LOOP depth, amplified by the trip factor
@@ -29690,9 +29866,11 @@
 
 ;; A weight strictly larger than any real spill weight; returned by
 ;; interferer-max-capped when a register is pinned by an over-cap (unevictable)
-;; resident, so the `< weight` evictability gate can never select it.
+;; resident, so the `< weight` evictability gate can never select it. 2^45:
+;; eviction compares BAND-FREE weights (compiler-reg-priority-key-weight), which
+;; compiler-reg-spill-weight-cap and the combine's tie span bound at 2^40.
 (define (compiler-reg-greedy-evict-inf) : i64
-  1000000000)
+  35184372088832)
 
 ;; Like compiler-reg-greedy-interferer-max, but cascade-aware: if any interferer
 ;; holding `reg` (and interfering with `var`) has already been evicted at least
@@ -29741,7 +29919,8 @@
                       0)]
                   [weight : i64
                     (if (< other (array-length ref-counts))
-                      (array-ref ref-counts other)
+                      (compiler-reg-priority-key-weight
+                        (array-ref ref-counts other))
                       0)]
                   (if (>= ec (compiler-reg-greedy-evict-cascade-cap))
                     (set! best (compiler-reg-greedy-evict-inf))
@@ -30095,9 +30274,11 @@
                 free)
               (compiler-reg-greedy-stage-rs-assign))
             (let
+              ;; The BAND-FREE weight: eviction compares real spill weights,
+              ;; never the local/global priority band packed above them.
               [weight : i64
                 (if (< var (array-length ref-counts))
-                  (array-ref ref-counts var)
+                  (compiler-reg-priority-key-weight (array-ref ref-counts var))
                   0)]
               [ev : i64
                 (compiler-reg-greedy-first-evictable
@@ -30295,23 +30476,34 @@
           unit)))))
 
 ;; Combine the remat-DISCOUNTED spill weight (primary eviction priority) with the
-;; RAW (undiscounted) use-density (secondary tie-break) into a single key:
-;;   combined = discounted * (maxRaw + 1) + raw
-;; Sorting/eviction by `combined` therefore orders first by discounted weight
-;; (remat values are cheaper to spill, so they rank lower and spill first) and,
-;; among equal discounted weight, by raw use count (the genuinely coldest value
-;; spills first). The /2 remat discount collapses distinct use counts to the same
-;; small integer; without the raw secondary key the greedy would spill an
-;; arbitrary tied value (e.g. a 2-use value over the 1-use coldest). maxRaw+1 as
-;; the radix keeps `discounted` strictly dominant. A non-remat value (discounted
-;; == raw) outranks a remat value of equal raw, so remat is still preferred for
-;; spilling.
+;; RAW (undiscounted) use-density (secondary tie-break) into a single weight:
+;;   weight = discounted * tie-span + (raw scaled into [0, tie-span))
+;; Ordering by `weight` therefore orders first by discounted weight (remat values
+;; are cheaper to spill, so they rank lower and spill first) and, among equal
+;; discounted weight, by raw use count (the genuinely coldest value spills
+;; first). The /2 remat discount collapses distinct use counts to the same small
+;; integer; without the raw secondary key the greedy would spill an arbitrary
+;; tied value (e.g. a 2-use value over the 1-use coldest). A non-remat value
+;; (discounted == raw) outranks a remat value of equal raw, so remat is still
+;; preferred for spilling.
+;;
+;; The tie-break is COMPRESSED into `tie-span` buckets (raw scaled by maxRaw + 1,
+;; the old radix) rather than carried at full width, because the pair now has to
+;; leave room for the priority band packed above it in the same integer
+;; (compiler-reg-priority-keys!). Ten bits is far more resolution than a discount
+;; collision needs -- the discount halves a ladder sum, so the values it collides
+;; are a handful per class -- and it bounds a combined weight at 2^40, which is
+;; what makes the band packing provably overflow-free.
+(define (compiler-reg-greedy-combine-tie-span) : i64
+  1024)
+
 (define (compiler-reg-greedy-combine-spill-weights
   [discounted : (__tl_dyn-array i64)]
   [raw : (__tl_dyn-array i64)]) : (__tl_dyn-array i64)
   (let
     [n : i64 (array-length discounted)]
     [out : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+    [tie-span : i64 (compiler-reg-greedy-combine-tie-span)]
     [max-raw : i64 0]
     [v : i64 0]
     (begin
@@ -30330,12 +30522,20 @@
       (while (< v n)
         (begin
           (let
-            [d : i64 (array-ref discounted v)]
+            [d : i64 (compiler-reg-spill-weight-clamp (array-ref discounted v))]
             [r : i64
               (if (< v (array-length raw))
                 (array-ref raw v)
                 0)]
-            (set! (array-ref out v) (+ (* d (+ max-raw 1)) r)))
+            [tie : i64
+              (if (= max-raw 0)
+                0
+                (let
+                  [scaled : i64 (/ (* r tie-span) (+ max-raw 1))]
+                  (if (>= scaled tie-span)
+                    (- tie-span 1)
+                    scaled)))]
+            (set! (array-ref out v) (+ (* d tie-span) tie)))
           (set! v (+ v 1))))
       out)))
 
@@ -32334,7 +32534,7 @@
   [weights : (__tl_dyn-array i64)]
   [v : i64]) : i64
   (if (and (>= v 0) (< v (array-length weights)))
-    (array-ref weights v)
+    (compiler-reg-priority-key-weight (array-ref weights v))
     0))
 
 (define (compiler-reg-group-pair-component-clobber-free?
@@ -33527,11 +33727,22 @@
         ;; coalesced class scored by its hottest member). The discounted
         ;; weight is combined with the RAW use-density as a tie-break (combine-
         ;; spill-weights) so that among equal-discounted values the genuinely
-        ;; coldest one spills, not an arbitrary tied one.
-        (compiler-reg-function-spill-weights-combined
-          func
-          coalesce
-          (array-length interval-index.starts))
+        ;; coldest one spills, not an arbitrary tied one. The combined weights
+        ;; then carry the LLVM enqueue priority band in their low digits
+        ;; (compiler-reg-priority-keys!): locals below globals of equal weight,
+        ;; and locals among themselves in start order. The band is read off the
+        ;; MERGED-ROOT index, which is the interval the greedy allocates.
+        (let
+          [weights : (__tl_dyn-array i64)
+            (compiler-reg-function-spill-weights-combined
+              func
+              coalesce
+              (array-length interval-index.starts))]
+          (begin
+            (match func
+              [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
+                (compiler-reg-priority-keys! weights blocks eff-index)])
+            weights))
         (__tl_make-array i64 0))]
     [base-eviction-raw-counts : (__tl_dyn-array i64)
       (if (and allow-caller-saved-zero-call (> early-scratch-count 0))
@@ -43035,17 +43246,34 @@
               (if (< scratch-index (array-length scratch-weights))
                 (array-ref scratch-weights scratch-index)
                 0)]
-            [combined : i64 (+ (* weight (+ max-raw 1)) weight)]
+            ;; R1: a real key is `discounted * tie-span + compressed raw`, then
+            ;; carried under a priority band, so a pseudo is priced on the same
+            ;; scale -- discounted and raw both equal to its demand, the raw half
+            ;; compressed against the same radix, and enqueued in the GLOBAL band
+            ;; so the one-unit tie-break below still decides an exact tie rather
+            ;; than losing to a band digit.
+            [tie-span : i64 (compiler-reg-greedy-combine-tie-span)]
+            [tie : i64
+              (if (= max-raw 0)
+                0
+                (let
+                  [scaled : i64 (/ (* weight tie-span) (+ max-raw 1))]
+                  (if (>= scaled tie-span)
+                    (- tie-span 1)
+                    scaled)))]
+            [combined : i64 (+ (* weight tie-span) tie)]
             [priced : i64
               (if (= weight 0)
                 combined
                 (+ combined 1))]
+            [key : i64
+              (if (= weight 0)
+                0
+                (+
+                  (* priced (compiler-reg-priority-band-span))
+                  (- (compiler-reg-priority-band-span) 1)))]
             (begin
-              (set!
-                (array-ref out v)
-                (if (>= priced (compiler-reg-greedy-evict-inf))
-                  (- (compiler-reg-greedy-evict-inf) 1)
-                  priced))
+              (set! (array-ref out v) key)
               (set! v (+ v 1)))))
         out))))
 

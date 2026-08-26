@@ -10756,8 +10756,15 @@
           shadow-regs
           cabi.compiler-reg-id-invalid)
         (set! (array-ref members 0) 0)
-        (reg.compiler-reg-fill-i64-array weights 1)
-        (set! (array-ref weights 0) 10)
+        ;; Greedy worklist keys, not bare weights: the pair pass reads them
+        ;; through compiler-reg-group-pair-weight, which strips the priority band
+        ;; (compiler-reg-priority-keys!). Weights 1 and 10 on that scale.
+        (reg.compiler-reg-fill-i64-array
+          weights
+          (reg.compiler-reg-priority-band-span))
+        (set!
+          (array-ref weights 0)
+          (* 10 (reg.compiler-reg-priority-band-span)))
         (let
           [v : i64 0]
           (while (< v vars)
@@ -12775,7 +12782,18 @@
         [(reg.CompilerRegAssignState.State _ out)
           (and
             (= (array-ref weights 0) 3)
-            (= (array-ref weights 1) 4)
+            ;; R1 scale: the pseudo's demand (1) is combined with the
+            ;; compressed raw tie-break against the same radix (max raw = 1) as a
+            ;; real value's, given the one-unit tie-break, and enqueued in the
+            ;; GLOBAL priority band.
+            (=
+              (array-ref weights 1)
+              (let
+                [span : i64 (reg.compiler-reg-greedy-combine-tie-span)]
+                [priced : i64 (+ (+ span (/ span 2)) 1)]
+                (+
+                  (* priced (reg.compiler-reg-priority-band-span))
+                  (- (reg.compiler-reg-priority-band-span) 1))))
             (compiler-reg-location-spill-offset?
               (reg.compiler-reg-assignment-table-lookup out 0)
               (reg.compiler-reg-stack-slot-offset 0))
@@ -12803,8 +12821,10 @@
     [excluded : (__tl_dyn-array reg.CompilerRegIdSeq)
       (__tl_make-array reg.CompilerRegIdSeq 2)]
     (begin
-      (set! (array-ref weights 0) 1)
-      (set! (array-ref weights 1) 2)
+      ;; Greedy worklist keys (weight * band span + band), not bare weights:
+      ;; the eviction gate strips the band with compiler-reg-priority-key-weight.
+      (set! (array-ref weights 0) (reg.compiler-reg-priority-band-span))
+      (set! (array-ref weights 1) (* 2 (reg.compiler-reg-priority-band-span)))
       (reg.compiler-reg-fill-i64-array hints -1)
       ;; %r10 is free but is the instruction operand home. The scratch pseudo
       ;; must instead evict the colder, CSR-only real value from %r12; when that

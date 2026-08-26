@@ -40,7 +40,7 @@
 ;; Unlike the bootstrap-compatibility global helper above, this always expands
 ;; to an explicit shallow read. Use it only for a local aggregate place whose
 ;; arena-backed owner remains live for the duration of the copied view.
-(import stdlib.comptime)
+(cfg stage0-borrowed-inline-bootstrap (import stdlib.comptime))
 
 (defmacro (ast-place-shared-view [place : Expr]) : Expr
   (cfg

@@ -4938,7 +4938,7 @@
                     [(ResultAstType.Ok parsed-ty)
                       (ResultAstFieldDef.Ok
                         (ast.ast-field-def-id
-                          (ci.intern-syntax-id-value name)
+                          name
                           parsed-ty
                           (ast.AstFieldCleanup.No)))]
                     [(ResultAstType.Err message)
@@ -4955,7 +4955,7 @@
                               [(ResultAstFieldCleanup.Ok parsed-cleanup)
                                 (ResultAstFieldDef.Ok
                                   (ast.ast-field-def-id
-                                    (ci.intern-syntax-id-value name)
+                                    name
                                     parsed-ty
                                     parsed-cleanup))]
                               [(ResultAstFieldCleanup.Err message)

@@ -242,7 +242,10 @@
           (match (array-ref fields.slots index)
             [(ast.AstFieldDef.Def name ty cleanup)
               (begin
-                (codec.surface-ast-write-name! out context name)
+                (codec.surface-ast-write-name!
+                  out
+                  context
+                  (ci.intern-syntax-id-value name))
                 (codec.surface-ast-write-type! out context ty)
                 (surface-ast-write-field-cleanup! out context cleanup))])
           (set! index (+ index 1)))))))
@@ -259,7 +262,8 @@
           (set!
             (array-ref slots index)
             (ast.AstFieldDef.Def
-              (codec.surface-ast-read-name! reader)
+              (ci.intern-syntax-id-from-raw
+                (codec.surface-ast-read-name! reader))
               (codec.surface-ast-read-type! reader)
               (surface-ast-read-field-cleanup! reader)))
           (set! index (+ index 1))))

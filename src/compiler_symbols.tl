@@ -3449,7 +3449,7 @@
             registries
             module-id
             struct-name-id
-            name
+            (ci.intern-syntax-id-value name)
             (compiler-registry-make-handle
               (compiler-symbol-kind-struct-field)
               struct-index
@@ -3659,44 +3659,46 @@
       field-index
       (ast.ast-field-def-fallback))
       [(ast.AstFieldDef.Def name _ _)
-        (if (sym_i64_env.sym-i64-contains-id seen name)
-          (begin
-            (set! compiler-symbols-last-error-path path)
-            (compiler-symbols-note-last-error-member-span!
-              (parser.compiler-parse-field-def-list-span-get
-                (& fields)
-                field-index
-                (ast.ast-decl-span-fallback)))
-            (ResultCompilerRegistries.Err
-              (compiler-registries-duplicate-field-message
-                (compiler-symbol-module-key-by-id module-id struct-name-id)
-                (ci.intern-str name))))
-          (match (compiler-registries-add-field-in-module-id
-            registries
-            module-id
-            struct-name-id
-            name
-            struct-index
-            field-index)
-            [(ResultCompilerRegistries.Ok next-registries)
-              (build-compiler-field-registry-list
-                fields
-                next-registries
-                (sym_i64_env.sym-i64-bind-id seen name field-index)
-                module-id
-                path
-                struct-name-id
-                struct-index
-                (+ field-index 1))]
-            [(ResultCompilerRegistries.Err message)
-              (begin
-                (set! compiler-symbols-last-error-path path)
-                (compiler-symbols-note-last-error-member-span!
-                  (parser.compiler-parse-field-def-list-span-get
-                    (& fields)
-                    field-index
-                    (ast.ast-decl-span-fallback)))
-                (ResultCompilerRegistries.Err message))]))])))
+        (let
+          [name-id : i64 (ci.intern-syntax-id-value name)]
+          (if (sym_i64_env.sym-i64-contains-id seen name-id)
+            (begin
+              (set! compiler-symbols-last-error-path path)
+              (compiler-symbols-note-last-error-member-span!
+                (parser.compiler-parse-field-def-list-span-get
+                  (& fields)
+                  field-index
+                  (ast.ast-decl-span-fallback)))
+              (ResultCompilerRegistries.Err
+                (compiler-registries-duplicate-field-message
+                  (compiler-symbol-module-key-by-id module-id struct-name-id)
+                  (ci.intern-str name-id))))
+            (match (compiler-registries-add-field-in-module-id
+              registries
+              module-id
+              struct-name-id
+              name-id
+              struct-index
+              field-index)
+              [(ResultCompilerRegistries.Ok next-registries)
+                (build-compiler-field-registry-list
+                  fields
+                  next-registries
+                  (sym_i64_env.sym-i64-bind-id seen name-id field-index)
+                  module-id
+                  path
+                  struct-name-id
+                  struct-index
+                  (+ field-index 1))]
+              [(ResultCompilerRegistries.Err message)
+                (begin
+                  (set! compiler-symbols-last-error-path path)
+                  (compiler-symbols-note-last-error-member-span!
+                    (parser.compiler-parse-field-def-list-span-get
+                      (& fields)
+                      field-index
+                      (ast.ast-decl-span-fallback)))
+                  (ResultCompilerRegistries.Err message))])))])))
 
 (define (build-compiler-registry-list-in-module
   [decls : ast.AstDeclList]
@@ -4269,7 +4271,7 @@
       (& fields)
       target
       (ast.ast-field-def-fallback))
-      [(ast.AstFieldDef.Def name-id _ _) name-id])))
+      [(ast.AstFieldDef.Def name-id _ _) (ci.intern-syntax-id-value name-id)])))
 
 (define (compiler-symbols-field-name-id-at-index
   [symbols : CompilerSymbols]

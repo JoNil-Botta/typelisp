@@ -15725,7 +15725,10 @@
                 (ast.ast-field-def-fallback))
                 [(ast.AstFieldDef.Def actual-name actual-ty _)
                   (cond
-                    [(not (= actual-name expected-name))
+                    [(not
+                        (=
+                          (ci.intern-syntax-id-value actual-name)
+                          expected-name))
                       (tc-stdlib-well-known-mismatch
                         type-name
                         (str_cat.str-cat
@@ -38210,7 +38213,8 @@
       fields
       index
       (ast.ast-field-def-fallback))
-      [(ast.AstFieldDef.Def name _ _) (TcMaybeNameId.Some name)])))
+      [(ast.AstFieldDef.Def name _ _)
+        (TcMaybeNameId.Some (ci.intern-syntax-id-value name))])))
 
 (define (tc-call-decl-param-name-at [decl : ast.AstDecl] [index : i64]) : TcMaybeNameId
   (match decl
@@ -43470,7 +43474,10 @@
               seen
               ty
               module-id
-              (str_cat.str-cat path "." (ci.intern-str name)))]
+              (str_cat.str-cat
+                path
+                "."
+                (ci.intern-str (ci.intern-syntax-id-value name))))]
           (if (string.eq candidate "")
             (tc-clone-unsupported-path-fields-at
               pools
@@ -54837,7 +54844,10 @@
                   (tc-inline-field-layout-list-set!
                     layout
                     index
-                    (TcInlineFieldLayout.Field name resolved offset))
+                    (TcInlineFieldLayout.Field
+                      (ci.intern-syntax-id-value name)
+                      resolved
+                      offset))
                   (tc-inline-aggregate-field-defs-layout-at
                     ctx
                     fields
@@ -56065,7 +56075,7 @@
           (match (tc-repr-c-field-layout-info
             ctx
             owner
-            (tc-env-key-name-text name)
+            (tc-env-key-name-text (ci.intern-syntax-id-value name))
             resolved
             seen)
             [(ResultTcLayoutInfo.Ok info)
@@ -56081,7 +56091,7 @@
                     layout
                     index
                     (TcReprCFieldLayout.Field
-                      (tc-env-key-name-text name)
+                      (tc-env-key-name-text (ci.intern-syntax-id-value name))
                       resolved
                       offset))
                   (tc-repr-c-fields-layout-at
@@ -68776,8 +68786,8 @@
                 (and
                   (qualified-name-for-state
                     (tc-context-macro-state ctx)
-                    name
-                    name-id)
+                    (ci.intern-syntax-id-value name)
+                    (ci.intern-syntax-id-value name-id))
                   (tc-proof-reuse-session-ast-type-exact? ctx ty type)
                   (match cleanup
                     [(ast.AstFieldCleanup.No)
@@ -116203,7 +116213,8 @@
   (match field
     [(ast.AstFieldDef.Def field-name ty field-cleanup)
       (let
-        [field-name-str : String (ci.intern-str field-name)]
+        [field-name-str : String
+          (ci.intern-str (ci.intern-syntax-id-value field-name))]
         [resolved-ty : ast.AstType
           (tc-type-strip-region (tc-resolve-type ctx ty))]
         [field-cleanup-owning : bool

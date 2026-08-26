@@ -14813,7 +14813,8 @@ g:
 ;; through the terminator. That is the planner's regular preservation class,
 ;; but a Jump has no reachable post-instruction restore. Keep the save/restore
 ;; around the exact memory-memory phi copy even when the forward-edge proof
-;; would otherwise permit an unbracketed stage.
+;; would otherwise permit an unbracketed stage. The scalar SysV fixture can
+;; park the saved GP value in a free XMM register, but the bracket must remain.
 (define (compiler-backend-phi-planned-live-through-preserved-ok?) : bool
   (cfg
     scratch-vreg
@@ -14863,12 +14864,6 @@ g:
               1
               (compiler_regalloc.CompilerRegLocation.Spill -8))
             (compiler_regalloc.compiler-reg-assignment-table-empty)))]
-      [function-state : compiler_backend.CompilerBackendFunctionState
-        (compiler_backend.compiler-backend-state-function-state backend-state)]
-      [_slot : unit
-        (compiler_backend.compiler-backend-function-scratch-fixture-set-emergency-slot-offset!
-          function-state
-          -64)]
       [planned : String
         (compiler_backend.compiler-backend-scratch-plan-register-here
           plan
@@ -14890,7 +14885,7 @@ g:
             (string.eq planned "%rsi")
             (compiler_backend.compiler-backend-string-contains?
               asm
-              "    movq %rsi, -64(%rbp)\n")
+              "    movq %rsi, %xmm4\n")
             (compiler_backend.compiler-backend-string-contains?
               asm
               "    movq -16(%rbp), %rsi\n")
@@ -14899,7 +14894,7 @@ g:
               "    movq %rsi, -8(%rbp)\n")
             (compiler_backend.compiler-backend-string-contains?
               asm
-              "    movq -64(%rbp), %rsi\n")
+              "    movq %xmm4, %rsi\n")
             (not
               (compiler_backend.compiler-backend-string-contains? asm "pushq")))]
         [(compiler_backend.ResultCompilerBackend.Err _) false]))

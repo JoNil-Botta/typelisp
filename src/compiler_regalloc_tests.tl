@@ -19903,22 +19903,45 @@
   (let
     [func : ir.CompilerIrFunction (compiler-reg-simd-copy-class-function)]
     [classes : live.CompilerLiveUseDef
-      (reg.compiler-reg-function-vector-mask-defs func)]
+      (reg.compiler-reg-function-vector-mask-defs
+        (reg.compiler-reg-global-shared-view func))]
     [words : (__tl_dyn-array i64) (array.make-array i64 6)]
-    (match func
+    (match (reg.compiler-reg-global-shared-view func)
       [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
         (begin
-          (reg.compiler-reg-vector-stack-words-blocks! blocks words)
-          (reg.compiler-reg-vector-stack-words-fixpoint! blocks words)
+          (reg.compiler-reg-vector-stack-words-blocks!
+            (reg.compiler-reg-global-shared-view blocks)
+            (reg.compiler-reg-global-shared-view words))
+          (reg.compiler-reg-vector-stack-words-fixpoint!
+            (reg.compiler-reg-global-shared-view blocks)
+            (reg.compiler-reg-global-shared-view words))
           (and
-            (live.compiler-live-set-contains? classes.uses 0)
-            (live.compiler-live-set-contains? classes.uses 1)
-            (live.compiler-live-set-contains? classes.uses 2)
-            (not (live.compiler-live-set-contains? classes.uses 3))
-            (live.compiler-live-set-contains? classes.defs 3)
-            (live.compiler-live-set-contains? classes.defs 4)
-            (live.compiler-live-set-contains? classes.defs 5)
-            (not (live.compiler-live-set-contains? classes.defs 0))
+            (live.compiler-live-set-contains?
+              (reg.compiler-reg-global-shared-view classes.uses)
+              0)
+            (live.compiler-live-set-contains?
+              (reg.compiler-reg-global-shared-view classes.uses)
+              1)
+            (live.compiler-live-set-contains?
+              (reg.compiler-reg-global-shared-view classes.uses)
+              2)
+            (not
+              (live.compiler-live-set-contains?
+                (reg.compiler-reg-global-shared-view classes.uses)
+                3))
+            (live.compiler-live-set-contains?
+              (reg.compiler-reg-global-shared-view classes.defs)
+              3)
+            (live.compiler-live-set-contains?
+              (reg.compiler-reg-global-shared-view classes.defs)
+              4)
+            (live.compiler-live-set-contains?
+              (reg.compiler-reg-global-shared-view classes.defs)
+              5)
+            (not
+              (live.compiler-live-set-contains?
+                (reg.compiler-reg-global-shared-view classes.defs)
+                0))
             (= (array-ref words 0) 8)
             (= (array-ref words 1) 8)
             (= (array-ref words 2) 8)

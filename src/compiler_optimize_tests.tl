@@ -4451,21 +4451,47 @@
         1]
       [(not (= (compiler_ir_types.compiler-ir-instr-seq-count dce) 8)) 2]
       [(not (= (compiler_ir_types.compiler-ir-instr-seq-count bounds) 8)) 3]
-      [(not (= (opt-count-vector-binop-instrs vector-cse) 1)) 4]
       [(not
           (=
-            (opt-mov-dst-type-tag vector-cse 3)
+            (opt-count-vector-binop-instrs
+              (compiler_optimize.compiler-opt-global-shared-view vector-cse))
+            1))
+        4]
+      [(not
+          (=
+            (opt-mov-dst-type-tag
+              (compiler_optimize.compiler-opt-global-shared-view vector-cse)
+              3)
             (compiler_ast_types.ast-type-tag (compiler_ast_types.AstType.I64))))
         5]
-      [(not (= (opt-count-vector-reduce-instrs vector-reduce-cse) 2)) 6]
-      [(not (= (opt-mov-dst-type-tag vector-reduce-cse 2) 0)) 7]
+      [(not
+          (=
+            (opt-count-vector-reduce-instrs
+              (compiler_optimize.compiler-opt-global-shared-view
+                vector-reduce-cse))
+            2))
+        6]
+      [(not
+          (=
+            (opt-mov-dst-type-tag
+              (compiler_optimize.compiler-opt-global-shared-view
+                vector-reduce-cse)
+              2)
+            0))
+        7]
       [(not
           (=
             (opt-count-arith-instr-seq
               (compiler_optimize.compiler-opt-global-shared-view vector-stale))
             1))
         8]
-      [(not (= (opt-count-mov-i64-value-instr-seq vector-stale 11) 0)) 9]
+      [(not
+          (=
+            (opt-count-mov-i64-value-instr-seq
+              (compiler_optimize.compiler-opt-global-shared-view vector-stale)
+              11)
+            0))
+        9]
       [(not (= (opt-vector-binop-lhs-var vector-copy 3) 0)) 10]
       [(not (= (opt-mask-binop-lhs-var mask-copy 3) 0)) 11]
       [(not (= (opt-mask-reduce-src-var mask-reduce-copy 2) 0)) 12]
@@ -6915,22 +6941,87 @@
       (opt-test-cse-instrs
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (compiler_optimize.OptExprTable.Nil)
-        input)]
+        (compiler_optimize.compiler-opt-global-shared-view input))]
     [copied : compiler_ir_types.CompilerIrInstrSeq
-      (opt-test-copy-instrs (compiler_optimize.OptCopyEnv.Nil) rewritten)]
+      (opt-test-copy-instrs
+        (compiler_optimize.OptCopyEnv.Nil)
+        (compiler_optimize.compiler-opt-global-shared-view rewritten))]
     (cond
       [(not (compiler_optimize.opt-scan-cse-dup-from input.slots 0 input.len))
         1]
-      [(not (= (opt-mov-src-var-instr-seq rewritten 21 (- 0 1)) 20)) 2]
-      [(not (= (opt-mov-src-var-instr-seq rewritten 31 (- 0 1)) 30)) 3]
-      [(not (= (opt-mov-src-var-instr-seq rewritten 41 (- 0 1)) 40)) 4]
-      [(not (= (opt-count-mov-dst-instr-seq rewritten 22) 0)) 5]
-      [(not (= (opt-count-mov-dst-instr-seq rewritten 32) 0)) 6]
-      [(not (= (opt-count-mov-dst-instr-seq rewritten 33) 0)) 7]
-      [(not (= (opt-count-mov-dst-instr-seq rewritten 34) 0)) 8]
-      [(not (= (opt-count-mov-dst-instr-seq rewritten 42) 0)) 9]
-      [(not (= (opt-count-mov-dst-instr-seq rewritten 43) 0)) 10]
-      [(not (= (opt-count-mov-dst-instr-seq rewritten 44) 0)) 11]
+      [(not
+          (=
+            (opt-mov-src-var-instr-seq
+              (compiler_optimize.compiler-opt-global-shared-view rewritten)
+              21
+              (- 0 1))
+            20))
+        2]
+      [(not
+          (=
+            (opt-mov-src-var-instr-seq
+              (compiler_optimize.compiler-opt-global-shared-view rewritten)
+              31
+              (- 0 1))
+            30))
+        3]
+      [(not
+          (=
+            (opt-mov-src-var-instr-seq
+              (compiler_optimize.compiler-opt-global-shared-view rewritten)
+              41
+              (- 0 1))
+            40))
+        4]
+      [(not
+          (=
+            (opt-count-mov-dst-instr-seq
+              (compiler_optimize.compiler-opt-global-shared-view rewritten)
+              22)
+            0))
+        5]
+      [(not
+          (=
+            (opt-count-mov-dst-instr-seq
+              (compiler_optimize.compiler-opt-global-shared-view rewritten)
+              32)
+            0))
+        6]
+      [(not
+          (=
+            (opt-count-mov-dst-instr-seq
+              (compiler_optimize.compiler-opt-global-shared-view rewritten)
+              33)
+            0))
+        7]
+      [(not
+          (=
+            (opt-count-mov-dst-instr-seq
+              (compiler_optimize.compiler-opt-global-shared-view rewritten)
+              34)
+            0))
+        8]
+      [(not
+          (=
+            (opt-count-mov-dst-instr-seq
+              (compiler_optimize.compiler-opt-global-shared-view rewritten)
+              42)
+            0))
+        9]
+      [(not
+          (=
+            (opt-count-mov-dst-instr-seq
+              (compiler_optimize.compiler-opt-global-shared-view rewritten)
+              43)
+            0))
+        10]
+      [(not
+          (=
+            (opt-count-mov-dst-instr-seq
+              (compiler_optimize.compiler-opt-global-shared-view rewritten)
+              44)
+            0))
+        11]
       [(not (= (opt-vector-binop-lhs-var copied 50) 20)) 12]
       [else 42])))
 
@@ -8007,14 +8098,19 @@
 (define (opt-simd-gvn-kind-count-blocks
   [blocks : compiler_ir_types.CompilerIrBlockList]
   [kind : i64]) : i64
-  (match blocks
+  (match (compiler_ir_types.compiler-ir-global-shared-view blocks)
     [(compiler_ir_types.CompilerIrBlockList.Nil) 0]
     [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
-      (match block
+      (match (compiler_ir_types.compiler-ir-global-shared-view block)
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
-            (opt-simd-gvn-kind-count-seq instrs kind 0)
-            (opt-simd-gvn-kind-count-blocks (__tl-box-place rest) kind))])]
+            (opt-simd-gvn-kind-count-seq
+              (compiler_ir_types.compiler-ir-global-shared-view instrs)
+              kind
+              0)
+            (opt-simd-gvn-kind-count-blocks
+              (compiler_ir_types.compiler-ir-block-list-box-shared-view rest)
+              kind))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (opt-simd-gvn-kind-count-blocks
         (compiler_ir_types.compiler-ir-block-seq-to-list seq)
@@ -8247,16 +8343,68 @@
         (opt-gvn-test-params)
         (opt-simd-gvn-redefined-dst-blocks))]
     (cond
-      [(not (= (opt-simd-gvn-kind-count-blocks dominated 0) 1)) 1]
-      [(not (= (opt-simd-gvn-kind-count-blocks dominated 1) 1)) 2]
-      [(not (= (opt-simd-gvn-kind-count-blocks dominated 2) 1)) 3]
-      [(not (= (opt-blocks-mov-src-var dominated 20 (- 0 1)) 10)) 4]
-      [(not (= (opt-blocks-mov-src-var dominated 21 (- 0 1)) 11)) 5]
-      [(not (= (opt-blocks-mov-src-var dominated 22 (- 0 1)) 12)) 6]
+      [(not
+          (=
+            (opt-simd-gvn-kind-count-blocks
+              (compiler_ir_types.compiler-ir-global-shared-view dominated)
+              0)
+            1))
+        1]
+      [(not
+          (=
+            (opt-simd-gvn-kind-count-blocks
+              (compiler_ir_types.compiler-ir-global-shared-view dominated)
+              1)
+            1))
+        2]
+      [(not
+          (=
+            (opt-simd-gvn-kind-count-blocks
+              (compiler_ir_types.compiler-ir-global-shared-view dominated)
+              2)
+            1))
+        3]
+      [(not
+          (=
+            (opt-blocks-mov-src-var
+              (compiler_ir_types.compiler-ir-global-shared-view dominated)
+              20
+              (- 0 1))
+            10))
+        4]
+      [(not
+          (=
+            (opt-blocks-mov-src-var
+              (compiler_ir_types.compiler-ir-global-shared-view dominated)
+              21
+              (- 0 1))
+            11))
+        5]
+      [(not
+          (=
+            (opt-blocks-mov-src-var
+              (compiler_ir_types.compiler-ir-global-shared-view dominated)
+              22
+              (- 0 1))
+            12))
+        6]
       [(not (= (opt-simd-gvn-kind-count-blocks siblings 1) 2)) 7]
       [(not (= (opt-simd-gvn-kind-count-blocks redefined 1) 2)) 8]
-      [(not (= (opt-simd-gvn-kind-count-blocks current 0) 2)) 9]
-      [(not (= (opt-blocks-mov-src-var current 20 (- 0 1)) (- 0 1))) 10]
+      [(not
+          (=
+            (opt-simd-gvn-kind-count-blocks
+              (compiler_ir_types.compiler-ir-global-shared-view current)
+              0)
+            2))
+        9]
+      [(not
+          (=
+            (opt-blocks-mov-src-var
+              (compiler_ir_types.compiler-ir-global-shared-view current)
+              20
+              (- 0 1))
+            (- 0 1)))
+        10]
       [(not (= (opt-simd-gvn-kind-count-blocks dst-redefined 1) 2)) 11]
       [else 42])))
 
@@ -75779,25 +75927,97 @@
       ;; instructions long.
       [(not (opt-pcf-changed? "pcc_forward_changed" (opt-pcc-blocks-forward)))
         1]
-      [(not (opt-pcf-jumps-to? fwd "sent" "no")) 2]
-      [(not (= (opt-pcf-input-count (opt-pcf-phi-inputs fwd "merge" 0)) 1)) 3]
-      [(not (opt-pcf-input-is-var? (opt-pcf-phi-inputs fwd "merge" 0) "arm" 3))
+      [(not
+          (opt-pcf-jumps-to?
+            (compiler_ir_types.compiler-ir-global-shared-view fwd)
+            "sent"
+            "no"))
+        2]
+      [(not
+          (=
+            (opt-pcf-input-count
+              (opt-pcf-phi-inputs
+                (compiler_ir_types.compiler-ir-global-shared-view fwd)
+                "merge"
+                0))
+            1))
+        3]
+      [(not
+          (opt-pcf-input-is-var?
+            (opt-pcf-phi-inputs
+              (compiler_ir_types.compiler-ir-global-shared-view fwd)
+              "merge"
+              0)
+            "arm"
+            3))
         4]
-      [(not (= (opt-pcf-count fwd "merge") 2)) 5]
-      [(not (= (opt-pcf-count fwd "c1") 2)) 6]
+      [(not
+          (=
+            (opt-pcf-count
+              (compiler_ir_types.compiler-ir-global-shared-view fwd)
+              "merge")
+            2))
+        5]
+      [(not
+          (=
+            (opt-pcf-count
+              (compiler_ir_types.compiler-ir-global-shared-view fwd)
+              "c1")
+            2))
+        6]
       ;; (b) the two-link chain. `-1` is decided by `ge %p, 48` alone and exits
       ;; to `no`; `50` passes that link, is decided by `le %p, 57` and exits to
       ;; `yes`; the variable edge keeps the whole chain, which is left standing.
-      [(not (opt-pcf-jumps-to? chain "sent" "no")) 7]
-      [(not (opt-pcf-jumps-to? chain "fifty" "yes")) 8]
-      [(not (opt-pcf-jumps-to? chain "arm" "merge")) 9]
-      [(not (= (opt-pcf-input-count (opt-pcf-phi-inputs chain "merge" 0)) 1))
+      [(not
+          (opt-pcf-jumps-to?
+            (compiler_ir_types.compiler-ir-global-shared-view chain)
+            "sent"
+            "no"))
+        7]
+      [(not
+          (opt-pcf-jumps-to?
+            (compiler_ir_types.compiler-ir-global-shared-view chain)
+            "fifty"
+            "yes"))
+        8]
+      [(not
+          (opt-pcf-jumps-to?
+            (compiler_ir_types.compiler-ir-global-shared-view chain)
+            "arm"
+            "merge"))
+        9]
+      [(not
+          (=
+            (opt-pcf-input-count
+              (opt-pcf-phi-inputs
+                (compiler_ir_types.compiler-ir-global-shared-view chain)
+                "merge"
+                0))
+            1))
         10]
       [(not
-          (opt-pcf-input-is-var? (opt-pcf-phi-inputs chain "merge" 0) "arm" 3))
+          (opt-pcf-input-is-var?
+            (opt-pcf-phi-inputs
+              (compiler_ir_types.compiler-ir-global-shared-view chain)
+              "merge"
+              0)
+            "arm"
+            3))
         11]
-      [(not (= (opt-pcf-count chain "c1") 2)) 12]
-      [(not (= (opt-pcf-count chain "c2") 2)) 13]
+      [(not
+          (=
+            (opt-pcf-count
+              (compiler_ir_types.compiler-ir-global-shared-view chain)
+              "c1")
+            2))
+        12]
+      [(not
+          (=
+            (opt-pcf-count
+              (compiler_ir_types.compiler-ir-global-shared-view chain)
+              "c2")
+            2))
+        13]
       ;; (c) the second link compares against a variable, so no literal has a
       ;; verdict there and the phi has a reader the chain does not cover.
       [(opt-pcf-changed?
@@ -75818,11 +76038,20 @@
       ;; (f) `b` is concatenated onto `p`, and `yes`, which phied on `b`, is
       ;; re-keyed onto `p` without gaining or losing an input.
       [(not (opt-pcm-changed? (opt-pcm-blocks-pair))) 17]
-      [(opt-pcm-has-block? pair "b") 18]
-      [(not (= (opt-pcf-count pair "p") 3)) 19]
+      [(opt-pcm-has-block?
+          (compiler_ir_types.compiler-ir-global-shared-view pair)
+          "b")
+        18]
+      [(not
+          (=
+            (opt-pcf-count
+              (compiler_ir_types.compiler-ir-global-shared-view pair)
+              "p")
+            3))
+        19]
       [(not
           (opt-pcf-moved-compare?
-            pair
+            (compiler_ir_types.compiler-ir-global-shared-view pair)
             "p"
             1
             5
@@ -75830,21 +76059,54 @@
             3
             37))
         20]
-      [(not (= (opt-pcf-input-count (opt-pcf-phi-inputs pair "yes" 0)) 2)) 21]
-      [(not (opt-pcf-input-is-i64? (opt-pcf-phi-inputs pair "yes" 0) "p" 11))
+      [(not
+          (=
+            (opt-pcf-input-count
+              (opt-pcf-phi-inputs
+                (compiler_ir_types.compiler-ir-global-shared-view pair)
+                "yes"
+                0))
+            2))
+        21]
+      [(not
+          (opt-pcf-input-is-i64?
+            (opt-pcf-phi-inputs
+              (compiler_ir_types.compiler-ir-global-shared-view pair)
+              "yes"
+              0)
+            "p"
+            11))
         22]
       [(not
-          (opt-pcf-input-is-i64? (opt-pcf-phi-inputs pair "yes" 0) "other" 22))
+          (opt-pcf-input-is-i64?
+            (opt-pcf-phi-inputs
+              (compiler_ir_types.compiler-ir-global-shared-view pair)
+              "yes"
+              0)
+            "other"
+            22))
         23]
       ;; (f) the whole run collapses in one round, and `m`'s one-input phi
       ;; becomes the mov that the copy propagator downstream deletes.
       [(not (opt-pcm-changed? (opt-pcm-blocks-run))) 24]
-      [(opt-pcm-has-block? run "m") 25]
-      [(opt-pcm-has-block? run "n") 26]
-      [(not (= (opt-pcf-count run "a") 4)) 27]
+      [(opt-pcm-has-block?
+          (compiler_ir_types.compiler-ir-global-shared-view run)
+          "m")
+        25]
+      [(opt-pcm-has-block?
+          (compiler_ir_types.compiler-ir-global-shared-view run)
+          "n")
+        26]
+      [(not
+          (=
+            (opt-pcf-count
+              (compiler_ir_types.compiler-ir-global-shared-view run)
+              "a")
+            4))
+        27]
       [(not
           (opt-pcf-moved-compare?
-            run
+            (compiler_ir_types.compiler-ir-global-shared-view run)
             "a"
             2
             5
@@ -75962,7 +76224,8 @@
 (define (opt-nn-run [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrBlockList
   (compiler_optimize.opt-bounds-dom-blocks-with-context
     (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-    (compiler_optimize.opt-cfg-context-build blocks)
+    (compiler_optimize.opt-cfg-context-build
+      (compiler_optimize.compiler-opt-global-shared-view blocks))
     (opt-nn-params)
     64
     blocks))
@@ -75972,7 +76235,8 @@
   [label : String]) : compiler_ir_types.CompilerIrBlock
   (match (compiler_optimize.opt-cfg-find-block
     blocks
-    (compiler_ir_types.compiler-ir-label label))
+    (compiler_ir_types.compiler-ir-label
+      (owned_view.compiler-owned-shared-view label)))
     [(compiler_optimize.OptMaybeBlock.Some block) block]
     [(compiler_optimize.OptMaybeBlock.No)
       (compiler_ir_types.CompilerIrBlock.Block
@@ -75994,7 +76258,9 @@
   [value : bool]) : bool
   (let
     [block : compiler_ir_types.CompilerIrBlock (opt-nn-block-of blocks label)]
-    (if (<= (opt-block-instr-count block) index)
+    (if (<=
+      (opt-block-instr-count (owned_view.compiler-owned-shared-view block))
+      index)
       false
       (match (opt-block-instr-at block index)
         [(compiler_ir_types.CompilerIrInstr.Mov found-dst operand _)
@@ -76015,7 +76281,9 @@
   [dst : i64]) : bool
   (let
     [block : compiler_ir_types.CompilerIrBlock (opt-nn-block-of blocks label)]
-    (if (<= (opt-block-instr-count block) index)
+    (if (<=
+      (opt-block-instr-count (owned_view.compiler-owned-shared-view block))
+      index)
       false
       (match (opt-block-instr-at block index)
         [(compiler_ir_types.CompilerIrInstr.BinOp found-dst _ _ _ ty)
@@ -76270,17 +76538,62 @@
       ;; no step: one unproven input refuses the whole group.
       [(not (= (opt-nn-count unfenced-nest "outer_body") 2)) 2]
       ;; (b) `x - 48` under `x >= 48`.
-      [(not (opt-nn-folded? affine "hot" 1 22 true)) 3]
-      [(not (opt-nn-compare-signed? affine "cold" 1 24)) 4]
+      [(not
+          (opt-nn-folded?
+            (compiler_optimize.compiler-opt-global-shared-view affine)
+            "hot"
+            1
+            22
+            true))
+        3]
+      [(not
+          (opt-nn-compare-signed?
+            (compiler_optimize.compiler-opt-global-shared-view affine)
+            "cold"
+            1
+            24))
+        4]
       ;; (c) `x + 1` with `x >= 0` and `x < len` known, and with only `x >= 0`.
-      [(not (opt-nn-folded? affine "fenced" 1 33 true)) 5]
-      [(not (opt-nn-compare-signed? affine "unfenced" 1 35)) 6]
+      [(not
+          (opt-nn-folded?
+            (compiler_optimize.compiler-opt-global-shared-view affine)
+            "fenced"
+            1
+            33
+            true))
+        5]
+      [(not
+          (opt-nn-compare-signed?
+            (compiler_optimize.compiler-opt-global-shared-view affine)
+            "unfenced"
+            1
+            35))
+        6]
       ;; (d) the branch-feeding compare of two PROVED non-negative operands
       ;; keeps its signed spelling, and so does the one nothing is proved about.
-      [(not (opt-nn-compare-signed? lengths "mid" 1 41)) 7]
-      [(not (opt-nn-compare-signed? lengths "other" 0 43)) 8]
+      [(not
+          (opt-nn-compare-signed?
+            (compiler_optimize.compiler-opt-global-shared-view lengths)
+            "mid"
+            1
+            41))
+        7]
+      [(not
+          (opt-nn-compare-signed?
+            (compiler_optimize.compiler-opt-global-shared-view lengths)
+            "other"
+            0
+            43))
+        8]
       ;; (e) a container length is non-negative.
-      [(not (opt-nn-folded? lengths "next" 0 42 true)) 9]
+      [(not
+          (opt-nn-folded?
+            (compiler_optimize.compiler-opt-global-shared-view lengths)
+            "next"
+            0
+            42
+            true))
+        9]
       ;; (f) all inputs proved, then one input open.
       [(not (opt-nn-folded? phi-proved "merge" 1 51 true)) 10]
       [(not (opt-nn-compare-signed? phi-open "merge" 1 51)) 11]
@@ -76692,16 +77005,20 @@
     [converted : compiler_ir_types.CompilerIrFunction
       (opt-flag-exit-sent-run 0)]
     [blocks : compiler_ir_types.CompilerIrBlockList
-      (compiler_optimize.opt-function-blocks converted)]
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view converted))]
     [twice : compiler_ir_types.CompilerIrBlockList
       (compiler_optimize.opt-function-blocks
-        (compiler_optimize.opt-flag-exit-function converted))]
+        (compiler_optimize.opt-flag-exit-function
+          (compiler_optimize.compiler-opt-global-shared-view converted)))]
     [global : compiler_ir_types.CompilerIrFunction (opt-flag-exit-sent-run 1)]
     [global-blocks : compiler_ir_types.CompilerIrBlockList
-      (compiler_optimize.opt-function-blocks global)]
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view global))]
     [mixed : compiler_ir_types.CompilerIrFunction (opt-flag-exit-sent-run 4)]
     [mixed-blocks : compiler_ir_types.CompilerIrBlockList
-      (compiler_optimize.opt-function-blocks mixed)]
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view mixed))]
     (cond
       [(not
           (compiler_optimize.opt-verify-ok?
@@ -76710,65 +77027,208 @@
         1]
       [(not
           (compiler_optimize.opt-verify-ok?
-            (compiler_optimize.opt-verify-function converted)))
+            (compiler_optimize.opt-verify-function
+              (compiler_optimize.compiler-opt-global-shared-view converted))))
         2]
       ;; (a) the header's gate stopped testing the flag, and the test moved to
       ;; the assignment site
-      [(not (opt-flag-exit-test-jumps-to? blocks "gate" "cont")) 3]
-      [(not (= (opt-flag-exit-test-instr-count blocks "gate") 1)) 4]
-      [(not (opt-flag-exit-test-jumps-to? blocks "mismatch" gate-label)) 5]
-      [(not (= (opt-flag-exit-sent-gate-lhs blocks gate-label) 9)) 6]
-      [(not (= (opt-flag-exit-sent-gate-rhs blocks gate-label) (- 0 1))) 7]
+      [(not
+          (opt-flag-exit-test-jumps-to?
+            (compiler_optimize.compiler-opt-global-shared-view blocks)
+            "gate"
+            "cont"))
+        3]
+      [(not
+          (=
+            (opt-flag-exit-test-instr-count
+              (compiler_optimize.compiler-opt-global-shared-view blocks)
+              "gate")
+            1))
+        4]
+      [(not
+          (opt-flag-exit-test-jumps-to?
+            (compiler_optimize.compiler-opt-global-shared-view blocks)
+            "mismatch"
+            (owned_view.compiler-owned-shared-view gate-label)))
+        5]
+      [(not
+          (=
+            (opt-flag-exit-sent-gate-lhs
+              (compiler_optimize.compiler-opt-global-shared-view blocks)
+              (owned_view.compiler-owned-shared-view gate-label))
+            9))
+        6]
+      [(not
+          (=
+            (opt-flag-exit-sent-gate-rhs
+              (compiler_optimize.compiler-opt-global-shared-view blocks)
+              (owned_view.compiler-owned-shared-view gate-label))
+            (- 0 1)))
+        7]
       ;; the copied gate leaves for X on a mismatch and falls back into the
       ;; edge's own target otherwise
       [(not
           (=
-            (opt-flag-exit-test-branch-true blocks gate-label)
+            (opt-flag-exit-test-branch-true
+              (compiler_optimize.compiler-opt-global-shared-view blocks)
+              (owned_view.compiler-owned-shared-view gate-label))
             (compiler_ir_types.compiler-ir-label "done")))
         8]
       [(not
           (=
-            (opt-flag-exit-test-branch-false blocks gate-label)
+            (opt-flag-exit-test-branch-false
+              (compiler_optimize.compiler-opt-global-shared-view blocks)
+              (owned_view.compiler-owned-shared-view gate-label))
             (compiler_ir_types.compiler-ir-label "latch")))
         9]
       ;; the gate's arm collapsed onto the merge and went with the branch
-      [(not (= (opt-flag-exit-test-instr-count blocks "escape") (- 0 1))) 10]
+      [(not
+          (=
+            (opt-flag-exit-test-instr-count
+              (compiler_optimize.compiler-opt-global-shared-view blocks)
+              "escape")
+            (- 0 1)))
+        10]
       ;; the exit phi reads the value the skipped run would have left in the
       ;; flag on the redirected edge, and K on the counter exit's
-      [(not (= (opt-flag-exit-test-phi-input-count blocks "done" 7) 2)) 11]
-      [(not (= (opt-flag-exit-test-phi-var blocks "done" 7 gate-label) 9)) 12]
-      [(not (= (opt-flag-exit-test-phi-i64 blocks "done" 7 "exit") (- 0 1))) 13]
+      [(not
+          (=
+            (opt-flag-exit-test-phi-input-count
+              (compiler_optimize.compiler-opt-global-shared-view blocks)
+              "done"
+              7)
+            2))
+        11]
+      [(not
+          (=
+            (opt-flag-exit-test-phi-var
+              (compiler_optimize.compiler-opt-global-shared-view blocks)
+              "done"
+              7
+              (owned_view.compiler-owned-shared-view gate-label))
+            9))
+        12]
+      [(not
+          (=
+            (opt-flag-exit-test-phi-i64
+              (compiler_optimize.compiler-opt-global-shared-view blocks)
+              "done"
+              7
+              "exit")
+            (- 0 1)))
+        13]
       ;; the clear edge keeps its place in the latch phi under the copied
       ;; gate's name, pinned to K like every other path that keeps going
-      [(not (= (opt-flag-exit-test-phi-input-count blocks "latch" 4) 2)) 14]
       [(not
-          (= (opt-flag-exit-test-phi-i64 blocks "latch" 4 gate-label) (- 0 1)))
+          (=
+            (opt-flag-exit-test-phi-input-count
+              (compiler_optimize.compiler-opt-global-shared-view blocks)
+              "latch"
+              4)
+            2))
+        14]
+      [(not
+          (=
+            (opt-flag-exit-test-phi-i64
+              (compiler_optimize.compiler-opt-global-shared-view blocks)
+              "latch"
+              4
+              (owned_view.compiler-owned-shared-view gate-label))
+            (- 0 1)))
         15]
-      [(not (= (opt-flag-exit-test-phi-i64 blocks "latch" 4 "match") (- 0 1)))
+      [(not
+          (=
+            (opt-flag-exit-test-phi-i64
+              (compiler_optimize.compiler-opt-global-shared-view blocks)
+              "latch"
+              4
+              "match")
+            (- 0 1)))
         16]
-      [(not (= (opt-flag-exit-test-phi-i64 blocks "header" 3 "entry") (- 0 1)))
+      [(not
+          (=
+            (opt-flag-exit-test-phi-i64
+              (compiler_optimize.compiler-opt-global-shared-view blocks)
+              "header"
+              3
+              "entry")
+            (- 0 1)))
         17]
-      [(not (= (opt-flag-exit-test-phi-i64 blocks "header" 3 "latch") (- 0 1)))
+      [(not
+          (=
+            (opt-flag-exit-test-phi-i64
+              (compiler_optimize.compiler-opt-global-shared-view blocks)
+              "header"
+              3
+              "latch")
+            (- 0 1)))
         18]
       ;; idempotence: the next pipeline iteration finds nothing left to convert
-      [(not (compiler_optimize.opt-block-list-eq bases blocks twice)) 19]
+      [(not
+          (compiler_optimize.opt-block-list-eq
+            bases
+            (compiler_optimize.compiler-opt-global-shared-view blocks)
+            twice))
+        19]
       ;; (b) K as a global read, tested against a second read of the same
       ;; global in the same straight line: one value under two names
       [(not
           (compiler_optimize.opt-verify-ok?
-            (compiler_optimize.opt-verify-function global)))
+            (compiler_optimize.opt-verify-function
+              (compiler_optimize.compiler-opt-global-shared-view global))))
         20]
-      [(not (opt-flag-exit-test-jumps-to? global-blocks "gate" "cont")) 21]
-      [(not (opt-flag-exit-test-jumps-to? global-blocks "mismatch" gate-label))
-        22]
-      [(not (= (opt-flag-exit-sent-gate-lhs global-blocks gate-label) 9)) 23]
-      [(not (= (opt-flag-exit-sent-gate-rhs global-blocks gate-label) 20)) 24]
       [(not
-          (= (opt-flag-exit-test-phi-var global-blocks "done" 7 gate-label) 9))
+          (opt-flag-exit-test-jumps-to?
+            (compiler_optimize.compiler-opt-global-shared-view global-blocks)
+            "gate"
+            "cont"))
+        21]
+      [(not
+          (opt-flag-exit-test-jumps-to?
+            (compiler_optimize.compiler-opt-global-shared-view global-blocks)
+            "mismatch"
+            (owned_view.compiler-owned-shared-view gate-label)))
+        22]
+      [(not
+          (=
+            (opt-flag-exit-sent-gate-lhs
+              (compiler_optimize.compiler-opt-global-shared-view global-blocks)
+              (owned_view.compiler-owned-shared-view gate-label))
+            9))
+        23]
+      [(not
+          (=
+            (opt-flag-exit-sent-gate-rhs
+              (compiler_optimize.compiler-opt-global-shared-view global-blocks)
+              (owned_view.compiler-owned-shared-view gate-label))
+            20))
+        24]
+      [(not
+          (=
+            (opt-flag-exit-test-phi-var
+              (compiler_optimize.compiler-opt-global-shared-view global-blocks)
+              "done"
+              7
+              (owned_view.compiler-owned-shared-view gate-label))
+            9))
         25]
-      [(not (= (opt-flag-exit-test-phi-var global-blocks "done" 7 "exit") 20))
+      [(not
+          (=
+            (opt-flag-exit-test-phi-var
+              (compiler_optimize.compiler-opt-global-shared-view global-blocks)
+              "done"
+              7
+              "exit")
+            20))
         26]
-      [(not (= (opt-flag-exit-test-phi-var global-blocks "latch" 4 "match") 20))
+      [(not
+          (=
+            (opt-flag-exit-test-phi-var
+              (compiler_optimize.compiler-opt-global-shared-view global-blocks)
+              "latch"
+              4
+              "match")
+            20))
         27]
       ;; (c) a second assignment site on an edge the redirect cannot take
       [(not (opt-flag-exit-sent-rejects? 2)) 28]
@@ -76786,23 +77246,69 @@
       ;; place under the copied gate's name, and X hears from both
       [(not
           (compiler_optimize.opt-verify-ok?
-            (compiler_optimize.opt-verify-function mixed)))
+            (compiler_optimize.opt-verify-function
+              (compiler_optimize.compiler-opt-global-shared-view mixed))))
         32]
-      [(not (opt-flag-exit-test-jumps-to? mixed-blocks "gate" "cont")) 33]
-      [(not (opt-flag-exit-test-jumps-to? mixed-blocks "hit" "done")) 34]
-      [(not (opt-flag-exit-test-jumps-to? mixed-blocks "mismatch" gate-label))
+      [(not
+          (opt-flag-exit-test-jumps-to?
+            (compiler_optimize.compiler-opt-global-shared-view mixed-blocks)
+            "gate"
+            "cont"))
+        33]
+      [(not
+          (opt-flag-exit-test-jumps-to?
+            (compiler_optimize.compiler-opt-global-shared-view mixed-blocks)
+            "hit"
+            "done"))
+        34]
+      [(not
+          (opt-flag-exit-test-jumps-to?
+            (compiler_optimize.compiler-opt-global-shared-view mixed-blocks)
+            "mismatch"
+            (owned_view.compiler-owned-shared-view gate-label)))
         35]
-      [(not (= (opt-flag-exit-test-phi-input-count mixed-blocks "latch" 4) 2))
+      [(not
+          (=
+            (opt-flag-exit-test-phi-input-count
+              (compiler_optimize.compiler-opt-global-shared-view mixed-blocks)
+              "latch"
+              4)
+            2))
         36]
-      [(not (= (opt-flag-exit-test-phi-input-count mixed-blocks "done" 7) 3))
+      [(not
+          (=
+            (opt-flag-exit-test-phi-input-count
+              (compiler_optimize.compiler-opt-global-shared-view mixed-blocks)
+              "done"
+              7)
+            3))
         37]
       [(not
-          (= (opt-flag-exit-test-phi-i64 mixed-blocks "done" 7 "hit") (- 0 2)))
+          (=
+            (opt-flag-exit-test-phi-i64
+              (compiler_optimize.compiler-opt-global-shared-view mixed-blocks)
+              "done"
+              7
+              "hit")
+            (- 0 2)))
         38]
-      [(not (= (opt-flag-exit-test-phi-var mixed-blocks "done" 7 gate-label) 9))
+      [(not
+          (=
+            (opt-flag-exit-test-phi-var
+              (compiler_optimize.compiler-opt-global-shared-view mixed-blocks)
+              "done"
+              7
+              (owned_view.compiler-owned-shared-view gate-label))
+            9))
         39]
       [(not
-          (= (opt-flag-exit-test-phi-i64 mixed-blocks "done" 7 "exit") (- 0 1)))
+          (=
+            (opt-flag-exit-test-phi-i64
+              (compiler_optimize.compiler-opt-global-shared-view mixed-blocks)
+              "done"
+              7
+              "exit")
+            (- 0 1)))
         40]
       [else 42])))
 
@@ -77211,19 +77717,49 @@
     (cond
       ;; (a) the header's `stack[sp]` check goes; the push's check, which is
       ;; what proved it, stays.
-      [(not (= (opt-nn-count stack "header") 2)) 1]
-      [(not (= (opt-nn-count stack "push") 3)) 2]
+      [(not
+          (=
+            (opt-nn-count
+              (compiler_optimize.compiler-opt-global-shared-view stack)
+              "header")
+            2))
+        1]
+      [(not
+          (=
+            (opt-nn-count
+              (compiler_optimize.compiler-opt-global-shared-view stack)
+              "push")
+            3))
+        2]
       ;; ... and the loop's own `>= 0` test is untouched: `sp - 1` really can
       ;; be negative, and folding it would build an endless loop.
-      [(not (opt-nn-compare-signed? stack "merge" 1 14)) 3]
+      [(not
+          (opt-nn-compare-signed?
+            (compiler_optimize.compiler-opt-global-shared-view stack)
+            "merge"
+            1
+            14))
+        3]
       ;; (d) one unclassified input -- an unconstrained seed -- refuses it.
       [(not (= (opt-nn-count open-seed "header") 3)) 4]
       ;; (c) the push's check no longer dominates the edge that carries the
       ;; stepped value: refused.
       [(not (= (opt-nn-count split "header") 3)) 5]
       ;; (b) the reversed copy's check goes, the fill's check stays.
-      [(not (= (opt-nn-count cursor "copy_body") 3)) 6]
-      [(not (= (opt-nn-count cursor "fill_body") 3)) 7]
+      [(not
+          (=
+            (opt-nn-count
+              (compiler_optimize.compiler-opt-global-shared-view cursor)
+              "copy_body")
+            3))
+        6]
+      [(not
+          (=
+            (opt-nn-count
+              (compiler_optimize.compiler-opt-global-shared-view cursor)
+              "fill_body")
+            3))
+        7]
       ;; (e) `pending - 1` under `pending >= 1`, then without it.
       [(not (= (opt-nn-count guarded "take") 2)) 8]
       [(not (= (opt-nn-count unguarded "take") 3)) 9]

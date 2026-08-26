@@ -5278,18 +5278,22 @@
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (compiler_backend.backend-and8
         (or
-          (compiler_backend.compiler-backend-string-contains? asm "_tl_calc")
-          (compiler_backend.compiler-backend-string-contains? asm "_tl_f"))
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view asm)
+            "_tl_calc")
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view asm)
+            "_tl_f"))
         ;; FPO (M-G3 stage 2) makes frame refs rsp-relative; T1-6 (a) puts
         ;; this call-free leaf's frame in the red zone, so its params spill
         ;; to NEGATIVE rsp slots and the spilled sum is reloaded into its
         ;; modeled scratch (%rsi with scratch-vreg, legacy %r8 otherwise),
         ;; leaving the product in %rax.
         (compiler_backend.compiler-backend-string-contains?
-          asm
+          (owned_view.compiler-owned-shared-view asm)
           "    movq %rdi, -8(%rsp)\n")
         (compiler_backend.compiler-backend-string-contains?
-          asm
+          (owned_view.compiler-owned-shared-view asm)
           "    movq %rsi, -16(%rsp)\n")
         (compiler_backend.compiler-backend-string-contains?
           (owned_view.compiler-owned-shared-view asm)
@@ -5314,7 +5318,6 @@
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (compiler_backend.backend-and8
         ;; T1-6 (a) red-zone frame slots (a=-16, b=-32, sum=-40).
-        (compiler_backend.compiler-backend-string-contains? asm "main:\n")
         (compiler_backend.compiler-backend-string-contains?
           (owned_view.compiler-owned-shared-view asm)
           "main:\n")
@@ -5337,7 +5340,7 @@
             "    movsd %xmm0, -40(%rsp)\n"
             "    movsd %xmm2, -40(%rsp)\n"))
         (compiler_backend.compiler-backend-string-contains?
-          asm
+          (owned_view.compiler-owned-shared-view asm)
           "    movsd -40(%rsp), %xmm0\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
@@ -5350,7 +5353,10 @@
               scratch-vreg
               "    movsd -16(%rsp), %xmm2\n"
               "    movsd -16(%rsp), %xmm0\n")))
-        (not (compiler_backend.compiler-backend-string-contains? asm "%xmm3")))]
+        (not
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view asm)
+            "%xmm3")))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-test-global-builder-push!
@@ -8910,22 +8916,22 @@
   (let
     [incoming0 : i64
       (compiler_backend.compiler-backend-string-find-from
-        body
+        (owned_view.compiler-owned-shared-view body)
         "    movq %rdi, -8(%rsp)\n"
         0)]
     [incoming1 : i64
       (compiler_backend.compiler-backend-string-find-from
-        body
+        (owned_view.compiler-owned-shared-view body)
         "    movq %rsi, -16(%rsp)\n"
         0)]
     [outgoing0 : i64
       (compiler_backend.compiler-backend-string-find-from
-        body
+        (owned_view.compiler-owned-shared-view body)
         "    movq -8(%rsp), %rax\n"
         0)]
     [outgoing1 : i64
       (compiler_backend.compiler-backend-string-find-from
-        body
+        (owned_view.compiler-owned-shared-view body)
         "    movq -16(%rsp), %rdx\n"
         0)]
     (and
@@ -23136,43 +23142,82 @@ g:
 (define (compiler-backend-vector-copy-paths-ok? [width : String]) : bool
   (let
     [move : String
-      (if (string.eq width "zmm")
+      (if (string.eq (owned_view.compiler-owned-shared-view width) "zmm")
         "vmovdqu64"
         "vmovdqu")]
-    [r6 : String (str_cat.str-cat "%" (str_cat.str-cat width "6"))]
-    [r7 : String (str_cat.str-cat "%" (str_cat.str-cat width "7"))]
-    [r8 : String (str_cat.str-cat "%" (str_cat.str-cat width "8"))]
-    [r14 : String (str_cat.str-cat "%" (str_cat.str-cat width "14"))]
-    [r15 : String (str_cat.str-cat "%" (str_cat.str-cat width "15"))]
+    [r6 : String
+      (str_cat.str-cat
+        "%"
+        (str_cat.str-cat (owned_view.compiler-owned-shared-view width) "6"))]
+    [r7 : String
+      (str_cat.str-cat
+        "%"
+        (str_cat.str-cat (owned_view.compiler-owned-shared-view width) "7"))]
+    [r8 : String
+      (str_cat.str-cat
+        "%"
+        (str_cat.str-cat (owned_view.compiler-owned-shared-view width) "8"))]
+    [r14 : String
+      (str_cat.str-cat
+        "%"
+        (str_cat.str-cat (owned_view.compiler-owned-shared-view width) "14"))]
+    [r15 : String
+      (str_cat.str-cat
+        "%"
+        (str_cat.str-cat (owned_view.compiler-owned-shared-view width) "15"))]
     (and
       (compiler-backend-vector-copy-emits?
         1
         0
-        width
-        (compiler-backend-vector-copy-line move r6 r7))
+        (owned_view.compiler-owned-shared-view width)
+        (compiler-backend-vector-copy-line
+          (owned_view.compiler-owned-shared-view move)
+          (owned_view.compiler-owned-shared-view r6)
+          (owned_view.compiler-owned-shared-view r7)))
       (compiler-backend-vector-copy-emits?
         2
         0
-        width
+        (owned_view.compiler-owned-shared-view width)
         (str_cat.str-cat
-          (compiler-backend-vector-copy-line move r6 r15)
-          (compiler-backend-vector-copy-line move r15 "-64(%rbp)")))
+          (compiler-backend-vector-copy-line
+            (owned_view.compiler-owned-shared-view move)
+            (owned_view.compiler-owned-shared-view r6)
+            (owned_view.compiler-owned-shared-view r15))
+          (compiler-backend-vector-copy-line
+            (owned_view.compiler-owned-shared-view move)
+            (owned_view.compiler-owned-shared-view r15)
+            "-64(%rbp)")))
       (compiler-backend-vector-copy-emits?
         3
         2
-        width
+        (owned_view.compiler-owned-shared-view width)
         (str_cat.str-cat
-          (compiler-backend-vector-copy-line move "-64(%rbp)" r14)
-          (compiler-backend-vector-copy-line move r14 r8)))
+          (compiler-backend-vector-copy-line
+            (owned_view.compiler-owned-shared-view move)
+            "-64(%rbp)"
+            (owned_view.compiler-owned-shared-view r14))
+          (compiler-backend-vector-copy-line
+            (owned_view.compiler-owned-shared-view move)
+            (owned_view.compiler-owned-shared-view r14)
+            (owned_view.compiler-owned-shared-view r8))))
       (compiler-backend-vector-copy-emits?
         4
         2
-        width
+        (owned_view.compiler-owned-shared-view width)
         (str_cat.str-cat
-          (compiler-backend-vector-copy-line move "-64(%rbp)" r14)
+          (compiler-backend-vector-copy-line
+            (owned_view.compiler-owned-shared-view move)
+            "-64(%rbp)"
+            (owned_view.compiler-owned-shared-view r14))
           (str_cat.str-cat
-            (compiler-backend-vector-copy-line move r14 r15)
-            (compiler-backend-vector-copy-line move r15 "-128(%rbp)")))))))
+            (compiler-backend-vector-copy-line
+              (owned_view.compiler-owned-shared-view move)
+              (owned_view.compiler-owned-shared-view r14)
+              (owned_view.compiler-owned-shared-view r15))
+            (compiler-backend-vector-copy-line
+              (owned_view.compiler-owned-shared-view move)
+              (owned_view.compiler-owned-shared-view r15)
+              "-128(%rbp)")))))))
 
 (define (compiler-backend-mask-copy-emits?
   [dst : i64]
@@ -28267,24 +28312,24 @@ g:
         ;; save/restore instruction count, no frame.
         (compiler_backend.backend-and8
           (compiler_backend.compiler-backend-string-contains?
-            asm
+            (owned_view.compiler-owned-shared-view asm)
             "    movq %r9, %xmm4\n")
           (compiler_backend.compiler-backend-string-contains?
-            asm
+            (owned_view.compiler-owned-shared-view asm)
             "    movq %xmm4, %r9\n")
           (compiler_backend.compiler-backend-string-contains?
-            asm
+            (owned_view.compiler-owned-shared-view asm)
             "    movq %rcx, %xmm5\n")
           (compiler_backend.compiler-backend-string-contains?
-            asm
+            (owned_view.compiler-owned-shared-view asm)
             "    movq %xmm5, %rcx\n")
           (not
             (compiler_backend.compiler-backend-string-contains?
-              asm
+              (owned_view.compiler-owned-shared-view asm)
               "-512(%rbp)"))
           (not
             (compiler_backend.compiler-backend-string-contains?
-              asm
+              (owned_view.compiler-owned-shared-view asm)
               "-576(%rbp)"))
           true
           true))]
@@ -28306,39 +28351,42 @@ g:
         ;; so there is nothing to preserve and no park at all.
         (and
           (compiler_backend.compiler-backend-string-contains?
-            asm
+            (owned_view.compiler-owned-shared-view asm)
             "    movq -8(%rbp), %r12\n")
-          (not (compiler_backend.compiler-backend-string-contains? asm "%xmm4")))
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              (owned_view.compiler-owned-shared-view asm)
+              "%xmm4")))
         (compiler_backend.backend-and8
           ;; The base is materialised into a SCAVENGED register (%r9 here --
           ;; the preferred %r10 is occupied at this point), never a fixed one.
           (compiler_backend.compiler-backend-string-contains?
-            asm
+            (owned_view.compiler-owned-shared-view asm)
             "    movq -8(%rbp), %r9\n")
           (compiler_backend.compiler-backend-string-contains?
-            asm
+            (owned_view.compiler-owned-shared-view asm)
             "    movq 192(%r9), %rcx\n")
           ;; Both borrowed registers are parked in free XMM registers ...
           (compiler_backend.compiler-backend-string-contains?
-            asm
+            (owned_view.compiler-owned-shared-view asm)
             "    movq %r9, %xmm4\n")
           (compiler_backend.compiler-backend-string-contains?
-            asm
+            (owned_view.compiler-owned-shared-view asm)
             "    movq %xmm4, %r9\n")
           (compiler_backend.compiler-backend-string-contains?
-            asm
+            (owned_view.compiler-owned-shared-view asm)
             "    movq %rcx, %xmm5\n")
           (compiler_backend.compiler-backend-string-contains?
-            asm
+            (owned_view.compiler-owned-shared-view asm)
             "    movq %xmm5, %rcx\n")
           ;; ... and neither one is stored into the emergency frame region.
           (not
             (compiler_backend.compiler-backend-string-contains?
-              asm
+              (owned_view.compiler-owned-shared-view asm)
               "    movq %r9, -512(%rbp)\n"))
           (not
             (compiler_backend.compiler-backend-string-contains?
-              asm
+              (owned_view.compiler-owned-shared-view asm)
               "    movq %rcx, -576(%rbp)\n"))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
@@ -37591,17 +37639,17 @@ g:
         ;; f64 param spills from %xmm0 to -8(%rsp), divisor 2.0 at
         ;; -16(%rsp)); every one of these leaves is call-free.
         (compiler_backend.compiler-backend-string-contains?
-          asm
+          (owned_view.compiler-owned-shared-view asm)
           "    movq %rdi, -8(%rsp)\n")
         (compiler_backend.compiler-backend-string-contains?
-          asm
+          (owned_view.compiler-owned-shared-view asm)
           "    movsd %xmm0, -8(%rsp)\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
-            asm
+            (owned_view.compiler-owned-shared-view asm)
             "    movsd %xmm1, -8(%rsp)\n"))
         (compiler_backend.compiler-backend-string-contains?
-          asm
+          (owned_view.compiler-owned-shared-view asm)
           "    divsd -16(%rsp), %xmm2\n")
         (or
           (compiler-backend-call-or-jmp-ok?
@@ -37913,20 +37961,21 @@ g:
           (compiler_backend.compiler-backend-string-contains?
             (owned_view.compiler-owned-shared-view asm)
             "    movq %r10, 8(%rsp)\n")
-          (compiler-backend-stack-add-call-ok? asm)
+          (compiler-backend-stack-add-call-ok?
+            (owned_view.compiler-owned-shared-view asm))
           (compiler_backend.compiler-backend-string-contains?
-            callee
+            (owned_view.compiler-owned-shared-view callee)
             "    movq 8(%rsp), %r8\n")
           (compiler_backend.compiler-backend-string-contains?
-            callee
+            (owned_view.compiler-owned-shared-view callee)
             "    movq 16(%rsp), %r8\n")
           (not
             (compiler_backend.compiler-backend-string-contains?
-              callee
+              (owned_view.compiler-owned-shared-view callee)
               "    movq 8(%rsp), %rax\n"))
           (not
             (compiler_backend.compiler-backend-string-contains?
-              callee
+              (owned_view.compiler-owned-shared-view callee)
               "    movq 16(%rsp), %rax\n"))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
@@ -37954,18 +38003,18 @@ g:
           (owned_view.compiler-owned-shared-view asm)
           "    movq %r10, 8(%rsp)\n")
         (compiler_backend.compiler-backend-string-contains?
-          asm
+          (owned_view.compiler-owned-shared-view asm)
           "    movsd 8(%rsp), %xmm2\n")
         (compiler_backend.compiler-backend-string-contains?
-          asm
+          (owned_view.compiler-owned-shared-view asm)
           "    movsd 16(%rsp), %xmm2\n")
         (not
           (compiler_backend.compiler-backend-string-contains?
-            asm
+            (owned_view.compiler-owned-shared-view asm)
             "    movsd 8(%rsp), %xmm0\n"))
         (not
           (compiler_backend.compiler-backend-string-contains?
-            asm
+            (owned_view.compiler-owned-shared-view asm)
             "    movsd 16(%rsp), %xmm0\n")))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
@@ -37987,7 +38036,8 @@ g:
         (compiler_backend.compiler-backend-string-contains?
           (owned_view.compiler-owned-shared-view asm)
           "    movq %r10, 8(%rsp)\n")
-        (compiler-backend-stack-mix-call-ok? asm))]
+        (compiler-backend-stack-mix-call-ok?
+          (owned_view.compiler-owned-shared-view asm)))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
 ;; The Windows positional ABI still reserves 32-byte shadow space, stacks
@@ -52916,7 +52966,10 @@ b_keep:
     ;; touches the borrowed register, so name the scavenged GP scratch in it.
     [scratch-wrap-a : String
       (compiler_backend.compiler-backend-emergency-wrap
-        (str_cat.str-cat "A_BODY " scratch-gp-a "\n")
+        (str_cat.str-cat
+          "A_BODY "
+          (owned_view.compiler-owned-shared-view scratch-gp-a)
+          "\n")
         state-a)]
     [scratch-cycle-a0 : String
       (compiler_backend.compiler-backend-cycle-temp-slot-with-backend-state
@@ -52933,9 +52986,18 @@ b_keep:
         false)]
     [scratch-before-reset : bool
       (and
-        (not (string.eq scratch-gp-a "%rcx"))
-        (not (string.eq scratch-gp-a "%rax"))
-        (not (string.eq scratch-gp-a "%rdx"))
+        (not
+          (string.eq
+            (owned_view.compiler-owned-shared-view scratch-gp-a)
+            "%rcx"))
+        (not
+          (string.eq
+            (owned_view.compiler-owned-shared-view scratch-gp-a)
+            "%rax"))
+        (not
+          (string.eq
+            (owned_view.compiler-owned-shared-view scratch-gp-a)
+            "%rdx"))
         (not (string.eq scratch-xmm-a ""))
         (compiler_backend.compiler-backend-string-contains?
           (owned_view.compiler-owned-shared-view scratch-wrap-a)
@@ -52954,7 +53016,9 @@ b_keep:
             function-a
             compiler_backend.compiler-backend-scratch-i64-cycle-temp-used-count)
           2)
-        (string.eq scratch-b-output-before "B_CONST\n"))]
+        (string.eq
+          (owned_view.compiler-owned-shared-view scratch-b-output-before)
+          "B_CONST\n"))]
     [_reset-failed-a : unit
       (compiler_backend.compiler-backend-function-state-reset! function-a)]
     [failure-result : compiler_backend.ResultCompilerBackendBuffer
@@ -53015,7 +53079,9 @@ b_keep:
             function-b
             compiler_backend.compiler-backend-scratch-i64-cycle-temp-used-count)
           2)
-        (string.eq scratch-b-output-after scratch-b-output-before))]
+        (string.eq
+          (owned_view.compiler-owned-shared-view scratch-b-output-after)
+          (owned_view.compiler-owned-shared-view scratch-b-output-before)))]
     [b-after : compiler_backend.ResultCompilerBackend
       (compiler-backend-emit-test-instrs-target-with-backend-state
         b-instrs
@@ -53029,7 +53095,9 @@ b_keep:
           (match b-after
             [(compiler_backend.ResultCompilerBackend.Ok after-asm)
               (and
-                (string.eq before-asm after-asm)
+                (string.eq
+                  (owned_view.compiler-owned-shared-view before-asm)
+                  (owned_view.compiler-owned-shared-view after-asm))
                 (compiler_backend.compiler-backend-string-contains?
                   (owned_view.compiler-owned-shared-view after-asm)
                   "_allocentry_i0_v0_slow")

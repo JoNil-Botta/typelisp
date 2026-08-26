@@ -7878,16 +7878,24 @@
           (let
             [next-vector : live.CompilerLiveI64Set
               (if (or
-                (live.compiler-live-set-contains? vector-set dst)
-                (live.compiler-live-set-contains? vector-set source))
+                (live.compiler-live-set-contains?
+                  (compiler-reg-global-shared-view vector-set)
+                  dst)
+                (live.compiler-live-set-contains?
+                  (compiler-reg-global-shared-view vector-set)
+                  source))
                 (live.compiler-live-set-insert
                   (live.compiler-live-set-insert vector-set dst)
                   source)
                 vector-set)]
             [next-mask : live.CompilerLiveI64Set
               (if (or
-                (live.compiler-live-set-contains? mask-set dst)
-                (live.compiler-live-set-contains? mask-set source))
+                (live.compiler-live-set-contains?
+                  (compiler-reg-global-shared-view mask-set)
+                  dst)
+                (live.compiler-live-set-contains?
+                  (compiler-reg-global-shared-view mask-set)
+                  source))
                 (live.compiler-live-set-insert
                   (live.compiler-live-set-insert mask-set dst)
                   source)
@@ -7910,8 +7918,8 @@
           [next : live.CompilerLiveUseDef
             (compiler-reg-vector-mask-defs-propagate-instr
               (ir.compiler-ir-instr-seq-ref instrs index)
-              out-vector
-              out-mask)]
+              (compiler-reg-global-shared-view out-vector)
+              (compiler-reg-global-shared-view out-mask))]
           (begin
             (set! out-vector next.uses)
             (set! out-mask next.defs)
@@ -7934,7 +7942,7 @@
                 vector-set
                 mask-set)]
             (compiler-reg-vector-mask-defs-propagate-blocks
-              (__tl-box-place rest)
+              (ir.compiler-ir-box-shared-view rest)
               next.uses
               next.defs))])]
     [(ir.CompilerIrBlockList.Array seq)
@@ -7950,18 +7958,25 @@
   (let
     [next : live.CompilerLiveUseDef
       (compiler-reg-vector-mask-defs-propagate-blocks
-        blocks
-        vector-set
-        mask-set)]
+        (compiler-reg-global-shared-view blocks)
+        (compiler-reg-global-shared-view vector-set)
+        (compiler-reg-global-shared-view mask-set))]
     (if (and
       (=
-        (live.compiler-live-set-count next.uses)
-        (live.compiler-live-set-count vector-set))
+        (live.compiler-live-set-count
+          (compiler-reg-global-shared-view next.uses))
+        (live.compiler-live-set-count
+          (compiler-reg-global-shared-view vector-set)))
       (=
-        (live.compiler-live-set-count next.defs)
-        (live.compiler-live-set-count mask-set)))
+        (live.compiler-live-set-count
+          (compiler-reg-global-shared-view next.defs))
+        (live.compiler-live-set-count
+          (compiler-reg-global-shared-view mask-set))))
       next
-      (compiler-reg-vector-mask-defs-fixpoint blocks next.uses next.defs))))
+      (compiler-reg-vector-mask-defs-fixpoint
+        (compiler-reg-global-shared-view blocks)
+        next.uses
+        next.defs))))
 
 (define (compiler-reg-function-vector-mask-defs [func : ir.CompilerIrFunction]) : live.CompilerLiveUseDef
   (match (compiler-reg-global-shared-view func)
@@ -7969,11 +7984,14 @@
       (let
         [defs : live.CompilerLiveUseDef
           (compiler-reg-spmd-private-param-defs
-            params
+            (compiler-reg-global-shared-view params)
             (live.compiler-live-set-empty)
             (live.compiler-live-set-empty))]
         [seeded : live.CompilerLiveUseDef
-          (compiler-reg-vector-mask-defs-blocks blocks defs.uses defs.defs)]
+          (compiler-reg-vector-mask-defs-blocks
+            (compiler-reg-global-shared-view blocks)
+            (compiler-reg-global-shared-view defs.uses)
+            (compiler-reg-global-shared-view defs.defs))]
         (compiler-reg-vector-mask-defs-fixpoint blocks seeded.uses seeded.defs))]))
 
 (define (compiler-reg-special-candidates
@@ -37360,7 +37378,7 @@
         (begin
           (if (compiler-reg-vector-stack-words-propagate-instr!
             (ir.compiler-ir-instr-seq-ref instrs index)
-            words)
+            (compiler-reg-global-shared-view words))
             (set! changed true)
             unit)
           (set! index (+ index 1))))
@@ -37376,21 +37394,25 @@
         [(ir.CompilerIrBlock.Block _ instrs)
           (let
             [here : bool
-              (compiler-reg-vector-stack-words-propagate-seq! instrs words)]
+              (compiler-reg-vector-stack-words-propagate-seq!
+                instrs
+                (compiler-reg-global-shared-view words))]
             [later : bool
               (compiler-reg-vector-stack-words-propagate-blocks!
-                (__tl-box-place rest)
-                words)]
+                (ir.compiler-ir-box-shared-view rest)
+                (compiler-reg-global-shared-view words))]
             (or here later))])]
     [(ir.CompilerIrBlockList.Array seq)
       (compiler-reg-vector-stack-words-propagate-blocks!
         (ir.compiler-ir-block-seq-to-list seq)
-        words)]))
+        (compiler-reg-global-shared-view words))]))
 
 (define (compiler-reg-vector-stack-words-fixpoint!
   [blocks : ir.CompilerIrBlockList]
   [words : (__tl_dyn-array i64)]) : unit
-  (if (compiler-reg-vector-stack-words-propagate-blocks! blocks words)
+  (if (compiler-reg-vector-stack-words-propagate-blocks!
+    (compiler-reg-global-shared-view blocks)
+    (compiler-reg-global-shared-view words))
     (compiler-reg-vector-stack-words-fixpoint! blocks words)
     unit))
 
@@ -40773,11 +40795,15 @@
         [vector-stack-words : (__tl_dyn-array i64) (array.make-array i64 vars)]
         [_vector-stack-words : unit
           (begin
-            (compiler-reg-vector-stack-words-params! params vector-stack-words)
-            (compiler-reg-vector-stack-words-blocks! blocks vector-stack-words)
+            (compiler-reg-vector-stack-words-params!
+              (compiler-reg-global-shared-view params)
+              (compiler-reg-global-shared-view vector-stack-words))
+            (compiler-reg-vector-stack-words-blocks!
+              (compiler-reg-global-shared-view blocks)
+              (compiler-reg-global-shared-view vector-stack-words))
             (compiler-reg-vector-stack-words-fixpoint!
-              blocks
-              vector-stack-words))]
+              (compiler-reg-global-shared-view blocks)
+              (compiler-reg-global-shared-view vector-stack-words)))]
         [slots : i64
           (+
             (+

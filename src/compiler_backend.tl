@@ -7344,9 +7344,9 @@
             (+ index 1)))]
       [(compiler_ir_types.CompilerIrInstr.VectorBinOp payload-box)
         (let
-          [dst (__tl-project-field (__tl-box-place payload-box) dst)]
-          [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
-          [elem-ty (__tl-project-field (__tl-box-place payload-box) ty)]
+          [dst (compiler-backend-box-field-shared-view payload-box dst)]
+          [lanes (compiler-backend-box-field-shared-view payload-box lanes)]
+          [elem-ty (compiler-backend-box-field-shared-view payload-box ty)]
           (if (= dst var)
             (CompilerBackendSimdCopyShape.Vector lanes elem-ty)
             (compiler-backend-simd-copy-shape-seq
@@ -7357,8 +7357,8 @@
               (+ index 1))))]
       [(compiler_ir_types.CompilerIrInstr.VectorCompare payload-box)
         (let
-          [dst (__tl-project-field (__tl-box-place payload-box) dst)]
-          [lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
+          [dst (compiler-backend-box-field-shared-view payload-box dst)]
+          [lanes (compiler-backend-box-field-shared-view payload-box lanes)]
           (if (= dst var)
             (CompilerBackendSimdCopyShape.Mask lanes)
             (compiler-backend-simd-copy-shape-seq
@@ -7374,8 +7374,8 @@
             (match src
               [(compiler_ir_types.CompilerIrValue.Var source)
                 (compiler-backend-simd-copy-shape-blocks
-                  blocks
-                  blocks
+                  (compiler-backend-global-shared-view blocks)
+                  (compiler-backend-global-shared-view blocks)
                   source
                   (- remaining 1))]
               [_ (CompilerBackendSimdCopyShape.No)]))
@@ -7405,15 +7405,15 @@
       (match block
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (match (compiler-backend-simd-copy-shape-seq
-            all-blocks
+            (compiler-backend-global-shared-view all-blocks)
             instrs
             var
             remaining
             0)
             [(CompilerBackendSimdCopyShape.No)
               (compiler-backend-simd-copy-shape-blocks
-                all-blocks
-                (__tl-box-place rest)
+                (compiler-backend-global-shared-view all-blocks)
+                (compiler_ir_types.compiler-ir-block-list-box-shared-view rest)
                 var
                 remaining)]
             [(CompilerBackendSimdCopyShape.Vector lanes elem-ty)
@@ -7422,7 +7422,7 @@
               (CompilerBackendSimdCopyShape.Mask lanes)])])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (compiler-backend-simd-copy-shape-blocks
-        all-blocks
+        (compiler-backend-global-shared-view all-blocks)
         (compiler_ir_types.compiler-ir-block-seq-to-list seq)
         var
         remaining)]))
@@ -7431,7 +7431,11 @@
   [blocks : compiler_ir_types.CompilerIrBlockList]
   [dst : i64]
   [vars : i64]) : CompilerBackendSimdCopyShape
-  (compiler-backend-simd-copy-shape-blocks blocks blocks dst (+ vars 1)))
+  (compiler-backend-simd-copy-shape-blocks
+    (compiler-backend-global-shared-view blocks)
+    blocks
+    dst
+    (+ vars 1)))
 
 (define (compiler-backend-emit-vector-copy
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -7441,24 +7445,30 @@
   [elem-ty : compiler_ast_types.AstType]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
-    [source-scratch : String (compiler-backend-vector-spill-scratch width 0)]
-    [dst-scratch : String (compiler-backend-vector-spill-scratch width 1)]
+    [source-scratch : String
+      (compiler-backend-vector-spill-scratch
+        (compiler-backend-global-shared-view width)
+        0)]
+    [dst-scratch : String
+      (compiler-backend-vector-spill-scratch
+        (compiler-backend-global-shared-view width)
+        1)]
     (match (compiler-backend-vector-register-use
-      assignments
-      src
+      (compiler-backend-global-shared-view assignments)
+      (compiler-backend-global-shared-view src)
       "copy source"
-      width
-      elem-ty
+      (compiler-backend-global-shared-view width)
+      (compiler-backend-global-shared-view elem-ty)
       source-scratch
       backend-state)
       [(ResultBackendVectorUse.Ok source-use)
         (match source-use
           [(CompilerBackendVectorUse.Use load-asm source-reg)
             (match (compiler-backend-vector-dst-reg
-              assignments
+              (compiler-backend-global-shared-view assignments)
               dst
               "copy destination"
-              width
+              (compiler-backend-global-shared-view width)
               dst-scratch
               backend-state)
               [(ResultBackendReg.Ok dst-reg)
@@ -7466,7 +7476,9 @@
                   (str_cat.str-cat
                     (str_cat.str-cat
                       load-asm
-                      (if (string.eq source-reg dst-reg)
+                      (if (string.eq
+                        (compiler-backend-global-shared-view source-reg)
+                        (compiler-backend-global-shared-view dst-reg))
                         ""
                         (str_cat.str-cat
                           (str_cat.str-cat
@@ -7474,11 +7486,15 @@
                               (str_cat.str-cat
                                 "    "
                                 (compiler-backend-vector-move-for-width
-                                  width
-                                  elem-ty))
+                                  (compiler-backend-global-shared-view width)
+                                  (compiler-backend-global-shared-view elem-ty)))
                               " ")
-                            source-reg)
-                          (str_cat.str-cat ", " (str_cat.str-cat dst-reg "\n")))))
+                            (compiler-backend-global-shared-view source-reg))
+                          (str_cat.str-cat
+                            ", "
+                            (str_cat.str-cat
+                              (compiler-backend-global-shared-view dst-reg)
+                              "\n")))))
                     (compiler-backend-vector-store-dst
                       assignments
                       dst
@@ -7500,27 +7516,29 @@
   (let
     [scratch : String (compiler-backend-mask-spill-scratch 0)]
     (match (compiler-backend-avx512-mask-register-use
-      assignments
-      src
+      (compiler-backend-global-shared-view assignments)
+      (compiler-backend-global-shared-view src)
       "copy source"
       lanes
-      scratch
+      (compiler-backend-global-shared-view scratch)
       backend-state)
       [(ResultBackendMaskUse.Ok source-use)
         (match source-use
           [(CompilerBackendMaskUse.Use load-asm source-reg)
             (match (compiler-backend-avx512-mask-dst-reg
-              assignments
+              (compiler-backend-global-shared-view assignments)
               dst
               "copy destination"
-              scratch
+              (compiler-backend-global-shared-view scratch)
               backend-state)
               [(ResultBackendReg.Ok dst-reg)
                 (ResultCompilerBackend.Ok
                   (str_cat.str-cat
                     (str_cat.str-cat
                       load-asm
-                      (if (string.eq source-reg dst-reg)
+                      (if (string.eq
+                        (compiler-backend-global-shared-view source-reg)
+                        (compiler-backend-global-shared-view dst-reg))
                         ""
                         (str_cat.str-cat
                           (str_cat.str-cat
@@ -7530,8 +7548,12 @@
                                 (compiler-backend-avx512-mask-move-mnemonic
                                   lanes))
                               " ")
-                            source-reg)
-                          (str_cat.str-cat ", " (str_cat.str-cat dst-reg "\n")))))
+                            (compiler-backend-global-shared-view source-reg))
+                          (str_cat.str-cat
+                            ", "
+                            (str_cat.str-cat
+                              (compiler-backend-global-shared-view dst-reg)
+                              "\n")))))
                     (compiler-backend-avx512-mask-store-dst
                       assignments
                       dst
@@ -16746,21 +16768,29 @@
   [text : String]
   [reg : i64]) : bool
   (and
-    (compiler-backend-emergency-text-park-allowed? text)
+    (compiler-backend-emergency-text-park-allowed?
+      (compiler-backend-global-shared-view text))
     (>= reg compiler_abi.compiler-reg-id-r8)
     (<= reg compiler_abi.compiler-reg-id-r15)
     (let
       [name : String (compiler_abi.compiler-abi-register-spelling reg)]
       (and
-        (not (compiler-backend-string-contains? text name))
         (not
           (compiler-backend-string-contains?
-            text
-            (compiler-backend-reg-part name 4)))
+            (compiler-backend-global-shared-view text)
+            (compiler-backend-global-shared-view name)))
         (not
           (compiler-backend-string-contains?
-            text
-            (compiler-backend-reg-part name 2)))
+            (compiler-backend-global-shared-view text)
+            (compiler-backend-reg-part
+              (compiler-backend-global-shared-view name)
+              4)))
+        (not
+          (compiler-backend-string-contains?
+            (compiler-backend-global-shared-view text)
+            (compiler-backend-reg-part
+              (compiler-backend-global-shared-view name)
+              2)))
         (not
           (compiler-backend-string-contains?
             text
@@ -16830,9 +16860,13 @@
     [digits : String (string.int->string family)]
     (and
       (not
-        (compiler-backend-string-contains? text (str_cat.str-cat "%xmm" digits)))
+        (compiler-backend-string-contains?
+          (compiler-backend-global-shared-view text)
+          (str_cat.str-cat "%xmm" (compiler-backend-global-shared-view digits))))
       (not
-        (compiler-backend-string-contains? text (str_cat.str-cat "%ymm" digits)))
+        (compiler-backend-string-contains?
+          (compiler-backend-global-shared-view text)
+          (str_cat.str-cat "%ymm" (compiler-backend-global-shared-view digits))))
       (not
         (compiler-backend-string-contains? text (str_cat.str-cat "%zmm" digits))))))
 
@@ -16887,7 +16921,9 @@
                     function-state
                     count
                     xmm))
-                (compiler-backend-emergency-park-untouched-by-text? text xmm))
+                (compiler-backend-emergency-park-untouched-by-text?
+                  (compiler-backend-global-shared-view text)
+                  xmm))
                 (set! found xmm)
                 unit)
               (set! i (+ i 1)))))
@@ -16928,7 +16964,9 @@
             [untouched : bool
               (and
                 have-text
-                (compiler-backend-emergency-reg-untouched-by-text? text reg))]
+                (compiler-backend-emergency-reg-untouched-by-text?
+                  (compiler-backend-global-shared-view text)
+                  reg))]
             [park : i64
               (if untouched
                 -1
@@ -16936,7 +16974,7 @@
                   function-state
                   reg
                   count
-                  text
+                  (compiler-backend-global-shared-view text)
                   park-allowed))]
             [slot-index : i64
               (compiler-backend-emergency-slot-form-count function-state count)]
@@ -17313,9 +17351,10 @@
         [_commit : unit
           (compiler-backend-emergency-commit-locs!
             function-state
-            head
+            (compiler-backend-global-shared-view head)
             true
-            (compiler-backend-emergency-text-park-allowed? head))]
+            (compiler-backend-emergency-text-park-allowed?
+              (compiler-backend-global-shared-view head)))]
         [count : i64
           (compiler-backend-function-scratch-i64
             function-state
@@ -49498,7 +49537,11 @@
       (compiler-backend-function-state-current-mode function-state)]
     (if (or
       (compiler-backend-mode-scalar? mode)
-      (compiler-backend-value-same-home? backend-state assignments dst src))
+      (compiler-backend-value-same-home?
+        backend-state
+        (compiler-backend-global-shared-view assignments)
+        dst
+        (compiler-backend-global-shared-view src)))
       (compiler-backend-emit-mov-with-plan
         type-segment-bases
         assignments
@@ -77860,7 +77903,8 @@
                             (compiler-backend-red-zone-decide!
                               program-index.backend-state
                               target
-                              post-prologue
+                              (compiler-backend-global-shared-view
+                                post-prologue)
                               fpo-attempt
                               fpo-frame
                               outgoing-frame-space

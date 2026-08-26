@@ -79756,7 +79756,10 @@
     (cfg
       scavenge-census
       (compiler-backend-scavenge-census-reset! backend-state))
-    (cfg compile-profile (compiler-backend-profile-start profile-state))
+    (cfg
+      compile-profile
+      (compiler-backend-profile-start
+        (profile_state.compiler-profile-state-shared-view profile-state)))
     (match (compiler-backend-runtime-plan-with-index-with-backend-state
       backend-state
       (compiler-backend-global-shared-view program))

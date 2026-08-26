@@ -1377,7 +1377,8 @@
                   (owned_view.compiler-owned-shared-view _state))
                 "write"))
             (compiler_driver_core.compiler-driver-allocation-profile-snapshot-for-job!
-              (compiler_driver_core.compiler-driver-state-typecheck _state)
+              (compiler_driver_core.compiler-driver-state-typecheck
+                (owned_view.compiler-owned-shared-view _state))
               "write")
             (cfg
               compile-profile
@@ -1419,7 +1420,8 @@
                   (owned_view.compiler-owned-shared-view _state))
                 "write"))
             (compiler_driver_core.compiler-driver-allocation-profile-snapshot-for-job!
-              (compiler_driver_core.compiler-driver-state-typecheck _state)
+              (compiler_driver_core.compiler-driver-state-typecheck
+                (owned_view.compiler-owned-shared-view _state))
               "write")
             (cfg
               compile-profile
@@ -1442,7 +1444,8 @@
       [(compiler_windows_coff_core.ResultCompilerWindowsBatchArtifact.Err diag)
         (begin
           (compiler_driver_core.compiler-driver-allocation-profile-snapshot-for-job!
-            (compiler_driver_core.compiler-driver-state-typecheck _state)
+            (compiler_driver_core.compiler-driver-state-typecheck
+              (owned_view.compiler-owned-shared-view _state))
             "write-error")
           (cfg
             compile-profile

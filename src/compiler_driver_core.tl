@@ -2315,7 +2315,9 @@
           (begin
             (cfg
               compile-profile
-              (compiler-driver-profile-finish-phase profile-state "optimize"))
+              (compiler-driver-profile-finish-phase
+                (profile_state.compiler-profile-state-shared-view profile-state)
+                "optimize"))
             (compiler-driver-allocation-profile-snapshot-for-job!
               typecheck-state
               "optimize")
@@ -5654,7 +5656,9 @@
         (begin
           (cfg
             compile-profile
-            (compiler-driver-profile-finish-phase _profile-state "write"))
+            (compiler-driver-profile-finish-phase
+              (profile_state.compiler-profile-state-shared-view _profile-state)
+              "write"))
           (compiler-driver-allocation-profile-snapshot-for-job!
             typecheck-state
             "write")

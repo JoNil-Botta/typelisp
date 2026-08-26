@@ -46,7 +46,7 @@
   ;; that both defines a macro and uses a generated function would fail to
   ;; typecheck. The downstream specialize call re-normalizes harmlessly.
   (begin
-    (tc_core.tc-spmd-inline-helper-stack-reset!)
+    (tc_core.tc-spmd-inline-helper-stack-reset-for-job! job-state)
     (tc_core.tc-macro-call-site-state-reset!
       (tc_core.tc-job-state-macro-call-sites job-state))
     (tc_core.tc-typecheck-result-with-pool-check
@@ -284,7 +284,7 @@
   [stdlib-roots : svec.Vec]
   [pools : ast.AstNodePoolContext]) : ResultCompilerDocExpand
   (begin
-    (tc_core.tc-spmd-inline-helper-stack-reset!)
+    (tc_core.tc-spmd-inline-helper-stack-reset-for-job! job-state)
     (tc_core.tc-macro-call-site-state-reset!
       (tc_core.tc-job-state-macro-call-sites job-state))
     (let
@@ -349,7 +349,7 @@
   [pools : ast.AstNodePoolContext]
   [intern-state : ci.InternCompatState]) : tc_core.ResultCompilerTypecheckChecked
   (begin
-    (tc_core.tc-spmd-inline-helper-stack-reset!)
+    (tc_core.tc-spmd-inline-helper-stack-reset-for-job! job-state)
     (tc_core.tc-macro-call-site-state-reset!
       (tc_core.tc-job-state-macro-call-sites job-state))
     (tc_core.tc-typecheck-checked-result-with-pool-check

@@ -95619,7 +95619,8 @@
           [_start : unit
             (cfg
               compile-profile
-              (compiler-opt-profile-detail-start summaries.profile-state))]
+              (compiler-opt-profile-detail-start
+                (compiler-opt-global-shared-view summaries.profile-state)))]
           [optimized : ir.CompilerIrFunction
             (optimize-function-level1-escaping-with-summaries
               (compiler-opt-global-shared-view pools)
@@ -95638,7 +95639,7 @@
             (cfg
               compile-profile
               (compiler-opt-profile-detail-finish
-                summaries.profile-state
+                (compiler-opt-global-shared-view summaries.profile-state)
                 "function"
                 (compiler-opt-profile-function-name
                   (compiler-opt-global-shared-view func))))]
@@ -95666,7 +95667,8 @@
           [_start : unit
             (cfg
               compile-profile
-              (compiler-opt-profile-detail-start summaries.profile-state))]
+              (compiler-opt-profile-detail-start
+                (compiler-opt-global-shared-view summaries.profile-state)))]
           [optimized : ir.CompilerIrFunction
             (optimize-function-escaping-with-summaries
               (compiler-opt-global-shared-view pools)
@@ -95686,7 +95688,7 @@
             (cfg
               compile-profile
               (compiler-opt-profile-detail-finish
-                summaries.profile-state
+                (compiler-opt-global-shared-view summaries.profile-state)
                 "function"
                 (compiler-opt-profile-function-name
                   (compiler-opt-global-shared-view func))))]

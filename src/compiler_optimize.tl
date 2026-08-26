@@ -24965,7 +24965,7 @@
 
 (defenum OptInductionDerivedList
   (Nil)
-  (Cons OptInductionDerived (Box OptInductionDerivedList)))
+  (Dense (__tl_dyn-array OptInductionDerived) i64))
 
 (defenum OptMaybeInductionDerived
   (No)
@@ -25875,24 +25875,57 @@
   [derived : OptInductionDerived]) : bool
   (match deriveds
     [(OptInductionDerivedList.Nil) false]
-    [(OptInductionDerivedList.Cons head rest)
-      (if (opt-induction-derived-eq? type-segment-bases head derived)
-        true
-        (opt-induction-derived-list-contains?
-          type-segment-bases
-          (__tl-box-place rest)
-          derived))]))
+    [(OptInductionDerivedList.Dense items len)
+      (let
+        [index : i64 0]
+        [found : bool false]
+        (begin
+          (while (and (< index len) (not found))
+            (begin
+              (when
+                (opt-induction-derived-eq?
+                  type-segment-bases
+                  (array-ref items index)
+                  derived)
+                (set! found true))
+              (set! index (+ index 1))))
+          found))]))
+
+(define (opt-induction-derived-list-ref
+  [deriveds : OptInductionDerivedList]
+  [index : i64]) : OptInductionDerived
+  (match deriveds
+    [(OptInductionDerivedList.Nil)
+      (OptInductionDerived.Mul 0 0 (ast.AstType.I64))]
+    [(OptInductionDerivedList.Dense items _) (array-ref items index)]))
 
 (define (opt-induction-derived-list-append
   [deriveds : OptInductionDerivedList]
   [derived : OptInductionDerived]) : OptInductionDerivedList
   (match deriveds
     [(OptInductionDerivedList.Nil)
-      (OptInductionDerivedList.Cons derived (box (OptInductionDerivedList.Nil)))]
-    [(OptInductionDerivedList.Cons head rest)
-      (OptInductionDerivedList.Cons
-        head
-        (box (opt-induction-derived-list-append (__tl-box-place rest) derived)))]))
+      (let
+        [items : (__tl_dyn-array OptInductionDerived)
+          (array.make-array OptInductionDerived 4)]
+        (begin
+          (set! (array-ref items 0) derived)
+          (OptInductionDerivedList.Dense items 1)))]
+    [(OptInductionDerivedList.Dense items len)
+      (if (< len (array-length items))
+        (begin
+          (set! (array-ref items len) derived)
+          (OptInductionDerivedList.Dense items (+ len 1)))
+        (let
+          [bigger : (__tl_dyn-array OptInductionDerived)
+            (array.make-array OptInductionDerived (opt-dense-next-capacity len))]
+          [index : i64 0]
+          (begin
+            (while (< index len)
+              (begin
+                (set! (array-ref bigger index) (array-ref items index))
+                (set! index (+ index 1))))
+            (set! (array-ref bigger len) derived)
+            (OptInductionDerivedList.Dense bigger (+ len 1)))))]))
 
 (define (opt-induction-derived-list-append-unique
   [type-segment-bases : i64]
@@ -25905,17 +25938,104 @@
 (define (opt-induction-derived-list-count [deriveds : OptInductionDerivedList]) : i64
   (match deriveds
     [(OptInductionDerivedList.Nil) 0]
-    [(OptInductionDerivedList.Cons _ rest)
-      (+ 1 (opt-induction-derived-list-count (__tl-box-place rest)))]))
+    [(OptInductionDerivedList.Dense _ len) len]))
 
 (define (opt-induction-derived-list-slot-count
   [deriveds : OptInductionDerivedList]) : i64
-  (match deriveds
-    [(OptInductionDerivedList.Nil) 0]
-    [(OptInductionDerivedList.Cons derived rest)
-      (+
-        (opt-induction-derived-slot-count derived)
-        (opt-induction-derived-list-slot-count (__tl-box-place rest)))]))
+  (let
+    [len : i64 (opt-induction-derived-list-count deriveds)]
+    [index : i64 0]
+    [count : i64 0]
+    (begin
+      (while (< index len)
+        (begin
+          (set!
+            count
+            (+
+              count
+              (opt-induction-derived-slot-count
+                (opt-induction-derived-list-ref deriveds index))))
+          (set! index (+ index 1))))
+      count)))
+
+(cfg
+  test
+  (test
+    optimizer-induction-derived-dense-storage-grows-in-source-order
+    (let
+      [empty : OptInductionDerivedList (OptInductionDerivedList.Nil)]
+      [first : OptInductionDerived
+        (OptInductionDerived.Mul 7 0 (ast.AstType.I64))]
+      [one : OptInductionDerivedList
+        (opt-induction-derived-list-append-unique 0 empty first)]
+      [duplicate : OptInductionDerivedList
+        (opt-induction-derived-list-append-unique 0 one first)]
+      [two : OptInductionDerivedList
+        (opt-induction-derived-list-append-unique
+          0
+          one
+          (OptInductionDerived.Mul 8 1 (ast.AstType.I64)))]
+      [deriveds : OptInductionDerivedList (OptInductionDerivedList.Nil)]
+      [index : i64 0]
+      (begin
+        (test.assert-i64-eq
+          (opt-induction-derived-list-count empty)
+          0
+          "induction derived empty storage")
+        (test.assert-i64-eq
+          (opt-induction-derived-list-count one)
+          1
+          "induction derived retained singleton length")
+        (test.assert-i64-eq
+          (opt-induction-derived-list-count duplicate)
+          1
+          "induction derived duplicate is ignored")
+        (test.assert-i64-eq
+          (opt-induction-derived-list-count two)
+          2
+          "induction derived distinct append")
+        (match (opt-induction-derived-list-ref one 0)
+          [(OptInductionDerived.Mul scale offset _)
+            (begin
+              (test.assert-i64-eq scale 7 "induction derived retained scale")
+              (test.assert-i64-eq offset 0 "induction derived retained offset"))]
+          [_ (test.assert-true false "induction derived retained shape")])
+        (match (opt-induction-derived-list-ref two 1)
+          [(OptInductionDerived.Mul scale offset _)
+            (begin
+              (test.assert-i64-eq scale 8 "induction derived append order")
+              (test.assert-i64-eq offset 1 "induction derived append offset"))]
+          [_ (test.assert-true false "induction derived append shape")])
+        (while (< index 9)
+          (begin
+            (set!
+              deriveds
+              (opt-induction-derived-list-append-unique
+                0
+                deriveds
+                (OptInductionDerived.Mul (+ index 10) index (ast.AstType.I64))))
+            (set! index (+ index 1))))
+        (match deriveds
+          [(OptInductionDerivedList.Nil)
+            (test.assert-true false "induction derived storage is non-empty")]
+          [(OptInductionDerivedList.Dense items len)
+            (begin
+              (test.assert-i64-eq len 9 "induction derived storage length")
+              (test.assert-true
+                (>= (array-length items) 9)
+                "induction derived storage grows past eight"))])
+        (match (opt-induction-derived-list-ref deriveds 0)
+          [(OptInductionDerived.Mul scale _ _)
+            (test.assert-i64-eq scale 10 "induction derived first source fact")]
+          [_ (test.assert-true false "induction derived first shape")])
+        (match (opt-induction-derived-list-ref deriveds 8)
+          [(OptInductionDerived.Mul scale _ _)
+            (test.assert-i64-eq scale 18 "induction derived last source fact")]
+          [_ (test.assert-true false "induction derived last shape")])
+        (test.assert-i64-eq
+          (opt-induction-derived-list-slot-count deriveds)
+          35
+          "induction derived slot accumulation order")))))
 
 (define (opt-induction-collect-derived-instr-seq-from
   [type-segment-bases : i64]
@@ -26267,7 +26387,7 @@
         all-blocks
         (ir.compiler-ir-block-seq-to-list seq))]))
 
-(define (opt-induction-rewrite-derived-list-blocks
+(define (opt-induction-rewrite-derived-list-blocks-from
   [type-segment-bases : i64]
   [body : OptLoopBody]
   [index : OptCfgIndex]
@@ -26275,20 +26395,15 @@
   [offsets : opt_i64_i64_map.Map]
   [scaled : opt_i64_i64_map.Map]
   [deriveds : OptInductionDerivedList]
+  [derived-index : i64]
   [frame : i64]
   [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
-  (match deriveds
-    [(OptInductionDerivedList.Nil) blocks]
-    [(OptInductionDerivedList.Cons derived rest)
-      (opt-induction-rewrite-derived-list-blocks
-        type-segment-bases
-        body
-        index
-        fact
-        offsets
-        scaled
-        (__tl-box-place rest)
-        (+ frame (opt-induction-derived-slot-count derived))
+  (if (>= derived-index (opt-induction-derived-list-count deriveds))
+    blocks
+    (let
+      [derived : OptInductionDerived
+        (opt-induction-derived-list-ref deriveds derived-index)]
+      [rewritten : ir.CompilerIrBlockList
         (opt-induction-rewrite-blocks
           type-segment-bases
           body
@@ -26299,7 +26414,40 @@
           derived
           (opt-induction-derived-phi-var derived frame)
           blocks
-          blocks))]))
+          blocks)]
+      (opt-induction-rewrite-derived-list-blocks-from
+        type-segment-bases
+        body
+        index
+        fact
+        offsets
+        scaled
+        deriveds
+        (+ derived-index 1)
+        (+ frame (opt-induction-derived-slot-count derived))
+        rewritten))))
+
+(define (opt-induction-rewrite-derived-list-blocks
+  [type-segment-bases : i64]
+  [body : OptLoopBody]
+  [index : OptCfgIndex]
+  [fact : OptInductionFact]
+  [offsets : opt_i64_i64_map.Map]
+  [scaled : opt_i64_i64_map.Map]
+  [deriveds : OptInductionDerivedList]
+  [frame : i64]
+  [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
+  (opt-induction-rewrite-derived-list-blocks-from
+    type-segment-bases
+    body
+    index
+    fact
+    offsets
+    scaled
+    deriveds
+    0
+    frame
+    blocks))
 
 ;; GepScaled has no affine offset; it reports a nonzero value so it takes the
 ;; 4-slot layout (mul tmp, seed, phi, next) its two-instruction seed needs.
@@ -26459,17 +26607,21 @@
   [seed-builder : (&mut seed-builder ir.CompilerIrInstrBuilder)]
   [phi-builder : (&mut phi-builder ir.CompilerIrInstrBuilder)]
   [next-builder : (&mut next-builder ir.CompilerIrInstrBuilder)]) : unit
-  (match deriveds
-    [(OptInductionDerivedList.Nil) unit]
-    [(OptInductionDerivedList.Cons derived rest)
+  (let
+    [len : i64 (opt-induction-derived-list-count deriveds)]
+    [index : i64 0]
+    [next-frame : i64 frame]
+    (while (< index len)
       (let
-        [seed-var : i64 (opt-induction-derived-seed-var derived frame)]
+        [derived : OptInductionDerived
+          (opt-induction-derived-list-ref deriveds index)]
+        [seed-var : i64 (opt-induction-derived-seed-var derived next-frame)]
         (begin
           (if (= (opt-induction-derived-offset derived) 0)
             unit
             (ir.compiler-ir-instr-builder-push!
               (&mut seed-builder)
-              (opt-induction-offset-seed-instr fact derived frame)))
+              (opt-induction-offset-seed-instr fact derived next-frame)))
           (ir.compiler-ir-instr-builder-push!
             (&mut seed-builder)
             (opt-induction-final-seed-instr fact derived seed-var))
@@ -26480,24 +26632,19 @@
               preheader
               latch
               seed-var
-              (opt-induction-derived-phi-var derived frame)
-              (opt-induction-derived-next-var derived frame)))
+              (opt-induction-derived-phi-var derived next-frame)
+              (opt-induction-derived-next-var derived next-frame)))
           (ir.compiler-ir-instr-builder-push!
             (&mut next-builder)
             (opt-induction-next-instr
               fact
               derived
-              (opt-induction-derived-phi-var derived frame)
-              (opt-induction-derived-next-var derived frame)))
-          (opt-induction-push-support-instrs!
-            fact
-            (__tl-box-place rest)
-            preheader
-            latch
-            (+ frame (opt-induction-derived-slot-count derived))
-            (&mut seed-builder)
-            (&mut phi-builder)
-            (&mut next-builder))))]))
+              (opt-induction-derived-phi-var derived next-frame)
+              (opt-induction-derived-next-var derived next-frame)))
+          (set!
+            next-frame
+            (+ next-frame (opt-induction-derived-slot-count derived)))
+          (set! index (+ index 1)))))))
 
 (define (opt-induction-support-instrs
   [fact : OptInductionFact]

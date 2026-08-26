@@ -1055,10 +1055,6 @@
         args
         result))))
 
-(defenum CompilerIrInstrList
-  (Nil)
-  (Cons CompilerIrInstr (Box CompilerIrInstrList)))
-
 (defstruct CompilerIrInstrSeq
   (slots (__tl_dyn-array CompilerIrInstr))
   (len i64))
@@ -1470,47 +1466,6 @@
           builder.len)
         (CompilerIrSwitchCaseSeq slots builder.len)))))
 
-(define (compiler-ir-instr-cons
-  [instr : CompilerIrInstr]
-  [rest : CompilerIrInstrList]) : CompilerIrInstrList
-  (CompilerIrInstrList.Cons instr (box rest)))
-
-(define (compiler-ir-instr-list-count [instrs : CompilerIrInstrList]) : i64
-  (match (compiler-ir-global-shared-view instrs)
-    [(CompilerIrInstrList.Nil) 0]
-    [(CompilerIrInstrList.Cons _ rest)
-      (+
-        1
-        (compiler-ir-instr-list-count
-          (compiler-ir-instr-list-box-shared-view rest)))]))
-
-(define (compiler-ir-instr-list-fill-array
-  [instrs : CompilerIrInstrList]
-  [slots : (__tl_dyn-array CompilerIrInstr)]
-  [index : i64]) : unit
-  (match (compiler-ir-global-shared-view instrs)
-    [(CompilerIrInstrList.Nil) unit]
-    [(CompilerIrInstrList.Cons instr rest)
-      (begin
-        (set! (array-ref slots index) instr)
-        (compiler-ir-instr-list-fill-array
-          (compiler-ir-instr-list-box-shared-view rest)
-          slots
-          (+ index 1)))]))
-
-(define (compiler-ir-instr-seq-from-list [instrs : CompilerIrInstrList]) : CompilerIrInstrSeq
-  (let
-    [count : i64
-      (compiler-ir-instr-list-count (compiler-ir-global-shared-view instrs))]
-    [slots : (__tl_dyn-array CompilerIrInstr)
-      (array.make-array CompilerIrInstr count)]
-    (begin
-      (compiler-ir-instr-list-fill-array
-        (compiler-ir-global-shared-view instrs)
-        (compiler-ir-global-shared-view slots)
-        0)
-      (CompilerIrInstrSeq slots count))))
-
 (define (compiler-ir-instr-seq-empty) : CompilerIrInstrSeq
   (CompilerIrInstrSeq (array.make-array CompilerIrInstr 0) 0))
 
@@ -1561,29 +1516,22 @@
       (set! (array-ref slots 3) fourth)
       (CompilerIrInstrSeq slots 4))))
 
-(define (compiler-ir-instr-seq-to-list-rev
-  [slots : (__tl_dyn-array CompilerIrInstr)]
-  [index : i64]
-  [acc : CompilerIrInstrList]) : CompilerIrInstrList
+(define (compiler-ir-instr-seq5
+  [first : CompilerIrInstr]
+  [second : CompilerIrInstr]
+  [third : CompilerIrInstr]
+  [fourth : CompilerIrInstr]
+  [fifth : CompilerIrInstr]) : CompilerIrInstrSeq
   (let
-    [cursor : i64 index]
-    [out : CompilerIrInstrList acc]
+    [slots : (__tl_dyn-array CompilerIrInstr)
+      (array.make-array CompilerIrInstr 5)]
     (begin
-      (while (>= cursor 0)
-        (begin
-          (set!
-            out
-            (CompilerIrInstrList.Cons
-              (compiler-ir-array-shared-view slots cursor)
-              (box out)))
-          (set! cursor (- cursor 1))))
-      out)))
-
-(define (compiler-ir-instr-seq-to-list [instrs : CompilerIrInstrSeq]) : CompilerIrInstrList
-  (compiler-ir-instr-seq-to-list-rev
-    (compiler-ir-global-shared-view instrs.slots)
-    (- instrs.len 1)
-    CompilerIrInstrList.Nil))
+      (set! (array-ref slots 0) first)
+      (set! (array-ref slots 1) second)
+      (set! (array-ref slots 2) third)
+      (set! (array-ref slots 3) fourth)
+      (set! (array-ref slots 4) fifth)
+      (CompilerIrInstrSeq slots 5))))
 
 (defmacro (compiler-ir-instr-seq-count [instrs : Expr]) : Expr
   `(__tl-project-field-name ,instrs "len"))
@@ -1726,8 +1674,8 @@
           (set! read (+ read 1))))
       (set! instrs.len write))))
 
-(define (compiler-ir-block [label : i64] [instrs : CompilerIrInstrList]) : CompilerIrBlock
-  (CompilerIrBlock.Block label (compiler-ir-instr-seq-from-list instrs)))
+(define (compiler-ir-block [label : i64] [instrs : CompilerIrInstrSeq]) : CompilerIrBlock
+  (CompilerIrBlock.Block label instrs))
 
 (define (compiler-ir-block-cons
   [block : CompilerIrBlock]
@@ -9420,16 +9368,6 @@
               (= (ast.ast-source-span-end-col found) 12))]
           [(CompilerMaybeSourceSpan.No) false])))))
 
-(define (compiler-ir-instr-list-first-mov-dst?
-  [instrs : CompilerIrInstrList]
-  [want : i64]) : bool
-  (match instrs
-    [(CompilerIrInstrList.Nil) false]
-    [(CompilerIrInstrList.Cons instr _)
-      (match (compiler-ir-global-shared-view instr)
-        [(CompilerIrInstr.Mov dst _ _) (= dst want)]
-        [_ false])]))
-
 (define (compiler-ir-instr-seq-mov-dst?
   [instrs : CompilerIrInstrSeq]
   [index : i64]
@@ -9494,17 +9432,12 @@
         (CompilerIrInstr.Mov 2 (CompilerIrValue.I64 20) (ast.AstType.I64))
         (CompilerIrInstr.Return
           (CompilerIrMaybeValue.Some (CompilerIrValue.Var 2))))]
-    [roundtrip : CompilerIrInstrList CompilerIrInstrList.Nil]
     (begin
       (compiler-ir-instr-seq-compact!
         (&mut seq)
         compiler-ir-instr-seq-test-keep-non-alloc?)
-      (set!
-        roundtrip
-        (compiler-ir-instr-seq-to-list (compiler-ir-global-shared-view seq)))
       (and
         (= (compiler-ir-instr-seq-count (compiler-ir-global-shared-view seq)) 3)
-        (= (compiler-ir-instr-list-count roundtrip) 3)
         (compiler-ir-instr-seq-mov-dst?
           (compiler-ir-global-shared-view seq)
           0
@@ -10135,26 +10068,19 @@
             "four")
           (compiler-ir-switch-case-seq-entry-tag-label? cloned 1 5 "five"))))))
 
-(define (compiler-ir-instr-seq-roundtrip-ok?) : bool
+(define (compiler-ir-instr-seq-dense-construction-ok?) : bool
   (let
-    [instrs : CompilerIrInstrList
-      (compiler-ir-instr-cons
-        (CompilerIrInstr.Mov 1 (CompilerIrValue.I64 10) (ast.AstType.I64))
-        (compiler-ir-instr-cons
-          (CompilerIrInstr.Mov 2 (CompilerIrValue.I64 20) (ast.AstType.I64))
-          (compiler-ir-instr-cons
-            (CompilerIrInstr.Return
-              (CompilerIrMaybeValue.Some (CompilerIrValue.Var 2)))
-            CompilerIrInstrList.Nil)))]
     [seq : CompilerIrInstrSeq
-      (compiler-ir-instr-seq-from-list (compiler-ir-global-shared-view instrs))]
-    [roundtrip : CompilerIrInstrList
-      (compiler-ir-instr-seq-to-list (compiler-ir-global-shared-view seq))]
+      (compiler-ir-instr-seq3
+        (CompilerIrInstr.Mov 1 (CompilerIrValue.I64 10) (ast.AstType.I64))
+        (CompilerIrInstr.Mov 2 (CompilerIrValue.I64 20) (ast.AstType.I64))
+        (CompilerIrInstr.Return
+          (CompilerIrMaybeValue.Some (CompilerIrValue.Var 2))))]
     [block-list : CompilerIrBlockList
       (compiler-ir-block-cons
         (compiler-ir-block
           (compiler-ir-label "entry")
-          (compiler-ir-global-shared-view instrs))
+          (compiler-ir-global-shared-view seq))
         CompilerIrBlockList.Nil)]
     [compact-blocks : CompilerIrBlockList
       (compiler-ir-block-list-compact
@@ -10166,10 +10092,6 @@
         [(CompilerIrInstr.Return _) true]
         [_ false])
       (=
-        (compiler-ir-instr-list-count
-          (compiler-ir-global-shared-view roundtrip))
-        3)
-      (=
         (compiler-ir-block-list-instruction-count
           (compiler-ir-global-shared-view block-list))
         3)
@@ -10180,7 +10102,7 @@
       (compiler-ir-block-list-first-label?
         (compiler-ir-global-shared-view compact-blocks)
         "entry")
-      (compiler-ir-instr-list-first-mov-dst? roundtrip 1))))
+      (compiler-ir-instr-seq-mov-dst? seq 0 1))))
 
 (define (compiler-ir-effect-self-test) : i64
   (begin
@@ -10191,7 +10113,7 @@
     (unless (compiler-ir-tail-call-render-ok?) (return 1))
     (unless (compiler-ir-switch-render-ok?) (return 1))
     (unless (compiler-ir-source-spans-entry-list-ok?) (return 1))
-    (unless (compiler-ir-instr-seq-roundtrip-ok?) (return 1))
+    (unless (compiler-ir-instr-seq-dense-construction-ok?) (return 1))
     (unless (compiler-ir-instr-seq-mutable-rewrite-ok?) (return 1))
     (unless (compiler-ir-instr-seq-mutable-compact-ok?) (return 1))
     (unless (compiler-ir-dense-builders-order-ok?) (return 1))

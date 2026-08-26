@@ -30244,13 +30244,12 @@
         set)]
     [_ set]))
 
-;; Iterate the instruction SEQ in place by index. The fixpoint re-runs the
-;; propagation pass once per round; materializing each block's instr-seq to a list
-;; every round (compiler-ir-instr-seq-to-list) allocated O(rounds * instrs) of
-;; transient list nodes per function, which on the largest functions overflowed
-;; the per-function scratch arena into a second chunk -- enough to expose the
-;; arena rewind's latent reuse hazard and corrupt later emission. Reading the seq
-;; by index allocates nothing.
+;; Iterate the instruction sequence in place by index. The fixpoint re-runs the
+;; propagation pass once per round; materializing a boxed copy every round used
+;; to allocate O(rounds * instrs) transient nodes per function, which on the
+;; largest functions overflowed the per-function scratch arena into a second
+;; chunk -- enough to expose the arena rewind's latent reuse hazard and corrupt
+;; later emission. Reading the sequence by index allocates nothing.
 (define (compiler-reg-group-vars-propagate-seq
   [set : live.CompilerLiveI64Set]
   [instrs : ir.CompilerIrInstrSeq]

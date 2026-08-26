@@ -78,29 +78,24 @@
     (ir.compiler-ir-block-cons
       (ir.compiler-ir-block
         (ir.compiler-ir-label "entry")
-        (ir.compiler-ir-instr-cons
+        (ir.compiler-ir-instr-seq5
           (ir.CompilerIrInstr.Store
             pa
             (ir.CompilerIrValue.Var 0)
             (ast.AstType.I64))
-          (ir.compiler-ir-instr-cons
-            (ir.CompilerIrInstr.Store
-              pb
-              (ir.CompilerIrValue.Var 1)
-              (ast.AstType.I64))
-            (ir.compiler-ir-instr-cons
-              (ir.CompilerIrInstr.Store
-                pc
-                (ir.CompilerIrValue.Var 2)
-                (ast.AstType.I64))
-              (ir.compiler-ir-instr-cons
-                (ir.CompilerIrInstr.Store
-                  pd
-                  (ir.CompilerIrValue.Var 3)
-                  (ast.AstType.I64))
-                (ir.compiler-ir-instr-cons
-                  (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
-                  ir.CompilerIrInstrList.Nil))))))
+          (ir.CompilerIrInstr.Store
+            pb
+            (ir.CompilerIrValue.Var 1)
+            (ast.AstType.I64))
+          (ir.CompilerIrInstr.Store
+            pc
+            (ir.CompilerIrValue.Var 2)
+            (ast.AstType.I64))
+          (ir.CompilerIrInstr.Store
+            pd
+            (ir.CompilerIrValue.Var 3)
+            (ast.AstType.I64))
+          (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)))
       ir.CompilerIrBlockList.Nil)))
 
 (define (win-param-preassign-program) : ir.CompilerIrProgram
@@ -131,17 +126,15 @@
     (ir.compiler-ir-block-cons
       (ir.compiler-ir-block
         (ir.compiler-ir-label "entry")
-        (ir.compiler-ir-instr-cons
+        (ir.compiler-ir-instr-seq2
           (ir.CompilerIrInstr.BinOp
             2
             ir.CompilerIrBinOp.SafeDiv
             (ir.CompilerIrValue.I64 8)
             (ir.CompilerIrValue.I64 2)
             (ast.AstType.I64))
-          (ir.compiler-ir-instr-cons
-            (ir.CompilerIrInstr.Return
-              (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 1)))
-            ir.CompilerIrInstrList.Nil)))
+          (ir.CompilerIrInstr.Return
+            (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 1)))))
       ir.CompilerIrBlockList.Nil)))
 
 (define (win-param-preassign-safe-div-regalloc-ok?) : bool

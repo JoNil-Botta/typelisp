@@ -29945,8 +29945,8 @@ g:
 ;; operands, which only an equality-shaped compare permits.
 (define (compiler-backend-cmp-mem-global-imm-tail
   [op : compiler_ir_types.CompilerIrBinOp]
-  [mem-on-rhs? : bool]) : compiler_ir_types.CompilerIrInstrList
-  (compiler_ir_types.compiler-ir-instr-cons
+  [mem-on-rhs? : bool]) : compiler_ir_types.CompilerIrInstrSeq
+  (compiler_ir_types.compiler-ir-instr-seq2
     (compiler_ir_types.CompilerIrInstr.BinOp
       5
       op
@@ -29957,12 +29957,10 @@ g:
         (compiler_ir_types.CompilerIrValue.Var 3)
         (compiler_ir_types.CompilerIrValue.I64 7))
       (compiler_ast_types.AstType.I64))
-    (compiler_ir_types.compiler-ir-instr-cons
-      (compiler_ir_types.CompilerIrInstr.Branch
-        (compiler_ir_types.CompilerIrValue.Var 5)
-        (compiler_ir_types.compiler-ir-label "hit")
-        (compiler_ir_types.compiler-ir-label "miss"))
-      compiler_ir_types.CompilerIrInstrList.Nil)))
+    (compiler_ir_types.CompilerIrInstr.Branch
+      (compiler_ir_types.CompilerIrValue.Var 5)
+      (compiler_ir_types.compiler-ir-label "hit")
+      (compiler_ir_types.compiler-ir-label "miss"))))
 
 ;; The global read is the compare's LEFT operand, which is the AT&T
 ;; DESTINATION slot: `movq g(%rip), %r13 ; cmpq %r14, %r13` becomes one line.
@@ -30012,10 +30010,9 @@ g:
 ;; destination one.
 (define (compiler-backend-cmp-mem-global-imm-fold-ok?) : bool
   (match (compiler-backend-cmp-mem-global-asm
-    (compiler_ir_types.compiler-ir-instr-seq-from-list
-      (compiler-backend-cmp-mem-global-imm-tail
-        (compiler_ir_types.CompilerIrBinOp.Eq)
-        true)))
+    (compiler-backend-cmp-mem-global-imm-tail
+      (compiler_ir_types.CompilerIrBinOp.Eq)
+      true))
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
@@ -30031,10 +30028,9 @@ g:
 ;; occupy cannot be exchanged, so the fold declines and the read survives.
 (define (compiler-backend-cmp-mem-global-imm-ordered-refused-ok?) : bool
   (match (compiler-backend-cmp-mem-global-asm
-    (compiler_ir_types.compiler-ir-instr-seq-from-list
-      (compiler-backend-cmp-mem-global-imm-tail
-        (compiler_ir_types.CompilerIrBinOp.Lt)
-        true)))
+    (compiler-backend-cmp-mem-global-imm-tail
+      (compiler_ir_types.CompilerIrBinOp.Lt)
+      true))
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
@@ -30052,25 +30048,21 @@ g:
 ;; thing that can refuse.
 (define (compiler-backend-cmp-mem-global-second-use-refused-ok?) : bool
   (match (compiler-backend-cmp-mem-global-asm
-    (compiler_ir_types.compiler-ir-instr-seq-from-list
-      (compiler_ir_types.compiler-ir-instr-cons
-        (compiler_ir_types.CompilerIrInstr.BinOp
-          5
-          (compiler_ir_types.CompilerIrBinOp.Lt)
-          (compiler_ir_types.CompilerIrValue.Var 3)
-          (compiler_ir_types.CompilerIrValue.Var 4)
-          (compiler_ast_types.AstType.I64))
-        (compiler_ir_types.compiler-ir-instr-cons
-          (compiler_ir_types.CompilerIrInstr.Branch
-            (compiler_ir_types.CompilerIrValue.Var 5)
-            (compiler_ir_types.compiler-ir-label "lt")
-            (compiler_ir_types.compiler-ir-label "ge"))
-          (compiler_ir_types.compiler-ir-instr-cons
-            (compiler_ir_types.CompilerIrInstr.Mov
-              6
-              (compiler_ir_types.CompilerIrValue.Var 3)
-              (compiler_ast_types.AstType.I64))
-            compiler_ir_types.CompilerIrInstrList.Nil)))))
+    (compiler_ir_types.compiler-ir-instr-seq3
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        5
+        (compiler_ir_types.CompilerIrBinOp.Lt)
+        (compiler_ir_types.CompilerIrValue.Var 3)
+        (compiler_ir_types.CompilerIrValue.Var 4)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.CompilerIrInstr.Branch
+        (compiler_ir_types.CompilerIrValue.Var 5)
+        (compiler_ir_types.compiler-ir-label "lt")
+        (compiler_ir_types.compiler-ir-label "ge"))
+      (compiler_ir_types.CompilerIrInstr.Mov
+        6
+        (compiler_ir_types.CompilerIrValue.Var 3)
+        (compiler_ast_types.AstType.I64))))
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (and
         (compiler_backend.compiler-backend-string-contains?
@@ -52813,10 +52805,10 @@ b_keep:
 ;; two fixtures agreeing when they should not.
 (define (compiler-backend-placement-test-block
   [name : String]
-  [instrs : compiler_ir_types.CompilerIrInstrList]) : compiler_ir_types.CompilerIrBlock
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]) : compiler_ir_types.CompilerIrBlock
   (compiler_ir_types.CompilerIrBlock.Block
     (compiler_ir_types.compiler-ir-label name)
-    (compiler_ir_types.compiler-ir-instr-seq-from-list instrs)))
+    instrs))
 
 (define (compiler-backend-placement-test-order-eq?
   [order : (__tl_dyn-array i64)]
@@ -52859,52 +52851,49 @@ b_keep:
 (define (compiler-backend-placement-test-entry-block) : compiler_ir_types.CompilerIrBlock
   (compiler-backend-placement-test-block
     "entry"
-    (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.compiler-ir-instr-seq2
       (compiler_ir_types.CompilerIrInstr.Mov
         0
         (compiler_ir_types.CompilerIrValue.I64 0)
         (compiler_ast_types.AstType.I64))
-      (compiler_ir_types.compiler-ir-instr-cons
-        (compiler_ir_types.CompilerIrInstr.Jump
-          (compiler_ir_types.compiler-ir-label "header"))
-        compiler_ir_types.CompilerIrInstrList.Nil))))
+      (compiler_ir_types.CompilerIrInstr.Jump
+        (compiler_ir_types.compiler-ir-label "header")))))
 
 ;; header: %1 = phi ... ; %2 = lt %1, %9 ; branch %2, body, exit
 ;; Variable 9 is defined nowhere, so it is the loop-invariant bound.
 (define (compiler-backend-placement-test-header-block) : compiler_ir_types.CompilerIrBlock
   (compiler-backend-placement-test-block
     "header"
-    (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.compiler-ir-instr-seq3
       (compiler-backend-placement-test-carry-phi)
-      (compiler_ir_types.compiler-ir-instr-cons
-        (compiler_ir_types.CompilerIrInstr.BinOp
-          2
-          (compiler_ir_types.CompilerIrBinOp.Lt)
-          (compiler_ir_types.CompilerIrValue.Var 1)
-          (compiler_ir_types.CompilerIrValue.Var 9)
-          (compiler_ast_types.AstType.I64))
-        (compiler_ir_types.compiler-ir-instr-cons
-          (compiler_ir_types.CompilerIrInstr.Branch
-            (compiler_ir_types.CompilerIrValue.Var 2)
-            (compiler_ir_types.compiler-ir-label "body")
-            (compiler_ir_types.compiler-ir-label "exit"))
-          compiler_ir_types.CompilerIrInstrList.Nil)))))
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        2
+        (compiler_ir_types.CompilerIrBinOp.Lt)
+        (compiler_ir_types.CompilerIrValue.Var 1)
+        (compiler_ir_types.CompilerIrValue.Var 9)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.CompilerIrInstr.Branch
+        (compiler_ir_types.CompilerIrValue.Var 2)
+        (compiler_ir_types.compiler-ir-label "body")
+        (compiler_ir_types.compiler-ir-label "exit")))))
 
 ;; body: %4 = %1 ; jump latch  (or, with `terminated?` false, no jump at all)
 (define (compiler-backend-placement-test-body-block [terminated? : bool]) : compiler_ir_types.CompilerIrBlock
   (compiler-backend-placement-test-block
     "body"
-    (compiler_ir_types.compiler-ir-instr-cons
-      (compiler_ir_types.CompilerIrInstr.Mov
-        4
-        (compiler_ir_types.CompilerIrValue.Var 1)
-        (compiler_ast_types.AstType.I64))
-      (if terminated?
-        (compiler_ir_types.compiler-ir-instr-cons
-          (compiler_ir_types.CompilerIrInstr.Jump
-            (compiler_ir_types.compiler-ir-label "latch"))
-          compiler_ir_types.CompilerIrInstrList.Nil)
-        compiler_ir_types.CompilerIrInstrList.Nil))))
+    (if terminated?
+      (compiler_ir_types.compiler-ir-instr-seq2
+        (compiler_ir_types.CompilerIrInstr.Mov
+          4
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "latch")))
+      (compiler_ir_types.compiler-ir-instr-seq1
+        (compiler_ir_types.CompilerIrInstr.Mov
+          4
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ast_types.AstType.I64))))))
 
 ;; latch: %3 = <step> ; jump header. `counting?` picks the step: `%1 + 1` makes
 ;; %1 an induction variable and the loop a counting one, while `load %1` is the
@@ -52912,7 +52901,7 @@ b_keep:
 (define (compiler-backend-placement-test-latch-block [counting? : bool]) : compiler_ir_types.CompilerIrBlock
   (compiler-backend-placement-test-block
     "latch"
-    (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.compiler-ir-instr-seq2
       (if counting?
         (compiler_ir_types.CompilerIrInstr.BinOp
           3
@@ -52924,19 +52913,16 @@ b_keep:
           3
           (compiler_ir_types.CompilerIrValue.Var 1)
           (compiler_ast_types.AstType.I64)))
-      (compiler_ir_types.compiler-ir-instr-cons
-        (compiler_ir_types.CompilerIrInstr.Jump
-          (compiler_ir_types.compiler-ir-label "header"))
-        compiler_ir_types.CompilerIrInstrList.Nil))))
+      (compiler_ir_types.CompilerIrInstr.Jump
+        (compiler_ir_types.compiler-ir-label "header")))))
 
 (define (compiler-backend-placement-test-exit-block) : compiler_ir_types.CompilerIrBlock
   (compiler-backend-placement-test-block
     "exit"
-    (compiler_ir_types.compiler-ir-instr-cons
+    (compiler_ir_types.compiler-ir-instr-seq1
       (compiler_ir_types.CompilerIrInstr.Return
         (compiler_ir_types.CompilerIrMaybeValue.Some
-          (compiler_ir_types.CompilerIrValue.Var 1)))
-      compiler_ir_types.CompilerIrInstrList.Nil)))
+          (compiler_ir_types.CompilerIrValue.Var 1))))))
 
 ;; entry / header / body / latch / exit, in that order.
 (define (compiler-backend-placement-test-while-blocks
@@ -52997,35 +52983,30 @@ b_keep:
         (compiler_ir_types.compiler-ir-block-cons
           (compiler-backend-placement-test-block
             "header"
-            (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.compiler-ir-instr-seq2
               (compiler-backend-placement-test-carry-phi)
-              (compiler_ir_types.compiler-ir-instr-cons
-                (compiler_ir_types.CompilerIrInstr.Jump
-                  (compiler_ir_types.compiler-ir-label "latch"))
-                compiler_ir_types.CompilerIrInstrList.Nil)))
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "latch"))))
           (compiler_ir_types.compiler-ir-block-cons
             (compiler-backend-placement-test-block
               "latch"
-              (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.compiler-ir-instr-seq3
                 (compiler_ir_types.CompilerIrInstr.BinOp
                   3
                   (compiler_ir_types.CompilerIrBinOp.Add)
                   (compiler_ir_types.CompilerIrValue.Var 1)
                   (compiler_ir_types.CompilerIrValue.I64 1)
                   (compiler_ast_types.AstType.I64))
-                (compiler_ir_types.compiler-ir-instr-cons
-                  (compiler_ir_types.CompilerIrInstr.BinOp
-                    2
-                    (compiler_ir_types.CompilerIrBinOp.Lt)
-                    (compiler_ir_types.CompilerIrValue.Var 3)
-                    (compiler_ir_types.CompilerIrValue.Var 9)
-                    (compiler_ast_types.AstType.I64))
-                  (compiler_ir_types.compiler-ir-instr-cons
-                    (compiler_ir_types.CompilerIrInstr.Branch
-                      (compiler_ir_types.CompilerIrValue.Var 2)
-                      (compiler_ir_types.compiler-ir-label "header")
-                      (compiler_ir_types.compiler-ir-label "exit"))
-                    compiler_ir_types.CompilerIrInstrList.Nil))))
+                (compiler_ir_types.CompilerIrInstr.BinOp
+                  2
+                  (compiler_ir_types.CompilerIrBinOp.Lt)
+                  (compiler_ir_types.CompilerIrValue.Var 3)
+                  (compiler_ir_types.CompilerIrValue.Var 9)
+                  (compiler_ast_types.AstType.I64))
+                (compiler_ir_types.CompilerIrInstr.Branch
+                  (compiler_ir_types.CompilerIrValue.Var 2)
+                  (compiler_ir_types.compiler-ir-label "header")
+                  (compiler_ir_types.compiler-ir-label "exit"))))
             (compiler_ir_types.compiler-ir-block-cons
               (compiler-backend-placement-test-exit-block)
               compiler_ir_types.CompilerIrBlockList.Nil)))))))
@@ -53051,7 +53032,7 @@ b_keep:
       (compiler_ir_types.compiler-ir-block-cons
         (compiler-backend-placement-test-block
           "entry"
-          (compiler_ir_types.compiler-ir-instr-cons
+          (compiler_ir_types.compiler-ir-instr-seq3
             (compiler_ir_types.CompilerIrInstr.Phi
               1
               (compiler_ir_types.compiler-ir-phi-input-cons
@@ -53062,33 +53043,28 @@ b_keep:
                   (compiler_ir_types.compiler-ir-label "body")
                   compiler_ir_types.CompilerIrPhiInputList.Nil))
               (compiler_ast_types.AstType.I64))
-            (compiler_ir_types.compiler-ir-instr-cons
-              (compiler_ir_types.CompilerIrInstr.BinOp
-                2
-                (compiler_ir_types.CompilerIrBinOp.Lt)
-                (compiler_ir_types.CompilerIrValue.Var 1)
-                (compiler_ir_types.CompilerIrValue.Var 9)
-                (compiler_ast_types.AstType.I64))
-              (compiler_ir_types.compiler-ir-instr-cons
-                (compiler_ir_types.CompilerIrInstr.Branch
-                  (compiler_ir_types.CompilerIrValue.Var 2)
-                  (compiler_ir_types.compiler-ir-label "body")
-                  (compiler_ir_types.compiler-ir-label "exit"))
-                compiler_ir_types.CompilerIrInstrList.Nil))))
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              2
+              (compiler_ir_types.CompilerIrBinOp.Lt)
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              (compiler_ir_types.CompilerIrValue.Var 9)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 2)
+              (compiler_ir_types.compiler-ir-label "body")
+              (compiler_ir_types.compiler-ir-label "exit"))))
         (compiler_ir_types.compiler-ir-block-cons
           (compiler-backend-placement-test-block
             "body"
-            (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.compiler-ir-instr-seq2
               (compiler_ir_types.CompilerIrInstr.BinOp
                 3
                 (compiler_ir_types.CompilerIrBinOp.Add)
                 (compiler_ir_types.CompilerIrValue.Var 1)
                 (compiler_ir_types.CompilerIrValue.I64 1)
                 (compiler_ast_types.AstType.I64))
-              (compiler_ir_types.compiler-ir-instr-cons
-                (compiler_ir_types.CompilerIrInstr.Jump
-                  (compiler_ir_types.compiler-ir-label "entry"))
-                compiler_ir_types.CompilerIrInstrList.Nil)))
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "entry"))))
           (compiler_ir_types.compiler-ir-block-cons
             (compiler-backend-placement-test-exit-block)
             compiler_ir_types.CompilerIrBlockList.Nil))))))
@@ -53130,19 +53106,17 @@ b_keep:
         (compiler_ir_types.compiler-ir-block-cons
           (compiler-backend-placement-test-block
             "entry"
-            (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.compiler-ir-instr-seq2
               (compiler_ir_types.CompilerIrInstr.Mov
                 1
                 (compiler_ir_types.CompilerIrValue.I64 0)
                 (compiler_ast_types.AstType.I64))
-              (compiler_ir_types.compiler-ir-instr-cons
-                (compiler_ir_types.CompilerIrInstr.Jump
-                  (compiler_ir_types.compiler-ir-label "header"))
-                compiler_ir_types.CompilerIrInstrList.Nil)))
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "header"))))
           (compiler_ir_types.compiler-ir-block-cons
             (compiler-backend-placement-test-block
               "header"
-              (compiler_ir_types.compiler-ir-instr-cons
+              (compiler_ir_types.compiler-ir-instr-seq3
                 (compiler_ir_types.CompilerIrInstr.Phi
                   2
                   (compiler_ir_types.compiler-ir-phi-input-cons
@@ -53153,53 +53127,45 @@ b_keep:
                       (compiler_ir_types.compiler-ir-label "latch")
                       compiler_ir_types.CompilerIrPhiInputList.Nil))
                   (compiler_ast_types.AstType.I64))
-                (compiler_ir_types.compiler-ir-instr-cons
-                  (compiler_ir_types.CompilerIrInstr.BinOp
-                    3
-                    (compiler_ir_types.CompilerIrBinOp.Lt)
-                    (compiler_ir_types.CompilerIrValue.Var 2)
-                    (compiler_ir_types.CompilerIrValue.Var 0)
-                    (compiler_ast_types.AstType.I64))
-                  (compiler_ir_types.compiler-ir-instr-cons
-                    (compiler_ir_types.CompilerIrInstr.Branch
-                      (compiler_ir_types.CompilerIrValue.Var 3)
-                      (compiler_ir_types.compiler-ir-label "body")
-                      (compiler_ir_types.compiler-ir-label "exit"))
-                    compiler_ir_types.CompilerIrInstrList.Nil))))
+                (compiler_ir_types.CompilerIrInstr.BinOp
+                  3
+                  (compiler_ir_types.CompilerIrBinOp.Lt)
+                  (compiler_ir_types.CompilerIrValue.Var 2)
+                  (compiler_ir_types.CompilerIrValue.Var 0)
+                  (compiler_ast_types.AstType.I64))
+                (compiler_ir_types.CompilerIrInstr.Branch
+                  (compiler_ir_types.CompilerIrValue.Var 3)
+                  (compiler_ir_types.compiler-ir-label "body")
+                  (compiler_ir_types.compiler-ir-label "exit"))))
             (compiler_ir_types.compiler-ir-block-cons
               (compiler-backend-placement-test-block
                 "body"
-                (compiler_ir_types.compiler-ir-instr-cons
+                (compiler_ir_types.compiler-ir-instr-seq2
                   (compiler_ir_types.CompilerIrInstr.Mov
                     5
                     (compiler_ir_types.CompilerIrValue.Var 2)
                     (compiler_ast_types.AstType.I64))
-                  (compiler_ir_types.compiler-ir-instr-cons
-                    (compiler_ir_types.CompilerIrInstr.Jump
-                      (compiler_ir_types.compiler-ir-label "latch"))
-                    compiler_ir_types.CompilerIrInstrList.Nil)))
+                  (compiler_ir_types.CompilerIrInstr.Jump
+                    (compiler_ir_types.compiler-ir-label "latch"))))
               (compiler_ir_types.compiler-ir-block-cons
                 (compiler-backend-placement-test-block
                   "latch"
-                  (compiler_ir_types.compiler-ir-instr-cons
+                  (compiler_ir_types.compiler-ir-instr-seq2
                     (compiler_ir_types.CompilerIrInstr.BinOp
                       4
                       (compiler_ir_types.CompilerIrBinOp.Add)
                       (compiler_ir_types.CompilerIrValue.Var 2)
                       (compiler_ir_types.CompilerIrValue.I64 1)
                       (compiler_ast_types.AstType.I64))
-                    (compiler_ir_types.compiler-ir-instr-cons
-                      (compiler_ir_types.CompilerIrInstr.Jump
-                        (compiler_ir_types.compiler-ir-label "header"))
-                      compiler_ir_types.CompilerIrInstrList.Nil)))
+                    (compiler_ir_types.CompilerIrInstr.Jump
+                      (compiler_ir_types.compiler-ir-label "header"))))
                 (compiler_ir_types.compiler-ir-block-cons
                   (compiler-backend-placement-test-block
                     "exit"
-                    (compiler_ir_types.compiler-ir-instr-cons
+                    (compiler_ir_types.compiler-ir-instr-seq1
                       (compiler_ir_types.CompilerIrInstr.Return
                         (compiler_ir_types.CompilerIrMaybeValue.Some
-                          (compiler_ir_types.CompilerIrValue.Var 2)))
-                      compiler_ir_types.CompilerIrInstrList.Nil))
+                          (compiler_ir_types.CompilerIrValue.Var 2)))))
                   compiler_ir_types.CompilerIrBlockList.Nil)))))))))
 
 (define (compiler-backend-placement-seh-main) : compiler_ir_types.CompilerIrFunction
@@ -53213,18 +53179,16 @@ b_keep:
         (compiler_ir_types.compiler-ir-block-cons
           (compiler-backend-placement-test-block
             "entry"
-            (compiler_ir_types.compiler-ir-instr-cons
+            (compiler_ir_types.compiler-ir-instr-seq2
               (compiler_ir_types.CompilerIrInstr.Call
                 0
                 (ci.intern "placement_loop")
                 (compiler_ir_types.CompilerIrCallArgs.One
                   (compiler_ir_types.CompilerIrValue.I64 4))
                 (compiler_ast_types.AstType.I64))
-              (compiler_ir_types.compiler-ir-instr-cons
-                (compiler_ir_types.CompilerIrInstr.Return
-                  (compiler_ir_types.CompilerIrMaybeValue.Some
-                    (compiler_ir_types.CompilerIrValue.Var 0)))
-                compiler_ir_types.CompilerIrInstrList.Nil)))
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.Var 0)))))
           compiler_ir_types.CompilerIrBlockList.Nil)))))
 
 ;; This fixture reaches emission without lowering a source first, so nothing

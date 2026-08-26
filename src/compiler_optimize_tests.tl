@@ -25415,6 +25415,511 @@
     (opt-gvn-pointer-cond-params)
     blocks))
 
+;; --- MF-2 join phis and MF-3 bypass-edge load PRE -----------------------------
+;;
+;; `cond` is var 0 and `arr` var 1, a descriptor handle -- the dereferenceable
+;; base MF-3 admits. The scalar-pointer families above reuse
+;; opt-gvn-pointer-cond-params, whose `ptr` is a plain i64 and therefore is NOT
+;; a hoistable base; both parameter sets are needed to separate the two rules.
+(define (opt-load-join-params) : compiler_ir_types.CompilerIrParamList
+  (compiler_ir_types.compiler-ir-param-cons
+    (compiler_ir_types.CompilerIrParam.Param
+      "cond"
+      (compiler_ast_types.AstType.Bool)
+      0)
+    (compiler_ir_types.compiler-ir-param-cons
+      (compiler_ir_types.CompilerIrParam.Param
+        "arr"
+        (compiler_ast_types.AstType.DynArray 0)
+        1)
+      (compiler_ir_types.CompilerIrParamList.Nil))))
+
+(define (opt-load-join-run [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_optimize.opt-gvn-blocks
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    (opt-load-join-params)
+    blocks))
+
+;; `count` chained `mov` definitions from var `base`, so a loop that uses them
+;; all is over the live-in budget.
+(define (opt-load-join-pressure-defs
+  [acc : (&mut acc compiler_ir_types.CompilerIrInstrBuilder)]
+  [base : i64]
+  [count : i64]) : unit
+  (let
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (compiler_ir_types.compiler-ir-instr-builder-push!
+            acc
+            (compiler_ir_types.CompilerIrInstr.Mov
+              (+ base index)
+              (compiler_ir_types.CompilerIrValue.I64 (+ 7 index))
+              (compiler_ast_types.AstType.I64)))
+          (set! index (+ index 1))))
+      unit)))
+
+;; `count - 1` chained adds reading every var the definitions above bound, so
+;; each of them is a live-in of the block that holds this run.
+(define (opt-load-join-pressure-uses
+  [acc : (&mut acc compiler_ir_types.CompilerIrInstrBuilder)]
+  [base : i64]
+  [count : i64]
+  [dst : i64]) : unit
+  (let
+    [index : i64 1]
+    (begin
+      (while (< index count)
+        (begin
+          (compiler_ir_types.compiler-ir-instr-builder-push!
+            acc
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              (+ dst index)
+              (compiler_ir_types.CompilerIrBinOp.Add)
+              (if (= index 1)
+                (compiler_ir_types.CompilerIrValue.Var base)
+                (compiler_ir_types.CompilerIrValue.Var (+ dst (- index 1))))
+              (compiler_ir_types.CompilerIrValue.Var (+ base index))
+              (compiler_ast_types.AstType.I64)))
+          (set! index (+ index 1))))
+      unit)))
+
+(define (opt-load-join-pressure-count) : i64
+  16)
+
+;; A guard diamond whose two arms load one word into two names: the intersect at
+;; `join` drops the key, MF-2 phis the two names instead.
+(define (opt-load-join-diamond-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.compiler-ir-label "then")
+          (compiler_ir_types.compiler-ir-label "else"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "then")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Load
+            3
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "join"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "else")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Load
+              4
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "join"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "join")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Load
+                5
+                (compiler_ir_types.CompilerIrValue.Var 1)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.CompilerIrInstr.Return
+                (compiler_ir_types.CompilerIrMaybeValue.Some
+                  (compiler_ir_types.CompilerIrValue.Var 5)))))
+          (compiler_ir_types.CompilerIrBlockList.Nil))))))
+
+;; The same diamond, but the join is the preheader of a loop that is already
+;; over opt-licm-frozen-chain-live-in-budget live-ins: the phi would be one
+;; more, so the budget refuses it.
+(define (opt-load-join-budget-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler_ir_types.compiler-ir-instr-builder-to-seq
+        (let
+          [built : compiler_ir_types.CompilerIrInstrBuilder
+            (compiler_ir_types.compiler-ir-instr-builder-with-capacity
+              (+ (opt-load-join-pressure-count) 1))]
+          (begin
+            (opt-load-join-pressure-defs
+              (&mut built)
+              20
+              (opt-load-join-pressure-count))
+            (compiler_ir_types.compiler-ir-instr-builder-push!
+              (&mut built)
+              (compiler_ir_types.CompilerIrInstr.Branch
+                (compiler_ir_types.CompilerIrValue.Var 0)
+                (compiler_ir_types.compiler-ir-label "then")
+                (compiler_ir_types.compiler-ir-label "else")))
+            built))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "then")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Load
+            3
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "join"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "else")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Load
+              4
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "join"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "join")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "header"))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "header")
+              (compiler_ir_types.compiler-ir-instr-builder-to-seq
+                (let
+                  [built : compiler_ir_types.CompilerIrInstrBuilder
+                    (compiler_ir_types.compiler-ir-instr-builder-with-capacity
+                      (+ (opt-load-join-pressure-count) 2))]
+                  (begin
+                    (opt-load-join-pressure-uses
+                      (&mut built)
+                      20
+                      (opt-load-join-pressure-count)
+                      60)
+                    (compiler_ir_types.compiler-ir-instr-builder-push!
+                      (&mut built)
+                      (compiler_ir_types.CompilerIrInstr.Load
+                        6
+                        (compiler_ir_types.CompilerIrValue.Var 1)
+                        (compiler_ast_types.AstType.I64)))
+                    (compiler_ir_types.compiler-ir-instr-builder-push!
+                      (&mut built)
+                      (compiler_ir_types.CompilerIrInstr.Branch
+                        (compiler_ir_types.CompilerIrValue.Var 0)
+                        (compiler_ir_types.compiler-ir-label "header")
+                        (compiler_ir_types.compiler-ir-label "exit")))
+                    built))))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.CompilerIrBlock.Block
+                (compiler_ir_types.compiler-ir-label "exit")
+                (opt-test-instrs
+                  (compiler_ir_types.CompilerIrInstr.Return
+                    (compiler_ir_types.CompilerIrMaybeValue.Some
+                      (compiler_ir_types.CompilerIrValue.Var 6)))))
+              (compiler_ir_types.CompilerIrBlockList.Nil))))))))
+
+;; The partially redundant shape MF-3 owns: the descriptor word is loaded only
+;; on the guarded arm, so the join loses it and re-derives it. `base?` false
+;; bases the arm's gep on a DATA POINTER instead of the handle, which is not
+;; dereferenceable on the bypass edge and must be refused.
+(define (opt-load-pre-bypass-blocks [handle-base? : bool]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Gep
+          10
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Load
+          11
+          (compiler_ir_types.CompilerIrValue.Var 10)
+          (compiler_ast_types.AstType.U64))
+        (compiler_ir_types.CompilerIrInstr.Branch
+          (compiler_ir_types.CompilerIrValue.Var 0)
+          (compiler_ir_types.compiler-ir-label "arm")
+          (compiler_ir_types.compiler-ir-label "join"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "arm")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Gep
+            2
+            (compiler_ir_types.CompilerIrValue.Var
+              (if handle-base?
+                1
+                11))
+            (compiler_ir_types.CompilerIrValue.I64 1)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Load
+            3
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "join"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "join")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Gep
+              4
+              (compiler_ir_types.CompilerIrValue.Var
+                (if handle-base?
+                  1
+                  11))
+              (compiler_ir_types.CompilerIrValue.I64 1)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Load
+              5
+              (compiler_ir_types.CompilerIrValue.Var 4)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Gep
+              6
+              (compiler_ir_types.CompilerIrValue.Var
+                (if handle-base?
+                  1
+                  11))
+              (compiler_ir_types.CompilerIrValue.I64 1)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Load
+              7
+              (compiler_ir_types.CompilerIrValue.Var 6)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Return
+              (compiler_ir_types.CompilerIrMaybeValue.Some
+                (compiler_ir_types.CompilerIrValue.Var 7)))))
+        (compiler_ir_types.CompilerIrBlockList.Nil)))))
+
+(define (opt-load-pre-latch-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "header"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "header")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Jump
+            (compiler_ir_types.compiler-ir-label "latch"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "latch")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Branch
+              (compiler_ir_types.CompilerIrValue.Var 0)
+              (compiler_ir_types.compiler-ir-label "arm")
+              (compiler_ir_types.compiler-ir-label "header"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "arm")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Gep
+                2
+                (compiler_ir_types.CompilerIrValue.Var 1)
+                (compiler_ir_types.CompilerIrValue.I64 1)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.CompilerIrInstr.Load
+                3
+                (compiler_ir_types.CompilerIrValue.Var 2)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "exit"))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "exit")
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.Gep
+                  4
+                  (compiler_ir_types.CompilerIrValue.Var 1)
+                  (compiler_ir_types.CompilerIrValue.I64 1)
+                  (compiler_ast_types.AstType.I64))
+                (compiler_ir_types.CompilerIrInstr.Load
+                  5
+                  (compiler_ir_types.CompilerIrValue.Var 4)
+                  (compiler_ast_types.AstType.I64))
+                (compiler_ir_types.CompilerIrInstr.Gep
+                  6
+                  (compiler_ir_types.CompilerIrValue.Var 1)
+                  (compiler_ir_types.CompilerIrValue.I64 1)
+                  (compiler_ast_types.AstType.I64))
+                (compiler_ir_types.CompilerIrInstr.Load
+                  7
+                  (compiler_ir_types.CompilerIrValue.Var 6)
+                  (compiler_ast_types.AstType.I64))
+                (compiler_ir_types.CompilerIrInstr.Return
+                  (compiler_ir_types.CompilerIrMaybeValue.Some
+                    (compiler_ir_types.CompilerIrValue.Var 7)))))
+            (compiler_ir_types.CompilerIrBlockList.Nil)))))))
+
+;; The hoist destination is a loop header already at the live-in budget: the
+;; hoisted value would be one more value live across a loop that is already
+;; paying for as many as the budget allows.
+(define (opt-load-pre-pressure-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (compiler_ir_types.compiler-ir-instr-builder-to-seq
+        (let
+          [built : compiler_ir_types.CompilerIrInstrBuilder
+            (compiler_ir_types.compiler-ir-instr-builder-with-capacity
+              (+ (opt-load-join-pressure-count) 1))]
+          (begin
+            (opt-load-join-pressure-defs
+              (&mut built)
+              20
+              (opt-load-join-pressure-count))
+            (compiler_ir_types.compiler-ir-instr-builder-push!
+              (&mut built)
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "header")))
+            built))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "header")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ir_types.compiler-ir-label "arm")
+            (compiler_ir_types.compiler-ir-label "exit"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "arm")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Gep
+              2
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              (compiler_ir_types.CompilerIrValue.I64 1)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Load
+              3
+              (compiler_ir_types.CompilerIrValue.Var 2)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "latch"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "latch")
+            (compiler_ir_types.compiler-ir-instr-builder-to-seq
+              (let
+                [built : compiler_ir_types.CompilerIrInstrBuilder
+                  (compiler_ir_types.compiler-ir-instr-builder-with-capacity
+                    (+ (opt-load-join-pressure-count) 1))]
+                (begin
+                  (opt-load-join-pressure-uses
+                    (&mut built)
+                    20
+                    (opt-load-join-pressure-count)
+                    60)
+                  (compiler_ir_types.compiler-ir-instr-builder-push!
+                    (&mut built)
+                    (compiler_ir_types.CompilerIrInstr.Branch
+                      (compiler_ir_types.CompilerIrValue.Var 0)
+                      (compiler_ir_types.compiler-ir-label "header")
+                      (compiler_ir_types.compiler-ir-label "exit")))
+                  built))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "exit")
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.Gep
+                  4
+                  (compiler_ir_types.CompilerIrValue.Var 1)
+                  (compiler_ir_types.CompilerIrValue.I64 1)
+                  (compiler_ast_types.AstType.I64))
+                (compiler_ir_types.CompilerIrInstr.Load
+                  5
+                  (compiler_ir_types.CompilerIrValue.Var 4)
+                  (compiler_ast_types.AstType.I64))
+                (compiler_ir_types.CompilerIrInstr.Gep
+                  6
+                  (compiler_ir_types.CompilerIrValue.Var 1)
+                  (compiler_ir_types.CompilerIrValue.I64 1)
+                  (compiler_ast_types.AstType.I64))
+                (compiler_ir_types.CompilerIrInstr.Load
+                  7
+                  (compiler_ir_types.CompilerIrValue.Var 6)
+                  (compiler_ast_types.AstType.I64))
+                (compiler_ir_types.CompilerIrInstr.Return
+                  (compiler_ir_types.CompilerIrMaybeValue.Some
+                    (compiler_ir_types.CompilerIrValue.Var 7)))))
+            (compiler_ir_types.CompilerIrBlockList.Nil)))))))
+
+(define (compiler-optimize-load-join-pre-self-test) : i64
+  (let
+    [diamond : compiler_ir_types.CompilerIrBlockList
+      (opt-load-join-run (opt-load-join-diamond-blocks))]
+    [budget : compiler_ir_types.CompilerIrBlockList
+      (opt-load-join-run (opt-load-join-budget-blocks))]
+    [bypass : compiler_ir_types.CompilerIrBlockList
+      (opt-load-join-run (opt-load-pre-bypass-blocks true))]
+    [element : compiler_ir_types.CompilerIrBlockList
+      (opt-load-join-run (opt-load-pre-bypass-blocks false))]
+    [latch : compiler_ir_types.CompilerIrBlockList
+      (opt-load-join-run (opt-load-pre-latch-blocks))]
+    [pressure : compiler_ir_types.CompilerIrBlockList
+      (opt-load-join-run (opt-load-pre-pressure-blocks))]
+    (cond
+      ;; MF-2: the two arms' names become one phi in the join, and the join's
+      ;; own load reads it instead of repeating the read.
+      [(not (= (opt-count-phi-blocks diamond) 1)) 50]
+      [(not (= (opt-count-load-blocks diamond) 2)) 51]
+      [(not
+          (=
+            (opt-count-load-label-blocks
+              diamond
+              (compiler_ir_types.compiler-ir-label "join"))
+            0))
+        52]
+      ;; MF-2 budget: the join is the preheader of a loop already over the
+      ;; live-in budget, so no phi is minted at all.
+      [(not (= (opt-count-phi-blocks budget) 0)) 53]
+      ;; MF-3: the guarded arm's `gep ; load` moves into the guard block, so the
+      ;; join reuses it and the function loads the word once.
+      [(not
+          (=
+            (opt-count-load-label-blocks
+              bypass
+              (compiler_ir_types.compiler-ir-label "arm"))
+            0))
+        54]
+      [(not (= (opt-count-load-blocks bypass) 2)) 55]
+      ;; MF-3 refuses an element base: a data pointer read out of the descriptor
+      ;; is not dereferenceable on the edge the guard was protecting.
+      [(not
+          (=
+            (opt-count-load-label-blocks
+              element
+              (compiler_ir_types.compiler-ir-label "arm"))
+            1))
+        56]
+      ;; MF-3 refuses a loop latch as the destination.
+      [(not
+          (=
+            (opt-count-load-label-blocks
+              latch
+              (compiler_ir_types.compiler-ir-label "latch"))
+            0))
+        57]
+      ;; MF-3 refuses a destination in a loop already at the live-in budget.
+      [(not
+          (=
+            (opt-count-load-label-blocks
+              pressure
+              (compiler_ir_types.compiler-ir-label "header"))
+            0))
+        58]
+      [(not
+          (=
+            (opt-count-load-label-blocks
+              pressure
+              (compiler_ir_types.compiler-ir-label "arm"))
+            1))
+        59]
+      [else 42])))
+
 (define (compiler-optimize-load-gvn-substitution-self-test) : i64
   (let
     [diamond : compiler_ir_types.CompilerIrBlockList
@@ -25449,7 +25954,9 @@
       [(not (= (opt-count-load-blocks loop-inner) 1)) 12]
       [(not (= (opt-count-mov-dst-blocks loop-inner 4) 0)) 13]
       [(not (= (opt-blocks-binop-lhs-var loop-inner 5 (- 0 1)) 3)) 14]
-      [else 42])))
+      ;; The join-phi (MF-2) and bypass-edge load PRE (MF-3) families run from
+      ;; here, so they are covered by this suite's one registered entry point.
+      [else (compiler-optimize-load-join-pre-self-test)])))
 
 (define (compiler-optimize-global-value-number-self-test) : i64
   (let

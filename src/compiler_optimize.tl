@@ -49576,9 +49576,9 @@
 (define (opt-len-eq-use-empty) : OptLenEqUse
   (OptLenEqUse
     (opt_i64_i64_map.with-capacity 1)
-    (array.make-array OptBoolBranchDef 1)
+    (__tl_make-array OptBoolBranchDef 1)
     false
-    (array.make-array bool 1)
+    (__tl_make-array bool 1)
     false))
 
 (define (opt-len-eq-use-def [use : OptLenEqUse] [var : i64]) : OptBoolBranchDef
@@ -49653,14 +49653,14 @@
     (opt-len-eq-use-empty)
     (let
       [defs : (__tl_dyn-array OptBoolBranchDef)
-        (array.make-array
+        (__tl_make-array
           OptBoolBranchDef
           (if (> frame 0)
             frame
             1))]
       (begin
         (opt-len-eq-mem-defs-fill-blocks! defs blocks)
-        (OptLenEqUse table defs true (array.make-array bool 1) late?)))))
+        (OptLenEqUse table defs true (__tl_make-array bool 1) late?)))))
 
 ;; The natural-loop body of one back edge `latch -> header`: the header plus
 ;; every block a backward walk from the latch reaches without passing through
@@ -49715,8 +49715,8 @@
       (if (> count 0)
         count
         1)]
-    [out : (__tl_dyn-array bool) (array.make-array bool size)]
-    [stack : (__tl_dyn-array i64) (array.make-array i64 size)]
+    [out : (__tl_dyn-array bool) (__tl_make-array bool size)]
+    [stack : (__tl_dyn-array i64) (__tl_make-array i64 size)]
     [offsets : (__tl_dyn-array i64) index.preds.offsets]
     [edges : (__tl_dyn-array i64) index.preds.edges]
     [header : i64 0]
@@ -76330,7 +76330,7 @@
           (if (not (opt-affine-64bit-type? pty))
             (ir.CompilerIrMaybeValue.No)
             (let
-              [ok : (__tl_dyn-array bool) (array.make-array bool 1)]
+              [ok : (__tl_dyn-array bool) (__tl_make-array bool 1)]
               [_seed : unit (set! (array-ref ok 0) true)]
               [found : ir.CompilerIrMaybeValue
                 (opt-bce-mb-self-phi-inputs
@@ -88737,7 +88737,7 @@
                   ;; A negated constant join mints one var for the zero-extended
                   ;; condition, so the frame counter is carried in a cell and
                   ;; written back into the rewritten function.
-                  [frame-cell : (__tl_dyn-array i64) (array.make-array i64 1)]
+                  [frame-cell : (__tl_dyn-array i64) (__tl_make-array i64 1)]
                   [read : i64 0]
                   [changed : bool false]
                   (begin
@@ -111734,16 +111734,16 @@
         frame
         1)]
     (OptLenEqDefs
-      (array.make-array OptBoolBranchDef size)
-      (array.make-array ir.CompilerIrValue size)
-      (array.make-array ir.CompilerIrValue size)
-      (array.make-array i64 size)
-      (array.make-array i64 size)
-      (array.make-array i64 size)
-      (array.make-array i64 size)
-      (array.make-array i64 size)
-      (array.make-array i64 size)
-      (array.make-array i64 size))))
+      (__tl_make-array OptBoolBranchDef size)
+      (__tl_make-array ir.CompilerIrValue size)
+      (__tl_make-array ir.CompilerIrValue size)
+      (__tl_make-array i64 size)
+      (__tl_make-array i64 size)
+      (__tl_make-array i64 size)
+      (__tl_make-array i64 size)
+      (__tl_make-array i64 size)
+      (__tl_make-array i64 size)
+      (__tl_make-array i64 size))))
 
 ;; The single definition of `var`, or `No`. A var with more than one
 ;; definition names more than one runtime value, so no fact may follow it.
@@ -112001,7 +112001,7 @@
   [blocks : ir.CompilerIrBlockList]) : OptLenEqDefs
   (let
     [tables : OptLenEqDefs (opt-len-eq-defs-new frame)]
-    [scratch : (__tl_dyn-array i64) (array.make-array i64 1)]
+    [scratch : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     (begin
       (opt-len-eq-defs-fill-blocks! type-segment-bases tables scratch blocks)
       tables)))
@@ -112306,11 +112306,11 @@
 
 (define (opt-len-eq-writes-new) : OptLenEqWrites
   (OptLenEqWrites
-    (array.make-array i64 (opt-len-eq-write-cap))
-    (array.make-array i64 (opt-len-eq-write-cap))
-    (array.make-array ir.CompilerIrValue (opt-len-eq-write-cap))
-    (array.make-array i64 (opt-len-eq-write-cap))
-    (array.make-array i64 2)))
+    (__tl_make-array i64 (opt-len-eq-write-cap))
+    (__tl_make-array i64 (opt-len-eq-write-cap))
+    (__tl_make-array ir.CompilerIrValue (opt-len-eq-write-cap))
+    (__tl_make-array i64 (opt-len-eq-write-cap))
+    (__tl_make-array i64 2)))
 
 (define (opt-len-eq-writes-push!
   [writes : OptLenEqWrites]
@@ -112560,7 +112560,7 @@
   (if (<= remaining 0)
     (opt_i64_i64_map.with-capacity 1)
     (let
-      [changed : (__tl_dyn-array i64) (array.make-array i64 1)]
+      [changed : (__tl_dyn-array i64) (__tl_make-array i64 1)]
       [next : opt_i64_i64_map.Map
         (opt-len-eq-clean-round
           functions
@@ -112617,7 +112617,7 @@
       (if (> frame 0)
         frame
         1)]
-    (OptLenEqTaint (array.make-array i64 size) (array.make-array i64 size))))
+    (OptLenEqTaint (__tl_make-array i64 size) (__tl_make-array i64 size))))
 
 (define (opt-len-eq-taint-of [taint : OptLenEqTaint] [var : i64]) : i64
   (if (or (< var 0) (>= var (array-length taint.box)))
@@ -113041,7 +113041,7 @@
         [taint : OptLenEqTaint (opt-len-eq-taint-new frame)]
         [tables : OptLenEqDefs
           (opt-len-eq-defs-build ctx.type-segment-bases frame blocks)]
-        [unmodelled : (__tl_dyn-array i64) (array.make-array i64 1)]
+        [unmodelled : (__tl_dyn-array i64) (__tl_make-array i64 1)]
         (begin
           (opt-len-eq-scan-blocks! ctx taint tables unmodelled bad blocks)
           (if (= (array-ref unmodelled 0) 0)
@@ -113192,18 +113192,18 @@
   (let
     [count : i64 (opt-len-eq-count-admitted writes bad names 0)]
     [members : (__tl_dyn-array i64)
-      (array.make-array
+      (__tl_make-array
         i64
         (if (> count 0)
           count
           1))]
     [families : (__tl_dyn-array i64)
-      (array.make-array
+      (__tl_make-array
         i64
         (if (> count 0)
           count
           1))]
-    [cursor : (__tl_dyn-array i64) (array.make-array i64 1)]
+    [cursor : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     [out : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity capacity)]
     [next : i64 1]
     (begin
@@ -113288,7 +113288,7 @@
               known
               (opt-len-eq-clean-map functions cand.map true known capacity)
               (opt-len-eq-writes-new)
-              (array.make-array i64 1))]
+              (__tl_make-array i64 1))]
           [bad : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity capacity)]
           (begin
             (set! (array-ref ctx.region 0) 1)
@@ -119981,7 +119981,7 @@
 ;; The block-local pipeline passes a zero-length table (opt-load-canon-none),
 ;; where every lookup is the identity and nothing changes.
 (define (opt-load-canon-none) : (__tl_dyn-array i64)
-  (array.make-array i64 0))
+  (__tl_make-array i64 0))
 
 ;; The empty program facts the BLOCK-LOCAL pipelines hand the shared dispatch:
 ;; they know no global-cell summary, and building one costs three maps and an
@@ -121915,7 +121915,7 @@
     [slots : (__tl_dyn-array OptLoadGlobalBaseEntry) bases.slots]
     [len : i64 bases.len]
     [out-slots : (__tl_dyn-array OptLoadGlobalBaseEntry)
-      (array.make-array OptLoadGlobalBaseEntry len)]
+      (__tl_make-array OptLoadGlobalBaseEntry len)]
     [read : i64 0]
     [write : i64 0]
     (begin
@@ -123219,7 +123219,7 @@
   ;; Every table is length-checked before it is read, so the inactive
   ;; workspace shares one empty array rather than allocating five.
   (let
-    [empty : (__tl_dyn-array i64) (array.make-array i64 0)]
+    [empty : (__tl_dyn-array i64) (__tl_make-array i64 0)]
     (OptLoadCellPromote
       false
       empty
@@ -123227,7 +123227,7 @@
       empty
       loop-masks
       frame
-      (array.make-array i64 1)
+      (__tl_make-array i64 1)
       empty
       empty)))
 
@@ -123387,10 +123387,10 @@
     (opt-load-cell-promote-inactive loop-masks frame)
     (let
       [reads : (__tl_dyn-array i64)
-        (array.make-array i64 (* (opt-load-cell-read-cap) 3))]
-      [starts : (__tl_dyn-array i64) (array.make-array i64 block-count)]
-      [counts : (__tl_dyn-array i64) (array.make-array i64 block-count)]
-      [counters : (__tl_dyn-array i64) (array.make-array i64 2)]
+        (__tl_make-array i64 (* (opt-load-cell-read-cap) 3))]
+      [starts : (__tl_dyn-array i64) (__tl_make-array i64 block-count)]
+      [counts : (__tl_dyn-array i64) (__tl_make-array i64 block-count)]
+      [counters : (__tl_dyn-array i64) (__tl_make-array i64 2)]
       [id : i64 0]
       (begin
         (while (< id block-count)
@@ -123425,8 +123425,8 @@
               loop-masks
               frame
               counters
-              (array.make-array i64 (* (opt-load-cell-promote-cap) 3))
-              (array.make-array i64 (+ frame (opt-load-cell-promote-cap))))))))))
+              (__tl_make-array i64 (* (opt-load-cell-promote-cap) 3))
+              (__tl_make-array i64 (+ frame (opt-load-cell-promote-cap))))))))))
 
 ;; Materialization is refused inside a natural loop, whatever the price test
 ;; says. A loop's `Global` operands belong to the loop passes:
@@ -123855,7 +123855,7 @@
         [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
         [added : i64 (- last first)]
         [slots : (__tl_dyn-array ir.CompilerIrInstr)
-          (array.make-array ir.CompilerIrInstr (+ count added))]
+          (__tl_make-array ir.CompilerIrInstr (+ count added))]
         [write : i64 0]
         [cursor : i64 first]
         [index : i64 0]
@@ -123913,6 +123913,1186 @@
                     (opt-load-cell-insert-block cells promote first last block)))])
             unit)
           (set! first last))))))
+
+;; --- MF-2: join phis over equal load keys ------------------------------------
+;;
+;; `opt-load-table-intersect-entry` keeps a key only when both edges cache it in
+;; the SAME var. Two edges that loaded one word into two names therefore lose
+;; it, and the next block reloads a word whose content both predecessors already
+;; hold: a guard diamond's two arms, a versioned loop's fast and slow exits, the
+;; two exits of one rotated loop. LLVM's GVN answers this with SSA construction
+;; (`constructSSAForLoadSet`): the available names become the inputs of a phi in
+;; the join, and the phi is what the following blocks reuse.
+;;
+;; This is that phi, restricted to what the pass can prove cheaply.
+;;
+;; LEGALITY. A value recorded in a predecessor's EXIT table was defined on every
+;; path reaching that predecessor's end; each var has one definition, so that
+;; definition dominates the predecessor -- exactly the phi-input requirement.
+;; The phi covers EVERY predecessor edge of the join (the scan refuses a block
+;; with an unprocessed or unreachable-state predecessor, so a loop header is
+;; never a site), and every edge's value names the same word, because all of
+;; them carry the same key. The joined entry takes the join state's allocation
+;; epoch, which is the MAX of the incoming epochs and therefore at least as
+;; conservative as the epoch `opt-load-table-intersect-entry` would have kept.
+;;
+;; PRESSURE, and the budget. The phi lengthens each input's live range to the
+;; end of its predecessor and adds one value live from the join to its last use.
+;; That is the shape :109700's substitution note prices as a loss when the value
+;; is pinned across a sibling loop, so a join that ENTERS a loop -- it is inside
+;; one, or a successor of it is a loop header -- is refused when that loop
+;; already has `opt-licm-frozen-chain-live-in-budget` live-ins, measured by the
+;; unroller's own proxy `opt-unroll-mb-live-in-count`. A loop's count is
+;; computed at most once per function.
+;;
+;; BUDGET. At most `opt-load-join-phi-cap` phis per function, so the workspace is
+;; a fixed allocation, and at most `opt-load-join-pred-cap` predecessor edges per
+;; join, so one site's scan is bounded.
+(define (opt-load-join-phi-cap) : i64
+  32)
+
+(define (opt-load-join-pred-cap) : i64
+  8)
+
+;; Per-function join-phi workspace.
+;;
+;; `sites` holds one block id per minted phi and `instrs` the phi itself, both
+;; filled in the sweep's RPO order, so a block's phis are contiguous and the
+;; splice rebuilds one block once. `live-ins` caches `opt-unroll-mb-live-in-count`
+;; per natural loop (-1 = not computed yet); `preds` is the scratch edge list one
+;; site's scan fills.
+(defstruct OptLoadJoinPhis
+  (active? bool)
+  (mint i64)
+  (counters (__tl_dyn-array i64))
+  (sites (__tl_dyn-array i64))
+  (instrs (__tl_dyn-array ir.CompilerIrInstr))
+  (live-ins (__tl_dyn-array i64))
+  (preds (__tl_dyn-array i64))
+  (loops OptNaturalLoopList))
+
+(define (opt-load-join-inactive [mint : i64]) : OptLoadJoinPhis
+  (let
+    [empty : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    (OptLoadJoinPhis
+      false
+      mint
+      (__tl_make-array i64 1)
+      empty
+      (__tl_make-array ir.CompilerIrInstr 0)
+      empty
+      empty
+      (OptNaturalLoopList.Nil))))
+
+(define (opt-load-join-count [joins : OptLoadJoinPhis]) : i64
+  (array-ref joins.counters 0))
+
+;; Loops, counted for the live-in cache.
+(define (opt-load-join-loop-count [loops : OptNaturalLoopList]) : i64
+  (match loops
+    [(OptNaturalLoopList.Nil) 0]
+    [(OptNaturalLoopList.Cons _ rest)
+      (+ 1 (opt-load-join-loop-count (__tl-box-place rest)))]))
+
+;; Does any reachable block have more than one reachable predecessor? A function
+;; without one can never mint a phi, so it skips the workspace entirely.
+(define (opt-load-join-any-site? [index : OptCfgIndex] [block-count : i64]) : bool
+  (let
+    [preds : OptCfgCsr index.preds]
+    [id : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (not found) (< id block-count))
+        (begin
+          (if (and
+            (array-ref index.reachable id)
+            (>
+              (-
+                (array-ref preds.offsets (+ id 1))
+                (array-ref preds.offsets id))
+              1))
+            (set! found true)
+            unit)
+          (set! id (+ id 1))))
+      found)))
+
+(define (opt-load-join-build
+  [index : OptCfgIndex]
+  [block-count : i64]
+  [loops : OptNaturalLoopList]
+  [mint : i64]) : OptLoadJoinPhis
+  (if (not (opt-load-join-any-site? index block-count))
+    (opt-load-join-inactive mint)
+    (let
+      [loop-count : i64 (opt-load-join-loop-count loops)]
+      [live-ins : (__tl_dyn-array i64) (__tl_make-array i64 loop-count)]
+      [slot : i64 0]
+      (begin
+        (while (< slot loop-count)
+          (begin
+            (set! (array-ref live-ins slot) (- 0 1))
+            (set! slot (+ slot 1))))
+        (OptLoadJoinPhis
+          true
+          mint
+          (__tl_make-array i64 1)
+          (__tl_make-array i64 (opt-load-join-phi-cap))
+          (__tl_make-array ir.CompilerIrInstr (opt-load-join-phi-cap))
+          live-ins
+          (__tl_make-array i64 (opt-load-join-pred-cap))
+          loops)))))
+
+;; This loop's live-in count, computed once and cached by loop index. An index
+;; outside the cache reports the budget itself, which refuses. MF-3 shares the
+;; cache and the budget.
+(define (opt-load-loop-live-ins-cached
+  [cache : (__tl_dyn-array i64)]
+  [loop : OptNaturalLoop]
+  [loop-index : i64]) : i64
+  (if (or (< loop-index 0) (>= loop-index (array-length cache)))
+    (opt-licm-frozen-chain-live-in-budget)
+    (let
+      [cached : i64 (array-ref cache loop-index)]
+      (if (>= cached 0)
+        cached
+        (let
+          [count : i64
+            (opt-unroll-mb-live-in-count (opt-natural-loop-body-blocks loop))]
+          (begin
+            (set! (array-ref cache loop-index) count)
+            count))))))
+
+;; Does the join at `id` enter this loop? Either it is a body block, or one of
+;; its successors is the loop header -- the preheader position, which is where a
+;; joined descriptor word becomes a loop live-in.
+(define (opt-load-join-enters-loop?
+  [index : OptCfgIndex]
+  [loop : OptNaturalLoop]
+  [id : i64]) : bool
+  (if (opt-natural-loop-body-contains-id? loop id)
+    true
+    (let
+      [succs : OptCfgCsr index.succs]
+      [edge : i64 (array-ref succs.offsets id)]
+      [end : i64 (array-ref succs.offsets (+ id 1))]
+      [found : bool false]
+      (begin
+        (while (and (not found) (< edge end))
+          (begin
+            (if (=
+              (opt-cfg-index-label index (array-ref succs.edges edge))
+              (opt-natural-loop-header loop))
+              (set! found true)
+              unit)
+            (set! edge (+ edge 1))))
+        found))))
+
+(define (opt-load-join-budget-ok?
+  [index : OptCfgIndex]
+  [joins : OptLoadJoinPhis]
+  [loops : OptNaturalLoopList]
+  [loop-index : i64]
+  [id : i64]) : bool
+  (match loops
+    [(OptNaturalLoopList.Nil) true]
+    [(OptNaturalLoopList.Cons loop rest)
+      (and
+        (if (opt-load-join-enters-loop? index loop id)
+          (<
+            (opt-load-loop-live-ins-cached joins.live-ins loop loop-index)
+            (opt-licm-frozen-chain-live-in-budget))
+          true)
+        (opt-load-join-budget-ok?
+          index
+          joins
+          (__tl-box-place rest)
+          (+ loop-index 1)
+          id))]))
+
+;; Fill `joins.preds` with this block's reachable predecessor ids. Returns the
+;; count, or -1 when the site is refused: an unprocessed predecessor (the
+;; unprocessed back edge of a loop header), a processed predecessor with no
+;; recorded state, a repeated predecessor label (one branch with both arms on
+;; this block, which a phi cannot spell), fewer than two edges, or more than
+;; `opt-load-join-pred-cap`.
+(define (opt-load-join-collect-preds
+  [index : OptCfgIndex]
+  [exit-states : (__tl_dyn-array OptMaybeLoadCseState)]
+  [processed : (__tl_dyn-array bool)]
+  [joins : OptLoadJoinPhis]
+  [id : i64]) : i64
+  (let
+    [preds : OptCfgCsr index.preds]
+    [edge : i64 (array-ref preds.offsets id)]
+    [end : i64 (array-ref preds.offsets (+ id 1))]
+    [count : i64 0]
+    [ok? : bool true]
+    (begin
+      (while (and ok? (< edge end))
+        (let
+          [pred : i64 (array-ref preds.edges edge)]
+          (begin
+            (if (not (array-ref index.reachable pred))
+              unit
+              (if (or
+                (not (array-ref processed pred))
+                (>= count (opt-load-join-pred-cap)))
+                (set! ok? false)
+                (match (array-ref exit-states pred)
+                  [(OptMaybeLoadCseState.No) (set! ok? false)]
+                  [(OptMaybeLoadCseState.Some _)
+                    (let
+                      [slot : i64 0]
+                      (begin
+                        (while (< slot count)
+                          (begin
+                            (if (= (array-ref joins.preds slot) pred)
+                              (set! ok? false)
+                              unit)
+                            (set! slot (+ slot 1))))
+                        (set! (array-ref joins.preds count) pred)
+                        (set! count (+ count 1))))])))
+            (set! edge (+ edge 1)))))
+      (if (and ok? (>= count 2))
+        count
+        (- 0 1)))))
+
+(define (opt-load-join-pred-value
+  [type-segment-bases : i64]
+  [exit-states : (__tl_dyn-array OptMaybeLoadCseState)]
+  [pred : i64]
+  [key : OptLoadKey]) : ir.CompilerIrMaybeValue
+  (match (array-ref exit-states pred)
+    [(OptMaybeLoadCseState.No) (ir.CompilerIrMaybeValue.No)]
+    [(OptMaybeLoadCseState.Some state)
+      (match state
+        [(OptLoadCseState.State _ table _ _ _ _ _)
+          (opt-load-table-lookup type-segment-bases table key)])]))
+
+;; Do all `count` predecessors cache `key` in a single-source var, with at least
+;; two DIFFERENT names? Equal names are what the ordinary intersect already
+;; keeps, so a phi over them would only add a copy.
+(define (opt-load-join-inputs-ok?
+  [type-segment-bases : i64]
+  [sources : opt_i64_i64_map.Map]
+  [exit-states : (__tl_dyn-array OptMaybeLoadCseState)]
+  [joins : OptLoadJoinPhis]
+  [count : i64]
+  [key : OptLoadKey]
+  [first : ir.CompilerIrValue]) : bool
+  (let
+    [slot : i64 1]
+    [ok? : bool true]
+    [differs? : bool false]
+    (begin
+      (while (and ok? (< slot count))
+        (begin
+          (match (opt-load-join-pred-value
+            type-segment-bases
+            exit-states
+            (array-ref joins.preds slot)
+            key)
+            [(ir.CompilerIrMaybeValue.No) (set! ok? false)]
+            [(ir.CompilerIrMaybeValue.Some value)
+              (begin
+                (if (opt-load-value-gvn-stable? sources value)
+                  unit
+                  (set! ok? false))
+                (match value
+                  [(ir.CompilerIrValue.Var _) unit]
+                  [_ (set! ok? false)])
+                (if (opt-value-eq value first)
+                  unit
+                  (set! differs? true)))])
+          (set! slot (+ slot 1))))
+      (and ok? differs?))))
+
+(define (opt-load-join-phi-inputs
+  [type-segment-bases : i64]
+  [index : OptCfgIndex]
+  [exit-states : (__tl_dyn-array OptMaybeLoadCseState)]
+  [joins : OptLoadJoinPhis]
+  [count : i64]
+  [slot : i64]
+  [key : OptLoadKey]) : ir.CompilerIrPhiInputList
+  (if (>= slot count)
+    (ir.CompilerIrPhiInputList.Nil)
+    (let
+      [pred : i64 (array-ref joins.preds slot)]
+      [rest : ir.CompilerIrPhiInputList
+        (opt-load-join-phi-inputs
+          type-segment-bases
+          index
+          exit-states
+          joins
+          count
+          (+ slot 1)
+          key)]
+      (match (opt-load-join-pred-value type-segment-bases exit-states pred key)
+        [(ir.CompilerIrMaybeValue.Some value)
+          (ir.CompilerIrPhiInputList.Cons
+            value
+            (opt-cfg-index-label index pred)
+            (box rest))]
+        [(ir.CompilerIrMaybeValue.No) rest]))))
+
+;; A joined header word at offset zero is the descriptor's data pointer, the
+;; same fact `opt-load-kinds-step`'s Load arm binds for the load it replaces.
+;; Carrying it is what lets the following block's element geps keep keying off
+;; the joined name instead of falling back to a Raw address.
+(define (opt-load-join-phi-kinds
+  [type-segment-bases : i64]
+  [profile-state : profile_state.CompilerProfileMetrics]
+  [kinds : OptLoadPtrKinds]
+  [key : OptLoadKey]
+  [fresh : i64]) : OptLoadPtrKinds
+  (match key
+    [(OptLoadKey.Field _ off ty header?)
+      (if (and
+        header?
+        (= off 0)
+        (= (opt-load-loc-type-size type-segment-bases ty) 8))
+        (opt-load-kinds-bind profile-state kinds fresh (OptLoadLocElement))
+        kinds)]
+    [_ kinds]))
+
+;; Record one phi and bind its key in the join's entry state.
+(define (opt-load-join-mint
+  [type-segment-bases : i64]
+  [index : OptCfgIndex]
+  [exit-states : (__tl_dyn-array OptMaybeLoadCseState)]
+  [joins : OptLoadJoinPhis]
+  [count : i64]
+  [id : i64]
+  [key : OptLoadKey]
+  [state : OptLoadCseState]) : OptLoadCseState
+  (let
+    [slot : i64 (opt-load-join-count joins)]
+    [fresh : i64 (+ joins.mint slot)]
+    [phi : ir.CompilerIrInstr
+      (ir.CompilerIrInstr.Phi
+        fresh
+        (opt-load-join-phi-inputs
+          type-segment-bases
+          index
+          exit-states
+          joins
+          count
+          0
+          key)
+        (opt-load-key-type key))]
+    (begin
+      (set! (array-ref joins.sites slot) id)
+      (set! (array-ref joins.instrs slot) phi)
+      (set! (array-ref joins.counters 0) (+ slot 1))
+      (match state
+        [(OptLoadCseState.State
+            facts
+            table
+            kinds
+            table-cap
+            epoch
+            bases
+            profile-state)
+          (opt-load-cse-state-bind-entry
+            type-segment-bases
+            (OptLoadCseState.State
+              facts
+              table
+              (opt-load-join-phi-kinds
+                type-segment-bases
+                profile-state
+                kinds
+                key
+                fresh)
+              table-cap
+              epoch
+              bases
+              profile-state)
+            key
+            (ir.CompilerIrValue.Var fresh))]))))
+
+;; Walk the first predecessor's exit table; every key it holds that the join
+;; state lost, that every other predecessor also holds, and that no two
+;; predecessors spell alike, becomes a phi.
+(define (opt-load-join-scan-table
+  [type-segment-bases : i64]
+  [index : OptCfgIndex]
+  [sources : opt_i64_i64_map.Map]
+  [exit-states : (__tl_dyn-array OptMaybeLoadCseState)]
+  [joins : OptLoadJoinPhis]
+  [count : i64]
+  [id : i64]
+  [table : OptLoadTable]
+  [state : OptLoadCseState]) : OptLoadCseState
+  (match table
+    [(OptLoadTable.Nil) state]
+    [(OptLoadTable.Cons entry rest)
+      (let
+        [key : OptLoadKey (opt-load-entry-key entry)]
+        [value : ir.CompilerIrValue (opt-load-entry-value entry)]
+        [next : OptLoadCseState
+          (if (>= (opt-load-join-count joins) (opt-load-join-phi-cap))
+            state
+            (if (not
+              (and
+                (opt-load-key-gvn-stable? sources key)
+                (opt-load-value-gvn-stable? sources value)
+                (match value
+                  [(ir.CompilerIrValue.Var _) true]
+                  [_ false])
+                (match state
+                  [(OptLoadCseState.State _ joined _ _ _ _ _)
+                    (match (opt-load-table-find-entry
+                      type-segment-bases
+                      joined
+                      key)
+                      [(OptMaybeLoadEntry.Some _) false]
+                      [(OptMaybeLoadEntry.No) true])])
+                (opt-load-join-inputs-ok?
+                  type-segment-bases
+                  sources
+                  exit-states
+                  joins
+                  count
+                  key
+                  value)))
+              state
+              (opt-load-join-mint
+                type-segment-bases
+                index
+                exit-states
+                joins
+                count
+                id
+                key
+                state)))]
+        (opt-load-join-scan-table
+          type-segment-bases
+          index
+          sources
+          exit-states
+          joins
+          count
+          id
+          (__tl-box-place rest)
+          next))]))
+
+(define (opt-load-join-augment
+  [type-segment-bases : i64]
+  [context : OptCfgContext]
+  [sources : opt_i64_i64_map.Map]
+  [exit-states : (__tl_dyn-array OptMaybeLoadCseState)]
+  [processed : (__tl_dyn-array bool)]
+  [joins : OptLoadJoinPhis]
+  [id : i64]
+  [state : OptLoadCseState]) : OptLoadCseState
+  (if (or
+    (not joins.active?)
+    (>= (opt-load-join-count joins) (opt-load-join-phi-cap)))
+    state
+    (let
+      [index : OptCfgIndex context.index]
+      [count : i64
+        (opt-load-join-collect-preds index exit-states processed joins id)]
+      (if (< count 0)
+        state
+        (if (not (opt-load-join-budget-ok? index joins joins.loops 0 id))
+          state
+          (match (array-ref exit-states (array-ref joins.preds 0))
+            [(OptMaybeLoadCseState.No) state]
+            [(OptMaybeLoadCseState.Some first)
+              (match first
+                [(OptLoadCseState.State _ table _ _ _ _ _)
+                  (opt-load-join-scan-table
+                    type-segment-bases
+                    index
+                    sources
+                    exit-states
+                    joins
+                    count
+                    id
+                    table
+                    state)])]))))))
+
+;; Prepend one block's phis. Phis lead a block, and these are minted for keys
+;; the join's own predecessors agreed on, so their position among any phis
+;; already there does not matter.
+(define (opt-load-join-prepend-block
+  [joins : OptLoadJoinPhis]
+  [first : i64]
+  [last : i64]
+  [block : ir.CompilerIrBlock]) : ir.CompilerIrBlock
+  (match block
+    [(ir.CompilerIrBlock.Block label instrs)
+      (let
+        [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+        [added : i64 (- last first)]
+        [slots : (__tl_dyn-array ir.CompilerIrInstr)
+          (__tl_make-array ir.CompilerIrInstr (+ count added))]
+        [write : i64 0]
+        [cursor : i64 first]
+        [index : i64 0]
+        (begin
+          (while (< cursor last)
+            (begin
+              (set! (array-ref slots write) (array-ref joins.instrs cursor))
+              (set! write (+ write 1))
+              (set! cursor (+ cursor 1))))
+          (while (< index count)
+            (begin
+              (set!
+                (array-ref slots write)
+                (ir.compiler-ir-instr-seq-ref instrs index))
+              (set! write (+ write 1))
+              (set! index (+ index 1))))
+          (ir.CompilerIrBlock.Block label (ir.CompilerIrInstrSeq slots write))))]))
+
+(define (opt-load-join-apply-phis!
+  [joins : OptLoadJoinPhis]
+  [out : (__tl_dyn-array OptGvnBlockResult)]) : unit
+  (let
+    [total : i64 (opt-load-join-count joins)]
+    [first : i64 0]
+    (while (< first total)
+      (let
+        [block-id : i64 (array-ref joins.sites first)]
+        [last : i64 first]
+        (begin
+          (while (and (< last total) (= (array-ref joins.sites last) block-id))
+            (set! last (+ last 1)))
+          (if (and (>= block-id 0) (< block-id (array-length out)))
+            (match (array-ref out block-id)
+              [(OptGvnBlockResult.NoBlock) unit]
+              [(OptGvnBlockResult.SomeBlock block)
+                (set!
+                  (array-ref out block-id)
+                  (OptGvnBlockResult.SomeBlock
+                    (opt-load-join-prepend-block joins first last block)))])
+            unit)
+          (set! first last))))))
+
+;; --- MF-3: one-insertion load PRE on bypass edges ----------------------------
+;;
+;; The join failure MF-2 does NOT reach is the partially redundant one: a key is
+;; cached on one edge and simply absent on the other, because the block that
+;; loaded it is bypassed. `count > 0` loop guards, rotated loops' entry tests and
+;; every "checked accessor returning a sentinel" have this shape, and the
+;; intersect drops the key at the join, so the next region re-derives the whole
+;; descriptor chain (cfg bucket B2, intern_table B2a, peephole B3).
+;;
+;; LLVM answers it with `performLoadPRE`: insert the load in the ONE predecessor
+;; that lacks it, phi the result with the available names. Its cheapest form --
+;; `findLoadToHoistIntoPred` -- does not insert a new load at all: it MOVES an
+;; identical load out of the other successor into the predecessor, so the guard
+;; block ends up holding the one copy both paths then reuse. That is the form
+;; here, and it is a move rather than an insertion for three reasons: the static
+;; load count cannot grow, no var is minted (the sweep, substitution mode, the
+;; header set and the single-source map all keep describing the same function),
+;; and the join needs no phi -- both edges reach it carrying the SAME name, which
+;; is what the ordinary intersect already keeps.
+;;
+;; THE SHAPE. `P` ends in a two-way branch to `A` and `B`; `A`'s only predecessor
+;; is `P` (so `P` dominates it, and the leading instructions of `A` are reached
+;; only through `P`); `B` is a join. `A` begins with `gep base, k ; load` pairs.
+;; Moving that prefix to the end of `P` makes the value available on BOTH edges
+;; out of `P`, so the value survives `B`'s intersect and every block `B`
+;; dominates stops re-deriving it.
+;;
+;; LEGALITY. (i) The base is available at the end of `P`: it is available at the
+;; entry of `A` and is not defined in `A`, and every path to `P` extends through
+;; the `P -> A` edge, so its definition dominates `P`. (ii) Nothing is crossed:
+;; the moved prefix contains only geps and loads, and `P`'s terminator writes no
+;; memory. (iii) The load becomes SPECULATIVE on the `P -> B` edge, so the base
+;; must be dereferenceable there whatever the branch was testing. Only an array
+;; DESCRIPTOR base is admitted -- a var whose static type is an array header
+;; (`opt-load-header-var?`, the same test the key's `header?` flag comes from) --
+;; at byte offset 0 or 8, its data pointer and its length. Those two words are
+;; the header's own storage and are live for as long as the handle is. The base
+;; of an ELEMENT load is not admitted: its address depends on an index the guard
+;; may be the very thing that bounds.
+;;
+;; PROFITABILITY. A blind hoist is the P2 experiment, which lost 9.3% on
+;; cfg_domloops by lengthening live ranges no reuse redeemed. Two gates keep this
+;; one to the partially-redundant shape: the value must be RE-DERIVED elsewhere
+;; (another `gep base, k` with the same base and offset exists in the function),
+;; and the destination must not be a loop latch or a block in a loop that is
+;; already at `opt-licm-frozen-chain-live-in-budget` live-ins -- the same budget
+;; MF-2 uses, on the same proxy. `A` can never be a loop header (it has one
+;; predecessor), so `P` and `A` always sit in the same loops and the hoist can
+;; only add the executions of the bypass edge itself.
+(define (opt-load-pre-hoist-cap) : i64
+  16)
+
+;; Byte offset 0 (the data pointer) or 8 (the length) of a two-word array
+;; descriptor. A gep spells the same word at several scales -- `gep h, 1 : i64`
+;; and `gep h, 8 : u8` are one address -- so the offset is normalized to bytes
+;; through the gep's own element size before it is tested.
+(define (opt-load-pre-descriptor-offset? [byte-off : i64]) : bool
+  (or (= byte-off 0) (= byte-off 8)))
+
+;; The byte offset of `gep base, k : ty`, or -1 when the scale is unknown.
+(define (opt-load-pre-byte-offset
+  [type-segment-bases : i64]
+  [k : i64]
+  [ty : ast.AstType]) : i64
+  (let
+    [size : i64 (opt-load-loc-type-size type-segment-bases ty)]
+    (if (< size 1)
+      (- 0 1)
+      (* k size))))
+
+;; One descriptor word, as a map key: base var and word index (0 or 1).
+(define (opt-load-pre-site-key [base : i64] [byte-off : i64]) : i64
+  (+ (* base 2) (/ byte-off 8)))
+
+;; The descriptor-word census: how many `gep base, off` sites the function has
+;; for each word, and which of them sits LAST in reverse postorder. The count is
+;; the redundancy witness (a word addressed once is not redundant anywhere); the
+;; last site is what the dominance witness tests, so a hoist only happens when
+;; the word is still wanted in the region the bypass edge's join dominates.
+(defstruct OptLoadPreSites
+  (counts opt_i64_i64_map.Map)
+  (last opt_i64_i64_map.Map))
+
+(define (opt-load-pre-scan
+  [type-segment-bases : i64]
+  [index : OptCfgIndex]
+  [block-count : i64]
+  [def-blocks : (__tl_dyn-array i64)]) : OptLoadPreSites
+  (let
+    [sites : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 32)]
+    [last : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 32)]
+    [rpo-num : (__tl_dyn-array i64) index.rpo-num]
+    [id : i64 0]
+    (begin
+      (while (< id block-count)
+        (begin
+          (match (opt-cfg-index-block index id)
+            [(OptMaybeBlock.No) unit]
+            [(OptMaybeBlock.Some block)
+              (match block
+                [(ir.CompilerIrBlock.Block _ instrs)
+                  (let
+                    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+                    [cursor : i64 0]
+                    (while (< cursor count)
+                      (let
+                        [instr : ir.CompilerIrInstr
+                          (ir.compiler-ir-instr-seq-ref instrs cursor)]
+                        [dst : i64 (opt-gvn-instr-dst instr)]
+                        (begin
+                          (if (and (>= dst 0) (< dst (array-length def-blocks)))
+                            (begin
+                              (set! (array-ref def-blocks dst) (+ id 1))
+                              unit)
+                            unit)
+                          (match instr
+                            [(ir.CompilerIrInstr.Gep _ base offset ty)
+                              (match base
+                                [(ir.CompilerIrValue.Var bvar)
+                                  (match offset
+                                    [(ir.CompilerIrValue.I64 k)
+                                      (let
+                                        [byte-off : i64
+                                          (opt-load-pre-byte-offset
+                                            type-segment-bases
+                                            k
+                                            ty)]
+                                        (if (opt-load-pre-descriptor-offset?
+                                          byte-off)
+                                          (let
+                                            [key : i64
+                                              (opt-load-pre-site-key
+                                                bvar
+                                                byte-off)]
+                                            [prev : i64
+                                              (opt_i64_i64_map.get-value-or
+                                                (& sites)
+                                                key
+                                                0)]
+                                            [prev-last : i64
+                                              (opt_i64_i64_map.get-value-or
+                                                (& last)
+                                                key
+                                                0)]
+                                            [later? : bool
+                                              (or
+                                                (= prev-last 0)
+                                                (>
+                                                  (array-ref rpo-num id)
+                                                  (array-ref
+                                                    rpo-num
+                                                    (- prev-last 1))))]
+                                            (begin
+                                              (opt_i64_i64_map.insert-ref!
+                                                (&mut sites)
+                                                key
+                                                (+ prev 1))
+                                              (if later?
+                                                (opt_i64_i64_map.insert-ref!
+                                                  (&mut last)
+                                                  key
+                                                  (+ id 1))
+                                                unit)))
+                                          unit))]
+                                    [_ unit])]
+                                [_ unit])]
+                            [_ unit])
+                          (set! cursor (+ cursor 1))))))])])
+          (set! id (+ id 1))))
+      (OptLoadPreSites sites last))))
+
+;; Is this descriptor word re-derived after the join the bypass edge lands on,
+;; often enough to pay for the load the bypass edge now runs?
+;;
+(define (opt-load-pre-witness-ok?
+  [doms : OptDomInfo]
+  [sites : OptLoadPreSites]
+  [key : i64]
+  [arm : i64]
+  [bypass : i64]) : bool
+  (and
+    (> (opt_i64_i64_map.get-value-or (& sites.counts) key 0) 1)
+    (let
+      [last : i64 (opt_i64_i64_map.get-value-or (& sites.last) key 0)]
+      (and
+        (> last 0)
+        (not (= (- last 1) arm))
+        (opt-dom-info-dominates-id? doms bypass (- last 1))))))
+
+;; Is `pair` a hoistable `gep base, k ; load` at positions (i, i+1) of `instrs`?
+(define (opt-load-pre-pair-ok?
+  [type-segment-bases : i64]
+  [doms : OptDomInfo]
+  [sources : opt_i64_i64_map.Map]
+  [hs : OptLoadHeaderSet]
+  [sites : OptLoadPreSites]
+  [def-blocks : (__tl_dyn-array i64)]
+  [block-id : i64]
+  [bypass : i64]
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]) : bool
+  (if (>= (+ index 1) (ir.compiler-ir-instr-seq-count instrs))
+    false
+    (match (ir.compiler-ir-instr-seq-ref instrs index)
+      [(ir.CompilerIrInstr.Gep gep-dst base offset ty)
+        (match base
+          [(ir.CompilerIrValue.Var bvar)
+            (match offset
+              [(ir.CompilerIrValue.I64 k)
+                (match (ir.compiler-ir-instr-seq-ref instrs (+ index 1))
+                  [(ir.CompilerIrInstr.Load load-dst src load-ty)
+                    (and
+                      (opt-value-is-var? src gep-dst)
+                      (opt-load-pre-descriptor-offset?
+                        (opt-load-pre-byte-offset type-segment-bases k ty))
+                      (= (opt-load-loc-type-size type-segment-bases load-ty) 8)
+                      (opt-load-header-var? hs bvar)
+                      (opt-gvn-stable-var? sources bvar)
+                      (opt-gvn-stable-var? sources gep-dst)
+                      (opt-gvn-stable-var? sources load-dst)
+                      ;; The base must not be defined in this very block: the
+                      ;; dominance argument for the move needs its definition
+                      ;; above the branch that is being hoisted into.
+                      (if (or (< bvar 0) (>= bvar (array-length def-blocks)))
+                        false
+                        (not (= (array-ref def-blocks bvar) (+ block-id 1))))
+                      ;; Redundancy witness: this exact descriptor word is
+                      ;; addressed somewhere else in the function too, AND its
+                      ;; last such site is in the region the bypass edge's join
+                      ;; dominates -- so the hoist really does feed a
+                      ;; re-derivation, rather than paying a load on the bypass
+                      ;; edge for a value only the arm's own subtree wants.
+                      ;; Measured with the count alone as the witness:
+                      ;; gvn_table 840,008,543 -> 840,047,225 (+38,682), five
+                      ;; descriptor words hoisted above one rotated loop's guard
+                      ;; whose re-derivations were all INSIDE the loop, growing
+                      ;; that frame from 152 to 232 bytes and paying five loads
+                      ;; and five spills on every zero-trip entry.
+                      (opt-load-pre-witness-ok?
+                        doms
+                        sites
+                        (opt-load-pre-site-key
+                          bvar
+                          (opt-load-pre-byte-offset type-segment-bases k ty))
+                        block-id
+                        bypass))]
+                  [_ false])]
+              [_ false])]
+          [_ false])]
+      [_ false])))
+
+;; Length of the maximal leading run of hoistable pairs.
+(define (opt-load-pre-prefix-length
+  [type-segment-bases : i64]
+  [doms : OptDomInfo]
+  [sources : opt_i64_i64_map.Map]
+  [hs : OptLoadHeaderSet]
+  [sites : OptLoadPreSites]
+  [def-blocks : (__tl_dyn-array i64)]
+  [block-id : i64]
+  [bypass : i64]
+  [instrs : ir.CompilerIrInstrSeq]) : i64
+  (let
+    [taken : i64 0]
+    [more? : bool true]
+    (begin
+      (while more?
+        (if (opt-load-pre-pair-ok?
+          type-segment-bases
+          doms
+          sources
+          hs
+          sites
+          def-blocks
+          block-id
+          bypass
+          instrs
+          taken)
+          (set! taken (+ taken 2))
+          (set! more? false)))
+      taken)))
+
+;; Does this block end in a two-way branch? The moved prefix goes immediately
+;; above it, so the block must have a terminator to sit above.
+(define (opt-load-pre-branch-block? [instrs : ir.CompilerIrInstrSeq]) : bool
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    (if (< count 1)
+      false
+      (match (ir.compiler-ir-instr-seq-ref instrs (- count 1))
+        [(ir.CompilerIrInstr.Branch _ _ _) true]
+        [_ false]))))
+
+(define (opt-load-pre-latch? [loops : OptNaturalLoopList] [label : i64]) : bool
+  (match loops
+    [(OptNaturalLoopList.Nil) false]
+    [(OptNaturalLoopList.Cons loop rest)
+      (or
+        (= (opt-natural-loop-latch loop) label)
+        (opt-load-pre-latch? (__tl-box-place rest) label))]))
+
+;; The placement gate: never a loop latch, and never a hoist whose destination
+;; or whose arm sits in (or enters) a loop already at the live-in budget.
+(define (opt-load-pre-dest-ok?
+  [cache : (__tl_dyn-array i64)]
+  [loops : OptNaturalLoopList]
+  [loop-index : i64]
+  [dest : i64]) : bool
+  (match loops
+    [(OptNaturalLoopList.Nil) true]
+    [(OptNaturalLoopList.Cons loop rest)
+      (and
+        ;; The destination is budgeted by the same rule MF-2 uses, on the same
+        ;; proxy: a guard block INSIDE a loop that already carries as many
+        ;; live-ins as the budget allows gets no more. Two wider readings were
+        ;; measured and reverted, both of which refuse build_csr's
+        ;; multi-descriptor guard (cfg_domloops -3,077,712 -> -2,422,944)
+        ;; without touching the gvn_table row they were aimed at: counting a
+        ;; guard that ENTERS a loop (MF-2's own test, which puts every rotated
+        ;; loop's guard under its loop's budget), and applying the test to the
+        ;; ARM as well.
+        (if (opt-natural-loop-body-contains-id? loop dest)
+          (<
+            (opt-load-loop-live-ins-cached cache loop loop-index)
+            (opt-licm-frozen-chain-live-in-budget))
+          true)
+        (opt-load-pre-dest-ok?
+          cache
+          (__tl-box-place rest)
+          (+ loop-index 1)
+          dest))]))
+
+;; The current value of a block in the plan: a block can be both a hoist source
+;; and a hoist destination, so every edit reads what earlier edits left.
+(define (opt-load-pre-current
+  [index : OptCfgIndex]
+  [out : (__tl_dyn-array OptGvnBlockResult)]
+  [id : i64]) : OptMaybeBlock
+  (match (array-ref out id)
+    [(OptGvnBlockResult.SomeBlock block) (OptMaybeBlock.Some block)]
+    [(OptGvnBlockResult.NoBlock) (opt-cfg-index-block index id)]))
+
+;; `source` minus its first `taken` instructions.
+(define (opt-load-pre-drop-prefix [block : ir.CompilerIrBlock] [taken : i64]) : ir.CompilerIrBlock
+  (match block
+    [(ir.CompilerIrBlock.Block label instrs)
+      (let
+        [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+        [slots : (__tl_dyn-array ir.CompilerIrInstr)
+          (__tl_make-array ir.CompilerIrInstr (- count taken))]
+        [index : i64 taken]
+        (begin
+          (while (< index count)
+            (begin
+              (set!
+                (array-ref slots (- index taken))
+                (ir.compiler-ir-instr-seq-ref instrs index))
+              (set! index (+ index 1))))
+          (ir.CompilerIrBlock.Block
+            label
+            (ir.CompilerIrInstrSeq slots (- count taken)))))]))
+
+;; `dest` with the first `taken` instructions of `source` spliced in above its
+;; terminator.
+(define (opt-load-pre-splice-prefix
+  [dest : ir.CompilerIrBlock]
+  [source : ir.CompilerIrInstrSeq]
+  [taken : i64]) : ir.CompilerIrBlock
+  (match dest
+    [(ir.CompilerIrBlock.Block label instrs)
+      (let
+        [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+        [slots : (__tl_dyn-array ir.CompilerIrInstr)
+          (__tl_make-array ir.CompilerIrInstr (+ count taken))]
+        [write : i64 0]
+        [index : i64 0]
+        (begin
+          (while (< index (- count 1))
+            (begin
+              (set!
+                (array-ref slots write)
+                (ir.compiler-ir-instr-seq-ref instrs index))
+              (set! write (+ write 1))
+              (set! index (+ index 1))))
+          (set! index 0)
+          (while (< index taken)
+            (begin
+              (set!
+                (array-ref slots write)
+                (ir.compiler-ir-instr-seq-ref source index))
+              (set! write (+ write 1))
+              (set! index (+ index 1))))
+          (set!
+            (array-ref slots write)
+            (ir.compiler-ir-instr-seq-ref instrs (- count 1)))
+          (ir.CompilerIrBlock.Block
+            label
+            (ir.CompilerIrInstrSeq slots (+ count taken)))))]))
+
+;; Try `pred -> arm` as the hoist, with `bypass` as the join the value has to
+;; reach. Returns the number of pairs moved (0 = refused).
+(define (opt-load-pre-try-arm
+  [type-segment-bases : i64]
+  [index : OptCfgIndex]
+  [doms : OptDomInfo]
+  [sources : opt_i64_i64_map.Map]
+  [hs : OptLoadHeaderSet]
+  [sites : OptLoadPreSites]
+  [def-blocks : (__tl_dyn-array i64)]
+  [loops : OptNaturalLoopList]
+  [cache : (__tl_dyn-array i64)]
+  [out : (__tl_dyn-array OptGvnBlockResult)]
+  [pred : i64]
+  [arm : i64]
+  [bypass : i64]) : i64
+  (let
+    [preds : OptCfgCsr index.preds]
+    (if (not
+      (and
+        (not (= arm bypass))
+        (not (= arm pred))
+        (array-ref index.reachable arm)
+        (array-ref index.reachable bypass)
+        (=
+          (- (array-ref preds.offsets (+ arm 1)) (array-ref preds.offsets arm))
+          1)
+        (opt-load-pre-dest-ok? cache loops 0 pred)
+        ;; The bypass edge must land on a JOIN. That is what makes the hoist a
+        ;; partial-redundancy fix rather than plain speculation: the value the
+        ;; two edges carry meets there, so the block the join dominates is the
+        ;; one that stops re-deriving it. Measured with this condition dropped
+        ;; (any second successor admitted, so a checked accessor's one-block
+        ;; sentinel arm qualifies): peephole_lines 435,518,106 -> 450,313,610
+        ;; (+3.40%), the descriptor words of `pl-text` pinned across all four
+        ;; inlined `pl-byte-at` sites of pl_parse_line instead of being read per
+        ;; guarded arm -- the live-range cost the header of this section prices,
+        ;; on the shape that has the most reuse to offer.
+        (>
+          (-
+            (array-ref preds.offsets (+ bypass 1))
+            (array-ref preds.offsets bypass))
+          1)))
+      0
+      (match (opt-load-pre-current index out arm)
+        [(OptMaybeBlock.No) 0]
+        [(OptMaybeBlock.Some arm-block)
+          (match arm-block
+            [(ir.CompilerIrBlock.Block _ arm-instrs)
+              (let
+                [taken : i64
+                  (opt-load-pre-prefix-length
+                    type-segment-bases
+                    doms
+                    sources
+                    hs
+                    sites
+                    def-blocks
+                    arm
+                    bypass
+                    arm-instrs)]
+                (if (= taken 0)
+                  0
+                  (match (opt-load-pre-current index out pred)
+                    [(OptMaybeBlock.No) 0]
+                    [(OptMaybeBlock.Some pred-block)
+                      (match pred-block
+                        [(ir.CompilerIrBlock.Block _ pred-instrs)
+                          (if (not (opt-load-pre-branch-block? pred-instrs))
+                            0
+                            (begin
+                              (set!
+                                (array-ref out pred)
+                                (OptGvnBlockResult.SomeBlock
+                                  (opt-load-pre-splice-prefix
+                                    pred-block
+                                    arm-instrs
+                                    taken)))
+                              (set!
+                                (array-ref out arm)
+                                (OptGvnBlockResult.SomeBlock
+                                  (opt-load-pre-drop-prefix arm-block taken)))
+                              taken))])])))])]))))
+
+(define (opt-load-pre-any-site? [index : OptCfgIndex] [block-count : i64]) : bool
+  (let
+    [succs : OptCfgCsr index.succs]
+    [preds : OptCfgCsr index.preds]
+    [id : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (not found) (< id block-count))
+        (begin
+          (if (and
+            (array-ref index.reachable id)
+            (=
+              (-
+                (array-ref succs.offsets (+ id 1))
+                (array-ref succs.offsets id))
+              2))
+            (let
+              [a : i64 (array-ref succs.edges (array-ref succs.offsets id))]
+              [b : i64
+                (array-ref succs.edges (+ (array-ref succs.offsets id) 1))]
+              (if (and
+                (not (= a b))
+                (or
+                  (and
+                    (=
+                      (-
+                        (array-ref preds.offsets (+ a 1))
+                        (array-ref preds.offsets a))
+                      1)
+                    (>
+                      (-
+                        (array-ref preds.offsets (+ b 1))
+                        (array-ref preds.offsets b))
+                      1))
+                  (and
+                    (=
+                      (-
+                        (array-ref preds.offsets (+ b 1))
+                        (array-ref preds.offsets b))
+                      1)
+                    (>
+                      (-
+                        (array-ref preds.offsets (+ a 1))
+                        (array-ref preds.offsets a))
+                      1))))
+                (set! found true)
+                unit))
+            unit)
+          (set! id (+ id 1))))
+      found)))
+
+(define (opt-load-pre-hoist-blocks
+  [type-segment-bases : i64]
+  [context : OptCfgContext]
+  [sources : opt_i64_i64_map.Map]
+  [hs : OptLoadHeaderSet]
+  [loops : OptNaturalLoopList]
+  [frame : i64]
+  [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
+  (let
+    [index : OptCfgIndex context.index]
+    [block-count : i64 (opt-cfg-index-block-count index)]
+    (if (or (< frame 1) (not (opt-load-pre-any-site? index block-count)))
+      blocks
+      (let
+        [def-blocks : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+        [sites : OptLoadPreSites
+          (opt-load-pre-scan type-segment-bases index block-count def-blocks)]
+        [out : (__tl_dyn-array OptGvnBlockResult)
+          (__tl_make-array OptGvnBlockResult block-count)]
+        [cache : (__tl_dyn-array i64)
+          (__tl_make-array i64 (opt-load-join-loop-count loops))]
+        [succs : OptCfgCsr index.succs]
+        [moved : i64 0]
+        [slot : i64 0]
+        [id : i64 0]
+        (begin
+          (while (< slot (array-length cache))
+            (begin
+              (set! (array-ref cache slot) (- 0 1))
+              (set! slot (+ slot 1))))
+          (while (< id block-count)
+            (begin
+              (if (and
+                (< moved (opt-load-pre-hoist-cap))
+                (array-ref index.reachable id)
+                (=
+                  (-
+                    (array-ref succs.offsets (+ id 1))
+                    (array-ref succs.offsets id))
+                  2)
+                (not (opt-load-pre-latch? loops (opt-cfg-index-label index id))))
+                (let
+                  [a : i64 (array-ref succs.edges (array-ref succs.offsets id))]
+                  [b : i64
+                    (array-ref succs.edges (+ (array-ref succs.offsets id) 1))]
+                  [took : i64
+                    (opt-load-pre-try-arm
+                      type-segment-bases
+                      index
+                      context.doms
+                      sources
+                      hs
+                      sites
+                      def-blocks
+                      loops
+                      cache
+                      out
+                      id
+                      a
+                      b)]
+                  (begin
+                    (if (= took 0)
+                      (set!
+                        took
+                        (opt-load-pre-try-arm
+                          type-segment-bases
+                          index
+                          context.doms
+                          sources
+                          hs
+                          sites
+                          def-blocks
+                          loops
+                          cache
+                          out
+                          id
+                          b
+                          a))
+                      unit)
+                    (if (> took 0)
+                      (set! moved (+ moved 1))
+                      unit)))
+                unit)
+              (set! id (+ id 1))))
+          (if (= moved 0)
+            blocks
+            (opt-gvn-materialize-blocks context.doms out blocks)))))))
 
 (define (opt-load-gvn-instr-seq
   [type-segment-bases : i64]
@@ -124034,6 +125214,7 @@
   [call-memory : opt_i64_i64_map.Map]
   [cells : OptGlobalCellSummary]
   [promote : OptLoadCellPromote]
+  [joins : OptLoadJoinPhis]
   [loop-safe : OptLabelSet]
   [exit-states : (__tl_dyn-array OptMaybeLoadCseState)]
   [processed : (__tl_dyn-array bool)]
@@ -124043,15 +125224,23 @@
   (let
     [index : OptCfgIndex context.index]
     [entry-state : OptLoadCseState
-      (opt-load-gvn-entry-state
+      (opt-load-join-augment
         type-segment-bases
         context
+        sources
         exit-states
         processed
-        sources
-        loop-safe
-        empty-state
-        id)]
+        joins
+        id
+        (opt-load-gvn-entry-state
+          type-segment-bases
+          context
+          exit-states
+          processed
+          sources
+          loop-safe
+          empty-state
+          id))]
     (match (opt-cfg-index-block index id)
       [(OptMaybeBlock.No) unit]
       [(OptMaybeBlock.Some block)
@@ -124088,6 +125277,7 @@
   [call-memory : opt_i64_i64_map.Map]
   [cells : OptGlobalCellSummary]
   [promote : OptLoadCellPromote]
+  [joins : OptLoadJoinPhis]
   [loop-safe : OptLabelSet]
   [exit-states : (__tl_dyn-array OptMaybeLoadCseState)]
   [processed : (__tl_dyn-array bool)]
@@ -124111,6 +125301,7 @@
             call-memory
             cells
             promote
+            joins
             loop-safe
             exit-states
             processed
@@ -124126,6 +125317,7 @@
             call-memory
             cells
             promote
+            joins
             loop-safe
             exit-states
             processed
@@ -124653,14 +125845,8 @@
     (let
       [index : OptCfgIndex context.index]
       [count : i64 (opt-cfg-index-block-count index)]
-      [exit-states : (__tl_dyn-array OptMaybeLoadCseState)
-        (__tl_make-array OptMaybeLoadCseState count)]
-      [processed : (__tl_dyn-array bool) (__tl_make-array bool count)]
-      [out : (__tl_dyn-array OptGvnBlockResult)
-        (__tl_make-array OptGvnBlockResult count)]
       [loops : OptNaturalLoopList
         (opt-cfg-natural-loops-with-context blocks context)]
-      [loop-safe : OptLabelSet (opt-load-gvn-loop-safe-collect hs blocks loops)]
       ;; One var-id-indexed table per function, shared by the whole sweep: the
       ;; copy-canonical rename (MF-1). Substitution mode needs the same bound,
       ;; so the frame is computed once here instead of twice.
@@ -124676,7 +125862,29 @@
             (opt-sccp-max-var-params
               params
               (opt-sccp-max-var-blocks blocks (- 0 1)))))]
-      [canon : (__tl_dyn-array i64) (array.make-array i64 frame)]
+      ;; MF-3 runs BEFORE the sweep and hands it a different function: it moves
+      ;; whole `gep ; load` pairs between existing blocks, so the CFG, the var
+      ;; numbering, the single-source map and the header set all keep describing
+      ;; it, and everything below simply reads the hoisted list. The block walk
+      ;; that records cell reads indexes blocks BY ID, so the index has to
+      ;; describe the hoist's input first and its output after.
+      [_refresh-in : unit (opt-cfg-index-refresh-blocks! index blocks)]
+      [work : ir.CompilerIrBlockList
+        (opt-load-pre-hoist-blocks
+          type-segment-bases
+          context
+          sources
+          hs
+          loops
+          frame
+          blocks)]
+      [exit-states : (__tl_dyn-array OptMaybeLoadCseState)
+        (__tl_make-array OptMaybeLoadCseState count)]
+      [processed : (__tl_dyn-array bool) (__tl_make-array bool count)]
+      [out : (__tl_dyn-array OptGvnBlockResult)
+        (__tl_make-array OptGvnBlockResult count)]
+      [loop-safe : OptLabelSet (opt-load-gvn-loop-safe-collect hs work loops)]
+      [canon : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
       ;; Natural-loop membership, filled before the sweep because MF-5 (i)'s
       ;; reuse gate reads it; substitution mode reuses the same array.
       ;; Loop membership is needed by MF-5 (i)'s gates from the start of the
@@ -124687,7 +125895,7 @@
       ;; substitution branch build its own if it needs one.
       [promotable? : bool (> (opt_i64_i64_map.len (& candidates)) 0)]
       [loop-masks : (__tl_dyn-array i64)
-        (array.make-array
+        (__tl_make-array
           i64
           (if promotable?
             count
@@ -124696,18 +125904,24 @@
         (if promotable?
           (opt-load-gvn-loop-masks-fill loop-masks loops 0)
           unit)]
-      ;; The block walk that records cell reads indexes blocks BY ID, so the
-      ;; index has to describe this pass's input before the plan is built.
-      [_refresh : unit (opt-cfg-index-refresh-blocks! index blocks)]
+      [_refresh : unit (opt-cfg-index-refresh-blocks! index work)]
       [promote : OptLoadCellPromote
         (opt-load-cell-promote-build candidates index count loop-masks frame)]
+      ;; MF-2's phis mint above the cell promotion's whole reserved range, so
+      ;; the two workspaces never name one var whichever of them fires.
+      [joins : OptLoadJoinPhis
+        (opt-load-join-build
+          index
+          count
+          loops
+          (+ frame (opt-load-cell-promote-cap)))]
       [empty-state : OptLoadCseState
         (opt-load-cse-state-with-caps-and-facts
           profile-state
           (opt-load-cse-table-cap-for-size
-            (ir.compiler-ir-block-list-instruction-count blocks))
+            (ir.compiler-ir-block-list-instruction-count work))
           (opt-load-cse-kinds-cap-for-size
-            (ir.compiler-ir-block-list-instruction-count blocks))
+            (ir.compiler-ir-block-list-instruction-count work))
           (opt-alias-seed-params type-segment-bases params))]
       (begin
         (opt-load-gvn-process-rpo
@@ -124719,6 +125933,7 @@
           call-memory
           cells
           promote
+          joins
           loop-safe
           exit-states
           processed
@@ -124742,7 +125957,7 @@
           [subst-masks : (__tl_dyn-array i64)
             (if (or promotable? (not subst-any?))
               loop-masks
-              (array.make-array i64 count))]
+              (__tl_make-array i64 count))]
           [_subst-masks : unit
             (if (or promotable? (not subst-any?))
               unit
@@ -124756,14 +125971,25 @@
             (if (> promoted 0)
               (opt-load-cell-apply-inserts! cells promote out)
               unit)]
+          ;; The join phis go in AFTER the cell Movs, whose plan is indexed
+          ;; against the block's own instruction positions; prepending first
+          ;; would shift every one of them.
+          [phis : i64 (opt-load-join-count joins)]
+          [_phis : unit
+            (if (> phis 0)
+              (opt-load-join-apply-phis! joins out)
+              unit)]
+          [next-frame : i64
+            (if (> phis 0)
+              (+ frame (opt-load-cell-promote-cap) phis)
+              (+ frame promoted))]
           [materialized : ir.CompilerIrBlockList
-            (opt-gvn-materialize-blocks context.doms out blocks)]
+            (opt-gvn-materialize-blocks context.doms out work)]
           (OptLoadGvnResult.Result
             (match subst
               [(OptCopyEnv.Nil) materialized]
-              [_
-                (opt-load-gvn-substitute (+ frame promoted) subst materialized)])
-            (+ frame promoted)))))))
+              [_ (opt-load-gvn-substitute next-frame subst materialized)])
+            next-frame))))))
 
 ;; The frame-free entry, for callers that mint nothing downstream of this pass.
 (define (opt-load-gvn-blocks-with-context

@@ -33,14 +33,14 @@ illustrative observation values) is:
 schema_version=1
 workload=owned-semantic-index
 input=src/compiler_typecheck_core.tl
-semantic_record_count=354341
+semantic_record_count=354405
 host=linux
 backend=systemd-user-cgroup
 reason=success
 exit_code=0
 limit_bytes=8589934592
-peak_memory_bytes=1679663104
-wall_ms=870116
+peak_memory_bytes=1717986918
+wall_ms=833340
 ```
 
 `host`, `backend`, timing, and memory values are observations. `reason` is one

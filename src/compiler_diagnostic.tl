@@ -211,6 +211,11 @@
 (define (compiler-diagnostic-message [diag : CompilerDiagnostic]) : String
   diag.message)
 
+(define (compiler-diagnostic-message-ref [diag : (& diag CompilerDiagnostic)]) : (&
+    diag
+    str)
+  (& diag.message))
+
 (define (compiler-diagnostic-end-line [diag : CompilerDiagnostic]) : i64
   (let
     [primary : CompilerDiagnosticSpan diag.primary]

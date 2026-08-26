@@ -105,8 +105,6 @@ reject_diag() {
             printf 'format: precision integer overflow' ;;
         stdlib/tests/format_precision_unknown_capture_reject.tl)
             printf 'typecheck: unbound name missing' ;;
-        stdlib/tests/format_precision_unsupported_reject.tl)
-            printf 'format: precision for float Display output is not supported yet' ;;
         stdlib/tests/format_plus_nonnumeric_reject.tl)
             printf "format: '+' sign requires a numeric argument" ;;
         stdlib/tests/format_raw_capture_reject.tl)

@@ -6390,8 +6390,13 @@ bytes: it does not decode or validate UTF-8, so a boundary may split a
 multi-byte UTF-8 sequence, and embedded NUL and bytes above `0x7f` remain
 ordinary output bytes. This is an intentional difference from Rust's
 Unicode-scalar count and keeps precision in the same unit as TypeLisp width.
-Float fixed precision remains a separate formatter feature and produces its
-focused unsupported diagnostic until present.
+For `f32` and `f64`, a present precision instead selects fixed decimal Display:
+finite values have exactly that many digits after the decimal point, precision
+zero omits the point, and conversion rounds the exact source-width IEEE-754
+value to nearest with ties to even. Signed zero and a negative finite value
+that rounds to zero retain their minus sign. Precision does not alter
+`inf`/`-inf`/`NaN`, and `#` does not force a point at precision zero. Checked
+output-length arithmetic traps before rendering on signed-`i64` overflow.
 
 The `+` sign emits a plus for nonnegative fixed-width integer and float values
 and is rejected for nonnumeric values; `-` is accepted as the Rust-compatible
@@ -6409,10 +6414,12 @@ The built-in placeholder types are `String`, `i8`, `i16`, `i32`, `i64`, `u8`,
 `u16`, `u32`, `u64`, `bool`, `char`, `f64`, and `f32`. Signed integers render
 their decimal magnitude with a leading minus when negative; unsigned conversion
 preserves the complete `u64` range. Float Display uses the source IEEE-754
-precision, emits the shortest round-tripping decimal without `e`/`E` notation,
-preserves signed zero, renders infinities as `inf`/`-inf`, and canonicalizes all
-NaNs to `NaN` without a sign. A struct or enum instead delegates to a function
-in the type's canonical owner module. The owner may define either:
+precision. With omitted format precision it emits the shortest round-tripping
+decimal without `e`/`E` notation; with resolved precision it emits the exact
+fixed-decimal spelling described above. Both paths preserve signed zero, render
+infinities as `inf`/`-inf`, and canonicalize all NaNs to `NaN` without a sign. A
+struct or enum instead delegates to a function in the type's canonical owner
+module. The owner may define either:
 
 - `to-string : (& T) -> String`, normally for the module's primary type; or
 - `to-string-<NominalName> : (& T) -> String`, for another nominal type owned

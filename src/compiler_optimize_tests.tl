@@ -68344,3 +68344,430 @@
     (compiler-optimize-flag-exit-sentinel-self-test)
     42
     "an i64 sentinel flag cleared to a computed value converts by copying the header's gate to the assignment site, K may be a global read under two names, an assignment site that already reaches the exit refuses, and the rotation defers to the conversion"))
+
+;; --- T1-5: phi-inductive bounds-check elimination (ABCD cycle rule) ----------
+;;
+;; The fixtures reuse the T1-3 parameter frame -- %0 a bool to branch on, %1 a
+;; length, %2 and %3 unconstrained i64s -- and each drives
+;; `opt-bounds-dom-blocks-with-context` end to end over one loop shape.
+(define (opt-abcd-phi
+  [dst : i64]
+  [inputs : compiler_ir_types.CompilerIrPhiInputList]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.Phi
+    dst
+    inputs
+    (compiler_ast_types.AstType.I64)))
+
+(define (opt-abcd-var [var : i64]) : compiler_ir_types.CompilerIrValue
+  (compiler_ir_types.CompilerIrValue.Var var))
+
+;; `bounds_check <literal>, %1`
+(define (opt-abcd-check-lit [literal : i64] [label : String]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.BoundsCheck
+    (compiler_ir_types.CompilerIrValue.I64 literal)
+    (compiler_ir_types.CompilerIrValue.Var 1)
+    (compiler_ir_types.compiler-ir-label label)))
+
+;; (a)/(d) THE EXPLICIT STACK. `sp` is a header phi seeded with a literal the
+;; preheader already checked, pushed as `sp + 1` (checked at the push, which is
+;; where `stack[sp + 1]` is written) and popped as `sp - 1` on an edge the
+;; header's own `>= 0` test guards. The header's `stack[sp]` check is the one
+;; the cycle rule retires; the push's check is what pays for it and must stay.
+;; `seed` is the phi's preheader input: the checked literal proves the cycle,
+;; an unconstrained parameter leaves one input unclassified and refuses it.
+(define (opt-abcd-stack-blocks [seed : compiler_ir_types.CompilerIrValue]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-nn-block
+      "entry"
+      (opt-test-instrs (opt-abcd-check-lit 0 "ok_seed") (opt-nn-jump "header")))
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-nn-block
+        "header"
+        (opt-test-instrs
+          (opt-abcd-phi
+            10
+            (opt-nn-phi-input
+              seed
+              "entry"
+              (opt-nn-phi-input
+                (opt-abcd-var 13)
+                "merge"
+                (compiler_ir_types.CompilerIrPhiInputList.Nil))))
+          (opt-nn-check 10 1 "ok_header")
+          (opt-nn-branch 0 "push" "pop")))
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-nn-block
+          "push"
+          (opt-test-instrs
+            (opt-nn-cmp-lit 11 (compiler_ir_types.CompilerIrBinOp.Add) 10 1)
+            (opt-nn-check 11 1 "ok_push")
+            (opt-nn-jump "merge")))
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-nn-block
+            "pop"
+            (opt-test-instrs
+              (opt-nn-cmp-lit 12 (compiler_ir_types.CompilerIrBinOp.Sub) 10 1)
+              (opt-nn-jump "merge")))
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-nn-block
+              "merge"
+              (opt-test-instrs
+                (opt-abcd-phi
+                  13
+                  (opt-nn-phi-input
+                    (opt-abcd-var 11)
+                    "push"
+                    (opt-nn-phi-input
+                      (opt-abcd-var 12)
+                      "pop"
+                      (compiler_ir_types.CompilerIrPhiInputList.Nil))))
+                (opt-nn-cmp-lit 14 (compiler_ir_types.CompilerIrBinOp.Ge) 13 0)
+                (opt-nn-branch 14 "header" "exit")))
+            (compiler_ir_types.compiler-ir-block-cons
+              (opt-nn-block "exit" (opt-test-instrs (opt-nn-return 2)))
+              (compiler_ir_types.CompilerIrBlockList.Nil))))))))
+
+;; (c) THE SAME STACK with the push's check moved onto ONE of the two paths out
+;; of the push block, so it no longer dominates the edge that carries `sp + 1`
+;; back to the header. The fact is recorded on the definition of `sp + 1` all
+;; the same; the dominance test on the block it was recorded at is what refuses
+;; it here.
+(define (opt-abcd-stack-split-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-nn-block
+      "entry"
+      (opt-test-instrs (opt-abcd-check-lit 0 "ok_seed") (opt-nn-jump "header")))
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-nn-block
+        "header"
+        (opt-test-instrs
+          (opt-abcd-phi
+            10
+            (opt-nn-phi-input
+              (compiler_ir_types.CompilerIrValue.I64 0)
+              "entry"
+              (opt-nn-phi-input
+                (opt-abcd-var 13)
+                "merge"
+                (compiler_ir_types.CompilerIrPhiInputList.Nil))))
+          (opt-nn-check 10 1 "ok_header")
+          (opt-nn-branch 0 "push" "pop")))
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-nn-block
+          "push"
+          (opt-test-instrs
+            (opt-nn-cmp-lit 11 (compiler_ir_types.CompilerIrBinOp.Add) 10 1)
+            (opt-nn-branch 0 "push_checked" "push_open")))
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-nn-block
+            "push_checked"
+            (opt-test-instrs
+              (opt-nn-check 11 1 "ok_push")
+              (opt-nn-jump "merge")))
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-nn-block "push_open" (opt-test-instrs (opt-nn-jump "merge")))
+            (compiler_ir_types.compiler-ir-block-cons
+              (opt-nn-block
+                "pop"
+                (opt-test-instrs
+                  (opt-nn-cmp-lit
+                    12
+                    (compiler_ir_types.CompilerIrBinOp.Sub)
+                    10
+                    1)
+                  (opt-nn-jump "merge")))
+              (compiler_ir_types.compiler-ir-block-cons
+                (opt-nn-block
+                  "merge"
+                  (opt-test-instrs
+                    (opt-abcd-phi
+                      13
+                      (opt-nn-phi-input
+                        (opt-abcd-var 11)
+                        "push_checked"
+                        (opt-nn-phi-input
+                          (opt-abcd-var 11)
+                          "push_open"
+                          (opt-nn-phi-input
+                            (opt-abcd-var 12)
+                            "pop"
+                            (compiler_ir_types.CompilerIrPhiInputList.Nil)))))
+                    (opt-nn-cmp-lit
+                      14
+                      (compiler_ir_types.CompilerIrBinOp.Ge)
+                      13
+                      0)
+                    (opt-nn-branch 14 "header" "exit")))
+                (compiler_ir_types.compiler-ir-block-cons
+                  (opt-nn-block "exit" (opt-test-instrs (opt-nn-return 2)))
+                  (compiler_ir_types.CompilerIrBlockList.Nil))))))))))
+
+;; (b) THE OUTPUT CURSOR AND ITS REVERSED COPY. The filling loop checks
+;; `out[post]` and steps `post + 1`, which is the non-strict half of the
+;; induction (`post <= len`); the copying loop below it reads
+;; `out[(post - 1) - i]` under `0 <= i < post`, which the decreasing rule
+;; discharges from it. The fill's own check has nothing to stand on -- nothing
+;; says the length is positive -- and stays.
+(define (opt-abcd-cursor-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-nn-block "entry" (opt-test-instrs (opt-nn-jump "fill_header")))
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-nn-block
+        "fill_header"
+        (opt-test-instrs
+          (opt-abcd-phi
+            20
+            (opt-nn-phi-input
+              (compiler_ir_types.CompilerIrValue.I64 0)
+              "entry"
+              (opt-nn-phi-input
+                (opt-abcd-var 21)
+                "fill_body"
+                (compiler_ir_types.CompilerIrPhiInputList.Nil))))
+          (opt-nn-branch 0 "fill_body" "after")))
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-nn-block
+          "fill_body"
+          (opt-test-instrs
+            (opt-nn-check 20 1 "ok_store")
+            (opt-nn-cmp-lit 21 (compiler_ir_types.CompilerIrBinOp.Add) 20 1)
+            (opt-nn-jump "fill_header")))
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-nn-block
+            "after"
+            (opt-test-instrs
+              (opt-nn-cmp-lit 22 (compiler_ir_types.CompilerIrBinOp.Sub) 20 1)
+              (opt-nn-jump "copy_header")))
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-nn-block
+              "copy_header"
+              (opt-test-instrs
+                (opt-abcd-phi
+                  24
+                  (opt-nn-phi-input
+                    (compiler_ir_types.CompilerIrValue.I64 0)
+                    "after"
+                    (opt-nn-phi-input
+                      (opt-abcd-var 27)
+                      "copy_body"
+                      (compiler_ir_types.CompilerIrPhiInputList.Nil))))
+                (opt-nn-cmp-var 25 (compiler_ir_types.CompilerIrBinOp.Lt) 24 20)
+                (opt-nn-branch 25 "copy_body" "exit")))
+            (compiler_ir_types.compiler-ir-block-cons
+              (opt-nn-block
+                "copy_body"
+                (opt-test-instrs
+                  (opt-nn-cmp-var
+                    26
+                    (compiler_ir_types.CompilerIrBinOp.Sub)
+                    22
+                    24)
+                  (opt-nn-check 26 1 "ok_copy")
+                  (opt-nn-cmp-lit
+                    27
+                    (compiler_ir_types.CompilerIrBinOp.Add)
+                    24
+                    1)
+                  (opt-nn-jump "copy_header")))
+              (compiler_ir_types.compiler-ir-block-cons
+                (opt-nn-block "exit" (opt-test-instrs (opt-nn-return 2)))
+                (compiler_ir_types.CompilerIrBlockList.Nil)))))))))
+
+;; (e) THE WORKLIST POP. `pending - 1` is checked on the arm the header's own
+;; test guards. With `pending >= 1` the difference is in [0, pending] and the
+;; cycle rule carries the range down to it; with a test that says nothing about
+;; the lower end, `pending - 1` may be -1 and the check stays.
+(define (opt-abcd-decrease-blocks [guard : compiler_ir_types.CompilerIrBinOp]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-nn-block
+      "entry"
+      (opt-test-instrs (opt-abcd-check-lit 0 "ok_seed") (opt-nn-jump "header")))
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-nn-block
+        "header"
+        (opt-test-instrs
+          (opt-abcd-phi
+            30
+            (opt-nn-phi-input
+              (compiler_ir_types.CompilerIrValue.I64 0)
+              "entry"
+              (opt-nn-phi-input
+                (opt-abcd-var 33)
+                "latch"
+                (compiler_ir_types.CompilerIrPhiInputList.Nil))))
+          (opt-nn-cmp-lit 31 guard 30 1)
+          (opt-nn-branch 31 "take" "skip")))
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-nn-block
+          "take"
+          (opt-test-instrs
+            (opt-nn-cmp-lit 32 (compiler_ir_types.CompilerIrBinOp.Sub) 30 1)
+            (opt-nn-check 32 1 "ok_pop")
+            (opt-nn-jump "latch")))
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-nn-block "skip" (opt-test-instrs (opt-nn-jump "latch")))
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-nn-block
+              "latch"
+              (opt-test-instrs
+                (opt-abcd-phi
+                  33
+                  (opt-nn-phi-input
+                    (opt-abcd-var 32)
+                    "take"
+                    (opt-nn-phi-input
+                      (opt-abcd-var 30)
+                      "skip"
+                      (compiler_ir_types.CompilerIrPhiInputList.Nil))))
+                (opt-nn-branch 0 "header" "exit")))
+            (compiler_ir_types.compiler-ir-block-cons
+              (opt-nn-block "exit" (opt-test-instrs (opt-nn-return 2)))
+              (compiler_ir_types.CompilerIrBlockList.Nil))))))))
+
+;; (f) THE BYTE SCANNER. The index is tested SIGNED against the very value the
+;; check uses as its length, and its sign is the induction: the counter is
+;; reassigned through the phi of every inner loop it runs, so no single input
+;; proves it and the group does. `inner-guard` is the innermost loop's test:
+;; `lt` fences its `+ 1` step, `eq` does not.
+(define (opt-abcd-scan-blocks [inner-guard : compiler_ir_types.CompilerIrBinOp]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-nn-block "entry" (opt-test-instrs (opt-nn-jump "outer_header")))
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-nn-block
+        "outer_header"
+        (opt-test-instrs
+          (opt-abcd-phi
+            40
+            (opt-nn-phi-input
+              (compiler_ir_types.CompilerIrValue.I64 0)
+              "entry"
+              (opt-nn-phi-input
+                (opt-abcd-var 41)
+                "outer_latch"
+                (compiler_ir_types.CompilerIrPhiInputList.Nil))))
+          (opt-nn-cmp-var 42 (compiler_ir_types.CompilerIrBinOp.Lt) 40 1)
+          (opt-nn-branch 42 "mid_header" "exit")))
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-nn-block
+          "mid_header"
+          (opt-test-instrs
+            (opt-abcd-phi
+              43
+              (opt-nn-phi-input
+                (opt-abcd-var 40)
+                "outer_header"
+                (opt-nn-phi-input
+                  (opt-abcd-var 44)
+                  "mid_latch"
+                  (compiler_ir_types.CompilerIrPhiInputList.Nil))))
+            (opt-nn-cmp-var 45 (compiler_ir_types.CompilerIrBinOp.Lt) 43 1)
+            (opt-nn-branch 45 "inner_header" "outer_latch")))
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-nn-block
+            "inner_header"
+            (opt-test-instrs
+              (opt-abcd-phi
+                46
+                (opt-nn-phi-input
+                  (opt-abcd-var 43)
+                  "mid_header"
+                  (opt-nn-phi-input
+                    (opt-abcd-var 47)
+                    "inner_latch"
+                    (compiler_ir_types.CompilerIrPhiInputList.Nil))))
+              (opt-nn-cmp-var 48 inner-guard 46 1)
+              (opt-nn-branch 48 "inner_body" "mid_latch")))
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-nn-block
+              "inner_body"
+              (opt-test-instrs
+                (opt-nn-check 46 1 "ok_scan")
+                (opt-nn-jump "inner_latch")))
+            (compiler_ir_types.compiler-ir-block-cons
+              (opt-nn-block
+                "inner_latch"
+                (opt-test-instrs
+                  (opt-nn-cmp-lit
+                    47
+                    (compiler_ir_types.CompilerIrBinOp.Add)
+                    46
+                    1)
+                  (opt-nn-jump "inner_header")))
+              (compiler_ir_types.compiler-ir-block-cons
+                (opt-nn-block
+                  "mid_latch"
+                  (opt-test-instrs
+                    (opt-nn-cmp-lit
+                      44
+                      (compiler_ir_types.CompilerIrBinOp.Add)
+                      43
+                      1)
+                    (opt-nn-jump "mid_header")))
+                (compiler_ir_types.compiler-ir-block-cons
+                  (opt-nn-block
+                    "outer_latch"
+                    (opt-test-instrs
+                      (opt-nn-cmp-lit
+                        41
+                        (compiler_ir_types.CompilerIrBinOp.Add)
+                        40
+                        1)
+                      (opt-nn-jump "outer_header")))
+                  (compiler_ir_types.compiler-ir-block-cons
+                    (opt-nn-block "exit" (opt-test-instrs (opt-nn-return 2)))
+                    (compiler_ir_types.CompilerIrBlockList.Nil)))))))))))
+
+;; Returns 42 only when every proof and every refusal holds.
+(define (compiler-optimize-bounds-dom-inductive-self-test) : i64
+  (let
+    [stack : compiler_ir_types.CompilerIrBlockList
+      (opt-nn-run
+        (opt-abcd-stack-blocks (compiler_ir_types.CompilerIrValue.I64 0)))]
+    [open-seed : compiler_ir_types.CompilerIrBlockList
+      (opt-nn-run
+        (opt-abcd-stack-blocks (compiler_ir_types.CompilerIrValue.Var 2)))]
+    [split : compiler_ir_types.CompilerIrBlockList
+      (opt-nn-run (opt-abcd-stack-split-blocks))]
+    [cursor : compiler_ir_types.CompilerIrBlockList
+      (opt-nn-run (opt-abcd-cursor-blocks))]
+    [guarded : compiler_ir_types.CompilerIrBlockList
+      (opt-nn-run
+        (opt-abcd-decrease-blocks (compiler_ir_types.CompilerIrBinOp.Ge)))]
+    [unguarded : compiler_ir_types.CompilerIrBlockList
+      (opt-nn-run
+        (opt-abcd-decrease-blocks (compiler_ir_types.CompilerIrBinOp.Le)))]
+    [scan : compiler_ir_types.CompilerIrBlockList
+      (opt-nn-run (opt-abcd-scan-blocks (compiler_ir_types.CompilerIrBinOp.Lt)))]
+    [scan-open : compiler_ir_types.CompilerIrBlockList
+      (opt-nn-run (opt-abcd-scan-blocks (compiler_ir_types.CompilerIrBinOp.Eq)))]
+    (cond
+      ;; (a) the header's `stack[sp]` check goes; the push's check, which is
+      ;; what proved it, stays.
+      [(not (= (opt-nn-count stack "header") 2)) 1]
+      [(not (= (opt-nn-count stack "push") 3)) 2]
+      ;; ... and the loop's own `>= 0` test is untouched: `sp - 1` really can
+      ;; be negative, and folding it would build an endless loop.
+      [(not (opt-nn-compare-signed? stack "merge" 1 14)) 3]
+      ;; (d) one unclassified input -- an unconstrained seed -- refuses it.
+      [(not (= (opt-nn-count open-seed "header") 3)) 4]
+      ;; (c) the push's check no longer dominates the edge that carries the
+      ;; stepped value: refused.
+      [(not (= (opt-nn-count split "header") 3)) 5]
+      ;; (b) the reversed copy's check goes, the fill's check stays.
+      [(not (= (opt-nn-count cursor "copy_body") 3)) 6]
+      [(not (= (opt-nn-count cursor "fill_body") 3)) 7]
+      ;; (e) `pending - 1` under `pending >= 1`, then without it.
+      [(not (= (opt-nn-count guarded "take") 2)) 8]
+      [(not (= (opt-nn-count unguarded "take") 3)) 9]
+      ;; (f) the scanner's index: signed `i < len` at the use, sign carried
+      ;; through three phis; and the same shape with the inner step unfenced.
+      [(not (= (opt-nn-count scan "inner_body") 1)) 10]
+      [(not (= (opt-nn-count scan-open "inner_body") 2)) 11]
+      [else 42])))
+
+(test
+  bounds-dom-phi-inductive-checks
+  (test.assert-i64-eq
+    (compiler-optimize-bounds-dom-inductive-self-test)
+    42
+    "the ABCD cycle rule retires an explicit stack's header check from the push's own check and the pop edge's guard, a reversed copy's decreasing index from the cursor that filled it, and a byte scanner's index from a signed test plus an inductive sign; a stepped input whose check does not dominate its edge, an unclassified seed, an unguarded decrement and an unfenced step are all refused"))

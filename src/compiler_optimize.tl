@@ -45203,6 +45203,15 @@
             (if (and (>= dst 0) (< dst (array-length defs)))
               (set! (array-ref defs dst) (OptBoolBranchDef.Some instr label))
               unit)]
+          ;; A `select` joins two bounds without a control-flow join -- the
+          ;; `min(len_a, len_b)` the ubound narrowing leaves in a loop header is
+          ;; one -- and the range rules below split it into its arms.
+          [(ir.CompilerIrInstr.Select payload-box)
+            (let
+              [dst : i64 (__tl-project-field (__tl-box-place payload-box) dst)]
+              (if (and (>= dst 0) (< dst (array-length defs)))
+                (set! (array-ref defs dst) (OptBoolBranchDef.Some instr label))
+                unit))]
           [_ unit])
         (opt-bounds-dom-phi-defs-fill-instrs! defs label instrs (+ index 1))))))
 
@@ -45756,10 +45765,15 @@
 ;; length too. A retyping pass wants to run below every signed-shape matcher,
 ;; not here.
 ;;
-;; Recursion budget: the phi nest of a byte scanner (a token counter outside, a
-;; skip loop inside) is two phis deep and each derived step costs one unit.
+;; Recursion budget. A byte scanner's counter is reassigned through the phis of
+;; every inner skip loop it runs, so the group it belongs to is a chain of phis,
+;; not a nest of two: `cfg-scan-ints`' digit cursor reaches its seed through
+;; four of them (digit loop, sign adjust, outer counter, the merge of the two
+;; comment-skip clones) and each derived step costs one unit on top. The budget
+;; is what bounds the work, not what makes the recursion terminate -- the phi
+;; group itself does that.
 (define (opt-bounds-dom-nonneg-fuel) : i64
-  4)
+  8)
 
 ;; The phis the current proof has entered, innermost first.
 (defenum OptNonnegPhis
@@ -45892,6 +45906,7 @@
   [defs : (__tl_dyn-array OptBoolBranchDef)]
   [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
   [var-facts : (__tl_dyn-array i64)]
+  [checks : OptBoundsDomChecks]
   [copies : opt_i64_i64_map.Map]
   [cmp-facts : OptDomCmpFacts]
   [phis : OptNonnegPhis]
@@ -45910,6 +45925,8 @@
           var-facts
           var
           (opt-bounds-dom-var-fact-nonneg))
+        ;; Proved by a `bounds_check` this point is dominated by.
+        (opt-bounds-dom-checked-any? doms checks at-id value)
         (and
           (> fuel 0)
           (opt-bounds-dom-nonneg-def?
@@ -45919,6 +45936,7 @@
             defs
             phi-defs
             var-facts
+            checks
             copies
             cmp-facts
             phis
@@ -45946,6 +45964,7 @@
   [defs : (__tl_dyn-array OptBoolBranchDef)]
   [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
   [var-facts : (__tl_dyn-array i64)]
+  [checks : OptBoundsDomChecks]
   [copies : opt_i64_i64_map.Map]
   [cmp-facts : OptDomCmpFacts]
   [phis : OptNonnegPhis]
@@ -45967,6 +45986,7 @@
               defs
               phi-defs
               var-facts
+              checks
               copies
               cmp-facts
               (OptNonnegPhis.Cons var (box phis))
@@ -45988,6 +46008,7 @@
                   defs
                   phi-defs
                   var-facts
+                  checks
                   copies
                   cmp-facts
                   phis
@@ -46006,6 +46027,7 @@
   [defs : (__tl_dyn-array OptBoolBranchDef)]
   [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
   [var-facts : (__tl_dyn-array i64)]
+  [checks : OptBoundsDomChecks]
   [copies : opt_i64_i64_map.Map]
   [cmp-facts : OptDomCmpFacts]
   [phis : OptNonnegPhis]
@@ -46033,6 +46055,7 @@
                   defs
                   phi-defs
                   var-facts
+                  checks
                   copies
                   cmp-facts
                   phis
@@ -46056,6 +46079,7 @@
                     defs
                     phi-defs
                     var-facts
+                    checks
                     copies
                     cmp-facts
                     phis
@@ -46079,6 +46103,7 @@
               defs
               phi-defs
               var-facts
+              checks
               copies
               cmp-facts
               phis
@@ -46097,6 +46122,7 @@
   [defs : (__tl_dyn-array OptBoolBranchDef)]
   [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
   [var-facts : (__tl_dyn-array i64)]
+  [checks : OptBoundsDomChecks]
   [copies : opt_i64_i64_map.Map]
   [cmp-facts : OptDomCmpFacts]
   [phis : OptNonnegPhis]
@@ -46117,6 +46143,7 @@
             defs
             phi-defs
             var-facts
+            checks
             copies
             cmp-facts
             phis
@@ -46131,6 +46158,7 @@
   [defs : (__tl_dyn-array OptBoolBranchDef)]
   [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
   [var-facts : (__tl_dyn-array i64)]
+  [checks : OptBoundsDomChecks]
   [copies : opt_i64_i64_map.Map]
   [cmp-facts : OptDomCmpFacts]
   [phis : OptNonnegPhis]
@@ -46147,6 +46175,7 @@
           defs
           phi-defs
           var-facts
+          checks
           copies
           cmp-facts
           phis
@@ -46163,6 +46192,7 @@
               defs
               phi-defs
               var-facts
+              checks
               copies
               cmp-facts
               phis
@@ -46176,6 +46206,7 @@
         defs
         phi-defs
         var-facts
+        checks
         copies
         cmp-facts
         phis
@@ -46193,6 +46224,7 @@
   [defs : (__tl_dyn-array OptBoolBranchDef)]
   [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
   [var-facts : (__tl_dyn-array i64)]
+  [checks : OptBoundsDomChecks]
   [copies : opt_i64_i64_map.Map]
   [cmp-facts : OptDomCmpFacts]
   [block-id : i64]
@@ -46204,12 +46236,1386 @@
     defs
     phi-defs
     var-facts
+    checks
     copies
     cmp-facts
     (OptNonnegPhis.Nil)
     block-id
     value
     (opt-bounds-dom-nonneg-fuel)))
+
+;; --- passed checks recorded on the checked value's definition ----------------
+;;
+;; Facts flow DOWN the dominator tree, so a check that a LATER iteration's index
+;; passed -- `bounds_check sp + 1, len` at an explicit stack's push, read back at
+;; the loop header as `stack[sp]` -- is invisible to the walk: the push block
+;; sits INSIDE the loop and dominates nothing the header is above. Collect every
+;; passed check once per function, keyed on the DEFINITION of the value it
+;; checked, so a consumer can ask whether one of them holds at some other block.
+;; Each row is a `(length, block)` pair; the consumer's dominance test is what
+;; turns it into an implication. The rows are a CSR indexed by var, so a query
+;; scans only the checks of the value it asks about.
+;;
+;; SOUNDNESS. `BoundsCheck` is a trap-or-continue, so reaching any point block B
+;; dominates means B's check PASSED, and a GVN-stable var names one runtime
+;; value everywhere: `0 <= v < len` therefore holds at every such point. The
+;; statement is about the program this pass READS, in which every check is still
+;; present, so it stays true no matter which checks the pass then deletes --
+;; there is no circularity even where two checks discharge each other, because
+;; neither proof ever assumes a deletion.
+;;
+;; The dominance test comes in two flavours:
+;;   * asked AT an instruction (the check being decided, or a value derived
+;;     there): B must STRICTLY dominate the asking block. A check LATER in the
+;;     same block runs after the one being decided and may not retire it -- the
+;;     trap would move to a different index and message.
+;;   * asked at the END of a block (a phi input, which the edge out of that
+;;     block consumes): B = that block itself is admitted, since all of it runs
+;;     before the edge is taken.
+(defstruct OptBoundsDomChecks
+  (offsets (__tl_dyn-array i64))
+  (lens (__tl_dyn-array ir.CompilerIrValue))
+  (blocks (__tl_dyn-array i64)))
+
+;; The var a check is keyed on: its index operand after copy resolution and the
+;; same-width reinterpret strip, which is the spelling every query below speaks.
+;; -1 when that is not a single-source var -- a var with more than one
+;; definition names more than one runtime value, so no fact may follow it.
+(define (opt-bounds-dom-checks-key
+  [type-segment-bases : i64]
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [copies : opt_i64_i64_map.Map]
+  [sources : opt_i64_i64_map.Map]
+  [idx : ir.CompilerIrValue]) : i64
+  (match (opt-bounds-dom-strip-int-cast
+    type-segment-bases
+    phi-defs
+    copies
+    (opt-bounds-dom-resolve copies idx))
+    [(ir.CompilerIrValue.Var var)
+      (if (opt-gvn-stable-var? sources var)
+        var
+        (- 0 1))]
+    [_ (- 0 1)]))
+
+;; The length a check is recorded under, in the same canonical spelling.
+(define (opt-bounds-dom-checks-len
+  [type-segment-bases : i64]
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [copies : opt_i64_i64_map.Map]
+  [len : ir.CompilerIrValue]) : ir.CompilerIrValue
+  (opt-bounds-dom-strip-int-cast
+    type-segment-bases
+    phi-defs
+    copies
+    (opt-bounds-dom-resolve copies len)))
+
+;; One block, twice: `fill?` false counts the rows on `cursor[key + 1]`, true
+;; writes them at `cursor[key]` and bumps that cursor.
+(define (opt-bounds-dom-checks-scan!
+  [type-segment-bases : i64]
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [copies : opt_i64_i64_map.Map]
+  [sources : opt_i64_i64_map.Map]
+  [cursor : (__tl_dyn-array i64)]
+  [lens : (__tl_dyn-array ir.CompilerIrValue)]
+  [rows : (__tl_dyn-array i64)]
+  [fill? : bool]
+  [block-id : i64]
+  [instrs : ir.CompilerIrInstrSeq]) : unit
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [pos : i64 0]
+    (while (< pos count)
+      (begin
+        (match (ir.compiler-ir-instr-seq-ref instrs pos)
+          [(ir.CompilerIrInstr.BoundsCheck idx len _)
+            (let
+              [key : i64
+                (opt-bounds-dom-checks-key
+                  type-segment-bases
+                  phi-defs
+                  copies
+                  sources
+                  idx)]
+              [clen : ir.CompilerIrValue
+                (opt-bounds-dom-checks-len
+                  type-segment-bases
+                  phi-defs
+                  copies
+                  len)]
+              (if (or
+                (< key 0)
+                (not (opt-gvn-value-stable? sources clen))
+                (>= (+ key 1) (array-length cursor)))
+                unit
+                (if fill?
+                  (let
+                    [slot : i64 (array-ref cursor key)]
+                    (if (or (< slot 0) (>= slot (array-length rows)))
+                      unit
+                      (begin
+                        (set! (array-ref lens slot) clen)
+                        (set! (array-ref rows slot) block-id)
+                        (set! (array-ref cursor key) (+ slot 1)))))
+                  (set!
+                    (array-ref cursor (+ key 1))
+                    (+ (array-ref cursor (+ key 1)) 1)))))]
+          [_ unit])
+        (set! pos (+ pos 1))))))
+
+(define (opt-bounds-dom-checks-blocks!
+  [type-segment-bases : i64]
+  [index : OptCfgIndex]
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [copies : opt_i64_i64_map.Map]
+  [sources : opt_i64_i64_map.Map]
+  [cursor : (__tl_dyn-array i64)]
+  [lens : (__tl_dyn-array ir.CompilerIrValue)]
+  [rows : (__tl_dyn-array i64)]
+  [fill? : bool]
+  [blocks : ir.CompilerIrBlockList]) : unit
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) unit]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (begin
+        (match block
+          [(ir.CompilerIrBlock.Block label instrs)
+            (match (opt-cfg-index-id index label)
+              [(option_i64.None) unit]
+              [(option_i64.Some id)
+                (if (or (< id 0) (>= id (opt-cfg-index-block-count index)))
+                  unit
+                  (opt-bounds-dom-checks-scan!
+                    type-segment-bases
+                    phi-defs
+                    copies
+                    sources
+                    cursor
+                    lens
+                    rows
+                    fill?
+                    id
+                    instrs))])])
+        (opt-bounds-dom-checks-blocks!
+          type-segment-bases
+          index
+          phi-defs
+          copies
+          sources
+          cursor
+          lens
+          rows
+          fill?
+          (__tl-box-place rest)))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (opt-bounds-dom-checks-blocks!
+        type-segment-bases
+        index
+        phi-defs
+        copies
+        sources
+        cursor
+        lens
+        rows
+        fill?
+        (ir.compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-bounds-dom-checks
+  [type-segment-bases : i64]
+  [index : OptCfgIndex]
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [copies : opt_i64_i64_map.Map]
+  [sources : opt_i64_i64_map.Map]
+  [frame : i64]
+  [blocks : ir.CompilerIrBlockList]) : OptBoundsDomChecks
+  (let
+    [offsets : (__tl_dyn-array i64) (array.make-array i64 (+ frame 1))]
+    [empty-lens : (__tl_dyn-array ir.CompilerIrValue)
+      (array.make-array ir.CompilerIrValue 0)]
+    [empty-rows : (__tl_dyn-array i64) (array.make-array i64 0)]
+    (begin
+      (opt-bounds-dom-checks-blocks!
+        type-segment-bases
+        index
+        phi-defs
+        copies
+        sources
+        offsets
+        empty-lens
+        empty-rows
+        false
+        blocks)
+      (let
+        [slot : i64 0]
+        (while (< slot frame)
+          (begin
+            (set!
+              (array-ref offsets (+ slot 1))
+              (+ (array-ref offsets (+ slot 1)) (array-ref offsets slot)))
+            (set! slot (+ slot 1)))))
+      (let
+        [total : i64 (array-ref offsets frame)]
+        [lens : (__tl_dyn-array ir.CompilerIrValue)
+          (array.make-array ir.CompilerIrValue total)]
+        [rows : (__tl_dyn-array i64) (array.make-array i64 total)]
+        [cursor : (__tl_dyn-array i64) (array.make-array i64 (+ frame 1))]
+        (begin
+          (let
+            [slot : i64 0]
+            (while (<= slot frame)
+              (begin
+                (set! (array-ref cursor slot) (array-ref offsets slot))
+                (set! slot (+ slot 1)))))
+          (opt-bounds-dom-checks-blocks!
+            type-segment-bases
+            index
+            phi-defs
+            copies
+            sources
+            cursor
+            lens
+            rows
+            true
+            blocks)
+          (OptBoundsDomChecks offsets lens rows))))))
+
+;; Was `value` the index of a passed `bounds_check` at a block that STRICTLY
+;; dominates `at-id`? An unsigned check proves the SIGN as firmly as it proves
+;; the bound, whatever length it used, so this is the non-negativity the lattice
+;; cannot see: a byte scanner's cursor is checked once per outer character and
+;; the inner loop reads the sign of that check back off the definition. Strict
+;; dominance, because a check later in `at-id`'s own block runs after the
+;; question is asked.
+(define (opt-bounds-dom-checked-any?
+  [doms : OptDomInfo]
+  [checks : OptBoundsDomChecks]
+  [at-id : i64]
+  [value : ir.CompilerIrValue]) : bool
+  (match value
+    [(ir.CompilerIrValue.Var var)
+      (let
+        [offsets : (__tl_dyn-array i64) checks.offsets]
+        (if (or (< var 0) (>= (+ var 1) (array-length offsets)))
+          false
+          (let
+            [rows : (__tl_dyn-array i64) checks.blocks]
+            [row : i64 (array-ref offsets var)]
+            [end : i64 (array-ref offsets (+ var 1))]
+            [found : bool false]
+            (begin
+              (while (and (not found) (< row end))
+                (begin
+                  (let
+                    [block : i64 (array-ref rows row)]
+                    (if (and
+                      (not (= block at-id))
+                      (opt-dom-info-dominates-id? doms block at-id))
+                      (set! found true)
+                      unit))
+                  (set! row (+ row 1))))
+              found))))]
+    [_ false]))
+
+;; Does a passed `bounds_check` of `value` against exactly `len` hold at
+;; `at-id`? `end?` admits a check in `at-id`'s own block (the phi-input query,
+;; consumed by the edge out of it); otherwise the check's block must strictly
+;; dominate.
+(define (opt-bounds-dom-checked-below?
+  [doms : OptDomInfo]
+  [checks : OptBoundsDomChecks]
+  [at-id : i64]
+  [end? : bool]
+  [value : ir.CompilerIrValue]
+  [len : ir.CompilerIrValue]) : bool
+  (match value
+    [(ir.CompilerIrValue.Var var)
+      (let
+        [offsets : (__tl_dyn-array i64) checks.offsets]
+        (if (or (< var 0) (>= (+ var 1) (array-length offsets)))
+          false
+          (let
+            [lens : (__tl_dyn-array ir.CompilerIrValue) checks.lens]
+            [rows : (__tl_dyn-array i64) checks.blocks]
+            [row : i64 (array-ref offsets var)]
+            [end : i64 (array-ref offsets (+ var 1))]
+            [found : bool false]
+            (begin
+              (while (and (not found) (< row end))
+                (begin
+                  (let
+                    [block : i64 (array-ref rows row)]
+                    (if (and
+                      (opt-value-eq (array-ref lens row) len)
+                      (opt-dom-info-dominates-id? doms block at-id)
+                      (or end? (not (= block at-id))))
+                      (set! found true)
+                      unit))
+                  (set! row (+ row 1))))
+              found))))]
+    [_ false]))
+
+;; --- phi-inductive range proof (ABCD cycle rule) ------------------------------
+;;
+;; The rules above prove a check from facts that DOMINATE it. An explicit stack,
+;; an output cursor and a reversed copy have none: the index is a loop-header
+;; phi whose in-range-ness is carried around the cycle, one edge at a time.
+;;
+;;   sp = phi [0, preheader], [sp + 1, push], [sp - 1, pop]
+;;
+;; and the property `0 <= sp < len` holds of EVERY value the phi can take,
+;; because each incoming edge either establishes it outright or inherits it from
+;; the value the previous iteration already had. That is the ABCD cycle rule
+;; (Bodik-Gupta-Sarkar) with our own fact database in place of their inequality
+;; graph, and it is discharged by induction on EXECUTION ORDER, not on the SSA
+;; graph: the FIRST value any member of the phi group takes cannot have come
+;; from the group (every group value is later in time than it), so it comes from
+;; an input proved outright; every later one is derived from a group value that
+;; already satisfied the property when its own header entry happened. `phis`
+;; carries the group members the current proof has entered and a reference back
+;; to one of them is the induction hypothesis. Nothing is recorded anywhere:
+;; ONE input the recursion cannot discharge refuses the whole phi, so an
+;; unproven assumption can never be left behind.
+;;
+;; The inputs it accepts, at the block the edge LEAVES (that is where the value
+;; it names is live and where the facts that discharge it are in scope):
+;;   (i)   a literal `c` with `c < len` (or `len >= 1` for `c = 0`) known there;
+;;   (ii)  a value with a passed `bounds_check v, len` dominating the edge --
+;;         `sp + 1` checked at the push, read back at the header;
+;;   (iii) `p - k` (k > 0 literal) for a group member `p`, on an edge carrying
+;;         `p - k >= 0`: with `0 <= p < len` from the hypothesis, `p - k` cannot
+;;         wrap and lies in [0, p], so it is in range too;
+;;   (iv)  the phi itself, through Movs (`opt-bounds-dom-resolve`);
+;;   (v)   another phi, proved by this same rule (fuel-bounded; a cycle that
+;;         closes back onto a member stops at the hypothesis).
+;;
+;; WHY AN EDGE MAY USE THE BRANCH THAT SELECTED IT. A phi input is taken only
+;; when control arrives along its edge, and arriving is exactly what the branch
+;; at the edge's source decided. `while (>= sp 0)` is what keeps `sp - 1 = -1`
+;; out of the header: that value reaches the phi's edge but the branch does not
+;; take it. The `nonneg?` flag carries such an edge fact DOWN through further
+;; phi substitutions -- on the path through that edge the nested phi IS the
+;; value the fact spoke about -- while the fact list itself is not carried, so a
+;; fact can never be read at a block the edge does not lead through.
+;;
+;; NO-WRAP. TypeLisp integer arithmetic wraps (SPEC 5.4), so `p - k` is admitted
+;; only with `p >= 0` established (the hypothesis gives it, or the pre-pass's
+;; non-negativity bit on the difference, or a dominating `p >= k`): a `p` at
+;; i64 MIN would wrap `p - 1` to a huge positive value that passes no check.
+;;
+;; STRICTNESS. `strict?` proves `0 <= v < bound`; without it, `0 <= v <= bound`,
+;; which is what an output cursor satisfies at the loop it FILLED (`post <= len`
+;; -- every stored element was checked and the step is `+ 1`) and what the
+;; decreasing rule below consumes.
+(define (opt-bounds-dom-induct-fuel) : i64
+  8)
+
+;; The two arms of a scalar `select`, resolved: a bound this pass meets as
+;; `min(len_a, len_b)` (the ubound narrowing) is below both of them, so proving
+;; the property against each arm proves it against the select.
+(defenum OptBoundsDomArms
+  (No)
+  (Some ir.CompilerIrValue ir.CompilerIrValue))
+
+(define (opt-bounds-dom-select-arms
+  [type-segment-bases : i64]
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [copies : opt_i64_i64_map.Map]
+  [value : ir.CompilerIrValue]) : OptBoundsDomArms
+  (match value
+    [(ir.CompilerIrValue.Var var)
+      (match (opt-bool-branch-def phi-defs var)
+        [(OptBoolBranchDef.No) (OptBoundsDomArms.No)]
+        [(OptBoolBranchDef.Some instr _)
+          (match instr
+            [(ir.CompilerIrInstr.Select payload-box)
+              (let
+                [payload : ir.CompilerIrInstrSelectPayload
+                  (__tl-box-place payload-box)]
+                [lanes : i64 (__tl-project-field payload lanes)]
+                [ty : ast.AstType (__tl-project-field payload ty)]
+                (if (and
+                  (= lanes 0)
+                  (opt-type-eq type-segment-bases ty (ast.AstType.I64)))
+                  (OptBoundsDomArms.Some
+                    (opt-bounds-dom-resolve
+                      copies
+                      (__tl-project-field payload on-true))
+                    (opt-bounds-dom-resolve
+                      copies
+                      (__tl-project-field payload on-false)))
+                  (OptBoundsDomArms.No)))]
+            [_ (OptBoundsDomArms.No)])])]
+    [_ (OptBoundsDomArms.No)]))
+
+;; The literal-offset split of a value's own definition, or the value itself.
+(define (opt-bounds-dom-induct-term
+  [type-segment-bases : i64]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [copies : opt_i64_i64_map.Map]
+  [value : ir.CompilerIrValue]) : OptBoundsDomOffset
+  (match value
+    [(ir.CompilerIrValue.Var var)
+      (match (opt-bool-branch-def defs var)
+        [(OptBoolBranchDef.No) (OptBoundsDomOffset.Some value 0)]
+        [(OptBoolBranchDef.Some instr _)
+          (match instr
+            [(ir.CompilerIrInstr.BinOp _ op lhs rhs ty)
+              (if (opt-type-eq type-segment-bases ty (ast.AstType.I64))
+                (match (opt-bounds-dom-affine-parts op lhs rhs)
+                  [(OptBoundsDomOffset.No) (OptBoundsDomOffset.Some value 0)]
+                  [(OptBoundsDomOffset.Some base offset)
+                    (OptBoundsDomOffset.Some
+                      (opt-bounds-dom-resolve copies base)
+                      offset)])
+                (OptBoundsDomOffset.Some value 0))]
+            [_ (OptBoundsDomOffset.Some value 0)])])]
+    [_ (OptBoundsDomOffset.Some value 0)]))
+
+;; Do the facts in scope put `value` below `bound` at `at-id`, in the signed
+;; domain the facts are recorded in? A `select` bound is split into its arms.
+(define (opt-bounds-dom-below-fact?
+  [type-segment-bases : i64]
+  [doms : OptDomInfo]
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [copies : opt_i64_i64_map.Map]
+  [cmp-facts : OptDomCmpFacts]
+  [at-id : i64]
+  [strict? : bool]
+  [value : ir.CompilerIrValue]
+  [bound : ir.CompilerIrValue]
+  [depth : i64]) : bool
+  (match (if (> depth 0)
+    (opt-bounds-dom-select-arms type-segment-bases phi-defs copies bound)
+    (OptBoundsDomArms.No))
+    [(OptBoundsDomArms.Some on-true on-false)
+      (and
+        (opt-bounds-dom-below-fact?
+          type-segment-bases
+          doms
+          phi-defs
+          copies
+          cmp-facts
+          at-id
+          strict?
+          value
+          on-true
+          (- depth 1))
+        (opt-bounds-dom-below-fact?
+          type-segment-bases
+          doms
+          phi-defs
+          copies
+          cmp-facts
+          at-id
+          strict?
+          value
+          on-false
+          (- depth 1)))]
+    [(OptBoundsDomArms.No)
+      (opt-dom-cmp-decided-at?
+        type-segment-bases
+        doms
+        at-id
+        cmp-facts
+        (if strict?
+          (ir.CompilerIrBinOp.Lt)
+          (ir.CompilerIrBinOp.Le))
+        value
+        bound)]))
+
+;; A passed check of `value` against `bound` (or against both arms of a select
+;; bound) holding at `at-id`.
+(define (opt-bounds-dom-checked-in-range?
+  [type-segment-bases : i64]
+  [doms : OptDomInfo]
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [copies : opt_i64_i64_map.Map]
+  [checks : OptBoundsDomChecks]
+  [at-id : i64]
+  [end? : bool]
+  [value : ir.CompilerIrValue]
+  [bound : ir.CompilerIrValue]
+  [depth : i64]) : bool
+  (match (if (> depth 0)
+    (opt-bounds-dom-select-arms type-segment-bases phi-defs copies bound)
+    (OptBoundsDomArms.No))
+    [(OptBoundsDomArms.Some on-true on-false)
+      (and
+        (opt-bounds-dom-checked-in-range?
+          type-segment-bases
+          doms
+          phi-defs
+          copies
+          checks
+          at-id
+          end?
+          value
+          on-true
+          (- depth 1))
+        (opt-bounds-dom-checked-in-range?
+          type-segment-bases
+          doms
+          phi-defs
+          copies
+          checks
+          at-id
+          end?
+          value
+          on-false
+          (- depth 1)))]
+    [(OptBoundsDomArms.No)
+      (opt-bounds-dom-checked-below? doms checks at-id end? value bound)]))
+
+;; `0 <= bound` -- what a container length always satisfies, and what makes a
+;; literal-zero seed in range without any other fact.
+(define (opt-bounds-dom-bound-positive?
+  [type-segment-bases : i64]
+  [index : OptCfgIndex]
+  [doms : OptDomInfo]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [var-facts : (__tl_dyn-array i64)]
+  [checks : OptBoundsDomChecks]
+  [copies : opt_i64_i64_map.Map]
+  [cmp-facts : OptDomCmpFacts]
+  [at-id : i64]
+  [bound : ir.CompilerIrValue]
+  [depth : i64]) : bool
+  (match (if (> depth 0)
+    (opt-bounds-dom-select-arms type-segment-bases phi-defs copies bound)
+    (OptBoundsDomArms.No))
+    [(OptBoundsDomArms.Some on-true on-false)
+      (and
+        (opt-bounds-dom-bound-positive?
+          type-segment-bases
+          index
+          doms
+          defs
+          phi-defs
+          var-facts
+          checks
+          copies
+          cmp-facts
+          at-id
+          on-true
+          (- depth 1))
+        (opt-bounds-dom-bound-positive?
+          type-segment-bases
+          index
+          doms
+          defs
+          phi-defs
+          var-facts
+          checks
+          copies
+          cmp-facts
+          at-id
+          on-false
+          (- depth 1)))]
+    [(OptBoundsDomArms.No)
+      (opt-bounds-dom-nonneg-at?
+        type-segment-bases
+        index
+        doms
+        defs
+        phi-defs
+        var-facts
+        checks
+        copies
+        cmp-facts
+        (OptNonnegPhis.Nil)
+        at-id
+        bound
+        (opt-bounds-dom-nonneg-fuel))]))
+
+;; Is `0 <= value < bound` (`<= bound` when not `strict?`) provable at `at-id`?
+;; `end?` says the question is asked at the END of `at-id` (a phi input), which
+;; is what admits a passed check sitting in that same block. `nonneg?` is the
+;; path fact `value >= 0` inherited from the branch that selected this edge.
+(define (opt-bounds-dom-induct-in-range?
+  [type-segment-bases : i64]
+  [index : OptCfgIndex]
+  [doms : OptDomInfo]
+  [terms : (__tl_dyn-array OptBoolBranchDef)]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [var-facts : (__tl_dyn-array i64)]
+  [checks : OptBoundsDomChecks]
+  [copies : opt_i64_i64_map.Map]
+  [sources : opt_i64_i64_map.Map]
+  [cmp-facts : OptDomCmpFacts]
+  [phis : OptNonnegPhis]
+  [at-id : i64]
+  [end? : bool]
+  [nonneg? : bool]
+  [below? : bool]
+  [strict? : bool]
+  [value : ir.CompilerIrValue]
+  [bound : ir.CompilerIrValue]
+  [fuel : i64]) : bool
+  (match value
+    [(ir.CompilerIrValue.I64 literal)
+      (and
+        (>= literal 0)
+        (or
+          below?
+          (opt-bounds-dom-below-fact?
+            type-segment-bases
+            doms
+            phi-defs
+            copies
+            cmp-facts
+            at-id
+            strict?
+            value
+            bound
+            2)
+          ;; `0` is in range of any bound the length premise already covers:
+          ;; below it when the bound is positive, at most it when nonnegative.
+          (and
+            (= literal 0)
+            (if strict?
+              (opt-bounds-dom-len-positive? type-segment-bases cmp-facts bound)
+              (opt-bounds-dom-bound-positive?
+                type-segment-bases
+                index
+                doms
+                defs
+                phi-defs
+                var-facts
+                checks
+                copies
+                cmp-facts
+                at-id
+                bound
+                2)))))]
+    [(ir.CompilerIrValue.Var var)
+      (or
+        ;; The induction hypothesis: a value the group already carries.
+        (opt-nonneg-phis-member? phis var)
+        ;; A passed check gives both halves at once.
+        (opt-bounds-dom-checked-in-range?
+          type-segment-bases
+          doms
+          phi-defs
+          copies
+          checks
+          at-id
+          end?
+          value
+          bound
+          2)
+        (and
+          (or
+            nonneg?
+            (opt-bounds-dom-nonneg-at?
+              type-segment-bases
+              index
+              doms
+              defs
+              phi-defs
+              var-facts
+              checks
+              copies
+              cmp-facts
+              (OptNonnegPhis.Nil)
+              at-id
+              value
+              (opt-bounds-dom-nonneg-fuel)))
+          (or
+            below?
+            (opt-bounds-dom-below-fact?
+              type-segment-bases
+              doms
+              phi-defs
+              copies
+              cmp-facts
+              at-id
+              strict?
+              value
+              bound
+              2)))
+        (and
+          (> fuel 0)
+          (opt-bounds-dom-induct-def?
+            type-segment-bases
+            index
+            doms
+            terms
+            defs
+            phi-defs
+            var-facts
+            checks
+            copies
+            sources
+            cmp-facts
+            phis
+            at-id
+            end?
+            nonneg?
+            below?
+            strict?
+            var
+            bound
+            (- fuel 1))))]
+    [_ false]))
+
+;; The value's own definition: a phi (every input discharged on its own edge) or
+;; an affine step off one.
+(define (opt-bounds-dom-induct-def?
+  [type-segment-bases : i64]
+  [index : OptCfgIndex]
+  [doms : OptDomInfo]
+  [terms : (__tl_dyn-array OptBoolBranchDef)]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [var-facts : (__tl_dyn-array i64)]
+  [checks : OptBoundsDomChecks]
+  [copies : opt_i64_i64_map.Map]
+  [sources : opt_i64_i64_map.Map]
+  [cmp-facts : OptDomCmpFacts]
+  [phis : OptNonnegPhis]
+  [at-id : i64]
+  [end? : bool]
+  [nonneg? : bool]
+  [below? : bool]
+  [strict? : bool]
+  [var : i64]
+  [bound : ir.CompilerIrValue]
+  [fuel : i64]) : bool
+  (match (opt-bool-branch-def phi-defs var)
+    [(OptBoolBranchDef.Some instr label)
+      (match instr
+        [(ir.CompilerIrInstr.Phi dst inputs ty)
+          (and
+            (= dst var)
+            (opt-integer-type? ty)
+            (opt-bounds-dom-induct-inputs?
+              type-segment-bases
+              index
+              doms
+              terms
+              defs
+              phi-defs
+              var-facts
+              checks
+              copies
+              sources
+              cmp-facts
+              (OptNonnegPhis.Cons var (box phis))
+              label
+              nonneg?
+              below?
+              strict?
+              inputs
+              bound
+              fuel))]
+        [_ false])]
+    [(OptBoolBranchDef.No)
+      (match (opt-bool-branch-def defs var)
+        [(OptBoolBranchDef.No) false]
+        [(OptBoolBranchDef.Some instr _)
+          (match instr
+            [(ir.CompilerIrInstr.BinOp _ op lhs rhs ty)
+              (if (not (opt-type-eq type-segment-bases ty (ast.AstType.I64)))
+                false
+                (match (opt-bounds-dom-affine-parts op lhs rhs)
+                  [(OptBoundsDomOffset.No) false]
+                  [(OptBoundsDomOffset.Some raw-base offset)
+                    (let
+                      [base : ir.CompilerIrValue
+                        (opt-bounds-dom-resolve copies raw-base)]
+                      (cond
+                        ;; `base - k`: in [0, base] once `base >= 0` is known,
+                        ;; so the base's own range carries over unchanged.
+                        [(< offset 0)
+                          (and
+                            (or
+                              nonneg?
+                              (opt-bounds-dom-var-fact?
+                                var-facts
+                                var
+                                (opt-bounds-dom-var-fact-nonneg))
+                              (opt-dom-cmp-decided-at?
+                                type-segment-bases
+                                doms
+                                at-id
+                                cmp-facts
+                                (ir.CompilerIrBinOp.Ge)
+                                base
+                                (ir.CompilerIrValue.I64 (- 0 offset))))
+                            (opt-bounds-dom-induct-in-range?
+                              type-segment-bases
+                              index
+                              doms
+                              terms
+                              defs
+                              phi-defs
+                              var-facts
+                              checks
+                              copies
+                              sources
+                              cmp-facts
+                              phis
+                              at-id
+                              end?
+                              false
+                              false
+                              strict?
+                              base
+                              bound
+                              fuel))]
+                        [(= offset 0)
+                          (opt-bounds-dom-induct-in-range?
+                            type-segment-bases
+                            index
+                            doms
+                            terms
+                            defs
+                            phi-defs
+                            var-facts
+                            checks
+                            copies
+                            sources
+                            cmp-facts
+                            phis
+                            at-id
+                            end?
+                            nonneg?
+                            below?
+                            strict?
+                            base
+                            bound
+                            fuel)]
+                        ;; `base + 1` is at most the bound once `base` is
+                        ;; STRICTLY below it -- an output cursor stepped past
+                        ;; the element it just checked. The hypothesis is not
+                        ;; allowed to supply that half: it carries this call's
+                        ;; own (weaker) strictness, and `<= bound` plus one is
+                        ;; not `<= bound`.
+                        [else
+                          (and
+                            (not strict?)
+                            (= offset 1)
+                            (or
+                              (opt-bounds-dom-checked-in-range?
+                                type-segment-bases
+                                doms
+                                phi-defs
+                                copies
+                                checks
+                                at-id
+                                end?
+                                base
+                                bound
+                                2)
+                              (and
+                                (opt-bounds-dom-nonneg-at?
+                                  type-segment-bases
+                                  index
+                                  doms
+                                  defs
+                                  phi-defs
+                                  var-facts
+                                  checks
+                                  copies
+                                  cmp-facts
+                                  (OptNonnegPhis.Nil)
+                                  at-id
+                                  base
+                                  (opt-bounds-dom-nonneg-fuel))
+                                (opt-bounds-dom-below-fact?
+                                  type-segment-bases
+                                  doms
+                                  phi-defs
+                                  copies
+                                  cmp-facts
+                                  at-id
+                                  true
+                                  base
+                                  bound
+                                  2))))]))]))]
+            [_ false])])]))
+
+;; One phi input, discharged at the block its edge leaves. An edge no execution
+;; takes carries nothing.
+(define (opt-bounds-dom-induct-edge?
+  [type-segment-bases : i64]
+  [index : OptCfgIndex]
+  [doms : OptDomInfo]
+  [terms : (__tl_dyn-array OptBoolBranchDef)]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [var-facts : (__tl_dyn-array i64)]
+  [checks : OptBoundsDomChecks]
+  [copies : opt_i64_i64_map.Map]
+  [sources : opt_i64_i64_map.Map]
+  [cmp-facts : OptDomCmpFacts]
+  [phis : OptNonnegPhis]
+  [home-label : i64]
+  [nonneg? : bool]
+  [below? : bool]
+  [strict? : bool]
+  [raw-value : ir.CompilerIrValue]
+  [from-label : i64]
+  [bound : ir.CompilerIrValue]
+  [fuel : i64]) : bool
+  (match (opt-cfg-index-id index from-label)
+    [(option_i64.None) false]
+    [(option_i64.Some from-id)
+      (if (or (< from-id 0) (>= from-id (opt-cfg-index-block-count index)))
+        false
+        (if (not (array-ref index.reachable from-id))
+          true
+          (let
+            [value : ir.CompilerIrValue
+              (opt-bounds-dom-strip-int-cast
+                type-segment-bases
+                phi-defs
+                copies
+                (opt-bounds-dom-resolve copies raw-value))]
+            ;; The branch that selected this edge decides its own condition of
+            ;; the value the edge carries. The fact list is NOT threaded further
+            ;; down -- it holds on this edge only -- but what it proves about
+            ;; the value travels with the value through further substitutions.
+            [edge-facts : OptDomCmpFacts
+              (opt-bounds-dom-induct-edge-facts
+                terms
+                defs
+                sources
+                copies
+                cmp-facts
+                from-id
+                home-label)]
+            (and
+              (opt-gvn-value-stable? sources value)
+              (opt-bounds-dom-induct-in-range?
+                type-segment-bases
+                index
+                doms
+                terms
+                defs
+                phi-defs
+                var-facts
+                checks
+                copies
+                sources
+                cmp-facts
+                phis
+                from-id
+                true
+                (or
+                  nonneg?
+                  (opt-dom-cmp-decided-at?
+                    type-segment-bases
+                    doms
+                    from-id
+                    edge-facts
+                    (ir.CompilerIrBinOp.Ge)
+                    value
+                    (ir.CompilerIrValue.I64 0)))
+                (or
+                  below?
+                  (opt-bounds-dom-below-fact?
+                    type-segment-bases
+                    doms
+                    phi-defs
+                    copies
+                    edge-facts
+                    from-id
+                    strict?
+                    value
+                    bound
+                    2))
+                strict?
+                value
+                bound
+                fuel)))))]))
+
+;; The fact the branch ending `from-id` establishes on its edge into
+;; `home-label`, prepended to the facts already in scope. A branch whose two
+;; edges share one label decides nothing about it.
+(define (opt-bounds-dom-induct-edge-facts
+  [terms : (__tl_dyn-array OptBoolBranchDef)]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [sources : opt_i64_i64_map.Map]
+  [copies : opt_i64_i64_map.Map]
+  [cmp-facts : OptDomCmpFacts]
+  [from-id : i64]
+  [home-label : i64]) : OptDomCmpFacts
+  (if (or (< from-id 0) (>= from-id (array-length terms)))
+    cmp-facts
+    (match (array-ref terms from-id)
+      [(OptBoolBranchDef.No) cmp-facts]
+      [(OptBoolBranchDef.Some instr _)
+        (match instr
+          [(ir.CompilerIrInstr.Branch cond true-label false-label)
+            (if (= true-label false-label)
+              cmp-facts
+              (cond
+                [(= true-label home-label)
+                  (opt-dom-cmp-edge-fact
+                    defs
+                    copies
+                    sources
+                    cond
+                    true
+                    from-id
+                    cmp-facts)]
+                [(= false-label home-label)
+                  (opt-dom-cmp-edge-fact
+                    defs
+                    copies
+                    sources
+                    cond
+                    false
+                    from-id
+                    cmp-facts)]
+                [else cmp-facts]))]
+          [_ cmp-facts])])))
+
+(define (opt-bounds-dom-induct-inputs?
+  [type-segment-bases : i64]
+  [index : OptCfgIndex]
+  [doms : OptDomInfo]
+  [terms : (__tl_dyn-array OptBoolBranchDef)]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [var-facts : (__tl_dyn-array i64)]
+  [checks : OptBoundsDomChecks]
+  [copies : opt_i64_i64_map.Map]
+  [sources : opt_i64_i64_map.Map]
+  [cmp-facts : OptDomCmpFacts]
+  [phis : OptNonnegPhis]
+  [home-label : i64]
+  [nonneg? : bool]
+  [below? : bool]
+  [strict? : bool]
+  [inputs : ir.CompilerIrPhiInputList]
+  [bound : ir.CompilerIrValue]
+  [fuel : i64]) : bool
+  (match inputs
+    [(ir.CompilerIrPhiInputList.Nil) false]
+    [(ir.CompilerIrPhiInputList.Cons value from-label rest)
+      (and
+        (opt-bounds-dom-induct-edge?
+          type-segment-bases
+          index
+          doms
+          terms
+          defs
+          phi-defs
+          var-facts
+          checks
+          copies
+          sources
+          cmp-facts
+          phis
+          home-label
+          nonneg?
+          below?
+          strict?
+          value
+          from-label
+          bound
+          fuel)
+        (match (__tl-box-place rest)
+          [(ir.CompilerIrPhiInputList.Nil) true]
+          [_
+            (opt-bounds-dom-induct-inputs?
+              type-segment-bases
+              index
+              doms
+              terms
+              defs
+              phi-defs
+              var-facts
+              checks
+              copies
+              sources
+              cmp-facts
+              phis
+              home-label
+              nonneg?
+              below?
+              strict?
+              (__tl-box-place rest)
+              bound
+              fuel)]))]
+    [(ir.CompilerIrPhiInputList.Array seq)
+      (opt-bounds-dom-induct-inputs?
+        type-segment-bases
+        index
+        doms
+        terms
+        defs
+        phi-defs
+        var-facts
+        checks
+        copies
+        sources
+        cmp-facts
+        phis
+        home-label
+        nonneg?
+        below?
+        strict?
+        (ir.compiler-ir-phi-input-seq-to-list seq)
+        bound
+        fuel)]))
+
+;; --- the decreasing affine index ---------------------------------------------
+;;
+;; A reversed copy indexes `postorder[post - 1 - i]` under `0 <= i < post`, and
+;; the cursor it counts down from is the one the FILLING loop left behind: every
+;; `postorder[post]` was checked and the step was `post + 1`, so `post <= len`
+;; -- the non-strict half of the induction above. Then
+;;
+;;     0 <= i <= post - 1  and  post <= len
+;;     =>  0 <= (post - 1) - i <= post - 1 <= len - 1 < len
+;;
+;; with no wrap anywhere: `post >= 1` follows from `0 <= i < post`, so `post - 1`
+;; is nonnegative, and subtracting an `i` that is at most `post - 1` stays in
+;; [0, post - 1]. The rule reads the index as `A - B` with `A = base + off`:
+;; `off = -1` needs only `base <= bound`, while `off = 0` (a plain `p - q`)
+;; needs `base < bound`, since `q >= 1` is not known.
+(define (opt-bounds-dom-difference-in-range?
+  [type-segment-bases : i64]
+  [index : OptCfgIndex]
+  [doms : OptDomInfo]
+  [terms : (__tl_dyn-array OptBoolBranchDef)]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [var-facts : (__tl_dyn-array i64)]
+  [checks : OptBoundsDomChecks]
+  [copies : opt_i64_i64_map.Map]
+  [sources : opt_i64_i64_map.Map]
+  [cmp-facts : OptDomCmpFacts]
+  [at-id : i64]
+  [idx : ir.CompilerIrValue]
+  [bound : ir.CompilerIrValue]) : bool
+  (match idx
+    [(ir.CompilerIrValue.Var var)
+      (match (opt-bool-branch-def defs var)
+        [(OptBoolBranchDef.No) false]
+        [(OptBoolBranchDef.Some instr _)
+          (match instr
+            [(ir.CompilerIrInstr.BinOp _ op lhs rhs ty)
+              (if (not
+                (and
+                  (opt-binop-eq op (ir.CompilerIrBinOp.Sub))
+                  (opt-type-eq type-segment-bases ty (ast.AstType.I64))))
+                false
+                (let
+                  [minuend : ir.CompilerIrValue
+                    (opt-bounds-dom-resolve copies lhs)]
+                  [subtrahend : ir.CompilerIrValue
+                    (opt-bounds-dom-resolve copies rhs)]
+                  (match (opt-bounds-dom-induct-term
+                    type-segment-bases
+                    defs
+                    copies
+                    minuend)
+                    [(OptBoundsDomOffset.No) false]
+                    [(OptBoundsDomOffset.Some base offset)
+                      (and
+                        (<= offset 0)
+                        (>= offset (- 0 1))
+                        ;; `0 <= B < base` is the whole of the index's own
+                        ;; range; the loop that walks `i` supplies both halves.
+                        (opt-bounds-dom-nonneg-at?
+                          type-segment-bases
+                          index
+                          doms
+                          defs
+                          phi-defs
+                          var-facts
+                          checks
+                          copies
+                          cmp-facts
+                          (OptNonnegPhis.Nil)
+                          at-id
+                          subtrahend
+                          (opt-bounds-dom-nonneg-fuel))
+                        (opt-dom-cmp-decided-at?
+                          type-segment-bases
+                          doms
+                          at-id
+                          cmp-facts
+                          (ir.CompilerIrBinOp.Lt)
+                          subtrahend
+                          base)
+                        (opt-bounds-dom-induct-in-range?
+                          type-segment-bases
+                          index
+                          doms
+                          terms
+                          defs
+                          phi-defs
+                          var-facts
+                          checks
+                          copies
+                          sources
+                          cmp-facts
+                          (OptNonnegPhis.Nil)
+                          at-id
+                          false
+                          false
+                          false
+                          (= offset 0)
+                          base
+                          bound
+                          (opt-bounds-dom-induct-fuel)))])))]
+            [_ false])])]
+    [_ false]))
+
+;; The whole ABCD verdict for one `(index, length)` pair: the cycle rule on the
+;; index itself, then the decreasing form built out of one.
+(define (opt-bounds-dom-inductive-in-range?
+  [type-segment-bases : i64]
+  [index : OptCfgIndex]
+  [doms : OptDomInfo]
+  [terms : (__tl_dyn-array OptBoolBranchDef)]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [var-facts : (__tl_dyn-array i64)]
+  [checks : OptBoundsDomChecks]
+  [copies : opt_i64_i64_map.Map]
+  [sources : opt_i64_i64_map.Map]
+  [cmp-facts : OptDomCmpFacts]
+  [at-id : i64]
+  [strict? : bool]
+  [idx : ir.CompilerIrValue]
+  [bound : ir.CompilerIrValue]) : bool
+  (and
+    (opt-bounds-dom-induct-candidate? phi-defs defs idx)
+    (or
+      (opt-bounds-dom-induct-in-range?
+        type-segment-bases
+        index
+        doms
+        terms
+        defs
+        phi-defs
+        var-facts
+        checks
+        copies
+        sources
+        cmp-facts
+        (OptNonnegPhis.Nil)
+        at-id
+        false
+        false
+        false
+        strict?
+        idx
+        bound
+        (opt-bounds-dom-induct-fuel))
+      (opt-bounds-dom-difference-in-range?
+        type-segment-bases
+        index
+        doms
+        terms
+        defs
+        phi-defs
+        var-facts
+        checks
+        copies
+        sources
+        cmp-facts
+        at-id
+        idx
+        bound))))
+
+;; Only a phi or an affine derivation can carry an induction, and every query
+;; that reaches here has already failed the cheaper rules; this gate is what
+;; keeps the walk off every other index.
+(define (opt-bounds-dom-induct-candidate?
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [idx : ir.CompilerIrValue]) : bool
+  (match idx
+    [(ir.CompilerIrValue.Var var)
+      (or
+        (match (opt-bool-branch-def phi-defs var)
+          [(OptBoolBranchDef.No) false]
+          [(OptBoolBranchDef.Some instr _)
+            (match instr
+              [(ir.CompilerIrInstr.Phi _ _ _) true]
+              [_ false])])
+        (match (opt-bool-branch-def defs var)
+          [(OptBoolBranchDef.No) false]
+          [(OptBoolBranchDef.Some instr _)
+            (match instr
+              [(ir.CompilerIrInstr.BinOp _ op _ _ _)
+                (or
+                  (opt-binop-eq op (ir.CompilerIrBinOp.Add))
+                  (opt-binop-eq op (ir.CompilerIrBinOp.Sub)))]
+              [_ false])]))]
+    [_ false]))
+
+;; Is this value a var? Only then can anything above name it in a fact.
+(define (opt-bounds-dom-value-var? [value : ir.CompilerIrValue]) : bool
+  (match value
+    [(ir.CompilerIrValue.Var _) true]
+    [_ false]))
+
+;; The same proof read as a COMPARISON verdict. `0 <= v < X` makes `lt v, X`
+;; true in BOTH spellings -- signed and unsigned agree once both operands are
+;; nonnegative -- and `0 <= v <= X` does the same for `le`. Only TRUE is ever
+;; decided: failing to prove the range says nothing about the compare. The gate
+;; is a 64-bit compare of two vars, which is what a versioned loop header's
+;; `lt sp, min(len_a, len_b) : u64` is; nothing is retyped here, the compare is
+;; replaced by the bool it computes, exactly as every other verdict in this pass
+;; does.
+(define (opt-bounds-dom-induct-verdict
+  [type-segment-bases : i64]
+  [doms : OptDomInfo]
+  [index : OptCfgIndex]
+  [terms : (__tl_dyn-array OptBoolBranchDef)]
+  [defs : (__tl_dyn-array OptBoolBranchDef)]
+  [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
+  [var-facts : (__tl_dyn-array i64)]
+  [checks : OptBoundsDomChecks]
+  [sources : opt_i64_i64_map.Map]
+  [block-id : i64]
+  [cmp-facts : OptDomCmpFacts]
+  [copies : opt_i64_i64_map.Map]
+  [op : ir.CompilerIrBinOp]
+  [lhs : ir.CompilerIrValue]
+  [rhs : ir.CompilerIrValue]
+  [ty : ast.AstType]) : OptDomCmpLookup
+  (let
+    [strict? : bool (opt-binop-eq op (ir.CompilerIrBinOp.Lt))]
+    [idx : ir.CompilerIrValue
+      (opt-bounds-dom-strip-int-cast type-segment-bases phi-defs copies lhs)]
+    [bound : ir.CompilerIrValue
+      (opt-bounds-dom-strip-int-cast type-segment-bases phi-defs copies rhs)]
+    (if (and
+      (or strict? (opt-binop-eq op (ir.CompilerIrBinOp.Le)))
+      (opt-integer-type? ty)
+      (= (opt-int-width ty) 64)
+      (opt-bounds-dom-value-var? idx)
+      (opt-bounds-dom-value-var? bound)
+      (opt-bounds-dom-inductive-in-range?
+        type-segment-bases
+        index
+        doms
+        terms
+        defs
+        phi-defs
+        var-facts
+        checks
+        copies
+        sources
+        cmp-facts
+        block-id
+        strict?
+        idx
+        bound))
+      (OptDomCmpLookup.Some true)
+      (OptDomCmpLookup.No))))
 
 ;; A dominating SIGNED `idx < len` plus `idx >= 0` decides the unsigned check:
 ;; both operands are then nonnegative i64s, where unsigned and signed order
@@ -46256,6 +47662,7 @@
   [defs : (__tl_dyn-array OptBoolBranchDef)]
   [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
   [var-facts : (__tl_dyn-array i64)]
+  [checks : OptBoundsDomChecks]
   [copies : opt_i64_i64_map.Map]
   [cmp-facts : OptDomCmpFacts]
   [facts : OptBoundsFacts]
@@ -46284,6 +47691,7 @@
           defs
           phi-defs
           var-facts
+          checks
           copies
           cmp-facts
           block-id
@@ -46662,6 +48070,7 @@
   [defs : (__tl_dyn-array OptBoolBranchDef)]
   [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
   [var-facts : (__tl_dyn-array i64)]
+  [checks : OptBoundsDomChecks]
   [copies : opt_i64_i64_map.Map]
   [cmp-facts : OptDomCmpFacts]
   [block-id : i64]
@@ -46679,6 +48088,7 @@
         defs
         phi-defs
         var-facts
+        checks
         copies
         cmp-facts
         block-id
@@ -46693,6 +48103,7 @@
   [defs : (__tl_dyn-array OptBoolBranchDef)]
   [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
   [var-facts : (__tl_dyn-array i64)]
+  [checks : OptBoundsDomChecks]
   [copies : opt_i64_i64_map.Map]
   [sources : opt_i64_i64_map.Map]
   [cmp-facts : OptDomCmpFacts]
@@ -46724,6 +48135,7 @@
         defs
         phi-defs
         var-facts
+        checks
         copies
         cmp-facts
         block-id
@@ -47139,6 +48551,7 @@
   [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
   [terms : (__tl_dyn-array OptBoolBranchDef)]
   [var-facts : (__tl_dyn-array i64)]
+  [checks : OptBoundsDomChecks]
   [cfg-index : OptCfgIndex]
   [doms : OptDomInfo]
   [block-label : i64]
@@ -47215,6 +48628,7 @@
                       defs
                       phi-defs
                       var-facts
+                      checks
                       copies
                       sources
                       cur-cmp-facts
@@ -47248,11 +48662,31 @@
                       defs
                       phi-defs
                       var-facts
+                      checks
                       copies
                       cur-cmp-facts
                       cur-facts
                       block-id
                       cidx
+                      sidx
+                      slen)
+                    ;; Last, because it is the only rule that walks the phi
+                    ;; graph: the ABCD cycle proof and the decreasing index
+                    ;; built out of one.
+                    (opt-bounds-dom-inductive-in-range?
+                      type-segment-bases
+                      cfg-index
+                      doms
+                      terms
+                      defs
+                      phi-defs
+                      var-facts
+                      checks
+                      copies
+                      sources
+                      cur-cmp-facts
+                      block-id
+                      true
                       sidx
                       slen))
                     unit
@@ -47312,6 +48746,7 @@
                     phi-defs
                     sources
                     var-facts
+                    checks
                     block-id
                     cur-cmp-facts
                     copies
@@ -47730,6 +49165,7 @@
   [defs : (__tl_dyn-array OptBoolBranchDef)]
   [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
   [var-facts : (__tl_dyn-array i64)]
+  [checks : OptBoundsDomChecks]
   [copies : opt_i64_i64_map.Map]
   [cmp-facts : OptDomCmpFacts]
   [block-id : i64]
@@ -47752,6 +49188,7 @@
               defs
               phi-defs
               var-facts
+              checks
               copies
               cmp-facts
               block-id
@@ -48229,6 +49666,7 @@
   [defs : (__tl_dyn-array OptBoolBranchDef)]
   [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
   [var-facts : (__tl_dyn-array i64)]
+  [checks : OptBoundsDomChecks]
   [sources : opt_i64_i64_map.Map]
   [block-id : i64]
   [cmp-facts : OptDomCmpFacts]
@@ -48270,20 +49708,40 @@
             ty)
             [(OptDomCmpLookup.Some value) (OptDomCmpLookup.Some value)]
             [(OptDomCmpLookup.No)
-              (opt-bounds-dom-nonneg-literal-verdict
+              (match (opt-bounds-dom-nonneg-literal-verdict
                 type-segment-bases
                 info
                 index
                 defs
                 phi-defs
                 var-facts
+                checks
                 copies
                 cmp-facts
                 block-id
                 canon-op
                 canon-lhs
                 canon-rhs
-                ty)])]))))
+                ty)
+                [(OptDomCmpLookup.Some value) (OptDomCmpLookup.Some value)]
+                [(OptDomCmpLookup.No)
+                  (opt-bounds-dom-induct-verdict
+                    type-segment-bases
+                    info
+                    index
+                    terms
+                    defs
+                    phi-defs
+                    var-facts
+                    checks
+                    sources
+                    block-id
+                    cmp-facts
+                    copies
+                    canon-op
+                    canon-lhs
+                    canon-rhs
+                    ty)])])]))))
 
 ;; --- a branch whose condition a dominating branch already decided ------------
 ;;
@@ -48324,6 +49782,7 @@
   [defs : (__tl_dyn-array OptBoolBranchDef)]
   [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
   [var-facts : (__tl_dyn-array i64)]
+  [checks : OptBoundsDomChecks]
   [sources : opt_i64_i64_map.Map]
   [block-id : i64]
   [cmp-facts : OptDomCmpFacts]
@@ -48353,6 +49812,7 @@
                     defs
                     phi-defs
                     var-facts
+                    checks
                     sources
                     block-id
                     cmp-facts
@@ -48379,6 +49839,7 @@
   [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
   [sources : opt_i64_i64_map.Map]
   [var-facts : (__tl_dyn-array i64)]
+  [checks : OptBoundsDomChecks]
   [block-id : i64]
   [cmp-facts : OptDomCmpFacts]
   [copies : opt_i64_i64_map.Map]
@@ -48393,6 +49854,7 @@
         defs
         phi-defs
         var-facts
+        checks
         sources
         block-id
         cmp-facts
@@ -48416,6 +49878,7 @@
         defs
         phi-defs
         var-facts
+        checks
         sources
         block-id
         cmp-facts
@@ -48747,6 +50210,7 @@
   [defs : (__tl_dyn-array OptBoolBranchDef)]
   [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
   [var-facts : (__tl_dyn-array i64)]
+  [checks : OptBoundsDomChecks]
   [copies : opt_i64_i64_map.Map]
   [cmp-facts : OptDomCmpFacts]
   [facts : OptBoundsFacts]
@@ -48764,6 +50228,7 @@
       defs
       phi-defs
       var-facts
+      checks
       copies
       cmp-facts
       block-id
@@ -48915,6 +50380,7 @@
   [defs : (__tl_dyn-array OptBoolBranchDef)]
   [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
   [var-facts : (__tl_dyn-array i64)]
+  [checks : OptBoundsDomChecks]
   [sources : opt_i64_i64_map.Map]
   [copies : opt_i64_i64_map.Map]
   [cmp-facts : OptDomCmpFacts]
@@ -48986,6 +50452,7 @@
                           defs
                           phi-defs
                           var-facts
+                          checks
                           copies
                           cmp-facts
                           facts
@@ -49010,6 +50477,7 @@
   [defs : (__tl_dyn-array OptBoolBranchDef)]
   [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
   [var-facts : (__tl_dyn-array i64)]
+  [checks : OptBoundsDomChecks]
   [sources : opt_i64_i64_map.Map]
   [copies : opt_i64_i64_map.Map]
   [cmp-facts : OptDomCmpFacts]
@@ -49046,6 +50514,7 @@
                       defs
                       phi-defs
                       var-facts
+                      checks
                       sources
                       copies
                       cmp-facts
@@ -49069,6 +50538,7 @@
   [defs : (__tl_dyn-array OptBoolBranchDef)]
   [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
   [var-facts : (__tl_dyn-array i64)]
+  [checks : OptBoundsDomChecks]
   [sources : opt_i64_i64_map.Map]
   [copies : opt_i64_i64_map.Map]
   [uses : (__tl_dyn-array i64)]
@@ -49108,6 +50578,7 @@
                             defs
                             phi-defs
                             var-facts
+                            checks
                             sources
                             copies
                             cmp-facts
@@ -49236,6 +50707,7 @@
   [defs : (__tl_dyn-array OptBoolBranchDef)]
   [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
   [var-facts : (__tl_dyn-array i64)]
+  [checks : OptBoundsDomChecks]
   [sources : opt_i64_i64_map.Map]
   [copies : opt_i64_i64_map.Map]
   [state : OptRangeMergeState]
@@ -49252,6 +50724,7 @@
       defs
       phi-defs
       var-facts
+      checks
       sources
       copies
       state.uses
@@ -49275,6 +50748,7 @@
   [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
   [terms : (__tl_dyn-array OptBoolBranchDef)]
   [var-facts : (__tl_dyn-array i64)]
+  [checks : OptBoundsDomChecks]
   [sources : opt_i64_i64_map.Map]
   [copies : opt_i64_i64_map.Map]
   [slice-lengths : opt_i64_i64_map.Map]
@@ -49315,6 +50789,7 @@
                     phi-defs
                     terms
                     var-facts
+                    checks
                     index
                     context.doms
                     label
@@ -49344,6 +50819,7 @@
                                 defs
                                 phi-defs
                                 var-facts
+                                checks
                                 sources
                                 copies
                                 range
@@ -49359,6 +50835,7 @@
                           phi-defs
                           terms
                           var-facts
+                          checks
                           sources
                           copies
                           slice-lengths
@@ -49463,6 +50940,7 @@
   [phi-defs : (__tl_dyn-array OptBoolBranchDef)]
   [terms : (__tl_dyn-array OptBoolBranchDef)]
   [var-facts : (__tl_dyn-array i64)]
+  [checks : OptBoundsDomChecks]
   [sources : opt_i64_i64_map.Map]
   [copies : opt_i64_i64_map.Map]
   [slice-lengths : opt_i64_i64_map.Map]
@@ -49492,6 +50970,7 @@
               phi-defs
               terms
               var-facts
+              checks
               sources
               copies
               slice-lengths
@@ -49576,6 +51055,17 @@
         sources
         frame
         blocks)]
+    ;; Every passed check, keyed on the value it checked: the facts a phi input
+    ;; needs are not on the walk's path to the check that asks about it.
+    [checks : OptBoundsDomChecks
+      (opt-bounds-dom-checks
+        type-segment-bases
+        index
+        phi-defs
+        copies
+        sources
+        frame
+        blocks)]
     [out : (__tl_dyn-array OptGvnBlockResult)
       (array.make-array OptGvnBlockResult count)]
     [next-var : (__tl_dyn-array i64) (array.make-array i64 1)]
@@ -49616,6 +51106,7 @@
               phi-defs
               terms
               var-facts
+              checks
               sources
               copies
               slice-lengths

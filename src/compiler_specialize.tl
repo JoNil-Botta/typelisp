@@ -2529,7 +2529,7 @@
       (match b
         [(ast.AstFieldDef.Def b-name b-ty b-cleanup)
           (and
-            (= a-name b-name)
+            (spec_ci.intern-syntax-id-eq? a-name b-name)
             (ctfe.ctfe-type-eq a-ty b-ty)
             (gen-field-cleanup-eq? a-cleanup b-cleanup))])]))
 
@@ -3124,7 +3124,7 @@
       (match b
         [(ast.AstFieldDef.Def b-name b-ty b-cleanup)
           (and
-            (= a-name b-name)
+            (spec_ci.intern-syntax-id-eq? a-name b-name)
             (ctfe.ctfe-type-eq-in-env env a-ty b-ty)
             (gen-field-cleanup-eq? a-cleanup b-cleanup))])]))
 

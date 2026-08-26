@@ -27,6 +27,9 @@
 (define (lower-test-generated-name-id [value : String]) : i64
   (ci.intern-generated-canonical-name value))
 
+(define (lower-test-generated-syntax-id [value : String]) : ci.InternSyntaxId
+  (ci.intern-syntax-id-from-raw (lower-test-generated-name-id value)))
+
 (define (lower-test-renderable-name-id [value : String]) : ci.InternId
   (ci.intern-id-from-renderable (ci.intern-generated-canonical-name value)))
 
@@ -12403,7 +12406,7 @@
               compiler_ast_types.AstStructCleanup.No
               (compiler_ast_types.ast-field-def-cons
                 (compiler_ast_types.ast-field-def-id
-                  (lower-test-generated-name-id "value")
+                  (lower-test-generated-syntax-id "value")
                   (compiler_ast_types.AstType.Enum used-enum-id)
                   compiler_ast_types.AstFieldCleanup.No)
                 (compiler_ast_types.ast-field-def-list-new)))
@@ -12414,7 +12417,7 @@
                 compiler_ast_types.AstStructCleanup.No
                 (compiler_ast_types.ast-field-def-cons
                   (compiler_ast_types.ast-field-def-id
-                    (lower-test-generated-name-id "value")
+                    (lower-test-generated-syntax-id "value")
                     (compiler_ast_types.AstType.I64)
                     compiler_ast_types.AstFieldCleanup.No)
                   (compiler_ast_types.ast-field-def-list-new)))
@@ -12513,7 +12516,7 @@
           compiler_ast_types.AstStructCleanup.No
           (compiler_ast_types.ast-field-def-cons
             (compiler_ast_types.ast-field-def-id
-              (lower-test-generated-name-id "handle")
+              (lower-test-generated-syntax-id "handle")
               (compiler_ast_types.AstType.I64)
               compiler_ast_types.AstFieldCleanup.No)
             (compiler_ast_types.ast-field-def-list-new)))
@@ -12524,7 +12527,7 @@
             compiler_ast_types.AstStructCleanup.No
             (compiler_ast_types.ast-field-def-cons
               (compiler_ast_types.ast-field-def-id
-                (lower-test-generated-name-id "handle")
+                (lower-test-generated-syntax-id "handle")
                 (compiler_ast_types.AstType.I64)
                 compiler_ast_types.AstFieldCleanup.No)
               (compiler_ast_types.ast-field-def-list-new)))
@@ -12535,7 +12538,7 @@
               compiler_ast_types.AstStructCleanup.No
               (compiler_ast_types.ast-field-def-cons
                 (compiler_ast_types.ast-field-def-id
-                  (lower-test-generated-name-id "handle")
+                  (lower-test-generated-syntax-id "handle")
                   (compiler_ast_types.AstType.I64)
                   compiler_ast_types.AstFieldCleanup.No)
                 (compiler_ast_types.ast-field-def-list-new)))
@@ -12549,7 +12552,7 @@
                   compiler_ast_types.AstStructCleanup.No
                   (compiler_ast_types.ast-field-def-cons
                     (compiler_ast_types.ast-field-def-id
-                      (lower-test-generated-name-id "owner")
+                      (lower-test-generated-syntax-id "owner")
                       (compiler_ast_types.AstType.Struct
                         cbi.compiler-builtin-id-fix-arena_dot_Arena)
                       compiler_ast_types.AstFieldCleanup.No)
@@ -12668,12 +12671,12 @@
           compiler_ast_types.AstStructCleanup.No
           (compiler_ast_types.ast-field-def-cons
             (compiler_ast_types.ast-field-def-id
-              (lower-test-generated-name-id "x")
+              (lower-test-generated-syntax-id "x")
               (compiler_ast_types.AstType.I64)
               compiler_ast_types.AstFieldCleanup.No)
             (compiler_ast_types.ast-field-def-cons
               (compiler_ast_types.ast-field-def-id
-                (lower-test-generated-name-id "y")
+                (lower-test-generated-syntax-id "y")
                 (compiler_ast_types.AstType.I64)
                 compiler_ast_types.AstFieldCleanup.No)
               (compiler_ast_types.ast-field-def-list-new))))
@@ -12684,7 +12687,7 @@
             compiler_ast_types.AstStructCleanup.No
             (compiler_ast_types.ast-field-def-cons
               (compiler_ast_types.ast-field-def-id
-                (lower-test-generated-name-id "value")
+                (lower-test-generated-syntax-id "value")
                 (compiler_ast_types.AstType.I64)
                 compiler_ast_types.AstFieldCleanup.No)
               (compiler_ast_types.ast-field-def-list-new)))

@@ -685,7 +685,7 @@
     [(ast.AstFieldDef.Def name ty _)
       (doc-cat5
         "\n  ("
-        (ci.intern-str name)
+        (ci.intern-str (ci.intern-syntax-id-value name))
         " "
         (doc-ast-type-source type-segment-bases ty)
         ")")]))
@@ -703,7 +703,7 @@
         (ast.ast-field-def-list-get
           (& fields)
           index
-          (ast.AstFieldDef.Def 0 (ast.AstType.Unit) ast.AstFieldCleanup.No)))
+          (ast.ast-field-def-fallback)))
       (doc-ast-field-list-source-from
         type-segment-bases
         fields

@@ -1518,6 +1518,42 @@
       (compiler-ast-cleanup-syntax-id-round-trip? hygiene)
       (compiler-ast-cleanup-syntax-id-round-trip? structural))))
 
+(define (compiler-ast-field-syntax-id-round-trip?
+  [expected : ci.InternSyntaxId]) : bool
+  (match (ast.AstFieldDef.Def expected (ast.AstType.I64) ast.AstFieldCleanup.No)
+    [(ast.AstFieldDef.Def name _ _) (ci.intern-syntax-id-eq? name expected)]))
+
+(define (compiler-ast-field-syntax-identity-smoke?) : bool
+  (let
+    [source-id : i64 (ci.intern "field-source")]
+    [module-id : i64 (ci.intern "field-module")]
+    [base-id : i64 (ci.intern "field-base")]
+    [source : ci.InternSyntaxId (ci.intern-syntax-id-from-raw source-id)]
+    [generated : ci.InternSyntaxId
+      (ci.intern-syntax-id-from-raw
+        (ci.intern-generated-name "field-generated"))]
+    [qualified : ci.InternSyntaxId
+      (ci.intern-syntax-id-from-raw
+        (ci.intern-generated-qualified-name
+          "field-module/field-base"
+          module-id
+          base-id))]
+    [builtin : ci.InternSyntaxId
+      (ci.intern-syntax-id-from-raw cbi.compiler-builtin-id-fix-x)]
+    [hygiene : ci.InternSyntaxId
+      (ci.intern-syntax-id-from-raw
+        (ci.intern-structural-local-id 11 source-id))]
+    [structural : ci.InternSyntaxId
+      (ci.intern-syntax-id-from-raw
+        (ci.intern-composite-pair-id module-id base-id))]
+    (and
+      (compiler-ast-field-syntax-id-round-trip? source)
+      (compiler-ast-field-syntax-id-round-trip? generated)
+      (compiler-ast-field-syntax-id-round-trip? qualified)
+      (compiler-ast-field-syntax-id-round-trip? builtin)
+      (compiler-ast-field-syntax-id-round-trip? hygiene)
+      (compiler-ast-field-syntax-id-round-trip? structural))))
+
 (define (main) : i64
   (begin
     (unless (= (ast.compiler-ast-smoke) 23) (return 2))
@@ -1540,4 +1576,5 @@
     (unless (compiler-ast-segmented-growth-isolation-smoke?) (return 15))
     (unless (compiler-ast-macro-type-kind-dense-compaction-smoke?) (return 16))
     (unless (compiler-ast-cleanup-syntax-identity-smoke?) (return 20))
+    (unless (compiler-ast-field-syntax-identity-smoke?) (return 21))
     42))

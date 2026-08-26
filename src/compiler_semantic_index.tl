@@ -5620,7 +5620,7 @@
               (compiler-semantic-record-field-definition!
                 state
                 struct-name-id
-                field-name-id
+                (ci.intern-syntax-id-value field-name-id)
                 index
                 ty)
               (compiler-semantic-walk-type! state ty))])

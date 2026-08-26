@@ -481,7 +481,7 @@
   (Owned))
 
 (defenum AstFieldDef
-  (Def i64 AstType AstFieldCleanup))
+  (Def ci.InternSyntaxId AstType AstFieldCleanup))
 
 (defstruct AstFieldDefList
   (slots (__tl_dyn-array AstFieldDef))
@@ -5164,13 +5164,16 @@
   (AstFieldCleanup.Fn name))
 
 (define (ast-field-def-id
-  [name : i64]
+  [name : ci.InternSyntaxId]
   [ty : AstType]
   [cleanup : AstFieldCleanup]) : AstFieldDef
   (AstFieldDef.Def name ty cleanup))
 
 (define (ast-field-def-fallback) : AstFieldDef
-  (AstFieldDef.Def 0 (AstType.Unit) AstFieldCleanup.No))
+  (AstFieldDef.Def
+    (ci.intern-syntax-id-from-raw 0)
+    (AstType.Unit)
+    AstFieldCleanup.No))
 
 (define (ast-field-def-list-with-capacity [capacity : i64]) : AstFieldDefList
   (let

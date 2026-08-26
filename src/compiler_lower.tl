@@ -18047,10 +18047,13 @@
         (ast.ast-field-def-fallback))
         [(ast.AstFieldDef.Def name ty _)
           (let
-            [name-str : String (tc_core.tc-env-key-name-text name)]
+            [name-id : i64 (ci.intern-syntax-id-value name)]
+            [name-str : String (tc_core.tc-env-key-name-text name-id)]
             [resolved : ast.AstType (tc_core.tc-resolve-type ctx ty)]
             [offset : i64
-              (tc_core.tc-inline-aggregate-layout-field-offset-id layout name)]
+              (tc_core.tc-inline-aggregate-layout-field-offset-id
+                layout
+                name-id)]
             (if (< offset 0)
               (ResultLowerExpr.Err
                 (box
@@ -18351,10 +18354,13 @@
         (ast.ast-field-def-fallback))
         [(ast.AstFieldDef.Def name ty _)
           (let
-            [name-str : String (tc_core.tc-env-key-name-text name)]
+            [name-id : i64 (ci.intern-syntax-id-value name)]
+            [name-str : String (tc_core.tc-env-key-name-text name-id)]
             [resolved : ast.AstType (tc_core.tc-resolve-type ctx ty)]
             [offset : i64
-              (tc_core.tc-inline-aggregate-layout-field-offset-id layout name)]
+              (tc_core.tc-inline-aggregate-layout-field-offset-id
+                layout
+                name-id)]
             (if (< offset 0)
               (ResultLowerExpr.Err
                 (box
@@ -20725,10 +20731,13 @@
         (ast.ast-field-def-fallback))
         [(ast.AstFieldDef.Def name ty _)
           (let
-            [name-str : String (tc_core.tc-env-key-name-text name)]
+            [name-id : i64 (ci.intern-syntax-id-value name)]
+            [name-str : String (tc_core.tc-env-key-name-text name-id)]
             [resolved : ast.AstType (tc_core.tc-resolve-type ctx ty)]
             [offset : i64
-              (tc_core.tc-inline-aggregate-layout-field-offset-id layout name)]
+              (tc_core.tc-inline-aggregate-layout-field-offset-id
+                layout
+                name-id)]
             (if (< offset 0)
               (ResultLowerState.Err
                 (box
@@ -22485,7 +22494,9 @@
         (let
           [resolved : ast.AstType (tc_core.tc-resolve-type ctx ty)]
           [offset : i64 (lower-align-up cursor (lower-type-align ctx resolved))]
-          (if (string.eq (tc_core.tc-env-key-name-text name) field-name)
+          (if (string.eq
+            (tc_core.tc-env-key-name-text (ci.intern-syntax-id-value name))
+            field-name)
             (ResultLowerFieldInfo.Ok (LowerFieldInfo.Info offset resolved))
             (lower-field-info-from-list-at
               ctx
@@ -62955,8 +62966,9 @@
                 base
                 struct-id
                 struct-name
-                field-name
-                (tc_core.tc-env-key-name-text field-name)
+                (ci.intern-syntax-id-value field-name)
+                (tc_core.tc-env-key-name-text
+                  (ci.intern-syntax-id-value field-name))
                 pattern
                 ty)
                 [(ResultLowerEnv.Ok next-state next-env next-type-env)
@@ -63643,7 +63655,8 @@
               ctx
               struct-id
               struct-name
-              (tc_core.tc-env-key-name-text field-name))
+              (tc_core.tc-env-key-name-text
+                (ci.intern-syntax-id-value field-name)))
               [(ResultLowerFieldInfo.Ok info)
                 (match info
                   [(LowerFieldInfo.Info offset _)
@@ -68119,7 +68132,7 @@
                 pools
                 (ci.intern-syntax-id-value cleanup-name)
                 value-name-id
-                field-name)
+                (ci.intern-syntax-id-value field-name))
               acc))]
         [(ast.AstFieldCleanup.Owned)
           (match (lower-struct-cleanup-id-for-type lower-state ctx ty)
@@ -68130,7 +68143,7 @@
                     pools
                     cleanup-name-id
                     value-name-id
-                    field-name)
+                    (ci.intern-syntax-id-value field-name))
                   acc))]
             [(tc_core.ResultTcNameId.Err message)
               (parser.ResultAstExprList.Err message)])])]))

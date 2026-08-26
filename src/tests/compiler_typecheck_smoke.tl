@@ -3426,16 +3426,16 @@
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [result : tc_core.ResultCompilerTypecheck
       (match (load.compiler-load-file-with-paths-and-roots-cfg-with-pools
-        load-state
+        (load.compiler-load-session-state-shared-view (& load-state))
         entry
         (sym_i64_env.sym-i64-empty)
-        roots
+        (tc_core.tc-global-shared-view roots)
         cfgs
-        pools)
+        (ast.ast-node-pool-context-shared-view (& pools)))
         [(load.ResultCompilerLoadWithPaths.Ok decls paths modules _)
           (tc_api.typecheck-compiler-program-with-paths-cache-and-load-state-and-prefix-cache-state-and-pools
             load-state
-            prefix-cache
+            (tc_core.tc-global-shared-view prefix-cache)
             job-state
             (ast.ast-program decls)
             (ast.ast-decl-path-list-with-modules paths modules)
@@ -3467,7 +3467,7 @@
 (import tc_macro_missing_helper as helper)
 (defmacro (bumped [value : Expr]) : Expr `(helper.bump ,value))")
       (compiler-typecheck-smoke-write-text
-        entry
+        (tc_core.tc-global-shared-view entry)
         "(import tc_macro_missing_provider as provider)
 (define (main) : i64 (provider.bumped 41))")
       (tc_api.compiler-typecheck-reset-load-session!)
@@ -3480,7 +3480,7 @@
           (and
             (string.eq
               (diagnostic.compiler-diagnostic-path (__tl-box-place diag))
-              missing)
+              (tc_core.tc-global-shared-view missing))
             (string.eq
               (diagnostic.compiler-diagnostic-message (__tl-box-place diag))
               (str_cat.str-cat "compiler-load: cannot read import " missing)))]
@@ -3506,7 +3506,10 @@
       (tc_api.compiler-typecheck-reset-load-session!)
       (let
         [serial-ok : bool
-          (compiler-typecheck-smoke-prefix-cache-file-check entry roots cfgs)]
+          (compiler-typecheck-smoke-prefix-cache-file-check
+            (tc_core.tc-global-shared-view entry)
+            (tc_core.tc-global-shared-view roots)
+            (tc_core.tc-global-shared-view cfgs))]
         [_reset : unit (tc_api.compiler-typecheck-reset-load-session!)]
         [state-ok : bool
           (compiler-typecheck-smoke-macro-dependency-state-check

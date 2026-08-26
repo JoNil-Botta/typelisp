@@ -33,4 +33,4 @@ benchmark/typelisp/liveness_scan	394920125
 benchmark/c-scalar/liveness_scan	433426169
 benchmark/typelisp/peephole_lines	447537568
 benchmark/c-scalar/peephole_lines	442194744
-self_compile/compile_cli_opt1	75516039884
+self_compile/compile_cli_opt1	76125752629

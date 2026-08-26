@@ -41,7 +41,7 @@ stdlib.hash/enum-hash-payloads	5	fixed	expr	tests/integration/stdlib_hash_genera
 stdlib.hash/enum-hash-dispatch	3	fixed	expr	tests/integration/stdlib_hash_generated.tl	ok	default	assembly
 stdlib.hash/hash-once	1	fixed	expr	tests/integration/stdlib_hash_generated.tl	ok	default	assembly
 stdlib.hash/hash	1	fixed	module	tests/integration/stdlib_hash_generated.tl	ok	default	assembly
-stdlib.hashmap/hashmap	2	fixed	module	tests/integration/generated_hashmap_global_mutation.tl	ok	default	assembly
+stdlib.hashmap/hashmap	2	fixed	module	tests/integration/hashmap_nominal_value_local_smoke.tl	ok	default	assembly
 stdlib.io/array-ptr	1	fixed	expr	tests/integration/tlci_native_index_folds.tl	ok	default	assembly
 stdlib.io/array-const-ptr	1	fixed	expr	tests/integration/tlci_native_index_folds.tl	ok	default	assembly
 stdlib.io/print-format	2	variadic	expr	tests/integration/tlci_native_format_scanner.tl	ok	default	assembly

@@ -19,7 +19,9 @@ set -eu
 # TYPELISP_BOOTSTRAP_WORKDIR isolates a second bootstrap in the same job, and
 # TYPELISP_BOOTSTRAP_SKIP_CLI_SMOKE=1 skips the redundant stage1 CLI surface
 # checks for that second run. CI uses these together for the scratch-vreg
-# self-hosting regression gate.
+# self-hosting regression gate. After convergence that gate also compiles,
+# links, and runs the configured compiler backend smoke with the scratch-built
+# compiler, so cfg-only backend test bodies cannot silently go unchecked.
 # TYPELISP_BOOTSTRAP_TLCI_MUTATION=1 turns that isolated second run into the
 # same-commit embedded-stdlib mutation handoff witness. It copies src/ and
 # stdlib/ below the selected workdir and never edits checked-in sources.
@@ -829,6 +831,53 @@ if [ "$BOOTSTRAP_TLCI_MUTATION" -eq 1 ]; then
     build_bootstrap_embedded_stdlib "$BOOTSTRAP_COMPILER_BIN"
     bootstrap_tlci_mutation_snapshot \
         "$BOOTSTRAP_COMPILER_STAGE" "$BOOTSTRAP_COMPILER_BIN"
+fi
+
+# A scratch-built compiler must be able to compile the backend's cfg-only
+# self-test and the linked program must pass it. The ordinary backend smoke is
+# compiled without scratch-vreg, so it cannot cover these bodies; a bootstrap
+# fixpoint alone only proves that the compiler can compile itself.
+if [ "$BOOTSTRAP_CFG" = scratch-vreg ]; then
+    SCRATCH_BACKEND_SMOKE_ASM="$WORKDIR/compiler-backend-scratch-vreg-smoke.s"
+    SCRATCH_BACKEND_SMOKE_OBJ="$WORKDIR/compiler-backend-scratch-vreg-smoke.$OBJ_EXT"
+    SCRATCH_BACKEND_SMOKE_BIN="$WORKDIR/compiler-backend-scratch-vreg-smoke$BIN_EXT"
+    SCRATCH_BACKEND_SMOKE_STDOUT="$WORKDIR/compiler-backend-scratch-vreg-smoke.stdout"
+    SCRATCH_BACKEND_SMOKE_STDERR="$WORKDIR/compiler-backend-scratch-vreg-smoke.stderr"
+    echo "[bootstrap] scratch-vreg compiler backend smoke"
+    run_with_heartbeat \
+        "scratch-vreg compiler backend smoke compile" \
+        "$BOOTSTRAP_COMPILER_BIN" compile \
+        "$BOOTSTRAP_COMPILER_ROOT/tests/compiler_backend_smoke.tl" \
+        -o "$SCRATCH_BACKEND_SMOKE_ASM" \
+        --target "$BOOTSTRAP_TARGET" \
+        $(native_target_cfg_args) \
+        --cfg scratch-vreg \
+        --stdlib-root "$BOOTSTRAP_STDLIB_ROOT" \
+        --stdlib-root "$BOOTSTRAP_COMPILER_ROOT"
+    assemble_and_link \
+        "scratch-vreg compiler backend smoke" \
+        "$SCRATCH_BACKEND_SMOKE_ASM" \
+        "$SCRATCH_BACKEND_SMOKE_OBJ" \
+        "$SCRATCH_BACKEND_SMOKE_BIN"
+    set +e
+    "$SCRATCH_BACKEND_SMOKE_BIN" \
+        > "$SCRATCH_BACKEND_SMOKE_STDOUT" \
+        2> "$SCRATCH_BACKEND_SMOKE_STDERR"
+    SCRATCH_BACKEND_SMOKE_STATUS=$?
+    set -e
+    if [ "$SCRATCH_BACKEND_SMOKE_STATUS" -ne 42 ]; then
+        echo "scratch-vreg compiler backend smoke exited $SCRATCH_BACKEND_SMOKE_STATUS, expected 42" >&2
+        sed 's/^/  /' "$SCRATCH_BACKEND_SMOKE_STDOUT" >&2 || true
+        sed 's/^/  /' "$SCRATCH_BACKEND_SMOKE_STDERR" >&2 || true
+        exit 1
+    fi
+    if [ -s "$SCRATCH_BACKEND_SMOKE_STDOUT" ] || \
+       [ -s "$SCRATCH_BACKEND_SMOKE_STDERR" ]; then
+        echo "scratch-vreg compiler backend smoke produced unexpected output" >&2
+        sed 's/^/  /' "$SCRATCH_BACKEND_SMOKE_STDOUT" >&2 || true
+        sed 's/^/  /' "$SCRATCH_BACKEND_SMOKE_STDERR" >&2 || true
+        exit 1
+    fi
 fi
 
 # The stage2 -> stage3 compile runs from the repo root, where the loader's

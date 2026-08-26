@@ -226,6 +226,11 @@
 (define (compiler-diagnostic-message [diag : (& diag CompilerDiagnostic)]) : String
   (string.copy (& diag.message)))
 
+(define (compiler-diagnostic-message-ref [diag : (& diag CompilerDiagnostic)]) : (&
+    diag
+    str)
+  (& diag.message))
+
 (define (compiler-diagnostic-end-line [diag : (& diag CompilerDiagnostic)]) : i64
   (compiler-diagnostic-span-end-line (& diag.primary)))
 

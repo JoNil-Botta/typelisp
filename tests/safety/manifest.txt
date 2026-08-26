@@ -175,6 +175,8 @@ hashmap_bang_rvalue_reject|check-fail|tests/safety/hashmap_bang_rvalue_reject.tl
 vector_bang_rvalue_reject|check-fail|tests/safety/vector_bang_rvalue_reject.tl|-|borrow requires a local, parameter, or aggregate place
 hashmap_bang_shared_borrow_reject|check-fail|tests/safety/hashmap_bang_shared_borrow_reject.tl|-|cannot mutably borrow borrowed place `m`
 hashmap_bang_projected_shared_borrow_reject|check-fail|tests/safety/hashmap_bang_projected_shared_borrow_reject.tl|-|cannot mutably borrow borrowed place `holder.map`
+hashmap_nominal_value_noncloneable_reject|check-fail|tests/safety/hashmap_nominal_value_noncloneable_reject.tl|-|typecheck: clone unsupported type HashmapNoncloneableValue at HashmapNoncloneableValue.choice.Raw[0].raw: (Ptr i64) has no clone capability
+hashmap_unsupported_value_kind_reject|check-fail|tests/safety/hashmap_unsupported_value_kind_reject.tl|-|hashmap: value type tuple_i64_i64_nil has unsupported value kind tuple
 hashmap_string_probe_forged_capacity_trap|run-trap|tests/safety/hashmap_string_probe_forged_capacity_trap.tl|134|array index out of bounds
 auto_borrow_shared_lifetime_reject|check-fail|tests/safety/auto_borrow_shared_lifetime_reject.tl|-|source lifetime `right-life` does not outlive required lifetime `left-life`
 auto_borrow_mutable_param_reject|check-fail|tests/safety/auto_borrow_mutable_param_reject.tl|-|typecheck: call `take-mut` argument 1 (parameter `n`) type mismatch: expected (&mut n i64), found i64
@@ -200,7 +202,7 @@ vector_iter_shared_move_live_reject|check-fail|tests/safety/vector_iter_shared_m
 vector_iter_shared_escape_reject|check-fail|tests/safety/vector_iter_shared_escape_reject.tl|-|reference value would escape lexical scope
 vector_core_full_surface_reject|check-fail|tests/safety/vector_core_full_surface_reject.tl|-|typecheck: unbound name compact.pop
 vector_full_unsupported_equality_nested_reject|check-fail|tests/safety/vector_full_unsupported_equality_nested_reject.tl|-|eq: unsupported type mutptr_i64
-clone_imported_nominal_noncloneable_reject|check-fail|tests/safety/clone_imported_nominal_noncloneable_reject.tl|-|typecheck: clone unsupported type LocalRawWrapper
+clone_imported_nominal_noncloneable_reject|check-fail|tests/safety/clone_imported_nominal_noncloneable_reject.tl|-|typecheck: clone unsupported type LocalRawWrapper at LocalRawWrapper.item.ptr: (Ptr i64) has no clone capability
 reborrow_stored_reference_item_source_live_reject|check-fail|tests/safety/reborrow_stored_reference_item_source_live_reject.tl|-|cannot assign to borrowed place `items[0]`
 reborrow_stored_mut_reference_item_source_live_reject|check-fail|tests/safety/reborrow_stored_mut_reference_item_source_live_reject.tl|-|cannot assign to borrowed place `items[0]`
 reborrow_stored_nested_reference_item_source_live_reject|check-fail|tests/safety/reborrow_stored_nested_reference_item_source_live_reject.tl|-|cannot assign to borrowed place `items[0]`

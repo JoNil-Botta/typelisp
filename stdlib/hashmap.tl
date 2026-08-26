@@ -87,19 +87,31 @@
         ["i64" "i64"]
         [_ "generated"])]
     [value-kind : String
-      (match (type-key V)
+      (match (type-kind V)
         ["i64" "i64"]
-        ["String" "string"]
-        ["struct_stdlib.hashmap/HashPayload" "aggregate"]
-        ["enum_stdlib.hashmap/HashState" "aggregate"]
+        ["string" "string"]
+        ["struct" "aggregate"]
+        ["enum" "aggregate"]
         [_ "unsupported"])]
     [module-key-k : String (type-key K)]
+    ;; These two spellings preserve the already-published family identities;
+    ;; value admission above is kind-based and does not depend on this mapping.
     [module-key-v : String
       (match (type-key V)
         ["struct_stdlib.hashmap/HashPayload"
           "struct_stdlib.hashmap.HashPayload"]
         ["enum_stdlib.hashmap/HashState" "enum_stdlib.hashmap.HashState"]
-        [_ (type-key V)])]
+        [_
+          (match value-kind
+            ["aggregate"
+              (let
+                [nominal-module : String (type-nominal-module V)]
+                (if (string.eq nominal-module "")
+                  (type-key V)
+                  (comptime.string-append
+                    nominal-module
+                    (comptime.string-append "." (type-nominal-name V)))))]
+            [_ (type-key V)])])]
     [module-name-text : String
       (comptime.string-append
         "stdlib.hashmap.generated."
@@ -857,9 +869,16 @@
                 "state"
                 (GeneratedHashmapSlotState.Occupied))))))]
     (if (string.eq value-kind "unsupported")
-      `(begin
-        (module ,module-name)
-        (import stdlib.comptime))
+      (comptime.comptime-error
+        (comptime.string-append
+          "hashmap: value type "
+          (comptime.string-append
+            (type-key V)
+            (comptime.string-append
+              " has unsupported value kind "
+              (comptime.string-append
+                (type-kind V)
+                "; expected i64, String, struct, or enum")))))
       `(begin
         (module ,module-name)
         (import stdlib.array as array_ops)

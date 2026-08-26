@@ -1460,7 +1460,7 @@
     [empty-program : compiler_ir_types.CompilerIrProgram
       (compiler_ir_types.CompilerIrProgram.Program
         (compiler_ir_types.compiler-ir-global-seq-empty)
-        compiler_ir_types.CompilerIrFunctionList.Nil
+        (compiler_ir_types.compiler-ir-function-seq-empty)
         (compiler_ir_types.compiler-ir-extern-seq-empty))]
     [runtime-globals : compiler_ir_types.CompilerIrGlobalSeq
       (let
@@ -1477,7 +1477,7 @@
     [runtime-global-program : compiler_ir_types.CompilerIrProgram
       (compiler_ir_types.CompilerIrProgram.Program
         runtime-globals
-        compiler_ir_types.CompilerIrFunctionList.Nil
+        (compiler_ir_types.compiler-ir-function-seq-empty)
         (compiler_ir_types.compiler-ir-extern-seq-empty))]
     (and
       (match (compiler_backend.compiler-backend-object-program-eligibility
@@ -3428,7 +3428,7 @@
     1
     (compiler_backend.compiler-backend-program-index-build
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-      compiler_ir_types.CompilerIrFunctionList.Nil
+      (compiler_ir_types.compiler-ir-function-seq-empty)
       (compiler_ir_types.compiler-ir-extern-seq-empty)))
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (compiler-backend-c-abi-call-result-store-bool-asm-ok? asm)]
@@ -3443,7 +3443,7 @@
     1
     (compiler_backend.compiler-backend-program-index-build
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-      compiler_ir_types.CompilerIrFunctionList.Nil
+      (compiler_ir_types.compiler-ir-function-seq-empty)
       (compiler_ir_types.compiler-ir-extern-seq-empty)))
     [(compiler_backend.ResultCompilerBackend.Ok asm)
       (compiler-backend-typelisp-call-result-store-bool-asm-ok? asm)]
@@ -3567,7 +3567,7 @@
     [program-index : compiler_backend.CompilerBackendProgramIndex
       (compiler_backend.compiler-backend-program-index-build
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        compiler_ir_types.CompilerIrFunctionList.Nil
+        (compiler_ir_types.compiler-ir-function-seq-empty)
         (compiler_ir_types.compiler-ir-extern-seq-empty))]
     [backend-state : compiler_backend.CompilerBackendState
       program-index.backend-state]
@@ -3637,7 +3637,7 @@
         ""
         ""
         (compiler_regalloc.compiler-reg-var-types-empty)
-        compiler_ir_types.CompilerIrFunctionList.Nil
+        (compiler_ir_types.compiler-ir-function-seq-empty)
         (compiler_ir_types.compiler-ir-extern-seq-empty)
         program-index
         3
@@ -3795,7 +3795,7 @@
     [program-index : compiler_backend.CompilerBackendProgramIndex
       (compiler_backend.compiler-backend-program-index-build
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        compiler_ir_types.CompilerIrFunctionList.Nil
+        (compiler_ir_types.compiler-ir-function-seq-empty)
         (compiler_ir_types.compiler-ir-extern-seq-empty))]
     [backend-state : compiler_backend.CompilerBackendState
       program-index.backend-state]
@@ -3806,7 +3806,7 @@
     [program-index : compiler_backend.CompilerBackendProgramIndex
       (compiler_backend.compiler-backend-program-index-build
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        compiler_ir_types.CompilerIrFunctionList.Nil
+        (compiler_ir_types.compiler-ir-function-seq-empty)
         (compiler_ir_types.compiler-ir-extern-seq-empty))]
     [backend-state : compiler_backend.CompilerBackendState
       program-index.backend-state]
@@ -3903,7 +3903,7 @@
         ""
         ""
         (compiler_regalloc.compiler-reg-var-types-empty)
-        compiler_ir_types.CompilerIrFunctionList.Nil
+        (compiler_ir_types.compiler-ir-function-seq-empty)
         (compiler_ir_types.compiler-ir-extern-seq-empty)
         program-index
         3
@@ -5219,7 +5219,7 @@
 (define (compiler-backend-call-save-program) : compiler_ir_types.CompilerIrProgram
   (compiler_ir_types.CompilerIrProgram.Program
     (compiler-backend-call-save-test-globals)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (compiler_ir_types.CompilerIrFunction.Function
         (ci.intern "side_effect")
         compiler_ir_types.CompilerIrParamList.Nil
@@ -5233,7 +5233,7 @@
                 compiler_ir_types.CompilerIrMaybeValue.No)
               (compiler_ir_types.compiler-ir-instr-seq-empty)))
           compiler_ir_types.CompilerIrBlockList.Nil))
-      (compiler_ir_types.compiler-ir-function-cons
+      (compiler_ir_types.compiler-ir-function-seq-prepend
         (compiler_ir_types.CompilerIrFunction.Function
           (ci.intern "main")
           compiler_ir_types.CompilerIrParamList.Nil
@@ -5244,7 +5244,7 @@
               (compiler_ir_types.compiler-ir-label "entry")
               (compiler-backend-call-save-main-instrs))
             compiler_ir_types.CompilerIrBlockList.Nil))
-        compiler_ir_types.CompilerIrFunctionList.Nil))
+        (compiler_ir_types.compiler-ir-function-seq-empty)))
     (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
 (define (compiler-backend-call-save-r9-wrap-ok?) : bool
@@ -7120,7 +7120,7 @@
         (compiler_ast_types.AstType.I64)
         (compiler_backend.compiler-backend-program-index-build
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-          compiler_ir_types.CompilerIrFunctionList.Nil
+          (compiler_ir_types.compiler-ir-function-seq-empty)
           (compiler_ir_types.compiler-ir-extern-seq-empty))
         8
         ""
@@ -7139,7 +7139,7 @@
         (compiler_ast_types.AstType.I64)
         (compiler_backend.compiler-backend-program-index-build
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-          compiler_ir_types.CompilerIrFunctionList.Nil
+          (compiler_ir_types.compiler-ir-function-seq-empty)
           (compiler_ir_types.compiler-ir-extern-seq-empty))
         ""
         ""
@@ -7164,7 +7164,7 @@
         (compiler_ast_types.AstType.U64)
         (compiler_backend.compiler-backend-program-index-build
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-          compiler_ir_types.CompilerIrFunctionList.Nil
+          (compiler_ir_types.compiler-ir-function-seq-empty)
           (compiler_ir_types.compiler-ir-extern-seq-empty))
         ""
         ""
@@ -7184,7 +7184,7 @@
         (compiler_ast_types.AstType.I64)
         (compiler_backend.compiler-backend-program-index-build
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-          compiler_ir_types.CompilerIrFunctionList.Nil
+          (compiler_ir_types.compiler-ir-function-seq-empty)
           (compiler_ir_types.compiler-ir-extern-seq-empty))
         ""
         ""
@@ -7204,7 +7204,7 @@
         (compiler_ast_types.AstType.U64)
         (compiler_backend.compiler-backend-program-index-build
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-          compiler_ir_types.CompilerIrFunctionList.Nil
+          (compiler_ir_types.compiler-ir-function-seq-empty)
           (compiler_ir_types.compiler-ir-extern-seq-empty))
         ""
         ""
@@ -7225,7 +7225,7 @@
         (compiler_ast_types.AstType.I64)
         (compiler_backend.compiler-backend-program-index-build
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-          compiler_ir_types.CompilerIrFunctionList.Nil
+          (compiler_ir_types.compiler-ir-function-seq-empty)
           (compiler_ir_types.compiler-ir-extern-seq-empty))
         ""
         ""
@@ -7251,7 +7251,7 @@
     [index : compiler_backend.CompilerBackendProgramIndex
       (compiler_backend.compiler-backend-program-index-build
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        compiler_ir_types.CompilerIrFunctionList.Nil
+        (compiler_ir_types.compiler-ir-function-seq-empty)
         (compiler_ir_types.compiler-ir-extern-seq-empty))]
     [backend-state : compiler_backend.CompilerBackendState index.backend-state]
     (and
@@ -7292,7 +7292,7 @@
     [index : compiler_backend.CompilerBackendProgramIndex
       (compiler_backend.compiler-backend-program-index-build
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        compiler_ir_types.CompilerIrFunctionList.Nil
+        (compiler_ir_types.compiler-ir-function-seq-empty)
         (compiler_ir_types.compiler-ir-extern-seq-empty))]
     [int-assignments : compiler_regalloc.CompilerRegAssignmentTable
       (compiler_regalloc.compiler-reg-assignments-prepend
@@ -7370,7 +7370,7 @@
     [index : compiler_backend.CompilerBackendProgramIndex
       (compiler_backend.compiler-backend-program-index-build
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        compiler_ir_types.CompilerIrFunctionList.Nil
+        (compiler_ir_types.compiler-ir-function-seq-empty)
         (compiler_ir_types.compiler-ir-extern-seq-empty))]
     [slot-assignments : compiler_regalloc.CompilerRegAssignmentTable
       (compiler_regalloc.compiler-reg-assignments-prepend
@@ -7623,8 +7623,8 @@
           (compiler_ir_types.compiler-ir-label "entry")
           instrs)
         compiler_ir_types.CompilerIrBlockList.Nil)]
-    [functions : compiler_ir_types.CompilerIrFunctionList
-      (compiler_ir_types.compiler-ir-function-cons
+    [functions : compiler_ir_types.CompilerIrFunctionSeq
+      (compiler_ir_types.compiler-ir-function-seq-prepend
         (compiler_ir_types.CompilerIrFunction.Function
           (compiler_ir_types.compiler-ir-symbol
             "__tl_internal_abi_ir_owned_6219_fixture")
@@ -7632,7 +7632,7 @@
           (compiler_ast_types.AstType.I64)
           2
           blocks)
-        compiler_ir_types.CompilerIrFunctionList.Nil)]
+        (compiler_ir_types.compiler-ir-function-seq-empty))]
     [index : compiler_backend.CompilerBackendProgramIndex
       (compiler_backend.compiler-backend-program-index-build
         bases
@@ -7729,15 +7729,15 @@
             (compiler_ir_types.compiler-ir-param-cons
               (compiler_ir_types.CompilerIrParam.Param "p3" type3 3)
               compiler_ir_types.CompilerIrParamList.Nil))))]
-    [functions : compiler_ir_types.CompilerIrFunctionList
-      (compiler_ir_types.compiler-ir-function-cons
+    [functions : compiler_ir_types.CompilerIrFunctionSeq
+      (compiler_ir_types.compiler-ir-function-seq-prepend
         (compiler_ir_types.CompilerIrFunction.Function
           (ci.intern "private_group_signature")
           params
           type3
           4
           compiler_ir_types.CompilerIrBlockList.Nil)
-        compiler_ir_types.CompilerIrFunctionList.Nil)]
+        (compiler_ir_types.compiler-ir-function-seq-empty))]
     [index : compiler_backend.CompilerBackendProgramIndex
       (compiler_backend.compiler-backend-program-index-build
         bases
@@ -7817,7 +7817,7 @@
     [index : compiler_backend.CompilerBackendProgramIndex
       (compiler_backend.compiler-backend-program-index-build
         bases
-        compiler_ir_types.CompilerIrFunctionList.Nil
+        (compiler_ir_types.compiler-ir-function-seq-empty)
         (compiler_ir_types.compiler-ir-extern-seq-empty))]
     [memory40 : compiler_ast_types.AstType
       (compiler_ast_types.AstType.Struct
@@ -7854,7 +7854,7 @@
         dynamic-types
         (compiler_ir_types.CompilerIrValue.Var 2)
         dynamic-args
-        compiler_ir_types.CompilerIrFunctionList.Nil
+        (compiler_ir_types.compiler-ir-function-seq-empty)
         (compiler_ir_types.compiler-ir-extern-seq-empty)
         index)]
     [effective-dynamic-type : compiler_ast_types.AstType
@@ -8139,14 +8139,14 @@
       [_index : compiler_backend.CompilerBackendProgramIndex
         (compiler_backend.compiler-backend-program-index-build
           bases
-          (compiler_ir_types.compiler-ir-function-cons
+          (compiler_ir_types.compiler-ir-function-seq-prepend
             (compiler_ir_types.CompilerIrFunction.Function
               name
               params
               (compiler_ast_types.AstType.I64)
               1
               compiler_ir_types.CompilerIrBlockList.Nil)
-            compiler_ir_types.CompilerIrFunctionList.Nil)
+            (compiler_ir_types.compiler-ir-function-seq-empty))
           (compiler_ir_types.compiler-ir-extern-seq-empty))]
       [indirect-slots : i64
         (compiler_regalloc.compiler-reg-scratch-vreg-slots
@@ -8229,7 +8229,7 @@
     [index : compiler_backend.CompilerBackendProgramIndex
       (compiler_backend.compiler-backend-program-index-build
         bases
-        compiler_ir_types.CompilerIrFunctionList.Nil
+        (compiler_ir_types.compiler-ir-function-seq-empty)
         (compiler_ir_types.compiler-ir-extern-seq-empty))]
     (and
       (= (compiler_backend.compiler-backend-type-size bases ref) 16)
@@ -8436,7 +8436,7 @@
       (compiler-backend-register-group-test-type)]
     (compiler_backend.compiler-backend-program-index-build
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-      (compiler_ir_types.compiler-ir-function-cons
+      (compiler_ir_types.compiler-ir-function-seq-prepend
         (compiler_ir_types.CompilerIrFunction.Function
           (ci.intern "main")
           compiler_ir_types.CompilerIrParamList.Nil
@@ -8456,7 +8456,7 @@
                   ty)
                 (compiler_ir_types.compiler-ir-instr-seq-empty)))
             compiler_ir_types.CompilerIrBlockList.Nil))
-        compiler_ir_types.CompilerIrFunctionList.Nil)
+        (compiler_ir_types.compiler-ir-function-seq-empty))
       (compiler_ir_types.compiler-ir-extern-seq-empty))))
 
 (define (compiler-backend-register-group-f64-test-type) : compiler_ast_types.AstType
@@ -8468,7 +8468,7 @@
       (compiler-backend-register-group-f64-test-type)]
     (compiler_backend.compiler-backend-program-index-build
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-      (compiler_ir_types.compiler-ir-function-cons
+      (compiler_ir_types.compiler-ir-function-seq-prepend
         (compiler_ir_types.CompilerIrFunction.Function
           (ci.intern "main")
           compiler_ir_types.CompilerIrParamList.Nil
@@ -8490,7 +8490,7 @@
                   ty)
                 (compiler_ir_types.compiler-ir-instr-seq-empty)))
             compiler_ir_types.CompilerIrBlockList.Nil))
-        compiler_ir_types.CompilerIrFunctionList.Nil)
+        (compiler_ir_types.compiler-ir-function-seq-empty))
       (compiler_ir_types.compiler-ir-extern-seq-empty))))
 
 (define (compiler-backend-register-group-mov-error-ok?
@@ -8748,11 +8748,11 @@
 (define (compiler-backend-descriptor-pair-program) : compiler_ir_types.CompilerIrProgram
   (compiler_ir_types.CompilerIrProgram.Program
     (compiler_ir_types.compiler-ir-global-seq-empty)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (compiler-backend-descriptor-pair-main)
-      (compiler_ir_types.compiler-ir-function-cons
+      (compiler_ir_types.compiler-ir-function-seq-prepend
         (compiler-backend-descriptor-pair-consumer)
-        compiler_ir_types.CompilerIrFunctionList.Nil))
+        (compiler_ir_types.compiler-ir-function-seq-empty)))
     (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
 (define (compiler-backend-descriptor-pair-spill-order-ok?) : bool
@@ -9043,9 +9043,9 @@
 (define (compiler-backend-descriptor-pair-object-program) : compiler_ir_types.CompilerIrProgram
   (compiler_ir_types.CompilerIrProgram.Program
     (compiler_ir_types.compiler-ir-global-seq-empty)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (compiler-backend-descriptor-pair-object-main)
-      compiler_ir_types.CompilerIrFunctionList.Nil)
+      (compiler_ir_types.compiler-ir-function-seq-empty))
     (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
 (define (compiler-backend-descriptor-pair-object-target-ok?
@@ -9577,17 +9577,15 @@
                   (compiler_ir_types.compiler-ir-label "entry")
                   instrs)
                 compiler_ir_types.CompilerIrBlockList.Nil)))]
-        [functions : compiler_ir_types.CompilerIrFunctionList
-          (compiler_ir_types.CompilerIrFunctionList.Array
-            (compiler_ir_types.compiler-ir-function-seq-from-list
-              (compiler_ir_types.compiler-ir-function-cons
-                (compiler_ir_types.CompilerIrFunction.Function
-                  (ci.intern "main")
-                  compiler_ir_types.CompilerIrParamList.Nil
-                  (compiler_ast_types.AstType.I64)
-                  3
-                  blocks)
-                compiler_ir_types.CompilerIrFunctionList.Nil)))]
+        [functions : compiler_ir_types.CompilerIrFunctionSeq
+          (compiler_ir_types.compiler-ir-function-seq-prepend
+            (compiler_ir_types.CompilerIrFunction.Function
+              (ci.intern "main")
+              compiler_ir_types.CompilerIrParamList.Nil
+              (compiler_ast_types.AstType.I64)
+              3
+              blocks)
+            (compiler_ir_types.compiler-ir-function-seq-empty))]
         [globals : compiler_ir_types.CompilerIrGlobalSeq
           (compiler-backend-test-global-seq-single
             "global_text"
@@ -9709,17 +9707,15 @@
               (compiler_ir_types.compiler-ir-label "entry")
               instrs)
             compiler_ir_types.CompilerIrBlockList.Nil)))]
-    [functions : compiler_ir_types.CompilerIrFunctionList
-      (compiler_ir_types.CompilerIrFunctionList.Array
-        (compiler_ir_types.compiler-ir-function-seq-from-list
-          (compiler_ir_types.compiler-ir-function-cons
-            (compiler_ir_types.CompilerIrFunction.Function
-              (ci.intern "main")
-              compiler_ir_types.CompilerIrParamList.Nil
-              (compiler_ast_types.AstType.I64)
-              5
-              blocks)
-            compiler_ir_types.CompilerIrFunctionList.Nil)))]
+    [functions : compiler_ir_types.CompilerIrFunctionSeq
+      (compiler_ir_types.compiler-ir-function-seq-prepend
+        (compiler_ir_types.CompilerIrFunction.Function
+          (ci.intern "main")
+          compiler_ir_types.CompilerIrParamList.Nil
+          (compiler_ast_types.AstType.I64)
+          5
+          blocks)
+        (compiler_ir_types.compiler-ir-function-seq-empty))]
     [index : compiler_backend.CompilerBackendProgramIndex
       (compiler_backend.compiler-backend-program-index-build
         bases
@@ -9924,7 +9920,7 @@
     [index : compiler_backend.CompilerBackendProgramIndex
       (compiler_backend.compiler-backend-program-index-build
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        compiler_ir_types.CompilerIrFunctionList.Nil
+        (compiler_ir_types.compiler-ir-function-seq-empty)
         (compiler_ir_types.compiler-ir-extern-seq-empty))]
     [values : compiler_ir_types.CompilerIrValueSeq
       (compiler_ir_types.compiler-ir-value-seq-prepend
@@ -9983,7 +9979,7 @@
   (match (compiler_backend.compiler-backend-runtime-plan
     (compiler_ir_types.CompilerIrProgram.Program
       (compiler_ir_types.compiler-ir-global-seq-empty)
-      compiler_ir_types.CompilerIrFunctionList.Nil
+      (compiler_ir_types.compiler-ir-function-seq-empty)
       (compiler_ir_types.compiler-ir-extern-seq-empty)))
     [(compiler_backend.ResultBackendRuntimePlan.Ok plan)
       (compiler-backend-ir-walker-object-refs-with-plan plan)]
@@ -11482,7 +11478,7 @@
       (compiler-backend-register-group-test-type)]
     (compiler_backend.compiler-backend-program-index-build
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-      (compiler_ir_types.compiler-ir-function-cons
+      (compiler_ir_types.compiler-ir-function-seq-prepend
         (compiler_ir_types.CompilerIrFunction.Function
           (ci.intern "group_seed")
           compiler_ir_types.CompilerIrParamList.Nil
@@ -11502,7 +11498,7 @@
                   ty)
                 (compiler_ir_types.compiler-ir-instr-seq-empty)))
             compiler_ir_types.CompilerIrBlockList.Nil))
-        (compiler_ir_types.compiler-ir-function-cons
+        (compiler_ir_types.compiler-ir-function-seq-prepend
           (compiler_ir_types.CompilerIrFunction.Function
             (ci.intern "consume_group")
             (compiler_ir_types.compiler-ir-param-cons
@@ -11511,7 +11507,7 @@
             (compiler_ast_types.AstType.I64)
             1
             compiler_ir_types.CompilerIrBlockList.Nil)
-          compiler_ir_types.CompilerIrFunctionList.Nil))
+          (compiler_ir_types.compiler-ir-function-seq-empty)))
       (compiler_ir_types.compiler-ir-extern-seq-empty))))
 
 (define (compiler-backend-call-arg-rax-group-consumer-not-forwardable?) : bool
@@ -11585,7 +11581,7 @@
         (compiler_backend.CompilerBackendGlobalTypeTable.Empty)
         (compiler_ast_types.AstType.I64)
         runtime-plan
-        compiler_ir_types.CompilerIrFunctionList.Nil
+        (compiler_ir_types.compiler-ir-function-seq-empty)
         (compiler_ir_types.compiler-ir-extern-seq-empty)
         program-index
         (compiler_ir_types.compiler-source-spans-empty)
@@ -11607,7 +11603,7 @@
     vars
     (compiler_backend.compiler-backend-program-index-build
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-      compiler_ir_types.CompilerIrFunctionList.Nil
+      (compiler_ir_types.compiler-ir-function-seq-empty)
       (compiler_ir_types.compiler-ir-extern-seq-empty))))
 
 (define (compiler-backend-rax-forwarding-ok?) : bool
@@ -11760,7 +11756,7 @@
     [program-index : compiler_backend.CompilerBackendProgramIndex
       (compiler_backend.compiler-backend-program-index-build
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        compiler_ir_types.CompilerIrFunctionList.Nil
+        (compiler_ir_types.compiler-ir-function-seq-empty)
         (compiler_ir_types.compiler-ir-extern-seq-empty))]
     [backend-state : compiler_backend.CompilerBackendState
       program-index.backend-state]
@@ -11778,7 +11774,7 @@
         (compiler_backend.CompilerBackendGlobalTypeTable.Empty)
         (compiler_ast_types.AstType.I64)
         (compiler-backend-runtime-helper-full-plan)
-        compiler_ir_types.CompilerIrFunctionList.Nil
+        (compiler_ir_types.compiler-ir-function-seq-empty)
         (compiler_ir_types.compiler-ir-extern-seq-empty)
         program-index
         (compiler_ir_types.compiler-source-spans-empty)
@@ -12883,7 +12879,7 @@ g:
 (define (compiler-backend-fallthrough-program) : compiler_ir_types.CompilerIrProgram
   (compiler_ir_types.CompilerIrProgram.Program
     (compiler_ir_types.compiler-ir-global-seq-empty)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (compiler_ir_types.CompilerIrFunction.Function
         (ci.intern "main")
         compiler_ir_types.CompilerIrParamList.Nil
@@ -12905,7 +12901,7 @@ g:
                     (compiler_ir_types.CompilerIrValue.I64 7)))
                 (compiler_ir_types.compiler-ir-instr-seq-empty)))
             compiler_ir_types.CompilerIrBlockList.Nil)))
-      compiler_ir_types.CompilerIrFunctionList.Nil)
+      (compiler_ir_types.compiler-ir-function-seq-empty))
     (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
 (define (compiler-backend-fallthrough-jump-ok?) : bool
@@ -13250,7 +13246,7 @@ g:
 (define (compiler-backend-call-return-program) : compiler_ir_types.CompilerIrProgram
   (compiler_ir_types.CompilerIrProgram.Program
     (compiler_ir_types.compiler-ir-global-seq-empty)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (compiler_ir_types.CompilerIrFunction.Function
         (ci.intern "callee")
         compiler_ir_types.CompilerIrParamList.Nil
@@ -13265,7 +13261,7 @@ g:
                   (compiler_ir_types.CompilerIrValue.I64 7)))
               (compiler_ir_types.compiler-ir-instr-seq-empty)))
           compiler_ir_types.CompilerIrBlockList.Nil))
-      (compiler_ir_types.compiler-ir-function-cons
+      (compiler_ir_types.compiler-ir-function-seq-prepend
         (compiler_ir_types.CompilerIrFunction.Function
           (ci.intern "main")
           compiler_ir_types.CompilerIrParamList.Nil
@@ -13286,7 +13282,7 @@ g:
                       (compiler_ir_types.CompilerIrValue.Var 0)))
                   (compiler_ir_types.compiler-ir-instr-seq-empty))))
             compiler_ir_types.CompilerIrBlockList.Nil))
-        compiler_ir_types.CompilerIrFunctionList.Nil))
+        (compiler_ir_types.compiler-ir-function-seq-empty)))
     (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
 (define (compiler-backend-call-return-ok?) : bool
@@ -13588,7 +13584,7 @@ g:
     [program-index : compiler_backend.CompilerBackendProgramIndex
       (compiler_backend.compiler-backend-program-index-build
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        compiler_ir_types.CompilerIrFunctionList.Nil
+        (compiler_ir_types.compiler-ir-function-seq-empty)
         (compiler_ir_types.compiler-ir-extern-seq-empty))]
     [backend-state : compiler_backend.CompilerBackendState
       program-index.backend-state]
@@ -13716,7 +13712,7 @@ g:
     [program-index : compiler_backend.CompilerBackendProgramIndex
       (compiler_backend.compiler-backend-program-index-build
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        compiler_ir_types.CompilerIrFunctionList.Nil
+        (compiler_ir_types.compiler-ir-function-seq-empty)
         (compiler_ir_types.compiler-ir-extern-seq-empty))]
     [backend-state : compiler_backend.CompilerBackendState
       program-index.backend-state]
@@ -13976,7 +13972,7 @@ g:
     [program-index : compiler_backend.CompilerBackendProgramIndex
       (compiler_backend.compiler-backend-program-index-build
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        compiler_ir_types.CompilerIrFunctionList.Nil
+        (compiler_ir_types.compiler-ir-function-seq-empty)
         (compiler_ir_types.compiler-ir-extern-seq-empty))]
     [backend-state : compiler_backend.CompilerBackendState
       program-index.backend-state]
@@ -14041,7 +14037,7 @@ g:
     (compiler_ir_types.compiler-ir-label "entry")
     (compiler_backend.compiler-backend-program-index-build
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-      compiler_ir_types.CompilerIrFunctionList.Nil
+      (compiler_ir_types.compiler-ir-function-seq-empty)
       (compiler_ir_types.compiler-ir-extern-seq-empty))
     4
     ""
@@ -14081,7 +14077,7 @@ g:
     (compiler_ir_types.compiler-ir-label "body")
     (compiler_backend.compiler-backend-program-index-build
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-      compiler_ir_types.CompilerIrFunctionList.Nil
+      (compiler_ir_types.compiler-ir-function-seq-empty)
       (compiler_ir_types.compiler-ir-extern-seq-empty))
     4
     ""
@@ -14105,7 +14101,7 @@ g:
         (compiler_ir_types.compiler-ir-label "body")
         (compiler_backend.compiler-backend-program-index-build
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-          compiler_ir_types.CompilerIrFunctionList.Nil
+          (compiler_ir_types.compiler-ir-function-seq-empty)
           (compiler_ir_types.compiler-ir-extern-seq-empty))
         4
         ""
@@ -14129,7 +14125,7 @@ g:
             (compiler_ir_types.compiler-ir-label "body")
             (compiler_backend.compiler-backend-program-index-build
               (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-              compiler_ir_types.CompilerIrFunctionList.Nil
+              (compiler_ir_types.compiler-ir-function-seq-empty)
               (compiler_ir_types.compiler-ir-extern-seq-empty))
             4
             ""
@@ -14174,7 +14170,7 @@ g:
     [program-index : compiler_backend.CompilerBackendProgramIndex
       (compiler_backend.compiler-backend-program-index-build
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        compiler_ir_types.CompilerIrFunctionList.Nil
+        (compiler_ir_types.compiler-ir-function-seq-empty)
         (compiler_ir_types.compiler-ir-extern-seq-empty))]
     [backend-state : compiler_backend.CompilerBackendState
       program-index.backend-state]
@@ -14192,7 +14188,7 @@ g:
         (compiler_backend.CompilerBackendGlobalTypeTable.Empty)
         (compiler_ast_types.AstType.I64)
         (compiler-backend-runtime-helper-full-plan)
-        compiler_ir_types.CompilerIrFunctionList.Nil
+        (compiler_ir_types.compiler-ir-function-seq-empty)
         (compiler_ir_types.compiler-ir-extern-seq-empty)
         program-index
         (compiler_ir_types.compiler-source-spans-empty)
@@ -14534,7 +14530,7 @@ g:
     [program-index : compiler_backend.CompilerBackendProgramIndex
       (compiler_backend.compiler-backend-program-index-build
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        compiler_ir_types.CompilerIrFunctionList.Nil
+        (compiler_ir_types.compiler-ir-function-seq-empty)
         (compiler_ir_types.compiler-ir-extern-seq-empty))]
     [backend-state : compiler_backend.CompilerBackendState
       program-index.backend-state]
@@ -14552,7 +14548,7 @@ g:
         (compiler_backend.CompilerBackendGlobalTypeTable.Empty)
         (compiler_ast_types.AstType.I64)
         (compiler-backend-runtime-helper-full-plan)
-        compiler_ir_types.CompilerIrFunctionList.Nil
+        (compiler_ir_types.compiler-ir-function-seq-empty)
         (compiler_ir_types.compiler-ir-extern-seq-empty)
         program-index
         (compiler_ir_types.compiler-source-spans-empty)
@@ -14594,7 +14590,7 @@ g:
     [program-index : compiler_backend.CompilerBackendProgramIndex
       (compiler_backend.compiler-backend-program-index-build
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        compiler_ir_types.CompilerIrFunctionList.Nil
+        (compiler_ir_types.compiler-ir-function-seq-empty)
         (compiler_ir_types.compiler-ir-extern-seq-empty))]
     [backend-state : compiler_backend.CompilerBackendState
       program-index.backend-state]
@@ -14704,7 +14700,7 @@ g:
     [program-index : compiler_backend.CompilerBackendProgramIndex
       (compiler_backend.compiler-backend-program-index-build
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        compiler_ir_types.CompilerIrFunctionList.Nil
+        (compiler_ir_types.compiler-ir-function-seq-empty)
         (compiler_ir_types.compiler-ir-extern-seq-empty))]
     [backend-state : compiler_backend.CompilerBackendState
       program-index.backend-state]
@@ -14816,7 +14812,7 @@ g:
       [program-index : compiler_backend.CompilerBackendProgramIndex
         (compiler_backend.compiler-backend-program-index-build
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-          compiler_ir_types.CompilerIrFunctionList.Nil
+          (compiler_ir_types.compiler-ir-function-seq-empty)
           (compiler_ir_types.compiler-ir-extern-seq-empty))]
       [backend-state : compiler_backend.CompilerBackendState
         program-index.backend-state]
@@ -15010,7 +15006,7 @@ g:
     [index : compiler_backend.CompilerBackendProgramIndex
       (compiler_backend.compiler-backend-program-index-build
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        compiler_ir_types.CompilerIrFunctionList.Nil
+        (compiler_ir_types.compiler-ir-function-seq-empty)
         (compiler_ir_types.compiler-ir-extern-seq-empty))]
     [_backend-state : compiler_backend.CompilerBackendState index.backend-state]
     [_prev-register-count : i64
@@ -15277,7 +15273,7 @@ g:
       (compiler_diagnostic.compiler-diagnostic-at-start "" "")
       (compiler_backend.compiler-backend-program-index-build
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        compiler_ir_types.CompilerIrFunctionList.Nil
+        (compiler_ir_types.compiler-ir-function-seq-empty)
         (compiler_ir_types.compiler-ir-extern-seq-empty))
       2
       (compiler_backend.compiler-backend-state-new
@@ -15323,7 +15319,7 @@ g:
       (compiler_diagnostic.compiler-diagnostic-at-start "" "")
       (compiler_backend.compiler-backend-program-index-build
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        compiler_ir_types.CompilerIrFunctionList.Nil
+        (compiler_ir_types.compiler-ir-function-seq-empty)
         (compiler_ir_types.compiler-ir-extern-seq-empty))
       2
       (compiler_backend.compiler-backend-state-new
@@ -15368,7 +15364,7 @@ g:
       (compiler_diagnostic.compiler-diagnostic-at-start "" "")
       (compiler_backend.compiler-backend-program-index-build
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        compiler_ir_types.CompilerIrFunctionList.Nil
+        (compiler_ir_types.compiler-ir-function-seq-empty)
         (compiler_ir_types.compiler-ir-extern-seq-empty))
       2
       (compiler_backend.compiler-backend-state-new
@@ -16310,7 +16306,7 @@ g:
 (define (compiler-backend-explicit-state-minimal-program [name-id : i64]) : compiler_ir_types.CompilerIrProgram
   (compiler_ir_types.CompilerIrProgram.Program
     (compiler_ir_types.compiler-ir-global-seq-empty)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (compiler_ir_types.CompilerIrFunction.Function
         name-id
         compiler_ir_types.CompilerIrParamList.Nil
@@ -16325,14 +16321,14 @@ g:
                   (compiler_ir_types.CompilerIrValue.I64 0)))
               (compiler_ir_types.compiler-ir-instr-seq-empty)))
           compiler_ir_types.CompilerIrBlockList.Nil))
-      compiler_ir_types.CompilerIrFunctionList.Nil)
+      (compiler_ir_types.compiler-ir-function-seq-empty))
     (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
 (define (compiler-backend-explicit-state-duplicate-function-program
   [name-id : i64]) : compiler_ir_types.CompilerIrProgram
   (compiler_ir_types.CompilerIrProgram.Program
     (compiler_ir_types.compiler-ir-global-seq-empty)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (compiler_ir_types.CompilerIrFunction.Function
         name-id
         compiler_ir_types.CompilerIrParamList.Nil
@@ -16347,7 +16343,7 @@ g:
                   (compiler_ir_types.CompilerIrValue.I64 0)))
               (compiler_ir_types.compiler-ir-instr-seq-empty)))
           compiler_ir_types.CompilerIrBlockList.Nil))
-      (compiler_ir_types.compiler-ir-function-cons
+      (compiler_ir_types.compiler-ir-function-seq-prepend
         (compiler_ir_types.CompilerIrFunction.Function
           name-id
           compiler_ir_types.CompilerIrParamList.Nil
@@ -16362,7 +16358,7 @@ g:
                     (compiler_ir_types.CompilerIrValue.I64 0)))
                 (compiler_ir_types.compiler-ir-instr-seq-empty)))
             compiler_ir_types.CompilerIrBlockList.Nil))
-        compiler_ir_types.CompilerIrFunctionList.Nil))
+        (compiler_ir_types.compiler-ir-function-seq-empty)))
     (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
 (define (compiler-backend-explicit-state-buffer-result-ok?
@@ -16756,7 +16752,7 @@ g:
     [program : compiler_ir_types.CompilerIrProgram
       (compiler_ir_types.CompilerIrProgram.Program
         (compiler_ir_types.compiler-ir-global-seq-empty)
-        compiler_ir_types.CompilerIrFunctionList.Nil
+        (compiler_ir_types.compiler-ir-function-seq-empty)
         (compiler_ir_types.compiler-ir-extern-seq-empty))]
     [spans : compiler_ir_types.CompilerSourceSpans
       (compiler_ir_types.compiler-source-spans-empty)]
@@ -16959,7 +16955,7 @@ g:
     [program : compiler_ir_types.CompilerIrProgram
       (compiler_ir_types.CompilerIrProgram.Program
         (compiler_ir_types.compiler-ir-global-seq-empty)
-        (compiler_ir_types.compiler-ir-function-cons
+        (compiler_ir_types.compiler-ir-function-seq-prepend
           (compiler_ir_types.CompilerIrFunction.Function
             (ci.intern "main")
             compiler_ir_types.CompilerIrParamList.Nil
@@ -16972,7 +16968,7 @@ g:
                   instr
                   (compiler_ir_types.compiler-ir-instr-seq-empty)))
               compiler_ir_types.CompilerIrBlockList.Nil))
-          compiler_ir_types.CompilerIrFunctionList.Nil)
+          (compiler_ir_types.compiler-ir-function-seq-empty))
         (compiler_ir_types.compiler-ir-extern-seq-empty))]
     (match (compiler_backend.compiler-backend-emit-program-linux-with-spans
       program
@@ -17010,7 +17006,7 @@ g:
 (define (compiler-backend-switch-test-program) : compiler_ir_types.CompilerIrProgram
   (compiler_ir_types.CompilerIrProgram.Program
     (compiler_ir_types.compiler-ir-global-seq-empty)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (compiler_ir_types.CompilerIrFunction.Function
         (ci.intern "main")
         compiler_ir_types.CompilerIrParamList.Nil
@@ -17055,7 +17051,7 @@ g:
                           (compiler_ir_types.CompilerIrValue.I64 42)))
                       (compiler_ir_types.compiler-ir-instr-seq-empty)))
                   compiler_ir_types.CompilerIrBlockList.Nil))))))
-      compiler_ir_types.CompilerIrFunctionList.Nil)
+      (compiler_ir_types.compiler-ir-function-seq-empty))
     (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
 (define (compiler-backend-total-switch-test-cases) : compiler_ir_types.CompilerIrSwitchCaseSeq
@@ -17167,14 +17163,14 @@ g:
 (define (compiler-backend-total-switch-test-program) : compiler_ir_types.CompilerIrProgram
   (compiler_ir_types.CompilerIrProgram.Program
     (compiler_ir_types.compiler-ir-global-seq-empty)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (compiler_ir_types.CompilerIrFunction.Function
         (ci.intern "main")
         compiler_ir_types.CompilerIrParamList.Nil
         (compiler_ast_types.AstType.I64)
         2
         (compiler-backend-total-switch-test-blocks true))
-      compiler_ir_types.CompilerIrFunctionList.Nil)
+      (compiler_ir_types.compiler-ir-function-seq-empty))
     (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
 (define (compiler-backend-forwarded-total-switch-test-blocks) : compiler_ir_types.CompilerIrBlockList
@@ -17232,27 +17228,27 @@ g:
 (define (compiler-backend-forwarded-total-switch-test-program) : compiler_ir_types.CompilerIrProgram
   (compiler_ir_types.CompilerIrProgram.Program
     (compiler_ir_types.compiler-ir-global-seq-empty)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (compiler_ir_types.CompilerIrFunction.Function
         (ci.intern "main")
         compiler_ir_types.CompilerIrParamList.Nil
         (compiler_ast_types.AstType.I64)
         2
         (compiler-backend-forwarded-total-switch-test-blocks))
-      compiler_ir_types.CompilerIrFunctionList.Nil)
+      (compiler_ir_types.compiler-ir-function-seq-empty))
     (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
 (define (compiler-backend-spoofed-total-switch-test-program) : compiler_ir_types.CompilerIrProgram
   (compiler_ir_types.CompilerIrProgram.Program
     (compiler_ir_types.compiler-ir-global-seq-empty)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (compiler_ir_types.CompilerIrFunction.Function
         (ci.intern "main")
         compiler_ir_types.CompilerIrParamList.Nil
         (compiler_ast_types.AstType.I64)
         2
         (compiler-backend-total-switch-test-blocks false))
-      compiler_ir_types.CompilerIrFunctionList.Nil)
+      (compiler_ir_types.compiler-ir-function-seq-empty))
     (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
 (define (compiler-backend-total-switch-source) : String
@@ -17469,7 +17465,7 @@ g:
 (define (compiler-backend-switch-base-test-program) : compiler_ir_types.CompilerIrProgram
   (compiler_ir_types.CompilerIrProgram.Program
     (compiler_ir_types.compiler-ir-global-seq-empty)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (compiler_ir_types.CompilerIrFunction.Function
         (ci.intern "main")
         compiler_ir_types.CompilerIrParamList.Nil
@@ -17516,7 +17512,7 @@ g:
                         (compiler_ir_types.CompilerIrValue.I64 0)))
                     (compiler_ir_types.compiler-ir-instr-seq-empty)))
                 compiler_ir_types.CompilerIrBlockList.Nil)))))
-      compiler_ir_types.CompilerIrFunctionList.Nil)
+      (compiler_ir_types.compiler-ir-function-seq-empty))
     (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
 (define (compiler-backend-switch-base-asm-ok?) : bool
@@ -17556,7 +17552,7 @@ g:
 (define (compiler-backend-switch-bad-shape-program) : compiler_ir_types.CompilerIrProgram
   (compiler_ir_types.CompilerIrProgram.Program
     (compiler_ir_types.compiler-ir-global-seq-empty)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (compiler_ir_types.CompilerIrFunction.Function
         (ci.intern "main")
         compiler_ir_types.CompilerIrParamList.Nil
@@ -17579,7 +17575,7 @@ g:
                 (compiler_ir_types.compiler-ir-label "other"))
               (compiler_ir_types.compiler-ir-instr-seq-empty)))
           compiler_ir_types.CompilerIrBlockList.Nil))
-      compiler_ir_types.CompilerIrFunctionList.Nil)
+      (compiler_ir_types.compiler-ir-function-seq-empty))
     (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
 (define (compiler-backend-switch-shape-diagnostic-ok?) : bool
@@ -17594,7 +17590,7 @@ g:
 (define (compiler-backend-switch-phi-program) : compiler_ir_types.CompilerIrProgram
   (compiler_ir_types.CompilerIrProgram.Program
     (compiler_ir_types.compiler-ir-global-seq-empty)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (compiler_ir_types.CompilerIrFunction.Function
         (ci.intern "main")
         compiler_ir_types.CompilerIrParamList.Nil
@@ -17633,7 +17629,7 @@ g:
                       (compiler_ir_types.CompilerIrValue.Var 1)))
                   (compiler_ir_types.compiler-ir-instr-seq-empty))))
             compiler_ir_types.CompilerIrBlockList.Nil)))
-      compiler_ir_types.CompilerIrFunctionList.Nil)
+      (compiler_ir_types.compiler-ir-function-seq-empty))
     (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
 (define (compiler-backend-switch-phi-edge-copy-ok?) : bool
@@ -17684,7 +17680,7 @@ g:
 (define (compiler-backend-switch-negative-case-program) : compiler_ir_types.CompilerIrProgram
   (compiler_ir_types.CompilerIrProgram.Program
     (compiler_ir_types.compiler-ir-global-seq-empty)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (compiler_ir_types.CompilerIrFunction.Function
         (ci.intern "main")
         compiler_ir_types.CompilerIrParamList.Nil
@@ -17726,7 +17722,7 @@ g:
                       (compiler_ir_types.CompilerIrValue.Var 1)))
                   (compiler_ir_types.compiler-ir-instr-seq-empty))))
             compiler_ir_types.CompilerIrBlockList.Nil)))
-      compiler_ir_types.CompilerIrFunctionList.Nil)
+      (compiler_ir_types.compiler-ir-function-seq-empty))
     (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
 (define (compiler-backend-switch-negative-case-label-ok?) : bool
@@ -20893,9 +20889,9 @@ g:
   [func : compiler_ir_types.CompilerIrFunction]) : compiler_ir_types.CompilerIrProgram
   (compiler_ir_types.CompilerIrProgram.Program
     (compiler_ir_types.compiler-ir-global-seq-empty)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       func
-      compiler_ir_types.CompilerIrFunctionList.Nil)
+      (compiler_ir_types.compiler-ir-function-seq-empty))
     (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
 (define (compiler-backend-vector-call-lifetime-function) : compiler_ir_types.CompilerIrFunction
@@ -22760,7 +22756,7 @@ g:
     [program : compiler_ir_types.CompilerIrProgram
       (compiler_ir_types.CompilerIrProgram.Program
         (compiler_ir_types.compiler-ir-global-seq-empty)
-        (compiler_ir_types.compiler-ir-function-cons
+        (compiler_ir_types.compiler-ir-function-seq-prepend
           (compiler_ir_types.CompilerIrFunction.Function
             (ci.intern "main")
             compiler_ir_types.CompilerIrParamList.Nil
@@ -22784,7 +22780,7 @@ g:
                           (compiler_ir_types.CompilerIrValue.Var 0)))
                       (compiler_ir_types.compiler-ir-instr-seq-empty))))
                 compiler_ir_types.CompilerIrBlockList.Nil)))
-          compiler_ir_types.CompilerIrFunctionList.Nil)
+          (compiler_ir_types.compiler-ir-function-seq-empty))
         (compiler_ir_types.compiler-ir-extern-seq-empty))]
     [spans : compiler_ir_types.CompilerSourceSpans
       (compiler_ir_types.compiler-source-spans-insert-instr
@@ -22870,7 +22866,7 @@ g:
     [program-index : compiler_backend.CompilerBackendProgramIndex
       (compiler_backend.compiler-backend-program-index-build
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        compiler_ir_types.CompilerIrFunctionList.Nil
+        (compiler_ir_types.compiler-ir-function-seq-empty)
         (compiler_ir_types.compiler-ir-extern-seq-empty))]
     [backend-state : compiler_backend.CompilerBackendState
       program-index.backend-state]
@@ -22971,7 +22967,7 @@ g:
         (compiler_backend.CompilerBackendGlobalTypeTable.Empty)
         (compiler_ast_types.AstType.I64)
         (compiler-backend-test-runtime-plan-for-instr instr vars)
-        compiler_ir_types.CompilerIrFunctionList.Nil
+        (compiler_ir_types.compiler-ir-function-seq-empty)
         (compiler_ir_types.compiler-ir-extern-seq-empty)
         program-index
         (compiler_ir_types.compiler-source-spans-empty)
@@ -23118,7 +23114,7 @@ g:
       (compiler_backend.compiler-backend-program-index-build-with-backend-state-and-profile-state
         backend-state
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        compiler_ir_types.CompilerIrFunctionList.Nil
+        (compiler_ir_types.compiler-ir-function-seq-empty)
         (compiler_ir_types.compiler-ir-extern-seq-empty)
         (profile_state.compiler-profile-state-new))]
     [_abi : unit
@@ -23288,7 +23284,7 @@ g:
         (compiler_backend.CompilerBackendGlobalTypeTable.Empty)
         (compiler_ast_types.AstType.I64)
         runtime-plan
-        compiler_ir_types.CompilerIrFunctionList.Nil
+        (compiler_ir_types.compiler-ir-function-seq-empty)
         (compiler_ir_types.compiler-ir-extern-seq-empty)
         program-index
         (compiler_ir_types.compiler-source-spans-empty)
@@ -23917,7 +23913,7 @@ g:
           "tl_region_reset"
           (compiler_ast_types.AstType.Unit)))]
     (match (compiler_backend.compiler-backend-runtime-plan-for
-      compiler_ir_types.CompilerIrFunctionList.Nil
+      (compiler_ir_types.compiler-ir-function-seq-empty)
       externs)
       [(compiler_backend.ResultBackendRuntimePlan.Ok plan)
         (and
@@ -23943,7 +23939,7 @@ g:
           (compiler_ast_types.ast-extern-link-input-list-new)
           true))]
     (match (compiler_backend.compiler-backend-runtime-plan-for
-      compiler_ir_types.CompilerIrFunctionList.Nil
+      (compiler_ir_types.compiler-ir-function-seq-empty)
       externs)
       [(compiler_backend.ResultBackendRuntimePlan.Ok plan)
         (let
@@ -23955,7 +23951,7 @@ g:
             (runtime_common.compiler-backend-runtime-features-startup-profile?
               (& features))
             (match (compiler_backend.compiler-backend-runtime-plan-for
-              compiler_ir_types.CompilerIrFunctionList.Nil
+              (compiler_ir_types.compiler-ir-function-seq-empty)
               (compiler_ir_types.compiler-ir-extern-seq-empty))
               [(compiler_backend.ResultBackendRuntimePlan.Ok empty-plan)
                 (not
@@ -23971,8 +23967,8 @@ g:
       cbi.compiler-builtin-id-tl-arena-debug-protect-never-reset]
     [local-protect-id : i64
       (ci.intern "compiler-arena-debug-plan-local-protect")]
-    [functions : compiler_ir_types.CompilerIrFunctionList
-      (compiler_ir_types.compiler-ir-function-cons
+    [functions : compiler_ir_types.CompilerIrFunctionSeq
+      (compiler_ir_types.compiler-ir-function-seq-prepend
         (compiler_ir_types.CompilerIrFunction.Function
           (ci.intern "arena-debug-plan-test")
           compiler_ir_types.CompilerIrParamList.Nil
@@ -23993,7 +23989,7 @@ g:
                     compiler_ir_types.CompilerIrMaybeValue.No)
                   (compiler_ir_types.compiler-ir-instr-seq-empty))))
             compiler_ir_types.CompilerIrBlockList.Nil))
-        compiler_ir_types.CompilerIrFunctionList.Nil)]
+        (compiler_ir_types.compiler-ir-function-seq-empty))]
     [externs : compiler_ir_types.CompilerIrExternSeq
       (compiler_ir_types.compiler-ir-extern-seq1
         (compiler_ir_types.CompilerIrExtern.Extern
@@ -24041,20 +24037,20 @@ g:
 
 (define (compiler-backend-runtime-prelude-validation-plan-ok?) : bool
   (let
-    [functions : compiler_ir_types.CompilerIrFunctionList
-      (compiler_ir_types.compiler-ir-function-cons
+    [functions : compiler_ir_types.CompilerIrFunctionSeq
+      (compiler_ir_types.compiler-ir-function-seq-prepend
         (compiler-backend-runtime-prelude-test-function
           "stdlib/runtime.tl::substring")
-        (compiler_ir_types.compiler-ir-function-cons
+        (compiler_ir_types.compiler-ir-function-seq-prepend
           (compiler-backend-runtime-prelude-test-function
             "stdlib/runtime.tl::str-view")
-          (compiler_ir_types.compiler-ir-function-cons
+          (compiler_ir_types.compiler-ir-function-seq-prepend
             (compiler-backend-runtime-prelude-test-function
               "stdlib/runtime.tl::string-concat")
-            (compiler_ir_types.compiler-ir-function-cons
+            (compiler_ir_types.compiler-ir-function-seq-prepend
               (compiler-backend-runtime-prelude-test-function
                 "stdlib/runtime.tl::int-to-string")
-              compiler_ir_types.CompilerIrFunctionList.Nil))))]
+              (compiler_ir_types.compiler-ir-function-seq-empty)))))]
     (match (compiler_backend.compiler-backend-runtime-plan-for
       functions
       (compiler_ir_types.compiler-ir-extern-seq-empty))
@@ -25992,7 +25988,7 @@ g:
     [index : compiler_backend.CompilerBackendProgramIndex
       (compiler_backend.compiler-backend-program-index-build
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        compiler_ir_types.CompilerIrFunctionList.Nil
+        (compiler_ir_types.compiler-ir-function-seq-empty)
         (compiler_ir_types.compiler-ir-extern-seq-empty))]
     (and
       (match (compiler_backend.compiler-backend-emit-store-ptr
@@ -27035,7 +27031,7 @@ g:
     [index : compiler_backend.CompilerBackendProgramIndex
       (compiler_backend.compiler-backend-program-index-build
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        compiler_ir_types.CompilerIrFunctionList.Nil
+        (compiler_ir_types.compiler-ir-function-seq-empty)
         (compiler_ir_types.compiler-ir-extern-seq-empty))]
     [reg-src : compiler_regalloc.CompilerRegAssignmentTable
       (compiler_regalloc.compiler-reg-assignments-prepend
@@ -29261,7 +29257,7 @@ g:
     to-ty
     (compiler_backend.compiler-backend-program-index-build
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-      compiler_ir_types.CompilerIrFunctionList.Nil
+      (compiler_ir_types.compiler-ir-function-seq-empty)
       (compiler_ir_types.compiler-ir-extern-seq-empty))
     ""
     ""
@@ -29325,7 +29321,7 @@ g:
     to-ty
     (compiler_backend.compiler-backend-program-index-build
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-      compiler_ir_types.CompilerIrFunctionList.Nil
+      (compiler_ir_types.compiler-ir-function-seq-empty)
       (compiler_ir_types.compiler-ir-extern-seq-empty))
     ""
     ""
@@ -29395,7 +29391,7 @@ g:
     to-ty
     (compiler_backend.compiler-backend-program-index-build
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-      compiler_ir_types.CompilerIrFunctionList.Nil
+      (compiler_ir_types.compiler-ir-function-seq-empty)
       (compiler_ir_types.compiler-ir-extern-seq-empty))
     ""
     ""
@@ -29458,7 +29454,7 @@ g:
     to-ty
     (compiler_backend.compiler-backend-program-index-build
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-      compiler_ir_types.CompilerIrFunctionList.Nil
+      (compiler_ir_types.compiler-ir-function-seq-empty)
       (compiler_ir_types.compiler-ir-extern-seq-empty))
     ""
     ""
@@ -29527,7 +29523,7 @@ g:
     to-ty
     (compiler_backend.compiler-backend-program-index-build
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-      compiler_ir_types.CompilerIrFunctionList.Nil
+      (compiler_ir_types.compiler-ir-function-seq-empty)
       (compiler_ir_types.compiler-ir-extern-seq-empty))
     ""
     ""
@@ -29609,7 +29605,7 @@ g:
     (compiler_ast_types.AstType.I64)
     (compiler_backend.compiler-backend-program-index-build
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-      compiler_ir_types.CompilerIrFunctionList.Nil
+      (compiler_ir_types.compiler-ir-function-seq-empty)
       (compiler_ir_types.compiler-ir-extern-seq-empty))
     ""
     ""
@@ -29672,7 +29668,7 @@ g:
     (compiler_ast_types.AstType.I64)
     (compiler_backend.compiler-backend-program-index-build
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-      compiler_ir_types.CompilerIrFunctionList.Nil
+      (compiler_ir_types.compiler-ir-function-seq-empty)
       (compiler_ir_types.compiler-ir-extern-seq-empty))
     ""
     ""
@@ -29740,7 +29736,7 @@ g:
     (compiler_ast_types.AstType.I64)
     (compiler_backend.compiler-backend-program-index-build
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-      compiler_ir_types.CompilerIrFunctionList.Nil
+      (compiler_ir_types.compiler-ir-function-seq-empty)
       (compiler_ir_types.compiler-ir-extern-seq-empty))
     ""
     ""
@@ -29820,7 +29816,7 @@ g:
     to-ty
     (compiler_backend.compiler-backend-program-index-build
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-      compiler_ir_types.CompilerIrFunctionList.Nil
+      (compiler_ir_types.compiler-ir-function-seq-empty)
       (compiler_ir_types.compiler-ir-extern-seq-empty))
     ""
     ""
@@ -29923,7 +29919,7 @@ g:
     (compiler_ast_types.AstType.U64)
     (compiler_backend.compiler-backend-program-index-build
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-      compiler_ir_types.CompilerIrFunctionList.Nil
+      (compiler_ir_types.compiler-ir-function-seq-empty)
       (compiler_ir_types.compiler-ir-extern-seq-empty))
     ""
     ""
@@ -29989,7 +29985,7 @@ g:
     to-ty
     (compiler_backend.compiler-backend-program-index-build
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-      compiler_ir_types.CompilerIrFunctionList.Nil
+      (compiler_ir_types.compiler-ir-function-seq-empty)
       (compiler_ir_types.compiler-ir-extern-seq-empty))
     ""
     ""
@@ -30055,7 +30051,7 @@ g:
     ty
     (compiler_backend.compiler-backend-program-index-build
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-      compiler_ir_types.CompilerIrFunctionList.Nil
+      (compiler_ir_types.compiler-ir-function-seq-empty)
       (compiler_ir_types.compiler-ir-extern-seq-empty))
     ""
     ""
@@ -30112,7 +30108,7 @@ g:
     (compiler_ast_types.AstType.U64)
     (compiler_backend.compiler-backend-program-index-build
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-      compiler_ir_types.CompilerIrFunctionList.Nil
+      (compiler_ir_types.compiler-ir-function-seq-empty)
       (compiler_ir_types.compiler-ir-extern-seq-empty))
     ""
     ""
@@ -32387,7 +32383,7 @@ g:
     [program-index : compiler_backend.CompilerBackendProgramIndex
       (compiler_backend.compiler-backend-program-index-build
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        compiler_ir_types.CompilerIrFunctionList.Nil
+        (compiler_ir_types.compiler-ir-function-seq-empty)
         (compiler_ir_types.compiler-ir-extern-seq-empty))]
     [backend-state : compiler_backend.CompilerBackendState
       program-index.backend-state]
@@ -35021,7 +35017,7 @@ g:
 (define (compiler-backend-global-compare-program) : compiler_ir_types.CompilerIrProgram
   (compiler_ir_types.CompilerIrProgram.Program
     (compiler-backend-test-two-i64-globals "g_next" 1 "g_cap" 1024)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (compiler_ir_types.CompilerIrFunction.Function
         (ci.intern "main")
         compiler_ir_types.CompilerIrParamList.Nil
@@ -35060,7 +35056,7 @@ g:
                       (compiler_ir_types.CompilerIrValue.I64 42)))
                   (compiler_ir_types.compiler-ir-instr-seq-empty)))
               compiler_ir_types.CompilerIrBlockList.Nil))))
-      compiler_ir_types.CompilerIrFunctionList.Nil)
+      (compiler_ir_types.compiler-ir-function-seq-empty))
     (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
 (define (compiler-backend-global-compare-branch-ok?) : bool
@@ -35599,7 +35595,7 @@ g:
     (compiler_diagnostic.compiler-diagnostic-at-start "" "")
     (compiler_backend.compiler-backend-program-index-build
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-      compiler_ir_types.CompilerIrFunctionList.Nil
+      (compiler_ir_types.compiler-ir-function-seq-empty)
       (compiler_ir_types.compiler-ir-extern-seq-empty))
     0
     (compiler_backend.compiler-backend-state-new
@@ -35854,7 +35850,7 @@ g:
           compiler_ir_types.CompilerIrParamList.Nil))]
     (compiler_backend.compiler-backend-program-index-build
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-      (compiler_ir_types.compiler-ir-function-cons
+      (compiler_ir_types.compiler-ir-function-seq-prepend
         (compiler_ir_types.CompilerIrFunction.Function
           (compiler_ir_types.compiler-ir-symbol
             "__tl_internal_abi_linux_atomic_group_fixture")
@@ -35862,7 +35858,7 @@ g:
           (compiler_ast_types.AstType.I64)
           2
           compiler_ir_types.CompilerIrBlockList.Nil)
-        compiler_ir_types.CompilerIrFunctionList.Nil)
+        (compiler_ir_types.compiler-ir-function-seq-empty))
       (compiler_ir_types.compiler-ir-extern-seq-empty))))
 
 (define (compiler-backend-linux-atomic-pressure-types
@@ -36861,7 +36857,7 @@ g:
     [program-index : compiler_backend.CompilerBackendProgramIndex
       (compiler_backend.compiler-backend-program-index-build
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        compiler_ir_types.CompilerIrFunctionList.Nil
+        (compiler_ir_types.compiler-ir-function-seq-empty)
         (compiler_ir_types.compiler-ir-extern-seq-empty))]
     [backend-state : compiler_backend.CompilerBackendState
       program-index.backend-state]
@@ -36953,7 +36949,7 @@ g:
         ""
         types
         1
-        compiler_ir_types.CompilerIrFunctionList.Nil
+        (compiler_ir_types.compiler-ir-function-seq-empty)
         (compiler_ir_types.compiler-ir-extern-seq-empty)
         program-index
         (compiler_diagnostic.compiler-diagnostic-at-start "" "")
@@ -37041,10 +37037,10 @@ g:
     [index : compiler_backend.CompilerBackendProgramIndex
       (compiler_backend.compiler-backend-program-index-build
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        compiler_ir_types.CompilerIrFunctionList.Nil
+        (compiler_ir_types.compiler-ir-function-seq-empty)
         externs)]
     (match (compiler_backend.compiler-backend-runtime-plan-for
-      compiler_ir_types.CompilerIrFunctionList.Nil
+      (compiler_ir_types.compiler-ir-function-seq-empty)
       externs)
       [(compiler_backend.ResultBackendRuntimePlan.Ok plan)
         (compiler_backend.compiler-backend-emit-tail-call
@@ -37061,7 +37057,7 @@ g:
           (compiler_backend.CompilerBackendGlobalTypeTable.Empty)
           0
           plan
-          compiler_ir_types.CompilerIrFunctionList.Nil
+          (compiler_ir_types.compiler-ir-function-seq-empty)
           externs
           index
           (compiler_diagnostic.compiler-diagnostic-at-start "" "")
@@ -37253,8 +37249,8 @@ g:
     (compiler-backend-non-direct-tail-call-varargs-target-ok?
       (compiler_backend.CompilerBackendTarget.Windows))))
 
-(define (compiler-backend-known-function-call-functions) : compiler_ir_types.CompilerIrFunctionList
-  (compiler_ir_types.compiler-ir-function-cons
+(define (compiler-backend-known-function-call-functions) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
     (compiler_ir_types.CompilerIrFunction.Function
       (ci.intern "known_target")
       (compiler_ir_types.compiler-ir-param-cons
@@ -37266,7 +37262,7 @@ g:
       (compiler_ast_types.AstType.I64)
       1
       compiler_ir_types.CompilerIrBlockList.Nil)
-    compiler_ir_types.CompilerIrFunctionList.Nil))
+    (compiler_ir_types.compiler-ir-function-seq-empty)))
 
 (define (compiler-backend-known-function-call-index) : compiler_backend.CompilerBackendProgramIndex
   (compiler_backend.compiler-backend-program-index-build
@@ -37284,7 +37280,7 @@ g:
 (define (compiler-backend-known-function-indirect-call-emit
   [target : compiler_backend.CompilerBackendTarget]) : compiler_backend.ResultCompilerBackend
   (let
-    [functions : compiler_ir_types.CompilerIrFunctionList
+    [functions : compiler_ir_types.CompilerIrFunctionSeq
       (compiler-backend-known-function-call-functions)]
     [index : compiler_backend.CompilerBackendProgramIndex
       (compiler-backend-known-function-call-index)]
@@ -37311,7 +37307,7 @@ g:
 (define (compiler-backend-dynamic-indirect-call-emit
   [target : compiler_backend.CompilerBackendTarget]) : compiler_backend.ResultCompilerBackend
   (let
-    [functions : compiler_ir_types.CompilerIrFunctionList
+    [functions : compiler_ir_types.CompilerIrFunctionSeq
       (compiler-backend-known-function-call-functions)]
     [index : compiler_backend.CompilerBackendProgramIndex
       (compiler-backend-known-function-call-index)]
@@ -37392,7 +37388,7 @@ g:
   (match (compiler_backend.compiler-backend-target-arg-reg target 1)
     [(compiler_backend.ResultBackendReg.Ok arg-reg)
       (let
-        [functions : compiler_ir_types.CompilerIrFunctionList
+        [functions : compiler_ir_types.CompilerIrFunctionSeq
           (compiler-backend-known-function-call-functions)]
         [index : compiler_backend.CompilerBackendProgramIndex
           (compiler-backend-known-function-call-index)]
@@ -37473,7 +37469,7 @@ g:
   (match (compiler_backend.compiler-backend-target-arg-reg target 1)
     [(compiler_backend.ResultBackendReg.Ok arg-reg)
       (let
-        [functions : compiler_ir_types.CompilerIrFunctionList
+        [functions : compiler_ir_types.CompilerIrFunctionSeq
           (compiler-backend-known-function-call-functions)]
         [index : compiler_backend.CompilerBackendProgramIndex
           (compiler-backend-known-function-call-index)]
@@ -37703,7 +37699,7 @@ g:
 (define (compiler-backend-clean-module-symbol-collision-program) : compiler_ir_types.CompilerIrProgram
   (compiler_ir_types.CompilerIrProgram.Program
     (compiler_ir_types.compiler-ir-global-seq-empty)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (compiler_ir_types.CompilerIrFunction.Function
         (ci.intern "pkg/a.tl::helper")
         compiler_ir_types.CompilerIrParamList.Nil
@@ -37718,7 +37714,7 @@ g:
                   (compiler_ir_types.CompilerIrValue.I64 1)))
               (compiler_ir_types.compiler-ir-instr-seq-empty)))
           compiler_ir_types.CompilerIrBlockList.Nil))
-      (compiler_ir_types.compiler-ir-function-cons
+      (compiler_ir_types.compiler-ir-function-seq-prepend
         (compiler_ir_types.CompilerIrFunction.Function
           (ci.intern "pkg_a.tl::helper")
           compiler_ir_types.CompilerIrParamList.Nil
@@ -37733,7 +37729,7 @@ g:
                     (compiler_ir_types.CompilerIrValue.I64 2)))
                 (compiler_ir_types.compiler-ir-instr-seq-empty)))
             compiler_ir_types.CompilerIrBlockList.Nil))
-        compiler_ir_types.CompilerIrFunctionList.Nil))
+        (compiler_ir_types.compiler-ir-function-seq-empty)))
     (compiler_ir_types.compiler-ir-extern-seq-empty)))
 
 (define (compiler-backend-clean-module-symbol-collision-ok?) : bool
@@ -38708,8 +38704,8 @@ g:
           [_ false]))]
     [(compiler_backend.CompilerBackendMaybeSignature.No) false]))
 
-(define (compiler-backend-program-index-test-functions) : compiler_ir_types.CompilerIrFunctionList
-  (compiler_ir_types.compiler-ir-function-cons
+(define (compiler-backend-program-index-test-functions) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
     (compiler_ir_types.CompilerIrFunction.Function
       (ci.intern "pkg/really-long-backend-index-function")
       (compiler_ir_types.compiler-ir-param-cons
@@ -38721,14 +38717,14 @@ g:
       (compiler_ast_types.AstType.I64)
       1
       compiler_ir_types.CompilerIrBlockList.Nil)
-    (compiler_ir_types.compiler-ir-function-cons
+    (compiler_ir_types.compiler-ir-function-seq-prepend
       (compiler_ir_types.CompilerIrFunction.Function
         (ci.intern "short_fn")
         compiler_ir_types.CompilerIrParamList.Nil
         (compiler_ast_types.AstType.Unit)
         0
         compiler_ir_types.CompilerIrBlockList.Nil)
-      compiler_ir_types.CompilerIrFunctionList.Nil)))
+      (compiler_ir_types.compiler-ir-function-seq-empty))))
 
 (define (compiler-backend-program-index-test-externs
   [provided-id : i64]
@@ -39382,14 +39378,14 @@ g:
     [index : compiler_backend.CompilerBackendProgramIndex
       (compiler_backend.compiler-backend-program-index-build
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        (compiler_ir_types.compiler-ir-function-cons
+        (compiler_ir_types.compiler-ir-function-seq-prepend
           (compiler_ir_types.CompilerIrFunction.Function
             fn-id
             compiler_ir_types.CompilerIrParamList.Nil
             (compiler_ast_types.AstType.I64)
             0
             compiler_ir_types.CompilerIrBlockList.Nil)
-          compiler_ir_types.CompilerIrFunctionList.Nil)
+          (compiler_ir_types.compiler-ir-function-seq-empty))
         (compiler_ir_types.compiler-ir-extern-seq-empty))]
     (and
       (string.eq
@@ -39523,14 +39519,14 @@ g:
       [index : compiler_backend.CompilerBackendProgramIndex
         (compiler_backend.compiler-backend-program-index-build
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-          (compiler_ir_types.compiler-ir-function-cons
+          (compiler_ir_types.compiler-ir-function-seq-prepend
             (compiler_ir_types.CompilerIrFunction.Function
               fn-id
               compiler_ir_types.CompilerIrParamList.Nil
               (compiler_ast_types.AstType.Unit)
               0
               compiler_ir_types.CompilerIrBlockList.Nil)
-            compiler_ir_types.CompilerIrFunctionList.Nil)
+            (compiler_ir_types.compiler-ir-function-seq-empty))
           (compiler_ir_types.compiler-ir-extern-seq2
             (compiler_ir_types.CompilerIrExtern.Extern
               extern-id
@@ -41326,7 +41322,7 @@ g:
       (compiler_ast_types.AstType.Struct (ci.intern "ScratchMixedAggregate"))]
     (compiler_backend.compiler-backend-program-index-build
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-      (compiler_ir_types.compiler-ir-function-cons
+      (compiler_ir_types.compiler-ir-function-seq-prepend
         (compiler_ir_types.CompilerIrFunction.Function
           (ci.intern "scratch_mixed_aggregate_index")
           compiler_ir_types.CompilerIrParamList.Nil
@@ -41347,7 +41343,7 @@ g:
                   ty)
                 (compiler_ir_types.compiler-ir-instr-seq-empty)))
             compiler_ir_types.CompilerIrBlockList.Nil))
-        compiler_ir_types.CompilerIrFunctionList.Nil)
+        (compiler_ir_types.compiler-ir-function-seq-empty))
       (compiler_ir_types.compiler-ir-extern-seq-empty))))
 
 (define (compiler-backend-scratch-vreg-aggregate-test-assignments) : compiler_regalloc.CompilerRegAssignmentTable
@@ -42167,7 +42163,7 @@ g:
       [index : compiler_backend.CompilerBackendProgramIndex
         (compiler_backend.compiler-backend-program-index-build
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-          compiler_ir_types.CompilerIrFunctionList.Nil
+          (compiler_ir_types.compiler-ir-function-seq-empty)
           (compiler_ir_types.compiler-ir-extern-seq-empty))]
       [backend-state : compiler_backend.CompilerBackendState
         index.backend-state]
@@ -42303,7 +42299,7 @@ g:
       [index : compiler_backend.CompilerBackendProgramIndex
         (compiler_backend.compiler-backend-program-index-build
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-          compiler_ir_types.CompilerIrFunctionList.Nil
+          (compiler_ir_types.compiler-ir-function-seq-empty)
           (compiler_ir_types.compiler-ir-extern-seq-empty))]
       [backend-state : compiler_backend.CompilerBackendState
         index.backend-state]
@@ -42370,7 +42366,7 @@ g:
                               scratch-length-id)
                             (compiler_ir_types.compiler-ir-label "ok")
                             (compiler-backend-runtime-helper-full-plan)
-                            compiler_ir_types.CompilerIrFunctionList.Nil
+                            (compiler_ir_types.compiler-ir-function-seq-empty)
                             (compiler_ir_types.compiler-ir-extern-seq-empty)
                             index)
                             [(compiler_backend.ResultCompilerBackend.Ok bounds)
@@ -42859,7 +42855,7 @@ g:
       [_index : compiler_backend.CompilerBackendProgramIndex
         (compiler_backend.compiler-backend-program-index-build
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-          compiler_ir_types.CompilerIrFunctionList.Nil
+          (compiler_ir_types.compiler-ir-function-seq-empty)
           externs)]
       [assignments : compiler_regalloc.CompilerRegAssignmentTable
         (compiler_regalloc.compiler-reg-assignments-prepend
@@ -43042,7 +43038,7 @@ g:
       [index : compiler_backend.CompilerBackendProgramIndex
         (compiler_backend.compiler-backend-program-index-build
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-          compiler_ir_types.CompilerIrFunctionList.Nil
+          (compiler_ir_types.compiler-ir-function-seq-empty)
           (compiler_ir_types.compiler-ir-extern-seq-empty))]
       [backend-state : compiler_backend.CompilerBackendState
         index.backend-state]
@@ -44349,7 +44345,7 @@ g:
       [index : compiler_backend.CompilerBackendProgramIndex
         (compiler_backend.compiler-backend-program-index-build
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-          compiler_ir_types.CompilerIrFunctionList.Nil
+          (compiler_ir_types.compiler-ir-function-seq-empty)
           (compiler_ir_types.compiler-ir-extern-seq-empty))]
       [backend-state : compiler_backend.CompilerBackendState
         index.backend-state]
@@ -45798,7 +45794,7 @@ g:
     [program-index : compiler_backend.CompilerBackendProgramIndex
       (compiler_backend.compiler-backend-program-index-build
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        compiler_ir_types.CompilerIrFunctionList.Nil
+        (compiler_ir_types.compiler-ir-function-seq-empty)
         (compiler_ir_types.compiler-ir-extern-seq-empty))]
     [backend-state : compiler_backend.CompilerBackendState
       program-index.backend-state]
@@ -46238,7 +46234,7 @@ g:
     [index : compiler_backend.CompilerBackendProgramIndex
       (compiler_backend.compiler-backend-program-index-build
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        compiler_ir_types.CompilerIrFunctionList.Nil
+        (compiler_ir_types.compiler-ir-function-seq-empty)
         (compiler_ir_types.compiler-ir-extern-seq-empty))]
     [backend-state : compiler_backend.CompilerBackendState index.backend-state]
     (match (compiler_backend.compiler-backend-emit-param-spills
@@ -46299,7 +46295,7 @@ g:
       [index : compiler_backend.CompilerBackendProgramIndex
         (compiler_backend.compiler-backend-program-index-build
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-          compiler_ir_types.CompilerIrFunctionList.Nil
+          (compiler_ir_types.compiler-ir-function-seq-empty)
           (compiler_ir_types.compiler-ir-extern-seq-empty))]
       [backend-state : compiler_backend.CompilerBackendState
         index.backend-state]
@@ -46395,7 +46391,7 @@ g:
       [index : compiler_backend.CompilerBackendProgramIndex
         (compiler_backend.compiler-backend-program-index-build
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-          compiler_ir_types.CompilerIrFunctionList.Nil
+          (compiler_ir_types.compiler-ir-function-seq-empty)
           (compiler_ir_types.compiler-ir-extern-seq-empty))]
       [backend-state : compiler_backend.CompilerBackendState
         index.backend-state]
@@ -46511,7 +46507,7 @@ g:
       [program-index : compiler_backend.CompilerBackendProgramIndex
         (compiler_backend.compiler-backend-program-index-build
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-          compiler_ir_types.CompilerIrFunctionList.Nil
+          (compiler_ir_types.compiler-ir-function-seq-empty)
           (compiler_ir_types.compiler-ir-extern-seq-empty))]
       [backend-state : compiler_backend.CompilerBackendState
         program-index.backend-state]
@@ -46547,7 +46543,7 @@ g:
         (compiler_ir_types.CompilerIrValue.Var 1)
         (compiler_ir_types.compiler-ir-label "bounds_ok")
         (compiler-backend-runtime-helper-full-plan)
-        compiler_ir_types.CompilerIrFunctionList.Nil
+        (compiler_ir_types.compiler-ir-function-seq-empty)
         (compiler_ir_types.compiler-ir-extern-seq-empty)
         program-index)
         [(compiler_backend.ResultCompilerBackend.Ok asm)
@@ -49226,13 +49222,11 @@ b_keep:
     (cbi.compiler-builtin-initialize-for-parse!)
     (compiler_ir_types.CompilerIrProgram.Program
       (compiler_ir_types.compiler-ir-global-seq-empty)
-      (compiler_ir_types.CompilerIrFunctionList.Array
-        (compiler_ir_types.compiler-ir-function-seq-from-list
-          (compiler_ir_types.compiler-ir-function-cons
-            (compiler-backend-placement-seh-function)
-            (compiler_ir_types.compiler-ir-function-cons
-              (compiler-backend-placement-seh-main)
-              compiler_ir_types.CompilerIrFunctionList.Nil))))
+      (compiler_ir_types.compiler-ir-function-seq-prepend
+        (compiler-backend-placement-seh-function)
+        (compiler_ir_types.compiler-ir-function-seq-prepend
+          (compiler-backend-placement-seh-main)
+          (compiler_ir_types.compiler-ir-function-seq-empty)))
       (compiler_ir_types.compiler-ir-extern-seq-empty))))
 
 (define (compiler-backend-placement-test-last-before

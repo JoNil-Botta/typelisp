@@ -4318,9 +4318,9 @@
         (opt_aggregate_candidate_vec.with-capacity
           opt-aggregate-list-initial-capacity))]))
 
-(define (opt-aggregate-candidate-list-append
-  [left : opt_aggregate_candidate_vec.Vec (:consume)]
-  [right : opt_aggregate_candidate_vec.Vec]) : opt_aggregate_candidate_vec.Vec
+(define (opt-aggregate-candidate-list-append!
+  [left : (&mut left opt_aggregate_candidate_vec.Vec)]
+  [right : opt_aggregate_candidate_vec.Vec]) : unit
   (let
     [right-count : i64 (opt_aggregate_candidate_vec.len (& right))]
     [i : i64 0]
@@ -4328,27 +4328,28 @@
       (while (< i right-count)
         (begin
           (opt_aggregate_candidate_vec.push-ref!
-            (&mut left)
+            left
             (array-ref (opt_aggregate_candidate_vec.slots (& right)) i))
           (set! i (+ i 1))))
-      left)))
+      unit)))
 
 (define (opt-aggregate-allocation-candidates-functions
   [type-segment-bases : i64]
-  [functions : ir.CompilerIrFunctionList]) : opt_aggregate_candidate_vec.Vec
-  (match functions
-    [(ir.CompilerIrFunctionList.Nil)
+  [functions : ir.CompilerIrFunctionSeq]) : opt_aggregate_candidate_vec.Vec
+  (let
+    [index : i64 0]
+    [out : opt_aggregate_candidate_vec.Vec
       (opt_aggregate_candidate_vec.with-capacity 0)]
-    [(ir.CompilerIrFunctionList.Cons func rest)
-      (opt-aggregate-candidate-list-append
-        (opt-aggregate-allocation-candidates-function type-segment-bases func)
-        (opt-aggregate-allocation-candidates-functions
-          type-segment-bases
-          (__tl-box-place rest)))]
-    [(ir.CompilerIrFunctionList.Array seq)
-      (opt-aggregate-allocation-candidates-functions
-        type-segment-bases
-        (ir.compiler-ir-function-seq-to-list seq))]))
+    (begin
+      (while (< index functions.len)
+        (begin
+          (opt-aggregate-candidate-list-append!
+            (&mut out)
+            (opt-aggregate-allocation-candidates-function
+              type-segment-bases
+              (array-ref functions.slots index)))
+          (set! index (+ index 1))))
+      out)))
 
 (define (opt-aggregate-allocation-candidates
   [type-segment-bases : i64]
@@ -6627,35 +6628,25 @@
             (opt-type-eq type-segment-bases aret bret)
             (opt-block-list-eq type-segment-bases ablocks bblocks))])]))
 
-(define (opt-function-list-eq
+(define (opt-function-seq-eq-from
   [type-segment-bases : i64]
-  [a : ir.CompilerIrFunctionList]
-  [b : ir.CompilerIrFunctionList]) : bool
-  (match a
-    [(ir.CompilerIrFunctionList.Nil)
-      (match b
-        [(ir.CompilerIrFunctionList.Nil) true]
-        [_ false])]
-    [(ir.CompilerIrFunctionList.Cons ah at)
-      (match b
-        [(ir.CompilerIrFunctionList.Cons bh bt)
-          (and
-            (opt-function-eq type-segment-bases ah bh)
-            (opt-function-list-eq
-              type-segment-bases
-              (__tl-box-place at)
-              (__tl-box-place bt)))]
-        [(ir.CompilerIrFunctionList.Array bseq)
-          (opt-function-list-eq
-            type-segment-bases
-            a
-            (ir.compiler-ir-function-seq-to-list bseq))]
-        [_ false])]
-    [(ir.CompilerIrFunctionList.Array aseq)
-      (opt-function-list-eq
+  [a : ir.CompilerIrFunctionSeq]
+  [b : ir.CompilerIrFunctionSeq]
+  [index : i64]) : bool
+  (if (>= index a.len)
+    true
+    (and
+      (opt-function-eq
         type-segment-bases
-        (ir.compiler-ir-function-seq-to-list aseq)
-        b)]))
+        (array-ref a.slots index)
+        (array-ref b.slots index))
+      (opt-function-seq-eq-from type-segment-bases a b (+ index 1)))))
+
+(define (opt-function-seq-eq
+  [type-segment-bases : i64]
+  [a : ir.CompilerIrFunctionSeq]
+  [b : ir.CompilerIrFunctionSeq]) : bool
+  (and (= a.len b.len) (opt-function-seq-eq-from type-segment-bases a b 0)))
 
 (define (opt-global-eq
   [type-segment-bases : i64]
@@ -6754,7 +6745,7 @@
         [(ir.CompilerIrProgram.Program bglobals bfunctions bexterns)
           (and
             (opt-global-seq-eq type-segment-bases aglobals bglobals)
-            (opt-function-list-eq type-segment-bases afunctions bfunctions)
+            (opt-function-seq-eq type-segment-bases afunctions bfunctions)
             (opt-extern-seq-eq type-segment-bases aexterns bexterns))])]))
 
 (define (opt-expr-key-eq
@@ -11402,29 +11393,33 @@
           [(ResultCompilerOptimizeVerify.Err message)
             (ResultCompilerOptimizeVerify.Err message)]))]))
 
-(define (opt-verify-function-list [functions : ir.CompilerIrFunctionList]) : ResultCompilerOptimizeVerify
-  (match (ir.compiler-ir-function-list-force-cons functions)
-    [(ir.CompilerIrFunctionList.Nil) (ResultCompilerOptimizeVerify.Ok)]
-    [(ir.CompilerIrFunctionList.Array seq)
-      (opt-verify-function-list (ir.compiler-ir-function-seq-to-list seq))]
-    [(ir.CompilerIrFunctionList.Cons func rest)
+(define (opt-verify-function-seq-from
+  [functions : ir.CompilerIrFunctionSeq]
+  [index : i64]) : ResultCompilerOptimizeVerify
+  (if (>= index functions.len)
+    (ResultCompilerOptimizeVerify.Ok)
+    (let
+      [func : ir.CompilerIrFunction (array-ref functions.slots index)]
       (match func
         [(ir.CompilerIrFunction.Function name _ _ _ _)
           (match (opt-verify-final-function func)
             [(ResultCompilerOptimizeVerify.Ok)
-              (opt-verify-function-list (__tl-box-place rest))]
+              (opt-verify-function-seq-from functions (+ index 1))]
             [(ResultCompilerOptimizeVerify.Err message)
               (ResultCompilerOptimizeVerify.Err
                 (str_cat.str-cat
                   "function @"
                   (ir.compiler-ir-symbol-text name)
                   ": "
-                  message))])])]))
+                  message))])]))))
+
+(define (opt-verify-function-seq [functions : ir.CompilerIrFunctionSeq]) : ResultCompilerOptimizeVerify
+  (opt-verify-function-seq-from functions 0))
 
 (define (opt-verify-program [program : ir.CompilerIrProgram]) : ResultCompilerOptimizeVerify
   (match program
     [(ir.CompilerIrProgram.Program _ functions _)
-      (opt-verify-function-list functions)]))
+      (opt-verify-function-seq functions)]))
 
 (define (compiler-opt-debug-finish-program [program : ir.CompilerIrProgram]) : ir.CompilerIrProgram
   (begin
@@ -20504,12 +20499,14 @@
           -1
           found))]))
 
-(define (opt-licm-return-alias-add-functions
-  [functions : ir.CompilerIrFunctionList]
-  [out : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
-  (match functions
-    [(ir.CompilerIrFunctionList.Nil) out]
-    [(ir.CompilerIrFunctionList.Cons func rest)
+(define (opt-licm-return-alias-add-functions-from
+  [functions : ir.CompilerIrFunctionSeq]
+  [out : opt_i64_i64_map.Map (:consume)]
+  [position : i64]) : opt_i64_i64_map.Map
+  (if (>= position functions.len)
+    out
+    (let
+      [func : ir.CompilerIrFunction (array-ref functions.slots position)]
       (match func
         [(ir.CompilerIrFunction.Function name _ _ _ _)
           (let
@@ -20521,14 +20518,18 @@
                   (&mut out)
                   (ir.compiler-ir-symbol-id name)
                   (+ index 1)))]
-            (opt-licm-return-alias-add-functions (__tl-box-place rest) out))])]
-    [(ir.CompilerIrFunctionList.Array seq)
-      (opt-licm-return-alias-add-functions
-        (ir.compiler-ir-function-seq-to-list seq)
-        out)]))
+            (opt-licm-return-alias-add-functions-from
+              functions
+              out
+              (+ position 1)))]))))
+
+(define (opt-licm-return-alias-add-functions
+  [functions : ir.CompilerIrFunctionSeq]
+  [out : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
+  (opt-licm-return-alias-add-functions-from functions out 0))
 
 (define (opt-licm-return-alias-map
-  [functions : ir.CompilerIrFunctionList]
+  [functions : ir.CompilerIrFunctionSeq]
   [capacity : i64]) : opt_i64_i64_map.Map
   (opt-licm-return-alias-add-functions
     functions
@@ -86187,12 +86188,12 @@
 (define (opt-optimizer-input-carry
   [pools : ast.AstNodePoolContext]
   [carrier : i64]
-  [funcs : ir.CompilerIrFunctionList]) : ir.CompilerIrFunctionList
+  [funcs : ir.CompilerIrFunctionSeq]) : ir.CompilerIrFunctionSeq
   (if (= carrier 0)
     funcs
     (in-arena
       (arena.Arena carrier)
-      (ir.compiler-ir-clone-function-list pools funcs))))
+      (ir.compiler-ir-clone-function-seq pools funcs))))
 
 ;; Both optimizer-input arenas report under the same mid-phase label: each is
 ;; read at its high-water mark and destroyed before the "optimize" phase
@@ -86217,19 +86218,19 @@
 ;; and escape materialization into one enclosing-arena pass instead of compacting
 ;; in scratch and then cloning the whole function. The scratch path remains for
 ;; opt2/fixpoint.
-(define (optimize-function-list-with-level-and-summaries
+(define (optimize-function-seq-with-level-and-summaries
   [pools : ast.AstNodePoolContext]
   [type-segment-bases : i64]
-  [funcs : ir.CompilerIrFunctionList]
+  [funcs : ir.CompilerIrFunctionSeq]
   [level : i64]
-  [summaries : OptLoopBceSummaries]) : ir.CompilerIrFunctionList
+  [summaries : OptLoopBceSummaries]) : ir.CompilerIrFunctionSeq
   (if (= level 0)
     funcs
     (if (= level 1)
       (let
         [scratch : arena.Arena (arena.make)]
-        [result : ir.CompilerIrFunctionList
-          (optimize-function-list-level1-escaping-with-summaries
+        [result : ir.CompilerIrFunctionSeq
+          (optimize-function-seq-level1-escaping-with-summaries
             pools
             type-segment-bases
             funcs
@@ -86245,8 +86246,8 @@
           result))
       (let
         [scratch : arena.Arena (arena.make)]
-        [result : ir.CompilerIrFunctionList
-          (optimize-function-list-escaping-with-summaries
+        [result : ir.CompilerIrFunctionSeq
+          (optimize-function-seq-escaping-with-summaries
             pools
             type-segment-bases
             funcs
@@ -86332,113 +86333,95 @@
                             _t-restore))]
                       escaped)))])])))))
 
-(define (optimize-function-list-level1-escaping-with-summaries
+(define (optimize-function-seq-level1-escaping-with-summaries
   [pools : ast.AstNodePoolContext]
   [type-segment-bases : i64]
-  [funcs : ir.CompilerIrFunctionList]
+  [funcs : ir.CompilerIrFunctionSeq]
   [scratch : i64]
-  [summaries : OptLoopBceSummaries]) : ir.CompilerIrFunctionList
-  (match funcs
-    [(ir.CompilerIrFunctionList.Nil) (ir.CompilerIrFunctionList.Nil)]
-    [(ir.CompilerIrFunctionList.Cons func rest)
-      (let
-        [_start : unit
-          (cfg
-            compile-profile
-            (compiler-opt-profile-detail-start summaries.profile-state))]
-        [optimized : ir.CompilerIrFunction
-          (optimize-function-level1-escaping-with-summaries
-            pools
-            type-segment-bases
-            func
-            scratch
-            summaries)]
-        [_report : unit
-          (cfg
-            compile-profile
-            (compiler-opt-scratch-region-report-function-escaping
+  [summaries : OptLoopBceSummaries]) : ir.CompilerIrFunctionSeq
+  (let
+    [index : i64 0]
+    [builder : ir.CompilerIrFunctionBuilder
+      (ir.compiler-ir-function-builder-with-capacity funcs.len)]
+    (begin
+      (while (< index funcs.len)
+        (let
+          [func : ir.CompilerIrFunction (array-ref funcs.slots index)]
+          [_start : unit
+            (cfg
+              compile-profile
+              (compiler-opt-profile-detail-start summaries.profile-state))]
+          [optimized : ir.CompilerIrFunction
+            (optimize-function-level1-escaping-with-summaries
+              pools
               type-segment-bases
-              optimized
-              scratch))]
-        [_finish : unit
-          (cfg
-            compile-profile
-            (compiler-opt-profile-detail-finish
-              summaries.profile-state
-              "function"
-              (compiler-opt-profile-function-name func)))]
-        (ir.compiler-ir-function-cons
-          optimized
-          (optimize-function-list-level1-escaping-with-summaries
-            pools
-            type-segment-bases
-            (__tl-box-place rest)
-            scratch
-            summaries)))]
-    [(ir.CompilerIrFunctionList.Array seq)
-      (ir.compiler-ir-function-list-compact
-        (optimize-function-list-level1-escaping-with-summaries
-          pools
-          type-segment-bases
-          (ir.compiler-ir-function-seq-to-list seq)
-          scratch
-          summaries))]))
+              func
+              scratch
+              summaries)]
+          [_report : unit
+            (cfg
+              compile-profile
+              (compiler-opt-scratch-region-report-function-escaping
+                type-segment-bases
+                optimized
+                scratch))]
+          [_finish : unit
+            (cfg
+              compile-profile
+              (compiler-opt-profile-detail-finish
+                summaries.profile-state
+                "function"
+                (compiler-opt-profile-function-name func)))]
+          (begin
+            (ir.compiler-ir-function-builder-push! (&mut builder) optimized)
+            (set! index (+ index 1)))))
+      (ir.compiler-ir-function-builder-to-seq builder))))
 
-(define (optimize-function-list-escaping-with-summaries
+(define (optimize-function-seq-escaping-with-summaries
   [pools : ast.AstNodePoolContext]
   [type-segment-bases : i64]
-  [funcs : ir.CompilerIrFunctionList]
+  [funcs : ir.CompilerIrFunctionSeq]
   [level : i64]
   [scratch : i64]
-  [summaries : OptLoopBceSummaries]) : ir.CompilerIrFunctionList
-  (match funcs
-    [(ir.CompilerIrFunctionList.Nil) (ir.CompilerIrFunctionList.Nil)]
-    [(ir.CompilerIrFunctionList.Cons func rest)
-      (let
-        [_start : unit
-          (cfg
-            compile-profile
-            (compiler-opt-profile-detail-start summaries.profile-state))]
-        [optimized : ir.CompilerIrFunction
-          (optimize-function-escaping-with-summaries
-            pools
-            type-segment-bases
-            func
-            level
-            scratch
-            summaries)]
-        [_report : unit
-          (cfg
-            compile-profile
-            (compiler-opt-scratch-region-report-function-escaping
+  [summaries : OptLoopBceSummaries]) : ir.CompilerIrFunctionSeq
+  (let
+    [index : i64 0]
+    [builder : ir.CompilerIrFunctionBuilder
+      (ir.compiler-ir-function-builder-with-capacity funcs.len)]
+    (begin
+      (while (< index funcs.len)
+        (let
+          [func : ir.CompilerIrFunction (array-ref funcs.slots index)]
+          [_start : unit
+            (cfg
+              compile-profile
+              (compiler-opt-profile-detail-start summaries.profile-state))]
+          [optimized : ir.CompilerIrFunction
+            (optimize-function-escaping-with-summaries
+              pools
               type-segment-bases
-              optimized
-              scratch))]
-        [_finish : unit
-          (cfg
-            compile-profile
-            (compiler-opt-profile-detail-finish
-              summaries.profile-state
-              "function"
-              (compiler-opt-profile-function-name func)))]
-        (ir.compiler-ir-function-cons
-          optimized
-          (optimize-function-list-escaping-with-summaries
-            pools
-            type-segment-bases
-            (__tl-box-place rest)
-            level
-            scratch
-            summaries)))]
-    [(ir.CompilerIrFunctionList.Array seq)
-      (ir.compiler-ir-function-list-compact
-        (optimize-function-list-escaping-with-summaries
-          pools
-          type-segment-bases
-          (ir.compiler-ir-function-seq-to-list seq)
-          level
-          scratch
-          summaries))]))
+              func
+              level
+              scratch
+              summaries)]
+          [_report : unit
+            (cfg
+              compile-profile
+              (compiler-opt-scratch-region-report-function-escaping
+                type-segment-bases
+                optimized
+                scratch))]
+          [_finish : unit
+            (cfg
+              compile-profile
+              (compiler-opt-profile-detail-finish
+                summaries.profile-state
+                "function"
+                (compiler-opt-profile-function-name func)))]
+          (begin
+            (ir.compiler-ir-function-builder-push! (&mut builder) optimized)
+            (set! index (+ index 1)))))
+      (ir.compiler-ir-function-builder-to-seq builder))))
 
 ;; Optimize one function inside `scratch`, compact its blocks there, then escape
 ;; the result by deep-cloning it into the enclosing arena and rewinding `scratch`
@@ -86630,13 +86613,13 @@
   (Some String i64))
 
 (defenum OptPrunedProgram
-  (Program ir.CompilerIrGlobalSeq ir.CompilerIrFunctionList))
+  (Program ir.CompilerIrGlobalSeq ir.CompilerIrFunctionSeq))
 
 (define (opt-pruned-program-globals [pruned : OptPrunedProgram]) : ir.CompilerIrGlobalSeq
   (match pruned
     [(OptPrunedProgram.Program globals _) globals]))
 
-(define (opt-pruned-program-functions [pruned : OptPrunedProgram]) : ir.CompilerIrFunctionList
+(define (opt-pruned-program-functions [pruned : OptPrunedProgram]) : ir.CompilerIrFunctionSeq
   (match pruned
     [(OptPrunedProgram.Program _ functions) functions]))
 
@@ -86645,13 +86628,8 @@
     8
     (* count 2)))
 
-(define (opt-function-list-count [functions : ir.CompilerIrFunctionList]) : i64
-  (match functions
-    [(ir.CompilerIrFunctionList.Nil) 0]
-    [(ir.CompilerIrFunctionList.Cons _ rest)
-      (+ 1 (opt-function-list-count (__tl-box-place rest)))]
-    [(ir.CompilerIrFunctionList.Array seq)
-      (ir.compiler-ir-function-seq-count seq)]))
+(define (opt-function-seq-count [functions : ir.CompilerIrFunctionSeq]) : i64
+  functions.len)
 
 (define (opt-function-name-index-add
   [names : OptFunctionNameIndex (:consume)]
@@ -86666,15 +86644,16 @@
         unit)
       (OptFunctionNameIndex ids))))
 
-(define (opt-function-index-fill
-  [functions : ir.CompilerIrFunctionList]
+(define (opt-function-index-fill-from
+  [functions : ir.CompilerIrFunctionSeq]
   [names : OptFunctionNameIndex (:consume)]
   [values : (__tl_dyn-array ir.CompilerIrFunction)]
   [leaf-starts : (__tl_dyn-array i64)]
   [index : i64]) : OptFunctionNameIndex
-  (match functions
-    [(ir.CompilerIrFunctionList.Nil) names]
-    [(ir.CompilerIrFunctionList.Cons func rest)
+  (if (>= index functions.len)
+    names
+    (let
+      [func : ir.CompilerIrFunction (array-ref functions.slots index)]
       (match func
         [(ir.CompilerIrFunction.Function name _ _ _ _)
           (begin
@@ -86682,28 +86661,21 @@
             (set!
               (array-ref leaf-starts index)
               (opt-symbol-leaf-start (ir.compiler-ir-symbol-text name)))
-            (opt-function-index-fill
-              (__tl-box-place rest)
+            (opt-function-index-fill-from
+              functions
               (opt-function-name-index-add names name index)
               values
               leaf-starts
-              (+ index 1)))])]
-    [(ir.CompilerIrFunctionList.Array seq)
-      (opt-function-index-fill
-        (ir.compiler-ir-function-seq-to-list seq)
-        names
-        values
-        leaf-starts
-        index)]))
+              (+ index 1)))]))))
 
-(define (opt-function-index-build [functions : ir.CompilerIrFunctionList]) : OptFunctionIndex
+(define (opt-function-index-build [functions : ir.CompilerIrFunctionSeq]) : OptFunctionIndex
   (let
-    [count : i64 (opt-function-list-count functions)]
+    [count : i64 (opt-function-seq-count functions)]
     [values : (__tl_dyn-array ir.CompilerIrFunction)
       (array.make-array ir.CompilerIrFunction count)]
     [leaf-starts : (__tl_dyn-array i64) (array.make-array i64 count)]
     [names : OptFunctionNameIndex
-      (opt-function-index-fill
+      (opt-function-index-fill-from
         functions
         (OptFunctionNameIndex
           (opt_i64_i64_map.with-capacity (opt-function-index-capacity count)))
@@ -87714,35 +87686,35 @@
         (opt-inline-census-depths-build! blocks)
         (opt-inline-census-blocks index census blocks 0))]))
 
-(define (opt-inline-census-functions
+(define (opt-inline-census-function-seq-from
   [index : OptFunctionIndex]
   [census : OptInlineCensus]
-  [functions : ir.CompilerIrFunctionList]) : OptInlineCensus
-  (match functions
-    [(ir.CompilerIrFunctionList.Nil) census]
-    [(ir.CompilerIrFunctionList.Cons func rest)
-      (opt-inline-census-functions
-        index
-        (opt-inline-census-function index census func)
-        (__tl-box-place rest))]
-    [(ir.CompilerIrFunctionList.Array seq)
-      (opt-inline-census-functions
+  [functions : ir.CompilerIrFunctionSeq]
+  [position : i64]) : OptInlineCensus
+  (if (>= position functions.len)
+    census
+    (opt-inline-census-function-seq-from
+      index
+      (opt-inline-census-function
         index
         census
-        (ir.compiler-ir-function-seq-to-list seq))]))
+        (array-ref functions.slots position))
+      functions
+      (+ position 1))))
 
 (define (opt-inline-census-build
   [index : OptFunctionIndex]
-  [functions : ir.CompilerIrFunctionList]) : OptInlineCensus
+  [functions : ir.CompilerIrFunctionSeq]) : OptInlineCensus
   (let
     [capacity : i64 (opt-inline-census-capacity index)]
-    (opt-inline-census-functions
+    (opt-inline-census-function-seq-from
       index
       (OptInlineCensus
         (opt_i64_i64_map.with-capacity capacity)
         (opt_i64_i64_map.with-capacity capacity)
         (opt_i64_i64_map.with-capacity capacity))
-      functions)))
+      functions
+      0)))
 
 (define (opt-inline-census-refcount
   [index : OptFunctionIndex]
@@ -88279,25 +88251,16 @@
     (opt-devirt-known-function-function! func)
     func))
 
-(define (opt-devirt-known-function-list [functions : ir.CompilerIrFunctionList]) : ir.CompilerIrFunctionList
-  (begin
-    (match functions
-      [(ir.CompilerIrFunctionList.Nil) unit]
-      [(ir.CompilerIrFunctionList.Cons func rest)
+(define (opt-devirt-known-function-seq [functions : ir.CompilerIrFunctionSeq]) : ir.CompilerIrFunctionSeq
+  (let
+    [index : i64 0]
+    (begin
+      (while (< index functions.len)
         (begin
-          (opt-devirt-known-function-function! func)
-          (opt-devirt-known-function-list (__tl-box-place rest))
-          unit)]
-      [(ir.CompilerIrFunctionList.Array seq)
-        (let
-          [index : i64 0]
-          [count : i64 (ir.compiler-ir-function-seq-count seq)]
-          (while (< index count)
-            (begin
-              (opt-devirt-known-function-function!
-                (ir.compiler-ir-function-seq-ref seq index))
-              (set! index (+ index 1)))))])
-    functions))
+          (opt-devirt-known-function-function!
+            (array-ref functions.slots index))
+          (set! index (+ index 1))))
+      functions)))
 
 ;; ---------------------------------------------------------------------------
 ;; Function inlining (opt level 2 only). Splices the body of small single-block
@@ -88383,7 +88346,7 @@
   (Blocks ir.CompilerIrBlockList i64 i64 ir.CompilerSourceSpans))
 
 (defenum OptInlineSpanProgram
-  (Program ir.CompilerIrFunctionList ir.CompilerSourceSpans))
+  (Program ir.CompilerIrFunctionSeq ir.CompilerSourceSpans))
 
 (defenum OptInlineMultiClone
   (Clone ir.CompilerIrBlockList ir.CompilerIrPhiInputList))
@@ -95936,9 +95899,9 @@
           [(OptInlineSpanBlocks.Blocks new-blocks new-vars added next-spans)
             (if (= opt-inline-caller-site-count 0)
               (OptInlineSpanProgram.Program
-                (ir.compiler-ir-function-cons
+                (ir.compiler-ir-function-seq-prepend
                   func
-                  ir.CompilerIrFunctionList.Nil)
+                  (ir.compiler-ir-function-seq-empty))
                 out-spans)
               (let
                 [repaired-blocks : ir.CompilerIrBlockList
@@ -95954,7 +95917,7 @@
                     repaired-blocks)]
                 (if (opt-inline-structure-ok-reclaiming? repaired-blocks)
                   (OptInlineSpanProgram.Program
-                    (ir.compiler-ir-function-cons
+                    (ir.compiler-ir-function-seq-prepend
                       (if (>
                         (+
                           added
@@ -95968,12 +95931,12 @@
                         0)
                         (opt-ssa-construct-function type-segment-bases next)
                         next)
-                      ir.CompilerIrFunctionList.Nil)
+                      (ir.compiler-ir-function-seq-empty))
                     next-spans)
                   (OptInlineSpanProgram.Program
-                    (ir.compiler-ir-function-cons
+                    (ir.compiler-ir-function-seq-prepend
                       func
-                      ir.CompilerIrFunctionList.Nil)
+                      (ir.compiler-ir-function-seq-empty))
                     out-spans))))]))]))
 
 (define (opt-inline-span-program-function
@@ -95981,13 +95944,9 @@
   [fallback : ir.CompilerIrFunction]) : ir.CompilerIrFunction
   (match program
     [(OptInlineSpanProgram.Program one _)
-      (match one
-        [(ir.CompilerIrFunctionList.Cons head _) head]
-        [(ir.CompilerIrFunctionList.Nil) fallback]
-        [(ir.CompilerIrFunctionList.Array seq)
-          (if (> (ir.compiler-ir-function-seq-count seq) 0)
-            (ir.compiler-ir-function-seq-ref seq 0)
-            fallback)])]))
+      (if (> one.len 0)
+        (array-ref one.slots 0)
+        fallback)]))
 
 ;; Same sequence as the span-free entry. Re-walking is safe on the spans side,
 ;; but not for the reason the shape first suggests, so the argument is written
@@ -96108,9 +96067,8 @@
         banked
         (- 0 1)))))
 
-(define (opt-function-index-to-list [index : OptFunctionIndex]) : ir.CompilerIrFunctionList
-  (ir.CompilerIrFunctionList.Array
-    (ir.CompilerIrFunctionSeq index.values (opt-function-index-count index))))
+(define (opt-function-index-to-seq [index : OptFunctionIndex]) : ir.CompilerIrFunctionSeq
+  (ir.CompilerIrFunctionSeq index.values (opt-function-index-count index)))
 
 (define (opt-inline-slot-order [scc-result : OptSccResult]) : (__tl_dyn-array
     i64)
@@ -96522,7 +96480,7 @@
 
 (define (opt-inline-tiny-leaf-program-functions
   [type-segment-bases : i64]
-  [functions : ir.CompilerIrFunctionList]) : ir.CompilerIrFunctionList
+  [functions : ir.CompilerIrFunctionSeq]) : ir.CompilerIrFunctionSeq
   (let
     [index : OptFunctionIndex (opt-function-index-build functions)]
     [flags : (__tl_dyn-array bool) (opt-inline-tiny-leaf-admitted-flags index)]
@@ -96540,7 +96498,7 @@
               index
               flags))
           (set! i (+ i 1))))
-      (opt-function-index-to-list index))))
+      (opt-function-index-to-seq index))))
 
 (define (opt-inline-tiny-leaf-try-with-spans
   [instr : ir.CompilerIrInstr]
@@ -96752,7 +96710,9 @@
     [(ir.CompilerIrFunction.Function name params ret vars blocks)
       (if (not (opt-inline-tiny-leaf-blocks-have-site? blocks index flags))
         (OptInlineSpanProgram.Program
-          (ir.compiler-ir-function-cons func ir.CompilerIrFunctionList.Nil)
+          (ir.compiler-ir-function-seq-prepend
+            func
+            (ir.compiler-ir-function-seq-empty))
           out-spans)
         (begin
           (set! opt-inline-caller-site-count 0)
@@ -96767,29 +96727,29 @@
             [(OptInlineSpanBlocks.Blocks new-blocks new-vars _ next-spans)
               (if (= opt-inline-caller-site-count 0)
                 (OptInlineSpanProgram.Program
-                  (ir.compiler-ir-function-cons
+                  (ir.compiler-ir-function-seq-prepend
                     func
-                    ir.CompilerIrFunctionList.Nil)
+                    (ir.compiler-ir-function-seq-empty))
                   out-spans)
                 (if (opt-inline-structure-ok-reclaiming? new-blocks)
                   (OptInlineSpanProgram.Program
-                    (ir.compiler-ir-function-cons
+                    (ir.compiler-ir-function-seq-prepend
                       (ir.CompilerIrFunction.Function
                         name
                         params
                         ret
                         new-vars
                         new-blocks)
-                      ir.CompilerIrFunctionList.Nil)
+                      (ir.compiler-ir-function-seq-empty))
                     next-spans)
                   (OptInlineSpanProgram.Program
-                    (ir.compiler-ir-function-cons
+                    (ir.compiler-ir-function-seq-prepend
                       func
-                      ir.CompilerIrFunctionList.Nil)
+                      (ir.compiler-ir-function-seq-empty))
                     out-spans)))])))]))
 
 (define (opt-inline-tiny-leaf-program-functions-with-spans
-  [functions : ir.CompilerIrFunctionList]
+  [functions : ir.CompilerIrFunctionSeq]
   [spans : ir.CompilerSourceSpans]) : OptInlineSpanProgram
   (let
     [index : OptFunctionIndex (opt-function-index-build functions)]
@@ -96809,20 +96769,13 @@
             current-spans)
             [(OptInlineSpanProgram.Program one next-spans)
               (begin
-                (match one
-                  [(ir.CompilerIrFunctionList.Cons head _)
-                    (set! (array-ref values i) head)]
-                  [(ir.CompilerIrFunctionList.Nil) unit]
-                  [(ir.CompilerIrFunctionList.Array seq)
-                    (if (> (ir.compiler-ir-function-seq-count seq) 0)
-                      (set!
-                        (array-ref values i)
-                        (ir.compiler-ir-function-seq-ref seq 0))
-                      unit)])
+                (if (> one.len 0)
+                  (set! (array-ref values i) (array-ref one.slots 0))
+                  unit)
                 (set! current-spans next-spans))])
           (set! i (+ i 1))))
       (OptInlineSpanProgram.Program
-        (opt-function-index-to-list index)
+        (opt-function-index-to-seq index)
         current-spans))))
 
 (define (opt-inline-process-scc-order!
@@ -96882,16 +96835,9 @@
               current-spans)
               [(OptInlineSpanProgram.Program one next-spans)
                 (begin
-                  (match one
-                    [(ir.CompilerIrFunctionList.Cons head _)
-                      (set! (array-ref values slot) head)]
-                    [(ir.CompilerIrFunctionList.Nil) unit]
-                    [(ir.CompilerIrFunctionList.Array seq)
-                      (if (> (ir.compiler-ir-function-seq-count seq) 0)
-                        (set!
-                          (array-ref values slot)
-                          (ir.compiler-ir-function-seq-ref seq 0))
-                        unit)])
+                  (if (> one.len 0)
+                    (set! (array-ref values slot) (array-ref one.slots 0))
+                    unit)
                   (set! current-spans next-spans))]))
           (set! index-pos (+ index-pos 1))))
       current-spans)))
@@ -96901,15 +96847,15 @@
 ;; level 1 runs only the call-free tiny-leaf pass above.
 (define (opt-inline-program-functions
   [type-segment-bases : i64]
-  [functions : ir.CompilerIrFunctionList]
-  [level : i64]) : ir.CompilerIrFunctionList
+  [functions : ir.CompilerIrFunctionSeq]
+  [level : i64]) : ir.CompilerIrFunctionSeq
   (if (< level 2)
     (if (= level 1)
       (opt-inline-tiny-leaf-program-functions type-segment-bases functions)
       functions)
     (let
-      [devirt : ir.CompilerIrFunctionList
-        (opt-devirt-known-function-list functions)]
+      [devirt : ir.CompilerIrFunctionSeq
+        (opt-devirt-known-function-seq functions)]
       [index : OptFunctionIndex (opt-function-index-build devirt)]
       [graph : OptCallGraph (opt-callgraph-build index)]
       [scc-result : OptSccResult (opt-scc-compute graph)]
@@ -96923,14 +96869,14 @@
           census
           scc-result)
         (let
-          [out : ir.CompilerIrFunctionList (opt-function-index-to-list index)]
+          [out : ir.CompilerIrFunctionSeq (opt-function-index-to-seq index)]
           (begin
             (opt-inline-owned-state-reset! true)
             out))))))
 
 (define (opt-inline-program-functions-with-spans
   [type-segment-bases : i64]
-  [functions : ir.CompilerIrFunctionList]
+  [functions : ir.CompilerIrFunctionSeq]
   [level : i64]
   [spans : ir.CompilerSourceSpans]) : OptInlineSpanProgram
   (if (< level 2)
@@ -96938,8 +96884,8 @@
       (opt-inline-tiny-leaf-program-functions-with-spans functions spans)
       (OptInlineSpanProgram.Program functions spans))
     (let
-      [devirt : ir.CompilerIrFunctionList
-        (opt-devirt-known-function-list functions)]
+      [devirt : ir.CompilerIrFunctionSeq
+        (opt-devirt-known-function-seq functions)]
       [index : OptFunctionIndex (opt-function-index-build devirt)]
       [graph : OptCallGraph (opt-callgraph-build index)]
       [scc-result : OptSccResult (opt-scc-compute graph)]
@@ -96955,41 +96901,47 @@
           spans)]
       [out : OptInlineSpanProgram
         (OptInlineSpanProgram.Program
-          (opt-function-index-to-list index)
+          (opt-function-index-to-seq index)
           next-spans)]
       (begin
         (opt-inline-owned-state-reset! true)
         out))))
 
-(define (opt-function-list-defines?
-  [functions : ir.CompilerIrFunctionList]
-  [name : String]) : bool
-  (match functions
-    [(ir.CompilerIrFunctionList.Nil) false]
-    [(ir.CompilerIrFunctionList.Cons func rest)
-      (match func
-        [(ir.CompilerIrFunction.Function func-name _ _ _ _)
-          (if (string.eq (ir.compiler-ir-symbol-text func-name) name)
-            true
-            (opt-function-list-defines? (__tl-box-place rest) name))])]
-    [(ir.CompilerIrFunctionList.Array seq)
-      (opt-function-list-defines?
-        (ir.compiler-ir-function-seq-to-list seq)
-        name)]))
+(define (opt-function-seq-defines-from?
+  [functions : ir.CompilerIrFunctionSeq]
+  [name : String]
+  [index : i64]) : bool
+  (if (>= index functions.len)
+    false
+    (match (array-ref functions.slots index)
+      [(ir.CompilerIrFunction.Function func-name _ _ _ _)
+        (if (string.eq (ir.compiler-ir-symbol-text func-name) name)
+          true
+          (opt-function-seq-defines-from? functions name (+ index 1)))])))
 
-(define (opt-function-list-find
-  [functions : ir.CompilerIrFunctionList]
-  [name : String]) : OptMaybeFunction
-  (match functions
-    [(ir.CompilerIrFunctionList.Nil) (OptMaybeFunction.No)]
-    [(ir.CompilerIrFunctionList.Cons func rest)
+(define (opt-function-seq-defines?
+  [functions : ir.CompilerIrFunctionSeq]
+  [name : String]) : bool
+  (opt-function-seq-defines-from? functions name 0))
+
+(define (opt-function-seq-find-from
+  [functions : ir.CompilerIrFunctionSeq]
+  [name : String]
+  [index : i64]) : OptMaybeFunction
+  (if (>= index functions.len)
+    (OptMaybeFunction.No)
+    (let
+      [func : ir.CompilerIrFunction (array-ref functions.slots index)]
       (match func
         [(ir.CompilerIrFunction.Function func-name _ _ _ _)
           (if (string.eq (ir.compiler-ir-symbol-text func-name) name)
             (OptMaybeFunction.Some func)
-            (opt-function-list-find (__tl-box-place rest) name))])]
-    [(ir.CompilerIrFunctionList.Array seq)
-      (opt-function-list-find (ir.compiler-ir-function-seq-to-list seq) name)]))
+            (opt-function-seq-find-from functions name (+ index 1)))]))))
+
+(define (opt-function-seq-find
+  [functions : ir.CompilerIrFunctionSeq]
+  [name : String]) : OptMaybeFunction
+  (opt-function-seq-find-from functions name 0))
 
 ;; Resolve `name` to its dense index slot with a single `ids` probe (the one
 ;; name->key lookup the reachability walk needs); a name that names no function in
@@ -97522,30 +97474,24 @@
 
 (define (opt-filter-reachable-functions
   [index : OptFunctionIndex]
-  [functions : ir.CompilerIrFunctionList]
-  [reachable : opt_i64_i64_map.Map]) : ir.CompilerIrFunctionList
-  (match functions
-    [(ir.CompilerIrFunctionList.Nil) (ir.CompilerIrFunctionList.Nil)]
-    [(ir.CompilerIrFunctionList.Cons func rest)
-      (match func
-        [(ir.CompilerIrFunction.Function name _ _ _ _)
-          (if (opt-reach-slot-set-contains-name? index reachable name)
-            (ir.compiler-ir-function-cons
-              func
-              (opt-filter-reachable-functions
-                index
-                (__tl-box-place rest)
-                reachable))
-            (opt-filter-reachable-functions
-              index
-              (__tl-box-place rest)
-              reachable))])]
-    [(ir.CompilerIrFunctionList.Array seq)
-      (ir.compiler-ir-function-list-compact
-        (opt-filter-reachable-functions
-          index
-          (ir.compiler-ir-function-seq-to-list seq)
-          reachable))]))
+  [functions : ir.CompilerIrFunctionSeq]
+  [reachable : opt_i64_i64_map.Map]) : ir.CompilerIrFunctionSeq
+  (let
+    [position : i64 0]
+    [builder : ir.CompilerIrFunctionBuilder
+      (ir.compiler-ir-function-builder-with-capacity functions.len)]
+    (begin
+      (while (< position functions.len)
+        (let
+          [func : ir.CompilerIrFunction (array-ref functions.slots position)]
+          (begin
+            (match func
+              [(ir.CompilerIrFunction.Function name _ _ _ _)
+                (when
+                  (opt-reach-slot-set-contains-name? index reachable name)
+                  (ir.compiler-ir-function-builder-push! (&mut builder) func))])
+            (set! position (+ position 1)))))
+      (ir.compiler-ir-function-builder-to-seq builder))))
 
 (define (opt-runtime-global? [ty : ast.AstType] [value : ir.CompilerIrValue]) : bool
   (match value
@@ -97681,14 +97627,14 @@
 ;; standalone callers that do not already have a classified start.
 (define (opt-prune-unreachable-program
   [globals : ir.CompilerIrGlobalSeq]
-  [functions : ir.CompilerIrFunctionList]
+  [functions : ir.CompilerIrFunctionSeq]
   [externs : ir.CompilerIrExternSeq]) : OptPrunedProgram
-  (if (opt-function-list-defines? functions "main")
+  (if (opt-function-seq-defines? functions "main")
     (let
       [index : OptFunctionIndex (opt-function-index-build functions)]
       [reachable : opt_i64_i64_map.Map
         (opt_i64_i64_map.with-capacity
-          (opt-function-index-capacity (opt-function-list-count functions)))]
+          (opt-function-index-capacity (opt-function-seq-count functions)))]
       [reachable-globals : opt_i64_i64_map.Map
         (opt_i64_i64_map.with-capacity
           (opt-function-index-capacity
@@ -97878,29 +97824,27 @@
 
 (define (opt-loop-bce-argc-return-map
   [type-segment-bases : i64]
-  [functions : ir.CompilerIrFunctionList]
+  [functions : ir.CompilerIrFunctionSeq]
   [map : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
-  (match functions
-    [(ir.CompilerIrFunctionList.Nil) map]
-    [(ir.CompilerIrFunctionList.Cons func rest)
-      (match func
-        [(ir.CompilerIrFunction.Function name _ _ _ _)
+  (let
+    [index : i64 0]
+    (begin
+      (while (< index functions.len)
+        (let
+          [func : ir.CompilerIrFunction (array-ref functions.slots index)]
           (begin
-            (if (opt-loop-bce-function-returns-argc? type-segment-bases func)
-              (opt_i64_i64_map.insert-ref!
-                (&mut map)
-                (ir.compiler-ir-symbol-id name)
-                1)
-              unit)
-            (opt-loop-bce-argc-return-map
-              type-segment-bases
-              (__tl-box-place rest)
-              map))])]
-    [(ir.CompilerIrFunctionList.Array seq)
-      (opt-loop-bce-argc-return-map
-        type-segment-bases
-        (ir.compiler-ir-function-seq-to-list seq)
-        map)]))
+            (match func
+              [(ir.CompilerIrFunction.Function name _ _ _ _)
+                (if (opt-loop-bce-function-returns-argc?
+                  type-segment-bases
+                  func)
+                  (opt_i64_i64_map.insert-ref!
+                    (&mut map)
+                    (ir.compiler-ir-symbol-id name)
+                    1)
+                  unit)])
+            (set! index (+ index 1)))))
+      map)))
 
 (define (opt-loop-bce-clean-storeptr-safe?
   [state : OptLoopBceState]
@@ -98089,38 +98033,36 @@
 
 (define (opt-loop-bce-length-clean-pass
   [type-segment-bases : i64]
-  [functions : ir.CompilerIrFunctionList]
-  [clean : opt_i64_i64_map.Map]) : OptLoopBceCleanPass
-  (match functions
-    [(ir.CompilerIrFunctionList.Nil) (OptLoopBceCleanPass.Pass clean false)]
-    [(ir.CompilerIrFunctionList.Cons func rest)
-      (match (opt-loop-bce-length-clean-pass
-        type-segment-bases
-        (__tl-box-place rest)
-        clean)
-        [(OptLoopBceCleanPass.Pass tail-clean tail-added)
-          (match func
-            [(ir.CompilerIrFunction.Function name _ _ _ _)
-              (if (opt_i64_i64_map.contains?
-                (& tail-clean)
-                (ir.compiler-ir-symbol-id name))
-                (OptLoopBceCleanPass.Pass tail-clean tail-added)
-                (if (opt-loop-bce-function-length-clean?
-                  type-segment-bases
-                  func
-                  tail-clean)
-                  (begin
-                    (opt_i64_i64_map.insert-ref!
-                      (&mut tail-clean)
-                      (ir.compiler-ir-symbol-id name)
-                      1)
-                    (OptLoopBceCleanPass.Pass tail-clean true))
-                  (OptLoopBceCleanPass.Pass tail-clean tail-added)))])])]
-    [(ir.CompilerIrFunctionList.Array seq)
-      (opt-loop-bce-length-clean-pass
-        type-segment-bases
-        (ir.compiler-ir-function-seq-to-list seq)
-        clean)]))
+  [functions : ir.CompilerIrFunctionSeq]
+  [clean : opt_i64_i64_map.Map (:consume)]) : OptLoopBceCleanPass
+  (let
+    [index : i64 (- functions.len 1)]
+    [added : bool false]
+    [out : opt_i64_i64_map.Map clean]
+    (begin
+      (while (>= index 0)
+        (let
+          [func : ir.CompilerIrFunction (array-ref functions.slots index)]
+          (begin
+            (match func
+              [(ir.CompilerIrFunction.Function name _ _ _ _)
+                (if (opt_i64_i64_map.contains?
+                  (& out)
+                  (ir.compiler-ir-symbol-id name))
+                  unit
+                  (when
+                    (opt-loop-bce-function-length-clean?
+                      type-segment-bases
+                      func
+                      out)
+                    (begin
+                      (opt_i64_i64_map.insert-ref!
+                        (&mut out)
+                        (ir.compiler-ir-symbol-id name)
+                        1)
+                      (set! added true))))])
+            (set! index (- index 1)))))
+      (OptLoopBceCleanPass.Pass out added))))
 
 (define (opt-loop-bce-direct-call-clean-effect? [effect : ir.CompilerIrEffect]) : bool
   (match effect
@@ -98233,34 +98175,32 @@
         (opt-loop-bce-direct-call-clean-blocks? blocks clean))]))
 
 (define (opt-loop-bce-direct-call-clean-all-functions
-  [functions : ir.CompilerIrFunctionList]
+  [functions : ir.CompilerIrFunctionSeq]
   [map : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
-  (match functions
-    [(ir.CompilerIrFunctionList.Nil) map]
-    [(ir.CompilerIrFunctionList.Cons func rest)
-      (match func
-        [(ir.CompilerIrFunction.Function name _ _ _ _)
-          (begin
-            (opt_i64_i64_map.insert-ref!
-              (&mut map)
-              (ir.compiler-ir-symbol-id name)
-              1)
-            (opt-loop-bce-direct-call-clean-all-functions
-              (__tl-box-place rest)
-              map))])]
-    [(ir.CompilerIrFunctionList.Array seq)
-      (opt-loop-bce-direct-call-clean-all-functions
-        (ir.compiler-ir-function-seq-to-list seq)
-        map)]))
+  (let
+    [index : i64 0]
+    (begin
+      (while (< index functions.len)
+        (begin
+          (match (array-ref functions.slots index)
+            [(ir.CompilerIrFunction.Function name _ _ _ _)
+              (opt_i64_i64_map.insert-ref!
+                (&mut map)
+                (ir.compiler-ir-symbol-id name)
+                1)])
+          (set! index (+ index 1))))
+      map)))
 
-(define (opt-loop-bce-direct-call-clean-filter
-  [functions : ir.CompilerIrFunctionList]
+(define (opt-loop-bce-direct-call-clean-filter-from
+  [functions : ir.CompilerIrFunctionSeq]
   [current : opt_i64_i64_map.Map]
   [out : opt_i64_i64_map.Map (:consume)]
-  [changed : bool]) : OptLoopBceIdCleanPass
-  (match functions
-    [(ir.CompilerIrFunctionList.Nil) (OptLoopBceIdCleanPass.Pass out changed)]
-    [(ir.CompilerIrFunctionList.Cons func rest)
+  [changed : bool]
+  [index : i64]) : OptLoopBceIdCleanPass
+  (if (>= index functions.len)
+    (OptLoopBceIdCleanPass.Pass out changed)
+    (let
+      [func : ir.CompilerIrFunction (array-ref functions.slots index)]
       (match func
         [(ir.CompilerIrFunction.Function name _ _ _ _)
           (let
@@ -98274,20 +98214,22 @@
               (if keep
                 (opt_i64_i64_map.insert-ref! (&mut out) name-id 1)
                 unit)]
-            (opt-loop-bce-direct-call-clean-filter
-              (__tl-box-place rest)
+            (opt-loop-bce-direct-call-clean-filter-from
+              functions
               current
               out
-              (or changed (and was-clean (not keep)))))])]
-    [(ir.CompilerIrFunctionList.Array seq)
-      (opt-loop-bce-direct-call-clean-filter
-        (ir.compiler-ir-function-seq-to-list seq)
-        current
-        out
-        changed)]))
+              (or changed (and was-clean (not keep)))
+              (+ index 1)))]))))
+
+(define (opt-loop-bce-direct-call-clean-filter
+  [functions : ir.CompilerIrFunctionSeq]
+  [current : opt_i64_i64_map.Map]
+  [out : opt_i64_i64_map.Map (:consume)]
+  [changed : bool]) : OptLoopBceIdCleanPass
+  (opt-loop-bce-direct-call-clean-filter-from functions current out changed 0))
 
 (define (opt-loop-bce-direct-call-clean-fixed
-  [functions : ir.CompilerIrFunctionList]
+  [functions : ir.CompilerIrFunctionSeq]
   [current : opt_i64_i64_map.Map]
   [capacity : i64]
   [remaining : i64]) : opt_i64_i64_map.Map
@@ -98308,7 +98250,7 @@
           next)])))
 
 (define (opt-loop-bce-direct-call-clean-map
-  [functions : ir.CompilerIrFunctionList]
+  [functions : ir.CompilerIrFunctionSeq]
   [capacity : i64]) : opt_i64_i64_map.Map
   (opt-loop-bce-direct-call-clean-fixed
     functions
@@ -98316,7 +98258,7 @@
       functions
       (opt_i64_i64_map.with-capacity capacity))
     capacity
-    (+ (opt-function-list-count functions) 1)))
+    (+ (opt-function-seq-count functions) 1)))
 
 ;; --- direct-call memory summaries for load GVN ------------------------------
 ;;
@@ -98399,23 +98341,21 @@
     (bit-or (opt-call-memory-global-bit) (opt-call-memory-unknown-bit))))
 
 (define (opt-call-memory-function-set
-  [functions : ir.CompilerIrFunctionList]
+  [functions : ir.CompilerIrFunctionSeq]
   [set : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
-  (match functions
-    [(ir.CompilerIrFunctionList.Nil) set]
-    [(ir.CompilerIrFunctionList.Cons func rest)
-      (match func
-        [(ir.CompilerIrFunction.Function name _ _ _ _)
-          (begin
-            (opt_i64_i64_map.insert-ref!
-              (&mut set)
-              (ir.compiler-ir-symbol-id name)
-              1)
-            (opt-call-memory-function-set (__tl-box-place rest) set))])]
-    [(ir.CompilerIrFunctionList.Array seq)
-      (opt-call-memory-function-set
-        (ir.compiler-ir-function-seq-to-list seq)
-        set)]))
+  (let
+    [index : i64 0]
+    (begin
+      (while (< index functions.len)
+        (begin
+          (match (array-ref functions.slots index)
+            [(ir.CompilerIrFunction.Function name _ _ _ _)
+              (opt_i64_i64_map.insert-ref!
+                (&mut set)
+                (ir.compiler-ir-symbol-id name)
+                1)])
+          (set! index (+ index 1))))
+      set)))
 
 ;; Find the source-level parameter index for a canonical checked-reference root
 ;; var. Fresh allocation roots deliberately have no parameter index.
@@ -99124,16 +99064,18 @@
 (defenum OptCallMemoryBuildPass
   (Pass opt_i64_i64_map.Map bool))
 
-(define (opt-call-memory-build-pass
+(define (opt-call-memory-build-pass-from
   [type-segment-bases : i64]
-  [functions : ir.CompilerIrFunctionList]
+  [functions : ir.CompilerIrFunctionSeq]
   [current : opt_i64_i64_map.Map]
   [function-set : opt_i64_i64_map.Map]
   [out : opt_i64_i64_map.Map (:consume)]
-  [changed : bool]) : OptCallMemoryBuildPass
-  (match functions
-    [(ir.CompilerIrFunctionList.Nil) (OptCallMemoryBuildPass.Pass out changed)]
-    [(ir.CompilerIrFunctionList.Cons func rest)
+  [changed : bool]
+  [index : i64]) : OptCallMemoryBuildPass
+  (if (>= index functions.len)
+    (OptCallMemoryBuildPass.Pass out changed)
+    (let
+      [func : ir.CompilerIrFunction (array-ref functions.slots index)]
       (match func
         [(ir.CompilerIrFunction.Function name _ _ _ _)
           (let
@@ -99142,13 +99084,14 @@
               [(opt_i64_i64_map.LookupFound summary)
                 (begin
                   (opt_i64_i64_map.insert-ref! (&mut out) name-id summary)
-                  (opt-call-memory-build-pass
+                  (opt-call-memory-build-pass-from
                     type-segment-bases
-                    (__tl-box-place rest)
+                    functions
                     current
                     function-set
                     out
-                    changed))]
+                    changed
+                    (+ index 1)))]
               [(opt_i64_i64_map.LookupMissing)
                 (match (opt-call-memory-function-candidate
                   type-segment-bases
@@ -99156,31 +99099,41 @@
                   function-set
                   func)
                   [(OptCallMemoryCandidate.Unresolved)
-                    (opt-call-memory-build-pass
+                    (opt-call-memory-build-pass-from
                       type-segment-bases
-                      (__tl-box-place rest)
+                      functions
                       current
                       function-set
                       out
-                      changed)]
+                      changed
+                      (+ index 1))]
                   [(OptCallMemoryCandidate.Known summary)
                     (begin
                       (opt_i64_i64_map.insert-ref! (&mut out) name-id summary)
-                      (opt-call-memory-build-pass
+                      (opt-call-memory-build-pass-from
                         type-segment-bases
-                        (__tl-box-place rest)
+                        functions
                         current
                         function-set
                         out
-                        true))])]))])]
-    [(ir.CompilerIrFunctionList.Array seq)
-      (opt-call-memory-build-pass
-        type-segment-bases
-        (ir.compiler-ir-function-seq-to-list seq)
-        current
-        function-set
-        out
-        changed)]))
+                        true
+                        (+ index 1)))])]))]))))
+
+(define (opt-call-memory-build-pass
+  [type-segment-bases : i64]
+  [functions : ir.CompilerIrFunctionSeq]
+  [current : opt_i64_i64_map.Map]
+  [function-set : opt_i64_i64_map.Map]
+  [out : opt_i64_i64_map.Map (:consume)]
+  [changed : bool]) : OptCallMemoryBuildPass
+  (opt-call-memory-build-pass-from
+    type-segment-bases
+    functions
+    current
+    function-set
+    out
+    changed
+    0))
 
 ;; Three runtime builtins have a memory footprint precise enough to summarize,
 ;; which lets a caller's cached load table survive them instead of being wiped:
@@ -99232,7 +99185,7 @@
 
 (define (opt-call-memory-build-fixed
   [type-segment-bases : i64]
-  [functions : ir.CompilerIrFunctionList]
+  [functions : ir.CompilerIrFunctionSeq]
   [function-set : opt_i64_i64_map.Map]
   [current : opt_i64_i64_map.Map]
   [capacity : i64]
@@ -99315,73 +99268,65 @@
 
 ;; Round zero: pessimistic rows copied through, residue rows at bottom.
 (define (opt-call-memory-seed-optimistic
-  [functions : ir.CompilerIrFunctionList]
+  [functions : ir.CompilerIrFunctionSeq]
   [resolved : opt_i64_i64_map.Map]
   [out : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
-  (match functions
-    [(ir.CompilerIrFunctionList.Nil) out]
-    [(ir.CompilerIrFunctionList.Cons func rest)
-      (match func
-        [(ir.CompilerIrFunction.Function name _ _ _ _)
-          (let
-            [name-id : i64 (ir.compiler-ir-symbol-id name)]
-            [seed : i64
-              (match (opt_i64_i64_map.get (& resolved) name-id)
-                [(opt_i64_i64_map.LookupFound summary) summary]
-                [(opt_i64_i64_map.LookupMissing) 0])]
-            (begin
-              (opt_i64_i64_map.insert-ref! (&mut out) name-id seed)
-              (opt-call-memory-seed-optimistic
-                (__tl-box-place rest)
-                resolved
-                out)))])]
-    [(ir.CompilerIrFunctionList.Array seq)
-      (opt-call-memory-seed-optimistic
-        (ir.compiler-ir-function-seq-to-list seq)
-        resolved
-        out)]))
+  (let
+    [index : i64 0]
+    (begin
+      (while (< index functions.len)
+        (begin
+          (match (array-ref functions.slots index)
+            [(ir.CompilerIrFunction.Function name _ _ _ _)
+              (let
+                [name-id : i64 (ir.compiler-ir-symbol-id name)]
+                [seed : i64
+                  (match (opt_i64_i64_map.get (& resolved) name-id)
+                    [(opt_i64_i64_map.LookupFound summary) summary]
+                    [(opt_i64_i64_map.LookupMissing) 0])]
+                (opt_i64_i64_map.insert-ref! (&mut out) name-id seed))])
+          (set! index (+ index 1))))
+      out)))
 
 (define (opt-call-memory-unresolved-count
-  [functions : ir.CompilerIrFunctionList]
+  [functions : ir.CompilerIrFunctionSeq]
   [resolved : opt_i64_i64_map.Map]
   [count : i64]) : i64
-  (match functions
-    [(ir.CompilerIrFunctionList.Nil) count]
-    [(ir.CompilerIrFunctionList.Cons func rest)
-      (match func
-        [(ir.CompilerIrFunction.Function name _ _ _ _)
-          (opt-call-memory-unresolved-count
-            (__tl-box-place rest)
-            resolved
-            (match (opt_i64_i64_map.get
-              (& resolved)
-              (ir.compiler-ir-symbol-id name))
-              [(opt_i64_i64_map.LookupFound _) count]
-              [(opt_i64_i64_map.LookupMissing) (+ count 1)]))])]
-    [(ir.CompilerIrFunctionList.Array seq)
-      (opt-call-memory-unresolved-count
-        (ir.compiler-ir-function-seq-to-list seq)
-        resolved
-        count)]))
+  (let
+    [index : i64 0]
+    [total : i64 count]
+    (begin
+      (while (< index functions.len)
+        (begin
+          (match (array-ref functions.slots index)
+            [(ir.CompilerIrFunction.Function name _ _ _ _)
+              (match (opt_i64_i64_map.get
+                (& resolved)
+                (ir.compiler-ir-symbol-id name))
+                [(opt_i64_i64_map.LookupFound _) unit]
+                [(opt_i64_i64_map.LookupMissing) (set! total (+ total 1))])])
+          (set! index (+ index 1))))
+      total)))
 
 ;; `out`, whether any residue row moved this round, and whether the round is
 ;; usable at all (see the `Unresolved` arm).
 (defenum OptCallMemoryOptimisticPass
   (Pass opt_i64_i64_map.Map bool bool))
 
-(define (opt-call-memory-optimistic-pass
+(define (opt-call-memory-optimistic-pass-from
   [type-segment-bases : i64]
-  [functions : ir.CompilerIrFunctionList]
+  [functions : ir.CompilerIrFunctionSeq]
   [resolved : opt_i64_i64_map.Map]
   [current : opt_i64_i64_map.Map]
   [function-set : opt_i64_i64_map.Map]
   [out : opt_i64_i64_map.Map (:consume)]
   [changed : bool]
-  [usable? : bool]) : OptCallMemoryOptimisticPass
-  (match functions
-    [(ir.CompilerIrFunctionList.Nil)
-      (OptCallMemoryOptimisticPass.Pass out changed usable?)]
-    [(ir.CompilerIrFunctionList.Cons func rest)
+  [usable? : bool]
+  [index : i64]) : OptCallMemoryOptimisticPass
+  (if (>= index functions.len)
+    (OptCallMemoryOptimisticPass.Pass out changed usable?)
+    (let
+      [func : ir.CompilerIrFunction (array-ref functions.slots index)]
       (match func
         [(ir.CompilerIrFunction.Function name _ _ _ _)
           (let
@@ -99393,15 +99338,16 @@
               [(opt_i64_i64_map.LookupFound summary)
                 (begin
                   (opt_i64_i64_map.insert-ref! (&mut out) name-id summary)
-                  (opt-call-memory-optimistic-pass
+                  (opt-call-memory-optimistic-pass-from
                     type-segment-bases
-                    (__tl-box-place rest)
+                    functions
                     resolved
                     current
                     function-set
                     out
                     changed
-                    usable?))]
+                    usable?
+                    (+ index 1)))]
               [(opt_i64_i64_map.LookupMissing)
                 (let
                   [previous : i64
@@ -99419,29 +99365,40 @@
                     [(OptCallMemoryCandidate.Known summary)
                       (begin
                         (opt_i64_i64_map.insert-ref! (&mut out) name-id summary)
-                        (opt-call-memory-optimistic-pass
+                        (opt-call-memory-optimistic-pass-from
                           type-segment-bases
-                          (__tl-box-place rest)
+                          functions
                           resolved
                           current
                           function-set
                           out
                           (or changed (not (= summary previous)))
-                          usable?))]))]))])]
-    [(ir.CompilerIrFunctionList.Array seq)
-      (opt-call-memory-optimistic-pass
-        type-segment-bases
-        (ir.compiler-ir-function-seq-to-list seq)
-        resolved
-        current
-        function-set
-        out
-        changed
-        usable?)]))
+                          usable?
+                          (+ index 1)))]))]))]))))
+
+(define (opt-call-memory-optimistic-pass
+  [type-segment-bases : i64]
+  [functions : ir.CompilerIrFunctionSeq]
+  [resolved : opt_i64_i64_map.Map]
+  [current : opt_i64_i64_map.Map]
+  [function-set : opt_i64_i64_map.Map]
+  [out : opt_i64_i64_map.Map (:consume)]
+  [changed : bool]
+  [usable? : bool]) : OptCallMemoryOptimisticPass
+  (opt-call-memory-optimistic-pass-from
+    type-segment-bases
+    functions
+    resolved
+    current
+    function-set
+    out
+    changed
+    usable?
+    0))
 
 (define (opt-call-memory-optimistic-fixed
   [type-segment-bases : i64]
-  [functions : ir.CompilerIrFunctionList]
+  [functions : ir.CompilerIrFunctionSeq]
   [resolved : opt_i64_i64_map.Map]
   [function-set : opt_i64_i64_map.Map]
   [current : opt_i64_i64_map.Map]
@@ -99475,7 +99432,7 @@
 
 (define (opt-call-memory-build
   [type-segment-bases : i64]
-  [functions : ir.CompilerIrFunctionList]
+  [functions : ir.CompilerIrFunctionSeq]
   [capacity : i64]) : opt_i64_i64_map.Map
   (let
     [function-set : opt_i64_i64_map.Map
@@ -99489,7 +99446,7 @@
         function-set
         (opt-call-memory-seed-builtins (opt_i64_i64_map.with-capacity capacity))
         capacity
-        (+ (opt-function-list-count functions) 1))]
+        (+ (opt-function-seq-count functions) 1))]
     (if (= (opt-call-memory-unresolved-count functions resolved 0) 0)
       resolved
       (opt-call-memory-optimistic-fixed
@@ -99873,21 +99830,23 @@
               (set! i (+ i 1))))
           acc))]))
 
+(define (opt-const-globals-disqualified-from
+  [disq : opt_i64_i64_map.Map]
+  [functions : ir.CompilerIrFunctionSeq]
+  [index : i64]) : opt_i64_i64_map.Map
+  (if (>= index functions.len)
+    disq
+    (match (array-ref functions.slots index)
+      [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
+        (opt-const-globals-disqualified-from
+          (opt-const-globals-disq-blocks disq blocks)
+          functions
+          (+ index 1))])))
+
 (define (opt-const-globals-disqualified
   [disq : opt_i64_i64_map.Map]
-  [functions : ir.CompilerIrFunctionList]) : opt_i64_i64_map.Map
-  (match functions
-    [(ir.CompilerIrFunctionList.Nil) disq]
-    [(ir.CompilerIrFunctionList.Cons func rest)
-      (match func
-        [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
-          (opt-const-globals-disqualified
-            (opt-const-globals-disq-blocks disq blocks)
-            (__tl-box-place rest))])]
-    [(ir.CompilerIrFunctionList.Array seq)
-      (opt-const-globals-disqualified
-        disq
-        (ir.compiler-ir-function-seq-to-list seq))]))
+  [functions : ir.CompilerIrFunctionSeq]) : opt_i64_i64_map.Map
+  (opt-const-globals-disqualified-from disq functions 0))
 
 ;; A constant only earns substitution when it fits a signed 32-bit immediate, so
 ;; the backend can fold it directly into the instruction (`and reg, $imm32`)
@@ -99965,7 +99924,7 @@
 
 (define (opt-const-divisors-build
   [globals : ir.CompilerIrGlobalSeq]
-  [functions : ir.CompilerIrFunctionList]) : opt_i64_i64_map.Map
+  [functions : ir.CompilerIrFunctionSeq]) : opt_i64_i64_map.Map
   (let
     [capacity : i64
       (opt-function-index-capacity (ir.compiler-ir-global-seq-count globals))]
@@ -100078,50 +100037,47 @@
           (opt-direct-call-clean-unconditional-global-bit))))))
 
 (define (opt-loop-bce-direct-call-clean-add-memory-clean
-  [functions : ir.CompilerIrFunctionList]
+  [functions : ir.CompilerIrFunctionSeq]
   [call-memory : opt_i64_i64_map.Map]
   [out : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
-  (match functions
-    [(ir.CompilerIrFunctionList.Nil) out]
-    [(ir.CompilerIrFunctionList.Cons func rest)
-      (match func
-        [(ir.CompilerIrFunction.Function name _ _ _ _)
-          (let
-            [name-id : i64 (ir.compiler-ir-symbol-id name)]
-            [_record : unit
-              (match (opt_i64_i64_map.get (& call-memory) name-id)
-                [(opt_i64_i64_map.LookupFound summary)
-                  (let
-                    [bits : i64 (opt-loop-bce-direct-call-clean-bits summary)]
-                    [existing : i64
-                      (match (opt_i64_i64_map.get (& out) name-id)
-                        [(opt_i64_i64_map.LookupFound old) old]
-                        [(opt_i64_i64_map.LookupMissing) 0])]
-                    (if (= (bit-or existing bits) existing)
-                      unit
-                      (opt_i64_i64_map.insert-ref!
-                        (&mut out)
-                        name-id
-                        (bit-or existing bits))))]
-                [(opt_i64_i64_map.LookupMissing) unit])]
-            (opt-loop-bce-direct-call-clean-add-memory-clean
-              (__tl-box-place rest)
-              call-memory
-              out))])]
-    [(ir.CompilerIrFunctionList.Array seq)
-      (opt-loop-bce-direct-call-clean-add-memory-clean
-        (ir.compiler-ir-function-seq-to-list seq)
-        call-memory
-        out)]))
+  (let
+    [index : i64 0]
+    (begin
+      (while (< index functions.len)
+        (begin
+          (match (array-ref functions.slots index)
+            [(ir.CompilerIrFunction.Function name _ _ _ _)
+              (let
+                [name-id : i64 (ir.compiler-ir-symbol-id name)]
+                [_record : unit
+                  (match (opt_i64_i64_map.get (& call-memory) name-id)
+                    [(opt_i64_i64_map.LookupFound summary)
+                      (let
+                        [bits : i64
+                          (opt-loop-bce-direct-call-clean-bits summary)]
+                        [existing : i64
+                          (match (opt_i64_i64_map.get (& out) name-id)
+                            [(opt_i64_i64_map.LookupFound old) old]
+                            [(opt_i64_i64_map.LookupMissing) 0])]
+                        (if (= (bit-or existing bits) existing)
+                          unit
+                          (opt_i64_i64_map.insert-ref!
+                            (&mut out)
+                            name-id
+                            (bit-or existing bits))))]
+                    [(opt_i64_i64_map.LookupMissing) unit])]
+                unit)])
+          (set! index (+ index 1))))
+      out)))
 
 (define (opt-loop-bce-build-summaries-with-direct-call-clean
   [type-segment-bases : i64]
-  [functions : ir.CompilerIrFunctionList]
+  [functions : ir.CompilerIrFunctionSeq]
   [build-direct-call-clean : bool]
   [build-call-memory : bool]) : OptLoopBceSummaries
   (let
     [capacity : i64
-      (opt-function-index-capacity (opt-function-list-count functions))]
+      (opt-function-index-capacity (opt-function-seq-count functions))]
     [argc-return : opt_i64_i64_map.Map
       (opt-loop-bce-argc-return-map
         type-segment-bases
@@ -100235,12 +100191,12 @@
 (define (opt-build-program-summaries
   [type-segment-bases : i64]
   [globals : ir.CompilerIrGlobalSeq]
-  [reachable-functions : ir.CompilerIrFunctionList]
+  [reachable-functions : ir.CompilerIrFunctionSeq]
   [level : i64]) : OptLoopBceSummaries
   (opt-loop-bce-summaries-set-global-cell
     (opt-loop-bce-summaries-set-const-divisors
       (if (<=
-        (opt-function-list-count reachable-functions)
+        (opt-function-seq-count reachable-functions)
         (opt-loop-bce-summary-function-limit))
         (opt-loop-bce-build-summaries-with-direct-call-clean
           type-segment-bases
@@ -101148,19 +101104,18 @@
 
 (define (opt-global-cell-scan-functions
   [scan : OptGlobalCellScan]
-  [functions : ir.CompilerIrFunctionList]) : OptGlobalCellScan
-  (match functions
-    [(ir.CompilerIrFunctionList.Nil) scan]
-    [(ir.CompilerIrFunctionList.Cons func rest)
-      (match func
-        [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
-          (opt-global-cell-scan-functions
-            (opt-global-cell-scan-blocks scan blocks false)
-            (__tl-box-place rest))])]
-    [(ir.CompilerIrFunctionList.Array seq)
-      (opt-global-cell-scan-functions
-        scan
-        (ir.compiler-ir-function-seq-to-list seq))]))
+  [functions : ir.CompilerIrFunctionSeq]) : OptGlobalCellScan
+  (let
+    [index : i64 0]
+    [out : OptGlobalCellScan scan]
+    (begin
+      (while (< index functions.len)
+        (begin
+          (match (array-ref functions.slots index)
+            [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
+              (set! out (opt-global-cell-scan-blocks out blocks false))])
+          (set! index (+ index 1))))
+      out)))
 
 ;; A global's cell qualifies for entry-load hoisting only when it is exactly
 ;; one machine word: the entry load is a single `mov %g, @G` whose Mov type is
@@ -101550,56 +101505,65 @@
 (defenum OptGlobalModRefPass
   (Pass opt_i64_i64_map.Map bool))
 
+(define (opt-global-mod-ref-pass-from
+  [functions : ir.CompilerIrFunctionSeq]
+  [index : opt_i64_i64_map.Map]
+  [current : opt_i64_i64_map.Map]
+  [function-set : opt_i64_i64_map.Map]
+  [out : opt_i64_i64_map.Map (:consume)]
+  [changed : bool]
+  [position : i64]) : OptGlobalModRefPass
+  (if (>= position functions.len)
+    (OptGlobalModRefPass.Pass out changed)
+    (match (array-ref functions.slots position)
+      [(ir.CompilerIrFunction.Function name _ _ _ blocks)
+        (let
+          [name-id : i64 (ir.compiler-ir-symbol-id name)]
+          [previous : i64
+            (match (opt_i64_i64_map.get (& current) name-id)
+              [(opt_i64_i64_map.LookupFound mask) mask]
+              [(opt_i64_i64_map.LookupMissing) 0])]
+          [mask : i64
+            (opt-global-mod-ref-blocks-mask
+              index
+              current
+              function-set
+              blocks
+              previous)]
+          [next : opt_i64_i64_map.Map out]
+          (begin
+            (opt_i64_i64_map.insert-ref! (&mut next) name-id mask)
+            (opt-global-mod-ref-pass-from
+              functions
+              index
+              current
+              function-set
+              next
+              (or changed (not (= mask previous)))
+              (+ position 1))))])))
+
 (define (opt-global-mod-ref-pass
-  [functions : ir.CompilerIrFunctionList]
+  [functions : ir.CompilerIrFunctionSeq]
   [index : opt_i64_i64_map.Map]
   [current : opt_i64_i64_map.Map]
   [function-set : opt_i64_i64_map.Map]
   [out : opt_i64_i64_map.Map (:consume)]
   [changed : bool]) : OptGlobalModRefPass
-  (match functions
-    [(ir.CompilerIrFunctionList.Nil) (OptGlobalModRefPass.Pass out changed)]
-    [(ir.CompilerIrFunctionList.Cons func rest)
-      (match func
-        [(ir.CompilerIrFunction.Function name _ _ _ blocks)
-          (let
-            [name-id : i64 (ir.compiler-ir-symbol-id name)]
-            [previous : i64
-              (match (opt_i64_i64_map.get (& current) name-id)
-                [(opt_i64_i64_map.LookupFound mask) mask]
-                [(opt_i64_i64_map.LookupMissing) 0])]
-            [mask : i64
-              (opt-global-mod-ref-blocks-mask
-                index
-                current
-                function-set
-                blocks
-                previous)]
-            [next : opt_i64_i64_map.Map out]
-            (begin
-              (opt_i64_i64_map.insert-ref! (&mut next) name-id mask)
-              (opt-global-mod-ref-pass
-                (__tl-box-place rest)
-                index
-                current
-                function-set
-                next
-                (or changed (not (= mask previous))))))])]
-    [(ir.CompilerIrFunctionList.Array seq)
-      (opt-global-mod-ref-pass
-        (ir.compiler-ir-function-seq-to-list seq)
-        index
-        current
-        function-set
-        out
-        changed)]))
+  (opt-global-mod-ref-pass-from
+    functions
+    index
+    current
+    function-set
+    out
+    changed
+    0))
 
 (defenum OptGlobalModRefWrites
   (No)
   (Some opt_i64_i64_map.Map))
 
 (define (opt-global-mod-ref-fixed
-  [functions : ir.CompilerIrFunctionList]
+  [functions : ir.CompilerIrFunctionSeq]
   [index : opt_i64_i64_map.Map]
   [function-set : opt_i64_i64_map.Map]
   [current : opt_i64_i64_map.Map]
@@ -101634,12 +101598,12 @@
 ;; globals fit the packed row.
 (define (opt-global-mod-ref-build
   [globals : ir.CompilerIrGlobalSeq]
-  [functions : ir.CompilerIrFunctionList]
+  [functions : ir.CompilerIrFunctionSeq]
   [stores : opt_i64_i64_map.Map]
   [addr-taken : opt_i64_i64_map.Map]
   [capacity : i64]) : OptGlobalModRef
   (let
-    [count : i64 (opt-function-list-count functions)]
+    [count : i64 (opt-function-seq-count functions)]
     (if (or
       (> (opt_i64_i64_map.len (& addr-taken)) 0)
       (> count (opt-loop-bce-summary-function-limit)))
@@ -102384,37 +102348,28 @@
   [type-segment-bases : i64]
   [cand : opt_i64_i64_map.Map]
   [fnset : opt_i64_i64_map.Map]
-  [functions : ir.CompilerIrFunctionList]
+  [functions : ir.CompilerIrFunctionSeq]
   [params : (&mut params opt_i64_i64_map.Map)]
   [bad : (&mut bad opt_i64_i64_map.Map)]
   [changed : bool]) : bool
-  (match functions
-    [(ir.CompilerIrFunctionList.Nil) changed]
-    [(ir.CompilerIrFunctionList.Cons func rest)
-      (opt-global-frozen-round
-        type-segment-bases
-        cand
-        fnset
-        (__tl-box-place rest)
-        params
-        bad
-        (opt-global-frozen-round-function
-          type-segment-bases
-          cand
-          fnset
-          func
-          params
-          bad
-          changed))]
-    [(ir.CompilerIrFunctionList.Array seq)
-      (opt-global-frozen-round
-        type-segment-bases
-        cand
-        fnset
-        (ir.compiler-ir-function-seq-to-list seq)
-        params
-        bad
-        changed)]))
+  (let
+    [index : i64 0]
+    [updated : bool changed]
+    (begin
+      (while (< index functions.len)
+        (begin
+          (set!
+            updated
+            (opt-global-frozen-round-function
+              type-segment-bases
+              cand
+              fnset
+              (array-ref functions.slots index)
+              params
+              bad
+              updated))
+          (set! index (+ index 1))))
+      updated)))
 
 ;; Rounds needed: one per call-graph edge a box pointer travels. The cap is a
 ;; compile-time bound, and exhausting it DISCARDS the whole set rather than
@@ -102427,7 +102382,7 @@
   [type-segment-bases : i64]
   [cand : opt_i64_i64_map.Map]
   [fnset : opt_i64_i64_map.Map]
-  [functions : ir.CompilerIrFunctionList]
+  [functions : ir.CompilerIrFunctionSeq]
   [params : (&mut params opt_i64_i64_map.Map)]
   [bad : (&mut bad opt_i64_i64_map.Map)]
   [remaining : i64]) : bool
@@ -102753,7 +102708,7 @@
 ;; The copy that fills a fresh box: its SOURCE decides whether what lands
 ;; inside is private (obligation 3).
 (define (opt-global-frozen-writer-copy-ok
-  [functions : ir.CompilerIrFunctionList]
+  [functions : ir.CompilerIrFunctionSeq]
   [derived : OptGlobalFrozenLevels]
   [call-dsts : opt_i64_i64_map.Map]
   [instr : ir.CompilerIrInstr]
@@ -102785,7 +102740,7 @@
     [_ unit]))
 
 (define (opt-global-frozen-writer-uses-seq-from
-  [functions : ir.CompilerIrFunctionList]
+  [functions : ir.CompilerIrFunctionSeq]
   [derived : OptGlobalFrozenLevels]
   [call-dsts : opt_i64_i64_map.Map]
   [instrs : ir.CompilerIrInstrSeq]
@@ -102814,7 +102769,7 @@
           bad)))))
 
 (define (opt-global-frozen-writer-uses-blocks
-  [functions : ir.CompilerIrFunctionList]
+  [functions : ir.CompilerIrFunctionSeq]
   [derived : OptGlobalFrozenLevels]
   [call-dsts : opt_i64_i64_map.Map]
   [blocks : ir.CompilerIrBlockList]
@@ -102869,7 +102824,7 @@
           bad))]))
 
 (define (opt-global-frozen-writer-check-function
-  [functions : ir.CompilerIrFunctionList]
+  [functions : ir.CompilerIrFunctionSeq]
   [cand : opt_i64_i64_map.Map]
   [owner : i64]
   [func : ir.CompilerIrFunction]
@@ -102919,22 +102874,28 @@
   256)
 
 (define (opt-global-frozen-find-function
-  [functions : ir.CompilerIrFunctionList]
+  [functions : ir.CompilerIrFunctionSeq]
   [name : i64]) : OptMaybeFunction
-  (match functions
-    [(ir.CompilerIrFunctionList.Nil) (OptMaybeFunction.No)]
-    [(ir.CompilerIrFunctionList.Cons func rest)
-      (match func
-        [(ir.CompilerIrFunction.Function func-name _ _ _ _)
-          (if (=
-            (ir.compiler-ir-symbol-id func-name)
-            (ir.compiler-ir-symbol-id name))
-            (OptMaybeFunction.Some func)
-            (opt-global-frozen-find-function (__tl-box-place rest) name))])]
-    [(ir.CompilerIrFunctionList.Array seq)
-      (opt-global-frozen-find-function
-        (ir.compiler-ir-function-seq-to-list seq)
-        name)]))
+  (let
+    [index : i64 0]
+    [found : OptMaybeFunction (OptMaybeFunction.No)]
+    [done : bool false]
+    (begin
+      (while (and (< index functions.len) (not done))
+        (let
+          [func : ir.CompilerIrFunction (array-ref functions.slots index)]
+          (begin
+            (match func
+              [(ir.CompilerIrFunction.Function func-name _ _ _ _)
+                (when
+                  (=
+                    (ir.compiler-ir-symbol-id func-name)
+                    (ir.compiler-ir-symbol-id name))
+                  (begin
+                    (set! found (OptMaybeFunction.Some func))
+                    (set! done true)))])
+            (set! index (+ index 1)))))
+      found)))
 
 ;; Instruction forms that transfer control somewhere this walk cannot resolve.
 (define (opt-global-frozen-opaque-call? [instr : ir.CompilerIrInstr]) : bool
@@ -102949,7 +102910,7 @@
     [_ false]))
 
 (define (opt-global-frozen-inert-instr
-  [functions : ir.CompilerIrFunctionList]
+  [functions : ir.CompilerIrFunctionSeq]
   [visited : (&mut visited opt_i64_i64_map.Map)]
   [state : OptGlobalFrozenInert]
   [instr : ir.CompilerIrInstr]) : OptGlobalFrozenInert
@@ -102967,7 +102928,7 @@
         [_ state]))))
 
 (define (opt-global-frozen-inert-seq-from
-  [functions : ir.CompilerIrFunctionList]
+  [functions : ir.CompilerIrFunctionSeq]
   [visited : (&mut visited opt_i64_i64_map.Map)]
   [state : OptGlobalFrozenInert]
   [instrs : ir.CompilerIrInstrSeq]
@@ -102986,7 +102947,7 @@
       (+ index 1))))
 
 (define (opt-global-frozen-inert-blocks
-  [functions : ir.CompilerIrFunctionList]
+  [functions : ir.CompilerIrFunctionSeq]
   [visited : (&mut visited opt_i64_i64_map.Map)]
   [state : OptGlobalFrozenInert]
   [blocks : ir.CompilerIrBlockList]) : OptGlobalFrozenInert
@@ -103015,7 +102976,7 @@
           (ir.compiler-ir-block-seq-to-list seq))])))
 
 (define (opt-global-frozen-inert-function
-  [functions : ir.CompilerIrFunctionList]
+  [functions : ir.CompilerIrFunctionSeq]
   [visited : (&mut visited opt_i64_i64_map.Map)]
   [state : OptGlobalFrozenInert]
   [name : i64]) : OptGlobalFrozenInert
@@ -103055,7 +103016,7 @@
                       blocks)))])]))]))
 
 (define (opt-global-frozen-inert-closure?
-  [functions : ir.CompilerIrFunctionList]
+  [functions : ir.CompilerIrFunctionSeq]
   [name : i64]) : bool
   (let
     [visited : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 16)]
@@ -103126,47 +103087,37 @@
 ;; One walk over the program: every function's cell writes, plus the
 ;; initializer return of the function that is some candidate's initializer.
 (define (opt-global-frozen-writer-scan-functions
-  [functions : ir.CompilerIrFunctionList]
-  [all : ir.CompilerIrFunctionList]
+  [functions : ir.CompilerIrFunctionSeq]
+  [all : ir.CompilerIrFunctionSeq]
   [cand : OptGlobalFrozenCandidates]
   [seen : (&mut seen opt_i64_i64_map.Map)]
   [bad : (&mut bad opt_i64_i64_map.Map)]) : unit
-  (match functions
-    [(ir.CompilerIrFunctionList.Nil) unit]
-    [(ir.CompilerIrFunctionList.Cons func rest)
-      (begin
-        (match func
-          [(ir.CompilerIrFunction.Function name _ _ _ _)
-            (let
-              [owner : i64
-                (match (opt_i64_i64_map.get
-                  (& cand.inits)
-                  (ir.compiler-ir-symbol-id name))
-                  [(opt_i64_i64_map.LookupFound encoded) (- encoded 1)]
-                  [(opt_i64_i64_map.LookupMissing) -1])]
-              (begin
-                (if (< owner 0)
-                  unit
-                  (opt_i64_i64_map.insert-ref! seen owner 1))
-                (opt-global-frozen-writer-check-function
-                  all
-                  cand.map
-                  owner
-                  func
-                  bad)))])
-        (opt-global-frozen-writer-scan-functions
-          (__tl-box-place rest)
-          all
-          cand
-          seen
-          bad))]
-    [(ir.CompilerIrFunctionList.Array seq)
-      (opt-global-frozen-writer-scan-functions
-        (ir.compiler-ir-function-seq-to-list seq)
-        all
-        cand
-        seen
-        bad)]))
+  (let
+    [index : i64 0]
+    (while (< index functions.len)
+      (let
+        [func : ir.CompilerIrFunction (array-ref functions.slots index)]
+        (begin
+          (match func
+            [(ir.CompilerIrFunction.Function name _ _ _ _)
+              (let
+                [owner : i64
+                  (match (opt_i64_i64_map.get
+                    (& cand.inits)
+                    (ir.compiler-ir-symbol-id name))
+                    [(opt_i64_i64_map.LookupFound encoded) (- encoded 1)]
+                    [(opt_i64_i64_map.LookupMissing) -1])]
+                (begin
+                  (if (< owner 0)
+                    unit
+                    (opt_i64_i64_map.insert-ref! seen owner 1))
+                  (opt-global-frozen-writer-check-function
+                    all
+                    cand.map
+                    owner
+                    func
+                    bad)))])
+          (set! index (+ index 1)))))))
 
 (define (opt-global-frozen-admit
   [cand : OptGlobalFrozenCandidates]
@@ -103200,11 +103151,11 @@
 (define (opt-global-frozen-build
   [type-segment-bases : i64]
   [globals : ir.CompilerIrGlobalSeq]
-  [functions : ir.CompilerIrFunctionList]
+  [functions : ir.CompilerIrFunctionSeq]
   [addr-taken : opt_i64_i64_map.Map]
   [capacity : i64]) : opt_i64_i64_map.Map
   (if (>
-    (opt-function-list-count functions)
+    (opt-function-seq-count functions)
     (opt-loop-bce-summary-function-limit))
     (opt_i64_i64_map.with-capacity 1)
     (let
@@ -103625,19 +103576,18 @@
 
 (define (opt-nonneg-count-functions
   [candidates : opt_i64_i64_map.Map]
-  [functions : ir.CompilerIrFunctionList]) : i64
-  (match functions
-    [(ir.CompilerIrFunctionList.Nil) 0]
-    [(ir.CompilerIrFunctionList.Cons func rest)
-      (match func
-        [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
-          (+
-            (opt-nonneg-count-blocks candidates blocks)
-            (opt-nonneg-count-functions candidates (__tl-box-place rest)))])]
-    [(ir.CompilerIrFunctionList.Array seq)
-      (opt-nonneg-count-functions
-        candidates
-        (ir.compiler-ir-function-seq-to-list seq))]))
+  [functions : ir.CompilerIrFunctionSeq]) : i64
+  (let
+    [index : i64 0]
+    [total : i64 0]
+    (begin
+      (while (< index functions.len)
+        (begin
+          (match (array-ref functions.slots index)
+            [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
+              (set! total (+ total (opt-nonneg-count-blocks candidates blocks)))])
+          (set! index (+ index 1))))
+      total)))
 
 (define (opt-nonneg-scan-blocks!
   [type-segment-bases : i64]
@@ -103688,46 +103638,37 @@
   [cell : OptGlobalCellSummary]
   [candidates : opt_i64_i64_map.Map]
   [edges : OptNonnegEdges]
-  [functions : ir.CompilerIrFunctionList]) : unit
-  (match functions
-    [(ir.CompilerIrFunctionList.Nil) unit]
-    [(ir.CompilerIrFunctionList.Cons func rest)
-      (match func
-        [(ir.CompilerIrFunction.Function _ params _ frame blocks)
-          (let
-            [defs : (__tl_dyn-array OptBoolBranchDef)
-              (array.make-array OptBoolBranchDef frame)]
-            [counts : (__tl_dyn-array i64) (array.make-array i64 frame)]
-            [param-header : (__tl_dyn-array bool) (array.make-array bool frame)]
-            [_defs : unit (opt-nonneg-defs-fill-blocks! defs counts blocks)]
-            [_params : unit
-              (opt-nonneg-param-header-fill!
-                type-segment-bases
-                params
-                param-header)]
-            (begin
-              (opt-nonneg-scan-blocks!
-                type-segment-bases
-                cell
-                param-header
-                defs
-                counts
-                candidates
-                edges
-                blocks)
-              (opt-nonneg-scan-functions!
-                type-segment-bases
-                cell
-                candidates
-                edges
-                (__tl-box-place rest))))])]
-    [(ir.CompilerIrFunctionList.Array seq)
-      (opt-nonneg-scan-functions!
-        type-segment-bases
-        cell
-        candidates
-        edges
-        (ir.compiler-ir-function-seq-to-list seq))]))
+  [functions : ir.CompilerIrFunctionSeq]) : unit
+  (let
+    [index : i64 0]
+    (while (< index functions.len)
+      (let
+        [func : ir.CompilerIrFunction (array-ref functions.slots index)]
+        (begin
+          (match func
+            [(ir.CompilerIrFunction.Function _ params _ frame blocks)
+              (let
+                [defs : (__tl_dyn-array OptBoolBranchDef)
+                  (array.make-array OptBoolBranchDef frame)]
+                [counts : (__tl_dyn-array i64) (array.make-array i64 frame)]
+                [param-header : (__tl_dyn-array bool)
+                  (array.make-array bool frame)]
+                [_defs : unit (opt-nonneg-defs-fill-blocks! defs counts blocks)]
+                [_params : unit
+                  (opt-nonneg-param-header-fill!
+                    type-segment-bases
+                    params
+                    param-header)]
+                (opt-nonneg-scan-blocks!
+                  type-segment-bases
+                  cell
+                  param-header
+                  defs
+                  counts
+                  candidates
+                  edges
+                  blocks))])
+          (set! index (+ index 1)))))))
 
 ;; Seed: `i64` globals with a non-negative literal initializer and no taken
 ;; address.
@@ -103805,7 +103746,7 @@
 (define (opt-nonneg-globals-build
   [type-segment-bases : i64]
   [globals : ir.CompilerIrGlobalSeq]
-  [functions : ir.CompilerIrFunctionList]
+  [functions : ir.CompilerIrFunctionSeq]
   [cell : OptGlobalCellSummary]) : opt_i64_i64_map.Map
   (let
     [count : i64 (ir.compiler-ir-global-seq-count globals)]
@@ -103847,7 +103788,7 @@
 (define (opt-global-cell-summary-build
   [type-segment-bases : i64]
   [globals : ir.CompilerIrGlobalSeq]
-  [functions : ir.CompilerIrFunctionList]) : OptGlobalCellSummary
+  [functions : ir.CompilerIrFunctionSeq]) : OptGlobalCellSummary
   (let
     [count : i64 (ir.compiler-ir-global-seq-count globals)]
     (if (= count 0)
@@ -105268,7 +105209,7 @@
           (cfg compile-profile (compiler-opt-profile-start profile-state))
           (opt-inline-checked-set-active! true)
           (let
-            [reachable-functions : ir.CompilerIrFunctionList
+            [reachable-functions : ir.CompilerIrFunctionSeq
               (opt-inline-program-functions type-segment-bases functions level)]
             (begin
               (cfg
@@ -105283,7 +105224,7 @@
                     externs)]
                 [pruned-globals : ir.CompilerIrGlobalSeq
                   (opt-pruned-program-globals pruned)]
-                [pruned-functions : ir.CompilerIrFunctionList
+                [pruned-functions : ir.CompilerIrFunctionSeq
                   (opt-pruned-program-functions pruned)]
                 [summaries : OptLoopBceSummaries
                   (opt-loop-bce-summaries-set-profile-state
@@ -105298,8 +105239,8 @@
                     compile-profile
                     (compiler-opt-load-cse-profile-reset profile-state)
                     unit)]
-                [optimized-functions : ir.CompilerIrFunctionList
-                  (optimize-function-list-with-level-and-summaries
+                [optimized-functions : ir.CompilerIrFunctionSeq
+                  (optimize-function-seq-with-level-and-summaries
                     pools
                     type-segment-bases
                     pruned-functions
@@ -105331,10 +105272,10 @@
                         externs)]
                     [final-globals : ir.CompilerIrGlobalSeq
                       (opt-pruned-program-globals final-pruned)]
-                    [final-functions : ir.CompilerIrFunctionList
+                    [final-functions : ir.CompilerIrFunctionSeq
                       (opt-pruned-program-functions final-pruned)]
-                    [late-functions : ir.CompilerIrFunctionList
-                      (opt-late-function-list-with-level
+                    [late-functions : ir.CompilerIrFunctionSeq
+                      (opt-late-function-seq-with-level
                         pools
                         type-segment-bases
                         final-functions
@@ -105345,7 +105286,7 @@
                         (compiler-opt-profile-finish profile-state "post_prune"))
                       (ir.CompilerIrProgram.Program
                         final-globals
-                        (ir.compiler-ir-function-list-compact late-functions)
+                        late-functions
                         externs)))))))))]))
 
 (define (optimize-program-with-reader-context-and-level
@@ -105640,19 +105581,21 @@
 (define (opt-remap-spans-functions
   [instr-entries : ir.CompilerSourceSpansInstrEntryList]
   [out : ir.CompilerSourceSpans]
-  [funcs : ir.CompilerIrFunctionList]) : ir.CompilerSourceSpans
-  (match funcs
-    [(ir.CompilerIrFunctionList.Nil) out]
-    [(ir.CompilerIrFunctionList.Cons func rest)
-      (opt-remap-spans-functions
-        instr-entries
-        (opt-remap-spans-function instr-entries out func)
-        (__tl-box-place rest))]
-    [(ir.CompilerIrFunctionList.Array seq)
-      (opt-remap-spans-functions
-        instr-entries
-        out
-        (ir.compiler-ir-function-seq-to-list seq))]))
+  [funcs : ir.CompilerIrFunctionSeq]) : ir.CompilerSourceSpans
+  (let
+    [index : i64 0]
+    [spans : ir.CompilerSourceSpans out]
+    (begin
+      (while (< index funcs.len)
+        (begin
+          (set!
+            spans
+            (opt-remap-spans-function
+              instr-entries
+              spans
+              (array-ref funcs.slots index)))
+          (set! index (+ index 1))))
+      spans)))
 
 (define (opt-remap-spans-fast-path? [source-spans : ir.CompilerSourceSpans]) : bool
   (and
@@ -105692,7 +105635,7 @@
           ;; Everything the inline stage builds -- the devirtualized function
           ;; index, the call graph, the SCC and census tables, every rewritten
           ;; caller body, and every superseded spans array -- is dead once
-          ;; `optimize-function-list-with-level-and-summaries` below has escaped
+          ;; `optimize-function-seq-with-level-and-summaries` below has escaped
           ;; each optimized function into this arena. Running the stage in a
           ;; dedicated arena lets that whole generation be released there
           ;; instead of riding the compiler-entry arena through the backend.
@@ -105752,14 +105695,14 @@
                         externs)]
                     [pruned-globals : ir.CompilerIrGlobalSeq
                       (opt-pruned-program-globals pruned)]
-                    [pruned-functions : ir.CompilerIrFunctionList
+                    [pruned-functions : ir.CompilerIrFunctionSeq
                       (opt-pruned-program-functions pruned)]
                     ;; Copy the surviving functions out of the inline arena and
                     ;; release it before the loop; see `opt-optimizer-input-carrier`.
                     ;; `pruned-globals` names the driver's globals, which live in
                     ;; the lower-IR arena and are untouched by this release.
                     [carrier : i64 (opt-optimizer-input-carrier level)]
-                    [optimizer-functions : ir.CompilerIrFunctionList
+                    [optimizer-functions : ir.CompilerIrFunctionSeq
                       (opt-optimizer-input-carry pools carrier pruned-functions)]
                     [_release-inline-arena-early : unit
                       (if (= carrier 0)
@@ -105782,8 +105725,8 @@
                         compile-profile
                         (compiler-opt-load-cse-profile-reset profile-state)
                         unit)]
-                    [optimized-functions : ir.CompilerIrFunctionList
-                      (optimize-function-list-with-level-and-summaries
+                    [optimized-functions : ir.CompilerIrFunctionSeq
+                      (optimize-function-seq-with-level-and-summaries
                         pools
                         type-segment-bases
                         optimizer-functions
@@ -105839,10 +105782,10 @@
                             externs)]
                         [final-globals : ir.CompilerIrGlobalSeq
                           (opt-pruned-program-globals final-pruned)]
-                        [final-functions : ir.CompilerIrFunctionList
+                        [final-functions : ir.CompilerIrFunctionSeq
                           (opt-pruned-program-functions final-pruned)]
-                        [late-functions : ir.CompilerIrFunctionList
-                          (opt-late-function-list-with-level
+                        [late-functions : ir.CompilerIrFunctionSeq
+                          (opt-late-function-seq-with-level
                             pools
                             type-segment-bases
                             final-functions
@@ -105850,8 +105793,7 @@
                         [optimized : ir.CompilerIrProgram
                           (ir.CompilerIrProgram.Program
                             final-globals
-                            (ir.compiler-ir-function-list-compact
-                              late-functions)
+                            late-functions
                             externs)]
                         (begin
                           (cfg
@@ -108549,39 +108491,39 @@
                                   (arena.tl_arena_set enclosing))]
                               escaped)))])])])])))))
 
-(define (opt-late-function-list-escaping
+(define (opt-late-function-seq-escaping
   [pools : ast.AstNodePoolContext]
   [type-segment-bases : i64]
-  [functions : ir.CompilerIrFunctionList]
-  [scratch : i64]) : ir.CompilerIrFunctionList
-  (match functions
-    [(ir.CompilerIrFunctionList.Nil) (ir.CompilerIrFunctionList.Nil)]
-    [(ir.CompilerIrFunctionList.Cons func rest)
-      (ir.compiler-ir-function-cons
-        (opt-late-function-escaping pools type-segment-bases func scratch)
-        (opt-late-function-list-escaping
-          pools
-          type-segment-bases
-          (__tl-box-place rest)
-          scratch))]
-    [(ir.CompilerIrFunctionList.Array seq)
-      (opt-late-function-list-escaping
-        pools
-        type-segment-bases
-        (ir.compiler-ir-function-seq-to-list seq)
-        scratch)]))
+  [functions : ir.CompilerIrFunctionSeq]
+  [scratch : i64]) : ir.CompilerIrFunctionSeq
+  (let
+    [index : i64 0]
+    [builder : ir.CompilerIrFunctionBuilder
+      (ir.compiler-ir-function-builder-with-capacity functions.len)]
+    (begin
+      (while (< index functions.len)
+        (begin
+          (ir.compiler-ir-function-builder-push!
+            (&mut builder)
+            (opt-late-function-escaping
+              pools
+              type-segment-bases
+              (array-ref functions.slots index)
+              scratch))
+          (set! index (+ index 1))))
+      (ir.compiler-ir-function-builder-to-seq builder))))
 
-(define (opt-late-function-list-with-level
+(define (opt-late-function-seq-with-level
   [pools : ast.AstNodePoolContext]
   [type-segment-bases : i64]
-  [functions : ir.CompilerIrFunctionList]
-  [level : i64]) : ir.CompilerIrFunctionList
+  [functions : ir.CompilerIrFunctionSeq]
+  [level : i64]) : ir.CompilerIrFunctionSeq
   (if (< level 2)
     functions
     (let
       [scratch : arena.Arena (arena.make)]
-      [result : ir.CompilerIrFunctionList
-        (opt-late-function-list-escaping
+      [result : ir.CompilerIrFunctionSeq
+        (opt-late-function-seq-escaping
           pools
           type-segment-bases
           functions

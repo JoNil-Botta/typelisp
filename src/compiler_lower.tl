@@ -1721,7 +1721,7 @@
   (Err String))
 
 (defenum ResultLowerFunction
-  (Ok ir.CompilerIrFunctionList ir.CompilerSourceSpans)
+  (Ok ir.CompilerIrFunctionSeq ir.CompilerSourceSpans)
   (Err (Box cdiag.CompilerDiagnostic)))
 
 ;; `lower-decls` also threads the `CompilerSourceSpans` provenance side table
@@ -1729,7 +1729,7 @@
 ;; so each lowered function's source span is recorded alongside the IR.
 (defstruct LowerDeclsSuccess
   (globals ir.CompilerIrGlobalSeq)
-  (functions ir.CompilerIrFunctionList)
+  (functions ir.CompilerIrFunctionSeq)
   (externs ir.CompilerIrExternSeq)
   (spans ir.CompilerSourceSpans))
 
@@ -1738,7 +1738,7 @@
   (Err (Box cdiag.CompilerDiagnostic)))
 
 (defenum LowerDispatchDecl
-  (Decl ir.CompilerIrGlobal ir.CompilerIrFunctionList ir.CompilerSourceSpans))
+  (Decl ir.CompilerIrGlobal ir.CompilerIrFunctionSeq ir.CompilerSourceSpans))
 
 (defenum ResultLowerDispatchDecl
   (Ok (Box LowerDispatchDecl))
@@ -3527,13 +3527,13 @@
         (begin
           (compiler-lower-profile-counter
             (str_cat.str-cat "ir." point ".functions")
-            (ir.compiler-ir-function-list-count functions))
+            (ir.compiler-ir-function-seq-count functions))
           (compiler-lower-profile-counter
             (str_cat.str-cat "ir." point ".blocks")
-            (ir.compiler-ir-function-list-block-count functions))
+            (ir.compiler-ir-function-seq-block-count functions))
           (compiler-lower-profile-counter
             (str_cat.str-cat "ir." point ".instructions")
-            (ir.compiler-ir-function-list-instruction-count functions)))])))
+            (ir.compiler-ir-function-seq-instruction-count functions)))])))
 
 (cfg
   compile-profile
@@ -16874,7 +16874,7 @@
 
 (define (lower-state-build-functions-with
   [state : LowerState]
-  [func : ir.CompilerIrFunction]) : ir.CompilerIrFunctionList
+  [func : ir.CompilerIrFunction]) : ir.CompilerIrFunctionSeq
   (match state
     [(LowerState.State data)
       (let
@@ -16884,16 +16884,16 @@
           (ir.CompilerIrFunctionBuilder functions.slots functions.len)]
         (begin
           (ir.compiler-ir-function-builder-push! (&mut out) func)
-          (ir.compiler-ir-function-builder-to-list out)))]))
+          (ir.compiler-ir-function-builder-to-seq out)))]))
 
 (define (lower-state-add-functions
   [state : LowerState (:consume)]
-  [new-functions : ir.CompilerIrFunctionList]
+  [new-functions : ir.CompilerIrFunctionSeq]
   [new-spans : ir.CompilerSourceSpans]) : LowerState
   (match state
     [(LowerState.State data)
       (begin
-        (ir.compiler-ir-function-builder-append-list!
+        (ir.compiler-ir-function-builder-append-seq!
           (&mut (__tl-project-field (__tl-box-place data) functions))
           new-functions)
         (__tl-project-set-field (__tl-box-place data) spans (box new-spans))
@@ -60164,7 +60164,7 @@
           (lower-spmd-package-index-name (& params) index-param)]
         (match registration
           [(LowerSpmdPackageSymbolRegistration.Existing)
-            (ResultLowerFunction.Ok ir.CompilerIrFunctionList.Nil spans)]
+            (ResultLowerFunction.Ok (ir.compiler-ir-function-seq-empty) spans)]
           [(LowerSpmdPackageSymbolRegistration.Collision collision-error)
             (ResultLowerFunction.Err (box (lower-diagnostic collision-error)))]
           [(LowerSpmdPackageSymbolRegistration.New)
@@ -60247,7 +60247,7 @@
     (>= index limit)
     (>= index (ast.ast-spmd-specialization-list-len specializations)))
     (ResultLowerFunction.Ok
-      (ir.compiler-ir-function-builder-to-list functions)
+      (ir.compiler-ir-function-builder-to-seq functions)
       spans)
     (let
       [fallback : ast.AstSpmdSpecialization
@@ -60275,7 +60275,7 @@
           (let
             [next-functions : ir.CompilerIrFunctionBuilder functions]
             (begin
-              (ir.compiler-ir-function-builder-append-list!
+              (ir.compiler-ir-function-builder-append-seq!
                 (&mut next-functions)
                 lowered)
               (lower-spmd-package-specializations-from
@@ -60315,7 +60315,7 @@
         (compiler-lower-state-from-name-cache names))]
     (match callable
       [(ast.AstSpmdCallable.No)
-        (ResultLowerFunction.Ok ir.CompilerIrFunctionList.Nil spans)]
+        (ResultLowerFunction.Ok (ir.compiler-ir-function-seq-empty) spans)]
       [(ast.AstSpmdCallable.Callable specializations)
         (if (= (string.string-length package-name) 0)
           (ResultLowerFunction.Err
@@ -67817,11 +67817,11 @@
     (compiler-lower-arena-state-release-scratch! state)
     (compiler-lower-arena-state-release-ir! state)))
 
-(define (lower-function-list-escape-to-ir-arena
-  [functions : ir.CompilerIrFunctionList]) : ir.CompilerIrFunctionList
+(define (lower-function-seq-escape-to-ir-arena
+  [functions : ir.CompilerIrFunctionSeq]) : ir.CompilerIrFunctionSeq
   (in-arena
     (arena.Arena (lower-ir-arena-get))
-    (ir.compiler-ir-clone-function-list
+    (ir.compiler-ir-clone-function-seq
       (ast.ast-node-pool-reader-context-current)
       functions)))
 
@@ -67865,8 +67865,8 @@
           mode)
           [(ResultLowerFunction.Ok fns function-spans)
             (let
-              [escaped-fns : ir.CompilerIrFunctionList
-                (lower-function-list-escape-to-ir-arena fns)]
+              [escaped-fns : ir.CompilerIrFunctionSeq
+                (lower-function-seq-escape-to-ir-arena fns)]
               ;; The IR function clones go to the dedicated lowered-IR
               ;; arena (released by the driver after optimization); the
               ;; spans side-table is rebuilt in the enclosing arena since
@@ -68211,7 +68211,7 @@
   [mode : CompilerLowerMode]) : ResultLowerFunction
   (match cleanup
     [(ast.AstStructCleanup.No)
-      (ResultLowerFunction.Ok ir.CompilerIrFunctionList.Nil spans)]
+      (ResultLowerFunction.Ok (ir.compiler-ir-function-seq-empty) spans)]
     [(ast.AstStructCleanup.Fn _)
       (lower-struct-cleanup-function
         ctx
@@ -68492,7 +68492,7 @@
   [mode : CompilerLowerMode]) : ResultLowerFunction
   (match cleanup
     [(ast.AstEnumCleanup.No)
-      (ResultLowerFunction.Ok ir.CompilerIrFunctionList.Nil spans)]
+      (ResultLowerFunction.Ok (ir.compiler-ir-function-seq-empty) spans)]
     [(ast.AstEnumCleanup.Fn _)
       (lower-enum-cleanup-function
         ctx
@@ -69404,7 +69404,7 @@
                   (&mut blocks)
                   tail-blocks)
                 (ResultLowerFunction.Ok
-                  (ir.compiler-ir-function-list-single
+                  (ir.compiler-ir-function-seq1
                     (ir.CompilerIrFunction.Function
                       logical-name
                       (lower-dispatch-physical-param-list
@@ -69543,7 +69543,7 @@
   [functions : ir.CompilerIrFunctionBuilder (:consume)]) : ResultLowerFunction
   (if (>= index variants.len)
     (ResultLowerFunction.Ok
-      (ir.compiler-ir-function-builder-to-list functions)
+      (ir.compiler-ir-function-builder-to-seq functions)
       spans)
     (match (lower-dispatch-lower-variant
       ctx
@@ -69562,7 +69562,7 @@
         (let
           [next-functions : ir.CompilerIrFunctionBuilder functions]
           (begin
-            (ir.compiler-ir-function-builder-append-list!
+            (ir.compiler-ir-function-builder-append-seq!
               (&mut next-functions)
               lowered-functions)
             (lower-dispatch-lower-variants-from
@@ -69670,19 +69670,19 @@
                     ;; The synthesized thunk is built directly in the enclosing
                     ;; source arena, so give it the same lifetime as variants
                     ;; lowered through lower-function-escaping.
-                    [escaped-thunk-functions : ir.CompilerIrFunctionList
-                      (lower-function-list-escape-to-ir-arena thunk-functions)]
+                    [escaped-thunk-functions : ir.CompilerIrFunctionSeq
+                      (lower-function-seq-escape-to-ir-arena thunk-functions)]
                     [functions : ir.CompilerIrFunctionBuilder
                       (ir.compiler-ir-function-builder-with-capacity
                         (+
-                          (ir.compiler-ir-function-list-count variant-functions)
-                          (ir.compiler-ir-function-list-count
+                          (ir.compiler-ir-function-seq-count variant-functions)
+                          (ir.compiler-ir-function-seq-count
                             escaped-thunk-functions)))]
                     (begin
-                      (ir.compiler-ir-function-builder-append-list!
+                      (ir.compiler-ir-function-builder-append-seq!
                         (&mut functions)
                         variant-functions)
-                      (ir.compiler-ir-function-builder-append-list!
+                      (ir.compiler-ir-function-builder-append-seq!
                         (&mut functions)
                         escaped-thunk-functions)
                       (ResultLowerDispatchDecl.Ok
@@ -69692,7 +69692,7 @@
                               cache-symbol
                               fn-ty
                               (ir.CompilerIrValue.I64 0))
-                            (ir.compiler-ir-function-builder-to-list functions)
+                            (ir.compiler-ir-function-builder-to-seq functions)
                             thunk-spans)))))]
                 [(ResultLowerFunction.Err message)
                   (ResultLowerDispatchDecl.Err message)])]
@@ -69777,7 +69777,7 @@
   [paths : ast.AstDeclPathList]
   [entry-path : String]
   [globals : ir.CompilerIrGlobalSeq]
-  [functions : ir.CompilerIrFunctionList]
+  [functions : ir.CompilerIrFunctionSeq]
   [externs : ir.CompilerIrExternSeq]
   [spans : ir.CompilerSourceSpans]
   [names : LowerNameEnv]
@@ -69900,7 +69900,7 @@
   [paths : ast.AstDeclPathList]
   [entry-path : String]
   [globals : ir.CompilerIrGlobalSeq]
-  [functions : ir.CompilerIrFunctionList]
+  [functions : ir.CompilerIrFunctionSeq]
   [externs : ir.CompilerIrExternSeq]
   [spans : ir.CompilerSourceSpans]
   [names : LowerNameEnv]
@@ -69919,7 +69919,7 @@
     [cur-globals : ir.CompilerIrGlobalBuilder
       (ir.compiler-ir-global-builder-from-seq globals)]
     [cur-functions : ir.CompilerIrFunctionBuilder
-      (ir.compiler-ir-function-builder-from-list functions)]
+      (ir.compiler-ir-function-builder-from-seq functions)]
     [cur-externs : ir.CompilerIrExternBuilder
       (ir.compiler-ir-extern-builder-from-seq externs)]
     [cur-spans : ir.CompilerSourceSpans spans]
@@ -69943,7 +69943,7 @@
                     (LowerDeclsSuccess
                       (ir.compiler-ir-global-builder-snapshot-seq
                         (& cur-globals))
-                      (ir.compiler-ir-function-builder-snapshot-list
+                      (ir.compiler-ir-function-builder-snapshot
                         (& cur-functions))
                       (ir.compiler-ir-extern-builder-snapshot-seq
                         (& cur-externs))
@@ -70077,7 +70077,7 @@
                                           global-ty
                                           (ir.CompilerIrValue.RuntimeGlobal
                                             init-symbol)))
-                                      (ir.compiler-ir-function-builder-append-list!
+                                      (ir.compiler-ir-function-builder-append-seq!
                                         (&mut cur-functions)
                                         init-funcs)
                                       (set! cur-spans init-spans)
@@ -70275,10 +70275,10 @@
                                         lower-state
                                         "function"
                                         logical-name))
-                                    (ir.compiler-ir-function-builder-append-list!
+                                    (ir.compiler-ir-function-builder-append-seq!
                                       (&mut cur-functions)
                                       lowered-functions)
-                                    (ir.compiler-ir-function-builder-append-list!
+                                    (ir.compiler-ir-function-builder-append-seq!
                                       (&mut cur-functions)
                                       callable-functions)
                                     (set! cur-spans next-spans)
@@ -70319,7 +70319,7 @@
                             (ir.compiler-ir-global-builder-push!
                               (&mut cur-globals)
                               cache-global)
-                            (ir.compiler-ir-function-builder-append-list!
+                            (ir.compiler-ir-function-builder-append-seq!
                               (&mut cur-functions)
                               lowered-functions)
                             (set! cur-spans function-spans)
@@ -70440,7 +70440,7 @@
                             cleanup-functions
                             cleanup-spans)
                           (begin
-                            (ir.compiler-ir-function-builder-append-list!
+                            (ir.compiler-ir-function-builder-append-seq!
                               (&mut cur-functions)
                               cleanup-functions)
                             (set! cur-spans cleanup-spans)
@@ -70522,7 +70522,7 @@
                             cleanup-functions
                             cleanup-spans)
                           (begin
-                            (ir.compiler-ir-function-builder-append-list!
+                            (ir.compiler-ir-function-builder-append-seq!
                               (&mut cur-functions)
                               cleanup-functions)
                             (set! cur-spans cleanup-spans)
@@ -70577,7 +70577,7 @@
                       mode)
                       [(ResultLowerFunction.Ok cleanup-functions cleanup-spans)
                         (begin
-                          (ir.compiler-ir-function-builder-append-list!
+                          (ir.compiler-ir-function-builder-append-seq!
                             (&mut cur-functions)
                             cleanup-functions)
                           (set! cur-spans cleanup-spans)
@@ -70639,7 +70639,7 @@
                       mode)
                       [(ResultLowerFunction.Ok cleanup-functions cleanup-spans)
                         (begin
-                          (ir.compiler-ir-function-builder-append-list!
+                          (ir.compiler-ir-function-builder-append-seq!
                             (&mut cur-functions)
                             cleanup-functions)
                           (set! cur-spans cleanup-spans)
@@ -70679,7 +70679,7 @@
             paths
             entry-path
             (ir.compiler-ir-global-seq-empty)
-            ir.CompilerIrFunctionList.Nil
+            (ir.compiler-ir-function-seq-empty)
             (ir.compiler-ir-extern-seq-empty)
             (ir.compiler-source-spans-empty)
             names

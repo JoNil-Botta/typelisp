@@ -653,7 +653,7 @@
             (ast.ast-decl-path-list-new)))))))
 
 (define (compiler-lower-smoke-stdlib-runtime-substring-defined?
-  [functions : ir.CompilerIrFunctionList]) : bool
+  [functions : ir.CompilerIrFunctionSeq]) : bool
   (or
     (compiler_lower_tests.lower-test-function-defined?
       functions
@@ -672,7 +672,7 @@
       "stdlib.runtime/substring")))
 
 (define (compiler-lower-smoke-stdlib-string-public-substring-defined?
-  [functions : ir.CompilerIrFunctionList]) : bool
+  [functions : ir.CompilerIrFunctionSeq]) : bool
   (or
     (compiler_lower_tests.lower-test-function-defined?
       functions

@@ -370,6 +370,14 @@
       assignment-index
       vars
       point)
+    ;; R4-B narrow tier disabled: the same mask on both sides is what
+    ;; compiler-backend-scavenge-narrow-index reads as "nothing to retry".
+    (compiler-backend-scavenge-occupied-mask-for-instr
+      starts
+      ends
+      assignment-index
+      vars
+      point)
     exclude
     exclude-n
     fallback))
@@ -46067,10 +46075,15 @@ g:
       (bit-or
         (array-ref hull 4)
         (compiler-backend-scavenge-segment-pick-busy-mask))]
+    [narrow : i64
+      (bit-or
+        (array-ref segmented 4)
+        (compiler-backend-scavenge-segment-pick-busy-mask))]
     [hull-pick : String
       (compiler_backend.compiler-backend-scavenge-pick-with-mask
         backend-state
         function-state
+        busy
         busy
         exclude
         5
@@ -46079,13 +46092,34 @@ g:
       (compiler_backend.compiler-backend-function-scratch-bool?
         function-state
         compiler_backend.compiler-backend-scratch-bool-emergency-pending)]
+    ;; R4-B: the same all-busy wide mask, but with the emit-point mask offered
+    ;; as the narrow retry. The last-resort tier finds %r10 free there and hands
+    ;; it back with nothing pending, instead of borrowing an occupied register
+    ;; and wrapping the step in a save/restore pair.
+    [_reset : unit
+      (compiler_backend.compiler-backend-function-scratch-set-bool!
+        function-state
+        compiler_backend.compiler-backend-scratch-bool-emergency-pending
+        false)]
+    [narrow-pick : String
+      (compiler_backend.compiler-backend-scavenge-pick-with-mask
+        backend-state
+        function-state
+        busy
+        narrow
+        exclude
+        5
+        "%r8")]
+    [narrow-pending? : bool
+      (compiler_backend.compiler-backend-function-scratch-bool?
+        function-state
+        compiler_backend.compiler-backend-scratch-bool-emergency-pending)]
     [segment-pick : String
       (compiler_backend.compiler-backend-scavenge-pick-with-mask
         backend-state
         function-state
-        (bit-or
-          (array-ref segmented 4)
-          (compiler-backend-scavenge-segment-pick-busy-mask))
+        narrow
+        narrow
         exclude
         5
         "%r8")]
@@ -46096,6 +46130,9 @@ g:
       ;; makes the emitter bracket the reload with a save and a restore.
       (string.eq hull-pick "%r9")
       hull-pending?
+      ;; R4-B narrow last-resort tier: free at the emit point, no wrap.
+      (string.eq narrow-pick "%r10")
+      (not narrow-pending?)
       ;; The hole frees %r10, so the picker hands it back directly -- the reload
       ;; is a plain `mov` with nothing to preserve.
       (string.eq segment-pick "%r10"))))
@@ -46235,6 +46272,7 @@ g:
                   backend-state
                   (compiler_backend.compiler-backend-state-function-state
                     backend-state)
+                  mask
                   mask
                   (compiler_backend.compiler-backend-one-exclude "%rax")
                   1

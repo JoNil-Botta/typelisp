@@ -24659,7 +24659,21 @@
   [cur-defs : (__tl_dyn-array i64)]
   [cur-firstdef : (__tl_dyn-array i64)]
   [cur-depth : (__tl_dyn-array i64)]) : unit
-  (if (and (>= v 0) (< v n) (= (array-ref cand v) 1))
+  ;; R4-A (LOCAL SPLIT): both candidate grades. A block row is LLVM's
+  ;; tryLocalSplit -- one clobber-free run inside one block, homed in a register
+  ;; with the slot authoritative outside it -- and nothing in that shape depends
+  ;; on the root spanning a call. The old `= 1` restricted block rows to
+  ;; call-spanning roots, so the commonest spill under pressure (a loop-carried
+  ;; temporary whose hull crosses no call but is denied a register because the
+  ;; loop's invariants own the pool) had no local shape at all: it was spilled
+  ;; WHOLE and paid a reload at every mention plus, at its def, an emergency
+  ;; save/restore of a live register. The region's own occupancy test is
+  ;; segment-precise over [lo,hi], which is far narrower than the hull the greedy
+  ;; failed on, so a register is often free exactly where the value is used.
+  ;; The profitability floor (>= 2 uses AND net >= 2 after charging the entry
+  ;; reload and exit store) is unchanged and prices the two grades identically --
+  ;; a block region's boundary movs run exactly as often as the refs they serve.
+  (if (and (>= v 0) (< v n) (> (array-ref cand v) 0))
     (begin
       (if (not (= (array-ref cur-region v) rid))
         (begin
@@ -37010,19 +37024,79 @@
     (< (array-ref ep-ends a) (array-ref ep-starts b))
     (< (array-ref ep-ends b) (array-ref ep-starts a))))
 
+;; R4-C: WITNESSES ARE A RELATION, NOT ONE PAIR.
+;;
+;; The rule above admitted the Mov/step witness for the pair the CURRENT link
+;; offers and for no other, so a web could hold at most one touching pair. A
+;; loop-carried accumulator's chain has one touch per link and needs them all at
+;; once. intern_table's it-bench is the measured case (2.7d):
+;;
+;;   %573 = phi [... , %606]        acc, the loop carry
+;;   %91  = mul %573, 1000003       touches %573 at its own point
+;;   %94  = add %91, %93            touches %91 at its own point
+;;   %606 = mov %94                 touches %94 at its own point
+;;
+;; %573, %91 and %606 join (each offer's own pair is the only touch it sees), but
+;; %94 cannot: offered against the web through the ADD witness it is refused by
+;; its touch with %606, and offered through the MOV witness it is refused by its
+;; touch with %91 -- each refusal naming a pair that has a witness of its own,
+;; just not the one being offered. So the add's result took a second stack slot
+;; and the block stored the same register to two slots on every identifier.
+;;
+;; The fix is to carry the witnesses as a per-variable relation instead of a pair
+;; of ids: `wit-a[d]` / `wit-b[d]` are the operands of d's defining Mov or
+;; step-BinOp (a Mov has one, a two-operand ALU op at most two).
+;; compiler-reg-color-scalar-witnessed-touch? then answers "may THIS pair touch"
+;; for any pair the all-pairs walk reaches.
+;;
+;; SOUNDNESS is the same argument, applied pairwise rather than once. For every
+;; pair of members the walk now proves either strict hull disjointness or a touch
+;; at a single point `end(src) == start(dst)` that is the def point of `dst` and
+;; carries `src` as an operand of the instruction defining it. The endpoint
+;; equality still proves src's LAST liveness event and dst's FIRST are that one
+;; instruction (interval points are unique per instruction, two coordinates
+;; each), and the operator families admitted as witnesses are exactly those whose
+;; lowering consumes every operand before writing the destination home. So at
+;; every program point at most one member of the web holds a live value, with the
+;; hand-off inside the witnessing instruction -- which is what one shared home
+;; requires. A pair that merely touches with no witness, and any containment
+;; (where the endpoint equality cannot hold), is refused exactly as before.
+;;
+;; Multiple defs of one id cannot forge a witness: `ep-starts[d]` is the EARLIEST
+;; def point, and an operand of a LATER def is live at that later point, so its
+;; `ep-ends` is past `ep-starts[d]` and the equality fails.
+(define (compiler-reg-color-scalar-witnessed-touch?
+  [wit-a : (__tl_dyn-array i64)]
+  [wit-b : (__tl_dyn-array i64)]
+  [ep-starts : (__tl_dyn-array i64)]
+  [ep-ends : (__tl_dyn-array i64)]
+  [x : i64]
+  [y : i64]) : bool
+  (and
+    (>= x 0)
+    (< x (array-length wit-a))
+    (>= y 0)
+    (< y (array-length wit-a))
+    (or
+      (and
+        (= (array-ref ep-ends x) (array-ref ep-starts y))
+        (or (= (array-ref wit-a y) x) (= (array-ref wit-b y) x)))
+      (and
+        (= (array-ref ep-ends y) (array-ref ep-starts x))
+        (or (= (array-ref wit-a x) y) (= (array-ref wit-b x) y))))))
+
 ;; Disjointness of `x` against every member of the web whose circular member list
-;; starts at `root-b`. The single pair (touch-a, touch-b) -- the Mov witness's own
-;; src/dst -- may TOUCH at `end(touch-a) == start(touch-b)`; every other pair must
-;; be strictly disjoint. Callers pass -1/-1 when there is no Mov witness, which no
-;; real var id can equal.
+;; starts at `root-b`. A pair may TOUCH at `end(src) == start(dst)` when the
+;; witness relation records that instruction; every other pair must be strictly
+;; disjoint.
 (define (compiler-reg-color-scalar-web-var-disjoint?
   [web-next : (__tl_dyn-array i64)]
   [ep-starts : (__tl_dyn-array i64)]
   [ep-ends : (__tl_dyn-array i64)]
+  [wit-a : (__tl_dyn-array i64)]
+  [wit-b : (__tl_dyn-array i64)]
   [x : i64]
-  [root-b : i64]
-  [touch-a : i64]
-  [touch-b : i64]) : bool
+  [root-b : i64]) : bool
   (let
     [y : i64 root-b]
     [steps : i64 0]
@@ -37032,11 +37106,13 @@
           (unless
             (compiler-reg-color-scalar-hulls-disjoint? ep-starts ep-ends x y)
             (unless
-              (and
-                (or
-                  (and (= x touch-a) (= y touch-b))
-                  (and (= x touch-b) (= y touch-a)))
-                (= (array-ref ep-ends touch-a) (array-ref ep-starts touch-b)))
+              (compiler-reg-color-scalar-witnessed-touch?
+                wit-a
+                wit-b
+                ep-starts
+                ep-ends
+                x
+                y)
               (return false)))
           (set! y (array-ref web-next y))
           (set! steps (+ steps 1))
@@ -37048,10 +37124,10 @@
   [web-next : (__tl_dyn-array i64)]
   [ep-starts : (__tl_dyn-array i64)]
   [ep-ends : (__tl_dyn-array i64)]
+  [wit-a : (__tl_dyn-array i64)]
+  [wit-b : (__tl_dyn-array i64)]
   [root-a : i64]
-  [root-b : i64]
-  [touch-a : i64]
-  [touch-b : i64]) : bool
+  [root-b : i64]) : bool
   (let
     [x : i64 root-a]
     [steps : i64 0]
@@ -37063,15 +37139,95 @@
               web-next
               ep-starts
               ep-ends
+              wit-a
+              wit-b
               x
-              root-b
-              touch-a
-              touch-b)
+              root-b)
             (return false))
           (set! x (array-ref web-next x))
           (set! steps (+ steps 1))
           (when (= x root-a) (return true))))
       false)))
+
+;; Record one witness source for `dst`: the operands of its defining Mov or
+;; step-BinOp. Two slots is exactly what the admitted operator set can produce
+;; (a Mov has one operand, a two-operand ALU op has two); a third offer for the
+;; same id is dropped, which can only refuse a merge, never admit one.
+(define (compiler-reg-color-scalar-witness-record!
+  [wit-a : (__tl_dyn-array i64)]
+  [wit-b : (__tl_dyn-array i64)]
+  [dst : i64]
+  [src : i64]) : unit
+  (when
+    (and
+      (>= dst 0)
+      (< dst (array-length wit-a))
+      (>= src 0)
+      (< src (array-length wit-a))
+      (not (= dst src)))
+    (cond
+      [(= (array-ref wit-a dst) src) unit]
+      [(= (array-ref wit-b dst) src) unit]
+      [(< (array-ref wit-a dst) 0) (set! (array-ref wit-a dst) src)]
+      [(< (array-ref wit-b dst) 0) (set! (array-ref wit-b dst) src)]
+      [else unit])))
+
+(define (compiler-reg-color-scalar-witness-operand!
+  [wit-a : (__tl_dyn-array i64)]
+  [wit-b : (__tl_dyn-array i64)]
+  [dst : i64]
+  [operand : ir.CompilerIrValue]) : unit
+  (match operand
+    [(ir.CompilerIrValue.Var src)
+      (compiler-reg-color-scalar-witness-record! wit-a wit-b dst src)]
+    [_ unit]))
+
+(define (compiler-reg-color-scalar-witness-seq!
+  [instrs : ir.CompilerIrInstrSeq]
+  [wit-a : (__tl_dyn-array i64)]
+  [wit-b : (__tl_dyn-array i64)]) : unit
+  (let
+    [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+    [len : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [i : i64 0]
+    (while (< i len)
+      (begin
+        (match (array-ref slots i)
+          [(ir.CompilerIrInstr.Mov dst src _)
+            (compiler-reg-color-scalar-witness-operand! wit-a wit-b dst src)]
+          [(ir.CompilerIrInstr.BinOp dst op lhs rhs _)
+            (when
+              (compiler-reg-color-scalar-step-op? op)
+              (begin
+                (compiler-reg-color-scalar-witness-operand! wit-a wit-b dst lhs)
+                (compiler-reg-color-scalar-witness-operand! wit-a wit-b dst rhs)))]
+          [_ unit])
+        (set! i (+ i 1))))))
+
+(define (compiler-reg-color-scalar-witness-blocks!
+  [blocks : ir.CompilerIrBlockList]
+  [wit-a : (__tl_dyn-array i64)]
+  [wit-b : (__tl_dyn-array i64)]) : unit
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) unit]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (begin
+        (match block
+          [(ir.CompilerIrBlock.Block _ instrs)
+            (compiler-reg-color-scalar-witness-seq! instrs wit-a wit-b)])
+        (compiler-reg-color-scalar-witness-blocks!
+          (__tl-box-place rest)
+          wit-a
+          wit-b))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (let
+        [i : i64 0]
+        (while (< i (ir.compiler-ir-block-seq-count seq))
+          (begin
+            (match (ir.compiler-ir-block-seq-ref seq i)
+              [(ir.CompilerIrBlock.Block _ instrs)
+                (compiler-reg-color-scalar-witness-seq! instrs wit-a wit-b)])
+            (set! i (+ i 1)))))]))
 
 ;; Absorb the web rooted at `root-b` into the one rooted at `root-a`: re-point
 ;; every absorbed member's alias directly at `root-a` (keeping the forest depth
@@ -37127,6 +37283,8 @@
   [var-tys : (__tl_dyn-array ast.AstType)]
   [ep-starts : (__tl_dyn-array i64)]
   [ep-ends : (__tl_dyn-array i64)]
+  [wit-a : (__tl_dyn-array i64)]
+  [wit-b : (__tl_dyn-array i64)]
   [earlier : i64]
   [later : i64]
   [mov-witness : bool]) : unit
@@ -37188,14 +37346,10 @@
               web-next
               ep-starts
               ep-ends
+              wit-a
+              wit-b
               root
-              other
-              (if mov-witness
-                earlier
-                (- 0 1))
-              (if mov-witness
-                later
-                (- 0 1)))))]
+              other)))]
       (if merge
         (compiler-reg-color-scalar-web-splice!
           alias
@@ -37237,6 +37391,8 @@
   [var-tys : (__tl_dyn-array ast.AstType)]
   [ep-starts : (__tl_dyn-array i64)]
   [ep-ends : (__tl_dyn-array i64)]
+  [wit-a : (__tl_dyn-array i64)]
+  [wit-b : (__tl_dyn-array i64)]
   [phi-def : (__tl_dyn-array bool)]
   [phi-pass : bool]
   [dst : i64]
@@ -37255,6 +37411,8 @@
         var-tys
         ep-starts
         ep-ends
+        wit-a
+        wit-b
         phi-def
         phi-pass
         dst
@@ -37285,6 +37443,8 @@
                     var-tys
                     ep-starts
                     ep-ends
+                    wit-a
+                    wit-b
                     src
                     dst
                     false)
@@ -37299,6 +37459,8 @@
                     var-tys
                     ep-starts
                     ep-ends
+                    wit-a
+                    wit-b
                     dst
                     src
                     false))))]
@@ -37314,6 +37476,8 @@
           var-tys
           ep-starts
           ep-ends
+          wit-a
+          wit-b
           phi-def
           phi-pass
           dst
@@ -37385,6 +37549,8 @@
   [var-tys : (__tl_dyn-array ast.AstType)]
   [ep-starts : (__tl_dyn-array i64)]
   [ep-ends : (__tl_dyn-array i64)]
+  [wit-a : (__tl_dyn-array i64)]
+  [wit-b : (__tl_dyn-array i64)]
   [operand : ir.CompilerIrValue]
   [dst : i64]) : unit
   (match operand
@@ -37400,6 +37566,8 @@
         var-tys
         ep-starts
         ep-ends
+        wit-a
+        wit-b
         src-var
         dst
         true)]
@@ -37421,6 +37589,8 @@
   [var-tys : (__tl_dyn-array ast.AstType)]
   [ep-starts : (__tl_dyn-array i64)]
   [ep-ends : (__tl_dyn-array i64)]
+  [wit-a : (__tl_dyn-array i64)]
+  [wit-b : (__tl_dyn-array i64)]
   [phi-def : (__tl_dyn-array bool)]
   [phi-pass : bool]) : unit
   (match instr
@@ -37440,6 +37610,8 @@
               var-tys
               ep-starts
               ep-ends
+              wit-a
+              wit-b
               src-var
               dst
               true))]
@@ -37461,6 +37633,8 @@
             var-tys
             ep-starts
             ep-ends
+            wit-a
+            wit-b
             lhs
             dst)
           (compiler-reg-color-scalar-alias-step-operand!
@@ -37474,6 +37648,8 @@
             var-tys
             ep-starts
             ep-ends
+            wit-a
+            wit-b
             rhs
             dst)))]
     [(ir.CompilerIrInstr.Phi dst inputs _)
@@ -37488,6 +37664,8 @@
         var-tys
         ep-starts
         ep-ends
+        wit-a
+        wit-b
         phi-def
         phi-pass
         dst
@@ -37506,6 +37684,8 @@
   [var-tys : (__tl_dyn-array ast.AstType)]
   [ep-starts : (__tl_dyn-array i64)]
   [ep-ends : (__tl_dyn-array i64)]
+  [wit-a : (__tl_dyn-array i64)]
+  [wit-b : (__tl_dyn-array i64)]
   [phi-def : (__tl_dyn-array bool)]) : unit
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
@@ -37527,6 +37707,8 @@
           var-tys
           ep-starts
           ep-ends
+          wit-a
+          wit-b
           phi-def
           true)
         ;; Only a Phi has anything left for the second pass, and re-reading the
@@ -37545,6 +37727,8 @@
               var-tys
               ep-starts
               ep-ends
+              wit-a
+              wit-b
               phi-def
               false)]
           [_ unit])
@@ -37562,6 +37746,8 @@
   [var-tys : (__tl_dyn-array ast.AstType)]
   [ep-starts : (__tl_dyn-array i64)]
   [ep-ends : (__tl_dyn-array i64)]
+  [wit-a : (__tl_dyn-array i64)]
+  [wit-b : (__tl_dyn-array i64)]
   [phi-def : (__tl_dyn-array bool)]) : unit
   (match blocks
     [(ir.CompilerIrBlockList.Nil) unit]
@@ -37581,6 +37767,8 @@
               var-tys
               ep-starts
               ep-ends
+              wit-a
+              wit-b
               phi-def)])
         (compiler-reg-color-scalar-alias-blocks!
           type-segment-bases
@@ -37594,6 +37782,8 @@
           var-tys
           ep-starts
           ep-ends
+          wit-a
+          wit-b
           phi-def))]
     [(ir.CompilerIrBlockList.Array seq)
       (let
@@ -37614,6 +37804,8 @@
                   var-tys
                   ep-starts
                   ep-ends
+                  wit-a
+                  wit-b
                   phi-def)])
             (set! i (+ i 1)))))]))
 
@@ -37796,17 +37988,25 @@
           [web-next : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
           [web-size : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
           [phi-def : (__tl_dyn-array bool) (__tl_make-array bool vars)]
+          ;; R4-C: the per-variable witness relation (see
+          ;; compiler-reg-color-scalar-witnessed-touch?), built once over the same
+          ;; blocks before any link is offered.
+          [wit-a : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+          [wit-b : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
           [liveness : live.CompilerFunctionLiveness
             (live.compiler-live-analyze-blocks-edge-precise blocks vars)]
           (begin
             (compiler-reg-fill-i64-array ep-starts (- 0 1))
             (compiler-reg-fill-i64-array ep-ends (- 0 1))
+            (compiler-reg-fill-i64-array wit-a (- 0 1))
+            (compiler-reg-fill-i64-array wit-b (- 0 1))
             (compiler-reg-color-ep-hull-blocks!
               blocks
               liveness
               0
               ep-starts
               ep-ends)
+            (compiler-reg-color-scalar-witness-blocks! blocks wit-a wit-b)
             (compiler-reg-color-scalar-phi-def-blocks! blocks phi-def)
             (let
               [i : i64 0]
@@ -37829,6 +38029,8 @@
               var-tys
               ep-starts
               ep-ends
+              wit-a
+              wit-b
               phi-def)))
         unit)
       alias)))

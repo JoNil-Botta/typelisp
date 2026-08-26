@@ -2213,8 +2213,14 @@
   3)
 (define compiler-backend-scratch-bool-const-hoist-frame-rbx : i64
   4)
-(define compiler-backend-scratch-bool-count : i64
+
+;; R4-B: is the instruction currently being emitted one whose spilled def may
+;; stage through a register found free only over the NARROW window? See
+;; compiler-backend-instr-staging-narrow-ok?.
+(define compiler-backend-scratch-bool-instr-staging-narrow-ok : i64
   5)
+(define compiler-backend-scratch-bool-count : i64
+  6)
 (define compiler-backend-scratch-i64-array-emergency-regs : i64
   0)
 (define compiler-backend-scratch-i64-array-const-hoist-site-points : i64
@@ -20903,6 +20909,7 @@
           (compiler-backend-scavenge-pick-with-mask
             backend-state
             (compiler-backend-state-function-state backend-state)
+            0
             0
             exclude
             exclude-n
@@ -63396,6 +63403,7 @@
             backend-state
             (compiler-backend-state-function-state backend-state)
             0
+            0
             exclude
             exclude-n
             "%r8")]
@@ -63732,6 +63740,7 @@
                                   backend-state
                                   (compiler-backend-state-function-state
                                     backend-state)
+                                  0
                                   0
                                   exclude
                                   exclude-n
@@ -65013,12 +65022,50 @@
 ;; of the plan (stable, order-independent) and still gives the scavenger every
 ;; callee register the allocator already pays to preserve, used as scratch only
 ;; where the freeness query certifies no live value occupies it.
+;; R4-B: FRESH-REGISTER DEF STAGING -- which instructions may take the narrow
+;; last-resort staging window.
+;;
+;; compiler-backend-scavenge-reg queries a staging register's freeness across
+;; `point + staging-window` (16 = 8 instructions) rather than at the emit point,
+;; because a FUSED destructure emits its field loads in offset order while the
+;; lowering numbers their def points in the REVERSE order: a register-homed
+;; sibling is written into its home BEFORE a spilled sibling's staging load yet
+;; carries a HIGHER interval point, so only a forward window keeps it occupied.
+;; That reordering is a property of the load-fusion families and of nothing else.
+;;
+;; The window is therefore right for loads and far too wide for a plain scalar
+;; computation, whose staging register is dead at the end of the single emitted
+;; step: a register that merely becomes live four instructions later is refused,
+;; and when every candidate is refused the site falls to the EMERGENCY tier,
+;; which borrows an occupied register and wraps the step in a save/restore pair
+;; (2.6, 2.7a). This predicate marks the instructions whose emission reorders
+;; nothing, so their staging pick may retry against the narrow [point, point+2]
+;; window before paying for that wrap.
+;;
+;; Admitted: the scalar compute family whose lowering is `stage operands ->
+;; apply -> write destination` in one step (BinOp/UnOp/Cast/Bitcast/Select) and
+;; the plain register-to-register/immediate Mov. Refused: every load, gep,
+;; store, call, copy and vector form -- the whole set the fusion clusters draw
+;; from -- so the reorder hazard can never reach the narrow tier.
+(define (compiler-backend-instr-staging-narrow-ok?
+  [instr : compiler_ir_types.CompilerIrInstr]) : bool
+  (match instr
+    [(compiler_ir_types.CompilerIrInstr.BinOp _ _ _ _ _) true]
+    [(compiler_ir_types.CompilerIrInstr.UnOp _ _ _ _) true]
+    [(compiler_ir_types.CompilerIrInstr.Cast _ _ _ _) true]
+    [(compiler_ir_types.CompilerIrInstr.Bitcast _ _ _ _) true]
+    [(compiler_ir_types.CompilerIrInstr.Select _) true]
+    [(compiler_ir_types.CompilerIrInstr.Mov _ _ _) true]
+    [_ false]))
+
 ;; Sound-scavenger reserved mask (LLVM RegScavenger model): the pooled-register
 ;; homes of the CURRENT instruction's operand (use) + result (def) vars. The
 ;; scavenge must NEVER return one of these as scratch -- it would clobber an
 ;; operand the instruction reads, or the result it writes (the dst reads "free"
 ;; at the scavenge point but must still be reserved). Set once per instruction
 ;; at the emission dispatcher; consulted in candidate-ok? AND the emergency tier.
+;; The same per-instruction visit records R4-B's narrow-staging admission
+;; (compiler-backend-instr-staging-narrow-ok?), which the staging pick reads.
 ;; Fold instruction uses/def straight into their assigned register-home bits.
 ;; Building generic liveness bitsets here used to allocate and zero two arrays
 ;; per emitted instruction, only to scan them immediately into this small mask.
@@ -65031,6 +65078,10 @@
     [mask-counts : (__tl_dyn-array i64)
       (__tl_make-array -1 function-state.address)]
     (begin
+      (compiler-backend-function-scratch-set-bool!
+        function-state
+        compiler-backend-scratch-bool-instr-staging-narrow-ok
+        (compiler-backend-instr-staging-narrow-ok? instr))
       (compiler-backend-function-state-set-i64!
         function-state
         compiler-backend-function-i64-use-home-mask-value
@@ -65172,6 +65223,60 @@
             (set! i (+ i 1))))
         found))))
 
+;; R4-B: index of the first candidate usable under `mask`, or -1. Same admission
+;; test the main walk uses; only the occupancy mask differs.
+(define (compiler-backend-scavenge-first-ok-index
+  [function-state : CompilerBackendFunctionState]
+  [mask : i64]
+  [exclude-mask : i64]
+  [plan-mask : i64]
+  [cands : (& cands (__tl_dyn-array i64))]
+  [n : i64]) : i64
+  (let
+    [i : i64 0]
+    [found : i64 -1]
+    (begin
+      (while (and (< i n) (< found 0))
+        (begin
+          (when
+            (compiler-backend-scavenge-candidate-ok?
+              function-state
+              mask
+              exclude-mask
+              plan-mask
+              (array-ref cands i))
+            (set! found i))
+          (set! i (+ i 1))))
+      found)))
+
+;; R4-B: the narrow last-resort tier. Reached only when every candidate is
+;; refused under the wide staging window, i.e. immediately before the emergency
+;; tier borrows an occupied register and wraps the step in a save/restore pair.
+;; `narrow-mask` is the SAME occupancy query at the emit point alone, so a
+;; register it reports free holds no live value while the staging register is
+;; live; the only thing the wide window adds is protection against a fused
+;; load group's reordered siblings, and the caller passes a narrower mask only
+;; for instructions whose emission reorders nothing
+;; (compiler-backend-instr-staging-narrow-ok?). Callers with nothing to gain
+;; pass their own occupied mask, which makes this a no-op.
+(define (compiler-backend-scavenge-narrow-index
+  [function-state : CompilerBackendFunctionState]
+  [occupied-mask : i64]
+  [narrow-mask : i64]
+  [exclude-mask : i64]
+  [plan-mask : i64]
+  [cands : (& cands (__tl_dyn-array i64))]
+  [n : i64]) : i64
+  (if (= narrow-mask occupied-mask)
+    -1
+    (compiler-backend-scavenge-first-ok-index
+      function-state
+      narrow-mask
+      exclude-mask
+      plan-mask
+      cands
+      n)))
+
 (define (compiler-backend-scavenge-pick-iter
   [backend-state : CompilerBackendState]
   [function-state : CompilerBackendFunctionState]
@@ -65179,6 +65284,7 @@
   [exclude-n : i64]
   [exclude-mask : i64]
   [occupied-mask : i64]
+  [narrow-mask : i64]
   [plan-mask : i64]
   [fallback : String]
   [cands : (& cands (__tl_dyn-array i64))]
@@ -65186,54 +65292,68 @@
   [n : i64]) : String
   (if (>= i n)
     (let
-      [emidx : i64
-        (compiler-backend-scavenge-emergency-cand-index
+      [nidx : i64
+        (compiler-backend-scavenge-narrow-index
           function-state
-          exclude
-          exclude-n
-          exclude-mask
           occupied-mask
-          fallback
+          narrow-mask
+          exclude-mask
+          plan-mask
           cands
           n)]
-      (if (< emidx 0)
-        (begin
-          (cfg
-            scavenge-census
-            (if (compiler-backend-scavenge-emergency-fallback-free?
-              function-state
-              exclude
-              exclude-n
-              occupied-mask
-              fallback)
-              (compiler-backend-scavenge-census-record-fallback-free!
-                backend-state)
-              (compiler-backend-scavenge-census-record-fallback-last-resort!
-                backend-state))
-            unit)
-          ;; emergency-reg MUST equal the returned reg (emergency-wrap saves/
-          ;; restores it). Give the global save set a copy, then return the
-          ;; owned fallback. (emidx<0 = the fallback is FREE here, preferred; or
-          ;; the pathological all-excluded last resort.)
-          (if (compiler-backend-scavenge-emergency-reg-supported? fallback)
-            (compiler-backend-emergency-add!
-              function-state
-              (string.copy fallback))
-            (io.panic
-              (str_cat.str-cat
-                "backend: unsupported scavenge emergency fallback register "
-                fallback)))
-          fallback)
-        (begin
-          (cfg
-            scavenge-census
-            (compiler-backend-scavenge-census-record-occupied-candidate!
-              backend-state)
-            unit)
-          (compiler-backend-emergency-add-id!
+      [emidx : i64
+        (if (>= nidx 0)
+          -2
+          (compiler-backend-scavenge-emergency-cand-index
             function-state
-            (array-ref cands emidx))
-          (compiler_abi.compiler-abi-register-spelling (array-ref cands emidx)))))
+            exclude
+            exclude-n
+            exclude-mask
+            occupied-mask
+            fallback
+            cands
+            n))]
+      (if (>= nidx 0)
+        (compiler_abi.compiler-abi-register-spelling (array-ref cands nidx))
+        (if (< emidx 0)
+          (begin
+            (cfg
+              scavenge-census
+              (if (compiler-backend-scavenge-emergency-fallback-free?
+                function-state
+                exclude
+                exclude-n
+                occupied-mask
+                fallback)
+                (compiler-backend-scavenge-census-record-fallback-free!
+                  backend-state)
+                (compiler-backend-scavenge-census-record-fallback-last-resort!
+                  backend-state))
+              unit)
+            ;; emergency-reg MUST equal the returned reg (emergency-wrap saves/
+            ;; restores it). Give the global save set a copy, then return the
+            ;; owned fallback. (emidx<0 = the fallback is FREE here, preferred; or
+            ;; the pathological all-excluded last resort.)
+            (if (compiler-backend-scavenge-emergency-reg-supported? fallback)
+              (compiler-backend-emergency-add!
+                function-state
+                (string.copy fallback))
+              (io.panic
+                (str_cat.str-cat
+                  "backend: unsupported scavenge emergency fallback register "
+                  fallback)))
+            fallback)
+          (begin
+            (cfg
+              scavenge-census
+              (compiler-backend-scavenge-census-record-occupied-candidate!
+                backend-state)
+              unit)
+            (compiler-backend-emergency-add-id!
+              function-state
+              (array-ref cands emidx))
+            (compiler_abi.compiler-abi-register-spelling
+              (array-ref cands emidx))))))
     (if (compiler-backend-scavenge-candidate-ok?
       function-state
       occupied-mask
@@ -65252,6 +65372,7 @@
         exclude-n
         exclude-mask
         occupied-mask
+        narrow-mask
         plan-mask
         fallback
         cands
@@ -65266,6 +65387,7 @@
   [backend-state : CompilerBackendState]
   [function-state : CompilerBackendFunctionState]
   [occupied-mask : i64]
+  [narrow-mask : i64]
   [exclude : (__tl_dyn-array String)]
   [exclude-n : i64]
   [fallback : String]) : String
@@ -65283,6 +65405,7 @@
         exclude-n
         exclude-mask
         occupied-mask
+        narrow-mask
         (compiler-backend-function-scratch-i64
           function-state
           compiler-backend-scratch-i64-scavenge-plan-reg-mask)
@@ -65312,6 +65435,7 @@
         exclude
         exclude-n
         exclude-mask
+        occupied-mask
         occupied-mask
         (compiler-backend-function-scratch-i64
           function-state
@@ -65436,6 +65560,7 @@
 (define (compiler-backend-scavenge-pick-iter-peek
   [function-state : CompilerBackendFunctionState]
   [occupied-mask : i64]
+  [narrow-mask : i64]
   [exclude : (__tl_dyn-array String)]
   [exclude-n : i64]
   [exclude-mask : i64]
@@ -65446,19 +65571,34 @@
   [n : i64]) : String
   (if (>= i n)
     (let
-      [emidx : i64
-        (compiler-backend-scavenge-emergency-cand-index
+      ;; R4-B: mirror the committing walk's narrow last-resort tier, so the peek
+      ;; keeps returning exactly what the committing call will.
+      [nidx : i64
+        (compiler-backend-scavenge-narrow-index
           function-state
-          exclude
-          exclude-n
-          exclude-mask
           occupied-mask
-          fallback
+          narrow-mask
+          exclude-mask
+          plan-mask
           cands
           n)]
-      (if (< emidx 0)
-        fallback
-        (compiler_abi.compiler-abi-register-spelling (array-ref cands emidx))))
+      [emidx : i64
+        (if (>= nidx 0)
+          -2
+          (compiler-backend-scavenge-emergency-cand-index
+            function-state
+            exclude
+            exclude-n
+            exclude-mask
+            occupied-mask
+            fallback
+            cands
+            n))]
+      (if (>= nidx 0)
+        (compiler_abi.compiler-abi-register-spelling (array-ref cands nidx))
+        (if (< emidx 0)
+          fallback
+          (compiler_abi.compiler-abi-register-spelling (array-ref cands emidx)))))
     (if (compiler-backend-scavenge-candidate-ok?
       function-state
       occupied-mask
@@ -65469,6 +65609,7 @@
       (compiler-backend-scavenge-pick-iter-peek
         function-state
         occupied-mask
+        narrow-mask
         exclude
         exclude-n
         exclude-mask
@@ -65481,6 +65622,7 @@
 (define (compiler-backend-scavenge-pick-with-mask-peek
   [function-state : CompilerBackendFunctionState]
   [occupied-mask : i64]
+  [narrow-mask : i64]
   [exclude : (__tl_dyn-array String)]
   [exclude-n : i64]
   [fallback : String]) : String
@@ -65494,6 +65636,7 @@
       (compiler-backend-scavenge-pick-iter-peek
         function-state
         occupied-mask
+        narrow-mask
         exclude
         exclude-n
         exclude-mask
@@ -65541,6 +65684,17 @@
         function-state
         point
         hi-point)
+      (if (compiler-backend-function-scratch-bool?
+        function-state
+        compiler-backend-scratch-bool-instr-staging-narrow-ok)
+        (compiler-backend-scavenge-occupied-mask-over-range
+          function-state
+          point
+          (+ point 2))
+        (compiler-backend-scavenge-occupied-mask-over-range
+          function-state
+          point
+          hi-point))
       ex
       ex-n
       fallback)))
@@ -65594,6 +65748,25 @@
       (if (string.eq dst-home "")
         exclude-n
         (+ exclude-n 1))]
+    ;; R4-B: the last-resort narrow window. The wide query above is the one that
+    ;; decides; this second mask is consulted only when it leaves nothing, and
+    ;; only for instructions whose emission reorders nothing
+    ;; (compiler-backend-instr-staging-narrow-ok?, set once per instruction next
+    ;; to the reserved-home mask). Passing the wide mask itself disables the tier
+    ;; -- compiler-backend-scavenge-narrow-index returns -1 on equality -- so the
+    ;; load-fusion families keep today's behaviour exactly.
+    [narrow-mask : i64
+      (if (compiler-backend-function-scratch-bool?
+        function-state
+        compiler-backend-scratch-bool-instr-staging-narrow-ok)
+        (compiler-backend-scavenge-occupied-mask-over-range
+          function-state
+          point
+          (+ point 2))
+        (compiler-backend-scavenge-occupied-mask-over-range
+          function-state
+          point
+          hi-point))]
     [reg : String
       (compiler-backend-scavenge-pick-with-mask
         backend-state
@@ -65602,6 +65775,7 @@
           function-state
           point
           hi-point)
+        narrow-mask
         ex
         ex-n
         fallback)]
@@ -65646,6 +65820,7 @@
       (compiler-backend-scavenge-pick-with-mask
         backend-state
         function-state
+        (compiler-backend-scavenge-occupied-mask-at-point function-state point)
         (compiler-backend-scavenge-occupied-mask-at-point function-state point)
         exclude
         exclude-n

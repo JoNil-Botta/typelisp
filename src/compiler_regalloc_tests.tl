@@ -11453,6 +11453,14 @@
       (compiler-reg-color-step-witness-ok?)
       "an induction step joins its counter's web on the same witness a Mov gets, and a counter that outlives the step is refused")))
 
+(cfg
+  test
+  (test
+    regalloc-scalar-web-witness-chain
+    (test.assert-true
+      (compiler-reg-color-witness-chain-ok?)
+      "a chain of witnessed touches collapses into one slot, and a step that outlives its copy is refused")))
+
 ;; M-B2 scalar phi-web slot sharing. Both cases hand the colorer the SAME plan
 ;; intervals -- deliberately overlapping, which is what the conservative model
 ;; produces for a phi and its input, because it counts the input as live AT the
@@ -11816,6 +11824,158 @@
               ;; A counter still live past its step keeps its own home.
               (> live-slots 1)
               (not (= (array-ref live-remap 0) (array-ref live-remap 1))))]
+          [(reg.CompilerRegColoring.None) false])]
+      [(reg.CompilerRegColoring.None) false])))
+
+;; R4-C: the witness RELATION, not a single witnessed pair. Modelled on
+;; intern_table's it-bench accumulator block:
+;;
+;;   header: %0 = phi [%3 latch], [%4 entry]     the carry
+;;   body:   %1 = mul %0, 3                      witness (%0 -> %1)
+;;           %2 = add %1, 5                      witness (%1 -> %2)
+;;           %3 = mov %2                         witness (%2 -> %3)
+;;
+;; The phi visit joins %3 to the carry first, so when %2 is offered through the
+;; ADD witness the all-pairs walk meets the %2/%3 touch -- a pair with a witness
+;; of its own, but not the one being offered. The old single-pair rule refused
+;; it there, and offering %2 again through the MOV witness met the %1/%2 touch
+;; and refused it again, so the add's result took a second slot and the block
+;; stored one register to two slots every iteration.
+;;
+;; `outlives` is the negative: `exit` returns %2, so %2 is still live where %3
+;; is defined, the endpoint equality that carries the witness no longer holds,
+;; and %2 must keep its own home.
+(cfg
+  test
+  (define (compiler-reg-color-witness-chain-blocks [outlives : bool]) : ir.CompilerIrBlockList
+    (ir.compiler-ir-block-cons
+      (ir.CompilerIrBlock.Block
+        (ir.compiler-ir-label "entry")
+        (compiler-reg-test-instr-seq-prepend
+          (ir.CompilerIrInstr.Mov
+            4
+            (ir.CompilerIrValue.I64 0)
+            (compiler-reg-i64-ty))
+          (compiler-reg-test-instr-seq-prepend
+            (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "header"))
+            (ir.compiler-ir-instr-seq-empty))))
+      (ir.compiler-ir-block-cons
+        (ir.CompilerIrBlock.Block
+          (ir.compiler-ir-label "header")
+          (compiler-reg-test-instr-seq-prepend
+            (ir.CompilerIrInstr.Phi
+              0
+              (ir.compiler-ir-phi-input-cons
+                (ir.CompilerIrValue.Var 3)
+                (ir.compiler-ir-label "latch")
+                (ir.compiler-ir-phi-input-cons
+                  (ir.CompilerIrValue.Var 4)
+                  (ir.compiler-ir-label "entry")
+                  ir.CompilerIrPhiInputList.Nil))
+              (compiler-reg-i64-ty))
+            (compiler-reg-test-instr-seq-prepend
+              (ir.CompilerIrInstr.Branch
+                (ir.CompilerIrValue.Var 0)
+                (ir.compiler-ir-label "body")
+                (ir.compiler-ir-label "exit"))
+              (ir.compiler-ir-instr-seq-empty))))
+        (ir.compiler-ir-block-cons
+          (ir.CompilerIrBlock.Block
+            (ir.compiler-ir-label "body")
+            (compiler-reg-test-instr-seq-prepend
+              (ir.CompilerIrInstr.BinOp
+                1
+                (ir.CompilerIrBinOp.Mul)
+                (ir.CompilerIrValue.Var 0)
+                (ir.CompilerIrValue.I64 3)
+                (compiler-reg-i64-ty))
+              (compiler-reg-test-instr-seq-prepend
+                (ir.CompilerIrInstr.BinOp
+                  2
+                  (ir.CompilerIrBinOp.Add)
+                  (ir.CompilerIrValue.Var 1)
+                  (ir.CompilerIrValue.I64 5)
+                  (compiler-reg-i64-ty))
+                (compiler-reg-test-instr-seq-prepend
+                  (ir.CompilerIrInstr.Mov
+                    3
+                    (ir.CompilerIrValue.Var 2)
+                    (compiler-reg-i64-ty))
+                  (compiler-reg-test-instr-seq-prepend
+                    (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "latch"))
+                    (ir.compiler-ir-instr-seq-empty))))))
+          (ir.compiler-ir-block-cons
+            (ir.CompilerIrBlock.Block
+              (ir.compiler-ir-label "latch")
+              (compiler-reg-test-instr-seq-prepend
+                (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "header"))
+                (ir.compiler-ir-instr-seq-empty)))
+            (ir.compiler-ir-block-cons
+              (ir.CompilerIrBlock.Block
+                (ir.compiler-ir-label "exit")
+                (compiler-reg-test-instr-seq-prepend
+                  (ir.CompilerIrInstr.Return
+                    (ir.CompilerIrMaybeValue.Some
+                      (if outlives
+                        (ir.CompilerIrValue.Var 2)
+                        (ir.CompilerIrValue.I64 0))))
+                  (ir.compiler-ir-instr-seq-empty)))
+              ir.CompilerIrBlockList.Nil)))))))
+
+;; Deliberately overlapping conservative intervals, as in the fixtures above:
+;; the ordinary disjoint-interval walk can share nothing, so every merge in the
+;; result is the web logic's doing.
+(cfg
+  test
+  (define (compiler-reg-color-witness-chain-intervals) : reg.CompilerRegIntervalSeq
+    (reg.compiler-reg-interval-seq-prepend
+      (reg.CompilerRegInterval 0 0 20)
+      (reg.compiler-reg-interval-seq-prepend
+        (reg.CompilerRegInterval 1 1 20)
+        (reg.compiler-reg-interval-seq-prepend
+          (reg.CompilerRegInterval 2 2 20)
+          (reg.compiler-reg-interval-seq-prepend
+            (reg.CompilerRegInterval 3 3 20)
+            (reg.compiler-reg-interval-seq-prepend
+              (reg.CompilerRegInterval 4 4 20)
+              (reg.compiler-reg-interval-seq-empty))))))))
+
+(cfg
+  test
+  (define (compiler-reg-color-witness-chain-coloring [outlives : bool]) : reg.CompilerRegColoring
+    (reg.compiler-reg-color-stack-slots
+      (ast.ast-node-pool-reader-type-segment-bases)
+      (reg.CompilerRegPlan.Plan
+        (compiler-reg-color-spill-sharing-assignments 5)
+        (live.compiler-live-set-empty)
+        (compiler-reg-color-witness-chain-intervals)
+        (compiler-reg-color-spill-sharing-types 5)
+        (reg.compiler-reg-call-split-empty)
+        (reg.compiler-reg-split-plan-empty))
+      (live.compiler-live-set-empty)
+      ir.CompilerIrParamList.Nil
+      (compiler-reg-color-witness-chain-blocks outlives)
+      5
+      5
+      (live.compiler-live-set-empty))))
+
+(cfg
+  test
+  (define (compiler-reg-color-witness-chain-ok?) : bool
+    (match (compiler-reg-color-witness-chain-coloring false)
+      [(reg.CompilerRegColoring.Remap chain-remap chain-slots)
+        (match (compiler-reg-color-witness-chain-coloring true)
+          [(reg.CompilerRegColoring.Remap live-remap live-slots)
+            (and
+              ;; Seed, carry, both steps and the back-edge copy share ONE slot.
+              (= chain-slots 1)
+              (= (array-ref chain-remap 0) (array-ref chain-remap 1))
+              (= (array-ref chain-remap 0) (array-ref chain-remap 2))
+              (= (array-ref chain-remap 0) (array-ref chain-remap 3))
+              (= (array-ref chain-remap 0) (array-ref chain-remap 4))
+              ;; A step still live where the copy is defined keeps its own home.
+              (> live-slots 1)
+              (not (= (array-ref live-remap 2) (array-ref live-remap 3))))]
           [(reg.CompilerRegColoring.None) false])]
       [(reg.CompilerRegColoring.None) false])))
 
@@ -19294,6 +19454,9 @@
     (compiler-regalloc-self-test-require!
       "compiler-reg-color-carry-priority-ok?"
       (cfg test (compiler-reg-color-carry-priority-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-color-witness-chain-ok?"
+      (cfg test (compiler-reg-color-witness-chain-ok?) true))
     (compiler-regalloc-self-test-require!
       "compiler-reg-color-spill-param-pins-ok?"
       (compiler-reg-color-spill-param-pins-ok?))

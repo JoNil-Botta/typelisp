@@ -3328,17 +3328,90 @@
 
 (define (compiler-typecheck-smoke-macro-dependency-helper-source) : String
   "(module tc_macro_context_helper)
-(define (bump [value : i64]) : i64 (+ value 1))")
+(defmacro (bump [value : Expr]) : Expr `(+ ,value 1))")
 
 (define (compiler-typecheck-smoke-macro-dependency-provider-source) : String
   "(module tc_macro_context_provider)
 (import tc_macro_context_helper as helper)
-(defmacro (bumped [value : i64]) : i64
+(defmacro (bumped [value : Expr]) : Expr
   `(helper.bump ,value))")
 
 (define (compiler-typecheck-smoke-macro-dependency-entry-source) : String
   "(import tc_macro_context_provider as provider)
 (define (main) : i64 (provider.bumped 41))")
+
+(define (compiler-typecheck-smoke-macro-dependency-state-check
+  [entry : String]
+  [roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]) : bool
+  (let
+    [load-state : load.CompilerLoadSessionState
+      (load.compiler-load-session-state-new)]
+    [prefix-cache : tc_core.TcPrefixSnapshotCacheState
+      (tc_core.tc-prefix-snapshot-cache-state-new)]
+    [job-state : tc_core.TcJobState (tc_core.tc-job-state-new)]
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [result : tc_core.ResultCompilerTypecheck
+      (match (load.compiler-load-file-with-paths-and-roots-cfg-with-pools
+        load-state
+        entry
+        (sym_i64_env.sym-i64-empty)
+        roots
+        cfgs
+        pools)
+        [(load.ResultCompilerLoadWithPaths.Ok decls paths modules _)
+          (tc_api.typecheck-compiler-program-with-paths-cache-and-load-state-and-prefix-cache-state-and-pools
+            load-state
+            prefix-cache
+            job-state
+            (ast.ast-program decls)
+            (ast.ast-decl-path-list-with-modules paths modules)
+            roots
+            "typecheck-macro-transitive-dependency-state"
+            pools)]
+        [(load.ResultCompilerLoadWithPaths.Err diag)
+          (tc_core.ResultCompilerTypecheck.Err
+            (diagnostic.compiler-diagnostic-list-box-single diag))])]
+    [ok : bool
+      (match result
+        [(tc_core.ResultCompilerTypecheck.Ok _) true]
+        [(tc_core.ResultCompilerTypecheck.Err _) false])]
+    (begin
+      (tc_core.tc-prefix-snapshot-cache-invalidate-for-state! prefix-cache)
+      ok)))
+
+(define (compiler-typecheck-smoke-macro-dependency-missing-ok?) : bool
+  (let
+    [provider : String "target/tc_macro_missing_provider.tl"]
+    [entry : String "target/tc_macro_missing_entry.tl"]
+    [missing : String "target/tc_macro_missing_helper.tl"]
+    [roots : svec.Vec (svec.new)]
+    [cfgs : sym_i64_env.SymI64Env (parser.compiler-cfg-empty)]
+    (begin
+      (compiler-typecheck-smoke-write-text
+        provider
+        "(module tc_macro_missing_provider)
+(import tc_macro_missing_helper as helper)
+(defmacro (bumped [value : Expr]) : Expr `(helper.bump ,value))")
+      (compiler-typecheck-smoke-write-text
+        entry
+        "(import tc_macro_missing_provider as provider)
+(define (main) : i64 (provider.bumped 41))")
+      (tc_api.compiler-typecheck-reset-load-session!)
+      (match (load.compiler-load-file-with-paths-and-roots-cfg
+        entry
+        (sym_i64_env.sym-i64-empty)
+        roots
+        cfgs)
+        [(load.ResultCompilerLoadWithPaths.Err diag)
+          (and
+            (string.eq
+              (diagnostic.compiler-diagnostic-path (__tl-box-place diag))
+              missing)
+            (string.eq
+              (diagnostic.compiler-diagnostic-message (__tl-box-place diag))
+              (str_cat.str-cat "compiler-load: cannot read import " missing)))]
+        [(load.ResultCompilerLoadWithPaths.Ok _ _ _ _) false]))))
 
 (define (compiler-typecheck-smoke-macro-dependency-context-ok?) : bool
   (let
@@ -3358,7 +3431,19 @@
         entry
         (compiler-typecheck-smoke-macro-dependency-entry-source))
       (tc_api.compiler-typecheck-reset-load-session!)
-      (compiler-typecheck-smoke-prefix-cache-file-check entry roots cfgs))))
+      (let
+        [serial-ok : bool
+          (compiler-typecheck-smoke-prefix-cache-file-check entry roots cfgs)]
+        [_reset : unit (tc_api.compiler-typecheck-reset-load-session!)]
+        [state-ok : bool
+          (compiler-typecheck-smoke-macro-dependency-state-check
+            entry
+            roots
+            cfgs)]
+        (and
+          serial-ok
+          state-ok
+          (compiler-typecheck-smoke-macro-dependency-missing-ok?))))))
 
 (define (compiler-typecheck-smoke-surface-macro-provider-source) : String
   "(module tc_surface_macro_provider)

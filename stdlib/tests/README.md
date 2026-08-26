@@ -53,6 +53,12 @@ or external runtime orchestration. Pure stdlib API coverage that can run through
   rounding, decimal-only powers, normal/subnormal edges, max finite values,
   infinities, and canonical NaNs; deterministic finite-bit samples additionally
   prove decimal parse round trips.
+- `format_float_precision.tl` pins Rust 1.98 fixed-decimal f32/f64 Display for
+  literal/indexed/named/star counts, signed zero, exact half-even boundaries,
+  carry, width/sign/zero composition, normals/subnormals, maximum finite
+  values, infinities, NaNs, source-width f32 digits, and bounded precision 400.
+  `format_float_precision_length_overflow.tl` pins the checked signed-`i64`
+  output-length trap before allocation.
 - `io_stdio_pipe_short_read.tl` is typechecked like the other witnesses and is
   also run by `scripts/verify-stdlib.sh` through a native pipe to ensure
   positive short pipe reads do not report EOF before all bytes arrive.
@@ -209,11 +215,11 @@ Inline stdlib coverage:
   advancement; count reuse; non-advancing dollar references; byte precision
   for String/borrowed-str/bool/char/owner-hook output; truncation-before-padding
   composition; and NUL/high-byte/mid-UTF-8-boundary behavior.
-  `format_precision_io.tl` proves the same precision path through stdout and
-  direct stderr output.
+  `format_precision_io.tl` proves text truncation and fixed float precision
+  through stdout and direct stderr output.
   `comptime_string_literal_reject.tl` keeps non-literal syntax inspection
   rejected at macro expansion. The `format_*_reject.tl` fixtures cover
-  non-literal templates, unsupported float precision/type semantics,
+  non-literal templates, unsupported type-selector semantics,
   malformed or out-of-order options, static width/precision overflow, dynamic
   width/precision type/range/sign failures, both placeholder-count mismatches,
   invalid/overflowed indices, malformed/captured/raw/bare names,

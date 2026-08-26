@@ -97343,6 +97343,10 @@
     function-state
     compiler-backend-scratch-i64-array-scavenge-ends))
 
+;; Deliberate raw lifetime proof (#6620): this fixture destroys its transient
+;; scratch arena and then mutates the retained backend tables to prove that
+;; lazy storage is owned by the job arena. A lexical arena form would prevent
+;; the post-destroy assertions that this test exists to exercise.
 (define (compiler-backend-lazy-table-storage-ok?) : bool
   (let
     [caller : arena.Arena (arena.current)]

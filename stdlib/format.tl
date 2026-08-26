@@ -6,7 +6,8 @@
 ;# plan supporting byte fill, alignment, sign, alternate/zero flags, width, and
 ;# literal/dollar/star precision counts. The generated expression evaluates
 ;# each supplied value once and uses one flat `str-cat` expansion. Nonnumeric
-;# Display precision truncates rendered TypeLisp bytes before padding.
+;# Display precision truncates rendered TypeLisp bytes before padding; float
+;# precision selects exact fixed decimal with round-half-to-even.
 ;#
 ;# Nominal structs and enums participate through their canonical owner module.
 ;# A module's common primary type defines `to-string`; additional nominal types
@@ -416,13 +417,15 @@
                                     ["u32" true]
                                     ["u64" true]
                                     [_ false])]
+                                [float? : bool
+                                  (match value-kind
+                                    ["f64" true]
+                                    ["f32" true]
+                                    [_ false])]
                                 [numeric? : bool
                                   (if integral?
                                     true
-                                    (match value-kind
-                                      ["f64" true]
-                                      ["f32" true]
-                                      [_ false]))]
+                                    float?)]
                                 [rendered : comptime.Expr
                                   (if nominal?
                                     (match hook-dispatch
@@ -572,18 +575,6 @@
                                             "format: unsupported argument type "
                                             value-key))]))]
                                 (begin
-                                  ;; Macro CTFE cannot invoke `cond`.
-                                  ;; lint-allow: nested-if-ladder
-                                  (if (= precision-kind 0)
-                                    unit
-                                    (if integral?
-                                      unit
-                                      (if (if (string.eq value-kind "f64")
-                                        true
-                                        (string.eq value-kind "f32"))
-                                        (comptime.comptime-error
-                                          "format: precision for float Display output is not supported yet")
-                                        unit)))
                                   (if (string.eq selector "")
                                     unit
                                     (comptime.comptime-error
@@ -705,12 +696,35 @@
                                       (if precision-runtime?
                                         precision-var
                                         resolved-precision)]
+                                    [rendered-with-precision : comptime.Expr
+                                      (if (if float?
+                                        (!= precision-kind 0)
+                                        false)
+                                        (match value-kind
+                                          ["f64"
+                                            (if borrowed?
+                                              `(stdlib.format.format-float-fixed-core
+                                                (deref ,value)
+                                                ,transported-precision)
+                                              `(stdlib.format.format-float-fixed-core
+                                                ,value
+                                                ,transported-precision))]
+                                          ["f32"
+                                            (if borrowed?
+                                              `(stdlib.format.format-f32-fixed-core
+                                                (deref ,value)
+                                                ,transported-precision)
+                                              `(stdlib.format.format-f32-fixed-core
+                                                ,value
+                                                ,transported-precision))]
+                                          [_ rendered])
+                                        rendered)]
                                     [formatted : comptime.Expr
                                       (if default-options?
-                                        rendered
+                                        rendered-with-precision
                                         (if numeric?
                                           `(stdlib.format.format-apply-options
-                                            ,rendered
+                                            ,rendered-with-precision
                                             true
                                             (stdlib.format.FormatOptions
                                               (cast ,fill-expr : char)
@@ -722,7 +736,7 @@
                                               (!= ,precision-kind-expr 0)
                                               ,transported-precision))
                                           `(stdlib.format.format-apply-options
-                                            ,rendered
+                                            ,rendered-with-precision
                                             false
                                             (stdlib.format.FormatOptions
                                               (cast ,fill-expr : char)
@@ -3269,18 +3283,34 @@
 (define ftoa-cap : i64
   40)
 
+;: Limb capacity for exact fixed-precision f64 decimal coefficients.
+;:
+;: The largest coefficient is a 53-bit significand multiplied by `5^1074`,
+;: which needs fewer than 81 base-2^32 limbs. Shortest Display keeps the
+;: smaller `ftoa-cap` buffers so omitted precision does not regress.
+(define ftoa-fixed-cap : i64
+  84)
+
+;: Decimal scratch bytes covering every value representable by 84 limbs.
+(define ftoa-fixed-decimal-cap : i64
+  820)
+
 ;: Low 32-bit mask isolating a base-2^32 limb.
 (define ftoa-mask32 : u64
   0xffffffff)
 
-;: A zero-valued formatter BigNum.
-(define (bn-zero) : BigNum
-  (BigNum (array.make-array u64 stdlib.format.ftoa-cap) 0))
+;: A zero-valued formatter BigNum with caller-selected scratch capacity.
+(define (bn-zero-cap [capacity : i64]) : BigNum
+  (BigNum (array.make-array u64 capacity) 0))
 
-;: BigNum holding the u64 value x.
-(define (bn-from-u64 [x : u64]) : BigNum
+;: A zero-valued shortest-formatter BigNum.
+(define (bn-zero) : BigNum
+  (bn-zero-cap stdlib.format.ftoa-cap))
+
+;: BigNum holding the u64 value x with caller-selected scratch capacity.
+(define (bn-from-u64-cap [x : u64] [capacity : i64]) : BigNum
   (let
-    [r : BigNum (bn-zero)]
+    [r : BigNum (bn-zero-cap capacity)]
     [lo : u64 (bit-and x stdlib.format.ftoa-mask32)]
     [hi : u64 (shr x 32)]
     (begin
@@ -3291,6 +3321,10 @@
         (if (> lo (cast 0 : u64))
           (BigNum r.limbs 1)
           (BigNum r.limbs 0))))))
+
+;: BigNum holding the u64 value x for shortest formatting.
+(define (bn-from-u64 [x : u64]) : BigNum
+  (bn-from-u64-cap x stdlib.format.ftoa-cap))
 
 ;: Compare BigNums a and b; -1 if a<b, 0 if equal, 1 if a>b.
 (define (bn-cmp [a : (& a BigNum)] [b : (& b BigNum)]) : i64
@@ -3335,7 +3369,13 @@
 ;: Sum of BigNums a and b.
 (define (bn-add [a : (& a BigNum)] [b : (& b BigNum)]) : BigNum
   (let
-    [r : (__tl_dyn-array u64) (array.make-array u64 stdlib.format.ftoa-cap)]
+    [a-cap : i64 (array-length a.limbs)]
+    [b-cap : i64 (array-length b.limbs)]
+    [capacity : i64
+      (if (> a-cap b-cap)
+        a-cap
+        b-cap)]
+    [r : (__tl_dyn-array u64) (array.make-array u64 capacity)]
     [la : i64 a.len]
     [lb : i64 b.len]
     [n : i64
@@ -3372,7 +3412,7 @@
 ;: Product of BigNum a and a value m that fits in 32 bits.
 (define (bn-mul-u32 [a : (& a BigNum)] [m : u64]) : BigNum
   (let
-    [r : (__tl_dyn-array u64) (array.make-array u64 stdlib.format.ftoa-cap)]
+    [r : (__tl_dyn-array u64) (array.make-array u64 (array-length a.limbs))]
     [la : i64 a.len]
     [carry : u64 (cast 0 : u64)]
     [i : i64 0]
@@ -3406,7 +3446,7 @@
     (let
       [limb-shift : i64 (/ n 32)]
       [bit-shift : i64 (% n 32)]
-      [r : (__tl_dyn-array u64) (array.make-array u64 stdlib.format.ftoa-cap)]
+      [r : (__tl_dyn-array u64) (array.make-array u64 (array-length a.limbs))]
       [la : i64 a.len]
       [carry : u64 (cast 0 : u64)]
       [i : i64 0]
@@ -3450,10 +3490,26 @@
           (set! remaining (- remaining 1))))
       r)))
 
+;: BigNum a multiplied by five raised to p.
+(define (bn-mul-pow5 [a : BigNum] [p : i64]) : BigNum
+  (let
+    [r : BigNum a]
+    [remaining : i64 p]
+    (begin
+      (while (>= remaining 13)
+        (begin
+          (set! r (bn-mul-u32 r (cast 1220703125 : u64)))
+          (set! remaining (- remaining 13))))
+      (while (> remaining 0)
+        (begin
+          (set! r (bn-mul-u32 r (cast 5 : u64)))
+          (set! remaining (- remaining 1))))
+      r)))
+
 ;: Difference of BigNums a and b, assuming a >= b.
 (define (bn-sub [a : (& a BigNum)] [b : (& b BigNum)]) : BigNum
   (let
-    [r : (__tl_dyn-array u64) (array.make-array u64 stdlib.format.ftoa-cap)]
+    [r : (__tl_dyn-array u64) (array.make-array u64 (array-length a.limbs))]
     [borrow : u64 (cast 0 : u64)]
     [i : i64 0]
     (begin
@@ -3479,6 +3535,125 @@
       (let
         [norm : i64 (bn-norm-len (& r) a.len)]
         (BigNum r norm)))))
+
+;: BigNum a shifted right by n bits.
+(define (bn-shr-bits [a : (& a BigNum)] [n : i64]) : BigNum
+  (if (or (= a.len 0) (<= n 0))
+    (BigNum (clone a.limbs) a.len)
+    (let
+      [limb-shift : i64 (/ n 32)]
+      [bit-shift : i64 (% n 32)]
+      [capacity : i64 (array-length a.limbs)]
+      [r : (__tl_dyn-array u64) (array.make-array u64 capacity)]
+      [out-len : i64
+        (if (>= limb-shift a.len)
+          0
+          (- a.len limb-shift))]
+      [i : i64 0]
+      (begin
+        (while (< i out-len)
+          (let
+            [source-index : i64 (+ i limb-shift)]
+            [low : u64 (shr (array-ref a.limbs source-index) bit-shift)]
+            [high : u64
+              (if (if (= bit-shift 0)
+                false
+                (< (+ source-index 1) a.len))
+                (bit-and
+                  (shl (array-ref a.limbs (+ source-index 1)) (- 32 bit-shift))
+                  stdlib.format.ftoa-mask32)
+                (cast 0 : u64))]
+            (begin
+              (set!
+                (array-ref r i)
+                (bit-and (bit-or low high) stdlib.format.ftoa-mask32))
+              (set! i (+ i 1)))))
+        (let
+          [norm : i64 (bn-norm-len (& r) out-len)]
+          (BigNum r norm))))))
+
+;: Whether one zero-based bit is set in a BigNum.
+(define (bn-bit-set? [a : (& a BigNum)] [index : i64]) : bool
+  (if (< index 0)
+    false
+    (let
+      [limb-index : i64 (/ index 32)]
+      [bit-index : i64 (% index 32)]
+      (if (>= limb-index a.len)
+        false
+        (!=
+          (bit-and
+            (shr (array-ref a.limbs limb-index) bit-index)
+            (cast 1 : u64))
+          (cast 0 : u64))))))
+
+;: Whether any of the lowest `count` bits are nonzero.
+(define (bn-low-bits-nonzero? [a : (& a BigNum)] [count : i64]) : bool
+  (if (<= count 0)
+    false
+    (let
+      [full-limbs : i64 (/ count 32)]
+      [partial-bits : i64 (% count 32)]
+      [i : i64 0]
+      [found : bool false]
+      (begin
+        (while (and (not found) (< i full-limbs) (< i a.len))
+          (begin
+            (when (!= (array-ref a.limbs i) (cast 0 : u64)) (set! found true))
+            (set! i (+ i 1))))
+        (if (if found
+          false
+          (if (= partial-bits 0)
+            false
+            (< full-limbs a.len)))
+          (let
+            [mask : u64 (- (shl (cast 1 : u64) partial-bits) (cast 1 : u64))]
+            (!= (bit-and (array-ref a.limbs full-limbs) mask) (cast 0 : u64)))
+          found)))))
+
+;: Divide by 2^shift and round an exact midpoint to an even quotient.
+(define (bn-round-shr-even [a : BigNum] [shift : i64]) : BigNum
+  (if (<= shift 0)
+    a
+    (let
+      [quotient : BigNum (bn-shr-bits (& a) shift)]
+      [half? : bool (bn-bit-set? (& a) (- shift 1))]
+      [lower? : bool (bn-low-bits-nonzero? (& a) (- shift 1))]
+      [odd? : bool
+        (if (= quotient.len 0)
+          false
+          (!=
+            (bit-and (array-ref quotient.limbs 0) (cast 1 : u64))
+            (cast 0 : u64)))]
+      (if (and half? (or lower? odd?))
+        (let
+          [one : BigNum (bn-from-u64-cap (cast 1 : u64) (array-length a.limbs))]
+          (bn-add quotient one))
+        quotient))))
+
+;: One base-2^32 long-division step by a u32-sized divisor.
+(defstruct BigDivU32Step
+  (quotient BigNum)
+  (remainder u64))
+
+;: Divide a BigNum by one nonzero value that fits in 32 bits.
+(define (bn-div-u32 [a : (& a BigNum)] [divisor : u64]) : BigDivU32Step
+  (let
+    [r : (__tl_dyn-array u64) (array.make-array u64 (array-length a.limbs))]
+    [remainder : u64 (cast 0 : u64)]
+    [i : i64 (- a.len 1)]
+    (begin
+      (while (>= i 0)
+        (let
+          [current : u64 (bit-or (shl remainder 32) (array-ref a.limbs i))]
+          [digit : u64 (/ current divisor)]
+          (begin
+            (set! (array-ref r i) digit)
+            (set! remainder (- current (* digit divisor)))
+            (set! i (- i 1)))))
+      (let
+        [norm : i64 (bn-norm-len (& r) a.len)]
+        (BigDivU32Step (BigNum r norm) remainder)))))
 
 ;: One base-10 long-division digit and its exact remainder.
 (defstruct BigDigitStep
@@ -3529,6 +3704,43 @@
   (unsafe
     (ptr-cast (__tl_array-data buf) : (Ptr u8))))
 
+;: Render one nonnegative BigNum as decimal digits.
+(define (bn-decimal-string [value : BigNum]) : String
+  (if (= value.len 0)
+    "0"
+    (let
+      [out : (__tl_dyn-array u8)
+        (array.make-array u8 stdlib.format.ftoa-fixed-decimal-cap)]
+      [cursor : i64 stdlib.format.ftoa-fixed-decimal-cap]
+      [current : BigNum value]
+      (begin
+        (while (> current.len 0)
+          (let
+            [step : BigDivU32Step (bn-div-u32 current (cast 1000000000 : u64))]
+            [chunk : u64 step.remainder]
+            [digit-count : i64
+              (if (> step.quotient.len 0)
+                9
+                (format-u64-digit-count chunk))]
+            [i : i64 0]
+            (begin
+              (while (< i digit-count)
+                (let
+                  [next : u64 (/ chunk (cast 10 : u64))]
+                  [digit : u64 (- chunk (* next (cast 10 : u64)))]
+                  (begin
+                    (set! cursor (- cursor 1))
+                    (set!
+                      (array-ref out cursor)
+                      (cast (+ digit (cast 48 : u64)) : u8))
+                    (set! chunk next)
+                    (set! i (+ i 1)))))
+              (set! current step.quotient))))
+        (unsafe
+          (string-from-bytes
+            (ptr-offset (format-array-const-ptr out) cursor)
+            (- stdlib.format.ftoa-fixed-decimal-cap cursor)))))))
+
 ;: A string of n zero characters.
 (define (ftoa-zeros [n : i64]) : String
   (let
@@ -3568,6 +3780,88 @@
       (if neg
         (str_cat.str-cat "-" body "")
         body))))
+
+;: Checked output byte length for fixed float Display.
+(define (ftoa-fixed-output-length
+  [neg : bool]
+  [integer-digits : i64]
+  [precision : i64]) : i64
+  (let
+    [base : i64
+      (+
+        integer-digits
+        (if neg
+          1
+          0))]
+    (if (= precision 0)
+      base
+      (if (> precision (- 9223372036854775807 (+ base 1)))
+        (format-runtime-abort-string
+          "format: fixed float output length overflow")
+        (+ base (+ 1 precision))))))
+
+;: Render exact decimal digits at `scale`, extending to requested precision.
+;:
+;: `precision >= scale`. Rounding has already happened when precision is below
+;: the source value's exact terminating-decimal scale.
+(define (ftoa-render-fixed
+  [neg : bool]
+  [digits : String]
+  [scale : i64]
+  [precision : i64]) : String
+  (let
+    [digits-len : i64 (string.string-length (& digits))]
+    [decimal-position : i64 (- digits-len scale)]
+    [integer-digits : i64
+      (if (> decimal-position 0)
+        decimal-position
+        1)]
+    [output-len : i64 (ftoa-fixed-output-length neg integer-digits precision)]
+    [dst : (MutPtr u8) (string.string-runtime-alloc output-len)]
+    [cursor : i64 0]
+    (begin
+      (when
+        neg
+        (begin
+          (unsafe
+            (ptr-write! dst (cast '-' : u8)))
+          (set! cursor 1)))
+      (if (= precision 0)
+        (format-copy-rendered-range! (& digits) 0 dst cursor digits-len)
+        (if (<= decimal-position 0)
+          (begin
+            (unsafe
+              (ptr-write! (ptr-offset dst cursor) (cast '0' : u8)))
+            (set! cursor (+ cursor 1))
+            (unsafe
+              (ptr-write! (ptr-offset dst cursor) (cast '.' : u8)))
+            (set! cursor (+ cursor 1))
+            (format-write-fill! dst cursor (- 0 decimal-position) '0')
+            (set! cursor (+ cursor (- 0 decimal-position)))
+            (format-copy-rendered-range! (& digits) 0 dst cursor digits-len)
+            (set! cursor (+ cursor digits-len))
+            (format-write-fill! dst cursor (- precision scale) '0'))
+          (begin
+            (format-copy-rendered-range!
+              (& digits)
+              0
+              dst
+              cursor
+              decimal-position)
+            (set! cursor (+ cursor decimal-position))
+            (unsafe
+              (ptr-write! (ptr-offset dst cursor) (cast '.' : u8)))
+            (set! cursor (+ cursor 1))
+            (format-copy-rendered-range!
+              (& digits)
+              decimal-position
+              dst
+              cursor
+              (- digits-len decimal-position))
+            (set! cursor (+ cursor (- digits-len decimal-position)))
+            (format-write-fill! dst cursor (- precision scale) '0'))))
+      (unsafe
+        (string-from-bytes (ptr-cast dst : (Ptr u8)) output-len)))))
 
 ;: Ten raised to n for n <= 17.
 (define (ftoa-pow10-u64 [n : i64]) : u64
@@ -3706,6 +4000,63 @@
       [lower-close : bool (and (= frac (cast 0 : u64)) (> expf (cast 1 : u64)))]
       (ftoa-shortest neg m e2 lower-close max-digits))))
 
+;: Shared exact fixed-precision implementation for f64 and f32 bit layouts.
+(define (format-float-fixed-parts
+  [neg : bool]
+  [expf : u64]
+  [frac : u64]
+  [exp-max : u64]
+  [mantissa-bits : i64]
+  [bias : i64]
+  [precision : i64]) : String
+  (begin
+    (when
+      (= expf exp-max)
+      (return
+        (if (= frac (cast 0 : u64))
+          (if neg
+            "-inf"
+            "inf")
+          "NaN")))
+    (when
+      (and (= expf (cast 0 : u64)) (= frac (cast 0 : u64)))
+      (return (ftoa-render-fixed neg "0" 0 precision)))
+    (let
+      [m : u64
+        (if (= expf (cast 0 : u64))
+          frac
+          (bit-or frac (shl (cast 1 : u64) mantissa-bits)))]
+      [e2 : i64
+        (if (= expf (cast 0 : u64))
+          (- (- 1 bias) mantissa-bits)
+          (- (- (cast expf : i64) bias) mantissa-bits))]
+      [base : BigNum (bn-from-u64-cap m stdlib.format.ftoa-fixed-cap)]
+      (if (>= e2 0)
+        (ftoa-render-fixed
+          neg
+          (bn-decimal-string (bn-shl-bits base e2))
+          0
+          precision)
+        (let
+          [exact-scale : i64 (- 0 e2)]
+          (if (< precision exact-scale)
+            (let
+              [scaled : BigNum (bn-mul-pow5 base precision)]
+              [rounded : BigNum
+                (bn-round-shr-even scaled (- exact-scale precision))]
+              (ftoa-render-fixed
+                neg
+                (bn-decimal-string rounded)
+                precision
+                precision))
+            (let
+              [coefficient : BigNum (bn-mul-pow5 base exact-scale)]
+              (ftoa-render-fixed
+                neg
+                (bn-decimal-string coefficient)
+                exact-scale
+                precision))))))))
+
 ;: Render an f64 with Rust Display-compatible shortest decimal semantics.
 (define (format-float-core [value : f64]) : String
   (let
@@ -3724,3 +4075,29 @@
     [expf : u64 (bit-and (shr bits 23) (cast 0xff : u64))]
     [frac : u64 (bit-and bits (cast 0x7fffff : u64))]
     (format-float-parts neg expf frac (cast 0xff : u64) 23 127 9)))
+
+;: Render an f64 with exact fixed precision and round-half-to-even.
+(define (format-float-fixed-core [value : f64] [precision : i64]) : String
+  (let
+    [bits : u64 (__tl_float_to_bits value)]
+    [neg : bool (= (bit-and (shr bits 63) (cast 1 : u64)) (cast 1 : u64))]
+    [expf : u64 (bit-and (shr bits 52) (cast 0x7ff : u64))]
+    [frac : u64 (bit-and bits 0xfffffffffffff)]
+    (format-float-fixed-parts
+      neg
+      expf
+      frac
+      (cast 0x7ff : u64)
+      52
+      1023
+      precision)))
+
+;: Render an f32 at source width with exact fixed precision.
+(define (format-f32-fixed-core [value : f32] [precision : i64]) : String
+  (let
+    [bits32 : u32 (__tl_float_to_bits value)]
+    [bits : u64 (cast bits32 : u64)]
+    [neg : bool (= (bit-and (shr bits 31) (cast 1 : u64)) (cast 1 : u64))]
+    [expf : u64 (bit-and (shr bits 23) (cast 0xff : u64))]
+    [frac : u64 (bit-and bits (cast 0x7fffff : u64))]
+    (format-float-fixed-parts neg expf frac (cast 0xff : u64) 23 127 precision)))

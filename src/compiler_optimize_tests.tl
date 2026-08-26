@@ -4062,13 +4062,17 @@
         1]
       [(not (= (compiler_ir_types.compiler-ir-instr-seq-count dce) 8)) 2]
       [(not (= (compiler_ir_types.compiler-ir-instr-seq-count bounds) 8)) 3]
-      [(not (= (opt-count-vector-binop-instrs vector-cse) 2)) 4]
-      [(not (= (opt-mov-dst-type-tag vector-cse 3) 0)) 5]
+      [(not (= (opt-count-vector-binop-instrs vector-cse) 1)) 4]
+      [(not
+          (=
+            (opt-mov-dst-type-tag vector-cse 3)
+            (compiler_ast_types.ast-type-tag (compiler_ast_types.AstType.I64))))
+        5]
       [(not (= (opt-count-vector-reduce-instrs vector-reduce-cse) 2)) 6]
       [(not (= (opt-mov-dst-type-tag vector-reduce-cse 2) 0)) 7]
       [(not (= (opt-count-arith-instr-seq vector-stale) 1)) 8]
       [(not (= (opt-count-mov-i64-value-instr-seq vector-stale 11) 0)) 9]
-      [(not (= (opt-vector-binop-lhs-var vector-copy 3) 2)) 10]
+      [(not (= (opt-vector-binop-lhs-var vector-copy 3) 0)) 10]
       [(not (= (opt-mask-binop-lhs-var mask-copy 3) 0)) 11]
       [(not (= (opt-mask-reduce-src-var mask-reduce-copy 2) 0)) 12]
       [(not (= (opt-mask-not-src-var mask-not-copy 2) 0)) 13]

@@ -64782,7 +64782,7 @@
           compiler_ir_types.CompilerIrParamList.Nil
           (compiler_ast_types.AstType.I64)
           17
-          blocks)
+          (compiler_optimize.compiler-opt-global-shared-view blocks))
         (compiler_ir_types.compiler-ir-function-seq-empty))]
     [table : opt_i64_i64_map.Map
       (compiler_optimize.opt-const-divisors-build globals functions)]
@@ -68063,7 +68063,8 @@
     [fixture : compiler_ir_types.CompilerIrFunction
       (opt-gc-test-while-function symbols)]
     [functions : compiler_ir_types.CompilerIrFunctionSeq
-      (opt-gc-test-functions1 fixture)]
+      (opt-gc-test-functions1
+        (compiler_optimize.compiler-opt-global-shared-view fixture))]
     [summaries : compiler_optimize.OptLoopBceSummaries
       (compiler_optimize.opt-build-program-summaries
         type-segment-bases
@@ -70722,7 +70723,7 @@
       (opt-lp-test-call-function symbols)]
     [call-functions : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_ir_types.compiler-ir-function-seq-prepend
-        call-fixture
+        (compiler_optimize.compiler-opt-global-shared-view call-fixture)
         (opt-lp-test-program-functions symbols))]
     [call-summaries : compiler_optimize.OptLoopBceSummaries
       (compiler_optimize.opt-loop-bce-summaries-set-global-cell

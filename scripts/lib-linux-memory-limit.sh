@@ -12,7 +12,9 @@
 # group's aggregate RSS from `ps`. It does not cap virtual address space and
 # therefore avoids the mmap-reservation failures caused by RLIMIT_AS. The
 # fallback can briefly overshoot between samples, but terminates the complete
-# process group once observed RSS crosses the configured ceiling.
+# process group once observed RSS crosses the configured ceiling. A launch
+# gate keeps user code suspended until process-group isolation and the first
+# successful memory sample are established.
 
 LINUX_MEMORY_LIMIT_BACKEND=${LINUX_MEMORY_LIMIT_BACKEND:-}
 
@@ -98,7 +100,7 @@ linux_memory_limit_run_systemd() {
         _linux_memory_limit_status=$?
     cat "$_linux_memory_limit_systemd_stderr" >&2
     _linux_memory_limit_peak_bytes=$(awk '
-        /^Memory peak: / { raw = $3 }
+        /^[[:space:]]*Memory peak: / { raw = $3 }
         END {
             if (raw == "") exit 1
             suffix = substr(raw, length(raw), 1)
@@ -148,6 +150,10 @@ linux_memory_limit_watchdog_available() {
     command -v ps >/dev/null 2>&1 || return 1
     command -v awk >/dev/null 2>&1 || return 1
     command -v sleep >/dev/null 2>&1 || return 1
+    command -v mktemp >/dev/null 2>&1 || return 1
+    command -v rm >/dev/null 2>&1 || return 1
+    command -v rmdir >/dev/null 2>&1 || return 1
+    command -v sh >/dev/null 2>&1 || return 1
     ps -e -o pid= -o pgid= -o rss= >/dev/null 2>&1
 }
 
@@ -205,7 +211,22 @@ linux_memory_limit_run_watchdog() {
     _linux_memory_limit_poll=${TYPELISP_LINUX_MEMORY_LIMIT_POLL_SECONDS:-0.05}
     _linux_memory_limit_peak_rss=0
 
-    setsid "$@" &
+    # Keep the requested command behind a filesystem gate. The waiting shell
+    # gives the parent time to verify the new process group and take a positive
+    # RSS sample before any user code can execute, including commands which
+    # would otherwise finish between fork and the first watchdog poll.
+    _linux_memory_limit_gate_dir=$(mktemp -d \
+        "${TMPDIR:-/tmp}/typelisp-memory-watchdog.XXXXXX") || {
+        echo "RSS watchdog failed to create launch gate" >&2
+        return 1
+    }
+    _linux_memory_limit_gate="$_linux_memory_limit_gate_dir/start"
+    setsid sh -c '
+        gate=$1
+        shift
+        while [ ! -e "$gate" ]; do sleep 0.01; done
+        exec "$@"
+    ' sh "$_linux_memory_limit_gate" "$@" &
     _linux_memory_limit_pid=$!
     _linux_memory_limit_pgid=$(ps -o pgid= -p "$_linux_memory_limit_pid" 2>/dev/null \
         | awk 'NR == 1 { print $1 }')
@@ -231,20 +252,67 @@ linux_memory_limit_run_watchdog() {
         if [ -n "${TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE:-}" ]; then
             printf '0\n' > "$TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE"
         fi
+        rm -f "$_linux_memory_limit_gate"
+        rmdir "$_linux_memory_limit_gate_dir" 2>/dev/null || true
         return "$_linux_memory_limit_status"
     fi
     if [ "$_linux_memory_limit_pgid" -ne "$_linux_memory_limit_pid" ]; then
         kill "$_linux_memory_limit_pid" 2>/dev/null || true
         wait "$_linux_memory_limit_pid" 2>/dev/null || true
+        rm -f "$_linux_memory_limit_gate"
+        rmdir "$_linux_memory_limit_gate_dir" 2>/dev/null || true
         echo "RSS watchdog failed to isolate command process group" >&2
         return 1
     fi
+
+    _linux_memory_limit_sample_attempt=0
+    _linux_memory_limit_rss=0
+    while [ "$_linux_memory_limit_rss" -eq 0 ] \
+        && [ "$_linux_memory_limit_sample_attempt" -lt 20 ]; do
+        _linux_memory_limit_rss=$(linux_memory_limit_process_group_rss_kib \
+            "$_linux_memory_limit_pid") || {
+                kill -TERM "-$_linux_memory_limit_pid" 2>/dev/null || true
+                wait "$_linux_memory_limit_pid" 2>/dev/null || true
+                rm -f "$_linux_memory_limit_gate"
+                rmdir "$_linux_memory_limit_gate_dir" 2>/dev/null || true
+                echo "RSS watchdog failed to read initial process memory" >&2
+                return 1
+            }
+        if [ "$_linux_memory_limit_rss" -eq 0 ]; then
+            sleep 0.01
+        fi
+        _linux_memory_limit_sample_attempt=$((_linux_memory_limit_sample_attempt + 1))
+    done
+    if [ "$_linux_memory_limit_rss" -eq 0 ]; then
+        kill -TERM "-$_linux_memory_limit_pid" 2>/dev/null || true
+        wait "$_linux_memory_limit_pid" 2>/dev/null || true
+        rm -f "$_linux_memory_limit_gate"
+        rmdir "$_linux_memory_limit_gate_dir" 2>/dev/null || true
+        echo "RSS watchdog failed to establish initial memory measurement" >&2
+        return 1
+    fi
+    _linux_memory_limit_peak_rss=$_linux_memory_limit_rss
+    if [ "$_linux_memory_limit_rss" -gt "$_linux_memory_limit_kib" ]; then
+        echo "memory limit exceeded before command launch: aggregate RSS ${_linux_memory_limit_rss} KiB > ${_linux_memory_limit_kib} KiB (rss-watchdog fallback)" >&2
+        kill -TERM "-$_linux_memory_limit_pid" 2>/dev/null || true
+        wait "$_linux_memory_limit_pid" 2>/dev/null || true
+        rm -f "$_linux_memory_limit_gate"
+        rmdir "$_linux_memory_limit_gate_dir" 2>/dev/null || true
+        if [ -n "${TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE:-}" ]; then
+            printf '%s\n' "$((_linux_memory_limit_peak_rss * 1024))" \
+                > "$TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE"
+        fi
+        return 137
+    fi
+    : > "$_linux_memory_limit_gate"
 
     while :; do
         _linux_memory_limit_rss=$(linux_memory_limit_process_group_rss_kib \
             "$_linux_memory_limit_pid") || {
                 kill -TERM "-$_linux_memory_limit_pid" 2>/dev/null || true
                 wait "$_linux_memory_limit_pid" 2>/dev/null || true
+                rm -f "$_linux_memory_limit_gate"
+                rmdir "$_linux_memory_limit_gate_dir" 2>/dev/null || true
                 echo "RSS watchdog failed to read process memory" >&2
                 return 1
             }
@@ -260,6 +328,8 @@ linux_memory_limit_run_watchdog() {
             sleep 0.1
             kill -KILL "-$_linux_memory_limit_pid" 2>/dev/null || true
             wait "$_linux_memory_limit_pid" 2>/dev/null || true
+            rm -f "$_linux_memory_limit_gate"
+            rmdir "$_linux_memory_limit_gate_dir" 2>/dev/null || true
             if [ -n "${TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE:-}" ]; then
                 printf '%s\n' "$((_linux_memory_limit_peak_rss * 1024))" \
                     > "$TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE"
@@ -274,6 +344,8 @@ linux_memory_limit_run_watchdog() {
     else
         _linux_memory_limit_status=$?
     fi
+    rm -f "$_linux_memory_limit_gate"
+    rmdir "$_linux_memory_limit_gate_dir" 2>/dev/null || true
     if [ -n "${TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE:-}" ]; then
         printf '%s\n' "$((_linux_memory_limit_peak_rss * 1024))" \
             > "$TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE"

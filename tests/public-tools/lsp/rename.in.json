@@ -1,7 +1,13 @@
 [
-  {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}},
-  {"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"${{TMP_URI}}/test.tl","languageId":"typelisp","version":1,"text":"(define (foo [x : i64]) : i64\n  (+ x foo-bar))\n\n(define (bar) : i64\n  foo)\n"}}},
-  {"jsonrpc":"2.0","id":2,"method":"tl/rename","params":{"textDocument":{"uri":"${{TMP_URI}}/test.tl"},"oldName":"foo","newName":"baz"}},
-  {"jsonrpc":"2.0","id":3,"method":"shutdown","params":null},
+  {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"workspaceFolders":[{"uri":"${{TMP_URI}}/root","name":"rename"}],"capabilities":{}}},
+  {"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"${{TMP_URI}}/root/main.tl","languageId":"typelisp","version":7,"text":"(module refactor.main)\n(import refactor.shared)\n(define prefix : String \"λ€𝄞\")\n(define first-use : i64 (+ shared.target-value shared.target-value))\n(define (shadow [target-value : i64]) : i64 target-value)\n; target-value shared.target-value\n(define text : String \"target-value shared.target-value\")\n"}}},
+  {"jsonrpc":"2.0","id":2,"method":"textDocument/prepareRename","params":{"textDocument":{"uri":"${{TMP_URI}}/root/main.tl"},"position":{"line":3,"character":38}}},
+  {"jsonrpc":"2.0","id":3,"method":"textDocument/rename","params":{"textDocument":{"uri":"${{TMP_URI}}/root/main.tl"},"position":{"line":3,"character":38},"newName":"renamed-value"}},
+  {"jsonrpc":"2.0","id":4,"method":"textDocument/prepareRename","params":{"textDocument":{"uri":"${{TMP_URI}}/root/main.tl"},"position":{"line":4,"character":51}}},
+  {"jsonrpc":"2.0","id":5,"method":"textDocument/rename","params":{"textDocument":{"uri":"${{TMP_URI}}/root/main.tl"},"position":{"line":4,"character":51},"newName":"local-value"}},
+  {"jsonrpc":"2.0","id":6,"method":"textDocument/rename","params":{"textDocument":{"uri":"${{TMP_URI}}/root/main.tl"},"position":{"line":3,"character":38},"newName":"other-value"}},
+  {"jsonrpc":"2.0","id":7,"method":"textDocument/rename","params":{"textDocument":{"uri":"${{TMP_URI}}/root/main.tl"},"position":{"line":3,"character":38},"newName":"1bad"}},
+  {"jsonrpc":"2.0","id":8,"method":"textDocument/prepareRename","params":{"textDocument":{"uri":"${{TMP_URI}}/root/main.tl"},"position":{"line":5,"character":4}}},
+  {"jsonrpc":"2.0","id":9,"method":"shutdown","params":null},
   {"jsonrpc":"2.0","method":"exit"}
 ]

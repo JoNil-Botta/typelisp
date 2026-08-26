@@ -280,7 +280,7 @@
 (define (gvn-mix [hash : i64] [value : i64]) : i64
   (* (bit-xor hash value) gvn-hash-prime))
 
-(define (gvn-byte-at [text : String] [n : i64] [i : i64]) : i64
+(define (gvn-byte-at [text : (& text str)] [n : i64] [i : i64]) : i64
   (if (< i n)
     (cast (string.string-ref text i) : i64)
     -1))
@@ -288,7 +288,7 @@
 (define (gvn-digit? [byte : i64]) : bool
   (and (>= byte 48) (<= byte 57)))
 
-(define (gvn-scan-ints [text : String] [out : (&mut out i64vec.Vec)]) : i64
+(define (gvn-scan-ints [text : (& text str)] [out : (&mut out i64vec.Vec)]) : i64
   (let
     [n : i64 (string.string-length text)]
     [i : i64 0]

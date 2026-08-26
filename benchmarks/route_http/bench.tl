@@ -153,7 +153,7 @@
 ;; wildcard captures on success and -1 on failure. The whole path must be
 ;; consumed, and a wildcard segment must capture at least one byte.
 (define (rt-match-route
-  [path : String]
+  [path : (& path str)]
   [path-end : i64]
   [words : (& words (Array String 16))]
   [segment-kind : (&mut segment-kind (Slice i64))]
@@ -215,7 +215,7 @@
         -1))))
 
 (define (rt-route-request
-  [path : String]
+  [path : (& path str)]
   [method : i64]
   [words : (& words (Array String 16))]
   [segment-kind : (&mut segment-kind (Slice i64))]

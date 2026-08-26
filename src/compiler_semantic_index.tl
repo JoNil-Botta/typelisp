@@ -8190,7 +8190,6 @@
   [entry-source : String]
   [complete : bool]) : CompilerSemanticSourceIndex
   (let
-    [previous : i64 (arena.tl_arena_current)]
     [owner : i64 (arena.tl_arena_make)]
     (begin
       (set!

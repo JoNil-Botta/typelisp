@@ -1,17 +1,21 @@
 ;: A live generated hashmap value borrow blocks a bang mutation of the map.
 (import stdlib.hashmap)
-(import (hashmap.hashmap i64 i64) as map_i64_i64)
+
+(defstruct BorrowedNominalValue
+  (text String))
+
+(import (hashmap.hashmap i64 BorrowedNominalValue) as nominal_map)
 
 (define (main) : unit
   (let
-    [m : map_i64_i64.Map (map_i64_i64.new)]
+    [m : nominal_map.Map (nominal_map.new)]
     (begin
-      (map_i64_i64.insert! m 1 10)
+      (nominal_map.insert! m 1 (BorrowedNominalValue "first"))
       (let
-        [borrowed : (map_i64_i64.BorrowedValueLookup m)
-          (map_i64_i64.get-value-borrowed (& m) 1)]
+        [borrowed : (nominal_map.BorrowedValueLookup m)
+          (nominal_map.get-value-borrowed (& m) 1)]
         (begin
-          (map_i64_i64.insert! m 2 20)
-          (if (map_i64_i64.borrowed-value-found? borrowed)
+          (nominal_map.insert! m 2 (BorrowedNominalValue "second"))
+          (if (nominal_map.borrowed-value-found? borrowed)
             unit
             unit))))))

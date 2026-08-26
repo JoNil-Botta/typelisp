@@ -161,6 +161,22 @@
         want)]
     [(tc_core.ResultCompilerTypecheck.Ok _) false]))
 
+(define (compiler-typecheck-error-count-ok?
+  [src : String]
+  [want : String]
+  [want-count : i64]) : bool
+  (match (tc_api.typecheck-compiler-source src)
+    [(tc_core.ResultCompilerTypecheck.Err diag)
+      (let
+        [diagnostics : cdiag.CompilerDiagnosticList (__tl-box-place diag)]
+        (and
+          (= (cdiag.compiler-diagnostic-list-count diagnostics) want-count)
+          (string.eq
+            (cdiag.compiler-diagnostic-message
+              (cdiag.compiler-diagnostic-list-first diagnostics))
+            want)))]
+    [(tc_core.ResultCompilerTypecheck.Ok _) false]))
+
 (define (compiler-typecheck-error-location-ok?
   [src : String]
   [want : String]
@@ -707,6 +723,18 @@
   "(define (main [n : i64]) : (& n i64)
   (clone (& n)))")
 
+(define (compiler-typecheck-generated-hashmap-clone-error-source) : String
+  "(module hashmap.clone.values)
+(defstruct RawValue (raw (Ptr i64)))
+(module stdlib.hashmap.generated.first)
+(import hashmap.clone.values as values)
+(define (copy-first [value : values.RawValue]) : values.RawValue (clone value))
+(define (copy-second [value : values.RawValue]) : values.RawValue (clone value))
+(module stdlib.hashmap.generated.second)
+(import hashmap.clone.values as values)
+(define (copy-first [value : values.RawValue]) : values.RawValue (clone value))
+(define (copy-second [value : values.RawValue]) : values.RawValue (clone value))")
+
 (define (compiler-typecheck-clone-tests-ok?) : bool
   (and
     (clone_support.clone-name-set-smoke-ok?)
@@ -720,7 +748,11 @@
       "typecheck: clone unsupported type (MutPtr i64)")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-clone-ref-source)
-      "typecheck: clone unsupported type (& n i64)")))
+      "typecheck: clone unsupported type (& n i64)")
+    (compiler-typecheck-error-count-ok?
+      (compiler-typecheck-generated-hashmap-clone-error-source)
+      "typecheck: clone unsupported type hashmap.clone.values/RawValue at hashmap.clone.values/RawValue.raw: (Ptr i64) has no clone capability"
+      2)))
 
 (define (compiler-typecheck-foreach-return-source) : String
   "(define (main [n : i64]) : i64

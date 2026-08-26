@@ -43301,6 +43301,407 @@
     (tc-global-shared-view tc-clone-able-cache)
     (tc-clone-able-set-build ctx)))
 
+(define (tc-clone-unsupported-path-type
+  [pools : ast.AstNodePoolContext]
+  [decls : ast.AstDeclList]
+  [able : clone_support.CloneNameSet]
+  [names : clone_support.CloneNameSet]
+  [seen : clone_support.CloneNameSet]
+  [ty : ast.AstType]
+  [module-id : i64]
+  [path : String]) : String
+  (if (clone_support.clone-field-type-able-id? pools ty able module-id)
+    ""
+    (match ty
+      [(ast.AstType.Tuple elems)
+        (tc-clone-unsupported-path-type-list-at
+          pools
+          decls
+          able
+          names
+          seen
+          (__tl-box-place elems)
+          module-id
+          path
+          0)]
+      [(ast.AstType.Array elem _)
+        (tc-clone-unsupported-path-type
+          pools
+          decls
+          able
+          names
+          seen
+          (clone_support.clone-type-get pools elem)
+          module-id
+          (str_cat.str-cat path "[]"))]
+      [(ast.AstType.DynArray elem)
+        (tc-clone-unsupported-path-type
+          pools
+          decls
+          able
+          names
+          seen
+          (clone_support.clone-type-get pools elem)
+          module-id
+          (str_cat.str-cat path "[]"))]
+      [(ast.AstType.Slice elem)
+        (tc-clone-unsupported-path-type
+          pools
+          decls
+          able
+          names
+          seen
+          (clone_support.clone-type-get pools elem)
+          module-id
+          (str_cat.str-cat path "[]"))]
+      [(ast.AstType.Box elem)
+        (tc-clone-unsupported-path-type
+          pools
+          decls
+          able
+          names
+          seen
+          (clone_support.clone-type-get pools elem)
+          module-id
+          (str_cat.str-cat path ".*"))]
+      [(ast.AstType.Region _ inner)
+        (tc-clone-unsupported-path-type
+          pools
+          decls
+          able
+          names
+          seen
+          (clone_support.clone-type-get pools inner)
+          module-id
+          path)]
+      [(ast.AstType.Var name)
+        (tc-clone-unsupported-path-nominal
+          pools
+          decls
+          able
+          names
+          seen
+          name
+          module-id
+          path)]
+      [(ast.AstType.VarArgs name _)
+        (tc-clone-unsupported-path-nominal
+          pools
+          decls
+          able
+          names
+          seen
+          name
+          module-id
+          path)]
+      [(ast.AstType.Enum name)
+        (tc-clone-unsupported-path-nominal
+          pools
+          decls
+          able
+          names
+          seen
+          name
+          module-id
+          path)]
+      [(ast.AstType.EnumArgs name _)
+        (tc-clone-unsupported-path-nominal
+          pools
+          decls
+          able
+          names
+          seen
+          name
+          module-id
+          path)]
+      [(ast.AstType.Struct name)
+        (tc-clone-unsupported-path-nominal
+          pools
+          decls
+          able
+          names
+          seen
+          name
+          module-id
+          path)]
+      [(ast.AstType.StructArgs name _)
+        (tc-clone-unsupported-path-nominal
+          pools
+          decls
+          able
+          names
+          seen
+          name
+          module-id
+          path)]
+      [_
+        (str_cat.str-cat
+          path
+          ": "
+          (tc-type-render ty)
+          " has no clone capability")])))
+
+(define (tc-clone-unsupported-path-type-list-at
+  [pools : ast.AstNodePoolContext]
+  [decls : ast.AstDeclList]
+  [able : clone_support.CloneNameSet]
+  [names : clone_support.CloneNameSet]
+  [seen : clone_support.CloneNameSet]
+  [types : ast.AstTypeList]
+  [module-id : i64]
+  [path : String]
+  [index : i64]) : String
+  (if (>= index (ast.ast-type-list-len (& types)))
+    ""
+    (let
+      [ty : ast.AstType
+        (clone_support.clone-type-get
+          pools
+          (ast.ast-type-list-get (& types) index (ast.ast-type-id-fallback)))]
+      [candidate : String
+        (tc-clone-unsupported-path-type
+          pools
+          decls
+          able
+          names
+          seen
+          ty
+          module-id
+          (str_cat.str-cat path "[" (string.int->string index) "]"))]
+      (if (string.eq candidate "")
+        (tc-clone-unsupported-path-type-list-at
+          pools
+          decls
+          able
+          names
+          seen
+          types
+          module-id
+          path
+          (+ index 1))
+        candidate))))
+
+(define (tc-clone-unsupported-path-fields-at
+  [pools : ast.AstNodePoolContext]
+  [decls : ast.AstDeclList]
+  [able : clone_support.CloneNameSet]
+  [names : clone_support.CloneNameSet]
+  [seen : clone_support.CloneNameSet]
+  [fields : ast.AstFieldDefList]
+  [module-id : i64]
+  [path : String]
+  [index : i64]) : String
+  (if (>= index (ast.ast-field-def-list-len fields))
+    ""
+    (match (ast.ast-field-def-list-get
+      fields
+      index
+      (ast.ast-field-def-fallback))
+      [(ast.AstFieldDef.Def name ty _)
+        (let
+          [candidate : String
+            (tc-clone-unsupported-path-type
+              pools
+              decls
+              able
+              names
+              seen
+              ty
+              module-id
+              (str_cat.str-cat path "." (ci.intern-str name)))]
+          (if (string.eq candidate "")
+            (tc-clone-unsupported-path-fields-at
+              pools
+              decls
+              able
+              names
+              seen
+              fields
+              module-id
+              path
+              (+ index 1))
+            candidate))])))
+
+(define (tc-clone-unsupported-path-variants-at
+  [pools : ast.AstNodePoolContext]
+  [decls : ast.AstDeclList]
+  [able : clone_support.CloneNameSet]
+  [names : clone_support.CloneNameSet]
+  [seen : clone_support.CloneNameSet]
+  [variants : ast.AstVariantDefList]
+  [module-id : i64]
+  [path : String]
+  [index : i64]) : String
+  (if (>= index (ast.ast-variant-def-list-len variants))
+    ""
+    (match (ast.ast-variant-def-list-get
+      variants
+      index
+      (ast.ast-variant-def-fallback))
+      [(ast.AstVariantDef.Def name payloads _)
+        (let
+          [candidate : String
+            (tc-clone-unsupported-path-type-list-at
+              pools
+              decls
+              able
+              names
+              seen
+              payloads
+              module-id
+              (str_cat.str-cat path "." (ci.intern-str name))
+              0)]
+          (if (string.eq candidate "")
+            (tc-clone-unsupported-path-variants-at
+              pools
+              decls
+              able
+              names
+              seen
+              variants
+              module-id
+              path
+              (+ index 1))
+            candidate))])))
+
+(define (tc-clone-unsupported-path-nominal
+  [pools : ast.AstNodePoolContext]
+  [decls : ast.AstDeclList]
+  [able : clone_support.CloneNameSet]
+  [names : clone_support.CloneNameSet]
+  [seen : clone_support.CloneNameSet]
+  [name : i64]
+  [module-id : i64]
+  [path : String]) : String
+  (let
+    [resolved-key : i64
+      (clone_support.clone-type-name-resolve-id names module-id name)]
+    [root-fallback : bool
+      (clone_support.clone-name-root-fallback-eligible? module-id name)]
+    [root-key : i64 (clone_support.clone-name-key-id name)]
+    [current-module-id : i64 (clone_support.clone-root-module-id)]
+    [index : i64 0]
+    [count : i64 (ast.ast-decl-list-len (& decls))]
+    [found : bool false]
+    [out : String ""]
+    (begin
+      (while (and (not found) (< index count))
+        (begin
+          (if (ast.ast-decl-list-unwrapped-module-or-type-definition-at?
+            (& decls)
+            index)
+            (match (ast.ast-decl-unwrapped
+              (ast.ast-decl-list-get (& decls) index (ast.ast-decl-fallback)))
+              [(ast.AstDecl.Module next-module)
+                (set! current-module-id next-module)]
+              [(ast.AstDecl.DefEnum _ decl-name _ variants)
+                (let
+                  [decl-key : i64
+                    (clone_support.clone-name-key-id-in-module
+                      current-module-id
+                      decl-name)]
+                  (if (or
+                    (= decl-key resolved-key)
+                    (and root-fallback (= decl-key root-key)))
+                    (begin
+                      (set! found true)
+                      (if (clone_support.clone-name-set-contains-id?
+                        seen
+                        decl-key)
+                        unit
+                        (set!
+                          out
+                          (tc-clone-unsupported-path-variants-at
+                            pools
+                            decls
+                            able
+                            names
+                            (clone_support.clone-name-set-insert-id
+                              seen
+                              decl-key)
+                            variants
+                            current-module-id
+                            path
+                            0))))
+                    unit))]
+              [(ast.AstDecl.DefStruct _ decl-name _ _ fields)
+                (let
+                  [decl-key : i64
+                    (clone_support.clone-name-key-id-in-module
+                      current-module-id
+                      decl-name)]
+                  (if (or
+                    (= decl-key resolved-key)
+                    (and root-fallback (= decl-key root-key)))
+                    (begin
+                      (set! found true)
+                      (if (clone_support.clone-name-set-contains-id?
+                        seen
+                        decl-key)
+                        unit
+                        (set!
+                          out
+                          (tc-clone-unsupported-path-fields-at
+                            pools
+                            decls
+                            able
+                            names
+                            (clone_support.clone-name-set-insert-id
+                              seen
+                              decl-key)
+                            fields
+                            current-module-id
+                            path
+                            0))))
+                    unit))]
+              [_ unit])
+            unit)
+          (set! index (+ index 1))))
+      (if found
+        out
+        (str_cat.str-cat
+          path
+          ": nominal declaration is unavailable to clone validation")))))
+
+(define (tc-clone-unsupported-detail [ctx : TcContext] [ty : ast.AstType]) : String
+  (let
+    [decls : ast.AstDeclList
+      (if (macro-segmented-program-active? (tc-context-job-state ctx))
+        (match (macro-segmented-program-flatten-raw (tc-context-job-state ctx))
+          [(MacroSegmentedProgramFlatView flattened _paths) flattened])
+        (match (tc-context-program ctx)
+          [(ast.AstProgram.Program decls-box) (__tl-box-place decls-box)]))]
+    [able : clone_support.CloneNameSet (tc-clone-able-set ctx)]
+    [names : clone_support.CloneNameSet
+      (clone_support.clone-all-type-names
+        decls
+        (clone_support.clone-name-set-for-decls decls))]
+    [root : String (tc-type-render ty)]
+    [nominal-root : bool
+      (match ty
+        [(ast.AstType.Var _) true]
+        [(ast.AstType.VarArgs _ _) true]
+        [(ast.AstType.Enum _) true]
+        [(ast.AstType.EnumArgs _ _) true]
+        [(ast.AstType.Struct _) true]
+        [(ast.AstType.StructArgs _ _) true]
+        [_ false])]
+    [path : String
+      (if nominal-root
+        (tc-clone-unsupported-path-type
+          (tc-context-pools ctx)
+          decls
+          able
+          names
+          (clone_support.clone-name-set-empty)
+          ty
+          (tc-context-module-id ctx)
+          root)
+        "")]
+    (if (string.eq path "")
+      ""
+      (str_cat.str-cat " at " path))))
+
 (define (tc-clone-able-type? [ctx : TcContext] [ty : ast.AstType]) : bool
   (let
     [resolved : ast.AstType (tc-type-without-regions (tc-resolve-type ctx ty))]
@@ -43335,7 +43736,8 @@
                 (str_cat.str-cat
                   "typecheck: clone unsupported type "
                   (tc-type-render
-                    (tc-type-without-regions (tc-resolve-type ctx arg-ty)))))))]
+                    (tc-type-without-regions (tc-resolve-type ctx arg-ty)))
+                  (tc-clone-unsupported-detail ctx clone-ty)))))]
         [(ResultTcType.Err message) (ResultTcType.Err message)]))
     (ResultTcType.Err "typecheck: clone expects exactly one argument")))
 
@@ -117828,6 +118230,16 @@
     path
     message))
 
+;; A generated hashmap family repeats its value clone in several public
+;; operations. Every site remains a semantic error for an unsupported V, but
+;; one macro request should report the identical capability failure only once.
+(define (tc-generated-hashmap-clone-diagnostic?
+  [module : String]
+  [message : String]) : bool
+  (and
+    (tc-diag-string-prefix? module "stdlib.hashmap.generated.")
+    (tc-diag-string-prefix? message "typecheck: clone unsupported type ")))
+
 ;; Direct declaration typechecking stays below the self-build memory budget and
 ;; avoids the per-declaration scratch arena overhead.
 (defstruct TcPoisonNameList
@@ -118016,6 +118428,11 @@
         (TcPoisonNameList (array.make-array i64 0) 0))]
     [diagnostics : cdiag.CompilerDiagnosticList
       (cdiag.compiler-diagnostic-list-empty)]
+    ;; Generated modules are walked contiguously. Retain the latest clone
+    ;; failure's stable list index so duplicate clone sites are collapsed only
+    ;; within the same generated family, never across two macro requests.
+    [last-hashmap-clone-module-id : i64 -1]
+    [last-hashmap-clone-diagnostic-index : i64 -1]
     [type-module-cache-valid : bool false]
     [type-module-cache-path-owner-id : i64 -1]
     [type-module-cache-id : i64 -1]
@@ -118242,13 +118659,49 @@
                                 prev-path)
                               (if tc-poison-observed
                                 unit
-                                (cdiag.compiler-diagnostic-list-push!
-                                  (&mut diagnostics)
-                                  (tc-typecheck-diag-with-rest-path
-                                    (& rest)
-                                    decl
-                                    decl-path
-                                    message)))
+                                (let
+                                  [decl-diag : cdiag.CompilerDiagnostic
+                                    (tc-typecheck-diag-with-rest-path
+                                      (& rest)
+                                      decl
+                                      decl-path
+                                      message)]
+                                  [diag-message : String
+                                    (cdiag.compiler-diagnostic-message
+                                      decl-diag)]
+                                  [hashmap-clone : bool
+                                    (tc-generated-hashmap-clone-diagnostic?
+                                      cur-module
+                                      diag-message)]
+                                  [duplicate-hashmap-clone : bool
+                                    (and
+                                      hashmap-clone
+                                      (=
+                                        cur-module-id
+                                        last-hashmap-clone-module-id)
+                                      (>= last-hashmap-clone-diagnostic-index 0)
+                                      (string.eq
+                                        (cdiag.compiler-diagnostic-message-ref
+                                          (cdiag.compiler-diagnostic-list-ref
+                                            (& diagnostics)
+                                            last-hashmap-clone-diagnostic-index))
+                                        (& diag-message)))]
+                                  (if duplicate-hashmap-clone
+                                    unit
+                                    (begin
+                                      (if hashmap-clone
+                                        (begin
+                                          (set!
+                                            last-hashmap-clone-module-id
+                                            cur-module-id)
+                                          (set!
+                                            last-hashmap-clone-diagnostic-index
+                                            (cdiag.compiler-diagnostic-list-count
+                                              diagnostics)))
+                                        unit)
+                                      (cdiag.compiler-diagnostic-list-push!
+                                        (&mut diagnostics)
+                                        decl-diag)))))
                               (set!
                                 cur-local-env
                                 (tc-poison-decl-env

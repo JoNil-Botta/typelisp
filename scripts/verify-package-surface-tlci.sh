@@ -14,18 +14,20 @@ cd "$ROOT"
 . "$ROOT/scripts/lib-native-link.sh"
 native_link_detect_host
 
-# Target-conditioned prefix declarations change the skip totals. Windows also
-# builds dependency nodes serially in one process, while Linux workers isolate
-# child-node fallback accounting from the root build.
+# Target-conditioned prefix declarations change the skip totals. The explicit
+# compiler-owned-view import from the by-value ownership cutover contributes
+# one declaration on both hosts. Windows also builds dependency nodes serially
+# in one process, while Linux workers isolate child-node fallback accounting
+# from the root build.
 case "$NL_HOST_OS" in
     windows)
-        TRUSTED_PREFIX_SKIPPED=229
-        FAILURE_PREFIX_SKIPPED=207
+        TRUSTED_PREFIX_SKIPPED=230
+        FAILURE_PREFIX_SKIPPED=208
         FORCED_SOURCE_FALLBACKS=3
         ;;
     *)
-        TRUSTED_PREFIX_SKIPPED=224
-        FAILURE_PREFIX_SKIPPED=202
+        TRUSTED_PREFIX_SKIPPED=225
+        FAILURE_PREFIX_SKIPPED=203
         FORCED_SOURCE_FALLBACKS=1
         ;;
 esac

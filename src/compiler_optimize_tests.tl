@@ -66962,6 +66962,442 @@
     42
     "a sentinel phi compared against a literal threads its literal edges to the branch targets, moves the compare onto the variable edge and leaves a bool phi; loop-header phis, back edges and second readers are refused, and successor phis keyed on the merge are re-keyed onto the threaded predecessor"))
 
+;; --- T1-2b: jump-separated merges, compare chains, and the block merge ------
+;;
+;; The T1-2 fixtures above all put the phi, the compare and the branch in ONE
+;; block. These put the compare somewhere else: one block further on (the
+;; jump-separated merge lowering leaves behind), or in a run of two of them (the
+;; `(and (>= b 48) (<= b 57))` classifier, which reads the join twice). The last
+;; group drives the block merge on its own.
+(define (opt-pcc-compare
+  [dst : i64]
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [literal : i64]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.BinOp
+    dst
+    op
+    (compiler_ir_types.CompilerIrValue.Var 4)
+    (compiler_ir_types.CompilerIrValue.I64 literal)
+    (compiler_ast_types.AstType.I64)))
+
+;; The same link with a VARIABLE on the right: no verdict folds for it, which is
+;; refusal (c).
+(define (opt-pcc-compare-var
+  [dst : i64]
+  [op : compiler_ir_types.CompilerIrBinOp]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.BinOp
+    dst
+    op
+    (compiler_ir_types.CompilerIrValue.Var 4)
+    (compiler_ir_types.CompilerIrValue.Var 1)
+    (compiler_ast_types.AstType.I64)))
+
+(define (opt-pcc-branch [cond-var : i64] [on-true : String] [on-false : String]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.Branch
+    (compiler_ir_types.CompilerIrValue.Var cond-var)
+    (compiler_ir_types.compiler-ir-label on-true)
+    (compiler_ir_types.compiler-ir-label on-false)))
+
+(define (opt-pcc-literal-input
+  [literal : i64]
+  [label : String]
+  [rest : compiler_ir_types.CompilerIrPhiInputList]) : compiler_ir_types.CompilerIrPhiInputList
+  (compiler_ir_types.compiler-ir-phi-input-cons
+    (compiler_ir_types.CompilerIrValue.I64 literal)
+    (compiler_ir_types.compiler-ir-label label)
+    rest))
+
+(define (opt-pcc-mov [dst : i64] [src : i64]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.Mov
+    dst
+    (compiler_ir_types.CompilerIrValue.Var src)
+    (compiler_ast_types.AstType.I64)))
+
+;; (a) entry -> {arm, sent} -> merge -> c1: the merge holds nothing but the phi
+;; and falls into the block that compares it.
+(define (opt-pcc-blocks-forward) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-pcf-block "entry" (opt-test-instrs (opt-pcf-branch "arm" "sent")))
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-pcf-block
+        "arm"
+        (opt-test-instrs (opt-pcf-arm-value) (opt-pcf-jump "merge")))
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-pcf-block "sent" (opt-test-instrs (opt-pcf-jump "merge")))
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-pcf-block
+            "merge"
+            (opt-test-instrs
+              (opt-pcf-phi
+                (opt-pcf-var-input
+                  "arm"
+                  (opt-pcf-sentinel-input
+                    "sent"
+                    (compiler_ir_types.CompilerIrPhiInputList.Nil))))
+              (opt-pcf-jump "c1")))
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-pcf-block
+              "c1"
+              (opt-test-instrs
+                (opt-pcc-compare 5 (compiler_ir_types.CompilerIrBinOp.Eq) 37)
+                (opt-pcc-branch 5 "yes" "no")))
+            (compiler_ir_types.compiler-ir-block-cons
+              (opt-pcf-block "yes" (opt-test-instrs (opt-pcf-return true)))
+              (compiler_ir_types.compiler-ir-block-cons
+                (opt-pcf-block "no" (opt-test-instrs (opt-pcf-return false)))
+                (compiler_ir_types.CompilerIrBlockList.Nil)))))))))
+
+;; (b)/(c)/(d) the digit classifier: three predecessors carry `%3`, `-1` and
+;; `50` into a merge that falls into `c1 = [ge %4, 48]`, which falls into
+;; `c2 = [<second>]`. `-1` is decided by the first link alone; `50` needs both.
+(define (opt-pcc-blocks-chain
+  [second : compiler_ir_types.CompilerIrInstr]
+  [yes-instrs : compiler_ir_types.CompilerIrInstrSeq]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-pcf-block "entry" (opt-test-instrs (opt-pcf-branch "arm" "pick")))
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-pcf-block "pick" (opt-test-instrs (opt-pcf-branch "sent" "fifty")))
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-pcf-block
+          "arm"
+          (opt-test-instrs (opt-pcf-arm-value) (opt-pcf-jump "merge")))
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-pcf-block "sent" (opt-test-instrs (opt-pcf-jump "merge")))
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-pcf-block "fifty" (opt-test-instrs (opt-pcf-jump "merge")))
+            (compiler_ir_types.compiler-ir-block-cons
+              (opt-pcf-block
+                "merge"
+                (opt-test-instrs
+                  (opt-pcf-phi
+                    (opt-pcf-var-input
+                      "arm"
+                      (opt-pcf-sentinel-input
+                        "sent"
+                        (opt-pcc-literal-input
+                          50
+                          "fifty"
+                          (compiler_ir_types.CompilerIrPhiInputList.Nil)))))
+                  (opt-pcf-jump "c1")))
+              (compiler_ir_types.compiler-ir-block-cons
+                (opt-pcf-block
+                  "c1"
+                  (opt-test-instrs
+                    (opt-pcc-compare
+                      5
+                      (compiler_ir_types.CompilerIrBinOp.Ge)
+                      48)
+                    (opt-pcc-branch 5 "c2" "no")))
+                (compiler_ir_types.compiler-ir-block-cons
+                  (opt-pcf-block
+                    "c2"
+                    (opt-test-instrs second (opt-pcc-branch 6 "yes" "no")))
+                  (compiler_ir_types.compiler-ir-block-cons
+                    (opt-pcf-block "yes" yes-instrs)
+                    (compiler_ir_types.compiler-ir-block-cons
+                      (opt-pcf-block
+                        "no"
+                        (opt-test-instrs (opt-pcf-return false)))
+                      (compiler_ir_types.CompilerIrBlockList.Nil))))))))))))
+
+(define (opt-pcc-blocks-chain-plain) : compiler_ir_types.CompilerIrBlockList
+  (opt-pcc-blocks-chain
+    (opt-pcc-compare 6 (compiler_ir_types.CompilerIrBinOp.Le) 57)
+    (opt-test-instrs (opt-pcf-return true))))
+
+;; (e) the merge is a loop header: its variable input arrives from the latch, on
+;; an edge that retreats in reverse postorder.
+(define (opt-pcc-blocks-retreating) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-pcf-block "entry" (opt-test-instrs (opt-pcf-jump "merge")))
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-pcf-block
+        "merge"
+        (opt-test-instrs
+          (opt-pcf-phi
+            (opt-pcf-sentinel-input
+              "entry"
+              (opt-pcf-var-input
+                "latch"
+                (compiler_ir_types.CompilerIrPhiInputList.Nil))))
+          (opt-pcf-jump "c1")))
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-pcf-block
+          "c1"
+          (opt-test-instrs
+            (opt-pcc-compare 5 (compiler_ir_types.CompilerIrBinOp.Ge) 48)
+            (opt-pcc-branch 5 "c2" "no")))
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-pcf-block
+            "c2"
+            (opt-test-instrs
+              (opt-pcc-compare 6 (compiler_ir_types.CompilerIrBinOp.Le) 57)
+              (opt-pcc-branch 6 "latch" "no")))
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-pcf-block
+              "latch"
+              (opt-test-instrs (opt-pcf-arm-value) (opt-pcf-jump "merge")))
+            (compiler_ir_types.compiler-ir-block-cons
+              (opt-pcf-block "no" (opt-test-instrs (opt-pcf-return false)))
+              (compiler_ir_types.CompilerIrBlockList.Nil))))))))
+
+;; (f) `p` ends in `jump b`, `b` is reached from nowhere else, and `yes` phis on
+;; the block `b` is about to stop being.
+(define (opt-pcm-blocks-pair) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-pcf-block "entry" (opt-test-instrs (opt-pcf-branch "p" "other")))
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-pcf-block
+        "p"
+        (opt-test-instrs (opt-pcf-arm-value) (opt-pcf-jump "b")))
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-pcf-block
+          "b"
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              5
+              (compiler_ir_types.CompilerIrBinOp.Eq)
+              (compiler_ir_types.CompilerIrValue.Var 3)
+              (compiler_ir_types.CompilerIrValue.I64 37)
+              (compiler_ast_types.AstType.I64))
+            (opt-pcc-branch 5 "yes" "no")))
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-pcf-block "other" (opt-test-instrs (opt-pcf-jump "yes")))
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-pcf-block
+              "yes"
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.Phi
+                  6
+                  (opt-pcc-literal-input
+                    11
+                    "b"
+                    (opt-pcc-literal-input
+                      22
+                      "other"
+                      (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                  (compiler_ast_types.AstType.I64))
+                (opt-pcf-return true)))
+            (compiler_ir_types.compiler-ir-block-cons
+              (opt-pcf-block "no" (opt-test-instrs (opt-pcf-return false)))
+              (compiler_ir_types.CompilerIrBlockList.Nil))))))))
+
+;; (f) the whole run `a -> m -> n`, with `m` holding the one-input phi the
+;; `cfg` cleanup leaves behind: it becomes a mov inside `a`.
+(define (opt-pcm-blocks-run) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-pcf-block "entry" (opt-test-instrs (opt-pcf-branch "a" "other")))
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-pcf-block
+        "a"
+        (opt-test-instrs (opt-pcf-arm-value) (opt-pcf-jump "m")))
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-pcf-block
+          "m"
+          (opt-test-instrs
+            (opt-pcf-phi
+              (opt-pcf-var-input
+                "a"
+                (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+            (opt-pcf-jump "n")))
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-pcf-block
+            "n"
+            (opt-test-instrs
+              (opt-pcc-compare 5 (compiler_ir_types.CompilerIrBinOp.Eq) 37)
+              (opt-pcc-branch 5 "yes" "no")))
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-pcf-block "other" (opt-test-instrs (opt-pcf-jump "no")))
+            (compiler_ir_types.compiler-ir-block-cons
+              (opt-pcf-block "yes" (opt-test-instrs (opt-pcf-return true)))
+              (compiler_ir_types.compiler-ir-block-cons
+                (opt-pcf-block "no" (opt-test-instrs (opt-pcf-return false)))
+                (compiler_ir_types.CompilerIrBlockList.Nil)))))))))
+
+;; (f) `h` is a loop header: `body` is its second predecessor, so nothing may be
+;; concatenated onto its preheader.
+(define (opt-pcm-blocks-loop-header) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-pcf-block "entry" (opt-test-instrs (opt-pcf-branch "p" "exit")))
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-pcf-block
+        "p"
+        (opt-test-instrs (opt-pcf-arm-value) (opt-pcf-jump "h")))
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-pcf-block
+          "h"
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.BinOp
+              5
+              (compiler_ir_types.CompilerIrBinOp.Lt)
+              (compiler_ir_types.CompilerIrValue.Var 3)
+              (compiler_ir_types.CompilerIrValue.I64 37)
+              (compiler_ast_types.AstType.I64))
+            (opt-pcc-branch 5 "body" "exit")))
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-pcf-block
+            "body"
+            (opt-test-instrs (opt-pcc-mov 7 1) (opt-pcf-jump "h")))
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-pcf-block "exit" (opt-test-instrs (opt-pcf-return true)))
+            (compiler_ir_types.CompilerIrBlockList.Nil)))))))
+
+;; (f) `b` has one predecessor but a phi that still names two: malformed, and
+;; refused rather than folded to whichever input came first.
+(define (opt-pcm-blocks-two-input-phi) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (opt-pcf-block "entry" (opt-test-instrs (opt-pcf-branch "p" "other")))
+    (compiler_ir_types.compiler-ir-block-cons
+      (opt-pcf-block
+        "p"
+        (opt-test-instrs (opt-pcf-arm-value) (opt-pcf-jump "b")))
+      (compiler_ir_types.compiler-ir-block-cons
+        (opt-pcf-block "other" (opt-test-instrs (opt-pcf-return false)))
+        (compiler_ir_types.compiler-ir-block-cons
+          (opt-pcf-block
+            "b"
+            (opt-test-instrs
+              (opt-pcf-phi
+                (opt-pcf-var-input
+                  "p"
+                  (compiler_ir_types.compiler-ir-phi-input-cons
+                    (compiler_ir_types.CompilerIrValue.Var 1)
+                    (compiler_ir_types.compiler-ir-label "other")
+                    (compiler_ir_types.CompilerIrPhiInputList.Nil))))
+              (opt-pcc-compare 5 (compiler_ir_types.CompilerIrBinOp.Eq) 37)
+              (opt-pcc-branch 5 "yes" "no")))
+          (compiler_ir_types.compiler-ir-block-cons
+            (opt-pcf-block "yes" (opt-test-instrs (opt-pcf-return true)))
+            (compiler_ir_types.compiler-ir-block-cons
+              (opt-pcf-block "no" (opt-test-instrs (opt-pcf-return false)))
+              (compiler_ir_types.CompilerIrBlockList.Nil))))))))
+
+(define (opt-pcm-run [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_optimize.OptBlockListPassResult
+  (compiler_optimize.opt-cfg-merge-blocks
+    blocks
+    16
+    (compiler_optimize.opt-cfg-merge-blocks-fuel)))
+
+(define (opt-pcm-changed? [blocks : compiler_ir_types.CompilerIrBlockList]) : bool
+  (match (opt-pcm-run blocks)
+    [(compiler_optimize.OptBlockListPassResult.Result _ changed) changed]))
+
+(define (opt-pcm-result [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrBlockList
+  (match (opt-pcm-run blocks)
+    [(compiler_optimize.OptBlockListPassResult.Result next _) next]))
+
+(define (opt-pcm-has-block?
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : String]) : bool
+  (compiler_optimize.opt-cfg-block-exists?
+    blocks
+    (compiler_ir_types.compiler-ir-label label)))
+
+;; Returns 42 only when every fold, every refusal and every repair holds.
+(define (compiler-optimize-phi-cmp-fold-chain-self-test) : i64
+  (let
+    [fwd : compiler_ir_types.CompilerIrBlockList
+      (opt-pcf-result "pcc_forward" (opt-pcc-blocks-forward))]
+    [chain : compiler_ir_types.CompilerIrBlockList
+      (opt-pcf-result "pcc_chain" (opt-pcc-blocks-chain-plain))]
+    [pair : compiler_ir_types.CompilerIrBlockList
+      (opt-pcm-result (opt-pcm-blocks-pair))]
+    [run : compiler_ir_types.CompilerIrBlockList
+      (opt-pcm-result (opt-pcm-blocks-run))]
+    (cond
+      ;; (a) `[phi; jump]` followed by `[eq %p, 37; branch]`: the sentinel edge
+      ;; threads to the false target and the merge keeps its variable input.
+      ;; Nothing moves -- the compare stays in `c1`, the merge stays two
+      ;; instructions long.
+      [(not (opt-pcf-changed? "pcc_forward_changed" (opt-pcc-blocks-forward)))
+        1]
+      [(not (opt-pcf-jumps-to? fwd "sent" "no")) 2]
+      [(not (= (opt-pcf-input-count (opt-pcf-phi-inputs fwd "merge" 0)) 1)) 3]
+      [(not (opt-pcf-input-is-var? (opt-pcf-phi-inputs fwd "merge" 0) "arm" 3))
+        4]
+      [(not (= (opt-pcf-count fwd "merge") 2)) 5]
+      [(not (= (opt-pcf-count fwd "c1") 2)) 6]
+      ;; (b) the two-link chain. `-1` is decided by `ge %p, 48` alone and exits
+      ;; to `no`; `50` passes that link, is decided by `le %p, 57` and exits to
+      ;; `yes`; the variable edge keeps the whole chain, which is left standing.
+      [(not (opt-pcf-jumps-to? chain "sent" "no")) 7]
+      [(not (opt-pcf-jumps-to? chain "fifty" "yes")) 8]
+      [(not (opt-pcf-jumps-to? chain "arm" "merge")) 9]
+      [(not (= (opt-pcf-input-count (opt-pcf-phi-inputs chain "merge" 0)) 1))
+        10]
+      [(not
+          (opt-pcf-input-is-var? (opt-pcf-phi-inputs chain "merge" 0) "arm" 3))
+        11]
+      [(not (= (opt-pcf-count chain "c1") 2)) 12]
+      [(not (= (opt-pcf-count chain "c2") 2)) 13]
+      ;; (c) the second link compares against a variable, so no literal has a
+      ;; verdict there and the phi has a reader the chain does not cover.
+      [(opt-pcf-changed?
+          "pcc_undecided"
+          (opt-pcc-blocks-chain
+            (opt-pcc-compare-var 6 (compiler_ir_types.CompilerIrBinOp.Le))
+            (opt-test-instrs (opt-pcf-return true))))
+        14]
+      ;; (d) a reader of the join outside the chain.
+      [(opt-pcf-changed?
+          "pcc_outside_reader"
+          (opt-pcc-blocks-chain
+            (opt-pcc-compare 6 (compiler_ir_types.CompilerIrBinOp.Le) 57)
+            (opt-test-instrs (opt-pcc-mov 7 4) (opt-pcf-return true))))
+        15]
+      ;; (e) the merge is a loop header: its variable input retreats in RPO.
+      [(opt-pcf-changed? "pcc_retreating" (opt-pcc-blocks-retreating)) 16]
+      ;; (f) `b` is concatenated onto `p`, and `yes`, which phied on `b`, is
+      ;; re-keyed onto `p` without gaining or losing an input.
+      [(not (opt-pcm-changed? (opt-pcm-blocks-pair))) 17]
+      [(opt-pcm-has-block? pair "b") 18]
+      [(not (= (opt-pcf-count pair "p") 3)) 19]
+      [(not
+          (opt-pcf-moved-compare?
+            pair
+            "p"
+            1
+            5
+            (compiler_ir_types.CompilerIrBinOp.Eq)
+            3
+            37))
+        20]
+      [(not (= (opt-pcf-input-count (opt-pcf-phi-inputs pair "yes" 0)) 2)) 21]
+      [(not (opt-pcf-input-is-i64? (opt-pcf-phi-inputs pair "yes" 0) "p" 11))
+        22]
+      [(not
+          (opt-pcf-input-is-i64? (opt-pcf-phi-inputs pair "yes" 0) "other" 22))
+        23]
+      ;; (f) the whole run collapses in one round, and `m`'s one-input phi
+      ;; becomes the mov that the copy propagator downstream deletes.
+      [(not (opt-pcm-changed? (opt-pcm-blocks-run))) 24]
+      [(opt-pcm-has-block? run "m") 25]
+      [(opt-pcm-has-block? run "n") 26]
+      [(not (= (opt-pcf-count run "a") 4)) 27]
+      [(not
+          (opt-pcf-moved-compare?
+            run
+            "a"
+            2
+            5
+            (compiler_ir_types.CompilerIrBinOp.Eq)
+            4
+            37))
+        28]
+      ;; (f) a loop header keeps its own block, and so does the preheader that
+      ;; would otherwise have absorbed it.
+      [(opt-pcm-changed? (opt-pcm-blocks-loop-header)) 29]
+      ;; (f) a block whose phi still names two predecessors is refused.
+      [(opt-pcm-changed? (opt-pcm-blocks-two-input-phi)) 30]
+      [else 42])))
+
+(test
+  phi-cmp-fold-chain-and-block-merge
+  (test.assert-i64-eq
+    (compiler-optimize-phi-cmp-fold-chain-self-test)
+    42
+    "a sentinel phi whose compare sits one block on, or in a run of compares, threads each literal edge to the target its whole run decides and leaves the compares in place; undecided verdicts, readers outside the run and retreating edges are refused; and the cfg stage concatenates a block into its unique predecessor, re-keying the successors' phis"))
+
 ;; --- T1-3: the non-negativity lattice in bounds_dom -------------------------
 ;;
 ;; Every fixture below drives `opt-bounds-dom-blocks-with-context` end to end

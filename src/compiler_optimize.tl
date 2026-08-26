@@ -32627,6 +32627,642 @@
             (opt-cfg-context-build simplified)
             true)))]))
 
+;; --- T1-2b part C: merge a block into its unique predecessor ----------------
+;;
+;; LLVM's `MergeBlockIntoPredecessor` (Local.cpp), which SimplifyCFG runs after
+;; every edge it folds. Nothing here did it: `opt-cfg-straighten` only DELETES a
+;; block that is nothing but a `jump`, and the rest of the CFG cleanup never
+;; moves an instruction between blocks. So a run that arrives split --
+;;
+;;   A: ... %47 = load %46 ; %38 = cast %47 ; jump M
+;;   M: %5 = mov %38 ; jump C1                    (M's phi lost its other edges)
+;;   C1: %7 = ge %5, 48 ; branch C2, F
+;;
+;; -- stays split, and the backend's M6-C cluster (compiler_backend.tl) only
+;; folds `load ; cast ; compare ; branch` when the four are CONTIGUOUS in one
+;; block. Concatenating A, M and C1 is what puts them back in one block, and it
+;; is what makes phi_cmp_fold's chain rewrite above pay: that rewrite moves no
+;; compare, so without this the merge is left as a `mov` in a block of its own.
+;;
+;; The rails, and why each one is needed:
+;;   - B has exactly one predecessor P, and P ends in `Jump B`. P therefore has
+;;     no other successor, so no edge is lost and no value B defines can reach a
+;;     block by a path that skips P.
+;;   - B is forward of P in reverse postorder. A block with one predecessor
+;;     cannot be a loop header (a header carries a back edge from its own body,
+;;     and a self loop makes the block its own second predecessor), and the RPO
+;;     test states that directly rather than relying on it.
+;;   - B does not branch back to P: merging would turn the pair into a
+;;     self-looping block whose phis reference their own block.
+;;   - Neither block is the entry. B cannot be (it has a predecessor), and
+;;     leaving P out keeps the block that owns the frame exactly where it is.
+;;   - B holds no phi with more than one input. With one predecessor every phi
+;;     of B has one input; it becomes a `mov` of the value that edge carried,
+;;     which is defined before P's terminator and so still dominates its new
+;;     position. Anything else is malformed and refused.
+;;   - B ENDS the run: its terminator is not an unconditional `Jump`. A block
+;;     that ends in one is either a trampoline, which is `opt-cfg-straighten`'s
+;;     (and which it deliberately keeps when it already falls through, because
+;;     every preheader `opt-loop-preheaders` emits and the backend's
+;;     loop-hoisted constant materializations depend on the block in front of a
+;;     loop header surviving), or an interior link of a longer run. Interior
+;;     links are not lost: the fixpoint below absorbs a run from its tail
+;;     backwards, one link per round, so `A -> M -> C1` still collapses whole --
+;;     `C1` into `M` first, then the `M` that now ends in `C1`'s branch into
+;;     `A`. Absorbing them head-first instead let the merge run away with blocks
+;;     that gained nothing, and a longer block is a longer live range: it cost
+;;     `intern_table`'s `it_hash_words` a spilled bounds-group limit (+0.87%).
+;;   - and the rail that keeps this from being a general block-layout rewrite:
+;;     B's FIRST instruction must read the value P's last instruction defines.
+;;     That is precisely the def/use pair the merge exists to make adjacent, and
+;;     it is the only thing the backend's contiguous-run folds can act on.
+;;     Merging on structure alone measured badly and for a structural reason:
+;;     the register allocator sees longer blocks as longer live ranges, so a
+;;     merge that gains no adjacency still costs spills. `lex_source`'s
+;;     `ls_scan_symbol_end` lost its whole `btq` bit-test fold to exactly that
+;;     (+3.7% on the row, a 224-byte frame where it had none), `cfg_domloops`'
+;;     `cfg_dfs_postorder` gained a spill/reload pair in its hottest store, and
+;;     `hashmap_get` flipped an inline verdict (the checked inline tier prices a
+;;     candidate by OPTIMIZING it, so every change here moves that measurement)
+;;     and lost 15.8%. With the adjacency rail those rows are flat and the rows
+;;     the merge was written for keep their gains.
+;; Phi keys: B's label disappears, so every phi input keyed on B in B's
+;; successors is re-keyed to P. Only the LAST block of a merged run has
+;; surviving successors -- every earlier one ends in the `Jump` that is dropped
+;; -- so no successor can end up with two inputs from the same run.
+(define (opt-cfg-merge-phis-foldable?
+  [instrs : ir.CompilerIrInstrSeq]
+  [slot : i64]
+  [pred-label : i64]) : bool
+  (if (>= slot (ir.compiler-ir-instr-seq-count instrs))
+    true
+    (match (ir.compiler-ir-instr-seq-ref instrs slot)
+      [(ir.CompilerIrInstr.Phi _ inputs _)
+        (and
+          (match (opt-bool-branch-only-phi-input inputs)
+            [(OptBoolBranchOnlyInput.Some _ label) (= label pred-label)]
+            [(OptBoolBranchOnlyInput.No) false])
+          (opt-cfg-merge-phis-foldable? instrs (+ slot 1) pred-label))]
+      [_ true])))
+
+(define (opt-cfg-merge-targets-label?
+  [instrs : ir.CompilerIrInstrSeq]
+  [label : i64]) : bool
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    (if (= count 0)
+      false
+      (opt-cfg-straighten-instr-contains?
+        (ir.compiler-ir-instr-seq-ref instrs (- count 1))
+        label))))
+
+;; The instruction kinds this merge exists to move: a compare, because the
+;; backend folds `... ; compare ; branch` only as one contiguous run, and the
+;; mov (or the one-input phi the `cfg` cleanup has not folded to one yet) that a
+;; threaded sentinel merge leaves holding that compare's operand. Absorbing on
+;; adjacency alone still let the merge take blocks whose head is a load, a gep
+;; or an arithmetic op -- runs the backend has no fold for -- and paid for them
+;; in live-range length: `intern_table`'s `it_hash_words` grew its inner byte
+;; loop past the size at which loop versioning admits, and the bounds-group
+;; limit that versioning then materialized cost eleven instructions and a spill
+;; on every entry of a loop that runs a handful of iterations (+0.87%).
+(define (opt-cfg-merge-absorbable-head? [instrs : ir.CompilerIrInstrSeq]) : bool
+  (if (= (ir.compiler-ir-instr-seq-count instrs) 0)
+    false
+    (match (ir.compiler-ir-instr-seq-ref instrs 0)
+      [(ir.CompilerIrInstr.Phi _ _ _) true]
+      [(ir.CompilerIrInstr.Mov _ _ _) true]
+      [(ir.CompilerIrInstr.BinOp _ op _ _ _) (opt-bool-branch-compare-op? op)]
+      [_ false])))
+
+;; The value the merge would make adjacent to its reader: what the instruction
+;; just before the block's terminator defines.
+(define (opt-cfg-merge-tail-def [instrs : ir.CompilerIrInstrSeq]) : i64
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    (if (< count 2)
+      (- 0 1)
+      (match (opt-instr-def-var
+        (ir.compiler-ir-instr-seq-ref instrs (- count 2)))
+        [(option_i64.Some dst) dst]
+        [(option_i64.None) (- 0 1)]))))
+
+;; Does the block's first instruction read `var`? `scratch` is a use census the
+;; round owns; only the one slot this asks about is zeroed and read, so the rest
+;; of it is free to hold whatever an earlier question left there.
+(define (opt-cfg-merge-reads-def?
+  [scratch : (__tl_dyn-array i64)]
+  [instrs : ir.CompilerIrInstrSeq]
+  [var : i64]) : bool
+  (if (or
+    (< var 0)
+    (>= var (array-length scratch))
+    (= (ir.compiler-ir-instr-seq-count instrs) 0))
+    false
+    (begin
+      (set! (array-ref scratch var) 0)
+      (opt-collect-instr-uses-array
+        scratch
+        (ir.compiler-ir-instr-seq-ref instrs 0))
+      (> (array-ref scratch var) 0))))
+
+(define (opt-cfg-merge-mergeable?
+  [index : OptCfgIndex]
+  [scratch : (__tl_dyn-array i64)]
+  [entry-label : i64]
+  [pred-label : i64]
+  [pred-instrs : ir.CompilerIrInstrSeq]
+  [label : i64]) : bool
+  (if (or
+    (= label pred-label)
+    (= label entry-label)
+    (= pred-label entry-label)
+    (= label (ir.compiler-ir-label-none)))
+    false
+    (let
+      [preds : OptLabelSet (opt-cfg-index-predecessors index label)]
+      [pred-rpo : i64 (opt-phi-cmp-fold-label-rpo index pred-label)]
+      [rpo : i64 (opt-phi-cmp-fold-label-rpo index label)]
+      (if (or
+        (not (= (opt-thread-jump-target pred-instrs) label))
+        (not (= (opt-label-count preds) 1))
+        (not (= (opt-label-ref preds 0) pred-label))
+        (< pred-rpo 0)
+        (<= rpo pred-rpo))
+        false
+        (match (opt-cfg-index-find-block index label)
+          [(OptMaybeBlock.No) false]
+          [(OptMaybeBlock.Some block)
+            (match block
+              [(ir.CompilerIrBlock.Block _ instrs)
+                (and
+                  (=
+                    (opt-thread-jump-target instrs)
+                    (ir.compiler-ir-label-none))
+                  (opt-cfg-merge-absorbable-head? instrs)
+                  (not (opt-cfg-merge-targets-label? instrs pred-label))
+                  (opt-cfg-merge-reads-def?
+                    scratch
+                    instrs
+                    (opt-cfg-merge-tail-def pred-instrs))
+                  (opt-cfg-merge-phis-foldable? instrs 0 pred-label))])])))))
+
+;; The block `label` absorbs, or `label-none`.
+(define (opt-cfg-merge-target
+  [index : OptCfgIndex]
+  [scratch : (__tl_dyn-array i64)]
+  [entry-label : i64]
+  [label : i64]
+  [instrs : ir.CompilerIrInstrSeq]) : i64
+  (let
+    [target : i64 (opt-thread-jump-target instrs)]
+    (if (opt-cfg-merge-mergeable? index scratch entry-label label instrs target)
+      target
+      (ir.compiler-ir-label-none))))
+
+;; Is `label` itself absorbed by its own predecessor? Only a block that is not
+;; heads a merged run.
+(define (opt-cfg-merge-absorbed?
+  [index : OptCfgIndex]
+  [scratch : (__tl_dyn-array i64)]
+  [entry-label : i64]
+  [label : i64]) : bool
+  (let
+    [preds : OptLabelSet (opt-cfg-index-predecessors index label)]
+    (if (not (= (opt-label-count preds) 1))
+      false
+      (let
+        [pred-label : i64 (opt-label-ref preds 0)]
+        (match (opt-cfg-index-find-block index pred-label)
+          [(OptMaybeBlock.No) false]
+          [(OptMaybeBlock.Some block)
+            (match block
+              [(ir.CompilerIrBlock.Block _ pred-instrs)
+                (opt-cfg-merge-mergeable?
+                  index
+                  scratch
+                  entry-label
+                  pred-label
+                  pred-instrs
+                  label)])])))))
+
+(define (opt-cfg-merge-block-candidate?
+  [index : OptCfgIndex]
+  [scratch : (__tl_dyn-array i64)]
+  [entry-label : i64]
+  [block : ir.CompilerIrBlock]) : bool
+  (match block
+    [(ir.CompilerIrBlock.Block label instrs)
+      (not
+        (=
+          (opt-cfg-merge-target index scratch entry-label label instrs)
+          (ir.compiler-ir-label-none)))]))
+
+;; One linear scan over the blocks the `cfg` stage just produced, reading the
+;; predecessor rows of the context index it already built. A function with
+;; nothing to merge -- the common case -- pays that and nothing else.
+(define (opt-cfg-merge-blocks-have-candidate-from?
+  [index : OptCfgIndex]
+  [scratch : (__tl_dyn-array i64)]
+  [entry-label : i64]
+  [blocks : ir.CompilerIrBlockList]) : bool
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) false]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (if (opt-cfg-merge-block-candidate? index scratch entry-label block)
+        true
+        (opt-cfg-merge-blocks-have-candidate-from?
+          index
+          scratch
+          entry-label
+          (__tl-box-place rest)))]
+    [(ir.CompilerIrBlockList.Array seq)
+      (let
+        [slot : i64 0]
+        [count : i64 (ir.compiler-ir-block-seq-count seq)]
+        (begin
+          (while (< slot count)
+            (if (opt-cfg-merge-block-candidate?
+              index
+              scratch
+              entry-label
+              (ir.compiler-ir-block-seq-ref seq slot))
+              (return true)
+              (set! slot (+ slot 1))))
+          false))]))
+
+(define (opt-cfg-merge-blocks-have-candidate?
+  [index : OptCfgIndex]
+  [entry-label : i64]
+  [frame : i64]
+  [blocks : ir.CompilerIrBlockList]) : bool
+  (opt-cfg-merge-blocks-have-candidate-from?
+    index
+    (opt-used-array-new frame)
+    entry-label
+    blocks))
+
+(define (opt-cfg-merge-phi-to-mov [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstr
+  (match instr
+    [(ir.CompilerIrInstr.Phi dst inputs ty)
+      (match (opt-bool-branch-only-phi-input inputs)
+        [(OptBoolBranchOnlyInput.Some value _)
+          (ir.CompilerIrInstr.Mov dst value ty)]
+        [(OptBoolBranchOnlyInput.No) instr])]
+    [_ instr]))
+
+;; The head of a run keeps its phis (its own predecessors are unchanged); every
+;; absorbed block's phis become movs.
+(define (opt-cfg-merge-append-range!
+  [builder : (&mut builder ir.CompilerIrInstrBuilder)]
+  [instrs : ir.CompilerIrInstrSeq]
+  [end : i64]
+  [head? : bool]) : unit
+  (if head?
+    (ir.compiler-ir-instr-builder-append-seq-range! builder instrs 0 end)
+    (let
+      [pos : i64 0]
+      (while (< pos end)
+        (begin
+          (ir.compiler-ir-instr-builder-push!
+            builder
+            (opt-cfg-merge-phi-to-mov (ir.compiler-ir-instr-seq-ref instrs pos)))
+          (set! pos (+ pos 1)))))))
+
+(define (opt-cfg-merge-append-chain!
+  [index : OptCfgIndex]
+  [scratch : (__tl_dyn-array i64)]
+  [entry-label : i64]
+  [builder : (&mut builder ir.CompilerIrInstrBuilder)]
+  [label : i64]
+  [instrs : ir.CompilerIrInstrSeq]
+  [head? : bool]
+  [fuel : i64]) : unit
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [target : i64
+      (if (<= fuel 0)
+        (ir.compiler-ir-label-none)
+        (opt-cfg-merge-target index scratch entry-label label instrs))]
+    (if (= target (ir.compiler-ir-label-none))
+      (opt-cfg-merge-append-range! builder instrs count head?)
+      (begin
+        (opt-cfg-merge-append-range! builder instrs (- count 1) head?)
+        (match (opt-cfg-index-find-block index target)
+          [(OptMaybeBlock.No) unit]
+          [(OptMaybeBlock.Some block)
+            (match block
+              [(ir.CompilerIrBlock.Block _ next-instrs)
+                (opt-cfg-merge-append-chain!
+                  index
+                  scratch
+                  entry-label
+                  builder
+                  target
+                  next-instrs
+                  false
+                  (- fuel 1))])])))))
+
+(define (opt-cfg-merge-chain-instrs
+  [index : OptCfgIndex]
+  [scratch : (__tl_dyn-array i64)]
+  [entry-label : i64]
+  [label : i64]
+  [instrs : ir.CompilerIrInstrSeq]
+  [fuel : i64]) : ir.CompilerIrInstrSeq
+  (let
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity
+        (ir.compiler-ir-instr-seq-count instrs))]
+    (begin
+      (opt-cfg-merge-append-chain!
+        index
+        scratch
+        entry-label
+        (&mut builder)
+        label
+        instrs
+        true
+        fuel)
+      (ir.compiler-ir-instr-builder-to-seq builder))))
+
+(define (opt-cfg-merge-redirect-label
+  [index : OptCfgIndex]
+  [redirect : (__tl_dyn-array i64)]
+  [label : i64]) : i64
+  (match (opt-cfg-index-id index label)
+    [(option_i64.None) label]
+    [(option_i64.Some id)
+      (let
+        [mapped : i64 (array-ref redirect id)]
+        (if (= mapped (ir.compiler-ir-label-none))
+          label
+          mapped))]))
+
+(define (opt-cfg-merge-rekey-inputs
+  [index : OptCfgIndex]
+  [redirect : (__tl_dyn-array i64)]
+  [inputs : ir.CompilerIrPhiInputList]) : ir.CompilerIrPhiInputList
+  (match (ir.compiler-ir-phi-input-list-force-cons inputs)
+    [(ir.CompilerIrPhiInputList.Nil) (ir.CompilerIrPhiInputList.Nil)]
+    [(ir.CompilerIrPhiInputList.Array seq)
+      (opt-cfg-merge-rekey-inputs
+        index
+        redirect
+        (ir.compiler-ir-phi-input-seq-to-list seq))]
+    [(ir.CompilerIrPhiInputList.Cons value label rest)
+      (ir.compiler-ir-phi-input-cons
+        value
+        (opt-cfg-merge-redirect-label index redirect label)
+        (opt-cfg-merge-rekey-inputs index redirect (__tl-box-place rest)))]))
+
+(define (opt-cfg-merge-rekey-block!
+  [index : OptCfgIndex]
+  [redirect : (__tl_dyn-array i64)]
+  [instrs : ir.CompilerIrInstrSeq]
+  [slot : i64]) : unit
+  (if (>= slot (ir.compiler-ir-instr-seq-count instrs))
+    unit
+    (match (ir.compiler-ir-instr-seq-ref instrs slot)
+      [(ir.CompilerIrInstr.Phi dst inputs ty)
+        (begin
+          (ir.compiler-ir-instr-seq-set!
+            instrs
+            slot
+            (ir.CompilerIrInstr.Phi
+              dst
+              (opt-cfg-merge-rekey-inputs index redirect inputs)
+              ty))
+          (opt-cfg-merge-rekey-block! index redirect instrs (+ slot 1)))]
+      [_ unit])))
+
+;; Walk the run that leaves `root-label` and record every block it absorbs.
+(define (opt-cfg-merge-mark-chain!
+  [index : OptCfgIndex]
+  [scratch : (__tl_dyn-array i64)]
+  [entry-label : i64]
+  [redirect : (__tl_dyn-array i64)]
+  [root-label : i64]
+  [label : i64]
+  [instrs : ir.CompilerIrInstrSeq]
+  [fuel : i64]) : bool
+  (let
+    [target : i64
+      (if (<= fuel 0)
+        (ir.compiler-ir-label-none)
+        (opt-cfg-merge-target index scratch entry-label label instrs))]
+    (if (= target (ir.compiler-ir-label-none))
+      false
+      (match (opt-cfg-index-id index target)
+        [(option_i64.None) false]
+        [(option_i64.Some id)
+          (begin
+            (set! (array-ref redirect id) root-label)
+            (match (opt-cfg-index-find-block index target)
+              [(OptMaybeBlock.No) unit]
+              [(OptMaybeBlock.Some block)
+                (match block
+                  [(ir.CompilerIrBlock.Block _ next-instrs)
+                    (begin
+                      (opt-cfg-merge-mark-chain!
+                        index
+                        scratch
+                        entry-label
+                        redirect
+                        root-label
+                        target
+                        next-instrs
+                        (- fuel 1))
+                      unit)])])
+            true)]))))
+
+(define (opt-cfg-merge-fill-none!
+  [redirect : (__tl_dyn-array i64)]
+  [count : i64]) : unit
+  (let
+    [id : i64 0]
+    (while (< id count)
+      (begin
+        (set! (array-ref redirect id) (ir.compiler-ir-label-none))
+        (set! id (+ id 1))))))
+
+(define (opt-cfg-merge-mark-all!
+  [index : OptCfgIndex]
+  [scratch : (__tl_dyn-array i64)]
+  [entry-label : i64]
+  [redirect : (__tl_dyn-array i64)]) : bool
+  (let
+    [count : i64 (opt-cfg-index-block-count index)]
+    [id : i64 0]
+    [changed : bool false]
+    (begin
+      (while (< id count)
+        (begin
+          (let
+            [label : i64 (opt-cfg-index-label index id)]
+            (when
+              (not (opt-cfg-merge-absorbed? index scratch entry-label label))
+              (match (opt-cfg-index-block index id)
+                [(OptMaybeBlock.No) unit]
+                [(OptMaybeBlock.Some block)
+                  (match block
+                    [(ir.CompilerIrBlock.Block _ instrs)
+                      (when
+                        (opt-cfg-merge-mark-chain!
+                          index
+                          scratch
+                          entry-label
+                          redirect
+                          label
+                          label
+                          instrs
+                          count)
+                        (set! changed true))])])))
+          (set! id (+ id 1))))
+      changed)))
+
+(define (opt-cfg-merge-rekey-all!
+  [index : OptCfgIndex]
+  [redirect : (__tl_dyn-array i64)]) : unit
+  (let
+    [count : i64 (opt-cfg-index-block-count index)]
+    [id : i64 0]
+    (while (< id count)
+      (begin
+        (when
+          (= (array-ref redirect id) (ir.compiler-ir-label-none))
+          (match (opt-cfg-index-block index id)
+            [(OptMaybeBlock.No) unit]
+            [(OptMaybeBlock.Some block)
+              (match block
+                [(ir.CompilerIrBlock.Block _ instrs)
+                  (opt-cfg-merge-rekey-block! index redirect instrs 0)])]))
+        (set! id (+ id 1))))))
+
+;; Block ids are assigned in list order, so emitting the surviving heads by
+;; ascending id keeps the entry first and the layout the backend's fallthrough
+;; rules read unchanged.
+(define (opt-cfg-merge-build-blocks
+  [index : OptCfgIndex]
+  [scratch : (__tl_dyn-array i64)]
+  [entry-label : i64]
+  [redirect : (__tl_dyn-array i64)]) : ir.CompilerIrBlockList
+  (let
+    [count : i64 (opt-cfg-index-block-count index)]
+    [builder : ir.CompilerIrBlockBuilder
+      (ir.compiler-ir-block-builder-with-capacity count)]
+    [id : i64 0]
+    (begin
+      (while (< id count)
+        (begin
+          (when
+            (= (array-ref redirect id) (ir.compiler-ir-label-none))
+            (match (opt-cfg-index-block index id)
+              [(OptMaybeBlock.No) unit]
+              [(OptMaybeBlock.Some block)
+                (match block
+                  [(ir.CompilerIrBlock.Block label instrs)
+                    (ir.compiler-ir-block-builder-push!
+                      (&mut builder)
+                      (ir.CompilerIrBlock.Block
+                        label
+                        (opt-cfg-merge-chain-instrs
+                          index
+                          scratch
+                          entry-label
+                          label
+                          instrs
+                          count)))])]))
+          (set! id (+ id 1))))
+      (ir.compiler-ir-block-builder-to-list builder))))
+
+;; The structural half of the optimizer verifier, which is all this rewrite can
+;; break: labels stay unique, successors stay known, and every phi input keys a
+;; real predecessor. Dominance is unchanged by construction -- concatenating B
+;; onto its only predecessor moves no instruction across an edge.
+(define (opt-cfg-merge-verified?
+  [blocks : ir.CompilerIrBlockList]
+  [context : OptCfgContext]) : bool
+  (and
+    (opt-verify-ok? (opt-verify-structure context))
+    (opt-verify-ok?
+      (opt-verify-phi-predecessors-blocks context.pred-map blocks))))
+
+;; The rewrite mutates phi input lists in place, so it works on a deep clone and
+;; hands back the untouched input list when it merges nothing.
+(define (opt-cfg-merge-blocks-round
+  [blocks : ir.CompilerIrBlockList]
+  [frame : i64]) : OptBlockListPassResult
+  (let
+    [work : ir.CompilerIrBlockList (opt-bool-branch-clone-blocks blocks)]
+    [index : OptCfgIndex (opt-cfg-index-build work)]
+    [entry-label : i64 (opt-cfg-entry-label work)]
+    [count : i64 (opt-cfg-index-block-count index)]
+    [scratch : (__tl_dyn-array i64) (opt-used-array-new frame)]
+    (if (or (not (opt-cfg-index-labels-unique? index)) (< count 1))
+      (OptBlockListPassResult.Result blocks false)
+      (let
+        [redirect : (__tl_dyn-array i64) (array.make-array i64 count)]
+        (begin
+          (opt-cfg-merge-fill-none! redirect count)
+          (if (not (opt-cfg-merge-mark-all! index scratch entry-label redirect))
+            (OptBlockListPassResult.Result blocks false)
+            (begin
+              (opt-cfg-merge-rekey-all! index redirect)
+              (let
+                [merged : ir.CompilerIrBlockList
+                  (opt-cfg-merge-build-blocks
+                    index
+                    scratch
+                    entry-label
+                    redirect)]
+                [merged-context : OptCfgContext (opt-cfg-context-build merged)]
+                (if (opt-cfg-merge-verified? merged merged-context)
+                  (OptBlockListPassResult.Result
+                    (opt-cfg-simplify-blocks merged)
+                    true)
+                  (OptBlockListPassResult.Result blocks false))))))))))
+
+;; A run is absorbed whole in one round, so the fixpoint only re-runs for the
+;; opportunities the trailing simplify opens (a phi folded to a mov, a block the
+;; merge orphaned). Four rounds is far past what the corpus needs.
+(define (opt-cfg-merge-blocks-fuel) : i64
+  6)
+
+(define (opt-cfg-merge-blocks
+  [blocks : ir.CompilerIrBlockList]
+  [frame : i64]
+  [remaining : i64]) : OptBlockListPassResult
+  (if (<= remaining 0)
+    (OptBlockListPassResult.Result blocks false)
+    (match (opt-cfg-merge-blocks-round blocks frame)
+      [(OptBlockListPassResult.Result next changed)
+        (if (not changed)
+          (OptBlockListPassResult.Result blocks false)
+          (match (opt-cfg-merge-blocks next frame (- remaining 1))
+            [(OptBlockListPassResult.Result final _)
+              (OptBlockListPassResult.Result final true)]))])))
+
+(define (opt-cfg-merge-blocks-with-context-result
+  [frame : i64]
+  [input : OptBlockCtxResult]) : OptBlockCtxResult
+  (match input
+    [(OptBlockCtxResult.Result blocks context context-valid)
+      (if (or
+        (not context-valid)
+        (not
+          (opt-cfg-merge-blocks-have-candidate?
+            context.index
+            context.entry-label
+            frame
+            blocks)))
+        input
+        (match (opt-cfg-merge-blocks blocks frame (opt-cfg-merge-blocks-fuel))
+          [(OptBlockListPassResult.Result next changed)
+            (if (not changed)
+              input
+              (OptBlockCtxResult.Result next (opt-cfg-context-build next) true))]))]))
+
 ;; A short-circuit boolean lowered as `(if c1 c2 false)` has this late SSA
 ;; shape after inlining and scalar cleanup:
 ;;
@@ -34995,6 +35631,669 @@
                             var-value
                             var-instrs))])]))]))))))
 
+;; --- T1-2b: jump-separated merges and compare chains ------------------------
+;;
+;; The three-instruction rail above matches a merge that IS the compare's block.
+;; Lowering leaves two shapes that carry the same sentinel but miss it:
+;;
+;;   (i)  JUMP-SEPARATED. The merge holds nothing but the phi and falls through
+;;        into the block that compares it (`cfg_domloops`' scan-ints:
+;;        `inl.while_header.27.0.cont = [phi %42; jump next]`,
+;;        `next = [ge %42, 48; branch ...]`).
+;;   (ii) A COMPARE CHAIN. `(cfg-digit? b)` is `(and (>= b 48) (<= b 57))`, which
+;;        reads the joined byte TWICE, from two single-predecessor blocks:
+;;        `C1 = [ge %p, 48; branch C2, F]`, `C2 = [le %p, 57; branch T, F]`.
+;;        The phi's use count is 2, so the single-use rail refuses outright.
+;;
+;; Both are the same fact: a literal input decides not one compare but the whole
+;; run of them, so its edge can be threaded past every block in the run to the
+;; target its last verdict picks. That is LLVM's JumpThreading across multiple
+;; blocks (JumpThreading.cpp's ThreadEdge, driven by the same
+;; "condition known on the edge" fact SimplifyCFG's
+;; foldCondBranchOnValueKnownInPredecessor uses at depth one).
+;;
+;; The chain C1..Ck is discovered structurally, ahead of any literal: Ci+1 is the
+;; one successor of Ci that compares %p against a literal AND has Ci as its only
+;; predecessor. Requiring `use-count(%p) = k` then proves the run is ALL of %p's
+;; readers, which is what makes threading past it sound:
+;;   - every Ci defines exactly its own compare result, whose only reader is its
+;;     own branch, so nothing defined inside the run is live at any exit;
+;;   - the merge defines only %p, and %p is read by the k compares alone;
+;;   - therefore a value live on the edge Ci -> exit is defined in a block that
+;;     strictly dominates the merge, and a strict dominator of a block dominates
+;;     every predecessor of that block -- so it dominates the threaded edge's
+;;     origin too, and the successor-phi repair `opt-thread-apply-edge!` performs
+;;     (copy the input keyed on Ci onto the origin's label) stays in SSA.
+;; The RPO rail is the merge's, unchanged: every predecessor edge runs forward,
+;; and each chain link runs forward from the previous one, so no back edge is
+;; ever threaded and no loop header is ever the merge.
+;;
+;; Unlike the single-compare case this rewrite MOVES NOTHING: the compares stay
+;; where they are and the merge is left holding its one variable input. Part C's
+;; block merge below is what then makes `[load; cast; compare; branch]`
+;; contiguous again, which is what the backend's M6-C cluster folds.
+(defenum OptPhiCmpFoldLink
+  (No)
+  (Some ir.CompilerIrBinOp bool ir.CompilerIrValue ast.AstType i64 i64))
+
+;; The chain block whose branch selected the exit, and the exit itself. The
+;; first is what the successor-phi repair reads its forwarded value from.
+(defenum OptPhiCmpFoldExit
+  (No)
+  (Some i64 i64))
+
+;; One chain link, read out of `instrs` at `slot`: `%c = op %p, K` (or `K, %p`)
+;; immediately followed by `branch %c, T, F`, with nothing after it and the
+;; compare read by that branch alone.
+(define (opt-phi-cmp-fold-link
+  [type-segment-bases : i64]
+  [uses : (__tl_dyn-array i64)]
+  [phi-var : i64]
+  [phi-ty : ast.AstType]
+  [instrs : ir.CompilerIrInstrSeq]
+  [slot : i64]) : OptPhiCmpFoldLink
+  (if (not (= (ir.compiler-ir-instr-seq-count instrs) (+ slot 2)))
+    (OptPhiCmpFoldLink.No)
+    (match (ir.compiler-ir-instr-seq-ref instrs slot)
+      [(ir.CompilerIrInstr.BinOp cmp-var op lhs rhs cmp-ty)
+        (match (ir.compiler-ir-instr-seq-ref instrs (+ slot 1))
+          [(ir.CompilerIrInstr.Branch
+              (ir.CompilerIrValue.Var cond-var)
+              true-label
+              false-label)
+            (let
+              [phi-left : bool (opt-phi-cmp-fold-value-is-var? lhs phi-var)]
+              [literal : ir.CompilerIrValue
+                (if phi-left
+                  rhs
+                  lhs)]
+              (if (or
+                (not (= cond-var cmp-var))
+                (not (opt-bool-branch-compare-op? op))
+                (not (= (opt-bool-branch-use-count uses cmp-var) 1))
+                (not (opt-type-eq type-segment-bases phi-ty cmp-ty))
+                (not (or phi-left (opt-phi-cmp-fold-value-is-var? rhs phi-var)))
+                (not (opt-const-value? literal cmp-ty)))
+                (OptPhiCmpFoldLink.No)
+                (OptPhiCmpFoldLink.Some
+                  op
+                  phi-left
+                  literal
+                  cmp-ty
+                  true-label
+                  false-label)))]
+          [_ (OptPhiCmpFoldLink.No)])]
+      [_ (OptPhiCmpFoldLink.No)])))
+
+;; Is `label` the next link of the run that leaves `from-label`? It must be a
+;; link block of its own, reached only from `from-label`, and forward of it in
+;; reverse postorder -- which is what keeps the walk finite and keeps a loop
+;; header out of the run.
+(define (opt-phi-cmp-fold-chain-block?
+  [type-segment-bases : i64]
+  [index : OptCfgIndex]
+  [uses : (__tl_dyn-array i64)]
+  [phi-var : i64]
+  [phi-ty : ast.AstType]
+  [from-label : i64]
+  [label : i64]) : bool
+  (if (or (= label from-label) (= label (ir.compiler-ir-label-none)))
+    false
+    (let
+      [preds : OptLabelSet (opt-cfg-index-predecessors index label)]
+      [from-rpo : i64 (opt-phi-cmp-fold-label-rpo index from-label)]
+      [rpo : i64 (opt-phi-cmp-fold-label-rpo index label)]
+      (if (or
+        (not (= (opt-label-count preds) 1))
+        (not (= (opt-label-ref preds 0) from-label))
+        (< from-rpo 0)
+        (<= rpo from-rpo))
+        false
+        (match (opt-cfg-index-find-block index label)
+          [(OptMaybeBlock.No) false]
+          [(OptMaybeBlock.Some block)
+            (match block
+              [(ir.CompilerIrBlock.Block _ instrs)
+                (match (opt-phi-cmp-fold-link
+                  type-segment-bases
+                  uses
+                  phi-var
+                  phi-ty
+                  instrs
+                  0)
+                  [(OptPhiCmpFoldLink.No) false]
+                  [(OptPhiCmpFoldLink.Some _ _ _ _ _ _) true])])])))))
+
+;; The successor that continues the run, or `label-none`. Two continuing
+;; successors would make the run a tree rather than a chain; reporting none
+;; leaves the other compares as readers of %p outside the run, which the reader
+;; count below then refuses.
+(define (opt-phi-cmp-fold-chain-next
+  [type-segment-bases : i64]
+  [index : OptCfgIndex]
+  [uses : (__tl_dyn-array i64)]
+  [phi-var : i64]
+  [phi-ty : ast.AstType]
+  [from-label : i64]
+  [true-label : i64]
+  [false-label : i64]) : i64
+  (let
+    [true-link? : bool
+      (opt-phi-cmp-fold-chain-block?
+        type-segment-bases
+        index
+        uses
+        phi-var
+        phi-ty
+        from-label
+        true-label)]
+    [false-link? : bool
+      (opt-phi-cmp-fold-chain-block?
+        type-segment-bases
+        index
+        uses
+        phi-var
+        phi-ty
+        from-label
+        false-label)]
+    (cond
+      [(and true-link? false-link?) (ir.compiler-ir-label-none)]
+      [true-link? true-label]
+      [false-link? false-label]
+      [else (ir.compiler-ir-label-none)])))
+
+;; Longer than this and the site is not a classifier chain; the corpus' longest
+;; is the two links of `(and (>= b 48) (<= b 57))`.
+(define (opt-phi-cmp-fold-chain-fuel) : i64
+  8)
+
+;; How many links the run holds, or 0 when the head is not a link at all (or the
+;; run is longer than the fuel allows).
+(define (opt-phi-cmp-fold-chain-length
+  [type-segment-bases : i64]
+  [index : OptCfgIndex]
+  [uses : (__tl_dyn-array i64)]
+  [phi-var : i64]
+  [phi-ty : ast.AstType]
+  [label : i64]
+  [slot : i64]
+  [instrs : ir.CompilerIrInstrSeq]
+  [fuel : i64]) : i64
+  (if (<= fuel 0)
+    0
+    (match (opt-phi-cmp-fold-link
+      type-segment-bases
+      uses
+      phi-var
+      phi-ty
+      instrs
+      slot)
+      [(OptPhiCmpFoldLink.No) 0]
+      [(OptPhiCmpFoldLink.Some _ _ _ _ true-label false-label)
+        (let
+          [next : i64
+            (opt-phi-cmp-fold-chain-next
+              type-segment-bases
+              index
+              uses
+              phi-var
+              phi-ty
+              label
+              true-label
+              false-label)]
+          (if (= next (ir.compiler-ir-label-none))
+            1
+            (match (opt-cfg-index-find-block index next)
+              [(OptMaybeBlock.No) 0]
+              [(OptMaybeBlock.Some block)
+                (match block
+                  [(ir.CompilerIrBlock.Block _ next-instrs)
+                    (let
+                      [rest : i64
+                        (opt-phi-cmp-fold-chain-length
+                          type-segment-bases
+                          index
+                          uses
+                          phi-var
+                          phi-ty
+                          next
+                          0
+                          next-instrs
+                          (- fuel 1))]
+                      (if (= rest 0)
+                        0
+                        (+ 1 rest)))])])))])))
+
+;; Run `input` through the chain: take the branch each verdict decides and keep
+;; going while that target is the next link. `No` when a verdict does not fold,
+;; which refuses the whole site -- a partially decided chain would leave the
+;; phi's literal input in place with nothing gained.
+(define (opt-phi-cmp-fold-chain-exit
+  [type-segment-bases : i64]
+  [index : OptCfgIndex]
+  [uses : (__tl_dyn-array i64)]
+  [phi-var : i64]
+  [phi-ty : ast.AstType]
+  [label : i64]
+  [slot : i64]
+  [instrs : ir.CompilerIrInstrSeq]
+  [input : ir.CompilerIrValue]
+  [fuel : i64]) : OptPhiCmpFoldExit
+  (if (<= fuel 0)
+    (OptPhiCmpFoldExit.No)
+    (match (opt-phi-cmp-fold-link
+      type-segment-bases
+      uses
+      phi-var
+      phi-ty
+      instrs
+      slot)
+      [(OptPhiCmpFoldLink.No) (OptPhiCmpFoldExit.No)]
+      [(OptPhiCmpFoldLink.Some
+          op
+          phi-left
+          literal
+          cmp-ty
+          true-label
+          false-label)
+        (match (opt-phi-cmp-fold-verdict
+          type-segment-bases
+          op
+          phi-left
+          literal
+          cmp-ty
+          input)
+          [(OptMaybeBool.No) (OptPhiCmpFoldExit.No)]
+          [(OptMaybeBool.Some known)
+            (let
+              [target : i64
+                (if known
+                  true-label
+                  false-label)]
+              [next : i64
+                (opt-phi-cmp-fold-chain-next
+                  type-segment-bases
+                  index
+                  uses
+                  phi-var
+                  phi-ty
+                  label
+                  true-label
+                  false-label)]
+              (if (not (= target next))
+                (OptPhiCmpFoldExit.Some label target)
+                (match (opt-cfg-index-find-block index next)
+                  [(OptMaybeBlock.No) (OptPhiCmpFoldExit.No)]
+                  [(OptMaybeBlock.Some block)
+                    (match block
+                      [(ir.CompilerIrBlock.Block _ next-instrs)
+                        (opt-phi-cmp-fold-chain-exit
+                          type-segment-bases
+                          index
+                          uses
+                          phi-var
+                          phi-ty
+                          next
+                          0
+                          next-instrs
+                          input
+                          (- fuel 1))])])))])])))
+
+;; Exactly one Var input, at least one literal input, and every literal input
+;; carried all the way to an exit by the chain.
+(define (opt-phi-cmp-fold-chain-classify
+  [type-segment-bases : i64]
+  [index : OptCfgIndex]
+  [uses : (__tl_dyn-array i64)]
+  [phi-var : i64]
+  [phi-ty : ast.AstType]
+  [head-label : i64]
+  [head-slot : i64]
+  [head-instrs : ir.CompilerIrInstrSeq]
+  [inputs : ir.CompilerIrPhiInputList]
+  [var-label : i64]
+  [var-value : ir.CompilerIrValue]
+  [var-count : i64]
+  [literal-count : i64]) : OptPhiCmpFoldInputs
+  (match (ir.compiler-ir-phi-input-list-force-cons inputs)
+    [(ir.CompilerIrPhiInputList.Nil)
+      (if (and (= var-count 1) (> literal-count 0))
+        (OptPhiCmpFoldInputs.Some var-label var-value literal-count)
+        (OptPhiCmpFoldInputs.No))]
+    [(ir.CompilerIrPhiInputList.Array seq)
+      (opt-phi-cmp-fold-chain-classify
+        type-segment-bases
+        index
+        uses
+        phi-var
+        phi-ty
+        head-label
+        head-slot
+        head-instrs
+        (ir.compiler-ir-phi-input-seq-to-list seq)
+        var-label
+        var-value
+        var-count
+        literal-count)]
+    [(ir.CompilerIrPhiInputList.Cons value label rest)
+      (match value
+        [(ir.CompilerIrValue.Var _)
+          (if (> var-count 0)
+            (OptPhiCmpFoldInputs.No)
+            (opt-phi-cmp-fold-chain-classify
+              type-segment-bases
+              index
+              uses
+              phi-var
+              phi-ty
+              head-label
+              head-slot
+              head-instrs
+              (__tl-box-place rest)
+              label
+              value
+              1
+              literal-count))]
+        [_
+          (match (opt-phi-cmp-fold-chain-exit
+            type-segment-bases
+            index
+            uses
+            phi-var
+            phi-ty
+            head-label
+            head-slot
+            head-instrs
+            value
+            (opt-phi-cmp-fold-chain-fuel))
+            [(OptPhiCmpFoldExit.No) (OptPhiCmpFoldInputs.No)]
+            [(OptPhiCmpFoldExit.Some _ _)
+              (opt-phi-cmp-fold-chain-classify
+                type-segment-bases
+                index
+                uses
+                phi-var
+                phi-ty
+                head-label
+                head-slot
+                head-instrs
+                (__tl-box-place rest)
+                var-label
+                var-value
+                var-count
+                (+ literal-count 1))])])]))
+
+;; Retarget every literal predecessor's jump onto the exit its value reaches.
+;; The phi input it leaves behind is dropped by the same helper (slot 0 of the
+;; merge is the phi), so the merge is left with its Var input alone. An edge the
+;; repair cannot serve -- a target phi with no input keyed on the deciding chain
+;; block -- keeps its input exactly as it stands, which is the T1-2 rule.
+(define (opt-phi-cmp-fold-chain-thread!
+  [type-segment-bases : i64]
+  [index : OptCfgIndex]
+  [uses : (__tl_dyn-array i64)]
+  [phi-var : i64]
+  [phi-ty : ast.AstType]
+  [merge-label : i64]
+  [merge-instrs : ir.CompilerIrInstrSeq]
+  [head-label : i64]
+  [head-slot : i64]
+  [head-instrs : ir.CompilerIrInstrSeq]
+  [inputs : ir.CompilerIrPhiInputList]
+  [changed : bool]) : bool
+  (match (ir.compiler-ir-phi-input-list-force-cons inputs)
+    [(ir.CompilerIrPhiInputList.Nil) changed]
+    [(ir.CompilerIrPhiInputList.Array seq)
+      (opt-phi-cmp-fold-chain-thread!
+        type-segment-bases
+        index
+        uses
+        phi-var
+        phi-ty
+        merge-label
+        merge-instrs
+        head-label
+        head-slot
+        head-instrs
+        (ir.compiler-ir-phi-input-seq-to-list seq)
+        changed)]
+    [(ir.CompilerIrPhiInputList.Cons value label rest)
+      (let
+        [next : bool
+          (match value
+            [(ir.CompilerIrValue.Var _) changed]
+            [_
+              (match (opt-phi-cmp-fold-chain-exit
+                type-segment-bases
+                index
+                uses
+                phi-var
+                phi-ty
+                head-label
+                head-slot
+                head-instrs
+                value
+                (opt-phi-cmp-fold-chain-fuel))
+                [(OptPhiCmpFoldExit.No) changed]
+                [(OptPhiCmpFoldExit.Some from-label exit-label)
+                  ;; The chain block `from-label` owns the edge into the exit
+                  ;; and carries no phi (chain rail), so it is the merge the
+                  ;; repair translates through with zero phis; the sentinel
+                  ;; block is the forwarding block whose phi loses `label`.
+                  (match (opt-cfg-index-find-block index from-label)
+                    [(OptMaybeBlock.No) changed]
+                    [(OptMaybeBlock.Some from-block)
+                      (match from-block
+                        [(ir.CompilerIrBlock.Block _ from-instrs)
+                          (if (opt-thread-apply-edge!
+                            index
+                            uses
+                            label
+                            merge-label
+                            from-label
+                            exit-label
+                            from-instrs
+                            0
+                            merge-instrs
+                            0)
+                            true
+                            changed)])])])])]
+        (opt-phi-cmp-fold-chain-thread!
+          type-segment-bases
+          index
+          uses
+          phi-var
+          phi-ty
+          merge-label
+          merge-instrs
+          head-label
+          head-slot
+          head-instrs
+          (__tl-box-place rest)
+          next))]))
+
+;; The chain form of the site. `head-label`/`head-slot` name C1: the merge's own
+;; tail when the compare shares the merge block, otherwise the block the merge
+;; jumps into. Everything the rewrite mutates it mutates in place (the edges'
+;; terminators, the merge phi's input list, the exits' phis), so the caller's
+;; block list is the answer.
+(define (opt-phi-cmp-fold-chain-try!
+  [type-segment-bases : i64]
+  [blocks : ir.CompilerIrBlockList]
+  [index : OptCfgIndex]
+  [uses : (__tl_dyn-array i64)]
+  [merge-label : i64]
+  [merge-instrs : ir.CompilerIrInstrSeq]
+  [phi-var : i64]
+  [inputs : ir.CompilerIrPhiInputList]
+  [phi-ty : ast.AstType]
+  [head-label : i64]
+  [head-slot : i64]
+  [head-instrs : ir.CompilerIrInstrSeq]) : OptPhiCmpFoldRewrite
+  (let
+    [links : i64
+      (opt-phi-cmp-fold-chain-length
+        type-segment-bases
+        index
+        uses
+        phi-var
+        phi-ty
+        head-label
+        head-slot
+        head-instrs
+        (opt-phi-cmp-fold-chain-fuel))]
+    [preds : OptLabelSet (opt-cfg-index-predecessors index merge-label)]
+    [merge-rpo : i64 (opt-phi-cmp-fold-label-rpo index merge-label)]
+    (if (or
+      (= links 0)
+      (not (= (opt-bool-branch-use-count uses phi-var) links))
+      (not (or (opt-int-or-char-type? phi-ty) (opt-bool-type? phi-ty)))
+      (< merge-rpo 0)
+      (not (opt-phi-cmp-fold-preds-forward? index preds merge-rpo)))
+      (OptPhiCmpFoldRewrite.No)
+      (match (opt-phi-cmp-fold-chain-classify
+        type-segment-bases
+        index
+        uses
+        phi-var
+        phi-ty
+        head-label
+        head-slot
+        head-instrs
+        inputs
+        (ir.compiler-ir-label-none)
+        (ir.CompilerIrValue.Unit)
+        0
+        0)
+        [(OptPhiCmpFoldInputs.No) (OptPhiCmpFoldRewrite.No)]
+        [(OptPhiCmpFoldInputs.Some var-label _ literal-count)
+          (if (not (= (+ literal-count 1) (opt-label-count preds)))
+            (OptPhiCmpFoldRewrite.No)
+            (match (opt-cfg-index-find-block index var-label)
+              [(OptMaybeBlock.No) (OptPhiCmpFoldRewrite.No)]
+              [(OptMaybeBlock.Some var-block)
+                (match var-block
+                  [(ir.CompilerIrBlock.Block _ var-instrs)
+                    (if (not
+                      (= (opt-thread-jump-target var-instrs) merge-label))
+                      (OptPhiCmpFoldRewrite.No)
+                      (if (opt-phi-cmp-fold-chain-thread!
+                        type-segment-bases
+                        index
+                        uses
+                        phi-var
+                        phi-ty
+                        merge-label
+                        merge-instrs
+                        head-label
+                        head-slot
+                        head-instrs
+                        inputs
+                        false)
+                        (OptPhiCmpFoldRewrite.Some blocks)
+                        (OptPhiCmpFoldRewrite.No)))])]))]))))
+
+;; The chain entry from a merge block that ends in a plain `jump`: C1 is the
+;; block it lands on, which must be a link block reached from the merge alone.
+(define (opt-phi-cmp-fold-chain-try-forward!
+  [type-segment-bases : i64]
+  [blocks : ir.CompilerIrBlockList]
+  [index : OptCfgIndex]
+  [uses : (__tl_dyn-array i64)]
+  [merge-label : i64]
+  [merge-instrs : ir.CompilerIrInstrSeq]
+  [phi-var : i64]
+  [inputs : ir.CompilerIrPhiInputList]
+  [phi-ty : ast.AstType]
+  [head-label : i64]) : OptPhiCmpFoldRewrite
+  (if (not
+    (opt-phi-cmp-fold-chain-block?
+      type-segment-bases
+      index
+      uses
+      phi-var
+      phi-ty
+      merge-label
+      head-label))
+    (OptPhiCmpFoldRewrite.No)
+    (match (opt-cfg-index-find-block index head-label)
+      [(OptMaybeBlock.No) (OptPhiCmpFoldRewrite.No)]
+      [(OptMaybeBlock.Some head-block)
+        (match head-block
+          [(ir.CompilerIrBlock.Block _ head-instrs)
+            (opt-phi-cmp-fold-chain-try!
+              type-segment-bases
+              blocks
+              index
+              uses
+              merge-label
+              merge-instrs
+              phi-var
+              inputs
+              phi-ty
+              head-label
+              0
+              head-instrs)])])))
+
+;; A merge that holds the compare itself. T1-2's rewrite keeps first refusal on
+;; the shape it owns -- it is the one that MOVES the compare down onto the
+;; variable edge -- and the chain matcher picks up what it declines, which is
+;; every site whose phi has a second reader further along the run.
+(define (opt-phi-cmp-fold-try-merge!
+  [type-segment-bases : i64]
+  [blocks : ir.CompilerIrBlockList]
+  [index : OptCfgIndex]
+  [uses : (__tl_dyn-array i64)]
+  [merge-label : i64]
+  [instrs : ir.CompilerIrInstrSeq]
+  [phi-var : i64]
+  [inputs : ir.CompilerIrPhiInputList]
+  [phi-ty : ast.AstType]) : OptPhiCmpFoldRewrite
+  (match (ir.compiler-ir-instr-seq-ref instrs 1)
+    [(ir.CompilerIrInstr.BinOp cmp-var op lhs rhs cmp-ty)
+      (match (ir.compiler-ir-instr-seq-ref instrs 2)
+        [(ir.CompilerIrInstr.Branch
+            (ir.CompilerIrValue.Var cond-var)
+            true-label
+            false-label)
+          (if (not (= cond-var cmp-var))
+            (OptPhiCmpFoldRewrite.No)
+            (match (opt-phi-cmp-fold-try-shape!
+              type-segment-bases
+              blocks
+              index
+              uses
+              merge-label
+              instrs
+              phi-var
+              inputs
+              phi-ty
+              cmp-var
+              op
+              lhs
+              rhs
+              cmp-ty
+              true-label
+              false-label)
+              [(OptPhiCmpFoldRewrite.Some next)
+                (OptPhiCmpFoldRewrite.Some next)]
+              [(OptPhiCmpFoldRewrite.No)
+                (opt-phi-cmp-fold-chain-try!
+                  type-segment-bases
+                  blocks
+                  index
+                  uses
+                  merge-label
+                  instrs
+                  phi-var
+                  inputs
+                  phi-ty
+                  merge-label
+                  1
+                  instrs)]))]
+        [_ (OptPhiCmpFoldRewrite.No)])]
+    [_ (OptPhiCmpFoldRewrite.No)]))
+
 (define (opt-phi-cmp-fold-try-block!
   [type-segment-bases : i64]
   [blocks : ir.CompilerIrBlockList]
@@ -35003,39 +36302,38 @@
   [block : ir.CompilerIrBlock]) : OptPhiCmpFoldRewrite
   (match block
     [(ir.CompilerIrBlock.Block merge-label instrs)
-      (if (not (= (ir.compiler-ir-instr-seq-count instrs) 3))
-        (OptPhiCmpFoldRewrite.No)
-        (match (ir.compiler-ir-instr-seq-ref instrs 0)
-          [(ir.CompilerIrInstr.Phi phi-var inputs phi-ty)
-            (match (ir.compiler-ir-instr-seq-ref instrs 1)
-              [(ir.CompilerIrInstr.BinOp cmp-var op lhs rhs cmp-ty)
-                (match (ir.compiler-ir-instr-seq-ref instrs 2)
-                  [(ir.CompilerIrInstr.Branch
-                      (ir.CompilerIrValue.Var cond-var)
-                      true-label
-                      false-label)
-                    (if (not (= cond-var cmp-var))
-                      (OptPhiCmpFoldRewrite.No)
-                      (opt-phi-cmp-fold-try-shape!
-                        type-segment-bases
-                        blocks
-                        index
-                        uses
-                        merge-label
-                        instrs
-                        phi-var
-                        inputs
-                        phi-ty
-                        cmp-var
-                        op
-                        lhs
-                        rhs
-                        cmp-ty
-                        true-label
-                        false-label))]
-                  [_ (OptPhiCmpFoldRewrite.No)])]
-              [_ (OptPhiCmpFoldRewrite.No)])]
-          [_ (OptPhiCmpFoldRewrite.No)]))]))
+      (let
+        [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+        (if (not (or (= count 2) (= count 3)))
+          (OptPhiCmpFoldRewrite.No)
+          (match (ir.compiler-ir-instr-seq-ref instrs 0)
+            [(ir.CompilerIrInstr.Phi phi-var inputs phi-ty)
+              (if (= count 3)
+                (opt-phi-cmp-fold-try-merge!
+                  type-segment-bases
+                  blocks
+                  index
+                  uses
+                  merge-label
+                  instrs
+                  phi-var
+                  inputs
+                  phi-ty)
+                (match (ir.compiler-ir-instr-seq-ref instrs 1)
+                  [(ir.CompilerIrInstr.Jump head-label)
+                    (opt-phi-cmp-fold-chain-try-forward!
+                      type-segment-bases
+                      blocks
+                      index
+                      uses
+                      merge-label
+                      instrs
+                      phi-var
+                      inputs
+                      phi-ty
+                      head-label)]
+                  [_ (OptPhiCmpFoldRewrite.No)]))]
+            [_ (OptPhiCmpFoldRewrite.No)])))]))
 
 (define (opt-phi-cmp-fold-first-list!
   [type-segment-bases : i64]
@@ -35122,33 +36420,72 @@
 ;; function the matcher then declines is only wasted work; rejecting one it
 ;; would have rewritten would be a miss, so this stays strictly weaker than the
 ;; matcher.
+(define (opt-phi-cmp-fold-merge-candidate?
+  [instrs : ir.CompilerIrInstrSeq]
+  [phi-var : i64]) : bool
+  (match (ir.compiler-ir-instr-seq-ref instrs 1)
+    [(ir.CompilerIrInstr.BinOp cmp-var op lhs rhs cmp-ty)
+      (and
+        (opt-bool-branch-compare-op? op)
+        (if (opt-phi-cmp-fold-value-is-var? lhs phi-var)
+          (opt-const-value? rhs cmp-ty)
+          (and
+            (opt-phi-cmp-fold-value-is-var? rhs phi-var)
+            (opt-const-value? lhs cmp-ty)))
+        (match (ir.compiler-ir-instr-seq-ref instrs 2)
+          [(ir.CompilerIrInstr.Branch (ir.CompilerIrValue.Var cond-var) _ _)
+            (= cond-var cmp-var)]
+          [_ false]))]
+    [_ false]))
+
+;; The jump-separated form is admitted on the phi alone -- whether the block it
+;; falls into compares the join is a question for the matcher, which owns the
+;; CFG index this scan deliberately does not build. Requiring BOTH a variable
+;; and a literal input keeps the scan off every ordinary merge: a sentinel join
+;; is exactly the phi that mixes the two.
+(define (opt-phi-cmp-fold-inputs-mixed?
+  [inputs : ir.CompilerIrPhiInputList]
+  [var? : bool]
+  [literal? : bool]) : bool
+  (if (and var? literal?)
+    true
+    (match (ir.compiler-ir-phi-input-list-force-cons inputs)
+      [(ir.CompilerIrPhiInputList.Nil) false]
+      [(ir.CompilerIrPhiInputList.Array seq)
+        (opt-phi-cmp-fold-inputs-mixed?
+          (ir.compiler-ir-phi-input-seq-to-list seq)
+          var?
+          literal?)]
+      [(ir.CompilerIrPhiInputList.Cons value _ rest)
+        (match value
+          [(ir.CompilerIrValue.Var _)
+            (opt-phi-cmp-fold-inputs-mixed? (__tl-box-place rest) true literal?)]
+          [_ (opt-phi-cmp-fold-inputs-mixed? (__tl-box-place rest) var? true)])])))
+
+(define (opt-phi-cmp-fold-forward-candidate?
+  [instrs : ir.CompilerIrInstrSeq]
+  [inputs : ir.CompilerIrPhiInputList]) : bool
+  (and
+    (match (ir.compiler-ir-instr-seq-ref instrs 1)
+      [(ir.CompilerIrInstr.Jump _) true]
+      [_ false])
+    (opt-phi-cmp-fold-inputs-mixed? inputs false false)))
+
 (define (opt-phi-cmp-fold-block-candidate? [block : ir.CompilerIrBlock]) : bool
   (match block
     [(ir.CompilerIrBlock.Block _ instrs)
-      (and
-        (= (ir.compiler-ir-instr-seq-count instrs) 3)
-        (match (ir.compiler-ir-instr-seq-ref instrs 0)
-          [(ir.CompilerIrInstr.Phi phi-var _ phi-ty)
-            (and
-              (or (opt-int-or-char-type? phi-ty) (opt-bool-type? phi-ty))
-              (match (ir.compiler-ir-instr-seq-ref instrs 1)
-                [(ir.CompilerIrInstr.BinOp cmp-var op lhs rhs cmp-ty)
-                  (and
-                    (opt-bool-branch-compare-op? op)
-                    (if (opt-phi-cmp-fold-value-is-var? lhs phi-var)
-                      (opt-const-value? rhs cmp-ty)
-                      (and
-                        (opt-phi-cmp-fold-value-is-var? rhs phi-var)
-                        (opt-const-value? lhs cmp-ty)))
-                    (match (ir.compiler-ir-instr-seq-ref instrs 2)
-                      [(ir.CompilerIrInstr.Branch
-                          (ir.CompilerIrValue.Var cond-var)
-                          _
-                          _)
-                        (= cond-var cmp-var)]
-                      [_ false]))]
-                [_ false]))]
-          [_ false]))]))
+      (let
+        [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+        (and
+          (or (= count 2) (= count 3))
+          (match (ir.compiler-ir-instr-seq-ref instrs 0)
+            [(ir.CompilerIrInstr.Phi phi-var inputs phi-ty)
+              (and
+                (or (opt-int-or-char-type? phi-ty) (opt-bool-type? phi-ty))
+                (if (= count 3)
+                  (opt-phi-cmp-fold-merge-candidate? instrs phi-var)
+                  (opt-phi-cmp-fold-forward-candidate? instrs inputs)))]
+            [_ false])))]))
 
 (define (opt-phi-cmp-fold-blocks-have-candidate?
   [blocks : ir.CompilerIrBlockList]) : bool
@@ -85663,16 +87000,27 @@
                             _t-thread-branch)
                           unit)]
                       [_t-cfg2 : i64 (cfg compile-profile (profile.now-ms) 0)]
+                      ;; The block merge closes the same stage: `phi_cmp_fold`
+                      ;; and the fuser above leave a merge holding one input and
+                      ;; the compare that reads it one block further on, and the
+                      ;; cleanup right above is what turns that phi into a mov.
+                      ;; Concatenating the run is what the backend's contiguous
+                      ;; `load ; cast ; compare ; branch` fold needs, and doing
+                      ;; it here -- rather than after `switch` and the loop
+                      ;; cluster -- means every one of those passes admits and
+                      ;; shapes the merged blocks.
                       [cfg-result : OptBlockCtxResult
-                        (opt-cfg-simplify-blocks-with-context-result
-                          (OptBlockCtxResult.Result
-                            thread-branch
-                            sccp-context
-                            (and
-                              sccp-context-valid
-                              (not phi-cmp-fold-changed)
-                              (not bool-branch-changed)
-                              (not thread-branch-changed))))]
+                        (opt-cfg-merge-blocks-with-context-result
+                          ssa-frame
+                          (opt-cfg-simplify-blocks-with-context-result
+                            (OptBlockCtxResult.Result
+                              thread-branch
+                              sccp-context
+                              (and
+                                sccp-context-valid
+                                (not phi-cmp-fold-changed)
+                                (not bool-branch-changed)
+                                (not thread-branch-changed)))))]
                       [cfg : ir.CompilerIrBlockList
                         (compiler-opt-debug-observe-blocks
                           type-segment-bases

@@ -2573,6 +2573,14 @@
 (define compiler-load-embedded-module-ids : sym_i64_env.SymI64Env
   (sym_i64_env.sym-i64-empty))
 
+;; Batch entries reset and rebuild their intern table while retaining parsed
+;; stdlib programs. Keep the trusted module identities structurally as well as
+;; in the fast symbol-id set so a cached module remains trusted after its old
+;; numeric id is retired. The strings and vector storage live in the dedicated
+;; provenance arena for the same reason as the id set.
+(define compiler-load-embedded-module-names : svec.Vec
+  (svec.new))
+
 (define (compiler-load-embedded-module-ids-shared-view) : sym_i64_env.SymI64Env
   (cfg
     stage0-seed-bootstrap
@@ -2580,22 +2588,40 @@
     (unsafe
       (ptr-read (ptr-addr-of compiler-load-embedded-module-ids)))))
 
-(define (compiler-load-embedded-module-ids-reset!) : unit
+(define (compiler-load-embedded-module-names-shared-view) : svec.Vec
+  (compiler-load-global-shared-view compiler-load-embedded-module-names))
+
+(define (compiler-load-embedded-module-id-cache-reset!) : unit
   (set! compiler-load-embedded-module-ids (sym_i64_env.sym-i64-empty)))
+
+(define (compiler-load-embedded-module-ids-reset!) : unit
+  (begin
+    (compiler-load-embedded-module-id-cache-reset!)
+    (set! compiler-load-embedded-module-names (svec.new))))
 
 (define (compiler-load-note-embedded-module! [path : String]) : unit
   (let
-    [id : i64 (ci.intern (compiler-load-canonical-module-id-from-path path))]
+    [module : String (compiler-load-canonical-module-id-from-path path)]
+    [id : i64 (ci.intern (clone module))]
+    [names : svec.Vec (compiler-load-embedded-module-names-shared-view)]
     ;; The set outlives every load-scoped scratch arena and every intern
     ;; floor reset; bind its nodes in the dedicated provenance arena.
     (in-arena
       (arena.Arena (compiler-load-provenance-arena))
-      (set!
-        compiler-load-embedded-module-ids
-        (sym_i64_env.sym-i64-bind-id
-          (compiler-load-embedded-module-ids-shared-view)
-          id
-          1)))))
+      (begin
+        (unless
+          (svec.contains? (& names) (clone module))
+          (set!
+            compiler-load-embedded-module-names
+            (compiler-load-string-vec-push-copy
+              (compiler-load-embedded-module-names-shared-view)
+              (string.copy (& module)))))
+        (set!
+          compiler-load-embedded-module-ids
+          (sym_i64_env.sym-i64-bind-id
+            (compiler-load-embedded-module-ids-shared-view)
+            id
+            1))))))
 
 (define compiler-load-embedded-equivalence-cache : sym_i64_env.SymI64Env
   (sym_i64_env.sym-i64-empty))
@@ -2677,9 +2703,27 @@
 
 (define (compiler-load-embedded-stdlib-module-id? [module : String]) : bool
   (let
+    [id : i64 (ci.intern (clone module))]
     [ids : sym_i64_env.SymI64Env
       (compiler-load-embedded-module-ids-shared-view)]
-    (sym_i64_env.sym-i64-contains-id ids (ci.intern module))))
+    (if (sym_i64_env.sym-i64-contains-id ids id)
+      true
+      (let
+        [names : svec.Vec (compiler-load-embedded-module-names-shared-view)]
+        (if (not (svec.contains? (& names) module))
+          false
+          ;; The structural identity survived a job-local intern reset. Rebind
+          ;; its current numeric id so subsequent macro dispatches stay O(1).
+          (in-arena
+            (arena.Arena (compiler-load-provenance-arena))
+            (begin
+              (set!
+                compiler-load-embedded-module-ids
+                (sym_i64_env.sym-i64-bind-id
+                  (compiler-load-embedded-module-ids-shared-view)
+                  id
+                  1))
+              true)))))))
 
 (define (compiler-load-session-note-embedded-stdlib-source!) : unit
   (compiler-load-session-state-note-embedded-stdlib-source!
@@ -2756,6 +2800,11 @@
   [load-state : CompilerLoadSessionState]
   [intern-state : (&mut intern-state ci.InternCompatState)]) : unit
   (begin
+    ;; Numeric intern ids are job-local. Retain the structural trusted-module
+    ;; names for cached ASTs, but discard all id-keyed caches before recycling
+    ;; the interner so stale ids cannot alias unrelated symbols in the next job.
+    (compiler-load-embedded-module-id-cache-reset!)
+    (set! compiler-load-embedded-equivalence-cache (sym_i64_env.sym-i64-empty))
     (compiler-load-session-state-surface-summaries-reset!
       (compiler-load-session-state-shared-view (& load-state)))
     (compiler-load-session-state-lazy-qualified-observer-reset! load-state)

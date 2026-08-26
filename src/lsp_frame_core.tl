@@ -7218,12 +7218,105 @@
       [(compiler_semantic_index.CompilerSemanticSymbolKind.Field) true]
       [_ false])))
 
+(define (lsp-completion-rendered-type-tail [type-text : String]) : String
+  ;; `tc-type-render` emits wrapper types as S-expressions. Find their final
+  ;; top-level component so reference and region wrappers can be peeled without
+  ;; confusing a lifetime argument with the nominal referent.
+  (let
+    [end : i64 (- (string.string-length type-text) 1)]
+    [start : i64 -1]
+    [depth : i64 0]
+    (begin
+      (while (and (> end 0) (lsp-ws? (string.string-ref type-text (- end 1))))
+        (set! end (- end 1)))
+      (if (and (> end 0) (= (string.string-ref type-text (- end 1)) ')'))
+        (let
+          [cursor : i64 (- end 1)]
+          (begin
+            (set! depth 1)
+            (set! cursor (- cursor 1))
+            (while (and (>= cursor 0) (> depth 0))
+              (begin
+                (cond
+                  [(= (string.string-ref type-text cursor) ')')
+                    (set! depth (+ depth 1))]
+                  [(= (string.string-ref type-text cursor) '(')
+                    (set! depth (- depth 1))]
+                  [else unit])
+                (if (= depth 0)
+                  (set! start cursor)
+                  unit)
+                (set! cursor (- cursor 1))))))
+        (let
+          [cursor : i64 (- end 1)]
+          (begin
+            (while (and
+              (> cursor 0)
+              (not (lsp-ws? (string.string-ref type-text (- cursor 1))))
+              (not (= (string.string-ref type-text (- cursor 1)) '(')))
+              (set! cursor (- cursor 1)))
+            (set! start cursor))))
+      (if (and (>= start 0) (> end start))
+        (string.substring type-text start (- end start))
+        ""))))
+
+(define (lsp-completion-rendered-type-owner-name [type-text : String]) : String
+  ;; A field receiver can be a nominal value, a lifetime-instantiated nominal,
+  ;; or a shared/mutable reference (possibly carrying an outer Region tag).
+  ;; Extract only that nominal head. A raw substring match is not semantic:
+  ;; e.g. type `app.main/AB` must not resolve to an earlier struct named `A`.
+  (let
+    [n : i64 (string.string-length type-text)]
+    (if (= n 0)
+      ""
+      (if (not (= (string.string-ref type-text 0) '('))
+        (string.copy (& type-text))
+        (let
+          [head-end : i64 1]
+          (begin
+            (while (and
+              (< head-end n)
+              (not (lsp-ws? (string.string-ref type-text head-end)))
+              (not (= (string.string-ref type-text head-end) ')')))
+              (set! head-end (+ head-end 1)))
+            (let
+              [head : String (string.substring type-text 1 (- head-end 1))]
+              (if (or
+                (string.eq head "&")
+                (string.eq head "&mut")
+                (string.eq head "Region"))
+                (lsp-completion-rendered-type-owner-name
+                  (lsp-completion-rendered-type-tail type-text))
+                head))))))))
+
+(define (lsp-completion-record-owns-rendered-type?
+  [record : (& record compiler_semantic_index.CompilerSemanticRecord)]
+  [owner-name : String]) : bool
+  (let
+    [module : String (tc.macro-decl-module-display record.symbol.module-id)]
+    [module-len : i64 (string.string-length module)]
+    [display-len : i64 (string.string-length record.display-name)]
+    (or
+      (string.eq owner-name record.display-name)
+      (and
+        (> module-len 0)
+        (= (string.string-length owner-name) (+ module-len (+ display-len 1)))
+        (string.is-string-prefix-at (& owner-name) (& module) 0)
+        (or
+          (= (string.string-ref owner-name module-len) '/')
+          (= (string.string-ref owner-name module-len) '.'))
+        (string.is-string-prefix-at
+          (& owner-name)
+          (& record.display-name)
+          (+ module-len 1))))))
+
 (define (lsp-completion-find-type-owner
   [index : (& index compiler_semantic_index.CompilerSemanticSourceIndex)]
   [type-text : String]) : i64
   (let
     [record-index : i64 0]
     [found : i64 -1]
+    [owner-name : String (lsp-completion-rendered-type-owner-name type-text)]
     (begin
       (while (and
         (< found 0)
@@ -7247,9 +7340,7 @@
                   [(compiler_semantic_index.CompilerSemanticSymbolKind.Enum)
                     true]
                   [_ false]))
-              (or
-                (string.eq type-text record.display-name)
-                (string.contains (& type-text) (& record.display-name))))
+              (lsp-completion-record-owns-rendered-type? (& record) owner-name))
               (set! found record-index)
               unit)
             (set! record-index (+ record-index 1)))))
@@ -7978,7 +8069,20 @@
           "parse")
         (string.eq
           (lsp-completion-module-next-segment "stdlib.string" "compiler")
-          "")))))
+          "")
+        (string.eq
+          (lsp-completion-rendered-type-owner-name "app.main/AB")
+          "app.main/AB")
+        (string.eq
+          (lsp-completion-rendered-type-owner-name "(& app.main/AB)")
+          "app.main/AB")
+        (string.eq
+          (lsp-completion-rendered-type-owner-name "(& lifetime app.main/AB)")
+          "app.main/AB")
+        (string.eq
+          (lsp-completion-rendered-type-owner-name
+            "(Region phase (& lifetime (app.main/RefBox lifetime)))")
+          "app.main/RefBox")))))
 
 (test
   lsp-completion-provider-ranking-dedup-cap

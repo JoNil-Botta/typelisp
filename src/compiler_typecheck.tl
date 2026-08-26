@@ -169,13 +169,14 @@
   (match (tc_api.typecheck-compiler-source src)
     [(tc_core.ResultCompilerTypecheck.Err diag)
       (let
-        [diagnostics : cdiag.CompilerDiagnosticList (__tl-box-place diag)]
+        [diagnostics : cdiag.CompilerDiagnosticList
+          (cdiag.compiler-diagnostic-list-box-shared-view diag)]
+        [count : i64 diagnostics.len]
+        [first : cdiag.CompilerDiagnostic
+          (cdiag.compiler-diagnostic-list-first diagnostics)]
         (and
-          (= (cdiag.compiler-diagnostic-list-count diagnostics) want-count)
-          (string.eq
-            (cdiag.compiler-diagnostic-message
-              (cdiag.compiler-diagnostic-list-first diagnostics))
-            want)))]
+          (= count want-count)
+          (string.eq (cdiag.compiler-diagnostic-message first) want)))]
     [(tc_core.ResultCompilerTypecheck.Ok _) false]))
 
 (define (compiler-typecheck-error-location-ok?

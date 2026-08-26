@@ -6382,12 +6382,20 @@ whereas `{2:.*}` and `{name:.*}` consume only the implicit count. Dynamic
 precision requires exact source type `i64` and traps with the precision-count
 diagnostic before rendering or allocation when negative. An omitted precision
 remains distinct from explicit zero in the shared options value. Ordinary
-integral Display and radix rendering accepts and ignores precision. Text,
-bool, char, owner Display, and float precision consumers are separate formatter
-features and produce category-specific unsupported diagnostics until present.
+integral Display and radix rendering accepts and ignores precision. `String`,
+borrowed `str`, `bool`, `char`, and the `String` returned by an owner Display
+hook truncate to `min(precision, rendered-byte-length)` before width/fill/
+alignment is applied. This precision counts TypeLisp characters, which are
+bytes: it does not decode or validate UTF-8, so a boundary may split a
+multi-byte UTF-8 sequence, and embedded NUL and bytes above `0x7f` remain
+ordinary output bytes. This is an intentional difference from Rust's
+Unicode-scalar count and keeps precision in the same unit as TypeLisp width.
+Float fixed precision remains a separate formatter feature and produces its
+focused unsupported diagnostic until present.
 
-The `+` sign emits a plus for nonnegative `i64`/`f64`/`f32` values and is
-rejected for nonnumeric values; `-` is accepted as the Rust-compatible no-op.
+The `+` sign emits a plus for nonnegative fixed-width integer and float values
+and is rejected for nonnumeric values; `-` is accepted as the Rust-compatible
+no-op.
 The `0` flag performs numeric sign-aware zero padding, inserting zeroes after an
 existing or requested sign and after a base prefix when a type-specific
 renderer supplies one; it overrides fill/alignment for that numeric value. `#`
@@ -6397,9 +6405,14 @@ change default Display output. The selectors `?`, `x?`, `X?`, `o`, `x`, `X`,
 focused unsupported-semantics diagnostics. Malformed, duplicated, or
 out-of-order options are rejected during macro expansion.
 
-The built-in placeholder types are `String`, `i64`, `bool`, `char`, `f64`, and
-`f32`. A struct or enum instead delegates to a function in the type's canonical
-owner module. The owner may define either:
+The built-in placeholder types are `String`, `i8`, `i16`, `i32`, `i64`, `u8`,
+`u16`, `u32`, `u64`, `bool`, `char`, `f64`, and `f32`. Signed integers render
+their decimal magnitude with a leading minus when negative; unsigned conversion
+preserves the complete `u64` range. Float Display uses the source IEEE-754
+precision, emits the shortest round-tripping decimal without `e`/`E` notation,
+preserves signed zero, renders infinities as `inf`/`-inf`, and canonicalizes all
+NaNs to `NaN` without a sign. A struct or enum instead delegates to a function
+in the type's canonical owner module. The owner may define either:
 
 - `to-string : (& T) -> String`, normally for the module's primary type; or
 - `to-string-<NominalName> : (& T) -> String`, for another nominal type owned
@@ -7503,8 +7516,10 @@ in documentation passes.
   with open-document overlays and incremental file/root updates, a bounded
   owned semantic cache for unopened workspace sources with canonical
   cross-snapshot occurrence queries and explicit completeness, standard
-  project-wide semantic references with declaration filtering, and TypeLisp
-  structural-edit/query extensions,
+  project-wide semantic references with declaration filtering, standard
+  semantic `prepareRename`/`rename` with deterministic version-aware workspace
+  edits and all-or-nothing safety checks, and TypeLisp structural-edit/query
+  extensions,
   structured source locations for source-authored semantic diagnostics, plus
   a REPL that evaluates through the real compile/link/run pipeline.
 
@@ -7552,7 +7567,7 @@ scalarized extensions.
 | Qualified short stdlib names | Migration in progress: module-name-prefixed helpers remain during the rename. |
 | Compiled comptime execution from embedded/package `tlci` images | Implemented for trusted local/source-built images on Linux and Windows. Published compilers use trusted embedded-stdlib and dependency-package catalogs; exact embedded or byte-identical source provenance admits stdlib entries, while dependency catalogs require exact package/source and host admission plus physical defining-provenance selection. Generation/key-bound capabilities are revalidated immediately before mapped dispatch. Compiled entries commit `Expr`, `Module`, and `Decls` results transactionally; dependency expressions reuse direct checked operands with zero rebinding, and declaration/module results reuse the exact bound environment. Registration shells and uncataloged, metadata-only, unavailable, or untrusted identities retain counted deterministic CTFE fallback. Required two-host differential, sustained reset/remap stress, bootstrap fixpoint, focused stale-source/rebuild, and package native/source gates require route activity plus byte-identical assembly and equivalent diagnostics. The embedded tier additionally derives an inventory-exact 107-entry declaration census and requires reviewed native/forced-source fixture evidence for every identity and result kind with byte-identical assembly. The package differential uses a two-parent dependency diamond to prove package-qualified catalog selection, one canonical mapping per package, native `Expr`/`Module`/`Decls` results, shell reuse, ordered/repeated generated output, zero-map forced-source parity, and authored/fuel diagnostic attribution. The isolated same-commit mutation gate additionally proves an interpreted producer consumes a changed transformer body, its successor executes that package-qualified identity from the newly embedded image, and later compiler/image/envelope/source-hash/provenance outputs converge. Metadata-only catalogs remain zero-entry/no-map and cross-host portable; stale source stands down before mapping, invalidates old capabilities, and resumes changed native execution only after rebuild. Content and exact-source hashes are deterministic integrity/rebuild identities, not publisher signatures; distributed/prebuilt authenticity remains a separate future trust layer. |
 | Package registry, semantic-version solving, workspaces | Deferred by design: deterministic git-pinned dependencies with lockfile replay. |
-| Richer LSP/IDE features | The immutable workspace source/declaration index, overlay/event plumbing, and standard semantic workspace references are implemented. Binding-aware read/write document highlights, hierarchical document symbols (members, variants, locals, and macro-generated declarations), semantic tokens, and rename through the standard method remain pending. |
+| Richer LSP/IDE features | The immutable workspace source/declaration index, overlay/event plumbing, standard semantic workspace references, and safe workspace-wide `prepareRename`/`rename` are implemented. Binding-aware read/write document highlights, hierarchical document symbols (members, variants, locals, and macro-generated declarations), and semantic tokens remain pending. |
 
 ---
 

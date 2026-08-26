@@ -19,6 +19,7 @@
 (import compiler_liveness as live)
 (import compiler_ir_types as ir)
 (import compiler_parallel_move as pmove)
+(import compiler_profile_state as profile_state)
 (cfg test (import stdlib.test))
 
 (defmacro (compiler-reg-global-shared-view [place : Expr]) : Expr
@@ -96,7 +97,10 @@
 (defstruct CompilerRegVarTypes
   (present (__tl_dyn-array i64))
   (items (__tl_dyn-array ast.AstType))
-  (representations ir.CompilerIrRepresentationIndex))
+  (representations ir.CompilerIrRepresentationIndex)
+  ;; The census owner follows the already-ubiquitous type view through every
+  ;; planning and rewrite path. Ordinary builds carry only its zero sentinel.
+  (metrics profile_state.CompilerProfileMetrics))
 
 (defenum CompilerRegMaybeType
   (No)
@@ -189,33 +193,41 @@
   (baseline live.CompilerFunctionLiveness)
   (edge-precise CompilerRegMaybeLiveness))
 
-(cfg
-  (any regalloc-liveness-census test)
-  (define compiler-reg-liveness-census-baseline : i64
-    0))
-(cfg
-  (any regalloc-liveness-census test)
-  (define compiler-reg-liveness-census-edge-precise : i64
-    0))
+(define compiler-reg-liveness-census-baseline-metric : i64
+  162)
+(define compiler-reg-liveness-census-edge-precise-metric : i64
+  163)
 
-(define (compiler-reg-liveness-census-reset!) : unit
+(define (compiler-reg-profile-metrics-new) : profile_state.CompilerProfileMetrics
+  (profile_state.compiler-profile-state-metrics
+    (profile_state.compiler-profile-state-new)))
+
+(define (compiler-reg-liveness-census-reset!
+  [_metrics : profile_state.CompilerProfileMetrics]) : unit
   (cfg
     (any regalloc-liveness-census test)
-    (begin
-      (set! compiler-reg-liveness-census-baseline 0)
-      (set! compiler-reg-liveness-census-edge-precise 0))
+    (profile_state.compiler-profile-metrics-reset-range!
+      _metrics
+      compiler-reg-liveness-census-baseline-metric
+      (+ compiler-reg-liveness-census-edge-precise-metric 1))
     unit))
 
-(define (compiler-reg-liveness-census-baseline-count) : i64
+(define (compiler-reg-liveness-census-baseline-count
+  [_metrics : profile_state.CompilerProfileMetrics]) : i64
   (cfg
     (any regalloc-liveness-census test)
-    compiler-reg-liveness-census-baseline
+    (profile_state.compiler-profile-metrics-value
+      _metrics
+      compiler-reg-liveness-census-baseline-metric)
     0))
 
-(define (compiler-reg-liveness-census-edge-precise-count) : i64
+(define (compiler-reg-liveness-census-edge-precise-count
+  [_metrics : profile_state.CompilerProfileMetrics]) : i64
   (cfg
     (any regalloc-liveness-census test)
-    compiler-reg-liveness-census-edge-precise
+    (profile_state.compiler-profile-metrics-value
+      _metrics
+      compiler-reg-liveness-census-edge-precise-metric)
     0))
 
 (define (compiler-reg-instr-seq-has-phi?
@@ -251,16 +263,18 @@
 
 (define (compiler-reg-liveness-handle-make
   [func : ir.CompilerIrFunction]
-  [need-edge-precise : bool]) : CompilerRegLivenessHandle
+  [need-edge-precise : bool]
+  [_metrics : profile_state.CompilerProfileMetrics]) : CompilerRegLivenessHandle
   (let
     [baseline : live.CompilerFunctionLiveness
       (live.compiler-live-analyze-function func)]
     (begin
       (cfg
         (any regalloc-liveness-census test)
-        (set!
-          compiler-reg-liveness-census-baseline
-          (+ compiler-reg-liveness-census-baseline 1))
+        (profile_state.compiler-profile-metrics-add!
+          _metrics
+          compiler-reg-liveness-census-baseline-metric
+          1)
         unit)
       (cfg
         regalloc-liveness-census
@@ -289,9 +303,10 @@
                 (begin
                   (cfg
                     (any regalloc-liveness-census test)
-                    (set!
-                      compiler-reg-liveness-census-edge-precise
-                      (+ compiler-reg-liveness-census-edge-precise 1))
+                    (profile_state.compiler-profile-metrics-add!
+                      _metrics
+                      compiler-reg-liveness-census-edge-precise-metric
+                      1)
                     unit)
                   (CompilerRegLivenessHandle
                     baseline
@@ -652,6 +667,32 @@
   (any regalloc-census test)
   (defstruct CompilerRegCallSpanCensus
     (counts (__tl_dyn-array i64))))
+
+(define compiler-reg-call-span-census-metric-start : i64
+  164)
+(define compiler-reg-call-span-census-metric-end : i64
+  176)
+(define compiler-reg-evict-census-metric-start : i64
+  176)
+(define compiler-reg-evict-census-metric-end : i64
+  196)
+(define compiler-reg-assignment-census-metric-start : i64
+  196)
+(define compiler-reg-assignment-census-metric-end : i64
+  207)
+(define compiler-reg-move-census-metric-start : i64
+  207)
+(define compiler-reg-move-census-metric-end : i64
+  223)
+
+(cfg
+  regalloc-census
+  (define (compiler-reg-census-reset!
+    [metrics : profile_state.CompilerProfileMetrics]) : unit
+    (profile_state.compiler-profile-metrics-reset-range!
+      metrics
+      compiler-reg-call-span-census-metric-start
+      compiler-reg-move-census-metric-end)))
 
 (defstruct CompilerRegMove
   (src i64)
@@ -1589,19 +1630,21 @@
   (CompilerRegVarTypes
     (array.make-array i64 0)
     (array.make-array ast.AstType 0)
-    (ir.compiler-ir-representation-index-empty)))
+    (ir.compiler-ir-representation-index-empty)
+    (compiler-reg-profile-metrics-new)))
 
 (define (compiler-reg-var-types-empty-with-representations
   [representations : ir.CompilerIrRepresentationIndex]) : CompilerRegVarTypes
   (CompilerRegVarTypes
     (array.make-array i64 0)
     (array.make-array ast.AstType 0)
-    representations))
+    representations
+    (compiler-reg-profile-metrics-new)))
 
 (define (compiler-reg-var-types-with-representations
   [types : CompilerRegVarTypes]
   [representations : ir.CompilerIrRepresentationIndex]) : CompilerRegVarTypes
-  (CompilerRegVarTypes types.present types.items representations))
+  (CompilerRegVarTypes types.present types.items representations types.metrics))
 
 (define (compiler-reg-var-types-lookup
   [types : CompilerRegVarTypes]
@@ -1656,7 +1699,11 @@
                 (set! index (+ index 1))))
             (set! (array-ref present var) 1)
             (set! (array-ref items var) ty)
-            (CompilerRegVarTypes present items types.representations)))))))
+            (CompilerRegVarTypes
+              present
+              items
+              types.representations
+              types.metrics)))))))
 
 (define (compiler-reg-addr-of-result-type) : ast.AstType
   (ast.ast-ty-mut-ptr (ast.AstType.U8)))
@@ -1791,9 +1838,10 @@
                 (compiler-reg-instr-seq-types-array! instrs present types)])
             (set! i (+ i 1)))))]))
 
-(define (compiler-reg-function-var-types-with-representations
+(define (compiler-reg-function-var-types-with-representations-and-metrics
   [func : ir.CompilerIrFunction]
-  [representations : ir.CompilerIrRepresentationIndex]) : CompilerRegVarTypes
+  [representations : ir.CompilerIrRepresentationIndex]
+  [metrics : profile_state.CompilerProfileMetrics]) : CompilerRegVarTypes
   (match func
     [(ir.CompilerIrFunction.Function _ params _ vars blocks)
       (let
@@ -1803,7 +1851,23 @@
         (begin
           (compiler-reg-param-types-array! params present types)
           (compiler-reg-block-list-types-array! blocks present types)
-          (CompilerRegVarTypes present types representations)))]))
+          (CompilerRegVarTypes present types representations metrics)))]))
+
+(define (compiler-reg-function-var-types-with-representations
+  [func : ir.CompilerIrFunction]
+  [representations : ir.CompilerIrRepresentationIndex]) : CompilerRegVarTypes
+  (compiler-reg-function-var-types-with-representations-and-metrics
+    func
+    representations
+    (compiler-reg-profile-metrics-new)))
+
+(define (compiler-reg-function-var-types-with-metrics
+  [func : ir.CompilerIrFunction]
+  [metrics : profile_state.CompilerProfileMetrics]) : CompilerRegVarTypes
+  (compiler-reg-function-var-types-with-representations-and-metrics
+    func
+    (ir.compiler-ir-representation-index-empty)
+    metrics))
 
 (define (compiler-reg-function-var-types [func : ir.CompilerIrFunction]) : CompilerRegVarTypes
   (compiler-reg-function-var-types-with-representations
@@ -11844,6 +11908,14 @@
             (set! index (+ index 1))
             (set! i (+ i 1)))))]))
 
+;; W3. The spill-weight discount's candidate set, and the backend rewrite
+;; pipeline's. It must cover every value the allocator can RECOMPUTE
+;; (compiler-reg-remat-recompute-value?), because the discount is the claim
+;; "spilling this range is half price, the reload is a recompute" -- LLVM's
+;; `TotalWeight *= 0.5F` at CalcSpillWeights.cpp:377-378, which is guarded by
+;; `isRematerializable` over ALL of the interval's definitions. Function /
+;; String / Bytes materialise as one `leaq label(%rip)` exactly like GlobalAddr
+;; and were simply missing from this list.
 (define (compiler-reg-remat-value? [value : ir.CompilerIrValue]) : bool
   (match value
     [(ir.CompilerIrValue.I64 _) true]
@@ -11851,8 +11923,25 @@
     [(ir.CompilerIrValue.Char _) true]
     [(ir.CompilerIrValue.F64 _) true]
     [(ir.CompilerIrValue.GlobalAddr _) true]
+    [(ir.CompilerIrValue.Function _) true]
+    [(ir.CompilerIrValue.String _) true]
+    [(ir.CompilerIrValue.Bytes _) true]
     [_ false]))
 
+;; The same candidate set for a MOV, where a read of a global cell additionally
+;; needs the whole function to be store- and call-free (`allow-invariant-loads`,
+;; the conservative per-function proof).
+;;
+;; W3: deliberately NOT extended to a FROZEN cell read. That range is
+;; rematerialisable under W3 step (c), so the 0.5x discount would be honest --
+;; but discounting it is a measured LOSS: cfg_domloops +158,961 (+0.024%):
+;; `cfg-hash-prime` stops being register-homed (each use folds to
+;; `imulq cfg_hash_prime(%rip), %r14`, which is instruction-neutral) and the
+;; register the allocator frees is then spent worse elsewhere in
+;; `cfg-build-csr`, costing an `xor`/`lea` rewrite and a block-layout flip.
+;; The discount is a global re-ranking, so it needs the frequency-shaped
+;; weight model (family E-5) before it can be trusted at that granularity;
+;; the recompute capability itself is unconditional and stands.
 (define (compiler-reg-remat-mov-value?
   [value : ir.CompilerIrValue]
   [allow-invariant-loads : bool]) : bool
@@ -11882,21 +11971,70 @@
 (define (compiler-reg-remat-discount-weight [weight : i64]) : i64
   (/ weight 2))
 
+;; W3(a). Which var TYPE admits a rematerialised scalar LITERAL. A remat drops
+;; the def store and recomputes at each use, so the recompute must reproduce the
+;; exact 64-bit register content the reload would have produced --
+;; compiler-backend-emit-load-memory-to-reg sign/zero-EXTENDS a narrow slot
+;; (`movslq`/`movzbq`/...), while compiler-backend-emit-load-i64-immediate-into
+;; materialises the literal itself (`xorl`/`movl $K`/`movq $K`). The two agree
+;; exactly when the literal round-trips through the type's width:
+;;   * an 8-byte integer type reloads with a plain `movq`, so any i64 literal is
+;;     bit-identical;
+;;   * a `Bool` literal is 0 or 1 and a `Char` literal is a non-negative code
+;;     point below 2^21, so both survive every narrower sign- or zero-extension.
+;; Every other pairing (an i64 literal homed in an i32 var, a literal in a
+;; register-GROUP or float type) is refused rather than range-checked: the
+;; narrow-typed constant is not a shape the hot rows carry.
+(define (compiler-reg-remat-word-int-type? [ty : ast.AstType]) : bool
+  (match ty
+    [(ast.AstType.I64) true]
+    [(ast.AstType.U64) true]
+    [_ false]))
+
+(define (compiler-reg-remat-recompute-literal?
+  [value : ir.CompilerIrValue]
+  [ty : ast.AstType]) : bool
+  (match value
+    [(ir.CompilerIrValue.I64 _) (compiler-reg-remat-word-int-type? ty)]
+    [(ir.CompilerIrValue.Bool _)
+      (match ty
+        [(ast.AstType.Bool) true]
+        [_ (compiler-reg-remat-word-int-type? ty)])]
+    [(ir.CompilerIrValue.Char _)
+      (match ty
+        [(ast.AstType.Char) true]
+        [_ (compiler-reg-remat-word-int-type? ty)])]
+    [_ false]))
+
 ;; A value the backend can RECOMPUTE in one instruction at each use: a static
-;; address materialisation (`leaq label(%rip)`). Plain integer/bool/char constants
-;; are deliberately EXCLUDED: the optimiser's constant propagation already inlines
-;; them directly into their uses (so an optimised function never carries a constant
-;; in a spillable vreg), making constant remat moot on real code; addresses cannot
-;; always be folded into an instruction's immediate, so they are the case that
-;; genuinely benefits. CompilerIrValue.Global (a LOAD of a mutable global) and CompilerIrValue.F64
-;; (no scalar backend support) must never be rematerialised.
-(define (compiler-reg-remat-recompute-value? [value : ir.CompilerIrValue]) : bool
+;; address materialisation (`leaq label(%rip)`), or -- W3 step (a) -- an
+;; integer/bool/char LITERAL whose type admits it (`xorl`/`movl $K`/`movq $K`,
+;; LLVM's `MOV32r0`/`MOV64ri32`/`MOV64ri`, X86InstrCompiler.td:327 and
+;; X86InstrMisc.td:371/385). Constants were previously excluded on the argument
+;; that constant propagation inlines them into their uses; that holds for the
+;; uses the backend can spell with an immediate operand, but a constant that
+;; reaches a phi, a call argument or a two-address operand still lands in a
+;; spillable vreg, which is gvn P8's `xor esi,esi` shape.
+;; CompilerIrValue.Global (a LOAD of a global cell) and CompilerIrValue.F64
+;; (no scalar backend support) must never be rematerialised here.
+(define (compiler-reg-remat-recompute-value?
+  [value : ir.CompilerIrValue]
+  [ty : ast.AstType]) : bool
   (match value
     [(ir.CompilerIrValue.GlobalAddr _) true]
     [(ir.CompilerIrValue.Function _) true]
     [(ir.CompilerIrValue.String _) true]
     [(ir.CompilerIrValue.Bytes _) true]
-    [_ false]))
+    ;; W3 step (c). A read of a FROZEN global cell recomputes as
+    ;; `movq g(%rip), %r` -- one instruction, the same one the reload replaced,
+    ;; and one a compare can fold outright (compiler-backend-compare-memory-
+    ;; operand). Word width only: the cell read always materialises the full
+    ;; 8 bytes, while a narrow var reloads sign/zero-extended from its slot.
+    [(ir.CompilerIrValue.Global name)
+      (and
+        (compiler-reg-remat-word-int-type? ty)
+        (compiler-reg-global-frozen? (ir.compiler-ir-symbol-id name)))]
+    [_ (compiler-reg-remat-recompute-literal? value ty)]))
 
 (define (compiler-reg-remat-init-vals!
   [vals : (__tl_dyn-array ir.CompilerIrValue)]
@@ -11922,10 +12060,10 @@
     (while (< index count)
       (begin
         (match (array-ref slots index)
-          [(ir.CompilerIrInstr.Mov dst value _)
+          [(ir.CompilerIrInstr.Mov dst value ty)
             ;; flags[dst]: 0 = not remat, 1 = remat, 2 = poisoned (address-taken,
             ;; must keep a real slot). A poisoned var never becomes remat.
-            (if (if (if (compiler-reg-remat-recompute-value? value)
+            (if (if (if (compiler-reg-remat-recompute-value? value ty)
               (compiler-reg-sv-single-def? def-counts dst)
               false)
               (if (>= dst 0)
@@ -11939,6 +12077,30 @@
                 (set! (array-ref vals dst) value)
                 unit)
               unit)]
+          ;; W3(c). `load %v, @g` is the same cell read as `mov %v <- Global g`
+          ;; -- the address IS the cell -- so it records the same recompute
+          ;; payload. (A `load` off a `gep @g, k` addresses a DIFFERENT word and
+          ;; has no `CompilerIrValue` spelling; it is not recorded.)
+          [(ir.CompilerIrInstr.Load dst src ty)
+            (match src
+              [(ir.CompilerIrValue.GlobalAddr name)
+                (if (if (if (compiler-reg-remat-recompute-value?
+                  (ir.CompilerIrValue.Global name)
+                  ty)
+                  (compiler-reg-sv-single-def? def-counts dst)
+                  false)
+                  (if (>= dst 0)
+                    (if (< dst (array-length flags))
+                      (not (= (array-ref flags dst) 2))
+                      false)
+                    false)
+                  false)
+                  (begin
+                    (set! (array-ref flags dst) 1)
+                    (set! (array-ref vals dst) (ir.CompilerIrValue.Global name))
+                    unit)
+                  unit)]
+              [_ unit])]
           ;; Taking a var's address needs its real storage; poison it so it is
           ;; never rematerialised (its slot must hold the value).
           [(ir.CompilerIrInstr.AddrOf _ src)
@@ -12046,6 +12208,10 @@
                         (CompilerRegLocation.Remat (array-ref vals v)))
                       unit)]
                   [_ unit])]
+              ;; A var the greedy left UNASSIGNED keeps its implicit per-var
+              ;; slot: converting those to Remat as well was tried and dropped
+              ;; (no benchmark asm changed -- the shape is rare there -- and it
+              ;; perturbed register homes for nothing).
               [(CompilerRegMaybeLocation.No) unit])
             unit)
           (set! v (+ v 1))))
@@ -12150,7 +12316,7 @@
   [instr : ir.CompilerIrInstr]
   [allow-invariant-loads : bool]) : unit
   (match instr
-    [(ir.CompilerIrInstr.Mov dst value _)
+    [(ir.CompilerIrInstr.Mov dst value ty)
       (if (and
         (compiler-reg-remat-mov-value? value allow-invariant-loads)
         (>= dst 0)
@@ -12164,7 +12330,7 @@
         (< dst (array-length def-status)))
         (set! (array-ref def-status dst) (bit-or (array-ref def-status dst) 1))
         unit)]
-    [(ir.CompilerIrInstr.Load dst src _)
+    [(ir.CompilerIrInstr.Load dst src ty)
       (if (and
         (compiler-reg-remat-load? src allow-invariant-loads)
         (>= dst 0)
@@ -16690,7 +16856,7 @@
           (ir.compiler-ir-label-none))
         (let
           [liveness-handle : CompilerRegLivenessHandle
-            (compiler-reg-liveness-handle-make func false)]
+            (compiler-reg-liveness-handle-make func false type-info.metrics)]
           (compiler-reg-loop-split-rewrite-fueled
             type-segment-bases
             target-abi
@@ -16867,7 +17033,8 @@
                                     new-func
                                     (compiler-reg-liveness-handle-make
                                       new-func
-                                      false)
+                                      false
+                                      type-info.metrics)
                                     new-blocks
                                     new-vars
                                     type-info
@@ -17397,8 +17564,12 @@
             current-vars
             extra-assignments
             extra-types))]
+      [round-plan-types : CompilerRegVarTypes
+        (compiler-reg-plan-types round-plan)]
       [round-type-info : CompilerRegVarTypes
-        (compiler-reg-function-var-types func)]
+        (compiler-reg-function-var-types-with-metrics
+          func
+          round-plan-types.metrics)]
       (match (compiler-reg-loop-split-rewrite-one
         type-segment-bases
         target-abi
@@ -20218,6 +20389,13 @@
               (set! index (+ index 1))))
           found)))))
 
+;; The ESTIMATE's reload question, kept at the shape the memory class was tuned
+;; with. The REWRITE asks `compiler-reg-call-hole-reload-needed-flow?` instead,
+;; which answers the same question over the whole CFG and for both classes; this
+;; one still drives `compiler-reg-call-hole-charge-live-through!`, so the cost
+;; the round SELECTS on stays an upper bound on what the rewrite will emit --
+;; over-charging a candidate can only refuse a relocation, never mis-place a mov.
+;;
 ;; Is the reload after the crossing at `from` OBSERVABLE, for a CSR candidate?
 ;; It is not when `var` has no use between `from` and the next kind-0 clobber in
 ;; the same block: the reload after THAT crossing overwrites it first, and that
@@ -20510,15 +20688,641 @@
         (set! (array-ref picked best) true)
         unit))))
 
-(define (compiler-reg-call-hole-reset-valid!
+;; ---------------------------------------------------------------------------
+;; E-1 -- exact carrier store and reload placement.
+;;
+;; The P3/P7 design note above specifies both elisions -- a carrier store is
+;; dead when `S_V` already holds `V` on this path, a carrier reload is dead when
+;; nothing reads `V` before the next crossing -- and the rewrite answered both
+;; questions INSIDE ONE BLOCK: "S_V valid" started false at every block entry
+;; and "nothing reads V" stopped at the block's terminator. Both questions are
+;; ordinary dataflow, and answering them over the whole CFG is what removes the
+;; shapes the accounting measures. At `gvn-kinds-bind` the second crossing's
+;; five stores re-write a slot the first crossing's stores already filled -- the
+;; two crossings sit in different blocks only because a branch separates the two
+;; calls -- and a reload whose next reader is past a second crossing is dead on
+;; the path that takes it.
+;;
+;;   * STORE availability is a forward MUST dataflow (available expressions):
+;;     `in[b] = AND over predecessors p of out[p]`, `in[entry] = 0`, and the
+;;     transfer is the rewrite's own bookkeeping -- a crossing makes every value
+;;     it stores available, a def of V takes V's availability away. The meet is
+;;     an INTERSECTION, so a store is elided only when every path into the block
+;;     already wrote the slot. That is the direction the correctness rule
+;;     demands: `compiler-reg-call-region-stat-exit`'s comment is "an extra dead
+;;     store is safe; a missing live store is a miscompile", so an absence of
+;;     information must read as "not available", never as "available".
+;;   * RELOAD liveness is a backward MAY dataflow: `out[b] = OR over successors
+;;     s of in[s]`, and the transfer reports which values are read before the
+;;     next crossing, before a redefinition, or off the end of the block. A
+;;     block with an unresolvable successor contributes EVERY value, so a jump
+;;     this function cannot resolve keeps every reload.
+;;
+;; This is the target-independent half of `SplitEditor::splitLiveThroughBlock`
+;; (`llvm/lib/CodeGen/SplitKit.cpp:1676`) plus
+;; `InlineSpiller::eliminateRedundantSpills` (`InlineSpiller.cpp:508`): a
+;; live-through region with no use gets neither store nor reload, and a value
+;; already known to be on the stack is not re-spilled.
+;;
+;; Both lattices are ONE i64 per block, indexed by SELECTION index rather than
+;; by var id -- `compiler-reg-call-hole-max-selected` is 32, so one word holds a
+;; block's whole state and a pass is a walk over the blocks.
+;;
+;; Neither fixpoint runs unbounded: `compiler-reg-call-hole-flow-max-passes`
+;; caps the round-robin the way `compiler-reg-region-park-max-blocks` caps the
+;; parking walks, and a run that has not converged inside the cap DISCARDS its
+;; partial answer for the degenerate flow -- `store-in` all zero, `reload-out`
+;; all one -- which is exactly the per-block behaviour this replaces. Stopping a
+;; must-analysis early is unsound; stopping it and throwing the answer away is
+;; not.
+;; ---------------------------------------------------------------------------
+(defstruct CompilerRegCallHoleFlow
+  (count i64)
+  ;; Bit j = "the carrier of `selected[j]` already holds its value on EVERY path
+  ;; into this block".
+  (store-in (__tl_dyn-array i64))
+  ;; Bit j = "`selected[j]` may be read on SOME path leaving this block before
+  ;; the next crossing or a redefinition".
+  (reload-out (__tl_dyn-array i64)))
+
+(define (compiler-reg-call-hole-flow-max-passes) : i64
+  8)
+
+;; The mask of every selection index, or zero when there is no usable selection.
+(define (compiler-reg-call-hole-flow-full [selected-count : i64]) : i64
+  (if (or
+    (< selected-count 1)
+    (> selected-count (compiler-reg-call-hole-max-selected)))
+    0
+    (- (shl 1 selected-count) 1)))
+
+;; The mask bit `var` occupies in the selection, or zero when it is not selected.
+;; The selection is at most `compiler-reg-call-hole-max-selected` wide, so this
+;; scan is bounded by a constant.
+(define (compiler-reg-call-hole-selected-bit
   [selected : (__tl_dyn-array i64)]
   [selected-count : i64]
+  [var : i64]) : i64
+  (if (< var 0)
+    0
+    (let
+      [index : i64 0]
+      [bit : i64 0]
+      (begin
+        (while (and (< index selected-count) (= bit 0))
+          (begin
+            (if (= (array-ref selected index) var)
+              (set! bit (shl 1 index))
+              unit)
+            (set! index (+ index 1))))
+        bit))))
+
+;; The selected values this crossing carries: live AFTER it and not defined BY
+;; it. Exactly the set `compiler-reg-call-hole-rewrite-block` stores and
+;; reloads.
+(define (compiler-reg-call-hole-flow-carried-mask
+  [live-after : live.CompilerLiveI64Set]
+  [selected : (__tl_dyn-array i64)]
+  [selected-count : i64]
+  [full : i64]
+  [def-bit : i64]) : i64
+  (let
+    [index : i64 0]
+    [mask : i64 0]
+    (begin
+      (while (< index selected-count)
+        (begin
+          (if (live.compiler-live-set-contains?
+            live-after
+            (array-ref selected index))
+            (set! mask (bit-or mask (shl 1 index)))
+            unit)
+          (set! index (+ index 1))))
+      (bit-and mask (bit-xor full def-bit)))))
+
+;; `store-in` all zero and `reload-out` all one: no carrier is available on
+;; entry to any block and every value may be read after every crossing. This is
+;; the answer the per-block rewrite gave, and it is what an unconverged fixpoint
+;; falls back to.
+(define (compiler-reg-call-hole-flow-degenerate [count : i64]) : CompilerRegCallHoleFlow
+  (let
+    [store-in : (__tl_dyn-array i64) (array.make-array i64 (+ count 1))]
+    [reload-out : (__tl_dyn-array i64) (array.make-array i64 (+ count 1))]
+    (begin
+      ;; EVERY bit, not only the ones the selection uses: the conservative
+      ;; answer must not depend on the mask being the right width. A selection
+      ;; too wide for one word is refused before the fixpoints run, and it has
+      ;; to land here rather than on an empty mask, which would read as "no
+      ;; reload needed" -- the one direction that is a miscompile.
+      (compiler-reg-fill-i64-array reload-out (- 0 1))
+      (CompilerRegCallHoleFlow count store-in reload-out))))
+
+(define (compiler-reg-call-hole-flow-store-in
+  [flow : CompilerRegCallHoleFlow]
+  [block : i64]) : i64
+  (if (and (>= block 0) (< block flow.count))
+    (array-ref flow.store-in block)
+    0))
+
+(define (compiler-reg-call-hole-flow-reload-out
+  [flow : CompilerRegCallHoleFlow]
+  [block : i64]
+  [full : i64]) : i64
+  (if (and (>= block 0) (< block flow.count))
+    (bit-and (array-ref flow.reload-out block) full)
+    full))
+
+;; One block's transfer for the carrier-availability dataflow: exactly the
+;; bookkeeping `compiler-reg-call-hole-rewrite-block` performs, run on a mask
+;; instead of on the emitted movs. A crossing stores (and so makes available)
+;; every selected value live through it; every instruction's def invalidates its
+;; own carrier. The rewrite's own reloads are not defs here for the same reason
+;; they are not there: a reload writes exactly what the carrier holds.
+(define (compiler-reg-call-hole-flow-store-transfer
+  [type-segment-bases : i64]
+  [slots : (__tl_dyn-array ir.CompilerIrInstr)]
+  [count : i64]
+  [after : live.CompilerLiveInstrSetVec]
+  [selected : (__tl_dyn-array i64)]
+  [selected-count : i64]
+  [full : i64]
+  [entry : i64]) : i64
+  (let
+    [last : i64 (- count 1)]
+    [valid : i64 entry]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (let
+            [instr : ir.CompilerIrInstr (array-ref slots index)]
+            [def-var : i64 (live.compiler-live-instr-def-var instr)]
+            (begin
+              (if (and
+                (< index last)
+                (compiler-reg-clobber-instr-kind? type-segment-bases instr 0))
+                (let
+                  [live-after : live.CompilerLiveI64Set
+                    (live.compiler-live-instr-set-vec-nth after index)]
+                  [j : i64 0]
+                  (while (< j selected-count)
+                    (begin
+                      (let
+                        [var : i64 (array-ref selected j)]
+                        (if (and
+                          (not (= var def-var))
+                          (live.compiler-live-set-contains? live-after var))
+                          (set! valid (bit-or valid (shl 1 j)))
+                          unit))
+                      (set! j (+ j 1)))))
+                unit)
+              (set!
+                valid
+                (bit-and
+                  valid
+                  (bit-xor
+                    full
+                    (compiler-reg-call-hole-selected-bit
+                      selected
+                      selected-count
+                      def-var))))))
+          (set! index (+ index 1))))
+      valid)))
+
+;; The rewrite leaves a block whose liveness handle is missing exactly as it
+;; found it, so it emits no store there -- but the block's defs are real. Report
+;; nothing available on the way out.
+(define (compiler-reg-call-hole-flow-store-block
+  [type-segment-bases : i64]
+  [seq : ir.CompilerIrBlockSeq]
+  [liveness : live.CompilerFunctionLiveness]
+  [selected : (__tl_dyn-array i64)]
+  [selected-count : i64]
+  [full : i64]
+  [block : i64]
+  [entry : i64]) : i64
+  (match (ir.compiler-ir-block-seq-ref seq block)
+    [(ir.CompilerIrBlock.Block label instrs)
+      (match (live.compiler-live-function-find-block liveness label)
+        [(live.CompilerLiveMaybeBlock.No) 0]
+        [(live.CompilerLiveMaybeBlock.Some live-block)
+          (compiler-reg-call-hole-flow-store-transfer
+            type-segment-bases
+            instrs.slots
+            instrs.len
+            (live.compiler-live-block-instr-after live-block)
+            selected
+            selected-count
+            full
+            entry)])]))
+
+;; `in[b]`: the intersection of every predecessor's `out`. The entry block, and
+;; any block with no predecessor at all, start from NOTHING -- an intersection
+;; over an empty set is the lattice top, and taking it here would claim a slot
+;; was written on a path that does not exist.
+(define (compiler-reg-call-hole-flow-meet-preds
+  [block : i64]
+  [pred-offsets : (__tl_dyn-array i64)]
+  [pred-sources : (__tl_dyn-array i64)]
+  [store-out : (__tl_dyn-array i64)]) : i64
+  (if (= block 0)
+    0
+    (let
+      [edge : i64 (array-ref pred-offsets block)]
+      [stop : i64 (array-ref pred-offsets (+ block 1))]
+      [seen : bool false]
+      [acc : i64 0]
+      (begin
+        (while (< edge stop)
+          (begin
+            (let
+              [source : i64 (array-ref pred-sources edge)]
+              (if seen
+                (set! acc (bit-and acc (array-ref store-out source)))
+                (begin
+                  (set! acc (array-ref store-out source))
+                  (set! seen true))))
+            (set! edge (+ edge 1))))
+        (if seen
+          acc
+          0)))))
+
+;; One round-robin pass of the forward fixpoint, in block order. Reports whether
+;; any block's `out` moved.
+(define (compiler-reg-call-hole-flow-store-pass!
+  [type-segment-bases : i64]
+  [seq : ir.CompilerIrBlockSeq]
+  [liveness : live.CompilerFunctionLiveness]
+  [selected : (__tl_dyn-array i64)]
+  [selected-count : i64]
+  [count : i64]
+  [full : i64]
+  [pred-offsets : (__tl_dyn-array i64)]
+  [pred-sources : (__tl_dyn-array i64)]
+  [store-in : (__tl_dyn-array i64)]
+  [store-out : (__tl_dyn-array i64)]) : bool
+  (let
+    [block : i64 0]
+    [changed : bool false]
+    (begin
+      (while (< block count)
+        (begin
+          (let
+            [entry : i64
+              (compiler-reg-call-hole-flow-meet-preds
+                block
+                pred-offsets
+                pred-sources
+                store-out)]
+            [out : i64
+              (compiler-reg-call-hole-flow-store-block
+                type-segment-bases
+                seq
+                liveness
+                selected
+                selected-count
+                full
+                block
+                entry)]
+            (begin
+              (set! (array-ref store-in block) entry)
+              (if (= out (array-ref store-out block))
+                unit
+                (begin
+                  (set! (array-ref store-out block) out)
+                  (set! changed true)))))
+          (set! block (+ block 1))))
+      changed)))
+
+;; What must be in `selected[j]`'s REGISTER at the start of this block, on some
+;; path out of it. Two things read that register, and both are counted:
+;;
+;;   * an ordinary use of the value;
+;;   * the CARRIER STORE the rewrite emits at a crossing -- `Mov S_V <- V` reads
+;;     V, so a crossing whose store is NOT elided needs the register just as much
+;;     as a use does. Missing this is a MISCOMPILE and not a missed elision: the
+;;     store would spill whatever the register happened to hold. It is the whole
+;;     reason this transfer tracks availability as well as reads.
+;;
+;; A crossing whose store IS elided kills the value instead: either it reloads,
+;; refreshing the register, or nothing downstream reads the value at all.
+;;
+;; Availability is seeded from the converged forward answer for this block and
+;; advanced exactly as `compiler-reg-call-hole-flow-store-transfer` advances it,
+;; which is why the store fixpoint runs first and this one consumes it.
+;;
+;; Unlike the per-block walk this generalises, the TERMINATOR is scanned: a
+;; branch condition and a tail call's outgoing arguments are reads, and the
+;; per-block version could only be safe about them by assuming one. `exit` is
+;; what the successors report, and is inherited by whatever the block itself
+;; does not decide.
+(define (compiler-reg-call-hole-flow-reload-transfer
+  [type-segment-bases : i64]
+  [slots : (__tl_dyn-array ir.CompilerIrInstr)]
+  [count : i64]
+  [after : live.CompilerLiveInstrSetVec]
+  [selected : (__tl_dyn-array i64)]
+  [selected-count : i64]
+  [full : i64]
+  [avail : i64]
+  [exit : i64]) : i64
+  (let
+    [last : i64 (- count 1)]
+    [pending : i64 full]
+    [read : i64 0]
+    [held : i64 avail]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (let
+            [instr : ir.CompilerIrInstr (array-ref slots index)]
+            [def-bit : i64
+              (compiler-reg-call-hole-selected-bit
+                selected
+                selected-count
+                (live.compiler-live-instr-def-var instr))]
+            [bits : i64 pending]
+            (begin
+              (while (not (= bits 0))
+                (begin
+                  (let
+                    [j : i64 (compiler-reg-low-bit-index32 bits)]
+                    (if (compiler-reg-call-hole-instr-uses?
+                      instr
+                      (array-ref selected j))
+                      (begin
+                        (set! read (bit-or read (shl 1 j)))
+                        (set!
+                          pending
+                          (bit-and pending (bit-xor full (shl 1 j)))))
+                      unit))
+                  (set! bits (bit-and bits (- bits 1)))))
+              (if (and
+                (< index last)
+                (compiler-reg-clobber-instr-kind? type-segment-bases instr 0))
+                (let
+                  [carried : i64
+                    (compiler-reg-call-hole-flow-carried-mask
+                      (live.compiler-live-instr-set-vec-nth after index)
+                      selected
+                      selected-count
+                      full
+                      def-bit)]
+                  (begin
+                    ;; The stores this crossing emits are the carried values the
+                    ;; carrier does not already hold; each one reads its register.
+                    (set!
+                      read
+                      (bit-or
+                        read
+                        (bit-and pending (bit-and carried (bit-xor full held)))))
+                    (set! pending 0)
+                    (set! held (bit-or held carried))))
+                unit)
+              (set! pending (bit-and pending (bit-xor full def-bit)))
+              (set! held (bit-and held (bit-xor full def-bit)))))
+          (set! index (+ index 1))))
+      (bit-or read (bit-and pending exit)))))
+
+;; `out[b]`: the union of every successor's `in`. A successor this function
+;; cannot resolve -- a jump to a label it does not define -- contributes EVERY
+;; value, so every reload survives on that edge. A block with no successor at
+;; all (a `Return`, a tail call) contributes nothing: its terminator's own reads
+;; were already counted by the transfer, and nothing in this function runs after
+;; it.
+(define (compiler-reg-call-hole-flow-join-succs
+  [block : i64]
+  [cfg : CompilerRegCallHoleCfg]
+  [need-in : (__tl_dyn-array i64)]
+  [full : i64]) : i64
+  (let
+    [edge : i64 (array-ref cfg.succ-offsets block)]
+    [stop : i64 (array-ref cfg.succ-offsets (+ block 1))]
+    [acc : i64 0]
+    (begin
+      (while (< edge stop)
+        (begin
+          (let
+            [target : i64 (array-ref cfg.succ-targets edge)]
+            (if (< target 0)
+              (set! acc full)
+              (set! acc (bit-or acc (array-ref need-in target)))))
+          (set! edge (+ edge 1))))
+      acc)))
+
+(define (compiler-reg-call-hole-flow-reload-block
+  [type-segment-bases : i64]
+  [seq : ir.CompilerIrBlockSeq]
+  [liveness : live.CompilerFunctionLiveness]
+  [selected : (__tl_dyn-array i64)]
+  [selected-count : i64]
+  [full : i64]
+  [avail : i64]
+  [block : i64]
+  [exit : i64]) : i64
+  (match (ir.compiler-ir-block-seq-ref seq block)
+    [(ir.CompilerIrBlock.Block label instrs)
+      (match (live.compiler-live-function-find-block liveness label)
+        ;; No liveness handle, so the rewrite does no bookkeeping here at all:
+        ;; report that every value may be read.
+        [(live.CompilerLiveMaybeBlock.No) full]
+        [(live.CompilerLiveMaybeBlock.Some live-block)
+          (compiler-reg-call-hole-flow-reload-transfer
+            type-segment-bases
+            instrs.slots
+            instrs.len
+            (live.compiler-live-block-instr-after live-block)
+            selected
+            selected-count
+            full
+            avail
+            exit)])]))
+
+;; One round-robin pass of the backward fixpoint, in reverse block order.
+(define (compiler-reg-call-hole-flow-reload-pass!
+  [type-segment-bases : i64]
+  [seq : ir.CompilerIrBlockSeq]
+  [liveness : live.CompilerFunctionLiveness]
+  [cfg : CompilerRegCallHoleCfg]
+  [selected : (__tl_dyn-array i64)]
+  [selected-count : i64]
+  [count : i64]
+  [full : i64]
+  [store-in : (__tl_dyn-array i64)]
+  [need-in : (__tl_dyn-array i64)]) : bool
+  (let
+    [block : i64 (- count 1)]
+    [changed : bool false]
+    (begin
+      (while (>= block 0)
+        (begin
+          (let
+            [value : i64
+              (compiler-reg-call-hole-flow-reload-block
+                type-segment-bases
+                seq
+                liveness
+                selected
+                selected-count
+                full
+                (array-ref store-in block)
+                block
+                (compiler-reg-call-hole-flow-join-succs block cfg need-in full))]
+            (if (= value (array-ref need-in block))
+              unit
+              (begin
+                (set! (array-ref need-in block) value)
+                (set! changed true))))
+          (set! block (- block 1))))
+      changed)))
+
+;; The reload after the crossing at `from`, asked over the whole CFG. The walk
+;; inside the block is the same one `compiler-reg-call-hole-reload-needed?`
+;; performs, extended by the two facts the per-block version could not have: the
+;; terminator IS scanned, and a run that reaches the end of the block asks the
+;; backward dataflow instead of assuming a read.
+(define (compiler-reg-call-hole-reload-needed-flow?
+  [type-segment-bases : i64]
+  [slots : (__tl_dyn-array ir.CompilerIrInstr)]
+  [last : i64]
+  [from : i64]
+  [var : i64]
+  [exit? : bool]) : bool
+  (let
+    [index : i64 (+ from 1)]
+    [needed : bool false]
+    [stopped : bool false]
+    (begin
+      (while (and (<= index last) (not needed) (not stopped))
+        (begin
+          (let
+            [instr : ir.CompilerIrInstr (array-ref slots index)]
+            (cond
+              [(compiler-reg-call-hole-instr-uses? instr var)
+                (set! needed true)]
+              ;; A crossing restores what it is asked to restore, so a reload
+              ;; before it is overwritten before anything reads it.
+              [(and
+                  (< index last)
+                  (compiler-reg-clobber-instr-kind? type-segment-bases instr 0))
+                (set! stopped true)]
+              ;; A redefinition makes the reloaded value dead too.
+              [(= (live.compiler-live-instr-def-var instr) var)
+                (set! stopped true)]
+              [else unit]))
+          (set! index (+ index 1))))
+      (cond [needed true] [stopped false] [else exit?]))))
+
+(define (compiler-reg-call-hole-flow-build
+  [type-segment-bases : i64]
+  [seq : ir.CompilerIrBlockSeq]
+  [liveness : live.CompilerFunctionLiveness]
+  [selected : (__tl_dyn-array i64)]
+  [selected-count : i64]) : CompilerRegCallHoleFlow
+  (let
+    [count : i64 (ir.compiler-ir-block-seq-count seq)]
+    [full : i64 (compiler-reg-call-hole-flow-full selected-count)]
+    (if (or (< count 1) (= full 0))
+      (compiler-reg-call-hole-flow-degenerate count)
+      (let
+        [cfg : CompilerRegCallHoleCfg (compiler-reg-call-hole-cfg-build seq)]
+        [edges : i64 (array-ref cfg.succ-offsets count)]
+        [pred-offsets : (__tl_dyn-array i64) (array.make-array i64 (+ count 1))]
+        [pred-sources : (__tl_dyn-array i64) (array.make-array i64 (+ edges 1))]
+        [cursor : (__tl_dyn-array i64) (array.make-array i64 count)]
+        [store-in : (__tl_dyn-array i64) (array.make-array i64 (+ count 1))]
+        [store-out : (__tl_dyn-array i64) (array.make-array i64 (+ count 1))]
+        [need-in : (__tl_dyn-array i64) (array.make-array i64 (+ count 1))]
+        [reload-out : (__tl_dyn-array i64) (array.make-array i64 (+ count 1))]
+        [index : i64 0]
+        [pass : i64 0]
+        [changed : bool true]
+        (begin
+          (compiler-reg-loop-nest-fill-pred!
+            count
+            cfg.succ-offsets
+            cfg.succ-targets
+            pred-offsets
+            pred-sources
+            cursor)
+          ;; A forward MUST analysis starts at the lattice top and only ever
+          ;; retracts, so every intermediate state is an OVER-estimate and only
+          ;; the fixpoint may be used.
+          (while (< index count)
+            (begin
+              (set! (array-ref store-out index) full)
+              (set! index (+ index 1))))
+          (while (and changed (< pass (compiler-reg-call-hole-flow-max-passes)))
+            (begin
+              (set!
+                changed
+                (compiler-reg-call-hole-flow-store-pass!
+                  type-segment-bases
+                  seq
+                  liveness
+                  selected
+                  selected-count
+                  count
+                  full
+                  pred-offsets
+                  pred-sources
+                  store-in
+                  store-out))
+              (set! pass (+ pass 1))))
+          (if changed
+            (compiler-reg-fill-i64-array store-in 0)
+            unit)
+          ;; A backward MAY analysis starts at the lattice bottom and only ever
+          ;; grows, so an unconverged run UNDER-reports the reads -- the one
+          ;; direction that would drop a live reload. Discard it for the
+          ;; all-ones answer, which is the per-block behaviour.
+          (set! pass 0)
+          (set! changed true)
+          (while (and changed (< pass (compiler-reg-call-hole-flow-max-passes)))
+            (begin
+              (set!
+                changed
+                (compiler-reg-call-hole-flow-reload-pass!
+                  type-segment-bases
+                  seq
+                  liveness
+                  cfg
+                  selected
+                  selected-count
+                  count
+                  full
+                  store-in
+                  need-in))
+              (set! pass (+ pass 1))))
+          (set! index 0)
+          (while (< index count)
+            (begin
+              (set!
+                (array-ref reload-out index)
+                (if changed
+                  (- 0 1)
+                  (compiler-reg-call-hole-flow-join-succs
+                    index
+                    cfg
+                    need-in
+                    full)))
+              (set! index (+ index 1))))
+          (CompilerRegCallHoleFlow count store-in reload-out))))))
+
+;; Seed the rewrite's per-var validity flags from the block's dataflow answer.
+(define (compiler-reg-call-hole-seed-valid!
+  [selected : (__tl_dyn-array i64)]
+  [selected-count : i64]
+  [entry : i64]
   [valid : (__tl_dyn-array bool)]) : unit
   (let
     [index : i64 0]
     (while (< index selected-count)
       (begin
-        (set! (array-ref valid (array-ref selected index)) false)
+        (set!
+          (array-ref valid (array-ref selected index))
+          (not (= 0 (bit-and entry (shl 1 index)))))
         (set! index (+ index 1))))))
 
 ;; A def of V invalidates the claim that S_V still holds V. The reload
@@ -20538,13 +21342,14 @@
 
 (define (compiler-reg-call-hole-rewrite-block
   [type-segment-bases : i64]
-  [csr : (__tl_dyn-array bool)]
   [block : ir.CompilerIrBlock]
   [liveness : live.CompilerFunctionLiveness]
   [type-info : CompilerRegVarTypes]
   [carrier : (__tl_dyn-array i64)]
   [selected : (__tl_dyn-array i64)]
   [selected-count : i64]
+  [entry-valid : i64]
+  [exit-read : i64]
   [valid : (__tl_dyn-array bool)]) : ir.CompilerIrBlock
   (match block
     [(ir.CompilerIrBlock.Block label instrs)
@@ -20561,11 +21366,14 @@
               (ir.compiler-ir-instr-builder-with-capacity count)]
             [index : i64 0]
             (begin
-              ;; "S_V valid" starts false at every block entry: the elision is a
-              ;; straight-line claim and this pass proves nothing across edges.
-              (compiler-reg-call-hole-reset-valid!
+              ;; "S_V valid" on entry is the forward MUST dataflow's answer for
+              ;; this block: every path into it already stored the carrier. The
+              ;; degenerate flow makes this all-false, which is the per-block
+              ;; claim this generalises.
+              (compiler-reg-call-hole-seed-valid!
                 selected
                 selected-count
+                entry-valid
                 valid)
               (while (< index count)
                 (begin
@@ -20625,13 +21433,13 @@
                                   (live.compiler-live-set-contains?
                                     live-after
                                     var)
-                                  (compiler-reg-call-hole-reload-needed?
+                                  (compiler-reg-call-hole-reload-needed-flow?
                                     type-segment-bases
-                                    csr
                                     slots
                                     last
                                     index
-                                    var))
+                                    var
+                                    (not (= 0 (bit-and exit-read (shl 1 j))))))
                                   (match (compiler-reg-var-types-lookup
                                     type-info
                                     var)
@@ -20660,13 +21468,14 @@
 
 (define (compiler-reg-call-hole-rewrite-blocks
   [type-segment-bases : i64]
-  [csr : (__tl_dyn-array bool)]
   [seq : ir.CompilerIrBlockSeq]
   [liveness : live.CompilerFunctionLiveness]
   [type-info : CompilerRegVarTypes]
   [carrier : (__tl_dyn-array i64)]
   [selected : (__tl_dyn-array i64)]
   [selected-count : i64]
+  [flow : CompilerRegCallHoleFlow]
+  [full : i64]
   [valid : (__tl_dyn-array bool)]) : ir.CompilerIrBlockList
   (let
     [count : i64 (ir.compiler-ir-block-seq-count seq)]
@@ -20680,13 +21489,14 @@
             (array-ref out index)
             (compiler-reg-call-hole-rewrite-block
               type-segment-bases
-              csr
               (ir.compiler-ir-block-seq-ref seq index)
               liveness
               type-info
               carrier
               selected
               selected-count
+              (compiler-reg-call-hole-flow-store-in flow index)
+              (compiler-reg-call-hole-flow-reload-out flow index full)
               valid))
           (set! index (+ index 1))))
       (ir.CompilerIrBlockList.Array (ir.CompilerIrBlockSeq out count)))))
@@ -21064,16 +21874,24 @@
                     selected
                     selected-count
                     ctx.vars)]
+                [flow : CompilerRegCallHoleFlow
+                  (compiler-reg-call-hole-flow-build
+                    ctx.type-segment-bases
+                    ctx.seq
+                    ctx.liveness
+                    selected
+                    selected-count)]
                 [split-blocks : ir.CompilerIrBlockList
                   (compiler-reg-call-hole-rewrite-blocks
                     ctx.type-segment-bases
-                    ctx.scores.csr
                     ctx.seq
                     ctx.liveness
                     ctx.type-info
                     carrier
                     selected
                     selected-count
+                    flow
+                    (compiler-reg-call-hole-flow-full selected-count)
                     valid)]
                 [split-vars : i64 (+ ctx.vars selected-count)]
                 [split-func : ir.CompilerIrFunction
@@ -21084,9 +21902,10 @@
                     split-vars
                     split-blocks)]
                 [split-types : CompilerRegVarTypes
-                  (compiler-reg-function-var-types-with-representations
+                  (compiler-reg-function-var-types-with-representations-and-metrics
                     split-func
-                    ctx.type-info.representations)]
+                    ctx.type-info.representations
+                    ctx.type-info.metrics)]
                 [split-plan
                   : CompilerRegPlan
                   ;; `cold-split?` is FALSE and never observed: cycle 20's
@@ -23267,9 +24086,10 @@
                     park-vars
                     park-blocks)]
                 [park-types : CompilerRegVarTypes
-                  (compiler-reg-function-var-types-with-representations
+                  (compiler-reg-function-var-types-with-representations-and-metrics
                     park-func
-                    rd.type-info.representations)]
+                    rd.type-info.representations
+                    rd.type-info.metrics)]
                 [park-plan : CompilerRegPlan
                   (compiler-reg-plan-function-scalar-forced-spill-with-types
                     rd.type-segment-bases
@@ -25074,6 +25894,7 @@
 ;; -1 refuses the candidate: an exit edge whose target cannot host a reload
 ;; (phi head, empty block, unresolved label) or more targets than the cap.
 (define (compiler-reg-call-region-evict-exit-points!
+  [_metrics : profile_state.CompilerProfileMetrics]
   [bslots : (__tl_dyn-array ir.CompilerIrBlock)]
   [nblocks : i64]
   [ids : reg_label_i64_map.Map]
@@ -25115,6 +25936,7 @@
                                   (cfg
                                     regalloc-census
                                     (compiler-reg-evict-census-bump!
+                                      _metrics
                                       (+ 8 status))
                                     unit)
                                   (return (- 0 1))))
@@ -25131,7 +25953,9 @@
                                     (begin
                                       (cfg
                                         regalloc-census
-                                        (compiler-reg-evict-census-bump! 12)
+                                        (compiler-reg-evict-census-bump!
+                                          _metrics
+                                          12)
                                         unit)
                                       (return (- 0 1))))
                                   (set!
@@ -25142,7 +25966,7 @@
                         (begin
                           (cfg
                             regalloc-census
-                            (compiler-reg-evict-census-bump! 13)
+                            (compiler-reg-evict-census-bump! _metrics 13)
                             unit)
                           (return (- 0 1)))])
                     (set! succs (live.compiler-live-label-set-tail succs)))]))
@@ -25345,6 +26169,7 @@
 ;; index to lend, the victim, and the number of reload points left in
 ;; `out-points` after the liveness filter.
 (define (compiler-reg-call-region-evict-try
+  [metrics : profile_state.CompilerProfileMetrics]
   [blocks : ir.CompilerIrBlockList]
   [depths : (__tl_dyn-array i64)]
   [weights : (__tl_dyn-array i64)]
@@ -25465,7 +26290,7 @@
                               (begin
                                 (cfg
                                   regalloc-census
-                                  (compiler-reg-evict-census-bump! 5)
+                                  (compiler-reg-evict-census-bump! metrics 5)
                                   unit)
                                 (when
                                   (and
@@ -25496,7 +26321,9 @@
                                     (begin
                                       (cfg
                                         regalloc-census
-                                        (compiler-reg-evict-census-bump! 6)
+                                        (compiler-reg-evict-census-bump!
+                                          metrics
+                                          6)
                                         unit)
                                       (when
                                         (or (< victim 0) (< w victim-weight))
@@ -25509,7 +26336,7 @@
                         (begin
                           (cfg
                             regalloc-census
-                            (compiler-reg-evict-census-bump! 3)
+                            (compiler-reg-evict-census-bump! metrics 3)
                             unit)
                           (CompilerRegCallEvictPick.CompilerRegCallEvictNoPick))
                         (if (compiler-reg-call-region-evict-var-mentioned?
@@ -25524,7 +26351,7 @@
                           (begin
                             (cfg
                               regalloc-census
-                              (compiler-reg-evict-census-bump! 7)
+                              (compiler-reg-evict-census-bump! metrics 7)
                               unit)
                             (CompilerRegCallEvictPick.CompilerRegCallEvictNoPick))
                           (let
@@ -25550,6 +26377,7 @@
                                   (cfg
                                     regalloc-census
                                     (compiler-reg-evict-census-bump!
+                                      metrics
                                       (- 12 def-count))
                                     unit)
                                   (return
@@ -25557,6 +26385,7 @@
                               (set!
                                 raw-exits
                                 (compiler-reg-call-region-evict-exit-points!
+                                  metrics
                                   bslots
                                   nblocks
                                   ids
@@ -25569,7 +26398,7 @@
                                 (begin
                                   (cfg
                                     regalloc-census
-                                    (compiler-reg-evict-census-bump! 2)
+                                    (compiler-reg-evict-census-bump! metrics 2)
                                     unit)
                                   (return
                                     (CompilerRegCallEvictPick.CompilerRegCallEvictNoPick))))
@@ -25608,7 +26437,9 @@
                                   (cfg
                                     regalloc-census
                                     (begin
-                                      (compiler-reg-evict-census-bump! 4)
+                                      (compiler-reg-evict-census-bump!
+                                        metrics
+                                        4)
                                       ;; how far short: 18 counts the ones
                                       ;; that clear a bare break-even, so
                                       ;; the report can say whether the
@@ -25636,7 +26467,9 @@
                                               depths
                                               out-saves
                                               def-count)))
-                                        (compiler-reg-evict-census-bump! 18)))
+                                        (compiler-reg-evict-census-bump!
+                                          metrics
+                                          18)))
                                     unit)
                                   (CompilerRegCallEvictPick.CompilerRegCallEvictNoPick))))))))))))))))))
 
@@ -26233,9 +27066,11 @@
                                                   (cfg
                                                     regalloc-census
                                                     (compiler-reg-evict-census-bump!
+                                                      type-info.metrics
                                                       0)
                                                     unit)
                                                   (match (compiler-reg-call-region-evict-try
+                                                    type-info.metrics
                                                     blocks
                                                     depths
                                                     weights
@@ -26329,8 +27164,10 @@
                                             regalloc-census
                                             (begin
                                               (compiler-reg-evict-census-bump!
+                                                type-info.metrics
                                                 1)
                                               (compiler-reg-evict-census-add!
+                                                type-info.metrics
                                                 8
                                                 acc-exits))
                                             unit))))))
@@ -26525,7 +27362,9 @@
     [func : ir.CompilerIrFunction]
     [plan : CompilerRegPlan]) : CompilerRegCallSpanCensus
     (let
-      [type-info : CompilerRegVarTypes (compiler-reg-function-var-types func)]
+      [plan-types : CompilerRegVarTypes (compiler-reg-plan-types plan)]
+      [type-info : CompilerRegVarTypes
+        (compiler-reg-function-var-types-with-metrics func plan-types.metrics)]
       [census : CompilerRegCallSpanCensus (compiler-reg-call-span-census-empty)]
       (begin
         (match plan
@@ -26564,28 +27403,35 @@
 
 (cfg
   regalloc-census
-  (define compiler-reg-call-span-census-total : CompilerRegCallSpanCensus
-    (compiler-reg-call-span-census-empty)))
-
-(cfg
-  regalloc-census
-  (define (compiler-reg-call-span-census-reset!) : unit
-    (set!
-      compiler-reg-call-span-census-total
-      (compiler-reg-call-span-census-empty))))
+  (define (compiler-reg-call-span-census-reset!
+    [metrics : profile_state.CompilerProfileMetrics]) : unit
+    (profile_state.compiler-profile-metrics-reset-range!
+      metrics
+      compiler-reg-call-span-census-metric-start
+      compiler-reg-call-span-census-metric-end)))
 
 (cfg
   regalloc-census
   (define (compiler-reg-call-span-census-record-plan!
+    [metrics : profile_state.CompilerProfileMetrics]
     [func : ir.CompilerIrFunction]
     [plan : CompilerRegPlan]) : unit
-    (compiler-reg-call-span-census-merge-into!
-      (&mut compiler-reg-call-span-census-total)
-      (compiler-reg-plan-call-span-census func plan))))
+    (let
+      [census : CompilerRegCallSpanCensus
+        (compiler-reg-plan-call-span-census func plan)]
+      [index : i64 0]
+      (while (< index (array-length census.counts))
+        (begin
+          (profile_state.compiler-profile-metrics-add!
+            metrics
+            (+ compiler-reg-call-span-census-metric-start index)
+            (array-ref census.counts index))
+          (set! index (+ index 1)))))))
 
 (cfg
   regalloc-census
   (define (compiler-reg-call-span-census-row
+    [metrics : profile_state.CompilerProfileMetrics]
     [bucket-name : String]
     [bucket : i64]) : String
     (str_cat.str-cat
@@ -26593,34 +27439,44 @@
       bucket-name
       "|"
       (string.int->string
-        (compiler-reg-call-span-census-count
-          (& compiler-reg-call-span-census-total)
-          bucket
-          (compiler-reg-call-span-outcome-register)))
+        (profile_state.compiler-profile-metrics-value
+          metrics
+          (+
+            compiler-reg-call-span-census-metric-start
+            (compiler-reg-call-span-census-index
+              bucket
+              (compiler-reg-call-span-outcome-register)))))
       "|"
       (string.int->string
-        (compiler-reg-call-span-census-count
-          (& compiler-reg-call-span-census-total)
-          bucket
-          (compiler-reg-call-span-outcome-spill)))
+        (profile_state.compiler-profile-metrics-value
+          metrics
+          (+
+            compiler-reg-call-span-census-metric-start
+            (compiler-reg-call-span-census-index
+              bucket
+              (compiler-reg-call-span-outcome-spill)))))
       "|"
       (string.int->string
-        (compiler-reg-call-span-census-count
-          (& compiler-reg-call-span-census-total)
-          bucket
-          (compiler-reg-call-span-outcome-unassigned)))
+        (profile_state.compiler-profile-metrics-value
+          metrics
+          (+
+            compiler-reg-call-span-census-metric-start
+            (compiler-reg-call-span-census-index
+              bucket
+              (compiler-reg-call-span-outcome-unassigned)))))
       "\n")))
 
 (cfg
   regalloc-census
-  (define (compiler-reg-call-span-census-print!) : unit
+  (define (compiler-reg-call-span-census-print!
+    [metrics : profile_state.CompilerProfileMetrics]) : unit
     (begin
       (io.print-error
         "regalloc-call-span-census|calls_spanned|register|spill|unassigned\n")
-      (io.print-error (compiler-reg-call-span-census-row "0" 0))
-      (io.print-error (compiler-reg-call-span-census-row "1" 1))
-      (io.print-error (compiler-reg-call-span-census-row "2-3" 2))
-      (io.print-error (compiler-reg-call-span-census-row "4+" 3)))))
+      (io.print-error (compiler-reg-call-span-census-row metrics "0" 0))
+      (io.print-error (compiler-reg-call-span-census-row metrics "1" 1))
+      (io.print-error (compiler-reg-call-span-census-row metrics "2-3" 2))
+      (io.print-error (compiler-reg-call-span-census-row metrics "4+" 3)))))
 
 ;; P11b phase 3 eviction census. Slots, in the order the attempt walks them:
 ;;   0 attempts        1 accepted        2 refused: an exit edge cannot be served
@@ -26640,142 +27496,124 @@
 ;;  16 the def is not before the region    17 more defs than the cap
 (cfg
   regalloc-census
-  (define compiler-reg-evict-census-counts : (__tl_dyn-array i64)
-    (array.make-array i64 20)))
+  (define (compiler-reg-evict-census-bump!
+    [metrics : profile_state.CompilerProfileMetrics]
+    [slot : i64]) : unit
+    (profile_state.compiler-profile-metrics-add!
+      metrics
+      (+ compiler-reg-evict-census-metric-start slot)
+      1)))
 
 (cfg
   regalloc-census
-  (define (compiler-reg-evict-census-bump! [slot : i64]) : unit
-    (set!
-      (array-ref compiler-reg-evict-census-counts slot)
-      (+ (array-ref compiler-reg-evict-census-counts slot) 1))))
+  (define (compiler-reg-evict-census-add!
+    [metrics : profile_state.CompilerProfileMetrics]
+    [slot : i64]
+    [amount : i64]) : unit
+    (profile_state.compiler-profile-metrics-add!
+      metrics
+      (+ compiler-reg-evict-census-metric-start slot)
+      amount)))
 
 (cfg
   regalloc-census
-  (define (compiler-reg-evict-census-add! [slot : i64] [amount : i64]) : unit
-    (set!
-      (array-ref compiler-reg-evict-census-counts slot)
-      (+ (array-ref compiler-reg-evict-census-counts slot) amount))))
+  (define (compiler-reg-evict-census-value
+    [metrics : profile_state.CompilerProfileMetrics]
+    [slot : i64]) : i64
+    (profile_state.compiler-profile-metrics-value
+      metrics
+      (+ compiler-reg-evict-census-metric-start slot))))
 
 (cfg
   regalloc-census
-  (define (compiler-reg-evict-census-print!) : unit
+  (define (compiler-reg-evict-census-print!
+    [metrics : profile_state.CompilerProfileMetrics]) : unit
     (io.print-error
       (str_cat.str-cat
         "regalloc-evict-census|attempts="
-        (string.int->string (array-ref compiler-reg-evict-census-counts 0))
+        (string.int->string (compiler-reg-evict-census-value metrics 0))
         "|accepted="
-        (string.int->string (array-ref compiler-reg-evict-census-counts 1))
+        (string.int->string (compiler-reg-evict-census-value metrics 1))
         (str_cat.str-cat
           "|no-exit="
-          (string.int->string (array-ref compiler-reg-evict-census-counts 2))
+          (string.int->string (compiler-reg-evict-census-value metrics 2))
           "|no-victim="
-          (string.int->string (array-ref compiler-reg-evict-census-counts 3))
+          (string.int->string (compiler-reg-evict-census-value metrics 3))
           (str_cat.str-cat
             "|priced-out="
-            (string.int->string (array-ref compiler-reg-evict-census-counts 4))
+            (string.int->string (compiler-reg-evict-census-value metrics 4))
             "|sole-occupant="
-            (string.int->string (array-ref compiler-reg-evict-census-counts 5))
+            (string.int->string (compiler-reg-evict-census-value metrics 5))
             (str_cat.str-cat
               "|parked="
-              (string.int->string
-                (array-ref compiler-reg-evict-census-counts 6))
+              (string.int->string (compiler-reg-evict-census-value metrics 6))
               "|verifier-refused="
-              (string.int->string
-                (array-ref compiler-reg-evict-census-counts 7))
+              (string.int->string (compiler-reg-evict-census-value metrics 7))
               (str_cat.str-cat
                 "|reloads="
-                (string.int->string
-                  (array-ref compiler-reg-evict-census-counts 8))
+                (string.int->string (compiler-reg-evict-census-value metrics 8))
                 (str_cat.str-cat
                   "|exit-backward="
                   (string.int->string
-                    (array-ref compiler-reg-evict-census-counts 9))
+                    (compiler-reg-evict-census-value metrics 9))
                   "|exit-critical="
                   (string.int->string
-                    (array-ref compiler-reg-evict-census-counts 10))
+                    (compiler-reg-evict-census-value metrics 10))
                   (str_cat.str-cat
                     "|exit-phi="
                     (string.int->string
-                      (array-ref compiler-reg-evict-census-counts 11))
+                      (compiler-reg-evict-census-value metrics 11))
                     "|exit-cap="
                     (string.int->string
-                      (array-ref compiler-reg-evict-census-counts 12))
+                      (compiler-reg-evict-census-value metrics 12))
                     (str_cat.str-cat
                       "|exit-label="
                       (string.int->string
-                        (array-ref compiler-reg-evict-census-counts 13))
+                        (compiler-reg-evict-census-value metrics 13))
                       "|def-phi="
                       (string.int->string
-                        (array-ref compiler-reg-evict-census-counts 14))
+                        (compiler-reg-evict-census-value metrics 14))
                       (str_cat.str-cat
                         "|def-last="
                         (string.int->string
-                          (array-ref compiler-reg-evict-census-counts 15))
+                          (compiler-reg-evict-census-value metrics 15))
                         "|def-late="
                         (string.int->string
-                          (array-ref compiler-reg-evict-census-counts 16))
+                          (compiler-reg-evict-census-value metrics 16))
                         (str_cat.str-cat
                           "|def-many="
                           (string.int->string
-                            (array-ref compiler-reg-evict-census-counts 17))
+                            (compiler-reg-evict-census-value metrics 17))
                           (str_cat.str-cat
                             "|priced-break-even="
                             (string.int->string
-                              (array-ref compiler-reg-evict-census-counts 18))
+                              (compiler-reg-evict-census-value metrics 18))
                             "\n"))))))))))))))
 
 ;; Dense assignment occupancy for performance and representation audits. These
-;; counters are compiled only for explicit regalloc-census builds.
+;; slots are compiled only for explicit regalloc-census builds.
 (cfg
   regalloc-census
-  (define compiler-reg-assignment-census-plans : i64
-    0))
-(cfg
-  regalloc-census
-  (define compiler-reg-assignment-census-capacity : i64
-    0))
-(cfg
-  regalloc-census
-  (define compiler-reg-assignment-census-assigned : i64
-    0))
-(cfg
-  regalloc-census
-  (define compiler-reg-assignment-census-register : i64
-    0))
-(cfg
-  regalloc-census
-  (define compiler-reg-assignment-census-spill : i64
-    0))
-(cfg
-  regalloc-census
-  (define compiler-reg-assignment-census-remat : i64
-    0))
-(cfg
-  regalloc-census
-  (define compiler-reg-assignment-census-max-capacity : i64
-    0))
-(cfg
-  regalloc-census
-  (define compiler-reg-assignment-census-max-assigned : i64
-    0))
+  (define (compiler-reg-assignment-census-value
+    [metrics : profile_state.CompilerProfileMetrics]
+    [slot : i64]) : i64
+    (profile_state.compiler-profile-metrics-value
+      metrics
+      (+ compiler-reg-assignment-census-metric-start slot))))
 
 (cfg
   regalloc-census
-  (define (compiler-reg-assignment-census-reset!) : unit
-    (begin
-      (set! compiler-reg-assignment-census-plans 0)
-      (set! compiler-reg-assignment-census-capacity 0)
-      (set! compiler-reg-assignment-census-assigned 0)
-      (set! compiler-reg-assignment-census-register 0)
-      (set! compiler-reg-assignment-census-spill 0)
-      (set! compiler-reg-assignment-census-remat 0)
-      (set! compiler-reg-assignment-census-max-capacity 0)
-      (set! compiler-reg-assignment-census-max-assigned 0))))
+  (define (compiler-reg-assignment-census-reset!
+    [metrics : profile_state.CompilerProfileMetrics]) : unit
+    (profile_state.compiler-profile-metrics-reset-range!
+      metrics
+      compiler-reg-assignment-census-metric-start
+      compiler-reg-assignment-census-metric-end)))
 
 (cfg
   regalloc-census
   (define (compiler-reg-assignment-census-record!
+    [metrics : profile_state.CompilerProfileMetrics]
     [assignments : (& assignments CompilerRegAssignmentTable)]) : unit
     (let
       [present : (__tl_dyn-array i64) assignments.present]
@@ -26786,6 +27624,10 @@
       [registers : i64 0]
       [spills : i64 0]
       [remats : i64 0]
+      ;; W3 remat-site census: which recompute shape each Remat home carries.
+      [addrs : i64 0]
+      [literals : i64 0]
+      [cells : i64 0]
       (begin
         (while (< index capacity)
           (begin
@@ -26799,57 +27641,99 @@
                   [(CompilerRegLocation.RegisterPair _ _)
                     (set! registers (+ registers 1))]
                   [(CompilerRegLocation.Spill _) (set! spills (+ spills 1))]
-                  [(CompilerRegLocation.Remat _) (set! remats (+ remats 1))])))
+                  [(CompilerRegLocation.Remat value)
+                    (begin
+                      (set! remats (+ remats 1))
+                      (match value
+                        [(ir.CompilerIrValue.I64 _)
+                          (set! literals (+ literals 1))]
+                        [(ir.CompilerIrValue.Bool _)
+                          (set! literals (+ literals 1))]
+                        [(ir.CompilerIrValue.Char _)
+                          (set! literals (+ literals 1))]
+                        [(ir.CompilerIrValue.Global _) (set! cells (+ cells 1))]
+                        [_ (set! addrs (+ addrs 1))]))])))
             (set! index (+ index 1))))
-        (set!
-          compiler-reg-assignment-census-plans
-          (+ compiler-reg-assignment-census-plans 1))
-        (set!
-          compiler-reg-assignment-census-capacity
-          (+ compiler-reg-assignment-census-capacity capacity))
-        (set!
-          compiler-reg-assignment-census-assigned
-          (+ compiler-reg-assignment-census-assigned assigned))
-        (set!
-          compiler-reg-assignment-census-register
-          (+ compiler-reg-assignment-census-register registers))
-        (set!
-          compiler-reg-assignment-census-spill
-          (+ compiler-reg-assignment-census-spill spills))
-        (set!
-          compiler-reg-assignment-census-remat
-          (+ compiler-reg-assignment-census-remat remats))
-        (if (> capacity compiler-reg-assignment-census-max-capacity)
-          (set! compiler-reg-assignment-census-max-capacity capacity)
+        (profile_state.compiler-profile-metrics-add!
+          metrics
+          (+ compiler-reg-assignment-census-metric-start 0)
+          1)
+        (profile_state.compiler-profile-metrics-add!
+          metrics
+          (+ compiler-reg-assignment-census-metric-start 1)
+          capacity)
+        (profile_state.compiler-profile-metrics-add!
+          metrics
+          (+ compiler-reg-assignment-census-metric-start 2)
+          assigned)
+        (profile_state.compiler-profile-metrics-add!
+          metrics
+          (+ compiler-reg-assignment-census-metric-start 3)
+          registers)
+        (profile_state.compiler-profile-metrics-add!
+          metrics
+          (+ compiler-reg-assignment-census-metric-start 4)
+          spills)
+        (profile_state.compiler-profile-metrics-add!
+          metrics
+          (+ compiler-reg-assignment-census-metric-start 5)
+          remats)
+        (profile_state.compiler-profile-metrics-add!
+          metrics
+          (+ compiler-reg-assignment-census-metric-start 6)
+          addrs)
+        (profile_state.compiler-profile-metrics-add!
+          metrics
+          (+ compiler-reg-assignment-census-metric-start 7)
+          literals)
+        (profile_state.compiler-profile-metrics-add!
+          metrics
+          (+ compiler-reg-assignment-census-metric-start 8)
+          cells)
+        (if (> capacity (compiler-reg-assignment-census-value metrics 9))
+          (profile_state.compiler-profile-metrics-set!
+            metrics
+            (+ compiler-reg-assignment-census-metric-start 9)
+            capacity)
           unit)
-        (if (> assigned compiler-reg-assignment-census-max-assigned)
-          (set! compiler-reg-assignment-census-max-assigned assigned)
+        (if (> assigned (compiler-reg-assignment-census-value metrics 10))
+          (profile_state.compiler-profile-metrics-set!
+            metrics
+            (+ compiler-reg-assignment-census-metric-start 10)
+            assigned)
           unit)))))
 
 (cfg
   regalloc-census
-  (define (compiler-reg-assignment-census-print!) : unit
+  (define (compiler-reg-assignment-census-print!
+    [metrics : profile_state.CompilerProfileMetrics]) : unit
     (begin
       (io.print-error
-        "regalloc-assignment-census|plans|capacity|assigned|register|spill|remat|max-capacity|max-assigned\n")
+        "regalloc-assignment-census|plans|capacity|assigned|register|spill|remat|remat-addr|remat-literal|remat-cell|max-capacity|max-assigned\n")
       (io.print-error
         (str_cat.str-cat
           "regalloc-assignment-census|"
-          (string.int->string compiler-reg-assignment-census-plans)
+          (string.int->string (compiler-reg-assignment-census-value metrics 0))
           "|"
-          (string.int->string compiler-reg-assignment-census-capacity)
+          (string.int->string (compiler-reg-assignment-census-value metrics 1))
           "|"
-          (string.int->string compiler-reg-assignment-census-assigned)
+          (string.int->string (compiler-reg-assignment-census-value metrics 2))
           "|"
-          (string.int->string compiler-reg-assignment-census-register)
+          (string.int->string (compiler-reg-assignment-census-value metrics 3))
           "|"
-          (string.int->string compiler-reg-assignment-census-spill)
+          (string.int->string (compiler-reg-assignment-census-value metrics 4))
           "|"
-          (string.int->string compiler-reg-assignment-census-remat)
+          (string.int->string (compiler-reg-assignment-census-value metrics 5))
           "|"
-          (string.int->string compiler-reg-assignment-census-max-capacity)
+          (string.int->string (compiler-reg-assignment-census-value metrics 6))
           "|"
-          (string.int->string compiler-reg-assignment-census-max-assigned)
+          (string.int->string (compiler-reg-assignment-census-value metrics 7))
+          "|"
+          (string.int->string (compiler-reg-assignment-census-value metrics 8))
+          "|"
+          (string.int->string (compiler-reg-assignment-census-value metrics 9))
+          "|"
+          (string.int->string (compiler-reg-assignment-census-value metrics 10))
           "\n")))))
 
 ;; ---- move census (cfg regalloc-census) ------------------------------------
@@ -26866,24 +27750,30 @@
 ;;                    simultaneous-liveness copy (needs a split, else irreducible)
 (cfg
   regalloc-census
-  (define compiler-reg-move-census-counts : (__tl_dyn-array i64)
-    (array.make-array i64 16)))
+  (define (compiler-reg-move-census-reset!
+    [metrics : profile_state.CompilerProfileMetrics]) : unit
+    (profile_state.compiler-profile-metrics-reset-range!
+      metrics
+      compiler-reg-move-census-metric-start
+      compiler-reg-move-census-metric-end)))
 
 (cfg
   regalloc-census
-  (define (compiler-reg-move-census-reset!) : unit
-    (set! compiler-reg-move-census-counts (array.make-array i64 16))))
-
-(cfg
-  regalloc-census
-  (define (compiler-reg-move-census-bump! [slot : i64]) : unit
+  (define (compiler-reg-move-census-bump!
+    [metrics : profile_state.CompilerProfileMetrics]
+    [slot : i64]) : unit
     (if (if (< slot 0)
       true
-      (>= slot (array-length compiler-reg-move-census-counts)))
+      (>=
+        slot
+        (-
+          compiler-reg-move-census-metric-end
+          compiler-reg-move-census-metric-start)))
       unit
-      (set!
-        (array-ref compiler-reg-move-census-counts slot)
-        (+ (array-ref compiler-reg-move-census-counts slot) 1)))))
+      (profile_state.compiler-profile-metrics-add!
+        metrics
+        (+ compiler-reg-move-census-metric-start slot)
+        1))))
 
 (cfg
   regalloc-census
@@ -26903,6 +27793,7 @@
 (cfg
   regalloc-census
   (define (compiler-reg-move-census-record!
+    [metrics : profile_state.CompilerProfileMetrics]
     [moves : CompilerRegMoveSeq]
     [parents : (__tl_dyn-array i64)]
     [interval-index : CompilerRegIntervalIndex]
@@ -26920,14 +27811,14 @@
             [src : i64 item.src]
             [dst : i64 item.dst]
             (begin
-              (compiler-reg-move-census-bump! 0)
+              (compiler-reg-move-census-bump! metrics 0)
               (let
                 [rs : i64 (compiler-reg-move-census-find parents src)]
                 [rd : i64 (compiler-reg-move-census-find parents dst)]
                 (if (= rs rd)
-                  (compiler-reg-move-census-bump! 1)
+                  (compiler-reg-move-census-bump! metrics 1)
                   (if (compiler-reg-same-value-class? sv-parents src dst)
-                    (compiler-reg-move-census-bump! 2)
+                    (compiler-reg-move-census-bump! metrics 2)
                     (if (not
                       (compiler-reg-vars-interfere-segmented-index?
                         interval-index
@@ -26940,14 +27831,14 @@
                       ;; ones, the PAIR is coalesce-vars-compatible? -> the merge
                       ;; was blocked by the all-pairs class check, not the pair.
                       (begin
-                        (compiler-reg-move-census-bump! 3)
+                        (compiler-reg-move-census-bump! metrics 3)
                         (if (compiler-reg-vars-interfere-segmented-index?
                           eff-index
                           rs
                           rd)
-                          (compiler-reg-move-census-bump! 6)
+                          (compiler-reg-move-census-bump! metrics 6)
                           (begin
-                            (compiler-reg-move-census-bump! 5)
+                            (compiler-reg-move-census-bump! metrics 5)
                             (if (compiler-reg-coalesce-vars-compatible?
                               interval-index
                               types
@@ -26956,7 +27847,7 @@
                               dst
                               false
                               sv-parents)
-                              (compiler-reg-move-census-bump! 7)
+                              (compiler-reg-move-census-bump! metrics 7)
                               (if (if (live.compiler-live-set-contains?
                                 group-vars
                                 src)
@@ -26964,49 +27855,55 @@
                                 (live.compiler-live-set-contains?
                                   group-vars
                                   dst))
-                                (compiler-reg-move-census-bump! 8)
+                                (compiler-reg-move-census-bump! metrics 8)
                                 (if (not
                                   (compiler-reg-compatible-types? types src dst))
-                                  (compiler-reg-move-census-bump! 9)
-                                  (compiler-reg-move-census-bump! 10)))))))
-                      (compiler-reg-move-census-bump! 4)))))))
+                                  (compiler-reg-move-census-bump! metrics 9)
+                                  (compiler-reg-move-census-bump! metrics 10)))))))
+                      (compiler-reg-move-census-bump! metrics 4)))))))
           (set! index (- index 1)))))))
 
 (cfg
   regalloc-census
-  (define (compiler-reg-move-census-count-text [index : i64]) : String
-    (string.int->string (array-ref compiler-reg-move-census-counts index))))
+  (define (compiler-reg-move-census-count-text
+    [metrics : profile_state.CompilerProfileMetrics]
+    [index : i64]) : String
+    (string.int->string
+      (profile_state.compiler-profile-metrics-value
+        metrics
+        (+ compiler-reg-move-census-metric-start index)))))
 
 (cfg
   regalloc-census
-  (define (compiler-reg-move-census-print!) : unit
+  (define (compiler-reg-move-census-print!
+    [metrics : profile_state.CompilerProfileMetrics]) : unit
     (begin
       (io.print-error
         "regalloc-move-census|harvested|coalesced|samevalue_unco|disjoint_unco|interfere|disjoint_rootfree|disjoint_rootblocked|rootfree_paircompat|rootfree_group|rootfree_typemismatch|rootfree_other\n")
       (io.print-error
         (str_cat.str-cat
           "regalloc-move-census|"
-          (compiler-reg-move-census-count-text 0)
+          (compiler-reg-move-census-count-text metrics 0)
           "|"
-          (compiler-reg-move-census-count-text 1)
+          (compiler-reg-move-census-count-text metrics 1)
           "|"
-          (compiler-reg-move-census-count-text 2)
+          (compiler-reg-move-census-count-text metrics 2)
           "|"
-          (compiler-reg-move-census-count-text 3)
+          (compiler-reg-move-census-count-text metrics 3)
           "|"
-          (compiler-reg-move-census-count-text 4)
+          (compiler-reg-move-census-count-text metrics 4)
           "|"
-          (compiler-reg-move-census-count-text 5)
+          (compiler-reg-move-census-count-text metrics 5)
           "|"
-          (compiler-reg-move-census-count-text 6)
+          (compiler-reg-move-census-count-text metrics 6)
           "|"
-          (compiler-reg-move-census-count-text 7)
+          (compiler-reg-move-census-count-text metrics 7)
           "|"
-          (compiler-reg-move-census-count-text 8)
+          (compiler-reg-move-census-count-text metrics 8)
           "|"
-          (compiler-reg-move-census-count-text 9)
+          (compiler-reg-move-census-count-text metrics 9)
           "|"
-          (compiler-reg-move-census-count-text 10)
+          (compiler-reg-move-census-count-text metrics 10)
           "\n")))))
 
 ;; Mark every var that is a member of `member-set` AND whose live interval
@@ -27238,6 +28135,54 @@
 
 (define (compiler-reg-clear-c-memory-call-names!) : unit
   (set! compiler-reg-c-memory-call-names (reg_i64_i64_map.with-capacity 8)))
+
+;; W3 step (c). FROZEN GLOBAL CELLS -- the program fact that licenses
+;; rematerialising `movq g(%rip), %r`.
+;;
+;; A global's CELL is its own statically allocated storage, named by that symbol
+;; and by nothing else, so "can anything write cell(g)" is decided by NAMES
+;; alone. The writers are exhaustively:
+;;   * `CompilerIrInstr.Store g, v` -- the lowering of `(set! g ...)`;
+;;   * a `StorePtr` through a pointer derived from `CompilerIrValue.GlobalAddr g`,
+;;     which exists only where `(& g)` / `(&mut g)` was taken;
+;;   * the startup initializer's one `movq %rax, g(%rip)`, emitted by
+;;     compiler-backend-global-init-call BETWEEN the `__global_init_*` calls and
+;;     before `main` -- never inside a user function's activation, so it cannot
+;;     fall between a value's definition and a use of it.
+;; Disqualifying a global on either of the first two therefore leaves globals no
+;; execution can write while any function runs, and a re-read of the cell at a
+;; use yields the same word the defining read produced. This is TypeLisp's
+;; version of LLVM's `isDereferenceableInvariantLoad`
+;; (TargetInstrInfo.cpp:1641-1643) -- established by construction, where LLVM
+;; needs `GlobalOpt` + `IPSCCP` to prove it.
+;;
+;; The set is seeded once per program from the backend's whole-program value
+;; walk (compiler-backend-collect-program-collections, a TOTAL match over the IR
+;; that already visits every operand of every instruction of every function AND
+;; every global initializer, so a new IR shape cannot silently escape it), and
+;; `known?` gates every answer: any path that reaches the allocator without that
+;; walk having run gets `false` and the old behaviour.
+(define compiler-reg-nonfrozen-globals : reg_i64_i64_map.Map
+  (reg_i64_i64_map.with-capacity 8))
+(define compiler-reg-frozen-globals-known? : bool
+  false)
+
+(define (compiler-reg-frozen-globals-begin!) : unit
+  (begin
+    (set! compiler-reg-frozen-globals-known? false)
+    (set! compiler-reg-nonfrozen-globals (reg_i64_i64_map.with-capacity 8))))
+
+(define (compiler-reg-add-nonfrozen-global! [name : i64]) : unit
+  (reg_i64_i64_map.insert-ref! (&mut compiler-reg-nonfrozen-globals) name 1))
+
+(define (compiler-reg-frozen-globals-finish!) : unit
+  (set! compiler-reg-frozen-globals-known? true))
+
+(define (compiler-reg-global-frozen? [name : i64]) : bool
+  (and
+    compiler-reg-frozen-globals-known?
+    (not compiler-reg-program-maps-suppressed?)
+    (not (reg_i64_i64_map.contains? (& compiler-reg-nonfrozen-globals) name))))
 
 (define (compiler-reg-add-c-memory-call-name! [name : i64]) : unit
   (reg_i64_i64_map.insert-ref! (&mut compiler-reg-c-memory-call-names) name 1))
@@ -32374,6 +33319,7 @@
         regalloc-census
         (if allow-caller-saved-zero-call
           (compiler-reg-move-census-record!
+            type-info.metrics
             moves
             coalesce.parents
             interval-index
@@ -32865,19 +33811,21 @@
 ;; SIMD/AVX register plan (unchanged from before #perf): full dataflow-liveness
 ;; intervals + the call-live-conservative ineligibility, keeping AVX backend
 ;; golden output byte-identical.
-(define (compiler-reg-plan-function-with-type-segment-bases-for-abi-and-representations
+(define (compiler-reg-plan-function-with-type-segment-bases-for-abi-and-representations-and-metrics
   [type-segment-bases : i64]
   [target-abi : cabi.CompilerRegTargetAbi]
   [func : ir.CompilerIrFunction]
-  [representations : ir.CompilerIrRepresentationIndex]) : CompilerRegPlan
+  [representations : ir.CompilerIrRepresentationIndex]
+  [metrics : profile_state.CompilerProfileMetrics]) : CompilerRegPlan
   (let
-    [liveness-handle : CompilerRegLivenessHandle
-      (compiler-reg-liveness-handle-make func false)]
-    [liveness : live.CompilerFunctionLiveness liveness-handle.baseline]
     [type-info : CompilerRegVarTypes
-      (compiler-reg-function-var-types-with-representations
+      (compiler-reg-function-var-types-with-representations-and-metrics
         func
-        representations)]
+        representations
+        metrics)]
+    [liveness-handle : CompilerRegLivenessHandle
+      (compiler-reg-liveness-handle-make func false type-info.metrics)]
+    [liveness : live.CompilerFunctionLiveness liveness-handle.baseline]
     [intervals : CompilerRegIntervalSeq
       (compiler-reg-live-intervals func liveness)]
     [ineligible : live.CompilerLiveI64Set
@@ -32900,6 +33848,18 @@
       target-abi
       false
       (- 0 1))))
+
+(define (compiler-reg-plan-function-with-type-segment-bases-for-abi-and-representations
+  [type-segment-bases : i64]
+  [target-abi : cabi.CompilerRegTargetAbi]
+  [func : ir.CompilerIrFunction]
+  [representations : ir.CompilerIrRepresentationIndex]) : CompilerRegPlan
+  (compiler-reg-plan-function-with-type-segment-bases-for-abi-and-representations-and-metrics
+    type-segment-bases
+    target-abi
+    func
+    representations
+    (compiler-reg-profile-metrics-new)))
 
 (define (compiler-reg-plan-function-with-type-segment-bases-for-abi
   [type-segment-bases : i64]
@@ -32922,19 +33882,21 @@
 (define (compiler-reg-plan-function [func : ir.CompilerIrFunction]) : CompilerRegPlan
   (compiler-reg-plan-function-for-abi cabi.CompilerRegTargetAbi.Linux func))
 
-(define (compiler-reg-plan-function-avx2-with-type-segment-bases-for-abi-and-representations
+(define (compiler-reg-plan-function-avx2-with-type-segment-bases-for-abi-and-representations-and-metrics
   [type-segment-bases : i64]
   [target-abi : cabi.CompilerRegTargetAbi]
   [func : ir.CompilerIrFunction]
-  [representations : ir.CompilerIrRepresentationIndex]) : CompilerRegPlan
+  [representations : ir.CompilerIrRepresentationIndex]
+  [metrics : profile_state.CompilerProfileMetrics]) : CompilerRegPlan
   (let
-    [liveness-handle : CompilerRegLivenessHandle
-      (compiler-reg-liveness-handle-make func false)]
-    [liveness : live.CompilerFunctionLiveness liveness-handle.baseline]
     [type-info : CompilerRegVarTypes
-      (compiler-reg-function-var-types-with-representations
+      (compiler-reg-function-var-types-with-representations-and-metrics
         func
-        representations)]
+        representations
+        metrics)]
+    [liveness-handle : CompilerRegLivenessHandle
+      (compiler-reg-liveness-handle-make func false type-info.metrics)]
+    [liveness : live.CompilerFunctionLiveness liveness-handle.baseline]
     [intervals : CompilerRegIntervalSeq
       (compiler-reg-live-intervals func liveness)]
     [ineligible : live.CompilerLiveI64Set
@@ -32957,6 +33919,18 @@
       target-abi
       false
       (- 0 1))))
+
+(define (compiler-reg-plan-function-avx2-with-type-segment-bases-for-abi-and-representations
+  [type-segment-bases : i64]
+  [target-abi : cabi.CompilerRegTargetAbi]
+  [func : ir.CompilerIrFunction]
+  [representations : ir.CompilerIrRepresentationIndex]) : CompilerRegPlan
+  (compiler-reg-plan-function-avx2-with-type-segment-bases-for-abi-and-representations-and-metrics
+    type-segment-bases
+    target-abi
+    func
+    representations
+    (compiler-reg-profile-metrics-new)))
 
 (define (compiler-reg-plan-function-avx2-with-type-segment-bases-for-abi
   [type-segment-bases : i64]
@@ -33140,7 +34114,7 @@
   [forced-assignments : CompilerRegAssignmentTable]) : CompilerRegPlan
   (let
     [liveness-handle : CompilerRegLivenessHandle
-      (compiler-reg-liveness-handle-make func true)]
+      (compiler-reg-liveness-handle-make func true type-info.metrics)]
     [vars : i64
       (match func
         [(ir.CompilerIrFunction.Function _ _ _ function-vars _) function-vars])]
@@ -33303,14 +34277,16 @@
                   (set! v (+ v 1))))
               ok))]))))
 
-(define (compiler-reg-plan-function-stack-only-with-representations
+(define (compiler-reg-plan-function-stack-only-with-representations-and-metrics
   [func : ir.CompilerIrFunction]
-  [representations : ir.CompilerIrRepresentationIndex]) : CompilerRegPlan
+  [representations : ir.CompilerIrRepresentationIndex]
+  [metrics : profile_state.CompilerProfileMetrics]) : CompilerRegPlan
   (let
     [type-info : CompilerRegVarTypes
-      (compiler-reg-function-var-types-with-representations
+      (compiler-reg-function-var-types-with-representations-and-metrics
         func
-        representations)]
+        representations
+        metrics)]
     (CompilerRegPlan.Plan
       (compiler-reg-assignment-table-empty)
       (live.compiler-live-set-empty)
@@ -33318,6 +34294,14 @@
       type-info
       (compiler-reg-call-split-empty)
       (compiler-reg-split-plan-empty))))
+
+(define (compiler-reg-plan-function-stack-only-with-representations
+  [func : ir.CompilerIrFunction]
+  [representations : ir.CompilerIrRepresentationIndex]) : CompilerRegPlan
+  (compiler-reg-plan-function-stack-only-with-representations-and-metrics
+    func
+    representations
+    (compiler-reg-profile-metrics-new)))
 
 (define (compiler-reg-plan-function-stack-only [func : ir.CompilerIrFunction]) : CompilerRegPlan
   (compiler-reg-plan-function-stack-only-with-representations
@@ -35100,7 +36084,7 @@
     [items : (__tl_dyn-array ast.AstType) (array.make-array ast.AstType vars)]
     (begin
       (compiler-reg-color-scatter-types remap present items types)
-      (CompilerRegVarTypes present items types.representations))))
+      (CompilerRegVarTypes present items types.representations types.metrics))))
 
 ;; Spilled scalars are dropped: the id remap re-homes them, so emission's
 ;; formula-slot fallback covers the new id and a stale Spill offset keyed by
@@ -37566,7 +38550,7 @@
                   (set! (array-ref present index) 1)
                   (set! (array-ref items index) (array-ref extra-items index))))
               (set! index (+ index 1))))
-          (CompilerRegVarTypes present items base.representations))))))
+          (CompilerRegVarTypes present items base.representations base.metrics))))))
 
 (define (compiler-reg-plan-with-call-save-rewrite
   [plan : CompilerRegPlan]
@@ -41828,7 +42812,11 @@
                 scratch-excluded)
               (CompilerRegEarlyScratchModel
                 (CompilerRegIntervalIndex starts ends segments)
-                (CompilerRegVarTypes present types base-types.representations)
+                (CompilerRegVarTypes
+                  present
+                  types
+                  base-types.representations
+                  base-types.metrics)
                 assignments
                 scratch-weights
                 scratch-excluded
@@ -43150,7 +44138,10 @@
               [base-type-info : CompilerRegVarTypes
                 (compiler-reg-plan-types plan)]
               [liveness-handle : CompilerRegLivenessHandle
-                (compiler-reg-liveness-handle-make _func false)]
+                (compiler-reg-liveness-handle-make
+                  _func
+                  false
+                  base-type-info.metrics)]
               [base-interval-selection : CompilerRegIntervalSelection
                 (compiler-reg-live-interval-selection
                   _func
@@ -43224,7 +44215,8 @@
                           (CompilerRegVarTypes
                             present
                             types
-                            base-type-info.representations)]
+                            base-type-info.representations
+                            base-type-info.metrics)]
                         [interval-index : CompilerRegIntervalIndex
                           (CompilerRegIntervalIndex starts ends segments)]
                         [intervals : CompilerRegIntervalSeq
@@ -44620,7 +45612,7 @@
       [group-vars : live.CompilerLiveI64Set
         (compiler-reg-function-group-vars type-segment-bases func type-info)]
       [liveness-handle : CompilerRegLivenessHandle
-        (compiler-reg-liveness-handle-make func false)]
+        (compiler-reg-liveness-handle-make func false type-info.metrics)]
       [liveness : live.CompilerFunctionLiveness liveness-handle.baseline]
       (match (compiler-reg-live-interval-selection func liveness)
         [(CompilerRegIntervalSelection.Selection intervals interval-index)

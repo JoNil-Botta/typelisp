@@ -5,7 +5,8 @@
 ;# selections; escapes use `{{` / `}}`. Format specifications share one parsed
 ;# plan supporting byte fill, alignment, sign, alternate/zero flags, width, and
 ;# literal/dollar/star precision counts. The generated expression evaluates
-;# each supplied value once and uses one flat `str-cat` expansion.
+;# each supplied value once and uses one flat `str-cat` expansion. Nonnumeric
+;# Display precision truncates rendered TypeLisp bytes before padding.
 ;#
 ;# Nominal structs and enums participate through their canonical owner module.
 ;# A module's common primary type defines `to-string`; additional nominal types
@@ -22,9 +23,9 @@
 ;#     (if (string.eq (format.format "hello, {}" name) "hello, Ada") 42 1)))
 ;# ```
 ;#
-;# Builtin placeholder values are `String`, `i64`, `bool`, `char`, `f64`, and
-;# `f32`. Structural formatting is intentionally separate from this default
-;# Display-style protocol.
+;# Builtin placeholder values are `String`, all eight fixed-width integer
+;# types, `bool`, `char`, `f64`, and `f32`. Structural formatting is
+;# intentionally separate from this default Display-style protocol.
 (import stdlib.array)
 (import stdlib.comptime)
 (import stdlib.str_cat)
@@ -120,17 +121,37 @@
           (ptr-offset (string-data rendered) source-start))]
       (string.str-copy-bytes-into source dst destination-start count))))
 
-;: Apply shared byte-width, alignment, sign, and sign-aware zero padding.
+;: Resolve the byte length visible to shared Display padding.
+;:
+;: Numeric renderers own their precision semantics, so this shared fallback
+;: truncates only nonnumeric output. TypeLisp text and `char` are byte-oriented:
+;: the precision boundary neither decodes nor validates UTF-8.
+(define (format-rendered-display-length
+  [rendered-len : i64]
+  [numeric? : bool]
+  [options : FormatOptions]) : i64
+  (if (if numeric?
+    false
+    (if options.precision-present
+      (< options.precision rendered-len)
+      false))
+    options.precision
+    rendered-len))
+
+;: Apply shared Display precision, byte width, alignment, sign, and zero padding.
 ;:
 ;: The value renderer has already chosen Display/type-specific text. Padding
-;: therefore composes with owner-module `to-string`. Numeric zero padding keeps
-;: a leading sign and a `0x`/`0X`/`0o`/`0b` prefix before the inserted zeroes.
+;: therefore follows nonnumeric byte truncation and composes with owner-module
+;: `to-string`. Numeric zero padding keeps a leading sign and a
+;: `0x`/`0X`/`0o`/`0b` prefix before the inserted zeroes.
 (define (format-apply-options
   [rendered : String]
   [numeric? : bool]
   [options : FormatOptions]) : String
   (let
     [rendered-len : i64 (string.string-length (& rendered))]
+    [display-len : i64
+      (format-rendered-display-length rendered-len numeric? options)]
     [source-sign-len : i64
       (if (if numeric?
         (> rendered-len 0)
@@ -166,13 +187,13 @@
             unit))
         unit)
       (let
-        [content-len : i64 (+ (- rendered-len source-sign-len) output-sign-len)]
+        [content-len : i64 (+ (- display-len source-sign-len) output-sign-len)]
         [output-len : i64
           (if (> options.width content-len)
             options.width
             content-len)]
         [padding : i64 (- output-len content-len)]
-        (if (and (= padding 0) (not add-plus?))
+        (if (and (= display-len rendered-len) (= padding 0) (not add-plus?))
           rendered
           (let
             [dst : (MutPtr u8) (string.string-runtime-alloc output-len)]
@@ -245,7 +266,7 @@
                       source-sign-len
                       dst
                       cursor
-                      (- rendered-len source-sign-len))
+                      (- display-len source-sign-len))
                     (format-write-fill!
                       dst
                       (- output-len right-padding)
@@ -472,11 +493,53 @@
                                           `(stdlib.string.copy ,value)
                                           value)]
                                       ["str" `(stdlib.string.copy ,value)]
+                                      ["i8"
+                                        (if borrowed?
+                                          `(stdlib.string.int->string
+                                            (cast (deref ,value) : i64))
+                                          `(stdlib.string.int->string
+                                            (cast ,value : i64)))]
+                                      ["i16"
+                                        (if borrowed?
+                                          `(stdlib.string.int->string
+                                            (cast (deref ,value) : i64))
+                                          `(stdlib.string.int->string
+                                            (cast ,value : i64)))]
+                                      ["i32"
+                                        (if borrowed?
+                                          `(stdlib.string.int->string
+                                            (cast (deref ,value) : i64))
+                                          `(stdlib.string.int->string
+                                            (cast ,value : i64)))]
                                       ["i64"
                                         (if borrowed?
                                           `(stdlib.string.int->string
                                             (deref ,value))
                                           `(stdlib.string.int->string ,value))]
+                                      ["u8"
+                                        (if borrowed?
+                                          `(stdlib.format.format-u64-core
+                                            (cast (deref ,value) : u64))
+                                          `(stdlib.format.format-u64-core
+                                            (cast ,value : u64)))]
+                                      ["u16"
+                                        (if borrowed?
+                                          `(stdlib.format.format-u64-core
+                                            (cast (deref ,value) : u64))
+                                          `(stdlib.format.format-u64-core
+                                            (cast ,value : u64)))]
+                                      ["u32"
+                                        (if borrowed?
+                                          `(stdlib.format.format-u64-core
+                                            (cast (deref ,value) : u64))
+                                          `(stdlib.format.format-u64-core
+                                            (cast ,value : u64)))]
+                                      ["u64"
+                                        (if borrowed?
+                                          `(stdlib.format.format-u64-core
+                                            (deref ,value))
+                                          `(stdlib.format.format-u64-core
+                                            ,value))]
                                       ["bool"
                                         (if borrowed?
                                           `(if (deref ,value)
@@ -499,10 +562,10 @@
                                             ,value))]
                                       ["f32"
                                         (if borrowed?
-                                          `(stdlib.format.format-float-core
-                                            (cast (deref ,value) : f64))
-                                          `(stdlib.format.format-float-core
-                                            (cast ,value : f64)))]
+                                          `(stdlib.format.format-f32-core
+                                            (deref ,value))
+                                          `(stdlib.format.format-f32-core
+                                            ,value))]
                                       [_
                                         (comptime.comptime-error
                                           (comptime.string-append
@@ -520,18 +583,7 @@
                                         (string.eq value-kind "f32"))
                                         (comptime.comptime-error
                                           "format: precision for float Display output is not supported yet")
-                                        (if (if (string.eq value-kind "string")
-                                          true
-                                          (string.eq value-kind "str"))
-                                          (comptime.comptime-error
-                                            "format: precision for text Display output is not supported yet")
-                                          (if nominal?
-                                            (comptime.comptime-error
-                                              "format: precision for owner Display output is not supported yet")
-                                            (comptime.comptime-error
-                                              (comptime.string-append
-                                                "format: precision for Display type is not supported yet: "
-                                                value-key)))))))
+                                        unit)))
                                   (if (string.eq selector "")
                                     unit
                                     (comptime.comptime-error
@@ -614,13 +666,19 @@
                                                   (deref ,precision-value))
                                                 (comptime.comptime-error
                                                   "format: dynamic precision argument must have exact type i64"))))))]
+                                    [precision-applies? : bool
+                                      (if (= precision-kind 0)
+                                        false
+                                        (not integral?))]
                                     [default-options? : bool
                                       (if (= fill-code 32)
                                         (if (= alignment 0)
                                           (if (= sign 0)
                                             (if (= alternate 0)
                                               (if (= zero 0)
-                                                (= width-kind 0)
+                                                (if (= width-kind 0)
+                                                  (not precision-applies?)
+                                                  false)
                                                 false)
                                               false)
                                             false)
@@ -3166,14 +3224,48 @@
             (__tl_format_bindings)))))
     (comptime.comptime-error "format: template must be a string literal")))
 
-;: Fixed-capacity base-2^32 bignum backing the pure-TL f64 formatter.
+;: Count decimal digits in an unsigned 64-bit value.
+(define (format-u64-digit-count [value : u64]) : i64
+  (let
+    [cursor : u64 value]
+    [digits : i64 1]
+    (begin
+      (while (>= cursor (cast 10 : u64))
+        (begin
+          (set! cursor (/ cursor (cast 10 : u64)))
+          (set! digits (+ digits 1))))
+      digits)))
+
+;: Render the complete unsigned 64-bit range as decimal Display text.
+(define (format-u64-core [value : u64]) : String
+  (let
+    [digits : i64 (format-u64-digit-count value)]
+    [dst : (MutPtr u8) (string.string-runtime-alloc digits)]
+    [cursor : u64 value]
+    [index : i64 (- digits 1)]
+    (begin
+      (while (>= index 0)
+        (let
+          [next : u64 (/ cursor (cast 10 : u64))]
+          [digit : u64 (- cursor (* next (cast 10 : u64)))]
+          (begin
+            (unsafe
+              (ptr-write!
+                (ptr-offset dst index)
+                (cast (+ digit (cast 48 : u64)) : u8)))
+            (set! cursor next)
+            (set! index (- index 1)))))
+      (unsafe
+        (string-from-bytes (ptr-cast dst : (Ptr u8)) digits)))))
+
+;: Fixed-capacity base-2^32 bignum backing the pure-TL float formatter.
 (defstruct BigNum
   (limbs (__tl_dyn-array u64))
   (len i64))
 
 ;: Limb capacity of formatter bignum scratch buffers.
 (define ftoa-cap : i64
-  96)
+  40)
 
 ;: Low 32-bit mask isolating a base-2^32 limb.
 (define ftoa-mask32 : u64
@@ -3328,44 +3420,66 @@
           (set! (array-ref r (+ la limb-shift)) carry))
         (BigNum r (bn-norm-len r (+ la (+ limb-shift 1))))))))
 
-;: Product of BigNum a and the 64-bit value m.
-(define (bn-mul-u64 [a : BigNum] [m : u64]) : BigNum
-  (let
-    [lo : u64 (bit-and m stdlib.format.ftoa-mask32)]
-    [hi : u64 (shr m 32)]
-    [low : BigNum (bn-mul-u32 a lo)]
-    (if (= hi (cast 0 : u64))
-      low
-      (bn-add low (bn-shl-bits (bn-mul-u32 a hi) 32)))))
-
 ;: BigNum a multiplied by ten raised to p.
 (define (bn-mul-pow10 [a : BigNum] [p : i64]) : BigNum
   (let
     [r : BigNum a]
-    [i : i64 0]
+    [remaining : i64 p]
     (begin
-      (while (< i p)
+      (while (>= remaining 9)
+        (begin
+          (set! r (bn-mul-u32 r (cast 1000000000 : u64)))
+          (set! remaining (- remaining 9))))
+      (while (> remaining 0)
         (begin
           (set! r (bn-mul-u32 r (cast 10 : u64)))
-          (set! i (+ i 1))))
+          (set! remaining (- remaining 1))))
       r)))
 
-;: floor(num/den) as u64, assuming the quotient fits in 60 bits.
-(define (bn-div-floor-u64 [num : BigNum] [den : BigNum]) : u64
+;: Difference of BigNums a and b, assuming a >= b.
+(define (bn-sub [a : BigNum] [b : BigNum]) : BigNum
   (let
-    [q : u64 (cast 0 : u64)]
-    [bit : i64 59]
+    [r : (__tl_dyn-array u64) (array.make-array u64 stdlib.format.ftoa-cap)]
+    [borrow : u64 (cast 0 : u64)]
+    [i : i64 0]
     (begin
-      (while (>= bit 0)
+      (while (< i a.len)
         (let
-          [cand : u64 (+ q (shl (cast 1 : u64) bit))]
-          [prod : BigNum (bn-mul-u64 den cand)]
+          [av : u64 (array-ref a.limbs i)]
+          [bv : u64
+            (if (< i b.len)
+              (array-ref b.limbs i)
+              (cast 0 : u64))]
+          [subtrahend : u64 (+ bv borrow)]
           (begin
-            (if (<= (bn-cmp prod num) 0)
-              (set! q cand)
-              unit)
-            (set! bit (- bit 1)))))
-      q)))
+            (if (>= av subtrahend)
+              (begin
+                (set! (array-ref r i) (- av subtrahend))
+                (set! borrow (cast 0 : u64)))
+              (begin
+                (set!
+                  (array-ref r i)
+                  (- (+ av (cast 0x100000000 : u64)) subtrahend))
+                (set! borrow (cast 1 : u64))))
+            (set! i (+ i 1)))))
+      (BigNum r (bn-norm-len r a.len)))))
+
+;: One base-10 long-division digit and its exact remainder.
+(defstruct BigDigitStep
+  (digit i64)
+  (remainder BigNum))
+
+;: Divide num by den when the quotient is one decimal digit.
+(define (bn-div-digit [num : BigNum] [den : BigNum]) : BigDigitStep
+  (let
+    [digit : i64 0]
+    [remainder : BigNum num]
+    (begin
+      (while (>= (bn-cmp remainder den) 0)
+        (begin
+          (set! remainder (bn-sub remainder den))
+          (set! digit (+ digit 1))))
+      (BigDigitStep digit remainder))))
 
 ;: floor(a / b) for b > 0 (TL `/` truncates toward zero).
 (define (ftoa-floor-div [a : i64] [b : i64]) : i64
@@ -3394,26 +3508,7 @@
         (set! dd (/ dd 10)))
       (string.int->string dd))))
 
-;: Exponent k formatted with sign and at least two digits.
-(define (ftoa-pad-exp [k : i64]) : String
-  (let
-    [mag : i64
-      (if (< k 0)
-        (- 0 k)
-        k)]
-    [digits : String (string.int->string mag)]
-    [sign : String
-      (if (< k 0)
-        "-"
-        "+")]
-    (str_cat.str-cat
-      sign
-      (if (< (string-length digits) 2)
-        (str_cat.str-cat "0" digits "")
-        digits)
-      "")))
-
-;: A string of n zero characters.
+;: Expose an array's backing bytes without taking ownership.
 (define (format-array-const-ptr [buf : (__tl_dyn-array u8)]) : (Ptr u8)
   (unsafe
     (ptr-cast (__tl_array-data buf) : (Ptr u8))))
@@ -3431,23 +3526,14 @@
       (unsafe
         (string-from-bytes (format-array-const-ptr out) n)))))
 
-;: Format significant-digit string s whose leading digit has decimal exponent k.
+;: Format significant digits whose leading digit has decimal exponent k.
+;: Rust Display always uses decimal notation, including very small/large values.
 (define (ftoa-render [neg : bool] [s : String] [k : i64]) : String
   (let
     [body : String ""]
     [ndig : i64 (string-length s)]
     (begin
       (cond
-        [(or (< k -4) (>= k 17))
-          (set!
-            body
-            (str_cat.str-cat
-              (string.substring s 0 1)
-              (if (> ndig 1)
-                (str_cat.str-cat "." (string.substring s 1 (- ndig 1)) "")
-                "")
-              "e"
-              (stdlib.format.ftoa-pad-exp k)))]
         [(< k 0)
           (set!
             body
@@ -3467,93 +3553,156 @@
         (str_cat.str-cat "-" body "")
         body))))
 
-;: Render an f64 as a shortest round-tripping decimal string.
+;: Ten raised to n for n <= 17.
+(define (ftoa-pow10-u64 [n : i64]) : u64
+  (let
+    [result : u64 (cast 1 : u64)]
+    [i : i64 0]
+    (begin
+      (while (< i n)
+        (begin
+          (set! result (* result (cast 10 : u64)))
+          (set! i (+ i 1))))
+      result)))
+
+;: Dragon-style shortest-decimal generation using exact interval boundaries.
+(define (ftoa-shortest
+  [neg : bool]
+  [m : u64]
+  [e2 : i64]
+  [lower-close : bool]
+  [max-digits : i64]) : String
+  (let
+    [mv : u64 (* m (cast 4 : u64))]
+    [mp : u64 (+ mv (cast 2 : u64))]
+    [mm : u64
+      (-
+        (- mv (cast 1 : u64))
+        (if lower-close
+          (cast 0 : u64)
+          (cast 1 : u64)))]
+    [boundary-e2 : i64 (- e2 2)]
+    [r : BigNum (bn-from-u64 mv)]
+    [s : BigNum (bn-from-u64 (cast 1 : u64))]
+    [mminus : BigNum (bn-from-u64 (- mv mm))]
+    [mplus : BigNum (bn-from-u64 (- mp mv))]
+    [accept-bounds : bool (= (bit-and m (cast 1 : u64)) (cast 0 : u64))]
+    [msb : i64 (ftoa-msb-index m)]
+    [k : i64 (ftoa-floor-div (* (+ msb e2) 30103) 100000)]
+    [prefix : u64 (cast 0 : u64)]
+    [digits : i64 0]
+    [done : bool false]
+    (begin
+      (if (>= boundary-e2 0)
+        (begin
+          (set! r (bn-shl-bits r boundary-e2))
+          (set! mminus (bn-shl-bits mminus boundary-e2))
+          (set! mplus (bn-shl-bits mplus boundary-e2)))
+        (set! s (bn-shl-bits s (- 0 boundary-e2))))
+      (if (>= k 0)
+        (set! s (bn-mul-pow10 s k))
+        (begin
+          (set! r (bn-mul-pow10 r (- 0 k)))
+          (set! mminus (bn-mul-pow10 mminus (- 0 k)))
+          (set! mplus (bn-mul-pow10 mplus (- 0 k)))))
+      (while (>= (bn-cmp r (bn-mul-u32 s (cast 10 : u64))) 0)
+        (begin
+          (set! s (bn-mul-u32 s (cast 10 : u64)))
+          (set! k (+ k 1))))
+      (while (< (bn-cmp r s) 0)
+        (begin
+          (set! r (bn-mul-u32 r (cast 10 : u64)))
+          (set! mminus (bn-mul-u32 mminus (cast 10 : u64)))
+          (set! mplus (bn-mul-u32 mplus (cast 10 : u64)))
+          (set! k (- k 1))))
+      (while (not done)
+        (let
+          [step : BigDigitStep (bn-div-digit r s)]
+          [remainder : BigNum step.remainder]
+          [low-cmp : i64 (bn-cmp remainder mminus)]
+          [high-cmp : i64 (bn-cmp (bn-add remainder mplus) s)]
+          [low : bool (or (< low-cmp 0) (and accept-bounds (= low-cmp 0)))]
+          [high : bool (or (> high-cmp 0) (and accept-bounds (= high-cmp 0)))]
+          (begin
+            (set! prefix (+ (* prefix (cast 10 : u64)) (cast step.digit : u64)))
+            (set! digits (+ digits 1))
+            (if (or low high (>= digits max-digits))
+              (let
+                [round-up : bool false]
+                (begin
+                  (cond
+                    [(and high (not low)) (set! round-up true)]
+                    [(and low (not high)) unit]
+                    [else
+                      (let
+                        [half-cmp : i64 (bn-cmp (bn-shl-bits remainder 1) s)]
+                        (if (> half-cmp 0)
+                          (set! round-up true)
+                          (if (= half-cmp 0)
+                            ;; Rust shortest Display breaks an exact decimal
+                            ;; midpoint toward the larger magnitude.
+                            (set! round-up true)
+                            unit)))])
+                  (when round-up (set! prefix (+ prefix (cast 1 : u64))))
+                  (when (>= prefix (ftoa-pow10-u64 digits)) (set! k (+ k 1)))
+                  (set! done true)))
+              (begin
+                (set! r (bn-mul-u32 remainder (cast 10 : u64)))
+                (set! mminus (bn-mul-u32 mminus (cast 10 : u64)))
+                (set! mplus (bn-mul-u32 mplus (cast 10 : u64))))))))
+      (ftoa-render neg (ftoa-strip-zeros (cast prefix : i64)) k))))
+
+;: Shared IEEE-754 Display implementation for f64 and f32 bit layouts.
+(define (format-float-parts
+  [neg : bool]
+  [expf : u64]
+  [frac : u64]
+  [exp-max : u64]
+  [mantissa-bits : i64]
+  [bias : i64]
+  [max-digits : i64]) : String
+  (begin
+    (when
+      (= expf exp-max)
+      (return
+        (if (= frac (cast 0 : u64))
+          (if neg
+            "-inf"
+            "inf")
+          "NaN")))
+    (when
+      (and (= expf (cast 0 : u64)) (= frac (cast 0 : u64)))
+      (return
+        (if neg
+          "-0"
+          "0")))
+    (let
+      [m : u64
+        (if (= expf (cast 0 : u64))
+          frac
+          (bit-or frac (shl (cast 1 : u64) mantissa-bits)))]
+      [e2 : i64
+        (if (= expf (cast 0 : u64))
+          (- (- 1 bias) mantissa-bits)
+          (- (- (cast expf : i64) bias) mantissa-bits))]
+      [lower-close : bool (and (= frac (cast 0 : u64)) (> expf (cast 1 : u64)))]
+      (ftoa-shortest neg m e2 lower-close max-digits))))
+
+;: Render an f64 with Rust Display-compatible shortest decimal semantics.
 (define (format-float-core [value : f64]) : String
   (let
-    [buf : (__tl_dyn-array f64) (array.make-array f64 1)]
-    (begin
-      (set! (array-ref buf 0) value)
-      (let
-        [bits : u64
-          (unsafe
-            (ptr-read (ptr-cast (__tl_array-data buf) : (Ptr u64))))]
-        [neg : bool (= (bit-and (shr bits 63) (cast 1 : u64)) (cast 1 : u64))]
-        [expf : u64 (bit-and (shr bits 52) (cast 0x7ff : u64))]
-        [frac : u64 (bit-and bits 0xfffffffffffff)]
-        (begin
-          (when
-            (= expf (cast 0x7ff : u64))
-            (return
-              (if (= frac (cast 0 : u64))
-                (if neg
-                  "-inf"
-                  "inf")
-                (if neg
-                  "-nan"
-                  "nan"))))
-          (when
-            (and (= expf (cast 0 : u64)) (= frac (cast 0 : u64)))
-            (return
-              (if neg
-                "-0"
-                "0")))
-          (let
-            [m : u64
-              (if (= expf (cast 0 : u64))
-                frac
-                (bit-or frac 0x10000000000000))]
-            [e2 : i64
-              (if (= expf (cast 0 : u64))
-                -1074
-                (- (cast expf : i64) 1075))]
-            [msb : i64 (stdlib.format.ftoa-msb-index m)]
-            [kest : i64
-              (stdlib.format.ftoa-floor-div (* (+ msb e2) 30103) 100000)]
-            [d : u64 (cast 0 : u64)]
-            [iters : i64 0]
-            [settled : bool false]
-            (begin
-              (while (if (not settled)
-                (< iters 6)
-                false)
-                (let
-                  [p : i64 (- 16 kest)]
-                  [num : BigNum (stdlib.format.bn-from-u64 m)]
-                  [den : BigNum (stdlib.format.bn-from-u64 (cast 1 : u64))]
-                  (begin
-                    (if (>= e2 0)
-                      (set! num (stdlib.format.bn-shl-bits num e2))
-                      (set! den (stdlib.format.bn-shl-bits den (- 0 e2))))
-                    (if (>= p 0)
-                      (set! num (stdlib.format.bn-mul-pow10 num p))
-                      (set! den (stdlib.format.bn-mul-pow10 den (- 0 p))))
-                    (let
-                      [q : u64 (stdlib.format.bn-div-floor-u64 num den)]
-                      [two-num : BigNum (stdlib.format.bn-shl-bits num 1)]
-                      [t : BigNum
-                        (stdlib.format.bn-mul-u64
-                          den
-                          (+ (* (cast 2 : u64) q) (cast 1 : u64)))]
-                      [c : i64 (stdlib.format.bn-cmp two-num t)]
-                      (begin
-                        (set! d q)
-                        (if (> c 0)
-                          (set! d (+ q (cast 1 : u64)))
-                          (if (= c 0)
-                            (if (= (bit-and q (cast 1 : u64)) (cast 1 : u64))
-                              (set! d (+ q (cast 1 : u64)))
-                              unit)
-                            unit))
-                        (if (>= d 100000000000000000)
-                          (set! kest (+ kest 1))
-                          (if (< d 10000000000000000)
-                            (set! kest (- kest 1))
-                            (set! settled true)))
-                        (set! iters (+ iters 1)))))))
-              (let
-                [s0 : String (string.int->string (cast d : i64))]
-                [k : i64 (+ (- (string-length s0) 17) kest)]
-                (stdlib.format.ftoa-render
-                  neg
-                  (stdlib.format.ftoa-strip-zeros (cast d : i64))
-                  k)))))))))
+    [bits : u64 (__tl_float_to_bits value)]
+    [neg : bool (= (bit-and (shr bits 63) (cast 1 : u64)) (cast 1 : u64))]
+    [expf : u64 (bit-and (shr bits 52) (cast 0x7ff : u64))]
+    [frac : u64 (bit-and bits 0xfffffffffffff)]
+    (format-float-parts neg expf frac (cast 0x7ff : u64) 52 1023 17)))
+
+;: Render an f32 at source width (without widening through f64).
+(define (format-f32-core [value : f32]) : String
+  (let
+    [bits32 : u32 (__tl_float_to_bits value)]
+    [bits : u64 (cast bits32 : u64)]
+    [neg : bool (= (bit-and (shr bits 31) (cast 1 : u64)) (cast 1 : u64))]
+    [expf : u64 (bit-and (shr bits 23) (cast 0xff : u64))]
+    [frac : u64 (bit-and bits (cast 0x7fffff : u64))]
+    (format-float-parts neg expf frac (cast 0xff : u64) 23 127 9)))

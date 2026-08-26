@@ -150,6 +150,7 @@ mem_dest_rmw_trap_parity|tests/integration/mem_dest_rmw_trap_parity.tl|134|rows\
 
 gep_value_direct|tests/integration/gep_value_direct.tl|42|-|-|stdlib/io.tl stdlib/string.tl
 const_index_bounds|tests/integration/const_index_bounds.tl|42|-|-|stdlib/io.tl stdlib/array.tl
+range_merge_unsigned|tests/integration/range_merge_unsigned.tl|42|-|-|stdlib/io.tl stdlib/string.tl
 const_global_mask_unroll|tests/integration/const_global_mask_unroll.tl|0|-|-|stdlib/array.tl
 rbp_base_deref|tests/integration/rbp_base_deref.tl|42|-|-|stdlib/io.tl stdlib/array.tl
 rbp_sixth_csr|tests/integration/rbp_sixth_csr.tl|42|-|-|stdlib/io.tl
@@ -457,6 +458,6 @@ comptime_type_expr_worklist|tests/integration/comptime_type_expr_worklist.tl|42|
 str_cat_scoped_region|tests/integration/str_cat_scoped_region.tl|42|-|-|-
 tlci_native_index_folds|tests/integration/tlci_native_index_folds.tl|42|-|-|stdlib/fs.tl stdlib/string.tl stdlib/str_cat.tl
 tlci_native_wildcard_arms|tests/integration/tlci_native_wildcard_arms.tl|42|-|-|stdlib/eq.tl stdlib/hash.tl
-tlci_native_format_scanner|tests/integration/tlci_native_format_scanner.tl|42|scanner: 1 {} 2\ndone\n|-|stdlib/format.tl stdlib/io.tl stdlib/string.tl
+tlci_native_format_scanner|tests/integration/tlci_native_format_scanner.tl|42|sca: 1 {} 2\ndo\n|-|stdlib/format.tl stdlib/io.tl stdlib/string.tl
 inline_multiblock_call_carrying_clone|tests/integration/inline_multiblock_call_carrying_clone.tl|42|-|-|stdlib/array.tl
 inline_tail_call_boundary|tests/integration/inline_tail_call_boundary.tl|42|-|-|-

@@ -1162,6 +1162,7 @@
     1
     (compiler_driver_core.compiler-driver-write-buffer-result
       (compiler_driver_core.compiler-driver-state-profile state)
+      (compiler_driver_core.compiler-driver-state-typecheck state)
       result
       output-path)))
 
@@ -1354,7 +1355,8 @@
               (compiler_driver_core.compiler-driver-profile-finish-phase
                 (compiler_driver_core.compiler-driver-state-profile _state)
                 "write"))
-            (compiler_driver_core.compiler-driver-allocation-profile-snapshot!
+            (compiler_driver_core.compiler-driver-allocation-profile-snapshot-for-job!
+              (compiler_driver_core.compiler-driver-state-typecheck _state)
               "write")
             (cfg
               compile-profile
@@ -1389,7 +1391,8 @@
               (compiler_driver_core.compiler-driver-profile-finish-phase
                 (compiler_driver_core.compiler-driver-state-profile _state)
                 "write"))
-            (compiler_driver_core.compiler-driver-allocation-profile-snapshot!
+            (compiler_driver_core.compiler-driver-allocation-profile-snapshot-for-job!
+              (compiler_driver_core.compiler-driver-state-typecheck _state)
               "write")
             (cfg
               compile-profile
@@ -1407,7 +1410,8 @@
               (ResultCompileCliWindowsBatchEntry.Err write-status))))]
       [(compiler_windows_coff_core.ResultCompilerWindowsBatchArtifact.Err diag)
         (begin
-          (compiler_driver_core.compiler-driver-allocation-profile-snapshot!
+          (compiler_driver_core.compiler-driver-allocation-profile-snapshot-for-job!
+            (compiler_driver_core.compiler-driver-state-typecheck _state)
             "write-error")
           (cfg
             compile-profile
@@ -1936,7 +1940,8 @@
           unit
           (unsafe
             (arena.tl_arena_destroy previous-compat-arena)))
-        (compiler_driver_core.compiler-driver-allocation-profile-snapshot!
+        (compiler_driver_core.compiler-driver-allocation-profile-snapshot-for-job!
+          (compiler_driver_core.compiler-driver-state-typecheck state)
           "batch-steady")
         (allocation_profile.compiler-allocation-profile-control!
           2
@@ -2000,7 +2005,8 @@
       (tc_core.tc-agg-align-cache-storage-ensure-for-job! typecheck-state)
       (tc_core.tc-agg-regwords-cache-storage-ensure-for-job! typecheck-state)
       (tc_core.tc-lazy-import-stub-storage-ensure-for-job! typecheck-state)
-      (tc_core.tc-agg-layout-cache-table-storage-ensure!)
+      (tc_core.tc-agg-layout-cache-table-storage-ensure-for-job!
+        typecheck-state)
       (tc_core.macro-unqualified-import-cache-storage-ensure!
         (tc_core.tc-job-state-macro-state
           (compiler_driver_core.compiler-driver-state-typecheck state))))))
@@ -2133,7 +2139,8 @@
           unit
           (unsafe
             (arena.tl_arena_destroy previous-compat-arena)))
-        (compiler_driver_core.compiler-driver-allocation-profile-snapshot!
+        (compiler_driver_core.compiler-driver-allocation-profile-snapshot-for-job!
+          (compiler_driver_core.compiler-driver-state-typecheck state)
           "batch-steady")
         (allocation_profile.compiler-allocation-profile-control!
           2

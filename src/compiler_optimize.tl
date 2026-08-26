@@ -21540,6 +21540,40 @@
       ;; the rest of the function uses (Mov copies it through the arm above);
       ;; and a callee that returns the argument it was handed -- the internal
       ;; sret shape -- hands the same pointer back out.
+      ;; The value written INTO a descriptor's data slot is the buffer that
+      ;; slot names, so it is element storage from that point on -- the same
+      ;; fact the `DataSlot -> DataBuffer` load arm above records, read off the
+      ;; store instead of off a later load.
+      ;;
+      ;; Without this arm the fact is lost as soon as the load-CSE forwards the
+      ;; slot's store to its later load (T2-2/MF-1 makes the two keys agree by
+      ;; resolving the descriptor copy): the loaded buffer var disappears and
+      ;; the store address is derived from the raw `tl_alloc` result instead, so
+      ;; every write through it degrades from `element-only` to
+      ;; `header-or-unknown`, LICM stops hoisting the SOURCE descriptor's words
+      ;; out of the copy loop, and bce_version/copy_call no longer see the
+      ;; contiguous shape they turn into `tl_mem_copy_fwd`. Measured on the
+      ;; compiler itself: tlci-slice-bytes alone regressed +392,318,706 Ir of a
+      ;; +401,563,417 self-compile delta.
+      ;;
+      ;; Only the element-vs-header CLASS is read off `DataBuffer`; its object
+      ;; component is ignored by every store summary
+      ;; (opt-licm-store-summary-for-storeptr), so binding it here cannot make
+      ;; an aliasing claim about the object the slot belongs to.
+      [(ir.CompilerIrInstr.StorePtr ptr value _)
+        (match ptr
+          [(ir.CompilerIrValue.Var ptr-var)
+            (match (opt-licm-ptr-lookup invalid.ptrs ptr-var)
+              [(OptLicmPtrKind.DataSlot object)
+                (match value
+                  [(ir.CompilerIrValue.Var value-var)
+                    (opt-licm-store-state-bind-ptr
+                      invalid
+                      value-var
+                      (OptLicmPtrKind.DataBuffer object))]
+                  [_ invalid])]
+              [_ invalid])]
+          [_ invalid])]
       [(ir.CompilerIrInstr.Alloc dst _)
         (opt-licm-store-state-bind-ptr
           invalid
@@ -44847,13 +44881,15 @@
 
 ;; Replace dominated repeated pure scalar expressions with a copy from the first
 ;; dominating value; existing copy propagation and DCE remove the dead copies.
-(define (opt-gvn-blocks-with-context-and-call-memory
+(define (opt-gvn-blocks-with-context-and-call-memory-result
   [profile-state : profile_state.CompilerProfileMetrics]
   [type-segment-bases : i64]
   [context : OptCfgContext]
   [params : ir.CompilerIrParamList]
   [call-memory : opt_i64_i64_map.Map]
-  [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
+  [cells : OptGlobalCellSummary]
+  [frame : i64]
+  [blocks : ir.CompilerIrBlockList]) : OptLoadGvnResult
   (let
     [sources : opt_i64_i64_map.Map
       (opt-gvn-sources-blocks
@@ -44864,7 +44900,7 @@
       (opt-gvn-rewrite-dom type-segment-bases context table sources blocks)]
     [hs : OptLoadHeaderSet
       (opt-load-header-set-from-function type-segment-bases params gvn)]
-    (opt-load-gvn-blocks-with-context
+    (opt-load-gvn-blocks-with-context-result
       profile-state
       type-segment-bases
       context
@@ -44872,7 +44908,28 @@
       hs
       params
       call-memory
+      cells
+      frame
       gvn)))
+
+(define (opt-gvn-blocks-with-context-and-call-memory
+  [profile-state : profile_state.CompilerProfileMetrics]
+  [type-segment-bases : i64]
+  [context : OptCfgContext]
+  [params : ir.CompilerIrParamList]
+  [call-memory : opt_i64_i64_map.Map]
+  [cells : OptGlobalCellSummary]
+  [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
+  (match (opt-gvn-blocks-with-context-and-call-memory-result
+    profile-state
+    type-segment-bases
+    context
+    params
+    call-memory
+    cells
+    0
+    blocks)
+    [(OptLoadGvnResult.Result out-blocks _) out-blocks]))
 
 (define (opt-gvn-blocks
   [type-segment-bases : i64]
@@ -44885,6 +44942,7 @@
     (opt-cfg-context-build blocks)
     params
     (opt_i64_i64_map.with-capacity 1)
+    (opt-global-cell-summary-empty)
     blocks))
 
 ;; --- dominated redundant bounds-check elimination ----------------------------
@@ -56072,6 +56130,10 @@
     [index : i64 0]
     [sources : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 1)]
     [call-memory : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 1)]
+    [cells : OptGlobalCellSummary (opt-load-cse-no-cells-view)]
+    ;; One empty rename table for the whole walk: this pipeline records no
+    ;; renames, and building one per instruction is pure allocation.
+    [no-canon : (__tl_dyn-array i64) (opt-load-canon-none)]
     [load-state : OptLoadCseState state]
     [copy-state : OptCopyEnv (OptCopyEnv.Nil)]
     [word-state : OptExprTable (OptExprTable.Nil)]
@@ -56090,10 +56152,12 @@
                 word-rewritten)]
             (match (opt-load-cse-dispatch
               type-segment-bases
+              no-canon
               hs
               false
               sources
               call-memory
+              cells
               load-state
               load-input)
               [(OptLoadCseResult.Result next-load loaded)
@@ -91171,6 +91235,25 @@
                       [ssa-blocks : ir.CompilerIrBlockList
                         (opt-function-blocks global-cell)]
                       [_t-gvn : i64 (cfg compile-profile (profile.now-ms) 0)]
+                      ;; MF-5 (i) promotes repeated scalar global-cell reads to
+                      ;; one materialized Mov, so this pass mints vars and hands
+                      ;; back the frame every pass below must size its per-var
+                      ;; arrays with.
+                      [gvn-result : OptLoadGvnResult
+                        (if run-heavy?
+                          (opt-gvn-blocks-with-context-and-call-memory-result
+                            load-cse-profile
+                            type-segment-bases
+                            ssa-context
+                            params
+                            summaries.call-memory
+                            summaries.global-cell
+                            ssa-frame
+                            ssa-blocks)
+                          (OptLoadGvnResult.Result ssa-blocks ssa-frame))]
+                      [gvn-frame : i64
+                        (match gvn-result
+                          [(OptLoadGvnResult.Result _ f) f])]
                       [gvn : ir.CompilerIrBlockList
                         (compiler-opt-debug-observe-blocks
                           type-segment-bases
@@ -91178,16 +91261,9 @@
                           name
                           params
                           ret-ty
-                          ssa-frame
-                          (if run-heavy?
-                            (opt-gvn-blocks-with-context-and-call-memory
-                              load-cse-profile
-                              type-segment-bases
-                              ssa-context
-                              params
-                              summaries.call-memory
-                              ssa-blocks)
-                            ssa-blocks))]
+                          gvn-frame
+                          (match gvn-result
+                            [(OptLoadGvnResult.Result b _) b]))]
                       [_p-gvn : unit
                         (cfg
                           compile-profile
@@ -91224,10 +91300,10 @@
                             type-segment-bases
                             ssa-context
                             params
-                            ssa-frame
+                            gvn-frame
                             summaries.global-cell.nonneg
                             gvn)
-                          (OptBoundsDomResult.Result gvn ssa-frame))]
+                          (OptBoundsDomResult.Result gvn gvn-frame))]
                       ;; The range merge mints the two casts its unsigned
                       ;; compare reads, so everything below sizes its per-var
                       ;; arrays off THIS frame, not the one SSA construction
@@ -91463,7 +91539,7 @@
                       ;; shapes the merged blocks.
                       [cfg-result : OptBlockCtxResult
                         (opt-cfg-merge-blocks-with-context-result
-                          ssa-frame
+                          gvn-frame
                           (opt-cfg-simplify-blocks-with-context-result
                             (OptBlockCtxResult.Result
                               thread-branch
@@ -105002,7 +105078,8 @@
 ;; --- direct-call memory summaries for load GVN ------------------------------
 ;;
 ;; Packed summary layout (kept nonnegative):
-;;   bits 0..59  writes through that checked-reference parameter index
+;;   bits 0..53  writes through that checked-reference parameter index
+;;   bits 54..59 the alias CLASSES its element writes store (MF-4 ii)
 ;;   bit 60      writes direct/reachable global storage
 ;;   bit 61      unknown memory effects
 ;;   bit 62      writes only into descriptor ELEMENT storage
@@ -105013,8 +105090,59 @@
 ;; recursive cycle. The OPTIMISTIC phase then resolves exactly what the first
 ;; one gave up on, by ascending Kleene iteration from the lattice bottom --
 ;; see opt-call-memory-optimistic-fixed.
+;; Parameter-write bits 0..53. The six bits above them are the element-write
+;; class set (opt-call-memory-element-class-bit); a function with more
+;; checked-reference parameters than this summarizes its writes through the
+;; extra ones as `unknown`, exactly as it always did past the old limit.
 (define (opt-call-memory-param-limit) : i64
-  60)
+  54)
+
+;; MF-4 (ii). WHICH typed words a callee's element writes can land on, as a
+;; one-hot SET over opt-load-type-alias-class codes 1..6, so the whole-program
+;; join stays plain `bit-or`. An element write whose stored type has no class
+;; (class 0: a byte store, a CopyBytes, an unmodelled type) sets ALL six bits,
+;; so "the callee writes exactly one known class" is spelled "exactly one bit
+;; set" and the unknown case is absorbed without a seventh flag.
+;;
+;; The element BIT already says a callee's writes all land in data buffers; this
+;; field says which words of those buffers, which is what lets the typed-word
+;; rule (opt-load-entry-survives-store-location?) keep a caller's `Field`/`Raw`
+;; entries of a DIFFERENT class across the call. Before it, an element-only
+;; callee was summarized as a byte store and the rule proved nothing.
+(define (opt-call-memory-element-class-shift) : i64
+  53)
+
+(define (opt-call-memory-element-class-mask) : i64
+  (* (- (shl 1 6) 1) (shl 1 (+ (opt-call-memory-element-class-shift) 1))))
+
+(define (opt-call-memory-element-class-bit [class : i64]) : i64
+  (if (and (>= class 1) (<= class 6))
+    (shl 1 (+ (opt-call-memory-element-class-shift) class))
+    (opt-call-memory-element-class-mask)))
+
+;; The single class every element write of this callee stores, or 0 for "more
+;; than one class, or an unmodelled one". A summary with no element writes at
+;; all also answers 0; its readers gate on the element bit first.
+(define (opt-call-memory-summary-element-class [summary : i64]) : i64
+  (let
+    [bits : i64 (bit-and summary (opt-call-memory-element-class-mask))]
+    [class : i64 1]
+    [found : i64 0]
+    (begin
+      (while (<= class 6)
+        (begin
+          (if (not
+            (= (bit-and bits (opt-call-memory-element-class-bit class)) 0))
+            (set!
+              found
+              (if (= found 0)
+                class
+                (- 0 1)))
+            unit)
+          (set! class (+ class 1))))
+      (if (< found 0)
+        0
+        found))))
 
 (define (opt-call-memory-global-bit) : i64
   (shl 1 60))
@@ -105059,7 +105187,7 @@
   (not (= (bit-and summary (opt-call-memory-element-bit)) 0)))
 
 (define (opt-call-memory-summary-has-param-writes? [summary : i64]) : bool
-  (not (= (bit-and summary (- (opt-call-memory-global-bit) 1)) 0)))
+  (not (= (bit-and summary (- (shl 1 (opt-call-memory-param-limit)) 1)) 0)))
 
 (define (opt-call-memory-summary-add-unknown [summary : i64]) : i64
   (bit-or summary (opt-call-memory-unknown-bit)))
@@ -105070,14 +105198,24 @@
 (define (opt-call-memory-summary-add-element [summary : i64]) : i64
   (bit-or summary (opt-call-memory-element-bit)))
 
+;; One element write of alias class `class`, joined into the class set.
+(define (opt-call-memory-summary-add-element-class
+  [summary : i64]
+  [class : i64]) : i64
+  (bit-or
+    (opt-call-memory-summary-add-element summary)
+    (opt-call-memory-element-class-bit class)))
+
 ;; The bits a call site copies out of its callee's summary unchanged: verdicts
 ;; about storage the caller has no argument for and therefore cannot refine.
 ;; The parameter bits are NOT here -- those are mapped through the arguments by
 ;; opt-call-memory-map-callee-param-writes.
 (define (opt-call-memory-carried-mask) : i64
   (bit-or
-    (opt-call-memory-element-bit)
-    (bit-or (opt-call-memory-global-bit) (opt-call-memory-unknown-bit))))
+    (opt-call-memory-element-class-mask)
+    (bit-or
+      (opt-call-memory-element-bit)
+      (bit-or (opt-call-memory-global-bit) (opt-call-memory-unknown-bit)))))
 
 (define (opt-call-memory-function-set
   [functions : ir.CompilerIrFunctionSeq]
@@ -105542,17 +105680,19 @@
   [params : ir.CompilerIrParamList]
   [roots : OptLicmRootEnv]
   [elements : opt_i64_i64_map.Map]
+  [class : i64]
   [ptr : ir.CompilerIrValue]) : i64
   (let
     [root : OptLicmRoot (opt-licm-root-of-value roots ptr)]
     (match root
       [(OptLicmRoot.NoRoot)
         (if (opt-call-memory-element-ptr? (& elements) ptr)
-          (opt-call-memory-summary-add-element summary)
+          (opt-call-memory-summary-add-element-class summary class)
           (opt-call-memory-summary-add-unknown summary))]
       [_ (opt-call-memory-summary-add-root-write summary params root)])))
 
 (define (opt-call-memory-candidate-instr
+  [type-segment-bases : i64]
   [candidate : OptCallMemoryCandidate]
   [summaries : opt_i64_i64_map.Map]
   [function-set : opt_i64_i64_map.Map]
@@ -105564,13 +105704,18 @@
     [(OptCallMemoryCandidate.Unresolved) candidate]
     [(OptCallMemoryCandidate.Known summary)
       (match instr
-        [(ir.CompilerIrInstr.StorePtr ptr _ _)
+        ;; A StorePtr carries its stored TYPE, so an element write of it is
+        ;; recorded with that type's alias class. CopyBytes has none -- it is a
+        ;; byte copy -- so it records class 0, which sets the whole class set
+        ;; and proves nothing, exactly the pre-MF-4 verdict.
+        [(ir.CompilerIrInstr.StorePtr ptr _ ty)
           (OptCallMemoryCandidate.Known
             (opt-call-memory-summary-add-write
               summary
               params
               roots
               elements
+              (opt-load-type-alias-class type-segment-bases ty)
               ptr))]
         [(ir.CompilerIrInstr.CopyBytes dst _ _)
           (OptCallMemoryCandidate.Known
@@ -105579,6 +105724,7 @@
               params
               roots
               elements
+              0
               dst))]
         [(ir.CompilerIrInstr.Store _ _ _)
           (OptCallMemoryCandidate.Known
@@ -105612,6 +105758,7 @@
                 (opt-call-memory-summary-add-unknown summary))])])]))
 
 (define (opt-call-memory-candidate-instrs
+  [type-segment-bases : i64]
   [candidate : OptCallMemoryCandidate]
   [summaries : opt_i64_i64_map.Map]
   [function-set : opt_i64_i64_map.Map]
@@ -105623,7 +105770,9 @@
   (if (>= index (ir.compiler-ir-instr-seq-count instrs))
     candidate
     (opt-call-memory-candidate-instrs
+      type-segment-bases
       (opt-call-memory-candidate-instr
+        type-segment-bases
         candidate
         summaries
         function-set
@@ -105640,6 +105789,7 @@
       (+ index 1))))
 
 (define (opt-call-memory-candidate-blocks
+  [type-segment-bases : i64]
   [candidate : OptCallMemoryCandidate]
   [summaries : opt_i64_i64_map.Map]
   [function-set : opt_i64_i64_map.Map]
@@ -105656,7 +105806,9 @@
           (match block
             [(ir.CompilerIrBlock.Block _ instrs)
               (opt-call-memory-candidate-blocks
+                type-segment-bases
                 (opt-call-memory-candidate-instrs
+                  type-segment-bases
                   candidate
                   summaries
                   function-set
@@ -105673,6 +105825,7 @@
                 (__tl-box-place rest))])]
         [(ir.CompilerIrBlockList.Array seq)
           (opt-call-memory-candidate-blocks
+            type-segment-bases
             candidate
             summaries
             function-set
@@ -105771,6 +105924,7 @@
     [(ir.CompilerIrFunction.Function _ params _ _ blocks)
       (if (not (opt-call-memory-blocks-need-roots? summaries blocks))
         (opt-call-memory-candidate-blocks
+          type-segment-bases
           (OptCallMemoryCandidate.Known 0)
           summaries
           function-set
@@ -105782,6 +105936,7 @@
           [sources : opt_i64_i64_map.Map
             (opt-call-memory-sources params blocks)]
           (opt-call-memory-candidate-blocks
+            type-segment-bases
             (OptCallMemoryCandidate.Known 0)
             summaries
             function-set
@@ -106601,6 +106756,31 @@
 ;; peephole_lines +1,863,046 Ir and gvn_table +260,613 Ir against the same tree
 ;; with wide constants refused. The imm32 rule is therefore a PROFITABILITY
 ;; rule, not a soundness one, and it stays.
+;;
+;; RE-TESTED (packet T2-2, MF-5 ii), which proposed admitting any-width literals
+;; and keeping this rule "only for operand folding", on the premise that the
+;; allocator would rematerialize a wide immediate at its uses instead of homing
+;; it in a frame slot (benchmarks/peephole_lines compares `pl-none` =
+;; 4611686018427387904 against `0x40(%rsp)`). It does not: this backend's
+;; allocator has no rematerialization of constant definitions, which is the same
+;; allocator capability target/research/patterns/memory-facts.md names as the
+;; prerequisite for the loop-carry packets. Three variants were built and
+;; measured against the same tree, one cachegrind run each:
+;;   (a) wide literals admitted at every `Mov` SOURCE, imm32 kept at the operand
+;;       positions: peephole_lines -507,918 and cfg_domloops -752,835 against
+;;       gvn_table +1,116,250, intern_table +802,254 and graph_dijkstra
+;;       +1,599,899 -- net +2.25M;
+;;   (b) wide literals admitted only at `Mov` sources whose destination feeds a
+;;       COMPARISON, the one operand position that needs a register whatever the
+;;       width: peephole_lines +461,425 and graph_dijkstra +1,599,899, every
+;;       other row unmoved -- `gd-infinity` is the same 4611686018427387904
+;;       constant and its compare sits in the hot loop, so it pays back more
+;;       than `pl-none` saves;
+;;   (c) (b) restricted to literals that do not fit imm32: byte-identical to
+;;       (b), because the early rewrite already substitutes the imm32 ones.
+;; No variant is a net win and each moves a row by more than the 0.05% this
+;; tree gates on, so the rule stays until the allocator can rematerialize a
+;; `movabs`.
 (define (opt-const-globals-imm32-fits? [n : i64]) : bool
   (and (>= n (- 0 2147483648)) (<= n 2147483647)))
 
@@ -115882,6 +116062,23 @@
         6)]
     [_ 0]))
 
+;; A static type that stands for an alias class, for a caller that knows the
+;; class but has no instruction to read a type off (a summarized callee's
+;; element writes, MF-4 ii). Only the CLASS of the returned type is ever
+;; consulted -- opt-load-entry-survives-store-location? compares element stores
+;; against entry types through opt-load-alias-classes-distinct? alone -- so any
+;; representative of the class serves, and class 0 maps to the byte type that
+;; proves nothing.
+(define (opt-load-alias-class-witness-type [class : i64]) : ast.AstType
+  (cond
+    [(= class 1) (ast.AstType.I64)]
+    [(= class 2) (ast.AstType.I32)]
+    [(= class 3) (ast.AstType.I16)]
+    [(= class 4) (ast.AstType.F64)]
+    [(= class 5) (ast.AstType.F32)]
+    [(= class 6) (ast.AstType.String)]
+    [else (ast.AstType.U8)]))
+
 ;; Two static types that can never name one word: both classes known (non-zero)
 ;; and different. Symmetric, and false whenever either side is the byte/unknown
 ;; class, so a u8 store or an unmodelled store still kills everything it did
@@ -116539,11 +116736,108 @@
         (opt-load-kinds-clone profile-state kinds)
         sources)]))
 
+;; --- copy-canonical key vars (MF-1) -----------------------------------------
+;;
+;; Load keys name their base (and, for a scaled element address, their index) by
+;; VAR ID, so two names for one value key differently. The pass MAKES such pairs
+;; itself: a redundant load is rewritten to `Mov dst <- earlier`, and every
+;; address derived from `dst` afterwards keys on `dst` while the table entry
+;; recorded for the same word keys on `earlier`. The inliner's parameter copies
+;; (`%20 = mov %85` feeding an index) are the same shape arriving in the input.
+;; Neither pair ever matched, so the second element load of an inlined callee
+;; was kept even though the first one's value was cached.
+;;
+;; `canon` is that missing rename: var id -> 1 + the var it is a provable copy
+;; of, 0 for "no binding", indexed by the pre-pass frame. A binding is recorded
+;; only for a `Mov dst <- Var src` whose BOTH vars are single-source
+;; (opt-gvn-stable-var?), which is the gate the cross-block pass already puts on
+;; everything it caches: neither var is ever redefined anywhere in the function,
+;; so `dst` and `src` denote one value at every program point either is live,
+;; and no reset (loop header, memory write, block join) can make the rename
+;; stale. That is why the table lives outside OptLoadCseState and is never
+;; intersected: it is an SSA fact about names, not a fact about memory.
+;;
+;; The block-local pipeline passes a zero-length table (opt-load-canon-none),
+;; where every lookup is the identity and nothing changes.
+(define (opt-load-canon-none) : (__tl_dyn-array i64)
+  (array.make-array i64 0))
+
+;; The empty program facts the BLOCK-LOCAL pipelines hand the shared dispatch:
+;; they know no global-cell summary, and building one costs three maps and an
+;; array. Both readers below are read-only (word-cell, the mod-ref table and the
+;; type/address-taken indexes), so one process-wide value serves every block --
+;; the same shape compiler-opt-owned-state uses for the optimizer's other
+;; process-global aggregate.
+(define opt-load-cse-no-cells : OptGlobalCellSummary
+  (opt-global-cell-summary-empty))
+
+;; Shallow shared view, exactly as compiler-opt-owned-state-shared-view takes
+;; one of the optimizer's other process-global aggregate: the block-local
+;; readers only ever LOOK at this value (word-cell, the mod-ref table, the type
+;; and address-taken indexes), so one instance serves every block instead of
+;; five maps and an array per block.
+(define (opt-load-cse-no-cells-view) : OptGlobalCellSummary
+  (cfg
+    stage0-seed-bootstrap
+    opt-load-cse-no-cells
+    (unsafe
+      (ptr-read (ptr-addr-of opt-load-cse-no-cells)))))
+
+(define (opt-load-canon-var [canon : (__tl_dyn-array i64)] [var : i64]) : i64
+  (if (or (< var 0) (>= var (array-length canon)))
+    var
+    (let
+      [bound : i64 (array-ref canon var)]
+      (if (<= bound 0)
+        var
+        (- bound 1)))))
+
+;; Bind dst -> canonical(src). `src` is defined before `dst` in the walk, so its
+;; own binding is already final and one hop resolves the whole chain; a
+;; self-binding is refused so no lookup can loop.
+(define (opt-load-canon-bind!
+  [canon : (__tl_dyn-array i64)]
+  [dst : i64]
+  [src : i64]) : unit
+  (if (or (< dst 0) (>= dst (array-length canon)))
+    unit
+    (let
+      [target : i64 (opt-load-canon-var canon src)]
+      (if (= target dst)
+        unit
+        (begin
+          (set! (array-ref canon dst) (+ target 1))
+          unit)))))
+
+;; Record the rename a `Mov` establishes. Both the load-CSE's own
+;; `Mov dst <- earlier` output and an input copy take this path; a Mov of a
+;; literal, of a `Global` operand or of a multi-source var records nothing.
+;; Called from the pointer-kind transfer's Mov arm, which is the one place that
+;; already has this instruction destructured, so an ordinary instruction pays
+;; nothing for the rename at all.
+(define (opt-load-canon-note-mov!
+  [canon : (__tl_dyn-array i64)]
+  [sources : opt_i64_i64_map.Map]
+  [dst : i64]
+  [src : ir.CompilerIrValue]) : unit
+  (if (= (array-length canon) 0)
+    unit
+    (match src
+      [(ir.CompilerIrValue.Var source-var)
+        (if (and
+          (opt-gvn-stable-var? sources dst)
+          (opt-gvn-stable-var? sources source-var))
+          (opt-load-canon-bind! canon dst source-var)
+          unit)]
+      [_ unit])))
+
 ;; Kind transfer for one instruction: redefinitions first (own binding + the
 ;; base-reference sweep), then the deriving arms.
 (define (opt-load-kinds-step
   [profile-state : profile_state.CompilerProfileMetrics]
   [type-segment-bases : i64]
+  [canon : (__tl_dyn-array i64)]
+  [sources : opt_i64_i64_map.Map]
   [kinds : OptLoadPtrKinds]
   [hs : OptLoadHeaderSet]
   [instr : ir.CompilerIrInstr]) : OptLoadPtrKinds
@@ -116569,8 +116863,8 @@
                       dst
                       (opt-load-loc-scaled-field-checked
                         profile-state
-                        bvar
-                        index-var
+                        (opt-load-canon-var canon bvar)
+                        (opt-load-canon-var canon index-var)
                         (opt-load-loc-type-size type-segment-bases ty)
                         false))]
                   [_
@@ -116607,7 +116901,7 @@
                         (opt-load-loc-scaled-field-checked
                           profile-state
                           b0
-                          index-var
+                          (opt-load-canon-var canon index-var)
                           (opt-load-loc-type-size type-segment-bases ty)
                           h0))
                       invalidated)]
@@ -116619,17 +116913,21 @@
                   [(ir.CompilerIrValue.I64 k)
                     (let
                       [sz : i64 (opt-load-loc-type-size type-segment-bases ty)]
-                      (if (and (> sz 0) (not (= bvar dst)))
+                      [canon-base : i64 (opt-load-canon-var canon bvar)]
+                      (if (and
+                        (> sz 0)
+                        (not (= bvar dst))
+                        (not (= canon-base dst)))
                         (opt-load-kinds-bind
                           profile-state
                           invalidated
                           dst
                           (opt-load-loc-field-checked
                             profile-state
-                            bvar
+                            canon-base
                             (* k sz)
                             sz
-                            (opt-load-header-var? hs bvar)))
+                            (opt-load-header-var? hs canon-base)))
                         invalidated))]
                   [_ invalidated])]
               [(OptLoadLocScaledField _ _ _ _)
@@ -116690,29 +116988,35 @@
               invalidated)]
           [_ invalidated])]
       [(ir.CompilerIrInstr.Mov dst src _)
-        (match src
-          [(ir.CompilerIrValue.Var s)
-            (match (opt-load-kinds-lookup invalidated s)
-              [(OptLoadLocUnknown) invalidated]
-              [(OptLoadLocElement)
-                (opt-load-kinds-bind
-                  profile-state
-                  invalidated
-                  dst
-                  (OptLoadLocElement))]
-              [(OptLoadLocField base off width header?)
-                (opt-load-kinds-bind
-                  profile-state
-                  invalidated
-                  dst
-                  (OptLoadLocField base off width header?))]
-              [(OptLoadLocScaledField base index width header?)
-                (opt-load-kinds-bind
-                  profile-state
-                  invalidated
-                  dst
-                  (OptLoadLocScaledField base index width header?))])]
-          [_ invalidated])]
+        ;; MF-1: the rename this copy establishes is visible to every later key
+        ;; in the walk. RPO order puts the copy's definition before every block
+        ;; it dominates, and a binding is only ever consulted for a var an
+        ;; instruction USES, so the copy is in scope wherever it is applied.
+        (begin
+          (opt-load-canon-note-mov! canon sources dst src)
+          (match src
+            [(ir.CompilerIrValue.Var s)
+              (match (opt-load-kinds-lookup invalidated s)
+                [(OptLoadLocUnknown) invalidated]
+                [(OptLoadLocElement)
+                  (opt-load-kinds-bind
+                    profile-state
+                    invalidated
+                    dst
+                    (OptLoadLocElement))]
+                [(OptLoadLocField base off width header?)
+                  (opt-load-kinds-bind
+                    profile-state
+                    invalidated
+                    dst
+                    (OptLoadLocField base off width header?))]
+                [(OptLoadLocScaledField base index width header?)
+                  (opt-load-kinds-bind
+                    profile-state
+                    invalidated
+                    dst
+                    (OptLoadLocScaledField base index width header?))])]
+            [_ invalidated]))]
       [_ invalidated])))
 
 ;; Load-GVN treats alias roots as pointer VALUE provenance, not as cached
@@ -117195,6 +117499,7 @@
 ;; Element/ScaledField vars never carry a base binding (a Load and a var-offset
 ;; Gep both drop their dst from the map), so those arms cannot disagree.
 (define (opt-load-key-for-address
+  [canon : (__tl_dyn-array i64)]
   [kinds : OptLoadPtrKinds]
   [bases : OptLoadGlobalBases]
   [addr : ir.CompilerIrValue]
@@ -117202,15 +117507,28 @@
   (match addr
     [(ir.CompilerIrValue.Var p)
       (match (opt-load-kinds-lookup kinds p)
+        ;; MF-1: a kind bound before its base became a known copy still names
+        ;; the copy, so the key resolves base and index here as well as at bind
+        ;; time. Both ends of a comparison go through this one function, so a
+        ;; rename can only ever make two keys for one word agree.
         [(OptLoadLocField base off _ header?)
           (if header?
-            (OptLoadKey.Field base off ty header?)
+            (OptLoadKey.Field (opt-load-canon-var canon base) off ty header?)
             (match (opt-load-global-bases-lookup bases p)
               [(OptMaybeGlobalBase.Some global goff value-base?)
                 (OptLoadKey.GlobalField global goff ty value-base?)]
-              [(OptMaybeGlobalBase.No) (OptLoadKey.Field base off ty header?)]))]
+              [(OptMaybeGlobalBase.No)
+                (OptLoadKey.Field
+                  (opt-load-canon-var canon base)
+                  off
+                  ty
+                  header?)]))]
         [(OptLoadLocScaledField base index _ header?)
-          (OptLoadKey.ScaledField base index ty header?)]
+          (OptLoadKey.ScaledField
+            (opt-load-canon-var canon base)
+            (opt-load-canon-var canon index)
+            ty
+            header?)]
         [(OptLoadLocElement) (OptLoadKey.Raw addr ty true)]
         [(OptLoadLocUnknown)
           (match (opt-load-global-bases-lookup bases p)
@@ -117955,6 +118273,9 @@
       [pending : OptDeadStoreSet
         (opt-dead-store-set-with-capacity store-capacity)]
       [kinds : OptLoadPtrKinds initial-kinds]
+      ;; This walk records no renames; one empty table serves the whole loop.
+      [no-canon : (__tl_dyn-array i64) (opt-load-canon-none)]
+      [no-sources : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 1)]
       [index : i64 0]
       (begin
         (while (< index count)
@@ -117976,6 +118297,8 @@
                 (opt-load-kinds-step
                   profile-state
                   type-segment-bases
+                  no-canon
+                  no-sources
                   kinds
                   hs
                   instr))
@@ -118079,6 +118402,8 @@
 ;; effects only), so it is also the only one that carries global bases forward.
 (define (opt-load-cse-state-step-other
   [type-segment-bases : i64]
+  [canon : (__tl_dyn-array i64)]
+  [sources : opt_i64_i64_map.Map]
   [hs : OptLoadHeaderSet]
   [state : OptLoadCseState]
   [instr : ir.CompilerIrInstr]) : OptLoadCseState
@@ -118104,7 +118429,14 @@
           (match (opt-instr-def-var instr)
             [(option_i64.Some dst) (opt-load-table-invalidate-var table dst)]
             [(option_i64.None) table])
-          (opt-load-kinds-step profile-state type-segment-bases kinds hs instr)
+          (opt-load-kinds-step
+            profile-state
+            type-segment-bases
+            canon
+            sources
+            kinds
+            hs
+            instr)
           table-cap
           next-epoch
           (opt-load-global-bases-step type-segment-bases bases instr)
@@ -118119,6 +118451,8 @@
 ;; a global slot -- so they clear with the table.
 (define (opt-load-cse-state-clear-for-memory
   [type-segment-bases : i64]
+  [canon : (__tl_dyn-array i64)]
+  [sources : opt_i64_i64_map.Map]
   [hs : OptLoadHeaderSet]
   [state : OptLoadCseState]
   [instr : ir.CompilerIrInstr]) : OptLoadCseState
@@ -118135,7 +118469,14 @@
             instr
             next-epoch)
           (OptLoadTable.Nil)
-          (opt-load-kinds-step profile-state type-segment-bases kinds hs instr)
+          (opt-load-kinds-step
+            profile-state
+            type-segment-bases
+            canon
+            sources
+            kinds
+            hs
+            instr)
           table-cap
           next-epoch
           (opt-load-global-bases-clear bases)
@@ -118153,6 +118494,8 @@
 ;; key the walk re-proved, exactly as before this arm existed.
 (define (opt-load-cse-state-global-store
   [type-segment-bases : i64]
+  [canon : (__tl_dyn-array i64)]
+  [sources : opt_i64_i64_map.Map]
   [hs : OptLoadHeaderSet]
   [state : OptLoadCseState]
   [global : i64]
@@ -118177,7 +118520,14 @@
             instr
             next-epoch)
           (opt-load-table-filter-global-cell-store table global)
-          (opt-load-kinds-step profile-state type-segment-bases kinds hs instr)
+          (opt-load-kinds-step
+            profile-state
+            type-segment-bases
+            canon
+            sources
+            kinds
+            hs
+            instr)
           table-cap
           next-epoch
           (opt-load-global-bases-clear bases)
@@ -118240,37 +118590,141 @@
 ;; WHICH caller object owns the written buffer, so no root-disjointness or
 ;; fresh-allocation-epoch claim may be made on its behalf, and
 ;; opt-alias-store-root-disjoint? proves nothing against NoRoot. Raw addresses,
-;; ScaledField element addresses, non-header Field entries and every
-;; GlobalField entry are dropped: each of those can name storage a data buffer
-;; covers (a global's own storage can be the buffer of a slice built over it).
+;; ScaledField element addresses and non-header Field entries are dropped
+;; whenever the typed-word rule cannot separate them: each of those can name
+;; storage a data buffer covers. (A named cell word is not one of them: a
+;; `GlobalField` key addresses static-segment storage no payload allocation
+;; overlaps, which is the global-cell arm of
+;; opt-load-entry-survives-store-location?.)
+;;
+;; MF-4 (ii): `class` is the callee's element-write class set collapsed to a
+;; single alias class, or 0 when its element writes span more than one class or
+;; an unmodelled one. With a known class the summarized callee is spelled as a
+;; store of that class instead of a byte store, so the typed-word rule keeps the
+;; caller's entries of every OTHER class -- the gvn scan_ints shape, where an
+;; i64 element setter cannot have written the `(__tl_dyn-array i64)` handle word
+;; the caller cached. Class 0 reproduces the byte-store verdict exactly.
 (define (opt-load-table-filter-element-call
   [type-segment-bases : i64]
   [table : OptLoadTable]
-  [facts : OptAliasFacts]) : OptLoadTable
+  [facts : OptAliasFacts]
+  [class : i64]) : OptLoadTable
   (opt-load-table-filter-store
     type-segment-bases
     table
     facts
     (OptAliasRoot.NoRoot)
-    ;; A summarized callee has no single stored type, so the element class
-    ;; carries a byte type: the typed-word rule proves nothing here and the
-    ;; verdict is exactly the pre-existing one.
-    (OptLoadStoreElement (ast.AstType.U8))))
+    (OptLoadStoreElement (opt-load-alias-class-witness-type class))))
+
+;; MF-4 (i). The cells a DIRECT callee may `set!`, as a table filter.
+;;
+;; `row` is the callee's OptGlobalModRef row: the packed set of global cells it
+;; and everything it transitively calls may write with a `CompilerIrInstr.Store`
+;; (opt-global-mod-ref-call-mask; an indirect call anywhere below it contributes
+;; "any cell", and a program with no table answers "any cell" to every query).
+;; The caller has already refused the "any cell" answer, so what is left is a
+;; finite set of NAMED cell writes -- and one named cell write is exactly the
+;; instruction `opt-load-entry-survives-global-cell-store?` decides, so the
+;; callee's whole cell-write set is the conjunction of that verdict over the row.
+;;
+;; Concretely an entry survives when it is a `GlobalField` on a cell OUTSIDE the
+;; row: distinct cells never overlap, and for a descriptor-valued cell the key
+;; names the object the cell POINTS AT, which a cell write leaves untouched
+;; either way. That is the same allocation-layer argument the in-function
+;; `Store G` arm makes (opt-load-entry-survives-global-cell-store?), one call
+;; level up.
+;;
+;; The other entry classes that argument ALSO clears -- a header-typed `Field`,
+;; an element-typed `Raw` -- are deliberately NOT kept here. They are sound to
+;; keep; they are not profitable. A descriptor word or a data-buffer word kept
+;; across a call becomes a value that must survive the call, and the only
+;; registers that do are the five callee-saved GP registers this backend plans
+;; against; the same trade lost 2,340,374 Ir on benchmarks/gvn_table when the
+;; loop-header carry admitted call-bearing loops
+;; (opt-load-gvn-loop-safe-instr?), and it loses here for the same reason.
+;; MEASURED on this packet: admitting them moved gvn_table 912,887,915 ->
+;; 916,608,471 (+3,720,556, +0.41%) with every other row unchanged, so the
+;; filter keeps exactly the cell words the packet names. A named CELL word is
+;; different in kind: it is one rip-relative load, not a chain, and the value it
+;; replaces was going to be re-read from the same static address anyway.
+;;
+;; This filter answers for the `Store` half of the callee's writes only. Its
+;; other write classes are filtered by the two filters that already existed: an
+;; element-only callee by opt-load-table-filter-element-call, a parameter-rooted
+;; write by opt-load-table-filter-call-writes. A callee whose summary carries the
+;; UNKNOWN bit is never handed to any of them -- an unknown write can land on a
+;; cell without a `Store`, which no row records.
+(define (opt-load-entry-survives-cell-writes?
+  [index : opt_i64_i64_map.Map]
+  [row : i64]
+  [entry : OptLoadEntry]) : bool
+  (match (opt-load-entry-key entry)
+    [(OptLoadKey.GlobalField entry-global _ _ _)
+      (not (opt-global-mod-ref-mask-may-write? index row entry-global))]
+    [(OptLoadKey.Field _ _ _ _) false]
+    [(OptLoadKey.ScaledField _ _ _ _) false]
+    [(OptLoadKey.Raw _ _ _) false]))
+
+(define (opt-load-table-filter-cell-writes
+  [index : opt_i64_i64_map.Map]
+  [row : i64]
+  [table : OptLoadTable]) : OptLoadTable
+  (match table
+    [(OptLoadTable.Nil) (OptLoadTable.Nil)]
+    [(OptLoadTable.Cons entry rest)
+      (let
+        [tail : OptLoadTable
+          (opt-load-table-filter-cell-writes index row (__tl-box-place rest))]
+        (if (opt-load-entry-survives-cell-writes? index row entry)
+          (OptLoadTable.Cons entry (box tail))
+          tail))]))
+
+;; MF-4 (i), the base-map half. A binding says "var v addresses [g]+off": with
+;; `value-base?` it is based at the pointer STORED in g, so it stays true
+;; exactly while g's cell is untouched; without it, at g's own link-time
+;; address, which nothing can change at all. Both are kept here for a g the
+;; callee's row excludes, and dropped otherwise -- so a call that provably
+;; writes no cell no longer forces every global-based address in the caller to
+;; be re-derived from a fresh `Global`/`GlobalAddr` operand.
+(define (opt-load-global-bases-filter-cell-writes
+  [index : opt_i64_i64_map.Map]
+  [row : i64]
+  [bases : OptLoadGlobalBases]) : OptLoadGlobalBases
+  (let
+    [slots : (__tl_dyn-array OptLoadGlobalBaseEntry) bases.slots]
+    [len : i64 bases.len]
+    [out-slots : (__tl_dyn-array OptLoadGlobalBaseEntry)
+      (array.make-array OptLoadGlobalBaseEntry len)]
+    [read : i64 0]
+    [write : i64 0]
+    (begin
+      (while (< read len)
+        (let
+          [entry : OptLoadGlobalBaseEntry (array-ref slots read)]
+          (begin
+            (match entry
+              [(OptLoadGlobalBaseEntry.Entry _ global _ _)
+                (if (opt-global-mod-ref-mask-may-write? index row global)
+                  unit
+                  (begin
+                    (set! (array-ref out-slots write) entry)
+                    (set! write (+ write 1))))])
+            (set! read (+ read 1)))))
+      (OptLoadGlobalBases out-slots write))))
 
 (define (opt-load-cse-state-direct-call
   [type-segment-bases : i64]
+  [canon : (__tl_dyn-array i64)]
+  [sources : opt_i64_i64_map.Map]
   [hs : OptLoadHeaderSet]
   [call-memory : opt_i64_i64_map.Map]
+  [cells : OptGlobalCellSummary]
   [state : OptLoadCseState]
   [dst : i64]
   [name : i64]
   [args : ir.CompilerIrCallArgs]
   [instr : ir.CompilerIrInstr]) : OptLoadCseState
   (match state
-    ;; A callee may write globals, so the base map clears here even when the
-    ;; summary lets table entries live: those entries survive only where the
-    ;; callee provably cannot reach them, while a base map binding would have to
-    ;; re-prove that the global SLOT is untouched, which no summary states.
     [(OptLoadCseState.State
         facts
         table
@@ -118280,32 +118734,80 @@
         bases
         profile-state)
       (let
+        [mod-ref : OptGlobalModRef cells.mod-ref]
+        ;; MF-4 (i): the CELLS this call may write, in the packed
+        ;; OptGlobalModRef encoding.
+        ;;
+        ;; Every write a summarized callee performs is named by its summary: the
+        ;; `Store` writes are its mod-ref row, and the parameter-rooted and
+        ;; element writes cannot reach a named cell at all -- a cell is a
+        ;; symbol's own storage in the static data segment, never a caller
+        ;; object's payload and never the data buffer a descriptor points at,
+        ;; which is the argument opt-call-memory-element-bit already makes for
+        ;; the element class and opt-load-entry-survives-global-cell-store?
+        ;; makes for the layer. Only the UNKNOWN bit admits a write with no such
+        ;; proof, so it alone answers "any cell" on its own. A callee with no
+        ;; summary row is an extern or an unresolved cycle: the effect
+        ;; classification decides, exactly as it does for the table below.
+        ;;
+        ;; "Any cell" also arrives from the row itself -- an indirect call
+        ;; anywhere below this callee, or a program that carries no table -- and
+        ;; every question below then falls back to its pre-MF-4 verdict.
+        [row : i64
+          (match (opt_i64_i64_map.get
+            (& call-memory)
+            (ir.compiler-ir-symbol-id name))
+            [(opt_i64_i64_map.LookupFound summary)
+              (if (opt-call-memory-summary-unknown? summary)
+                (opt-global-mod-ref-any)
+                (opt-global-mod-ref-call-mask mod-ref name))]
+            [(opt_i64_i64_map.LookupMissing)
+              (match (ir.compiler-ir-direct-call-effect-id name)
+                [(ir.CompilerIrEffect.MemoryRead) 0]
+                [(ir.CompilerIrEffect.ControlFlow) 0]
+                [_ (opt-global-mod-ref-any)])])]
         ;; Filtering reads the PRE-call facts and table, so a tl_alloc call
         ;; cannot use its own (not yet bound) fresh root to keep entries.
+        [cells-known? : bool (not (opt-global-mod-ref-any? row))]
         [filtered : OptLoadTable
           (match (opt_i64_i64_map.get
             (& call-memory)
             (ir.compiler-ir-symbol-id name))
             [(opt_i64_i64_map.LookupFound summary)
-              ;; Unknown effects and global writes still empty the table: an
-              ;; unknown write can land anywhere, and a global write can rewrite
-              ;; a descriptor-valued global cell, which is the base a descriptor
-              ;; entry was keyed on. The element bit is the one verdict that
-              ;; names a LAYER instead of an object, so it filters to the
-              ;; descriptor layer rather than clearing (the parameter bits, if
-              ;; any, then filter that result by root as before).
+              ;; Unknown effects still empty the table: an unknown write can
+              ;; land anywhere. A GLOBAL write no longer does -- MF-4 (i) reads
+              ;; the callee's cell row and keeps every entry the named cell
+              ;; writes provably miss; only an unusable ("any cell") row falls
+              ;; back to clearing. The element bit is the one verdict that names
+              ;; a LAYER instead of an object, so it filters to the descriptor
+              ;; layer rather than clearing (the parameter bits, if any, then
+              ;; filter that result by root as before).
               (if (or
-                (opt-call-memory-summary-global? summary)
-                (opt-call-memory-summary-unknown? summary))
+                (opt-call-memory-summary-unknown? summary)
+                (and
+                  (opt-call-memory-summary-global? summary)
+                  (not cells-known?)))
                 (OptLoadTable.Nil)
                 (opt-load-table-filter-call-writes
                   type-segment-bases
-                  (if (opt-call-memory-summary-element? summary)
-                    (opt-load-table-filter-element-call
-                      type-segment-bases
-                      table
-                      facts)
-                    table)
+                  (if (opt-call-memory-summary-global? summary)
+                    (opt-load-table-filter-cell-writes
+                      mod-ref.index
+                      row
+                      (if (opt-call-memory-summary-element? summary)
+                        (opt-load-table-filter-element-call
+                          type-segment-bases
+                          table
+                          facts
+                          (opt-call-memory-summary-element-class summary))
+                        table))
+                    (if (opt-call-memory-summary-element? summary)
+                      (opt-load-table-filter-element-call
+                        type-segment-bases
+                        table
+                        facts
+                        (opt-call-memory-summary-element-class summary))
+                      table))
                   facts
                   args
                   summary
@@ -118331,10 +118833,23 @@
             instr
             next-epoch)
           (opt-load-table-invalidate-var filtered dst)
-          (opt-load-kinds-step profile-state type-segment-bases kinds hs instr)
+          (opt-load-kinds-step
+            profile-state
+            type-segment-bases
+            canon
+            sources
+            kinds
+            hs
+            instr)
           table-cap
           next-epoch
-          (opt-load-global-bases-clear bases)
+          ;; MF-4 (i), base-map half: a binding names `[g]+off`, so it survives
+          ;; a call that provably writes no cell of g. Everything else clears,
+          ;; as before -- a callee that may write ANY cell could make a binding
+          ;; name a stale address.
+          (if cells-known?
+            (opt-load-global-bases-filter-cell-writes mod-ref.index row bases)
+            (opt-load-global-bases-clear bases))
           profile-state))]))
 
 ;; StorePtr: granular invalidation, then store-to-load forwarding. The
@@ -118343,6 +118858,7 @@
 ;; origin, so arbitrary non-canonical sub-word vars still reload from memory.
 (define (opt-load-cse-state-store
   [type-segment-bases : i64]
+  [canon : (__tl_dyn-array i64)]
   ;; lint-allow: unused-variable
   [hs : OptLoadHeaderSet]
   [gated? : bool]
@@ -118398,7 +118914,8 @@
               profile-state)]
           [_
             (let
-              [key : OptLoadKey (opt-load-key-for-address kinds bases ptr ty)]
+              [key : OptLoadKey
+                (opt-load-key-for-address canon kinds bases ptr ty)]
               [forwardable? : bool
                 (if gated?
                   (and
@@ -118547,6 +119064,7 @@
 
 (define (opt-load-cse-core-load
   [type-segment-bases : i64]
+  [canon : (__tl_dyn-array i64)]
   [hs : OptLoadHeaderSet]
   [gated? : bool]
   [sources : opt_i64_i64_map.Map]
@@ -118571,7 +119089,7 @@
         ;; from the PRE-def kinds and bases (a `Load dst <- dst` reads the old
         ;; address).
         [table2 : OptLoadTable (opt-load-table-invalidate-var table dst)]
-        [key : OptLoadKey (opt-load-key-for-address kinds bases src ty)]
+        [key : OptLoadKey (opt-load-key-for-address canon kinds bases src ty)]
         [eligible? : bool
           (if gated?
             (and
@@ -118601,6 +119119,8 @@
                   (opt-load-kinds-step
                     profile-state
                     type-segment-bases
+                    canon
+                    sources
                     kinds
                     hs
                     new-instr)
@@ -118639,6 +119159,8 @@
                   (opt-load-kinds-step
                     profile-state
                     type-segment-bases
+                    canon
+                    sources
                     kinds
                     hs
                     instr)
@@ -118653,10 +119175,12 @@
 ;; clear-all check: they ARE memory writes, handled granularly.
 (define (opt-load-cse-dispatch
   [type-segment-bases : i64]
+  [canon : (__tl_dyn-array i64)]
   [hs : OptLoadHeaderSet]
   [gated? : bool]
   [sources : opt_i64_i64_map.Map]
   [call-memory : opt_i64_i64_map.Map]
+  [cells : OptGlobalCellSummary]
   [state : OptLoadCseState]
   [instr : ir.CompilerIrInstr]) : OptLoadCseResult
   (match instr
@@ -118664,6 +119188,7 @@
       (OptLoadCseResult.Result
         (opt-load-cse-state-store
           type-segment-bases
+          canon
           hs
           gated?
           sources
@@ -118689,6 +119214,7 @@
     [(ir.CompilerIrInstr.Load dst src ty)
       (opt-load-cse-core-load
         type-segment-bases
+        canon
         hs
         gated?
         sources
@@ -118701,8 +119227,11 @@
       (OptLoadCseResult.Result
         (opt-load-cse-state-direct-call
           type-segment-bases
+          canon
+          sources
           hs
           call-memory
+          cells
           state
           dst
           name
@@ -118713,6 +119242,8 @@
       (OptLoadCseResult.Result
         (opt-load-cse-state-global-store
           type-segment-bases
+          canon
+          sources
           hs
           state
           (ir.compiler-ir-symbol-id name)
@@ -118723,12 +119254,20 @@
         (OptLoadCseResult.Result
           (opt-load-cse-state-clear-for-memory
             type-segment-bases
+            canon
+            sources
             hs
             state
             instr)
           instr)
         (OptLoadCseResult.Result
-          (opt-load-cse-state-step-other type-segment-bases hs state instr)
+          (opt-load-cse-state-step-other
+            type-segment-bases
+            canon
+            sources
+            hs
+            state
+            instr)
           instr))]))
 
 (define (opt-load-cse-instrs-from
@@ -118739,6 +119278,8 @@
   [state : OptLoadCseState]
   [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
   (let
+    [cells : OptGlobalCellSummary (opt-load-cse-no-cells-view)]
+    [no-canon : (__tl_dyn-array i64) (opt-load-canon-none)]
     [next-state : OptLoadCseState state]
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [builder : ir.CompilerIrInstrBuilder
@@ -118749,10 +119290,12 @@
         (begin
           (match (opt-load-cse-dispatch
             type-segment-bases
+            no-canon
             hs
             false
             sources
             call-memory
+            cells
             next-state
             (ir.compiler-ir-instr-seq-ref instrs index))
             [(OptLoadCseResult.Result after-state new-instr)
@@ -119345,12 +119888,821 @@
 ;; Same shape as the const-divisor rewrite: one instruction out per instruction
 ;; in, so the CSE state threads through an indexed walk that fills a sized target
 ;; sequence instead of consing a reversed list and reversing it back.
+;; --- MF-5 (i): scalar global-cell reads as load keys -------------------------
+;;
+;; A `CompilerIrValue.Global g` operand is a hidden LOAD of g's cell: the
+;; backend spells it as its own rip-relative read at every use, and because the
+;; operand is neither a literal nor an SSA var, GVN and copy propagation both
+;; refuse it outright. Two reads of one cell in a write-free stretch are
+;; therefore two memory reads of one word.
+;;
+;; The function-scope `global_cell` pass already collapses those to one entry
+;; load, but only when the WHOLE function qualifies: it declines when a
+;; returning call may write the cell, and when a call-bearing function is over
+;; its live-in budget. This is the REGION-scoped form of the same rewrite: the
+;; first read materializes `%t = mov @g` and every later read the load-CSE's own
+;; dataflow proves still reaches it becomes `%t`.
+;;
+;; The cell word is keyed as `GlobalField(g, 0, ty, false)` -- the existing key
+;; for `gep (GlobalAddr g) 0`, which is g's own storage at offset zero, i.e.
+;; exactly the word a `Global g` operand reads. Reusing that key is what makes
+;; this a precision fix rather than a new analysis: the kill rules the key
+;; already has ARE the region boundary. `Store g` drops it and leaves every
+;; other cell alone (opt-load-entry-survives-global-cell-store?); an element
+;; store or a typed-word-distinct field store keeps it
+;; (opt-load-entry-survives-store-location?); an unclassified store, a barrier
+;; and a clears-all instruction drop the whole table; a call drops it exactly
+;; when its mod-ref row may contain g (MF-4 i); a loop header with an
+;; unprocessed back edge drops it; and a join keeps it only when both edges
+;; carry the same var. One table entry per key is one live value per cell.
+;;
+;; ELIGIBILITY, beyond that. A candidate must be
+;;   * a SCALAR cell (opt-load-cell-promotable-type?): the Mov's declared type
+;;     drives the backend's load width, so a wider cell would load only its
+;;     first word -- the reason opt-global-cell-word-type? exists -- and
+;;     descriptor-typed cells are excluded on top of that, because the promoted
+;;     var would be a descriptor handle that the header-set classification
+;;     (computed before this rewrite) does not know about, which would LOSE the
+;;     descriptor keying this pass depends on elsewhere;
+;;   * NOT address-taken anywhere in the program (cells.addr-taken): otherwise a
+;;     store through a pointer could write the cell without a `Store g` and
+;;     without an unknown-effect classification. This is condition (b) of the
+;;     function-scope pass, unchanged;
+;;   * read at least TWICE in this function, so the materialized Mov always has
+;;     a second use to pay for it.
+;;
+;; PRESSURE. A promoted value is one more live value, and every carry decision
+;; in this pass is a measured pressure gate. The gate here is stronger than the
+;; live-in budget opt-licm-global-promote-live-in-budget prices, and needs no
+;; count: a materialized value may only be reused in a block with the SAME
+;; natural-loop membership mask as the block that materialized it. So the value
+;; never crosses a loop boundary in either direction -- it cannot be carried
+;; into a loop it is not already in (the shape that budget prices, and the
+;; shape the loop-header reset already refuses for this key), and it cannot
+;; escape one (the shape opt-load-gvn-subst-escapes-loop? prices). A read that
+;; the gate refuses materializes its own copy instead, which is never worse than
+;; the rip-relative read it replaces.
+;;
+;; BUDGET. At most opt-load-cell-promote-cap promotions and
+;; opt-load-cell-read-cap recorded reads per function, so the workspace is a
+;; fixed allocation and a pathological function simply promotes its first few.
+(define (opt-load-cell-promote-cap) : i64
+  64)
+
+(define (opt-load-cell-read-cap) : i64
+  256)
+
+;; Scalar cells only. Pointer-, descriptor- and aggregate-typed cells are
+;; deliberately absent (see the header).
+(define (opt-load-cell-promotable-type? [ty : ast.AstType]) : bool
+  (match ty
+    [(ast.AstType.I64) true]
+    [(ast.AstType.U64) true]
+    [(ast.AstType.I32) true]
+    [(ast.AstType.U32) true]
+    [(ast.AstType.I16) true]
+    [(ast.AstType.U16) true]
+    [(ast.AstType.I8) true]
+    [(ast.AstType.U8) true]
+    [(ast.AstType.F64) true]
+    [(ast.AstType.F32) true]
+    [(ast.AstType.Bool) true]
+    [(ast.AstType.Char) true]
+    [_ false]))
+
+;; Per-function promotion workspace.
+;;
+;; `reads` is a flat (block id, instruction index, global) triple table built in
+;; BLOCK-ID order, so `starts`/`counts` index it directly and the sweep walks
+;; one block's entries with a cursor. `counters` holds the promotion count;
+;; promotion k mints var `frame + k` and records its materialization block in
+;; `def-blocks`, which is how the loop-mask gate finds a candidate value's
+;; definition point without a second def map.
+(defstruct OptLoadCellPromote
+  (active? bool)
+  (reads (__tl_dyn-array i64))
+  (starts (__tl_dyn-array i64))
+  (counts (__tl_dyn-array i64))
+  (loop-masks (__tl_dyn-array i64))
+  (frame i64)
+  (counters (__tl_dyn-array i64))
+  (inserts (__tl_dyn-array i64))
+  ;; var -> 1 + the block that defines this cell value, indexed by var id over
+  ;; the frame plus the promotion budget. Covers both the vars this pass mints
+  ;; and the ones it ADOPTS from an existing `Mov v <- @g`.
+  (def-blocks (__tl_dyn-array i64)))
+
+(define (opt-load-cell-promote-inactive
+  [loop-masks : (__tl_dyn-array i64)]
+  [frame : i64]) : OptLoadCellPromote
+  ;; Every table is length-checked before it is read, so the inactive
+  ;; workspace shares one empty array rather than allocating five.
+  (let
+    [empty : (__tl_dyn-array i64) (array.make-array i64 0)]
+    (OptLoadCellPromote
+      false
+      empty
+      empty
+      empty
+      loop-masks
+      frame
+      (array.make-array i64 1)
+      empty
+      empty)))
+
+(define (opt-load-cell-promote-count [promote : OptLoadCellPromote]) : i64
+  (array-ref promote.counters 0))
+
+;; Is `global` worth promoting in this function? Type, address-taken and the
+;; two-reads price, in that order.
+(define (opt-load-cell-candidate?
+  [cells : OptGlobalCellSummary]
+  [refs : opt_i64_i64_map.Map]
+  [global : i64]) : bool
+  (and
+    (match (opt_i64_i64_map.get (& refs) global)
+      [(opt_i64_i64_map.LookupFound seen)
+        (>= seen (opt-global-cell-ref-count-cap))]
+      [(opt_i64_i64_map.LookupMissing) false])
+    (not (opt_i64_i64_map.contains? (& cells.addr-taken) global))
+    (match (opt-global-cell-type-lookup cells global)
+      [(OptMaybeAstType.No) false]
+      [(OptMaybeAstType.Some ty) (opt-load-cell-promotable-type? ty)])))
+
+(define (opt-load-cell-candidates
+  [cells : OptGlobalCellSummary]
+  [refs : opt_i64_i64_map.Map]
+  [names : OptI64List]
+  [out : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
+  (match names
+    [(OptI64List.Nil) out]
+    [(OptI64List.Cons name rest)
+      (begin
+        (if (opt-load-cell-candidate? cells refs name)
+          (opt_i64_i64_map.insert-ref! (&mut out) name 1)
+          unit)
+        (opt-load-cell-candidates cells refs (__tl-box-place rest) out))]))
+
+;; Append this instruction's candidate-cell reads. The operand walk is
+;; opt-global-cell-scan-instr, the same total match the function-scope pass
+;; uses, so a new IR instruction cannot silently hide a `Global` operand from
+;; this pass either.
+(define (opt-load-cell-record-names!
+  [candidates : opt_i64_i64_map.Map]
+  [reads : (__tl_dyn-array i64)]
+  [counters : (__tl_dyn-array i64)]
+  [block-id : i64]
+  [index : i64]
+  [names : OptI64List]) : unit
+  (match names
+    [(OptI64List.Nil) unit]
+    [(OptI64List.Cons name rest)
+      (begin
+        (if (and
+          (opt_i64_i64_map.contains? (& candidates) name)
+          (< (array-ref counters 1) (opt-load-cell-read-cap)))
+          (let
+            [slot : i64 (* (array-ref counters 1) 3)]
+            (begin
+              (set! (array-ref reads slot) block-id)
+              (set! (array-ref reads (+ slot 1)) index)
+              (set! (array-ref reads (+ slot 2)) name)
+              (set! (array-ref counters 1) (+ (array-ref counters 1) 1))))
+          unit)
+        (opt-load-cell-record-names!
+          candidates
+          reads
+          counters
+          block-id
+          index
+          (__tl-box-place rest)))]))
+
+;; A `Phi` input is deliberately never recorded. Its use position is the
+;; INCOMING EDGE's predecessor end, not the phi's own block, so a materialized
+;; Mov placed before the phi does not dominate it -- the same position
+;; opt-copy-subst-instr refuses for substitution mode, for the same reason.
+(define (opt-load-cell-record-reads!
+  [candidates : opt_i64_i64_map.Map]
+  [reads : (__tl_dyn-array i64)]
+  [counters : (__tl_dyn-array i64)]
+  [block-id : i64]
+  [index : i64]
+  [instr : ir.CompilerIrInstr]) : unit
+  (match instr
+    [(ir.CompilerIrInstr.Phi _ _ _) unit]
+    [_
+      (opt-load-cell-record-reads-scan!
+        candidates
+        reads
+        counters
+        block-id
+        index
+        instr)]))
+
+(define (opt-load-cell-record-reads-scan!
+  [candidates : opt_i64_i64_map.Map]
+  [reads : (__tl_dyn-array i64)]
+  [counters : (__tl_dyn-array i64)]
+  [block-id : i64]
+  [index : i64]
+  [instr : ir.CompilerIrInstr]) : unit
+  (opt-load-cell-record-names!
+    candidates
+    reads
+    counters
+    block-id
+    index
+    (opt-global-cell-scan-instr (opt-global-cell-scan-new) false instr).ref-list))
+
+(define (opt-load-cell-record-block-reads!
+  [candidates : opt_i64_i64_map.Map]
+  [reads : (__tl_dyn-array i64)]
+  [counters : (__tl_dyn-array i64)]
+  [block-id : i64]
+  [instrs : ir.CompilerIrInstrSeq]) : unit
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [index : i64 0]
+    (while (< index count)
+      (begin
+        (opt-load-cell-record-reads!
+          candidates
+          reads
+          counters
+          block-id
+          index
+          (ir.compiler-ir-instr-seq-ref instrs index))
+        (set! index (+ index 1))))))
+
+;; Build the workspace, or the inactive one when nothing qualifies. The
+;; whole-function `Global` scan runs first and costs one walk; every function
+;; whose referenced globals are all single-read, address-taken or non-scalar
+;; stops there.
+;; The promotable cells this function reads more than once, or an empty map.
+;; A program with no word-cell candidates at all -- every optimizer level below
+;; 2, and every program whose globals are address-taken or wider than a word --
+;; answers without walking anything.
+(define (opt-load-cell-candidate-map
+  [cells : OptGlobalCellSummary]
+  [blocks : ir.CompilerIrBlockList]) : opt_i64_i64_map.Map
+  (if (= cells.word-cell 0)
+    (opt_i64_i64_map.with-capacity 1)
+    (let
+      [scan : OptGlobalCellScan
+        (opt-global-cell-scan-blocks (opt-global-cell-scan-new) blocks false)]
+      (opt-load-cell-candidates
+        cells
+        scan.refs
+        scan.ref-list
+        (opt_i64_i64_map.with-capacity 8)))))
+
+(define (opt-load-cell-promote-build
+  [candidates : opt_i64_i64_map.Map]
+  [index : OptCfgIndex]
+  [block-count : i64]
+  [loop-masks : (__tl_dyn-array i64)]
+  [frame : i64]) : OptLoadCellPromote
+  (if (= (opt_i64_i64_map.len (& candidates)) 0)
+    (opt-load-cell-promote-inactive loop-masks frame)
+    (let
+      [reads : (__tl_dyn-array i64)
+        (array.make-array i64 (* (opt-load-cell-read-cap) 3))]
+      [starts : (__tl_dyn-array i64) (array.make-array i64 block-count)]
+      [counts : (__tl_dyn-array i64) (array.make-array i64 block-count)]
+      [counters : (__tl_dyn-array i64) (array.make-array i64 2)]
+      [id : i64 0]
+      (begin
+        (while (< id block-count)
+          (begin
+            (set! (array-ref starts id) (array-ref counters 1))
+            (match (opt-cfg-index-block index id)
+              [(OptMaybeBlock.No) unit]
+              [(OptMaybeBlock.Some block)
+                (match block
+                  [(ir.CompilerIrBlock.Block _ instrs)
+                    (opt-load-cell-record-block-reads!
+                      candidates
+                      reads
+                      counters
+                      id
+                      instrs)])])
+            (set!
+              (array-ref counts id)
+              (- (array-ref counters 1) (array-ref starts id)))
+            (set! id (+ id 1))))
+        (if (= (array-ref counters 1) 0)
+          (opt-load-cell-promote-inactive loop-masks frame)
+          (begin
+            ;; counters[1] switches roles from "reads recorded" to nothing;
+            ;; counters[0] counts promotions from here on.
+            (set! (array-ref counters 0) 0)
+            (OptLoadCellPromote
+              true
+              reads
+              starts
+              counts
+              loop-masks
+              frame
+              counters
+              (array.make-array i64 (* (opt-load-cell-promote-cap) 3))
+              (array.make-array i64 (+ frame (opt-load-cell-promote-cap))))))))))
+
+;; Materialization is refused inside a natural loop, whatever the price test
+;; says. A loop's `Global` operands belong to the loop passes:
+;; opt-licm-global-promote hoists them to the preheader under a live-in budget
+;; (opt-licm-global-promote-live-in-budget) precisely because a value live
+;; across a loop competes for the callee-saved file, and a materialized Mov in
+;; the body is a `Global` operand the ordinary hoist can then take OUT of the
+;; loop -- turning a refusal into the very promotion the budget refused.
+;; Observed on tests/integration/licm_memclean_global_promote.tl, whose
+;; `pressured_scan` loop is over the budget: without this gate its `gcell_b`
+;; read moved into the preheader and the value spanned the loop, which
+;; scripts/verify-asm-shape-gates.sh gates on. Every measured win of this
+;; promotion is in straight-line code, so the gate costs nothing on the
+;; benchmark corpus (all 20 rows byte-identical with and without it).
+(define (opt-load-cell-outside-loops?
+  [promote : OptLoadCellPromote]
+  [block-id : i64]) : bool
+  (and
+    (>= block-id 0)
+    (< block-id (array-length promote.loop-masks))
+    (= (array-ref promote.loop-masks block-id) 0)))
+
+;; May a read in `block-id` reuse the value `var`? Only a value THIS pass
+;; materialized (its var is at or above the pre-pass frame) and only from a
+;; block with the same loop membership -- the pressure gate in the header.
+(define (opt-load-cell-reuse-ok?
+  [promote : OptLoadCellPromote]
+  [block-id : i64]
+  [var : i64]) : bool
+  (if (or (< var 0) (>= var (array-length promote.def-blocks)))
+    false
+    (let
+      [def-id : i64 (- (array-ref promote.def-blocks var) 1)]
+      (if (or
+        (< def-id 0)
+        (>= def-id (array-length promote.loop-masks))
+        (< block-id 0)
+        (>= block-id (array-length promote.loop-masks)))
+        false
+        (=
+          (array-ref promote.loop-masks def-id)
+          (array-ref promote.loop-masks block-id))))))
+
+;; Record where a cell value is defined, for the reuse gate above.
+(define (opt-load-cell-note-def!
+  [promote : OptLoadCellPromote]
+  [var : i64]
+  [block-id : i64]) : unit
+  (if (or (< var 0) (>= var (array-length promote.def-blocks)))
+    unit
+    (begin
+      (set! (array-ref promote.def-blocks var) (+ block-id 1))
+      unit)))
+
+;; Rewrite one `Global g` operand of `instr` to `Var value`, through the same
+;; total operand walk the function-scope pass uses.
+(define (opt-load-cell-rewrite-operand
+  [global : i64]
+  [value : i64]
+  [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstr
+  (let
+    [plan : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 2)]
+    (begin
+      (opt_i64_i64_map.insert-ref! (&mut plan) global value)
+      (opt-global-cell-rewrite-instr plan false instr))))
+
+(define (opt-load-cse-state-bind-entry
+  [type-segment-bases : i64]
+  [state : OptLoadCseState]
+  [key : OptLoadKey]
+  [value : ir.CompilerIrValue]) : OptLoadCseState
+  (match state
+    [(OptLoadCseState.State
+        facts
+        table
+        kinds
+        table-cap
+        epoch
+        bases
+        profile-state)
+      (OptLoadCseState.State
+        facts
+        (opt-load-table-bind
+          profile-state
+          type-segment-bases
+          table
+          table-cap
+          key
+          value
+          epoch)
+        kinds
+        table-cap
+        epoch
+        bases
+        profile-state)]))
+
+(defenum OptLoadCellStep
+  (Step OptLoadCseState ir.CompilerIrInstr))
+
+;; Does another recorded read of `global` follow in THIS block? That is the
+;; materialization price test.
+;;
+;; Reusing a value that already exists costs nothing, but MATERIALIZING one is
+;; only free when a second read redeems it. A `Global g` operand is one
+;; rip-relative read wherever it stands, so a lone promoted read trades that
+;; read for a Mov plus a live register -- and, worse, it takes the operand away
+;; from the passes that price globals per LOOP: `opt-licm-global-promote` hoists
+;; a `Global` operand out of a loop under a live-in budget, and it can only do
+;; that to an operand that is still there. MEASURED, materializing on the
+;; whole-function read count alone: peephole_lines 443,963,889 -> 450,939,763
+;; (+1.57%), all of it loops whose `pl_none` / `pl_text` operands stopped being
+;; hoisted and became a per-iteration rip read (pl_first_rsp_read +3,879,268,
+;; pl_record_sweep +2,263,140), and graph_dijkstra +1,041,364 for the same
+;; shape. Requiring the second read to be in the SAME BLOCK makes the reuse
+;; unconditional -- nothing between the two can be a control-flow join -- and
+;; leaves every operand a loop pass would have hoisted exactly where it was.
+;; Cross-block reuse of a value that HAS been materialized is unaffected: it
+;; costs nothing and stays available for as long as the dataflow proves it.
+;; May a direct call write cell `global`? The same question
+;; opt-load-cse-state-direct-call answers when it filters the table, asked here
+;; on the price side so a call the row clears does not look like a region end.
+(define (opt-load-cell-call-writes-cell?
+  [call-memory : opt_i64_i64_map.Map]
+  [cells : OptGlobalCellSummary]
+  [global : i64]
+  [name : i64]) : bool
+  (let
+    [mod-ref : OptGlobalModRef cells.mod-ref]
+    [row : i64
+      (match (opt_i64_i64_map.get
+        (& call-memory)
+        (ir.compiler-ir-symbol-id name))
+        [(opt_i64_i64_map.LookupFound summary)
+          (if (opt-call-memory-summary-unknown? summary)
+            (opt-global-mod-ref-any)
+            (opt-global-mod-ref-call-mask mod-ref name))]
+        [(opt_i64_i64_map.LookupMissing)
+          (match (ir.compiler-ir-direct-call-effect-id name)
+            [(ir.CompilerIrEffect.MemoryRead) 0]
+            [(ir.CompilerIrEffect.ControlFlow) 0]
+            [_ (opt-global-mod-ref-any)])])]
+    (opt-global-mod-ref-mask-may-write? mod-ref.index row global)))
+
+;; A kill for the price test above: an instruction between two reads that ends
+;; the region for THIS cell. A `Store` of this very cell, a call whose cell row
+;; may contain it, and the clears-all family (which includes every indirect
+;; call). Element stores and typed field stores are deliberately NOT kills here:
+;; the load table decides those precisely, and treating them as kills would
+;; refuse the very regions this promotion is for. The test is only a price
+;; estimate -- a region the table ends anyway simply leaves the second read
+;; alone, at the cost of one materialized Mov.
+(define (opt-load-cell-region-kill?
+  [call-memory : opt_i64_i64_map.Map]
+  [cells : OptGlobalCellSummary]
+  [global : i64]
+  [instr : ir.CompilerIrInstr]) : bool
+  (match instr
+    [(ir.CompilerIrInstr.Store name _ _)
+      (= (ir.compiler-ir-symbol-id name) global)]
+    [(ir.CompilerIrInstr.Call _ name _ _)
+      (opt-load-cell-call-writes-cell? call-memory cells global name)]
+    [(ir.CompilerIrInstr.TailCall name _ _)
+      (opt-load-cell-call-writes-cell? call-memory cells global name)]
+    [_ (opt-alias-instr-clears-all? instr)]))
+
+(define (opt-load-cell-region-clear?
+  [call-memory : opt_i64_i64_map.Map]
+  [cells : OptGlobalCellSummary]
+  [instrs : ir.CompilerIrInstrSeq]
+  [global : i64]
+  [from : i64]
+  [to : i64]) : bool
+  (if (>= from to)
+    true
+    (if (opt-load-cell-region-kill?
+      call-memory
+      cells
+      global
+      (ir.compiler-ir-instr-seq-ref instrs from))
+      false
+      (opt-load-cell-region-clear?
+        call-memory
+        cells
+        instrs
+        global
+        (+ from 1)
+        to))))
+
+(define (opt-load-cell-more-reads?
+  [call-memory : opt_i64_i64_map.Map]
+  [cells : OptGlobalCellSummary]
+  [promote : OptLoadCellPromote]
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [cursor : i64]
+  [read-end : i64]
+  [global : i64]) : bool
+  (if (>= cursor read-end)
+    false
+    (if (= (array-ref promote.reads (+ (* cursor 3) 2)) global)
+      (opt-load-cell-region-clear?
+        call-memory
+        cells
+        instrs
+        global
+        (+ index 1)
+        (array-ref promote.reads (+ (* cursor 3) 1)))
+      (opt-load-cell-more-reads?
+        call-memory
+        cells
+        promote
+        instrs
+        index
+        (+ cursor 1)
+        read-end
+        global))))
+
+;; One recorded cell read: reuse the region's live value, or materialize one.
+;; Is a reusable value for this cell already live here? Checked BEFORE the
+;; adoption arm below, so a `Mov v <- @g` that the region has already
+;; materialized a value for is rewritten to that value like any other read
+;; instead of starting a second one.
+(define (opt-load-cell-live-value?
+  [type-segment-bases : i64]
+  [promote : OptLoadCellPromote]
+  [block-id : i64]
+  [state : OptLoadCseState]
+  [key : OptLoadKey]) : bool
+  (match (opt-load-table-lookup
+    type-segment-bases
+    (match state
+      [(OptLoadCseState.State _ t _ _ _ _ _) t])
+    key)
+    [(ir.CompilerIrMaybeValue.No) false]
+    [(ir.CompilerIrMaybeValue.Some earlier)
+      (match earlier
+        [(ir.CompilerIrValue.Var live)
+          (opt-load-cell-reuse-ok? promote block-id live)]
+        [_ false])]))
+
+;; Is `instr` a `Mov dst <- Global g` of this very cell, with a single-source
+;; destination? Then it already IS the cell's materialization.
+(define (opt-load-cell-adopts?
+  [sources : opt_i64_i64_map.Map]
+  [global : i64]
+  [instr : ir.CompilerIrInstr]) : bool
+  (match instr
+    [(ir.CompilerIrInstr.Mov dst src _)
+      (and
+        (opt-gvn-stable-var? sources dst)
+        (match src
+          [(ir.CompilerIrValue.Global name)
+            (= (ir.compiler-ir-symbol-id name) global)]
+          [_ false]))]
+    [_ false]))
+
+(define (opt-load-cell-promote-read
+  [type-segment-bases : i64]
+  [canon : (__tl_dyn-array i64)]
+  [hs : OptLoadHeaderSet]
+  [sources : opt_i64_i64_map.Map]
+  [cells : OptGlobalCellSummary]
+  [promote : OptLoadCellPromote]
+  [block-id : i64]
+  [instr-index : i64]
+  [more? : bool]
+  [state : OptLoadCseState]
+  [global : i64]
+  [instr : ir.CompilerIrInstr]) : OptLoadCellStep
+  (match (opt-global-cell-type-lookup cells global)
+    [(OptMaybeAstType.No) (OptLoadCellStep.Step state instr)]
+    [(OptMaybeAstType.Some ty)
+      (if (and
+        (opt-load-cell-adopts? sources global instr)
+        (not
+          (opt-load-cell-live-value?
+            type-segment-bases
+            promote
+            block-id
+            state
+            (OptLoadKey.GlobalField global 0 ty false))))
+        ;; ADOPT. This is the shape `global_cell` and opt-licm-global-promote
+        ;; both emit, and the shape a second optimizer round sees of this pass's
+        ;; own output. Take its destination as the region's live cell value
+        ;; instead of minting a rival one: a second name for one cell splits
+        ;; what the passes below match on, and that is a real loss rather than a
+        ;; missed win. MEASURED before this arm existed: peephole_lines
+        ;; 443,963,889 -> 450,939,763, of which pl_first_rsp_read alone was
+        ;; +3,879,268 -- its loop's `result == pl_none` test stopped folding
+        ;; once the entry Mov and the promoted read became two different vars,
+        ;; so the loop kept a compare and the value kept a register.
+        (OptLoadCellStep.Step
+          (begin
+            (opt-load-cell-note-def! promote (opt-gvn-instr-dst instr) block-id)
+            (opt-load-cse-state-bind-entry
+              type-segment-bases
+              state
+              (OptLoadKey.GlobalField global 0 ty false)
+              (ir.CompilerIrValue.Var (opt-gvn-instr-dst instr))))
+          instr)
+        (opt-load-cell-promote-read-key
+          type-segment-bases
+          canon
+          sources
+          hs
+          promote
+          block-id
+          instr-index
+          more?
+          state
+          global
+          ty
+          instr))]))
+
+(define (opt-load-cell-promote-read-key
+  [type-segment-bases : i64]
+  [canon : (__tl_dyn-array i64)]
+  [sources : opt_i64_i64_map.Map]
+  [hs : OptLoadHeaderSet]
+  [promote : OptLoadCellPromote]
+  [block-id : i64]
+  [instr-index : i64]
+  [more? : bool]
+  [state : OptLoadCseState]
+  [global : i64]
+  [ty : ast.AstType]
+  [instr : ir.CompilerIrInstr]) : OptLoadCellStep
+  (let
+    [key : OptLoadKey (OptLoadKey.GlobalField global 0 ty false)]
+    [table : OptLoadTable
+      (match state
+        [(OptLoadCseState.State _ t _ _ _ _ _) t])]
+    (match (opt-load-table-lookup type-segment-bases table key)
+      [(ir.CompilerIrMaybeValue.Some earlier)
+        (match earlier
+          [(ir.CompilerIrValue.Var live)
+            ;; A live value the gate refuses (it was materialized under a
+            ;; different loop membership) leaves the operand ALONE rather than
+            ;; minting a rival name for the same cell. Two names for one cell
+            ;; cost twice: the fold that matched on the first one stops matching
+            ;; (see opt-load-cell-adopts?), and the operand a loop pass would
+            ;; have hoisted (opt-licm-global-promote) is gone. Leaving it is
+            ;; exactly the pre-MF-5 code.
+            (if (opt-load-cell-reuse-ok? promote block-id live)
+              (OptLoadCellStep.Step
+                state
+                (opt-load-cell-rewrite-operand global live instr))
+              (OptLoadCellStep.Step state instr))]
+          [_ (OptLoadCellStep.Step state instr)])]
+      [(ir.CompilerIrMaybeValue.No)
+        (opt-load-cell-materialize
+          type-segment-bases
+          canon
+          sources
+          hs
+          promote
+          block-id
+          instr-index
+          more?
+          state
+          global
+          ty
+          key
+          instr)])))
+
+;; Mint `%t = mov @g` for this read: record the insertion, step the state as if
+;; the Mov were already in the stream (it is spliced in after substitution mode
+;; has read the 1:1 input/output pairing), and bind the cell word to `%t`.
+(define (opt-load-cell-materialize
+  [type-segment-bases : i64]
+  [canon : (__tl_dyn-array i64)]
+  [sources : opt_i64_i64_map.Map]
+  [hs : OptLoadHeaderSet]
+  [promote : OptLoadCellPromote]
+  [block-id : i64]
+  [instr-index : i64]
+  [more? : bool]
+  [state : OptLoadCseState]
+  [global : i64]
+  [ty : ast.AstType]
+  [key : OptLoadKey]
+  [instr : ir.CompilerIrInstr]) : OptLoadCellStep
+  (let
+    [slot : i64 (opt-load-cell-promote-count promote)]
+    (if (or
+      (not more?)
+      (not (opt-load-cell-outside-loops? promote block-id))
+      (>= slot (opt-load-cell-promote-cap)))
+      (OptLoadCellStep.Step state instr)
+      (let
+        [fresh : i64 (+ promote.frame slot)]
+        [mov : ir.CompilerIrInstr
+          (ir.CompilerIrInstr.Mov fresh (ir.CompilerIrValue.Global global) ty)]
+        (begin
+          (set! (array-ref promote.inserts (* slot 3)) block-id)
+          (set! (array-ref promote.inserts (+ (* slot 3) 1)) instr-index)
+          (set! (array-ref promote.inserts (+ (* slot 3) 2)) global)
+          (opt-load-cell-note-def! promote fresh block-id)
+          (set! (array-ref promote.counters 0) (+ slot 1))
+          (OptLoadCellStep.Step
+            (opt-load-cse-state-bind-entry
+              type-segment-bases
+              (opt-load-cse-state-step-other
+                type-segment-bases
+                canon
+                sources
+                hs
+                state
+                mov)
+              key
+              (ir.CompilerIrValue.Var fresh))
+            (opt-load-cell-rewrite-operand global fresh instr)))))))
+
+;; Splice the materialized Movs into the rewritten block array. Records are
+;; appended in the sweep's order, so a block's records are contiguous and
+;; ascending by instruction index; each run rebuilds one block once.
+(define (opt-load-cell-insert-block
+  [cells : OptGlobalCellSummary]
+  [promote : OptLoadCellPromote]
+  [first : i64]
+  [last : i64]
+  [block : ir.CompilerIrBlock]) : ir.CompilerIrBlock
+  (match block
+    [(ir.CompilerIrBlock.Block label instrs)
+      (let
+        [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+        [added : i64 (- last first)]
+        [slots : (__tl_dyn-array ir.CompilerIrInstr)
+          (array.make-array ir.CompilerIrInstr (+ count added))]
+        [write : i64 0]
+        [cursor : i64 first]
+        [index : i64 0]
+        (begin
+          (while (< index count)
+            (begin
+              (while (and
+                (< cursor last)
+                (= (array-ref promote.inserts (+ (* cursor 3) 1)) index))
+                (let
+                  [global : i64 (array-ref promote.inserts (+ (* cursor 3) 2))]
+                  (begin
+                    (match (opt-global-cell-type-lookup cells global)
+                      [(OptMaybeAstType.No) unit]
+                      [(OptMaybeAstType.Some ty)
+                        (begin
+                          (set!
+                            (array-ref slots write)
+                            (ir.CompilerIrInstr.Mov
+                              (+ promote.frame cursor)
+                              (ir.CompilerIrValue.Global global)
+                              ty))
+                          (set! write (+ write 1)))])
+                    (set! cursor (+ cursor 1)))))
+              (set!
+                (array-ref slots write)
+                (ir.compiler-ir-instr-seq-ref instrs index))
+              (set! write (+ write 1))
+              (set! index (+ index 1))))
+          (ir.CompilerIrBlock.Block label (ir.CompilerIrInstrSeq slots write))))]))
+
+(define (opt-load-cell-apply-inserts!
+  [cells : OptGlobalCellSummary]
+  [promote : OptLoadCellPromote]
+  [out : (__tl_dyn-array OptGvnBlockResult)]) : unit
+  (let
+    [total : i64 (opt-load-cell-promote-count promote)]
+    [first : i64 0]
+    (while (< first total)
+      (let
+        [block-id : i64 (array-ref promote.inserts (* first 3))]
+        [last : i64 first]
+        (begin
+          (while (and
+            (< last total)
+            (= (array-ref promote.inserts (* last 3)) block-id))
+            (set! last (+ last 1)))
+          (if (and (>= block-id 0) (< block-id (array-length out)))
+            (match (array-ref out block-id)
+              [(OptGvnBlockResult.NoBlock) unit]
+              [(OptGvnBlockResult.SomeBlock block)
+                (set!
+                  (array-ref out block-id)
+                  (OptGvnBlockResult.SomeBlock
+                    (opt-load-cell-insert-block cells promote first last block)))])
+            unit)
+          (set! first last))))))
+
 (define (opt-load-gvn-instr-seq
   [type-segment-bases : i64]
+  [canon : (__tl_dyn-array i64)]
   [hs : OptLoadHeaderSet]
   [state : OptLoadCseState]
   [sources : opt_i64_i64_map.Map]
   [call-memory : opt_i64_i64_map.Map]
+  [cells : OptGlobalCellSummary]
+  [promote : OptLoadCellPromote]
+  [block-id : i64]
   [instrs : ir.CompilerIrInstrSeq]) : OptLoadGvnBlockRewrite
   (let
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
@@ -119358,19 +120710,66 @@
       (__tl_make-array ir.CompilerIrInstr count)]
     [index : i64 0]
     [current : OptLoadCseState state]
+    ;; MF-5 (i): this block's recorded `Global` operand reads, in instruction
+    ;; order. `read-end` is `read-start` for every block with none, so a
+    ;; function without promotable cells pays one compare per instruction.
+    [read-cursor : i64
+      (if promote.active?
+        (array-ref promote.starts block-id)
+        0)]
+    [read-end : i64
+      (if promote.active?
+        (+ read-cursor (array-ref promote.counts block-id))
+        0)]
+    ;; Overwritten from the sequence before every use; the initializer only
+    ;; has to type.
+    [staged : ir.CompilerIrInstr (ir.CompilerIrInstr.Jump 0)]
     (begin
       (while (< index count)
         (begin
+          (set! staged (ir.compiler-ir-instr-seq-ref instrs index))
+          (while (and
+            (< read-cursor read-end)
+            (= (array-ref promote.reads (+ (* read-cursor 3) 1)) index))
+            (begin
+              (match (opt-load-cell-promote-read
+                type-segment-bases
+                canon
+                hs
+                sources
+                cells
+                promote
+                block-id
+                index
+                (opt-load-cell-more-reads?
+                  call-memory
+                  cells
+                  promote
+                  instrs
+                  index
+                  (+ read-cursor 1)
+                  read-end
+                  (array-ref promote.reads (+ (* read-cursor 3) 2)))
+                current
+                (array-ref promote.reads (+ (* read-cursor 3) 2))
+                staged)
+                [(OptLoadCellStep.Step next-state next-instr)
+                  (begin
+                    (set! current next-state)
+                    (set! staged next-instr))])
+              (set! read-cursor (+ read-cursor 1))))
           (set!
             current
             (match (opt-load-cse-dispatch
               type-segment-bases
+              canon
               hs
               true
               sources
               call-memory
+              cells
               current
-              (ir.compiler-ir-instr-seq-ref instrs index))
+              staged)
               [(OptLoadCseResult.Result next-state new-instr)
                 (begin
                   (set! (array-ref slots index) new-instr)
@@ -119382,27 +120781,38 @@
 
 (define (opt-load-gvn-rewrite-block
   [type-segment-bases : i64]
+  [canon : (__tl_dyn-array i64)]
   [hs : OptLoadHeaderSet]
   [entry-state : OptLoadCseState]
   [sources : opt_i64_i64_map.Map]
   [call-memory : opt_i64_i64_map.Map]
+  [cells : OptGlobalCellSummary]
+  [promote : OptLoadCellPromote]
+  [block-id : i64]
   [block : ir.CompilerIrBlock]) : OptLoadGvnBlockRewrite
   (match block
     [(ir.CompilerIrBlock.Block _ instrs)
       (opt-load-gvn-instr-seq
         type-segment-bases
+        canon
         hs
         entry-state
         sources
         call-memory
+        cells
+        promote
+        block-id
         instrs)]))
 
 (define (opt-load-gvn-process-id
   [type-segment-bases : i64]
+  [canon : (__tl_dyn-array i64)]
   [context : OptCfgContext]
   [hs : OptLoadHeaderSet]
   [sources : opt_i64_i64_map.Map]
   [call-memory : opt_i64_i64_map.Map]
+  [cells : OptGlobalCellSummary]
+  [promote : OptLoadCellPromote]
   [loop-safe : OptLabelSet]
   [exit-states : (__tl_dyn-array OptMaybeLoadCseState)]
   [processed : (__tl_dyn-array bool)]
@@ -119428,10 +120838,14 @@
           [(ir.CompilerIrBlock.Block block-label _)
             (match (opt-load-gvn-rewrite-block
               type-segment-bases
+              canon
               hs
               entry-state
               sources
               call-memory
+              cells
+              promote
+              id
               block)
               [(OptLoadGvnBlockRewrite.Rewrite exit-state instrs)
                 (begin
@@ -119446,10 +120860,13 @@
 
 (define (opt-load-gvn-process-rpo
   [type-segment-bases : i64]
+  [canon : (__tl_dyn-array i64)]
   [context : OptCfgContext]
   [hs : OptLoadHeaderSet]
   [sources : opt_i64_i64_map.Map]
   [call-memory : opt_i64_i64_map.Map]
+  [cells : OptGlobalCellSummary]
+  [promote : OptLoadCellPromote]
   [loop-safe : OptLabelSet]
   [exit-states : (__tl_dyn-array OptMaybeLoadCseState)]
   [processed : (__tl_dyn-array bool)]
@@ -119466,10 +120883,13 @@
         (begin
           (opt-load-gvn-process-id
             type-segment-bases
+            canon
             context
             hs
             sources
             call-memory
+            cells
+            promote
             loop-safe
             exit-states
             processed
@@ -119478,10 +120898,13 @@
             id)
           (opt-load-gvn-process-rpo
             type-segment-bases
+            canon
             context
             hs
             sources
             call-memory
+            cells
+            promote
             loop-safe
             exit-states
             processed
@@ -119957,7 +121380,13 @@
       (opt-load-gvn-subst-blocks env used blocks)]
     (opt-load-gvn-drop-copies-blocks env used substituted)))
 
-(define (opt-load-gvn-blocks-with-context
+(defenum OptLoadGvnResult
+  ;; Rewritten blocks plus the frame they need. MF-5 (i) is the one rewrite in
+  ;; this pass that mints vars, so the frame leaves with the blocks instead of
+  ;; being recomputed by the caller.
+  (Result ir.CompilerIrBlockList i64))
+
+(define (opt-load-gvn-blocks-with-context-result
   [profile-state : profile_state.CompilerProfileMetrics]
   [type-segment-bases : i64]
   [context : OptCfgContext]
@@ -119965,11 +121394,41 @@
   [hs : OptLoadHeaderSet]
   [params : ir.CompilerIrParamList]
   [call-memory : opt_i64_i64_map.Map]
-  [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
-  (if (not (opt-load-gvn-blocks-have-load? blocks))
-    ;; No loads: no rewrite can fire, so the pass output equals the input; skip
-    ;; the empty state and the per-block arrays.
-    blocks
+  [cells : OptGlobalCellSummary]
+  [frame-in : i64]
+  [blocks : ir.CompilerIrBlockList]) : OptLoadGvnResult
+  (opt-load-gvn-blocks-with-candidates
+    profile-state
+    type-segment-bases
+    context
+    sources
+    hs
+    params
+    call-memory
+    cells
+    (opt-load-cell-candidate-map cells blocks)
+    frame-in
+    blocks))
+
+(define (opt-load-gvn-blocks-with-candidates
+  [profile-state : profile_state.CompilerProfileMetrics]
+  [type-segment-bases : i64]
+  [context : OptCfgContext]
+  [sources : opt_i64_i64_map.Map]
+  [hs : OptLoadHeaderSet]
+  [params : ir.CompilerIrParamList]
+  [call-memory : opt_i64_i64_map.Map]
+  [cells : OptGlobalCellSummary]
+  [candidates : opt_i64_i64_map.Map]
+  [frame-in : i64]
+  [blocks : ir.CompilerIrBlockList]) : OptLoadGvnResult
+  (if (and
+    (not (opt-load-gvn-blocks-have-load? blocks))
+    (= (opt_i64_i64_map.len (& candidates)) 0))
+    ;; Neither a Load nor a promotable repeated cell read: no rewrite can fire,
+    ;; so the pass output equals the input; skip the empty state and the
+    ;; per-block arrays.
+    (OptLoadGvnResult.Result blocks frame-in)
     (let
       [index : OptCfgIndex context.index]
       [count : i64 (opt-cfg-index-block-count index)]
@@ -119981,6 +121440,46 @@
       [loops : OptNaturalLoopList
         (opt-cfg-natural-loops-with-context blocks context)]
       [loop-safe : OptLabelSet (opt-load-gvn-loop-safe-collect hs blocks loops)]
+      ;; One var-id-indexed table per function, shared by the whole sweep: the
+      ;; copy-canonical rename (MF-1). Substitution mode needs the same bound,
+      ;; so the frame is computed once here instead of twice.
+      ;; The caller's declared frame is already an upper bound on this
+      ;; function's var ids, and it is what every pass below sizes its per-var
+      ;; arrays with, so it is used as-is; only the frame-free test entry
+      ;; (frame-in 0) pays a scan for it.
+      [frame : i64
+        (if (> frame-in 0)
+          frame-in
+          (+
+            1
+            (opt-sccp-max-var-params
+              params
+              (opt-sccp-max-var-blocks blocks (- 0 1)))))]
+      [canon : (__tl_dyn-array i64) (array.make-array i64 frame)]
+      ;; Natural-loop membership, filled before the sweep because MF-5 (i)'s
+      ;; reuse gate reads it; substitution mode reuses the same array.
+      ;; Loop membership is needed by MF-5 (i)'s gates from the start of the
+      ;; sweep, and by substitution mode only if a rewrite fires. Filling it is
+      ;; O(loops x blocks), so a function with no promotable cell -- every
+      ;; function of a program whose global-cell summary is empty, which is
+      ;; every optimizer level below 2 -- leaves it empty here and lets the
+      ;; substitution branch build its own if it needs one.
+      [promotable? : bool (> (opt_i64_i64_map.len (& candidates)) 0)]
+      [loop-masks : (__tl_dyn-array i64)
+        (array.make-array
+          i64
+          (if promotable?
+            count
+            0))]
+      [_masks : unit
+        (if promotable?
+          (opt-load-gvn-loop-masks-fill loop-masks loops 0)
+          unit)]
+      ;; The block walk that records cell reads indexes blocks BY ID, so the
+      ;; index has to describe this pass's input before the plan is built.
+      [_refresh : unit (opt-cfg-index-refresh-blocks! index blocks)]
+      [promote : OptLoadCellPromote
+        (opt-load-cell-promote-build candidates index count loop-masks frame)]
       [empty-state : OptLoadCseState
         (opt-load-cse-state-with-caps-and-facts
           profile-state
@@ -119990,13 +121489,15 @@
             (ir.compiler-ir-block-list-instruction-count blocks))
           (opt-alias-seed-params type-segment-bases params))]
       (begin
-        (opt-cfg-index-refresh-blocks! index blocks)
         (opt-load-gvn-process-rpo
           type-segment-bases
+          canon
           context
           hs
           sources
           call-memory
+          cells
+          promote
           loop-safe
           exit-states
           processed
@@ -120009,24 +121510,60 @@
         ;; rewrite above needs no extra plumbing; an empty env (no rewrite
         ;; fired, or every rewrite was gated out) keeps the materialized blocks
         ;; untouched.
+        ;;
+        ;; The env is built BEFORE MF-5 (i)'s materialized Movs are spliced in,
+        ;; because that pairing is index-for-index against the pass INPUT. The
+        ;; splice then runs on the same `out` array, so substitution and
+        ;; dead-copy removal see the final blocks; a minted `%t = mov @g` is
+        ;; never in the env, so the dead-copy test cannot delete one.
         (let
+          [subst-any? : bool (opt-load-gvn-subst-any? index sources out)]
+          [subst-masks : (__tl_dyn-array i64)
+            (if (or promotable? (not subst-any?))
+              loop-masks
+              (array.make-array i64 count))]
+          [_subst-masks : unit
+            (if (or promotable? (not subst-any?))
+              unit
+              (opt-load-gvn-loop-masks-fill subst-masks loops 0))]
+          [subst : OptCopyEnv
+            (if subst-any?
+              (opt-load-gvn-subst-env index sources subst-masks frame out)
+              (OptCopyEnv.Nil))]
+          [promoted : i64 (opt-load-cell-promote-count promote)]
+          [_inserts : unit
+            (if (> promoted 0)
+              (opt-load-cell-apply-inserts! cells promote out)
+              unit)]
           [materialized : ir.CompilerIrBlockList
             (opt-gvn-materialize-blocks context.doms out blocks)]
-          (if (not (opt-load-gvn-subst-any? index sources out))
-            materialized
-            (let
-              [frame : i64
-                (+
-                  1
-                  (opt-sccp-max-var-params
-                    params
-                    (opt-sccp-max-var-blocks blocks (- 0 1))))]
-              [loop-masks : (__tl_dyn-array i64) (__tl_make-array i64 count)]
-              (begin
-                (opt-load-gvn-loop-masks-fill loop-masks loops 0)
-                (let
-                  [subst : OptCopyEnv
-                    (opt-load-gvn-subst-env index sources loop-masks frame out)]
-                  (match subst
-                    [(OptCopyEnv.Nil) materialized]
-                    [_ (opt-load-gvn-substitute frame subst materialized)]))))))))))
+          (OptLoadGvnResult.Result
+            (match subst
+              [(OptCopyEnv.Nil) materialized]
+              [_
+                (opt-load-gvn-substitute (+ frame promoted) subst materialized)])
+            (+ frame promoted)))))))
+
+;; The frame-free entry, for callers that mint nothing downstream of this pass.
+(define (opt-load-gvn-blocks-with-context
+  [profile-state : profile_state.CompilerProfileMetrics]
+  [type-segment-bases : i64]
+  [context : OptCfgContext]
+  [sources : opt_i64_i64_map.Map]
+  [hs : OptLoadHeaderSet]
+  [params : ir.CompilerIrParamList]
+  [call-memory : opt_i64_i64_map.Map]
+  [cells : OptGlobalCellSummary]
+  [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
+  (match (opt-load-gvn-blocks-with-context-result
+    profile-state
+    type-segment-bases
+    context
+    sources
+    hs
+    params
+    call-memory
+    cells
+    0
+    blocks)
+    [(OptLoadGvnResult.Result out-blocks _) out-blocks]))

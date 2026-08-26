@@ -56805,6 +56805,15 @@
       (opt-call-memory-cycle-optimistic cycle-a cycle-b cycle-cell 4)]
     [cycle-clean : opt_i64_i64_map.Map
       (opt-call-memory-cycle-clean-bits cycle-a cycle-b cycle-cell)]
+    ;; The whole summary of an element-only member of the cycle. Its one write
+    ;; is `store_ptr <buffer>, 7 : u64`, so besides the element bit the summary
+    ;; carries the ALIAS CLASS that write stores (packet T2-2 / MF-4 ii,
+    ;; opt-call-memory-element-class-bit): u64 is class 1. Before that field
+    ;; existed the element bit stood alone, which is what these assertions used
+    ;; to spell -- the summaries below are compared for EQUALITY, so the class
+    ;; has to be part of them.
+    [cycle-element-summary : i64
+      (compiler_optimize.opt-call-memory-summary-add-element-class 0 1)]
     ;; GAP4: a store through an UNKNOWN pointer still clears everything.
     [store : bool
       (opt-load-cse-barrier-blocked?
@@ -57196,13 +57205,13 @@
           (opt-call-memory-summary-is?
             cycle-element
             cycle-a
-            (compiler_optimize.opt-call-memory-summary-add-element 0)))
+            cycle-element-summary))
         210]
       [(not
           (opt-call-memory-summary-is?
             cycle-element
             cycle-b
-            (compiler_optimize.opt-call-memory-summary-add-element 0)))
+            cycle-element-summary))
         211]
       ;; ...and one global-cell store inside the cycle reaches BOTH members, so
       ;; the iteration is a fixed point and not an optimistic seed.
@@ -57211,14 +57220,14 @@
             cycle-global
             cycle-a
             (compiler_optimize.opt-call-memory-summary-add-global
-              (compiler_optimize.opt-call-memory-summary-add-element 0))))
+              cycle-element-summary)))
         212]
       [(not
           (opt-call-memory-summary-is?
             cycle-global
             cycle-b
             (compiler_optimize.opt-call-memory-summary-add-global
-              (compiler_optimize.opt-call-memory-summary-add-element 0))))
+              cycle-element-summary)))
         213]
       ;; Out of rounds: the pessimistic map is committed unchanged, so the cycle
       ;; stays absent and therefore opaque.
@@ -57234,7 +57243,7 @@
           (opt-call-memory-summary-is?
             cycle-rounds
             cycle-a
-            (compiler_optimize.opt-call-memory-summary-add-element 0)))
+            cycle-element-summary))
         216]
       ;; The bit the descriptor readers ask for arrives for a RECURSIVE
       ;; element-only callee, which is what routes it into LICM's store summary.
@@ -63929,6 +63938,14 @@
     [symbols : OptCmElemSymbols (opt-cm-elem-symbols)]
     [lp : OptLpTestSymbols (opt-lp-test-symbols)]
     [element-bit : i64 (compiler_optimize.opt-call-memory-element-bit)]
+    ;; MF-4 (ii): an element write also records the ALIAS CLASS of its stored
+    ;; type, so the whole summary of this fixture's `i64` slot write is the
+    ;; element bit plus class 1. The bit-level assertions below still read
+    ;; `element-bit` alone: the class field is not a parameter write, not a
+    ;; global write and not an unknown effect, so nothing that already asked
+    ;; about those moves.
+    [element-summary : i64
+      (compiler_optimize.opt-call-memory-summary-add-element-class 0 1)]
     [unknown-bit : i64 (compiler_optimize.opt-call-memory-unknown-bit)]
     [global-bit : i64 (compiler_optimize.opt-direct-call-clean-global-bit)]
     [memory-bit : i64 (compiler_optimize.opt-direct-call-clean-memory-bit)]
@@ -63968,7 +63985,31 @@
         (opt-cm-elem-clean-map lp-length-functions))]
     (cond
       ;; (a) the accessor write summarizes as an element write, alone
-      [(not (opt-call-memory-summary-is? summaries symbols.slot element-bit)) 1]
+      [(not
+          (opt-call-memory-summary-is? summaries symbols.slot element-summary))
+        1]
+      ;; the class field reads back as the single class the writes store ...
+      [(not
+          (=
+            (compiler_optimize.opt-call-memory-summary-element-class
+              element-summary)
+            1))
+        27]
+      ;; ... and two different classes, or an unmodelled one, read back as 0
+      [(not
+          (=
+            (compiler_optimize.opt-call-memory-summary-element-class
+              (compiler_optimize.opt-call-memory-summary-add-element-class
+                element-summary
+                2))
+            0))
+        28]
+      [(not
+          (=
+            (compiler_optimize.opt-call-memory-summary-element-class
+              (compiler_optimize.opt-call-memory-summary-add-element-class 0 0))
+            0))
+        29]
       ;; a header/length-slot write does not
       [(not (opt-call-memory-summary-is? summaries symbols.length unknown-bit))
         2]
@@ -63978,7 +64019,8 @@
       [(not (opt-call-memory-summary-is? summaries symbols.rebound unknown-bit))
         4]
       ;; the fact composes to callers rather than degrading to unknown
-      [(not (opt-call-memory-summary-is? summaries symbols.caller element-bit))
+      [(not
+          (opt-call-memory-summary-is? summaries symbols.caller element-summary))
         5]
       ;; the element bit is not a parameter write and not a global write
       [(compiler_optimize.opt-call-memory-summary-has-param-writes? element-bit)
@@ -70057,3 +70099,560 @@
     (compiler-optimize-if-convert-self-test)
     42
     "if-conversion finds the arms and the merge through the CFG index rather than the block layout, folds the triangle as well as the diamond, and spells a literal 1/0 join as a bool zero-extension (0/1 as that cast under an xor); computed vars still fold to a select and an arm holding an instruction is still refused"))
+
+;; --- T2-2: load-CSE precision (MF-1 keys, MF-4 call filtering, MF-5 cells) ---
+;;
+;; Every fixture below runs the CROSS-BLOCK load GVN
+;; (opt-gvn-blocks-with-context-and-call-memory), because that is the pass that
+;; carries the copy-canonical rename, the callee cell rows and the scalar
+;; cell-read promotion; the block-local helper above sees none of them.
+(define (opt-t22-type-bases) : i64
+  (compiler_ast_types.ast-node-pool-reader-type-segment-bases))
+
+(define (opt-t22-blocks [instrs : compiler_ir_types.CompilerIrInstrSeq]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      instrs)
+    (compiler_ir_types.CompilerIrBlockList.Nil)))
+
+(define (opt-t22-run
+  [params : compiler_ir_types.CompilerIrParamList]
+  [call-memory : opt_i64_i64_map.Map]
+  [cells : compiler_optimize.OptGlobalCellSummary]
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_optimize.opt-gvn-blocks-with-context-and-call-memory
+    (profile_state.compiler-profile-state-metrics
+      (profile_state.compiler-profile-state-new))
+    (opt-t22-type-bases)
+    (compiler_optimize.opt-cfg-context-build blocks)
+    params
+    call-memory
+    cells
+    blocks))
+
+(define (opt-t22-empty-map) : opt_i64_i64_map.Map
+  (opt_i64_i64_map.with-capacity 1))
+
+;; --- (a) MF-1: copy-canonical load keys -------------------------------------
+;;
+;; The cfg-natural-loops shape of target/research/patterns/memory-facts.md 2.8:
+;; a descriptor handle is loaded twice off the same `&mut Vec` parameter, the
+;; second load is CSE'd to `Mov <- first`, and an element address is then formed
+;; off EACH name. Without the rename the second element load keys on the copy
+;; and survives; with it both key alike and only one element load remains.
+(define (opt-t22-header-params) : compiler_ir_types.CompilerIrParamList
+  (compiler_ir_types.compiler-ir-param-cons
+    (compiler_ir_types.CompilerIrParam.Param
+      "vec"
+      (compiler_ast_types.ast-ty-mut-ref
+        0
+        (compiler_ast_types.ast-ty-dyn-array (compiler_ast_types.AstType.I64)))
+      0)
+    (compiler_ir_types.compiler-ir-param-cons
+      (compiler_ir_types.CompilerIrParam.Param
+        "index"
+        (compiler_ast_types.AstType.I64)
+        1)
+      (compiler_ir_types.CompilerIrParamList.Nil))))
+
+;; `index-var` is the var the SECOND element gep indexes with: var 1 directly,
+;; or var 10 for the inliner's parameter copy `%10 = mov %1`.
+(define (opt-t22-canon-instrs [index-var : i64] [copy? : bool]) : compiler_ir_types.CompilerIrInstrSeq
+  (opt-test-instrs
+    (compiler_ir_types.CompilerIrInstr.Gep
+      2
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      (compiler_ir_types.CompilerIrValue.I64 0)
+      (compiler_ast_types.AstType.U64))
+    (compiler_ir_types.CompilerIrInstr.Load
+      3
+      (compiler_ir_types.CompilerIrValue.Var 2)
+      (compiler_ast_types.AstType.U64))
+    (compiler_ir_types.CompilerIrInstr.Gep
+      4
+      (compiler_ir_types.CompilerIrValue.Var 3)
+      (compiler_ir_types.CompilerIrValue.Var 1)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.CompilerIrInstr.Load
+      5
+      (compiler_ir_types.CompilerIrValue.Var 4)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.CompilerIrInstr.Mov
+      10
+      (if copy?
+        (compiler_ir_types.CompilerIrValue.Var 1)
+        (compiler_ir_types.CompilerIrValue.I64 0))
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.CompilerIrInstr.Gep
+      6
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      (compiler_ir_types.CompilerIrValue.I64 0)
+      (compiler_ast_types.AstType.U64))
+    (compiler_ir_types.CompilerIrInstr.Load
+      7
+      (compiler_ir_types.CompilerIrValue.Var 6)
+      (compiler_ast_types.AstType.U64))
+    (compiler_ir_types.CompilerIrInstr.Gep
+      8
+      (compiler_ir_types.CompilerIrValue.Var 7)
+      (compiler_ir_types.CompilerIrValue.Var index-var)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.CompilerIrInstr.Load
+      9
+      (compiler_ir_types.CompilerIrValue.Var 8)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.CompilerIrInstr.Return
+      (compiler_ir_types.CompilerIrMaybeValue.Some
+        (compiler_ir_types.CompilerIrValue.Var 9)))))
+
+(define (opt-t22-canon-loads [index-var : i64] [copy? : bool]) : i64
+  (opt-count-load-blocks
+    (opt-t22-run
+      (opt-t22-header-params)
+      (opt-t22-empty-map)
+      (compiler_optimize.opt-global-cell-summary-empty)
+      (opt-t22-blocks (opt-t22-canon-instrs index-var copy?)))))
+
+;; --- (b) MF-5 (i): repeated scalar cell reads -------------------------------
+(defstruct OptT22CellSymbols
+  (g i64)
+  (h i64)
+  (caller i64)
+  (writer i64)
+  (clean i64)
+  (opaque i64))
+
+(define (opt-t22-cell-symbols) : OptT22CellSymbols
+  (OptT22CellSymbols
+    (opt-test-symbol "t22_g")
+    (opt-test-symbol "t22_h")
+    (opt-test-symbol "t22_caller")
+    (opt-test-symbol "t22_writer")
+    (opt-test-symbol "t22_clean")
+    (opt-test-symbol "t22_opaque")))
+
+(define (opt-t22-cell-globals [symbols : OptT22CellSymbols]) : compiler_ir_types.CompilerIrGlobalSeq
+  (let
+    [builder : compiler_ir_types.CompilerIrGlobalBuilder
+      (compiler_ir_types.compiler-ir-global-builder-with-capacity 2)]
+    (begin
+      (opt-test-global-builder-push!
+        (&mut builder)
+        symbols.g
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.CompilerIrValue.I64 7))
+      (opt-test-global-builder-push!
+        (&mut builder)
+        symbols.h
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.CompilerIrValue.I64 9))
+      (compiler_ir_types.compiler-ir-global-builder-to-seq builder))))
+
+;; `t22_writer` stores g, `t22_clean` stores h (so its row excludes g), and
+;; `t22_opaque` makes an indirect call, so its row is "any cell".
+(define (opt-t22-store-function [name : i64] [target : i64]) : compiler_ir_types.CompilerIrFunction
+  (opt-call-memory-test-function
+    name
+    (compiler_ir_types.CompilerIrParamList.Nil)
+    (opt-test-instrs
+      (compiler_ir_types.CompilerIrInstr.Store
+        target
+        (compiler_ir_types.CompilerIrValue.I64 5)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.CompilerIrInstr.Return
+        (compiler_ir_types.CompilerIrMaybeValue.No)))))
+
+(define (opt-t22-opaque-function [name : i64]) : compiler_ir_types.CompilerIrFunction
+  (opt-call-memory-test-function
+    name
+    (compiler_ir_types.CompilerIrParamList.Nil)
+    (opt-test-instrs
+      (compiler_ir_types.CompilerIrInstr.CallIndirect
+        1
+        (compiler_ir_types.CompilerIrValue.I64 0)
+        compiler_ir_types.CompilerIrCallArgs.Nil
+        (compiler_ast_types.AstType.Unit))
+      (compiler_ir_types.CompilerIrInstr.Return
+        (compiler_ir_types.CompilerIrMaybeValue.No)))))
+
+;; `middle` is what stands between the two `Global g` reads: 0 nothing,
+;; 1 a `Store g`, 2 a call to a callee that stores g, 3 a call to a callee whose
+;; row holds h alone.
+(define (opt-t22-cell-instrs [symbols : OptT22CellSymbols] [middle : i64]) : compiler_ir_types.CompilerIrInstrSeq
+  (opt-test-instrs
+    (compiler_ir_types.CompilerIrInstr.BinOp
+      2
+      compiler_ir_types.CompilerIrBinOp.Add
+      (compiler_ir_types.CompilerIrValue.Global symbols.g)
+      (compiler_ir_types.CompilerIrValue.I64 1)
+      (compiler_ast_types.AstType.I64))
+    (cond
+      [(= middle 1)
+        (compiler_ir_types.CompilerIrInstr.Store
+          symbols.g
+          (compiler_ir_types.CompilerIrValue.I64 5)
+          (compiler_ast_types.AstType.I64))]
+      [(= middle 2)
+        (compiler_ir_types.CompilerIrInstr.Call
+          4
+          symbols.writer
+          compiler_ir_types.CompilerIrCallArgs.Nil
+          (compiler_ast_types.AstType.Unit))]
+      [(= middle 3)
+        (compiler_ir_types.CompilerIrInstr.Call
+          4
+          symbols.clean
+          compiler_ir_types.CompilerIrCallArgs.Nil
+          (compiler_ast_types.AstType.Unit))]
+      [else
+        (compiler_ir_types.CompilerIrInstr.Mov
+          5
+          (compiler_ir_types.CompilerIrValue.I64 3)
+          (compiler_ast_types.AstType.I64))])
+    (compiler_ir_types.CompilerIrInstr.BinOp
+      3
+      compiler_ir_types.CompilerIrBinOp.Add
+      (compiler_ir_types.CompilerIrValue.Global symbols.g)
+      (compiler_ir_types.CompilerIrValue.I64 2)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.CompilerIrInstr.Return
+      (compiler_ir_types.CompilerIrMaybeValue.Some
+        (compiler_ir_types.CompilerIrValue.Var 3)))))
+
+(define (opt-t22-global-operand?
+  [value : compiler_ir_types.CompilerIrValue]
+  [name : i64]) : bool
+  (match value
+    [(compiler_ir_types.CompilerIrValue.Global g)
+      (= (compiler_ir_types.compiler-ir-symbol-id g) name)]
+    [_ false]))
+
+(define (opt-t22-count-cell-reads-seq
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [name : i64]
+  [index : i64]
+  [acc : i64]) : i64
+  (if (>= index (compiler_ir_types.compiler-ir-instr-seq-count instrs))
+    acc
+    (opt-t22-count-cell-reads-seq
+      instrs
+      name
+      (+ index 1)
+      (+
+        acc
+        (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
+          [(compiler_ir_types.CompilerIrInstr.BinOp _ _ lhs rhs _)
+            (+
+              (if (opt-t22-global-operand? lhs name)
+                1
+                0)
+              (if (opt-t22-global-operand? rhs name)
+                1
+                0))]
+          [_ 0])))))
+
+(define (opt-t22-count-cell-movs-seq
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [name : i64]
+  [index : i64]
+  [acc : i64]) : i64
+  (if (>= index (compiler_ir_types.compiler-ir-instr-seq-count instrs))
+    acc
+    (opt-t22-count-cell-movs-seq
+      instrs
+      name
+      (+ index 1)
+      (+
+        acc
+        (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
+          [(compiler_ir_types.CompilerIrInstr.Mov _ src _)
+            (if (opt-t22-global-operand? src name)
+              1
+              0)]
+          [_ 0])))))
+
+(define (opt-t22-count-cell-reads
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [name : i64]) : i64
+  (match blocks
+    [(compiler_ir_types.CompilerIrBlockList.Nil) 0]
+    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (+
+            (opt-t22-count-cell-reads-seq instrs name 0 0)
+            (opt-t22-count-cell-reads (__tl-box-place rest) name))])]
+    [(compiler_ir_types.CompilerIrBlockList.Array seq)
+      (opt-t22-count-cell-reads
+        (compiler_ir_types.compiler-ir-block-seq-to-list seq)
+        name)]))
+
+(define (opt-t22-count-cell-movs
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [name : i64]) : i64
+  (match blocks
+    [(compiler_ir_types.CompilerIrBlockList.Nil) 0]
+    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (+
+            (opt-t22-count-cell-movs-seq instrs name 0 0)
+            (opt-t22-count-cell-movs (__tl-box-place rest) name))])]
+    [(compiler_ir_types.CompilerIrBlockList.Array seq)
+      (opt-t22-count-cell-movs
+        (compiler_ir_types.compiler-ir-block-seq-to-list seq)
+        name)]))
+
+(define (opt-t22-cell-functions [symbols : OptT22CellSymbols] [middle : i64]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
+    (opt-call-memory-test-function
+      symbols.caller
+      (compiler_ir_types.CompilerIrParamList.Nil)
+      (opt-t22-cell-instrs symbols middle))
+    (compiler_ir_types.compiler-ir-function-seq-prepend
+      (opt-t22-store-function symbols.writer symbols.g)
+      (compiler_ir_types.compiler-ir-function-seq-prepend
+        (opt-t22-store-function symbols.clean symbols.h)
+        (compiler_ir_types.compiler-ir-function-seq-prepend
+          (opt-t22-opaque-function symbols.opaque)
+          (compiler_ir_types.compiler-ir-function-seq-empty))))))
+
+(define (opt-t22-cell-run [symbols : OptT22CellSymbols] [middle : i64]) : compiler_ir_types.CompilerIrBlockList
+  (let
+    [functions : compiler_ir_types.CompilerIrFunctionSeq
+      (opt-t22-cell-functions symbols middle)]
+    (opt-t22-run
+      (compiler_ir_types.CompilerIrParamList.Nil)
+      (compiler_optimize.opt-call-memory-build
+        (opt-t22-type-bases)
+        functions
+        16)
+      (compiler_optimize.opt-global-cell-summary-build
+        (opt-t22-type-bases)
+        (opt-t22-cell-globals symbols)
+        functions)
+      (opt-t22-blocks (opt-t22-cell-instrs symbols middle)))))
+
+;; --- (d)/(e) MF-4: element class and cell rows at a call --------------------
+;;
+;; Two shared-ref params, so the alias layer proves nothing and every verdict is
+;; the location rule's alone (as in the P1 fixtures above). The entry is a
+;; NON-header `Field(1, 0, (__tl_dyn-array i64))` -- a handle word -- which an
+;; element-only callee can only be separated from by the typed-word rule, i.e.
+;; by MF-4 (ii)'s class field.
+(define (opt-t22-element-call-instrs [callee : i64]) : compiler_ir_types.CompilerIrInstrSeq
+  (opt-test-instrs
+    (compiler_ir_types.CompilerIrInstr.Gep
+      2
+      (compiler_ir_types.CompilerIrValue.Var 1)
+      (compiler_ir_types.CompilerIrValue.I64 0)
+      (compiler_ast_types.ast-ty-dyn-array (compiler_ast_types.AstType.I64)))
+    (compiler_ir_types.CompilerIrInstr.Load
+      3
+      (compiler_ir_types.CompilerIrValue.Var 2)
+      (compiler_ast_types.ast-ty-dyn-array (compiler_ast_types.AstType.I64)))
+    (compiler_ir_types.CompilerIrInstr.Call
+      4
+      callee
+      (compiler_ir_types.CompilerIrCallArgs.One
+        (compiler_ir_types.CompilerIrValue.Var 0))
+      (compiler_ast_types.AstType.Unit))
+    (compiler_ir_types.CompilerIrInstr.Gep
+      5
+      (compiler_ir_types.CompilerIrValue.Var 1)
+      (compiler_ir_types.CompilerIrValue.I64 0)
+      (compiler_ast_types.ast-ty-dyn-array (compiler_ast_types.AstType.I64)))
+    (compiler_ir_types.CompilerIrInstr.Load
+      6
+      (compiler_ir_types.CompilerIrValue.Var 5)
+      (compiler_ast_types.ast-ty-dyn-array (compiler_ast_types.AstType.I64)))
+    (compiler_ir_types.CompilerIrInstr.Return
+      (compiler_ir_types.CompilerIrMaybeValue.Some
+        (compiler_ir_types.CompilerIrValue.Var 6)))))
+
+;; The `cm_elem` accessor writer, with the stored element type as a parameter:
+;; i64 gives class 1, u8 gives the unmodelled class 0.
+(define (opt-t22-element-writer-instrs [store-ty : compiler_ast_types.AstType]) : compiler_ir_types.CompilerIrInstrSeq
+  (opt-cm-elem-accessor-instrs
+    (opt-test-instrs
+      (compiler_ir_types.CompilerIrInstr.Gep
+        4
+        (compiler_ir_types.CompilerIrValue.Var 3)
+        (compiler_ir_types.CompilerIrValue.I64 0)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.CompilerIrInstr.Load
+        5
+        (compiler_ir_types.CompilerIrValue.Var 4)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.CompilerIrInstr.Gep
+        6
+        (compiler_ir_types.CompilerIrValue.Var 5)
+        (compiler_ir_types.CompilerIrValue.I64 1)
+        store-ty)
+      (compiler_ir_types.CompilerIrInstr.StorePtr
+        (compiler_ir_types.CompilerIrValue.Var 6)
+        (compiler_ir_types.CompilerIrValue.I64 7)
+        store-ty))))
+
+(define (opt-t22-element-call-loads [store-ty : compiler_ast_types.AstType]) : i64
+  (let
+    [callee : i64 (opt-test-symbol "t22_elem_writer")]
+    [functions : compiler_ir_types.CompilerIrFunctionSeq
+      (opt-gc-test-functions1
+        (opt-cm-elem-function callee (opt-t22-element-writer-instrs store-ty)))]
+    (opt-count-load-blocks
+      (opt-t22-run
+        (opt-load-cse-shared-ref-params)
+        (compiler_optimize.opt-call-memory-build
+          (opt-t22-type-bases)
+          functions
+          16)
+        (compiler_optimize.opt-global-cell-summary-empty)
+        (opt-t22-blocks (opt-t22-element-call-instrs callee))))))
+
+;; (e) A named cell word read twice across a call. `GlobalAddr` is the spelling
+;; that keys as `GlobalField(g, 0, i64, false)` -- g's own storage -- and it is
+;; also what makes g address-taken, which is why this fixture cannot double as
+;; the MF-5 (i) one.
+(define (opt-t22-cell-row-instrs [symbols : OptT22CellSymbols] [callee : i64]) : compiler_ir_types.CompilerIrInstrSeq
+  (opt-test-instrs
+    (compiler_ir_types.CompilerIrInstr.Gep
+      2
+      (compiler_ir_types.CompilerIrValue.GlobalAddr symbols.g)
+      (compiler_ir_types.CompilerIrValue.I64 0)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.CompilerIrInstr.Load
+      3
+      (compiler_ir_types.CompilerIrValue.Var 2)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.CompilerIrInstr.Call
+      4
+      callee
+      compiler_ir_types.CompilerIrCallArgs.Nil
+      (compiler_ast_types.AstType.Unit))
+    (compiler_ir_types.CompilerIrInstr.Gep
+      5
+      (compiler_ir_types.CompilerIrValue.GlobalAddr symbols.g)
+      (compiler_ir_types.CompilerIrValue.I64 0)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.CompilerIrInstr.Load
+      6
+      (compiler_ir_types.CompilerIrValue.Var 5)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.CompilerIrInstr.Return
+      (compiler_ir_types.CompilerIrMaybeValue.Some
+        (compiler_ir_types.CompilerIrValue.Var 6)))))
+
+(define (opt-t22-cell-row-loads [symbols : OptT22CellSymbols] [callee : i64]) : i64
+  (let
+    [functions : compiler_ir_types.CompilerIrFunctionSeq
+      (compiler_ir_types.compiler-ir-function-seq-prepend
+        (opt-call-memory-test-function
+          symbols.caller
+          (compiler_ir_types.CompilerIrParamList.Nil)
+          (opt-t22-cell-row-instrs symbols callee))
+        (compiler_ir_types.compiler-ir-function-seq-prepend
+          (opt-t22-store-function symbols.writer symbols.g)
+          (compiler_ir_types.compiler-ir-function-seq-prepend
+            (opt-t22-store-function symbols.clean symbols.h)
+            (compiler_ir_types.compiler-ir-function-seq-prepend
+              (opt-t22-opaque-function symbols.opaque)
+              (compiler_ir_types.compiler-ir-function-seq-empty)))))]
+    (opt-count-load-blocks
+      (opt-t22-run
+        (compiler_ir_types.CompilerIrParamList.Nil)
+        (compiler_optimize.opt-call-memory-build
+          (opt-t22-type-bases)
+          functions
+          16)
+        (compiler_optimize.opt-global-cell-summary-build
+          (opt-t22-type-bases)
+          (opt-t22-cell-globals symbols)
+          functions)
+        (opt-t22-blocks (opt-t22-cell-row-instrs symbols callee))))))
+
+;; --- (c) MF-5 (ii): the width rule for constant globals ---------------------
+;;
+;; MEASURED and REFUSED, see the note above opt-const-globals-imm32-fits?: this
+;; tree's allocator cannot rematerialize a wide immediate, so a wide literal
+;; global stays a cell read and only imm32 literals become operands. This
+;; fixture pins that decision so the next attempt has to move the note with it.
+(define (opt-t22-const-globals) : compiler_ir_types.CompilerIrGlobalSeq
+  (let
+    [builder : compiler_ir_types.CompilerIrGlobalBuilder
+      (compiler_ir_types.compiler-ir-global-builder-with-capacity 2)]
+    (begin
+      (opt-test-global-builder-push!
+        (&mut builder)
+        (opt-test-symbol "t22_narrow")
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.CompilerIrValue.I64 17))
+      (opt-test-global-builder-push!
+        (&mut builder)
+        (opt-test-symbol "t22_wide")
+        (compiler_ast_types.AstType.I64)
+        (compiler_ir_types.CompilerIrValue.I64 4611686018427387904))
+      (compiler_ir_types.compiler-ir-global-builder-to-seq builder))))
+
+(define (opt-t22-const-table) : opt_i64_i64_map.Map
+  (compiler_optimize.opt-const-divisors-build
+    (opt-t22-const-globals)
+    (compiler_ir_types.compiler-ir-function-seq-empty)))
+
+(define (compiler-optimize-t22-load-cse-precision-self-test) : i64
+  (let
+    [cells : OptT22CellSymbols (opt-t22-cell-symbols)]
+    [const-table : opt_i64_i64_map.Map (opt-t22-const-table)]
+    [clean : compiler_ir_types.CompilerIrBlockList (opt-t22-cell-run cells 0)]
+    [stored : compiler_ir_types.CompilerIrBlockList (opt-t22-cell-run cells 1)]
+    [dirty-call : compiler_ir_types.CompilerIrBlockList
+      (opt-t22-cell-run cells 2)]
+    [clean-call : compiler_ir_types.CompilerIrBlockList
+      (opt-t22-cell-run cells 3)]
+    (cond
+      ;; (a) the second element load is CSE'd once the key resolves the copy the
+      ;; pass itself made; the inliner's index copy keys alike too.
+      [(not (= (opt-t22-canon-loads 1 false) 2)) 1]
+      [(not (= (opt-t22-canon-loads 10 true) 2)) 2]
+      ;; (b) two cell reads with no write between: one materialized `mov @g`
+      ;; and no `Global g` operand left in the arithmetic.
+      [(not (= (opt-t22-count-cell-reads clean cells.g) 0)) 3]
+      [(not (= (opt-t22-count-cell-movs clean cells.g) 1)) 4]
+      ;; a `Store g` between them ends the region -- and the price test sees it,
+      ;; so nothing is materialized either.
+      [(not (= (opt-t22-count-cell-reads stored cells.g) 2)) 5]
+      [(not (= (opt-t22-count-cell-movs stored cells.g) 0)) 6]
+      ;; a call whose cell row holds g ends it the same way ...
+      [(not (= (opt-t22-count-cell-reads dirty-call cells.g) 2)) 7]
+      [(not (= (opt-t22-count-cell-movs dirty-call cells.g) 0)) 8]
+      ;; ... while a call whose row holds only h does not (MF-4 i).
+      [(not (= (opt-t22-count-cell-reads clean-call cells.g) 0)) 9]
+      [(not (= (opt-t22-count-cell-movs clean-call cells.g) 1)) 10]
+      ;; (d) an element-only callee storing i64 cannot have written a handle
+      ;; word, so the second load of it is CSE'd; the same callee storing bytes
+      ;; has no class and drops the entry.
+      [(not (= (opt-t22-element-call-loads (compiler_ast_types.AstType.I64)) 1))
+        11]
+      [(not (= (opt-t22-element-call-loads (compiler_ast_types.AstType.U8)) 2))
+        12]
+      ;; (e) a cell word survives a call whose row excludes it, and does not
+      ;; survive a callee that may write any cell.
+      [(not (= (opt-t22-cell-row-loads cells cells.clean) 1)) 13]
+      [(not (= (opt-t22-cell-row-loads cells cells.opaque) 2)) 14]
+      ;; (c) the constant-global table: imm32 in, wide out.
+      [(not
+          (opt_i64_i64_map.contains?
+            (& const-table)
+            (opt-test-symbol "t22_narrow")))
+        15]
+      [(opt_i64_i64_map.contains? (& const-table) (opt-test-symbol "t22_wide"))
+        16]
+      [else 42])))
+
+(test
+  load-cse-precision-keys-cells-and-call-rows
+  (test.assert-i64-eq
+    (compiler-optimize-t22-load-cse-precision-self-test)
+    42
+    "load keys resolve the copies the pass makes and the inliner's parameter copies, a repeated scalar cell read materializes one Mov per write-free region (ended by a Store or by a call whose mod-ref row holds the cell, not by one whose row does not), an element-only callee's stored class keeps a differently classed handle entry, a cell word survives a call whose row excludes it, and the constant-global table still refuses wide literals"))

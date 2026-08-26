@@ -3625,7 +3625,9 @@
       (ast.ast-decl-def-struct-id
         (ci.intern-generated-name "Bad")
         (ast.AstStructRepr.C)
-        (ast.ast-struct-cleanup-fn-id (ci.intern-generated-name "cleanup-bad"))
+        (ast.ast-struct-cleanup-fn-id
+          (ci.intern-syntax-id-from-raw
+            (ci.intern-generated-name "cleanup-bad")))
         (ast.ast-field-def-cons
           (ast.ast-field-def-id
             (ci.intern-generated-name "fd")
@@ -3645,7 +3647,9 @@
           (ast.ast-field-def-id
             (ci.intern-generated-name "fd")
             (ast.AstType.I64)
-            (ast.ast-field-cleanup-fn-id (ci.intern-generated-name "close-fd")))
+            (ast.ast-field-cleanup-fn-id
+              (ci.intern-syntax-id-from-raw
+                (ci.intern-generated-name "close-fd"))))
           (ast.ast-field-def-list-new)))
       (ast.ast-decl-list-new))))
 
@@ -3751,7 +3755,8 @@
             (ast.ast-type-cons (ast.AstType.I64) (ast.ast-type-list-new))
             (ast.ast-variant-payload-cleanup-cons
               (ast.ast-variant-payload-cleanup-fn-id
-                (ci.intern-generated-name "close-fd"))
+                (ci.intern-syntax-id-from-raw
+                  (ci.intern-generated-name "close-fd")))
               (ast.ast-variant-payload-cleanup-list-new)))
           (ast.ast-variant-def-list-new)))
       (ast.ast-decl-list-new))))

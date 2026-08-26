@@ -2704,7 +2704,8 @@
   [refs : lint_svec.Vec (:consume)]) : lint_svec.Vec
   (match cleanup
     [(ast.AstFieldCleanup.No) refs]
-    [(ast.AstFieldCleanup.Fn name) (selfhost-lint-dead-ref-add-id refs name)]
+    [(ast.AstFieldCleanup.Fn name)
+      (selfhost-lint-dead-ref-add-id refs (ci.intern-syntax-id-value name))]
     [(ast.AstFieldCleanup.Owned) refs]))
 
 (define (selfhost-lint-dead-field-def-list-refs
@@ -2735,14 +2736,16 @@
   [refs : lint_svec.Vec (:consume)]) : lint_svec.Vec
   (match cleanup
     [(ast.AstStructCleanup.No) refs]
-    [(ast.AstStructCleanup.Fn name) (selfhost-lint-dead-ref-add-id refs name)]))
+    [(ast.AstStructCleanup.Fn name)
+      (selfhost-lint-dead-ref-add-id refs (ci.intern-syntax-id-value name))]))
 
 (define (selfhost-lint-dead-enum-cleanup-refs
   [cleanup : ast.AstEnumCleanup]
   [refs : lint_svec.Vec (:consume)]) : lint_svec.Vec
   (match cleanup
     [(ast.AstEnumCleanup.No) refs]
-    [(ast.AstEnumCleanup.Fn name) (selfhost-lint-dead-ref-add-id refs name)]))
+    [(ast.AstEnumCleanup.Fn name)
+      (selfhost-lint-dead-ref-add-id refs (ci.intern-syntax-id-value name))]))
 
 (define (selfhost-lint-dead-variant-cleanup-refs
   [cleanup : ast.AstVariantPayloadCleanup]
@@ -2750,7 +2753,7 @@
   (match cleanup
     [(ast.AstVariantPayloadCleanup.No) refs]
     [(ast.AstVariantPayloadCleanup.Fn name)
-      (selfhost-lint-dead-ref-add-id refs name)]
+      (selfhost-lint-dead-ref-add-id refs (ci.intern-syntax-id-value name))]
     [(ast.AstVariantPayloadCleanup.Owned) refs]))
 
 (define (selfhost-lint-dead-variant-cleanup-list-refs

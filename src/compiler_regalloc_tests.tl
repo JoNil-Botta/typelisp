@@ -17734,6 +17734,87 @@
         (= (array-ref words 4) 4)
         (= (array-ref words 5) 4)))))
 
+(define (compiler-reg-simd-copy-class-function) : ir.CompilerIrFunction
+  (ir.CompilerIrFunction.Function
+    (ir.compiler-ir-test-symbol "simd_copy_class")
+    ir.CompilerIrParamList.Nil
+    (ast.AstType.Unit)
+    6
+    (ir.compiler-ir-block-cons
+      (ir.CompilerIrBlock.Block
+        (ir.compiler-ir-label "entry")
+        (compiler-reg-test-instr-seq-prepend
+          (ir.CompilerIrInstr.Mov
+            2
+            (ir.CompilerIrValue.Var 1)
+            (ast.AstType.I64))
+          (compiler-reg-test-instr-seq-prepend
+            (ir.CompilerIrInstr.Mov
+              1
+              (ir.CompilerIrValue.Var 0)
+              (ast.AstType.I64))
+            (compiler-reg-test-instr-seq-prepend
+              (ir.CompilerIrInstr.Splat
+                0
+                (ir.CompilerIrValue.I64 7)
+                8
+                (ast.AstType.I64))
+              (compiler-reg-test-instr-seq-prepend
+                (ir.CompilerIrInstr.Mov
+                  5
+                  (ir.CompilerIrValue.Var 4)
+                  (ast.AstType.Bool))
+                (compiler-reg-test-instr-seq-prepend
+                  (ir.CompilerIrInstr.Mov
+                    4
+                    (ir.CompilerIrValue.Var 3)
+                    (ast.AstType.Bool))
+                  (compiler-reg-test-instr-seq-prepend
+                    (ir.ir-instr-vector-compare
+                      3
+                      (ir.CompilerIrBinOp.Eq)
+                      (ir.CompilerIrValue.Var 0)
+                      (ir.CompilerIrValue.Var 0)
+                      8
+                      (ast.AstType.I64))
+                    (compiler-reg-test-instr-seq-prepend
+                      (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
+                      (ir.compiler-ir-instr-seq-empty)))))))))
+      ir.CompilerIrBlockList.Nil)))
+
+(define (compiler-reg-simd-copy-classes-and-widths-ok?) : bool
+  (let
+    [func : ir.CompilerIrFunction (compiler-reg-simd-copy-class-function)]
+    [classes : live.CompilerLiveUseDef
+      (reg.compiler-reg-function-vector-mask-defs func)]
+    [words : (__tl_dyn-array i64) (array.make-array i64 6)]
+    (match func
+      [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
+        (begin
+          (reg.compiler-reg-vector-stack-words-blocks! blocks words)
+          (reg.compiler-reg-vector-stack-words-fixpoint! blocks words)
+          (and
+            (live.compiler-live-set-contains? classes.uses 0)
+            (live.compiler-live-set-contains? classes.uses 1)
+            (live.compiler-live-set-contains? classes.uses 2)
+            (not (live.compiler-live-set-contains? classes.uses 3))
+            (live.compiler-live-set-contains? classes.defs 3)
+            (live.compiler-live-set-contains? classes.defs 4)
+            (live.compiler-live-set-contains? classes.defs 5)
+            (not (live.compiler-live-set-contains? classes.defs 0))
+            (= (array-ref words 0) 8)
+            (= (array-ref words 1) 8)
+            (= (array-ref words 2) 8)
+            (= (array-ref words 3) 4)
+            (= (array-ref words 4) 4)
+            (= (array-ref words 5) 4)))])))
+
+(test
+  regalloc-simd-copy-class-fixpoint
+  (test.assert-true
+    (compiler-reg-simd-copy-classes-and-widths-ok?)
+    "vector/mask register classes and full spill widths flow through out-of-order Mov chains"))
+
 (define (compiler-reg-color-storage-ranges-ok?) : bool
   (match (compiler-reg-color-storage-function)
     [(ir.CompilerIrFunction.Function _ params _ vars blocks)

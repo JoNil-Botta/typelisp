@@ -88,6 +88,14 @@ identity, output, routing, and parity results live separately in
 `assertions.tsv`. Linux adds Cachegrind instruction evidence when available;
 no noisy time or instruction measurement is a regression ratchet.
 
+`benchmark-semantic-index.sh` is the opt-in compiler-scale consumer of that
+interface. It builds a current-tree runner with an explicitly selected compiler
+and reports owned semantic record count, process-tree peak memory, wall time,
+exit status, and normalized termination reason for
+`src/compiler_typecheck_core.tl`. Its `--self-test` mode is wired into CI on
+both hosts, but the expensive corpus workload is deliberately not; see
+`tools/semantic-index-bench/README.md` for the reproducible command and schema.
+
 On Windows, `verify-integration.sh` sends independent manifest links through
 `windows-integration-linker.ps1`. The measured default is four concurrent
 `lld-link` children; set `TYPELISP_WINDOWS_LINK_JOBS=1` for serial debugging or
@@ -130,9 +138,9 @@ Keep these at the top level while their owning gate references them.
 
 Active optional tools stay at the top level when they support recurring work:
 the compiler and CLI benchmarks, selfhost size report, compile-memory and RSS
-tools, instruction-count runners, ISPC/SPMD comparisons, LSP latency,
-typecheck-prefix-cache measurements, the `run-bounded-process.ps1` job-memory
-cap wrapper, and platform profilers. See
+tools, instruction-count runners, the compiler-scale semantic-index benchmark,
+ISPC/SPMD comparisons, LSP latency, typecheck-prefix-cache measurements, the
+`run-bounded-process.ps1` job-memory cap wrapper, and platform profilers. See
 `src/TESTING.md`, `perf/README.md`, and `benchmarks/README.md` for their
 workload-specific instructions.
 

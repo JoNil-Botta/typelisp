@@ -3,10 +3,11 @@ set -eu
 
 # Cross-host fail-closed process-tree memory cap with a stable report.
 #
-# Linux uses lib-linux-memory-limit.sh (user cgroup or aggregate-RSS watchdog)
-# and GNU time for the observed peak. Windows delegates to the suspended-start
-# Job Object wrapper. A missing enforcement/measurement backend is a wrapper
-# failure, never an unbounded fallback.
+# Linux uses lib-linux-memory-limit.sh (user cgroup or aggregate-RSS watchdog),
+# whose in-boundary sampler provides the observed process-tree peak, plus a
+# monotonic wall clock. Windows delegates to the suspended-start Job Object
+# wrapper. A missing enforcement/measurement backend is a wrapper failure,
+# never an unbounded fallback.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 
@@ -209,11 +210,6 @@ if [ "$command_available" != yes ]; then
     exit 2
 fi
 
-command -v /usr/bin/time >/dev/null 2>&1 || {
-    echo "bounded-run Linux measurement requires /usr/bin/time" >&2
-    write_wrapper_failure_report unavailable
-    exit 2
-}
 if [ "$timeout_seconds" -gt 0 ]; then
     command -v timeout >/dev/null 2>&1 || {
         echo "bounded-run Linux timeout requires GNU timeout" >&2
@@ -221,6 +217,35 @@ if [ "$timeout_seconds" -gt 0 ]; then
         exit 2
     }
 fi
+
+linux_wall_now_ms() {
+    if [ -r /proc/uptime ] && command -v awk >/dev/null 2>&1; then
+        _wall_now=$(awk 'NR == 1 { printf "%.0f\n", $1 * 1000 }' /proc/uptime) \
+            || return 1
+        case "$_wall_now" in
+            '' | *[!0-9]*) return 1 ;;
+            *) printf '%s\n' "$_wall_now"; return 0 ;;
+        esac
+    fi
+    command -v date >/dev/null 2>&1 || return 1
+    _wall_now=$(date +%s%3N 2>/dev/null || true)
+    case "$_wall_now" in
+        '' | *[!0-9]*)
+            _wall_seconds=$(date +%s 2>/dev/null || true)
+            case "$_wall_seconds" in
+                '' | *[!0-9]*) return 1 ;;
+                *) printf '%s000\n' "$_wall_seconds" ;;
+            esac
+            ;;
+        *) printf '%s\n' "$_wall_now" ;;
+    esac
+}
+
+start_wall_ms=$(linux_wall_now_ms) || {
+    echo "bounded-run Linux wall-time measurement is unavailable" >&2
+    write_wrapper_failure_report unavailable
+    exit 2
+}
 
 . "$ROOT/scripts/lib-linux-memory-limit.sh"
 LINUX_MEMORY_LIMIT_BACKEND=
@@ -230,38 +255,34 @@ if ! linux_memory_limit_select_backend; then
 fi
 backend=$LINUX_MEMORY_LIMIT_BACKEND
 export LINUX_MEMORY_LIMIT_BACKEND
-time_file="$report.time"
 metrics_file="$report.memory"
-rm -f "$time_file" "$metrics_file"
+rm -f "$report.time" "$metrics_file"
 
 set +e
 (
     cd "$working_directory"
-    /usr/bin/time \
-        -f 'wall_seconds=%e\npeak_rss_kib=%M' \
-        -o "$time_file" \
-        "$ROOT/scripts/run-memory-bounded.sh" \
+    "$ROOT/scripts/run-memory-bounded.sh" \
         --linux-exec "$limit_bytes" "$timeout_seconds" "$backend" \
         "$metrics_file" "$@"
 )
 status=$?
 set -e
 
-wall_seconds=$(sed -n 's/^wall_seconds=//p' "$time_file" 2>/dev/null || true)
-peak_rss_kib=$(sed -n 's/^peak_rss_kib=//p' "$time_file" 2>/dev/null || true)
-case "$wall_seconds:$peak_rss_kib" in
-    *[!0-9.:]* | :* | *:)
-        echo "bounded-run Linux measurement backend produced malformed output" >&2
-        write_wrapper_failure_report "$backend"
-        exit 2
-        ;;
-esac
-wall_ms=$(awk -v seconds="$wall_seconds" 'BEGIN { printf "%.0f", seconds * 1000 }')
-peak_memory_bytes=$((peak_rss_kib * 1024))
+end_wall_ms=$(linux_wall_now_ms) || {
+    echo "bounded-run Linux wall-time measurement disappeared" >&2
+    write_wrapper_failure_report "$backend"
+    exit 2
+}
+if [ "$end_wall_ms" -lt "$start_wall_ms" ]; then
+    echo "bounded-run Linux monotonic wall clock moved backwards" >&2
+    write_wrapper_failure_report "$backend"
+    exit 2
+fi
+wall_ms=$((end_wall_ms - start_wall_ms))
 if [ -s "$metrics_file" ]; then
     measured_peak=$(sed -n '1p' "$metrics_file")
     case "$measured_peak" in
-        "" | *[!0-9]*)
+        "" | *[!0-9]* | 0)
             echo "bounded-run Linux memory backend produced malformed peak evidence" >&2
             write_wrapper_failure_report "$backend"
             exit 2
@@ -295,6 +316,6 @@ limit_bytes=$limit_bytes
 peak_memory_bytes=$peak_memory_bytes
 wall_ms=$wall_ms
 EOF
-rm -f "$time_file" "$metrics_file"
-echo "[bounded] reason=$reason exit=$status peak_rss_bytes=$peak_memory_bytes cap_bytes=$limit_bytes wall_ms=$wall_ms backend=$backend" >&2
+rm -f "$metrics_file"
+echo "[bounded] reason=$reason exit=$status peak_memory_bytes=$peak_memory_bytes cap_bytes=$limit_bytes wall_ms=$wall_ms backend=$backend" >&2
 exit "$status"

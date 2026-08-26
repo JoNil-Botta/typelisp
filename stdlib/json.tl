@@ -25,14 +25,17 @@
 (import stdlib.vector)
 
 ;; Internal shallow reads used while ordinary by-value parameters own values.
+;: Return a representation-level shared view of a JSON value place.
 (defmacro (json-shared-view [place : Expr]) : Expr
   `(unsafe
     (ptr-read (ptr-addr-of ,place))))
 
+;: Return a representation-level shared view of a JSON array element.
 (defmacro (json-array-element-shared-view [items : Expr] [index : Expr]) : Expr
   `(unsafe
     (ptr-read (ptr-offset (__tl_array-data ,items) ,index))))
 
+;: Return a representation-level shared view of a boxed JSON value.
 (defmacro (json-box-shared-view [value : Expr]) : Expr
   (let
     ;; Spliced into the generated pointer element type.
@@ -339,6 +342,7 @@
 (define (list-count [items : JsonSeq]) : i64
   items.len)
 
+;: Return the number of elements through a borrowed JSON array sequence.
 (define (list-count-ref [items : (& items JsonSeq)]) : i64
   items.len)
 
@@ -350,6 +354,7 @@
 
 ;; Return an owned element for generated decoders that must move the lookup
 ;; result out of a boxed sequence.
+;: Look up and copy an array element for an ownership-taking decoder.
 (define (list-get-index-owned [items : (& items JsonSeq)] [index : i64]) : JsonLookup
   (if (or (< index 0) (>= index items.len))
     JsonMissing
@@ -451,6 +456,7 @@
 
 ;; Return an owned member value for generated decoders that must move the
 ;; lookup result out of a boxed object.
+;: Look up and copy an object member value for an ownership-taking decoder.
 (define (member-list-get-value-owned
   [items : (& items JsonMemberSeq)]
   [key : (& key str)]) : JsonLookup
@@ -502,6 +508,7 @@
       (stdlib.json.member-list-get-owned (json-box-shared-view members) key)]
     [_ JsonMissing]))
 
+;: Look up an object member and return an independently owned value.
 (define (object-get-value-owned [value : Json] [key : String]) : JsonLookup
   (match value
     [(JsonObject members)

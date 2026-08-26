@@ -30,6 +30,7 @@
 ;; the address carried by the reference. Keeping type reflection on the simple
 ;; local reference also preserves nested dotted places across macro expansion.
 ;; The published seed keeps its pre-cutover sharing behavior.
+;: Internal bootstrap bridge that copies a value through its dynamic reference.
 ;; lint-allow: function-name-case -- private one-epoch bootstrap ABI
 (defmacro (__tl-compiler-owned-shared-view-dyn-ref-as
   [value : Expr]

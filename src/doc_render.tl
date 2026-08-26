@@ -73,7 +73,7 @@
 (define (doc-render-anchor-char? [c : char]) : bool
   (or (doc-render-alpha? c) (doc-render-digit? c) (= c '-') (= c '_')))
 
-(define (doc-render-anchor [name : String]) : String
+(define (doc-render-anchor [name : (& name str)]) : String
   (let
     [i : i64 0]
     [n : i64 (string.string-length name)]

@@ -16,6 +16,7 @@
 ;# conversion helpers below: every stored word is produced from a typed
 ;# `(& text str)` through a local reference record, and every recovered
 ;# reference uses the same named lifetime carried by the list anchor.
+;: Internal lifetime-carrying wrapper around one borrowed process string.
 (defstruct ProcessBorrowedStringRef
   (:lifetimes text)
   (value (& text str)))
@@ -59,18 +60,22 @@
   (env (ProcessBorrowedEnvList env))
   (stdin (ProcessBorrowedMaybeString stdin)))
 
+;: Internal wrapper around a borrowed process argument list.
 (defstruct ProcessBorrowedStringListRef
   (:lifetimes text value)
   (value (& value (ProcessBorrowedStringList text))))
 
+;: Internal wrapper around a borrowed process environment list.
 (defstruct ProcessBorrowedEnvListRef
   (:lifetimes text value)
   (value (& value (ProcessBorrowedEnvList text))))
 
+;: Internal wrapper around a borrowed optional process string.
 (defstruct ProcessBorrowedMaybeStringRef
   (:lifetimes text value)
   (value (& value (ProcessBorrowedMaybeString text))))
 
+;: Re-expose a borrowed argument list through the compatibility surface.
 (define (borrowed-string-list-shared-view
   [value : (& value (ProcessBorrowedStringList text))]) : (ProcessBorrowedStringList
     text)
@@ -83,6 +88,7 @@
     (unsafe
       (ptr-read (int->ptr address : (Ptr (ProcessBorrowedStringList text)))))))
 
+;: Re-expose a borrowed environment list through the compatibility surface.
 (define (borrowed-env-list-shared-view
   [value : (& value (ProcessBorrowedEnvList text))]) : (ProcessBorrowedEnvList
     text)
@@ -95,6 +101,7 @@
     (unsafe
       (ptr-read (int->ptr address : (Ptr (ProcessBorrowedEnvList text)))))))
 
+;: Re-expose a borrowed optional string through the compatibility surface.
 (define (borrowed-maybe-string-shared-view
   [value : (& value (ProcessBorrowedMaybeString text))]) : (ProcessBorrowedMaybeString
     text)

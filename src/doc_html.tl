@@ -14,7 +14,7 @@
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 
-(define (doc-html-escape-one [text : String] [idx : i64]) : String
+(define (doc-html-escape-one [text : (& text str)] [idx : i64]) : String
   (let
     [c : char (string.string-ref text idx)]
     (cond
@@ -24,7 +24,7 @@
       [(= c '"') "&quot;"]
       [else (string.substring text idx 1)])))
 
-(define (doc-html-escape [text : String]) : String
+(define (doc-html-escape [text : (& text str)]) : String
   (let
     [i : i64 0]
     [n : i64 (string.string-length text)]
@@ -34,11 +34,11 @@
         (begin
           (byte_buf.byte-buf-builder-append-string
             (&mut out)
-            (doc-html-escape-one (owned_view.compiler-owned-shared-view text) i))
+            (doc-html-escape-one text i))
           (set! i (+ i 1))))
       (byte_buf.byte-buf-builder-finish-string (& out)))))
 
-(define (doc-html-escape-text-one [text : String] [idx : i64]) : String
+(define (doc-html-escape-text-one [text : (& text str)] [idx : i64]) : String
   (let
     [c : char (string.string-ref text idx)]
     (if (= c '\n')
@@ -47,7 +47,7 @@
         ""
         (doc-html-escape-one text idx)))))
 
-(define (doc-html-escape-text [text : String]) : String
+(define (doc-html-escape-text [text : (& text str)]) : String
   (let
     [i : i64 0]
     [n : i64 (string.string-length text)]
@@ -57,9 +57,7 @@
         (begin
           (byte_buf.byte-buf-builder-append-string
             (&mut out)
-            (doc-html-escape-text-one
-              (owned_view.compiler-owned-shared-view text)
-              i))
+            (doc-html-escape-text-one text i))
           (set! i (+ i 1))))
       (byte_buf.byte-buf-builder-finish-string (& out)))))
 
@@ -867,8 +865,6 @@
   [rendered : Expr]
   [needle : Expr]
   [message : Expr]) : Expr
-  `(if (doc_extract.doc-string-contains?
-    (owned_view.compiler-owned-shared-view ,rendered)
-    ,needle)
+  `(if (doc_extract.doc-string-contains? ,rendered ,needle)
     true
     (io.panic ,message)))

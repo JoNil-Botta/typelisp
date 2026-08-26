@@ -106,6 +106,7 @@
   (OkArgsParseAdvance ArgsParseAdvance)
   (ErrArgsParseAdvance ArgsError))
 
+;: Re-expose a borrowed string field through the public String surface.
 (define (args-string-shared-view [value : (& value str)]) : String
   (__tl-compiler-owned-shared-view-dyn-ref-as value String))
 
@@ -154,6 +155,7 @@
     [(ArgsFlag) (ArgsFlag)]
     [(ArgsValue) (ArgsValue)]))
 
+;: Copy a borrowed option spec into an independently owned value.
 (define (option-spec-copy [spec : (& spec ArgsOptionSpec)]) : ArgsOptionSpec
   (ArgsOptionSpec
     (option-spec-name spec)

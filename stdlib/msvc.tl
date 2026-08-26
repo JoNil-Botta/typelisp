@@ -26,14 +26,17 @@
 (import stdlib.vector)
 
 ;; Internal shallow reads used while ordinary by-value parameters own values.
+;: Return a representation-level shared view of an MSVC value place.
 (defmacro (msvc-shared-view [place : Expr]) : Expr
   `(unsafe
     (ptr-read (ptr-addr-of ,place))))
 
+;: Return a representation-level shared view of an MSVC array element.
 (defmacro (msvc-array-element-shared-view [items : Expr] [index : Expr]) : Expr
   `(unsafe
     (ptr-read (ptr-offset (__tl_array-data ,items) ,index))))
 
+;: Return a representation-level shared view of a boxed MSVC value.
 (defmacro (msvc-box-shared-view [value : Expr]) : Expr
   (let
     ;; Spliced into the generated pointer element type.
@@ -98,6 +101,7 @@
   (MsvcNoSdk)
   (MsvcSomeSdk MsvcSdk))
 
+;: Re-expose a borrowed MSVC string field through the public String surface.
 (define (msvc-string-shared-view [value : (& value str)]) : String
   (__tl-compiler-owned-shared-view-dyn-ref-as value String))
 

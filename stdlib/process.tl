@@ -22,10 +22,12 @@
 
 ;; Process values are persistent arena-backed records. These shallow reads make
 ;; an explicit shared view when a builder or accessor retains owner storage.
+;: Return a representation-level shared view of a process value place.
 (defmacro (process-place-shared-view [place : Expr]) : Expr
   `(unsafe
     (ptr-read (ptr-addr-of ,place))))
 
+;: Return a representation-level shared view of a process array element.
 (defmacro (process-array-shared-view [items : Expr] [index : Expr]) : Expr
   `(unsafe
     (ptr-read (ptr-offset (__tl_array-data ,items) ,index))))
@@ -128,25 +130,31 @@
   (OkProcessChild ProcessChild)
   (ErrProcessChild ProcessError))
 
+;: Internal lifetime-carrying wrapper around a borrowed process string.
 (defstruct ProcessStringRef
   (:lifetimes value)
   (value (& value str)))
 
+;: Internal lifetime-carrying wrapper around a borrowed argument list.
 (defstruct ProcessStringListRef
   (:lifetimes value)
   (value (& value ProcessStringList)))
 
+;: Internal lifetime-carrying wrapper around a borrowed environment list.
 (defstruct ProcessEnvListRef
   (:lifetimes value)
   (value (& value ProcessEnvList)))
 
+;: Internal lifetime-carrying wrapper around a borrowed optional string.
 (defstruct ProcessMaybeStringRef
   (:lifetimes value)
   (value (& value ProcessMaybeString)))
 
+;: Re-expose a borrowed process string through the public String surface.
 (define (process-string-shared-view [value : (& value str)]) : String
   (__tl-compiler-owned-shared-view-dyn-ref-as value String))
 
+;: Re-expose a borrowed argument list through the owning compatibility surface.
 (define (process-string-list-shared-view [value : (& value ProcessStringList)]) : ProcessStringList
   (let
     [cell : (ProcessStringListRef value) (ProcessStringListRef value)]
@@ -156,6 +164,7 @@
     (unsafe
       (ptr-read (int->ptr address : (Ptr ProcessStringList))))))
 
+;: Re-expose a borrowed environment through the owning compatibility surface.
 (define (process-env-list-shared-view [value : (& value ProcessEnvList)]) : ProcessEnvList
   (let
     [cell : (ProcessEnvListRef value) (ProcessEnvListRef value)]
@@ -165,6 +174,7 @@
     (unsafe
       (ptr-read (int->ptr address : (Ptr ProcessEnvList))))))
 
+;: Re-expose a borrowed optional string through the owning compatibility surface.
 (define (process-maybe-string-shared-view
   [value : (& value ProcessMaybeString)]) : ProcessMaybeString
   (let

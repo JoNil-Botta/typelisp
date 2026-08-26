@@ -62,10 +62,12 @@
 
 ;; Read a place without transferring ownership. Serialization consumes each
 ;; logical input once, while generated traversal revisits aggregate containers.
+;: Return a representation-level shared view of a serialization input place.
 (defmacro (serialize-shared-view [place : Expr]) : Expr
   `(unsafe
     (ptr-read (ptr-addr-of ,place))))
 
+;: Return a representation-level shared view of a serialized array element.
 (defmacro (serialize-array-element-shared-view [items : Expr] [index : Expr]) : Expr
   `(unsafe
     (ptr-read (ptr-offset (__tl_array-data ,items) ,index))))

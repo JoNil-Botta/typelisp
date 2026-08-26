@@ -28,6 +28,7 @@
 
 ;; Runtime command storage is arena-backed and immutable after construction.
 ;; Explicit shallow reads preserve those shared buffers across owner accessors.
+;: Return a representation-level shared view of a runtime process value place.
 (defmacro (process-runtime-place-shared-view [place : Expr]) : Expr
   (let
     [value-ty : comptime.Expr (comptime.expr-type place)]
@@ -41,6 +42,7 @@
       `(unsafe
         (ptr-read (ptr-addr-of ,place))))))
 
+;: Return a representation-level shared view of a runtime process array element.
 (defmacro (process-runtime-array-shared-view [items : Expr] [index : Expr]) : Expr
   `(unsafe
     (ptr-read (ptr-offset (__tl_array-data ,items) ,index))))
@@ -126,18 +128,22 @@
   (stderr-handle i64)
   (message String))
 
+;: Internal wrapper around a borrowed runtime argument list.
 (defstruct ProcessRuntimeStringListRef
   (:lifetimes value)
   (value (& value ProcessRuntimeStringList)))
 
+;: Internal wrapper around a borrowed optional runtime string.
 (defstruct ProcessRuntimeMaybeStringRef
   (:lifetimes value)
   (value (& value ProcessRuntimeMaybeString)))
 
+;: Internal wrapper around a borrowed runtime environment list.
 (defstruct ProcessRuntimeEnvListRef
   (:lifetimes value)
   (value (& value ProcessRuntimeEnvList)))
 
+;: Re-expose a borrowed runtime argument list through the compatibility surface.
 (define (process-runtime-string-list-shared-view
   [value : (& value ProcessRuntimeStringList)]) : ProcessRuntimeStringList
   (let
@@ -149,6 +155,7 @@
     (unsafe
       (ptr-read (int->ptr address : (Ptr ProcessRuntimeStringList))))))
 
+;: Re-expose a borrowed optional runtime string through the compatibility surface.
 (define (process-runtime-maybe-string-shared-view
   [value : (& value ProcessRuntimeMaybeString)]) : ProcessRuntimeMaybeString
   (let
@@ -160,6 +167,7 @@
     (unsafe
       (ptr-read (int->ptr address : (Ptr ProcessRuntimeMaybeString))))))
 
+;: Re-expose a borrowed runtime environment through the compatibility surface.
 (define (process-runtime-env-list-shared-view
   [value : (& value ProcessRuntimeEnvList)]) : ProcessRuntimeEnvList
   (let

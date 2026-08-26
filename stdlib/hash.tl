@@ -20,10 +20,12 @@
 (import stdlib.comptime)
 (import stdlib.string as string_mod)
 
+;: Return a representation-level shared view of a hash input place.
 (defmacro (hash-shared-view [place : comptime.Expr]) : comptime.Expr
   `(unsafe
     (ptr-read (ptr-addr-of ,place))))
 
+;: Return a representation-level shared view of an array element to hash.
 (defmacro (hash-array-shared-view
   [items : comptime.Expr]
   [index : comptime.Expr]) : comptime.Expr

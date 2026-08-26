@@ -163,7 +163,10 @@
           (set! keep false)))
       i)))
 
-(define (doc-string-prefix-at? [text : String] [prefix : String] [start : i64]) : bool
+(define (doc-string-prefix-at?
+  [text : (& text str)]
+  [prefix : (& prefix str)]
+  [start : i64]) : bool
   (let
     [text-len : i64 (string.string-length text)]
     [prefix-len : i64 (string.string-length prefix)]
@@ -185,7 +188,7 @@
                 (set! ok false)))
             (= i prefix-len)))))))
 
-(define (doc-string-contains? [text : String] [needle : String]) : bool
+(define (doc-string-contains? [text : (& text str)] [needle : (& needle str)]) : bool
   (let
     [text-len : i64 (string.string-length text)]
     [needle-len : i64 (string.string-length needle)]
@@ -198,10 +201,7 @@
         (begin
           (while (not done)
             (if (<= (+ i needle-len) text-len)
-              (if (doc-string-prefix-at?
-                (owned_view.compiler-owned-shared-view text)
-                (owned_view.compiler-owned-shared-view needle)
-                i)
+              (if (doc-string-prefix-at? text needle i)
                 (begin
                   (set! found true)
                   (set! done true))

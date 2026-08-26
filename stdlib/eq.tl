@@ -4,6 +4,7 @@
 
 ;; Read a place without transferring ownership. Generated equality is an
 ;; observer, and its staged recursive projections revisit aggregate operands.
+;: Return a representation-level shared view of an equality operand place.
 (defmacro (eq-shared-view [place : Expr]) : Expr
   `(unsafe
     (ptr-read (ptr-addr-of ,place))))

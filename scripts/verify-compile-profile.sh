@@ -1678,9 +1678,11 @@ if [ "$NL_HOST_OS" = windows ]; then
     # bytes.
     # #6215's ownership cutover moves this boundary to 3,574,471 used nodes,
     # 3,604,480 capacity, and 115,343,360 physical payload bytes on the
-    # authoritative Windows probe.
+    # authoritative Windows probe. Rebasing over #6857/#6861/#6862 crosses the
+    # next boundary: the authoritative Windows CI probe measured 3,606,568 used
+    # nodes, 3,670,016 capacity, and 117,440,512 physical payload bytes.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool typecheck 55 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool typecheck 56 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # This is the tightest of the four and the one to check first when a series
     # adds compiler source: the copy-call / unsigned-bound-narrowing / chain
@@ -1715,7 +1717,7 @@ if [ "$NL_HOST_OS" = windows ]; then
     # measures 27,698 used nodes and crosses to 28 segments, 28,672 capacity,
     # and 688,128 physical payload bytes on the authoritative Windows probe.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_type_pool macro_expand 27 1024 24 \
+        "$SELFHOST_STDERR" ast_type_pool macro_expand 28 1024 24 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # #6828's dense flag-exit/BCE storage declarations cross the next type-pool
     # typecheck boundary: the authoritative Windows probe measured 9,221 used

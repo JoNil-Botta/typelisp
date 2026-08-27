@@ -1633,9 +1633,12 @@ if [ "$NL_HOST_OS" = windows ]; then
     # 150,994,944 physical payload bytes. Reconciliation through #6870/#6871
     # brings the combined graph back below that boundary: the authoritative
     # Windows CI probe measured 4,643,724 used nodes, 4,653,056 capacity, and
-    # 148,897,792 physical payload bytes.
+    # 148,897,792 physical payload bytes. Merging #6873's raw-pointer format
+    # selector and the final ownership reconciliation crosses two boundaries:
+    # the authoritative Windows CI probe measured 4,728,044 used nodes,
+    # 4,784,128 capacity, and 153,092,096 physical payload bytes.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool macro_expand 71 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool macro_expand 73 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # The three dense optimizer plan containers crossed the checked expression
     # graph into its 33rd segment; the accessor-admission/absorption/fold/sinking

@@ -1,7 +1,6 @@
 ;; Full SIMD gangs use an all-active parent state while tails and divergent
 ;; children retain real masks. Exercise zero, short, exact-width, and partial
 ;; ranges, including a child branch whose active mask is always empty.
-
 (define capacity : i64
   16)
 

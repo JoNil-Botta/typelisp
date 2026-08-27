@@ -1,5 +1,4 @@
 ;: Lifetime-tagged iterator state can be mutably borrowed and advanced in place.
-
 (defstruct Iter
   (:lifetimes source)
   (slots (& source (__tl_dyn-array i64)))

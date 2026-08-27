@@ -1,6 +1,5 @@
 ;; #5679: one active count equal to the u32 width in a direct map must use
 ;; tl_shift_abort (exit 129).
-
 (define (main) : i64
   (let
     [n : i64 19]

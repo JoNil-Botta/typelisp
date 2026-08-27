@@ -1,7 +1,6 @@
 ;; Map-fused i64 reductions over a contiguous input (#5181). The neutral lane
 ;; term exercises mixed Array/Uniform/LaneIndex plans while keeping scalar,
 ;; AVX2, and AVX-512 results identical across full gangs and scalar tails.
-
 (define (manual-map-sum
   [values : (& values (__tl_dyn-array i64))]
   [n : i64]

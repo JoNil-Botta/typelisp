@@ -2,7 +2,6 @@
 ;; n = 14 gives AVX2 a two-lane tail and AVX-512 a six-lane tail.
 ; Compatibility exception for #3772: SPMD value operands still use bare
 ; array-ref so the checker sees the compiler array-read AST.
-
 (define (init [xs : (&mut xs (__tl_dyn-array i64))] [n : i64]) : unit
   (let
     [i : i64 0]

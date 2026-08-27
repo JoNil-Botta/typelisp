@@ -1,5 +1,4 @@
 ;; Incoming masks guard stores in an out-of-line unit helper.
-
 (define (heavy-store [out : (&mut out (__tl_dyn-array i64))] [i : i64]) : unit
   (set! (array-ref out i) (+ (+ (+ (+ (+ (+ (+ i 1) 2) 3) 4) 5) 6) 7)))
 

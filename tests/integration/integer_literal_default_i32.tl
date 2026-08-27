@@ -1,4 +1,3 @@
-
 (define (unconstrained-default) : i32
   (let
     [x (+ 1 2)]

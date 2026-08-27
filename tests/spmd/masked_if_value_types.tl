@@ -1,6 +1,5 @@
 ;; SPMD masked-if corpus (#3356): AVX-512 value-producing masked `if`
 ;; over non-i64 lane result types. Each case uses a non-full tail.
-
 (define (init-u32
   [keys : (&mut keys (__tl_dyn-array u32))]
   [left : (&mut left (__tl_dyn-array u32))]

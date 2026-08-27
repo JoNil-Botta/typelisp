@@ -1,5 +1,4 @@
 ;; SPMD nested masked-if/varying-while corpus (#3752).
-
 (define (init-counts [xs : (&mut xs (__tl_dyn-array i64))]) : unit
   (begin
     (set! (array-ref xs 0) -1)

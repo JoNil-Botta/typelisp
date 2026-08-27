@@ -1,6 +1,5 @@
 ;: SPEC borrow contract: private dynamic-buffer shared borrow created
 ;: during reservation cannot escape activation (#3581 keeps this surface staged).
-
 (define (borrow-items [items : (& items (__tl_dyn-array i64))]) : (&
     items
     (__tl_dyn-array i64))

@@ -1,6 +1,5 @@
 ;; #5679: one active negative i64 count in a direct map must use
 ;; tl_shift_abort (exit 129).
-
 (define (main) : i64
   (let
     [n : i64 13]

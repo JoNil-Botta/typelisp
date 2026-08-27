@@ -1,5 +1,4 @@
 ;; SPMD varying-match corpus (#3753): a match inside a masked-if branch.
-
 (define (init-xs [xs : (&mut xs (__tl_dyn-array i64))] [n : i64]) : unit
   (let
     [i : i64 0]

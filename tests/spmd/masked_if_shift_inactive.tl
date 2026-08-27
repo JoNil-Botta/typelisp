@@ -1,5 +1,4 @@
 ;; #5365: invalid counts in inactive branch and tail lanes are unobservable.
-
 (define (main) : i64
   (let
     [n : i64 19]

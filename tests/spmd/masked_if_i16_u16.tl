@@ -1,4 +1,3 @@
-
 (define (init-i16 [xs : (&mut xs (__tl_dyn-array i16))] [n : i64]) : unit
   (let
     [i : i64 0]

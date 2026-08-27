@@ -21,7 +21,6 @@
 ;: inlined result and not the fused one. Run at opt0/opt1 by the manifest (where
 ;: the multiblock inliner does not run at all) and at opt2 by
 ;: verify-integration.sh (where it does), so the two levels must also agree.
-
 ;; Never inlined: it calls itself, so it is in its own SCC. The recursive arm is
 ;; unreachable for every value this fixture produces, which is what lets the
 ;; fused loop below spell out the base case.

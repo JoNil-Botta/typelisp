@@ -1,5 +1,4 @@
 ;; Incoming masks guard helper bounds checks and loads in masked/tail lanes.
-
 (define (heavy-load [xs : (& xs (__tl_dyn-array i64))] [i : i64]) : i64
   (+ (+ (+ (+ (+ (+ (+ (array-ref xs i) 1) 2) 3) 4) 5) 6) 7))
 

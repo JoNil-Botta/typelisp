@@ -1,5 +1,4 @@
 ;; SPMD varying-while corpus (#3752): per-lane loop convergence over i64 lanes.
-
 (define (init-counts [xs : (&mut xs (__tl_dyn-array i64))]) : unit
   (begin
     (set! (array-ref xs 0) 0)

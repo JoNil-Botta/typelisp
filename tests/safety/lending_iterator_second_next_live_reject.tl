@@ -1,5 +1,4 @@
 ;: A mutable iterator cannot advance while its prior yielded mutable item is live.
-
 (defstruct Iter
   (:lifetimes source)
   (slots (&mut source (__tl_dyn-array i64)))

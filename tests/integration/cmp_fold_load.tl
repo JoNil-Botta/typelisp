@@ -1,4 +1,3 @@
-
 ;; FORCING TEST for GAP6a: fold a register-homed comparand into the fused
 ;; gep+load+compare+branch instead of staging it through a scratch register.
 ;;

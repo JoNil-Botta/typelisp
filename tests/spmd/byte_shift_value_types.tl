@@ -1,7 +1,6 @@
 ;; Checked byte-lane shifts (#6686): direct maps and nested masked values use
 ;; the same scalar semantics across empty, short, full, multi-gang, and tail
 ;; lengths. Backing tail lanes carry invalid counts and must stay inactive.
-
 (define (count-i8 [i : i64]) : i8
   (match (% i 4)
     [0 0]

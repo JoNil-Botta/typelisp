@@ -1,6 +1,5 @@
 ;; #3176: a live mutable borrow of one struct field does not block direct reads
 ;; of a disjoint sibling field.
-
 (defstruct Bag
   (left (__tl_dyn-array i64))
   (right i64))

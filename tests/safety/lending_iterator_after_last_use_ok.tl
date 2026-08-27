@@ -1,5 +1,4 @@
 ;: A mutable iterator can advance after its prior yielded result is dead.
-
 (defstruct Iter
   (:lifetimes source)
   (slots (&mut source (__tl_dyn-array i64)))

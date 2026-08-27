@@ -8,7 +8,6 @@
 ;; contain exactly one load of the parameter's length field, and under
 ;; substitution mode no copy either -- the add reads the surviving load's var
 ;; directly (see opt-load-gvn-subst-pair).
-
 (define (load-across-fresh-alloc [values : (__tl_dyn-array i64)]) : i64
   (let
     [before : i64 (array-length values)]

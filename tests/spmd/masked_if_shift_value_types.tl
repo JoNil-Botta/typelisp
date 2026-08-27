@@ -1,6 +1,5 @@
 ;; SPMD masked-shift corpus (#5365): native dword/qword shifts, varying and
 ;; literal counts, signed/logical right shift, nested masks, and partial tails.
-
 (define (count32 [i : i64]) : i32
   (match (% i 4)
     [0 0]

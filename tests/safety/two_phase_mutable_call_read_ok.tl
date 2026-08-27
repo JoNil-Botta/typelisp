@@ -1,6 +1,5 @@
 ;: SPEC safe-code contract: private dynamic-buffer mutable borrows reserve
 ;: before activation (#3581 keeps this surface staged).
-
 (define (read-len [items : (& items (__tl_dyn-array i64))]) : i64
   (array-length items))
 

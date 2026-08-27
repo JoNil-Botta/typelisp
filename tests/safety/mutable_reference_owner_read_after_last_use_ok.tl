@@ -1,4 +1,3 @@
-
 (define (main) : i64
   (let
     [items : (__tl_dyn-array i64) (__tl_make-array i64 1)]

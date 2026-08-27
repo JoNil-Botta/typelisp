@@ -1,5 +1,4 @@
 ;; A Slice view of arena-backed dynamic storage cannot escape with-arena.
-
 (define (bad [seed : (& outer (Slice i64))]) : (& outer (Slice i64))
   (begin
     (array-length seed)

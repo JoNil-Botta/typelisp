@@ -1,5 +1,4 @@
 ;; AVX2/AVX-512 varying while with f32 recurrence state and i32 lane counters.
-
 (define (fill-recurrence
   [remaining : (&mut remaining (__tl_dyn-array i32))]
   [x-values : (& x-values (__tl_dyn-array f32))]

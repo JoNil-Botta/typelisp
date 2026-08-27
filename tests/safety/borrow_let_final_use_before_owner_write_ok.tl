@@ -1,6 +1,5 @@
 ;: A mutable borrow can end after its last use in an ordered let initializer,
 ;: before the body reads the owner.
-
 (define (main) : i64
   (let
     [values : (Array i64 1) (array 41)]

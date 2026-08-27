@@ -1,5 +1,4 @@
 ;: SPEC SPMD contract: masked branches still reject uniform while loops.
-
 (define (main
   [xs : (__tl_dyn-array i64)]
   [out : (__tl_dyn-array i64)]

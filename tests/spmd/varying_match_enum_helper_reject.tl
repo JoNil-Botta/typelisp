@@ -1,6 +1,5 @@
 ;; Enum matches whose varying source is not a contiguous array lane must use
 ;; the documented SIMD diagnostic instead of silently selecting scalar foreach.
-
 (defenum Choice
   (Zero)
   (One))

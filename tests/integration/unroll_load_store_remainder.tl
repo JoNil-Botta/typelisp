@@ -1,4 +1,3 @@
-
 ;; Runtime coverage for the load-AND-store body class of the counted-loop
 ;; unroller (src/compiler_optimize.tl, opt-unroll-body-copies).
 ;;

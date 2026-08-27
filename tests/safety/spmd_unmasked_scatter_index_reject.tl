@@ -1,5 +1,4 @@
 ;: SPEC SPMD contract: unmasked foreach writes reject scatter-like indexes.
-
 (define (main
   [ix : (__tl_dyn-array i64)]
   [out : (__tl_dyn-array i64)]

@@ -1,5 +1,4 @@
 ;; A shared dynamic-array Slice blocks growth that may reallocate its owner.
-
 (define (main) : i64
   (let
     [items : (__tl_dyn-array i64) (__tl_make-array i64 1)]

@@ -1,5 +1,4 @@
 ;; Out-of-line direct SPMD helper call with a varying i64 argument/result.
-
 (define (inner-heavy [x : i64]) : i64
   (+ (+ (+ (+ (+ (+ (+ x 1) 2) 3) 4) 5) 6) 7))
 

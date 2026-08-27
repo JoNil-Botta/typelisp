@@ -1,6 +1,5 @@
 ;; #2855: packed f32 fields in a homogeneous SSE eightbyte are register-resident.
 ;; Mixed integer/f32 sub-word eightbytes stay memory-backed.
-
 (defstruct Vec2
   (x f32)
   (y f32))

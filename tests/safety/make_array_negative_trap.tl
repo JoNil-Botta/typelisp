@@ -1,6 +1,5 @@
 ;: SPEC safe-code contract: generated collection lengths reject invalid
 ;: allocation through the bounds-check abort path.
-
 (define (main) : i64
   (let
     [a : (__tl_dyn-array i64) (__tl_make-array i64 -1)]

@@ -1,4 +1,3 @@
-
 (define (multi-output-case
   [a : (&mut a (__tl_dyn-array i64))]
   [b : (&mut b (__tl_dyn-array i64))]

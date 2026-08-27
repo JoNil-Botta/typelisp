@@ -1,5 +1,4 @@
 ;; SPMD masked bit-or/bit-xor remain integer-only at the source boundary.
-
 (define (fill
   [xs : (__tl_dyn-array f32)]
   [out : (__tl_dyn-array f32)]

@@ -1,7 +1,6 @@
 ;; Hoisted SIMD vector-bound clamps (#5178). Negative and near-INT64_MAX
 ;; zero-trip ranges must bypass the vector header without overflowing its
 ;; index + lanes calculation; an ordinary full gang still runs.
-
 (define (fill
   [input : (& input (__tl_dyn-array i64))]
   [output : (&mut output (__tl_dyn-array i64))]

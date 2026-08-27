@@ -1,6 +1,5 @@
 ;; #3175: simultaneous mutable borrows of disjoint storage-backed struct fields
 ;; are accepted and remain usable through ordinary array operations.
-
 (defstruct Bags
   (left (__tl_dyn-array i64))
   (right (__tl_dyn-array i64)))

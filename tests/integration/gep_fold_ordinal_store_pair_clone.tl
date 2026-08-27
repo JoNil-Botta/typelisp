@@ -31,7 +31,6 @@
 ;: merely wrong (rather than shape-detectable) fails here too. Run at opt0/opt1
 ;: by the manifest and at opt2 by verify-integration.sh, where the multiblock
 ;: inliner and the gep fold both actually run.
-
 ;; Two words: tag then payload. Storing one writes base+0 and base+8 through a
 ;; single address computation -- the store-pair peephole's admitted shape.
 (defenum GfoTok

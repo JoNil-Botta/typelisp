@@ -1,5 +1,4 @@
 ;; Out-of-line direct SPMD helper call with a varying bool result.
-
 (define (large-enough? [x : i64]) : bool
   (> (+ (+ (+ (+ (+ (+ (+ x 1) 2) 3) 4) 5) 6) 7) 30))
 

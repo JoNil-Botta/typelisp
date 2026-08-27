@@ -1,7 +1,6 @@
 ;; refs #6053: an explicit input lifetime is a signature-local binder even
 ;; when its spelling differs from the parameter name. It remains available to
 ;; local scalar and aggregate reborrows without becoming a value binding.
-
 (defstruct SignatureAliasRec
   (value i64))
 

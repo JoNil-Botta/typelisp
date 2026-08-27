@@ -1,7 +1,6 @@
 ;; #1521: `(set! place.field value)` mutates the field in place,
 ;; including register-resident locals, private dynamic-buffer elements,
 ;; fixed-array elements, tuple projections, mutable references, and nested fields.
-
 (defstruct Pair
   (x i64)
   (y i64))

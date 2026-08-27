@@ -1,5 +1,4 @@
 ;: SPEC SPMD contract: varying enum match payload bindings must stay in supported lane value types.
-
 (defenum Choice
   (Named String)
   (Code i64))

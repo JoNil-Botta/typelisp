@@ -1,5 +1,4 @@
 ;: A lending iterator can advance again after its item dies in each loop body.
-
 (defstruct Iter
   (:lifetimes source)
   (slots (&mut source (__tl_dyn-array i64)))

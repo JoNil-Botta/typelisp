@@ -1,5 +1,4 @@
 ;; Direct source-known SPMD helper calls with varying f64 lane arguments.
-
 (define (scale [x : f64]) : f64
   (+ (* x 2.0) 1.0))
 

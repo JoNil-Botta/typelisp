@@ -1,6 +1,5 @@
 ;; #2601: exact aligned f64 fields in <=16-byte aggregates are register-resident
 ;; SSE eightbytes. #2855 covers packed f32 SSE eightbytes in the sibling fixture.
-
 (defstruct PairF64
   (x f64)
   (y f64))

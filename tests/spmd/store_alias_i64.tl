@@ -1,4 +1,3 @@
-
 ;; The single mutable reference deliberately reads and writes the same array.
 ;; Sequential gang copies must load both inputs before their corresponding
 ;; output store, preserving scalar alias semantics without manufacturing

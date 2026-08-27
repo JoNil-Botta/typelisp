@@ -5,7 +5,6 @@
 ;; 42, avx2 = 106, avx512 = 170. A bad SIMD result returns a small failure code
 ;; instead of the tag. Keep the SPMD loop directly inside each variant while
 ;; sharing ordinary scalar setup/checksum helpers across all variants.
-
 ;; lint-allow: function-name-case -- assembly dispatch symbol fixture
 (define (dispatch_seed_a [i : i64]) : i64
   (+ i 1))

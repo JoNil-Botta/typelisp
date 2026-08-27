@@ -1,4 +1,3 @@
-
 (define (read-len [items : (& items (__tl_dyn-array i64))]) : i64
   (array-length items))
 

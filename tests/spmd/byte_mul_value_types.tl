@@ -1,7 +1,6 @@
 ;; Packed i8/u8 multiplication corpus (#6684). The cases span sub-gang,
 ;; exact-gang, multi-gang, and tail lengths in AVX2 and AVX-512 modes. Scalar
 ;; reference loops cover the boundary bit patterns 00, 01, 7f, 80, and ff.
-
 (define (i8-left [i : i64]) : i8
   (match (% i 8)
     [0 (cast 0 : i8)]

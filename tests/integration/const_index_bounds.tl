@@ -1,4 +1,3 @@
-
 ;; FORCING TEST for GAP6d: a constant array index folds into the bounds-check
 ;; compare instead of being materialised into a register.
 ;;

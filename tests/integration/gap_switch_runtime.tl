@@ -1,4 +1,3 @@
-
 ;; Twelve variants; the match names nine of them and lets 3, 6 and 10 fall to a
 ;; catch-all. The formed table must route those three tags to the default arm.
 (defenum GapTag

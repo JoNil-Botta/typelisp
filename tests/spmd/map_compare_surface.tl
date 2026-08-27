@@ -1,7 +1,6 @@
 ;; Direct comparison maps (#5679): the full predicate surface plus unsigned
 ;; integer and floating-point lanes. Bool stores use the masked vector planner;
 ;; this fixture pins that route as part of the contiguous-map operator surface.
-
 (define (case-i64-predicates) : bool
   (let
     [n : i64 13]

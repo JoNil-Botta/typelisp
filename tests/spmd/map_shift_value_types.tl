@@ -2,7 +2,6 @@
 ;; counts, signed/logical right shift, full gangs, and partial tails. Backing
 ;; lanes beyond each logical range contain invalid counts; AVX-512 predicated
 ;; tails must not let those inactive counts reach the shift guard.
-
 (define (case-i32) : bool
   (let
     [n : i64 19]

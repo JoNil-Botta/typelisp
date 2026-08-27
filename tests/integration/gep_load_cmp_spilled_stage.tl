@@ -1,4 +1,3 @@
-
 ;; FORCING TEST for M6-H (the scavenged M6-D staging register) and for the
 ;; fusion pin that keeps a fused LOAD destination's identity through slot
 ;; coloring.

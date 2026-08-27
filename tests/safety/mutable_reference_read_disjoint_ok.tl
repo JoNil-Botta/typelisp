@@ -1,6 +1,5 @@
 ;: SPEC borrow contract: disjoint sibling field reads are allowed while another
 ;: sibling field is mutably borrowed.
-
 (defstruct Bag
   (left (__tl_dyn-array i64))
   (right i64))

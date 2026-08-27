@@ -2,7 +2,6 @@
 ;; already-borrowed Slice references.  The fixture returns 42 only when the
 ;; shared/mutable paths, reference forms, nested views, aggregate stride, and
 ;; argument evaluation order all agree.
-
 (defstruct SliceViewTriple
   (a i64)
   (b i64)

@@ -5,7 +5,6 @@
 ;; the result. The comparison harness builds this at scalar/avx2/avx512 and
 ;; asserts identical exit codes. a[i]=i+1, b[i]=2i, out[i]=3i+1; the n=13
 ;; checksum is 247, so every mode must exit 247.
-
 (define (init
   [a : (&mut a (__tl_dyn-array i64))]
   [b : (&mut b (__tl_dyn-array i64))]

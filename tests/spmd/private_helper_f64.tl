@@ -1,5 +1,4 @@
 ;; Out-of-line direct SPMD helper call with a varying f64 argument/result.
-
 (define (heavy-f64 [x : f64]) : f64
   (+ (+ (+ (+ (+ (+ (+ x 1.0) 2.0) 3.0) 4.0) 5.0) 6.0) 7.0))
 

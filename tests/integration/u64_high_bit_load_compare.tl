@@ -1,4 +1,3 @@
-
 (define (threshold) : u64
   (shl (cast 1 : u64) 63))
 

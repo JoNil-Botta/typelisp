@@ -1,7 +1,6 @@
 ;: Scan values use the same pure first-slice rules as spmd-reduce values.
 ; Compatibility exception for #3772: SPMD value operands still use bare array
 ; helpers so the checker sees compiler array ASTs.
-
 (define (bad [xs : (__tl_dyn-array i64)] [n : i64]) : unit
   (spmd-scan
     sum

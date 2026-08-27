@@ -1,5 +1,4 @@
 ;: SPEC SPMD contract: masked-if branches reject non-contiguous side effects.
-
 (define (main
   [xs : (__tl_dyn-array i64)]
   [out : (__tl_dyn-array i64)]

@@ -1,5 +1,4 @@
 ;; Direct source-known helper calls inside AVX-512 masked SPMD branches.
-
 (define (init-xs [xs : (&mut xs (__tl_dyn-array i64))]) : unit
   (begin
     (set! (array-ref xs 0) -3)

@@ -1,6 +1,5 @@
 ;; AVX2/AVX-512 nested varying-while mask coverage. Exact-sized arrays make
 ;; every sub-gang and tail case an inactive-lane bounds-safety check too.
-
 (define (fill-nested
   [outer : (&mut outer (__tl_dyn-array i64))]
   [inner : (&mut inner (__tl_dyn-array i64))]

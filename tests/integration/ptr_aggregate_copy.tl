@@ -3,7 +3,6 @@
 ;; A memory aggregate is represented by an address during lowering, while a
 ;; two-word register group carries both words explicitly. ptr-write! must copy
 ;; the complete representation in either case.
-
 (defenum Slot
   (Empty)
   (Tombstone)

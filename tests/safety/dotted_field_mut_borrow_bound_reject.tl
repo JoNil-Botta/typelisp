@@ -1,5 +1,4 @@
 ;: #2610: non-call dotted mutable borrows retain the rooted field path.
-
 (defstruct Pair
   (left (__tl_dyn-array i64))
   (right (__tl_dyn-array i64)))

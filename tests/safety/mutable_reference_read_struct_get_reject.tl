@@ -1,6 +1,5 @@
 ;: SPEC borrow contract: field reads conflict with an overlapping live mutable
 ;: field borrow.
-
 (defstruct Bag
   (left (__tl_dyn-array i64))
   (right i64))

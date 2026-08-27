@@ -1,5 +1,4 @@
 ;: A live mutable borrow of lifetime-tagged iterator state protects its fields.
-
 (defstruct Iter
   (:lifetimes source)
   (slots (& source (__tl_dyn-array i64)))

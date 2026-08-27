@@ -1,6 +1,5 @@
 ;; SPMD masked-if corpus (#2205): AVX-512 masked branches whose condition uses
 ;; `% i 2` lane-index arithmetic. The n = 13 length exercises a masked tail.
-
 (define (init-out [out : (&mut out (__tl_dyn-array i64))] [n : i64]) : unit
   (let
     [i : i64 0]

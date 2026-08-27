@@ -1,5 +1,4 @@
 ;; Direct source-known SPMD helper calls with varying i64 lane arguments.
-
 (define (bump [x : i64]) : i64
   (+ x 5))
 

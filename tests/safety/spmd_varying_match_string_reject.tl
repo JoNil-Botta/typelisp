@@ -1,5 +1,4 @@
 ;: SPEC SPMD contract: varying match scrutinees must stay in supported lane value types.
-
 (define (main [out : (__tl_dyn-array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])

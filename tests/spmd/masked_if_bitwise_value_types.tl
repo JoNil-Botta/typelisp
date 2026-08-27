@@ -2,7 +2,6 @@
 ;; contiguous integer lane width. Each case has a non-full AVX2/AVX-512 tail;
 ;; the leading literals, nested value-producing match, and post-loop scalar
 ;; checks exercise contextual typing and scalar/SIMD equivalence.
-
 (define (case-i8) : bool
   (let
     [n : i64 67]

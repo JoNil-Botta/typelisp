@@ -2,7 +2,6 @@
 ;; a sibling or a descendant of that sibling. On Linux only the first two i64
 ;; source elements are mapped. The second source spelling is under an always-
 ;; empty mask, so a widened or unpredicated load reaches the guard page.
-
 (cfg linux (extern (tl_alloc [bytes : u64]) : u64))
 
 (cfg

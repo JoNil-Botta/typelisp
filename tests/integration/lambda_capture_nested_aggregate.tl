@@ -1,6 +1,5 @@
 ; Capturing nested aggregate fields in local closure environments (#584).
 ; `main` yields 42 only if every snapshot case holds.
-
 ;; lint-allow: unused-import
 (import stdlib.string)
 

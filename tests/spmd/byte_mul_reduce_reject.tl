@@ -1,7 +1,6 @@
 ;; Byte products are vectorizable, but byte reduction results do not yet have
 ;; a horizontal SIMD reduction. Type checking diagnoses that exact unsupported
 ;; result surface before any backend could silently scalarize it.
-
 (define (product-sum
   [a : (__tl_dyn-array i8)]
   [b : (__tl_dyn-array i8)]

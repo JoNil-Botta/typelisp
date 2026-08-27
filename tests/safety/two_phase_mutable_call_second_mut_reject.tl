@@ -1,6 +1,5 @@
 ;: SPEC borrow contract: private dynamic-buffer reservation rejects a
 ;: second overlapping mutable borrow (#3581 keeps this surface staged).
-
 (define (take-two
   [left : (&mut left (__tl_dyn-array i64))]
   [right : (&mut right (__tl_dyn-array i64))]) : unit

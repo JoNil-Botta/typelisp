@@ -1,7 +1,6 @@
 ;; Checked word-lane shifts (#6685): direct maps and nested masked values use
 ;; the same scalar semantics across empty, short, full, multi-gang, and tail
 ;; lengths. Backing tail lanes carry invalid counts and must stay inactive.
-
 (define (count-i16 [i : i64]) : i16
   (match (% i 4)
     [0 0]

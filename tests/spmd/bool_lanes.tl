@@ -1,4 +1,3 @@
-
 (define (init-bool
   [flags : (&mut flags (__tl_dyn-array bool))]
   [values : (&mut values (__tl_dyn-array i64))]

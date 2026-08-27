@@ -1,6 +1,5 @@
 ;; #6686: invalid byte counts in inactive branch lanes and backing tail lanes
 ;; are unobservable in both signed and unsigned masked value lowering.
-
 (define (main) : i64
   (let
     [n : i64 77]

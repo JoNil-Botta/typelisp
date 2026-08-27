@@ -1,4 +1,3 @@
-
 ;; FORCING TEST for M6-G: a narrow element load whose only reader is its
 ;; widening cast is emitted straight into the CAST's register, not into a
 ;; scratch that is then re-extended.

@@ -1,7 +1,6 @@
 ;; SPMD uniform zip corpus (#2561): i64 foreach body
 ;; `out[i] = a[i] * b[i] + c[i] + r` with uniform scalar `r`.
 ;; The length forces both full-vector and tail paths under avx2/avx512.
-
 (define (init
   [a : (&mut a (__tl_dyn-array i64))]
   [b : (&mut b (__tl_dyn-array i64))]

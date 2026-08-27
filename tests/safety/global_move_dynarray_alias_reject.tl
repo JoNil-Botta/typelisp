@@ -1,5 +1,4 @@
 ;: A by-value read cannot create an untracked alias of mutable global storage.
-
 (define global-items : (__tl_dyn-array i64)
   (__tl_make-array i64 2))
 

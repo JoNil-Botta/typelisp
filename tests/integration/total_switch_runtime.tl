@@ -1,4 +1,3 @@
-
 ;; A dynamic six-variant enum dispatch: every valid tag must reach its explicit
 ;; arm at both opt0 (comparison chain) and opt2 (total jump table).
 (defenum TotalSwitchValue

@@ -2,7 +2,6 @@
 ;;
 ;; n = 13 gives AVX2 a one-lane scalar tail and AVX-512 a five-lane masked
 ;; tail. Each active lane writes `program-count * 10 + program-index`.
-
 (define (fill [out : (&mut out (__tl_dyn-array i64))] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])

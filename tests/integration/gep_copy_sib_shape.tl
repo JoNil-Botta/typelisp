@@ -1,4 +1,3 @@
-
 ;; FORCING TEST for the gep-element copy addressing fold.
 ;;
 ;; Both functions below copy a whole 32-byte struct to or from a dynamically

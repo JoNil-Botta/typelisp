@@ -1,4 +1,3 @@
-
 ;; Regression guard for #5238: a checked counted loop whose array index is
 ;; masked by an immutable *global* must reach the same BCE-versioned, x16
 ;; unrolled fast path as one that spells the mask as a literal.

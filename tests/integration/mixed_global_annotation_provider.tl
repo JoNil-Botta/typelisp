@@ -1,4 +1,3 @@
-
 (defenum MixedGlobalAnnotationItem
   (Value i64))
 

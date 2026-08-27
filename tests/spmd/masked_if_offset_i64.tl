@@ -1,6 +1,5 @@
 ;; SPMD masked-if corpus (#2205): shifted contiguous AVX-512 masked branches
 ;; over i64 lanes, including a non-multiple-of-8 tail.
-
 (define (init-xs [xs : (&mut xs (__tl_dyn-array i64))]) : unit
   (begin
     (set! (array-ref xs 0) 99)

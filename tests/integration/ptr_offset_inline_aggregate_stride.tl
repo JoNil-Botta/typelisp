@@ -1,6 +1,5 @@
 ;; refs #2606: ptr-offset over an inline aggregate pointee must stride by the
 ;; aggregate byte size, not by the backend's pointer-sized aggregate handle.
-
 (defstruct PtrOffsetTriple
   (a i64)
   (b i64)

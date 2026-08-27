@@ -1,6 +1,5 @@
 ;; Private varying helper with enough leading uniform arguments to use the
 ;; platform stack ABI. The helper is deliberately too large to inline.
-
 (define (heavy-uniform-stack
   [a : i64]
   [b : i64]

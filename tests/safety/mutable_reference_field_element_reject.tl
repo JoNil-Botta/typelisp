@@ -1,5 +1,4 @@
 ;: SPEC borrow contract: mutable borrows conflict across ancestor/descendant paths.
-
 (defstruct Bags
   (left (__tl_dyn-array i64))
   (right (__tl_dyn-array i64)))

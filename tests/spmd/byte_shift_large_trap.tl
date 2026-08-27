@@ -1,6 +1,5 @@
 ;; #6686: one active u8 count equal to the lane width in masked value lowering
 ;; must use tl_shift_abort (exit 129).
-
 (define (main) : i64
   (let
     [n : i64 77]

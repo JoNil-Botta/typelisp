@@ -1,5 +1,4 @@
 ;: Lifetime-tagged iterator state cannot outlive its borrowed source storage.
-
 (defstruct Iter
   (:lifetimes source)
   (slots (& source (__tl_dyn-array i64)))

@@ -1,4 +1,3 @@
-
 ;; FORCING TEST for SCAV2 (backend descriptor-CSE of repeated global-handle
 ;; loads via the owner-map peephole).
 ;;

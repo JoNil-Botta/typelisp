@@ -1,6 +1,5 @@
 ;; refs #2608: a 24-byte aggregate array element must use the element stride,
 ;; not a power-of-two word/pair shortcut, for push, set, and ref operations.
-
 (defstruct Triple
   (a i64)
   (b i64)

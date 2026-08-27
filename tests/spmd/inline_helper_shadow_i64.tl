@@ -1,5 +1,4 @@
 ;; SPMD inline helper arguments must not be captured by helper-local bindings.
-
 (define (bump-with-shadow [x : i64]) : i64
   (let
     [lane : i64 1]

@@ -682,14 +682,14 @@
         : (MutPtr ,_T))
       ,value)))
 
-(defmacro (compiler-lower-state-cell [T : type] [value : Expr]) : Expr
+(defmacro (compiler-lower-state-cell [_T : type] [value : Expr]) : Expr
   `(let
-    [cell : (__tl_dyn-array ,T) (__tl_make-array ,T 1)]
+    [cell : (__tl_dyn-array ,_T) (__tl_make-array ,_T 1)]
     (begin
       (set! (array-ref cell 0) ,value)
       (cast
         (unsafe
-          (ptr->int (ptr-cast (__tl_array-data cell) : (Ptr ,T))))
+          (ptr->int (ptr-cast (__tl_array-data cell) : (Ptr ,_T))))
         : i64))))
 
 (define (compiler-lower-state-from-address [address : i64]) : CompilerLowerState

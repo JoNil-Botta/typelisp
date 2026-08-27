@@ -502,7 +502,7 @@ profile_live_counter_in() {
 #
 # #3992's removal of the stdlib.array compatibility module crossed
 # lower.ast_type_pool.typecheck from 10 back to 9 segments; the authoritative
-# Windows CI probe measured 9,172 used nodes, 9,216 capacity, and 221,184
+# Windows target probe measured 9,173 used nodes, 9,216 capacity, and 221,184
 # physical payload bytes.
 #
 # Assert one selfhost pool boundary from its segment count alone.
@@ -1706,7 +1706,7 @@ if [ "$NL_HOST_OS" = windows ]; then
         "$SELFHOST_STDERR" ast_type_pool macro_expand 27 1024 24 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # #3992's stdlib.array removal crosses this type-pool boundary back down:
-    # the authoritative Windows probe measured 9,172 used nodes, 9 segments,
+    # the authoritative Windows target probe measured 9,173 used nodes, 9 segments,
     # 9,216 capacity, and 221,184 physical payload bytes.
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_type_pool typecheck 9 1024 24 \

@@ -12775,7 +12775,7 @@
       (and
         (match (compiler_lower.lower-imported-spmd-select
           (& interns)
-          pools
+          (owned_view.compiler-owned-shared-view pools)
           canonical-name
           (& callables)
           (owned_view.compiler-owned-shared-view signature)
@@ -12800,7 +12800,7 @@
           [(compiler_lower.ResultLowerImportedSpmdSpecialization.Err _) false])
         (match (compiler_lower.lower-imported-spmd-select
           (& interns)
-          pools
+          (owned_view.compiler-owned-shared-view pools)
           canonical-name
           (& empty-callables)
           (owned_view.compiler-owned-shared-view signature)
@@ -12820,7 +12820,7 @@
         (compiler-lower-imported-spmd-selection-error-contains?
           (compiler_lower.lower-imported-spmd-select
             (& interns)
-            pools
+            (owned_view.compiler-owned-shared-view pools)
             canonical-name
             (& callables)
             "(-> i64 u64)"
@@ -12834,7 +12834,7 @@
         (compiler-lower-imported-spmd-selection-error-contains?
           (compiler_lower.lower-imported-spmd-select
             (& interns)
-            pools
+            (owned_view.compiler-owned-shared-view pools)
             canonical-name
             (& callables)
             (owned_view.compiler-owned-shared-view signature)
@@ -12849,7 +12849,7 @@
         (compiler-lower-imported-spmd-selection-error-contains?
           (compiler_lower.lower-imported-spmd-select
             (& interns)
-            pools
+            (owned_view.compiler-owned-shared-view pools)
             canonical-name
             (& callables)
             (owned_view.compiler-owned-shared-view signature)
@@ -12863,7 +12863,7 @@
         (compiler-lower-imported-spmd-selection-error-contains?
           (compiler_lower.lower-imported-spmd-select
             (& interns)
-            pools
+            (owned_view.compiler-owned-shared-view pools)
             canonical-name
             (& unsupported-callables)
             (owned_view.compiler-owned-shared-view signature)
@@ -12877,7 +12877,7 @@
         (compiler-lower-imported-spmd-selection-error-contains?
           (compiler_lower.lower-imported-spmd-select
             (& interns)
-            pools
+            (owned_view.compiler-owned-shared-view pools)
             canonical-name
             (& duplicate-callables)
             (owned_view.compiler-owned-shared-view signature)
@@ -12891,7 +12891,7 @@
         (compiler-lower-imported-spmd-selection-error-contains?
           (compiler_lower.lower-imported-spmd-select
             (& interns)
-            pools
+            (owned_view.compiler-owned-shared-view pools)
             canonical-name
             (& callables)
             (owned_view.compiler-owned-shared-view signature)

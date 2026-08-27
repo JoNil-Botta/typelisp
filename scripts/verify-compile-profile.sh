@@ -1640,6 +1640,9 @@ if [ "$NL_HOST_OS" = windows ]; then
     # #6877's loop-postcondition bounds-check memo crossed the pre-ownership
     # graph from 47 to 48 segments (3,083,453 used nodes), but the combined
     # ownership graph remains within this exact 73-segment boundary.
+    # On the pre-#6877 tree, #6783's integer and float exponent formatting
+    # independently crossed the same boundary: the authoritative Windows CI
+    # probe measured 3,080,997 used nodes with the same capacity and payload.
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_expr_pool macro_expand 73 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"

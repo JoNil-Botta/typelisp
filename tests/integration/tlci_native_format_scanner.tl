@@ -66,7 +66,7 @@
         (scanner-counted (&mut state) 2)
         (scanner-counted (&mut state) 3))]
     [aligned : String (format.format "{:-<5}|{:^5}|{:>5}" "a" "b" "c")]
-    [signed-zero : String (format.format "{:+05}" (cast 12 : i64))]
+    [integer-exponent : String (format.format "{:+010.2E}" (cast 1250 : i64))]
     [dynamic-width : String
       (format.format
         "{0:1$}:{2:width$}"
@@ -120,7 +120,7 @@
       (string.eq captured "captured:7")
       (string.eq ordered "3:1:2:3")
       (string.eq aligned "a----|  b  |    c")
-      (string.eq signed-zero "+0012")
+      (string.eq integer-exponent "+0001.25E3")
       (string.eq dynamic-width "a   :b  ")
       (string.eq inline-precision "7")
       (string.eq dollar-precision "7:2")

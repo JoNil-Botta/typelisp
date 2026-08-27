@@ -1,7 +1,6 @@
 ;; Emit the stdlib.math log-table payloads as shortest round-tripping f64
 ;; literals.  The fixed table/field walk makes the output a migration manifest:
 ;; running it before and after a literal rewrite must be byte-identical.
-(import stdlib.array)
 (import stdlib.format)
 (import stdlib.io)
 (import stdlib.math)
@@ -72,7 +71,7 @@
 
 (define (main) : i64
   (let
-    [seen : (__tl_dyn-array u64) (array.make-array u64 544)]
+    [seen : (__tl_dyn-array u64) (__tl_make-array u64 544)]
     [count : i64 0]
     [table-index : i64 0]
     [ok : bool true]

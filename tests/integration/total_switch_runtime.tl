@@ -1,5 +1,3 @@
-(import stdlib.array)
-
 ;; A dynamic six-variant enum dispatch: every valid tag must reach its explicit
 ;; arm at both opt0 (comparison chain) and opt2 (total jump table).
 (defenum TotalSwitchValue
@@ -22,7 +20,7 @@
 (define (main) : i64
   (let
     [values : (__tl_dyn-array TotalSwitchValue)
-      (array.make-array TotalSwitchValue 6)]
+      (__tl_make-array TotalSwitchValue 6)]
     [i : i64 0]
     [sum : i64 0]
     (begin
@@ -34,7 +32,7 @@
       (set! (array-ref values 5) (TotalSwitchValue.Five))
       (while (< i 6)
         (begin
-          (set! sum (+ sum (total-switch-score (array.ref values i))))
+          (set! sum (+ sum (total-switch-score (array-ref values i))))
           (set! i (+ i 1))))
       (if (= sum 42)
         42

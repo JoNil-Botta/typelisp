@@ -1,4 +1,3 @@
-(import stdlib.array)
 (import stdlib.format)
 (import stdlib.string)
 
@@ -75,7 +74,7 @@
 
 (define (format-binary-display-source) : String
   (let
-    [bytes : (__tl_dyn-array u8) (array.make-array u8 5)]
+    [bytes : (__tl_dyn-array u8) (__tl_make-array u8 5)]
     (begin
       (set! (array-ref bytes 0) (cast 65 : u8))
       (set! (array-ref bytes 1) (cast 0 : u8))
@@ -87,7 +86,7 @@
 
 (define (format-utf8-display-source) : String
   (let
-    [bytes : (__tl_dyn-array u8) (array.make-array u8 3)]
+    [bytes : (__tl_dyn-array u8) (__tl_make-array u8 3)]
     (begin
       ;; UTF-8 for U+00E9 followed by ASCII x. Precision one deliberately
       ;; retains only the first byte; TypeLisp precision does not decode UTF-8.

@@ -7,7 +7,6 @@
 ;; entry point through the backend runtime's raw C-ABI bridge, validate its
 ;; macro table, and invoke registered entries through the six-argument ABI.
 (import stdlib.arena)
-(import stdlib.array)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.hash)
@@ -947,8 +946,8 @@
     0
     0
     1
-    (array.make-array String 0)
-    (array.make-array i64 0)
+    (__tl_make-array String 0)
+    (__tl_make-array i64 0)
     0))
 
 (define (tlci-loader-load-from-bytes [bytes : (__tl_dyn-array u8)]) : ResultTlciLoadedImage
@@ -2243,8 +2242,8 @@
                   0
                   1
                   1
-                  (array.make-array String 0)
-                  (array.make-array i64 0)
+                  (__tl_make-array String 0)
+                  (__tl_make-array i64 0)
                   0))
               "tlci host ABI: unsupported callback ABI version 3"))))]))
 

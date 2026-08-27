@@ -5,7 +5,6 @@
 ;# different module name so internal selfhost tests run the checked-in macro
 ;# body below.
 (import stdlib.comptime)
-(import stdlib.array)
 (import stdlib.string)
 
 ;: Compiler-private owner for the one backing allocation used by long calls.
@@ -14,7 +13,7 @@
 
 ;: Allocate the one backing buffer used to pack a long concatenation.
 (define (str-cat-pack-new [count : i64]) : StrCatPack
-  (StrCatPack (stdlib.array.make-array String count)))
+  (StrCatPack (__tl_make-array String count)))
 
 ;: Store one String in a compiler-private pack and return the pack.
 (define (str-cat-pack-part [pack : StrCatPack] [index : i64] [value : String]) : StrCatPack

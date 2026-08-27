@@ -28,8 +28,6 @@
 ;# program-lifetime arena outside `(with-arena ...)`, or the scoped arena inside
 ;# one.
 ;; lint-allow: unused-import
-(import stdlib.array)
-
 ;; lint-allow: unused-import
 (import stdlib.arena)
 
@@ -165,7 +163,7 @@
         "alpha beta"
         "append order")
       (let
-        [items : (__tl_dyn-array String) (array.make-array String 5)]
+        [items : (__tl_dyn-array String) (__tl_make-array String 5)]
         (begin
           (set! (array-ref items 0) "skip")
           (set! (array-ref items 1) "alpha")

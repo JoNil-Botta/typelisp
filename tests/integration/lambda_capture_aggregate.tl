@@ -1,8 +1,6 @@
 ; Capturing String and dynamic-array values in closure environments (#435).
 ; Each case reads a scalar out of a captured aggregate so the test exercises
 ; capture (not aggregate returns); `main` yields 42 only if every case holds.
-(import stdlib.array)
-
 ;; lint-allow: unused-import
 (import stdlib.string)
 
@@ -18,7 +16,7 @@
 ; A dynamic array captured and indexed in the same scope.
 (define (case-dynarray-elem) : bool
   (let
-    [a : (__tl_dyn-array i64) (array.make-array i64 4)]
+    [a : (__tl_dyn-array i64) (__tl_make-array i64 4)]
     (begin
       (set! (array-ref a 2) 9)
       (=

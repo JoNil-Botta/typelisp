@@ -1,5 +1,3 @@
-(import stdlib.array)
-
 ;; Regression guard for #5238: a checked counted loop whose array index is
 ;; masked by an immutable *global* must reach the same BCE-versioned, x16
 ;; unrolled fast path as one that spells the mask as a literal.
@@ -64,8 +62,8 @@
 
 (define (main) : i64
   (let
-    [table : (__tl_dyn-array i64) (array.make-array i64 256)]
-    [buf : (__tl_dyn-array u8) (array.make-array u8 64)]
+    [table : (__tl_dyn-array i64) (__tl_make-array i64 256)]
+    [buf : (__tl_dyn-array u8) (__tl_make-array u8 64)]
     [n : i64 0]
     (begin
       (while (< n 256)

@@ -420,7 +420,7 @@ while IFS= read -r suffix; do
     cp "stdlib/$suffix" "$MUTATED_ROOT/$suffix"
 done < "$MANIFEST"
 printf '\n;; embedded stdlib tlci source binding probe\n' \
-    >> "$MUTATED_ROOT/array.tl"
+    >> "$MUTATED_ROOT/core_macros.tl"
 BUILD_HASH=$(build_provenance_hash "$0")
 MUTATED_SOURCE_HASH=$(
     while IFS= read -r module_path; do
@@ -451,7 +451,7 @@ fi
 # The three tiers exist so a failure names an entry/session shape instead of a
 # symptom. With #6550 there are no production shells left: tier 1 now sustains
 # the newly native text_buf/append! two-operand dynamic set!-place callback
-# chain. Tier 2 runs array/length over one persistent set of pools/operands and
+# chain. Tier 2 runs core_macros/__tl-box-place over one persistent set of pools/operands and
 # audits the count, operand, cookie and stack state after every fresh session.
 # Tier 3 runs that same entry but captures pools and pushes a fresh operand each
 # iteration, adding pool/operand cycling. All three run above the observed

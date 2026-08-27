@@ -477,7 +477,7 @@
                                   (match (ast.ast-node-pool-context-expr-get
                                     pools
                                     make-body)
-                                    [(ast.AstExpr.MakeArray _ size-body)
+                                    [(ast.AstExpr.FixedMakeArray _ size-body)
                                       (= size-body first-body)]
                                     [_ false])
                                   (match (ast.ast-decl-list-step final-box)
@@ -534,7 +534,7 @@
     [source-make : i64
       (ast.ast-node-pool-context-expr-push
         source-pools
-        (ast.AstExpr.MakeArray
+        (ast.AstExpr.FixedMakeArray
           (ast.ast-node-pool-context-type-push
             source-pools
             (ast.AstType.Ptr source-i64-ty))

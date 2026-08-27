@@ -33,7 +33,7 @@ its `count + 1` sweep bound, the Euler tour, the back-edge scan direction, the
 loop-body worklist order, and the preheader `None`/`One`/`Many` state machine.
 
 Each loop's body collection clears a whole `count`-entry marks array, which is
-what `array.make-array bool (opt-cfg-index-block-count index)` costs per natural
+what `__tl_make-array bool (opt-cfg-index-block-count index)` costs per natural
 loop in `opt-natural-loop-build`. That per-function loop-enumeration cost is the
 one this benchmark exists to track.
 

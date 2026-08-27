@@ -18,7 +18,6 @@
 ;# bit-length seed, a branchy convergence test, and a hard iteration cap,
 ;# implemented identically on both sides. Results stay in `[0, prime)` so the
 ;# printed decimal matches the C baseline's `%lld`.
-(import stdlib.array)
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.vector)
@@ -100,7 +99,7 @@
   (bit-and (shr state 33) 2147483647))
 
 (define (nb-zero-vec [n : i64]) : i64vec.Vec
-  (i64vec.Vec (array.make-array i64 n) n))
+  (i64vec.Vec (__tl_make-array i64 n) n))
 
 (define (nb-seed
   [px : (&mut px (Slice i64))]

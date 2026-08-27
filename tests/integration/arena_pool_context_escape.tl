@@ -24,7 +24,6 @@
 ;
 ; Exit 42 on success, like the other arena-ownership fixtures.
 (import stdlib.arena)
-(import stdlib.array)
 
 ; The "pool state" a global points at: a one-element cell holding a payload.
 (defstruct CellHolder
@@ -33,7 +32,7 @@
 ; The process-global. `install!` re-points it at the caller's cells, so whatever
 ; arena those cells live in becomes this global's lifetime.
 (define global-holder : CellHolder
-  (CellHolder (array.make-array i64 1)))
+  (CellHolder (__tl_make-array i64 1)))
 (define long-lived-arena : i64
   (arena.tl_arena_current))
 (define pin-cells-to-long-lived : bool
@@ -43,7 +42,7 @@
   (if (not pin-cells-to-long-lived)
     ; UNGUARDED: cells come from whatever arena is current.
     (let
-      [cells : (__tl_dyn-array i64) (array.make-array i64 1)]
+      [cells : (__tl_dyn-array i64) (__tl_make-array i64 1)]
       (begin
         (set! (array-ref cells 0) value)
         (CellHolder cells)))
@@ -53,7 +52,7 @@
       [_enter : unit
         (unsafe
           (arena.tl_arena_set long-lived-arena))]
-      [cells : (__tl_dyn-array i64) (array.make-array i64 1)]
+      [cells : (__tl_dyn-array i64) (__tl_make-array i64 1)]
       [head : i64 (arena.tl_arena_current)]
       [_leave : unit
         (begin

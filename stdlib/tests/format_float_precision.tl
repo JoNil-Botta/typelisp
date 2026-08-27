@@ -1,4 +1,3 @@
-(import stdlib.array)
 (import stdlib.format)
 (import stdlib.math)
 (import stdlib.string)
@@ -70,9 +69,9 @@
 (define (f64-fixed-table-ok?) : bool
   (let
     [count : i64 15]
-    [bits : (__tl_dyn-array u64) (array.make-array u64 count)]
-    [precision : (__tl_dyn-array i64) (array.make-array i64 count)]
-    [expected : (__tl_dyn-array String) (array.make-array String count)]
+    [bits : (__tl_dyn-array u64) (__tl_make-array u64 count)]
+    [precision : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [expected : (__tl_dyn-array String) (__tl_make-array String count)]
     [i : i64 0]
     [ok : bool true]
     (begin
@@ -178,9 +177,9 @@
 (define (f32-fixed-table-ok?) : bool
   (let
     [count : i64 8]
-    [bits : (__tl_dyn-array u32) (array.make-array u32 count)]
-    [precision : (__tl_dyn-array i64) (array.make-array i64 count)]
-    [expected : (__tl_dyn-array String) (array.make-array String count)]
+    [bits : (__tl_dyn-array u32) (__tl_make-array u32 count)]
+    [precision : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [expected : (__tl_dyn-array String) (__tl_make-array String count)]
     [i : i64 0]
     [ok : bool true]
     (begin

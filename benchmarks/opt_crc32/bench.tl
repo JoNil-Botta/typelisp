@@ -9,7 +9,6 @@
 ;# round count are runtime
 ;# arguments; the accumulator stays in [0, 2^32) so its printed decimal matches
 ;# the C baseline.
-(import stdlib.array)
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.vector)
@@ -38,7 +37,7 @@
 
 (define (crc-build-table) : i64vec.Vec
   (let
-    [table : i64vec.Vec (i64vec.Vec (array.make-array i64 256) 256)]
+    [table : i64vec.Vec (i64vec.Vec (__tl_make-array i64 256) 256)]
     [slots (i64vec.slots-mut (&mut table))]
     [n : i64 0]
     (begin
@@ -81,7 +80,7 @@
 (define (crc-bench [len : i64] [rounds : i64]) : i64
   (let
     [table : i64vec.Vec (crc-build-table)]
-    [buf : u8vec.Vec (u8vec.Vec (array.make-array u8 len) len)]
+    [buf : u8vec.Vec (u8vec.Vec (__tl_make-array u8 len) len)]
     [round : i64 0]
     [acc : i64 0]
     (begin

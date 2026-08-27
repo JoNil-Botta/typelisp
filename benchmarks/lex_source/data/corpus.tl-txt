@@ -10603,7 +10603,7 @@
 ;; The lowerer accepts the checked program and builds a deterministic
 ;; CompilerIrProgram.
 (import stdlib.arena)
-(import stdlib.array)
+
 (import stdlib.vector)
 (import (vector.vector String) as svec)
 (import compiler_typecheck_core as tc_core)
@@ -11159,7 +11159,7 @@
 
 (defmacro (compiler-lower-state-cell [T : type] [value : Expr]) : Expr
   `(let
-    [cell : (__tl_dyn-array ,T) (array.make-array ,T 1)]
+    [cell : (__tl_dyn-array ,T) (__tl_make-array ,T 1)]
     (begin
       (set! (array-ref cell 0) ,value)
       (cast
@@ -11175,7 +11175,7 @@
 
 (define (compiler-lower-state-new) : CompilerLowerState
   (let
-    [cells : (__tl_dyn-array i64) (array.make-array i64 31)]
+    [cells : (__tl_dyn-array i64) (__tl_make-array i64 31)]
     [address : i64
       (cast
         (unsafe
@@ -41526,7 +41526,7 @@
   (let
     [count : i64 (lower-c-abi-slot-list-count slots)]
     [out : (__tl_dyn-array ir.CompilerIrCAbiReturnSlot)
-      (array.make-array ir.CompilerIrCAbiReturnSlot count)]
+      (__tl_make-array ir.CompilerIrCAbiReturnSlot count)]
     (begin
       (lower-c-abi-ir-return-slots-from slots out 0 count)
       (ir.CompilerIrCAbiReturnSlotList.Array
@@ -72441,14 +72441,14 @@
 (define lower-variant-arm-memo-generation : i64
   0)
 (define lower-variant-arm-memo-stamps : (__tl_dyn-array i64)
-  (array.make-array i64 256))
+  (__tl_make-array i64 256))
 (define lower-variant-arm-memo-keys : (__tl_dyn-array i64)
-  (array.make-array i64 256))
+  (__tl_make-array i64 256))
 (define lower-variant-arm-memo-scrut-tys : (__tl_dyn-array ast.AstType)
-  (array.make-array ast.AstType 256))
+  (__tl_make-array ast.AstType 256))
 (define lower-variant-arm-memo-outcomes : (__tl_dyn-array
     LowerVariantArmResolution)
-  (array.make-array LowerVariantArmResolution 256))
+  (__tl_make-array LowerVariantArmResolution 256))
 
 (define (lower-variant-arm-memo-next-gen!) : unit
   (set!

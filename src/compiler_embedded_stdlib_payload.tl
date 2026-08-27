@@ -7,8 +7,6 @@
 
 (include-str-lzss payload-args "../stdlib/args.tl")
 
-(include-str-lzss payload-array "../stdlib/array.tl")
-
 (include-str-lzss payload-byte-buf "../stdlib/byte_buf.tl")
 
 (include-str-lzss payload-byte-buf-core "../stdlib/byte_buf_core.tl")
@@ -123,8 +121,6 @@
       (compiler-embedded-stdlib-payload-copy payload-atomic)]
     [(string.eq suffix "args.tl")
       (compiler-embedded-stdlib-payload-copy payload-args)]
-    [(string.eq suffix "array.tl")
-      (compiler-embedded-stdlib-payload-copy payload-array)]
     [(string.eq suffix "byte_buf.tl")
       (compiler-embedded-stdlib-payload-copy payload-byte-buf)]
     [(string.eq suffix "byte_buf_core.tl")

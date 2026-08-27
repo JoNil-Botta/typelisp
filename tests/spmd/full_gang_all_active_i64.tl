@@ -1,8 +1,6 @@
 ;; Full SIMD gangs use an all-active parent state while tails and divergent
 ;; children retain real masks. Exercise zero, short, exact-width, and partial
 ;; ranges, including a child branch whose active mask is always empty.
-(import stdlib.array)
-
 (define capacity : i64
   16)
 
@@ -34,9 +32,9 @@
 
 (define (run-case [n : i64]) : bool
   (let
-    [xs : (__tl_dyn-array i64) (array.make-array i64 capacity)]
-    [copy : (__tl_dyn-array i64) (array.make-array i64 capacity)]
-    [out : (__tl_dyn-array i64) (array.make-array i64 capacity)]
+    [xs : (__tl_dyn-array i64) (__tl_make-array i64 capacity)]
+    [copy : (__tl_dyn-array i64) (__tl_make-array i64 capacity)]
+    [out : (__tl_dyn-array i64) (__tl_make-array i64 capacity)]
     [i : i64 0]
     [ok : bool true]
     (begin

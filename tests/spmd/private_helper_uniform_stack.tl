@@ -1,7 +1,5 @@
 ;; Private varying helper with enough leading uniform arguments to use the
 ;; platform stack ABI. The helper is deliberately too large to inline.
-(import stdlib.array)
-
 (define (heavy-uniform-stack
   [a : i64]
   [b : i64]
@@ -32,7 +30,7 @@
 (define (main) : i64
   (let
     [n : i64 13]
-    [out : (__tl_dyn-array i64) (array.make-array i64 n)]
+    [out : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     (begin
       (fill out n)
       (if (= (sum-array out n) 442)

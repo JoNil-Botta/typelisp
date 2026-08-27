@@ -1,7 +1,5 @@
 ;; SPMD masked-if corpus (#2205): AVX-512 value-producing masked `if`
 ;; feeding a predicated store. The n = 13 length exercises a masked tail.
-(import stdlib.array)
-
 (define (init-xs [xs : (__tl_dyn-array i64)] [n : i64]) : unit
   (let
     [i : i64 0]
@@ -64,9 +62,9 @@
 (define (main) : i64
   (let
     [n : i64 13]
-    [xs : (__tl_dyn-array i64) (array.make-array i64 n)]
-    [got : (__tl_dyn-array i64) (array.make-array i64 n)]
-    [want : (__tl_dyn-array i64) (array.make-array i64 n)]
+    [xs : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+    [got : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+    [want : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     (begin
       (init-xs xs n)
       (init-out got n)

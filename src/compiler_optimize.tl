@@ -23,7 +23,6 @@
 (import stdlib.io)
 (cfg compile-profile (import stdlib.profile))
 (cfg test (import stdlib.test))
-(import stdlib.array)
 (import stdlib.vector)
 (import stdlib.text_buf)
 (import compiler_allocation_profile as allocation_profile)
@@ -85,7 +84,7 @@
 
 (define compiler-opt-owned-state : CompilerOptOwnedState
   (CompilerOptOwnedState
-    (OptInlineOwnedState (arena.Arena 0) (array.make-array i64 0))
+    (OptInlineOwnedState (arena.Arena 0) (__tl_make-array i64 0))
     (OptDebugState
       (arena.Arena 0)
       (cis.InternStructuralSessionHandle 0)
@@ -139,7 +138,7 @@
     (set!
       compiler-opt-owned-state
       (CompilerOptOwnedState
-        (OptInlineOwnedState (arena.Arena 0) (array.make-array i64 0))
+        (OptInlineOwnedState (arena.Arena 0) (__tl_make-array i64 0))
         (OptDebugState
           (arena.current)
           structural-session
@@ -2469,7 +2468,7 @@
 ;; no initialising pass. The `opt-used-array-fill` helper existed only to run
 ;; that pass and had no other caller, so it goes with it.
 (define (opt-used-array-new [count : i64]) : (__tl_dyn-array i64)
-  (array.make-array i64 count))
+  (__tl_make-array i64 count))
 
 ;; Use counts (not booleans): `add` bumps the count, `contains` reports any live
 ;; use, and `dec` drops a single use when DCE deletes an instruction. Counting
@@ -2995,7 +2994,7 @@
 ;; step. Zero length is the "no mirror" signal, so the rewrite paths below skip
 ;; the mirrored bookkeeping with one length test and no allocation.
 (define opt-dce-no-mirror : (__tl_dyn-array (__tl_dyn-array i64))
-  (__tl_make-array (array.make-array i64 0)))
+  (__tl_make-array (__tl_make-array i64 0)))
 
 ;; The zero-length mirror sentinel is immutable in practice: every update is
 ;; guarded by its length. Preserve the allocation-free shared sentinel behind
@@ -3250,7 +3249,7 @@
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
     [out-slots : (__tl_dyn-array ir.CompilerIrInstr)
-      (array.make-array ir.CompilerIrInstr count)]
+      (__tl_make-array ir.CompilerIrInstr count)]
     [index : i64 (- count 1)]
     [write : i64 (- count 1)]
     [live-count : i64 0]
@@ -3371,7 +3370,7 @@
 (define (opt-dce-copy-used [source : (__tl_dyn-array i64)]) : (__tl_dyn-array
     i64)
   (let
-    [out : (__tl_dyn-array i64) (array.make-array i64 (array-length source))]
+    [out : (__tl_dyn-array i64) (__tl_make-array i64 (array-length source))]
     (begin
       (opt-dce-copy-used-from! source out 0)
       out)))
@@ -3499,7 +3498,7 @@
     [src-slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
     [out-slots : (__tl_dyn-array ir.CompilerIrInstr)
-      (array.make-array ir.CompilerIrInstr count)]
+      (__tl_make-array ir.CompilerIrInstr count)]
     [index : i64 (- count 1)]
     [write : i64 (- count 1)]
     [live-count : i64 0]
@@ -3591,7 +3590,7 @@
   (let
     [count : i64 (ir.compiler-ir-block-list-count blocks)]
     [slots : (__tl_dyn-array ir.CompilerIrBlock)
-      (array.make-array ir.CompilerIrBlock count)]
+      (__tl_make-array ir.CompilerIrBlock count)]
     [written : i64
       (opt-dce-block-list-array-escape-fill pools items blocks slots 0)]
     (ir.CompilerIrBlockList.Array (ir.CompilerIrBlockSeq slots written))))
@@ -4607,7 +4606,7 @@
       (let
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
         [out : (__tl_dyn-array ir.CompilerIrBlock)
-          (array.make-array ir.CompilerIrBlock count)]
+          (__tl_make-array ir.CompilerIrBlock count)]
         [index : i64 0]
         (begin
           (while (< index count)
@@ -4942,7 +4941,7 @@
   (let
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [slots : (__tl_dyn-array ir.CompilerIrInstr)
-      (array.make-array ir.CompilerIrInstr count)]
+      (__tl_make-array ir.CompilerIrInstr count)]
     [index : i64 0]
     [facts : OptAggregateFieldFacts (OptAggregateFieldFacts.Nil)]
     (begin
@@ -7258,7 +7257,7 @@
   [values : ir.CompilerIrValueSeq]) : ir.CompilerIrValueSeq
   (let
     [slots : (__tl_dyn-array ir.CompilerIrValue)
-      (array.make-array ir.CompilerIrValue values.len)]
+      (__tl_make-array ir.CompilerIrValue values.len)]
     [index : i64 0]
     (begin
       (while (< index values.len)
@@ -7294,7 +7293,7 @@
     [(ir.CompilerIrCallArgs.Array values)
       (let
         [out : (__tl_dyn-array ir.CompilerIrValue)
-          (array.make-array ir.CompilerIrValue (array-length values))]
+          (__tl_make-array ir.CompilerIrValue (array-length values))]
         (begin
           (opt-copy-subst-call-args-array env values out 0)
           (ir.CompilerIrCallArgs.Array out)))]))
@@ -7336,7 +7335,7 @@
   [args : ir.CompilerIrSpmdCallArgSeq]) : ir.CompilerIrSpmdCallArgSeq
   (let
     [out : (__tl_dyn-array ir.CompilerIrSpmdCallArg)
-      (array.make-array ir.CompilerIrSpmdCallArg args.len)]
+      (__tl_make-array ir.CompilerIrSpmdCallArg args.len)]
     (begin
       (opt-copy-subst-spmd-call-args-array env args.slots out 0)
       (ir.CompilerIrSpmdCallArgSeq out args.len))))
@@ -8479,7 +8478,7 @@
   (match set
     [(OptLabelSet.Nil)
       (let
-        [items : (__tl_dyn-array i64) (array.make-array i64 5)]
+        [items : (__tl_dyn-array i64) (__tl_make-array i64 5)]
         (begin
           (set! (array-ref items 0) 1)
           (set! (array-ref items 1) label)
@@ -8496,7 +8495,7 @@
             (if (< len old-capacity)
               old-capacity
               (opt-dense-next-capacity len))]
-          [bigger : (__tl_dyn-array i64) (array.make-array i64 (+ capacity 1))]
+          [bigger : (__tl_dyn-array i64) (__tl_make-array i64 (+ capacity 1))]
           [index : i64 0]
           (begin
             (while (< index len)
@@ -8851,9 +8850,9 @@
 ;; because a later build stamps over this one and passes routinely query an
 ;; index that is no longer the newest.
 (define opt-cfg-label-slot : (__tl_dyn-array i64)
-  (array.make-array i64 1))
+  (__tl_make-array i64 1))
 (define opt-cfg-label-stamp : (__tl_dyn-array i64)
-  (array.make-array i64 1))
+  (__tl_make-array i64 1))
 (define opt-cfg-label-generation : i64
   0)
 
@@ -8874,8 +8873,8 @@
         (in-arena
           (arena.Arena (ir.compiler-ir-label-arena))
           (begin
-            (set! opt-cfg-label-slot (array.make-array i64 size))
-            (set! opt-cfg-label-stamp (array.make-array i64 size))))
+            (set! opt-cfg-label-slot (__tl_make-array i64 size))
+            (set! opt-cfg-label-stamp (__tl_make-array i64 size))))
         ;; A fresh stamp array reads as generation 0, so restart the counter
         ;; above it rather than leaving stale entries live.
         (set! opt-cfg-label-generation 0)))))
@@ -9182,8 +9181,8 @@
 (define (opt-cfg-csr-build [rows : (__tl_dyn-array OptI64List)] [count : i64]) : OptCfgCsr
   (let
     [edge-count : i64 (opt-cfg-row-list-total rows count 0 0)]
-    [offsets : (__tl_dyn-array i64) (array.make-array i64 (+ count 1))]
-    [edges : (__tl_dyn-array i64) (array.make-array i64 edge-count)]
+    [offsets : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
+    [edges : (__tl_dyn-array i64) (__tl_make-array i64 edge-count)]
     (begin
       (opt-cfg-csr-fill-rows! rows count offsets edges 0 0)
       (OptCfgCsr offsets edges))))
@@ -9337,22 +9336,20 @@
 (define (opt-cfg-index-build [blocks : ir.CompilerIrBlockList]) : OptCfgIndex
   (let
     [count : i64 (ir.compiler-ir-block-list-count blocks)]
-    [labels : (__tl_dyn-array i64) (array.make-array i64 count)]
+    [labels : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [dense-blocks : (__tl_dyn-array ir.CompilerIrBlock)
-      (array.make-array ir.CompilerIrBlock count)]
+      (__tl_make-array ir.CompilerIrBlock count)]
     [generation : i64 (opt-cfg-label-table-begin!)]
     [labels-unique : bool
       (opt-cfg-index-fill-labels! blocks generation labels dense-blocks 0)]
     [id-map : (__tl_dyn-array i64)
-      (array.make-array i64 (opt-cfg-index-id-map-capacity count))]
-    [succ-rows : (__tl_dyn-array OptI64List)
-      (array.make-array OptI64List count)]
-    [pred-rows : (__tl_dyn-array OptI64List)
-      (array.make-array OptI64List count)]
-    [reachable : (__tl_dyn-array bool) (array.make-array bool count)]
-    [postorder : (__tl_dyn-array i64) (array.make-array i64 count)]
-    [rpo : (__tl_dyn-array i64) (array.make-array i64 count)]
-    [rpo-num : (__tl_dyn-array i64) (array.make-array i64 count)]
+      (__tl_make-array i64 (opt-cfg-index-id-map-capacity count))]
+    [succ-rows : (__tl_dyn-array OptI64List) (__tl_make-array OptI64List count)]
+    [pred-rows : (__tl_dyn-array OptI64List) (__tl_make-array OptI64List count)]
+    [reachable : (__tl_dyn-array bool) (__tl_make-array bool count)]
+    [postorder : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [rpo : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [rpo-num : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [reach-count : i64 0]
     [targets-known : bool true]
     (begin
@@ -9933,9 +9930,9 @@
   (let
     [count : i64 (opt-cfg-index-block-count index)]
     [words : i64 (opt-bits-words count)]
-    [rows : (__tl_dyn-array i64) (array.make-array i64 (* count words))]
-    [scratch : (__tl_dyn-array i64) (array.make-array i64 words)]
-    [empty : (__tl_dyn-array i64) (array.make-array i64 0)]
+    [rows : (__tl_dyn-array i64) (__tl_make-array i64 (* count words))]
+    [scratch : (__tl_dyn-array i64) (__tl_make-array i64 words)]
+    [empty : (__tl_dyn-array i64) (__tl_make-array i64 0)]
     [entry-id : i64 (- 0 1)]
     (begin
       (match (opt-cfg-index-id index entry-label)
@@ -10087,7 +10084,7 @@
   (let
     [count : i64 (opt-cfg-index-block-count index)]
     [child-rows : (__tl_dyn-array OptI64List)
-      (array.make-array OptI64List count)]
+      (__tl_make-array OptI64List count)]
     (begin
       (opt-cfg-fill-i64! tin count (- 0 1))
       (opt-cfg-fill-i64! tout count (- 0 1))
@@ -10104,10 +10101,10 @@
 (define (opt-cfg-dominators-with [index : OptCfgIndex] [entry-label : i64]) : OptDomInfo
   (let
     [count : i64 (opt-cfg-index-block-count index)]
-    [idom : (__tl_dyn-array i64) (array.make-array i64 count)]
-    [tin : (__tl_dyn-array i64) (array.make-array i64 count)]
-    [tout : (__tl_dyn-array i64) (array.make-array i64 count)]
-    [empty : (__tl_dyn-array i64) (array.make-array i64 0)]
+    [idom : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [tin : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [tout : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [empty : (__tl_dyn-array i64) (__tl_make-array i64 0)]
     [entry-id : i64 (- 0 1)]
     (begin
       (opt-cfg-fill-i64! idom count (- 0 1))
@@ -10650,7 +10647,7 @@
   (if (< vars 0)
     false
     (let
-      [set : (__tl_dyn-array bool) (array.make-array bool vars)]
+      [set : (__tl_dyn-array bool) (__tl_make-array bool vars)]
       (and
         (opt-verify-param-def-set params set)
         (opt-verify-block-def-set blocks set)))))
@@ -10737,7 +10734,7 @@
   [blocks : ir.CompilerIrBlockList]) : (__tl_dyn-array OptMaybeVarDef)
   (let
     [items : (__tl_dyn-array OptMaybeVarDef)
-      (array.make-array OptMaybeVarDef vars)]
+      (__tl_make-array OptMaybeVarDef vars)]
     (begin
       (opt-var-defs-index-params! params items)
       (opt-var-defs-index-blocks! blocks 0 items)
@@ -10851,7 +10848,7 @@
     (OptVarDefsIndex.Duplicate)
     (let
       [items : (__tl_dyn-array OptMaybeVarDef)
-        (array.make-array OptMaybeVarDef vars)]
+        (__tl_make-array OptMaybeVarDef vars)]
       (if (and
         (opt-var-defs-checked-params! params items)
         (opt-var-defs-checked-blocks! blocks 0 items))
@@ -12236,7 +12233,7 @@
 
 (define (opt-ssa-label-members-new [index : OptCfgIndex]) : (__tl_dyn-array
     bool)
-  (array.make-array bool (opt-cfg-index-block-count index)))
+  (__tl_make-array bool (opt-cfg-index-block-count index)))
 
 (define (opt-ssa-label-member? [members : (__tl_dyn-array bool)] [id : i64]) : bool
   (if (and (>= id 0) (< id (array-length members)))
@@ -12277,8 +12274,8 @@
   [var-capacity : i64]
   [entry-capacity : i64]) : OptSsaVarBlocks
   (OptSsaVarBlocks
-    (array.make-array i64 var-capacity)
-    (array.make-array OptSsaVarBlockEntry entry-capacity)
+    (__tl_make-array i64 var-capacity)
+    (__tl_make-array OptSsaVarBlockEntry entry-capacity)
     0))
 
 (define (opt-ssa-var-blocks-add
@@ -12639,12 +12636,12 @@
   [entry-capacity : i64]
   [change-capacity : i64]) : OptSsaRenameEnv
   (OptSsaRenameEnv
-    (array.make-array i64 var-capacity)
-    (array.make-array i64 entry-capacity)
-    (array.make-array bool entry-capacity)
-    (array.make-array i64 change-capacity)
-    (array.make-array i64 change-capacity)
-    (array.make-array bool change-capacity)
+    (__tl_make-array i64 var-capacity)
+    (__tl_make-array i64 entry-capacity)
+    (__tl_make-array bool entry-capacity)
+    (__tl_make-array i64 change-capacity)
+    (__tl_make-array i64 change-capacity)
+    (__tl_make-array bool change-capacity)
     0
     0))
 
@@ -12741,9 +12738,9 @@
 
 (define (opt-ssa-env-snapshot-empty) : OptSsaRenameSnapshot
   (OptSsaRenameSnapshot
-    (array.make-array i64 0)
-    (array.make-array i64 0)
-    (array.make-array bool 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array bool 0)
     0))
 
 (define (opt-ssa-env-snapshot-lookup
@@ -12895,7 +12892,7 @@
   [values : ir.CompilerIrValueSeq]) : ir.CompilerIrValueSeq
   (let
     [slots : (__tl_dyn-array ir.CompilerIrValue)
-      (array.make-array ir.CompilerIrValue values.len)]
+      (__tl_make-array ir.CompilerIrValue values.len)]
     [index : i64 0]
     (begin
       (while (< index values.len)
@@ -12935,7 +12932,7 @@
     [(ir.CompilerIrCallArgs.Array values)
       (let
         [out : (__tl_dyn-array ir.CompilerIrValue)
-          (array.make-array ir.CompilerIrValue (array-length values))]
+          (__tl_make-array ir.CompilerIrValue (array-length values))]
         (begin
           (opt-ssa-rewrite-call-args-array env values out 0)
           (ir.CompilerIrCallArgs.Array out)))]))
@@ -12965,7 +12962,7 @@
   [args : ir.CompilerIrSpmdCallArgSeq]) : ir.CompilerIrSpmdCallArgSeq
   (let
     [out : (__tl_dyn-array ir.CompilerIrSpmdCallArg)
-      (array.make-array ir.CompilerIrSpmdCallArg args.len)]
+      (__tl_make-array ir.CompilerIrSpmdCallArg args.len)]
     (begin
       (opt-ssa-rewrite-spmd-call-args-array env args.slots out 0)
       (ir.CompilerIrSpmdCallArgSeq out args.len))))
@@ -13755,14 +13752,14 @@
     ;; record. Dense work arrays plus a single tail-recursive driver keep a
     ;; source-generated chain of short-circuit blocks off the native call stack
     ;; during SSA rename (#6318).
-    [work-ids : (__tl_dyn-array i64) (array.make-array i64 capacity)]
-    [work-exits : (__tl_dyn-array bool) (array.make-array bool capacity)]
-    [work-checkpoints : (__tl_dyn-array i64) (array.make-array i64 capacity)]
+    [work-ids : (__tl_dyn-array i64) (__tl_make-array i64 capacity)]
+    [work-exits : (__tl_dyn-array bool) (__tl_make-array bool capacity)]
+    [work-checkpoints : (__tl_dyn-array i64) (__tl_make-array i64 capacity)]
     ;; One-based links make zero the empty sentinel in freshly zeroed arrays.
     ;; Iterating children upward and prepending builds each sibling list in
     ;; descending order, which is the order the LIFO work stack needs.
-    [child-heads : (__tl_dyn-array i64) (array.make-array i64 count)]
-    [child-next : (__tl_dyn-array i64) (array.make-array i64 count)]
+    [child-heads : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [child-next : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [child-id : i64 0]
     [idom : (__tl_dyn-array i64) context.doms.idom]
     (begin
@@ -14856,7 +14853,7 @@
         1
         (+ max-dst 1))]
     [buckets : (__tl_dyn-array OptGlobalCopyFacts)
-      (array.make-array OptGlobalCopyFacts capacity)]
+      (__tl_make-array OptGlobalCopyFacts capacity)]
     [table : OptGlobalCopyFactTable (OptGlobalCopyFactTable buckets)]
     (begin
       (opt-global-copy-table-insert-reversed! table facts)
@@ -15014,7 +15011,7 @@
         1
         (+ max-group 1))]
     [buckets : (__tl_dyn-array OptGlobalPackWordFacts)
-      (array.make-array OptGlobalPackWordFacts capacity)]
+      (__tl_make-array OptGlobalPackWordFacts capacity)]
     [table : OptGlobalPackWordFactTable (OptGlobalPackWordFactTable buckets)]
     (begin
       (opt-global-pack-word-table-insert-reversed! table facts)
@@ -15306,7 +15303,7 @@
     [(ir.CompilerIrCallArgs.Array values)
       (let
         [out : (__tl_dyn-array ir.CompilerIrValue)
-          (array.make-array ir.CompilerIrValue (array-length values))]
+          (__tl_make-array ir.CompilerIrValue (array-length values))]
         (begin
           (opt-global-copy-subst-call-args-array
             facts
@@ -15388,7 +15385,7 @@
   [args : ir.CompilerIrSpmdCallArgSeq]) : ir.CompilerIrSpmdCallArgSeq
   (let
     [out : (__tl_dyn-array ir.CompilerIrSpmdCallArg)
-      (array.make-array ir.CompilerIrSpmdCallArg args.len)]
+      (__tl_make-array ir.CompilerIrSpmdCallArg args.len)]
     (begin
       (opt-global-copy-subst-spmd-call-args-array
         facts
@@ -15716,7 +15713,7 @@
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
     [out : (__tl_dyn-array ir.CompilerIrInstr)
-      (array.make-array ir.CompilerIrInstr count)]
+      (__tl_make-array ir.CompilerIrInstr count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -15896,7 +15893,7 @@
     [capacity : i64
       (opt-global-fact-bucket-capacity (opt-global-expr-facts-count facts))]
     [buckets : (__tl_dyn-array OptGlobalExprFacts)
-      (array.make-array OptGlobalExprFacts capacity)]
+      (__tl_make-array OptGlobalExprFacts capacity)]
     [table : OptGlobalExprFactTable (OptGlobalExprFactTable buckets)]
     (begin
       (opt-global-expr-table-insert-reversed! type-segment-bases table facts)
@@ -16076,7 +16073,7 @@
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
     [out : (__tl_dyn-array ir.CompilerIrInstr)
-      (array.make-array ir.CompilerIrInstr count)]
+      (__tl_make-array ir.CompilerIrInstr count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -16275,7 +16272,7 @@
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
     [out : (__tl_dyn-array ir.CompilerIrInstr)
-      (array.make-array ir.CompilerIrInstr count)]
+      (__tl_make-array ir.CompilerIrInstr count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -16592,7 +16589,7 @@
   [labels : OptLabelSet]) : OptLoopBody
   (let
     [members : (__tl_dyn-array bool)
-      (array.make-array bool (opt-cfg-index-block-count index))]
+      (__tl_make-array bool (opt-cfg-index-block-count index))]
     (begin
       (opt-loop-body-fill-members! index members labels)
       (OptLoopBody labels members (opt-loop-body-blocks-from members blocks 0)))))
@@ -16867,7 +16864,7 @@
   (let
     [index : OptCfgIndex pred-map.index]
     [marks : (__tl_dyn-array bool)
-      (array.make-array bool (opt-cfg-index-block-count index))]
+      (__tl_make-array bool (opt-cfg-index-block-count index))]
     [_seed-header : unit (opt-natural-loop-mark-label! index marks header)]
     [_seed-latch : unit (opt-natural-loop-mark-label! index marks latch)]
     ;; #M-E: a self-loop (latch == header) has body {header}. Seeding the
@@ -17311,7 +17308,7 @@
   (let
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [slots : (__tl_dyn-array ir.CompilerIrInstr)
-      (array.make-array ir.CompilerIrInstr count)]
+      (__tl_make-array ir.CompilerIrInstr count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -17339,7 +17336,7 @@
   [preheader : i64]) : ir.CompilerIrSwitchCaseSeq
   (let
     [slots : (__tl_dyn-array ir.CompilerIrSwitchCase)
-      (array.make-array ir.CompilerIrSwitchCase cases.len)]
+      (__tl_make-array ir.CompilerIrSwitchCase cases.len)]
     [index : i64 0]
     (begin
       (while (< index cases.len)
@@ -17402,7 +17399,7 @@
   (let
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [slots : (__tl_dyn-array ir.CompilerIrInstr)
-      (array.make-array ir.CompilerIrInstr count)]
+      (__tl_make-array ir.CompilerIrInstr count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -17422,7 +17419,7 @@
   (let
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [slots : (__tl_dyn-array ir.CompilerIrInstr)
-      (array.make-array ir.CompilerIrInstr (+ count 1))]
+      (__tl_make-array ir.CompilerIrInstr (+ count 1))]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -17796,7 +17793,7 @@
     [prefix-count : i64 (- instr-count 1)]
     [guard-count : i64 (ir.compiler-ir-instr-seq-count guard)]
     [slots : (__tl_dyn-array ir.CompilerIrInstr)
-      (array.make-array ir.CompilerIrInstr (+ prefix-count guard-count))]
+      (__tl_make-array ir.CompilerIrInstr (+ prefix-count guard-count))]
     [index : i64 0]
     (begin
       (while (< index prefix-count)
@@ -18087,7 +18084,7 @@
     [(OptRotateSsaPhiRecs.Nil)
       (let
         [items : (__tl_dyn-array OptRotateSsaPhiRec)
-          (array.make-array OptRotateSsaPhiRec 4)]
+          (__tl_make-array OptRotateSsaPhiRec 4)]
         (begin
           (set! (array-ref items 0) record)
           (OptRotateSsaPhiRecs.Dense items 1)))]
@@ -18098,7 +18095,7 @@
           (OptRotateSsaPhiRecs.Dense items (+ len 1)))
         (let
           [bigger : (__tl_dyn-array OptRotateSsaPhiRec)
-            (array.make-array OptRotateSsaPhiRec (opt-dense-next-capacity len))]
+            (__tl_make-array OptRotateSsaPhiRec (opt-dense-next-capacity len))]
           [index : i64 0]
           (begin
             (while (< index len)
@@ -18331,7 +18328,7 @@
   (let
     [count : i64 (- last first)]
     [slots : (__tl_dyn-array ir.CompilerIrInstr)
-      (array.make-array ir.CompilerIrInstr count)]
+      (__tl_make-array ir.CompilerIrInstr count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -18812,7 +18809,7 @@
   (let
     [count : i64 (ir.compiler-ir-instr-seq-count guard)]
     [slots : (__tl_dyn-array ir.CompilerIrInstr)
-      (array.make-array ir.CompilerIrInstr (+ count 1))]
+      (__tl_make-array ir.CompilerIrInstr (+ count 1))]
     [index : i64 0]
     [out-env : OptCopyEnv env]
     [out-var : i64 next-var]
@@ -18884,7 +18881,7 @@
   (let
     [count : i64 (opt-rotate-ssa-phi-rec-count recs)]
     [slots : (__tl_dyn-array ir.CompilerIrInstr)
-      (array.make-array ir.CompilerIrInstr count)]
+      (__tl_make-array ir.CompilerIrInstr count)]
     (begin
       (opt-rotate-ssa-moved-phis-fill! recs land-label latch slots 0)
       (ir.CompilerIrInstrSeq slots count))))
@@ -18964,7 +18961,7 @@
     preheader
     latch
     next-var
-    (array.make-array ir.CompilerIrInstr (opt-rotate-ssa-phi-rec-count recs))
+    (__tl_make-array ir.CompilerIrInstr (opt-rotate-ssa-phi-rec-count recs))
     0))
 
 (define (opt-rotate-ssa-subst-phi-inputs
@@ -19070,7 +19067,7 @@
         0)]
     [out-count : i64 (+ prefix-count (+ body-count guard-count))]
     [slots : (__tl_dyn-array ir.CompilerIrInstr)
-      (array.make-array ir.CompilerIrInstr out-count)]
+      (__tl_make-array ir.CompilerIrInstr out-count)]
     [index : i64 0]
     (begin
       (while (< index prefix-count)
@@ -23919,7 +23916,7 @@
                 ;; Loop-scope global promotion mints fresh vars, so the pass
                 ;; carries the frame counter in a cell and writes the final
                 ;; value back into the rewritten function.
-                [frame-cell : (__tl_dyn-array i64) (array.make-array i64 1)]
+                [frame-cell : (__tl_dyn-array i64) (__tl_make-array i64 1)]
                 [_seed-frame : unit (set! (array-ref frame-cell 0) frame)]
                 (match (opt-licm-apply-loops
                   type-segment-bases
@@ -24613,7 +24610,7 @@
   [body-labels : OptLabelSet]) : ir.CompilerIrSwitchCaseSeq
   (let
     [slots : (__tl_dyn-array ir.CompilerIrSwitchCase)
-      (array.make-array ir.CompilerIrSwitchCase cases.len)]
+      (__tl_make-array ir.CompilerIrSwitchCase cases.len)]
     [index : i64 0]
     (begin
       (while (< index cases.len)
@@ -25075,7 +25072,7 @@
     (if (opt-bce-mb-defs-escape? shape.body-blocks outside)
       (OptUnrollResult.Result blocks frame false)
       (let
-        [cell : (__tl_dyn-array i64) (array.make-array i64 1)]
+        [cell : (__tl_dyn-array i64) (__tl_make-array i64 1)]
         [_cell : unit (set! (array-ref cell 0) frame)]
         ;; Allocated before the clone's ids: the conjunction lives in the
         ;; preheader and is never cloned or remapped.
@@ -25087,7 +25084,7 @@
             shape.cond
             cell)]
         [remap : (__tl_dyn-array ir.CompilerIrValue)
-          (array.make-array ir.CompilerIrValue frame)]
+          (__tl_make-array ir.CompilerIrValue frame)]
         [_fill : unit (opt-unroll-remap-fill remap 0)]
         [clone-param-moves : ir.CompilerIrInstrSeq
           (opt-licm-unswitch-clone-param-moves! params remap cell)]
@@ -26209,7 +26206,7 @@
     [(OptInductionDerivedList.Nil)
       (let
         [items : (__tl_dyn-array OptInductionDerived)
-          (array.make-array OptInductionDerived 4)]
+          (__tl_make-array OptInductionDerived 4)]
         (begin
           (set! (array-ref items 0) derived)
           (OptInductionDerivedList.Dense items 1)))]
@@ -26220,7 +26217,7 @@
           (OptInductionDerivedList.Dense items (+ len 1)))
         (let
           [bigger : (__tl_dyn-array OptInductionDerived)
-            (array.make-array OptInductionDerived (opt-dense-next-capacity len))]
+            (__tl_make-array OptInductionDerived (opt-dense-next-capacity len))]
           [index : i64 0]
           (begin
             (while (< index len)
@@ -27427,7 +27424,7 @@
   (if (<= remaining 0)
     false
     (let
-      [changed : (__tl_dyn-array i64) (array.make-array i64 1)]
+      [changed : (__tl_dyn-array i64) (__tl_make-array i64 1)]
       [_run : unit (opt-dead-phi-expand-blocks! blocks live done changed)]
       (if (= (array-ref changed 0) 1)
         (opt-dead-phi-expand-rounds! blocks live done (- remaining 1))
@@ -27485,7 +27482,7 @@
   (let
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [slots : (__tl_dyn-array ir.CompilerIrInstr)
-      (array.make-array ir.CompilerIrInstr count)]
+      (__tl_make-array ir.CompilerIrInstr count)]
     [read : i64 0]
     [write : i64 0]
     (begin
@@ -27508,7 +27505,7 @@
   (let
     [count : i64 (ir.compiler-ir-block-seq-count blocks)]
     [slots : (__tl_dyn-array ir.CompilerIrBlock)
-      (array.make-array ir.CompilerIrBlock count)]
+      (__tl_make-array ir.CompilerIrBlock count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -27550,8 +27547,8 @@
   (if (not (opt-dead-phi-blocks-have-phi? blocks))
     blocks
     (let
-      [live : (__tl_dyn-array i64) (array.make-array i64 frame)]
-      [done : (__tl_dyn-array i64) (array.make-array i64 frame)]
+      [live : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+      [done : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
       [_mark : unit (opt-dead-phi-mark-blocks! blocks live)]
       [settled? : bool
         (opt-dead-phi-expand-rounds! blocks live done (opt-dead-phi-round-max))]
@@ -27788,7 +27785,7 @@
       [(OptFlagExitEdgeList.Nil)
         (let
           [items : (__tl_dyn-array OptFlagExitEdge)
-            (array.make-array OptFlagExitEdge 4)]
+            (__tl_make-array OptFlagExitEdge 4)]
           (begin
             (set! (array-ref items 0) edge)
             (OptFlagExitEdgeList.Dense items 1)))]
@@ -27799,7 +27796,7 @@
             (OptFlagExitEdgeList.Dense items (+ len 1)))
           (let
             [bigger : (__tl_dyn-array OptFlagExitEdge)
-              (array.make-array OptFlagExitEdge (opt-dense-next-capacity len))]
+              (__tl_make-array OptFlagExitEdge (opt-dense-next-capacity len))]
             [index : i64 0]
             (begin
               (while (< index len)
@@ -27957,7 +27954,7 @@
       [(OptFlagExitEdgeValues.Nil)
         (let
           [items : (__tl_dyn-array OptFlagExitEdgeValue)
-            (array.make-array OptFlagExitEdgeValue 4)]
+            (__tl_make-array OptFlagExitEdgeValue 4)]
           (begin
             (set! (array-ref items 0) item)
             (OptFlagExitEdgeValues.Dense items 1)))]
@@ -27968,7 +27965,7 @@
             (OptFlagExitEdgeValues.Dense items (+ len 1)))
           (let
             [bigger : (__tl_dyn-array OptFlagExitEdgeValue)
-              (array.make-array
+              (__tl_make-array
                 OptFlagExitEdgeValue
                 (opt-dense-next-capacity len))]
             [index : i64 0]
@@ -28016,7 +28013,7 @@
       [(OptFlagExitPhiFixes.Nil)
         (let
           [items : (__tl_dyn-array OptFlagExitPhiFix)
-            (array.make-array OptFlagExitPhiFix 4)]
+            (__tl_make-array OptFlagExitPhiFix 4)]
           (begin
             (set! (array-ref items 0) item)
             (OptFlagExitPhiFixes.Dense items 1)))]
@@ -28027,7 +28024,7 @@
             (OptFlagExitPhiFixes.Dense items (+ len 1)))
           (let
             [bigger : (__tl_dyn-array OptFlagExitPhiFix)
-              (array.make-array OptFlagExitPhiFix (opt-dense-next-capacity len))]
+              (__tl_make-array OptFlagExitPhiFix (opt-dense-next-capacity len))]
             [index : i64 0]
             (begin
               (while (< index len)
@@ -28068,7 +28065,7 @@
       [(OptFlagExitMints.Nil)
         (let
           [items : (__tl_dyn-array OptFlagExitMint)
-            (array.make-array OptFlagExitMint 4)]
+            (__tl_make-array OptFlagExitMint 4)]
           (begin
             (set! (array-ref items 0) item)
             (OptFlagExitMints.Dense items 1)))]
@@ -28079,7 +28076,7 @@
             (OptFlagExitMints.Dense items (+ len 1)))
           (let
             [bigger : (__tl_dyn-array OptFlagExitMint)
-              (array.make-array OptFlagExitMint (opt-dense-next-capacity len))]
+              (__tl_make-array OptFlagExitMint (opt-dense-next-capacity len))]
             [index : i64 0]
             (begin
               (while (< index len)
@@ -29711,7 +29708,7 @@
             pred-map
             exits
             (opt-pred-map-successors pred-map (opt-label-ref labels 0))
-            (array.make-array i64 count)))
+            (__tl_make-array i64 count)))
         (opt-flag-exit-exits-separate-from?
           blocks
           body
@@ -30179,7 +30176,7 @@
   [gate : i64]
   [count : i64]) : (__tl_dyn-array i64)
   (let
-    [reach : (__tl_dyn-array i64) (array.make-array i64 count)]
+    [reach : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     (begin
       (opt-flag-exit-reach-gate-preds!
         body
@@ -31844,11 +31841,11 @@
   [closure : (__tl_dyn-array i64)]
   [mint : (__tl_dyn-array i64)]) : bool
   (let
-    [allowed : (__tl_dyn-array i64) (array.make-array i64 frame)]
-    [defined : (__tl_dyn-array i64) (array.make-array i64 frame)]
-    [inside : (__tl_dyn-array i64) (array.make-array i64 frame)]
-    [xdom : (__tl_dyn-array i64) (array.make-array i64 frame)]
-    [xphi : (__tl_dyn-array i64) (array.make-array i64 frame)]
+    [allowed : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+    [defined : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+    [inside : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+    [xdom : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+    [xphi : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
     [_allow : unit
       (opt-flag-exit-allowed-blocks!
         blocks
@@ -31928,8 +31925,8 @@
         (opt-flag-exit-reach-gate body index pred-map gate count)
         count
         (+ (* 4 count) 16))]
-    [pos : (__tl_dyn-array i64) (array.make-array i64 count)]
-    [labels : (__tl_dyn-array i64) (array.make-array i64 count)]
+    [pos : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [labels : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     (match (opt-flag-exit-phi-seeds blocks exit-label arm-pred)
       [(OptFlagExitMaybePhiFixes.No) (OptFlagExitMaybePlan.No)]
       [(OptFlagExitMaybePhiFixes.Some phi-seeds)
@@ -32016,9 +32013,9 @@
       (opt-flag-exit-cleared-value seed clears (ir.CompilerIrMaybeValue.No))]
     [drop-preds : OptLabelSet
       (opt-flag-exit-dropped-preds seed clears (OptLabelSet.Nil))]
-    [seen : (__tl_dyn-array i64) (array.make-array i64 count)]
-    [alt : (__tl_dyn-array i64) (array.make-array i64 count)]
-    [mint : (__tl_dyn-array i64) (array.make-array i64 frame)]
+    [seen : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [alt : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [mint : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
     [_mark : unit
       (opt-flag-exit-mark-clears! body index pred-map gate clears seen alt)]
     [alt-labels : OptLabelSet
@@ -32129,9 +32126,9 @@
   (let
     [index : OptCfgIndex context.index]
     [body : OptLoopBody (opt-natural-loop-body-info loop)]
-    [closure : (__tl_dyn-array i64) (array.make-array i64 frame)]
-    [web : (__tl_dyn-array i64) (array.make-array i64 frame)]
-    [bad : (__tl_dyn-array i64) (array.make-array i64 1)]
+    [closure : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+    [web : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+    [bad : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     [clears : OptFlagExitEdgeList
       (opt-flag-exit-walk
         blocks
@@ -32581,7 +32578,7 @@
           (OptFlagExitPassResult.Result blocks frame false)]
         [(OptNaturalLoopList.Cons _ _)
           (let
-            [def-label : (__tl_dyn-array i64) (array.make-array i64 frame)]
+            [def-label : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
             [_fill : unit (opt-cfg-fill-i64! def-label frame (- 0 1))]
             [_defs : unit (opt-flag-exit-def-labels! blocks def-label)]
             (if (not
@@ -33375,8 +33372,8 @@
                 (OptLftrMaybePlan.No)
                 (let
                   [kills : (__tl_dyn-array i64)
-                    (array.make-array i64 (opt-lftr-kill-cap))]
-                  [count : (__tl_dyn-array i64) (array.make-array i64 1)]
+                    (__tl_make-array i64 (opt-lftr-kill-cap))]
+                  [count : (__tl_dyn-array i64) (__tl_make-array i64 1)]
                   [uses : (__tl_dyn-array i64)
                     (opt-collect-blocks-uses-array frame blocks)]
                   [scratch : (__tl_dyn-array i64) (opt-used-array-new frame)]
@@ -33830,7 +33827,7 @@
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
     [out : (__tl_dyn-array ir.CompilerIrInstr)
-      (array.make-array ir.CompilerIrInstr count)]
+      (__tl_make-array ir.CompilerIrInstr count)]
     [pos : i64 0]
     [prefix : i64 0]
     [state : i64 0]
@@ -34567,7 +34564,7 @@
     (if (or (not (opt-cfg-index-labels-unique? index)) (< count 1))
       (OptBlockListPassResult.Result blocks false)
       (let
-        [redirect : (__tl_dyn-array i64) (array.make-array i64 count)]
+        [redirect : (__tl_dyn-array i64) (__tl_make-array i64 count)]
         (begin
           (opt-cfg-merge-fill-none! redirect count)
           (if (not (opt-cfg-merge-mark-all! index scratch entry-label redirect))
@@ -34741,10 +34738,10 @@
         (ir.compiler-ir-block-seq-to-list seq))]))
 
 ;; `OptBoolBranchDef.No` is the fieldless tag-0 variant, so its representation is
-;; all-zero bytes and `array.make-array` already produces it for every slot -- see
+;; all-zero bytes and `__tl_make-array` already produces it for every slot -- see
 ;; `lower-make-array-zero-fill-enum-supported?`, which admits exactly the enums
 ;; whose first variant carries no fields. Every private `(__tl_dyn-array E)` in
-;; this file built by `array.make-array` for such an `E` therefore starts out
+;; this file built by `__tl_make-array` for such an `E` therefore starts out
 ;; uniformly tag-0, and a
 ;; pass that writes that same variant over the whole array is a pure repeat of
 ;; the allocation's own fill.
@@ -34752,7 +34749,7 @@
     OptBoolBranchDef)
   (let
     [defs : (__tl_dyn-array OptBoolBranchDef)
-      (array.make-array OptBoolBranchDef frame)]
+      (__tl_make-array OptBoolBranchDef frame)]
     (begin
       (opt-bool-branch-defs-fill-blocks! defs blocks)
       defs)))
@@ -35222,7 +35219,7 @@
                               [refs : (__tl_dyn-array i64)
                                 (opt-used-array-new frame)]
                               [visited : (__tl_dyn-array bool)
-                                (array.make-array bool frame)]
+                                (__tl_make-array bool frame)]
                               [collected? : bool
                                 (opt-bool-branch-chain-collect-value!
                                   type-segment-bases
@@ -35242,13 +35239,13 @@
                                 (OptBoolBranchChainRewrite.No)
                                 (let
                                   [expanded : (__tl_dyn-array bool)
-                                    (array.make-array bool frame)]
+                                    (__tl_make-array bool frame)]
                                   [emitted : (__tl_dyn-array bool)
-                                    (array.make-array bool frame)]
+                                    (__tl_make-array bool frame)]
                                   [remove : (__tl_dyn-array bool)
-                                    (array.make-array bool frame)]
+                                    (__tl_make-array bool frame)]
                                   [cell : (__tl_dyn-array i64)
-                                    (array.make-array i64 1)]
+                                    (__tl_make-array i64 1)]
                                   [_cell : unit (set! (array-ref cell 0) frame)]
                                   [built : OptBoolBranchConjBuild
                                     (opt-bool-branch-chain-flatten-value
@@ -36255,7 +36252,7 @@
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
     [out : (__tl_dyn-array ir.CompilerIrInstr)
-      (array.make-array ir.CompilerIrInstr count)]
+      (__tl_make-array ir.CompilerIrInstr count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -38105,7 +38102,7 @@
     (if (< and-max 0)
       false
       (let
-        [marks : (__tl_dyn-array bool) (array.make-array bool (+ and-max 1))]
+        [marks : (__tl_dyn-array bool) (__tl_make-array bool (+ and-max 1))]
         (begin
           (opt-bool-branch-chain-mark-blocks-ands! marks blocks)
           (opt-bool-branch-chain-blocks-marked-branch? marks blocks))))))
@@ -39356,7 +39353,7 @@
   (let
     [index : OptCfgIndex (opt-cfg-index-build blocks)]
     [uses : (__tl_dyn-array i64) (opt-collect-blocks-uses-array frame blocks)]
-    [budget : (__tl_dyn-array i64) (array.make-array i64 1)]
+    [budget : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     (opt-thread-scan-blocks! budget type-segment-bases index uses blocks false)))
 
 ;; One round threads every edge it can prove, so the fixpoint only has to
@@ -39829,7 +39826,7 @@
     [slots : (__tl_dyn-array ir.CompilerIrSwitchCase) cases.slots]
     [count : i64 cases.len]
     [out : (__tl_dyn-array ir.CompilerIrSwitchCase)
-      (array.make-array ir.CompilerIrSwitchCase count)]
+      (__tl_make-array ir.CompilerIrSwitchCase count)]
     [pos : i64 0]
     (begin
       (unless
@@ -40066,7 +40063,7 @@
         (let
           [uses : (__tl_dyn-array i64)
             (opt-collect-blocks-uses-array frame work)]
-          [flag : (__tl_dyn-array i64) (array.make-array i64 1)]
+          [flag : (__tl_dyn-array i64) (__tl_make-array i64 1)]
           [entry-label : i64 (opt-cfg-straighten-head-label work)]
           [fuel : i64 (+ (ir.compiler-ir-block-list-count work) 1)]
           (begin
@@ -40159,7 +40156,7 @@
       (if (< cap 1)
         1
         cap)]
-    [slots : (__tl_dyn-array OptSccpValue) (array.make-array OptSccpValue n)]
+    [slots : (__tl_dyn-array OptSccpValue) (__tl_make-array OptSccpValue n)]
     (begin
       (opt-sccp-env-fill-unknown! slots n 0)
       (OptSccpEnv.Env n slots))))
@@ -40761,7 +40758,7 @@
       (opt-sccp-max-var-params params (opt-sccp-max-var-blocks blocks (- 0 1)))]
     [executable-count : i64 (opt-cfg-index-block-count context.index)]
     [executable-flags : (__tl_dyn-array bool)
-      (array.make-array bool executable-count)]
+      (__tl_make-array bool executable-count)]
     [_entry : unit
       (match (opt-cfg-index-id context.index context.entry-label)
         [(option_i64.Some entry-id)
@@ -40790,7 +40787,7 @@
   (let
     [executable-count : i64 (opt-cfg-index-block-count context.index)]
     [executable-flags : (__tl_dyn-array bool)
-      (array.make-array bool executable-count)]
+      (__tl_make-array bool executable-count)]
     [_entry : unit
       (match (opt-cfg-index-id context.index context.entry-label)
         [(option_i64.Some entry-id)
@@ -40946,7 +40943,7 @@
     [(ir.CompilerIrCallArgs.Array values)
       (let
         [out : (__tl_dyn-array ir.CompilerIrValue)
-          (array.make-array ir.CompilerIrValue (array-length values))]
+          (__tl_make-array ir.CompilerIrValue (array-length values))]
         (begin
           (opt-sccp-rewrite-call-args-array env values out 0)
           (ir.CompilerIrCallArgs.Array out)))]))
@@ -40976,7 +40973,7 @@
   [args : ir.CompilerIrSpmdCallArgSeq]) : ir.CompilerIrSpmdCallArgSeq
   (let
     [out : (__tl_dyn-array ir.CompilerIrSpmdCallArg)
-      (array.make-array ir.CompilerIrSpmdCallArg args.len)]
+      (__tl_make-array ir.CompilerIrSpmdCallArg args.len)]
     (begin
       (opt-sccp-rewrite-spmd-call-args-array env args.slots out 0)
       (ir.CompilerIrSpmdCallArgSeq out args.len))))
@@ -41581,7 +41578,7 @@
       [(OptSwitchCandidateList.Nil)
         (let
           [slots : (__tl_dyn-array OptSwitchCandidate)
-            (array.make-array OptSwitchCandidate 4)]
+            (__tl_make-array OptSwitchCandidate 4)]
           (begin
             (set! (array-ref slots 0) candidate)
             (OptSwitchCandidateList.Dense slots 1)))]
@@ -41592,9 +41589,7 @@
             (OptSwitchCandidateList.Dense slots (+ len 1)))
           (let
             [bigger : (__tl_dyn-array OptSwitchCandidate)
-              (array.make-array
-                OptSwitchCandidate
-                (opt-dense-next-capacity len))]
+              (__tl_make-array OptSwitchCandidate (opt-dense-next-capacity len))]
             [index : i64 0]
             (begin
               (while (< index len)
@@ -42044,7 +42039,7 @@
         0
         (+ (- max-tag min-tag) 1))]
     [slots : (__tl_dyn-array ir.CompilerIrSwitchCase)
-      (array.make-array ir.CompilerIrSwitchCase count)]
+      (__tl_make-array ir.CompilerIrSwitchCase count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -42093,7 +42088,7 @@
   [final-label : i64]) : OptLateTotalSwitchCases
   (let
     [slots : (__tl_dyn-array ir.CompilerIrSwitchCase)
-      (array.make-array ir.CompilerIrSwitchCase (+ cases.len 1))]
+      (__tl_make-array ir.CompilerIrSwitchCase (+ cases.len 1))]
     [index : i64 0]
     (begin
       (while (< index cases.len)
@@ -42264,7 +42259,7 @@
   (match func
     [(ir.CompilerIrFunction.Function name params ret-ty frame blocks)
       (let
-        [frame-cell : (__tl_dyn-array i64) (array.make-array i64 1)]
+        [frame-cell : (__tl_dyn-array i64) (__tl_make-array i64 1)]
         [_frame : unit (set! (array-ref frame-cell 0) frame)]
         [occupied : (__tl_dyn-array i64)
           (opt-collect-blocks-uses-array frame blocks)]
@@ -43034,9 +43029,9 @@
         frame
         0)]
     (OptBitTestCompareFacts
-      (array.make-array i64 size)
-      (array.make-array i64 size)
-      (array.make-array i64 size))))
+      (__tl_make-array i64 size)
+      (__tl_make-array i64 size)
+      (__tl_make-array i64 size))))
 
 (define (opt-bit-test-fact-kind [facts : OptBitTestCompareFacts] [var : i64]) : i64
   (let
@@ -43350,11 +43345,11 @@
   (let
     [size : i64 (opt-bit-test-max-links)]
     (OptBitTestChain
-      (array.make-array i64 size)
-      (array.make-array i64 size)
-      (array.make-array i64 size)
-      (array.make-array i64 size)
-      (array.make-array i64 size))))
+      (__tl_make-array i64 size)
+      (__tl_make-array i64 size)
+      (__tl_make-array i64 size)
+      (__tl_make-array i64 size)
+      (__tl_make-array i64 size))))
 
 (define (opt-bit-test-chain-visited?
   [chain : OptBitTestChain]
@@ -43533,14 +43528,14 @@
   (let
     [size : i64 (opt-bit-test-max-plans)]
     (OptBitTestPlans
-      (array.make-array i64 size)
-      (array.make-array i64 size)
-      (array.make-array i64 size)
-      (array.make-array i64 size)
-      (array.make-array i64 size)
-      (array.make-array i64 size)
-      (array.make-array i64 size)
-      (array.make-array i64 1))))
+      (__tl_make-array i64 size)
+      (__tl_make-array i64 size)
+      (__tl_make-array i64 size)
+      (__tl_make-array i64 size)
+      (__tl_make-array i64 size)
+      (__tl_make-array i64 size)
+      (__tl_make-array i64 size)
+      (__tl_make-array i64 1))))
 
 (define (opt-bit-test-plans-count [plans : OptBitTestPlans]) : i64
   (array-ref plans.used 0))
@@ -44270,7 +44265,7 @@
 
 (define (opt-gvn-map-empty [record-count : i64]) : OptGvnMap
   (OptGvnMap
-    (array.make-array OptGvnBucket (opt-gvn-bucket-capacity record-count))))
+    (__tl_make-array OptGvnBucket (opt-gvn-bucket-capacity record-count))))
 
 (define (opt-gvn-bucket-index
   [type-segment-bases : i64]
@@ -44693,7 +44688,7 @@
     [index : OptCfgIndex doms.index]
     [count : i64 (opt-cfg-index-block-count index)]
     [child-rows : (__tl_dyn-array OptI64List)
-      (array.make-array OptI64List count)]
+      (__tl_make-array OptI64List count)]
     (begin
       (opt-dom-child-rows-fill! index doms.idom child-rows)
       (opt-cfg-csr-build child-rows count))))
@@ -44827,7 +44822,7 @@
     [count : i64 (opt-cfg-index-block-count index)]
     [children : OptCfgCsr (opt-gvn-dom-children doms)]
     [out : (__tl_dyn-array OptGvnBlockResult)
-      (array.make-array OptGvnBlockResult count)]
+      (__tl_make-array OptGvnBlockResult count)]
     (begin
       (opt-cfg-index-refresh-blocks! index blocks)
       (let
@@ -45719,7 +45714,7 @@
   [blocks : ir.CompilerIrBlockList]) : (__tl_dyn-array OptBoolBranchDef)
   (let
     [defs : (__tl_dyn-array OptBoolBranchDef)
-      (array.make-array OptBoolBranchDef frame)]
+      (__tl_make-array OptBoolBranchDef frame)]
     (begin
       (opt-bounds-dom-phi-defs-fill-blocks! defs blocks)
       defs)))
@@ -45901,7 +45896,7 @@
   (let
     [count : i64 (opt-cfg-index-block-count index)]
     [terms : (__tl_dyn-array OptBoolBranchDef)
-      (array.make-array OptBoolBranchDef count)]
+      (__tl_make-array OptBoolBranchDef count)]
     (begin
       (opt-bounds-dom-terms-fill! terms index blocks)
       terms)))
@@ -46913,10 +46908,10 @@
   [frame : i64]
   [blocks : ir.CompilerIrBlockList]) : OptBoundsDomChecks
   (let
-    [offsets : (__tl_dyn-array i64) (array.make-array i64 (+ frame 1))]
+    [offsets : (__tl_dyn-array i64) (__tl_make-array i64 (+ frame 1))]
     [empty-lens : (__tl_dyn-array ir.CompilerIrValue)
-      (array.make-array ir.CompilerIrValue 0)]
-    [empty-rows : (__tl_dyn-array i64) (array.make-array i64 0)]
+      (__tl_make-array ir.CompilerIrValue 0)]
+    [empty-rows : (__tl_dyn-array i64) (__tl_make-array i64 0)]
     (begin
       (opt-bounds-dom-checks-blocks!
         type-segment-bases
@@ -46940,9 +46935,9 @@
       (let
         [total : i64 (array-ref offsets frame)]
         [lens : (__tl_dyn-array ir.CompilerIrValue)
-          (array.make-array ir.CompilerIrValue total)]
-        [rows : (__tl_dyn-array i64) (array.make-array i64 total)]
-        [cursor : (__tl_dyn-array i64) (array.make-array i64 (+ frame 1))]
+          (__tl_make-array ir.CompilerIrValue total)]
+        [rows : (__tl_dyn-array i64) (__tl_make-array i64 total)]
+        [cursor : (__tl_dyn-array i64) (__tl_make-array i64 (+ frame 1))]
         (begin
           (let
             [slot : i64 0]
@@ -48977,7 +48972,7 @@
   [max-pos : i64]) : ir.CompilerIrInstrSeq
   (let
     [moved : (__tl_dyn-array bool)
-      (array.make-array bool (ir.compiler-ir-instr-seq-count instrs))]
+      (__tl_make-array bool (ir.compiler-ir-instr-seq-count instrs))]
     [_mark-min : unit
       (opt-bounds-dom-widen-mark!
         moved
@@ -49833,7 +49828,7 @@
   [frame : i64]
   [blocks : ir.CompilerIrBlockList]) : (__tl_dyn-array i64)
   (let
-    [var-facts : (__tl_dyn-array i64) (array.make-array i64 frame)]
+    [var-facts : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
     (begin
       (opt-bounds-dom-var-facts-blocks!
         type-segment-bases
@@ -50665,7 +50660,7 @@
   [frame : i64]
   [blocks : ir.CompilerIrBlockList]) : (__tl_dyn-array bool)
   (let
-    [known : (__tl_dyn-array bool) (array.make-array bool frame)]
+    [known : (__tl_dyn-array bool) (__tl_make-array bool frame)]
     (begin
       (opt-bounds-dom-range-known-blocks!
         type-segment-bases
@@ -51550,13 +51545,13 @@
         frame
         blocks)]
     [out : (__tl_dyn-array OptGvnBlockResult)
-      (array.make-array OptGvnBlockResult count)]
-    [next-var : (__tl_dyn-array i64) (array.make-array i64 1)]
+      (__tl_make-array OptGvnBlockResult count)]
+    [next-var : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     [_next-var : unit (set! (array-ref next-var 0) frame)]
     [range : OptRangeMergeState
       (OptRangeMergeState
         (opt-collect-blocks-uses-array frame blocks)
-        (array.make-array bool frame)
+        (__tl_make-array bool frame)
         (opt-bounds-dom-range-known-nonneg
           type-segment-bases
           phi-defs
@@ -52154,7 +52149,7 @@
   (let
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [out : (__tl_dyn-array ir.CompilerIrInstr)
-      (array.make-array ir.CompilerIrInstr count)]
+      (__tl_make-array ir.CompilerIrInstr count)]
     [current : OptDivRemFacts facts]
     [index : i64 0]
     (begin
@@ -52419,9 +52414,9 @@
         (match ssa-facts
           [(OptSsaFacts.Facts _ _ fact-types) fact-types])]
       [facts : (__tl_dyn-array OptDivRemFacts)
-        (array.make-array OptDivRemFacts count)]
+        (__tl_make-array OptDivRemFacts count)]
       [out : (__tl_dyn-array OptDivRemBlockResult)
-        (array.make-array OptDivRemBlockResult count)]
+        (__tl_make-array OptDivRemBlockResult count)]
       (begin
         (opt-cfg-index-refresh-blocks! index blocks)
         (opt-divrem-process-rpo!
@@ -52529,7 +52524,7 @@
       [(OptLoopBceGuardEnv.Nil)
         (let
           [items : (__tl_dyn-array OptLoopBceGuard)
-            (array.make-array OptLoopBceGuard 4)]
+            (__tl_make-array OptLoopBceGuard 4)]
           (begin
             (set! (array-ref items 0) guard)
             (OptLoopBceGuardEnv.Dense items 1)))]
@@ -52540,7 +52535,7 @@
             (OptLoopBceGuardEnv.Dense items (+ len 1)))
           (let
             [bigger : (__tl_dyn-array OptLoopBceGuard)
-              (array.make-array OptLoopBceGuard (opt-dense-next-capacity len))]
+              (__tl_make-array OptLoopBceGuard (opt-dense-next-capacity len))]
             [slot : i64 0]
             (begin
               (while (< slot len)
@@ -52595,7 +52590,7 @@
   (OptGlobalCellSummary
     (opt_i64_i64_map.with-capacity 1)
     (opt_i64_i64_map.with-capacity 1)
-    (array.make-array ast.AstType 0)
+    (__tl_make-array ast.AstType 0)
     0
     (opt-global-mod-ref-none)
     (opt_i64_i64_map.with-capacity 1)
@@ -55428,7 +55423,7 @@
       [loops : OptNaturalLoopList
         (opt-cfg-natural-loops-with-context blocks context)]
       [out : (__tl_dyn-array OptLoopBceBlockResult)
-        (array.make-array OptLoopBceBlockResult count)]
+        (__tl_make-array OptLoopBceBlockResult count)]
       [sources : opt_i64_i64_map.Map
         (opt-gvn-sources-blocks
           blocks
@@ -56862,7 +56857,7 @@
     pools
     type-segment-bases
     (opt-load-header-set-empty)
-    (array.make-array i64 0)
+    (__tl_make-array i64 0)
     block))
 
 (define (optimize-block-entry-facts
@@ -56887,7 +56882,7 @@
   (let
     [count : i64 (ir.compiler-ir-block-seq-count blocks)]
     [slots : (__tl_dyn-array ir.CompilerIrBlock)
-      (array.make-array ir.CompilerIrBlock count)]
+      (__tl_make-array ir.CompilerIrBlock count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -56933,7 +56928,7 @@
   (let
     [count : i64 (ir.compiler-ir-block-seq-count blocks)]
     [slots : (__tl_dyn-array ir.CompilerIrBlock)
-      (array.make-array ir.CompilerIrBlock count)]
+      (__tl_make-array ir.CompilerIrBlock count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -57109,7 +57104,7 @@
   [params : ir.CompilerIrParamList]
   [blocks : ir.CompilerIrBlockList]) : OptBlockListPassResult
   (let
-    [scan-work : (__tl_dyn-array i64) (array.make-array i64 frame)]
+    [scan-work : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
     (if (not (optimize-block-list-has-work? scan-work blocks))
       (OptBlockListPassResult.Result blocks false)
       (let
@@ -57190,7 +57185,7 @@
     (opt-load-header-set-empty)
     (ir.compiler-ir-label "entry")
     (opt-alias-empty)
-    (array.make-array i64 0)
+    (__tl_make-array i64 0)
     blocks))
 
 ;; Whole-function transforms keep a pathological-CFG work cap. Loop transforms
@@ -57726,8 +57721,7 @@
   (match phis
     [(OptUnrollPhiList.Nil)
       (let
-        [items : (__tl_dyn-array OptUnrollPhi)
-          (array.make-array OptUnrollPhi 4)]
+        [items : (__tl_dyn-array OptUnrollPhi) (__tl_make-array OptUnrollPhi 4)]
         (begin
           (set! (array-ref items 0) phi)
           (OptUnrollPhiList.Dense items 1)))]
@@ -57738,7 +57732,7 @@
           (OptUnrollPhiList.Dense items (+ len 1)))
         (let
           [bigger : (__tl_dyn-array OptUnrollPhi)
-            (array.make-array OptUnrollPhi (opt-dense-next-capacity len))]
+            (__tl_make-array OptUnrollPhi (opt-dense-next-capacity len))]
           [index : i64 0]
           (begin
             (while (< index len)
@@ -59070,7 +59064,7 @@
         (- count index)
         0)]
     [slots : (__tl_dyn-array ir.CompilerIrValue)
-      (array.make-array ir.CompilerIrValue remaining)]
+      (__tl_make-array ir.CompilerIrValue remaining)]
     [offset : i64 0]
     (begin
       (while (< offset remaining)
@@ -59592,14 +59586,14 @@
           (ir.compiler-ir-label
             (str_cat.str-cat (ir.compiler-ir-label-text label) "__unroll_body"))]
         [remap : (__tl_dyn-array ir.CompilerIrValue)
-          (array.make-array ir.CompilerIrValue frame)]
+          (__tl_make-array ir.CompilerIrValue frame)]
         [_fill : unit (opt-unroll-remap-fill remap 0)]
-        [cell : (__tl_dyn-array i64) (array.make-array i64 1)]
+        [cell : (__tl_dyn-array i64) (__tl_make-array i64 1)]
         [_cell : unit (set! (array-ref cell 0) frame)]
         [iu : i64 (opt-unroll-alloc-var cell)]
         [other-count : i64 (opt-unroll-phi-list-count others)]
         [ku-ids : (__tl_dyn-array i64)
-          (array.make-array
+          (__tl_make-array
             i64
             (if (< other-count 1)
               1
@@ -60516,8 +60510,8 @@
       (match func
         [(ir.CompilerIrFunction.Function name params ret-ty frame blocks)
           (let
-            [frame-cell : (__tl_dyn-array i64) (array.make-array i64 1)]
-            [changed-cell : (__tl_dyn-array i64) (array.make-array i64 1)]
+            [frame-cell : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+            [changed-cell : (__tl_dyn-array i64) (__tl_make-array i64 1)]
             [_seed : unit (set! (array-ref frame-cell 0) frame)]
             [_seed2 : unit (set! (array-ref changed-cell 0) 0)]
             [rewritten : ir.CompilerIrBlockList
@@ -61128,8 +61122,8 @@
       (match func
         [(ir.CompilerIrFunction.Function name params ret-ty frame blocks)
           (let
-            [frame-cell : (__tl_dyn-array i64) (array.make-array i64 1)]
-            [changed-cell : (__tl_dyn-array i64) (array.make-array i64 1)]
+            [frame-cell : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+            [changed-cell : (__tl_dyn-array i64) (__tl_make-array i64 1)]
             [_seed : unit (set! (array-ref frame-cell 0) frame)]
             [_seed2 : unit (set! (array-ref changed-cell 0) 0)]
             [rewritten : ir.CompilerIrBlockList
@@ -62723,7 +62717,7 @@
       [(OptUceExitRecs.Nil)
         (let
           [items : (__tl_dyn-array OptUceExitRec)
-            (array.make-array OptUceExitRec 4)]
+            (__tl_make-array OptUceExitRec 4)]
           (begin
             (set! (array-ref items 0) rec)
             (OptUceExitRecs.Dense items 1)))]
@@ -62734,7 +62728,7 @@
             (OptUceExitRecs.Dense items (+ len 1)))
           (let
             [bigger : (__tl_dyn-array OptUceExitRec)
-              (array.make-array OptUceExitRec (opt-dense-next-capacity len))]
+              (__tl_make-array OptUceExitRec (opt-dense-next-capacity len))]
             [index : i64 0]
             (begin
               (while (< index len)
@@ -62957,7 +62951,7 @@
       (not (opt-unroll-const-guard-exit-ok? blocks exit-label)))
       (OptUcePlan.No)
       (let
-        [counters : (__tl_dyn-array i64) (array.make-array i64 trips)]
+        [counters : (__tl_dyn-array i64) (__tl_make-array i64 trips)]
         [_c0 : unit (set! (array-ref counters 0) shape.seed)]
         [_fill : unit
           (opt-unroll-const-guard-counters counters 1 trips shape.step ity)]
@@ -63330,9 +63324,9 @@
         [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
         [last : i64 (- count 1)]
         [remap : (__tl_dyn-array ir.CompilerIrValue)
-          (array.make-array ir.CompilerIrValue frame)]
+          (__tl_make-array ir.CompilerIrValue frame)]
         [_fill : unit (opt-unroll-remap-fill remap 0)]
-        [cell : (__tl_dyn-array i64) (array.make-array i64 1)]
+        [cell : (__tl_dyn-array i64) (__tl_make-array i64 1)]
         [_cell : unit (set! (array-ref cell 0) frame)]
         (match (opt-unroll-const-guard-plan blocks label instrs last shape)
           [(OptUcePlan.Some groups skips exit-recs)
@@ -64131,7 +64125,7 @@
   [cell : (__tl_dyn-array i64)]
   [group-bases : (__tl_dyn-array i64)]
   [index : i64]) : unit
-  (if (>= index (array.length group-bases))
+  (if (>= index (__tl_array-length group-bases))
     unit
     (begin
       (set! (array-ref group-bases index) (opt-unroll-alloc-var cell))
@@ -64249,12 +64243,12 @@
         [memory-bases : OptUnrollSimdMemoryList shape.memory-bases]
         [memory-count : i64 shape.memory-count]
         [remap : (__tl_dyn-array ir.CompilerIrValue)
-          (array.make-array ir.CompilerIrValue frame)]
+          (__tl_make-array ir.CompilerIrValue frame)]
         [_fill : unit (opt-unroll-remap-fill remap 0)]
-        [cell : (__tl_dyn-array i64) (array.make-array i64 1)]
+        [cell : (__tl_dyn-array i64) (__tl_make-array i64 1)]
         [_cell : unit (set! (array-ref cell 0) frame)]
         [iu : i64 (opt-unroll-alloc-var cell)]
-        [group-bases : (__tl_dyn-array i64) (array.make-array i64 memory-count)]
+        [group-bases : (__tl_dyn-array i64) (__tl_make-array i64 memory-count)]
         [_group-bases : unit (opt-unroll-simd-group-vars! cell group-bases 0)]
         [copies : ir.CompilerIrInstrSeq
           (opt-unroll-simd-copies
@@ -65472,8 +65466,8 @@
               0
               count
               (opt_i64_i64_map.with-capacity 64))]
-          [rewrites : (__tl_dyn-array i64) (array.make-array i64 count)]
-          [deletes : (__tl_dyn-array i64) (array.make-array i64 count)]
+          [rewrites : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+          [deletes : (__tl_dyn-array i64) (__tl_make-array i64 count)]
           [_fill : unit
             (let
               [i : i64 0]
@@ -65522,7 +65516,7 @@
   (if (opt-load-combine-blocks-have-candidate? blocks)
     (opt-load-combine-blocks-walk
       (opt-collect-blocks-uses-array frame blocks)
-      (array.make-array i64 88)
+      (__tl_make-array i64 88)
       blocks)
     blocks))
 
@@ -65628,7 +65622,7 @@
   (count i64))
 
 (define (opt-bce-version-keep-new [index-bound : i64]) : OptBceVersionKeep
-  (OptBceVersionKeep (array.make-array bool index-bound) 0))
+  (OptBceVersionKeep (__tl_make-array bool index-bound) 0))
 
 (define (opt-bce-version-keep-add [keep : OptBceVersionKeep] [index : i64]) : OptBceVersionKeep
   (if (and
@@ -66943,11 +66937,11 @@
 (define (opt-bce-version-fan-new) : OptBceVersionFan
   (let
     [slots : (__tl_dyn-array i64)
-      (array.make-array i64 (+ (* (opt-bce-version-fan-max) 2) 1))]
+      (__tl_make-array i64 (+ (* (opt-bce-version-fan-max) 2) 1))]
     (begin
       (set! (array-ref slots 0) 0)
       (OptBceVersionFan
-        (array.make-array ir.CompilerIrValue (* (opt-bce-version-fan-max) 2))
+        (__tl_make-array ir.CompilerIrValue (* (opt-bce-version-fan-max) 2))
         slots))))
 
 ;; Fan keys compare by resolved identity: same var, or same literal. Any other
@@ -67442,7 +67436,7 @@
     [(OptBceMaskList.Empty)
       (let
         [values : (__tl_dyn-array ir.CompilerIrValue)
-          (array.make-array ir.CompilerIrValue (opt-bce-mask-set-max))]
+          (__tl_make-array ir.CompilerIrValue (opt-bce-mask-set-max))]
         (begin
           (set! (array-ref values 0) value)
           (OptBceMaskList.Dense values 1)))]
@@ -68238,7 +68232,7 @@
   [step : i64]
   [cell : (__tl_dyn-array i64)]) : OptBceVersionGuardOut
   (let
-    [census-cell : (__tl_dyn-array i64) (array.make-array i64 1)]
+    [census-cell : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     [_census-seed : unit (set! (array-ref census-cell 0) (array-ref cell 0))]
     ;; The census gets its own fan table for the same reason it gets its own
     ;; var counter: its records are discarded with its conditions.
@@ -68974,7 +68968,7 @@
             [(OptBceVersionGuardOut.Some guard-instrs guard-value keep)
               (let
                 [remap : (__tl_dyn-array ir.CompilerIrValue)
-                  (array.make-array ir.CompilerIrValue frame)]
+                  (__tl_make-array ir.CompilerIrValue frame)]
                 [_fill : unit (opt-unroll-remap-fill remap 0)]
                 ;; Fresh phi destinations first so the cloned body reads the
                 ;; clone's loop-carried values.
@@ -69078,7 +69072,7 @@
   (match block
     [(ir.CompilerIrBlock.Block label _)
       (let
-        [cell : (__tl_dyn-array i64) (array.make-array i64 1)]
+        [cell : (__tl_dyn-array i64) (__tl_make-array i64 1)]
         [_cell : unit (set! (array-ref cell 0) frame)]
         [context : OptCfgContext (opt-cfg-context-build blocks)]
         [body-labels : OptLabelSet (opt-label-add (OptLabelSet.Nil) label)]
@@ -72495,7 +72489,7 @@
       [(OptBceMbKeep.Nil)
         (let
           [items : (__tl_dyn-array OptBceMbKeepEntry)
-            (array.make-array OptBceMbKeepEntry 4)]
+            (__tl_make-array OptBceMbKeepEntry 4)]
           (begin
             (set! (array-ref items 0) entry)
             (OptBceMbKeep.Dense items 1)))]
@@ -72506,7 +72500,7 @@
             (OptBceMbKeep.Dense items (+ len 1)))
           (let
             [bigger : (__tl_dyn-array OptBceMbKeepEntry)
-              (array.make-array OptBceMbKeepEntry (opt-dense-next-capacity len))]
+              (__tl_make-array OptBceMbKeepEntry (opt-dense-next-capacity len))]
             [slot : i64 0]
             (begin
               (while (< slot len)
@@ -72724,7 +72718,7 @@
       [(OptLateBoundsPairPlan.Nil)
         (let
           [items : (__tl_dyn-array OptLateBoundsPairEntry)
-            (array.make-array OptLateBoundsPairEntry 4)]
+            (__tl_make-array OptLateBoundsPairEntry 4)]
           (begin
             (set! (array-ref items 0) entry)
             (OptLateBoundsPairPlan.Dense items 1)))]
@@ -72735,7 +72729,7 @@
             (OptLateBoundsPairPlan.Dense items (+ len 1)))
           (let
             [bigger : (__tl_dyn-array OptLateBoundsPairEntry)
-              (array.make-array
+              (__tl_make-array
                 OptLateBoundsPairEntry
                 (opt-dense-next-capacity len))]
             [slot : i64 0]
@@ -73450,7 +73444,7 @@
                           [(ir.CompilerIrMaybeValue.Some const-short-length)
                             (let
                               [cell : (__tl_dyn-array i64)
-                                (array.make-array i64 1)]
+                                (__tl_make-array i64 1)]
                               [_cell : unit (set! (array-ref cell 0) frame)]
                               (OptLateBoundsPairResult.Some
                                 (opt-late-bounds-pair-rewrite-blocks
@@ -73466,7 +73460,7 @@
                           [(ir.CompilerIrMaybeValue.No)
                             (let
                               [cell : (__tl_dyn-array i64)
-                                (array.make-array i64 1)]
+                                (__tl_make-array i64 1)]
                               [_cell : unit (set! (array-ref cell 0) frame)]
                               [nonempty : i64 (opt-bce-version-alloc-var cell)]
                               [nonempty-i64 : i64
@@ -76871,7 +76865,7 @@
     [(ir.CompilerIrCallArgs.Array values)
       (let
         [out : (__tl_dyn-array ir.CompilerIrValue)
-          (array.make-array ir.CompilerIrValue (array-length values))]
+          (__tl_make-array ir.CompilerIrValue (array-length values))]
         (begin
           (opt-bce-mb-subst-call-args-array remap values out 0)
           (ir.CompilerIrCallArgs.Array out)))]))
@@ -76881,7 +76875,7 @@
   [body-labels : OptLabelSet]) : ir.CompilerIrSwitchCaseSeq
   (let
     [slots : (__tl_dyn-array ir.CompilerIrSwitchCase)
-      (array.make-array ir.CompilerIrSwitchCase cases.len)]
+      (__tl_make-array ir.CompilerIrSwitchCase cases.len)]
     [index : i64 0]
     (begin
       (while (< index cases.len)
@@ -78348,7 +78342,7 @@
       [(OptBceMbGuardOut.Some guard-instrs guard-value keep facts)
         (let
           [remap : (__tl_dyn-array ir.CompilerIrValue)
-            (array.make-array ir.CompilerIrValue frame)]
+            (__tl_make-array ir.CompilerIrValue frame)]
           [_fill : unit (opt-unroll-remap-fill remap 0)]
           [_alloc : unit (opt-bce-mb-alloc-defs! body-blocks remap cell)]
           [guard-label : i64
@@ -78578,7 +78572,7 @@
   [shape : OptBceMbShape]
   [frame : i64]) : OptUnrollResult
   (let
-    [cell : (__tl_dyn-array i64) (array.make-array i64 1)]
+    [cell : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     [_cell : unit (set! (array-ref cell 0) frame)]
     (match (opt-bce-mb-far-repair
       pred-map
@@ -79735,7 +79729,7 @@
   [copy : i64]) : (__tl_dyn-array i64)
   (let
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
-    [shifted : (__tl_dyn-array i64) (array.make-array i64 count)]
+    [shifted : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [index : i64 (- count 1)]
     (begin
       (while (>= index 0)
@@ -80094,12 +80088,12 @@
     (if (opt-bce-mb-defs-escape? body-blocks outside)
       (OptUnrollResult.Result blocks frame false)
       (let
-        [cell : (__tl_dyn-array i64) (array.make-array i64 1)]
+        [cell : (__tl_dyn-array i64) (__tl_make-array i64 1)]
         [_cell : unit (set! (array-ref cell 0) frame)]
         [remap0 : (__tl_dyn-array ir.CompilerIrValue)
-          (array.make-array ir.CompilerIrValue frame)]
+          (__tl_make-array ir.CompilerIrValue frame)]
         [remap1 : (__tl_dyn-array ir.CompilerIrValue)
-          (array.make-array ir.CompilerIrValue frame)]
+          (__tl_make-array ir.CompilerIrValue frame)]
         [_fill0 : unit (opt-unroll-remap-fill remap0 0)]
         [_fill1 : unit (opt-unroll-remap-fill remap1 0)]
         [_alloc0 : unit (opt-bce-mb-alloc-defs! body-blocks remap0 cell)]
@@ -80303,7 +80297,7 @@
     [(OptGepOffsetDerivedList.Nil)
       (let
         [items : (__tl_dyn-array OptGepOffsetDerived)
-          (array.make-array OptGepOffsetDerived 4)]
+          (__tl_make-array OptGepOffsetDerived 4)]
         (begin
           (set! (array-ref items 0) record)
           (OptGepOffsetDerivedList.Dense items 1)))]
@@ -80314,7 +80308,7 @@
           (OptGepOffsetDerivedList.Dense items (+ len 1)))
         (let
           [bigger : (__tl_dyn-array OptGepOffsetDerived)
-            (array.make-array OptGepOffsetDerived (opt-dense-next-capacity len))]
+            (__tl_make-array OptGepOffsetDerived (opt-dense-next-capacity len))]
           [index : i64 0]
           (begin
             (while (< index len)
@@ -80628,9 +80622,9 @@
   [frame : i64]) : (__tl_dyn-array i64)
   (let
     [uses : (__tl_dyn-array i64) (opt-collect-blocks-uses-array frame blocks)]
-    [dead-uses : (__tl_dyn-array i64) (array.make-array i64 frame)]
-    [dead : (__tl_dyn-array i64) (array.make-array i64 frame)]
-    [changed : (__tl_dyn-array i64) (array.make-array i64 1)]
+    [dead-uses : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+    [dead : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+    [changed : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     [_settle : unit
       (opt-gep-offset-settle-rounds!
         blocks
@@ -80879,11 +80873,11 @@
     (OptGepOffsetPreheaderResult.Result blocks context changed)
     (let
       [uses : (__tl_dyn-array i64) (opt-gep-offset-effective-uses blocks frame)]
-      [gep-uses : (__tl_dyn-array i64) (array.make-array i64 frame)]
-      [poison : (__tl_dyn-array i64) (array.make-array i64 frame)]
-      [base0 : (__tl_dyn-array i64) (array.make-array i64 frame)]
-      [multi-base : (__tl_dyn-array i64) (array.make-array i64 frame)]
-      [def-block : (__tl_dyn-array i64) (array.make-array i64 frame)]
+      [gep-uses : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+      [poison : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+      [base0 : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+      [multi-base : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+      [def-block : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
       [_base0 : unit (opt-gep-offset-fill! base0 (- 0 1))]
       [_defs : unit
         (begin
@@ -81471,16 +81465,16 @@
             body))
           acc
           (let
-            [cand : (__tl_dyn-array i64) (array.make-array i64 frame)]
-            [cand-inv : (__tl_dyn-array i64) (array.make-array i64 frame)]
-            [cand-var : (__tl_dyn-array i64) (array.make-array i64 frame)]
-            [base-split : (__tl_dyn-array i64) (array.make-array i64 frame)]
-            [addend-split : (__tl_dyn-array i64) (array.make-array i64 frame)]
-            [addend-geps : (__tl_dyn-array i64) (array.make-array i64 frame)]
-            [derived-var : (__tl_dyn-array i64) (array.make-array i64 frame)]
-            [derived-inv : (__tl_dyn-array i64) (array.make-array i64 frame)]
+            [cand : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+            [cand-inv : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+            [cand-var : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+            [base-split : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+            [addend-split : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+            [addend-geps : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+            [derived-var : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+            [derived-inv : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
             [derived-ty : (__tl_dyn-array ast.AstType)
-              (array.make-array ast.AstType frame)]
+              (__tl_make-array ast.AstType frame)]
             [loop-uses : (__tl_dyn-array i64)
               (opt-collect-blocks-uses-array frame body-blocks)]
             [_derived : unit (opt-gep-offset-fill! derived-var (- 0 1))]
@@ -81736,15 +81730,15 @@
   [frame : i64]) : OptGepOffsetPlanResult
   (let
     [uses : (__tl_dyn-array i64) (opt-gep-offset-effective-uses blocks frame)]
-    [gep-uses : (__tl_dyn-array i64) (array.make-array i64 frame)]
-    [poison : (__tl_dyn-array i64) (array.make-array i64 frame)]
-    [base0 : (__tl_dyn-array i64) (array.make-array i64 frame)]
-    [multi-base : (__tl_dyn-array i64) (array.make-array i64 frame)]
-    [def-block : (__tl_dyn-array i64) (array.make-array i64 frame)]
-    [gep-mark : (__tl_dyn-array i64) (array.make-array i64 frame)]
-    [gep-base : (__tl_dyn-array i64) (array.make-array i64 frame)]
-    [gep-index : (__tl_dyn-array i64) (array.make-array i64 frame)]
-    [cell : (__tl_dyn-array i64) (array.make-array i64 1)]
+    [gep-uses : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+    [poison : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+    [base0 : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+    [multi-base : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+    [def-block : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+    [gep-mark : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+    [gep-base : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+    [gep-index : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+    [cell : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     [_seed : unit (set! (array-ref cell 0) frame)]
     [_base0 : unit (opt-gep-offset-fill! base0 (- 0 1))]
     [_defs : unit
@@ -82282,7 +82276,7 @@
       (let
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
         [slots : (__tl_dyn-array ir.CompilerIrBlock)
-          (array.make-array ir.CompilerIrBlock count)]
+          (__tl_make-array ir.CompilerIrBlock count)]
         [index : i64 0]
         (begin
           (while (< index count)
@@ -82316,17 +82310,16 @@
       (let
         [uses : (__tl_dyn-array i64)
           (opt-collect-blocks-uses-array frame blocks)]
-        [memuses : (__tl_dyn-array i64) (array.make-array i64 frame)]
-        [chainuses : (__tl_dyn-array i64) (array.make-array i64 frame)]
-        [defs : (__tl_dyn-array i64) (array.make-array i64 frame)]
+        [memuses : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+        [chainuses : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+        [defs : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
         [bases : (__tl_dyn-array ir.CompilerIrValue)
-          (array.make-array ir.CompilerIrValue frame)]
+          (__tl_make-array ir.CompilerIrValue frame)]
         [offsets : (__tl_dyn-array ir.CompilerIrValue)
-          (array.make-array ir.CompilerIrValue frame)]
-        [tys : (__tl_dyn-array ast.AstType)
-          (array.make-array ast.AstType frame)]
-        [marks : (__tl_dyn-array i64) (array.make-array i64 frame)]
-        [cands : (__tl_dyn-array i64) (array.make-array i64 frame)]
+          (__tl_make-array ir.CompilerIrValue frame)]
+        [tys : (__tl_dyn-array ast.AstType) (__tl_make-array ast.AstType frame)]
+        [marks : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+        [cands : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
         [_uses : unit (opt-gep-split-memuses-blocks! blocks memuses chainuses)]
         [_defs : unit
           (begin
@@ -82355,7 +82348,7 @@
         (if (not any?)
           func
           (let
-            [cell : (__tl_dyn-array i64) (array.make-array i64 1)]
+            [cell : (__tl_dyn-array i64) (__tl_make-array i64 1)]
             [_cell : unit (set! (array-ref cell 0) frame)]
             [next-blocks : ir.CompilerIrBlockList
               (opt-gep-split-rewrite-blocks blocks cands bases offsets tys cell)]
@@ -82713,7 +82706,7 @@
   [count : i64]) : ir.CompilerIrInstrSeq
   (let
     [out : (__tl_dyn-array ir.CompilerIrInstr)
-      (array.make-array ir.CompilerIrInstr count)]
+      (__tl_make-array ir.CompilerIrInstr count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -82742,9 +82735,9 @@
           (not (opt-load-sink-block-moves? use-counts instrs slots count)))
           (OptBlockPassResult.Result block false)
           (let
-            [head : (__tl_dyn-array i64) (array.make-array i64 count)]
-            [link : (__tl_dyn-array i64) (array.make-array i64 count)]
-            [order : (__tl_dyn-array i64) (array.make-array i64 count)]
+            [head : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+            [link : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+            [order : (__tl_dyn-array i64) (__tl_make-array i64 count)]
             [index : i64 (- count 2)]
             [write : i64 0]
             [changed : bool false]
@@ -82821,7 +82814,7 @@
         [count : i64 seq.len]
         [source : (__tl_dyn-array ir.CompilerIrBlock) seq.slots]
         [out : (__tl_dyn-array ir.CompilerIrBlock)
-          (array.make-array ir.CompilerIrBlock count)]
+          (__tl_make-array ir.CompilerIrBlock count)]
         [index : i64 0]
         [changed : bool false]
         (begin
@@ -83410,7 +83403,7 @@
       (let
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
         [slots : (__tl_dyn-array ir.CompilerIrBlock)
-          (array.make-array ir.CompilerIrBlock count)]
+          (__tl_make-array ir.CompilerIrBlock count)]
         [index : i64 0]
         (begin
           (while (< index count)
@@ -83455,12 +83448,12 @@
             (opt-dce-block-list-array-fixpoint frame input-blocks 8)]
           [uses : (__tl_dyn-array i64)
             (opt-collect-blocks-uses-array frame blocks)]
-          [defs : (__tl_dyn-array i64) (array.make-array i64 frame)]
-          [branch-uses : (__tl_dyn-array i64) (array.make-array i64 frame)]
-          [loose : (__tl_dyn-array i64) (array.make-array i64 frame)]
-          [marks : (__tl_dyn-array i64) (array.make-array i64 frame)]
+          [defs : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+          [branch-uses : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+          [loose : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+          [marks : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
           [recipes : (__tl_dyn-array ir.CompilerIrInstr)
-            (array.make-array ir.CompilerIrInstr frame)]
+            (__tl_make-array ir.CompilerIrInstr frame)]
           ;; Parameters are definitions too, and the most stable operands a
           ;; copied compare can read; the seeding walk is shared with gep-split.
           [_defs : unit
@@ -83488,9 +83481,9 @@
           (if (not any?)
             func
             (let
-              [cell : (__tl_dyn-array i64) (array.make-array i64 1)]
+              [cell : (__tl_dyn-array i64) (__tl_make-array i64 1)]
               [_cell : unit (set! (array-ref cell 0) frame)]
-              [budget : (__tl_dyn-array i64) (array.make-array i64 1)]
+              [budget : (__tl_dyn-array i64) (__tl_make-array i64 1)]
               [_budget : unit (set! (array-ref budget 0) copies)]
               [next-blocks : ir.CompilerIrBlockList
                 (opt-cmp-dup-rewrite-blocks blocks marks recipes cell budget)]
@@ -83543,10 +83536,10 @@
     [(OptSuccessorSinkMoves.Nil)
       (OptSuccessorSinkMove.Move
         -1
-        (array.make-array i64 0)
+        (__tl_make-array i64 0)
         -1
         (ir.compiler-ir-instr-seq-empty)
-        (array.make-array i64 0))]
+        (__tl_make-array i64 0))]
     [(OptSuccessorSinkMoves.Dense items len)
       (array-ref items (- (- len 1) index))]))
 
@@ -83557,7 +83550,7 @@
     [(OptSuccessorSinkMoves.Nil)
       (let
         [items : (__tl_dyn-array OptSuccessorSinkMove)
-          (array.make-array OptSuccessorSinkMove 4)]
+          (__tl_make-array OptSuccessorSinkMove 4)]
         (begin
           (set! (array-ref items 0) move)
           (OptSuccessorSinkMoves.Dense items 1)))]
@@ -83568,9 +83561,7 @@
           (OptSuccessorSinkMoves.Dense items (+ len 1)))
         (let
           [bigger : (__tl_dyn-array OptSuccessorSinkMove)
-            (array.make-array
-              OptSuccessorSinkMove
-              (opt-dense-next-capacity len))]
+            (__tl_make-array OptSuccessorSinkMove (opt-dense-next-capacity len))]
           [index : i64 0]
           (begin
             (while (< index len)
@@ -83590,19 +83581,19 @@
         (opt-successor-sink-moves-prepend
           (OptSuccessorSinkMove.Move
             44
-            (array.make-array i64 0)
+            (__tl_make-array i64 0)
             144
             (ir.compiler-ir-instr-seq-empty)
-            (array.make-array i64 0))
+            (__tl_make-array i64 0))
           empty)]
       [duplicate : OptSuccessorSinkMoves
         (opt-successor-sink-moves-prepend
           (OptSuccessorSinkMove.Move
             44
-            (array.make-array i64 0)
+            (__tl_make-array i64 0)
             145
             (ir.compiler-ir-instr-seq-empty)
-            (array.make-array i64 0))
+            (__tl_make-array i64 0))
           retained)]
       [moves : OptSuccessorSinkMoves (OptSuccessorSinkMoves.Nil)]
       [index : i64 8]
@@ -83636,10 +83627,10 @@
               (opt-successor-sink-moves-prepend
                 (OptSuccessorSinkMove.Move
                   index
-                  (array.make-array i64 0)
+                  (__tl_make-array i64 0)
                   (+ index 100)
                   (ir.compiler-ir-instr-seq-empty)
-                  (array.make-array i64 0))
+                  (__tl_make-array i64 0))
                 moves))
             (set! index (- index 1))))
         (match moves
@@ -83833,7 +83824,7 @@
   [values : ir.CompilerIrValueSeq]) : ir.CompilerIrValueSeq
   (let
     [slots : (__tl_dyn-array ir.CompilerIrValue)
-      (array.make-array ir.CompilerIrValue values.len)]
+      (__tl_make-array ir.CompilerIrValue values.len)]
     [index : i64 0]
     (begin
       (while (< index values.len)
@@ -85017,9 +85008,9 @@
     [clone-count : (__tl_dyn-array i64) (opt-used-array-new 1)]
     [builder : ir.CompilerIrInstrBuilder
       (ir.compiler-ir-instr-builder-with-capacity (+ count 4))]
-    [pending : (__tl_dyn-array i64) (array.make-array i64 count)]
-    [pending-len : (__tl_dyn-array i64) (array.make-array i64 1)]
-    [origins : (__tl_dyn-array i64) (array.make-array i64 (+ count 4))]
+    [pending : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [pending-len : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    [origins : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 4))]
     (begin
       (set! (array-ref pending 0) index)
       (set! (array-ref pending-len 0) 1)
@@ -86679,8 +86670,8 @@
         block
         (let
           [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
-          [plan : (__tl_dyn-array i64) (array.make-array i64 count)]
-          [bases : (__tl_dyn-array i64) (array.make-array i64 count)]
+          [plan : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+          [bases : (__tl_dyn-array i64) (__tl_make-array i64 count)]
           [changed : bool false]
           [i : i64 0]
           (begin
@@ -86732,7 +86723,7 @@
       (let
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
         [slots : (__tl_dyn-array ir.CompilerIrBlock)
-          (array.make-array ir.CompilerIrBlock count)]
+          (__tl_make-array ir.CompilerIrBlock count)]
         [index : i64 0]
         (begin
           (while (< index count)
@@ -88433,9 +88424,9 @@
   [frame : i64]
   [width : i64]) : OptBgAnalysis
   (let
-    [add-base : (__tl_dyn-array i64) (array.make-array i64 frame)]
-    [add-k : (__tl_dyn-array i64) (array.make-array i64 frame)]
-    [def-block : (__tl_dyn-array i64) (array.make-array i64 frame)]
+    [add-base : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+    [add-k : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+    [def-block : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
     (begin
       (opt-gep-offset-fill! def-block (- 0 1))
       (opt-bg-defs-blocks! blocks 0 def-block)
@@ -88448,12 +88439,12 @@
         def-block
         (opt-collect-blocks-uses-array frame blocks)
         (OptBgScratch
-          (array.make-array i64 width)
-          (array.make-array ir.CompilerIrValue width)
-          (array.make-array i64 width)
-          (array.make-array i64 width)
-          (array.make-array ir.CompilerIrValue width)
-          (array.make-array bool width))))))
+          (__tl_make-array i64 width)
+          (__tl_make-array ir.CompilerIrValue width)
+          (__tl_make-array i64 width)
+          (__tl_make-array i64 width)
+          (__tl_make-array ir.CompilerIrValue width)
+          (__tl_make-array bool width))))))
 
 ;; A lone member pays only through the backend displacement fold, and that fold
 ;; admits the offset Add only when every reader it has left is a Gep INDEX in
@@ -88577,7 +88568,7 @@
             [(OptBgMaybeCheck.No) (OptBgPlanResult.No)]
             [(OptBgMaybeCheck.Some base _ _ _)
               (let
-                [drop : (__tl_dyn-array bool) (array.make-array bool count)]
+                [drop : (__tl_dyn-array bool) (__tl_make-array bool count)]
                 [scratch : OptBgScratch analysis.scratch]
                 [marked : OptBgScratch
                   (OptBgScratch
@@ -89267,7 +89258,7 @@
         [loops : OptNaturalLoopList
           (opt-cfg-natural-loops-with-context blocks context)]
         [marks : (__tl_dyn-array bool)
-          (array.make-array bool (ir.compiler-ir-block-list-count blocks))]
+          (__tl_make-array bool (ir.compiler-ir-block-list-count blocks))]
         [_marks : unit (opt-bg-loop-marks! loops marks)]
         (match (opt-bg-plan-loops
           (opt-bg-loops-widest-first loops)
@@ -91996,8 +91987,8 @@
   (let
     [count : i64 (opt-function-seq-count functions)]
     [values : (__tl_dyn-array ir.CompilerIrFunction)
-      (array.make-array ir.CompilerIrFunction count)]
-    [leaf-starts : (__tl_dyn-array i64) (array.make-array i64 count)]
+      (__tl_make-array ir.CompilerIrFunction count)]
+    [leaf-starts : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [names : OptFunctionNameIndex
       (opt-function-index-fill-from
         functions
@@ -92161,7 +92152,7 @@
 (define (opt-callgraph-build [index : OptFunctionIndex]) : OptCallGraph
   (let
     [count : i64 (opt-function-index-count index)]
-    [edges : (__tl_dyn-array OptSlotList) (array.make-array OptSlotList count)]
+    [edges : (__tl_dyn-array OptSlotList) (__tl_make-array OptSlotList count)]
     [values : (__tl_dyn-array ir.CompilerIrFunction) index.values]
     (begin
       (opt-callgraph-init-edges edges 0 count)
@@ -92231,7 +92222,7 @@
 ;; ranges into a difference sequence, and a prefix sum then produces every
 ;; block's depth. The whole estimate stays linear in blocks plus edges.
 (define opt-inline-census-depth-slots : (__tl_dyn-array i64)
-  (array.make-array i64 64))
+  (__tl_make-array i64 64))
 (define opt-inline-census-depth-count : i64
   0)
 (define opt-inline-census-depth-active? : bool
@@ -92256,7 +92247,7 @@
           (set! size (* size 2)))
         (in-arena
           (arena.Arena (ir.compiler-ir-label-arena))
-          (set! opt-inline-census-depth-slots (array.make-array i64 size)))))))
+          (set! opt-inline-census-depth-slots (__tl_make-array i64 size)))))))
 
 (define (opt-inline-census-depth-clear! [count : i64]) : unit
   (let
@@ -93227,7 +93218,7 @@
 (define (opt-scc-copy-order [source : (__tl_dyn-array i64)] [count : i64]) : (__tl_dyn-array
     i64)
   (let
-    [out : (__tl_dyn-array i64) (array.make-array i64 count)]
+    [out : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -93239,14 +93230,14 @@
 (define (opt-scc-compute [graph : OptCallGraph]) : OptSccResult
   (let
     [count : i64 graph.count]
-    [indices : (__tl_dyn-array i64) (array.make-array i64 count)]
-    [lowlink : (__tl_dyn-array i64) (array.make-array i64 count)]
-    [on-stack : (__tl_dyn-array bool) (array.make-array bool count)]
-    [scc-of : (__tl_dyn-array i64) (array.make-array i64 count)]
-    [node-stack : (__tl_dyn-array i64) (array.make-array i64 count)]
-    [frame-slots : (__tl_dyn-array i64) (array.make-array i64 count)]
-    [frame-nexts : (__tl_dyn-array i64) (array.make-array i64 count)]
-    [order-scratch : (__tl_dyn-array i64) (array.make-array i64 count)]
+    [indices : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [lowlink : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [on-stack : (__tl_dyn-array bool) (__tl_make-array bool count)]
+    [scc-of : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [node-stack : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [frame-slots : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [frame-nexts : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [order-scratch : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [root : i64 0]
     [next-index : i64 0]
     [node-stack-len : i64 0]
@@ -93563,8 +93554,8 @@
     [(ir.CompilerIrFunction.Function _ _ _ frame blocks)
       (if (opt-devirt-prepare-blocks! blocks)
         (let
-          [states : (__tl_dyn-array i64) (array.make-array i64 frame)]
-          [names : (__tl_dyn-array i64) (array.make-array i64 frame)]
+          [states : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+          [names : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
           (begin
             (opt-devirt-note-blocks! states names blocks)
             (opt-devirt-known-function-blocks! states names blocks)))
@@ -93637,7 +93628,7 @@
       [(OptInlinePredRenameList.Nil)
         (let
           [items : (__tl_dyn-array OptInlinePredRename)
-            (array.make-array OptInlinePredRename 4)]
+            (__tl_make-array OptInlinePredRename 4)]
           (begin
             (set! (array-ref items 0) rename)
             (OptInlinePredRenameList.Dense items 1)))]
@@ -93648,7 +93639,7 @@
             (OptInlinePredRenameList.Dense items (+ len 1)))
           (let
             [bigger : (__tl_dyn-array OptInlinePredRename)
-              (array.make-array
+              (__tl_make-array
                 OptInlinePredRename
                 (opt-dense-next-capacity len))]
             [index : i64 0]
@@ -94577,7 +94568,7 @@
 (define (opt-inline-owned-state-install! [index : OptFunctionIndex]) : unit
   (let
     [count : i64 (opt-function-index-count index)]
-    [memo : (__tl_dyn-array i64) (array.make-array i64 count)]
+    [memo : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [scratch : arena.Arena (arena.make)]
     (begin
       (opt-cfg-fill-i64! memo count (- 0 1))
@@ -94598,7 +94589,7 @@
       (__tl-project-set-field
         compiler-opt-owned-state
         inline-state
-        (OptInlineOwnedState (arena.Arena 0) (array.make-array i64 0)))
+        (OptInlineOwnedState (arena.Arena 0) (__tl_make-array i64 0)))
       (if (or (not destroy-owner?) (= (arena.raw-handle scratch) 0))
         unit
         (unsafe
@@ -95041,7 +95032,7 @@
     [else
       (let
         [out : (__tl_dyn-array ir.CompilerIrValue)
-          (array.make-array ir.CompilerIrValue np)]
+          (__tl_make-array ir.CompilerIrValue np)]
         (begin
           (opt-inline-staged-args-array-fill! out params args base stage-all? 0)
           (ir.CompilerIrCallArgs.Array out)))]))
@@ -95157,7 +95148,7 @@
       (let
         [n : i64 (array-length arr)]
         [out : (__tl_dyn-array ir.CompilerIrValue)
-          (array.make-array ir.CompilerIrValue n)]
+          (__tl_make-array ir.CompilerIrValue n)]
         [i : i64 0]
         (begin
           (while (< i n)
@@ -95175,7 +95166,7 @@
   [base : i64]) : ir.CompilerIrValueSeq
   (let
     [slots : (__tl_dyn-array ir.CompilerIrValue)
-      (array.make-array ir.CompilerIrValue values.len)]
+      (__tl_make-array ir.CompilerIrValue values.len)]
     [index : i64 0]
     (begin
       (while (< index values.len)
@@ -95870,7 +95861,7 @@
   [prefix : String]) : ir.CompilerIrSwitchCaseSeq
   (let
     [slots : (__tl_dyn-array ir.CompilerIrSwitchCase)
-      (array.make-array ir.CompilerIrSwitchCase cases.len)]
+      (__tl_make-array ir.CompilerIrSwitchCase cases.len)]
     [index : i64 0]
     (begin
       (while (< index cases.len)
@@ -97872,7 +97863,7 @@
 ;; kept, three columns per row (callee name, block label, site position), room
 ;; for opt-inline-checked-max-caller-verdicts rows.
 (define opt-inline-checked-accepted : (__tl_dyn-array i64)
-  (array.make-array i64 12))
+  (__tl_make-array i64 12))
 (define opt-inline-checked-accepted-count : i64
   0)
 
@@ -97882,7 +97873,7 @@
 ;; its boundary costs). Room for opt-inline-checked-scan-cap rows. A row whose
 ;; richness has been set negative has already been armed as a target.
 (define opt-inline-checked-scan : (__tl_dyn-array i64)
-  (array.make-array i64 32))
+  (__tl_make-array i64 32))
 (define opt-inline-checked-scan-count : i64
   0)
 
@@ -101401,10 +101392,10 @@
     [scc-of : (__tl_dyn-array i64) scc-result.scc-of]
     [slot-count : i64 (array-length scc-of)]
     [scc-count : i64 (array-length order)]
-    [counts : (__tl_dyn-array i64) (array.make-array i64 scc-count)]
-    [starts : (__tl_dyn-array i64) (array.make-array i64 scc-count)]
-    [next : (__tl_dyn-array i64) (array.make-array i64 scc-count)]
-    [slots : (__tl_dyn-array i64) (array.make-array i64 slot-count)]
+    [counts : (__tl_dyn-array i64) (__tl_make-array i64 scc-count)]
+    [starts : (__tl_dyn-array i64) (__tl_make-array i64 scc-count)]
+    [next : (__tl_dyn-array i64) (__tl_make-array i64 scc-count)]
+    [slots : (__tl_dyn-array i64) (__tl_make-array i64 slot-count)]
     [slot : i64 0]
     [order-index : i64 0]
     [offset : i64 0]
@@ -105683,7 +105674,7 @@
   (let
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [slots : (__tl_dyn-array ir.CompilerIrInstr)
-      (array.make-array ir.CompilerIrInstr count)]
+      (__tl_make-array ir.CompilerIrInstr count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -105802,7 +105793,7 @@
   (let
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [slots : (__tl_dyn-array ir.CompilerIrInstr)
-      (array.make-array ir.CompilerIrInstr count)]
+      (__tl_make-array ir.CompilerIrInstr count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -108593,9 +108584,9 @@
 
 (define (opt-nonneg-edges-new [capacity : i64]) : OptNonnegEdges
   (OptNonnegEdges
-    (array.make-array i64 capacity)
-    (array.make-array i64 capacity)
-    (array.make-array i64 1)
+    (__tl_make-array i64 capacity)
+    (__tl_make-array i64 capacity)
+    (__tl_make-array i64 1)
     capacity))
 
 (define (opt-nonneg-edges-push!
@@ -108973,10 +108964,10 @@
             [(ir.CompilerIrFunction.Function _ params _ frame blocks)
               (let
                 [defs : (__tl_dyn-array OptBoolBranchDef)
-                  (array.make-array OptBoolBranchDef frame)]
-                [counts : (__tl_dyn-array i64) (array.make-array i64 frame)]
+                  (__tl_make-array OptBoolBranchDef frame)]
+                [counts : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
                 [param-header : (__tl_dyn-array bool)
-                  (array.make-array bool frame)]
+                  (__tl_make-array bool frame)]
                 [_defs : unit (opt-nonneg-defs-fill-blocks! defs counts blocks)]
                 [_params : unit
                   (opt-nonneg-param-header-fill!
@@ -109098,7 +109089,7 @@
                 candidates
                 edges
                 functions)]
-            [removed : (__tl_dyn-array i64) (array.make-array i64 1)]
+            [removed : (__tl_dyn-array i64) (__tl_make-array i64 1)]
             (opt-nonneg-prune edges candidates removed count)))))))
 
 (define (opt-nonneg-global?
@@ -109120,7 +109111,7 @@
       (let
         [capacity : i64 (opt-function-index-capacity count)]
         [types : (__tl_dyn-array ast.AstType)
-          (array.make-array ast.AstType count)]
+          (__tl_make-array ast.AstType count)]
         [type-index : opt_i64_i64_map.Map
           (opt-global-cell-types-fill
             globals
@@ -109594,7 +109585,7 @@
   (let
     [index : OptCfgIndex (opt-cfg-index-build blocks)]
     [count : i64 (opt-cfg-index-block-count index)]
-    [budget : (__tl_dyn-array i64) (array.make-array i64 2)]
+    [budget : (__tl_dyn-array i64) (__tl_make-array i64 2)]
     (begin
       (set! (array-ref budget 0) (opt-global-cell-reach-step-cap))
       (set! (array-ref budget 1) 0)
@@ -109608,9 +109599,9 @@
           out)
         (opt-global-cell-observable-stores-reach
           index
-          (array.make-array bool count)
-          (array.make-array i64 count)
-          (array.make-array i64 1)
+          (__tl_make-array bool count)
+          (__tl_make-array i64 count)
+          (__tl_make-array i64 1)
           budget
           0
           count
@@ -109698,7 +109689,7 @@
   [marks : (__tl_dyn-array bool)]) : unit
   (let
     [csr : OptCfgCsr index.succs]
-    [delta : (__tl_dyn-array i64) (array.make-array i64 (+ count 1))]
+    [delta : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
     [i : i64 0]
     [acc : i64 0]
     (begin
@@ -109758,7 +109749,7 @@
       (not index.targets-known))
       out
       (let
-        [marks : (__tl_dyn-array bool) (array.make-array bool count)]
+        [marks : (__tl_dyn-array bool) (__tl_make-array bool count)]
         (begin
           (opt-global-cell-loop-marks! index count marks)
           (opt-global-cell-loop-refs-collect index marks 0 count out))))))
@@ -109966,7 +109957,7 @@
       (let
         [count : i64 (array-length values)]
         [slots : (__tl_dyn-array ir.CompilerIrValue)
-          (array.make-array ir.CompilerIrValue count)]
+          (__tl_make-array ir.CompilerIrValue count)]
         [index : i64 0]
         (begin
           (while (< index count)
@@ -109982,7 +109973,7 @@
   [args : ir.CompilerIrSpmdCallArgSeq]) : ir.CompilerIrSpmdCallArgSeq
   (let
     [slots : (__tl_dyn-array ir.CompilerIrSpmdCallArg)
-      (array.make-array ir.CompilerIrSpmdCallArg args.len)]
+      (__tl_make-array ir.CompilerIrSpmdCallArg args.len)]
     [index : i64 0]
     (begin
       (while (< index args.len)
@@ -110337,7 +110328,7 @@
   (let
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [slots : (__tl_dyn-array ir.CompilerIrInstr)
-      (array.make-array ir.CompilerIrInstr count)]
+      (__tl_make-array ir.CompilerIrInstr count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -110373,7 +110364,7 @@
         [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
         [total : i64 (+ hoist-count count)]
         [slots : (__tl_dyn-array ir.CompilerIrInstr)
-          (array.make-array ir.CompilerIrInstr total)]
+          (__tl_make-array ir.CompilerIrInstr total)]
         [index : i64 0]
         (begin
           (while (< index hoist-count)
@@ -110462,7 +110453,7 @@
                     func
                     (let
                       [frame-cell : (__tl_dyn-array i64)
-                        (array.make-array i64 1)]
+                        (__tl_make-array i64 1)]
                       [_seed : unit (set! (array-ref frame-cell 0) frame)]
                       [planned : OptGlobalCellPlan
                         (opt-global-cell-plan-build
@@ -110488,7 +110479,7 @@
                         func
                         (let
                           [hoists : (__tl_dyn-array ir.CompilerIrInstr)
-                            (array.make-array ir.CompilerIrInstr planned.count)]
+                            (__tl_make-array ir.CompilerIrInstr planned.count)]
                           [_filled : i64
                             (opt-global-cell-hoists-fill!
                               planned.map
@@ -113569,7 +113560,7 @@
   (let
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [out : (__tl_dyn-array ir.CompilerIrInstr)
-      (array.make-array ir.CompilerIrInstr count)]
+      (__tl_make-array ir.CompilerIrInstr count)]
     [read : i64 0]
     [write : i64 0]
     (begin
@@ -113601,7 +113592,7 @@
   (let
     [count : i64 (ir.compiler-ir-block-seq-count blocks)]
     [slots : (__tl_dyn-array ir.CompilerIrBlock)
-      (array.make-array ir.CompilerIrBlock count)]
+      (__tl_make-array ir.CompilerIrBlock count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -113644,10 +113635,10 @@
               1
               frame)]
           [env-slots : (__tl_dyn-array OptSccpValue)
-            (array.make-array OptSccpValue cap)]
-          [folded : (__tl_dyn-array i64) (array.make-array i64 cap)]
-          [bound : (__tl_dyn-array i64) (array.make-array i64 cap)]
-          [marked : (__tl_dyn-array i64) (array.make-array i64 4)]
+            (__tl_make-array OptSccpValue cap)]
+          [folded : (__tl_dyn-array i64) (__tl_make-array i64 cap)]
+          [bound : (__tl_dyn-array i64) (__tl_make-array i64 cap)]
+          [marked : (__tl_dyn-array i64) (__tl_make-array i64 4)]
           [phi-uses : (__tl_dyn-array i64) (opt-used-array-new cap)]
           [other-uses : (__tl_dyn-array i64) (opt-used-array-new cap)]
           [_fill : unit (opt-sccp-env-fill-unknown! env-slots cap 0)]
@@ -113990,7 +113981,7 @@
 
 (define (opt-load-header-set-with-size [count : i64]) : OptLoadHeaderSet
   (let
-    [items : (__tl_dyn-array i64) (array.make-array i64 count)]
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     (begin
       (opt-load-header-set-fill-zero! items 0)
       (OptLoadHeaderSet.Dense items))))
@@ -114637,12 +114628,12 @@
 ;; only repeats what the allocation just did.
 (define (opt-load-kinds-dense-work-with-size [count : i64]) : OptLoadKindsDenseWork
   (OptLoadKindsDenseWork
-    (array.make-array i64 count)
-    (array.make-array i64 count)
-    (array.make-array i64 count)
-    (array.make-array i64 count)
-    (array.make-array i64 count)
-    (array.make-array i64 count)))
+    (__tl_make-array i64 count)
+    (__tl_make-array i64 count)
+    (__tl_make-array i64 count)
+    (__tl_make-array i64 count)
+    (__tl_make-array i64 count)
+    (__tl_make-array i64 count)))
 
 (define (opt-load-kinds-dense-state
   [work : OptLoadKindsDenseWork]
@@ -115450,7 +115441,7 @@
   4)
 
 (define (opt-load-global-bases-empty) : OptLoadGlobalBases
-  (OptLoadGlobalBases (array.make-array OptLoadGlobalBaseEntry 0) 0))
+  (OptLoadGlobalBases (__tl_make-array OptLoadGlobalBaseEntry 0) 0))
 
 (define (opt-load-global-bases-clear [bases : OptLoadGlobalBases]) : OptLoadGlobalBases
   (OptLoadGlobalBases bases.slots 0))
@@ -115461,7 +115452,7 @@
   [capacity : i64]) : (__tl_dyn-array OptLoadGlobalBaseEntry)
   (let
     [out : (__tl_dyn-array OptLoadGlobalBaseEntry)
-      (array.make-array OptLoadGlobalBaseEntry capacity)]
+      (__tl_make-array OptLoadGlobalBaseEntry capacity)]
     [index : i64 0]
     (begin
       (while (< index len)
@@ -115588,7 +115579,7 @@
     [a-slots : (__tl_dyn-array OptLoadGlobalBaseEntry) a.slots]
     [a-len : i64 a.len]
     [out-slots : (__tl_dyn-array OptLoadGlobalBaseEntry)
-      (array.make-array OptLoadGlobalBaseEntry a-len)]
+      (__tl_make-array OptLoadGlobalBaseEntry a-len)]
     [read : i64 0]
     [write : i64 0]
     (begin
@@ -116293,7 +116284,7 @@
   (len i64))
 
 (define (opt-dead-store-set-with-capacity [capacity : i64]) : OptDeadStoreSet
-  (OptDeadStoreSet (array.make-array OptDeadStoreEntry capacity) 0))
+  (OptDeadStoreSet (__tl_make-array OptDeadStoreEntry capacity) 0))
 
 (define (opt-dead-store-set-clear [pending : OptDeadStoreSet]) : OptDeadStoreSet
   (OptDeadStoreSet pending.slots 0))
@@ -117940,7 +117931,7 @@
   (let
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [slots : (__tl_dyn-array ir.CompilerIrInstr)
-      (array.make-array ir.CompilerIrInstr count)]
+      (__tl_make-array ir.CompilerIrInstr count)]
     [index : i64 0]
     [current : OptLoadCseState state]
     (begin
@@ -118395,7 +118386,7 @@
   [frame : i64]
   [out : (__tl_dyn-array OptGvnBlockResult)]) : OptCopyEnv
   (let
-    [def-blocks : (__tl_dyn-array i64) (array.make-array i64 frame)]
+    [def-blocks : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
     [reach-count : i64 index.reach-count]
     [slot : i64 0]
     [env : OptCopyEnv (OptCopyEnv.Nil)]
@@ -118435,7 +118426,7 @@
   (let
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [slots : (__tl_dyn-array ir.CompilerIrInstr)
-      (array.make-array ir.CompilerIrInstr count)]
+      (__tl_make-array ir.CompilerIrInstr count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -118559,10 +118550,10 @@
       [index : OptCfgIndex context.index]
       [count : i64 (opt-cfg-index-block-count index)]
       [exit-states : (__tl_dyn-array OptMaybeLoadCseState)
-        (array.make-array OptMaybeLoadCseState count)]
-      [processed : (__tl_dyn-array bool) (array.make-array bool count)]
+        (__tl_make-array OptMaybeLoadCseState count)]
+      [processed : (__tl_dyn-array bool) (__tl_make-array bool count)]
       [out : (__tl_dyn-array OptGvnBlockResult)
-        (array.make-array OptGvnBlockResult count)]
+        (__tl_make-array OptGvnBlockResult count)]
       [loops : OptNaturalLoopList
         (opt-cfg-natural-loops-with-context blocks context)]
       [loop-safe : OptLabelSet (opt-load-gvn-loop-safe-collect hs blocks loops)]
@@ -118606,7 +118597,7 @@
                   (opt-sccp-max-var-params
                     params
                     (opt-sccp-max-var-blocks blocks (- 0 1))))]
-              [loop-masks : (__tl_dyn-array i64) (array.make-array i64 count)]
+              [loop-masks : (__tl_dyn-array i64) (__tl_make-array i64 count)]
               (begin
                 (opt-load-gvn-loop-masks-fill loop-masks loops 0)
                 (let

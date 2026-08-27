@@ -1,7 +1,6 @@
 ;; Runtime coverage for the guarded sp-1/sp-2 bounds-check pairing rule. Both
 ;; underflow states must still take the ordinary array bounds abort at opt0 and
 ;; opt2: sp=1 makes only sp-2 wrap, while sp=0 makes both indices wrap.
-(import stdlib.array)
 (import stdlib.io)
 (import stdlib.string)
 
@@ -48,5 +47,5 @@
   (let
     [initial-sp : i64 (string.>int (io.arg 1))]
     [program : (__tl_dyn-array UnderflowInst) (__tl_make-array (Add))]
-    [stack : (__tl_dyn-array i64) (array.make-array i64 4)]
+    [stack : (__tl_dyn-array i64) (__tl_make-array i64 4)]
     (run-underflow program stack initial-sp)))

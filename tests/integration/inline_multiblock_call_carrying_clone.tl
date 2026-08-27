@@ -21,8 +21,6 @@
 ;: inlined result and not the fused one. Run at opt0/opt1 by the manifest (where
 ;: the multiblock inliner does not run at all) and at opt2 by
 ;: verify-integration.sh (where it does), so the two levels must also agree.
-(import stdlib.array)
-
 ;; Never inlined: it calls itself, so it is in its own SCC. The recursive arm is
 ;; unreachable for every value this fixture produces, which is what lets the
 ;; fused loop below spell out the base case.
@@ -95,9 +93,9 @@
 (define (main) : i64
   (let
     [n : i64 96]
-    [uses : (__tl_dyn-array i64) (array.make-array i64 n)]
-    [nophi : (__tl_dyn-array i64) (array.make-array i64 n)]
-    [defs : (__tl_dyn-array i64) (array.make-array i64 n)]
+    [uses : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+    [nophi : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+    [defs : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     [inlined : i64 1]
     [fused : i64 1]
     (begin

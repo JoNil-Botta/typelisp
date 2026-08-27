@@ -1,6 +1,4 @@
 ;; Out-of-line direct SPMD helper call with a varying f64 argument/result.
-(import stdlib.array)
-
 (define (heavy-f64 [x : f64]) : f64
   (+ (+ (+ (+ (+ (+ (+ x 1.0) 2.0) 3.0) 4.0) 5.0) 6.0) 7.0))
 
@@ -26,8 +24,8 @@
 (define (main) : i64
   (let
     [n : i64 13]
-    [xs : (__tl_dyn-array f64) (array.make-array f64 n)]
-    [out : (__tl_dyn-array f64) (array.make-array f64 n)]
+    [xs : (__tl_dyn-array f64) (__tl_make-array f64 n)]
+    [out : (__tl_dyn-array f64) (__tl_make-array f64 n)]
     [i : i64 0]
     (begin
       (while (< i n)

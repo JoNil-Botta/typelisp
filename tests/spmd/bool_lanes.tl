@@ -1,5 +1,3 @@
-(import stdlib.array)
-
 (define (init-bool
   [flags : (__tl_dyn-array bool)]
   [values : (__tl_dyn-array i64)]
@@ -143,21 +141,21 @@
 
 (define (case-bool [n : i64]) : bool
   (let
-    [flags : (__tl_dyn-array bool) (array.make-array bool n)]
-    [values : (__tl_dyn-array i64) (array.make-array i64 n)]
-    [values32 : (__tl_dyn-array i32) (array.make-array i32 n)]
-    [values16 : (__tl_dyn-array i16) (array.make-array i16 n)]
-    [values8 : (__tl_dyn-array i8) (array.make-array i8 n)]
-    [copy-got : (__tl_dyn-array bool) (array.make-array bool n)]
-    [copy-want : (__tl_dyn-array bool) (array.make-array bool n)]
-    [cmp-got : (__tl_dyn-array bool) (array.make-array bool n)]
-    [cmp-want : (__tl_dyn-array bool) (array.make-array bool n)]
-    [cmp32-got : (__tl_dyn-array bool) (array.make-array bool n)]
-    [cmp32-want : (__tl_dyn-array bool) (array.make-array bool n)]
-    [cmp16-got : (__tl_dyn-array bool) (array.make-array bool n)]
-    [cmp16-want : (__tl_dyn-array bool) (array.make-array bool n)]
-    [cmp8-got : (__tl_dyn-array bool) (array.make-array bool n)]
-    [cmp8-want : (__tl_dyn-array bool) (array.make-array bool n)]
+    [flags : (__tl_dyn-array bool) (__tl_make-array bool n)]
+    [values : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+    [values32 : (__tl_dyn-array i32) (__tl_make-array i32 n)]
+    [values16 : (__tl_dyn-array i16) (__tl_make-array i16 n)]
+    [values8 : (__tl_dyn-array i8) (__tl_make-array i8 n)]
+    [copy-got : (__tl_dyn-array bool) (__tl_make-array bool n)]
+    [copy-want : (__tl_dyn-array bool) (__tl_make-array bool n)]
+    [cmp-got : (__tl_dyn-array bool) (__tl_make-array bool n)]
+    [cmp-want : (__tl_dyn-array bool) (__tl_make-array bool n)]
+    [cmp32-got : (__tl_dyn-array bool) (__tl_make-array bool n)]
+    [cmp32-want : (__tl_dyn-array bool) (__tl_make-array bool n)]
+    [cmp16-got : (__tl_dyn-array bool) (__tl_make-array bool n)]
+    [cmp16-want : (__tl_dyn-array bool) (__tl_make-array bool n)]
+    [cmp8-got : (__tl_dyn-array bool) (__tl_make-array bool n)]
+    [cmp8-want : (__tl_dyn-array bool) (__tl_make-array bool n)]
     (begin
       (init-bool flags values n)
       (init-i32 values32 n)

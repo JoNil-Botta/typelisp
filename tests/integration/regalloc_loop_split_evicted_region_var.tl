@@ -1,4 +1,3 @@
-(import stdlib.array)
 (import stdlib.io)
 (import stdlib.string)
 
@@ -136,7 +135,7 @@
   (let
     ;; Runtime-derived so nothing is constant-folded into the copies.
     [pad : i64 (io.arg-count)]
-    [items : (__tl_dyn-array u8) (array.make-array u8 512)]
+    [items : (__tl_dyn-array u8) (__tl_make-array u8 512)]
     [buf : Buf
       (Buf
         (unsafe

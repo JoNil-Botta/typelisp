@@ -29,7 +29,6 @@
 ;#         (if (args.option-present? parsed "verbose") 1 0)]
 ;#       [(args.ErrArgsParsed _) 2])))
 ;# ```
-(import stdlib.array)
 (import stdlib.io)
 (import stdlib.str_cat)
 (import stdlib.string)
@@ -108,14 +107,14 @@
 
 ;: Return an empty option spec list.
 (define (option-spec-empty) : ArgsOptionSpecList
-  (ArgsOptionSpecList (array.make-array ArgsOptionSpec 0) 0))
+  (ArgsOptionSpecList (__tl_make-array ArgsOptionSpec 0) 0))
 
 ;: Prepend `spec` to `rest`, copying `rest` into a right-sized array.
 (define (option-spec-cons [spec : ArgsOptionSpec] [rest : ArgsOptionSpecList]) : ArgsOptionSpecList
   (let
     [len : i64 rest.len]
     [slots : (__tl_dyn-array ArgsOptionSpec)
-      (array.make-array ArgsOptionSpec (+ len 1))]
+      (__tl_make-array ArgsOptionSpec (+ len 1))]
     [index : i64 0]
     (begin
       (set! (array-ref slots 0) spec)
@@ -182,15 +181,14 @@
 
 ;: Return an empty parsed option list.
 (define (option-list-empty) : ArgsOptionList
-  (ArgsOptionList (array.make-array ArgsOption 0) 0))
+  (ArgsOptionList (__tl_make-array ArgsOption 0) 0))
 
 ;: Prepend one parsed option occurrence, copying `rest` into a right-sized
 ;: array.
 (define (option-list-cons [option : ArgsOption] [rest : ArgsOptionList]) : ArgsOptionList
   (let
     [len : i64 rest.len]
-    [slots : (__tl_dyn-array ArgsOption)
-      (array.make-array ArgsOption (+ len 1))]
+    [slots : (__tl_dyn-array ArgsOption) (__tl_make-array ArgsOption (+ len 1))]
     (begin
       (set! (array-ref slots 0) option)
       (option-list-copy! (&mut slots) (& rest.slots) 1 len)
@@ -208,7 +206,7 @@
         unit
         (let
           [bigger : (__tl_dyn-array ArgsOption)
-            (array.make-array
+            (__tl_make-array
               ArgsOption
               (if (< capacity 1)
                 4

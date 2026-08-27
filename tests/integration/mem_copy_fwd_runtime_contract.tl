@@ -21,7 +21,6 @@
 ;# over the same buffer at every source offset, destination offset and length in
 ;# 0..33, which covers non-overlap, exact aliasing, and both overlap directions
 ;# at every alignment, and the two buffers are compared byte for byte.
-(import stdlib.array)
 (import stdlib.runtime)
 
 (define buf-size : i64
@@ -88,9 +87,9 @@
 (define (twin-mismatches) : i64
   (let
     [n : i64 buf-size]
-    [fast : (__tl_dyn-array u8) (array.make-array u8 n)]
-    [ref : (__tl_dyn-array u8) (array.make-array u8 n)]
-    [witness : (__tl_dyn-array u8) (array.make-array u8 n)]
+    [fast : (__tl_dyn-array u8) (__tl_make-array u8 n)]
+    [ref : (__tl_dyn-array u8) (__tl_make-array u8 n)]
+    [witness : (__tl_dyn-array u8) (__tl_make-array u8 n)]
     [bad : i64 0]
     [dst : i64 0]
     (begin
@@ -119,7 +118,7 @@
 (define (helper-checks) : i64
   (let
     [n : i64 buf-size]
-    [items : (__tl_dyn-array u8) (array.make-array u8 n)]
+    [items : (__tl_dyn-array u8) (__tl_make-array u8 n)]
     [bad : i64 0]
     (begin
       ;; (1) copies exactly [1, n-1) and leaves the two edge bytes alone.

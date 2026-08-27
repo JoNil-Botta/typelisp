@@ -2,13 +2,11 @@
 ;; contiguous integer lane width. Each case has a non-full AVX2/AVX-512 tail;
 ;; the leading literals, nested value-producing match, and post-loop scalar
 ;; checks exercise contextual typing and scalar/SIMD equivalence.
-(import stdlib.array)
-
 (define (case-i8) : bool
   (let
     [n : i64 67]
-    [xs : (__tl_dyn-array i8) (array.make-array i8 n)]
-    [out : (__tl_dyn-array i8) (array.make-array i8 n)]
+    [xs : (__tl_dyn-array i8) (__tl_make-array i8 n)]
+    [out : (__tl_dyn-array i8) (__tl_make-array i8 n)]
     [i : i64 0]
     [ok : bool true]
     (begin
@@ -47,8 +45,8 @@
 (define (case-u8) : bool
   (let
     [n : i64 67]
-    [xs : (__tl_dyn-array u8) (array.make-array u8 n)]
-    [out : (__tl_dyn-array u8) (array.make-array u8 n)]
+    [xs : (__tl_dyn-array u8) (__tl_make-array u8 n)]
+    [out : (__tl_dyn-array u8) (__tl_make-array u8 n)]
     [i : i64 0]
     [ok : bool true]
     (begin
@@ -87,8 +85,8 @@
 (define (case-i16) : bool
   (let
     [n : i64 35]
-    [xs : (__tl_dyn-array i16) (array.make-array i16 n)]
-    [out : (__tl_dyn-array i16) (array.make-array i16 n)]
+    [xs : (__tl_dyn-array i16) (__tl_make-array i16 n)]
+    [out : (__tl_dyn-array i16) (__tl_make-array i16 n)]
     [i : i64 0]
     [ok : bool true]
     (begin
@@ -127,8 +125,8 @@
 (define (case-u16) : bool
   (let
     [n : i64 35]
-    [xs : (__tl_dyn-array u16) (array.make-array u16 n)]
-    [out : (__tl_dyn-array u16) (array.make-array u16 n)]
+    [xs : (__tl_dyn-array u16) (__tl_make-array u16 n)]
+    [out : (__tl_dyn-array u16) (__tl_make-array u16 n)]
     [i : i64 0]
     [ok : bool true]
     (begin
@@ -167,8 +165,8 @@
 (define (case-i32) : bool
   (let
     [n : i64 19]
-    [xs : (__tl_dyn-array i32) (array.make-array i32 n)]
-    [out : (__tl_dyn-array i32) (array.make-array i32 n)]
+    [xs : (__tl_dyn-array i32) (__tl_make-array i32 n)]
+    [out : (__tl_dyn-array i32) (__tl_make-array i32 n)]
     [i : i64 0]
     [ok : bool true]
     (begin
@@ -207,8 +205,8 @@
 (define (case-u32) : bool
   (let
     [n : i64 19]
-    [xs : (__tl_dyn-array u32) (array.make-array u32 n)]
-    [out : (__tl_dyn-array u32) (array.make-array u32 n)]
+    [xs : (__tl_dyn-array u32) (__tl_make-array u32 n)]
+    [out : (__tl_dyn-array u32) (__tl_make-array u32 n)]
     [i : i64 0]
     [ok : bool true]
     (begin
@@ -247,8 +245,8 @@
 (define (case-i64) : bool
   (let
     [n : i64 13]
-    [xs : (__tl_dyn-array i64) (array.make-array i64 n)]
-    [out : (__tl_dyn-array i64) (array.make-array i64 n)]
+    [xs : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+    [out : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     [i : i64 0]
     [ok : bool true]
     (begin
@@ -287,8 +285,8 @@
 (define (case-u64) : bool
   (let
     [n : i64 13]
-    [xs : (__tl_dyn-array u64) (array.make-array u64 n)]
-    [out : (__tl_dyn-array u64) (array.make-array u64 n)]
+    [xs : (__tl_dyn-array u64) (__tl_make-array u64 n)]
+    [out : (__tl_dyn-array u64) (__tl_make-array u64 n)]
     [i : i64 0]
     [ok : bool true]
     (begin

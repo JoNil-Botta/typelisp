@@ -1,5 +1,4 @@
 (import stdlib.io)
-(import stdlib.array)
 
 ;; FORCING TEST for W1-frame (dead frame adjust + dead alignment pad for
 ;; boundary-only functions), pinned by scripts/verify-asm-shape-gates.sh:
@@ -109,7 +108,7 @@
   (let
     ;; (io.arg-count) = 1 without args; it blocks constant folding of all three.
     [v : i64 (io.arg-count)]
-    [xs : (__tl_dyn-array i64) (array.make-array i64 4)]
+    [xs : (__tl_dyn-array i64) (__tl_make-array i64 4)]
     [_seed : unit (set! (array-ref xs 3) 11)]
     ;; dfb-sink(1, -4) = -3
     [f : i64 (dfb-forward v)]

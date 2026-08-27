@@ -1628,6 +1628,10 @@
       (tltest-reach-mark-expr-list session exprs names)]
     [(ast.AstExpr.DynArray exprs)
       (tltest-reach-mark-expr-list session exprs names)]
+    [(ast.AstExpr.FixedMakeArray _ len-box)
+      (let
+        [len : ast.AstExpr (ast.ast-node-get len-box)]
+        (tltest-reach-mark-expr session len names))]
     [(ast.AstExpr.MakeArray _ len-box)
       (let
         [len : ast.AstExpr (ast.ast-node-get len-box)]

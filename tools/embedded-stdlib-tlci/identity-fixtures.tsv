@@ -1,8 +1,4 @@
 # identity	declared-params	shape	result	fixture	native-status	fuel	comparison
-stdlib.array/make-array	2	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
-stdlib.array/length	1	fixed	expr	tests/integration/generated_hashmap_global_mutation.tl	ok	default	assembly
-stdlib.array/ref	2	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
-stdlib.array/push!	2	fixed	expr	tests/integration/tlci_identity_public_gaps.tl	ok	default	assembly
 stdlib.clone/synthesize-helpers	1	variadic	decls	tests/integration/clone_deep_copy.tl	ok	default	assembly
 stdlib.core_macros/__tl-project-field	2	fixed	expr	tests/integration/tlci_native_index_folds.tl	ok	default	assembly
 stdlib.core_macros/__tl-project-set-field	3	fixed	expr	tests/integration/tlci_identity_public_gaps.tl	ok	default	assembly

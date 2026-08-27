@@ -1,5 +1,4 @@
 (import stdlib.io)
-(import stdlib.array)
 
 ;; FORCING TEST for T1-6 (a), abort-site half (pinned by
 ;; scripts/verify-asm-shape-gates.sh:check_red_zone_leaf and run end to end by
@@ -77,7 +76,7 @@
   (let
     ;; (io.arg-count) is 1 without arguments and 2 with one.
     [v : i64 (io.arg-count)]
-    [xs : (__tl_dyn-array i64) (array.make-array i64 4)]
+    [xs : (__tl_dyn-array i64) (__tl_make-array i64 4)]
     [_seed : unit (set! (array-ref xs 3) 11)]
     [r : i64 (rzt-probe xs (+ v 2) v (+ v 2))]
     (if (= r 2073)

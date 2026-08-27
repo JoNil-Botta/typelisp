@@ -1,5 +1,3 @@
-(import stdlib.array)
-
 ;; lint-allow: unused-import
 (import stdlib.string)
 
@@ -39,15 +37,15 @@
 
 (define (main) : i64
   (let
-    [ints : (__tl_dyn-array i64) (array.make-array i64 3)]
-    [flags : (__tl_dyn-array bool) (array.make-array bool 2)]
+    [ints : (__tl_dyn-array i64) (__tl_make-array i64 3)]
+    [flags : (__tl_dyn-array bool) (__tl_make-array bool 2)]
     ;; lint-allow: single-element-array-cell
-    [chars : (__tl_dyn-array char) (array.make-array char 1)]
-    [texts : (__tl_dyn-array String) (array.make-array String 2)]
-    [points : (__tl_dyn-array Point) (array.make-array Point 2)]
-    [maybes : (__tl_dyn-array Maybe) (array.make-array Maybe 2)]
-    [bags : (__tl_dyn-array Bag) (array.make-array Bag 2)]
-    [empty-points : (__tl_dyn-array Point) (array.make-array Point 0)]
+    [chars : (__tl_dyn-array char) (__tl_make-array char 1)]
+    [texts : (__tl_dyn-array String) (__tl_make-array String 2)]
+    [points : (__tl_dyn-array Point) (__tl_make-array Point 2)]
+    [maybes : (__tl_dyn-array Maybe) (__tl_make-array Maybe 2)]
+    [bags : (__tl_dyn-array Bag) (__tl_make-array Bag 2)]
+    [empty-points : (__tl_dyn-array Point) (__tl_make-array Point 0)]
     [int-score : i64 (+ (array-length ints) (array-ref ints 2))]
     [flag-score : i64 (score-bool (not (array-ref flags 0)))]
     [char-score : i64 (score-bool (= (array-ref chars 0) (init : char)))]

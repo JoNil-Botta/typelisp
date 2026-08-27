@@ -15,7 +15,6 @@
 ;#
 ;# Usage: `(import stdlib.process)`
 ;#
-(import stdlib.array)
 (import stdlib.string)
 (import stdlib.vector)
 (import (vector.vector String) as svec)
@@ -126,7 +125,7 @@
     (if (< n 0)
       (ProcessStringStep false "" (args-empty))
       (let
-        [slots : (__tl_dyn-array String) (array.make-array String n)]
+        [slots : (__tl_dyn-array String) (__tl_make-array String n)]
         [i : i64 0]
         (begin
           (while (< i n)
@@ -191,8 +190,8 @@
       (ProcessEnvStep false "" "" (env-empty))
       (let
         [tail-n : i64 (- n 1)]
-        [tail-names : (__tl_dyn-array String) (array.make-array String tail-n)]
-        [tail-values : (__tl_dyn-array String) (array.make-array String tail-n)]
+        [tail-names : (__tl_dyn-array String) (__tl_make-array String tail-n)]
+        [tail-values : (__tl_dyn-array String) (__tl_make-array String tail-n)]
         [i : i64 1]
         (begin
           (while (< i n)
@@ -238,7 +237,7 @@
 
 ;: Return an empty argument list.
 (define (args-empty) : ProcessStringList
-  (ProcessStringList (array.make-array String 0) 0))
+  (ProcessStringList (__tl_make-array String 0) 0))
 
 ;: Return the number of argv entries in `args`.
 (define (args-count [args : ProcessStringList]) : i64
@@ -267,7 +266,7 @@
 (define (args-cons [value : String] [rest : ProcessStringList]) : ProcessStringList
   (let
     [n : i64 rest.len]
-    [slots : (__tl_dyn-array String) (array.make-array String (+ n 1))]
+    [slots : (__tl_dyn-array String) (__tl_make-array String (+ n 1))]
     (begin
       (set! (array-ref slots 0) value)
       (args-copy-into (&mut slots) rest 1)
@@ -276,7 +275,7 @@
 ;: Return a one-element argument list backed by an owned string.
 (define (args-single [value : String]) : ProcessStringList
   (let
-    [slots : (__tl_dyn-array String) (array.make-array String 1)]
+    [slots : (__tl_dyn-array String) (__tl_make-array String 1)]
     (begin
       (set! (array-ref slots 0) value)
       (ProcessStringList slots 1))))
@@ -286,7 +285,7 @@
   (let
     [ln : i64 left.len]
     [rn : i64 right.len]
-    [slots : (__tl_dyn-array String) (array.make-array String (+ ln rn))]
+    [slots : (__tl_dyn-array String) (__tl_make-array String (+ ln rn))]
     (begin
       (args-copy-into (&mut slots) left 0)
       (args-copy-into (&mut slots) right ln)
@@ -297,7 +296,7 @@
 (define (args-from-string-vec [args : (& args svec.Vec)]) : ProcessStringList
   (let
     [n : i64 (svec.len args)]
-    [slots : (__tl_dyn-array String) (array.make-array String n)]
+    [slots : (__tl_dyn-array String) (__tl_make-array String n)]
     [i : i64 0]
     (begin
       (while (< i n)
@@ -308,7 +307,7 @@
 
 ;: Return an empty environment override list.
 (define (env-empty) : ProcessEnvList
-  (ProcessEnvList (array.make-array String 0) (array.make-array String 0) 0))
+  (ProcessEnvList (__tl_make-array String 0) (__tl_make-array String 0) 0))
 
 ;: Return the number of env overrides in `env`.
 (define (env-count [env : ProcessEnvList]) : i64
@@ -319,8 +318,8 @@
 (define (env-cons [name : String] [value : String] [rest : ProcessEnvList]) : ProcessEnvList
   (let
     [n : i64 rest.len]
-    [names : (__tl_dyn-array String) (array.make-array String (+ n 1))]
-    [values : (__tl_dyn-array String) (array.make-array String (+ n 1))]
+    [names : (__tl_dyn-array String) (__tl_make-array String (+ n 1))]
+    [values : (__tl_dyn-array String) (__tl_make-array String (+ n 1))]
     (begin
       (set! (array-ref names 0) name)
       (set! (array-ref values 0) value)
@@ -399,8 +398,8 @@
 (define (env-vec-to-list [env : (& env ProcessEnvVec)]) : ProcessEnvList
   (let
     [n : i64 (env-vec-count env)]
-    [names : (__tl_dyn-array String) (array.make-array String n)]
-    [values : (__tl_dyn-array String) (array.make-array String n)]
+    [names : (__tl_dyn-array String) (__tl_make-array String n)]
+    [values : (__tl_dyn-array String) (__tl_make-array String n)]
     (begin
       (env-vec-to-list-fill env (&mut names) (&mut values))
       (ProcessEnvList names values n))))

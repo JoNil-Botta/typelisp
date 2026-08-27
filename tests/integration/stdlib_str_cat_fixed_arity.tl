@@ -1,7 +1,6 @@
 ;; stdlib_str_cat_fixed_arity.tl - compare public fixed-arity concat helpers
 ;; with the backend-local helper shape that #3888 is retiring.
 ;; Exit code: 42
-(import stdlib.array)
 (import stdlib.string)
 (import stdlib.str_cat)
 
@@ -54,7 +53,7 @@
     (if (= total 0)
       ""
       (let
-        [out : (__tl_dyn-array u8) (array.make-array u8 total)]
+        [out : (__tl_dyn-array u8) (__tl_make-array u8 total)]
         [dst : (MutPtr u8)
           (unsafe
             (__tl_array-data out))]

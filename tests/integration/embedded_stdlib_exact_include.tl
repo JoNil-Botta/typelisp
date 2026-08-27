@@ -1,9 +1,9 @@
 ;; Exact embedded fallback must agree for text and binary includes.
 (import stdlib.string)
 
-(include-str embedded-stdlib-text "stdlib/array.tl")
+(include-str embedded-stdlib-text "stdlib/atomic.tl")
 
-(include-bin embedded-stdlib-bytes "stdlib/array.tl")
+(include-bin embedded-stdlib-bytes "stdlib/atomic.tl")
 
 (define (main) : i64
   (let
@@ -19,6 +19,6 @@
               (array-ref embedded-stdlib-bytes index))
             (set! same false))
           (set! index (+ index 1))))
-      (if (and same (= length 1364))
+      (if (and same (= length 3300))
         42
         1))))

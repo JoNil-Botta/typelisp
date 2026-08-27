@@ -1,5 +1,3 @@
-(import stdlib.array)
-
 (define (read-len [items : (& items (__tl_dyn-array i64))]) : i64
   (array-length items))
 
@@ -10,7 +8,7 @@
 
 (define (main) : i64
   (let
-    [items : (__tl_dyn-array i64) (array.make-array i64 1)]
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     (begin
       (set! (array-ref items 0) 40)
       (push-with-len (&mut items) (read-len (& items)))

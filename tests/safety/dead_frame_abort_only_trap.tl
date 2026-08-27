@@ -7,7 +7,6 @@
 ;: alignment it inherits is immaterial -- this fixture is what proves it.
 ;: The five loop-carried values force an EVEN callee-saved push run (the shape
 ;: that used to pay the pad); `probe` is out of range for a length-4 array.
-(import stdlib.array)
 (import stdlib.io)
 
 (define (probe [xs : (__tl_dyn-array i64)] [n : i64] [k : i64]) : i64
@@ -38,5 +37,5 @@
 (define (main) : i64
   (let
     [v : i64 (io.arg-count)]
-    [xs : (__tl_dyn-array i64) (array.make-array i64 4)]
+    [xs : (__tl_dyn-array i64) (__tl_make-array i64 4)]
     (probe xs (+ v 4) (+ v 6))))

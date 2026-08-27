@@ -1,5 +1,3 @@
-(import stdlib.array)
-
 (define (unconstrained-default) : i32
   (let
     [x (+ 1 2)]
@@ -21,7 +19,7 @@
 
 (define (contextual-make-array-len [n : i64]) : i64
   (array-length
-    (array.make-array
+    (__tl_make-array
       i64
       (if (< n 1)
         1

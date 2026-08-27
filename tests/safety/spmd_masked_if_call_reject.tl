@@ -1,6 +1,4 @@
 ;: SPEC SPMD v1 private-call ABI: masked branches reject function-value calls.
-(import stdlib.array)
-
 (define (bump [x : i64]) : i64
   (+ x 1))
 

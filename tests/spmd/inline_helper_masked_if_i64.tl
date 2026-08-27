@@ -1,6 +1,4 @@
 ;; Direct source-known helper calls inside AVX-512 masked SPMD branches.
-(import stdlib.array)
-
 (define (init-xs [xs : (__tl_dyn-array i64)]) : unit
   (begin
     (set! (array-ref xs 0) -3)
@@ -47,8 +45,8 @@
 (define (main) : i64
   (let
     [n : i64 13]
-    [xs : (__tl_dyn-array i64) (array.make-array i64 n)]
-    [out : (__tl_dyn-array i64) (array.make-array i64 n)]
+    [xs : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+    [out : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     (begin
       (init-xs xs)
       (fill-inline xs out n)

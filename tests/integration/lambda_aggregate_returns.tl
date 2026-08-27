@@ -1,5 +1,3 @@
-(import stdlib.array)
-
 ;; lint-allow: unused-import
 (import stdlib.string)
 
@@ -20,7 +18,7 @@
         (BoxI 11))]
     [mk-array : (-> (__tl_dyn-array i64))
       (lambda () : (__tl_dyn-array i64)
-        (array.make-array i64 13))]
+        (__tl_make-array i64 13))]
     [mk-struct : (-> Pair)
       (lambda () : Pair
         (Pair 1 13))]

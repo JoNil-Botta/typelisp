@@ -14,7 +14,6 @@
 (import compiler_object as cobj)
 (import compiler_object_elf)
 (import tlci_core)
-(import stdlib.array)
 (import stdlib.byte_buf_core)
 (import stdlib.hashmap)
 (import (hashmap.hashmap String i64) as tlci_native_string_i64_map)
@@ -737,16 +736,16 @@
     [symbols-index : CompilerTlciNativeSymbolIndex
       (compiler-tlci-native-build-symbol-index image bases)]
     [import-names : (__tl_dyn-array String)
-      (array.make-array String compiler-tlci-native-import-cap)]
+      (__tl_make-array String compiler-tlci-native-import-cap)]
     [import-offsets : (__tl_dyn-array i64)
-      (array.make-array i64 compiler-tlci-native-import-cap)]
+      (__tl_make-array i64 compiler-tlci-native-import-cap)]
     [import-count : (__tl_dyn-array i64) (__tl_make-array 0)]
     [error : (__tl_dyn-array String) (__tl_make-array "")]
     [fixup-cap : i64
       (+
         (compiler-tlci-native-data-fixup-count rodata-records)
         (compiler-tlci-native-data-fixup-count data-records))]
-    [fixup-offsets : (__tl_dyn-array i64) (array.make-array i64 fixup-cap)]
+    [fixup-offsets : (__tl_dyn-array i64) (__tl_make-array i64 fixup-cap)]
     [fixup-count : (__tl_dyn-array i64) (__tl_make-array 0)]
     [builder : byte_buf_core.ByteBufBuilder
       (byte_buf_core.byte-buf-builder-with-capacity bss-base)]
@@ -900,7 +899,7 @@
   (let
     [count : i64 layout.fixup-count]
     [out : (__tl_dyn-array u8)
-      (array.make-array u8 (* count tlci_core.tlci-section-fixup-record-size))]
+      (__tl_make-array u8 (* count tlci_core.tlci-section-fixup-record-size))]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -974,7 +973,7 @@
   [layout : (& layout CompilerTlciNativeLayout)]) : ResultCompilerTlciNativeImports
   (let
     [count : i64 layout.import-count]
-    [names : (__tl_dyn-array String) (array.make-array String count)]
+    [names : (__tl_dyn-array String) (__tl_make-array String count)]
     [index : i64 0]
     [names-len : i64 0]
     [error : String ""]
@@ -995,14 +994,14 @@
               (set! index (+ index 1))))))
       (if (= (string.string-length error) 0)
         (if (= count 0)
-          (ResultCompilerTlciNativeImports.Ok (array.make-array u8 0))
+          (ResultCompilerTlciNativeImports.Ok (__tl_make-array u8 0))
           (let
             [records-end : i64
               (+
                 tlci_core.tlci-section-import-header-size
                 (* count tlci_core.tlci-section-import-record-size))]
             [out : (__tl_dyn-array u8)
-              (array.make-array u8 (+ records-end names-len))]
+              (__tl_make-array u8 (+ records-end names-len))]
             [name-offset : i64 records-end]
             (begin
               (tlci_core.tlci-set-u64! out 0 count)

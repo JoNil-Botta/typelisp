@@ -763,7 +763,7 @@
 ;: compiler-backend-runtime-array-zero-functions), which costs one instruction
 ;: per eight bytes under the deterministic instruction-count gate. The
 ;: byte-at-a-time loop before it was the single largest zeroing cost in the
-;: self-compile (every `array.make-array` zero-fills its backing storage).
+;: self-compile (every `__tl_make-array` zero-fills its backing storage).
 (extern (array-zero [buf : (MutPtr u8)] [byte-count : i64]) : unit (:symbol "tl_array_zero"))
 
 ;: Abort handler for an invalid arena/region mark, exported as `tl_region_abort`.

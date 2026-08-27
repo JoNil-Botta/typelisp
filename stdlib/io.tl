@@ -43,7 +43,6 @@
 ;#       (io.stdout-write bytes))
 ;#     0))
 ;# ```
-(import stdlib.array)
 (import stdlib.byte_buf)
 (import stdlib.comptime)
 (import stdlib.format)
@@ -130,7 +129,7 @@
   (define (io-windows-write [fd : i32] [buf : (Ptr u8)] [count : i32]) : i32
     (let
       [handle : i64 (io-windows-fd-handle fd)]
-      [written : (__tl_dyn-array i32) (array.make-array i32 1)]
+      [written : (__tl_dyn-array i32) (__tl_make-array i32 1)]
       [ok : i32
         (io-win-write-file
           handle
@@ -149,7 +148,7 @@
   (define (io-windows-read [fd : i32] [buf : (MutPtr u8)] [count : i32]) : i32
     (let
       [handle : i64 (io-windows-fd-handle fd)]
-      [nread : (__tl_dyn-array i32) (array.make-array i32 1)]
+      [nread : (__tl_dyn-array i32) (__tl_make-array i32 1)]
       [ok : i32
         (io-win-read-file
           handle
@@ -181,7 +180,7 @@
   (define (io-windows-lseek [fd : i32] [offset : i64] [whence : i32]) : i64
     (let
       [handle : i64 (io-windows-fd-handle fd)]
-      [newpos : (__tl_dyn-array i64) (array.make-array i64 1)]
+      [newpos : (__tl_dyn-array i64) (__tl_make-array i64 1)]
       [ok : i32
         (io-win-set-file-pointer-ex
           handle
@@ -257,7 +256,7 @@
 (define (c-string [text : String]) : (__tl_dyn-array u8)
   (let
     [n : i64 (string-length text)]
-    [buf : (__tl_dyn-array u8) (array.make-array u8 (+ n 1))]
+    [buf : (__tl_dyn-array u8) (__tl_make-array u8 (+ n 1))]
     [i : i64 0]
     (begin
       (while (< i n)
@@ -286,7 +285,7 @@
 (define (copy-c-string [ptr : (Ptr u8)]) : String
   (let
     [n : i64 (c-string-length ptr)]
-    [buf : (__tl_dyn-array u8) (array.make-array u8 n)]
+    [buf : (__tl_dyn-array u8) (__tl_make-array u8 n)]
     [i : i64 0]
     (begin
       (while (< i n)
@@ -595,7 +594,7 @@
 
 ;: A zero-valued BigNum.
 (define (bn-zero) : BigNum
-  (BigNum (array.make-array u64 stdlib.io.ftoa-cap) 0))
+  (BigNum (__tl_make-array u64 stdlib.io.ftoa-cap) 0))
 
 ;: BigNum holding the u64 value x.
 (define (bn-from-u64 [x : u64]) : BigNum
@@ -655,7 +654,7 @@
 ;: Sum of BigNums a and b.
 (define (bn-add [a : BigNum] [b : BigNum]) : BigNum
   (let
-    [r : (__tl_dyn-array u64) (array.make-array u64 stdlib.io.ftoa-cap)]
+    [r : (__tl_dyn-array u64) (__tl_make-array u64 stdlib.io.ftoa-cap)]
     [la : i64 a.len]
     [lb : i64 b.len]
     [n : i64
@@ -690,7 +689,7 @@
 ;: Product of BigNum a and a value m that fits in 32 bits.
 (define (bn-mul-u32 [a : BigNum] [m : u64]) : BigNum
   (let
-    [r : (__tl_dyn-array u64) (array.make-array u64 stdlib.io.ftoa-cap)]
+    [r : (__tl_dyn-array u64) (__tl_make-array u64 stdlib.io.ftoa-cap)]
     [la : i64 a.len]
     [carry : u64 (cast 0 : u64)]
     [i : i64 0]
@@ -716,7 +715,7 @@
     (let
       [limb-shift : i64 (/ n 32)]
       [bit-shift : i64 (% n 32)]
-      [r : (__tl_dyn-array u64) (array.make-array u64 stdlib.io.ftoa-cap)]
+      [r : (__tl_dyn-array u64) (__tl_make-array u64 stdlib.io.ftoa-cap)]
       [la : i64 a.len]
       [carry : u64 (cast 0 : u64)]
       [i : i64 0]
@@ -1145,7 +1144,7 @@
           (panic "tl: read-file failed\n")
           unit)
         (let
-          [buf : (__tl_dyn-array u8) (array.make-array u8 end)]
+          [buf : (__tl_dyn-array u8) (__tl_make-array u8 end)]
           [offset : i64 0]
           [done : bool false]
           (begin
@@ -1178,7 +1177,7 @@
     (if (< fd 0)
       (stdlib.io.last-error-code)
       (let
-        [probe : (__tl_dyn-array u8) (array.make-array u8 1)]
+        [probe : (__tl_dyn-array u8) (__tl_make-array u8 1)]
         [read-count : i64
           (stdlib.io.platform-read fd (stdlib.io.array-ptr probe) 1)]
         [status : i64
@@ -1338,7 +1337,7 @@
         0)]
     [else
       (let
-        [buf : (__tl_dyn-array u8) (array.make-array u8 count)]
+        [buf : (__tl_dyn-array u8) (__tl_make-array u8 count)]
         [fd : i64 (io_core.io-file-i64-ref (io_core.io-file-fds-ptr) raw)]
         [read-count : i64
           (stdlib.io.platform-read fd (stdlib.io.array-ptr buf) count)]
@@ -1397,7 +1396,7 @@
     (if (= count 0)
       (byte_buf.new)
       (let
-        [buf : (__tl_dyn-array u8) (array.make-array u8 count)]
+        [buf : (__tl_dyn-array u8) (__tl_make-array u8 count)]
         [offset : i64 0]
         [done : bool false]
         (begin
@@ -1426,7 +1425,7 @@
 (define (read-stdin-line) : byte_buf.ByteBuf
   (let
     [out : byte_buf.ByteBuf (byte_buf.new)]
-    [one : (__tl_dyn-array u8) (array.make-array u8 1)]
+    [one : (__tl_dyn-array u8) (__tl_make-array u8 1)]
     [done : bool false]
     (begin
       (while (not done)

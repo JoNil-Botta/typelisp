@@ -1,6 +1,4 @@
 ;: A live mutable borrow of lifetime-tagged iterator state protects its fields.
-(import stdlib.array)
-
 (defstruct Iter
   (:lifetimes source)
   (slots (& source (__tl_dyn-array i64)))
@@ -25,7 +23,7 @@
 
 (define (main) : unit
   (let
-    [items : (__tl_dyn-array i64) (array.make-array i64 1)]
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     [iter : (Iter items) (Iter (& items) 1 0)]
     [borrowed : (&mut iter (Iter items)) (hold (&mut iter))]
     (begin

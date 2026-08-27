@@ -1,4 +1,3 @@
-(import stdlib.array)
 (import stdlib.arena)
 (import stdlib.sync)
 (import (sync.channel i64) as channel_i64)
@@ -19,7 +18,7 @@
 (define (sync-api-empty-i64-channel) : channel_i64.Channel
   (let
     [raw : (__tl_dyn-array i64)
-      (array.make-array i64 (channel_i64.raw-field-count))]
+      (__tl_make-array i64 (channel_i64.raw-field-count))]
     (channel_i64.load-raw raw 0)))
 
 (define (sync-api-duplicate-channel-score
@@ -31,7 +30,7 @@
 (define (sync-api-run-channel [channel : channel_i64.Channel]) : i64
   (let
     [packed : (__tl_dyn-array i64)
-      (array.make-array i64 (channel_i64.raw-field-count))]
+      (__tl_make-array i64 (channel_i64.raw-field-count))]
     (begin
       (channel_i64.store-raw! channel packed 0)
       (let
@@ -62,7 +61,7 @@
 (define (sync-api-run-pair-channel [channel : sync.ChannelI64PairChannel]) : i64
   (let
     [packed : (__tl_dyn-array i64)
-      (array.make-array i64 sync.channel-i64-pair-raw-field-count)]
+      (__tl_make-array i64 sync.channel-i64-pair-raw-field-count)]
     (begin
       (sync.channel-i64-pair-store-raw! channel packed 0)
       (let
@@ -96,7 +95,7 @@
   (let
     [owner : arena.Arena (arena.make-atomic)]
     [packed : (__tl_dyn-array i64)
-      (array.make-array i64 sync.channel-string-raw-field-count)]
+      (__tl_make-array i64 sync.channel-string-raw-field-count)]
     (begin
       (sync.channel-string-store-raw! channel packed 0)
       (let
@@ -136,7 +135,7 @@
 (define (sync-api-run-mutex [mutex : mutex_i64.Mutex]) : i64
   (let
     [packed : (__tl_dyn-array i64)
-      (array.make-array i64 (mutex_i64.raw-field-count))]
+      (__tl_make-array i64 (mutex_i64.raw-field-count))]
     (begin
       (mutex_i64.store-raw! mutex packed 0)
       (let

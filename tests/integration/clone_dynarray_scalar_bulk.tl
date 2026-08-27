@@ -1,4 +1,3 @@
-(import stdlib.array)
 (import stdlib.arena)
 (import stdlib.string)
 
@@ -8,7 +7,7 @@
 
 (define (make-i64-items) : (__tl_dyn-array i64)
   (let
-    [items : (__tl_dyn-array i64) (array.make-array i64 64)]
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 64)]
     [i : i64 0]
     (begin
       (while (< i 64)
@@ -63,7 +62,7 @@
       (unsafe
         (arena.set! scratch))
       (let
-        [items : (__tl_dyn-array String) (array.make-array String 2)]
+        [items : (__tl_dyn-array String) (__tl_make-array String 2)]
         (begin
           (set! (array-ref items 0) (string.append "s" "0"))
           (set! (array-ref items 1) (string.append "s" "1"))

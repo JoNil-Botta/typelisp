@@ -37708,6 +37708,7 @@
   [expected-len : i64]) : ResultTcType
   (if (= (tc-expr-list-len (tc-global-shared-view exprs)) expected-len)
     (match (tc-ensure-cleanup-resource-not-stored-list
+      (tc-global-shared-view ctx)
       (tc-global-shared-view env)
       (tc-global-shared-view exprs))
       [(ResultTcUnit.Ok)
@@ -37741,7 +37742,8 @@
         (tc-global-shared-view ctx)
         (tc-global-shared-view elem-ty))]
     (match (tc-ensure-cleanup-resource-not-stored-list
-      env
+      (tc-global-shared-view ctx)
+      (tc-global-shared-view env)
       (tc-global-shared-view exprs))
       [(ResultTcUnit.Ok)
         (match (tc-dyn-array-literal-element-supported
@@ -37767,7 +37769,8 @@
   [env : TcTypeEnv]
   [exprs : ast.AstExprList]) : ResultTcType
   (match (tc-ensure-cleanup-resource-not-stored-list
-    env
+    (tc-global-shared-view ctx)
+    (tc-global-shared-view env)
     (tc-global-shared-view exprs))
     [(ResultTcUnit.Ok)
       (if (ast.ast-expr-list-empty? (& exprs))
@@ -37932,7 +37935,8 @@
     (tc-expr-list-len (tc-global-shared-view exprs))
     (tc-type-list-len (tc-global-shared-view expected-elems)))
     (match (tc-ensure-cleanup-resource-not-stored-list
-      env
+      (tc-global-shared-view ctx)
+      (tc-global-shared-view env)
       (tc-global-shared-view exprs))
       [(ResultTcUnit.Ok)
         (match (tc-check-tuple-elements-with-expected
@@ -38386,7 +38390,8 @@
               (tc-context-expr-get (tc-global-shared-view ctx) inner-box)]
             [want : ast.AstType (ast.ty-node-get inner-ty)]
             (match (tc-ensure-cleanup-resource-not-stored-expr
-              env
+              (tc-global-shared-view ctx)
+              (tc-global-shared-view env)
               (tc-global-shared-view inner))
               [(ResultTcUnit.Ok)
                 (match (tc-expr-with-expected-or-actual
@@ -44457,6 +44462,7 @@
                               (match (tc-global-shared-view constructor-target)
                                 [(ast.AstMaybeType.Some target)
                                   (match (tc-ensure-cleanup-resource-not-stored-expr
+                                    (tc-global-shared-view ctx)
                                     env
                                     effective-arg)
                                     [(ResultTcUnit.Ok)
@@ -48914,7 +48920,10 @@
                 init-box
                 expected-init-ty)
                 [(ResultTcType.Ok init-ty)
-                  (match (tc-ensure-cleanup-resource-not-transferred env init)
+                  (match (tc-ensure-cleanup-resource-not-transferred
+                    (tc-global-shared-view ctx)
+                    env
+                    init)
                     [(ResultTcUnit.Ok)
                       (match (tc-resource-cleanup-ok
                         (tc-global-shared-view ctx)
@@ -57165,23 +57174,34 @@
     (not (tc-string-list-contains bound name))))
 
 (define (tc-expr-list-result-uses-cleanup-owner?
+  [expr-bases : i64]
   [exprs : ast.AstExprList]
   [owners : TcStringList]
   [bound : TcStringList]) : bool
   (if (ast.ast-expr-list-empty? (& exprs))
     false
     (tc-expr-result-uses-cleanup-owner?
-      (ast.ast-node-get (ast.ast-expr-list-get (& exprs) (- exprs.len 1) 0))
+      expr-bases
+      (ast.ast-expr-segment-bases-get
+        expr-bases
+        (ast.ast-expr-list-get (& exprs) (- exprs.len 1) 0))
       owners
       bound)))
 
 (define (tc-expr-list-any-result-uses-cleanup-owner?
+  [expr-bases : i64]
   [exprs : ast.AstExprList]
   [owners : TcStringList]
   [bound : TcStringList]) : bool
-  (tc-expr-list-any-result-uses-cleanup-owner-at? (& exprs) 0 owners bound))
+  (tc-expr-list-any-result-uses-cleanup-owner-at?
+    expr-bases
+    (& exprs)
+    0
+    owners
+    bound))
 
 (define (tc-expr-list-any-result-uses-cleanup-owner-at?
+  [expr-bases : i64]
   [exprs : (& exprs ast.AstExprList)]
   [index : i64]
   [owners : TcStringList]
@@ -57190,22 +57210,33 @@
     false
     (or
       (tc-expr-result-uses-cleanup-owner?
-        (ast.ast-node-get (ast.ast-expr-list-get exprs index 0))
+        expr-bases
+        (ast.ast-expr-segment-bases-get
+          expr-bases
+          (ast.ast-expr-list-get exprs index 0))
         (tc-global-shared-view owners)
         (tc-global-shared-view bound))
       (tc-expr-list-any-result-uses-cleanup-owner-at?
+        expr-bases
         exprs
         (+ index 1)
         owners
         bound))))
 
 (define (tc-match-arms-result-use-cleanup-owner?
+  [expr-bases : i64]
   [arms : ast.AstMatchArmList]
   [owners : TcStringList]
   [bound : TcStringList]) : bool
-  (tc-match-arms-result-use-cleanup-owner-at? (& arms) owners bound 0))
+  (tc-match-arms-result-use-cleanup-owner-at?
+    expr-bases
+    (& arms)
+    owners
+    bound
+    0))
 
 (define (tc-match-arms-result-use-cleanup-owner-at?
+  [expr-bases : i64]
   [arms : (& arms ast.AstMatchArmList)]
   [owners : TcStringList]
   [bound : TcStringList]
@@ -57215,62 +57246,79 @@
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
       [(ast.AstMatchArm.Arm pattern body-box)
         (let
-          [body : ast.AstExpr (ast.ast-node-get body-box)]
+          [body : ast.AstExpr
+            (ast.ast-expr-segment-bases-get expr-bases body-box)]
           (or
             (tc-expr-result-uses-cleanup-owner?
+              expr-bases
               body
               (tc-global-shared-view owners)
               (tc-pattern-add-bound-names pattern (tc-global-shared-view bound)))
             (tc-match-arms-result-use-cleanup-owner-at?
+              expr-bases
               arms
               owners
               bound
               (+ index 1))))])))
 
 (define (tc-expr-result-uses-cleanup-owner?
+  [expr-bases : i64]
   [expr : ast.AstExpr]
   [owners : TcStringList]
   [bound : TcStringList]) : bool
   (match expr
     [(ast.AstExpr.Spanned inner-box _)
       (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
-        (tc-expr-result-uses-cleanup-owner? inner owners bound))]
+        [inner : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-result-uses-cleanup-owner? expr-bases inner owners bound))]
     [(ast.AstExpr.MacroExpansion inner-box _ _)
       (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
-        (tc-expr-result-uses-cleanup-owner? inner owners bound))]
+        [inner : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-result-uses-cleanup-owner? expr-bases inner owners bound))]
     [(ast.AstExpr.Var name)
       (tc-name-is-free-cleanup-owner? owners (tc-env-key-name-text name) bound)]
     [(ast.AstExpr.If _ then-branch-box else-branch-box)
       (let
-        [then-branch : ast.AstExpr (ast.ast-node-get then-branch-box)]
-        [else-branch : ast.AstExpr (ast.ast-node-get else-branch-box)]
+        [then-branch : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases then-branch-box)]
+        [else-branch : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases else-branch-box)]
         (or
           (tc-expr-result-uses-cleanup-owner?
+            expr-bases
             then-branch
             (tc-global-shared-view owners)
             (tc-global-shared-view bound))
-          (tc-expr-result-uses-cleanup-owner? else-branch owners bound)))]
+          (tc-expr-result-uses-cleanup-owner?
+            expr-bases
+            else-branch
+            owners
+            bound)))]
     [(ast.AstExpr.Let let-box)
       (match (__tl-box-place let-box)
         [(ast.AstLet.Let bindings body-box)
           (let
-            [body : ast.AstExpr (ast.ast-node-get body-box)]
+            [body : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases body-box)]
             (tc-expr-result-uses-cleanup-owner?
+              expr-bases
               body
               owners
               (tc-let-binding-list-add-bound-names bindings bound)))])]
     [(ast.AstExpr.Match match-box)
       (match (__tl-box-place match-box)
         [(ast.AstMatch.Match _ arms)
-          (tc-match-arms-result-use-cleanup-owner? arms owners bound)])]
+          (tc-match-arms-result-use-cleanup-owner? expr-bases arms owners bound)])]
     [(ast.AstExpr.Foreach fe-box)
       (match (__tl-box-place fe-box)
         [(ast.AstForeach.Foreach index _ _ _ body-box)
           (let
-            [body : ast.AstExpr (ast.ast-node-get body-box)]
+            [body : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases body-box)]
             (tc-expr-result-uses-cleanup-owner?
+              expr-bases
               body
               owners
               (tc-string-list-add bound (tc-env-key-name-text index))))])]
@@ -57278,8 +57326,10 @@
       (match (__tl-box-place reduce-box)
         [(ast.AstSpmdReduce.Reduce _ index _ _ _ _ value-box)
           (let
-            [value : ast.AstExpr (ast.ast-node-get value-box)]
+            [value : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases value-box)]
             (tc-expr-result-uses-cleanup-owner?
+              expr-bases
               value
               owners
               (tc-string-list-add bound (tc-env-key-name-text index))))])]
@@ -57287,8 +57337,10 @@
       (match (__tl-box-place scan-box)
         [(ast.AstSpmdScan.Scan _ index _ _ _ prefix _ _ value-box body-box)
           (let
-            [value : ast.AstExpr (ast.ast-node-get value-box)]
-            [body : ast.AstExpr (ast.ast-node-get body-box)]
+            [value : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases value-box)]
+            [body : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases body-box)]
             [value-bound : TcStringList
               (tc-string-list-add bound (tc-env-key-name-text index))]
             [body-bound : TcStringList
@@ -57297,72 +57349,90 @@
                 (tc-env-key-name-text prefix))]
             (or
               (tc-expr-result-uses-cleanup-owner?
+                expr-bases
                 value
                 (tc-global-shared-view owners)
                 (tc-global-shared-view value-bound))
-              (tc-expr-result-uses-cleanup-owner? body owners body-bound)))])]
+              (tc-expr-result-uses-cleanup-owner?
+                expr-bases
+                body
+                owners
+                body-bound)))])]
     [(ast.AstExpr.SpmdBroadcast value-box _)
       (let
-        [value : ast.AstExpr (ast.ast-node-get value-box)]
-        (tc-expr-result-uses-cleanup-owner? value owners bound))]
+        [value : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases value-box)]
+        (tc-expr-result-uses-cleanup-owner? expr-bases value owners bound))]
     [(ast.AstExpr.SpmdShuffle value-box _)
       (let
-        [value : ast.AstExpr (ast.ast-node-get value-box)]
-        (tc-expr-result-uses-cleanup-owner? value owners bound))]
+        [value : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases value-box)]
+        (tc-expr-result-uses-cleanup-owner? expr-bases value owners bound))]
     [(ast.AstExpr.Begin exprs)
-      (tc-expr-list-result-uses-cleanup-owner? exprs owners bound)]
+      (tc-expr-list-result-uses-cleanup-owner? expr-bases exprs owners bound)]
     [(ast.AstExpr.Unsafe exprs)
-      (tc-expr-list-result-uses-cleanup-owner? exprs owners bound)]
+      (tc-expr-list-result-uses-cleanup-owner? expr-bases exprs owners bound)]
     [(ast.AstExpr.Ann inner-box _)
       (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
-        (tc-expr-result-uses-cleanup-owner? inner owners bound))]
+        [inner : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-result-uses-cleanup-owner? expr-bases inner owners bound))]
     [(ast.AstExpr.Cast inner-box _)
       (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
-        (tc-expr-result-uses-cleanup-owner? inner owners bound))]
+        [inner : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-result-uses-cleanup-owner? expr-bases inner owners bound))]
     [(ast.AstExpr.Comptime inner-box)
       (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
-        (tc-expr-result-uses-cleanup-owner? inner owners bound))]
+        [inner : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-result-uses-cleanup-owner? expr-bases inner owners bound))]
     [(ast.AstExpr.Try inner-box)
       (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
-        (tc-expr-result-uses-cleanup-owner? inner owners bound))]
+        [inner : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-result-uses-cleanup-owner? expr-bases inner owners bound))]
     [(ast.AstExpr.Return inner-box)
       (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
-        (tc-expr-result-uses-cleanup-owner? inner owners bound))]
+        [inner : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-result-uses-cleanup-owner? expr-bases inner owners bound))]
     [(ast.AstExpr.BoxGet inner-box)
       (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
-        (tc-expr-result-uses-cleanup-owner? inner owners bound))]
+        [inner : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-result-uses-cleanup-owner? expr-bases inner owners bound))]
     [(ast.AstExpr.BoxTake inner-box)
       (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
-        (tc-expr-result-uses-cleanup-owner? inner owners bound))]
+        [inner : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-expr-result-uses-cleanup-owner? expr-bases inner owners bound))]
     [(ast.AstExpr.BoxSet inner-box value-box)
       (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
-        [value : ast.AstExpr (ast.ast-node-get value-box)]
+        [inner : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
+        [value : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases value-box)]
         (or
           (tc-expr-result-uses-cleanup-owner?
+            expr-bases
             inner
             (tc-global-shared-view owners)
             (tc-global-shared-view bound))
-          (tc-expr-result-uses-cleanup-owner? value owners bound)))]
+          (tc-expr-result-uses-cleanup-owner? expr-bases value owners bound)))]
     [(ast.AstExpr.WithRegion _ body)
-      (tc-expr-list-result-uses-cleanup-owner? body owners bound)]
+      (tc-expr-list-result-uses-cleanup-owner? expr-bases body owners bound)]
     [(ast.AstExpr.WithEscape _ body)
-      (tc-expr-list-result-uses-cleanup-owner? body owners bound)]
+      (tc-expr-list-result-uses-cleanup-owner? expr-bases body owners bound)]
     [(ast.AstExpr.WithScratch body)
-      (tc-expr-list-result-uses-cleanup-owner? body owners bound)]
+      (tc-expr-list-result-uses-cleanup-owner? expr-bases body owners bound)]
     [(ast.AstExpr.InArena _ body)
-      (tc-expr-list-result-uses-cleanup-owner? body owners bound)]
+      (tc-expr-list-result-uses-cleanup-owner? expr-bases body owners bound)]
     [(ast.AstExpr.WithResource wr-box)
       (match (__tl-box-place wr-box)
         [(ast.AstWithResource.WithResource bindings body)
           (tc-expr-list-result-uses-cleanup-owner?
+            expr-bases
             body
             owners
             (tc-resource-binding-list-add-bound-names bindings bound))])]
@@ -57373,15 +57443,22 @@
 ;; of `owners`. With an empty owner list the answer is false for every
 ;; expression, so the recursive expression walk is pure overhead and is skipped.
 (define (tc-expr-result-uses-active-cleanup-owner?
+  [ctx : TcContext]
   [env : TcTypeEnv]
   [expr : ast.AstExpr]) : bool
   (let
     [owners : TcStringList (tc-active-cleanup-owners env)]
     (match (tc-global-shared-view owners)
       [(TcStringList.Nil) false]
-      [_ (tc-expr-result-uses-cleanup-owner? expr owners TcStringList.Nil)])))
+      [_
+        (tc-expr-result-uses-cleanup-owner?
+          (tc-context-expr-bases ctx)
+          expr
+          owners
+          TcStringList.Nil)])))
 
 (define (tc-expr-list-any-result-uses-active-cleanup-owner?
+  [ctx : TcContext]
   [env : TcTypeEnv]
   [exprs : ast.AstExprList]) : bool
   (let
@@ -57390,6 +57467,7 @@
       [(TcStringList.Nil) false]
       [_
         (tc-expr-list-any-result-uses-cleanup-owner?
+          (tc-context-expr-bases ctx)
           exprs
           owners
           TcStringList.Nil)])))
@@ -57400,43 +57478,119 @@
   [expr : ast.AstExpr]
   [ty : ast.AstType]) : ResultTcUnit
   (if (or
-    (tc-expr-result-uses-active-cleanup-owner? env expr)
+    (tc-expr-result-uses-active-cleanup-owner?
+      (tc-global-shared-view ctx)
+      env
+      expr)
     (tc-cleanup-owning-aggregate-type? ctx ty))
     (ResultTcUnit.Err
       "typecheck: ordinary let cannot own cleanup-required resource; use with")
     ResultTcUnit.Ok))
 
 (define (tc-ensure-cleanup-resource-not-transferred
+  [ctx : TcContext]
   [env : TcTypeEnv]
   [expr : ast.AstExpr]) : ResultTcUnit
-  (if (tc-expr-result-uses-active-cleanup-owner? env expr)
+  (if (tc-expr-result-uses-active-cleanup-owner? ctx env expr)
     (ResultTcUnit.Err
       "typecheck: cleanup-required resource already has a cleanup owner")
     ResultTcUnit.Ok))
 
 (define (tc-ensure-cleanup-resource-not-stored-expr
+  [ctx : TcContext]
   [env : TcTypeEnv]
   [expr : ast.AstExpr]) : ResultTcUnit
-  (if (tc-expr-result-uses-active-cleanup-owner? env expr)
+  (if (tc-expr-result-uses-active-cleanup-owner? ctx env expr)
     (ResultTcUnit.Err
       "typecheck: cannot store cleanup-required resource in ordinary aggregate")
     ResultTcUnit.Ok))
 
 (define (tc-ensure-cleanup-resource-not-stored-list
+  [ctx : TcContext]
   [env : TcTypeEnv]
   [exprs : ast.AstExprList]) : ResultTcUnit
-  (if (tc-expr-list-any-result-uses-active-cleanup-owner? env exprs)
+  (if (tc-expr-list-any-result-uses-active-cleanup-owner? ctx env exprs)
     (ResultTcUnit.Err
       "typecheck: cannot store cleanup-required resource in ordinary aggregate")
     ResultTcUnit.Ok))
 
 (define (tc-ensure-cleanup-resource-not-assigned
+  [ctx : TcContext]
   [env : TcTypeEnv]
   [expr : ast.AstExpr]) : ResultTcUnit
-  (if (tc-expr-result-uses-active-cleanup-owner? env expr)
+  (if (tc-expr-result-uses-active-cleanup-owner? ctx env expr)
     (ResultTcUnit.Err
       "typecheck: cannot store cleanup-required resource in longer-lived binding")
     ResultTcUnit.Ok))
+
+(test
+  tc-cleanup-owner-result-walk-pool-isolation
+  (let
+    [installed : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-capture-active)]
+    [pools-a : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [pools-b : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [owner-id : i64 (ci.intern "cleanup-owner/pool-a")]
+    [decoy-id : i64 (ci.intern "cleanup-owner/pool-b-decoy")]
+    [leaf-a : i64
+      (ast.ast-node-pool-context-expr-push
+        (tc-global-shared-view pools-a)
+        (ast.AstExpr.Var owner-id))]
+    [leaf-b : i64
+      (ast.ast-node-pool-context-expr-push
+        (tc-global-shared-view pools-b)
+        (ast.AstExpr.Var decoy-id))]
+    [root : ast.AstExpr
+      (ast.AstExpr.Spanned leaf-a (ast.ast-source-span 1 1 1 2))]
+    [ctx-a : TcContext
+      (tc-context-new
+        (ast.ast-program (ast.ast-decl-list-new))
+        (csym.compiler-symbols-empty)
+        (csym.compiler-registries-empty)
+        ""
+        cbi.compiler-builtin-id-fix-empty
+        (tc-global-shared-view pools-a))]
+    [env : TcTypeEnv
+      (tc-bind-id
+        (tc-bind-cleanup-owner (tc-empty-env) owner-id)
+        owner-id
+        (ast.AstType.String))]
+    [owners : TcStringList
+      (tc-string-list-add TcStringList.Nil (ci.intern-str owner-id))]
+    [_install-decoy : unit
+      (ast.ast-node-pool-context-install! (tc-global-shared-view pools-b))]
+    [owner-found? : bool
+      (tc-expr-result-uses-active-cleanup-owner?
+        ctx-a
+        env
+        (tc-global-shared-view root))]
+    [decoy-differs? : bool
+      (not
+        (tc-expr-result-uses-cleanup-owner?
+          (ast.ast-node-pool-context-expr-segment-bases (& pools-b))
+          root
+          owners
+          TcStringList.Nil))]
+    [decoy-still-installed? : bool
+      (ast.ast-node-pool-context-expr-installed?
+        (tc-global-shared-view pools-b))]
+    [ok? : bool
+      (and
+        (= leaf-a leaf-b)
+        owner-found?
+        decoy-differs?
+        decoy-still-installed?
+        (=
+          (ast.ast-node-pool-context-expr-len (tc-global-shared-view pools-a))
+          1)
+        (= (ast.ast-node-pool-context-expr-len pools-b) 1))]
+    (begin
+      (ast.ast-node-pool-context-install! installed)
+      (if ok?
+        unit
+        (io.panic "typecheck: cleanup-owner result walk pool isolation failed")))))
 
 (define (tc-type-env-scoped-carrier-check-lambda-region-captures-scan
   [expr-bases : i64]
@@ -60784,7 +60938,7 @@
   (match (tc-current-return-type env)
     [(ResultTcType.Ok return-ty)
       (match (tc-expr-with-expected-or-actual
-        ctx
+        (tc-global-shared-view ctx)
         env
         (tc-global-shared-view value)
         (tc-global-shared-view return-ty))
@@ -60794,7 +60948,7 @@
             return-ty
             "typecheck: return type mismatch")
             [(ResultTcUnit.Ok)
-              (if (tc-expr-result-uses-active-cleanup-owner? env value)
+              (if (tc-expr-result-uses-active-cleanup-owner? ctx env value)
                 (ResultTcType.Err
                   "typecheck: cleanup-required resource would escape with scope")
                 (ResultTcType.Ok (ast.AstType.Never)))]
@@ -65939,7 +66093,8 @@
 
 (define (tc-box-expr [ctx : TcContext] [env : TcTypeEnv] [inner : ast.AstExpr]) : ResultTcType
   (match (tc-ensure-cleanup-resource-not-stored-expr
-    env
+    (tc-global-shared-view ctx)
+    (tc-global-shared-view env)
     (tc-global-shared-view inner))
     [(ResultTcUnit.Ok)
       (match (tc-expr (tc-global-shared-view ctx) env inner)
@@ -65961,7 +66116,8 @@
       (let
         [expected-inner-ty : ast.AstType (ast.ty-node-get expected-inner)]
         (match (tc-ensure-cleanup-resource-not-stored-expr
-          env
+          (tc-global-shared-view ctx)
+          (tc-global-shared-view env)
           (tc-global-shared-view inner))
           [(ResultTcUnit.Ok)
             (match (tc-expr-with-expected-or-actual
@@ -66122,6 +66278,7 @@
                     "typecheck: box assignment type mismatch")
                     [(ResultTcUnit.Ok)
                       (match (tc-ensure-cleanup-resource-not-stored-expr
+                        (tc-global-shared-view ctx)
                         env
                         (tc-global-shared-view value))
                         [(ResultTcUnit.Ok)
@@ -67007,9 +67164,13 @@
     env
     (tc-global-shared-view bindings))
     [(ResultTcEnv.Ok body-env)
-      (match (tc-begin-list ctx body-env (tc-global-shared-view body))
+      (match (tc-begin-list
+        (tc-global-shared-view ctx)
+        body-env
+        (tc-global-shared-view body))
         [(ResultTcType.Ok body-ty)
           (if (tc-expr-list-result-uses-cleanup-owner?
+            (tc-context-expr-bases ctx)
             body
             (tc-resource-binding-list-add-bound-names bindings TcStringList.Nil)
             TcStringList.Nil)
@@ -67031,12 +67192,13 @@
     (tc-global-shared-view bindings))
     [(ResultTcEnv.Ok body-env)
       (match (tc-begin-list-with-expected
-        ctx
+        (tc-global-shared-view ctx)
         body-env
         (tc-global-shared-view body)
         expected)
         [(ResultTcType.Ok body-ty)
           (if (tc-expr-list-result-uses-cleanup-owner?
+            (tc-context-expr-bases ctx)
             body
             (tc-resource-binding-list-add-bound-names bindings TcStringList.Nil)
             TcStringList.Nil)
@@ -67667,6 +67829,7 @@
                       "typecheck: replace! replacement type mismatch")
                       [(ResultTcUnit.Ok)
                         (match (tc-ensure-cleanup-resource-not-stored-expr
+                          (tc-global-shared-view ctx)
                           (tc-global-shared-view env)
                           replacement)
                           [(ResultTcUnit.Ok)
@@ -67735,7 +67898,8 @@
         mismatch-message)
         [(ResultTcUnit.Ok)
           (match (tc-ensure-cleanup-resource-not-stored-expr
-            env
+            (tc-global-shared-view ctx)
+            (tc-global-shared-view env)
             (tc-global-shared-view value))
             [(ResultTcUnit.Ok)
               (match (tc-ensure-region-value-can-flow-into
@@ -67849,6 +68013,7 @@
                       "typecheck: struct field assignment type mismatch"))
                     [(ResultTcUnit.Ok)
                       (match (tc-ensure-cleanup-resource-not-stored-expr
+                        (tc-global-shared-view ctx)
                         env
                         (tc-global-shared-view value))
                         [(ResultTcUnit.Ok)
@@ -68020,13 +68185,13 @@
           (tc-global-shared-view var-ty))
           [(ResultTcType.Ok value-ty)
             (match (tc-expect-in-context
-              ctx
+              (tc-global-shared-view ctx)
               env
               (tc-global-shared-view value-ty)
               (tc-global-shared-view var-ty)
               "typecheck: assignment type mismatch")
               [(ResultTcUnit.Ok)
-                (match (tc-ensure-cleanup-resource-not-assigned env value)
+                (match (tc-ensure-cleanup-resource-not-assigned ctx env value)
                   [(ResultTcUnit.Ok)
                     (match (tc-ensure-region-value-can-flow-into
                       env
@@ -68389,6 +68554,7 @@
             (tc-lambda-expr ctx env params maybe-ret body-box body))])]
     [(ast.AstExpr.Tuple exprs)
       (match (tc-ensure-cleanup-resource-not-stored-list
+        (tc-global-shared-view ctx)
         (tc-global-shared-view env)
         (tc-global-shared-view exprs))
         [(ResultTcUnit.Ok)
@@ -68424,6 +68590,7 @@
         [(ResultTcType.Err message) (ResultTcType.Err message)])]
     [(ast.AstExpr.Array exprs)
       (match (tc-ensure-cleanup-resource-not-stored-list
+        (tc-global-shared-view ctx)
         (tc-global-shared-view env)
         (tc-global-shared-view exprs))
         [(ResultTcUnit.Ok)

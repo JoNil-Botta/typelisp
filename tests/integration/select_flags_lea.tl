@@ -1,5 +1,4 @@
 (import stdlib.io)
-(import stdlib.array)
 
 ;; FORCING TEST for T2-4 (SS-P5 / VG-P-B), pinned by
 ;; scripts/verify-asm-shape-gates.sh:check_select_flags_lea. Two rules:
@@ -128,8 +127,8 @@
   (let
     ;; (io.arg-count) = 1 without args; it blocks constant folding.
     [v : i64 (io.arg-count)]
-    [xs : (__tl_dyn-array i64) (array.make-array i64 4)]
-    [us : (__tl_dyn-array u64) (array.make-array u64 4)]
+    [xs : (__tl_dyn-array i64) (__tl_make-array i64 4)]
+    [us : (__tl_dyn-array u64) (__tl_make-array u64 4)]
     [_x0 : unit (set! (array-ref xs 0) 1)]
     [_x1 : unit (set! (array-ref xs 1) 9)]
     [_x2 : unit (set! (array-ref xs 2) 3)]
@@ -143,8 +142,8 @@
     ;; max(1,5) + max(9,5) + max(3,5) + max(7,5) = 5 + 9 + 5 + 7 = 26
     [mx : i64 (sfl-max-scan xs (+ v 3) 5)]
     [umn : u64 (sfl-umin-scan us (+ v 3) (cast 5 : u64))]
-    [src : (__tl_dyn-array u8) (array.make-array u8 8)]
-    [dst : (__tl_dyn-array u8) (array.make-array u8 8)]
+    [src : (__tl_dyn-array u8) (__tl_make-array u8 8)]
+    [dst : (__tl_dyn-array u8) (__tl_make-array u8 8)]
     [_s0 : unit (set! (array-ref src 2) (cast 11 : u8))]
     [_s1 : unit (set! (array-ref src 3) (cast 22 : u8))]
     [_s2 : unit (set! (array-ref src 4) (cast 33 : u8))]
@@ -154,10 +153,10 @@
       (+
         (cast (array-ref dst 1) : i64)
         (+ (cast (array-ref dst 2) : i64) (cast (array-ref dst 3) : i64)))]
-    [b : (__tl_dyn-array u8) (array.make-array u8 8)]
-    [h : (__tl_dyn-array i16) (array.make-array i16 8)]
-    [w : (__tl_dyn-array i32) (array.make-array i32 8)]
-    [q : (__tl_dyn-array i64) (array.make-array i64 8)]
+    [b : (__tl_dyn-array u8) (__tl_make-array u8 8)]
+    [h : (__tl_dyn-array i16) (__tl_make-array i16 8)]
+    [w : (__tl_dyn-array i32) (__tl_make-array i32 8)]
+    [q : (__tl_dyn-array i64) (__tl_make-array i64 8)]
     [_b : unit (set! (array-ref b 2) (cast 3 : u8))]
     [_h : unit (set! (array-ref h 2) (cast 40 : i16))]
     [_w : unit (set! (array-ref w 2) (cast 500 : i32))]

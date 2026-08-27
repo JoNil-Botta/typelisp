@@ -553,6 +553,25 @@ check. They deliberately do not fail on wall-clock noise. Use
 `TYPELISP_LSP_CHECK_SMALL_LINES`, `TYPELISP_LSP_CHECK_LARGE_LINES`, or
 `TYPELISP_LSP_CHECK_WORKDIR` to adjust a local run.
 
+`scripts/measure-lsp-completion-latency.sh` similarly keeps one LSP process
+alive while it builds a large persistent workspace index and a deep lexical
+scope. It reports cold open/check latency separately from at least 100
+alternating lexical/import completion requests, candidate counts, and retained
+RSS across the hot loop:
+
+```sh
+TYPELISP_BIN=target/stage0/typelisp scripts/measure-lsp-completion-latency.sh
+```
+
+The generated workspace is isolated under
+`target/lsp-completion-latency/`. Override request, top-level declaration,
+scope-depth, or workspace-module counts with
+`TYPELISP_LSP_COMPLETION_REQUESTS`, `TYPELISP_LSP_COMPLETION_TOP_LEVEL`,
+`TYPELISP_LSP_COMPLETION_DEPTH`, and `TYPELISP_LSP_COMPLETION_MODULES`.
+Linux hosts with Valgrind can additionally set
+`TYPELISP_LSP_COMPLETION_CACHEGRIND=1` to report deterministic dynamic
+instruction counts for the whole cold-plus-hot server workload.
+
 `compile --profile-allocations` emits opt-in arena ownership rows for any input
 program. Rows report the phase, owner, arena root, bump-position bytes,
 committed bytes, reserved bytes, and segment count. Arena roots make overlapping `active` and

@@ -180,12 +180,13 @@ The [`tools/vs-code-extension`](tools/vs-code-extension) directory contains a
 VS Code extension with syntax highlighting and a stdio language server. It
 provides diagnostics, compiler and lint quick fixes, definition lookup,
 semantic references and safe semantic rename across the workspace, hover,
-completion, semantic signature help, inlay hints, and formatting. Rename uses
-standard `prepareRename`/`rename` requests, rejects incomplete or non-editable
-targets before returning any edit, and versions open-document edits. The server
-indexes workspace sources, with unsaved open documents overriding disk
-snapshots, and lazily caches owned semantic snapshots for unopened sources
-behind a completeness-reporting query boundary. See the extension
+cursor-aware completion over semantic visibility, imports, members, and live
+workspace overlays, semantic signature help, inlay hints, and formatting.
+Rename uses standard `prepareRename`/`rename` requests, rejects incomplete or
+non-editable targets before returning any edit, and versions open-document
+edits. The server indexes workspace sources, with unsaved open documents
+overriding disk snapshots, and lazily caches owned semantic snapshots for
+unopened sources behind a completeness-reporting query boundary. See the extension
 [README](tools/vs-code-extension/README.md) for installation.
 
 ## Contributing

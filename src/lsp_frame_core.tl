@@ -166,6 +166,30 @@
   (slots (__tl_dyn-array LspWorkspaceSymbolCandidate))
   (len i64))
 
+;; Request-local completion rows.  The provider keeps only the best fixed
+;; prefix, so a large workspace cannot make one keystroke allocate an
+;; unbounded candidate vector.  `stable-key` is an opaque semantic identity
+;; (or an explicit language/workspace identity for non-semantic candidates).
+(defstruct LspCompletionCandidate
+  (match-rank i64)
+  (source-rank i64)
+  (namespace-rank i64)
+  (kind i64)
+  (label String)
+  (detail String)
+  (documentation String)
+  (module String)
+  (path String)
+  (line i64)
+  (col i64)
+  (stable-key String)
+  (new-text String))
+
+(defstruct LspCompletionResults
+  (slots (__tl_dyn-array LspCompletionCandidate))
+  (len i64)
+  (incomplete bool))
+
 (defstruct LspWorkspaceSemanticQuery
   (slots (__tl_dyn-array lsp_vector_families.LspWorkspaceSemanticFact))
   (len i64)
@@ -6666,91 +6690,1405 @@
         unit)
       acc)))
 
-(define (lsp-completion-item [label : String] [kind : i64]) : json.Json
-  (lsp-json-object2
-    "label"
-    (json.JsonString label)
-    "kind"
-    (lsp-json-number kind)))
+(define lsp-completion-result-limit : i64
+  256)
 
-(define (lsp-completion-items-from
-  [labels : lsp_svec.Vec]
-  [kind : i64]
-  [idx : i64]
-  [acc : json.JsonSeq]) : json.JsonSeq
-  (if (>= idx (lsp_svec.len (& labels)))
-    acc
-    (lsp-completion-items-from
-      labels
-      kind
-      (+ idx 1)
-      (lsp-json-list-cons
-        (lsp-completion-item (lsp_svec.get (& labels) idx "") kind)
-        acc))))
+(define (lsp-completion-candidate-fallback) : LspCompletionCandidate
+  (LspCompletionCandidate 2 9 9 1 "" "" "" "" "" 0 0 "" ""))
 
-;; Collect every top-level definition name in `text`, skipping strings/comments.
-(define (lsp-collect-def-names [text : String] [acc : lsp_svec.Vec (:consume)]) : lsp_svec.Vec
+(define (lsp-completion-results-new) : LspCompletionResults
+  (LspCompletionResults
+    (__tl_make-array LspCompletionCandidate lsp-completion-result-limit)
+    0
+    false))
+
+(define (lsp-completion-results-get
+  [results : (& results LspCompletionResults)]
+  [index : i64]) : LspCompletionCandidate
+  (if (and (>= index 0) (< index results.len))
+    (array-ref results.slots index)
+    (lsp-completion-candidate-fallback)))
+
+(define (lsp-completion-match-rank [label : String] [prefix : String]) : i64
+  (cond
+    [(string.eq label prefix) 0]
+    [(or
+        (= (string.string-length prefix) 0)
+        (string.is-string-prefix-at (& label) (& prefix) 0))
+      1]
+    [else -1]))
+
+(define (lsp-completion-candidate-less?
+  [left : LspCompletionCandidate]
+  [right : LspCompletionCandidate]) : bool
+  (cond
+    [(< left.match-rank right.match-rank) true]
+    [(> left.match-rank right.match-rank) false]
+    [(< left.source-rank right.source-rank) true]
+    [(> left.source-rank right.source-rank) false]
+    [(not (string.eq left.label right.label))
+      (package_source_core.package-source-string-less? left.label right.label)]
+    [(< left.namespace-rank right.namespace-rank) true]
+    [(> left.namespace-rank right.namespace-rank) false]
+    [(< left.kind right.kind) true]
+    [(> left.kind right.kind) false]
+    [(not (string.eq left.module right.module))
+      (package_source_core.package-source-string-less? left.module right.module)]
+    [(not (string.eq left.path right.path))
+      (package_source_core.package-source-string-less? left.path right.path)]
+    [(< left.line right.line) true]
+    [(> left.line right.line) false]
+    [(< left.col right.col) true]
+    [(> left.col right.col) false]
+    [else
+      (package_source_core.package-source-string-less?
+        left.stable-key
+        right.stable-key)]))
+
+(define (lsp-completion-results-contain-key?
+  [results : (& results LspCompletionResults)]
+  [stable-key : String]) : bool
   (let
-    [n : i64 (string.string-length text)]
-    [i : i64 0]
-    [out : lsp_svec.Vec acc]
+    [index : i64 0]
+    [found : bool false]
     (begin
-      (while (< i n)
-        (let
-          [c : char (string.string-ref text i)]
-          (cond
-            [(= c ';') (set! i (lsp-skip-line text i n))]
-            [(= c '"') (set! i (lsp-skip-string text i n))]
-            [(= c '(')
-              (let
-                [name-off : i64 (lsp-def-name-offset-at text i n)]
+      (while (and (< index results.len) (not found))
+        (begin
+          (if (string.eq
+            (lsp-completion-results-get results index).stable-key
+            stable-key)
+            (set! found true)
+            unit)
+          (set! index (+ index 1))))
+      found)))
+
+;; Insert into the sorted live prefix, retaining the best 256 unique semantic
+;; identities.  Seeing any further match marks the CompletionList incomplete,
+;; even when that match ranks below every retained row.
+(define (lsp-completion-results-insert!
+  [results : (&mut results LspCompletionResults)]
+  [candidate : LspCompletionCandidate]) : unit
+  (if (lsp-completion-results-contain-key? results candidate.stable-key)
+    unit
+    (let
+      [len : i64 results.len]
+      [position : i64 0]
+      (begin
+        (while (and
+          (< position len)
+          (not
+            (lsp-completion-candidate-less?
+              candidate
+              (lsp-completion-results-get results position))))
+          (set! position (+ position 1)))
+        (if (>= position lsp-completion-result-limit)
+          (set! results.incomplete true)
+          (let
+            [write : i64
+              (if (< len lsp-completion-result-limit)
+                len
+                (- lsp-completion-result-limit 1))]
+            (begin
+              (while (> write position)
                 (begin
-                  (if (>= name-off 0)
-                    (lsp-string-vec-push-copy!
-                      (&mut out)
-                      (lsp-symbol-at-offset text name-off))
-                    unit)
-                  (set! i (+ i 1))))]
-            [else (set! i (+ i 1))])))
-      out)))
+                  (set!
+                    (array-ref results.slots write)
+                    (array-ref results.slots (- write 1)))
+                  (set! write (- write 1))))
+              (set! (array-ref results.slots position) candidate)
+              (if (< len lsp-completion-result-limit)
+                (set! results.len (+ len 1))
+                (set! results.incomplete true)))))))))
 
-(define (lsp-collect-def-names-all
-  [docs : lsp_document_vec.Vec]
-  [idx : i64]
-  [acc : lsp_svec.Vec (:consume)]) : lsp_svec.Vec
-  (if (>= idx (lsp_document_vec.len (& docs)))
-    acc
-    (lsp-collect-def-names-all
-      docs
-      (+ idx 1)
-      (lsp-collect-def-names
-        (__tl-project-field
-          (lsp_document_vec.get (& docs) idx (lsp-document-fallback))
-          text)
-        acc))))
+(define (lsp-completion-symbol-kind
+  [kind : (& kind compiler_semantic_index.CompilerSemanticSymbolKind)]) : i64
+  (match (deref kind)
+    [(compiler_semantic_index.CompilerSemanticSymbolKind.Function) 3]
+    [(compiler_semantic_index.CompilerSemanticSymbolKind.ExternFunction) 3]
+    [(compiler_semantic_index.CompilerSemanticSymbolKind.Macro) 3]
+    [(compiler_semantic_index.CompilerSemanticSymbolKind.Field) 5]
+    [(compiler_semantic_index.CompilerSemanticSymbolKind.Value) 6]
+    [(compiler_semantic_index.CompilerSemanticSymbolKind.ExternValue) 6]
+    [(compiler_semantic_index.CompilerSemanticSymbolKind.Parameter) 6]
+    [(compiler_semantic_index.CompilerSemanticSymbolKind.Local) 6]
+    [(compiler_semantic_index.CompilerSemanticSymbolKind.Module) 9]
+    [(compiler_semantic_index.CompilerSemanticSymbolKind.Enum) 13]
+    [(compiler_semantic_index.CompilerSemanticSymbolKind.EnumMember) 20]
+    [(compiler_semantic_index.CompilerSemanticSymbolKind.Struct) 22]))
 
-(define (lsp-completion-respond [id : json.Json] [docs : lsp_document_vec.Vec]) : unit
+(define (lsp-completion-namespace-rank
+  [namespace
+    : (& namespace compiler_semantic_index.CompilerSemanticBindingNamespace)]) : i64
+  (match (deref namespace)
+    [(compiler_semantic_index.CompilerSemanticBindingNamespace.Value) 0]
+    [(compiler_semantic_index.CompilerSemanticBindingNamespace.Type) 1]
+    [(compiler_semantic_index.CompilerSemanticBindingNamespace.Macro) 2]))
+
+(define (lsp-completion-kind-name
+  [kind : (& kind compiler_semantic_index.CompilerSemanticSymbolKind)]) : String
+  (match (deref kind)
+    [(compiler_semantic_index.CompilerSemanticSymbolKind.Value) "value"]
+    [(compiler_semantic_index.CompilerSemanticSymbolKind.Function) "function"]
+    [(compiler_semantic_index.CompilerSemanticSymbolKind.Macro) "macro"]
+    [(compiler_semantic_index.CompilerSemanticSymbolKind.ExternValue)
+      "extern value"]
+    [(compiler_semantic_index.CompilerSemanticSymbolKind.ExternFunction)
+      "extern function"]
+    [(compiler_semantic_index.CompilerSemanticSymbolKind.Struct) "struct"]
+    [(compiler_semantic_index.CompilerSemanticSymbolKind.Enum) "enum"]
+    [(compiler_semantic_index.CompilerSemanticSymbolKind.Module) "module"]
+    [(compiler_semantic_index.CompilerSemanticSymbolKind.Field) "field"]
+    [(compiler_semantic_index.CompilerSemanticSymbolKind.EnumMember)
+      "enum member"]
+    [(compiler_semantic_index.CompilerSemanticSymbolKind.Parameter) "parameter"]
+    [_ "local"]))
+
+(define (lsp-completion-semantic-stable-key
+  [binding : (& binding compiler_semantic_index.CompilerSemanticVisibleBinding)]) : String
+  (lsp-str3
+    (lsp-str3 "semantic:" (string.int->string binding.symbol.module-id) ":")
+    (lsp-str3
+      (string.int->string binding.symbol.declaration-ordinal)
+      ":"
+      (string.int->string binding.symbol.local-ordinal))
+    (lsp-str3
+      ":"
+      (string.int->string (lsp-completion-namespace-rank (& binding.namespace)))
+      "")))
+
+(define (lsp-completion-source-rank
+  [kind : compiler_semantic_index.CompilerSemanticSymbolKind]
+  [definition-path : String]
+  [current-path : String]) : i64
+  (match kind
+    [(compiler_semantic_index.CompilerSemanticSymbolKind.Parameter) 0]
+    [(compiler_semantic_index.CompilerSemanticSymbolKind.Local) 0]
+    [_
+      (if (string.eq definition-path current-path)
+        1
+        2)]))
+
+(define (lsp-completion-add-visible!
+  [results : (&mut results LspCompletionResults)]
+  [binding : compiler_semantic_index.CompilerSemanticVisibleBinding]
+  [prefix : String]
+  [current-path : String]) : unit
   (let
-    [names : lsp_svec.Vec (lsp-collect-def-names-all docs 0 (lsp_svec.new))]
-    [items : json.JsonSeq
-      (lsp-completion-items-from
-        names
-        3
-        0
-        (lsp-completion-items-from
-          (lsp-split-spaces (lsp-completion-types))
-          7
-          0
-          (lsp-completion-items-from
-            (lsp-split-spaces (lsp-completion-builtins))
-            3
-            0
-            (lsp-completion-items-from
-              (lsp-split-spaces (lsp-completion-keywords))
+    [rank : i64 (lsp-completion-match-rank binding.display-name prefix)]
+    (if (or (< rank 0) (not binding.editable))
+      unit
+      (let
+        [detail : String
+          (if (= (string.string-length binding.resolved-type) 0)
+            (lsp-completion-kind-name (& binding.kind))
+            binding.resolved-type)]
+        (lsp-completion-results-insert!
+          results
+          (LspCompletionCandidate
+            rank
+            (lsp-completion-source-rank
+              binding.kind
+              binding.definition-span.path
+              current-path)
+            (lsp-completion-namespace-rank (& binding.namespace))
+            (lsp-completion-symbol-kind (& binding.kind))
+            (string.copy (& binding.display-name))
+            (string.copy (& detail))
+            (string.copy (& binding.documentation))
+            ""
+            (string.copy (& binding.definition-span.path))
+            (cast binding.definition-span.source.start-line : i64)
+            (cast binding.definition-span.source.start-col : i64)
+            (lsp-completion-semantic-stable-key (& binding))
+            (string.copy (& binding.display-name))))))))
+
+(define (lsp-completion-collect-visible!
+  [results : (&mut results LspCompletionResults)]
+  [doc : (& doc lsp_vector_families.LspDocument)]
+  [context : (& context LspCompletionContext)]
+  [namespace-mask : i64]) : unit
+  (match (compiler_semantic_index.compiler-semantic-source-index-query
+    (& doc.semantic.index)
+    (string.copy (& doc.path))
+    context.cursor-byte)
+    [(compiler_semantic_index.CompilerSemanticMaybeVisibleBindingQuery.None)
+      unit]
+    [(compiler_semantic_index.CompilerSemanticMaybeVisibleBindingQuery.Some
+        query)
+      (let
+        [cursor : compiler_semantic_index.CompilerSemanticVisibleBindingCursor
+          (compiler_semantic_index.compiler-semantic-visible-binding-cursor
+            (& doc.semantic.index)
+            query
+            namespace-mask)]
+        [done : bool false]
+        (while (not done)
+          (match (compiler_semantic_index.compiler-semantic-visible-binding-cursor-step
+            (& doc.semantic.index)
+            cursor)
+            [(compiler_semantic_index.CompilerSemanticVisibleBindingStep.Some
+                binding
+                next)
+              (begin
+                (lsp-completion-add-visible!
+                  results
+                  binding
+                  (string.copy (& context.prefix))
+                  (string.copy (& doc.path)))
+                (set! cursor next))]
+            [(compiler_semantic_index.CompilerSemanticVisibleBindingStep.Done)
+              (set! done true)])))]))
+
+(define (lsp-completion-add-language-labels!
+  [results : (&mut results LspCompletionResults)]
+  [labels : String]
+  [prefix : String]
+  [kind : i64]
+  [source-rank : i64]
+  [identity-prefix : String]
+  [detail : String]) : unit
+  (let
+    [split : lsp_svec.Vec (lsp-split-spaces labels)]
+    [index : i64 0]
+    (while (< index (lsp_svec.len (& split)))
+      (let
+        [label : String (lsp_svec.get (& split) index "")]
+        [rank : i64 (lsp-completion-match-rank label prefix)]
+        (begin
+          (if (>= rank 0)
+            (lsp-completion-results-insert!
+              results
+              (LspCompletionCandidate
+                rank
+                source-rank
+                8
+                kind
+                (string.copy (& label))
+                (string.copy (& detail))
+                ""
+                ""
+                ""
+                0
+                0
+                (lsp-str3 identity-prefix ":" label)
+                (string.copy (& label))))
+            unit)
+          (set! index (+ index 1)))))))
+
+(define (lsp-completion-record-definition?
+  [record : (& record compiler_semantic_index.CompilerSemanticRecord)]) : bool
+  (match record.role
+    [(compiler_semantic_index.CompilerSemanticRecordRole.Definition) true]
+    [_ false]))
+
+(define (lsp-completion-record-kind-allowed?
+  [kind : compiler_semantic_index.CompilerSemanticSymbolKind]
+  [type-context : bool]
+  [member-context : bool]) : bool
+  (if member-context
+    (if type-context
+      false
+      (or
+        (match kind
+          [(compiler_semantic_index.CompilerSemanticSymbolKind.Field) true]
+          [_ false])
+        (match kind
+          [(compiler_semantic_index.CompilerSemanticSymbolKind.EnumMember) true]
+          [_ false])))
+    (if type-context
+      (or
+        (match kind
+          [(compiler_semantic_index.CompilerSemanticSymbolKind.Struct) true]
+          [_ false])
+        (match kind
+          [(compiler_semantic_index.CompilerSemanticSymbolKind.Enum) true]
+          [_ false]))
+      (or
+        (match kind
+          [(compiler_semantic_index.CompilerSemanticSymbolKind.Value) true]
+          [_ false])
+        (match kind
+          [(compiler_semantic_index.CompilerSemanticSymbolKind.Function) true]
+          [_ false])
+        (match kind
+          [(compiler_semantic_index.CompilerSemanticSymbolKind.ExternValue)
+            true]
+          [_ false])
+        (match kind
+          [(compiler_semantic_index.CompilerSemanticSymbolKind.ExternFunction)
+            true]
+          [_ false])
+        (match kind
+          [(compiler_semantic_index.CompilerSemanticSymbolKind.Macro) true]
+          [_ false])
+        (match kind
+          [(compiler_semantic_index.CompilerSemanticSymbolKind.Struct) true]
+          [_ false])
+        (match kind
+          [(compiler_semantic_index.CompilerSemanticSymbolKind.EnumMember) true]
+          [_ false])))))
+
+(define (lsp-completion-record-stable-key
+  [record : (& record compiler_semantic_index.CompilerSemanticRecord)]) : String
+  (lsp-str3
+    (lsp-str3 "record:" (string.int->string record.symbol.module-id) ":")
+    (lsp-str3
+      (string.int->string record.symbol.declaration-ordinal)
+      ":"
+      (string.int->string record.symbol.local-ordinal))
+    (lsp-str3
+      ":"
+      (string.int->string (lsp-completion-symbol-kind (& record.kind)))
+      "")))
+
+(define (lsp-completion-add-record!
+  [results : (&mut results LspCompletionResults)]
+  [record : compiler_semantic_index.CompilerSemanticRecord]
+  [prefix : String]
+  [source-rank : i64]
+  [module : String]) : unit
+  (let
+    [rank : i64 (lsp-completion-match-rank record.display-name prefix)]
+    (if (or (< rank 0) (not record.editable))
+      unit
+      (lsp-completion-results-insert!
+        results
+        (LspCompletionCandidate
+          rank
+          source-rank
+          3
+          (lsp-completion-symbol-kind (& record.kind))
+          (string.copy (& record.display-name))
+          (if (= (string.string-length record.resolved-type) 0)
+            (lsp-completion-kind-name (& record.kind))
+            (string.copy (& record.resolved-type)))
+          (string.copy (& record.documentation))
+          (string.copy (& module))
+          (string.copy (& record.span.path))
+          (cast record.span.source.start-line : i64)
+          (cast record.span.source.start-col : i64)
+          (lsp-completion-record-stable-key (& record))
+          (string.copy (& record.display-name)))))))
+
+(define (lsp-completion-workspace-item-kind [symbol-kind : i64]) : i64
+  (cond
+    [(= symbol-kind 12) 3]
+    [(= symbol-kind 23) 22]
+    [(= symbol-kind 10) 13]
+    [else 6]))
+
+(define (lsp-completion-add-workspace-decl!
+  [results : (&mut results LspCompletionResults)]
+  [source : (& source lsp_vector_families.LspWorkspaceSource)]
+  [decl : lsp_vector_families.LspDeclEntry]
+  [prefix : String]
+  [source-rank : i64]) : unit
+  (let
+    [rank : i64 (lsp-completion-match-rank decl.name prefix)]
+    (if (< rank 0)
+      unit
+      (lsp-completion-results-insert!
+        results
+        (LspCompletionCandidate
+          rank
+          source-rank
+          4
+          (lsp-completion-workspace-item-kind decl.symbol-kind)
+          (string.copy (& decl.name))
+          (lsp-str3 decl.kind " from " (string.copy (& source.module)))
+          ""
+          (string.copy (& source.module))
+          (string.copy (& source.path))
+          decl.name-line
+          decl.name-col
+          (lsp-str7
+            "workspace:"
+            (string.copy (& source.path))
+            ":"
+            (string.int->string decl.name-line)
+            ":"
+            (string.int->string decl.name-col)
+            (lsp-str3 ":" decl.kind ""))
+          (string.copy (& decl.name)))))))
+
+(define (lsp-completion-first-module-segment [text : String]) : String
+  (let
+    [index : i64 0]
+    [n : i64 (string.string-length text)]
+    (begin
+      (while (and (< index n) (not (= (string.string-ref text index) '.')))
+        (set! index (+ index 1)))
+      (string.substring text 0 index))))
+
+;; Return the next bare module component after `receiver`, or empty when the
+;; indexed module is outside that subtree.
+(define (lsp-completion-module-next-segment
+  [module : String]
+  [receiver : String]) : String
+  (if (= (string.string-length receiver) 0)
+    (lsp-completion-first-module-segment module)
+    (let
+      [prefix : String (lsp-str3 receiver "." "")]
+      (if (not (string.is-string-prefix-at (& module) (& prefix) 0))
+        ""
+        (lsp-completion-first-module-segment
+          (string.substring
+            module
+            (string.string-length prefix)
+            (- (string.string-length module) (string.string-length prefix))))))))
+
+(define (lsp-completion-collect-import!
+  [results : (&mut results LspCompletionResults)]
+  [workspace : (& workspace lsp_vector_families.LspWorkspaceIndex)]
+  [context : (& context LspCompletionContext)]) : unit
+  (let
+    [sources : lsp_vector_families.LspWorkspaceSources workspace.sources]
+    [source-index : i64 0]
+    (while (< source-index (lsp-workspace-sources-len (& sources)))
+      (let
+        [source : lsp_vector_families.LspWorkspaceSource
+          (lsp-workspace-sources-get (& sources) source-index)]
+        [segment : String
+          (lsp-completion-module-next-segment
+            (string.copy (& source.module))
+            (string.copy (& context.receiver)))]
+        (begin
+          (if (> (string.string-length segment) 0)
+            (let
+              [rank : i64
+                (lsp-completion-match-rank
+                  segment
+                  (string.copy (& context.prefix)))]
+              (if (>= rank 0)
+                (lsp-completion-results-insert!
+                  results
+                  (LspCompletionCandidate
+                    rank
+                    4
+                    4
+                    9
+                    (string.copy (& segment))
+                    (lsp-str3 "module " source.module "")
+                    ""
+                    (string.copy (& source.module))
+                    (string.copy (& source.path))
+                    0
+                    0
+                    (lsp-str5
+                      "module-segment:"
+                      (string.copy (& context.receiver))
+                      ":"
+                      segment
+                      "")
+                    (string.copy (& segment))))
+                unit))
+            unit)
+          (if (string.eq source.module context.receiver)
+            (let
+              [decls : lsp_decl_vec.Vec source.decls]
+              [decl-index : i64 0]
+              (while (< decl-index (lsp_decl_vec.len (& decls)))
+                (begin
+                  (lsp-completion-add-workspace-decl!
+                    results
+                    (& source)
+                    (lsp_decl_vec.get
+                      (& decls)
+                      decl-index
+                      (lsp-decl-entry-fallback))
+                    (string.copy (& context.prefix))
+                    4)
+                  (set! decl-index (+ decl-index 1)))))
+            unit)
+          (set! source-index (+ source-index 1)))))))
+
+(define (lsp-completion-record-is-value-receiver?
+  [record : (& record compiler_semantic_index.CompilerSemanticRecord)]) : bool
+  (or
+    (match record.kind
+      [(compiler_semantic_index.CompilerSemanticSymbolKind.Value) true]
+      [_ false])
+    (match record.kind
+      [(compiler_semantic_index.CompilerSemanticSymbolKind.Local) true]
+      [_ false])
+    (match record.kind
+      [(compiler_semantic_index.CompilerSemanticSymbolKind.Parameter) true]
+      [_ false])
+    (match record.kind
+      [(compiler_semantic_index.CompilerSemanticSymbolKind.Field) true]
+      [_ false])))
+
+(define (lsp-completion-rendered-type-tail [type-text : String]) : String
+  ;; `tc-type-render` emits wrapper types as S-expressions. Find their final
+  ;; top-level component so reference and region wrappers can be peeled without
+  ;; confusing a lifetime argument with the nominal referent.
+  (let
+    [end : i64 (- (string.string-length type-text) 1)]
+    [start : i64 -1]
+    [depth : i64 0]
+    (begin
+      (while (and (> end 0) (lsp-ws? (string.string-ref type-text (- end 1))))
+        (set! end (- end 1)))
+      (if (and (> end 0) (= (string.string-ref type-text (- end 1)) ')'))
+        (let
+          [cursor : i64 (- end 1)]
+          (begin
+            (set! depth 1)
+            (set! cursor (- cursor 1))
+            (while (and (>= cursor 0) (> depth 0))
+              (begin
+                (cond
+                  [(= (string.string-ref type-text cursor) ')')
+                    (set! depth (+ depth 1))]
+                  [(= (string.string-ref type-text cursor) '(')
+                    (set! depth (- depth 1))]
+                  [else unit])
+                (if (= depth 0)
+                  (set! start cursor)
+                  unit)
+                (set! cursor (- cursor 1))))))
+        (let
+          [cursor : i64 (- end 1)]
+          (begin
+            (while (and
+              (> cursor 0)
+              (not (lsp-ws? (string.string-ref type-text (- cursor 1))))
+              (not (= (string.string-ref type-text (- cursor 1)) '(')))
+              (set! cursor (- cursor 1)))
+            (set! start cursor))))
+      (if (and (>= start 0) (> end start))
+        (string.substring type-text start (- end start))
+        ""))))
+
+(define (lsp-completion-rendered-type-owner-name [type-text : String]) : String
+  ;; A field receiver can be a nominal value, a lifetime-instantiated nominal,
+  ;; or a shared/mutable reference (possibly carrying an outer Region tag).
+  ;; Extract only that nominal head. A raw substring match is not semantic:
+  ;; e.g. type `app.main/AB` must not resolve to an earlier struct named `A`.
+  (let
+    [n : i64 (string.string-length type-text)]
+    (if (= n 0)
+      ""
+      (if (not (= (string.string-ref type-text 0) '('))
+        (string.copy (& type-text))
+        (let
+          [head-end : i64 1]
+          (begin
+            (while (and
+              (< head-end n)
+              (not (lsp-ws? (string.string-ref type-text head-end)))
+              (not (= (string.string-ref type-text head-end) ')')))
+              (set! head-end (+ head-end 1)))
+            (let
+              [head : String (string.substring type-text 1 (- head-end 1))]
+              (if (or
+                (string.eq head "&")
+                (string.eq head "&mut")
+                (string.eq head "Region"))
+                (lsp-completion-rendered-type-owner-name
+                  (lsp-completion-rendered-type-tail type-text))
+                head))))))))
+
+(define (lsp-completion-record-owns-rendered-type?
+  [record : (& record compiler_semantic_index.CompilerSemanticRecord)]
+  [owner-name : String]) : bool
+  (let
+    [module : String (tc.macro-decl-module-display record.symbol.module-id)]
+    [module-len : i64 (string.string-length module)]
+    [display-len : i64 (string.string-length record.display-name)]
+    (or
+      (string.eq owner-name record.display-name)
+      (and
+        (> module-len 0)
+        (= (string.string-length owner-name) (+ module-len (+ display-len 1)))
+        (string.is-string-prefix-at (& owner-name) (& module) 0)
+        (or
+          (= (string.string-ref owner-name module-len) '/')
+          (= (string.string-ref owner-name module-len) '.'))
+        (string.is-string-prefix-at
+          (& owner-name)
+          (& record.display-name)
+          (+ module-len 1))))))
+
+(define (lsp-completion-find-type-owner
+  [index : (& index compiler_semantic_index.CompilerSemanticSourceIndex)]
+  [type-text : String]) : i64
+  (let
+    [record-index : i64 0]
+    [found : i64 -1]
+    [owner-name : String (lsp-completion-rendered-type-owner-name type-text)]
+    (begin
+      (while (and
+        (< found 0)
+        (<
+          record-index
+          (compiler_semantic_index.compiler-semantic-source-index-len index)))
+        (let
+          [record : compiler_semantic_index.CompilerSemanticRecord
+            (compiler_semantic_index.compiler-semantic-source-index-get
+              index
+              record-index)]
+          (begin
+            (if (and
+              (lsp-completion-record-definition? (& record))
+              (or
+                (match record.kind
+                  [(compiler_semantic_index.CompilerSemanticSymbolKind.Struct)
+                    true]
+                  [_ false])
+                (match record.kind
+                  [(compiler_semantic_index.CompilerSemanticSymbolKind.Enum)
+                    true]
+                  [_ false]))
+              (lsp-completion-record-owns-rendered-type? (& record) owner-name))
+              (set! found record-index)
+              unit)
+            (set! record-index (+ record-index 1)))))
+      found)))
+
+(define (lsp-completion-find-module-record
+  [index : (& index compiler_semantic_index.CompilerSemanticSourceIndex)]
+  [path : String]
+  [start : i64]
+  [end : i64]) : i64
+  (let
+    [record-index : i64 0]
+    [found : i64 -1]
+    [best-start : i64 -1]
+    (begin
+      (while (<
+        record-index
+        (compiler_semantic_index.compiler-semantic-source-index-len index))
+        (let
+          [record : compiler_semantic_index.CompilerSemanticRecord
+            (compiler_semantic_index.compiler-semantic-source-index-get
+              index
+              record-index)]
+          (begin
+            (if (and
+              (match record.kind
+                [(compiler_semantic_index.CompilerSemanticSymbolKind.Module)
+                  true]
+                [_ false])
+              record.editable
+              (string.eq record.span.path path)
+              (>= record.span.start-byte start)
+              (<= record.span.end-byte end)
+              (> record.span.start-byte best-start))
+              (begin
+                (set! found record-index)
+                (set! best-start record.span.start-byte))
+              unit)
+            (set! record-index (+ record-index 1)))))
+      found)))
+
+(define (lsp-completion-find-member-owner
+  [index : (& index compiler_semantic_index.CompilerSemanticSourceIndex)]
+  [member-index : i64]) : i64
+  (if (< member-index 0)
+    -1
+    (let
+      [member : compiler_semantic_index.CompilerSemanticRecord
+        (compiler_semantic_index.compiler-semantic-source-index-get
+          index
+          member-index)]
+      [record-index : i64 0]
+      [found : i64 -1]
+      (begin
+        (when
+          (not
+            (or
+              (match member.kind
+                [(compiler_semantic_index.CompilerSemanticSymbolKind.Field)
+                  true]
+                [_ false])
+              (match member.kind
+                [(compiler_semantic_index.CompilerSemanticSymbolKind.EnumMember)
+                  true]
+                [_ false])))
+          (return -1))
+        (while (and
+          (< found 0)
+          (<
+            record-index
+            (compiler_semantic_index.compiler-semantic-source-index-len index)))
+          (let
+            [record : compiler_semantic_index.CompilerSemanticRecord
+              (compiler_semantic_index.compiler-semantic-source-index-get
+                index
+                record-index)]
+            (begin
+              (if (and
+                (lsp-completion-record-definition? (& record))
+                (or
+                  (match record.kind
+                    [(compiler_semantic_index.CompilerSemanticSymbolKind.Struct)
+                      true]
+                    [_ false])
+                  (match record.kind
+                    [(compiler_semantic_index.CompilerSemanticSymbolKind.Enum)
+                      true]
+                    [_ false]))
+                (compiler_semantic_index.compiler-semantic-member-symbol-owned-by?
+                  (& record.symbol)
+                  (& member.symbol)))
+                (set! found record-index)
+                unit)
+              (set! record-index (+ record-index 1)))))
+        found))))
+
+(define (lsp-completion-find-visible-receiver-owner
+  [index : (& index compiler_semantic_index.CompilerSemanticSourceIndex)]
+  [path : String]
+  [cursor-byte : i64]
+  [receiver : String]) : i64
+  (match (compiler_semantic_index.compiler-semantic-source-index-query
+    index
+    path
+    cursor-byte)
+    [(compiler_semantic_index.CompilerSemanticMaybeVisibleBindingQuery.None) -1]
+    [(compiler_semantic_index.CompilerSemanticMaybeVisibleBindingQuery.Some
+        query)
+      (let
+        [cursor : compiler_semantic_index.CompilerSemanticVisibleBindingCursor
+          (compiler_semantic_index.compiler-semantic-visible-binding-cursor
+            index
+            query
+            (compiler_semantic_index.compiler-semantic-binding-namespace-value-mask))]
+        [found : i64 -1]
+        [done : bool false]
+        (begin
+          (while (and (< found 0) (not done))
+            (match (compiler_semantic_index.compiler-semantic-visible-binding-cursor-step
+              index
+              cursor)
+              [(compiler_semantic_index.CompilerSemanticVisibleBindingStep.Some
+                  binding
+                  next)
+                (begin
+                  (if (string.eq binding.display-name receiver)
+                    (set!
+                      found
+                      (lsp-completion-find-type-owner
+                        index
+                        binding.resolved-type))
+                    unit)
+                  (set! cursor next))]
+              [(compiler_semantic_index.CompilerSemanticVisibleBindingStep.Done)
+                (set! done true)]))
+          found))]))
+
+(define (lsp-completion-find-field-receiver
+  [index : (& index compiler_semantic_index.CompilerSemanticSourceIndex)]
+  [path : String]
+  [context : (& context LspCompletionContext)]) : i64
+  (let
+    [record-index : i64 0]
+    [found : i64 -1]
+    [best-end : i64 -1]
+    (begin
+      (while (<
+        record-index
+        (compiler_semantic_index.compiler-semantic-source-index-len index))
+        (let
+          [record : compiler_semantic_index.CompilerSemanticRecord
+            (compiler_semantic_index.compiler-semantic-source-index-get
+              index
+              record-index)]
+          (begin
+            (if (and
+              (lsp-completion-record-is-value-receiver? (& record))
+              (string.eq record.span.path path)
+              (>= record.span.start-byte context.form-start)
+              (<= record.span.end-byte context.token-start)
+              (> record.span.end-byte best-end))
+              (begin
+                (set! found record-index)
+                (set! best-end record.span.end-byte))
+              unit)
+            (set! record-index (+ record-index 1)))))
+      found)))
+
+(define (lsp-completion-workspace-module-exists?
+  [workspace : (& workspace lsp_vector_families.LspWorkspaceIndex)]
+  [module : String]) : bool
+  (let
+    [sources : lsp_vector_families.LspWorkspaceSources workspace.sources]
+    [source-index : i64 0]
+    [found : bool false]
+    (begin
+      (while (and
+        (< source-index (lsp-workspace-sources-len (& sources)))
+        (not found))
+        (begin
+          (if (string.eq
+            (lsp-workspace-sources-get (& sources) source-index).module
+            module)
+            (set! found true)
+            unit)
+          (set! source-index (+ source-index 1))))
+      found)))
+
+(define (lsp-completion-collect-workspace-module-decls!
+  [results : (&mut results LspCompletionResults)]
+  [workspace : (& workspace lsp_vector_families.LspWorkspaceIndex)]
+  [module : String]
+  [prefix : String]
+  [type-context : bool]) : unit
+  (let
+    [sources : lsp_vector_families.LspWorkspaceSources workspace.sources]
+    [source-index : i64 0]
+    (while (< source-index (lsp-workspace-sources-len (& sources)))
+      (let
+        [source : lsp_vector_families.LspWorkspaceSource
+          (lsp-workspace-sources-get (& sources) source-index)]
+        (begin
+          (if (string.eq source.module module)
+            (let
+              [decls : lsp_decl_vec.Vec source.decls]
+              [decl-index : i64 0]
+              (while (< decl-index (lsp_decl_vec.len (& decls)))
+                (let
+                  [decl : lsp_vector_families.LspDeclEntry
+                    (lsp_decl_vec.get
+                      (& decls)
+                      decl-index
+                      (lsp-decl-entry-fallback))]
+                  [allowed : bool
+                    (if type-context
+                      (or (= decl.symbol-kind 23) (= decl.symbol-kind 10))
+                      (not (= decl.symbol-kind 10)))]
+                  (begin
+                    (if allowed
+                      (lsp-completion-add-workspace-decl!
+                        results
+                        (& source)
+                        decl
+                        prefix
+                        3)
+                      unit)
+                    (set! decl-index (+ decl-index 1))))))
+            unit)
+          (set! source-index (+ source-index 1)))))))
+
+(define (lsp-completion-collect-owned-members!
+  [results : (&mut results LspCompletionResults)]
+  [index : (& index compiler_semantic_index.CompilerSemanticSourceIndex)]
+  [owner-index : i64]
+  [prefix : String]) : unit
+  (if (< owner-index 0)
+    unit
+    (let
+      [owner : compiler_semantic_index.CompilerSemanticRecord
+        (compiler_semantic_index.compiler-semantic-source-index-get
+          index
+          owner-index)]
+      [record-index : i64 0]
+      (while (<
+        record-index
+        (compiler_semantic_index.compiler-semantic-source-index-len index))
+        (let
+          [record : compiler_semantic_index.CompilerSemanticRecord
+            (compiler_semantic_index.compiler-semantic-source-index-get
+              index
+              record-index)]
+          (begin
+            (if (and
+              (lsp-completion-record-definition? (& record))
+              (lsp-completion-record-kind-allowed? record.kind false true)
+              (compiler_semantic_index.compiler-semantic-member-symbol-owned-by?
+                (& owner.symbol)
+                (& record.symbol)))
+              (lsp-completion-add-record!
+                results
+                record
+                prefix
+                3
+                owner.display-name)
+              unit)
+            (set! record-index (+ record-index 1))))))))
+
+(define (lsp-completion-collect-module-records!
+  [results : (&mut results LspCompletionResults)]
+  [index : (& index compiler_semantic_index.CompilerSemanticSourceIndex)]
+  [module-id : i64]
+  [module : String]
+  [prefix : String]
+  [type-context : bool]) : unit
+  (let
+    [record-index : i64 0]
+    (while (<
+      record-index
+      (compiler_semantic_index.compiler-semantic-source-index-len index))
+      (let
+        [record : compiler_semantic_index.CompilerSemanticRecord
+          (compiler_semantic_index.compiler-semantic-source-index-get
+            index
+            record-index)]
+        (begin
+          (if (and
+            (= record.module-id module-id)
+            (lsp-completion-record-definition? (& record))
+            (lsp-completion-record-kind-allowed? record.kind type-context false))
+            (lsp-completion-add-record! results record prefix 3 module)
+            unit)
+          (set! record-index (+ record-index 1)))))))
+
+(define (lsp-completion-collect-qualified!
+  [results : (&mut results LspCompletionResults)]
+  [doc : (& doc lsp_vector_families.LspDocument)]
+  [workspace : (& workspace lsp_vector_families.LspWorkspaceIndex)]
+  [context : (& context LspCompletionContext)]
+  [type-context : bool]) : unit
+  (let
+    [index : compiler_semantic_index.CompilerSemanticSourceIndex
+      doc.semantic.index]
+    [receiver-end : i64 (- context.replace-start 1)]
+    [point-index : i64
+      (if (> receiver-end context.token-start)
+        (compiler_semantic_index.compiler-semantic-source-index-find-editable-record-at
+          (& index)
+          (& doc.path)
+          (- receiver-end 1))
+        -1)]
+    [point : compiler_semantic_index.CompilerSemanticRecord
+      (compiler_semantic_index.compiler-semantic-source-index-get
+        (& index)
+        point-index)]
+    [suffix-index : i64
+      (if (> context.cursor-byte context.replace-start)
+        (compiler_semantic_index.compiler-semantic-source-index-find-editable-record-at
+          (& index)
+          (& doc.path)
+          (- context.cursor-byte 1))
+        -1)]
+    [member-owner-index : i64
+      (lsp-completion-find-member-owner (& index) suffix-index)]
+    [visible-owner-index : i64
+      (lsp-completion-find-visible-receiver-owner
+        (& index)
+        (string.copy (& doc.path))
+        context.cursor-byte
+        (string.copy (& context.receiver)))]
+    [local-receiver : bool
+      (and
+        (>= point-index 0)
+        (lsp-completion-record-is-value-receiver? (& point))
+        ;; A whole qualified-use record may overlap its leading module
+        ;; component.  Only a value fact whose own spelling is the receiver
+        ;; wins the SPEC §4.4.3 local-field precedence rule.
+        (string.eq point.display-name context.receiver))]
+    (if (>= member-owner-index 0)
+      (lsp-completion-collect-owned-members!
+        results
+        (& index)
+        member-owner-index
+        (string.copy (& context.prefix)))
+      (if (or local-receiver (>= visible-owner-index 0))
+        (lsp-completion-collect-owned-members!
+          results
+          (& index)
+          (if local-receiver
+            (lsp-completion-find-type-owner (& index) point.resolved-type)
+            visible-owner-index)
+          (string.copy (& context.prefix)))
+        (let
+          [module-index : i64
+            (lsp-completion-find-module-record
+              (& index)
+              (string.copy (& doc.path))
+              context.token-start
+              receiver-end)]
+          (if (>= module-index 0)
+            (let
+              [module-record : compiler_semantic_index.CompilerSemanticRecord
+                (compiler_semantic_index.compiler-semantic-source-index-get
+                  (& index)
+                  module-index)]
+              [module : String module-record.resolved-type]
+              [workspace-backed : bool
+                (lsp-completion-workspace-module-exists? workspace module)]
+              (if workspace-backed
+                (lsp-completion-collect-workspace-module-decls!
+                  results
+                  workspace
+                  module
+                  (string.copy (& context.prefix))
+                  type-context)
+                (lsp-completion-collect-module-records!
+                  results
+                  (& index)
+                  module-record.module-id
+                  module
+                  (string.copy (& context.prefix))
+                  type-context)))
+            (if (and
+              (>= point-index 0)
+              (or
+                (match point.kind
+                  [(compiler_semantic_index.CompilerSemanticSymbolKind.Struct)
+                    true]
+                  [_ false])
+                (match point.kind
+                  [(compiler_semantic_index.CompilerSemanticSymbolKind.Enum)
+                    true]
+                  [_ false])))
+              (lsp-completion-collect-owned-members!
+                results
+                (& index)
+                point-index
+                (string.copy (& context.prefix)))
+              unit)))))))
+
+(define (lsp-completion-collect-field!
+  [results : (&mut results LspCompletionResults)]
+  [doc : (& doc lsp_vector_families.LspDocument)]
+  [context : (& context LspCompletionContext)]) : unit
+  (let
+    [index : compiler_semantic_index.CompilerSemanticSourceIndex
+      doc.semantic.index]
+    [receiver-index : i64
+      (lsp-completion-find-field-receiver
+        (& index)
+        (string.copy (& doc.path))
+        context)]
+    [receiver : compiler_semantic_index.CompilerSemanticRecord
+      (compiler_semantic_index.compiler-semantic-source-index-get
+        (& index)
+        receiver-index)]
+    (if (>= receiver-index 0)
+      (lsp-completion-collect-owned-members!
+        results
+        (& index)
+        (lsp-completion-find-type-owner (& index) receiver.resolved-type)
+        (string.copy (& context.prefix)))
+      unit)))
+
+(define (lsp-completion-collect
+  [doc : (& doc lsp_vector_families.LspDocument)]
+  [workspace : (& workspace lsp_vector_families.LspWorkspaceIndex)]
+  [context : (& context LspCompletionContext)]) : LspCompletionResults
+  (let
+    [results : LspCompletionResults (lsp-completion-results-new)]
+    (begin
+      (match context.kind
+        [(LspCompletionContextKind.Suppressed) unit]
+        [(LspCompletionContextKind.ImportAlias) unit]
+        [(LspCompletionContextKind.ImportPathOrItem)
+          (lsp-completion-collect-import! (&mut results) workspace context)]
+        [(LspCompletionContextKind.DottedMember)
+          (lsp-completion-collect-qualified!
+            (&mut results)
+            doc
+            workspace
+            context
+            false)]
+        [(LspCompletionContextKind.Field)
+          (lsp-completion-collect-field! (&mut results) doc context)]
+        [(LspCompletionContextKind.Type)
+          (if (> (string.string-length context.receiver) 0)
+            (lsp-completion-collect-qualified!
+              (&mut results)
+              doc
+              workspace
+              context
+              true)
+            (begin
+              (lsp-completion-collect-visible!
+                (&mut results)
+                doc
+                context
+                (compiler_semantic_index.compiler-semantic-binding-namespace-type-mask))
+              (lsp-completion-add-language-labels!
+                (&mut results)
+                (lsp-completion-types)
+                (string.copy (& context.prefix))
+                7
+                5
+                "type"
+                "primitive type")))]
+        [(LspCompletionContextKind.CallHead)
+          (begin
+            (lsp-completion-collect-visible!
+              (&mut results)
+              doc
+              context
+              (bit-or
+                (compiler_semantic_index.compiler-semantic-binding-namespace-value-mask)
+                (compiler_semantic_index.compiler-semantic-binding-namespace-macro-mask)))
+            (lsp-completion-add-language-labels!
+              (&mut results)
+              (lsp-completion-builtins)
+              (string.copy (& context.prefix))
+              3
+              5
+              "builtin"
+              "builtin form")
+            (lsp-completion-add-language-labels!
+              (&mut results)
+              (lsp-completion-keywords)
+              (string.copy (& context.prefix))
               14
+              6
+              "keyword"
+              "language form"))]
+        [(LspCompletionContextKind.Value)
+          (lsp-completion-collect-visible!
+            (&mut results)
+            doc
+            context
+            (compiler_semantic_index.compiler-semantic-binding-namespace-value-mask))])
+      results)))
+
+(define (lsp-completion-text-edit
+  [candidate : (& candidate LspCompletionCandidate)]
+  [text : String]
+  [context : (& context LspCompletionContext)]) : json.Json
+  (let
+    [start : LspLineCol (lsp-line-col-at-offset text context.replace-start)]
+    [end : LspLineCol (lsp-line-col-at-offset text context.replace-end)]
+    (lsp-json-object2
+      "range"
+      (lsp-json-object2
+        "start"
+        (lsp-position start.line start.col)
+        "end"
+        (lsp-position end.line end.col))
+      "newText"
+      (json.JsonString (string.copy (& candidate.new-text))))))
+
+(define (lsp-completion-item-json
+  [candidate : (& candidate LspCompletionCandidate)]
+  [text : String]
+  [context : (& context LspCompletionContext)]) : json.Json
+  (lsp-json-object
+    (lsp-json-member
+      "label"
+      (json.JsonString (string.copy (& candidate.label)))
+      (lsp-json-member
+        "kind"
+        (lsp-json-number candidate.kind)
+        (if (> (string.string-length candidate.detail) 0)
+          (lsp-json-member
+            "detail"
+            (json.JsonString (string.copy (& candidate.detail)))
+            (if (> (string.string-length candidate.documentation) 0)
+              (lsp-json-member
+                "documentation"
+                (json.JsonString (string.copy (& candidate.documentation)))
+                (lsp-json-member
+                  "textEdit"
+                  (lsp-completion-text-edit candidate text context)
+                  (json.member-list-empty)))
+              (lsp-json-member
+                "textEdit"
+                (lsp-completion-text-edit candidate text context)
+                (json.member-list-empty))))
+          (if (> (string.string-length candidate.documentation) 0)
+            (lsp-json-member
+              "documentation"
+              (json.JsonString (string.copy (& candidate.documentation)))
+              (lsp-json-member
+                "textEdit"
+                (lsp-completion-text-edit candidate text context)
+                (json.member-list-empty)))
+            (lsp-json-member
+              "textEdit"
+              (lsp-completion-text-edit candidate text context)
+              (json.member-list-empty))))))))
+
+(define (lsp-completion-items-json
+  [results : (& results LspCompletionResults)]
+  [text : String]
+  [context : (& context LspCompletionContext)]
+  [index : i64]) : json.JsonSeq
+  (if (>= index results.len)
+    (json.list-empty)
+    (lsp-json-list-cons
+      (lsp-completion-item-json
+        (& (array-ref results.slots index))
+        text
+        context)
+      (lsp-completion-items-json results text context (+ index 1)))))
+
+(define (lsp-completion-empty-result) : json.Json
+  (lsp-json-object2
+    "isIncomplete"
+    (json.JsonBool false)
+    "items"
+    (lsp-json-array (json.list-empty))))
+
+(define (lsp-completion-result-json
+  [doc : (& doc lsp_vector_families.LspDocument)]
+  [workspace : (& workspace lsp_vector_families.LspWorkspaceIndex)]
+  [context : (& context LspCompletionContext)]) : json.Json
+  (let
+    [results : LspCompletionResults
+      (lsp-completion-collect doc workspace context)]
+    (lsp-json-object2
+      "isIncomplete"
+      (json.JsonBool results.incomplete)
+      "items"
+      (lsp-json-array
+        (lsp-completion-items-json
+          (& results)
+          (string.copy (& doc.text))
+          context
+          0)))))
+
+(define (lsp-completion-result-for-params
+  [params : json.Json]
+  [state : lsp_vector_families.LspServerState]) : json.Json
+  (match (lsp-get-semantic-document params state.documents)
+    [(LspSemanticDocumentLookup.Missing) (lsp-completion-empty-result)]
+    [(LspSemanticDocumentLookup.Found doc)
+      (let
+        [position-key : String "position"]
+        (match (json.object-get params (& position-key))
+          [(json.JsonMissing) (lsp-completion-empty-result)]
+          [(json.JsonFound position)
+            (if (not
+              (and
+                (lsp-json-int-field-usable? position "line")
+                (lsp-json-int-field-usable? position "character")))
+              (lsp-completion-empty-result)
+              (match (lsp-completion-context-at-position
+                doc.text
+                (lsp-json-int-field-default position "line" -1)
+                (lsp-json-int-field-default position "character" -1))
+                [(LspCompletionContextLookup.Missing)
+                  (lsp-completion-empty-result)]
+                [(LspCompletionContextLookup.Found context)
+                  (match (lsp-document-semantic-snapshot-status (& doc))
+                    [(LspSemanticSnapshotStatus.Current _ _)
+                      (lsp-completion-result-json
+                        (& doc)
+                        (& state.workspace)
+                        (& context))]
+                    [_ (lsp-completion-empty-result)])]))]))]))
+
+(define (lsp-handle-completion-message
+  [message : json.Json]
+  [state : lsp_vector_families.LspServerState]) : LspHandleResult
+  (let
+    [id-key : String "id"]
+    (match (json.object-get message (& id-key))
+      [(json.JsonMissing) (LspHandleResult.Continue state)]
+      [(json.JsonFound id)
+        (let
+          [previous : i64 (arena.tl_arena_current)]
+          [scratch : i64 (arena.tl_arena_make)]
+          [_install : unit
+            (unsafe
+              (arena.tl_arena_set scratch))]
+          [params-key : String "params"]
+          (begin
+            (match (json.object-get message (& params-key))
+              [(json.JsonMissing)
+                (lsp-write-response id (lsp-completion-empty-result))]
+              [(json.JsonFound params)
+                (lsp-write-response
+                  id
+                  (lsp-completion-result-for-params params state))])
+            (unsafe
+              (begin
+                (arena.tl_arena_set previous)
+                (arena.tl_arena_destroy scratch)))
+            (LspHandleResult.Continue state)))])))
+
+(define (lsp-completion-test-candidate
+  [label : String]
+  [match-rank : i64]
+  [source-rank : i64]
+  [namespace-rank : i64]
+  [stable-key : String]) : LspCompletionCandidate
+  (LspCompletionCandidate
+    match-rank
+    source-rank
+    namespace-rank
+    6
+    label
+    ""
+    ""
+    ""
+    ""
+    0
+    0
+    stable-key
+    (string.copy (& label))))
+
+(define (lsp-completion-provider-smoke-ok?) : bool
+  (let
+    [ordered : LspCompletionResults (lsp-completion-results-new)]
+    [capped : LspCompletionResults (lsp-completion-results-new)]
+    [index : i64 0]
+    (begin
+      (lsp-completion-results-insert!
+        (&mut ordered)
+        (lsp-completion-test-candidate "beta" 1 1 0 "beta"))
+      (lsp-completion-results-insert!
+        (&mut ordered)
+        (lsp-completion-test-candidate "alpha" 1 2 0 "alpha-import"))
+      (lsp-completion-results-insert!
+        (&mut ordered)
+        (lsp-completion-test-candidate "alpha" 1 0 0 "alpha-local"))
+      ;; A repeated stable semantic identity never produces another item.
+      (lsp-completion-results-insert!
+        (&mut ordered)
+        (lsp-completion-test-candidate "duplicate-label" 0 0 0 "alpha-local"))
+      (while (< index (+ lsp-completion-result-limit 1))
+        (begin
+          (lsp-completion-results-insert!
+            (&mut capped)
+            (lsp-completion-test-candidate
+              (lsp-str3 "item-" (string.int->string index) "")
+              1
+              4
               0
-              (json.list-empty)))))]
-    (lsp-write-response id (lsp-json-array items))))
+              (lsp-str3 "cap-" (string.int->string index) "")))
+          (set! index (+ index 1))))
+      (and
+        (= ordered.len 3)
+        (string.eq
+          (lsp-completion-results-get (& ordered) 0).stable-key
+          "alpha-local")
+        (string.eq (lsp-completion-results-get (& ordered) 1).stable-key "beta")
+        (string.eq
+          (lsp-completion-results-get (& ordered) 2).stable-key
+          "alpha-import")
+        (= capped.len lsp-completion-result-limit)
+        capped.incomplete
+        (string.eq
+          (lsp-completion-module-next-segment "stdlib.string" "")
+          "stdlib")
+        (string.eq
+          (lsp-completion-module-next-segment "stdlib.string" "stdlib")
+          "string")
+        (string.eq
+          (lsp-completion-module-next-segment "compiler.parse.core" "compiler")
+          "parse")
+        (string.eq
+          (lsp-completion-module-next-segment "stdlib.string" "compiler")
+          "")
+        (string.eq
+          (lsp-completion-rendered-type-owner-name "app.main/AB")
+          "app.main/AB")
+        (string.eq
+          (lsp-completion-rendered-type-owner-name "(& app.main/AB)")
+          "app.main/AB")
+        (string.eq
+          (lsp-completion-rendered-type-owner-name "(& lifetime app.main/AB)")
+          "app.main/AB")
+        (string.eq
+          (lsp-completion-rendered-type-owner-name
+            "(Region phase (& lifetime (app.main/RefBox lifetime)))")
+          "app.main/RefBox")))))
+
+(test
+  lsp-completion-provider-ranking-dedup-cap
+  (unless
+    (lsp-completion-provider-smoke-ok?)
+    (io.panic "lsp-completion-provider-ranking-dedup-cap failed")))
 
 ;; --------------------------------------------------------------------------
 ;; Inlay hints (textDocument/inlayHint) for inferred types.
@@ -12936,16 +14274,6 @@
                   [(json.JsonMissing) unit]))
               (set! result (LspDocumentHandleResult.Continue docs)))
             unit)
-          (if (and (not handled) (string.eq method "textDocument/completion"))
-            (begin
-              (set! handled true)
-              (let
-                [id-key : String "id"]
-                (match (json.object-get message (& id-key))
-                  [(json.JsonFound id) (lsp-completion-respond id docs)]
-                  [(json.JsonMissing) unit]))
-              (set! result (LspDocumentHandleResult.Continue docs)))
-            unit)
           (if (and
             (not handled)
             (string.eq method "textDocument/signatureHelp"))
@@ -13659,6 +14987,8 @@
           (lsp-handle-rename-message method message state stdlib-roots)]
         [(string.eq method "textDocument/references")
           (lsp-handle-references-message message state stdlib-roots)]
+        [(string.eq method "textDocument/completion")
+          (lsp-handle-completion-message message state)]
         [(or
             (string.eq method "workspace/symbol")
             (string.eq method "tl/projectSearch"))

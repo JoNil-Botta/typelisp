@@ -1697,6 +1697,10 @@ if [ "$NL_HOST_OS" = windows ]; then
     # The instruction-gap bank's optimizer, regalloc, and backend test surface
     # crosses that line: its authoritative Windows probe measured 25,643 used
     # nodes, 26 segments, 26,624 capacity, and 638,976 physical payload bytes.
+    # #5407's semantic completion provider adds enough macro-expanded type
+    # structure to cross the next line: the authoritative Windows probe
+    # measured 26,662 used nodes, 27 segments, 27,648 capacity, and 663,552
+    # physical payload bytes.
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_type_pool macro_expand 27 1024 24 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"

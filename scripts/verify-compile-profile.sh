@@ -1637,6 +1637,9 @@ if [ "$NL_HOST_OS" = windows ]; then
     # selector and the final ownership reconciliation crosses two boundaries:
     # the authoritative Windows CI probe measured 4,728,044 used nodes,
     # 4,784,128 capacity, and 153,092,096 physical payload bytes.
+    # #6877's loop-postcondition bounds-check memo crossed the pre-ownership
+    # graph from 47 to 48 segments (3,083,453 used nodes), but the combined
+    # ownership graph remains within this exact 73-segment boundary.
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_expr_pool macro_expand 73 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"

@@ -1325,6 +1325,10 @@
   (table-id-cell (__tl_dyn-array i64))
   (reset-generation-cell (__tl_dyn-array i64))
   (pool-slots (__tl_dyn-array String))
+  ;; Immutable name-shape metadata belongs to the same compile-job capability
+  ;; as the rendered spelling. Later phases must not consult the installed
+  ;; compatibility table to classify an ID captured by this session.
+  (semantic-names InternSemanticNameView)
   (map-id-slots (__tl_dyn-array InternSlotId))
   (map-hash-slots (__tl_dyn-array i64))
   (map-ready-cell (__tl_dyn-array bool))
@@ -2870,6 +2874,30 @@
                 module-id
                 base-id))))))))
 
+(define (intern-compat-state-generated-canonical-name
+  [state : InternCompatState]
+  [name : String]) : i64
+  (begin
+    (if (array-ref state.map-ready 0)
+      unit
+      (intern-compat-state-reset! state))
+    (let
+      [capacity : i64 (array-length state.generated-map-id-slots)]
+      [hash : i64
+        (cfg
+          compile-profile
+          (intern-compat-state-hash-ref (& state) (& name))
+          (intern-hash name))]
+      (intern-compat-state-generated-canonical-name-at
+        state
+        name
+        hash
+        (intern-bucket hash capacity)
+        0
+        false
+        -1
+        -1))))
+
 (define (intern-compat-state-generated-canonical-qualified-name
   [state : InternCompatState]
   [name : String]
@@ -4318,6 +4346,7 @@
     state.table-id
     state.reset-generation
     state.pool-slots
+    (intern-compat-state-semantic-name-view state)
     state.map-id-slots
     state.map-hash-slots
     state.map-ready
@@ -4372,6 +4401,119 @@
   (unsafe
     (ptr-read
       (int->ptr (cast handle.address : u64) : (Ptr InternSourceNameSession)))))
+
+;; Explicit-owner rendering boundary for later compiler phases. The handle's
+;; pool storage belongs to the captured intern table, so an unrelated installed
+;; compatibility table cannot redirect this read.
+(define (intern-source-name-session-handle-str
+  [handle : InternSourceNameSessionHandle]
+  [id : i64]) : String
+  (let
+    [pool-slots : (__tl_dyn-array String)
+      (unsafe
+        (__tl-project-field
+          (ptr-read
+            (int->ptr
+              (cast handle.address : u64)
+              : (Ptr InternSourceNameSession)))
+          pool-slots))]
+    (array-ref pool-slots id)))
+
+(define (intern-source-name-session-handle-capacity
+  [handle : InternSourceNameSessionHandle]) : i64
+  (let
+    [pool-slots : (__tl_dyn-array String)
+      (unsafe
+        (__tl-project-field
+          (ptr-read
+            (int->ptr
+              (cast handle.address : u64)
+              : (Ptr InternSourceNameSession)))
+          pool-slots))]
+    (array-length pool-slots)))
+
+(define (intern-source-name-session-handle-qualified?
+  [handle : InternSourceNameSessionHandle]
+  [id : i64]) : bool
+  (let
+    [names : InternSemanticNameView
+      (unsafe
+        (__tl-project-field
+          (ptr-read
+            (int->ptr
+              (cast handle.address : u64)
+              : (Ptr InternSourceNameSession)))
+          semantic-names))]
+    (intern-semantic-name-view-qualified? (& names) id)))
+
+(define (intern-source-name-session-handle-qualified-base-id
+  [handle : InternSourceNameSessionHandle]
+  [id : i64]) : i64
+  (let
+    [names : InternSemanticNameView
+      (unsafe
+        (__tl-project-field
+          (ptr-read
+            (int->ptr
+              (cast handle.address : u64)
+              : (Ptr InternSourceNameSession)))
+          semantic-names))]
+    (intern-semantic-name-view-qualified-base-id (& names) id)))
+
+(define (intern-source-name-session-handle-dotted?
+  [handle : InternSourceNameSessionHandle]
+  [id : i64]) : bool
+  (let
+    [names : InternSemanticNameView
+      (unsafe
+        (__tl-project-field
+          (ptr-read
+            (int->ptr
+              (cast handle.address : u64)
+              : (Ptr InternSourceNameSession)))
+          semantic-names))]
+    (>= (intern-semantic-name-view-first-dot (& names) id) 0)))
+
+(define (intern-source-name-session-handle-first-dot
+  [handle : InternSourceNameSessionHandle]
+  [id : i64]) : i64
+  (let
+    [names : InternSemanticNameView
+      (unsafe
+        (__tl-project-field
+          (ptr-read
+            (int->ptr
+              (cast handle.address : u64)
+              : (Ptr InternSourceNameSession)))
+          semantic-names))]
+    (intern-semantic-name-view-first-dot (& names) id)))
+
+(define (intern-source-name-session-handle-dotted-final-id
+  [handle : InternSourceNameSessionHandle]
+  [id : i64]) : i64
+  (let
+    [names : InternSemanticNameView
+      (unsafe
+        (__tl-project-field
+          (ptr-read
+            (int->ptr
+              (cast handle.address : u64)
+              : (Ptr InternSourceNameSession)))
+          semantic-names))]
+    [current : i64
+      (if (intern-semantic-name-view-qualified? (& names) id)
+        (intern-semantic-name-view-qualified-base-id (& names) id)
+        id)]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (let
+          [tail-id : i64
+            (intern-semantic-name-view-dotted-tail-id (& names) current)]
+          (if (< tail-id 0)
+            (set! done true)
+            (set! current tail-id))))
+      current)))
 
 ;; Hot provenance checks need only these scalar identity fields. Reading them
 ;; through focused accessors avoids copying the full combined session.

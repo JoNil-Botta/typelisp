@@ -101,6 +101,10 @@
   [session : ci.InternSourceNameSessionHandle]) : InternStructuralSessionHandle
   (InternStructuralSessionHandle session.address))
 
+(define (intern-structural-session-handle-source-names
+  [handle : InternStructuralSessionHandle]) : ci.InternSourceNameSessionHandle
+  (ci.InternSourceNameSessionHandle handle.address))
+
 (define (intern-structural-session-handle-session
   [handle : InternStructuralSessionHandle]) : ci.InternSourceNameSession
   (ci.intern-source-name-session-handle-session

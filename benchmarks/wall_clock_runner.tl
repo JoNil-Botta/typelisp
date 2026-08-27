@@ -23,17 +23,41 @@
   ;; O_CLOEXEC.
   524288)
 
-(define (array-i32-addr [items : (__tl_dyn-array i32)]) : i64
+(define (array-i32-addr [items : (& items (__tl_dyn-array i32))]) : i64
   (unsafe
-    (cast (ptr->int (ptr-cast (__tl_array-data items) : (Ptr u8))) : i64)))
+    (cast
+      (ptr->int
+        (ptr-cast
+          (__tl_array-data
+            (__tl-compiler-owned-shared-view-dyn-ref-as
+              items
+              (__tl_dyn-array i32)))
+          : (Ptr u8)))
+      : i64)))
 
-(define (array-i64-addr [items : (__tl_dyn-array i64)]) : i64
+(define (array-i64-addr [items : (& items (__tl_dyn-array i64))]) : i64
   (unsafe
-    (cast (ptr->int (ptr-cast (__tl_array-data items) : (Ptr u8))) : i64)))
+    (cast
+      (ptr->int
+        (ptr-cast
+          (__tl_array-data
+            (__tl-compiler-owned-shared-view-dyn-ref-as
+              items
+              (__tl_dyn-array i64)))
+          : (Ptr u8)))
+      : i64)))
 
-(define (array-u8-addr [items : (__tl_dyn-array u8)]) : i64
+(define (array-u8-addr [items : (& items (__tl_dyn-array u8))]) : i64
   (unsafe
-    (cast (ptr->int (ptr-cast (__tl_array-data items) : (Ptr u8))) : i64)))
+    (cast
+      (ptr->int
+        (ptr-cast
+          (__tl_array-data
+            (__tl-compiler-owned-shared-view-dyn-ref-as
+              items
+              (__tl_dyn-array u8)))
+          : (Ptr u8)))
+      : i64)))
 
 (define (program-argv-at [index : i64]) : (Ptr u8)
   (unsafe
@@ -63,7 +87,7 @@
 
 (define (child-fail
   [exec-write : i64]
-  [error-buffer : (__tl_dyn-array i64)]
+  [error-buffer : (&mut error-buffer (__tl_dyn-array i64))]
   [status : i64]) : never
   (begin
     (set! (array-ref error-buffer 0) (positive-errno status))
@@ -94,7 +118,7 @@
         (unsafe
           (syscall 2 stdout-path-addr open-output-flags open-output-mode))]
       (if (< stdout-fd 0)
-        (child-fail exec-write error-buffer stdout-fd)
+        (child-fail exec-write (&mut error-buffer) stdout-fd)
         (let
           [stderr-fd : i64
             (unsafe
@@ -102,7 +126,7 @@
           (if (< stderr-fd 0)
             (begin
               (close-redirect-fd stdout-fd)
-              (child-fail exec-write error-buffer stderr-fd))
+              (child-fail exec-write (&mut error-buffer) stderr-fd))
             (let
               [stdout-status : i64
                 (unsafe
@@ -111,7 +135,7 @@
                 (begin
                   (close-redirect-fd stdout-fd)
                   (close-redirect-fd stderr-fd)
-                  (child-fail exec-write error-buffer stdout-status))
+                  (child-fail exec-write (&mut error-buffer) stdout-status))
                 (let
                   [stderr-status : i64
                     (unsafe
@@ -120,7 +144,7 @@
                     (begin
                       (close-redirect-fd stdout-fd)
                       (close-redirect-fd stderr-fd)
-                      (child-fail exec-write error-buffer stderr-status))
+                      (child-fail exec-write (&mut error-buffer) stderr-status))
                     (begin
                       (close-redirect-fd stdout-fd)
                       (close-redirect-fd stderr-fd)
@@ -128,10 +152,12 @@
                         [exec-status : i64
                           (unsafe
                             (syscall 59 exec-addr argv-addr envp-addr))]
-                        (child-fail exec-write error-buffer exec-status)))))))))))
-    (child-fail exec-write error-buffer -1)))
+                        (child-fail exec-write (&mut error-buffer) exec-status)))))))))))
+    (child-fail exec-write (&mut error-buffer) -1)))
 
-(define (read-launch-error [fd : i64] [error-buffer : (__tl_dyn-array i64)]) : i64
+(define (read-launch-error
+  [fd : i64]
+  [error-buffer : (&mut error-buffer (__tl_dyn-array i64))]) : i64
   (let
     [total : i64 0]
     [done : bool false]
@@ -151,7 +177,9 @@
             [else (set! total (+ total count))])))
       total)))
 
-(define (wait-child [pid : i64] [status-buffer : (__tl_dyn-array i32)]) : i64
+(define (wait-child
+  [pid : i64]
+  [status-buffer : (&mut status-buffer (__tl_dyn-array i32))]) : i64
   (let
     [waited : i64 -4]
     (begin
@@ -204,7 +232,7 @@
     [status-buffer : (__tl_dyn-array i32) (array.make-array i32 1)]
     [pipe-status : i64
       (unsafe
-        (syscall 293 (array-i32-addr exec-pipe) pipe-close-on-exec))]
+        (syscall 293 (array-i32-addr (& exec-pipe)) pipe-close-on-exec))]
     (if (< pipe-status 0)
       (begin
         (io.print-error "wall-clock-runner: pipe2 failed\n")
@@ -227,8 +255,8 @@
               exec-read
               exec-write
               error-buffer
-              (array-u8-addr stdout-path)
-              (array-u8-addr stderr-path)
+              (array-u8-addr (& stdout-path))
+              (array-u8-addr (& stderr-path))
               (unsafe
                 (cast (ptr->int (program-argv-at 4)) : i64))
               (program-argv-addr 4)
@@ -236,8 +264,9 @@
             (begin
               (close-fd exec-write)
               (let
-                [launch-bytes : i64 (read-launch-error exec-read error-buffer)]
-                [waited : i64 (wait-child pid status-buffer)]
+                [launch-bytes : i64
+                  (read-launch-error exec-read (&mut error-buffer))]
+                [waited : i64 (wait-child pid (&mut status-buffer))]
                 [end : i64 (profile.now-ticks)]
                 (begin
                   (close-fd exec-read)

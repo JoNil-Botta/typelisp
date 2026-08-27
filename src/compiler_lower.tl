@@ -19684,6 +19684,11 @@
     [(ast.AstType.U8) true]
     [(ast.AstType.Bool) true]
     [(ast.AstType.Char) true]
+    ;; Borrowing a raw-pointer value borrows the one-word pointer slot; it does
+    ;; not dereference the raw pointer's target. Pointer formatting relies on
+    ;; this shape before its separately unsafe ptr->int conversion.
+    [(ast.AstType.Ptr _) true]
+    [(ast.AstType.MutPtr _) true]
     [(ast.AstType.Str) true]
     [(ast.AstType.Bytes) true]
     [(ast.AstType.Tuple elems)

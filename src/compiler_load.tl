@@ -499,6 +499,15 @@
   (member-sets (__tl_dyn-array sym_i64_env.SymI64Env))
   (stack (__tl_dyn-array CompilerLoadLazyQualifiedObserverStack)))
 
+;; Embedded-stdlib route trust belongs to the load session whose intern table
+;; produced these ids. Keeping the map heads in the session prevents a batch
+;; reset or an interleaved job from reinterpreting a numeric id under another
+;; intern generation.
+(defstruct CompilerLoadEmbeddedStdlibProvenanceState
+  (module-ids (__tl_dyn-array sym_i64_env.SymI64Env))
+  (equivalence-cache (__tl_dyn-array sym_i64_env.SymI64Env))
+  (noted (__tl_dyn-array bool)))
+
 ;; A dependency catalog is admitted once for the load job and then selected by
 ;; the defining declaration's physical source provenance. The stable key keeps
 ;; reuse conservative across package builds, source edits, artifact rewrites,
@@ -723,6 +732,7 @@
   (surface-summary-load-depth (__tl_dyn-array i64))
   (lazy-import-skip-record-count (__tl_dyn-array i64))
   (lazy-qualified-observer CompilerLoadLazyQualifiedObserverState)
+  (embedded-stdlib-provenance CompilerLoadEmbeddedStdlibProvenanceState)
   (dependency-catalog CompilerLoadDependencyCatalogRegistry)
   (dependency-surfaces CompilerLoadDependencySurfaceState)
   ;; Verification policy is snapshotted per package build before admission.
@@ -823,6 +833,12 @@
   [value : bool]) : unit
   (set! (array-ref cell 0) value))
 
+(define (compiler-load-embedded-stdlib-provenance-state-new) : CompilerLoadEmbeddedStdlibProvenanceState
+  (CompilerLoadEmbeddedStdlibProvenanceState
+    (__tl_make-array (sym_i64_env.sym-i64-empty))
+    (__tl_make-array (sym_i64_env.sym-i64-empty))
+    (compiler-load-session-state-bool-cell false)))
+
 (define (compiler-load-session-state-new-with-standalone-reset-safety
   [standalone-reset-safe : bool]) : CompilerLoadSessionState
   (let
@@ -857,6 +873,7 @@
       surface-summary-load-depth
       lazy-import-skip-record-count
       lazy-qualified-observer
+      (compiler-load-embedded-stdlib-provenance-state-new)
       (compiler-load-dependency-catalog-registry-new)
       (compiler-load-dependency-surface-state-new)
       (compiler-load-session-state-bool-cell false)
@@ -2371,22 +2388,19 @@
   [state : CompilerLoadSessionState]) : unit
   (set! (array-ref state.cache-enabled 1) true))
 
-;; Canonical ids of modules whose source matches the embedded stdlib payload
-;; in this process. The tlci macro route consults this per defining module:
-;; embedded source and byte-identical disk source may use the catalog, while
-;; modified or otherwise untrusted roots must expand from their own source.
+;; Canonical ids of modules whose source matches the embedded stdlib payload.
+;; The owning session's intern table gives these ids meaning: embedded source
+;; and byte-identical disk source may use the catalog, while modified or
+;; otherwise untrusted roots must expand from their own source.
 (define compiler-load-provenance-arena-handle : i64
   0)
 
 (define (compiler-load-provenance-arena-handle-value) : i64
   compiler-load-provenance-arena-handle)
 
-;: Arena for the embedded-provenance set and the content-equivalence cache.
-;: These outlive every session floor reset (their contents are re-derived
-;: per session, but the bindings must never point into memory another reset
-;: can free), so they get their own arena that is created once and only grows.
-;: The retained payload is small even for selfhost; start with the runtime's
-;: small reservation while preserving the ordinary overflow path.
+;: Compatibility arena for standalone embedded-provenance adapters. Explicit
+;: compiler sessions allocate their bindings in their owned intern-persistent
+;: arena so the next entry reset reclaims them without affecting another job.
 (define (compiler-load-provenance-arena) : i64
   (begin
     (if (= compiler-load-provenance-arena-handle 0)
@@ -2408,62 +2422,78 @@
         compiler-load-provenance-arena-handle
         head))))
 
-(define compiler-load-embedded-module-ids : sym_i64_env.SymI64Env
-  (sym_i64_env.sym-i64-empty))
+(define (compiler-load-session-state-embedded-provenance-arena
+  [state : CompilerLoadSessionState]) : i64
+  (if (array-ref state.intern-state-ready 0)
+    (ci.intern-compat-state-persistent-arena-current-head
+      (array-ref state.intern-state 0))
+    (compiler-load-provenance-arena)))
 
-(define (compiler-load-embedded-module-ids-shared-view) : sym_i64_env.SymI64Env
-  (cfg
-    stage0-seed-bootstrap
-    compiler-load-embedded-module-ids
-    (unsafe
-      (ptr-read (ptr-addr-of compiler-load-embedded-module-ids)))))
+(define (compiler-load-session-state-embedded-module-ids-shared-view
+  [state : CompilerLoadSessionState]) : sym_i64_env.SymI64Env
+  (array-ref state.embedded-stdlib-provenance.module-ids 0))
 
-(define (compiler-load-embedded-module-ids-reset!) : unit
-  (set! compiler-load-embedded-module-ids (sym_i64_env.sym-i64-empty)))
+(define (compiler-load-session-state-embedded-equivalence-cache-shared-view
+  [state : CompilerLoadSessionState]) : sym_i64_env.SymI64Env
+  (array-ref state.embedded-stdlib-provenance.equivalence-cache 0))
 
-(define (compiler-load-note-embedded-module! [path : String]) : unit
+(define (compiler-load-session-state-embedded-provenance-noted?
+  [state : CompilerLoadSessionState]) : bool
+  (array-ref state.embedded-stdlib-provenance.noted 0))
+
+(define (compiler-load-session-state-embedded-provenance-reset!
+  [state : CompilerLoadSessionState]) : unit
+  (begin
+    (set!
+      (array-ref state.embedded-stdlib-provenance.module-ids 0)
+      (sym_i64_env.sym-i64-empty))
+    (set!
+      (array-ref state.embedded-stdlib-provenance.equivalence-cache 0)
+      (sym_i64_env.sym-i64-empty))
+    (set! (array-ref state.embedded-stdlib-provenance.noted 0) false)))
+
+(define (compiler-load-session-state-note-embedded-module!
+  [state : CompilerLoadSessionState]
+  [path : String]) : unit
   (let
     [id : i64 (ci.intern (compiler-load-canonical-module-id-from-path path))]
-    ;; The set outlives every load-scoped scratch arena and every intern
-    ;; floor reset; bind its nodes in the dedicated provenance arena.
+    ;; The map head belongs to this session. Its nodes outlive load-scoped
+    ;; scratch arenas and remain valid until the next session intern reset.
     (in-arena
-      (arena.Arena (compiler-load-provenance-arena))
+      (arena.Arena
+        (compiler-load-session-state-embedded-provenance-arena state))
       (set!
-        compiler-load-embedded-module-ids
+        (array-ref state.embedded-stdlib-provenance.module-ids 0)
         (sym_i64_env.sym-i64-bind-id
-          (compiler-load-embedded-module-ids-shared-view)
+          (compiler-load-session-state-embedded-module-ids-shared-view state)
           id
           1)))))
 
-(define compiler-load-embedded-equivalence-cache : sym_i64_env.SymI64Env
-  (sym_i64_env.sym-i64-empty))
-
-(define (compiler-load-embedded-equivalence-cache-shared-view) : sym_i64_env.SymI64Env
-  (cfg
-    stage0-seed-bootstrap
-    compiler-load-embedded-equivalence-cache
-    (unsafe
-      (ptr-read (ptr-addr-of compiler-load-embedded-equivalence-cache)))))
-
-(define compiler-load-embedded-provenance-noted : bool
-  false)
+(define (compiler-load-note-embedded-module! [path : String]) : unit
+  (compiler-load-session-state-note-embedded-module!
+    (compiler-load-active-session-state-shared-view)
+    path))
 
 (define (compiler-load-embedded-provenance-noted?) : bool
-  compiler-load-embedded-provenance-noted)
+  (compiler-load-session-state-embedded-provenance-noted?
+    (compiler-load-active-session-state-shared-view)))
 
 (define (compiler-load-embedded-provenance-observer-ok?) : bool
   (let
-    [previous : bool compiler-load-embedded-provenance-noted]
+    [state : CompilerLoadSessionState
+      (compiler-load-active-session-state-shared-view)]
+    [previous : bool
+      (compiler-load-session-state-embedded-provenance-noted? state)]
     [false-ok : bool
       (begin
-        (set! compiler-load-embedded-provenance-noted false)
+        (set! (array-ref state.embedded-stdlib-provenance.noted 0) false)
         (not (compiler-load-embedded-provenance-noted?)))]
     [true-ok : bool
       (begin
-        (set! compiler-load-embedded-provenance-noted true)
+        (set! (array-ref state.embedded-stdlib-provenance.noted 0) true)
         (compiler-load-embedded-provenance-noted?))]
     (begin
-      (set! compiler-load-embedded-provenance-noted previous)
+      (set! (array-ref state.embedded-stdlib-provenance.noted 0) previous)
       (and false-ok true-ok))))
 
 ;: A stdlib module resolved from a root (or the working directory) whose
@@ -2472,13 +2502,14 @@
 ;: by construction, and any user modification breaks the equality and keeps
 ;: that module on source interpretation. Cached per suffix; the compare runs
 ;: once per module per session.
-(define (compiler-load-note-embedded-equivalent-if-matching!
+(define (compiler-load-session-state-note-embedded-equivalent-if-matching!
+  [state : CompilerLoadSessionState]
   [suffix : String]
   [disk-path : String]) : unit
   (let
     [key : i64 (ci.intern suffix)]
     (if (sym_i64_env.sym-i64-contains-id
-      (compiler-load-embedded-equivalence-cache-shared-view)
+      (compiler-load-session-state-embedded-equivalence-cache-shared-view state)
       key)
       unit
       (let
@@ -2499,24 +2530,42 @@
               -1])]
         (begin
           (in-arena
-            (arena.Arena (compiler-load-provenance-arena))
+            (arena.Arena
+              (compiler-load-session-state-embedded-provenance-arena state))
             (set!
-              compiler-load-embedded-equivalence-cache
+              (array-ref state.embedded-stdlib-provenance.equivalence-cache 0)
               (sym_i64_env.sym-i64-bind-id
-                (compiler-load-embedded-equivalence-cache-shared-view)
+                (compiler-load-session-state-embedded-equivalence-cache-shared-view
+                  state)
                 key
                 outcome)))
           (if (= outcome 1)
             (begin
-              (compiler-load-note-embedded-module!
+              (compiler-load-session-state-note-embedded-module!
+                state
                 (str_cat.str-cat "stdlib/" suffix))
-              (set! compiler-load-embedded-provenance-noted true))
+              (set! (array-ref state.embedded-stdlib-provenance.noted 0) true))
             unit))))))
 
-(define (compiler-load-embedded-stdlib-module-id? [module : String]) : bool
+(define (compiler-load-note-embedded-equivalent-if-matching!
+  [suffix : String]
+  [disk-path : String]) : unit
+  (compiler-load-session-state-note-embedded-equivalent-if-matching!
+    (compiler-load-active-session-state-shared-view)
+    suffix
+    disk-path))
+
+(define (compiler-load-session-state-embedded-stdlib-module-id?
+  [state : CompilerLoadSessionState]
+  [module : String]) : bool
   (sym_i64_env.sym-i64-contains-id
-    (compiler-load-embedded-module-ids-shared-view)
+    (compiler-load-session-state-embedded-module-ids-shared-view state)
     (ci.intern module)))
+
+(define (compiler-load-embedded-stdlib-module-id? [module : String]) : bool
+  (compiler-load-session-state-embedded-stdlib-module-id?
+    (compiler-load-active-session-state-shared-view)
+    module))
 
 (define (compiler-load-session-note-embedded-stdlib-source!) : unit
   (compiler-load-session-state-note-embedded-stdlib-source!
@@ -2566,9 +2615,8 @@
 
 (define (compiler-load-session-reset-interns!) : unit
   (begin
-    (compiler-load-embedded-module-ids-reset!)
-    (set! compiler-load-embedded-equivalence-cache (sym_i64_env.sym-i64-empty))
-    (set! compiler-load-embedded-provenance-noted false)
+    (compiler-load-session-state-embedded-provenance-reset!
+      (compiler-load-active-session-state-shared-view))
     (compiler-load-surface-summaries-reset!)
     (compiler-load-lazy-qualified-observer-reset!)
     (set!
@@ -2588,6 +2636,7 @@
   [load-state : CompilerLoadSessionState]
   [intern-state : ci.InternCompatState]) : unit
   (begin
+    (compiler-load-session-state-embedded-provenance-reset! load-state)
     (compiler-load-session-state-surface-summaries-reset! load-state)
     (compiler-load-session-state-lazy-qualified-observer-reset! load-state)
     (set! (array-ref load-state.surface-summary-load-depth 0) 0)
@@ -4844,7 +4893,8 @@
     (match (compiler-load-resolve-stdlib-root suffix stdlib-roots)
       [(CompilerLoadSomePath source-path)
         (begin
-          (compiler-load-note-embedded-equivalent-if-matching!
+          (compiler-load-session-state-note-embedded-equivalent-if-matching!
+            load-state
             suffix
             source-path)
           (compiler-load-stdlib-prelude-source-with-roots-cfg-with-pools
@@ -4860,7 +4910,9 @@
           [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource
               source)
             (begin
-              (compiler-load-note-embedded-module! path)
+              (compiler-load-session-state-note-embedded-module!
+                load-state
+                path)
               (compiler-load-session-state-note-embedded-stdlib-source!
                 load-state)
               (compiler-load-stdlib-prelude-source-with-roots-cfg-with-pools
@@ -11653,7 +11705,9 @@
               [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource
                   source)
                 (match (begin
-                  (compiler-load-note-embedded-module! path)
+                  (compiler-load-session-state-note-embedded-module!
+                    load-state
+                    path)
                   (if cache-current
                     (compiler-load-parse-embedded-source-diagnostic-session-id-with-pools
                       load-state
@@ -18797,6 +18851,54 @@
       (compiler-load-session-state-use! previous-state)
       ok)))
 
+(define (compiler-load-session-embedded-provenance-isolation-ok?) : bool
+  (let
+    [state-a : CompilerLoadSessionState (compiler-load-session-state-new)]
+    [state-b : CompilerLoadSessionState (compiler-load-session-state-new)]
+    [module-a : String "stdlib.state_a"]
+    [module-b : String "stdlib.state_b"]
+    [_note-a : unit
+      (compiler-load-session-state-note-embedded-module!
+        state-a
+        "stdlib/state_a.tl")]
+    [_note-b : unit
+      (compiler-load-session-state-note-embedded-module!
+        state-b
+        "stdlib/state_b.tl")]
+    [_mark-a : unit
+      (set! (array-ref state-a.embedded-stdlib-provenance.noted 0) true)]
+    [_mark-b : unit
+      (set! (array-ref state-b.embedded-stdlib-provenance.noted 0) true)]
+    [before : bool
+      (and
+        (compiler-load-session-state-embedded-stdlib-module-id?
+          state-a
+          module-a)
+        (not
+          (compiler-load-session-state-embedded-stdlib-module-id?
+            state-a
+            module-b))
+        (compiler-load-session-state-embedded-stdlib-module-id?
+          state-b
+          module-b)
+        (not
+          (compiler-load-session-state-embedded-stdlib-module-id?
+            state-b
+            module-a))
+        (compiler-load-session-state-embedded-provenance-noted? state-a)
+        (compiler-load-session-state-embedded-provenance-noted? state-b))]
+    [_reset-b : unit
+      (compiler-load-session-state-embedded-provenance-reset! state-b)]
+    (and
+      before
+      (compiler-load-session-state-embedded-stdlib-module-id? state-a module-a)
+      (compiler-load-session-state-embedded-provenance-noted? state-a)
+      (not
+        (compiler-load-session-state-embedded-stdlib-module-id?
+          state-b
+          module-b))
+      (not (compiler-load-session-state-embedded-provenance-noted? state-b)))))
+
 (define (compiler-load-session-explicit-parse-isolation-ok?) : bool
   (let
     [home : arena.Arena (arena.current)]
@@ -19757,6 +19859,10 @@
       (compiler-load-session-explicit-cache-api-isolation-ok?)
       (return
         (io.panic "compiler-load: explicit cache API isolation smoke mismatch")))
+    (unless
+      (compiler-load-session-embedded-provenance-isolation-ok?)
+      (return
+        (io.panic "compiler-load: embedded provenance isolation smoke mismatch")))
     (unless
       (compiler-load-session-explicit-parse-isolation-ok?)
       (return

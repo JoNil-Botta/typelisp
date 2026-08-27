@@ -147,7 +147,11 @@ Vec bang place macros as available yet.
   resolved precision. `String`, borrowed `str`, `bool`, `char`, and owner-hook
   output truncate to the resolved number of TypeLisp bytes before width/fill/
   alignment. The byte count deliberately does not decode UTF-8 and may split a
-  multi-byte sequence; NUL and high bytes remain ordinary text bytes. The `p`
+  multi-byte sequence; NUL and high bytes remain ordinary text bytes. Integer
+  `b`, `o`, `x`,
+  and `X` selectors render binary, octal, and lower/uppercase hexadecimal;
+  negative signed values retain their exact 8/16/32/64-bit two's-complement
+  pattern, and `#` supplies `0b`/`0o`/`0x`. The `p`
   selector accepts direct `(Ptr T)` / `(MutPtr T)` values and shared borrows of
   those values. It emits minimal lowercase `0x` address text; `#p` defaults to
   16 zero-padded digits on 64-bit targets, and explicit width, alignment, fill,
@@ -158,8 +162,8 @@ Vec bang place macros as available yet.
   uniqueness, liveness, persistence, provenance, or a supported integer/pointer
   round-trip. Other type selectors remain focused unsupported-semantics
   diagnostics. Default Display values are `String`, all eight fixed-width
-  integer types, `bool`, `char`, `f64`, and `f32`.
-  Integers use full-range decimal Display; floats use source-width shortest
+  integer types, `bool`, `char`, `f64`, and `f32`. Integers use full-range
+  decimal Display or the selected radix; floats use source-width shortest
   round-tripping decimal Display without exponent notation and with canonical
   `NaN` spelling. Every supplied expression is evaluated once in source order.
   A nominal struct or
@@ -665,7 +669,7 @@ borrowed process runtime wrappers likewise copy at their owned boundary.
 | `string.is-char-whitespace`, `string.char-eq`, `string.index-of-byte`, `string.contains`, `string.contains-char`, `string.is-string-prefix-at` | Non-allocating string/char inspection; text parameters are borrowed `str` inputs. |
 | `string.append`, `string.concat`, `string.copy`, `string.substring`, `string.slice`, `string.concat-all` | Copying string helpers allocate fresh active-arena `String` storage and copy bytes from borrowed `str` inputs. Owned `String` places auto-borrow at call sites, and stdlib code that already has `(& r str)` values calls the same public helpers directly. `string.concat-all` accepts a borrowed native `Slice String`; long `str-cat` expansions pass a live-prefix Slice over one compiler-private packed buffer. |
 | `int->string` | Allocates fresh active-arena `String` storage, writes decimal bytes directly, and returns the zero, positive, negative, and signed edge-case spelling without calling the legacy runtime helper. Project callers should import the stdlib helper instead of relying on an unimported compiler default. |
-| `format.format` | Parses a literal template into a deterministic plan at macro expansion and emits one flat `str-cat` expression. Implicit, indexed, explicit named, call-site-captured, and star precision value/count selections bind every supplied expression once in source order. All fixed-width integer types use direct decimal conversion, including full-range `u64`; f32/f64 use source-width exact-boundary shortest Display when precision is omitted and exact fixed-decimal round-half-to-even when precision is present. Nominal placeholders call the canonical owner module's exact shared-borrow display hook without moving places. An unchanged value takes the existing fast path; applying shared options allocates an option-rendered piece only when content, sign, or padding changes, then the final `String` allocates once in the active arena. Integer conversion allocates one rendered piece; finite float conversion also allocates fixed-capacity active-arena bignum scratch buffers before its rendered piece. Fixed float conversion uses a separate wider scratch capacity sufficient for every f32/f64 exact coefficient, then performs checked one-allocation fixed layout. Owner hooks may allocate their rendered pieces before those steps. |
+| `format.format` | Parses a literal template into a deterministic plan at macro expansion and emits one flat `str-cat` expression. Implicit, indexed, explicit named, call-site-captured, and star precision value/count selections bind every supplied expression once in source order. All fixed-width integer types use direct full-range decimal conversion or one shared shift/mask `b`/`o`/`x`/`X` radix converter; same-width unsigned casts preserve negative signed bit patterns. f32/f64 use source-width exact-boundary shortest Display when precision is omitted and exact fixed-decimal round-half-to-even when precision is present. Nominal placeholders call the canonical owner module's exact shared-borrow display hook without moving places. An unchanged value takes the existing fast path; applying shared options allocates an option-rendered piece only when content, sign, or padding changes, then the final `String` allocates once in the active arena. Integer conversion allocates one exact-size rendered piece; sign/prefix/width changes allocate one additional option-rendered piece. Finite float conversion also allocates fixed-capacity active-arena bignum scratch buffers before its rendered piece. Fixed float conversion uses a separate wider scratch capacity sufficient for every f32/f64 exact coefficient, then performs checked one-allocation fixed layout. Owner hooks may allocate their rendered pieces before those steps. |
 | `string-trim-left`, `string-trim-right`, `string-trim` | Borrow the input text and return fresh `String` storage from `substring`, allocated in the active arena. |
 | `string-replace` | Compatibility wrapper: returns fresh `String` storage from `substring`/`string-append` when a replacement is made; returns the caller-provided `s` when `old` is not present. `string_caller_result.tl` exposes the `string-replace-result` caller-result shape that preserves the no-match borrow until explicit materialization. |
 | `read-file`, `try-read-file` | `read-file` returns an active-arena `ByteBuf`. The recoverable form returns `OkIoBytes ByteBuf` when the path is readable, or `ErrIoBytes` for empty paths, expected absence, permission failures, interrupted reads, and target status-code failures. Text consumers call `byte_buf.to-string` explicitly. |

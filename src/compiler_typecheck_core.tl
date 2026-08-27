@@ -95994,6 +95994,7 @@
   ;; observe or erase one another's verification counters.
   (macro-dependency-tlci-route-counters (__tl_dyn-array i64))
   (macro-expand-stdlib-tlci-route-active bool)
+  (macro-expand-stdlib-tlci-module-ids sym_i64_env.SymI64Env)
   (dotted-macro-journal-pools (__tl_dyn-array ast.AstNodePoolContext))
   (dotted-macro-journal-ids (__tl_dyn-array i64))
   (dotted-macro-journal-exprs (__tl_dyn-array ast.AstExpr))
@@ -96056,6 +96057,7 @@
       (cload.compiler-load-serial-test-session-state))
     (__tl_make-array i64 13)
     false
+    (sym_i64_env.sym-i64-empty)
     (__tl_make-array ast.AstNodePoolContext 0)
     (__tl_make-array i64 0)
     (__tl_make-array ast.AstExpr 0)
@@ -115067,6 +115069,62 @@
             source-names.pool-slots
             provenance-id))))))
 
+(define (macro-expand-stdlib-tlci-module-id?
+  [state : TcMacroState]
+  [module : String]) : bool
+  (let
+    [ids : sym_i64_env.SymI64Env
+      (tc-macro-walk-field state macro-expand-stdlib-tlci-module-ids)]
+    (sym_i64_env.sym-i64-contains-id ids (ci.intern module))))
+
+(cfg
+  test
+  (test
+    compiler-typecheck-embedded-provenance-job-isolation
+    (let
+      [left : TcMacroState (tc-job-state-macro-state (tc-job-state-new))]
+      [right : TcMacroState (tc-job-state-macro-state (tc-job-state-new))]
+      [left-module : String "stdlib.state_a"]
+      [right-module : String "stdlib.state_b"]
+      [left-ids : sym_i64_env.SymI64Env
+        (sym_i64_env.sym-i64-bind-id
+          (sym_i64_env.sym-i64-empty)
+          (ci.intern (clone left-module))
+          1)]
+      [right-ids : sym_i64_env.SymI64Env
+        (sym_i64_env.sym-i64-bind-id
+          (sym_i64_env.sym-i64-empty)
+          (ci.intern (clone right-module))
+          1)]
+      (begin
+        (tc-macro-walk-set!
+          (tc-global-shared-view left)
+          macro-expand-stdlib-tlci-module-ids
+          left-ids)
+        (tc-macro-walk-set!
+          (tc-global-shared-view right)
+          macro-expand-stdlib-tlci-module-ids
+          right-ids)
+        (tc-macro-walk-set!
+          (tc-global-shared-view right)
+          macro-expand-stdlib-tlci-module-ids
+          (sym_i64_env.sym-i64-empty))
+        (test.assert-true
+          (macro-expand-stdlib-tlci-module-id?
+            (tc-global-shared-view left)
+            (clone left-module))
+          "right provenance reset preserves left snapshot")
+        (test.assert-false
+          (macro-expand-stdlib-tlci-module-id?
+            (tc-global-shared-view left)
+            (clone right-module))
+          "left snapshot does not trust right module")
+        (test.assert-false
+          (macro-expand-stdlib-tlci-module-id?
+            (tc-global-shared-view right)
+            (clone right-module))
+          "right provenance reset is job-local")))))
+
 ;; Both embedded stdlib and dependency catalogs enter through this selection
 ;; contract after ordinary macro lookup has chosen the defining declaration.
 ;; The dependency payload is a registry-generation-bound capability, never a
@@ -115105,7 +115163,9 @@
           (tc-macro-walk-field
             (tc-context-macro-state (tc-global-shared-view ctx))
             macro-expand-stdlib-tlci-route-active)
-          (cload.compiler-load-embedded-stdlib-module-id? definition-module))
+          (macro-expand-stdlib-tlci-module-id?
+            (tc-context-macro-state ctx)
+            definition-module))
           (match (macro-expand-stdlib-tlci-catalog-lookup-cached identity)
             [(embedded_tlci.CompilerEmbeddedStdlibTlciLookup.Resolved resolved)
               (MacroTlciCatalogSelection.Resolved
@@ -115363,7 +115423,8 @@
           "interpreted"))
       (if (and
         (tc-macro-walk-field state macro-expand-stdlib-tlci-route-active)
-        (cload.compiler-load-embedded-stdlib-module-id?
+        (macro-expand-stdlib-tlci-module-id?
+          (tc-global-shared-view state)
           (tc-global-shared-view definition-module)))
         (begin
           (cfg
@@ -125438,6 +125499,14 @@
         macro-dependency-catalog-handle
         (cload.compiler-load-session-state-dependency-catalog-handle
           (tc-global-shared-view load-state)))
+      ;; Snapshot this load session's exact intern-owned module trust set before
+      ;; macro dispatch. Another job may reset or replace its own provenance
+      ;; carrier without changing this walk's routing decisions.
+      (tc-macro-walk-set!
+        (tc-job-state-macro-state (tc-global-shared-view job-state))
+        macro-expand-stdlib-tlci-module-ids
+        (cload.compiler-load-session-state-embedded-module-ids-shared-view
+          (tc-global-shared-view load-state)))
       (tc-dependency-tlci-route-counters-reset!
         (tc-job-state-macro-state (tc-global-shared-view job-state)))
       ;; Legacy macro expansion still reads compatibility globals; bridge the
@@ -125464,7 +125533,8 @@
           (or
             (cload.compiler-load-session-state-embedded-stdlib-source-used?
               (tc-global-shared-view load-state))
-            (cload.compiler-load-embedded-provenance-noted?))
+            (cload.compiler-load-session-state-embedded-provenance-noted?
+              (tc-global-shared-view load-state)))
           false))
       (cfg
         embedded-stdlib-tlci

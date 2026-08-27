@@ -87,6 +87,7 @@
     [text-star-precision : String (format.format "{:.*}" two "seven")]
     [bool-precision : String (format.format "{:.3}" true)]
     [char-zero-precision : String (format.format "{:.0}" 'x')]
+    [integer-radix : String (format.format "{:+#010X}" (cast -1 : i8))]
     [null-pointer : (Ptr i64) (ptr-null : (Ptr i64))]
     [pointer-text : String
       (unsafe
@@ -130,6 +131,7 @@
       (string.eq text-star-precision "se")
       (string.eq bool-precision "tru")
       (string.eq char-zero-precision "")
+      (string.eq integer-radix "+0x00000FF")
       (string.eq pointer-text "0x0")
       (string.eq pointer-alternate "0x0000000000000000")
       (string.eq rust-counter-one "Hello world is 7")
@@ -148,7 +150,7 @@
     ;; lint-allow: unused-variable
     [label : String "scanner"]
     (begin
-      (io.println "{label:.3}: {1} {{}} {0}" two one)
+      (io.println "{label:.3}: {1:#x} {{}} {0:b}" two one)
       (io.print-format "{word:.2}\n" (format.named word "done"))
       true)))
 

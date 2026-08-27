@@ -1,5 +1,4 @@
 ;; Incoming masks guard stores and atomics in an out-of-line helper.
-(import stdlib.array)
 (import stdlib.atomic)
 
 (define (heavy-effects
@@ -33,7 +32,7 @@
 
 (define (main) : i64
   (let
-    [out : (__tl_dyn-array i64) (array.make-array i64 16)]
+    [out : (__tl_dyn-array i64) (__tl_make-array i64 16)]
     [atomic-out : atomic.AtomicI64Buffer (atomic.i64-buffer 1)]
     (begin
       (fill out (& atomic-out) 13)

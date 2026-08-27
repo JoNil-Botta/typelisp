@@ -1,7 +1,5 @@
 ;; SPMD masked-if corpus (#2207): nested AVX-512 masked branches over i64
 ;; lanes. The n = 13 length exercises parent/child branch masks plus a tail.
-(import stdlib.array)
-
 (define (init-xs [xs : (__tl_dyn-array i64)]) : unit
   (begin
     (set! (array-ref xs 0) -3)
@@ -68,9 +66,9 @@
 (define (main) : i64
   (let
     [n : i64 13]
-    [xs : (__tl_dyn-array i64) (array.make-array i64 n)]
-    [got : (__tl_dyn-array i64) (array.make-array i64 n)]
-    [want : (__tl_dyn-array i64) (array.make-array i64 n)]
+    [xs : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+    [got : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+    [want : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     (begin
       (init-xs xs)
       (fill-masked xs got n)

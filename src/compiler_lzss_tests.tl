@@ -2,7 +2,6 @@
 ;; fixtures outside `compiler_lzss` avoids shipping test constructors in the
 ;; compiler that decodes the production payloads.
 (import compiler_lzss as lzss)
-(import stdlib.array)
 (import stdlib.string)
 
 (define (compiler-lzss-test-payload
@@ -13,7 +12,7 @@
     [prefix-len : i64 (string.string-length prefix)]
     [header-len : i64 (string.string-length header)]
     [out : (__tl_dyn-array u8)
-      (array.make-array u8 (+ prefix-len header-len (array-length tokens)))]
+      (__tl_make-array u8 (+ prefix-len header-len (array-length tokens)))]
     [index : i64 0]
     (begin
       (while (< index prefix-len)

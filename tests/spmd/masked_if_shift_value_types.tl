@@ -1,7 +1,5 @@
 ;; SPMD masked-shift corpus (#5365): native dword/qword shifts, varying and
 ;; literal counts, signed/logical right shift, nested masks, and partial tails.
-(import stdlib.array)
-
 (define (count32 [i : i64]) : i32
   (match (% i 4)
     [0 0]
@@ -19,9 +17,9 @@
 (define (case-i32) : bool
   (let
     [n : i64 19]
-    [xs : (__tl_dyn-array i32) (array.make-array i32 n)]
-    [counts : (__tl_dyn-array i32) (array.make-array i32 n)]
-    [out : (__tl_dyn-array i32) (array.make-array i32 n)]
+    [xs : (__tl_dyn-array i32) (__tl_make-array i32 n)]
+    [counts : (__tl_dyn-array i32) (__tl_make-array i32 n)]
+    [out : (__tl_dyn-array i32) (__tl_make-array i32 n)]
     [i : i64 0]
     [ok : bool true]
     (begin
@@ -63,9 +61,9 @@
 (define (case-u32) : bool
   (let
     [n : i64 19]
-    [xs : (__tl_dyn-array u32) (array.make-array u32 n)]
-    [counts : (__tl_dyn-array u32) (array.make-array u32 n)]
-    [out : (__tl_dyn-array u32) (array.make-array u32 n)]
+    [xs : (__tl_dyn-array u32) (__tl_make-array u32 n)]
+    [counts : (__tl_dyn-array u32) (__tl_make-array u32 n)]
+    [out : (__tl_dyn-array u32) (__tl_make-array u32 n)]
     [i : i64 0]
     [ok : bool true]
     (begin
@@ -103,9 +101,9 @@
 (define (case-i64) : bool
   (let
     [n : i64 13]
-    [xs : (__tl_dyn-array i64) (array.make-array i64 n)]
-    [counts : (__tl_dyn-array i64) (array.make-array i64 n)]
-    [out : (__tl_dyn-array i64) (array.make-array i64 n)]
+    [xs : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+    [counts : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+    [out : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     [i : i64 0]
     [ok : bool true]
     (begin
@@ -143,9 +141,9 @@
 (define (case-u64) : bool
   (let
     [n : i64 13]
-    [xs : (__tl_dyn-array u64) (array.make-array u64 n)]
-    [counts : (__tl_dyn-array u64) (array.make-array u64 n)]
-    [out : (__tl_dyn-array u64) (array.make-array u64 n)]
+    [xs : (__tl_dyn-array u64) (__tl_make-array u64 n)]
+    [counts : (__tl_dyn-array u64) (__tl_make-array u64 n)]
+    [out : (__tl_dyn-array u64) (__tl_make-array u64 n)]
     [i : i64 0]
     [ok : bool true]
     (begin

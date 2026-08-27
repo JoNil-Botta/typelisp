@@ -1,6 +1,4 @@
 ;; Out-of-line direct SPMD helper call with a varying i64 argument/result.
-(import stdlib.array)
-
 (define (inner-heavy [x : i64]) : i64
   (+ (+ (+ (+ (+ (+ (+ x 1) 2) 3) 4) 5) 6) 7))
 
@@ -24,7 +22,7 @@
 (define (main) : i64
   (let
     [n : i64 13]
-    [out : (__tl_dyn-array i64) (array.make-array i64 n)]
+    [out : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     (begin
       (fill out n)
       (if (= (sum-array out n) 806)

@@ -1,7 +1,6 @@
 ;; compiler_typecheck_core.tl - Specialization-free scalar typechecker core.
 (import stdlib.io)
 (import stdlib.arena)
-(import stdlib.array)
 (import stdlib.comptime)
 (import stdlib.hashmap)
 (import stdlib.hash)
@@ -546,14 +545,14 @@
 (define (tc-topenv-membership-state-new) : TcTopEnvMembershipState
   (let
     [cell : (__tl_dyn-array TcTopEnvMembershipStateData)
-      (array.make-array TcTopEnvMembershipStateData 1)]
+      (__tl_make-array TcTopEnvMembershipStateData 1)]
     (begin
       (set!
         (array-ref cell 0)
         (TcTopEnvMembershipStateData
           0
-          (array.make-array i64 tc-topenv-renderable-table-capacity)
-          (array.make-array i64 tc-topenv-renderable-table-capacity)
+          (__tl_make-array i64 tc-topenv-renderable-table-capacity)
+          (__tl_make-array i64 tc-topenv-renderable-table-capacity)
           (tc_i64_i64_map.with-capacity 64)
           1
           -1
@@ -572,7 +571,7 @@
 (define (tc-thread-name-kind-state-new) : TcThreadNameKindState
   (let
     [cell : (__tl_dyn-array TcThreadNameKindStateData)
-      (array.make-array TcThreadNameKindStateData 1)]
+      (__tl_make-array TcThreadNameKindStateData 1)]
     (begin
       (set!
         (array-ref cell 0)
@@ -595,16 +594,16 @@
 (define (tc-inlay-hint-state-new) : TcInlayHintState
   (let
     [cell : (__tl_dyn-array TcInlayHintStateData)
-      (array.make-array TcInlayHintStateData 1)]
+      (__tl_make-array TcInlayHintStateData 1)]
     (begin
       (set!
         (array-ref cell 0)
         (TcInlayHintStateData
           false
           0
-          (array.make-array i64 0)
-          (array.make-array i64 0)
-          (array.make-array String 0)
+          (__tl_make-array i64 0)
+          (__tl_make-array i64 0)
+          (__tl_make-array String 0)
           (arena.tl_arena_current)
           0))
       (TcInlayHintState
@@ -617,13 +616,13 @@
 (define (tc-macro-call-site-state-new) : TcMacroCallSiteState
   (let
     [cell : (__tl_dyn-array TcMacroCallSiteStateData)
-      (array.make-array TcMacroCallSiteStateData 1)]
+      (__tl_make-array TcMacroCallSiteStateData 1)]
     (begin
       (set!
         (array-ref cell 0)
         (TcMacroCallSiteStateData
           false
-          (array.make-array i64 0)
+          (__tl_make-array i64 0)
           0
           0
           (tc_i64_i64_map.with-capacity 64)
@@ -644,14 +643,14 @@
 (define (tc-checked-let-binding-fact-state-new) : TcCheckedLetBindingFactState
   (let
     [cell : (__tl_dyn-array TcCheckedLetBindingFactStateData)
-      (array.make-array TcCheckedLetBindingFactStateData 1)]
+      (__tl_make-array TcCheckedLetBindingFactStateData 1)]
     (begin
       (set!
         (array-ref cell 0)
         (TcCheckedLetBindingFactStateData
           false
           -1
-          (array.make-array TcCheckedLetBindingFact 0)
+          (__tl_make-array TcCheckedLetBindingFact 0)
           0
           0
           (tc_i64_i64_map.with-capacity 1)
@@ -670,22 +669,22 @@
 
 (define (tc-source-key-cache-state-new) : TcSourceKeyCacheState
   (TcSourceKeyCacheState
-    (array.make-array i64 8192)
-    (array.make-array i64 8192)
-    (array.make-array i64 8192)
-    (array.make-array i64 8192)
-    (array.make-array i64 8192)
-    (array.make-array i64 8192)
-    (array.make-array i64 8192)
-    (array.make-array i64 8192)
-    (array.make-array i64 8192)
-    (array.make-array i64 8192)
-    (array.make-array i64 10)))
+    (__tl_make-array i64 8192)
+    (__tl_make-array i64 8192)
+    (__tl_make-array i64 8192)
+    (__tl_make-array i64 8192)
+    (__tl_make-array i64 8192)
+    (__tl_make-array i64 8192)
+    (__tl_make-array i64 8192)
+    (__tl_make-array i64 8192)
+    (__tl_make-array i64 8192)
+    (__tl_make-array i64 8192)
+    (__tl_make-array i64 10)))
 
 (define (tc-scratch-arena-state-new) : TcScratchArenaState
   (let
     [cell : (__tl_dyn-array TcScratchArenaStateData)
-      (array.make-array TcScratchArenaStateData 1)]
+      (__tl_make-array TcScratchArenaStateData 1)]
     (begin
       (set! (array-ref cell 0) (TcScratchArenaStateData 0 0 0 0 0))
       (TcScratchArenaState
@@ -698,7 +697,7 @@
 (define (tc-unused-unsafe-state-new) : TcUnusedUnsafeState
   (let
     [cell : (__tl_dyn-array TcUnusedUnsafeStateData)
-      (array.make-array TcUnusedUnsafeStateData 1)]
+      (__tl_make-array TcUnusedUnsafeStateData 1)]
     (begin
       (set!
         (array-ref cell 0)
@@ -708,9 +707,9 @@
           ""
           ""
           0
-          (array.make-array ast.AstSourceSpan 0)
-          (array.make-array String 0)
-          (array.make-array bool 0)
+          (__tl_make-array ast.AstSourceSpan 0)
+          (__tl_make-array String 0)
+          (__tl_make-array bool 0)
           (arena.tl_arena_current)))
       (TcUnusedUnsafeState
         (cast
@@ -722,13 +721,13 @@
 (define (tc-type-resolution-cache-state-new) : TcTypeResolutionCacheState
   (let
     [cell : (__tl_dyn-array TcTypeResolutionCacheStateData)
-      (array.make-array TcTypeResolutionCacheStateData 1)]
+      (__tl_make-array TcTypeResolutionCacheStateData 1)]
     (begin
       (set!
         (array-ref cell 0)
         (TcTypeResolutionCacheStateData
           (arena.tl_arena_current)
-          (array.make-array i64 0)
+          (__tl_make-array i64 0)
           1
           0
           0))
@@ -744,19 +743,19 @@
 (define (tc-agg-scalar-cache-state-new) : TcAggScalarCacheState
   (let
     [cell : (__tl_dyn-array TcAggScalarCacheStateData)
-      (array.make-array TcAggScalarCacheStateData 1)]
+      (__tl_make-array TcAggScalarCacheStateData 1)]
     (begin
       (set!
         (array-ref cell 0)
         (TcAggScalarCacheStateData
           (arena.tl_arena_current)
-          (array.make-array i64 0)
+          (__tl_make-array i64 0)
           -1
           -1
-          (array.make-array i64 0)
+          (__tl_make-array i64 0)
           -1
           -1
-          (array.make-array i64 0)
+          (__tl_make-array i64 0)
           -1
           -1))
       (TcAggScalarCacheState
@@ -770,9 +769,9 @@
 
 (define (tc-job-state-new) : TcJobState
   (let
-    [cell : (__tl_dyn-array TcJobStateData) (array.make-array TcJobStateData 1)]
+    [cell : (__tl_dyn-array TcJobStateData) (__tl_make-array TcJobStateData 1)]
     [owner : i64 (arena.tl_arena_current)]
-    [macro-state-addresses : (__tl_dyn-array i64) (array.make-array i64 15)]
+    [macro-state-addresses : (__tl_dyn-array i64) (__tl_make-array i64 15)]
     (begin
       ;; The directory never grows, so TcMacroState may carry its data pointer
       ;; directly. Slot 12 keeps the owner beside the lazy addresses, while
@@ -1083,7 +1082,7 @@
         (in-arena
           (arena.Arena data.owner-arena)
           (begin
-            (set! data.facts (array.make-array TcCheckedLetBindingFact 0))
+            (set! data.facts (__tl_make-array TcCheckedLetBindingFact 0))
             (set! data.by-hash (tc_i64_i64_map.with-capacity 1))))
         (set! data.enabled false)
         (set! data.current-declaration-ordinal -1)
@@ -1111,7 +1110,7 @@
           (begin
             (set! data.enabled true)
             (set! data.current-declaration-ordinal -1)
-            (set! data.facts (array.make-array TcCheckedLetBindingFact 64))
+            (set! data.facts (__tl_make-array TcCheckedLetBindingFact 64))
             (set! data.capacity 64)
             (set! data.len 0)
             (set! data.by-hash (tc_i64_i64_map.with-capacity 128))
@@ -1154,7 +1153,7 @@
       (arena.Arena data.payload-arena)
       (let
         [next : (__tl_dyn-array TcCheckedLetBindingFact)
-          (array.make-array TcCheckedLetBindingFact next-capacity)]
+          (__tl_make-array TcCheckedLetBindingFact next-capacity)]
         [index : i64 0]
         (begin
           (while (< index data.len)
@@ -1600,7 +1599,7 @@
       (arena.Arena data.fixed-storage-arena)
       (let
         [new-records : (__tl_dyn-array i64)
-          (array.make-array
+          (__tl_make-array
             i64
             (* new-capacity tc-macro-call-site-record-stride))]
         [index : i64 0]
@@ -1953,7 +1952,7 @@
 ;; Allocate their state only when one of those adapters is called; production
 ;; compiler jobs always pass their CompilerDriverState-owned TcJobState.
 (define tc-serial-job-state-cell : (__tl_dyn-array TcJobState)
-  (array.make-array TcJobState 1))
+  (__tl_make-array TcJobState 1))
 (define tc-serial-job-state-ready : bool
   false)
 (define tc-serial-job-state-arena : i64
@@ -2229,7 +2228,7 @@
   [source-names : ci.InternSourceNameSessionHandle]) : TcBodyState
   (let
     [cell : (__tl_dyn-array TcBodyStateData)
-      (array.make-array TcBodyStateData 1)]
+      (__tl_make-array TcBodyStateData 1)]
     [source-session : ci.InternSourceNameSession
       (ci.intern-source-name-session-handle-session source-names)]
     (begin
@@ -2238,10 +2237,10 @@
         (TcBodyStateData
           false
           false
-          (array.make-array i64 1)
-          (array.make-array i64 1)
-          (array.make-array ast.AstType 1)
-          (array.make-array i64 1)
+          (__tl_make-array i64 1)
+          (__tl_make-array i64 1)
+          (__tl_make-array ast.AstType 1)
+          (__tl_make-array i64 1)
           0
           0
           0
@@ -2250,8 +2249,8 @@
           false
           0
           -1
-          (array.make-array i64 1)
-          (array.make-array i64 1)))
+          (__tl_make-array i64 1)
+          (__tl_make-array i64 1)))
       (TcBodyState
         cell
         job-state
@@ -2271,7 +2270,7 @@
   (tc-body-state-new-with-job-state (tc-serial-job-state)))
 
 (define (tc-body-state-data-value [state : TcBodyState]) : TcBodyStateData
-  (array.ref state.data 0))
+  (array-ref state.data 0))
 
 (define (tc-body-state-data-set! [state : TcBodyState] [data : TcBodyStateData]) : unit
   (set! (array-ref state.data 0) data))
@@ -2280,7 +2279,7 @@
   (__tl-project-field (tc-body-state-data-value state) type-fact-storage-arena))
 
 (define (tc-body-state-type-fact-capacity [state : TcBodyState]) : i64
-  (array.length
+  (__tl_array-length
     (__tl-project-field (tc-body-state-data-value state) type-fact-types)))
 
 (define (tc-body-state-early-exit-source-limit [state : TcBodyState]) : i64
@@ -2296,10 +2295,10 @@
     (begin
       (set!
         data.early-exit-facts
-        (array.make-array i64 (/ (+ expr-limit 63) 64)))
+        (__tl_make-array i64 (/ (+ expr-limit 63) 64)))
       (set!
         data.early-exit-known
-        (array.make-array i64 (/ (+ expr-limit 63) 64)))
+        (__tl_make-array i64 (/ (+ expr-limit 63) 64)))
       (set! data.early-exit-current false)
       (set! data.early-exit-suppress-depth 0)
       (set! data.early-exit-source-expr-limit expr-limit)
@@ -2362,11 +2361,11 @@
         (begin
           (set!
             (array-ref data.early-exit-known word-index)
-            (bit-or (array.ref data.early-exit-known word-index) bit))
+            (bit-or (array-ref data.early-exit-known word-index) bit))
           (if data.early-exit-current
             (set!
               (array-ref data.early-exit-facts word-index)
-              (bit-or (array.ref data.early-exit-facts word-index) bit))
+              (bit-or (array-ref data.early-exit-facts word-index) bit))
             unit)))
       unit)))
 
@@ -2414,11 +2413,11 @@
         [word-index : i64 (/ body-id 64)]
         [bit-index : i64 (% body-id 64)]
         [bit : i64 (shl 1 bit-index)]
-        [known : i64 (array.ref data.early-exit-known word-index)]
+        [known : i64 (array-ref data.early-exit-known word-index)]
         (if (= (bit-and known bit) 0)
           (TcBodyEarlyExitFact.Unknown)
           (let
-            [bits : i64 (array.ref data.early-exit-facts word-index)]
+            [bits : i64 (array-ref data.early-exit-facts word-index)]
             (TcBodyEarlyExitFact.Known (not (= (bit-and bits bit) 0))))))
       (TcBodyEarlyExitFact.Unknown))))
 
@@ -2444,10 +2443,10 @@
         ;; Replace storage-owned arrays before destroying their arena. The
         ;; returned context retains only these tiny idle placeholders plus the
         ;; early-exit bitsets needed by lowering.
-        (set! data.type-fact-index (array.make-array i64 1))
-        (set! data.type-fact-expr-ids (array.make-array i64 1))
-        (set! data.type-fact-types (array.make-array ast.AstType 1))
-        (set! data.type-fact-closure-codes (array.make-array i64 1))
+        (set! data.type-fact-index (__tl_make-array i64 1))
+        (set! data.type-fact-expr-ids (__tl_make-array i64 1))
+        (set! data.type-fact-types (__tl_make-array ast.AstType 1))
+        (set! data.type-fact-closure-codes (__tl_make-array i64 1))
         (set! data.type-fact-storage-arena 0)
         (set! data.type-fact-enclosing-arena 0)
         (set! data.type-fact-count 0)
@@ -2476,18 +2475,16 @@
           (begin
             (set! data.type-fact-storage-arena storage)
             (set! data.type-fact-enclosing-arena enclosing)
-            (set! data.type-fact-index (array.make-array i64 index-cap))
+            (set! data.type-fact-index (__tl_make-array i64 index-cap))
             (set!
               data.type-fact-expr-ids
-              (array.make-array i64 (tc-body-type-fact-initial-capacity)))
+              (__tl_make-array i64 (tc-body-type-fact-initial-capacity)))
             (set!
               data.type-fact-types
-              (array.make-array
-                ast.AstType
-                (tc-body-type-fact-initial-capacity)))
+              (__tl_make-array ast.AstType (tc-body-type-fact-initial-capacity)))
             (set!
               data.type-fact-closure-codes
-              (array.make-array i64 (tc-body-type-fact-initial-capacity)))
+              (__tl_make-array i64 (tc-body-type-fact-initial-capacity)))
             (set! data.type-fact-count 0)
             (tc-body-state-data-set! state data)))))))
 
@@ -2504,9 +2501,9 @@
     [i : i64 index]
     (while (< i count)
       (begin
-        (set! (array-ref dst-types i) (array.ref src-types i))
-        (set! (array-ref dst-closure-codes i) (array.ref src-closure-codes i))
-        (set! (array-ref dst-expr-ids i) (array.ref src-expr-ids i))
+        (set! (array-ref dst-types i) (array-ref src-types i))
+        (set! (array-ref dst-closure-codes i) (array-ref src-closure-codes i))
+        (set! (array-ref dst-expr-ids i) (array-ref src-expr-ids i))
         (set! i (+ i 1))))))
 
 (define (tc-body-type-fact-grow! [state : TcBodyState]) : unit
@@ -2515,7 +2512,7 @@
     [old-types : (__tl_dyn-array ast.AstType) data.type-fact-types]
     [old-closure-codes : (__tl_dyn-array i64) data.type-fact-closure-codes]
     [old-expr-ids : (__tl_dyn-array i64) data.type-fact-expr-ids]
-    [old-cap : i64 (array.length old-types)]
+    [old-cap : i64 (__tl_array-length old-types)]
     [new-cap : i64
       (if (< old-cap 1)
         (tc-body-type-fact-initial-capacity)
@@ -2524,10 +2521,10 @@
       (arena.Arena data.type-fact-storage-arena)
       (let
         [next-types : (__tl_dyn-array ast.AstType)
-          (array.make-array ast.AstType new-cap)]
+          (__tl_make-array ast.AstType new-cap)]
         [next-closure-codes : (__tl_dyn-array i64)
-          (array.make-array i64 new-cap)]
-        [next-expr-ids : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
+          (__tl_make-array i64 new-cap)]
+        [next-expr-ids : (__tl_dyn-array i64) (__tl_make-array i64 new-cap)]
         (begin
           (tc-body-type-fact-grow-copy!
             next-types
@@ -2547,11 +2544,11 @@
   (let
     [data : TcBodyStateData (tc-body-state-data-value state)]
     [i : i64 0]
-    [index-len : i64 (array.length data.type-fact-index)]
+    [index-len : i64 (__tl_array-length data.type-fact-index)]
     (begin
       (while (< i data.type-fact-count)
         (let
-          [expr-id : i64 (array.ref data.type-fact-expr-ids i)]
+          [expr-id : i64 (array-ref data.type-fact-expr-ids i)]
           (begin
             (if (and (>= expr-id 0) (< expr-id index-len))
               (set! (array-ref data.type-fact-index expr-id) 0)
@@ -2569,9 +2566,9 @@
         1)]
     (if (or
       (= data.type-fact-storage-arena 0)
-      (< (array.length data.type-fact-index) source-limit)
+      (< (__tl_array-length data.type-fact-index) source-limit)
       (<
-        (array.length data.type-fact-types)
+        (__tl_array-length data.type-fact-types)
         (tc-body-type-fact-initial-capacity)))
       (tc-body-type-fact-storage-start! state source-limit)
       unit)))
@@ -2579,8 +2576,10 @@
 (define (tc-body-type-fact-slot [state : TcBodyState] [expr-id : i64]) : i64
   (let
     [data : TcBodyStateData (tc-body-state-data-value state)]
-    (if (and (>= expr-id 0) (< expr-id (array.length data.type-fact-index)))
-      (- (array.ref data.type-fact-index expr-id) 1)
+    (if (and
+      (>= expr-id 0)
+      (< expr-id (__tl_array-length data.type-fact-index)))
+      (- (array-ref data.type-fact-index expr-id) 1)
       -1)))
 
 (define (tc-body-type-facts-start-recording! [state : TcBodyState]) : unit
@@ -2620,13 +2619,13 @@
     (if (and
       data.type-facts-recording
       (>= expr-id 0)
-      (< expr-id (array.length data.type-fact-index)))
+      (< expr-id (__tl_array-length data.type-fact-index)))
       (if (>= (tc-body-type-fact-slot state expr-id) 0)
         unit
         (let
           [slot : i64 data.type-fact-count]
           (begin
-            (if (>= slot (array.length data.type-fact-types))
+            (if (>= slot (__tl_array-length data.type-fact-types))
               (tc-body-type-fact-grow! state)
               unit)
             (let
@@ -2647,7 +2646,7 @@
       (let
         [slot : i64 (tc-body-type-fact-slot state expr-id)]
         (if (and (>= slot 0) (< slot data.type-fact-count))
-          (TcBodyTypeFact.Hit (array.ref data.type-fact-types slot))
+          (TcBodyTypeFact.Hit (array-ref data.type-fact-types slot))
           (TcBodyTypeFact.Miss)))
       (TcBodyTypeFact.Miss))))
 
@@ -2664,7 +2663,7 @@
       data.type-facts-consuming
       (>= slot 0)
       (< slot data.type-fact-count))
-      (array.ref data.type-fact-closure-codes slot)
+      (array-ref data.type-fact-closure-codes slot)
       0)))
 
 (define (tc-body-closure-fact-record!
@@ -2897,7 +2896,7 @@
 (define (tc-spmd-traversal-state-new) : TcSpmdTraversalState
   (let
     [cell : (__tl_dyn-array TcSpmdTraversalStateData)
-      (array.make-array TcSpmdTraversalStateData 1)]
+      (__tl_make-array TcSpmdTraversalStateData 1)]
     (begin
       (set!
         (array-ref cell 0)
@@ -3237,7 +3236,7 @@
     [owner : arena.Arena
       (arena.Arena (tc-job-state-field job-state owner-arena i64))]
     [cell : (__tl_dyn-array TcAggLayoutCacheStateData)
-      (in-arena owner (array.make-array TcAggLayoutCacheStateData 1))]
+      (in-arena owner (__tl_make-array TcAggLayoutCacheStateData 1))]
     [address : i64
       (cast
         (unsafe
@@ -3250,7 +3249,7 @@
         (TcAggLayoutCacheStateData
           (arena.raw-handle owner)
           (arena.Arena 0)
-          (array.make-array TcAggLayoutCacheSlot 0)
+          (__tl_make-array TcAggLayoutCacheSlot 0)
           -1
           -1))
       (tc-job-state-set-agg-layout-cache-address! job-state address)
@@ -3357,7 +3356,7 @@
 ;; right-sized backing array in the retained cache arena, fill it in source
 ;; order, and carry only the shallow array descriptor through cached layouts.
 (define (tc-repr-c-field-layout-list-with-count [count : i64]) : TcReprCFieldLayoutList
-  (TcReprCFieldLayoutList (array.make-array TcReprCFieldLayout count)))
+  (TcReprCFieldLayoutList (__tl_make-array TcReprCFieldLayout count)))
 
 (define (tc-repr-c-field-layout-list-count [items : TcReprCFieldLayoutList]) : i64
   (array-length items.slots))
@@ -3378,7 +3377,7 @@
   [count : i64]) : TcInlineFieldLayoutList
   (in-arena
     (tc-agg-layout-cache-storage-handle-for-state state)
-    (TcInlineFieldLayoutList (array.make-array TcInlineFieldLayout count))))
+    (TcInlineFieldLayoutList (__tl_make-array TcInlineFieldLayout count))))
 
 (define (tc-inline-field-layout-list-with-count [count : i64]) : TcInlineFieldLayoutList
   (tc-inline-field-layout-list-with-count-for-state
@@ -3404,7 +3403,7 @@
   [count : i64]) : TcInlinePayloadLayoutList
   (in-arena
     (tc-agg-layout-cache-storage-handle-for-state state)
-    (TcInlinePayloadLayoutList (array.make-array TcInlinePayloadLayout count))))
+    (TcInlinePayloadLayoutList (__tl_make-array TcInlinePayloadLayout count))))
 
 (define (tc-inline-payload-layout-list-with-count [count : i64]) : TcInlinePayloadLayoutList
   (tc-inline-payload-layout-list-with-count-for-state
@@ -3431,7 +3430,7 @@
   [count : i64]) : TcInlineVariantLayoutList
   (in-arena
     (tc-agg-layout-cache-storage-handle-for-state state)
-    (TcInlineVariantLayoutList (array.make-array TcInlineVariantLayout count))))
+    (TcInlineVariantLayoutList (__tl_make-array TcInlineVariantLayout count))))
 
 (define (tc-inline-variant-layout-list-with-count [count : i64]) : TcInlineVariantLayoutList
   (tc-inline-variant-layout-list-with-count-for-state
@@ -3516,15 +3515,15 @@
 
 (define (tc-prefix-snapshot-cache-state-new) : TcPrefixSnapshotCacheState
   (let
-    [arena-cell : (__tl_dyn-array i64) (array.make-array i64 1)]
-    [enabled-cell : (__tl_dyn-array bool) (array.make-array bool 1)]
-    [ready-cell : (__tl_dyn-array bool) (array.make-array bool 1)]
-    [hit-cell : (__tl_dyn-array i64) (array.make-array i64 1)]
-    [miss-cell : (__tl_dyn-array i64) (array.make-array i64 1)]
-    [store-cell : (__tl_dyn-array i64) (array.make-array i64 1)]
+    [arena-cell : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    [enabled-cell : (__tl_dyn-array bool) (__tl_make-array bool 1)]
+    [ready-cell : (__tl_dyn-array bool) (__tl_make-array bool 1)]
+    [hit-cell : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    [miss-cell : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    [store-cell : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     [provenance-cell : (__tl_dyn-array TcPrefixSnapshotCacheProvenance)
-      (array.make-array TcPrefixSnapshotCacheProvenance 1)]
-    [provenance-ready-cell : (__tl_dyn-array bool) (array.make-array bool 1)]
+      (__tl_make-array TcPrefixSnapshotCacheProvenance 1)]
+    [provenance-ready-cell : (__tl_dyn-array bool) (__tl_make-array bool 1)]
     (begin
       (set! (array-ref arena-cell 0) 0)
       (set! (array-ref enabled-cell 0) false)
@@ -3537,7 +3536,7 @@
         (tc-prefix-snapshot-cache-provenance-empty))
       (set! (array-ref provenance-ready-cell 0) false)
       (TcPrefixSnapshotCacheState
-        (array.make-array TcPrefixSnapshotSlot 64)
+        (__tl_make-array TcPrefixSnapshotSlot 64)
         arena-cell
         enabled-cell
         ready-cell
@@ -4725,7 +4724,7 @@
 (cfg
   compile-profile
   (define compiler-tc-walk-clock-scratch : (__tl_dyn-array i64)
-    (array.make-array i64 2)))
+    (__tl_make-array i64 2)))
 
 (cfg
   compile-profile
@@ -5957,31 +5956,31 @@
 (cfg
   compile-profile
   (define compiler-tc-walk-sp-probe-ns : (__tl_dyn-array i64)
-    (array.make-array i64 5)))
+    (__tl_make-array i64 5)))
 (cfg
   compile-profile
   (define compiler-tc-walk-sp-probe-alloc : (__tl_dyn-array i64)
-    (array.make-array i64 5)))
+    (__tl_make-array i64 5)))
 (cfg
   compile-profile
   (define compiler-tc-walk-sp-probe-live : (__tl_dyn-array i64)
-    (array.make-array i64 5)))
+    (__tl_make-array i64 5)))
 (cfg
   compile-profile
   (define compiler-tc-walk-sp-probe-calls : (__tl_dyn-array i64)
-    (array.make-array i64 5)))
+    (__tl_make-array i64 5)))
 (cfg
   compile-profile
   (define compiler-tc-walk-sp-probe-start-ns : (__tl_dyn-array i64)
-    (array.make-array i64 5)))
+    (__tl_make-array i64 5)))
 (cfg
   compile-profile
   (define compiler-tc-walk-sp-probe-start-alloc : (__tl_dyn-array i64)
-    (array.make-array i64 5)))
+    (__tl_make-array i64 5)))
 (cfg
   compile-profile
   (define compiler-tc-walk-sp-probe-start-live : (__tl_dyn-array i64)
-    (array.make-array i64 5)))
+    (__tl_make-array i64 5)))
 
 (cfg
   compile-profile
@@ -6677,7 +6676,7 @@
   compile-profile
   (define (compiler-tc-macro-profile-entries-empty) : CompilerTcMacroProfileEntries
     (CompilerTcMacroProfileEntries
-      (array.make-array CompilerTcMacroProfileEntry 0)
+      (__tl_make-array CompilerTcMacroProfileEntry 0)
       0
       (tc_i64_i64_map.with-capacity 1))))
 
@@ -6750,7 +6749,7 @@
               16
               (* old-capacity 2))]
           [next : (__tl_dyn-array CompilerTcMacroProfileEntry)
-            (array.make-array CompilerTcMacroProfileEntry next-capacity)]
+            (__tl_make-array CompilerTcMacroProfileEntry next-capacity)]
           (begin
             (compiler-tc-macro-profile-copy-prefix!
               (& entries.slots)
@@ -6980,27 +6979,27 @@
 (cfg
   compile-profile
   (define compiler-tc-reinfer-profile-calls : (__tl_dyn-array i64)
-    (array.make-array i64 18)))
+    (__tl_make-array i64 18)))
 (cfg
   compile-profile
   (define compiler-tc-reinfer-profile-ms : (__tl_dyn-array i64)
-    (array.make-array i64 18)))
+    (__tl_make-array i64 18)))
 (cfg
   compile-profile
   (define compiler-tc-reinfer-profile-alloc : (__tl_dyn-array i64)
-    (array.make-array i64 18)))
+    (__tl_make-array i64 18)))
 (cfg
   compile-profile
   (define compiler-tc-reinfer-profile-live : (__tl_dyn-array i64)
-    (array.make-array i64 18)))
+    (__tl_make-array i64 18)))
 (cfg
   compile-profile
   (define compiler-tc-body-fact-profile-hits : (__tl_dyn-array i64)
-    (array.make-array i64 18)))
+    (__tl_make-array i64 18)))
 (cfg
   compile-profile
   (define compiler-tc-body-fact-profile-misses : (__tl_dyn-array i64)
-    (array.make-array i64 18)))
+    (__tl_make-array i64 18)))
 
 (cfg
   compile-profile
@@ -7091,7 +7090,7 @@
         unit
         (set!
           (array-ref compiler-tc-body-fact-profile-hits index)
-          (+ (array.ref compiler-tc-body-fact-profile-hits index) 1))))))
+          (+ (array-ref compiler-tc-body-fact-profile-hits index) 1))))))
 
 (cfg
   compile-profile
@@ -7102,7 +7101,7 @@
         unit
         (set!
           (array-ref compiler-tc-body-fact-profile-misses index)
-          (+ (array.ref compiler-tc-body-fact-profile-misses index) 1))))))
+          (+ (array-ref compiler-tc-body-fact-profile-misses index) 1))))))
 
 (cfg
   compile-profile
@@ -7329,11 +7328,11 @@
         (compiler-tc-body-fact-profile-line
           site
           "hits"
-          (array.ref compiler-tc-body-fact-profile-hits index))
+          (array-ref compiler-tc-body-fact-profile-hits index))
         (compiler-tc-body-fact-profile-line
           site
           "misses"
-          (array.ref compiler-tc-body-fact-profile-misses index))))))
+          (array-ref compiler-tc-body-fact-profile-misses index))))))
 
 (cfg
   compile-profile
@@ -7649,7 +7648,7 @@
 (cfg
   compile-profile
   (define tc-lp-counts : (__tl_dyn-array i64)
-    (array.make-array i64 15)))
+    (__tl_make-array i64 15)))
 
 (cfg
   compile-profile
@@ -7963,7 +7962,7 @@
   compile-profile
   (define (tc-lp-count [index : i64]) : i64
     (if (tc-lp-index-valid? index)
-      (array.ref tc-lp-counts index)
+      (array-ref tc-lp-counts index)
       0)))
 
 (cfg
@@ -9253,6 +9252,7 @@
       (match (__tl-box-place lambda-box)
         [(ast.AstLambda.Lambda _ _ body) (tc-expr-id-maybe-span body)])]
     [(ast.AstExpr.TupleRef target _) (tc-expr-id-maybe-span target)]
+    [(ast.AstExpr.FixedMakeArray _ size) (tc-expr-id-maybe-span size)]
     [(ast.AstExpr.MakeArray _ size) (tc-expr-id-maybe-span size)]
     [(ast.AstExpr.Set _ value) (tc-expr-id-maybe-span value)]
     [(ast.AstExpr.Ann inner _) (tc-expr-id-maybe-span inner)]
@@ -9613,10 +9613,10 @@
   [structural-session-address : i64]
   [type-resolution-cache-state-address : i64]) : TcTypeEnvStore
   (TcTypeEnvStore
-    (array.make-array TcTypeEnvBinding 1)
+    (__tl_make-array TcTypeEnvBinding 1)
     0
     0
-    (array.make-array TcTypeEnvCache 1)
+    (__tl_make-array TcTypeEnvCache 1)
     0
     0
     (arena.tl_arena_current)
@@ -9630,7 +9630,7 @@
   [structural-session-address : i64]
   [type-resolution-cache-state-address : i64]) : i64
   (let
-    [cell : (__tl_dyn-array TcTypeEnvStore) (array.make-array TcTypeEnvStore 1)]
+    [cell : (__tl_dyn-array TcTypeEnvStore) (__tl_make-array TcTypeEnvStore 1)]
     (begin
       (set! tc-type-env-store-epoch (+ tc-type-env-store-epoch 1))
       (set!
@@ -9714,7 +9714,7 @@
         (arena.Arena owner)
         (let
           [bigger : (__tl_dyn-array TcTypeEnvBinding)
-            (array.make-array TcTypeEnvBinding next-capacity)]
+            (__tl_make-array TcTypeEnvBinding next-capacity)]
           (begin
             (set! store.bindings bigger)
             (set! store.binding-capacity next-capacity)
@@ -9735,7 +9735,7 @@
         (arena.Arena owner)
         (let
           [bigger : (__tl_dyn-array TcTypeEnvCache)
-            (array.make-array TcTypeEnvCache next-capacity)]
+            (__tl_make-array TcTypeEnvCache next-capacity)]
           (begin
             (set! store.caches bigger)
             (set! store.cache-capacity next-capacity)
@@ -10104,7 +10104,7 @@
   (let
     [index : i64 0]
     (begin
-      (while (< index (array.length map.slots))
+      (while (< index (__tl_array-length map.slots))
         (begin
           (__tl-project-set-field
             (array-ref map.slots index)
@@ -10167,7 +10167,7 @@
   [bound : bool]) : unit
   (let
     [index : i64 (ci.intern-id-value name-id)]
-    (if (< index (array.length data.renderable-slots))
+    (if (< index (__tl_array-length data.renderable-slots))
       (begin
         (set! (array-ref data.renderable-slots index) data.epoch)
         (if bound
@@ -10292,7 +10292,7 @@
           (let
             [renderable : ci.InternId (ci.intern-id-from-renderable name-id)]
             [index : i64 (ci.intern-id-value renderable)]
-            (if (< index (array.length data.renderable-bound-slots))
+            (if (< index (__tl_array-length data.renderable-bound-slots))
               (= (array-ref data.renderable-bound-slots index) data.epoch)
               (not
                 (=
@@ -10326,7 +10326,7 @@
           (let
             [renderable : ci.InternId (ci.intern-id-from-renderable name-id)]
             [index : i64 (ci.intern-id-value renderable)]
-            (if (< index (array.length data.renderable-slots))
+            (if (< index (__tl_array-length data.renderable-slots))
               (= (array-ref data.renderable-slots index) data.epoch)
               (not
                 (=
@@ -10541,7 +10541,7 @@
           (tc-type-env-cache-field-at cache-ptr 56 (__tl_dyn-array ast.AstType))]
         (if (and scan-through partial)
           (+
-            (/ (array.length values) 2)
+            (/ (__tl_array-length values) 2)
             (tc-env-partial-local-covered-count below))
           0))]
     [_ 0]))
@@ -10589,7 +10589,7 @@
                 (if cache.partial
                   (let
                     [shadow-flags : (__tl_dyn-array i64) cache.shadow-flags]
-                    [capacity : i64 (array.length shadow-flags)]
+                    [capacity : i64 (__tl_array-length shadow-flags)]
                     [covered : i64 (array-ref shadow-flags (- capacity 1))]
                     (begin
                       (set! count (+ count covered))
@@ -10797,9 +10797,9 @@
 (define tc-type-env-scoped-dense-lookup-capacity : i64
   262144)
 (define tc-type-env-scoped-dense-lookup-indices : (__tl_dyn-array i64)
-  (array.make-array i64 tc-type-env-scoped-dense-lookup-capacity))
+  (__tl_make-array i64 tc-type-env-scoped-dense-lookup-capacity))
 (define tc-type-env-scoped-dense-lookup-epochs : (__tl_dyn-array i64)
-  (array.make-array i64 tc-type-env-scoped-dense-lookup-capacity))
+  (__tl_make-array i64 tc-type-env-scoped-dense-lookup-capacity))
 (define tc-type-env-scoped-next-lookup-epoch : i64
   1)
 
@@ -10813,7 +10813,7 @@
         tc-type-env-scoped-next-lookup-epoch
         (+ tc-type-env-scoped-next-lookup-epoch 1))
       (TcTypeEnvScopedStack
-        (array.make-array
+        (__tl_make-array
           TcTypeEnvScopedSlot
           (tc-type-env-scoped-capacity slot-capacity))
         0
@@ -10821,7 +10821,7 @@
           (tc_i64_i64_map.with-capacity
             (tc-type-env-scoped-capacity slot-capacity)))
         lookup-epoch
-        (array.make-array
+        (__tl_make-array
           TcTypeEnvScopedMark
           (tc-type-env-scoped-capacity mark-capacity))
         0
@@ -12815,7 +12815,7 @@
                         (set!
                           (array-ref
                             unsafe-flags
-                            (+ (array.length values) 1 resolution-next))
+                            (+ (__tl_array-length values) 1 resolution-next))
                           name-id)
                         (set! resolution-next (+ resolution-next 1)))
                       unit)
@@ -12860,7 +12860,9 @@
       ;; The final slot is a construction-only handoff to the cache node. It
       ;; avoids a second result aggregate around the consuming map.
       (if track-resolution
-        (set! (array-ref unsafe-flags (array.length values)) resolution-next)
+        (set!
+          (array-ref unsafe-flags (__tl_array-length values))
+          resolution-next)
         unit)
       cur-ids)))
 
@@ -12941,7 +12943,7 @@
                         (set!
                           (array-ref
                             unsafe-flags
-                            (+ (array.length values) 1 resolution-next))
+                            (+ (__tl_array-length values) 1 resolution-next))
                           name-id)
                         (set! resolution-next (+ resolution-next 1)))
                       unit)
@@ -12991,7 +12993,9 @@
                 (set! done true)))]
           [else (set! done true)]))
       (if track-resolution
-        (set! (array-ref unsafe-flags (array.length values)) resolution-next)
+        (set!
+          (array-ref unsafe-flags (__tl_array-length values))
+          resolution-next)
         unit)
       cur-ids)))
 
@@ -13032,7 +13036,7 @@
 ;; append-only and is extended only where a layer is created, so nothing has to
 ;; be invalidated.
 (define tc-chain-empty-i64-array : (__tl_dyn-array i64)
-  (array.make-array i64 0))
+  (__tl_make-array i64 0))
 
 ;; A reference packs the layer node address (8-byte aligned, so the low three
 ;; bits are free) above an 18-bit slot. Layers wider than the slot field, or
@@ -13139,7 +13143,7 @@
             (arena.Arena owner)
             (let
               [slots : (__tl_dyn-array TcChainIndex)
-                (array.make-array TcChainIndex 1)]
+                (__tl_make-array TcChainIndex 1)]
               (begin
                 (set!
                   (array-ref slots 0)
@@ -13170,7 +13174,7 @@
     0
     (let
       [jumps : (__tl_dyn-array i64) (tc-chain-node-jumps addr)]
-      (if (< k (array.length jumps))
+      (if (< k (__tl_array-length jumps))
         (array-ref jumps k)
         0))))
 
@@ -13275,7 +13279,7 @@
               (begin
                 (if (and
                   (>= slot 0)
-                  (< slot (array.length prev))
+                  (< slot (__tl_array-length prev))
                   (= (array-ref prev slot) 0))
                   (begin
                     (set!
@@ -13346,8 +13350,8 @@
             [jumps : (__tl_dyn-array i64)
               (if (= levels 0)
                 (tc-global-shared-view tc-chain-empty-i64-array)
-                (array.make-array i64 levels))]
-            [prev : (__tl_dyn-array i64) (array.make-array i64 capacity)]
+                (__tl_make-array i64 levels))]
+            [prev : (__tl_dyn-array i64) (__tl_make-array i64 capacity)]
             [seq : i64
               (let
                 [state : TcChainIndex (tc-chain-state-read state-addr)]
@@ -13387,15 +13391,15 @@
       [count : i64 (tc-env-cache-count env)]
       [capacity : i64 (tc-env-cache-capacity count)]
       [values : (__tl_dyn-array ast.AstType)
-        (array.make-array ast.AstType capacity)]
+        (__tl_make-array ast.AstType capacity)]
       [unsafe-flags : (__tl_dyn-array i64)
-        (array.make-array
+        (__tl_make-array
           i64
           (if scan-through
             capacity
             (+ (* capacity 2) 1)))]
-      [c-abi-fnptr-flags : (__tl_dyn-array i64) (array.make-array i64 capacity)]
-      [shadow-flags : (__tl_dyn-array i64) (array.make-array i64 capacity)]
+      [c-abi-fnptr-flags : (__tl_dyn-array i64) (__tl_make-array i64 capacity)]
+      [shadow-flags : (__tl_dyn-array i64) (__tl_make-array i64 capacity)]
       [ids : tc_i64_i64_map.Map
         (tc-env-cache-fill
           env
@@ -13455,15 +13459,15 @@
     (let
       [capacity : i64 (tc-env-cache-capacity count)]
       [values : (__tl_dyn-array ast.AstType)
-        (array.make-array ast.AstType capacity)]
+        (__tl_make-array ast.AstType capacity)]
       [unsafe-flags : (__tl_dyn-array i64)
-        (array.make-array
+        (__tl_make-array
           i64
           (if scan-through
             capacity
             (+ (* capacity 2) 1)))]
-      [c-abi-fnptr-flags : (__tl_dyn-array i64) (array.make-array i64 capacity)]
-      [shadow-flags : (__tl_dyn-array i64) (array.make-array i64 capacity)]
+      [c-abi-fnptr-flags : (__tl_dyn-array i64) (__tl_make-array i64 capacity)]
+      [shadow-flags : (__tl_dyn-array i64) (__tl_make-array i64 capacity)]
       [ids : tc_i64_i64_map.Map
         (tc-env-cache-fill-prefix
           env
@@ -13985,7 +13989,7 @@
   (tc-empty-env))
 
 (define (tc-empty-module-local-env-cache) : TcModuleLocalEnvCache
-  (TcModuleLocalEnvCache (array.make-array TcModuleLocalEnvEntry 0) 0))
+  (TcModuleLocalEnvCache (__tl_make-array TcModuleLocalEnvEntry 0) 0))
 
 (defstruct TcMacroModuleEnvStateData
   (hygiene-active-top-env-ready bool)
@@ -14009,8 +14013,8 @@
     0
     -1
     256
-    (array.make-array i64 0)
-    (array.make-array TcTypeEnv 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array TcTypeEnv 0)
     0
     0
     0
@@ -14028,7 +14032,7 @@
           (arena.Arena owner)
           (let
             [cell : (__tl_dyn-array TcMacroModuleEnvStateData)
-              (array.make-array TcMacroModuleEnvStateData 1)]
+              (__tl_make-array TcMacroModuleEnvStateData 1)]
             [_init : unit
               (set! (array-ref cell 0) (tc-macro-module-env-state-new))]
             [next : i64
@@ -14525,14 +14529,14 @@
 (define (tc-unused-unsafe-state-storage-ensure! [state : TcUnusedUnsafeState]) : unit
   (let
     [data : TcUnusedUnsafeStateData (tc-unused-unsafe-state-data state)]
-    (if (> (array.length data.block-spans) 0)
+    (if (> (__tl_array-length data.block-spans) 0)
       unit
       (in-arena
         (arena.Arena data.fixed-storage-arena)
         (begin
-          (set! data.block-spans (array.make-array ast.AstSourceSpan 128))
-          (set! data.block-paths (array.make-array String 128))
-          (set! data.block-used (array.make-array bool 128))
+          (set! data.block-spans (__tl_make-array ast.AstSourceSpan 128))
+          (set! data.block-paths (__tl_make-array String 128))
+          (set! data.block-used (__tl_make-array bool 128))
           (tc-unused-unsafe-state-data-set! state data))))))
 
 (define (tc-unused-unsafe-tracking-reset!
@@ -14668,15 +14672,15 @@
 (define (tc-unused-unsafe-grow! [state : TcUnusedUnsafeState]) : unit
   (let
     [data : TcUnusedUnsafeStateData (tc-unused-unsafe-state-data state)]
-    [old-cap : i64 (array.length data.block-spans)]
+    [old-cap : i64 (__tl_array-length data.block-spans)]
     [new-cap : i64 (* old-cap 2)]
     (in-arena
       (arena.Arena data.fixed-storage-arena)
       (let
         [new-spans : (__tl_dyn-array ast.AstSourceSpan)
-          (array.make-array ast.AstSourceSpan new-cap)]
-        [new-paths : (__tl_dyn-array String) (array.make-array String new-cap)]
-        [new-used : (__tl_dyn-array bool) (array.make-array bool new-cap)]
+          (__tl_make-array ast.AstSourceSpan new-cap)]
+        [new-paths : (__tl_dyn-array String) (__tl_make-array String new-cap)]
+        [new-used : (__tl_dyn-array bool) (__tl_make-array bool new-cap)]
         (begin
           (tc-unused-unsafe-grow-copy data new-spans new-paths new-used 0)
           (set! data.block-spans new-spans)
@@ -14696,7 +14700,7 @@
       (let
         [slot : i64 data.block-len]
         (begin
-          (if (>= slot (array.length data.block-spans))
+          (if (>= slot (__tl_array-length data.block-spans))
             (tc-unused-unsafe-grow! state)
             unit)
           (let
@@ -15371,12 +15375,12 @@
   (len i64))
 
 (define (tc-stdlib-type-spec-list0) : TcStdlibTypeSpecList
-  (TcStdlibTypeSpecList (array.make-array TcStdlibTypeSpec 0) 0))
+  (TcStdlibTypeSpecList (__tl_make-array TcStdlibTypeSpec 0) 0))
 
 (define (tc-stdlib-type-spec-list1 [a : TcStdlibTypeSpec]) : TcStdlibTypeSpecList
   (let
     [slots : (__tl_dyn-array TcStdlibTypeSpec)
-      (array.make-array TcStdlibTypeSpec 1)]
+      (__tl_make-array TcStdlibTypeSpec 1)]
     (begin
       (set! (array-ref slots 0) a)
       (TcStdlibTypeSpecList slots 1))))
@@ -15386,7 +15390,7 @@
   [b : TcStdlibTypeSpec]) : TcStdlibTypeSpecList
   (let
     [slots : (__tl_dyn-array TcStdlibTypeSpec)
-      (array.make-array TcStdlibTypeSpec 2)]
+      (__tl_make-array TcStdlibTypeSpec 2)]
     (begin
       (set! (array-ref slots 0) a)
       (set! (array-ref slots 1) b)
@@ -15398,7 +15402,7 @@
   [c : TcStdlibTypeSpec]) : TcStdlibTypeSpecList
   (let
     [slots : (__tl_dyn-array TcStdlibTypeSpec)
-      (array.make-array TcStdlibTypeSpec 3)]
+      (__tl_make-array TcStdlibTypeSpec 3)]
     (begin
       (set! (array-ref slots 0) a)
       (set! (array-ref slots 1) b)
@@ -15406,7 +15410,7 @@
       (TcStdlibTypeSpecList slots 3))))
 
 (define (tc-stdlib-field-spec-nil) : TcStdlibFieldSpecList
-  (TcStdlibFieldSpecList (array.make-array TcStdlibFieldSpec 0) 0))
+  (TcStdlibFieldSpecList (__tl_make-array TcStdlibFieldSpec 0) 0))
 
 (define (tc-stdlib-field-spec-cons
   [name : i64]
@@ -15416,7 +15420,7 @@
     [n : i64 rest.len]
     [src : (__tl_dyn-array TcStdlibFieldSpec) rest.slots]
     [slots : (__tl_dyn-array TcStdlibFieldSpec)
-      (array.make-array TcStdlibFieldSpec (+ n 1))]
+      (__tl_make-array TcStdlibFieldSpec (+ n 1))]
     [i : i64 0]
     (begin
       (cfg compile-profile (tc-lp-note 8))
@@ -15428,7 +15432,7 @@
       (TcStdlibFieldSpecList slots (+ n 1)))))
 
 (define (tc-stdlib-variant-spec-nil) : TcStdlibVariantSpecList
-  (TcStdlibVariantSpecList (array.make-array TcStdlibVariantSpec 0) 0))
+  (TcStdlibVariantSpecList (__tl_make-array TcStdlibVariantSpec 0) 0))
 
 (define (tc-stdlib-variant-spec-cons
   [name : i64]
@@ -15438,7 +15442,7 @@
     [n : i64 rest.len]
     [src : (__tl_dyn-array TcStdlibVariantSpec) rest.slots]
     [slots : (__tl_dyn-array TcStdlibVariantSpec)
-      (array.make-array TcStdlibVariantSpec (+ n 1))]
+      (__tl_make-array TcStdlibVariantSpec (+ n 1))]
     [i : i64 0]
     (begin
       (cfg compile-profile (tc-lp-note 10))
@@ -17179,7 +17183,7 @@
           (arena.Arena owner)
           (let
             [cell : (__tl_dyn-array TcMacroHelperStateData)
-              (array.make-array TcMacroHelperStateData 1)]
+              (__tl_make-array TcMacroHelperStateData 1)]
             [_init : unit
               (set!
                 (array-ref cell 0)
@@ -17691,11 +17695,11 @@
 (define tc-name-bound-span-cache-capacity : i64
   128)
 (define tc-name-bound-span-keys : (__tl_dyn-array i64)
-  (array.make-array i64 tc-name-bound-span-slot-capacity))
+  (__tl_make-array i64 tc-name-bound-span-slot-capacity))
 (define tc-name-bound-span-stamps : (__tl_dyn-array i64)
-  (array.make-array i64 tc-name-bound-span-slot-capacity))
+  (__tl_make-array i64 tc-name-bound-span-slot-capacity))
 (define tc-name-bound-span-caches : (__tl_dyn-array i64)
-  (array.make-array i64 tc-name-bound-span-cache-capacity))
+  (__tl_make-array i64 tc-name-bound-span-cache-capacity))
 
 ;; Stamps start above the zero-filled array so the first generation is empty.
 (define tc-name-bound-span-stamp : i64
@@ -18301,9 +18305,9 @@
 (define (tc-string-list-store-new [first : String]) : i64
   (let
     [cell : (__tl_dyn-array TcStringListStoreData)
-      (array.make-array TcStringListStoreData 1)]
+      (__tl_make-array TcStringListStoreData 1)]
     [nodes : (__tl_dyn-array TcStringListNode)
-      (array.make-array TcStringListNode 4)]
+      (__tl_make-array TcStringListNode 4)]
     [owner : i64 (arena.tl_arena_current)]
     (begin
       (set! (array-ref nodes 0) (TcStringListNode first -1))
@@ -18319,7 +18323,7 @@
   [required : i64]) : unit
   (let
     [old : (__tl_dyn-array TcStringListNode) data.nodes]
-    [old-capacity : i64 (array.length old)]
+    [old-capacity : i64 (__tl_array-length old)]
     [next-capacity : i64 old-capacity]
     (if (<= required old-capacity)
       unit
@@ -18329,7 +18333,7 @@
         (let
           [owner : arena.Arena (arena.Arena data.owner-arena)]
           [next : (__tl_dyn-array TcStringListNode)
-            (in-arena owner (array.make-array TcStringListNode next-capacity))]
+            (in-arena owner (__tl_make-array TcStringListNode next-capacity))]
           [index : i64 0]
           (begin
             (while (< index data.len)
@@ -18460,9 +18464,9 @@
 (define (tc-name-id-list-store-new [first : i64]) : i64
   (let
     [cell : (__tl_dyn-array TcNameIdListStoreData)
-      (array.make-array TcNameIdListStoreData 1)]
+      (__tl_make-array TcNameIdListStoreData 1)]
     [nodes : (__tl_dyn-array TcNameIdListNode)
-      (array.make-array TcNameIdListNode 4)]
+      (__tl_make-array TcNameIdListNode 4)]
     [owner : i64 (arena.tl_arena_current)]
     (begin
       (set! (array-ref nodes 0) (TcNameIdListNode first -1))
@@ -18478,7 +18482,7 @@
   [required : i64]) : unit
   (let
     [old : (__tl_dyn-array TcNameIdListNode) data.nodes]
-    [old-capacity : i64 (array.length old)]
+    [old-capacity : i64 (__tl_array-length old)]
     [next-capacity : i64 old-capacity]
     (if (<= required old-capacity)
       unit
@@ -18489,7 +18493,7 @@
           (arena.Arena data.owner-arena)
           (let
             [next : (__tl_dyn-array TcNameIdListNode)
-              (array.make-array TcNameIdListNode next-capacity)]
+              (__tl_make-array TcNameIdListNode next-capacity)]
             [index : i64 0]
             (begin
               (while (< index data.len)
@@ -19151,9 +19155,9 @@
 (define (tc-lifetime-subst-store-new [from : i64] [to : i64]) : i64
   (let
     [cell : (__tl_dyn-array TcLifetimeSubstStoreData)
-      (array.make-array TcLifetimeSubstStoreData 1)]
+      (__tl_make-array TcLifetimeSubstStoreData 1)]
     [nodes : (__tl_dyn-array TcLifetimeSubstNode)
-      (array.make-array TcLifetimeSubstNode 4)]
+      (__tl_make-array TcLifetimeSubstNode 4)]
     [owner : i64 (arena.tl_arena_current)]
     (begin
       (set! (array-ref nodes 0) (TcLifetimeSubstNode from to -1))
@@ -19169,7 +19173,7 @@
   [required : i64]) : unit
   (let
     [old : (__tl_dyn-array TcLifetimeSubstNode) data.nodes]
-    [old-capacity : i64 (array.length old)]
+    [old-capacity : i64 (__tl_array-length old)]
     [next-capacity : i64 old-capacity]
     (if (<= required old-capacity)
       unit
@@ -19180,7 +19184,7 @@
           (arena.Arena data.owner-arena)
           (let
             [next : (__tl_dyn-array TcLifetimeSubstNode)
-              (array.make-array TcLifetimeSubstNode next-capacity)]
+              (__tl_make-array TcLifetimeSubstNode next-capacity)]
             [index : i64 0]
             (begin
               (while (< index data.len)
@@ -21274,7 +21278,7 @@
         (begin
           (set!
             data.slots
-            (array.make-array i64 tc-type-resolution-cache-capacity))
+            (__tl_make-array i64 tc-type-resolution-cache-capacity))
           (tc-type-resolution-cache-state-data-set! state data))))))
 
 (define (tc-type-needs-resolution-storage-ensure-for-job!
@@ -22219,7 +22223,7 @@
 (define (tc-dotted-macro-journal-grow! [state : TcMacroState]) : unit
   (let
     [old-capacity : i64
-      (array.length (tc-macro-walk-field state dotted-macro-journal-ids))]
+      (__tl_array-length (tc-macro-walk-field state dotted-macro-journal-ids))]
     [next-capacity : i64
       (if (< old-capacity 1)
         16
@@ -22228,10 +22232,10 @@
       (arena.Arena (tc-macro-state-owner-arena state))
       (let
         [next-pools : (__tl_dyn-array ast.AstNodePoolContext)
-          (array.make-array ast.AstNodePoolContext next-capacity)]
-        [next-ids : (__tl_dyn-array i64) (array.make-array i64 next-capacity)]
+          (__tl_make-array ast.AstNodePoolContext next-capacity)]
+        [next-ids : (__tl_dyn-array i64) (__tl_make-array i64 next-capacity)]
         [next-exprs : (__tl_dyn-array ast.AstExpr)
-          (array.make-array ast.AstExpr next-capacity)]
+          (__tl_make-array ast.AstExpr next-capacity)]
         (begin
           (tc-dotted-macro-journal-grow-copy!
             state
@@ -22259,7 +22263,7 @@
     (begin
       (if (>=
         (tc-macro-walk-field state dotted-macro-journal-len)
-        (array.length (tc-macro-walk-field state dotted-macro-journal-ids)))
+        (__tl_array-length (tc-macro-walk-field state dotted-macro-journal-ids)))
         (tc-dotted-macro-journal-grow! state)
         unit)
       (set!
@@ -22446,11 +22450,11 @@
 (define tc-imported-module-identity-cache-capacity : i64
   8192)
 (define tc-imported-module-identity-cache-module-keys : (__tl_dyn-array i64)
-  (array.make-array i64 8192))
+  (__tl_make-array i64 8192))
 (define tc-imported-module-identity-cache-target-keys : (__tl_dyn-array i64)
-  (array.make-array i64 8192))
+  (__tl_make-array i64 8192))
 (define tc-imported-module-identity-cache-values : (__tl_dyn-array i64)
-  (array.make-array i64 8192))
+  (__tl_make-array i64 8192))
 (define tc-imported-module-identity-cache-count : i64
   0)
 (define tc-imported-module-identity-cache-generation : i64
@@ -22908,7 +22912,7 @@
             [decls : (__tl_dyn-array ast.AstDecl)
               (csym.compiler-symbols-decls symbols)]
             [index : i64 (csym.compiler-symbol-handle-index handle)]
-            (if (or (< index 0) (>= index (array.length decls)))
+            (if (or (< index 0) (>= index (__tl_array-length decls)))
               false
               (let
                 [decl : ast.AstDecl (array-ref decls index)]
@@ -22967,17 +22971,17 @@
 (define tc-module-decl-index-modules : tc_i64_i64_map.Map
   (tc_i64_i64_map.with-capacity 16))
 (define tc-module-decl-index-starts : (__tl_dyn-array i64)
-  (array.make-array i64 0))
+  (__tl_make-array i64 0))
 (define tc-module-decl-index-ends : (__tl_dyn-array i64)
-  (array.make-array i64 0))
+  (__tl_make-array i64 0))
 (define tc-module-decl-index-positions : (__tl_dyn-array i64)
-  (array.make-array i64 0))
+  (__tl_make-array i64 0))
 (define tc-module-import-index-starts : (__tl_dyn-array i64)
-  (array.make-array i64 0))
+  (__tl_make-array i64 0))
 (define tc-module-import-index-ends : (__tl_dyn-array i64)
-  (array.make-array i64 0))
+  (__tl_make-array i64 0))
 (define tc-module-import-index-positions : (__tl_dyn-array i64)
-  (array.make-array i64 0))
+  (__tl_make-array i64 0))
 
 ;; Reset marks the index maybe-stale instead of destroying it. The macro
 ;; expander resets these caches every round, but most rounds leave the
@@ -22988,7 +22992,7 @@
 (define tc-module-decl-index-maybe-stale : bool
   false)
 (define tc-module-decl-index-seq : (__tl_dyn-array i64)
-  (array.make-array i64 0))
+  (__tl_make-array i64 0))
 
 (define (tc-module-decl-index-reset!) : unit
   (set! tc-module-decl-index-maybe-stale true))
@@ -23063,15 +23067,15 @@
           (arena.tl_arena_set tc-module-decl-index-arena))]
       [modules : tc_i64_i64_map.Map (tc_i64_i64_map.with-capacity 512)]
       [module-count : i64 0]
-      [counts : (__tl_dyn-array i64) (array.make-array i64 (+ count 1))]
-      [import-counts : (__tl_dyn-array i64) (array.make-array i64 (+ count 1))]
-      [starts : (__tl_dyn-array i64) (array.make-array i64 (+ count 1))]
-      [ends : (__tl_dyn-array i64) (array.make-array i64 (+ count 1))]
-      [positions : (__tl_dyn-array i64) (array.make-array i64 (+ count 1))]
-      [import-starts : (__tl_dyn-array i64) (array.make-array i64 (+ count 1))]
-      [import-ends : (__tl_dyn-array i64) (array.make-array i64 (+ count 1))]
+      [counts : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
+      [import-counts : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
+      [starts : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
+      [ends : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
+      [positions : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
+      [import-starts : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
+      [import-ends : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
       [import-positions : (__tl_dyn-array i64)
-        (array.make-array i64 (+ count 1))]
+        (__tl_make-array i64 (+ count 1))]
       [cur-module-id : i64 empty-module-id]
       [i : i64 0]
       [running : i64 0]
@@ -23156,7 +23160,7 @@
         ;; Record the per-decl shape sequence so a maybe-stale index can be
         ;; revalidated without rebuilding.
         (let
-          [seq : (__tl_dyn-array i64) (array.make-array i64 count)]
+          [seq : (__tl_dyn-array i64) (__tl_make-array i64 count)]
           (begin
             (set! i 0)
             (while (< i count)
@@ -23711,11 +23715,11 @@
 (define (tc-lazy-import-state-data-new [owner-arena : i64]) : TcLazyImportStateData
   (TcLazyImportStateData
     owner-arena
-    (array.make-array i64 0)
-    (array.make-array i64 0)
-    (array.make-array i64 0)
-    (array.make-array bool 0)
-    (array.make-array i64 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array bool 0)
+    (__tl_make-array i64 0)
     0
     -1
     -1
@@ -23734,7 +23738,7 @@
           (arena.Arena owner)
           (let
             [cell : (__tl_dyn-array TcLazyImportStateData)
-              (array.make-array TcLazyImportStateData 1)]
+              (__tl_make-array TcLazyImportStateData 1)]
             [_init : unit
               (set! (array-ref cell 0) (tc-lazy-import-state-data-new owner))]
             [next : i64
@@ -23789,19 +23793,19 @@
           (begin
             (set!
               data.module-ids
-              (array.make-array i64 tc-lazy-import-stub-capacity))
+              (__tl_make-array i64 tc-lazy-import-stub-capacity))
             (set!
               data.alias-ids
-              (array.make-array i64 tc-lazy-import-stub-capacity))
+              (__tl_make-array i64 tc-lazy-import-stub-capacity))
             (set!
               data.target-ids
-              (array.make-array i64 tc-lazy-import-stub-capacity))
+              (__tl_make-array i64 tc-lazy-import-stub-capacity))
             (set!
               data.summary-backed
-              (array.make-array bool tc-lazy-import-stub-capacity))
+              (__tl_make-array bool tc-lazy-import-stub-capacity))
             (set!
               data.index-slots
-              (array.make-array i64 tc-lazy-import-stub-capacity))
+              (__tl_make-array i64 tc-lazy-import-stub-capacity))
             (tc-lazy-import-state-data-set! state data)))))))
 
 (define (tc-lazy-import-stub-storage-ensure-for-job! [state : TcJobState]) : unit
@@ -27340,6 +27344,10 @@
       (tc-source-expr-list-spmd-broadcast-scope-ok expr-bases exprs allow)]
     [(ast.AstExpr.DynArray exprs)
       (tc-source-expr-list-spmd-broadcast-scope-ok expr-bases exprs allow)]
+    [(ast.AstExpr.FixedMakeArray _ len-box)
+      (let
+        [len : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases len-box)]
+        (tc-source-expr-spmd-broadcast-scope-ok expr-bases len allow))]
     [(ast.AstExpr.MakeArray _ len-box)
       (let
         [len : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases len-box)]
@@ -27907,6 +27915,12 @@
       (tc-source-expr-list-policy-ok ctx expr-bases exprs)]
     [(ast.AstExpr.DynArray exprs)
       (tc-source-expr-list-policy-ok ctx expr-bases exprs)]
+    [(ast.AstExpr.FixedMakeArray elem-ty-id len-box)
+      (let
+        [len : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases len-box)]
+        (match (tc-source-type-policy-ok ctx (ast.ty-node-get elem-ty-id))
+          [(ResultTcUnit.Ok) (tc-source-expr-policy-ok ctx expr-bases len)]
+          [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
     [(ast.AstExpr.MakeArray elem-ty-id len-box)
       (let
         [len : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases len-box)]
@@ -30823,7 +30837,7 @@
   (let
     [count : i64 (tc-spmd-env-binding-count env)]
     [bindings : (__tl_dyn-array TcSpmdBinding)
-      (array.make-array TcSpmdBinding count)]
+      (__tl_make-array TcSpmdBinding count)]
     (begin
       (tc-spmd-env-fill-from-type-env env bindings (- count 1))
       (TcSpmdEnv bindings count))))
@@ -30881,7 +30895,7 @@
     [old-bindings : (__tl_dyn-array TcSpmdBinding) (tc-spmd-env-bindings env)]
     [new-len : i64 (+ old-len 1)]
     [new-bindings : (__tl_dyn-array TcSpmdBinding)
-      (array.make-array TcSpmdBinding new-len)]
+      (__tl_make-array TcSpmdBinding new-len)]
     (begin
       (tc-spmd-env-copy-bindings new-bindings old-bindings 0 old-len)
       (set!
@@ -30977,7 +30991,7 @@
       env
       (let
         [new-bindings : (__tl_dyn-array TcSpmdBinding)
-          (array.make-array TcSpmdBinding old-len)]
+          (__tl_make-array TcSpmdBinding old-len)]
         [old-binding : TcSpmdBinding (array-ref old-bindings local-index)]
         (begin
           (tc-spmd-env-copy-bindings new-bindings old-bindings 0 old-len)
@@ -31021,7 +31035,7 @@
     [old-len : i64 (tc-spmd-env-len env)]
     [old-bindings : (__tl_dyn-array TcSpmdBinding) (tc-spmd-env-bindings env)]
     [new-bindings : (__tl_dyn-array TcSpmdBinding)
-      (array.make-array TcSpmdBinding old-len)]
+      (__tl_make-array TcSpmdBinding old-len)]
     (begin
       (tc-spmd-env-mark-outer-into new-bindings old-bindings 0 old-len)
       (TcSpmdEnv new-bindings old-len))))
@@ -31077,7 +31091,7 @@
     [right-bindings : (__tl_dyn-array TcSpmdBinding)
       (tc-spmd-env-bindings right)]
     [merged : (__tl_dyn-array TcSpmdBinding)
-      (array.make-array TcSpmdBinding left-len)]
+      (__tl_make-array TcSpmdBinding left-len)]
     (begin
       ;; Branch merge is index-aligned: both branches start from the same
       ;; snapshot and local lets restore to that mark before the merge.
@@ -34389,7 +34403,7 @@
   (let
     [capacity : i64 (+ (parser.ast-decl-list-count all-decls) 1)]
     [decls : (__tl_dyn-array ast.AstDeclList)
-      (array.make-array ast.AstDeclList capacity)]
+      (__tl_make-array ast.AstDeclList capacity)]
     [modules : tc_i64_i64_map.Map (tc_i64_i64_map.with-capacity capacity)]
     [slot-count : i64 0]
     [count : i64 (ast.ast-decl-list-len (& all-decls))]
@@ -35590,7 +35604,7 @@
     [n : i64 cache.len]
     [src : (__tl_dyn-array TcModuleLocalEnvEntry) cache.slots]
     [slots : (__tl_dyn-array TcModuleLocalEnvEntry)
-      (array.make-array TcModuleLocalEnvEntry (+ n 1))]
+      (__tl_make-array TcModuleLocalEnvEntry (+ n 1))]
     [i : i64 0]
     (begin
       (while (< i n)
@@ -37651,9 +37665,9 @@
     tc-unbound-edit-distance-adjacent-transposition
     (let
       [len : i64 5]
-      [previous-previous-row : (__tl_dyn-array i64) (array.make-array i64 len)]
-      [previous-row : (__tl_dyn-array i64) (array.make-array i64 len)]
-      [current-row : (__tl_dyn-array i64) (array.make-array i64 len)]
+      [previous-previous-row : (__tl_dyn-array i64) (__tl_make-array i64 len)]
+      [previous-row : (__tl_dyn-array i64) (__tl_make-array i64 len)]
+      [current-row : (__tl_dyn-array i64) (__tl_make-array i64 len)]
       (unless
         (and
           (=
@@ -37725,11 +37739,11 @@
 (define tc-unbound-suggest-cache-capacity : i64
   262144)
 (define tc-unbound-suggest-cache-stamps : (__tl_dyn-array i64)
-  (array.make-array i64 tc-unbound-suggest-cache-capacity))
+  (__tl_make-array i64 tc-unbound-suggest-cache-capacity))
 (define tc-unbound-suggest-cache-classes : (__tl_dyn-array u8)
-  (array.make-array u8 tc-unbound-suggest-cache-capacity))
+  (__tl_make-array u8 tc-unbound-suggest-cache-capacity))
 (define tc-unbound-suggest-cache-lengths : (__tl_dyn-array i32)
-  (array.make-array i32 tc-unbound-suggest-cache-capacity))
+  (__tl_make-array i32 tc-unbound-suggest-cache-capacity))
 
 (define (tc-unbound-near-miss
   [module-qualified : bool]
@@ -37760,10 +37774,9 @@
     [wanted-len : i64 (string.string-length wanted-text)]
     [max-distance : i64 (tc-unbound-suggestion-max-distance wanted-len)]
     [previous-previous-row : (__tl_dyn-array i64)
-      (array.make-array i64 (+ wanted-len 1))]
-    [previous-row : (__tl_dyn-array i64)
-      (array.make-array i64 (+ wanted-len 1))]
-    [current-row : (__tl_dyn-array i64) (array.make-array i64 (+ wanted-len 1))]
+      (__tl_make-array i64 (+ wanted-len 1))]
+    [previous-row : (__tl_dyn-array i64) (__tl_make-array i64 (+ wanted-len 1))]
+    [current-row : (__tl_dyn-array i64) (__tl_make-array i64 (+ wanted-len 1))]
     [candidate-id : i64 0]
     [candidate-limit : i64 (ci.intern-pool-len)]
     [owner-stamp : i64
@@ -39264,7 +39277,7 @@
       (let
         [slot : i64 (tc-body-type-fact-slot state key)]
         (if (and (>= slot 0) (< slot data.type-fact-count))
-          (TcBodyTypeFact.Hit (array.ref data.type-fact-types slot))
+          (TcBodyTypeFact.Hit (array-ref data.type-fact-types slot))
           (TcBodyTypeFact.Miss)))
       (TcBodyTypeFact.Miss))))
 
@@ -42886,7 +42899,7 @@
       (tc-source-value-bound-id? ctx env name-id))
       (ResultTcType.Ok (ast.AstType.I64))
       (ResultTcType.Err
-        "typecheck: array-length requires dynamic array or borrowed Slice"))
+        "typecheck: array-length requires fixed array, private dynamic array, or borrowed Slice"))
     (tc-length-string-call ctx env name-id func args arg-ty)))
 
 (define (tc-array-length-array-call
@@ -42915,6 +42928,9 @@
 
 (define (tc-array-length-receiver [ctx : TcContext] [receiver-ty : ast.AstType]) : ResultTcArrayReceiver
   (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
+    [(ast.AstType.Array elem-ty _)
+      (ResultTcArrayReceiver.Ok
+        (TcArrayReceiver receiver-ty (ast.ty-node-get elem-ty)))]
     [(ast.AstType.DynArray elem-ty)
       (ResultTcArrayReceiver.Ok
         (TcArrayReceiver receiver-ty (ast.ty-node-get elem-ty)))]
@@ -42934,13 +42950,12 @@
         [_ (tc-array-length-receiver ctx (ast.ty-node-get referent-ty))])]
     [_
       (ResultTcArrayReceiver.Err
-        "typecheck: array-length requires dynamic array or borrowed Slice")]))
+        "typecheck: array-length requires fixed array, private dynamic array, or borrowed Slice")]))
 
-;; Runtime `array-length` remains dynamic-array-only. Macro helper environments
-;; bind `array-length` for Expr operands so CTFE can validate fixed-array type
-;; reflection.
-;; Core `length` accepts arrays and string/bytes handles. The stdlib
-;; `string-length` wrapper uses the private `__tl_string_length` intrinsic.
+;; Core `length` / `array-length` accept fixed arrays and supported references;
+;; compiler-private dynamic arrays and borrowed Slice receivers retain their
+;; intrinsic path. The stdlib `string-length` wrapper uses the private
+;; `__tl_string_length` intrinsic.
 (define (tc-array-length-call
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -44855,6 +44870,10 @@
       (tc-ref-closure-expr-list-local-uses-ok? expr-bases exprs name bound)]
     [(ast.AstExpr.DynArray exprs)
       (tc-ref-closure-expr-list-local-uses-ok? expr-bases exprs name bound)]
+    [(ast.AstExpr.FixedMakeArray _ len-box)
+      (let
+        [len : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases len-box)]
+        (tc-ref-closure-local-uses-ok? expr-bases len name bound))]
     [(ast.AstExpr.MakeArray _ len-box)
       (let
         [len : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases len-box)]
@@ -45382,9 +45401,9 @@
       (in-arena
         (arena.Arena data.fixed-storage-arena)
         (begin
-          (set! data.lines (array.make-array i64 tc-inlay-hint-capacity))
-          (set! data.cols (array.make-array i64 tc-inlay-hint-capacity))
-          (set! data.types (array.make-array String tc-inlay-hint-capacity))
+          (set! data.lines (__tl_make-array i64 tc-inlay-hint-capacity))
+          (set! data.cols (__tl_make-array i64 tc-inlay-hint-capacity))
+          (set! data.types (__tl_make-array String tc-inlay-hint-capacity))
           (tc-inlay-hint-state-data-set! state data))))))
 
 (define (tc-inlay-hint-string-arena-ensure-for-state!
@@ -47560,6 +47579,9 @@
     [(ast.AstExpr.PtrWrite _ _)
       (tc-spmd-masked-if-unsupported
         "side effects other than contiguous array writes inside masked branches")]
+    [(ast.AstExpr.FixedMakeArray _ _)
+      (tc-spmd-masked-if-unsupported
+        "allocations that can escape masked branches")]
     [(ast.AstExpr.MakeArray _ _)
       (tc-spmd-masked-if-unsupported
         "allocations that can escape masked branches")]
@@ -48183,6 +48205,10 @@
       (tc-spmd-scan-body-no-nested-list expr-bases exprs)]
     [(ast.AstExpr.DynArray exprs)
       (tc-spmd-scan-body-no-nested-list expr-bases exprs)]
+    [(ast.AstExpr.FixedMakeArray _ len-box)
+      (tc-spmd-scan-body-no-nested-spmd
+        expr-bases
+        (ast.ast-expr-segment-bases-get expr-bases len-box))]
     [(ast.AstExpr.MakeArray _ len-box)
       (tc-spmd-scan-body-no-nested-spmd
         expr-bases
@@ -49300,6 +49326,16 @@
               (tc-spmd-finish expr-ty class next-spmd-env)])]
         [(ResultTcSpmdExprListInfo.Err message)
           (ResultTcSpmdExprInfo.Err message)])]
+    [(ast.AstExpr.FixedMakeArray _ len-box)
+      (let
+        [len : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases len-box)]
+        (match (tc-spmd-expr ctx expr-bases env spmd-env len)
+          [(ResultTcSpmdExprInfo.Ok info)
+            (match info
+              [(TcSpmdExprInfo _ class next-spmd-env)
+                (tc-spmd-finish expr-ty class next-spmd-env)])]
+          [(ResultTcSpmdExprInfo.Err message)
+            (ResultTcSpmdExprInfo.Err message)]))]
     [(ast.AstExpr.MakeArray _ len-box)
       (let
         [len : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases len-box)]
@@ -50534,6 +50570,10 @@
       (tc-expr-list-uses-free-name? expr-bases exprs name bound)]
     [(ast.AstExpr.DynArray exprs)
       (tc-expr-list-uses-free-name? expr-bases exprs name bound)]
+    [(ast.AstExpr.FixedMakeArray _ len-box)
+      (let
+        [len : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases len-box)]
+        (tc-expr-uses-free-name? expr-bases len name bound))]
     [(ast.AstExpr.MakeArray _ len-box)
       (let
         [len : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases len-box)]
@@ -51579,6 +51619,16 @@
         target-1
         target-2
         bound)]
+    [(ast.AstExpr.FixedMakeArray _ len-box)
+      (let
+        [len : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases len-box)]
+        (tc-expr-uses-free-source-id?
+          session
+          expr-bases
+          len
+          target-1
+          target-2
+          bound))]
     [(ast.AstExpr.MakeArray _ len-box)
       (let
         [len : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases len-box)]
@@ -52848,6 +52898,10 @@
       (tc-expr-list-sets-free-name? expr-bases exprs name bound)]
     [(ast.AstExpr.DynArray exprs)
       (tc-expr-list-sets-free-name? expr-bases exprs name bound)]
+    [(ast.AstExpr.FixedMakeArray _ len-box)
+      (let
+        [len : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases len-box)]
+        (tc-expr-sets-free-name? expr-bases len name bound))]
     [(ast.AstExpr.MakeArray _ len-box)
       (let
         [len : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases len-box)]
@@ -55179,7 +55233,7 @@
           (arena.Arena data.owner-arena)
           (set!
             data.agg-layout-cache
-            (array.make-array TcAggLayoutCacheSlot tc-agg-layout-cache-capacity)))
+            (__tl_make-array TcAggLayoutCacheSlot tc-agg-layout-cache-capacity)))
         (tc-agg-layout-cache-state-data-set! state data)))))
 
 (define (tc-agg-layout-cache-table-storage-ensure-for-job!
@@ -55634,7 +55688,7 @@
           (arena.Arena data.owner-arena)
           (set!
             data.size-cache
-            (array.make-array i64 tc-agg-scalar-cache-capacity)))
+            (__tl_make-array i64 tc-agg-scalar-cache-capacity)))
         (tc-agg-scalar-cache-state-data-set! state data)))))
 
 (define (tc-agg-size-cache-storage-ensure-for-job! [job-state : TcJobState]) : unit
@@ -55729,7 +55783,7 @@
           (arena.Arena data.owner-arena)
           (set!
             data.align-cache
-            (array.make-array i64 tc-agg-scalar-cache-capacity)))
+            (__tl_make-array i64 tc-agg-scalar-cache-capacity)))
         (tc-agg-scalar-cache-state-data-set! state data)))))
 
 (define (tc-agg-align-cache-storage-ensure-for-job! [job-state : TcJobState]) : unit
@@ -55821,7 +55875,7 @@
           (arena.Arena data.owner-arena)
           (set!
             data.regwords-cache
-            (array.make-array i64 tc-agg-scalar-cache-capacity)))
+            (__tl_make-array i64 tc-agg-scalar-cache-capacity)))
         (tc-agg-scalar-cache-state-data-set! state data)))))
 
 (define (tc-agg-regwords-cache-storage-ensure-for-job! [job-state : TcJobState]) : unit
@@ -62006,6 +62060,29 @@
       (tc-make-array-zero-literal-length? len)
       (not (tc-type-contains-reference? elem)))))
 
+(define (tc-fixed-make-array-expr
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [elem : ast.AstType]
+  [len : ast.AstExpr]) : ResultTcType
+  (match (ctfe_support.compiler-ctfe-eval
+    len
+    (tc-ctfe-env ctx)
+    (ctfe_support.ctfe-fuel-limit))
+    [(ctfe_support.ResultCtfe.Ok value _)
+      (match value
+        [(ctfe_support.CompilerCtfeValue.I64 count)
+          (if (< count 0)
+            (ResultTcType.Err
+              "typecheck: make-array length must be a non-negative compile-time integer")
+            (tc-init-expr ctx env (ast.ast-ty-array elem count)))]
+        [_
+          (ResultTcType.Err
+            "typecheck: make-array length must be a non-negative compile-time integer")])]
+    [(ctfe_support.ResultCtfe.Err _)
+      (ResultTcType.Err
+        "typecheck: make-array length must be a non-negative compile-time integer")]))
+
 ;; An unquote recursively enters ordinary typechecking, which may install a
 ;; different node-pool context during macro expansion. Re-project every child
 ;; read through `ctx`; unlike the non-installing analysis walks above, this
@@ -63604,6 +63681,12 @@
         [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
     [(ast.AstExpr.DynArray exprs)
       (tc-expr-dyn-array-literal-infer ctx env exprs)]
+    [(ast.AstExpr.FixedMakeArray elem-ty-id len-box)
+      (tc-fixed-make-array-expr
+        ctx
+        env
+        (tc-resolve-type ctx (tc-context-type-get ctx elem-ty-id))
+        (tc-context-expr-get ctx len-box))]
     [(ast.AstExpr.MakeArray elem-ty-id len-box)
       (let
         [len : ast.AstExpr (tc-context-expr-get ctx len-box)]
@@ -65358,6 +65441,16 @@
         seen
         template?
         exprs)]
+    [(ast.AstExpr.FixedMakeArray _ len)
+      (tc-comptime-purity-node-mode
+        ctx
+        expr-bases
+        env
+        bound
+        chain
+        seen
+        template?
+        len)]
     [(ast.AstExpr.MakeArray _ len)
       (tc-comptime-purity-node-mode
         ctx
@@ -66334,7 +66427,7 @@
       [index : i64 (csym.compiler-symbol-handle-index handle)]
       [decls : (__tl_dyn-array ast.AstDecl)
         (csym.compiler-symbols-decls (tc-context-symbols ctx))]
-      (if (or (< index 0) (>= index (array.length decls)))
+      (if (or (< index 0) (>= index (__tl_array-length decls)))
         ResultTcUnit.Ok
         (tc-comptime-purity-decl
           ctx
@@ -66453,9 +66546,9 @@
     0
     0
     4096
-    (array.make-array i64 0)
-    (array.make-array i64 0)
-    (array.make-array i64 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)
     0))
 
 (define (tc-macro-abstract-state-address-initialize [state : TcMacroState]) : i64
@@ -66470,7 +66563,7 @@
           (arena.Arena owner)
           (let
             [cell : (__tl_dyn-array TcMacroAbstractStateData)
-              (array.make-array TcMacroAbstractStateData 1)]
+              (__tl_make-array TcMacroAbstractStateData 1)]
             [_init : unit
               (set! (array-ref cell 0) (tc-macro-abstract-state-new))]
             [next : i64
@@ -66596,31 +66689,31 @@
 
 (define (tc-macro-proof-reuse-state-new) : TcMacroProofReuseStateData
   (TcMacroProofReuseStateData
-    (array.make-array String 0)
+    (__tl_make-array String 0)
     0
     false
     0
     false
     false
-    (array.make-array String 0)
-    (array.make-array String 0)
-    (array.make-array i64 0)
-    (array.make-array i64 0)
-    (array.make-array ast.AstDecl 0)
+    (__tl_make-array String 0)
+    (__tl_make-array String 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array ast.AstDecl 0)
     0
     -1
     -1
     false
-    (array.make-array i64 0)
-    (array.make-array i64 0)
-    (array.make-array String 0)
-    (array.make-array String 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array String 0)
+    (__tl_make-array String 0)
     0
     -1
     -1
     false
-    (array.make-array String 0)
-    (array.make-array String 0)
+    (__tl_make-array String 0)
+    (__tl_make-array String 0)
     0
     -1
     -1
@@ -66631,8 +66724,8 @@
     0
     0
     false
-    (array.make-array i64 0)
-    (array.make-array i64 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)
     0
     false
     false
@@ -66640,8 +66733,8 @@
     false
     false
     false
-    (array.make-array i64 0)
-    (array.make-array String 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array String 0)
     0
     false
     false
@@ -66663,7 +66756,7 @@
           (arena.Arena owner)
           (let
             [cell : (__tl_dyn-array TcMacroProofReuseStateData)
-              (array.make-array TcMacroProofReuseStateData 1)]
+              (__tl_make-array TcMacroProofReuseStateData 1)]
             [_init : unit
               (set! (array-ref cell 0) (tc-macro-proof-reuse-state-new))]
             [next : i64
@@ -66827,8 +66920,8 @@
 
 (define (tc-macro-identity-state-new) : TcMacroIdentityStateData
   (TcMacroIdentityStateData
-    (array.make-array String 0)
-    (array.make-array i64 0)
+    (__tl_make-array String 0)
+    (__tl_make-array i64 0)
     0
     0
     -1
@@ -66847,7 +66940,7 @@
           (arena.Arena owner)
           (let
             [cell : (__tl_dyn-array TcMacroIdentityStateData)
-              (array.make-array TcMacroIdentityStateData 1)]
+              (__tl_make-array TcMacroIdentityStateData 1)]
             [_init : unit
               (set! (array-ref cell 0) (tc-macro-identity-state-new))]
             [next : i64
@@ -66923,8 +67016,8 @@
                 unit
                 (begin
                   (set! data.capacity 16)
-                  (set! data.keys (array.make-array String data.capacity))
-                  (set! data.slots (array.make-array i64 data.capacity))))]
+                  (set! data.keys (__tl_make-array String data.capacity))
+                  (set! data.slots (__tl_make-array i64 data.capacity))))]
             [index : i64 0]
             (begin
               (while (< index data.capacity)
@@ -66959,8 +67052,8 @@
       (arena.Arena owner)
       (let
         [next-keys : (__tl_dyn-array String)
-          (array.make-array String next-capacity)]
-        [next-slots : (__tl_dyn-array i64) (array.make-array i64 next-capacity)]
+          (__tl_make-array String next-capacity)]
+        [next-slots : (__tl_dyn-array i64) (__tl_make-array i64 next-capacity)]
         [index : i64 0]
         (begin
           (while (< index data.count)
@@ -67094,7 +67187,7 @@
         (arena.Arena owner)
         (let
           [storage : (__tl_dyn-array String)
-            (array.make-array String requested-capacity)]
+            (__tl_make-array String requested-capacity)]
           (tc-macro-proof-set! state qualified-keys storage))))))
 
 (define (record-count-for-state [state : TcMacroState] [macro-key : String]) : unit
@@ -67210,15 +67303,15 @@
         (arena.Arena owner)
         (let
           [function-storage : (__tl_dyn-array String)
-            (array.make-array String additional-capacity)]
+            (__tl_make-array String additional-capacity)]
           [local-storage : (__tl_dyn-array String)
-            (array.make-array String additional-capacity)]
+            (__tl_make-array String additional-capacity)]
           [identity-storage : (__tl_dyn-array i64)
-            (array.make-array i64 additional-capacity)]
+            (__tl_make-array i64 additional-capacity)]
           [module-storage : (__tl_dyn-array i64)
-            (array.make-array i64 additional-capacity)]
+            (__tl_make-array i64 additional-capacity)]
           [decl-storage : (__tl_dyn-array ast.AstDecl)
-            (array.make-array ast.AstDecl additional-capacity)]
+            (__tl_make-array ast.AstDecl additional-capacity)]
           (begin
             (tc-macro-proof-set! state function-names function-storage)
             (tc-macro-proof-set! state local-names local-storage)
@@ -67426,16 +67519,16 @@
         (arena.Arena owner)
         (let
           [identities : (__tl_dyn-array i64)
-            (array.make-array i64 store-capacity)]
-          [counts : (__tl_dyn-array i64) (array.make-array i64 store-capacity)]
+            (__tl_make-array i64 store-capacity)]
+          [counts : (__tl_dyn-array i64) (__tl_make-array i64 store-capacity)]
           [types : (__tl_dyn-array String)
-            (array.make-array String (* store-capacity expected-count))]
+            (__tl_make-array String (* store-capacity expected-count))]
           [kinds : (__tl_dyn-array String)
-            (array.make-array String (* store-capacity expected-count))]
+            (__tl_make-array String (* store-capacity expected-count))]
           [scratch-keys : (__tl_dyn-array String)
-            (array.make-array String expected-count)]
+            (__tl_make-array String expected-count)]
           [scratch-kinds : (__tl_dyn-array String)
-            (array.make-array String expected-count)]
+            (__tl_make-array String expected-count)]
           (begin
             (tc-macro-proof-set! state identity-bytes identities)
             (tc-macro-proof-set! state operand-count counts)
@@ -67539,11 +67632,11 @@
       (in-arena
         (arena.Arena owner)
         (let
-          [locals : (__tl_dyn-array i64) (array.make-array i64 type-capacity)]
-          [next : (__tl_dyn-array i64) (array.make-array i64 type-capacity)]
-          [values : (__tl_dyn-array i64) (array.make-array i64 seed-capacity)]
+          [locals : (__tl_dyn-array i64) (__tl_make-array i64 type-capacity)]
+          [next : (__tl_dyn-array i64) (__tl_make-array i64 type-capacity)]
+          [values : (__tl_dyn-array i64) (__tl_make-array i64 seed-capacity)]
           [texts : (__tl_dyn-array String)
-            (array.make-array String seed-capacity)]
+            (__tl_make-array String seed-capacity)]
           (begin
             (tc-macro-proof-set! state local-alias-names locals)
             (tc-macro-proof-set! state next-locals next)
@@ -69516,13 +69609,13 @@
           (begin
             (set!
               abstract.proof-macro-keys
-              (array.make-array i64 abstract.proof-capacity))
+              (__tl_make-array i64 abstract.proof-capacity))
             (set!
               abstract.proof-param-keys
-              (array.make-array i64 abstract.proof-capacity))
+              (__tl_make-array i64 abstract.proof-capacity))
             (set!
               abstract.proof-kind-masks
-              (array.make-array i64 abstract.proof-capacity))
+              (__tl_make-array i64 abstract.proof-capacity))
             (tc-macro-abstract-state-data-set! state abstract)))))))
 
 (define (tc-macro-abstract-proof-find
@@ -70643,8 +70736,11 @@
         (tc-generated-expr-list-dependent-construct-at? ctx (& items) 0)]
       [(ast.AstExpr.DynArray items)
         (tc-generated-expr-list-dependent-construct-at? ctx (& items) 0)]
-      ;; A make-array element type in expression position is not dependent; the
-      ;; produced value is a length-erased dynamic array.
+      ;; A make-array element type in expression position is not dependent.
+      [(ast.AstExpr.FixedMakeArray _ len-id)
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx len-id))]
       [(ast.AstExpr.MakeArray _ len-id)
         (tc-generated-expr-dependent-construct?
           ctx
@@ -71468,7 +71564,7 @@
   (len i64))
 
 (define (tc-move-cleanup-owners-new [count : i64]) : TcMoveCleanupOwners
-  (TcMoveCleanupOwners (array.make-array TcMoveCleanupOwner count) count))
+  (TcMoveCleanupOwners (__tl_make-array TcMoveCleanupOwner count) count))
 
 (define (tc-move-cleanup-owners-set
   [owners : TcMoveCleanupOwners]
@@ -71571,7 +71667,7 @@
     TcMovedPathFactStoreData)
   (let
     [nodes : (__tl_dyn-array TcMovedPathFactNode)
-      (array.make-array TcMovedPathFactNode 4)]
+      (__tl_make-array TcMovedPathFactNode 4)]
     [owner : i64 (arena.tl_arena_current)]
     (begin
       (set! (array-ref nodes 0) (TcMovedPathFactNode first -1))
@@ -71582,7 +71678,7 @@
   [required : i64]) : unit
   (let
     [old : (__tl_dyn-array TcMovedPathFactNode) data.nodes]
-    [old-capacity : i64 (array.length old)]
+    [old-capacity : i64 (__tl_array-length old)]
     [next-capacity : i64 old-capacity]
     (if (<= required old-capacity)
       unit
@@ -71593,7 +71689,7 @@
           (arena.Arena data.owner-arena)
           (let
             [next : (__tl_dyn-array TcMovedPathFactNode)
-              (array.make-array TcMovedPathFactNode next-capacity)]
+              (__tl_make-array TcMovedPathFactNode next-capacity)]
             [index : i64 0]
             (begin
               (while (< index data.len)
@@ -71723,7 +71819,7 @@
   [parent : i64]) : i64
   (let
     [cell : (__tl_dyn-array TcParamStorageOriginNode)
-      (array.make-array TcParamStorageOriginNode 1)]
+      (__tl_make-array TcParamStorageOriginNode 1)]
     (begin
       (set!
         (array-ref cell 0)
@@ -71997,13 +72093,13 @@
 (define (tc-move-path-segment-store-new) : i64
   (let
     [cell : (__tl_dyn-array TcMovePathSegmentStoreData)
-      (array.make-array TcMovePathSegmentStoreData 1)]
+      (__tl_make-array TcMovePathSegmentStoreData 1)]
     [owner : i64 (arena.tl_arena_current)]
     (begin
       (set!
         (array-ref cell 0)
         (TcMovePathSegmentStoreData
-          (array.make-array TcMovePathSegmentNode 4)
+          (__tl_make-array TcMovePathSegmentNode 4)
           0
           owner))
       (unsafe
@@ -72017,7 +72113,7 @@
   [required : i64]) : unit
   (let
     [old : (__tl_dyn-array TcMovePathSegmentNode) data.nodes]
-    [old-capacity : i64 (array.length old)]
+    [old-capacity : i64 (__tl_array-length old)]
     [next-capacity : i64 old-capacity]
     (if (<= required old-capacity)
       unit
@@ -72028,7 +72124,7 @@
           (arena.Arena data.owner-arena)
           (let
             [next : (__tl_dyn-array TcMovePathSegmentNode)
-              (array.make-array TcMovePathSegmentNode next-capacity)]
+              (__tl_make-array TcMovePathSegmentNode next-capacity)]
             [index : i64 0]
             (begin
               (while (< index data.len)
@@ -72060,7 +72156,7 @@
 (define (tc-move-path-segments-storage-capacity [segments : TcMovePathSegments]) : i64
   (if (= segments.store-address 0)
     0
-    (array.length
+    (__tl_array-length
       (__tl-project-field
         (tc-move-path-segment-store-read segments.store-address)
         nodes))))
@@ -72162,7 +72258,7 @@
     (if (= length 0)
       ""
       (let
-        [order : (__tl_dyn-array i64) (array.make-array i64 length)]
+        [order : (__tl_dyn-array i64) (__tl_make-array i64 length)]
         [cursor : i64 segments.tail]
         [write-index : i64 (- length 1)]
         [read-index : i64 0]
@@ -78145,6 +78241,11 @@
             loop-carried
             moved
             exprs)])]
+    [(ast.AstExpr.FixedMakeArray _ inner-box)
+      (let
+        [inner : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-move-check-expr ctx expr-bases env locals loop-carried moved inner))]
     [(ast.AstExpr.MakeArray _ inner-box)
       (let
         [inner : ast.AstExpr
@@ -86851,6 +86952,11 @@
             types)]
         [(ResultTcTypeList.Err _)
           (tc-borrow-check-exprs ctx expr-bases env locals borrowed exprs)])]
+    [(ast.AstExpr.FixedMakeArray _ inner-box)
+      (let
+        [inner : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-borrow-check-expr ctx expr-bases env locals borrowed inner))]
     [(ast.AstExpr.MakeArray _ inner-box)
       (let
         [inner : ast.AstExpr
@@ -88154,6 +88260,11 @@
       (tc-borrow-gate-exprs-relevant? ctx expr-bases exprs)]
     [(ast.AstExpr.DynArray exprs)
       (tc-borrow-gate-exprs-relevant? ctx expr-bases exprs)]
+    [(ast.AstExpr.FixedMakeArray _ len-box)
+      (tc-borrow-gate-expr-relevant?
+        ctx
+        expr-bases
+        (ast.ast-expr-segment-bases-get expr-bases len-box))]
     [(ast.AstExpr.MakeArray _ len-box)
       (tc-borrow-gate-expr-relevant?
         ctx
@@ -88929,10 +89040,10 @@
 
 (define (tc-macro-walk-state-new) : TcMacroWalkStateData
   (TcMacroWalkStateData
-    (array.make-array i64 0)
-    (array.make-array i64 0)
-    (array.make-array i64 0)
-    (array.make-array i64 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)
     0
     0
     0
@@ -88971,8 +89082,8 @@
     0
     0
     32
-    (array.make-array i64 32)
-    (array.make-array i64 32)
+    (__tl_make-array i64 32)
+    (__tl_make-array i64 32)
     0
     false
     false
@@ -88981,11 +89092,11 @@
     cbi.compiler-builtin-id-fix-empty
     (cload.compiler-load-session-state-dependency-catalog-handle
       (cload.compiler-load-serial-test-session-state))
-    (array.make-array i64 13)
+    (__tl_make-array i64 13)
     false
-    (array.make-array ast.AstNodePoolContext 0)
-    (array.make-array i64 0)
-    (array.make-array ast.AstExpr 0)
+    (__tl_make-array ast.AstNodePoolContext 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array ast.AstExpr 0)
     0
     0))
 
@@ -89000,7 +89111,7 @@
           (arena.Arena owner)
           (let
             [cell : (__tl_dyn-array TcMacroWalkStateData)
-              (array.make-array TcMacroWalkStateData 1)]
+              (__tl_make-array TcMacroWalkStateData 1)]
             [_init : unit (set! (array-ref cell 0) (tc-macro-walk-state-new))]
             [next : i64
               (cast
@@ -89243,7 +89354,7 @@
           (arena.Arena owner)
           (let
             [cell : (__tl_dyn-array ci.InternSourceNameSession)
-              (array.make-array ci.InternSourceNameSession 1)]
+              (__tl_make-array ci.InternSourceNameSession 1)]
             [next-address : i64
               (begin
                 (set! (array-ref cell 0) next)
@@ -89621,8 +89732,8 @@
               [required-reflections : i64 (+ reflections.len needed)]
               [grew? : bool
                 (or
-                  (> required-layouts (array.length layouts.slots))
-                  (> required-reflections (array.length reflections.slots)))]
+                  (> required-layouts (__tl_array-length layouts.slots))
+                  (> required-reflections (__tl_array-length reflections.slots)))]
               [_profile-start : unit
                 (cfg
                   compile-profile
@@ -90970,7 +91081,7 @@
     (let
       [count : i64 (ast.ast-decl-list-len (& items))]
       [slots : (__tl_dyn-array ast.AstDecl)
-        (array.make-array ast.AstDecl (+ reserve count))]
+        (__tl_make-array ast.AstDecl (+ reserve count))]
       [reserved : ast.AstDeclList (ast.AstDeclList slots reserve count true)]
       (begin
         (ast.ast-decl-list-copy-to
@@ -91209,8 +91320,8 @@
       [count : i64 (ast.ast-decl-path-list-len (& items))]
       [capacity : i64 (+ reserve count)]
       [items-capacity : i64 (array-length items.slots)]
-      [slots : (__tl_dyn-array String) (array.make-array String capacity)]
-      [owner-ids : (__tl_dyn-array i64) (array.make-array i64 (* capacity 2))]
+      [slots : (__tl_dyn-array String) (__tl_make-array String capacity)]
+      [owner-ids : (__tl_dyn-array i64) (__tl_make-array i64 (* capacity 2))]
       (begin
         (ast.ast-decl-path-list-copy-to
           (&mut slots)
@@ -91607,7 +91718,7 @@
   [next : i64]) : i64
   (let
     [cell : (__tl_dyn-array MacroProgramSegmentNodeData)
-      (array.make-array MacroProgramSegmentNodeData 1)]
+      (__tl_make-array MacroProgramSegmentNodeData 1)]
     (begin
       (cfg compile-profile (compiler-tc-walk-segment-node-note!))
       (set! (array-ref cell 0) (MacroProgramSegmentNodeData decls paths next))
@@ -91630,7 +91741,7 @@
         0
         (macro-program-segment-node-new-current decls paths 0))]
     [cell : (__tl_dyn-array MacroSegmentedProgramViewData)
-      (array.make-array MacroSegmentedProgramViewData 1)]
+      (__tl_make-array MacroSegmentedProgramViewData 1)]
     (begin
       (set!
         (array-ref cell 0)
@@ -91824,7 +91935,7 @@
         1
         count)]
     [slots : (__tl_dyn-array ast.AstDecl)
-      (array.make-array ast.AstDecl capacity)]
+      (__tl_make-array ast.AstDecl capacity)]
     [src-slots : (__tl_dyn-array ast.AstDecl) decls.slots]
     [src-offset : i64 decls.offset]
     [index : i64 0]
@@ -91845,8 +91956,8 @@
       (if (< decl-count 1)
         1
         decl-count)]
-    [slots : (__tl_dyn-array String) (array.make-array String capacity)]
-    [owner-ids : (__tl_dyn-array i64) (array.make-array i64 (* capacity 2))]
+    [slots : (__tl_dyn-array String) (__tl_make-array String capacity)]
+    [owner-ids : (__tl_dyn-array i64) (__tl_make-array i64 (* capacity 2))]
     [index : i64 0]
     (begin
       (while (< index decl-count)
@@ -92323,9 +92434,9 @@
         1
         count)]
     [decl-slots : (__tl_dyn-array ast.AstDecl)
-      (array.make-array ast.AstDecl capacity)]
-    [path-slots : (__tl_dyn-array String) (array.make-array String capacity)]
-    [owner-ids : (__tl_dyn-array i64) (array.make-array i64 (* capacity 2))]
+      (__tl_make-array ast.AstDecl capacity)]
+    [path-slots : (__tl_dyn-array String) (__tl_make-array String capacity)]
+    [owner-ids : (__tl_dyn-array i64) (__tl_make-array i64 (* capacity 2))]
     [data : MacroSegmentedProgramViewData
       (macro-segmented-program-view-data
         (tc-job-state-macro-program-view-address state))]
@@ -93937,8 +94048,8 @@
 (define (tc-macro-generated-module-state-new) : TcMacroGeneratedModuleStateData
   (TcMacroGeneratedModuleStateData
     4096
-    (array.make-array i64 0)
-    (array.make-array MacroGeneratedModuleCatalogEntry 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array MacroGeneratedModuleCatalogEntry 0)
     0
     -1
     -1
@@ -93957,7 +94068,7 @@
           (arena.Arena owner)
           (let
             [cell : (__tl_dyn-array TcMacroGeneratedModuleStateData)
-              (array.make-array TcMacroGeneratedModuleStateData 1)]
+              (__tl_make-array TcMacroGeneratedModuleStateData 1)]
             [_init : unit
               (set! (array-ref cell 0) (tc-macro-generated-module-state-new))]
             [next : i64
@@ -94026,10 +94137,10 @@
               (if (= (array-length memo.keys) memo.capacity)
                 unit
                 (begin
-                  (set! memo.keys (array.make-array i64 memo.capacity))
+                  (set! memo.keys (__tl_make-array i64 memo.capacity))
                   (set!
                     memo.catalog-entries
-                    (array.make-array
+                    (__tl_make-array
                       MacroGeneratedModuleCatalogEntry
                       memo.capacity))))]
             [i : i64 0]
@@ -94243,8 +94354,8 @@
 (define (tc-macro-generated-decls-state-new) : TcMacroGeneratedDeclsStateData
   (TcMacroGeneratedDeclsStateData
     1024
-    (array.make-array i64 0)
-    (array.make-array ast.AstDeclList 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array ast.AstDeclList 0)
     0
     -1
     -1
@@ -94263,7 +94374,7 @@
           (arena.Arena owner)
           (let
             [cell : (__tl_dyn-array TcMacroGeneratedDeclsStateData)
-              (array.make-array TcMacroGeneratedDeclsStateData 1)]
+              (__tl_make-array TcMacroGeneratedDeclsStateData 1)]
             [_init : unit
               (set! (array-ref cell 0) (tc-macro-generated-decls-state-new))]
             [next : i64
@@ -94332,10 +94443,10 @@
               (if (= (array-length memo.keys) memo.capacity)
                 unit
                 (begin
-                  (set! memo.keys (array.make-array i64 memo.capacity))
+                  (set! memo.keys (__tl_make-array i64 memo.capacity))
                   (set!
                     memo.decls
-                    (array.make-array ast.AstDeclList memo.capacity))))]
+                    (__tl_make-array ast.AstDeclList memo.capacity))))]
             [i : i64 0]
             (begin
               (while (< i memo.capacity)
@@ -95252,7 +95363,7 @@
     [_ "<non-call-expression>"]))
 
 ;; Serialize an AstType back to a spanned sexpr so type positions embedded in
-;; expression nodes (array.make-array, cast, ann, typed let bindings) round-trip.
+;; expression nodes (__tl_make-array, cast, ann, typed let bindings) round-trip.
 (define (macro-type-to-spanned-sexpr
   [session : cis.InternStructuralSessionHandle]
   [ty : ast.AstType]
@@ -96133,6 +96244,19 @@
                 span)
               svalue
               span))]
+        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
+    [(ast.AstExpr.FixedMakeArray ty-id len-id)
+      (match (macro-type-to-spanned-sexpr
+        session
+        (ast.ty-node-get ty-id)
+        span
+        origin)
+        [(ResultMacroSexpr.Ok sty)
+          (match (macro-child-to-spanned-sexpr session len-id span origin)
+            [(ResultMacroSexpr.Ok slen)
+              (ResultMacroSexpr.Ok
+                (macro-form2-id (ci.intern "make-array") sty slen span))]
+            [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.MakeArray ty-id len-id)
       (match (macro-type-to-spanned-sexpr
@@ -97104,9 +97228,9 @@
 (define (tc-macro-surface-call-state-new) : TcMacroSurfaceCallStateData
   (TcMacroSurfaceCallStateData
     8192
-    (array.make-array i64 0)
-    (array.make-array i64 0)
-    (array.make-array MacroMaybeDecl 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array MacroMaybeDecl 0)
     0
     -1
     -1
@@ -97124,7 +97248,7 @@
           (arena.Arena owner)
           (let
             [cell : (__tl_dyn-array TcMacroSurfaceCallStateData)
-              (array.make-array TcMacroSurfaceCallStateData 1)]
+              (__tl_make-array TcMacroSurfaceCallStateData 1)]
             [_init : unit
               (set! (array-ref cell 0) (tc-macro-surface-call-state-new))]
             [next : i64
@@ -97191,13 +97315,13 @@
           (let
             [i : i64 0]
             (begin
-              (if (= (array.length cache.module-keys) 0)
+              (if (= (__tl_array-length cache.module-keys) 0)
                 (begin
-                  (set! cache.module-keys (array.make-array i64 cache.capacity))
-                  (set! cache.base-keys (array.make-array i64 cache.capacity))
+                  (set! cache.module-keys (__tl_make-array i64 cache.capacity))
+                  (set! cache.base-keys (__tl_make-array i64 cache.capacity))
                   (set!
                     cache.values
-                    (array.make-array MacroMaybeDecl cache.capacity)))
+                    (__tl_make-array MacroMaybeDecl cache.capacity)))
                 unit)
               (while (< i cache.capacity)
                 (begin
@@ -97935,10 +98059,10 @@
       (tc-macro-walk-field state macro-hygiene-env-values)]
     [old-parents : (__tl_dyn-array i64)
       (tc-macro-walk-field state macro-hygiene-env-parents)]
-    (if (< slot-count (array.length old-keys))
+    (if (< slot-count (__tl_array-length old-keys))
       unit
       (let
-        [old-capacity : i64 (array.length old-keys)]
+        [old-capacity : i64 (__tl_array-length old-keys)]
         [next-capacity : i64
           (if (< old-capacity 1)
             64
@@ -97950,13 +98074,13 @@
           (arena.Arena storage)
           (let
             [next-kinds : (__tl_dyn-array i64)
-              (array.make-array i64 next-capacity)]
+              (__tl_make-array i64 next-capacity)]
             [next-keys : (__tl_dyn-array i64)
-              (array.make-array i64 next-capacity)]
+              (__tl_make-array i64 next-capacity)]
             [next-values : (__tl_dyn-array i64)
-              (array.make-array i64 next-capacity)]
+              (__tl_make-array i64 next-capacity)]
             [next-parents : (__tl_dyn-array i64)
-              (array.make-array i64 next-capacity)]
+              (__tl_make-array i64 next-capacity)]
             (begin
               (macro-hygiene-env-grow-copy!
                 next-kinds
@@ -98618,7 +98742,7 @@
   (refcounts (__tl_dyn-array i64)))
 
 (define (tc-macro-hygiene-produced-state-new) : TcMacroHygieneProducedStateData
-  (TcMacroHygieneProducedStateData false 0 0 (array.make-array i64 0)))
+  (TcMacroHygieneProducedStateData false 0 0 (__tl_make-array i64 0)))
 
 (define (tc-macro-hygiene-produced-state-address-initialize
   [state : TcMacroState]) : i64
@@ -98633,7 +98757,7 @@
           (arena.Arena owner)
           (let
             [cell : (__tl_dyn-array TcMacroHygieneProducedStateData)
-              (array.make-array TcMacroHygieneProducedStateData 1)]
+              (__tl_make-array TcMacroHygieneProducedStateData 1)]
             [_init : unit
               (set! (array-ref cell 0) (tc-macro-hygiene-produced-state-new))]
             [next : i64
@@ -98698,20 +98822,20 @@
   (let
     [produced : TcMacroHygieneProducedStateData
       (tc-macro-hygiene-produced-state-data state)]
-    (if (<= needed (array.length produced.refcounts))
+    (if (<= needed (__tl_array-length produced.refcounts))
       unit
       (let
         [capacity : i64
-          (if (= (array.length produced.refcounts) 0)
+          (if (= (__tl_array-length produced.refcounts) 0)
             1
-            (array.length produced.refcounts))]
+            (__tl_array-length produced.refcounts))]
         (begin
           (while (< capacity needed)
             (set! capacity (* capacity 2)))
           (in-arena
             (arena.Arena (tc-macro-state-owner-arena state))
             (begin
-              (set! produced.refcounts (array.make-array i64 capacity))
+              (set! produced.refcounts (__tl_make-array i64 capacity))
               (tc-macro-hygiene-produced-state-data-set! state produced))))))))
 
 (define (macro-hygiene-produced-note-id!
@@ -98940,6 +99064,8 @@
         expr-bases
         exprs
         shared-path?)]
+    [(ast.AstExpr.FixedMakeArray _ len-box)
+      (macro-hygiene-produced-note-id! produced expr-bases len-box shared-path?)]
     [(ast.AstExpr.MakeArray _ len-box)
       (macro-hygiene-produced-note-id! produced expr-bases len-box shared-path?)]
     [(ast.AstExpr.ArrayRef array-box index-box)
@@ -100381,6 +100507,16 @@
         env.pools
         (ast.AstExpr.DynArray
           (macro-hygiene-expr-list expr-bases exprs env macro-name depth)))]
+    [(ast.AstExpr.FixedMakeArray ty-id len-box)
+      (let
+        [len : i64 len-box]
+        (ast.ast-expr-fixed-make-array-with-pools
+          env.pools
+          (macro-hygiene-type
+            (ast.ast-node-pool-context-type-get env.pools ty-id)
+            env
+            macro-name)
+          (macro-hygiene-expr expr-bases len env macro-name depth)))]
     [(ast.AstExpr.MakeArray ty-id len-box)
       (let
         [len : i64 len-box]
@@ -101257,7 +101393,7 @@
 
 (define (tc-macro-import-index-state-new) : TcMacroImportIndexStateData
   (let
-    [control : (__tl_dyn-array i64) (array.make-array i64 23)]
+    [control : (__tl_dyn-array i64) (__tl_make-array i64 23)]
     (begin
       (set! (array-ref control 1) -1)
       (set! (array-ref control 2) -1)
@@ -101272,14 +101408,14 @@
       (set! (array-ref control 21) -1)
       (set! (array-ref control 22) -1)
       (TcMacroImportIndexStateData
-        (array.make-array i64 0)
-        (array.make-array i64 0)
-        (array.make-array i64 0)
-        (array.make-array i64 0)
-        (array.make-array i64 0)
-        (array.make-array i64 0)
-        (array.make-array i64 0)
-        (array.make-array MacroFlatImportTargetList 0)
+        (__tl_make-array i64 0)
+        (__tl_make-array i64 0)
+        (__tl_make-array i64 0)
+        (__tl_make-array i64 0)
+        (__tl_make-array i64 0)
+        (__tl_make-array i64 0)
+        (__tl_make-array i64 0)
+        (__tl_make-array MacroFlatImportTargetList 0)
         control))))
 
 (define (tc-macro-import-index-state-address-initialize [state : TcMacroState]) : i64
@@ -101294,7 +101430,7 @@
           (arena.Arena owner)
           (let
             [cell : (__tl_dyn-array TcMacroImportIndexStateData)
-              (array.make-array TcMacroImportIndexStateData 1)]
+              (__tl_make-array TcMacroImportIndexStateData 1)]
             [_init : unit
               (set! (array-ref cell 0) (tc-macro-import-index-state-new))]
             [next : i64
@@ -101414,9 +101550,9 @@
         (in-arena
           (arena.Arena owner)
           (begin
-            (set! data.unqualified-module-keys (array.make-array i64 65536))
-            (set! data.unqualified-name-keys (array.make-array i64 65536))
-            (set! data.unqualified-values (array.make-array i64 65536))
+            (set! data.unqualified-module-keys (__tl_make-array i64 65536))
+            (set! data.unqualified-name-keys (__tl_make-array i64 65536))
+            (set! data.unqualified-values (__tl_make-array i64 65536))
             (tc-macro-import-index-state-data-set! state data)))))))
 
 (define (tc-unused-unsafe-storage-lifetime-fill!
@@ -103128,10 +103264,10 @@
           (begin
             (if (= (array-length data.flat-module-keys) 0)
               (begin
-                (set! data.flat-module-keys (array.make-array i64 1024))
+                (set! data.flat-module-keys (__tl_make-array i64 1024))
                 (set!
                   data.flat-values
-                  (array.make-array MacroFlatImportTargetList 1024)))
+                  (__tl_make-array MacroFlatImportTargetList 1024)))
               unit)
             (while (< i 1024)
               (begin
@@ -103241,7 +103377,7 @@
         unit))))
 
 (define (macro-flat-import-target-list-empty) : MacroFlatImportTargetList
-  (MacroFlatImportTargetList (array.make-array i64 0) 0))
+  (MacroFlatImportTargetList (__tl_make-array i64 0) 0))
 
 ;; Appends in program order, so no reversal pass is needed on store. The
 ;; per-module lists are a handful of entries, so the dedup scan and the
@@ -103497,9 +103633,9 @@
           (begin
             (if (= (array-length data.alias-module-keys) 0)
               (begin
-                (set! data.alias-module-keys (array.make-array i64 16384))
-                (set! data.alias-qualifier-keys (array.make-array i64 16384))
-                (set! data.alias-values (array.make-array i64 16384)))
+                (set! data.alias-module-keys (__tl_make-array i64 16384))
+                (set! data.alias-qualifier-keys (__tl_make-array i64 16384))
+                (set! data.alias-values (__tl_make-array i64 16384)))
               unit)
             (while (< i 16384)
               (begin
@@ -104238,7 +104374,7 @@
           (arena.Arena owner)
           (let
             [cell : (__tl_dyn-array TcMacroResultIdentityStateData)
-              (array.make-array TcMacroResultIdentityStateData 1)]
+              (__tl_make-array TcMacroResultIdentityStateData 1)]
             [_init : unit
               (set!
                 (array-ref cell 0)
@@ -106402,7 +106538,7 @@
       0
       env
       (ctfe_support.ctfe-env-syntax-pools env)
-      (array.make-array ctfe_support.CompilerCtfeValue operand-count)
+      (__tl_make-array ctfe_support.CompilerCtfeValue operand-count)
       capture-expr-types
       call-expr)))
 
@@ -107565,7 +107701,7 @@
             ret
             env
             call-expr
-            (array.make-array
+            (__tl_make-array
               ctfe_support.CompilerCtfeValue
               embedded_tlci.compiler-comptime-host-operand-cap)
             params.len
@@ -109821,6 +109957,11 @@
         [(ResultMacroExprList.Ok nexprs)
           (ResultMacroExpr.Ok (ast.ast-node-push (ast.AstExpr.DynArray nexprs)))]
         [(ResultMacroExprList.Err diag) (ResultMacroExpr.Err diag)])]
+    [(ast.AstExpr.FixedMakeArray ty-id len-box)
+      (match (macro-expand-node ctx env decls depth len-box)
+        [(ResultMacroExpr.Ok nlen)
+          (ResultMacroExpr.Ok (ast.ast-expr-fixed-make-array-id ty-id nlen))]
+        [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
     [(ast.AstExpr.MakeArray ty-id len-box)
       (match (macro-expand-node ctx env decls depth len-box)
         [(ResultMacroExpr.Ok nlen)
@@ -110412,10 +110553,10 @@
           (begin
             (set!
               data.macro-cache-module-ids
-              (array.make-array i64 data.macro-cache-capacity))
+              (__tl_make-array i64 data.macro-cache-capacity))
             (set!
               data.macro-cache-values
-              (array.make-array TcTypeEnv data.macro-cache-capacity))
+              (__tl_make-array TcTypeEnv data.macro-cache-capacity))
             (tc-macro-module-env-state-data-set! state data)))))))
 
 (define (tc-macro-module-env-cache-lookup
@@ -112594,6 +112735,8 @@
       (macro-exprs-use-macro? ctx expr-bases decls exprs)]
     [(ast.AstExpr.DynArray exprs)
       (macro-exprs-use-macro? ctx expr-bases decls exprs)]
+    [(ast.AstExpr.FixedMakeArray _ len)
+      (macro-node-uses-macro? ctx expr-bases decls len)]
     [(ast.AstExpr.MakeArray _ len)
       (macro-node-uses-macro? ctx expr-bases decls len)]
     [(ast.AstExpr.ArrayRef a i)
@@ -113102,6 +113245,10 @@
       (macro-expr-list-might-fire? state expr-bases exprs)]
     [(ast.AstExpr.DynArray exprs)
       (macro-expr-list-might-fire? state expr-bases exprs)]
+    [(ast.AstExpr.FixedMakeArray _ len-box)
+      (let
+        [len : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases len-box)]
+        (macro-expr-might-fire? state expr-bases len))]
     [(ast.AstExpr.MakeArray _ len-box)
       (let
         [len : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases len-box)]
@@ -113704,6 +113851,7 @@
         (ctfe-node-has-type-literal? state b))]
     [(ast.AstExpr.Array exprs) (ctfe-exprs-have-type-literal? state exprs)]
     [(ast.AstExpr.DynArray exprs) (ctfe-exprs-have-type-literal? state exprs)]
+    [(ast.AstExpr.FixedMakeArray _ len) (ctfe-node-has-type-literal? state len)]
     [(ast.AstExpr.MakeArray _ len) (ctfe-node-has-type-literal? state len)]
     [(ast.AstExpr.ArrayRef a i)
       (ctfe-reflection-prescan-or
@@ -113920,7 +114068,7 @@
     [ids : tc_i64_i64_map.Map cache.ids]
     [values : (__tl_dyn-array ast.AstType) cache.values]
     [sidecar : (__tl_dyn-array i64) cache.unsafe-flags]
-    [capacity : i64 (array.length values)]
+    [capacity : i64 (__tl_array-length values)]
     [count : i64 (array-ref sidecar capacity)]
     [read-index : i64 0]
     [write-index : i64 0]
@@ -113930,7 +114078,9 @@
           [name-id : i64 (array-ref sidecar (+ capacity 1 read-index))]
           [value-slot : i64 (tc_i64_i64_map.get-value-or (& ids) name-id -1)]
           (begin
-            (if (and (>= value-slot 0) (< value-slot (array.length values)))
+            (if (and
+              (>= value-slot 0)
+              (< value-slot (__tl_array-length values)))
               (let
                 [before : ast.AstType (array-ref values value-slot)]
                 (if (tc-type-needs-resolution-for-context? ctx before)
@@ -113968,7 +114118,7 @@
                   "typecheck: top-env resolution slot out of bounds: "
                   (string.int->string value-slot)
                   " / "
-                  (string.int->string (array.length values)))))
+                  (string.int->string (__tl_array-length values)))))
             (set! read-index (+ read-index 1)))))
       (set! (array-ref sidecar capacity) write-index)
       (cfg
@@ -118289,7 +118439,7 @@
 (cfg
   compile-profile
   (define (tc-poison-name-list-new) : TcPoisonNameList
-    (TcPoisonNameList (array.make-array i64 0) 0)))
+    (TcPoisonNameList (__tl_make-array i64 0) 0)))
 
 (cfg
   compile-profile
@@ -118297,7 +118447,7 @@
     (let
       [len : i64 names.len]
       [slots : (__tl_dyn-array i64) names.slots]
-      [next : (__tl_dyn-array i64) (array.make-array i64 (+ len 1))]
+      [next : (__tl_dyn-array i64) (__tl_make-array i64 (+ len 1))]
       [index : i64 0]
       (begin
         (while (< index len)
@@ -118363,7 +118513,7 @@
         (let
           [len : i64 names.len]
           [slots : (__tl_dyn-array i64) names.slots]
-          [next : (__tl_dyn-array i64) (array.make-array i64 (+ len 1))]
+          [next : (__tl_dyn-array i64) (__tl_make-array i64 (+ len 1))]
           [index : i64 0]
           (begin
             (while (< index len)
@@ -118455,7 +118605,7 @@
       (cfg
         compile-profile
         (tc-poison-name-list-new)
-        (TcPoisonNameList (array.make-array i64 0) 0))]
+        (TcPoisonNameList (__tl_make-array i64 0) 0))]
     [diagnostics : cdiag.CompilerDiagnosticList
       (cdiag.compiler-diagnostic-list-empty)]
     ;; Generated modules are walked contiguously. Retain the latest clone

@@ -4,7 +4,6 @@
 ;; cannot silently give only one representation different propagation rules.
 ;; The recursive group-return path also provokes a rejected shrinkwrap attempt;
 ;; its carry-safe labels must not leak into the accepted function body.
-(import stdlib.array)
 (import stdlib.io)
 
 (defstruct ScalarSnapshot
@@ -19,20 +18,20 @@
   (parent i64))
 
 (define snapshot-slots : (__tl_dyn-array IndexedSnapshotSlot)
-  (array.make-array IndexedSnapshotSlot 0))
+  (__tl_make-array IndexedSnapshotSlot 0))
 (define snapshot-count : i64
   0)
 (define stored-raw-heads : (__tl_dyn-array i64)
-  (array.make-array i64 128))
+  (__tl_make-array i64 128))
 (define stored-struct-heads : (__tl_dyn-array ScalarSnapshot)
-  (array.make-array ScalarSnapshot 128))
+  (__tl_make-array ScalarSnapshot 128))
 (define stored-enum-heads : (__tl_dyn-array i64)
-  (array.make-array i64 128))
+  (__tl_make-array i64 128))
 
 (define (snapshot-reset!) : unit
   (begin
     (set! snapshot-count 0)
-    (set! snapshot-slots (array.make-array IndexedSnapshotSlot 0))))
+    (set! snapshot-slots (__tl_make-array IndexedSnapshotSlot 0))))
 
 (define (snapshot-grow-copy!
   [dst : (__tl_dyn-array IndexedSnapshotSlot)]
@@ -45,16 +44,16 @@
       (snapshot-grow-copy! dst src (+ index 1)))))
 
 (define (snapshot-ensure-capacity!) : unit
-  (if (< snapshot-count (array.length snapshot-slots))
+  (if (< snapshot-count (__tl_array-length snapshot-slots))
     unit
     (let
-      [old-capacity : i64 (array.length snapshot-slots)]
+      [old-capacity : i64 (__tl_array-length snapshot-slots)]
       [next-capacity : i64
         (if (< old-capacity 1)
           64
           (* old-capacity 2))]
       [next-slots : (__tl_dyn-array IndexedSnapshotSlot)
-        (array.make-array IndexedSnapshotSlot next-capacity)]
+        (__tl_make-array IndexedSnapshotSlot next-capacity)]
       (begin
         (snapshot-grow-copy! next-slots (& snapshot-slots) 0)
         (set! snapshot-slots next-slots)))))

@@ -25,7 +25,6 @@
 ;# (define (main) : i64
 ;#   (if (>= (thread.default-worker-count) 1) 42 1))
 ;# ```
-(import stdlib.array)
 (import stdlib.arena)
 (import stdlib.comptime)
 (import stdlib.string)
@@ -511,9 +510,9 @@
 ;: Linux implementation of `spawn`.
 (define (linux-spawn [entry : (-> i64 i64)] [arg : i64]) : ThreadSpawnResult
   (let
-    [stack : (__tl_dyn-array u8) (array.make-array u8 default-stack-size)]
-    [clear-cell : (__tl_dyn-array i32) (array.make-array i32 1)]
-    [started-cell : (__tl_dyn-array i32) (array.make-array i32 1)]
+    [stack : (__tl_dyn-array u8) (__tl_make-array u8 default-stack-size)]
+    [clear-cell : (__tl_dyn-array i32) (__tl_make-array i32 1)]
+    [started-cell : (__tl_dyn-array i32) (__tl_make-array i32 1)]
     [result-cell : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     [clear-addr : i64 (array-i32-addr clear-cell)]
     [started-addr : i64 (array-i32-addr started-cell)]
@@ -547,8 +546,8 @@
   windows
   (define (thread-windows-spawn [entry : (-> i64 i64)] [arg : i64]) : ThreadSpawnResult
     (let
-      [context : (__tl_dyn-array u64) (array.make-array u64 4)]
-      [started-cell : (__tl_dyn-array i32) (array.make-array i32 1)]
+      [context : (__tl_dyn-array u64) (__tl_make-array u64 4)]
+      [started-cell : (__tl_dyn-array i32) (__tl_make-array i32 1)]
       [result-cell : (__tl_dyn-array i64) (__tl_make-array i64 1)]
       [context-addr : i64 (array-u64-addr context)]
       [started-addr : i64 (array-i32-addr started-cell)]
@@ -614,7 +613,7 @@
   (let
     [owner : arena.Arena (arena.make-atomic)]
     [result : (__tl_dyn-array String)
-      (in-arena owner (array.make-array String 1))]
+      (in-arena owner (__tl_make-array String 1))]
     [result-addr : i64 (array-string-addr result)]
     (match (spawn
       (lambda ([_ignored : i64]) : i64
@@ -687,8 +686,8 @@
       (if (= timeout-ms 0)
         (ThreadWaitTimedOut)
         (let
-          [clock : (__tl_dyn-array i64) (array.make-array i64 2)]
-          [timeout : (__tl_dyn-array i64) (array.make-array i64 2)]
+          [clock : (__tl_dyn-array i64) (__tl_make-array i64 2)]
+          [timeout : (__tl_dyn-array i64) (__tl_make-array i64 2)]
           [start-ms : i64 (linux-monotonic-ms clock)]
           (if (< start-ms 0)
             (ThreadWaitErr "thread: wait monotonic clock unavailable")
@@ -864,7 +863,7 @@
 ;: Linux implementation of `default-worker-count`.
 (define (linux-default-worker-count) : i64
   (let
-    [mask : (__tl_dyn-array u8) (array.make-array u8 128)]
+    [mask : (__tl_dyn-array u8) (__tl_make-array u8 128)]
     [rc : i64
       (unsafe
         (syscall 204 0 128 (array-u8-addr mask)))]
@@ -940,7 +939,7 @@
       (thread-windows-wait-single sem.handle windows-wait-infinite)
       windows-wait-object-0)
     (let
-      [buf : (__tl_dyn-array u64) (array.make-array u64 1)]
+      [buf : (__tl_dyn-array u64) (__tl_make-array u64 1)]
       [done : bool false]
       [ok : bool false]
       (begin
@@ -967,7 +966,7 @@
         (thread-windows-release-semaphore sem.handle (cast 1 : i32) 0)
         (cast 0 : i32)))
     (let
-      [buf : (__tl_dyn-array u64) (array.make-array u64 1)]
+      [buf : (__tl_dyn-array u64) (__tl_make-array u64 1)]
       (begin
         (set! (array-ref buf 0) (cast 1 : u64))
         (=
@@ -1008,7 +1007,7 @@
 (test
   thread-api
   (let
-    [mask : (__tl_dyn-array u8) (array.make-array u8 4)]
+    [mask : (__tl_dyn-array u8) (__tl_make-array u8 4)]
     (begin
       (set! (array-ref mask 0) (cast 0 : u8))
       (set! (array-ref mask 1) (cast 1 : u8))

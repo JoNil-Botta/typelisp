@@ -1,7 +1,6 @@
 ;; Low-level ABI coverage for the runtime memmove primitive. Private dynamic
 ;; byte arrays intentionally expose stable raw backing pointers; public binary
 ;; collection behavior is covered through ByteBuf/bytes fixtures.
-(import stdlib.array)
 (import stdlib.string)
 (import stdlib.test)
 
@@ -73,8 +72,8 @@
 
 (define (byte-copy-zero-length-case) : unit
   (let
-    [src : (__tl_dyn-array u8) (array.make-array u8 4)]
-    [dst : (__tl_dyn-array u8) (array.make-array u8 4)]
+    [src : (__tl_dyn-array u8) (__tl_make-array u8 4)]
+    [dst : (__tl_dyn-array u8) (__tl_make-array u8 4)]
     [src-base : (MutPtr u8) (byte-copy-base src)]
     [dst-base : (MutPtr u8) (byte-copy-base dst)]
     (begin
@@ -90,8 +89,8 @@
 
 (define (byte-copy-unaligned-case) : unit
   (let
-    [src : (__tl_dyn-array u8) (array.make-array u8 20)]
-    [dst : (__tl_dyn-array u8) (array.make-array u8 20)]
+    [src : (__tl_dyn-array u8) (__tl_make-array u8 20)]
+    [dst : (__tl_dyn-array u8) (__tl_make-array u8 20)]
     [src-base : (MutPtr u8) (byte-copy-base src)]
     [dst-base : (MutPtr u8) (byte-copy-base dst)]
     [n : i64 11]
@@ -105,8 +104,8 @@
 
 (define (byte-copy-tail-case [n : i64]) : unit
   (let
-    [src : (__tl_dyn-array u8) (array.make-array u8 12)]
-    [dst : (__tl_dyn-array u8) (array.make-array u8 12)]
+    [src : (__tl_dyn-array u8) (__tl_make-array u8 12)]
+    [dst : (__tl_dyn-array u8) (__tl_make-array u8 12)]
     [src-base : (MutPtr u8) (byte-copy-base src)]
     [dst-base : (MutPtr u8) (byte-copy-base dst)]
     (begin
@@ -127,8 +126,8 @@
 
 (define (byte-copy-medium-dynamic-case) : unit
   (let
-    [src : (__tl_dyn-array u8) (array.make-array u8 96)]
-    [dst : (__tl_dyn-array u8) (array.make-array u8 96)]
+    [src : (__tl_dyn-array u8) (__tl_make-array u8 96)]
+    [dst : (__tl_dyn-array u8) (__tl_make-array u8 96)]
     [src-base : (MutPtr u8) (byte-copy-base src)]
     [dst-base : (MutPtr u8) (byte-copy-base dst)]
     [n : i64 (+ 64 9)]
@@ -142,7 +141,7 @@
 
 (define (byte-copy-overlap-dst-after-src-case) : unit
   (let
-    [buf : (__tl_dyn-array u8) (array.make-array u8 20)]
+    [buf : (__tl_dyn-array u8) (__tl_make-array u8 20)]
     [base : (MutPtr u8) (byte-copy-base buf)]
     (begin
       (byte-copy-fill! buf 20 0)
@@ -153,7 +152,7 @@
 
 (define (byte-copy-medium-overlap-dst-after-src-case) : unit
   (let
-    [buf : (__tl_dyn-array u8) (array.make-array u8 160)]
+    [buf : (__tl_dyn-array u8) (__tl_make-array u8 160)]
     [base : (MutPtr u8) (byte-copy-base buf)]
     (begin
       (byte-copy-fill! buf 160 0)
@@ -164,7 +163,7 @@
 
 (define (byte-copy-medium-overlap-dst-before-src-case) : unit
   (let
-    [buf : (__tl_dyn-array u8) (array.make-array u8 160)]
+    [buf : (__tl_dyn-array u8) (__tl_make-array u8 160)]
     [base : (MutPtr u8) (byte-copy-base buf)]
     (begin
       (byte-copy-fill! buf 160 0)

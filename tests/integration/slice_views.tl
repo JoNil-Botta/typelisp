@@ -2,8 +2,6 @@
 ;; already-borrowed Slice references.  The fixture returns 42 only when the
 ;; shared/mutable paths, reference forms, nested views, aggregate stride, and
 ;; argument evaluation order all agree.
-(import stdlib.array)
-
 (defstruct SliceViewTriple
   (a i64)
   (b i64)
@@ -83,7 +81,7 @@
     [fixed-mut-score : i64 (slice-view-write (slice-mut-view fixed 1 2) 77)]
     [fixed-mut-ref-score : i64
       (slice-view-write (slice-mut-view (&mut fixed) 0 1) 88)]
-    [dynamic : (__tl_dyn-array i64) (array.make-array i64 4)]
+    [dynamic : (__tl_dyn-array i64) (__tl_make-array i64 4)]
     (begin
       (set! (array-ref dynamic 0) 3)
       (set! (array-ref dynamic 1) 6)

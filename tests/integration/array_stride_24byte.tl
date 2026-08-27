@@ -1,7 +1,5 @@
 ;; refs #2608: a 24-byte aggregate array element must use the element stride,
 ;; not a power-of-two word/pair shortcut, for push, set, and ref operations.
-(import stdlib.array)
-
 (defstruct Triple
   (a i64)
   (b i64)
@@ -12,7 +10,7 @@
 
 (define (main) : i64
   (let
-    [items : (__tl_dyn-array Triple) (array.make-array Triple 1)]
+    [items : (__tl_dyn-array Triple) (__tl_make-array Triple 1)]
     (begin
       (set! (array-ref items 0) (Triple 1 2 3))
       (__tl_array-push! items (Triple 5 7 11))

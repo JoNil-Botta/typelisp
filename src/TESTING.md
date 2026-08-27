@@ -938,7 +938,7 @@ review. `verify-stdlib-tlci-identity-differential.sh`, invoked by the required
 compile-profile gate, compiles the 15 unique witnesses through the default
 trusted route, a byte-identical explicit root, and a comment-modified source
 root. It requires every identity in its assigned witness on all three routes,
-all 107 native identities and result kinds, all 107 source controls, zero
+all 103 native identities and result kinds, all 103 source controls, zero
 catalog fallback/miss/load-failure counters, zero native hits in the source
 control, byte-identical assembly for every `Expr`, `Module`, and `Decls`
 witness, and authored-error diagnostic parity. The enclosing gate's direct

@@ -4,7 +4,6 @@
 ;; compile_smoke AST. It stays parser-only: the later selfhost passes consume
 ;; the parsed `AstProgram` for typechecking/lowering.
 (import stdlib.str_cat_runtime as str_cat)
-(import stdlib.array)
 (import stdlib.io)
 (import compiler_intern as ci)
 (import compiler_ast_types as ast)
@@ -1465,11 +1464,11 @@
 (define (compiler-parse-state-new-from-owner
   [owner : (__tl_dyn-array ci.InternCompatState)]) : CompilerParseState
   (let
-    [control : (__tl_dyn-array i64) (array.make-array i64 10)]
-    [keys : (__tl_dyn-array i64) (array.make-array i64 512)]
-    [tags : (__tl_dyn-array i64) (array.make-array i64 512)]
+    [control : (__tl_dyn-array i64) (__tl_make-array i64 10)]
+    [keys : (__tl_dyn-array i64) (__tl_make-array i64 512)]
+    [tags : (__tl_dyn-array i64) (__tl_make-array i64 512)]
     [cache : (__tl_dyn-array sym_i64_env.SymI64Env)
-      (array.make-array sym_i64_env.SymI64Env 1)]
+      (__tl_make-array sym_i64_env.SymI64Env 1)]
     [cache-handle : (__tl_dyn-array (__tl_dyn-array sym_i64_env.SymI64Env))
       (__tl_make-array (__tl_dyn-array sym_i64_env.SymI64Env) 1)]
     (begin
@@ -1497,14 +1496,13 @@
       (CompilerParseState control keys tags cache cache-handle owner))))
 
 (define (compiler-parse-state-new) : CompilerParseState
-  (compiler-parse-state-new-from-owner
-    (array.make-array ci.InternCompatState 0)))
+  (compiler-parse-state-new-from-owner (__tl_make-array ci.InternCompatState 0)))
 
 (define (compiler-parse-state-new-with-intern-state
   [intern-state : ci.InternCompatState]) : CompilerParseState
   (let
     [owner : (__tl_dyn-array ci.InternCompatState)
-      (array.make-array ci.InternCompatState 1)]
+      (__tl_make-array ci.InternCompatState 1)]
     (begin
       (set! (array-ref owner 0) intern-state)
       (compiler-parse-state-new-from-owner owner))))
@@ -2235,7 +2233,7 @@
 (define (compiler-parse-tag-expr-retired-struct-set) : i64
   313)
 
-(define (compiler-parse-tag-expr-retired-make-array) : i64
+(define (compiler-parse-tag-expr-fixed-make-array) : i64
   315)
 
 (define (compiler-parse-tag-expr-retired-array-push) : i64
@@ -2928,7 +2926,7 @@
         (compiler-parse-dispatch-bind
           out
           "make-array"
-          (compiler-parse-tag-expr-retired-make-array)))
+          (compiler-parse-tag-expr-fixed-make-array)))
       (set!
         out
         (compiler-parse-dispatch-bind
@@ -6646,6 +6644,37 @@
         [_ (parse-ast-dyn-array-literal dispatch pools rest)])]
     [_ (parse-ast-dyn-array-literal dispatch pools rest)]))
 
+(define (parse-ast-fixed-make-array
+  [dispatch : sym_i64_env.SymI64Env]
+  [pools : ast.AstNodePoolContext]
+  [rest : reader.SpannedSexpr]) : ResultAstExpr
+  (match (reader.spanned-sexpr-view rest)
+    [(reader.SpannedSexprView.Cons elem-ty len-tail _)
+      (match (reader.spanned-sexpr-view len-tail)
+        [(reader.SpannedSexprView.Cons len end _)
+          (match (reader.spanned-sexpr-view end)
+            [(reader.SpannedSexprView.Nil _)
+              (match (parse-ast-type-spanned dispatch pools elem-ty)
+                [(ResultAstType.Ok parsed-ty)
+                  (match (parse-ast-expr-with-pools dispatch pools len)
+                    [(ResultAstExpr.Ok parsed-len)
+                      (ResultAstExpr.Ok
+                        (ast.ast-expr-fixed-make-array-with-pools
+                          pools
+                          parsed-ty
+                          parsed-len))]
+                    [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])]
+                [(ResultAstType.Err message) (ResultAstExpr.Err message)])]
+            [_
+              (ResultAstExpr.Err
+                "parse: make-array expects exactly one type and one length")])]
+        [_
+          (ResultAstExpr.Err
+            "parse: make-array expects exactly one type and one length")])]
+    [_
+      (ResultAstExpr.Err
+        "parse: make-array expects exactly one type and one length")]))
+
 (define (parse-ast-array-ref-like
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
@@ -8430,6 +8459,8 @@
       (parse-ast-array dispatch pools rest)]
     [(= tag (compiler-parse-tag-expr-make-array))
       (parse-ast-make-array dispatch pools rest)]
+    [(= tag (compiler-parse-tag-expr-fixed-make-array))
+      (parse-ast-fixed-make-array dispatch pools rest)]
     [(= tag (compiler-parse-tag-expr-array-ref))
       (parse-ast-array-ref-like dispatch pools false rest)]
     [(= tag (compiler-parse-tag-expr-array-set))
@@ -8489,12 +8520,9 @@
     [(= tag (compiler-parse-tag-expr-retired-struct-set))
       (ResultAstExpr.Err
         "parse: struct-set/struct-set! was removed; use (set! value.field replacement)")]
-    [(= tag (compiler-parse-tag-expr-retired-make-array))
-      (ResultAstExpr.Err
-        "parse: bare make-array was removed; use stdlib.vector or qualified stdlib.array.make-array during the transition")]
     [(= tag (compiler-parse-tag-expr-retired-array-push))
       (ResultAstExpr.Err
-        "parse: bare array-push! was removed; use a vector mutator or qualified stdlib.array.push! during the transition")]
+        "parse: bare array-push! was removed; use a generated vector mutator")]
     [(= tag (compiler-parse-tag-expr-retired-array-data))
       (ResultAstExpr.Err
         "parse: array-data was removed; raw dynamic-buffer storage is compiler-private")]
@@ -11724,10 +11752,10 @@
   [cfgs : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]) : ResultAstProgram
   (let
-    [cur : (__tl_dyn-array i64) (array.make-array i64 1)]
+    [cur : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     [base-dispatch : sym_i64_env.SymI64Env
       (parse-ast-program-dispatch-with-cfg cfgs)]
-    [invocation : (__tl_dyn-array i64) (array.make-array i64 6)]
+    [invocation : (__tl_dyn-array i64) (__tl_make-array i64 6)]
     [dispatch : sym_i64_env.SymI64Env
       (sym_i64_env.sym-i64-bind-id
         base-dispatch
@@ -11819,7 +11847,7 @@
       (match (lexer.spanned-result src)
         [(lexer.ResultSpannedTokens.Ok toks)
           (let
-            [cur : (__tl_dyn-array i64) (array.make-array i64 1)]
+            [cur : (__tl_dyn-array i64) (__tl_make-array i64 1)]
             [dispatch : sym_i64_env.SymI64Env (parse-ast-program-dispatch)]
             (begin
               (set! (array-ref cur 0) 0)
@@ -12072,10 +12100,10 @@
   [cfgs : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]) : ResultAstProgramRecovery
   (let
-    [cur : (__tl_dyn-array i64) (array.make-array i64 1)]
+    [cur : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     [base-dispatch : sym_i64_env.SymI64Env
       (parse-ast-program-dispatch-with-cfg cfgs)]
-    [invocation : (__tl_dyn-array i64) (array.make-array i64 6)]
+    [invocation : (__tl_dyn-array i64) (__tl_make-array i64 6)]
     [dispatch : sym_i64_env.SymI64Env
       (sym_i64_env.sym-i64-bind-id
         base-dispatch
@@ -12276,10 +12304,10 @@
   [cfgs : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]) : ResultAstProgramDiagnostic
   (let
-    [cur : (__tl_dyn-array i64) (array.make-array i64 1)]
+    [cur : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     [base-dispatch : sym_i64_env.SymI64Env
       (parse-ast-program-dispatch-with-cfg cfgs)]
-    [invocation : (__tl_dyn-array i64) (array.make-array i64 6)]
+    [invocation : (__tl_dyn-array i64) (__tl_make-array i64 6)]
     [dispatch : sym_i64_env.SymI64Env
       (sym_i64_env.sym-i64-bind-id
         base-dispatch
@@ -14440,12 +14468,11 @@
     (compiler-parse-error-ok?
       "(define (main [items : (Array i64)]) : i64 0)"
       "parse: unsized (Array T) was removed; use (Array T N), stdlib.vector, or a borrowed Slice")
-    (compiler-parse-error-ok?
-      "(define (main) : i64 (array-length (make-array i64 1)))"
-      "parse: bare make-array was removed; use stdlib.vector or qualified stdlib.array.make-array during the transition")
+    (compiler-parse-ok?
+      "(define (main) : i64 (array-length (make-array i64 1)))")
     (compiler-parse-error-ok?
       "(define (main [items : (__tl_dyn-array i64)]) : unit (array-push! items 1))"
-      "parse: bare array-push! was removed; use a vector mutator or qualified stdlib.array.push! during the transition")
+      "parse: bare array-push! was removed; use a generated vector mutator")
     (compiler-parse-error-ok?
       "(define (main [items : (__tl_dyn-array i64)]) : (MutPtr i64) (unsafe (array-data items)))"
       "parse: array-data was removed; raw dynamic-buffer storage is compiler-private")

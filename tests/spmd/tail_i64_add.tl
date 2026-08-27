@@ -5,8 +5,6 @@
 ;; the result. The comparison harness builds this at scalar/avx2/avx512 and
 ;; asserts identical exit codes. a[i]=i+1, b[i]=2i, out[i]=3i+1; the n=13
 ;; checksum is 247, so every mode must exit 247.
-(import stdlib.array)
-
 (define (init [a : (__tl_dyn-array i64)] [b : (__tl_dyn-array i64)] [n : i64]) : unit
   (let
     [i : i64 0]
@@ -39,9 +37,9 @@
 (define (main) : i64
   (let
     [n : i64 13]
-    [a : (__tl_dyn-array i64) (array.make-array i64 n)]
-    [b : (__tl_dyn-array i64) (array.make-array i64 n)]
-    [out : (__tl_dyn-array i64) (array.make-array i64 n)]
+    [a : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+    [b : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+    [out : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     (begin
       (init a b n)
       (fill a b out n)

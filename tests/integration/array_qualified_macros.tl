@@ -1,4 +1,3 @@
-(import stdlib.array)
 (import stdlib.comptime)
 
 (defmacro (integration-all [items : bool ...]) : bool
@@ -19,7 +18,7 @@
 
 (define (dynamic-score) : i64
   (let
-    [items : (__tl_dyn-array i64) (array.make-array i64 2)]
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 2)]
     (begin
       (set! (array-ref items 0) 10)
       (set! (array-ref items 1) 20)

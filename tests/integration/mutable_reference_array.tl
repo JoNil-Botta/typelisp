@@ -1,5 +1,3 @@
-(import stdlib.array)
-
 (define (put-first [items : (&mut items (__tl_dyn-array i64))] [value : i64]) : unit
   (set! (array-ref items 0) value))
 
@@ -29,7 +27,7 @@
 
 (define (array-bag-handle-score) : i64
   (let
-    [items : (__tl_dyn-array i64) (array.make-array i64 2)]
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 2)]
     (begin
       (set! (array-ref items 0) 7)
       (set! (array-ref items 1) 9)
@@ -42,7 +40,7 @@
 
 (define (main) : i64
   (let
-    [items : (__tl_dyn-array i64) (array.make-array i64 1)]
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     [fixed : (Array i64 2) (array 0 0)]
     (begin
       (set! (array-ref items 0) 1)

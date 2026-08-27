@@ -4,7 +4,6 @@
 ;; is represented here by three canonical Huffman alphabets: literal-or-match,
 ;; match distance, and match length. Code lengths are stored explicitly so the
 ;; decoder owns no fixed model and repeated encoder runs are byte-identical.
-(import stdlib.array)
 (import stdlib.string)
 
 (define (compiler-embedded-stdlib-tlci-codec-main-symbols) : i64
@@ -178,9 +177,9 @@
   [alphabet-size : i64]) : ResultCompilerEmbeddedStdlibTlciHuffmanTable
   (let
     [slot-count : i64 (+ (compiler-embedded-stdlib-tlci-codec-max-code-bits) 1)]
-    [counts : (__tl_dyn-array i64) (array.make-array i64 slot-count)]
-    [first-codes : (__tl_dyn-array i64) (array.make-array i64 slot-count)]
-    [first-symbols : (__tl_dyn-array i64) (array.make-array i64 slot-count)]
+    [counts : (__tl_dyn-array i64) (__tl_make-array i64 slot-count)]
+    [first-codes : (__tl_dyn-array i64) (__tl_make-array i64 slot-count)]
+    [first-symbols : (__tl_dyn-array i64) (__tl_make-array i64 slot-count)]
     [active : i64 0]
     [max-bits : i64 0]
     [symbol : i64 0]
@@ -206,8 +205,8 @@
             counts
             first-codes
             first-symbols
-            (array.make-array i64 0)
-            (array.make-array
+            (__tl_make-array i64 0)
+            (__tl_make-array
               i64
               (compiler-embedded-stdlib-tlci-codec-lookup-size))
             0
@@ -232,10 +231,10 @@
                 [code : i64 0]
                 [ordered : i64 0]
                 [code-bits : i64 1]
-                [symbols : (__tl_dyn-array i64) (array.make-array i64 active)]
-                [next : (__tl_dyn-array i64) (array.make-array i64 slot-count)]
+                [symbols : (__tl_dyn-array i64) (__tl_make-array i64 active)]
+                [next : (__tl_dyn-array i64) (__tl_make-array i64 slot-count)]
                 [lookup : (__tl_dyn-array i64)
-                  (array.make-array
+                  (__tl_make-array
                     i64
                     (compiler-embedded-stdlib-tlci-codec-lookup-size))]
                 (begin
@@ -440,7 +439,7 @@
           "embedded stdlib tlci envelope: unexpected match huffman table")]
       [else
         (let
-          [out : (__tl_dyn-array u8) (array.make-array u8 raw-len)]
+          [out : (__tl_dyn-array u8) (__tl_make-array u8 raw-len)]
           [out-index : i64 0]
           [reader : CompilerEmbeddedStdlibTlciBitReader
             (CompilerEmbeddedStdlibTlciBitReader bit-start 0 0 0)]

@@ -1,6 +1,5 @@
 ;; compiler_load.tl - Shared selfhost compiler source/import loader.
 (import stdlib.arena)
-(import stdlib.array)
 (import stdlib.byte_buf)
 (import stdlib.io)
 (import compiler_parse_core as parser)
@@ -373,7 +372,7 @@
 
 (define (compiler-load-surface-import-list-empty) : CompilerLoadSurfaceImportList
   (CompilerLoadSurfaceImportList
-    (array.make-array CompilerLoadSurfaceImport 0)
+    (__tl_make-array CompilerLoadSurfaceImport 0)
     0))
 
 (define (compiler-load-surface-import-list-count
@@ -386,7 +385,7 @@
   (array-ref imports.slots index))
 
 (define (compiler-load-surface-decl-list-empty) : CompilerLoadSurfaceDeclList
-  (CompilerLoadSurfaceDeclList (array.make-array CompilerLoadSurfaceDecl 0) 0))
+  (CompilerLoadSurfaceDeclList (__tl_make-array CompilerLoadSurfaceDecl 0) 0))
 
 (define (compiler-load-surface-decl-list-count
   [decls : CompilerLoadSurfaceDeclList]) : i64
@@ -399,7 +398,7 @@
 
 (define (compiler-load-surface-summary-list-empty) : CompilerLoadSurfaceSummaryList
   (CompilerLoadSurfaceSummaryList
-    (array.make-array CompilerLoadSurfaceSummary 0)
+    (__tl_make-array CompilerLoadSurfaceSummary 0)
     0))
 
 (define (compiler-load-surface-summary-list-count
@@ -652,7 +651,7 @@
 
 (define compiler-load-dependency-catalog-empty-slots : (__tl_dyn-array
     CompilerLoadDependencyCatalogEntry)
-  (array.make-array CompilerLoadDependencyCatalogEntry 0))
+  (__tl_make-array CompilerLoadDependencyCatalogEntry 0))
 
 (define (compiler-load-dependency-catalog-empty-list) : CompilerLoadDependencyCatalogList
   (CompilerLoadDependencyCatalogList
@@ -757,7 +756,7 @@
   ;; seed backend does not cross its per-function aggregate-allocation label
   ;; limit here.
   (let
-    [flags : (__tl_dyn-array bool) (array.make-array bool 3)]
+    [flags : (__tl_dyn-array bool) (__tl_make-array bool 3)]
     (begin
       (set! (array-ref flags 2) true)
       flags)))
@@ -768,7 +767,7 @@
 
 (define (compiler-load-lazy-qualified-observer-stack-empty) : CompilerLoadLazyQualifiedObserverStack
   (CompilerLoadLazyQualifiedObserverStack
-    (array.make-array CompilerLoadLazyQualifiedObserverFrame 0)
+    (__tl_make-array CompilerLoadLazyQualifiedObserverFrame 0)
     0))
 
 (define (compiler-load-lazy-qualified-observer-stack-count
@@ -791,7 +790,7 @@
               1
               (* (array-length slots) 2))]
           [bigger : (__tl_dyn-array CompilerLoadLazyQualifiedObserverFrame)
-            (array.make-array CompilerLoadLazyQualifiedObserverFrame capacity)]
+            (__tl_make-array CompilerLoadLazyQualifiedObserverFrame capacity)]
           [index : i64 0]
           (begin
             (while (< index len)
@@ -804,10 +803,10 @@
 
 (define (compiler-load-lazy-qualified-observer-state-new) : CompilerLoadLazyQualifiedObserverState
   (let
-    [flags : (__tl_dyn-array bool) (array.make-array bool 4)]
-    [root-ids : (__tl_dyn-array i64) (array.make-array i64 2)]
+    [flags : (__tl_dyn-array bool) (__tl_make-array bool 4)]
+    [root-ids : (__tl_dyn-array i64) (__tl_make-array i64 2)]
     [member-sets : (__tl_dyn-array sym_i64_env.SymI64Env)
-      (array.make-array sym_i64_env.SymI64Env 2)]
+      (__tl_make-array sym_i64_env.SymI64Env 2)]
     [stack : (__tl_dyn-array CompilerLoadLazyQualifiedObserverStack)
       (__tl_make-array (compiler-load-lazy-qualified-observer-stack-empty))]
     (begin
@@ -861,7 +860,7 @@
       (compiler-load-dependency-catalog-registry-new)
       (compiler-load-dependency-surface-state-new)
       (compiler-load-session-state-bool-cell false)
-      (array.make-array ci.InternCompatState 1)
+      (__tl_make-array ci.InternCompatState 1)
       (compiler-load-session-state-bool-cell false)
       (compiler-load-session-state-bool-cell standalone-reset-safe))))
 
@@ -1000,7 +999,7 @@
     [slots : (__tl_dyn-array CompilerLoadDependencyCatalogEntry)
       (in-arena
         (arena.Arena owner)
-        (array.make-array CompilerLoadDependencyCatalogEntry capacity))]
+        (__tl_make-array CompilerLoadDependencyCatalogEntry capacity))]
     [index : i64 0]
     (begin
       (while (< index items.len)
@@ -1279,7 +1278,7 @@
             (& loaded)
             capability.resolved
             session-cookie
-            (array.make-array i64 0)
+            (__tl_make-array i64 0)
             0)
             [(tlci_loader_support.ResultTlciMacroDispatch.Ok dispatch)
               (tlci_loader_support.ResultTlciMacroDispatch.Ok dispatch)]
@@ -2650,7 +2649,7 @@
 (define (compiler-load-intern-id-seq-copy [ids : CompilerLoadInternIdSeq]) : CompilerLoadInternIdSeq
   (let
     [count : i64 ids.len]
-    [slots : (__tl_dyn-array i64) (array.make-array i64 count)]
+    [slots : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -2772,7 +2771,7 @@
       (if (< index count)
         (- count index)
         0)]
-    [slots : (__tl_dyn-array i64) (array.make-array i64 len)]
+    [slots : (__tl_dyn-array i64) (__tl_make-array i64 len)]
     [cursor : i64 0]
     (begin
       (while (< cursor len)
@@ -5844,7 +5843,7 @@
               1
               (* (array-length slots) 2))]
           [bigger : (__tl_dyn-array CompilerLoadSurfaceSummary)
-            (array.make-array CompilerLoadSurfaceSummary capacity)]
+            (__tl_make-array CompilerLoadSurfaceSummary capacity)]
           [index : i64 0]
           (begin
             (while (< index len)
@@ -6053,7 +6052,7 @@
         summaries
         (let
           [slots : (__tl_dyn-array CompilerLoadSurfaceSummary)
-            (array.make-array CompilerLoadSurfaceSummary kept)]
+            (__tl_make-array CompilerLoadSurfaceSummary kept)]
           [read-index : i64 0]
           [write-index : i64 0]
           (begin
@@ -7636,6 +7635,20 @@
         alias
         summary
         locals)]
+    [(ast.AstExpr.FixedMakeArray elem-id length)
+      (compiler-load-lazy-alias-demand-merge
+        (compiler-load-session-state-lazy-type-demand
+          state
+          (ast.ty-node-get elem-id)
+          alias
+          summary
+          locals)
+        (compiler-load-session-state-lazy-expr-demand
+          state
+          (ast.ast-node-get length)
+          alias
+          summary
+          locals))]
     [(ast.AstExpr.MakeArray elem-id length)
       (compiler-load-lazy-alias-demand-merge
         (compiler-load-session-state-lazy-type-demand
@@ -8984,9 +8997,9 @@
 
 (define (compiler-load-surface-build-empty [counts : CompilerLoadSurfaceCounts]) : CompilerLoadSurfaceBuild
   (CompilerLoadSurfaceBuild
-    (array.make-array CompilerLoadSurfaceImport counts.imports)
+    (__tl_make-array CompilerLoadSurfaceImport counts.imports)
     0
-    (array.make-array CompilerLoadSurfaceDecl counts.decls)
+    (__tl_make-array CompilerLoadSurfaceDecl counts.decls)
     0
     false
     false
@@ -14786,8 +14799,8 @@
 (define (compiler-load-canonical-module-id-ok?) : bool
   (and
     (string.eq
-      (compiler-load-canonical-module-id-from-path "stdlib/array.tl")
-      "stdlib.array")
+      (compiler-load-canonical-module-id-from-path "stdlib/vector.tl")
+      "stdlib.vector")
     (string.eq
       (compiler-load-canonical-module-id-from-path "src\\compiler_intern.tl")
       "src.compiler_intern")
@@ -16531,7 +16544,7 @@
   (array-ref deps.slots index))
 
 (define (compiler-pkg-dep-list-empty) : CompilerPkgDepList
-  (CompilerPkgDepList (array.make-array CompilerPkgDep 0) 0))
+  (CompilerPkgDepList (__tl_make-array CompilerPkgDep 0) 0))
 
 (define (compiler-pkg-dep-list-copy-into
   [dst : (__tl_dyn-array CompilerPkgDep)]
@@ -16553,7 +16566,7 @@
   (let
     [n : i64 (compiler-pkg-dep-list-count deps)]
     [slots : (__tl_dyn-array CompilerPkgDep)
-      (array.make-array CompilerPkgDep (+ n 1))]
+      (__tl_make-array CompilerPkgDep (+ n 1))]
     (begin
       (compiler-pkg-dep-list-copy-into slots deps 0)
       (set! (array-ref slots n) dep)
@@ -16566,7 +16579,7 @@
   (let
     [n : i64 (compiler-pkg-dep-list-count deps)]
     [slots : (__tl_dyn-array CompilerPkgDep)
-      (array.make-array CompilerPkgDep (+ n 1))]
+      (__tl_make-array CompilerPkgDep (+ n 1))]
     (begin
       (set! (array-ref slots 0) dep)
       (compiler-pkg-dep-list-copy-into slots deps 1)
@@ -18676,7 +18689,7 @@
     [right-address : i64 (compiler-load-module-list-slots-address right)]
     [reused : ast.AstDeclModuleList
       (compiler-load-decl-module-list-append-onto left right)]
-    [shared : (__tl_dyn-array i64) (array.make-array i64 8)]
+    [shared : (__tl_dyn-array i64) (__tl_make-array i64 8)]
     [_shared : unit
       (begin
         (set! (array-ref shared 1) alias-a-id)
@@ -18729,7 +18742,7 @@
       (compiler-load-session-state-program-admission-record state-a program-key)]
     [prelude-key : CompilerLoadPreludeCacheKey
       (CompilerLoadPreludeCacheKey
-        (CompilerLoadInternIdSeq (array.make-array i64 0) 0)
+        (CompilerLoadInternIdSeq (__tl_make-array i64 0) 0)
         cfgs)]
     [_store-prelude : unit
       (compiler-load-session-state-runtime-prelude-cache-store

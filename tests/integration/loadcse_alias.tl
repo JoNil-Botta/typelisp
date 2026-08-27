@@ -1,5 +1,4 @@
 (import stdlib.io)
-(import stdlib.array)
 
 ;; MUST-INVALIDATE stress for GAP4 (alias-granular load CSE / store-to-load
 ;; forwarding). Two handles that name the SAME array reach a function as
@@ -22,10 +21,10 @@
   (if (< n 0)
     (alias-poke xs ys (+ n 1))
     (let
-      [a : i64 (array.ref xs 0)]
+      [a : i64 (array-ref xs 0)]
       (begin
         (set! (array-ref ys 0) (+ a n))
-        (+ (array.ref xs 0) (array.ref ys 1))))))
+        (+ (array-ref xs 0) (array-ref ys 1))))))
 
 (define (mirror-sum
   [xs : (__tl_dyn-array i64)]
@@ -39,7 +38,7 @@
       (begin
         (while (< i n)
           (begin
-            (set! acc (+ acc (array.ref xs i)))
+            (set! acc (+ acc (array-ref xs i)))
             (set! (array-ref ys (- (- n 1) i)) (+ i 1))
             (set! i (+ i 1))))
         acc))))
@@ -47,8 +46,8 @@
 (define (main) : i64
   (let
     [n : i64 (+ (io.arg-count) 5)]
-    [xs : (__tl_dyn-array i64) (array.make-array i64 2)]
-    [zs : (__tl_dyn-array i64) (array.make-array i64 (+ n 1))]
+    [xs : (__tl_dyn-array i64) (__tl_make-array i64 2)]
+    [zs : (__tl_dyn-array i64) (__tl_make-array i64 (+ n 1))]
     (begin
       (set! (array-ref xs 0) 10)
       (set! (array-ref xs 1) 20)

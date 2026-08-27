@@ -1,4 +1,3 @@
-(import stdlib.array)
 (import stdlib.thread)
 (import stdlib.vector)
 (import (thread.handle i64) as thread_i64)
@@ -211,10 +210,10 @@
 
 (define (thread-api-run-with-semaphore [sem : thread.ThreadSemaphore]) : i64
   (let
-    [out-a : (__tl_dyn-array i64) (array.make-array i64 1)]
-    [out-b : (__tl_dyn-array i64) (array.make-array i64 1)]
-    [ctx-a : (__tl_dyn-array i64) (array.make-array i64 3)]
-    [ctx-b : (__tl_dyn-array i64) (array.make-array i64 3)]
+    [out-a : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    [out-b : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    [ctx-a : (__tl_dyn-array i64) (__tl_make-array i64 3)]
+    [ctx-b : (__tl_dyn-array i64) (__tl_make-array i64 3)]
     [sem-handle : i64 sem.handle]
     (begin
       (set! (array-ref ctx-a 0) (test-array-i64-addr out-a))

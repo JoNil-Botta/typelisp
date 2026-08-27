@@ -1,10 +1,8 @@
-(import stdlib.array)
-
 (define (main) : i64
   (let
-    [a : (__tl_dyn-array i64) (array.make-array i64 8)]
-    [out-x : (__tl_dyn-array i64) (array.make-array i64 8)]
-    [out-y : (__tl_dyn-array i64) (array.make-array i64 3)]
+    [a : (__tl_dyn-array i64) (__tl_make-array i64 8)]
+    [out-x : (__tl_dyn-array i64) (__tl_make-array i64 8)]
+    [out-y : (__tl_dyn-array i64) (__tl_make-array i64 3)]
     (begin
       (foreach
         ([i : i64 0 8])

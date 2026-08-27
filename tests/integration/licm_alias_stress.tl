@@ -1,5 +1,4 @@
 (import stdlib.io)
-(import stdlib.array)
 
 ;; ALIASING STRESS for M-E descriptor-load hoisting.
 ;;
@@ -28,7 +27,7 @@
       (while (< i n)
         (begin
           ;; read the value written on an EARLIER iteration when i > n-1-i.
-          (set! acc (+ acc (array.ref xs i)))
+          (set! acc (+ acc (array-ref xs i)))
           (set! (array-ref xs (- (- n 1) i)) (+ i 1))
           (set! i (+ i 1))))
       acc)))
@@ -47,18 +46,18 @@
           (if (= (% i 2) 0)
             (set! (array-ref xss 0) a)
             (set! (array-ref xss 0) b))
-          (set! acc (+ acc (array.length (array.ref xss 0))))
+          (set! acc (+ acc (__tl_array-length (array-ref xss 0))))
           (set! i (+ i 1))))
       acc)))
 
 (define (main) : i64
   (let
     [n : i64 (+ (io.arg-count) 5)]
-    [xs : (__tl_dyn-array i64) (array.make-array i64 n)]
-    [a : (__tl_dyn-array i64) (array.make-array i64 2)]
-    [b : (__tl_dyn-array i64) (array.make-array i64 3)]
+    [xs : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+    [a : (__tl_dyn-array i64) (__tl_make-array i64 2)]
+    [b : (__tl_dyn-array i64) (__tl_make-array i64 3)]
     [xss : (__tl_dyn-array (__tl_dyn-array i64))
-      (array.make-array (type (__tl_dyn-array i64)) 1)]
+      (__tl_make-array (__tl_dyn-array i64) 1)]
     (begin
       (set! (array-ref xss 0) a)
       ;; n = 6 (no args). rotate-sum walk:

@@ -10,7 +10,6 @@
 ;#
 ;# Sizes are past one 4 KiB page so a wrongly skipped fill cannot hide inside
 ;# memory that happened to be zero anyway.
-(import stdlib.array)
 (import stdlib.arena)
 
 (defenum Slot
@@ -66,15 +65,15 @@
 
 (define (defaults-bad [n : i64]) : i64
   (+
-    (count-nonzero-i64 (array.make-array i64 n) n)
+    (count-nonzero-i64 (__tl_make-array i64 n) n)
     (+
-      (count-true-bool (array.make-array bool n) n)
-      (count-non-empty-slot (array.make-array Slot n) n))))
+      (count-true-bool (__tl_make-array bool n) n)
+      (count-non-empty-slot (__tl_make-array Slot n) n))))
 
 (define (main) : i64
   (let
     ;; Force the program arena into existence before taking the mark.
-    [_warm : (__tl_dyn-array i64) (array.make-array i64 8)]
+    [_warm : (__tl_dyn-array i64) (__tl_make-array i64 8)]
     [mark : arena.ArenaMark (arena.mark)]
     ;; Virgin arena: tl_array_zero is allowed to skip, the pages must still
     ;; read as the default.
@@ -88,7 +87,7 @@
       ;; with the fill wrongly skipped.
       (unsafe
         (arena.rewind mark))
-      (dirty-i64! (array.make-array i64 65536) 65536)
+      (dirty-i64! (__tl_make-array i64 65536) 65536)
       (unsafe
         (arena.rewind mark))
       (let

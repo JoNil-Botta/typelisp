@@ -1,6 +1,5 @@
 ;; compiler_specialize.tl - Selfhost comptime function specialization.
 (import stdlib.str_cat_runtime as str_cat)
-(import stdlib.array)
 (import compiler_parse_core as parser)
 (import compiler_ast_types as ast)
 (import compiler_ctfe as ctfe)
@@ -106,12 +105,12 @@
   [_state : profile_state.CompilerProfileState]) : SpecOwnerContext
   (let
     [records : (__tl_dyn-array SpecGeneratedSymbolRecords)
-      (array.make-array SpecGeneratedSymbolRecords 1)]
+      (__tl_make-array SpecGeneratedSymbolRecords 1)]
     (begin
       (set!
         (array-ref records 0)
         (SpecGeneratedSymbolRecords
-          (array.make-array SpecGeneratedSymbolRecord 0)
+          (__tl_make-array SpecGeneratedSymbolRecord 0)
           0))
       (cfg
         (any compile-profile test)
@@ -138,12 +137,12 @@
       (profile_state.compiler-profile-state-new))
     (let
       [records : (__tl_dyn-array SpecGeneratedSymbolRecords)
-        (array.make-array SpecGeneratedSymbolRecords 1)]
+        (__tl_make-array SpecGeneratedSymbolRecords 1)]
       (begin
         (set!
           (array-ref records 0)
           (SpecGeneratedSymbolRecords
-            (array.make-array SpecGeneratedSymbolRecord 0)
+            (__tl_make-array SpecGeneratedSymbolRecord 0)
             0))
         (SpecOwnerContext
           pools
@@ -159,7 +158,7 @@
   (if (>= index count)
     unit
     (begin
-      (set! (array-ref dst index) (array.ref src index))
+      (set! (array-ref dst index) (array-ref src index))
       (spec-generated-symbol-records-copy-range dst src (+ index 1) count))))
 
 (define (spec-generated-symbol-records-grow!
@@ -167,7 +166,7 @@
   (let
     [count : i64 records.len]
     [bigger : (__tl_dyn-array SpecGeneratedSymbolRecord)
-      (array.make-array SpecGeneratedSymbolRecord (+ (* count 2) 8))]
+      (__tl_make-array SpecGeneratedSymbolRecord (+ (* count 2) 8))]
     (begin
       (spec-generated-symbol-records-copy-range
         (&mut bigger)
@@ -180,7 +179,7 @@
   [records : (&mut records SpecGeneratedSymbolRecords)]
   [item : SpecGeneratedSymbolRecord]) : unit
   (begin
-    (if (< records.len (array.length records.slots))
+    (if (< records.len (__tl_array-length records.slots))
       unit
       (spec-generated-symbol-records-grow! records))
     (let
@@ -438,7 +437,7 @@
   (len i64))
 
 (define (spec-template-list-new) : SpecTemplateList
-  (SpecTemplateList (array.make-array SpecTemplate 0) 0))
+  (SpecTemplateList (__tl_make-array SpecTemplate 0) 0))
 
 (define (spec-template-list-copy-range
   [dst : (&mut dst (__tl_dyn-array SpecTemplate))]
@@ -448,7 +447,7 @@
   (if (>= index count)
     unit
     (begin
-      (set! (array-ref dst index) (array.ref src index))
+      (set! (array-ref dst index) (array-ref src index))
       (spec-template-list-copy-range dst src (+ index 1) count))))
 
 (define (spec-template-list-grow
@@ -456,7 +455,7 @@
   (let
     [count : i64 templates.len]
     [bigger : (__tl_dyn-array SpecTemplate)
-      (array.make-array SpecTemplate (+ (* count 2) 8))]
+      (__tl_make-array SpecTemplate (+ (* count 2) 8))]
     (begin
       (spec-template-list-copy-range (&mut bigger) (& templates.slots) 0 count)
       (set! templates.slots bigger))))
@@ -465,7 +464,7 @@
   [templates : (&mut templates SpecTemplateList)]
   [item : SpecTemplate]) : unit
   (begin
-    (if (< templates.len (array.length templates.slots))
+    (if (< templates.len (__tl_array-length templates.slots))
       unit
       (spec-template-list-grow templates))
     (let
@@ -475,24 +474,24 @@
         (set! templates.len (+ count 1))))))
 
 (define (spec-value-list-new) : SpecValueList
-  (SpecValueList (array.make-array ctfe.CompilerCtfeValue 0) 0))
+  (SpecValueList (__tl_make-array ctfe.CompilerCtfeValue 0) 0))
 
 (define (spec-value-cons [head : ctfe.CompilerCtfeValue] [rest : SpecValueList]) : SpecValueList
   (let
     [count : i64 rest.len]
     [slots : (__tl_dyn-array ctfe.CompilerCtfeValue)
-      (array.make-array ctfe.CompilerCtfeValue (+ count 1))]
+      (__tl_make-array ctfe.CompilerCtfeValue (+ count 1))]
     [at : i64 0]
     (begin
       (set! (array-ref slots 0) head)
       (while (< at count)
         (begin
-          (set! (array-ref slots (+ at 1)) (array.ref rest.slots at))
+          (set! (array-ref slots (+ at 1)) (array-ref rest.slots at))
           (set! at (+ at 1))))
       (SpecValueList slots (+ count 1)))))
 
 (define (spec-value-subst-new) : SpecValueSubst
-  (SpecValueSubst (array.make-array SpecValueBinding 0) 0))
+  (SpecValueSubst (__tl_make-array SpecValueBinding 0) 0))
 
 (define (spec-value-subst-cons
   [key-id : i64]
@@ -501,18 +500,18 @@
   (let
     [count : i64 rest.len]
     [slots : (__tl_dyn-array SpecValueBinding)
-      (array.make-array SpecValueBinding (+ count 1))]
+      (__tl_make-array SpecValueBinding (+ count 1))]
     [at : i64 0]
     (begin
       (set! (array-ref slots 0) (SpecValueBinding.Bind key-id value))
       (while (< at count)
         (begin
-          (set! (array-ref slots (+ at 1)) (array.ref rest.slots at))
+          (set! (array-ref slots (+ at 1)) (array-ref rest.slots at))
           (set! at (+ at 1))))
       (SpecValueSubst slots (+ count 1)))))
 
 (define (spec-type-subst-new) : SpecTypeSubst
-  (SpecTypeSubst (array.make-array SpecTypeBinding 0) 0))
+  (SpecTypeSubst (__tl_make-array SpecTypeBinding 0) 0))
 
 (define (spec-type-subst-cons
   [key-id : i64]
@@ -521,13 +520,13 @@
   (let
     [count : i64 rest.len]
     [slots : (__tl_dyn-array SpecTypeBinding)
-      (array.make-array SpecTypeBinding (+ count 1))]
+      (__tl_make-array SpecTypeBinding (+ count 1))]
     [at : i64 0]
     (begin
       (set! (array-ref slots 0) (SpecTypeBinding.Bind key-id ty))
       (while (< at count)
         (begin
-          (set! (array-ref slots (+ at 1)) (array.ref rest.slots at))
+          (set! (array-ref slots (+ at 1)) (array-ref rest.slots at))
           (set! at (+ at 1))))
       (SpecTypeSubst slots (+ count 1)))))
 
@@ -805,13 +804,13 @@
   (if (>= index count)
     unit
     (begin
-      (set! (array-ref dst index) (array.ref src index))
+      (set! (array-ref dst index) (array-ref src index))
       (spec-template-shadow-copy-range dst src (+ index 1) count))))
 
 (define (spec-template-shadow-fill-zero
   [slots : (&mut slots (__tl_dyn-array i64))]
   [index : i64]) : unit
-  (if (>= index (array.length slots))
+  (if (>= index (__tl_array-length slots))
     unit
     (begin
       (set! (array-ref slots index) 0)
@@ -834,19 +833,19 @@
 
 (define (spec-template-shadow-state-new [template-count : i64]) : SpecTemplateShadowState
   (let
-    [counts : (__tl_dyn-array i64) (array.make-array i64 template-count)]
+    [counts : (__tl_dyn-array i64) (__tl_make-array i64 template-count)]
     [cell : (__tl_dyn-array SpecTemplateShadowStateData)
-      (array.make-array SpecTemplateShadowStateData 1)]
+      (__tl_make-array SpecTemplateShadowStateData 1)]
     (begin
       (spec-template-shadow-fill-zero (&mut counts) 0)
       (set!
         (array-ref cell 0)
         (SpecTemplateShadowStateData
-          (array.make-array i64 8)
-          (array.make-array i64 8)
-          (array.make-array i64 8)
+          (__tl_make-array i64 8)
+          (__tl_make-array i64 8)
+          (__tl_make-array i64 8)
           counts
-          (array.make-array i64 8)
+          (__tl_make-array i64 8)
           0
           -1))
       (SpecTemplateShadowState
@@ -862,10 +861,10 @@
   [data : SpecTemplateShadowStateData]) : SpecTemplateShadowStateData
   (let
     [count : i64 data.len]
-    [next-capacity : i64 (+ (* (array.length data.slots) 2) 8)]
-    [next-slots : (__tl_dyn-array i64) (array.make-array i64 next-capacity)]
-    [next-parents : (__tl_dyn-array i64) (array.make-array i64 next-capacity)]
-    [next-depths : (__tl_dyn-array i64) (array.make-array i64 next-capacity)]
+    [next-capacity : i64 (+ (* (__tl_array-length data.slots) 2) 8)]
+    [next-slots : (__tl_dyn-array i64) (__tl_make-array i64 next-capacity)]
+    [next-parents : (__tl_dyn-array i64) (__tl_make-array i64 next-capacity)]
+    [next-depths : (__tl_dyn-array i64) (__tl_make-array i64 next-capacity)]
     (begin
       (spec-template-shadow-copy-range (&mut next-slots) (& data.slots) 0 count)
       (spec-template-shadow-copy-range
@@ -892,7 +891,7 @@
   [count : i64]) : SpecTemplateShadowStateData
   (let
     [next : (__tl_dyn-array i64)
-      (array.make-array i64 (+ (* (array.length data.scratch) 2) 8))]
+      (__tl_make-array i64 (+ (* (__tl_array-length data.scratch) 2) 8))]
     (begin
       (spec-template-shadow-copy-range (&mut next) (& data.scratch) 0 count)
       (SpecTemplateShadowStateData
@@ -909,7 +908,7 @@
   [head : i64]) : i64
   (if (< head 0)
     0
-    (array.ref data.depths head)))
+    (array-ref data.depths head)))
 
 (define (spec-template-shadow-state-append
   [state : SpecTemplateShadowState]
@@ -918,7 +917,7 @@
   (let
     [data : SpecTemplateShadowStateData (spec-template-shadow-state-data state)]
     (begin
-      (if (< data.len (array.length data.slots))
+      (if (< data.len (__tl_array-length data.slots))
         unit
         (set! data (spec-template-shadow-state-grow-records data)))
       (let
@@ -952,33 +951,33 @@
           (begin
             (if (and (>= current-depth wanted-depth) (>= current 0))
               (let
-                [slot : i64 (array.ref data.slots current)]
+                [slot : i64 (array-ref data.slots current)]
                 (begin
                   (set!
                     (array-ref data.counts slot)
-                    (- (array.ref data.counts slot) 1))
-                  (set! current (array.ref data.parents current))))
+                    (- (array-ref data.counts slot) 1))
+                  (set! current (array-ref data.parents current))))
               unit)
             (if (and (>= wanted-depth current-depth) (>= wanted 0))
               (begin
-                (if (< scratch-len (array.length data.scratch))
+                (if (< scratch-len (__tl_array-length data.scratch))
                   unit
                   (set!
                     data
                     (spec-template-shadow-state-grow-scratch data scratch-len)))
                 (set! (array-ref data.scratch scratch-len) wanted)
                 (set! scratch-len (+ scratch-len 1))
-                (set! wanted (array.ref data.parents wanted)))
+                (set! wanted (array-ref data.parents wanted)))
               unit))))
       (while (> scratch-len 0)
         (let
           [next-index : i64 (- scratch-len 1)]
-          [node : i64 (array.ref data.scratch next-index)]
-          [slot : i64 (array.ref data.slots node)]
+          [node : i64 (array-ref data.scratch next-index)]
+          [slot : i64 (array-ref data.slots node)]
           (begin
             (set!
               (array-ref data.counts slot)
-              (+ (array.ref data.counts slot) 1))
+              (+ (array-ref data.counts slot) 1))
             (set! scratch-len next-index))))
       (set! data.active-head wanted-head)
       (spec-template-shadow-state-data-set! state data))))
@@ -989,7 +988,7 @@
   [slot : i64]) : bool
   (begin
     (spec-template-shadow-state-activate! state head)
-    (> (array.ref (spec-template-shadow-state-data state).counts slot) 0)))
+    (> (array-ref (spec-template-shadow-state-data state).counts slot) 0)))
 
 (define (spec-template-values-fill-empty
   [values : (__tl_dyn-array SpecMaybeTemplate)]
@@ -1010,7 +1009,7 @@
   (if (>= at templates.len)
     index
     (let
-      [template : SpecTemplate (array.ref templates.slots at)]
+      [template : SpecTemplate (array-ref templates.slots at)]
       (match template
         [(SpecTemplate.Item name _ _ _)
           (if (spec_id_i64_map.contains? (& index) name)
@@ -1032,7 +1031,7 @@
   (let
     [count : i64 templates.len]
     [values : (__tl_dyn-array SpecMaybeTemplate)
-      (array.make-array SpecMaybeTemplate count)]
+      (__tl_make-array SpecMaybeTemplate count)]
     (begin
       (spec-template-values-fill-empty values 0 count)
       (SpecTemplateEnv
@@ -1054,7 +1053,7 @@
         templates.shadow-head
         slot)
         (SpecMaybeTemplate.None)
-        (array.ref templates.values slot))]
+        (array-ref templates.values slot))]
     [(spec_id_i64_map.LookupMissing) (SpecMaybeTemplate.None)]))
 
 (define (spec-template-env-shadow-name
@@ -1609,7 +1608,7 @@
   (if (>= at values.len)
     "none"
     (str_cat.str-cat
-      (spec-value-key (array.ref values.slots at))
+      (spec-value-key (array-ref values.slots at))
       "_"
       (spec-values-key-at values (+ at 1)))))
 
@@ -1682,7 +1681,7 @@
   (if (>= at values.len)
     "none"
     (str_cat.str-cat
-      (spec-value-key-with-owner owner (array.ref values.slots at))
+      (spec-value-key-with-owner owner (array-ref values.slots at))
       "_"
       (spec-values-key-with-owner-at owner values (+ at 1)))))
 
@@ -2186,7 +2185,7 @@
       [head : SpecStructuralKey
         (spec-value-structural-key-with-owner
           owner
-          (array.ref values.slots index))]
+          (array-ref values.slots index))]
       [tail : SpecStructuralKey
         (spec-values-structural-key-at-with-owner owner values (+ index 1))]
       (spec-structural-node-with-owner
@@ -2283,7 +2282,7 @@
     [index : i64 0]
     (while (< index records.len)
       (let
-        [record : SpecGeneratedSymbolRecord (array.ref records.slots index)]
+        [record : SpecGeneratedSymbolRecord (array-ref records.slots index)]
         (begin
           (spec_ci.intern-compat-state-generated-symbol-materialize!
             (spec-owner-intern-state owner)
@@ -2309,7 +2308,7 @@
   (let
     [capacity : i64 64]
     [decls : (__tl_dyn-array ast.AstDecl)
-      (array.make-array ast.AstDecl capacity)]
+      (__tl_make-array ast.AstDecl capacity)]
     (GenRegistry (spec_id_i64_map.with-capacity capacity) decls 0)))
 
 (define (gen-registry-structural-key-with-owner
@@ -2355,7 +2354,7 @@
   [key : SpecStructuralKey]) : GenMaybeEntry
   (match (spec_id_i64_map.get (& registry.index) (spec-structural-key-raw key))
     [(spec_id_i64_map.LookupFound slot)
-      (GenMaybeEntry.Some (array.ref registry.decls slot))]
+      (GenMaybeEntry.Some (array-ref registry.decls slot))]
     [(spec_id_i64_map.LookupMissing) (GenMaybeEntry.None)]))
 
 (define (gen-registry-copy-decls
@@ -2366,7 +2365,7 @@
   (if (>= index count)
     unit
     (begin
-      (set! (array-ref dst index) (array.ref src index))
+      (set! (array-ref dst index) (array-ref src index))
       (gen-registry-copy-decls src dst (+ index 1) count))))
 
 (define (gen-registry-grow [registry : GenRegistry]) : GenRegistry
@@ -2374,13 +2373,13 @@
     [old-index : spec_id_i64_map.Map registry.index]
     [old-decls : (__tl_dyn-array ast.AstDecl) registry.decls]
     [old-len : i64 registry.len]
-    [old-capacity : i64 (array.length old-decls)]
+    [old-capacity : i64 (__tl_array-length old-decls)]
     [new-capacity : i64
       (if (< old-capacity 1)
         1
         (* old-capacity 2))]
     [new-decls : (__tl_dyn-array ast.AstDecl)
-      (array.make-array ast.AstDecl new-capacity)]
+      (__tl_make-array ast.AstDecl new-capacity)]
     (begin
       (gen-registry-copy-decls old-decls new-decls 0 old-len)
       (GenRegistry old-index new-decls old-len))))
@@ -2391,7 +2390,7 @@
   [decl : ast.AstDecl]) : GenRegistry
   (let
     [ready : GenRegistry
-      (if (>= registry.len (array.length registry.decls))
+      (if (>= registry.len (__tl_array-length registry.decls))
         (gen-registry-grow registry)
         registry)]
     [slot : i64 ready.len]
@@ -4216,7 +4215,7 @@
 (define (spec-type-subst-find [subs : SpecTypeSubst] [name-id : i64] [at : i64]) : i64
   (if (>= at subs.len)
     (- 0 1)
-    (match (array.ref subs.slots at)
+    (match (array-ref subs.slots at)
       [(SpecTypeBinding.Bind key-id _)
         (if (= key-id name-id)
           at
@@ -4232,7 +4231,7 @@
     [at : i64 (spec-type-subst-find subs name-id 0)]
     (if (< at 0)
       (ast.AstType.Var name-id)
-      (match (array.ref subs.slots at)
+      (match (array-ref subs.slots at)
         [(SpecTypeBinding.Bind _ ty) ty]))))
 
 (define (spec-value-subst-find
@@ -4241,7 +4240,7 @@
   [at : i64]) : i64
   (if (>= at subs.len)
     (- 0 1)
-    (match (array.ref subs.slots at)
+    (match (array-ref subs.slots at)
       [(SpecValueBinding.Bind key-id _)
         (if (= key-id name-id)
           at
@@ -4257,7 +4256,7 @@
     [at : i64 (spec-value-subst-find subs name-id 0)]
     (if (< at 0)
       (ctfe.CompilerCtfeValue.Unit)
-      (match (array.ref subs.slots at)
+      (match (array-ref subs.slots at)
         [(SpecValueBinding.Bind _ value) value]))))
 
 ;; An unbound name leaves the environment alone, so the hot inner-scope walk
@@ -4267,18 +4266,18 @@
     subs
     (let
       [slots : (__tl_dyn-array SpecValueBinding)
-        (array.make-array SpecValueBinding subs.len)]
+        (__tl_make-array SpecValueBinding subs.len)]
       [at : i64 0]
       [kept : i64 0]
       (begin
         (while (< at subs.len)
           (begin
-            (match (array.ref subs.slots at)
+            (match (array-ref subs.slots at)
               [(SpecValueBinding.Bind key-id _)
                 (if (= key-id name-id)
                   unit
                   (begin
-                    (set! (array-ref slots kept) (array.ref subs.slots at))
+                    (set! (array-ref slots kept) (array-ref subs.slots at))
                     (set! kept (+ kept 1))))])
             (set! at (+ at 1))))
         (SpecValueSubst slots kept)))))
@@ -4367,18 +4366,18 @@
     subs
     (let
       [slots : (__tl_dyn-array SpecTypeBinding)
-        (array.make-array SpecTypeBinding subs.len)]
+        (__tl_make-array SpecTypeBinding subs.len)]
       [at : i64 0]
       [kept : i64 0]
       (begin
         (while (< at subs.len)
           (begin
-            (match (array.ref subs.slots at)
+            (match (array-ref subs.slots at)
               [(SpecTypeBinding.Bind key-id _)
                 (if (= key-id name-id)
                   unit
                   (begin
-                    (set! (array-ref slots kept) (array.ref subs.slots at))
+                    (set! (array-ref slots kept) (array-ref subs.slots at))
                     (set! kept (+ kept 1))))])
             (set! at (+ at 1))))
         (SpecTypeSubst slots kept)))))
@@ -5190,7 +5189,7 @@
         (if is-comptime
           (if (< at values.len)
             (let
-              [value : ctfe.CompilerCtfeValue (array.ref values.slots at)]
+              [value : ctfe.CompilerCtfeValue (array-ref values.slots at)]
               (match (spec-build-specialization-at
                 params
                 (+ index 1)
@@ -5583,6 +5582,17 @@
               (ast.AstExpr.DynArray rewritten))
             state2)]
         [(ResultSpecExprList.Err diag) (ResultSpecExpr.Err diag)])]
+    [(ast.AstExpr.FixedMakeArray elem-ty-id len-box)
+      (let
+        [len : ast.AstExpr (spec-state-expr-get state len-box)]
+        (match (spec-rewrite-expr len templates state)
+          [(ResultSpecExpr.Ok rewritten-len state2)
+            (ResultSpecExpr.Ok
+              (spec-owner-expr-push
+                (spec-state-owner state)
+                (ast.AstExpr.FixedMakeArray elem-ty-id rewritten-len))
+              state2)]
+          [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))]
     [(ast.AstExpr.MakeArray elem-ty-id len-box)
       (let
         [len : ast.AstExpr (spec-state-expr-get state len-box)]
@@ -6754,6 +6764,16 @@
           (ResultSpecSubExpr.Ok
             (spec-owner-expr-push owner (ast.AstExpr.DynArray rewritten)))]
         [(ResultSpecSubExprList.Err diag) (ResultSpecSubExpr.Err diag)])]
+    [(ast.AstExpr.FixedMakeArray elem-ty-id len-box)
+      (let
+        [len : ast.AstExpr (spec-owner-expr-get owner len-box)]
+        (match (spec-substitute-values-expr-with-owner owner len subs)
+          [(ResultSpecSubExpr.Ok rewritten-len)
+            (ResultSpecSubExpr.Ok
+              (spec-owner-expr-push
+                owner
+                (ast.AstExpr.FixedMakeArray elem-ty-id rewritten-len)))]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(ast.AstExpr.MakeArray elem-ty-id len-box)
       (let
         [len : ast.AstExpr (spec-owner-expr-get owner len-box)]
@@ -7836,6 +7856,20 @@
               (spec-owner-pools owner)
               maybe-ty-id)
             subs)))]
+    [(ast.AstExpr.FixedMakeArray elem-ty-id len-box)
+      (let
+        [len : ast.AstExpr (spec-owner-expr-get owner len-box)]
+        (match (spec-substitute-types-expr-with-owner owner len subs)
+          [(ResultSpecSubExpr.Ok rewritten-len)
+            (ResultSpecSubExpr.Ok
+              (ast.ast-expr-fixed-make-array-with-pools
+                (spec-owner-pools owner)
+                (spec-substitute-type-with-owner
+                  owner
+                  (spec-owner-type-get owner elem-ty-id)
+                  subs)
+                rewritten-len))]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(ast.AstExpr.MakeArray elem-ty-id len-box)
       (let
         [len : ast.AstExpr (spec-owner-expr-get owner len-box)]
@@ -9735,7 +9769,7 @@
           (= (spec-template-shadow-state-data base.shadow-state).len 18)
           (= (spec-template-shadow-state-data wide.shadow-state).len 64)
           (>
-            (array.length
+            (__tl_array-length
               (spec-template-shadow-state-data wide.shadow-state).slots)
             8)
           (= (comptime (size-of (type SpecTemplateShadowState))) 8)
@@ -10560,7 +10594,7 @@
       (ast.ast-node-pool-context-new-with-capacities 32 32)]
     [intern-state : spec_ci.InternCompatState (spec_ci.intern-compat-state-new)]
     [owner : SpecOwnerContext (spec-owner-context-new pools intern-state)]
-    [handles : (__tl_dyn-array i64) (array.make-array i64 count)]
+    [handles : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [index : i64 0]
     [ok : bool true]
     (begin
@@ -10596,7 +10630,7 @@
             (if (string.eq
               (spec_ci.intern-compat-state-str
                 intern-state
-                (array.ref handles index))
+                (array-ref handles index))
               (spec-specialized-name-with-owner owner "wide" values))
               unit
               (set! ok false))

@@ -44,6 +44,7 @@ RAW_IMAGE="$ROOT/target/embedded-stdlib-tlci/stdlib.tlci"
 HEAVY_DISPATCHES=16000
 LIGHT_DISPATCHES=2501
 ROW_COUNT=5
+TLCI_NATIVE_ROUTE_TIME_BIN=${TLCI_NATIVE_ROUTE_TIME_BIN:-/usr/bin/time}
 
 TYPELISP_TLCI_NATIVE_ROUTE_STRESS=1
 export TYPELISP_TLCI_NATIVE_ROUTE_STRESS
@@ -120,14 +121,13 @@ generate_success_source() {
     output=$1
     dispatches=$2
     cat > "$output" <<'FIXTURE'
-(import stdlib.array)
 (import stdlib.hash)
 (import stdlib.text_buf)
 (import (hash.hash i64) as stress_hash_i64)
 
 (define (main) : i64
   (let
-    [items : (__tl_dyn-array i64) (array.make-array i64 1)]
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     [buf : text_buf.TextBuf (text_buf.empty)]
     (begin
       (set! (array-ref items 0) 7)
@@ -136,17 +136,17 @@ FIXTURE
     index=0
     while [ "$index" -lt "$dispatches" ]; do
         case $((index % 4)) in
-            0) printf '%s\n' '      (array.length items)' >> "$output" ;;
-            1) printf '%s\n' '      (array.ref items 0)' >> "$output" ;;
-            2) printf '%s\n' '      (and true true)' >> "$output" ;;
-            3) printf '%s\n' '      (or false true)' >> "$output" ;;
+            0) printf '%s\n' '      (__tl-box-place (box 7))' >> "$output" ;;
+            1) printf '%s\n' '      (and true true)' >> "$output" ;;
+            2) printf '%s\n' '      (or false true)' >> "$output" ;;
+            3) printf '%s\n' '      (unless false unit)' >> "$output" ;;
         esac
         index=$((index + 1))
     done
     cat >> "$output" <<'FIXTURE'
       (if (and
-        (= (array.length items) 1)
-        (= (stress_hash_i64.hash (array.ref items 0))
+        (= (__tl_array-length items) 1)
+        (= (stress_hash_i64.hash (array-ref items 0))
           (stress_hash_i64.hash 7)))
         42
         1))))
@@ -196,9 +196,14 @@ if [ "$NL_HOST_OS" = windows ]; then
     NATIVE_STDERR="$WINDOWS_MEMORY_DIR/stderr.log"
     cp "$WINDOWS_MEMORY_DIR/summary.tsv" "$WORKDIR/metrics.tsv"
 else
+    [ -x "$TLCI_NATIVE_ROUTE_TIME_BIN" ] ||
+        fail "GNU time is required for the native-route RSS report: $TLCI_NATIVE_ROUTE_TIME_BIN"
+    if ! "$TLCI_NATIVE_ROUTE_TIME_BIN" -v -o /dev/null true >/dev/null 2>&1; then
+        fail "GNU time with -v support is required for the native-route RSS report: $TLCI_NATIVE_ROUTE_TIME_BIN"
+    fi
     if ! (
         cd "$NATIVE_CWD"
-        /usr/bin/time \
+        "$TLCI_NATIVE_ROUTE_TIME_BIN" \
             -f 'wall_seconds=%e\npeak_rss_kb=%M' \
             -o "$WORKDIR/native.time" \
             "$COMPILER" compile --batch "$NATIVE_BATCH" \
@@ -381,10 +386,10 @@ if ! awk -F '|' -v rows="$ROW_COUNT" '
 fi
 
 for identity in \
-    'stdlib.array/length arity=1' \
-    'stdlib.array/ref arity=2' \
+    'stdlib.core_macros/__tl-box-place arity=1' \
     'stdlib.core_macros/and arity=' \
     'stdlib.core_macros/or arity=' \
+    'stdlib.core_macros/unless arity=' \
     'stdlib.hash/hash arity=1' \
     'stdlib.text_buf_family/owned arity=0' \
     'stdlib.text_buf/append! arity=2'; do

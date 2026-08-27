@@ -19,8 +19,6 @@
 ;#     ([i : i64 0 n])
 ;#     (atomic.atomic-i64-add! out (array-ref ix i) 1)))
 ;# ```
-(import stdlib.array)
-
 ;: Owned zero-initialized storage for sequentially consistent `i64` atomics.
 (defstruct AtomicI64Buffer
   (slots (__tl_dyn-array i64)))
@@ -31,11 +29,11 @@
 
 ;: Allocate `length` zero-initialized atomic `i64` elements.
 (define (i64-buffer [length : i64]) : AtomicI64Buffer
-  (AtomicI64Buffer (array.make-array i64 length)))
+  (AtomicI64Buffer (__tl_make-array i64 length)))
 
 ;: Allocate `length` zero-initialized atomic `i32` elements.
 (define (i32-buffer [length : i64]) : AtomicI32Buffer
-  (AtomicI32Buffer (array.make-array i32 length)))
+  (AtomicI32Buffer (__tl_make-array i32 length)))
 
 ;: Number of elements in an `i64` atomic buffer.
 (define (i64-buffer-length [items : (& source AtomicI64Buffer)]) : i64

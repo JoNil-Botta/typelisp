@@ -1,8 +1,6 @@
 ;; SPMD varying-match enum payload corpus (#3776, #5152): tag-only and payload
 ;; arms inside a foreach body. The n = 13 length exercises mixed arms plus the
 ;; AVX2/AVX-512 tail.
-(import stdlib.array)
-
 (defenum Choice
   (Zero)
   (Add i64)
@@ -92,9 +90,9 @@
 (define (main) : i64
   (let
     [n : i64 13]
-    [items : (__tl_dyn-array Choice) (array.make-array Choice n)]
-    [got : (__tl_dyn-array i64) (array.make-array i64 n)]
-    [want : (__tl_dyn-array i64) (array.make-array i64 n)]
+    [items : (__tl_dyn-array Choice) (__tl_make-array Choice n)]
+    [got : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+    [want : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     (begin
       (init-choices items n)
       (fill-match items got n)

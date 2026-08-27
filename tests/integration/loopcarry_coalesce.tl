@@ -1,4 +1,3 @@
-(import stdlib.array)
 (import stdlib.io)
 
 ;; FORCING / CORRECTNESS test for LLVM-style loop-carry phi coalescing -- mirrors
@@ -37,12 +36,12 @@
     (begin
       (while (< scan n)
         (begin
-          (if (< (array.ref xs scan) pivot)
+          (if (< (array-ref xs scan) pivot)
             (begin
               ;; real call in the loop body -> `store` (live across it) must be
               ;; callee-saved or spill; plus a bounds-checked array element store.
               (sink (bit-and scan 3))
-              (set! (array-ref xs store) (array.ref xs scan))
+              (set! (array-ref xs store) (array-ref xs scan))
               (set! store (+ store 1)))
             unit)
           (set! scan (+ scan 1))))
@@ -52,7 +51,7 @@
   (let
     [s : i64 (io.arg-count)]
     [n : i64 1000]
-    [xs : (__tl_dyn-array i64) (array.make-array i64 1000)]
+    [xs : (__tl_dyn-array i64) (__tl_make-array i64 1000)]
     [i : i64 0]
     (begin
       (while (< i n)

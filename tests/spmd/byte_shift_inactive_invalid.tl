@@ -1,17 +1,15 @@
 ;; #6686: invalid byte counts in inactive branch lanes and backing tail lanes
 ;; are unobservable in both signed and unsigned masked value lowering.
-(import stdlib.array)
-
 (define (main) : i64
   (let
     [n : i64 77]
     [capacity : i64 96]
-    [signed-xs : (__tl_dyn-array i8) (array.make-array i8 capacity)]
-    [signed-counts : (__tl_dyn-array i8) (array.make-array i8 capacity)]
-    [signed-out : (__tl_dyn-array i8) (array.make-array i8 capacity)]
-    [unsigned-xs : (__tl_dyn-array u8) (array.make-array u8 capacity)]
-    [unsigned-counts : (__tl_dyn-array u8) (array.make-array u8 capacity)]
-    [unsigned-out : (__tl_dyn-array u8) (array.make-array u8 capacity)]
+    [signed-xs : (__tl_dyn-array i8) (__tl_make-array i8 capacity)]
+    [signed-counts : (__tl_dyn-array i8) (__tl_make-array i8 capacity)]
+    [signed-out : (__tl_dyn-array i8) (__tl_make-array i8 capacity)]
+    [unsigned-xs : (__tl_dyn-array u8) (__tl_make-array u8 capacity)]
+    [unsigned-counts : (__tl_dyn-array u8) (__tl_make-array u8 capacity)]
+    [unsigned-out : (__tl_dyn-array u8) (__tl_make-array u8 capacity)]
     [i : i64 0]
     [ok : bool true]
     (begin

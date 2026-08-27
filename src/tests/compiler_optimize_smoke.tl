@@ -28,7 +28,6 @@
 (import compiler_builtin_ids as cbi)
 (import stdlib.string)
 (import stdlib.test)
-(import stdlib.array)
 
 (define (smoke-cfg-index-test-block [label : i64] [value : i64]) : ir.CompilerIrBlock
   (ir.CompilerIrBlock.Block
@@ -392,7 +391,7 @@
   ;; `first`, then 1-apart tags, then `last`: exactly `count` tags whose span is
   ;; whatever `last` makes it, so a case can name a span directly.
   (let
-    [tags : (__tl_dyn-array i64) (array.make-array i64 count)]
+    [tags : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [i : i64 0]
     (begin
       (while (< i count)
@@ -3332,7 +3331,7 @@
   [symbols : compiler_optimize_tests.OptInlineMultiTestSymbols]) : ir.CompilerIrInstr
   (let
     [values : (__tl_dyn-array ir.CompilerIrValue)
-      (array.make-array ir.CompilerIrValue 4)]
+      (__tl_make-array ir.CompilerIrValue 4)]
     (begin
       (set! (array-ref values 0) (ir.CompilerIrValue.I64 1))
       (set! (array-ref values 1) (ir.CompilerIrValue.I64 2))

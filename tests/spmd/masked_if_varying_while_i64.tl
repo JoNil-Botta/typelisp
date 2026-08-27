@@ -1,6 +1,4 @@
 ;; SPMD nested masked-if/varying-while corpus (#3752).
-(import stdlib.array)
-
 (define (init-counts [xs : (__tl_dyn-array i64)]) : unit
   (begin
     (set! (array-ref xs 0) -1)
@@ -65,10 +63,10 @@
 (define (main) : i64
   (let
     [n : i64 13]
-    [work : (__tl_dyn-array i64) (array.make-array i64 n)]
-    [work-ref : (__tl_dyn-array i64) (array.make-array i64 n)]
-    [got : (__tl_dyn-array i64) (array.make-array i64 n)]
-    [want : (__tl_dyn-array i64) (array.make-array i64 n)]
+    [work : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+    [work-ref : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+    [got : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+    [want : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     (begin
       (init-counts work)
       (init-counts work-ref)

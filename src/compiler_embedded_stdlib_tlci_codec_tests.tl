@@ -1,6 +1,5 @@
 ;; Focused malformed-frame coverage for the TLCI-only deployment envelope.
 (import compiler_embedded_stdlib_tlci_codec as codec)
-(import stdlib.array)
 (import stdlib.string)
 
 (define (tlci-codec-test-write-i64-le!
@@ -28,7 +27,7 @@
           0
           1))]
     [payload : (__tl_dyn-array u8)
-      (array.make-array u8 (+ prefix-len (+ 16 (+ 4369 bit-bytes))))]
+      (__tl_make-array u8 (+ prefix-len (+ 16 (+ 4369 bit-bytes))))]
     [index : i64 0]
     (begin
       (while (< index prefix-len)
@@ -110,7 +109,7 @@
     u8)
   (let
     [length : i64 (array-length payload)]
-    [out : (__tl_dyn-array u8) (array.make-array u8 (+ length 1))]
+    [out : (__tl_dyn-array u8) (__tl_make-array u8 (+ length 1))]
     [index : i64 0]
     (begin
       (while (< index length)
@@ -122,7 +121,7 @@
 (define (tlci-codec-test-take [payload : (__tl_dyn-array u8)] [length : i64]) : (__tl_dyn-array
     u8)
   (let
-    [out : (__tl_dyn-array u8) (array.make-array u8 length)]
+    [out : (__tl_dyn-array u8) (__tl_make-array u8 length)]
     [index : i64 0]
     (begin
       (while (< index length)

@@ -1,6 +1,4 @@
 ;; Incoming masks guard stores in an out-of-line unit helper.
-(import stdlib.array)
-
 (define (heavy-store [out : (__tl_dyn-array i64)] [i : i64]) : unit
   (set! (array-ref out i) (+ (+ (+ (+ (+ (+ (+ i 1) 2) 3) 4) 5) 6) 7)))
 
@@ -24,7 +22,7 @@
 
 (define (main) : i64
   (let
-    [out : (__tl_dyn-array i64) (array.make-array i64 13)]
+    [out : (__tl_dyn-array i64) (__tl_make-array i64 13)]
     (begin
       (fill out 13)
       (if (= (sum-array out 13) 150)

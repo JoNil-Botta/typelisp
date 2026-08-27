@@ -14,17 +14,18 @@ private_array_data|tests/integration/private_array_data.tl|42|-|-|-
 dynamic_array_literal|tests/integration/dynamic_array_literal.tl|42|-|-|-
 dyn_array_reference_elements|tests/integration/dyn_array_reference_elements.tl|42|-|-|stdlib/string.tl
 array_qualified_macros|tests/integration/array_qualified_macros.tl|42|-|-|-
+fixed_array_core_ops|tests/integration/fixed_array_core_ops.tl|42|-|-|-
 array_stride_24byte|tests/integration/array_stride_24byte.tl|42|-|-|-
 fixed_array_take|tests/integration/fixed_array_take.tl|42|-|-|stdlib/string.tl
 replace_places|tests/integration/replace_places.tl|42|-|-|stdlib/string.tl stdlib/test.tl stdlib/comptime.tl
 replace_large_values|tests/integration/replace_large_values.tl|42|-|-|stdlib/test.tl
 slice_whole_array|tests/integration/slice_whole_array.tl|42|-|-|-
-slice_views|tests/integration/slice_views.tl|42|-|-|stdlib/array.tl
-slice_split_at|tests/integration/slice_split_at.tl|42|-|-|stdlib/array.tl
+slice_views|tests/integration/slice_views.tl|42|-|-|-
+slice_split_at|tests/integration/slice_split_at.tl|42|-|-|-
 slice_generated_decl|tests/integration/slice_generated_decl.tl|42|-|-|-
 ptr_offset_inline_aggregate_stride|tests/integration/ptr_offset_inline_aggregate_stride.tl|42|-|-|-
 ptr_addr_of_places|tests/integration/ptr_addr_of_places.tl|0|-|-|-
-ptr_aggregate_copy|tests/integration/ptr_aggregate_copy.tl|0|-|-|stdlib/array.tl
+ptr_aggregate_copy|tests/integration/ptr_aggregate_copy.tl|0|-|-|-
 raw_pointer_register_addr_of|tests/integration/raw_pointer_register_addr_of.tl|0|-|-|-
 auto_borrow_call|tests/integration/auto_borrow_call.tl|42|-|-|stdlib/string.tl
 stdlib_string_to_int|tests/integration/stdlib_string_to_int.tl|42|-|-|stdlib/string.tl
@@ -43,7 +44,7 @@ implicit_scratch_loop|tests/integration/implicit_scratch_loop.tl|42|-|-|-
 macro_forward_order|tests/integration/macro_forward_order.tl|42|-|-|-
 macro_value_same_spelling|tests/integration/macro_value_same_spelling.tl|42|-|-|-
 macro_module_local_shadow_provider|tests/integration/macro_module_local_shadow_provider.tl|42|-|-|stdlib/string.tl stdlib/str_cat_runtime.tl
-macro_module_local_shadow|tests/integration/macro_module_local_shadow.tl|42|-|-|macro_module_local_shadow_provider.tl stdlib/io.tl stdlib/string.tl stdlib/array.tl stdlib/arena.tl stdlib/hash.tl stdlib/byte_buf_core.tl stdlib/option.tl stdlib/text_buf.tl stdlib/str_cat_runtime.tl
+macro_module_local_shadow|tests/integration/macro_module_local_shadow.tl|42|-|-|macro_module_local_shadow_provider.tl stdlib/io.tl stdlib/string.tl stdlib/arena.tl stdlib/hash.tl stdlib/byte_buf_core.tl stdlib/option.tl stdlib/text_buf.tl stdlib/str_cat_runtime.tl
 compile_profile_macro_detach_unchanged|tests/integration/compile_profile_macro_detach_unchanged.tl|42|-|-|compile_profile_macro_detach_unchanged_dep.tl
 compile_profile_macro_detail|tests/integration/compile_profile_macro_detail.tl|42|-|-|stdlib/string.tl stdlib/core_macros.tl stdlib/str_cat.tl
 compile_profile_generated_replay_lazy|tests/integration/compile_profile_generated_replay_lazy.tl|42|-|-|-
@@ -56,13 +57,13 @@ compile_profile_vector_five_core|tests/integration/compile_profile_vector_five_c
 compile_profile_vector_full|tests/integration/compile_profile_vector_full.tl|42|-|-|stdlib/vector.tl
 compile_profile_vector_one_core|tests/integration/compile_profile_vector_one_core.tl|42|-|-|stdlib/vector.tl
 compile_profile_layout_spec|tests/integration/compile_profile_layout_spec.tl|42|-|-|stdlib/comptime.tl
-compile_profile_nested_peak_reset|tests/integration/compile_profile_nested_peak_reset.tl|42|-|-|stdlib/array.tl stdlib/profile.tl
+compile_profile_nested_peak_reset|tests/integration/compile_profile_nested_peak_reset.tl|42|-|-|stdlib/profile.tl
 compile_profile_optimizer_escape|tests/integration/compile_profile_optimizer_escape.tl|42|-|-|-
 compile_profile_result_import|tests/integration/compile_profile_result_import.tl|42|-|-|-
 call_eval_order|tests/integration/call_eval_order.tl|42|-|-|-
 include_bin|tests/integration/include_bin.tl|42|-|-|include_bin_payload.bin
 include_str_comptime|tests/integration/include_str_comptime.tl|42|-|-|include/str/comptime/owner.tl include_str_comptime_payload.txt include_bin_payload.bin stdlib/comptime.tl
-embedded_stdlib_exact_include|tests/integration/embedded_stdlib_exact_include.tl|42|-|-|stdlib/array.tl stdlib/string.tl
+embedded_stdlib_exact_include|tests/integration/embedded_stdlib_exact_include.tl|42|-|-|stdlib/string.tl
 c_abi_aggregate_color|tests/integration/c_abi_aggregate_color.tl|42|-|-|benchmarks/c_abi_aggregate_color/baseline.c
 c_abi_f32_scalar|tests/integration/c_abi_f32_scalar.tl|42|-|-|benchmarks/c_abi_f32_scalar/baseline.c
 c_abi_win64_sret_return|tests/integration/c_abi_win64_sret_return.tl|42|-|-|benchmarks/c_abi_win64_sret_return/baseline.c
@@ -74,8 +75,8 @@ c_abi_int8_struct|tests/integration/c_abi_int8_struct.tl|42|-|-|benchmarks/c_abi
 c_abi_slice_ptr_len|tests/integration/c_abi_slice_ptr_len.tl|42|-|-|benchmarks/c_abi_slice_ptr_len/baseline.c
 arena_escape_stress|tests/integration/arena_escape_stress.tl|42|-|-|stdlib/arena.tl stdlib/string.tl
 arena_growth_stable_handle|tests/integration/arena_growth_stable_handle.tl|42|-|-|stdlib/arena.tl
-arena_pool_context_escape|tests/integration/arena_pool_context_escape.tl|42|-|-|stdlib/arena.tl stdlib/array.tl stdlib/string.tl
-arena_lazy_singleton_raw_addr_escape|tests/integration/arena_lazy_singleton_raw_addr_escape.tl|42|-|-|stdlib/arena.tl stdlib/array.tl stdlib/string.tl
+arena_pool_context_escape|tests/integration/arena_pool_context_escape.tl|42|-|-|stdlib/arena.tl stdlib/string.tl
+arena_lazy_singleton_raw_addr_escape|tests/integration/arena_lazy_singleton_raw_addr_escape.tl|42|-|-|stdlib/arena.tl stdlib/string.tl
 argv|tests/integration/argv.tl|7|alpha\n|alpha beta|stdlib/io.tl stdlib/string.tl
 # Backend/regalloc campaign fixtures recovered from llvm-inlining.
 # syscall_arg_alias and dead_frame_store stay Linux-only via windows_integration_non_applicable_cases.
@@ -83,20 +84,20 @@ arg_register_swap_cycle|tests/integration/arg_register_swap_cycle.tl|42|-|-|stdl
 arg_cycle_stack_break|tests/integration/arg_cycle_stack_break.tl|42|-|-|stdlib/io.tl
 arg_stack_overflow_registers|tests/integration/arg_stack_overflow_registers.tl|42|-|-|stdlib/io.tl
 save_reload_elide|tests/integration/save_reload_elide.tl|42|-|-|stdlib/io.tl
-global_handle_cse|tests/integration/global_handle_cse.tl|42|-|-|stdlib/io.tl stdlib/array.tl
-scalar_indexed_snapshot|tests/integration/scalar_indexed_snapshot.tl|42|-|-|stdlib/io.tl stdlib/array.tl
+global_handle_cse|tests/integration/global_handle_cse.tl|42|-|-|stdlib/io.tl
+scalar_indexed_snapshot|tests/integration/scalar_indexed_snapshot.tl|42|-|-|stdlib/io.tl
 call_spanning_split|tests/integration/call_spanning_split.tl|42|-|-|stdlib/io.tl
 call_spanning_split_single|tests/integration/call_spanning_split_single.tl|42|-|-|stdlib/io.tl
 loopcarry_coalesce|tests/integration/loopcarry_coalesce.tl|42|-|-|stdlib/io.tl
-regalloc_shifted_loop_bound|tests/integration/regalloc_shifted_loop_bound.tl|42|-|-|stdlib/array.tl stdlib/io.tl
-regalloc_loop_split_evicted_region_var|tests/integration/regalloc_loop_split_evicted_region_var.tl|42|-|-|stdlib/array.tl stdlib/io.tl stdlib/string.tl
-regalloc_coalesce_class_return_value|tests/integration/regalloc_coalesce_class_return_value.tl|42|-|-|stdlib/array.tl stdlib/io.tl
+regalloc_shifted_loop_bound|tests/integration/regalloc_shifted_loop_bound.tl|42|-|-|stdlib/io.tl
+regalloc_loop_split_evicted_region_var|tests/integration/regalloc_loop_split_evicted_region_var.tl|42|-|-|stdlib/io.tl stdlib/string.tl
+regalloc_coalesce_class_return_value|tests/integration/regalloc_coalesce_class_return_value.tl|42|-|-|stdlib/io.tl
 loop_invariant_array_sum|tests/integration/loop_invariant_array_sum.tl|42|-|-|stdlib/io.tl
 csr_occupant_split|tests/integration/csr_occupant_split.tl|42|-|-|stdlib/io.tl
 callrun_subrange_home|tests/integration/callrun_subrange_home.tl|42|-|-|stdlib/io.tl
 scavenge_destructure_clobber|tests/integration/scavenge_destructure_clobber.tl|42|-|-|stdlib/io.tl stdlib/string.tl
 phi_forward_scavenge_live_through|tests/integration/phi_forward_scavenge_live_through.tl|42|-|-|-
-gep_pair_spill_sibling_home|tests/integration/gep_pair_spill_sibling_home.tl|42|-|-|stdlib/array.tl stdlib/string.tl
+gep_pair_spill_sibling_home|tests/integration/gep_pair_spill_sibling_home.tl|42|-|-|stdlib/string.tl
 splitkit_realize_split|tests/integration/splitkit_realize_split.tl|42|-|-|stdlib/io.tl
 splitkit_realize_writeback|tests/integration/splitkit_realize_writeback.tl|42|-|-|stdlib/io.tl
 splitkit_csr_across_call|tests/integration/splitkit_csr_across_call.tl|42|-|-|stdlib/io.tl
@@ -107,8 +108,8 @@ group_mov_coalesce|tests/integration/group_mov_coalesce.tl|42|-|-|stdlib/io.tl
 idx_copy_coalesce|tests/integration/idx_copy_coalesce.tl|42|-|-|stdlib/io.tl
 call_result_rax|tests/integration/call_result_rax.tl|42|-|-|stdlib/io.tl
 gep_direct_base|tests/integration/gep_direct_base.tl|42|-|-|stdlib/io.tl
-gep_copy_sib_shape|tests/integration/gep_copy_sib_shape.tl|42|-|-|stdlib/array.tl
-gep_fold_ordinal_store_pair_clone|tests/integration/gep_fold_ordinal_store_pair_clone.tl|42|-|-|stdlib/array.tl
+gep_copy_sib_shape|tests/integration/gep_copy_sib_shape.tl|42|-|-|-
+gep_fold_ordinal_store_pair_clone|tests/integration/gep_fold_ordinal_store_pair_clone.tl|42|-|-|-
 tail_arg_reg|tests/integration/tail_arg_reg.tl|42|-|-|stdlib/io.tl
 callregion_split|tests/integration/callregion_split.tl|42|-|-|stdlib/io.tl
 callregion_writeback|tests/integration/callregion_writeback.tl|42|-|-|stdlib/io.tl
@@ -121,10 +122,10 @@ jump_only_forward|tests/integration/jump_only_forward.tl|42|-|-|-
 wide_const_hoist|tests/integration/wide_const_hoist.tl|42|-|-|stdlib/io.tl
 target_asm_loop_divmod_parity|tests/integration/target_asm_loop_divmod_parity.tl|42|-|-|stdlib/io.tl
 csr_push_prologue|tests/integration/csr_push_prologue.tl|42|-|-|stdlib/io.tl
-dead_frame_boundary|tests/integration/dead_frame_boundary.tl|42|-|-|stdlib/io.tl stdlib/array.tl
-red_zone_leaf|tests/integration/red_zone_leaf.tl|42|-|-|stdlib/io.tl stdlib/array.tl
-red_zone_abort_ok|tests/integration/red_zone_abort_trap.tl|42|-|-|stdlib/io.tl stdlib/array.tl
-red_zone_abort_trap|tests/integration/red_zone_abort_trap.tl|134|-|1|stdlib/io.tl stdlib/array.tl|expected-stderr:tl: target/integration-verify/windows/red_zone_abort_trap/red_zone_abort_trap.tl:69:25: array index out of bounds: index=4 length=4\n
+dead_frame_boundary|tests/integration/dead_frame_boundary.tl|42|-|-|stdlib/io.tl
+red_zone_leaf|tests/integration/red_zone_leaf.tl|42|-|-|stdlib/io.tl
+red_zone_abort_ok|tests/integration/red_zone_abort_trap.tl|42|-|-|stdlib/io.tl
+red_zone_abort_trap|tests/integration/red_zone_abort_trap.tl|134|-|1|stdlib/io.tl|expected-stderr:tl: target/integration-verify/windows/red_zone_abort_trap/red_zone_abort_trap.tl:68:25: array index out of bounds: index=4 length=4\n
 group_copy_direct|tests/integration/group_copy_direct.tl|42|-|-|stdlib/io.tl
 group_pair_home|tests/integration/group_pair_home.tl|42|-|-|stdlib/io.tl
 group_pair_phi_home|tests/integration/group_pair_phi_home.tl|42|-|-|stdlib/io.tl
@@ -132,32 +133,32 @@ param_shift_pin|tests/integration/param_shift_pin.tl|42|-|-|stdlib/io.tl
 handle_param_pin|tests/integration/handle_param_pin.tl|42|-|-|stdlib/io.tl
 param_pin_interval|tests/integration/param_pin_interval.tl|42|-|-|stdlib/io.tl
 crossblock_reload_elide|tests/integration/crossblock_reload_elide.tl|42|-|-|stdlib/io.tl
-licm_desc_hoist|tests/integration/licm_desc_hoist.tl|42|-|-|stdlib/io.tl stdlib/array.tl
+licm_desc_hoist|tests/integration/licm_desc_hoist.tl|42|-|-|stdlib/io.tl
 licm_memclean_global_promote|tests/integration/licm_memclean_global_promote.tl|42|-|-|stdlib/io.tl
 lftr_counter_retire|tests/integration/lftr_counter_retire.tl|42|-|-|stdlib/io.tl
-licm_alias_stress|tests/integration/licm_alias_stress.tl|42|-|-|stdlib/io.tl stdlib/array.tl
-loadcse_forward|tests/integration/loadcse_forward.tl|42|-|-|stdlib/io.tl stdlib/array.tl
-loadcse_alias|tests/integration/loadcse_alias.tl|42|-|-|stdlib/io.tl stdlib/array.tl
-rotate_multi_exit_live_out|tests/integration/rotate_multi_exit_live_out.tl|42|-|-|stdlib/io.tl stdlib/array.tl
+licm_alias_stress|tests/integration/licm_alias_stress.tl|42|-|-|stdlib/io.tl
+loadcse_forward|tests/integration/loadcse_forward.tl|42|-|-|stdlib/io.tl
+loadcse_alias|tests/integration/loadcse_alias.tl|42|-|-|stdlib/io.tl
+rotate_multi_exit_live_out|tests/integration/rotate_multi_exit_live_out.tl|42|-|-|stdlib/io.tl
 rotate_multi_exit_trap_parity|tests/integration/rotate_multi_exit_trap_parity.tl|134|rows\n|-|stdlib/io.tl|expected-stderr:tl: target/integration-verify/windows/rotate_multi_exit_trap_parity/rotate_multi_exit_trap_parity.tl:36:42: array index out of bounds: index=4 length=4\n
-switch_dispatch_scavenge|tests/integration/switch_dispatch_scavenge.tl|42|-|-|stdlib/io.tl stdlib/array.tl
-total_switch_runtime|tests/integration/total_switch_runtime.tl|42|-|-|stdlib/array.tl
-gap_switch_runtime|tests/integration/gap_switch_runtime.tl|42|-|-|stdlib/array.tl
-cmp_fold_load|tests/integration/cmp_fold_load.tl|42|-|-|stdlib/io.tl stdlib/array.tl
+switch_dispatch_scavenge|tests/integration/switch_dispatch_scavenge.tl|42|-|-|stdlib/io.tl
+total_switch_runtime|tests/integration/total_switch_runtime.tl|42|-|-|-
+gap_switch_runtime|tests/integration/gap_switch_runtime.tl|42|-|-|-
+cmp_fold_load|tests/integration/cmp_fold_load.tl|42|-|-|stdlib/io.tl
 global_cmp_mem_fold|tests/integration/global_cmp_mem_fold.tl|42|-|-|-
-load_widen_cast_fold|tests/integration/load_widen_cast_fold.tl|42|-|-|stdlib/array.tl
-gep_load_cmp_spilled_stage|tests/integration/gep_load_cmp_spilled_stage.tl|42|-|-|stdlib/array.tl
-alu_mem_operand_tie|tests/integration/alu_mem_operand_tie.tl|42|-|-|
+load_widen_cast_fold|tests/integration/load_widen_cast_fold.tl|42|-|-|-
+gep_load_cmp_spilled_stage|tests/integration/gep_load_cmp_spilled_stage.tl|42|-|-|-
+alu_mem_operand_tie|tests/integration/alu_mem_operand_tie.tl|42|-|-|-
 mem_dest_rmw_fold|tests/integration/mem_dest_rmw_fold.tl|42|-|-|-
 copy_call_word|tests/integration/copy_call_word.tl|42|-|-|-
 load_sink_trap_parity|tests/integration/load_sink_trap_parity.tl|134|rows\n|-|stdlib/io.tl|expected-stderr:tl: target/integration-verify/windows/load_sink_trap_parity/load_sink_trap_parity.tl:33:37: array index out of bounds: index=4 length=4\n
 mem_dest_rmw_trap_parity|tests/integration/mem_dest_rmw_trap_parity.tl|134|rows\n|-|stdlib/io.tl|expected-stderr:tl: target/integration-verify/windows/mem_dest_rmw_trap_parity/mem_dest_rmw_trap_parity.tl:27:68: array index out of bounds: index=4 length=4\n
 
 gep_value_direct|tests/integration/gep_value_direct.tl|42|-|-|stdlib/io.tl stdlib/string.tl
-const_index_bounds|tests/integration/const_index_bounds.tl|42|-|-|stdlib/io.tl stdlib/array.tl
+const_index_bounds|tests/integration/const_index_bounds.tl|42|-|-|stdlib/io.tl
 range_merge_unsigned|tests/integration/range_merge_unsigned.tl|42|-|-|stdlib/io.tl stdlib/string.tl
-const_global_mask_unroll|tests/integration/const_global_mask_unroll.tl|0|-|-|stdlib/array.tl
-rbp_base_deref|tests/integration/rbp_base_deref.tl|42|-|-|stdlib/io.tl stdlib/array.tl
+const_global_mask_unroll|tests/integration/const_global_mask_unroll.tl|0|-|-|-
+rbp_base_deref|tests/integration/rbp_base_deref.tl|42|-|-|stdlib/io.tl
 rbp_sixth_csr|tests/integration/rbp_sixth_csr.tl|42|-|-|stdlib/io.tl
 win64_rbp_eighth_csr|tests/integration/win64_rbp_eighth_csr.tl|42|-|-|stdlib/io.tl
 atomic_thread_spawn|tests/integration/atomic_thread_spawn.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl
@@ -203,15 +204,15 @@ intern_pool_active_source_exhaustion|tests/integration/intern_pool_exhaustion.tl
 intern_pool_active_generated_exhaustion|tests/integration/intern_pool_exhaustion.tl|134|-|1|compiler_intern.tl stdlib/arena.tl stdlib/io.tl stdlib/string.tl|expected-stderr:tl: intern pool capacity exhausted: source and generated lanes met\n
 intern_pool_state_source_exhaustion|tests/integration/intern_pool_exhaustion.tl|134|-|2|compiler_intern.tl stdlib/arena.tl stdlib/io.tl stdlib/string.tl|expected-stderr:tl: intern pool capacity exhausted: source and generated lanes met\n
 intern_pool_state_generated_exhaustion|tests/integration/intern_pool_exhaustion.tl|134|-|3|compiler_intern.tl stdlib/arena.tl stdlib/io.tl stdlib/string.tl|expected-stderr:tl: intern pool capacity exhausted: source and generated lanes met\n
-bce_paired_underflow_sp0_trap|tests/integration/bce_paired_underflow_trap.tl|134|-|0|stdlib/array.tl stdlib/io.tl stdlib/string.tl|expected-stderr:tl: target/integration-verify/windows/bce_paired_underflow_sp0_trap/bce_paired_underflow_sp0_trap.tl:39:47: array index out of bounds: index=-1 length=4\n
-bce_paired_underflow_sp1_trap|tests/integration/bce_paired_underflow_trap.tl|134|-|1|stdlib/array.tl stdlib/io.tl stdlib/string.tl|expected-stderr:tl: target/integration-verify/windows/bce_paired_underflow_sp1_trap/bce_paired_underflow_sp1_trap.tl:40:46: array index out of bounds: index=-1 length=4\n
-bce_descending_counted_loop|tests/integration/bce_descending_counted_loop.tl|42|-|-|stdlib/array.tl stdlib/io.tl stdlib/string.tl
-unroll_load_store_remainder|tests/integration/unroll_load_store_remainder.tl|42|-|-|stdlib/array.tl
-unroll_load_store_even_trap|tests/integration/unroll_load_store_trap.tl|134|7000056000120\n|4|stdlib/array.tl stdlib/io.tl stdlib/string.tl|expected-stderr:tl: target/integration-verify/windows/unroll_load_store_even_trap/unroll_load_store_even_trap.tl:28:56: array index out of bounds: index=4 length=4\n
-unroll_load_store_odd_trap|tests/integration/unroll_load_store_trap.tl|134|7000077000288000388\n|5|stdlib/array.tl stdlib/io.tl stdlib/string.tl|expected-stderr:tl: target/integration-verify/windows/unroll_load_store_odd_trap/unroll_load_store_odd_trap.tl:28:56: array index out of bounds: index=5 length=5\n
-bce_call_carrying_versioned_loop|tests/integration/bce_call_carrying_versioned_loop.tl|42|-|-|stdlib/array.tl stdlib/io.tl stdlib/string.tl
-bce_call_carrying_fast_trap|tests/integration/bce_call_carrying_trap.tl|134|-|0|stdlib/array.tl stdlib/io.tl stdlib/string.tl|expected-stderr:tl: target/integration-verify/windows/bce_call_carrying_fast_trap/bce_call_carrying_fast_trap.tl:41:57: array index out of bounds: index=4 length=4\n
-bce_call_carrying_slow_trap|tests/integration/bce_call_carrying_trap.tl|134|-|1|stdlib/array.tl stdlib/io.tl stdlib/string.tl|expected-stderr:tl: target/integration-verify/windows/bce_call_carrying_slow_trap/bce_call_carrying_slow_trap.tl:41:57: array index out of bounds: index=4 length=4\n
+bce_paired_underflow_sp0_trap|tests/integration/bce_paired_underflow_trap.tl|134|-|0|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: target/integration-verify/windows/bce_paired_underflow_sp0_trap/bce_paired_underflow_sp0_trap.tl:38:47: array index out of bounds: index=-1 length=4\n
+bce_paired_underflow_sp1_trap|tests/integration/bce_paired_underflow_trap.tl|134|-|1|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: target/integration-verify/windows/bce_paired_underflow_sp1_trap/bce_paired_underflow_sp1_trap.tl:39:46: array index out of bounds: index=-1 length=4\n
+bce_descending_counted_loop|tests/integration/bce_descending_counted_loop.tl|42|-|-|stdlib/io.tl stdlib/string.tl
+unroll_load_store_remainder|tests/integration/unroll_load_store_remainder.tl|42|-|-|-
+unroll_load_store_even_trap|tests/integration/unroll_load_store_trap.tl|134|7000056000120\n|4|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: target/integration-verify/windows/unroll_load_store_even_trap/unroll_load_store_even_trap.tl:27:56: array index out of bounds: index=4 length=4\n
+unroll_load_store_odd_trap|tests/integration/unroll_load_store_trap.tl|134|7000077000288000388\n|5|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: target/integration-verify/windows/unroll_load_store_odd_trap/unroll_load_store_odd_trap.tl:27:56: array index out of bounds: index=5 length=5\n
+bce_call_carrying_versioned_loop|tests/integration/bce_call_carrying_versioned_loop.tl|42|-|-|stdlib/io.tl stdlib/string.tl
+bce_call_carrying_fast_trap|tests/integration/bce_call_carrying_trap.tl|134|-|0|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: target/integration-verify/windows/bce_call_carrying_fast_trap/bce_call_carrying_fast_trap.tl:40:57: array index out of bounds: index=4 length=4\n
+bce_call_carrying_slow_trap|tests/integration/bce_call_carrying_trap.tl|134|-|1|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: target/integration-verify/windows/bce_call_carrying_slow_trap/bce_call_carrying_slow_trap.tl:40:57: array index out of bounds: index=4 length=4\n
 bce_affine_versioning|tests/integration/bce_affine_versioning.tl|42|-|0|stdlib/io.tl stdlib/string.tl
 bce_affine_overflow_trap|tests/integration/bce_affine_versioning.tl|134|-|1|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: target/integration-verify/windows/bce_affine_overflow_trap/bce_affine_overflow_trap.tl:17:45: array index out of bounds: index=-9223372036854775807 length=8\n
 bce_affine_underflow_trap|tests/integration/bce_affine_versioning.tl|134|-|2|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: target/integration-verify/windows/bce_affine_underflow_trap/bce_affine_underflow_trap.tl:28:45: array index out of bounds: index=-2 length=8\n
@@ -275,12 +276,12 @@ integer_literal_u64_full_range|tests/integration/integer_literal_u64_full_range.
 inline_alloc_scavenge_live_through|tests/integration/inline_alloc_scavenge_live_through.tl|42|-|-|stdlib/io.tl
 parser|tests/integration/parser.tl|14|-|-|-
 process_runtime|tests/integration/process_runtime.tl|42|inherit-stdout\n|-|stdlib/process_borrowed.tl stdlib/process.tl stdlib/process_runtime.tl stdlib/test.tl stdlib/io.tl stdlib/env.tl stdlib/vector.tl stdlib/string.tl|expected-stderr:inherit-stderr\n
-read_file_missing_trap|tests/integration/read_file_missing_trap.tl|134|-|-|-|expected-stderr:tl: stdlib/io.tl:1153:8: panic: tl: read-file failed\n
+read_file_missing_trap|tests/integration/read_file_missing_trap.tl|134|-|-|-|expected-stderr:tl: stdlib/io.tl:1152:8: panic: tl: read-file failed\n
 write_file_invalid_trap|tests/integration/write_file_invalid_trap.tl|134|-|-|-|expected-stderr:tl: write-file failed: io: not found: tests/integration/missing-parent-zzz/output.txt\n
-selfhost_argv_oob|tests/integration/selfhost_argv_oob.tl|134|-|-|-|expected-stderr:tl: stdlib/io.tl:1082:8: panic: tl: argv index out of bounds\n
+selfhost_argv_oob|tests/integration/selfhost_argv_oob.tl|134|-|-|-|expected-stderr:tl: stdlib/io.tl:1081:8: panic: tl: argv index out of bounds\n
 tl_alloc_huge_trap|tests/integration/tl_alloc_huge_trap.tl|134|-|-|-|expected-stderr:tl: allocation failed\n
 windows_allocation_abort|tests/integration/windows_allocation_abort.tl|134|-|-|-|expected-stderr:tl: allocation failed: arena=atomic operation=growth-commit requested=18446744073709551615 reserved=18446744073709551614 committed=9223372036854775808 windows-error=4294967295\n
-stdin_bytes_negative_trap|tests/integration/stdin_bytes_negative_trap.tl|134|-|-|-|expected-stderr:tl: stdlib/io.tl:1351:6: panic: tl: stdin failed\n
+stdin_bytes_negative_trap|tests/integration/stdin_bytes_negative_trap.tl|134|-|-|-|expected-stderr:tl: stdlib/io.tl:1350:6: panic: tl: stdin failed\n
 region_mark_zero|tests/integration/region_mark_zero.tl|42|-|-|-
 region_reset_zero|tests/integration/region_reset_zero.tl|44|-|-|stdlib/string.tl
 region_reset_discard|tests/integration/region_reset_discard.tl|3|-|-|stdlib/string.tl
@@ -288,7 +289,7 @@ region_reset_preserve|tests/integration/region_reset_preserve.tl|62|-|-|stdlib/s
 region_reset_overflow_retains|tests/integration/region_reset_overflow_retains.tl|42|-|-|-
 region_reset_invalid_trap|tests/integration/region_reset_invalid_trap.tl|134|-|-|-|expected-stderr:tl: invalid region mark\n
 print|tests/integration/print.tl|0|42\nfalse\n|-|-
-format_precision_counts|tests/integration/format_precision_counts.tl|42|-|-|stdlib/array.tl stdlib/format.tl stdlib/profile.tl stdlib/string.tl
+format_precision_counts|tests/integration/format_precision_counts.tl|42|-|-|stdlib/format.tl stdlib/profile.tl stdlib/string.tl
 io_format_print|tests/integration/io_format_print.tl|0|Ada:-7:true:x:1.5 {done}\n42\n|-|-
 format_owner_protocol|tests/integration/format_owner_protocol.tl|0|@tests/integration/format_owner_protocol.stdout|-|format_owner_alpha.tl format_owner_beta.tl format_owner_multi.tl format_owner_nested.tl format_owner_point.tl format_owner_state.tl stdlib/format.tl stdlib/io.tl stdlib/string.tl
 format_owner_order_a|tests/integration/format_owner_order_a.tl|0|@tests/integration/format_owner_order.stdout|-|format_owner_alpha.tl format_owner_beta.tl stdlib/format.tl stdlib/io.tl
@@ -330,7 +331,7 @@ stdlib_hash_generated|tests/integration/stdlib_hash_generated.tl|0|-|-|stdlib/co
 stdlib_json|tests/integration/stdlib_json.tl|42|-|-|stdlib/json.tl stdlib/str_cat.tl stdlib/string.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/io.tl
 stdlib_serialize_json|tests/integration/stdlib_serialize_json.tl|42|-|-|stdlib/json.tl stdlib/serialize.tl stdlib/str_cat.tl stdlib/string.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/io.tl stdlib/vector.tl serialize_enum_fixture.tl
 tlci_native_template_nodes|tests/integration/tlci_native_template_nodes.tl|42|-|-|stdlib/json.tl stdlib/serialize.tl stdlib/math.tl stdlib/str_cat.tl stdlib/string.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/io.tl stdlib/vector.tl
-tlci_identity_public_gaps|tests/integration/tlci_identity_public_gaps.tl|42|-|-|stdlib/array.tl stdlib/comptime.tl stdlib/eq.tl stdlib/hash.tl stdlib/math.tl stdlib/queue.tl stdlib/set.tl stdlib/sort.tl stdlib/str_cat_runtime.tl stdlib/string.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/vector.tl
+tlci_identity_public_gaps|tests/integration/tlci_identity_public_gaps.tl|42|-|-|stdlib/comptime.tl stdlib/eq.tl stdlib/hash.tl stdlib/math.tl stdlib/queue.tl stdlib/set.tl stdlib/sort.tl stdlib/str_cat_runtime.tl stdlib/string.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/vector.tl
 tlci_native_computed_scrutinee|tests/integration/tlci_native_computed_scrutinee.tl|42|-|-|stdlib/json.tl stdlib/serialize.tl stdlib/math.tl stdlib/format.tl stdlib/str_cat.tl stdlib/string.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/io.tl stdlib/vector.tl
 macro_import_order_json_first|tests/integration/macro_import_order_repro.tl|42|-|-|stdlib/json.tl stdlib/format.tl stdlib/str_cat.tl stdlib/string.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/io.tl stdlib/vector.tl
 macro_import_order_format_first|tests/integration/macro_import_order_format_first.tl|42|-|-|stdlib/json.tl stdlib/format.tl stdlib/str_cat.tl stdlib/string.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/io.tl stdlib/vector.tl
@@ -338,7 +339,7 @@ stdlib_serialize|tests/integration/stdlib_serialize.tl|42|-|-|stdlib/comptime.tl
 stdlib_byte_copy|tests/integration/stdlib_byte_copy.tl|42|-|-|stdlib/string.tl stdlib/test.tl stdlib/io.tl
 stdlib_text_buf|tests/integration/stdlib_text_buf.tl|42|-|-|stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/text_buf_borrowed.tl stdlib/io.tl stdlib/string.tl
 stdlib_string|tests/integration/stdlib_string.tl|42|hello\174\nhello\174\nhello\174\nfound\n\174empty-left\n\174empty-right\n\174all-space\ncontains\nmissing\nhippo\nabx\n0\n123456789\n-42\n9223372036854775807\n-9223372036854775808\n|-|stdlib/io.tl stdlib/string.tl
-stdlib_str_cat_fixed_arity|tests/integration/stdlib_str_cat_fixed_arity.tl|42|-|-|stdlib/array.tl stdlib/string.tl stdlib/str_cat.tl
+stdlib_str_cat_fixed_arity|tests/integration/stdlib_str_cat_fixed_arity.tl|42|-|-|stdlib/string.tl stdlib/str_cat.tl
 str_cat_native_arities|tests/integration/str_cat_native_arities.tl|42|-|-|stdlib/io.tl stdlib/string.tl stdlib/str_cat.tl
 stdlib_substring_negative_len_trap|tests/integration/stdlib_substring_negative_len_trap.tl|134|-|-|stdlib/string.tl|expected-stderr:tl: array index out of bounds\n
 stdlib_substring_negative_start_trap|tests/integration/stdlib_substring_negative_start_trap.tl|134|-|-|stdlib/string.tl|expected-stderr:tl: array index out of bounds\n
@@ -446,7 +447,7 @@ arena_branded_handle|tests/integration/arena_branded_handle.tl|42|-|-|stdlib/are
 arena_rewind_make_array_zero|tests/integration/arena_rewind_make_array_zero.tl|42|-|-|-
 make_array_default_reads_zero|tests/integration/make_array_default_reads_zero.tl|42|-|-|stdlib/arena.tl
 mem_fill8_runtime_contract|tests/integration/mem_fill8_runtime_contract.tl|42|-|-|stdlib/arena.tl stdlib/runtime.tl
-mem_copy_fwd_runtime_contract|tests/integration/mem_copy_fwd_runtime_contract.tl|42|-|-|stdlib/array.tl stdlib/runtime.tl
+mem_copy_fwd_runtime_contract|tests/integration/mem_copy_fwd_runtime_contract.tl|42|-|-|stdlib/runtime.tl
 arena_atomic_rewind_destroy_safe|tests/integration/arena_atomic_rewind_destroy_safe.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl
 arena_branded_atomic_aggregate|tests/integration/arena_branded_atomic_aggregate.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl
 resource_with_order|tests/integration/resource_with_order.tl|42|-|-|-
@@ -464,5 +465,5 @@ str_cat_scoped_region|tests/integration/str_cat_scoped_region.tl|42|-|-|-
 tlci_native_index_folds|tests/integration/tlci_native_index_folds.tl|42|-|-|stdlib/fs.tl stdlib/string.tl stdlib/str_cat.tl
 tlci_native_wildcard_arms|tests/integration/tlci_native_wildcard_arms.tl|42|-|-|stdlib/eq.tl stdlib/hash.tl
 tlci_native_format_scanner|tests/integration/tlci_native_format_scanner.tl|42|sca: 1 {} 2\ndo\n|-|stdlib/format.tl stdlib/io.tl stdlib/string.tl
-inline_multiblock_call_carrying_clone|tests/integration/inline_multiblock_call_carrying_clone.tl|42|-|-|stdlib/array.tl
+inline_multiblock_call_carrying_clone|tests/integration/inline_multiblock_call_carrying_clone.tl|42|-|-|-
 inline_tail_call_boundary|tests/integration/inline_tail_call_boundary.tl|42|-|-|-

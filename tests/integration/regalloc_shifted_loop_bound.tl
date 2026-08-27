@@ -1,4 +1,3 @@
-(import stdlib.array)
 (import stdlib.io)
 
 ;; #4720: keep the shifted loop bound in a real outlined function. Opt2 rotates
@@ -37,7 +36,7 @@
 
 (define (main) : i64
   (let
-    [items : (__tl_dyn-array u8) (array.make-array u8 80)]
+    [items : (__tl_dyn-array u8) (__tl_make-array u8 80)]
     [buf : (MutPtr u8)
       (unsafe
         (__tl_array-data items))]

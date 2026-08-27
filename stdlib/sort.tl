@@ -231,7 +231,6 @@
           ,sort-body))]
     `(begin
       (module ,module-name)
-      (import stdlib.array)
       ,sort-decl)))
 
 ;; Inline test coverage.

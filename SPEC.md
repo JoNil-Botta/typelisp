@@ -292,8 +292,8 @@ unbound unless a program declares such names.
   layout. Non-empty fixed arrays can cross internal function boundaries as
   by-value parameters and returns; their target-specific transport is
   specified in section 11.
-- `array-ref` and `array-set!` on fixed arrays are bounds-checked and use the
-  compile-time length. Zero-sized fixed arrays have no internal transport
+- `array-ref` reads and `(set! (array-ref place index) value)` writes on fixed
+  arrays are bounds-checked and use the compile-time length. Zero-sized fixed arrays have no internal transport
   representation and are rejected when used as internal parameters or
   returns.
 - Public `Array` means this fixed-size form only. Fixed arrays, stdlib
@@ -1538,8 +1538,8 @@ arrays are **not** region-tagged because they do not allocate through
 `tl_alloc`.
 
 A region-tagged type `(in r T)` is a **subtype** of the plain type `T` for
-operations that do not escape the region: field access, `array-ref`,
-`array-set!`, `match` arms, `io.print-format`, and function calls whose parameter
+operations that do not escape the region: field access, `array-ref`, array
+element place assignment, `match` arms, `io.print-format`, and function calls whose parameter
 types accept `T`. It is **not** a subtype where the value would leave the
 region's scope: as the result of the `with-arena` form, stored into an outer
 `let` or global, captured by an escaping closure, or returned from an enclosing
@@ -1578,8 +1578,8 @@ Reference types are lifetime-bearing:
   The same exclusivity rules apply to direct mutation of a borrowed global.
   Borrows end at their last use under the non-lexical lifetime rule below.
 - Array operations accept reference receivers: `array-ref` reads through an
-  immutable or mutable array reference, and `array-set!` writes through an
-  owned fixed array or a mutable array reference. Private
+  immutable or mutable array reference, and `(set! (array-ref place index)
+  value)` writes through an owned fixed array or a mutable array reference. Private
   `__tl_array-push!` mutates private dynamic buffers. Borrowed `str` source
   semantics are specified in section 3.11.
 
@@ -4327,7 +4327,7 @@ There are two source forms:
 - `(init)` is contextual. It is accepted only where an expected type is known,
   such as an annotated `define`, annotated `let`, declared function return,
   function argument, struct/enum constructor field, fixed or dynamic array
-  literal element, `array-set!`, or private `__tl_array-push!` position.
+  literal element, array element assignment, or private `__tl_array-push!` position.
   Ambiguous `(init)`
   is rejected with a diagnostic asking for `(init : T)` or an annotation.
 
@@ -4471,8 +4471,9 @@ fully typed replacement; unlike `array-take!`, it never synthesizes one.
   environment copy or require capture-by-reference semantics that the
   function type does not expose.
 - Captured-name assignment is distinct from mutation through explicit storage
-  reached by a captured value: `array-set!` on a captured dynamic array handle
-  is legal when the receiver is otherwise mutable, and `Box` and
+  reached by a captured value: `(set! (array-ref buffer index) value)` on a
+  captured private dynamic buffer handle is legal when the receiver is
+  otherwise mutable, and `Box` and
   mutable-reference APIs define their own explicit storage mutation rules.
 - Reference captures follow §3.10.4: a local, non-escaping closure may capture
   immutable references or move a mutable reference into its environment.
@@ -4531,18 +4532,18 @@ Semantics:
   not depend on lane width or on an ordering between distinct logical
   iterations. Programs that evaluate `(program-index)` or `(program-count)`
   explicitly observe the selected backend gang shape (see lane identity).
-- Compatibility dynamic-buffer bounds checks apply inside `foreach`: indexing
-  past an array's length traps through the same bounds-check abort path as
-  `array-ref`/`array-set!`.
+- Private dynamic-buffer bounds checks apply inside `foreach`: indexing past a
+  buffer's length traps through the same bounds-check abort path for both
+  `array-ref` reads and array-element place writes.
 
 Array access. The core patterns are contiguous map and zip-style kernels over
 runtime-sized buffers, reading through `array-ref` and writing through
-`array-set!`:
+`(set! (array-ref destination index) value)`:
 
 - Reads may use any SPMD-safe varying `i64` index expression, including
   gather-only reads through an index array such as `xs[ix[i]]`. Each read
   performs the ordinary bounds check for the logical iteration performing it.
-- Non-atomic `array-set!` destination indexes must be the loop index or a
+- Non-atomic array-element assignment indexes must be the loop index or a
   simple uniform offset from it, such as `i` or `(+ base i)`. This makes
   ordinary writes race-free by construction: no two logical instances write
   the same element. Scatter writes through arbitrary varying indexes are
@@ -4587,7 +4588,8 @@ implicitly converted into SPMD or SIMD loops.
 Generated vector `slots`/`slots-mut` accessors and generated full-slice `slots`
 fields may likewise be borrowed into inferred local bindings before a
 `foreach` body. Callers do not name the compiler-private dynamic backing type;
-the body uses ordinary `array-ref`/`array-set!` over the borrowed view.
+the body uses ordinary `array-ref` reads and array-element place writes over
+the borrowed view.
 
 Uniform and varying rules:
 
@@ -4595,7 +4597,7 @@ Uniform and varying rules:
   logical program instance has its own `i`.
 - Arithmetic and comparisons involving a varying value produce varying
   values. `array-ref` with a varying index produces a varying element value;
-  `array-set!` with a varying index or value performs one write per active
+  array-element assignment with a varying index or value performs one write per active
   logical program instance.
 - There is no public `(varying T)`, vector, or mask type. Those spellings are
   reserved and rejected; varying information is inferred inside `foreach`,
@@ -4746,9 +4748,9 @@ Masked varying control flow:
   deferred by design.
 - Branch bodies may use local `let`, `begin`, nested varying `if`, varying
   `match` over scalar lane values, supported arithmetic/comparison/boolean
-  operators, contiguous `array-ref`/`array-set!` over lane element types, and
+  operators, contiguous `array-ref` reads and array-element place writes over lane element types, and
   accepted SPMD helper calls. Array indexes must still be the `foreach` index
-  or a simple uniform offset from it. `array-set!` in a masked branch writes
+  or a simple uniform offset from it. An array-element assignment in a masked branch writes
   only active lanes; `array-ref` reads and checks bounds only for active
   lanes.
 - Integer masked value lanes support `bit-and`, `bit-or`, and `bit-xor` for
@@ -4760,7 +4762,7 @@ Masked varying control flow:
   The section 5.4 shift-count rule remains normative: an invalid count traps
   only when its lane is active after intersecting the current branch and tail
   masks.
-- Side effects other than supported contiguous `array-set!` and explicit
+- Side effects other than supported contiguous array-element place writes and explicit
   `stdlib/atomic.tl` integer element operations are rejected in masked
   branches. This includes `set!` to bindings declared outside the `foreach`,
   formatted output, file/process I/O, `panic`/`error`, allocation whose result
@@ -4806,7 +4808,7 @@ Explicit SPMD atomic scatter:
   sequentially consistent.
 - Inside `foreach`, the helper index and value arguments may be varying. This
   is the only overlap-tolerant scatter update in the source surface; ordinary
-  `array-set!` with a varying non-contiguous index remains rejected.
+  array-element assignment with a varying non-contiguous index remains rejected.
 - Atomic helpers synchronize only the exact element they operate on. They do
   not make surrounding non-atomic data race-free and do not permit
   unsynchronized mutation of other fields or array elements.
@@ -4960,7 +4962,7 @@ Purity and varying rules:
   `spmd-broadcast`, `spmd-shuffle`, and local `let` bindings whose values
   satisfy the same rules.
 - `value` must not perform writes or other side effects. In particular,
-  `set!`, `array-set!`, formatted output, file I/O, `panic`/`error`, nested
+  `set!`, formatted output, file I/O, `panic`/`error`, nested
   `foreach`/`spmd-reduce`/`spmd-scan`, and user-defined calls with varying
   arguments are rejected.
 - `spmd-scan` applies the same purity and index restrictions to `value`.
@@ -5179,8 +5181,8 @@ nesting `with-arena` forms.
 `(in r T)` (see §3.9). The typechecker rejects any attempt to let a
 region-tagged value escape its scope:
 
-- As the result of the `with-arena` form after importing `stdlib.array`
-  (`(with-arena r (array.make-array i64 5))`).
+- As the result of the `with-arena` form (for example,
+  `(with-arena r (string.int->string 42))`).
 - Stored into an outer `let`, `set!`, or global binding.
 - Captured by a lambda whose closure outlives the region.
 - Returned from an enclosing function.
@@ -6266,10 +6268,11 @@ borrowed Slice reference forms described in section 3.2:
 
 | Builtin | Signature | Description |
 |---------|-----------|-------------|
-| `length` | `(Array T N) → i64` / `(__tl_dyn-array T) → i64` (private) / `(& r (Slice T)) → i64` / `(&mut r (Slice T)) → i64` / `String → i64` | Fixed/private-dynamic count, borrowed Slice length, or string byte length |
-| `array-length` | `(Array T N) → i64` / `(__tl_dyn-array T) → i64` (private) / `(& r (Slice T)) → i64` / `(&mut r (Slice T)) → i64` | Alias for array `length`, including borrowed Slice length |
-| `array-ref` | `(Array T N) i64 → T` / `(& r (Slice T)) i64 → T` / `(&mut r (Slice T)) i64 → T` | Bounds-checked read through an owned array, an immutable or mutable array reference, or a borrowed Slice receiver |
-| `array-set!` | `(Array T N) i64 T → unit` / `(&mut r (Slice T)) i64 T → unit` | Bounds-checked write through an owned array, mutable array reference, or mutable Slice receiver; shared Slice writes are rejected |
+| `make-array` | `type comptime-i64 → (Array T N)` | Construct a fixed array whose non-negative compile-time length is `N`; every element is initialized under the same rules as `(init : (Array T N))` |
+| `length` | `(Array T N) → i64` / `(& r (Array T N)) → i64` / `(&mut r (Array T N)) → i64` / `(__tl_dyn-array T) → i64` (private) / `(& r (Slice T)) → i64` / `(&mut r (Slice T)) → i64` / `String → i64` | Evaluate the receiver once; fixed arrays return constant `N`, while private dynamic buffers, borrowed Slices, and strings use their respective length representations |
+| `array-length` | `(Array T N) → i64` / `(& r (Array T N)) → i64` / `(&mut r (Array T N)) → i64` / `(__tl_dyn-array T) → i64` (private) / `(& r (Slice T)) → i64` / `(&mut r (Slice T)) → i64` | Array-only alias for `length`; fixed arrays return constant `N` |
+| `array-ref` | `(Array T N) i64 → T` / `(& r (Array T N)) i64 → T` / `(&mut r (Array T N)) i64 → T` / `(& r (Slice T)) i64 → T` / `(&mut r (Slice T)) i64 → T` | Bounds-checked read/place projection through an owned fixed array, a supported reference, or a borrowed Slice receiver |
+| `(set! (array-ref place index) value)` | `place i64 T → unit` | Bounds-checked write through an owned fixed-array place, mutable fixed-array reference, or mutable Slice receiver; shared receivers are rejected |
 | `array-take!` | `(Array T N) i64 → T` / `(&mut r (Array T N)) i64 → T` | Bounds-check, return the old fixed-array element, and immediately replace its slot with `(init : T)`; requires an owned storage place or mutable reference and an `init`-eligible, non-cleanup-owning `T` |
 | `replace!` | `place T → T` | Evaluate and reserve initialized writable storage once, return its old value by copy/move, and commit a caller-supplied `T` without an uninitialized interval |
 | `slice-view` | `source i64 i64 → (& r (Slice T))` | Checked, allocation-free view over a fixed array, private dynamic buffer, suitable reference, or borrowed Slice; source and indices evaluate once left-to-right |
@@ -6296,7 +6299,7 @@ Owned `String` arguments place an auto-borrow at typed call sites. Per the
 section 3.11 contract, non-consuming text inputs take `(& lifetime str)`
 while allocating operations return owned `String`.
 
-**Bounds checks and traps.** `array-ref`, `array-set!`, `array-take!`, indexed
+**Bounds checks and traps.** `array-ref` reads/place writes, `array-take!`, indexed
 `replace!`, the imported
 `string-ref`, and `substring` / `string-slice` / `substring-view` perform
 runtime bounds checks. An out-of-bounds access calls the `tl_oob_abort`
@@ -6446,9 +6449,9 @@ binary APIs use explicit borrow/copy helpers.
 compiler/runtime surface, not a public growable-collection API. The former bare
 `(Array T)`, `make-array`, `array-push!`, and `array-data` aliases are rejected.
 Public growable collections route through `stdlib.vector`, take `&` / `&mut`
-receivers where possible, and mutate storage in place. The qualified
-`stdlib.array` macros remain a transitional implementation wrapper until the
-fixed-array core migration removes that module. The private forms keep their
+receivers where possible, and mutate storage in place. Public fixed arrays use
+the import-free `(make-array T N)`, `length` / `array-length`, `array-ref`, and
+`(set! (array-ref items index) value)` core forms. The private forms keep their
 runtime contracts:
 
 - `__tl_make-array` checks the runtime length before allocation: a negative
@@ -7007,7 +7010,7 @@ Allocation sites inside a `with-arena` scope target the active region:
 
 - String operations that create fresh storage (`substring`, `str-cat`,
   low-level concat primitives, `read-file`, `int->string`, `arg`), buffer and
-  collection constructors (`array.make-array`, `box`), `ByteBuf`
+  collection constructors (private `__tl_make-array`, `box`), `ByteBuf`
   construction/growth/copy-result helpers, and returned aggregate storage
   from calls inside the region.
 - The body result must be region-free (scalars, or aggregates allocated
@@ -7084,9 +7087,9 @@ from escaping.
 | Category | Members | Arena behavior |
 |----------|---------|----------------|
 | Non-allocating inspection | `length`/`array-length`; `stdlib.string` helpers `string-length`, `string-ref`/`char-at`, `string-eq`/`string=?`, `string.>int`, and string predicates such as `string-contains` | Reads caller-provided handles and returns scalars. |
-| Returns active-arena owned data | `array.make-array`, `box`, `arg`, `read-file`, `file-read-chunk`, `read-stdin-line`, `read-stdin-bytes`, `str-cat`/low-level concat primitives, `substring`/`string-slice`, `int->string`, `ByteBuf` construction/growth/copy-result helpers, stdlib trimming/replacement helpers when they build a new string | Fresh storage is allocated in the active arena and cannot escape a scoped arena. |
+| Returns active-arena owned data | private `__tl_make-array`, `box`, `arg`, `read-file`, `file-read-chunk`, `read-stdin-line`, `read-stdin-bytes`, `str-cat`/low-level concat primitives, `substring`/`string-slice`, `int->string`, `ByteBuf` construction/growth/copy-result helpers, stdlib trimming/replacement helpers when they build a new string | Fresh storage is allocated in the active arena and cannot escape a scoped arena. |
 | Returns caller-provided data | `stdlib.string` `string-replace` when no match is found; `stdlib.io` `read-file-or` when the path is missing | Returns the caller-provided aggregate unchanged. Reference-typed signatures express the caller-owned result; without lifetime information in the signature, the conservative arena-tagging rule above applies inside a scoped arena. |
-| Mutates caller-provided storage | `array-set!`, `byte-buf-set!`/`bytes-set!` mutation helpers | Mutates storage named by the caller; it does not allocate unless an owned-buffer growth operation is explicitly requested. Region checks reject storing shorter-lived aggregate handles into longer-lived containers, and borrowed `bytes` mutation requires an exclusive mutable view. |
+| Mutates caller-provided storage | `(set! (array-ref place index) value)`, `byte-buf-set!`/`bytes-set!` mutation helpers | Mutates storage named by the caller; it does not allocate unless an owned-buffer growth operation is explicitly requested. Region checks reject storing shorter-lived aggregate handles into longer-lived containers, and borrowed `bytes` mutation requires an exclusive mutable view. |
 | Host/runtime IO | `print-format`/`println`, `stdout-write`/`stderr-write`, `panic`/`error`, `flush-stdout`, `write-file`, `file-exists?`, stdlib IO helpers | Performs target IO. Format macros allocate one active-arena result string; binary writes borrow `bytes` directly. |
 
 The owned `String` / borrowed `str` source contract, together with the
@@ -7384,8 +7387,9 @@ and not a general manual memory management feature.
   primitives, `read-file`, `arg`, and `int->string` return fresh
   heap-allocated string storage. There is no source operation that mutates a
   string's bytes.
-- Dynamic buffers are mutable heap storage. `array-set!` mutates the buffer
-  named by the live owner handle under the mutation rules in section 4.7.2.
+- Private dynamic buffers are mutable heap storage. Array-element place
+  assignment mutates the buffer named by the live owner handle under the
+  mutation rules in section 4.7.2.
   Explicit shared mutable aliases require reference/borrow semantics rather
   than copying the buffer handle. `(__tl_dyn-array T)` is a private
   dynamic-buffer representation, not a public collection surface; public
@@ -8116,20 +8120,21 @@ storage. Target C ABI call/return lowering is a separate backend contract.
 ### Fixed-size array
 
 ```lisp test=run name=fixed-array exit=30 stdout=""
-(import stdlib.array)
-
 (define (main) : i64
   (let
-    [arr : (Array i64 2) (init)]
+    [arr : (Array i64 2) (make-array i64 2)]
     (begin
       (set! (array-ref arr 0) 10)
       (set! (array-ref arr 1) 20)
-      (+ (array-ref arr 0) (array-ref arr 1)))))  ; returns 30
+      (if (= (length arr) 2)
+        (+ (array-ref arr 0) (array-ref arr 1))
+        1))))  ; returns 30
 ```
 
-`(Array i64 2)` is a fixed array of two elements; `(init)` produces it with
-every element zero-initialized per section 5.12.1, and `array-ref` reads and
-`set!` element writes are bounds-checked against the compile-time length.
+`(Array i64 2)` is a fixed array of two elements; `make-array` produces it with
+every element initialized per section 5.12.1, `length` lowers to the constant
+size, and `array-ref` reads and `set!` element writes are bounds-checked against
+the compile-time length.
 
 ### String operations
 

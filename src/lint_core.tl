@@ -812,6 +812,7 @@
     [(ast.AstExpr.TupleRef _ _) true]
     [(ast.AstExpr.Array _) true]
     [(ast.AstExpr.DynArray _) true]
+    [(ast.AstExpr.FixedMakeArray _ _) true]
     [(ast.AstExpr.MakeArray _ _) true]
     [(ast.AstExpr.ArrayRef _ _) true]
     [(ast.AstExpr.StringRef _ _) true]
@@ -2405,6 +2406,10 @@
       (lint-expr-list-uses-import? exprs alias module-name)]
     [(ast.AstExpr.DynArray exprs)
       (lint-expr-list-uses-import? exprs alias module-name)]
+    [(ast.AstExpr.FixedMakeArray elem-id len)
+      (if (lint-type-uses-import? (ast.ty-node-get elem-id) alias module-name)
+        true
+        (lint-expr-uses-import? (ast.ast-node-get len) alias module-name))]
     [(ast.AstExpr.MakeArray elem-id len)
       (if (lint-type-uses-import? (ast.ty-node-get elem-id) alias module-name)
         true
@@ -3893,6 +3898,7 @@
     [(ast.AstExpr.TupleRef tuple _) (lint-unsafe-scan-node tuple scope)]
     [(ast.AstExpr.Array items) (lint-unsafe-scan-expr-list items scope)]
     [(ast.AstExpr.DynArray items) (lint-unsafe-scan-expr-list items scope)]
+    [(ast.AstExpr.FixedMakeArray _ len) (lint-unsafe-scan-node len scope)]
     [(ast.AstExpr.MakeArray _ len) (lint-unsafe-scan-node len scope)]
     [(ast.AstExpr.ArrayRef array index)
       (lint-unsafe-scan-two-nodes array index scope)]
@@ -4835,6 +4841,8 @@
       (lint-copy-on-update-expr (ast.ast-node-get tuple) state span)]
     [(ast.AstExpr.Array exprs) (lint-copy-on-update-expr-list exprs state)]
     [(ast.AstExpr.DynArray exprs) (lint-copy-on-update-expr-list exprs state)]
+    [(ast.AstExpr.FixedMakeArray _ len)
+      (lint-copy-on-update-expr (ast.ast-node-get len) state span)]
     [(ast.AstExpr.MakeArray _ len)
       (lint-copy-on-update-expr (ast.ast-node-get len) state span)]
     [(ast.AstExpr.ArrayRef array index)
@@ -5351,19 +5359,10 @@
     [_ ""]))
 
 (define (lint-single-element-array-make-array-callee? [name : String]) : bool
-  (or
-    (string.eq name "__tl_make-array")
-    (string.eq name "array.make-array")
-    (string.eq name "array/make-array")
-    (string.eq name "stdlib.array.make-array")))
+  (string.eq name "__tl_make-array"))
 
 (define (lint-single-element-array-ref-callee? [name : String]) : bool
-  (or
-    (string.eq name "array-ref")
-    (string.eq name "__tl_array-ref")
-    (string.eq name "array.ref")
-    (string.eq name "array/ref")
-    (string.eq name "stdlib.array.ref")))
+  (or (string.eq name "array-ref") (string.eq name "__tl_array-ref")))
 
 (define (lint-single-element-array-set-callee? [name : String]) : bool
   (or (string.eq name "array-set!") (string.eq name "__tl_array-set!")))
@@ -5714,11 +5713,7 @@
         (or item.used (not item.valid))))))
 
 (define (lint-prefer-dynamic-array-literal-set-callee? [name : String]) : bool
-  (or
-    (lint-single-element-array-set-callee? name)
-    (string.eq name "array.set!")
-    (string.eq name "array/set!")
-    (string.eq name "stdlib.array.set!")))
+  (lint-single-element-array-set-callee? name))
 
 (define (lint-prefer-dynamic-array-literal-set-at?
   [expr : ast.AstExpr]
@@ -5944,6 +5939,8 @@
       (lint-single-element-array-expr-list exprs state)]
     [(ast.AstExpr.DynArray exprs)
       (lint-single-element-array-expr-list exprs state)]
+    [(ast.AstExpr.FixedMakeArray _ len)
+      (lint-single-element-array-expr (ast.ast-node-get len) state)]
     [(ast.AstExpr.MakeArray _ len)
       (lint-single-element-array-expr (ast.ast-node-get len) state)]
     [(ast.AstExpr.ArrayRef array index)
@@ -6497,6 +6494,8 @@
       (lint-unused-assignment-note-reads-list exprs state)]
     [(ast.AstExpr.DynArray exprs)
       (lint-unused-assignment-note-reads-list exprs state)]
+    [(ast.AstExpr.FixedMakeArray _ len)
+      (lint-unused-assignment-note-reads (ast.ast-node-get len) state)]
     [(ast.AstExpr.MakeArray _ len)
       (lint-unused-assignment-note-reads (ast.ast-node-get len) state)]
     [(ast.AstExpr.ArrayRef array index)
@@ -8863,6 +8862,8 @@
       (lint-unused-variable-quasiquote-expr-list exprs state)]
     [(ast.AstExpr.DynArray exprs)
       (lint-unused-variable-quasiquote-expr-list exprs state)]
+    [(ast.AstExpr.FixedMakeArray _ len)
+      (lint-unused-variable-quasiquote-expr (ast.ast-node-get len) state)]
     [(ast.AstExpr.MakeArray _ len)
       (lint-unused-variable-quasiquote-expr (ast.ast-node-get len) state)]
     [(ast.AstExpr.ArrayRef array index)
@@ -9383,6 +9384,11 @@
       (lint-unused-variable-expr (ast.ast-node-get tuple) state span)]
     [(ast.AstExpr.Array exprs) (lint-unused-variable-expr-list exprs state)]
     [(ast.AstExpr.DynArray exprs) (lint-unused-variable-expr-list exprs state)]
+    [(ast.AstExpr.FixedMakeArray ty-id len)
+      (lint-unused-variable-expr
+        (ast.ast-node-get len)
+        (lint-unused-variable-type (ast.ty-node-get ty-id) state)
+        span)]
     [(ast.AstExpr.MakeArray ty-id len)
       (lint-unused-variable-expr
         (ast.ast-node-get len)
@@ -10937,6 +10943,10 @@
         (lint-walk-expr tuple threshold acc))]
     [(ast.AstExpr.Array exprs) (lint-walk-expr-list exprs threshold acc)]
     [(ast.AstExpr.DynArray exprs) (lint-walk-expr-list exprs threshold acc)]
+    [(ast.AstExpr.FixedMakeArray _ len-box)
+      (let
+        [len : ast.AstExpr (ast.ast-node-get len-box)]
+        (lint-walk-expr len threshold acc))]
     [(ast.AstExpr.MakeArray _ len-box)
       (let
         [len : ast.AstExpr (ast.ast-node-get len-box)]

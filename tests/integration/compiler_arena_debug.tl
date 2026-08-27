@@ -1,5 +1,4 @@
 ;; compiler_arena_debug.tl - native never-reset arena guard fixture.
-(import stdlib.array)
 (import stdlib.arena)
 (import stdlib.io)
 (import stdlib.string)
@@ -21,7 +20,7 @@
     [_set : unit
       (unsafe
         (arena.tl_arena_set handle))]
-    [values : (__tl_dyn-array i64) (array.make-array i64 1024)]
+    [values : (__tl_dyn-array i64) (__tl_make-array i64 1024)]
     (begin
       (set! (array-ref values 1023) 42)
       (array-ref values 1023))))
@@ -33,7 +32,7 @@
       (unsafe
         (arena.tl_arena_set handle))]
     [mark : i64 (arena.tl_region_mark)]
-    [_values : (__tl_dyn-array i64) (array.make-array i64 16)]
+    [_values : (__tl_dyn-array i64) (__tl_make-array i64 16)]
     (begin
       (unsafe
         (arena.tl_region_reset mark))

@@ -1,8 +1,6 @@
 ;: SPEC SPMD contract: masked branches do not support spmd-shuffle yet.
 ; Compatibility exception for #3772: SPMD value operands still use bare
 ; array-ref so the checker sees the compiler array-read AST.
-(import stdlib.array)
-
 (define (main
   [xs : (__tl_dyn-array i64)]
   [out : (__tl_dyn-array i64)]

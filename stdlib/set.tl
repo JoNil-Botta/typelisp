@@ -48,7 +48,6 @@
       ["String"
         `(begin
           (module ,module-name)
-          (import stdlib.array)
           (import stdlib.string)
           (defenum Slot
             (Empty)
@@ -319,7 +318,7 @@
           ;; Public set updates take a caller place. The `*-ref!` helpers are
           ;; retained only for code that already owns an explicit mutable ref.
           ;; Direct CTFE helper aliases avoid another generated-module comptime
-          ;; import; stdlib.array above still materializes this module body.
+          ;; import; the generated module body is materialized by its own imports.
           (defmacro (insert! [place : Expr] [key : Expr]) : unit
             (expr-mut-call1 (expr-var ,insert-helper-name) place key))
           (defmacro (remove! [place : Expr] [key : Expr]) : unit
@@ -329,7 +328,6 @@
       ["i64"
         `(begin
           (module ,module-name)
-          (import stdlib.array)
           (defenum Slot
             (Empty)
             (Tombstone)
@@ -547,7 +545,7 @@
           ;; Public set updates take a caller place. The `*-ref!` helpers are
           ;; retained only for code that already owns an explicit mutable ref.
           ;; Direct CTFE helper aliases avoid another generated-module comptime
-          ;; import; stdlib.array above still materializes this module body.
+          ;; import; the generated module body is materialized by its own imports.
           (defmacro (insert! [place : Expr] [key : Expr]) : unit
             (expr-mut-call1 (expr-var ,insert-helper-name) place key))
           (defmacro (remove! [place : Expr] [key : Expr]) : unit

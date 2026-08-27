@@ -1,6 +1,4 @@
 ;: SPEC SPMD contract: masked-if branches reject nested foreach.
-(import stdlib.array)
-
 (define (main
   [xs : (__tl_dyn-array i64)]
   [out : (__tl_dyn-array i64)]

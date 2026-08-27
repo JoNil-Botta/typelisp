@@ -19,7 +19,6 @@
 ;#     [right : String "tool-output.s"]
 ;#     (fs.path-join (& left) (& right))))
 ;# ```
-(import stdlib.array)
 (cfg test (import stdlib.byte_buf))
 (import stdlib.byte_buf_core)
 (import stdlib.comptime)
@@ -480,9 +479,9 @@
         ""
         (let
           [buf : (__tl_dyn-array u8)
-            (array.make-array u8 fs-read-dir-buffer-size)]
+            (__tl_make-array u8 fs-read-dir-buffer-size)]
           [out : byte_buf_core.ByteBufBuilder
-            (byte_buf_core.ByteBufBuilder (array.make-array u8 0) 0)]
+            (byte_buf_core.ByteBufBuilder (__tl_make-array u8 0) 0)]
           [ok : bool true]
           [done : bool false]
           (begin
@@ -560,7 +559,7 @@
       [pattern : String (fs-windows-read-dir-pattern path)]
       [pattern-bytes : (__tl_dyn-array u8) (io.c-string pattern)]
       [data : (__tl_dyn-array u8)
-        (array.make-array u8 fs-windows-find-data-size)]
+        (__tl_make-array u8 fs-windows-find-data-size)]
       [handle : i64
         (fs-win-find-first-file
           (io.array-const-ptr pattern-bytes)
@@ -579,9 +578,9 @@
       [pattern : String (fs-windows-read-dir-pattern path)]
       [pattern-bytes : (__tl_dyn-array u8) (io.c-string pattern)]
       [data : (__tl_dyn-array u8)
-        (array.make-array u8 fs-windows-find-data-size)]
+        (__tl_make-array u8 fs-windows-find-data-size)]
       [out : byte_buf_core.ByteBufBuilder
-        (byte_buf_core.ByteBufBuilder (array.make-array u8 0) 0)]
+        (byte_buf_core.ByteBufBuilder (__tl_make-array u8 0) 0)]
       [handle : i64
         (fs-win-find-first-file
           (io.array-const-ptr pattern-bytes)
@@ -727,7 +726,7 @@
   (define (linux-file-metadata-probe [path : (Ptr u8)] [no-follow : bool]) : FsFileMetadataProbe
     (let
       [statbuf : (__tl_dyn-array u8)
-        (array.make-array u8 fs-linux-stat-buffer-size)]
+        (__tl_make-array u8 fs-linux-stat-buffer-size)]
       [statptr : (MutPtr u8) (io.array-ptr statbuf)]
       [status : i64
         (status-from-result
@@ -792,7 +791,7 @@
   (define (fs-windows-file-metadata-probe [path : (Ptr u8)] [no-follow : bool]) : FsFileMetadataProbe
     (let
       [data : (__tl_dyn-array u8)
-        (array.make-array u8 fs-windows-file-attribute-data-size)]
+        (__tl_make-array u8 fs-windows-file-attribute-data-size)]
       [dataptr : (MutPtr u8) (io.array-ptr data)]
       [ok : i32 (fs-win-get-file-attributes-ex path (cast 0 : i32) dataptr)]
       (if (= ok (cast 0 : i32))
@@ -870,7 +869,7 @@
     (if (> capacity stdlib.fs.fs-current-dir-max-capacity)
       io.io-status-name-too-long
       (let
-        [buf : (__tl_dyn-array u8) (array.make-array u8 capacity)]
+        [buf : (__tl_dyn-array u8) (__tl_make-array u8 capacity)]
         [written : i64
           (cast
             (stdlib.fs.fs-windows-get-current-directory
@@ -886,7 +885,7 @@
     (if (> capacity stdlib.fs.fs-current-dir-max-capacity)
       io.io-status-name-too-long
       (let
-        [buf : (__tl_dyn-array u8) (array.make-array u8 capacity)]
+        [buf : (__tl_dyn-array u8) (__tl_make-array u8 capacity)]
         [result : (Ptr u8)
           (stdlib.fs.linux-syscall-getcwd (io.array-ptr buf) capacity)]
         (if (ptr-null? result)
@@ -906,7 +905,7 @@
     (if (> capacity stdlib.fs.fs-current-dir-max-capacity)
       ""
       (let
-        [buf : (__tl_dyn-array u8) (array.make-array u8 capacity)]
+        [buf : (__tl_dyn-array u8) (__tl_make-array u8 capacity)]
         [written : i64
           (cast
             (stdlib.fs.fs-windows-get-current-directory
@@ -922,7 +921,7 @@
     (if (> capacity stdlib.fs.fs-current-dir-max-capacity)
       ""
       (let
-        [buf : (__tl_dyn-array u8) (array.make-array u8 capacity)]
+        [buf : (__tl_dyn-array u8) (__tl_make-array u8 capacity)]
         [result : (Ptr u8)
           (stdlib.fs.linux-syscall-getcwd (io.array-ptr buf) capacity)]
         (if (ptr-null? result)

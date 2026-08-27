@@ -1,6 +1,4 @@
 ;; Direct source-known SPMD helper calls with varying i64 lane arguments.
-(import stdlib.array)
-
 (define (bump [x : i64]) : i64
   (+ x 5))
 
@@ -24,8 +22,8 @@
 (define (main) : i64
   (let
     [n : i64 1]
-    [xs : (__tl_dyn-array i64) (array.make-array i64 n)]
-    [out : (__tl_dyn-array i64) (array.make-array i64 n)]
+    [xs : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+    [out : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     (begin
       (set! (array-ref xs 0) 37)
       (fill-inline xs out n)

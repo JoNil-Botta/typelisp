@@ -1694,8 +1694,11 @@ if [ "$NL_HOST_OS" = windows ]; then
     # authoritative Windows probe. Rebasing over #6857/#6861/#6862 crosses the
     # next boundary: the authoritative Windows CI probe measured 3,606,568 used
     # nodes, 3,670,016 capacity, and 117,440,512 physical payload bytes.
+    # Merging #6877's loop-postcondition memo into the ownership tree crosses
+    # the next boundary: the authoritative Windows CI probe measured 3,687,354
+    # used nodes, 3,735,552 capacity, and 119,537,664 physical payload bytes.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool typecheck 56 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool typecheck 57 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # This is the tightest of the four and the one to check first when a series
     # adds compiler source: the copy-call / unsigned-bound-narrowing / chain

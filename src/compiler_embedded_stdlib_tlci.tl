@@ -6326,6 +6326,144 @@
             (set! compiler-comptime-host-session-status result))
           result)))))
 
+;; Reconstruct a quasiquoted lambda. `arg-c` encodes parameter-count * 2 plus
+;; one when an explicit return annotation is present. Parameter types, then
+;; the optional return type, then the body are on the value stack. `arg-a` /
+;; `arg-b` carry `<flags>:<name>\n` records for the parameters. Refs #6868.
+(define (compiler-comptime-host-lambda-push!
+  [param-count : i64]
+  [has-ret? : bool]
+  [payload : String]) : i64
+  (let
+    [value-count : i64
+      (+
+        param-count
+        (if has-ret?
+          1
+          0)
+        1)]
+    [base : i64 (- compiler-comptime-host-stack-len value-count)]
+    [payload-len : i64 (string.string-length payload)]
+    [valid : bool (and (>= param-count 0) (>= base 0))]
+    [params : ast.AstParamList (ast.ast-param-list-with-capacity param-count)]
+    [index : i64 0]
+    [start : i64 0]
+    [maybe-ret : ast.AstMaybeType (ast.AstMaybeType.No)]
+    (begin
+      (while (and valid (< index param-count))
+        (let
+          [name-start : i64 (+ start 2)]
+          [end : i64 name-start]
+          [flags : i64
+            (if (< start payload-len)
+              (- (cast (string.string-ref payload start) : i64) 48)
+              -1)]
+          (begin
+            (while (and
+              (< end payload-len)
+              (not (= (string.string-ref payload end) '\n')))
+              (set! end (+ end 1)))
+            (if (or
+              (< flags 0)
+              (> flags 3)
+              (>= (+ start 1) payload-len)
+              (not (= (string.string-ref payload (+ start 1)) ':'))
+              (= end name-start)
+              (>= end payload-len))
+              (set! valid false)
+              (match (array-ref
+                (compiler-comptime-host-global-shared-view
+                  compiler-comptime-host-stack)
+                (+ base index))
+                [(ctfe_support.CompilerCtfeValue.Type ty)
+                  (ast.ast-param-list-push
+                    (&mut params)
+                    (ast.AstParam.Param
+                      (ci.intern-template-source-id
+                        (ci.intern-source-slice
+                          payload
+                          name-start
+                          (- end name-start)))
+                      ty
+                      (or (= flags 1) (= flags 3))
+                      (or (= flags 2) (= flags 3))))]
+                [_ (set! valid false)]))
+            (set! start (+ end 1))
+            (set! index (+ index 1)))))
+      (when (not (= start payload-len)) (set! valid false))
+      (when
+        (and valid has-ret?)
+        (match (array-ref
+          (compiler-comptime-host-global-shared-view
+            compiler-comptime-host-stack)
+          (+ base param-count))
+          [(ctfe_support.CompilerCtfeValue.Type ty)
+            (set! maybe-ret (ast.AstMaybeType.Some ty))]
+          [_ (set! valid false)]))
+      (if (not valid)
+        tlci.tlci-host-callback-status-bad-request
+        (let
+          [body-index : i64
+            (+
+              base
+              param-count
+              (if has-ret?
+                1
+                0))]
+          [body-node : i64
+            (compiler-comptime-host-value-node
+              (array-ref
+                (compiler-comptime-host-global-shared-view
+                  compiler-comptime-host-stack)
+                body-index))]
+          (if (< body-node 0)
+            tlci.tlci-host-callback-status-bad-request
+            (begin
+              (set! compiler-comptime-host-stack-len base)
+              (compiler-comptime-host-push!
+                (ctfe_support.CompilerCtfeValue.Expr
+                  (ast.ast-expr-lambda-with-pools
+                    (array-ref
+                      (compiler-comptime-host-global-shared-view
+                        compiler-comptime-host-pools)
+                      0)
+                    params
+                    maybe-ret
+                    body-node)
+                  (ast.AstType.Expr))))))))))
+
+(define (compiler-comptime-host-callback-expr-lambda
+  [session : i64]
+  [arg-a : i64]
+  [arg-b : i64]
+  [arg-c : i64]) : i64
+  (if (or
+    (= compiler-comptime-host-session-cookie 0)
+    (not (= session compiler-comptime-host-session-cookie)))
+    tlci.tlci-host-callback-status-bad-request
+    (if (not
+      (=
+        compiler-comptime-host-session-status
+        tlci.tlci-host-callback-status-ok))
+      compiler-comptime-host-session-status
+      (let
+        [result : i64
+          (if (or (<= arg-a 0) (< arg-b 0) (< arg-c 0))
+            tlci.tlci-host-callback-status-bad-request
+            (let
+              [param-count : i64 (/ arg-c 2)]
+              [has-ret? : bool (= (- arg-c (* param-count 2)) 1)]
+              (compiler-comptime-host-lambda-push!
+                param-count
+                has-ret?
+                (unsafe
+                  (string-from-bytes (int->ptr arg-a : (Ptr u8)) arg-b)))))]
+        (begin
+          (when
+            (not (= result tlci.tlci-host-callback-status-ok))
+            (set! compiler-comptime-host-session-status result))
+          result)))))
+
 ;; type-var: push the AstType.Var for caller bytes (unmarked, matching
 ;; the interpreted type quote for a plain name).
 (define (compiler-comptime-host-callback-type-var
@@ -9709,6 +9847,11 @@
         (tlci.tlci-host-callback-name-shared-view
           tlci.tlci-host-callback-name-expr-let)
         compiler-comptime-host-callback-expr-let)
+      (compiler-comptime-host-registry-add!
+        (&mut registry)
+        (tlci.tlci-host-callback-name-shared-view
+          tlci.tlci-host-callback-name-expr-lambda)
+        compiler-comptime-host-callback-expr-lambda)
       (compiler-comptime-host-registry-add!
         (&mut registry)
         (tlci.tlci-host-callback-name-shared-view

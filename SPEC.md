@@ -861,6 +861,17 @@ implicitly; use `expr-clause-list->expr-list` or
 bracket operands. `unquote` and `unquote-splicing` outside quasiquote are
 rejected.
 
+An `unquote` in a quasiquoted type position instead accepts a compile-time
+`type` value and substitutes that exact resolved type. This includes lambda
+parameter and return annotations as well as generated declaration, binding,
+cast, and aggregate type positions. Nominal identity and inferred or named
+lifetime arguments are preserved; the type is not rendered and reparsed.
+Generated lambdas then undergo the ordinary post-expansion capture,
+capability, borrow, and escape checks. Consequently a capture-free renderer
+may accept an opaque reflected tuple of heterogeneous shared references, while
+a generated reference-capturing closure is accepted only when all uses prove
+that it remains inside the borrowed values' lexical scope.
+
 Captured string-literal syntax is inspectable through
 `(expr-string? expr)` and `(expr-string-value expr)`. The predicate is false
 for expressions that merely produce `String`; the extractor rejects those

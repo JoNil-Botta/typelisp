@@ -44363,10 +44363,30 @@
   [env : TcTypeEnv]
   [maybe-ty : ast.AstMaybeType]
   [init : ast.AstExpr]) : ResultTcType
-  (match maybe-ty
-    [(ast.AstMaybeType.Some want)
-      (tc-expr-with-expected-or-actual ctx env init want)]
-    [(ast.AstMaybeType.No) (tc-expr ctx env init)]))
+  ;; This path exists only to extend the environment while expression macros
+  ;; are being expanded. The complete expanded let is checked afterward by
+  ;; `tc-let-bindings-for-body`, which proves concrete closure capability and
+  ;; captured-lifetime uses against the rest of the bindings and body. Admit a
+  ;; direct lambda here so a macro-produced reference-capturing closure can
+  ;; survive long enough to reach that proof instead of being treated as an
+  ;; already-escaping plain function value during the expansion walk.
+  (match (ast.ast-expr-unspan-with-segment-bases
+    (tc-context-expr-bases ctx)
+    init)
+    [(ast.AstExpr.Lambda lambda-box)
+      (match (__tl-box-place lambda-box)
+        [(ast.AstLambda.Lambda params maybe-ret body-box)
+          (tc-lambda-expr-allow-ref-captures
+            ctx
+            env
+            params
+            maybe-ret
+            (tc-context-expr-get ctx body-box))])]
+    [_
+      (match maybe-ty
+        [(ast.AstMaybeType.Some want)
+          (tc-expr-with-expected-or-actual ctx env init want)]
+        [(ast.AstMaybeType.No) (tc-expr ctx env init)])]))
 
 (define (tc-let-binding-plain-expected-ok
   [ctx : TcContext]
@@ -44514,7 +44534,7 @@
   [expr-bases : i64]
   [env : TcTypeEnv]
   [init : ast.AstExpr]) : bool
-  (match (ast.ast-expr-unspan init)
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases init)
     [(ast.AstExpr.Lambda lambda-box)
       (match (__tl-box-place lambda-box)
         [(ast.AstLambda.Lambda params _ body-box)
@@ -44533,31 +44553,34 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [init : ast.AstExpr]) : bool
-  (match (ast.ast-expr-unspan init)
-    [(ast.AstExpr.Lambda lambda-box)
-      (match (__tl-box-place lambda-box)
-        [(ast.AstLambda.Lambda params _ body-box)
-          (let
-            [expr-bases : i64 (tc-context-expr-bases ctx)]
-            [body : ast.AstExpr
-              (ast.ast-expr-segment-bases-get expr-bases body-box)]
-            (tc-lambda-capture-has-move-only? ctx expr-bases env params body))])]
-    [_ false]))
+  (let
+    [expr-bases : i64 (tc-context-expr-bases ctx)]
+    (match (ast.ast-expr-unspan-with-segment-bases expr-bases init)
+      [(ast.AstExpr.Lambda lambda-box)
+        (match (__tl-box-place lambda-box)
+          [(ast.AstLambda.Lambda params _ body-box)
+            (let
+              [body : ast.AstExpr
+                (ast.ast-expr-segment-bases-get expr-bases body-box)]
+              (tc-lambda-capture-has-move-only? ctx expr-bases env params body))])]
+      [_ false])))
 
 (define (tc-consuming-capturing-lambda-init?
   [ctx : TcContext]
   [env : TcTypeEnv]
   [init : ast.AstExpr]) : bool
-  (and
-    (tc-move-only-capturing-lambda-init? ctx env init)
-    (match (ast.ast-expr-unspan init)
-      [(ast.AstExpr.Lambda lambda-box)
-        (match (__tl-box-place lambda-box)
-          [(ast.AstLambda.Lambda params _ body-box)
-            (=
-              (tc-lambda-call-capability ctx env params body-box)
-              (tc-closure-call-capability-once))])]
-      [_ false])))
+  (let
+    [expr-bases : i64 (tc-context-expr-bases ctx)]
+    (and
+      (tc-move-only-capturing-lambda-init? ctx env init)
+      (match (ast.ast-expr-unspan-with-segment-bases expr-bases init)
+        [(ast.AstExpr.Lambda lambda-box)
+          (match (__tl-box-place lambda-box)
+            [(ast.AstLambda.Lambda params _ body-box)
+              (=
+                (tc-lambda-call-capability ctx env params body-box)
+                (tc-closure-call-capability-once))])]
+        [_ false]))))
 
 (define (tc-ref-closure-expr-list-local-uses-ok?
   [expr-bases : i64]
@@ -44648,7 +44671,7 @@
           [direct-copy-alias : bool
             (and
               allow-copy-alias
-              (match (ast.ast-expr-unspan init)
+              (match (ast.ast-expr-unspan-with-segment-bases expr-bases init)
                 [(ast.AstExpr.Var source-name)
                   (and
                     (string.eq (tc-env-key-name-text source-name) name)
@@ -44657,7 +44680,7 @@
           [nested-fact-capture : bool
             (and
               allow-copy-alias
-              (match (ast.ast-expr-unspan init)
+              (match (ast.ast-expr-unspan-with-segment-bases expr-bases init)
                 [(ast.AstExpr.Lambda lambda-box)
                   (match (__tl-box-place lambda-box)
                     [(ast.AstLambda.Lambda params _ lambda-body-box)
@@ -44772,10 +44795,11 @@
               (+ index 1))))])))
 
 (define (tc-ref-closure-direct-call?
+  [expr-bases : i64]
   [func : ast.AstExpr]
   [name : String]
   [bound : TcStringList]) : bool
-  (match (ast.ast-expr-unspan func)
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases func)
     [(ast.AstExpr.Var var-name)
       (and
         (string.eq (tc-env-key-name-text var-name) name)
@@ -44811,7 +44835,7 @@
       (let
         [func : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases func-box)]
-        (if (tc-ref-closure-direct-call? func name bound)
+        (if (tc-ref-closure-direct-call? expr-bases func name bound)
           (tc-ref-closure-expr-list-local-uses-ok? expr-bases args name bound)
           (and
             (tc-ref-closure-local-uses-ok? expr-bases func name bound)
@@ -45646,7 +45670,9 @@
                     body
                     name)])
                 [(ResultTcUnit.Ok)
-                  (match (ast.ast-expr-unspan init)
+                  (match (ast.ast-expr-unspan-with-segment-bases
+                    expr-bases
+                    init)
                     [(ast.AstExpr.Lambda lambda-box)
                       (match (__tl-box-place lambda-box)
                         [(ast.AstLambda.Lambda params maybe-ret lambda-body-box)
@@ -45693,7 +45719,7 @@
                   body
                   name)])
               [(ResultTcUnit.Ok)
-                (match (ast.ast-expr-unspan init)
+                (match (ast.ast-expr-unspan-with-segment-bases expr-bases init)
                   [(ast.AstExpr.Lambda lambda-box)
                     (match (__tl-box-place lambda-box)
                       [(ast.AstLambda.Lambda params maybe-ret lambda-body-box)
@@ -82632,7 +82658,7 @@
             [(ResultTcUnit.Err message) (TcBorrowCheckResult.Err message)])
           (TcBorrowCheckResult.Ok borrowed))]
       [(TcMaybeMoveName.No)
-        (match (ast.ast-expr-unspan init)
+        (match (ast.ast-expr-unspan-with-segment-bases expr-bases init)
           [(ast.AstExpr.Call func-box args)
             (let
               [func : ast.AstExpr

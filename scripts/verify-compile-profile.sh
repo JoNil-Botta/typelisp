@@ -1618,8 +1618,12 @@ if [ "$NL_HOST_OS" = windows ]; then
     # 98,566,144 physical payload bytes. Composing #6840's semantic workspace
     # rename provider with #6827 measured 3,029,193 used nodes on the
     # authoritative Windows CI probe and retains the same boundary.
+    # #6650's direct format sink plan and stdio macro family cross the next
+    # macro-expand expression boundary: the authoritative Windows CI probe
+    # measured 3,085,431 used nodes, 3,145,728 capacity, and 100,663,296
+    # physical payload bytes.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool macro_expand 47 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool macro_expand 48 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # The three dense optimizer plan containers crossed the checked expression
     # graph into its 33rd segment; the accessor-admission/absorption/fold/sinking

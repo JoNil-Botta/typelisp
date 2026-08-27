@@ -900,6 +900,48 @@
     cis.InternStructuralSessionHandle
     structural-session-owner))
 
+;; Render a mixed source/structural name through the compile job that owns it.
+;; Macro expansion can leave table-backed hygiene identities in declaration
+;; and module fields. Treating those identities as raw pool indexes turns an
+;; otherwise useful lowering diagnostic into an unchecked out-of-bounds read.
+(define (compiler-lower-state-name-text
+  [state : CompilerLowerState]
+  [name-id : i64]) : String
+  (let
+    [session : cis.InternStructuralSessionHandle
+      (compiler-lower-state-structural-session state)]
+    [source-names : ci.InternSourceNameSessionHandle
+      (cis.intern-structural-session-handle-source-names session)]
+    [source-id : i64
+      (cis.intern-structural-session-syntax-source-name-id-or
+        session
+        name-id
+        -1)]
+    (if (>= source-id 0)
+      (ci.intern-source-name-session-handle-str source-names source-id)
+      (match (cis.intern-structural-session-record-for-raw session name-id)
+        [(cis.InternMaybeStructuralRecord.Some record)
+          (cond
+            [(= record.kind (ci.intern-structural-kind-pair))
+              (str_cat.str-cat
+                (compiler-lower-state-name-text state record.left-id)
+                "/"
+                (compiler-lower-state-name-text state record.right-id))]
+            [(= record.kind (ci.intern-structural-kind-triple))
+              (str_cat.str-cat
+                (compiler-lower-state-name-text state record.left-id)
+                "/"
+                (compiler-lower-state-name-text state record.middle-id)
+                "."
+                (compiler-lower-state-name-text state record.right-id))]
+            [else
+              (str_cat.str-cat
+                "<structural-id:"
+                (string.int->string name-id)
+                ">")])]
+        [(cis.InternMaybeStructuralRecord.No)
+          (str_cat.str-cat "<id:" (string.int->string name-id) ">")]))))
+
 (cfg
   (any compile-profile test)
   (define (compiler-lower-state-profile [state : CompilerLowerState]) : profile_state.CompilerProfileState
@@ -7963,7 +8005,7 @@
                     bind-syntax?
                     (lower-global-shared-view entry-path)
                     decl-path
-                    (compiler-lower-state-intern-str lower-state cur-module-id)
+                    (compiler-lower-state-name-text lower-state cur-module-id)
                     cur-module-id
                     (lower-global-array-element-shared-view
                       decl-slots
@@ -12750,14 +12792,14 @@
               [(ast.AstDecl.Module module-id)
                 (str_cat.str-cat
                   "module:"
-                  (compiler-lower-state-intern-str lower-state module-id))]
+                  (compiler-lower-state-name-text lower-state module-id))]
               [(ast.AstDecl.DefFn decl-meta name _ _ _ _)
                 (match (ast.ast-decl-generated-meta
                   (lower-global-shared-view decl))
                   [(ast.AstGeneratedDeclMeta.Some generator generated-item _ _)
                     (str_cat.str-cat
                       "fn:"
-                      (compiler-lower-state-intern-str lower-state name)
+                      (compiler-lower-state-name-text lower-state name)
                       "@"
                       generator
                       "/"
@@ -12765,7 +12807,7 @@
                   [(ast.AstGeneratedDeclMeta.No)
                     (str_cat.str-cat
                       "fn:"
-                      (compiler-lower-state-intern-str lower-state name)
+                      (compiler-lower-state-name-text lower-state name)
                       "@plain")])]
               [_ "other"])]
           (str_cat.str-cat

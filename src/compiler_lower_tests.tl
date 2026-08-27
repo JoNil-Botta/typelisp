@@ -12575,6 +12575,15 @@
       (ci.intern-source-name-session-handle-from-state (& intern-a))]
     [source-b : ci.InternSourceNameSessionHandle
       (ci.intern-source-name-session-handle-from-state (& intern-b))]
+    [lower-a : compiler_lower.CompilerLowerState
+      (compiler_lower.compiler-lower-state-new-with-intern-state
+        (owned_view.compiler-owned-shared-view intern-a))]
+    [structural-a : cis.InternStructuralKey
+      (cis.intern-structural-session-composite-pair-key
+        (compiler_lower.compiler-lower-state-structural-session
+          (owned_view.compiler-owned-shared-view lower-a))
+        name-a
+        link-a)]
     [pools-a : compiler_ast_types.AstNodePoolContext
       (compiler_ast_types.ast-node-pool-context-new-with-capacities 4 1)]
     [pools-b : compiler_ast_types.AstNodePoolContext
@@ -12656,6 +12665,16 @@
             (string.eq
               (ci.intern-compat-state-str (& intern-a) stripped-a)
               "owner_a")
+            (string.eq
+              (compiler_lower.compiler-lower-state-name-text
+                (owned_view.compiler-owned-shared-view lower-a)
+                name-a)
+              "owner-a/item.field")
+            (string.eq
+              (compiler_lower.compiler-lower-state-name-text
+                (owned_view.compiler-owned-shared-view lower-a)
+                (cis.intern-structural-key-raw structural-a))
+              "owner-a/item.field/_tl_owner_a")
             (= diagnostic-line 9)
             (=
               (ci.intern-compat-state-pool-len (& intern-decoy))

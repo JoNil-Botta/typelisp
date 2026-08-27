@@ -59,6 +59,16 @@ reject_diag() {
             printf "format: bare '_' is not a captured identifier" ;;
         stdlib/tests/format_duplicate_named_reject.tl)
             printf 'format: duplicate named argument name' ;;
+        stdlib/tests/format_exponent_bool_reject.tl)
+            printf "format: 'e' selector requires an integer or float argument; got bool" ;;
+        stdlib/tests/format_exponent_char_reject.tl)
+            printf "format: 'E' selector requires an integer or float argument; got char" ;;
+        stdlib/tests/format_exponent_nominal_reject.tl | stdlib/tests/format_exponent_pointer_reject.tl)
+            printf "format: 'e' selector requires an integer or float argument" ;;
+        stdlib/tests/format_exponent_reference_reject.tl)
+            printf "format: 'E' selector requires an integer or float argument" ;;
+        stdlib/tests/format_exponent_string_reject.tl)
+            printf "format: 'e' selector requires an integer or float argument; got String" ;;
         stdlib/tests/format_dynamic_precision_integer_type_reject.tl)
             printf 'format: dynamic precision argument must have exact type i64' ;;
         stdlib/tests/format_dynamic_precision_index_reject.tl)

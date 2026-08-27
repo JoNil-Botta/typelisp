@@ -1636,8 +1636,12 @@ if [ "$NL_HOST_OS" = windows ]; then
     # #6877's loop-postcondition bounds-check memo (~1,800 compiler-source lines)
     # independently crossed ast_expr_pool.macro_expand from 47 to 48 segments:
     # the authoritative Windows probe measured 3,083,453 used nodes, 3,145,728
-    # capacity, and 100,663,296 physical payload bytes. The composed tree keeps
-    # the exact 48-segment pin pending its required Windows profile probe.
+    # 100,663,296 physical payload bytes.
+    # On the pre-#6877 tree, #6783's integer and float exponent formatting
+    # independently crossed the same boundary: the authoritative Windows CI
+    # probe measured 3,080,997 used nodes with the same capacity and payload.
+    # The composed tree keeps the exact 48-segment pin pending its required
+    # Windows profile probe.
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_expr_pool macro_expand 48 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"

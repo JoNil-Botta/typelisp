@@ -6416,9 +6416,27 @@ that rounds to zero retain their minus sign. Precision does not alter
 `inf`/`-inf`/`NaN`, and `#` does not force a point at precision zero. Checked
 output-length arithmetic traps before rendering on signed-`i64` overflow.
 
+For the `e` and `E` selectors, precision instead counts digits after the one
+leading decimal digit for every fixed-width integer and for `f32`/`f64`.
+Omitted precision emits the shortest exact integer spelling or the shortest
+round-tripping source-width float spelling, normalized to one leading digit;
+insignificant coefficient zeroes are omitted. A present precision emits
+exactly that many digits after the point and rounds the exact value to nearest
+with ties to even, including carry into the leading digit and exponent.
+Positive exponents have no `+` or leading zeroes; negative exponents have one
+`-`; `E` changes only the exponent marker. Signed zero is preserved as
+`-0e0`/`-0E0`, infinities remain `inf`/`-inf`, and every NaN is the signless
+canonical `NaN`. Precision does not alter those special values. `#` is a
+documented no-op for exponent formatting, including at precision zero.
+Checked exponent output-length arithmetic traps before rendering on
+signed-`i64` overflow. Width, fill, alignment, `+`, and sign-aware zero padding
+then use the common numeric option path. Other builtin, raw-pointer, checked
+reference, and nominal values receive a selector-and-type diagnostic at the
+placeholder occurrence.
+
 The `+` sign emits a plus for nonnegative fixed-width integer and float values
-and is rejected for nonnumeric values; `-` is accepted as the Rust-compatible
-no-op.
+except canonical `NaN`, whose spelling is always signless, and is rejected for
+nonnumeric values; `-` is accepted as the Rust-compatible no-op.
 The `0` flag performs numeric sign-aware zero padding, inserting zeroes after an
 existing or requested sign and after a base prefix when a type-specific
 renderer supplies one; it overrides fill/alignment for that numeric value. `#`
@@ -6431,10 +6449,11 @@ is `ffff`. With `#`, the prefixes are `0b`, `0o`, and `0x`; uppercase hex keeps
 the prefix lowercase. A requested plus precedes that prefix, and sign-aware
 zero padding follows the sign and prefix while counting both toward width.
 Radix precision is accepted and ignored like ordinary integral Display.
-Nonnumeric values receive a selector/type diagnostic. The selectors `?`, `x?`,
-`X?`, `e`, and `E` are parsed into the same plan but currently produce focused
-unsupported-semantics diagnostics. Malformed, duplicated, or out-of-order
-options are rejected during macro expansion.
+Nonnumeric values receive a selector/type diagnostic. The `e` and `E`
+selectors use the exponent semantics above. The selectors `?`, `x?`, and `X?`
+are parsed into the same plan but currently produce focused unsupported-
+semantics diagnostics. Malformed, duplicated, or out-of-order options are
+rejected during macro expansion.
 
 The `p` selector accepts direct `(Ptr T)` and `(MutPtr T)` values, plus a shared
 borrow whose referent has either raw-pointer type. It never dereferences the raw
@@ -6469,9 +6488,11 @@ Display uses the source IEEE-754 precision. With omitted format precision it
 emits the shortest round-tripping decimal without `e`/`E` notation; with
 resolved precision it emits the exact fixed-decimal spelling described above.
 Both paths preserve signed zero, render infinities as `inf`/`-inf`, and
-canonicalize all NaNs to `NaN` without a sign. A struct or enum instead
-delegates to a function in the type's canonical owner module. The owner may
-define either:
+canonicalize all NaNs to `NaN` without a sign. A selector `e` or `E` switches
+only the selected integer or float placeholder to
+the normalized exponent spelling described above and never changes default
+Display. A struct or enum instead delegates to a function in the type's
+canonical owner module. The owner may define either:
 
 - `to-string : (& T) -> String`, normally for the module's primary type; or
 - `to-string-<NominalName> : (& T) -> String`, for another nominal type owned

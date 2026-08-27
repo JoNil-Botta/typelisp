@@ -2,5 +2,5 @@
 
 (define (main) : i64
   (begin
-    (format.format "{:?}" (cast 7 : i64))
+    (format.format "{:x}" (cast 1.5 : f32))
     42))

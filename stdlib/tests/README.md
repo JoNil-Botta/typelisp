@@ -53,6 +53,13 @@ or external runtime orchestration. Pure stdlib API coverage that can run through
   rounding, decimal-only powers, normal/subnormal edges, max finite values,
   infinities, and canonical NaNs; deterministic finite-bit samples additionally
   prove decimal parse round trips.
+- `format_integer_radix.tl` pins Rust 1.98 binary, octal, lowercase hex, and
+  uppercase hex for every fixed-width signed and unsigned integer at zero, one,
+  signed minus one/min/max, unsigned max, and power-of-two boundaries. It also
+  covers prefixes, sign, literal/dynamic width, fill/alignment, zero padding,
+  ignored precision, shared references, and exactly-once reuse. Adjacent
+  `format_radix_*_reject.tl` fixtures pin selector/type diagnostics for every
+  noninteger category.
 - `format_float_precision.tl` pins Rust 1.98 fixed-decimal f32/f64 Display for
   literal/indexed/named/star counts, signed zero, exact half-even boundaries,
   carry, width/sign/zero composition, normals/subnormals, maximum finite

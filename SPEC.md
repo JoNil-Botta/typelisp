@@ -6418,9 +6418,17 @@ no-op.
 The `0` flag performs numeric sign-aware zero padding, inserting zeroes after an
 existing or requested sign and after a base prefix when a type-specific
 renderer supplies one; it overrides fill/alignment for that numeric value. `#`
-is retained in the common option plan for type-specific renderers and does not
-change default Display output. The selectors `?`, `x?`, `X?`, `o`, `x`, `X`,
-`b`, `e`, and `E` are parsed into that same plan, but currently produce focused
+does not change default Display output. For every fixed-width integer, `b`,
+`o`, `x`, and `X` select binary, octal, lowercase hexadecimal, and uppercase
+hexadecimal. Zero and positive values use the minimal digit count. A negative
+signed value uses the exact two's-complement width of its selected type, so
+`-1i8` renders as `11111111`, `377`, `ff`, or `FF`, while `-1i16` hexadecimal
+is `ffff`. With `#`, the prefixes are `0b`, `0o`, and `0x`; uppercase hex keeps
+the prefix lowercase. A requested plus precedes that prefix, and sign-aware
+zero padding follows the sign and prefix while counting both toward width.
+Radix precision is accepted and ignored like ordinary integral Display.
+Nonnumeric values receive a selector/type diagnostic. The selectors `?`, `x?`,
+`X?`, `e`, and `E` are parsed into the same plan but currently produce focused
 unsupported-semantics diagnostics. Malformed, duplicated, or out-of-order
 options are rejected during macro expansion.
 
@@ -6451,13 +6459,15 @@ The default built-in placeholder types are `String`, `i8`, `i16`, `i32`, `i64`,
 `u8`, `u16`, `u32`, `u64`, `bool`, `char`, `f64`, and `f32`; raw pointers are
 available only through `p` as described above. Signed integers render
 their decimal magnitude with a leading minus when negative; unsigned conversion
-preserves the complete `u64` range. Float Display uses the source IEEE-754
-precision. With omitted format precision it emits the shortest round-tripping
-decimal without `e`/`E` notation; with resolved precision it emits the exact
-fixed-decimal spelling described above. Both paths preserve signed zero, render
-infinities as `inf`/`-inf`, and canonicalize all NaNs to `NaN` without a sign. A
-struct or enum instead delegates to a function in the type's canonical owner
-module. The owner may define either:
+preserves the complete `u64` range. The four integral radix selectors use one
+unsigned conversion path after same-width signed-to-unsigned conversion. Float
+Display uses the source IEEE-754 precision. With omitted format precision it
+emits the shortest round-tripping decimal without `e`/`E` notation; with
+resolved precision it emits the exact fixed-decimal spelling described above.
+Both paths preserve signed zero, render infinities as `inf`/`-inf`, and
+canonicalize all NaNs to `NaN` without a sign. A struct or enum instead
+delegates to a function in the type's canonical owner module. The owner may
+define either:
 
 - `to-string : (& T) -> String`, normally for the module's primary type; or
 - `to-string-<NominalName> : (& T) -> String`, for another nominal type owned

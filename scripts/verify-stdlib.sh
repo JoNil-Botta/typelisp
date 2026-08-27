@@ -270,6 +270,8 @@ stdlib/tests/format_api.tl|42|-|-|-
 stdlib/tests/format_pointer.tl|42|printf:0x0\n|literal:0x0000000000000000|-
 stdlib/tests/format_float_precision.tl|42|-|-|-
 stdlib/tests/format_float_precision_length_overflow.tl|134|-|literal:format: fixed float output length overflow|-
+stdlib/tests/format_integer_radix.tl|42|-|-|-
+stdlib/tests/format_integer_radix_io.tl|42|printf:0x2a/00000101\n|literal:0xFF|-
 stdlib/tests/format_precision_io.tl|42|printf:abc/   tr\n1.25/-0000.00\n|literal:er/1.2|-
 stdlib/tests/format_primitive_display.tl|42|-|-|-
 stdlib/tests/format_negative_dynamic_precision.tl|134|-|literal:format: precision count must be nonnegative|-
@@ -330,9 +332,17 @@ stdlib/tests/format_precision_negative_literal_reject.tl|fail|format: malformed 
 stdlib/tests/format_precision_overflow_reject.tl|fail|format: precision integer overflow
 stdlib/tests/format_precision_unknown_capture_reject.tl|fail|typecheck: unbound name missing
 stdlib/tests/format_plus_nonnumeric_reject.tl|fail|format: '+' sign requires a numeric argument
+stdlib/tests/format_radix_bool_reject.tl|fail|requires a fixed-width integer argument; got
+stdlib/tests/format_radix_char_reject.tl|fail|requires a fixed-width integer argument; got
+stdlib/tests/format_radix_f32_reject.tl|fail|requires a fixed-width integer argument; got
+stdlib/tests/format_radix_f64_reject.tl|fail|requires a fixed-width integer argument; got
+stdlib/tests/format_radix_nominal_reject.tl|fail|requires a fixed-width integer argument; got
+stdlib/tests/format_radix_pointer_reject.tl|fail|requires a fixed-width integer argument; got
+stdlib/tests/format_radix_reference_reject.tl|fail|requires a fixed-width integer argument; got
+stdlib/tests/format_radix_string_reject.tl|fail|requires a fixed-width integer argument; got
 stdlib/tests/format_raw_capture_reject.tl|fail|format: Rust raw identifiers use the TypeLisp spelling without 'r#'
 stdlib/tests/format_specifier_order_reject.tl|fail|format: malformed, duplicated, or out-of-order format specifier
-stdlib/tests/format_specifier_reject.tl|fail|format: type selector is parsed but not supported yet: x
+stdlib/tests/format_specifier_reject.tl|fail|format: type selector is parsed but not supported yet: ?
 stdlib/tests/format_star_precision_too_few_reject.tl|fail|format: not enough arguments for placeholders
 stdlib/tests/format_too_few_args_reject.tl|fail|format: not enough arguments for placeholders
 stdlib/tests/format_too_many_args_reject.tl|fail|format: not enough placeholders for arguments

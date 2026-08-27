@@ -1671,8 +1671,12 @@ if [ "$NL_HOST_OS" = windows ]; then
     # crosses the next boundary: the direct Windows selfhost probe measured
     # 2,425,185 used nodes, 2,490,368 capacity, and 79,691,776 physical payload
     # bytes.
+    # #6650's direct format sink plan and stdio macro family cross the next
+    # typecheck expression boundary: the authoritative Windows CI probe
+    # measured 2,497,319 used nodes, 2,555,904 capacity, and 81,788,928 physical
+    # payload bytes.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool typecheck 38 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool typecheck 39 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # This is the tightest of the four and the one to check first when a series
     # adds compiler source: the copy-call / unsigned-bound-narrowing / chain

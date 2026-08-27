@@ -66,6 +66,15 @@ or external runtime orchestration. Pure stdlib API coverage that can run through
   values, infinities, NaNs, source-width f32 digits, and bounded precision 400.
   `format_float_precision_length_overflow.tl` pins the checked signed-`i64`
   output-length trap before allocation.
+- `format_exponent.tl` pins Rust 1.98 lower/upper exponent output for every
+  integer width and source-width f32/f64, including signed zero, integer and
+  float boundaries, normals/subnormals, infinities, NaNs, shortest spelling,
+  exact half-even precision and carry, large precision, shared borrows,
+  exactly-once evaluation, and width/sign/fill/alignment/zero composition.
+  `format_exponent_io.tl` covers stdout/stderr and
+  `format_exponent_length_overflow.tl` pins checked output-length failure. The
+  selector rejection fixtures cover bool, char, String, raw pointers, shared
+  references, and nominal values with source-located selector/type diagnostics.
 - `io_stdio_pipe_short_read.tl` is typechecked like the other witnesses and is
   also run by `scripts/verify-stdlib.sh` through a native pipe to ensure
   positive short pipe reads do not report EOF before all bytes arrive.
@@ -223,7 +232,8 @@ Inline stdlib coverage:
   for String/borrowed-str/bool/char/owner-hook output; truncation-before-padding
   composition; and NUL/high-byte/mid-UTF-8-boundary behavior.
   `format_precision_io.tl` proves text truncation and fixed float precision
-  through stdout and direct stderr output.
+  through stdout and direct stderr output; `format_exponent_io.tl` does the
+  same for lower/upper exponent rendering.
   `comptime_string_literal_reject.tl` keeps non-literal syntax inspection
   rejected at macro expansion. The `format_*_reject.tl` fixtures cover
   non-literal templates, unsupported type-selector semantics,

@@ -9,7 +9,9 @@
 ;# Display precision truncates rendered TypeLisp bytes before padding; float
 ;# precision selects exact fixed decimal with round-half-to-even. Fixed-width
 ;# integers additionally support binary, octal, and lower/uppercase hexadecimal
-;# selectors with width-correct signed bit patterns.
+;# selectors with width-correct signed bit patterns. The `e` and `E` selectors
+;# normalize every integer and source-width float to Rust exponent notation;
+;# their precision counts digits after the leading digit.
 ;#
 ;# Nominal structs and enums participate through their canonical owner module.
 ;# A module's common primary type defines `to-string`; additional nominal types
@@ -27,9 +29,10 @@
 ;# ```
 ;#
 ;# Builtin placeholder values are `String`, all eight fixed-width integer
-;# types, `bool`, `char`, `f64`, and `f32`. The `p` selector additionally
-;# accepts raw pointers in an unsafe call-site context. Structural formatting
-;# is intentionally separate from this default Display-style protocol.
+;# types, `bool`, `char`, `f64`, and `f32`. The `e`/`E` selectors accept every
+;# integer and float type. The `p` selector additionally accepts raw pointers
+;# in an unsafe call-site context. Structural formatting is intentionally
+;# separate from this default Display-style protocol.
 (import stdlib.comptime)
 (import stdlib.str_cat)
 (import stdlib.string)
@@ -163,11 +166,18 @@
           1
           0)
         0)]
+    [source-nan? : bool
+      (if (and numeric? (= rendered-len 3))
+        (and
+          (= (cast (string.string-ref (& rendered) 0) : i64) 78)
+          (= (cast (string.string-ref (& rendered) 1) : i64) 97)
+          (= (cast (string.string-ref (& rendered) 2) : i64) 78))
+        false)]
     [add-plus? : bool
       (if (if numeric?
         (= options.sign 1)
         false)
-        (= source-sign-len 0)
+        (and (= source-sign-len 0) (not source-nan?))
         false)]
     [output-sign-len : i64
       (if (or add-plus? (= source-sign-len 1))
@@ -333,10 +343,20 @@
                                     [_ false])]
                                 [pointer-selector? : bool
                                   (string.eq selector "p")]
+                                [exponent-selector? : bool
+                                  (if (string.eq selector "e")
+                                    true
+                                    (string.eq selector "E"))]
+                                [uppercase-exponent? : bool
+                                  (string.eq selector "E")]
+                                [uppercase-exponent-expr : comptime.Expr
+                                  (comptime.expr-bool uppercase-exponent?)]
                                 [special-selector? : bool
                                   (if radix-selector?
                                     true
-                                    pointer-selector?)]
+                                    (if pointer-selector?
+                                      true
+                                      exponent-selector?))]
                                 [raw-pointer? : bool
                                   (if (string.eq value-kind "ptr")
                                     true
@@ -668,7 +688,11 @@
                                   (if (string.eq selector "X")
                                     1
                                     0)]
-                                [rendered : comptime.Expr
+                                [rendered
+                                  : comptime.Expr
+                                  ;; CTFE evaluates this selector ladder before
+                                  ;; syntax macros such as `cond` are available.
+                                  ;; lint-allow: nested-if-ladder
                                   (if radix-selector?
                                     (if integral?
                                       `(stdlib.format.format-u64-radix-core
@@ -697,8 +721,24 @@
                                           (comptime.string-append
                                             "format: 'p' selector requires (Ptr T), (MutPtr T), or a shared borrow of a raw-pointer value; got "
                                             (type-key argument-type))))
-                                      display-rendered))]
+                                      (if exponent-selector?
+                                        (comptime.expr-string "")
+                                        display-rendered)))]
                                 (begin
+                                  (if exponent-selector?
+                                    (if (if integral?
+                                      true
+                                      float?)
+                                      unit
+                                      (comptime.comptime-error
+                                        (comptime.string-append
+                                          (comptime.string-append
+                                            "format: '"
+                                            selector)
+                                          (comptime.string-append
+                                            "' selector requires an integer or float argument; got "
+                                            (type-key argument-type)))))
+                                    unit)
                                   (if (string.eq selector "")
                                     unit
                                     (if special-selector?
@@ -786,10 +826,12 @@
                                     [precision-applies? : bool
                                       (if (= precision-kind 0)
                                         false
-                                        (not
-                                          (if integral?
-                                            true
-                                            pointer-selector?)))]
+                                        (if exponent-selector?
+                                          true
+                                          (not
+                                            (if integral?
+                                              true
+                                              pointer-selector?))))]
                                     [default-options? : bool
                                       (if (= fill-code 32)
                                         (if (= alignment 0)
@@ -840,28 +882,151 @@
                                         precision-var
                                         resolved-precision)]
                                     [rendered-with-precision : comptime.Expr
-                                      (if (if float?
-                                        (!= precision-kind 0)
-                                        false)
+                                      (if exponent-selector?
                                         (match value-kind
+                                          ["i8"
+                                            (if borrowed?
+                                              `(stdlib.format.format-i64-exponent-core
+                                                (cast (deref ,value) : i64)
+                                                (!= ,precision-kind-expr 0)
+                                                ,transported-precision
+                                                ,uppercase-exponent-expr)
+                                              `(stdlib.format.format-i64-exponent-core
+                                                (cast ,value : i64)
+                                                (!= ,precision-kind-expr 0)
+                                                ,transported-precision
+                                                ,uppercase-exponent-expr))]
+                                          ["i16"
+                                            (if borrowed?
+                                              `(stdlib.format.format-i64-exponent-core
+                                                (cast (deref ,value) : i64)
+                                                (!= ,precision-kind-expr 0)
+                                                ,transported-precision
+                                                ,uppercase-exponent-expr)
+                                              `(stdlib.format.format-i64-exponent-core
+                                                (cast ,value : i64)
+                                                (!= ,precision-kind-expr 0)
+                                                ,transported-precision
+                                                ,uppercase-exponent-expr))]
+                                          ["i32"
+                                            (if borrowed?
+                                              `(stdlib.format.format-i64-exponent-core
+                                                (cast (deref ,value) : i64)
+                                                (!= ,precision-kind-expr 0)
+                                                ,transported-precision
+                                                ,uppercase-exponent-expr)
+                                              `(stdlib.format.format-i64-exponent-core
+                                                (cast ,value : i64)
+                                                (!= ,precision-kind-expr 0)
+                                                ,transported-precision
+                                                ,uppercase-exponent-expr))]
+                                          ["i64"
+                                            (if borrowed?
+                                              `(stdlib.format.format-i64-exponent-core
+                                                (deref ,value)
+                                                (!= ,precision-kind-expr 0)
+                                                ,transported-precision
+                                                ,uppercase-exponent-expr)
+                                              `(stdlib.format.format-i64-exponent-core
+                                                ,value
+                                                (!= ,precision-kind-expr 0)
+                                                ,transported-precision
+                                                ,uppercase-exponent-expr))]
+                                          ["u8"
+                                            (if borrowed?
+                                              `(stdlib.format.format-u64-exponent-core
+                                                (cast (deref ,value) : u64)
+                                                (!= ,precision-kind-expr 0)
+                                                ,transported-precision
+                                                ,uppercase-exponent-expr)
+                                              `(stdlib.format.format-u64-exponent-core
+                                                (cast ,value : u64)
+                                                (!= ,precision-kind-expr 0)
+                                                ,transported-precision
+                                                ,uppercase-exponent-expr))]
+                                          ["u16"
+                                            (if borrowed?
+                                              `(stdlib.format.format-u64-exponent-core
+                                                (cast (deref ,value) : u64)
+                                                (!= ,precision-kind-expr 0)
+                                                ,transported-precision
+                                                ,uppercase-exponent-expr)
+                                              `(stdlib.format.format-u64-exponent-core
+                                                (cast ,value : u64)
+                                                (!= ,precision-kind-expr 0)
+                                                ,transported-precision
+                                                ,uppercase-exponent-expr))]
+                                          ["u32"
+                                            (if borrowed?
+                                              `(stdlib.format.format-u64-exponent-core
+                                                (cast (deref ,value) : u64)
+                                                (!= ,precision-kind-expr 0)
+                                                ,transported-precision
+                                                ,uppercase-exponent-expr)
+                                              `(stdlib.format.format-u64-exponent-core
+                                                (cast ,value : u64)
+                                                (!= ,precision-kind-expr 0)
+                                                ,transported-precision
+                                                ,uppercase-exponent-expr))]
+                                          ["u64"
+                                            (if borrowed?
+                                              `(stdlib.format.format-u64-exponent-core
+                                                (deref ,value)
+                                                (!= ,precision-kind-expr 0)
+                                                ,transported-precision
+                                                ,uppercase-exponent-expr)
+                                              `(stdlib.format.format-u64-exponent-core
+                                                ,value
+                                                (!= ,precision-kind-expr 0)
+                                                ,transported-precision
+                                                ,uppercase-exponent-expr))]
                                           ["f64"
                                             (if borrowed?
-                                              `(stdlib.format.format-float-fixed-core
+                                              `(stdlib.format.format-float-exponent-core
                                                 (deref ,value)
-                                                ,transported-precision)
-                                              `(stdlib.format.format-float-fixed-core
+                                                (!= ,precision-kind-expr 0)
+                                                ,transported-precision
+                                                ,uppercase-exponent-expr)
+                                              `(stdlib.format.format-float-exponent-core
                                                 ,value
-                                                ,transported-precision))]
+                                                (!= ,precision-kind-expr 0)
+                                                ,transported-precision
+                                                ,uppercase-exponent-expr))]
                                           ["f32"
                                             (if borrowed?
-                                              `(stdlib.format.format-f32-fixed-core
+                                              `(stdlib.format.format-f32-exponent-core
                                                 (deref ,value)
-                                                ,transported-precision)
-                                              `(stdlib.format.format-f32-fixed-core
+                                                (!= ,precision-kind-expr 0)
+                                                ,transported-precision
+                                                ,uppercase-exponent-expr)
+                                              `(stdlib.format.format-f32-exponent-core
                                                 ,value
-                                                ,transported-precision))]
+                                                (!= ,precision-kind-expr 0)
+                                                ,transported-precision
+                                                ,uppercase-exponent-expr))]
                                           [_ rendered])
-                                        rendered)]
+                                        (if (if float?
+                                          (!= precision-kind 0)
+                                          false)
+                                          (match value-kind
+                                            ["f64"
+                                              (if borrowed?
+                                                `(stdlib.format.format-float-fixed-core
+                                                  (deref ,value)
+                                                  ,transported-precision)
+                                                `(stdlib.format.format-float-fixed-core
+                                                  ,value
+                                                  ,transported-precision))]
+                                            ["f32"
+                                              (if borrowed?
+                                                `(stdlib.format.format-f32-fixed-core
+                                                  (deref ,value)
+                                                  ,transported-precision)
+                                                `(stdlib.format.format-f32-fixed-core
+                                                  ,value
+                                                  ,transported-precision))]
+                                            [_ rendered])
+                                          rendered))]
                                     [formatted : comptime.Expr
                                       (if default-options?
                                         rendered-with-precision
@@ -3490,6 +3655,294 @@
       (unsafe
         (string-from-bytes (ptr-cast dst : (Ptr u8)) output-len)))))
 
+;: Render normalized decimal digits with Rust exponent layout.
+;:
+;: `digits` is an exact or already-shortest positive decimal coefficient and
+;: `decimal-exponent` is the exponent of its leading digit. A present
+;: precision selects digits after the point. Exact coefficients are rounded
+;: half to even; omitted precision drops insignificant trailing zeroes.
+;: Positive exponents have no sign or leading zeroes. This formatter-private
+;: normalization seam is also reusable by Debug's general-float policy.
+(define (format-exponent-layout
+  [neg : bool]
+  [digits : (& digits str)]
+  [decimal-exponent : i64]
+  [precision-present : bool]
+  [precision : i64]
+  [uppercase : bool]) : String
+  (let
+    [source-len : i64 (string.string-length digits)]
+    [significant-len : i64 source-len]
+    (begin
+      (if precision-present
+        unit
+        (while (if (> significant-len 1)
+          (= (cast (string.string-ref digits (- significant-len 1)) : i64) 48)
+          false)
+          (set! significant-len (- significant-len 1))))
+      (when
+        (and precision-present (= precision 9223372036854775807))
+        (format-runtime-abort-string "format: exponent output length overflow"))
+      (let
+        [output-significant-len : i64
+          (if precision-present
+            (+ precision 1)
+            significant-len)]
+        [round-up? : bool false]
+        (begin
+          (when
+            (and precision-present (> source-len output-significant-len))
+            (let
+              [first-discarded : i64
+                (cast (string.string-ref digits output-significant-len) : i64)]
+              (cond
+                [(> first-discarded 53) (set! round-up? true)]
+                [(= first-discarded 53)
+                  (let
+                    [scan : i64 (+ output-significant-len 1)]
+                    [tail-nonzero? : bool false]
+                    (begin
+                      (while (and (not tail-nonzero?) (< scan source-len))
+                        (begin
+                          (when
+                            (!= (cast (string.string-ref digits scan) : i64) 48)
+                            (set! tail-nonzero? true))
+                          (set! scan (+ scan 1))))
+                      (if tail-nonzero?
+                        (set! round-up? true)
+                        (when
+                          (!=
+                            (%
+                              (cast
+                                (string.string-ref
+                                  digits
+                                  (- output-significant-len 1))
+                                : i64)
+                              2)
+                            0)
+                          (set! round-up? true)))))]
+                [else unit])))
+          (let
+            [carry-past-leading? : bool false]
+            (begin
+              (when
+                round-up?
+                (let
+                  [scan : i64 0]
+                  [all-nine? : bool true]
+                  (begin
+                    (while (and all-nine? (< scan output-significant-len))
+                      (begin
+                        (when
+                          (!= (cast (string.string-ref digits scan) : i64) 57)
+                          (set! all-nine? false))
+                        (set! scan (+ scan 1))))
+                    (set! carry-past-leading? all-nine?))))
+              (let
+                [rendered-exponent : i64
+                  (+
+                    decimal-exponent
+                    (if carry-past-leading?
+                      1
+                      0))]
+                [negative-exponent? : bool (< rendered-exponent 0)]
+                [exponent-magnitude : u64
+                  (cast
+                    (if negative-exponent?
+                      (- 0 rendered-exponent)
+                      rendered-exponent)
+                    : u64)]
+                [exponent-digits : i64
+                  (format-u64-digit-count exponent-magnitude)]
+                [fraction-digits : i64
+                  (if precision-present
+                    precision
+                    (- significant-len 1))]
+                [fixed-output-len : i64
+                  (+
+                    (+
+                      (+
+                        (if neg
+                          1
+                          0)
+                        1)
+                      1)
+                    (+
+                      (if negative-exponent?
+                        1
+                        0)
+                      exponent-digits))]
+                [output-len : i64
+                  (if (> fraction-digits 0)
+                    (if (>
+                      fraction-digits
+                      (- 9223372036854775807 (+ fixed-output-len 1)))
+                      (format-runtime-abort-string
+                        "format: exponent output length overflow")
+                      (+ fixed-output-len (+ 1 fraction-digits)))
+                    fixed-output-len)]
+                [dst : (MutPtr u8) (string.string-runtime-alloc output-len)]
+                [cursor : i64 0]
+                [digit-index : i64 0]
+                [digit-start : i64
+                  (if neg
+                    1
+                    0)]
+                (begin
+                  (when
+                    neg
+                    (begin
+                      (unsafe
+                        (ptr-write! dst (cast '-' : u8)))
+                      (set! cursor 1)))
+                  (while (< digit-index output-significant-len)
+                    (begin
+                      (when
+                        (and (= digit-index 1) (> fraction-digits 0))
+                        (begin
+                          (unsafe
+                            (ptr-write! (ptr-offset dst cursor) (cast '.' : u8)))
+                          (set! cursor (+ cursor 1))))
+                      (unsafe
+                        (ptr-write!
+                          (ptr-offset dst cursor)
+                          (if (< digit-index source-len)
+                            (cast (string.string-ref digits digit-index) : u8)
+                            (cast '0' : u8))))
+                      (set! cursor (+ cursor 1))
+                      (set! digit-index (+ digit-index 1))))
+                  (when
+                    round-up?
+                    (if carry-past-leading?
+                      (let
+                        [reset-index : i64 0]
+                        (while (< reset-index output-significant-len)
+                          (let
+                            [destination : i64
+                              (+
+                                digit-start
+                                (+
+                                  reset-index
+                                  (if (and
+                                    (> reset-index 0)
+                                    (> fraction-digits 0))
+                                    1
+                                    0)))]
+                            (begin
+                              (unsafe
+                                (ptr-write!
+                                  (ptr-offset dst destination)
+                                  (cast
+                                    (if (= reset-index 0)
+                                      '1'
+                                      '0')
+                                    : u8)))
+                              (set! reset-index (+ reset-index 1))))))
+                      (let
+                        [carry? : bool true]
+                        [round-index : i64 (- output-significant-len 1)]
+                        (while (and carry? (>= round-index 0))
+                          (let
+                            [destination : i64
+                              (+
+                                digit-start
+                                (+
+                                  round-index
+                                  (if (and
+                                    (> round-index 0)
+                                    (> fraction-digits 0))
+                                    1
+                                    0)))]
+                            [digit : u8
+                              (unsafe
+                                (ptr-read
+                                  (ptr-offset
+                                    (ptr-cast dst : (Ptr u8))
+                                    destination)))]
+                            (if (< (cast digit : i64) 57)
+                              (begin
+                                (unsafe
+                                  (ptr-write!
+                                    (ptr-offset dst destination)
+                                    (cast (+ (cast digit : i64) 1) : u8)))
+                                (set! carry? false))
+                              (begin
+                                (unsafe
+                                  (ptr-write!
+                                    (ptr-offset dst destination)
+                                    (cast '0' : u8)))
+                                (set! round-index (- round-index 1)))))))))
+                  (unsafe
+                    (ptr-write!
+                      (ptr-offset dst cursor)
+                      (cast
+                        (if uppercase
+                          'E'
+                          'e')
+                        : u8)))
+                  (set! cursor (+ cursor 1))
+                  (when
+                    negative-exponent?
+                    (begin
+                      (unsafe
+                        (ptr-write! (ptr-offset dst cursor) (cast '-' : u8)))
+                      (set! cursor (+ cursor 1))))
+                  (let
+                    [remaining : u64 exponent-magnitude]
+                    [write-index : i64 (- output-len 1)]
+                    (while (>= write-index cursor)
+                      (let
+                        [next : u64 (/ remaining (cast 10 : u64))]
+                        [digit : u64 (- remaining (* next (cast 10 : u64)))]
+                        (begin
+                          (unsafe
+                            (ptr-write!
+                              (ptr-offset dst write-index)
+                              (cast (+ digit (cast 48 : u64)) : u8)))
+                          (set! remaining next)
+                          (set! write-index (- write-index 1))))))
+                  (unsafe
+                    (string-from-bytes (ptr-cast dst : (Ptr u8)) output-len)))))))))))
+
+;: Render one signed integer through the shared exponent layout.
+(define (format-i64-exponent-core
+  [value : i64]
+  [precision-present : bool]
+  [precision : i64]
+  [uppercase : bool]) : String
+  (let
+    [neg : bool (< value 0)]
+    [magnitude : u64
+      (if neg
+        (+ (cast (- 0 (+ value 1)) : u64) (cast 1 : u64))
+        (cast value : u64))]
+    [decimal : String (format-u64-core magnitude)]
+    [decimal-len : i64 (string.string-length (& decimal))]
+    (format-exponent-layout
+      neg
+      (& decimal)
+      (- decimal-len 1)
+      precision-present
+      precision
+      uppercase)))
+
+;: Render one unsigned integer through the shared exponent layout.
+(define (format-u64-exponent-core
+  [value : u64]
+  [precision-present : bool]
+  [precision : i64]
+  [uppercase : bool]) : String
+  (let
+    [decimal : String (format-u64-core value)]
+    [decimal-len : i64 (string.string-length (& decimal))]
+    (format-exponent-layout
+      false
+      (& decimal)
+      (- decimal-len 1)
+      precision-present
+      precision
+      uppercase)))
+
 ;: Render one raw-pointer address as minimal lowercase hexadecimal text.
 ;:
 ;: The formatter macro performs the unsafe pointer-to-integer conversion at
@@ -3735,15 +4188,16 @@
               (cast 0 : u64))]
           [subtrahend : u64 (+ bv borrow)]
           (begin
+            ;; Unsigned subtraction wraps, and masking its low limb is exactly
+            ;; subtraction modulo 2^32. This avoids carrying a hoistable 2^32
+            ;; literal across the allocation calls above: the O2 backend may
+            ;; place such a rematerializable literal in a caller-saved register.
+            (set!
+              (array-ref r i)
+              (bit-and (- av subtrahend) stdlib.format.ftoa-mask32))
             (if (>= av subtrahend)
-              (begin
-                (set! (array-ref r i) (- av subtrahend))
-                (set! borrow (cast 0 : u64)))
-              (begin
-                (set!
-                  (array-ref r i)
-                  (- (+ av (cast 0x100000000 : u64)) subtrahend))
-                (set! borrow (cast 1 : u64))))
+              (set! borrow (cast 0 : u64))
+              (set! borrow (cast 1 : u64)))
             (set! i (+ i 1)))))
       (BigNum r (bn-norm-len r a.len)))))
 
@@ -3987,6 +4441,88 @@
       (if neg
         (str_cat.str-cat "-" body "")
         body))))
+
+;: Normalize shortest decimal Display text into exponent notation.
+;:
+;: This keeps shortest-digit selection in the established source-width float
+;: renderer and exposes exponent normalization as a separate reusable seam.
+(define (format-exponent-normalize [rendered : String] [uppercase : bool]) : String
+  (let
+    [rendered-len : i64 (string.string-length (& rendered))]
+    [neg : bool
+      (and
+        (> rendered-len 0)
+        (= (cast (string.string-ref (& rendered) 0) : i64) 45))]
+    [start : i64
+      (if neg
+        1
+        0)]
+    [decimal-point : i64 rendered-len]
+    [scan : i64 start]
+    (begin
+      (while (< scan rendered-len)
+        (begin
+          (when
+            (= (cast (string.string-ref (& rendered) scan) : i64) 46)
+            (set! decimal-point scan))
+          (set! scan (+ scan 1))))
+      (let
+        [first-significant : i64 start]
+        (begin
+          (when
+            (and
+              (< decimal-point rendered-len)
+              (= decimal-point (+ start 1))
+              (= (cast (string.string-ref (& rendered) start) : i64) 48))
+            (begin
+              (set! first-significant (+ decimal-point 1))
+              (while (if (< first-significant rendered-len)
+                (=
+                  (cast
+                    (string.string-ref (& rendered) first-significant)
+                    : i64)
+                  48)
+                false)
+                (set! first-significant (+ first-significant 1)))))
+          (let
+            [decimal-exponent : i64
+              (if (= first-significant start)
+                (-
+                  (if (= decimal-point rendered-len)
+                    rendered-len
+                    decimal-point)
+                  (+ start 1))
+                (- 0 (- first-significant decimal-point)))]
+            [coefficient-len : i64
+              (-
+                (- rendered-len first-significant)
+                (if (and
+                  (< decimal-point rendered-len)
+                  (> decimal-point first-significant))
+                  1
+                  0))]
+            [digits : String
+              (if (and
+                (< decimal-point rendered-len)
+                (> decimal-point first-significant))
+                (str_cat.str-cat
+                  (string.substring
+                    rendered
+                    first-significant
+                    (- decimal-point first-significant))
+                  (string.substring
+                    rendered
+                    (+ decimal-point 1)
+                    (- rendered-len (+ decimal-point 1)))
+                  "")
+                (string.substring rendered first-significant coefficient-len))]
+            (format-exponent-layout
+              neg
+              (& digits)
+              decimal-exponent
+              false
+              0
+              uppercase)))))))
 
 ;: Checked output byte length for fixed float Display.
 (define (ftoa-fixed-output-length
@@ -4262,6 +4798,42 @@
                 exact-scale
                 precision))))))))
 
+;: Render one decoded finite nonzero float at exact exponent precision.
+;:
+;: The terminating decimal coefficient reuses fixed formatting's wide bignum
+;: capacity and feeds the common half-even significant-digit layout.
+(define (format-float-exponent-exact
+  [neg : bool]
+  [m : u64]
+  [e2 : i64]
+  [precision : i64]
+  [uppercase : bool]) : String
+  (let
+    [base : BigNum (bn-from-u64-cap m stdlib.format.ftoa-fixed-cap)]
+    (if (>= e2 0)
+      (let
+        [digits : String (bn-decimal-string (bn-shl-bits base e2))]
+        [digits-len : i64 (string.string-length (& digits))]
+        (format-exponent-layout
+          neg
+          (& digits)
+          (- digits-len 1)
+          true
+          precision
+          uppercase))
+      (let
+        [exact-scale : i64 (- 0 e2)]
+        [coefficient : BigNum (bn-mul-pow5 base exact-scale)]
+        [digits : String (bn-decimal-string coefficient)]
+        [digits-len : i64 (string.string-length (& digits))]
+        (format-exponent-layout
+          neg
+          (& digits)
+          (- (- digits-len exact-scale) 1)
+          true
+          precision
+          uppercase)))))
+
 ;: Render an f64 with Rust Display-compatible shortest decimal semantics.
 (define (format-float-core [value : f64]) : String
   (let
@@ -4306,3 +4878,94 @@
     [expf : u64 (bit-and (shr bits 23) (cast 0xff : u64))]
     [frac : u64 (bit-and bits (cast 0x7fffff : u64))]
     (format-float-fixed-parts neg expf frac (cast 0xff : u64) 23 127 precision)))
+
+;: Render an f64 with Rust LowerExp/UpperExp semantics.
+(define (format-float-exponent-core
+  [value : f64]
+  [precision-present : bool]
+  [precision : i64]
+  [uppercase : bool]) : String
+  (let
+    [bits : u64 (__tl_float_to_bits value)]
+    [neg : bool (= (bit-and (shr bits 63) (cast 1 : u64)) (cast 1 : u64))]
+    [expf : u64 (bit-and (shr bits 52) (cast 0x7ff : u64))]
+    [frac : u64 (bit-and bits 0xfffffffffffff)]
+    (begin
+      (when
+        (= expf (cast 0x7ff : u64))
+        (return
+          (if (= frac (cast 0 : u64))
+            (if neg
+              "-inf"
+              "inf")
+            "NaN")))
+      (when
+        (and (= expf (cast 0 : u64)) (= frac (cast 0 : u64)))
+        (let
+          [zero : String "0"]
+          (return
+            (format-exponent-layout
+              neg
+              (& zero)
+              0
+              precision-present
+              precision
+              uppercase))))
+      (if precision-present
+        (let
+          [m : u64
+            (if (= expf (cast 0 : u64))
+              frac
+              (bit-or frac (shl (cast 1 : u64) 52)))]
+          [e2 : i64
+            (if (= expf (cast 0 : u64))
+              -1074
+              (- (- (cast expf : i64) 1023) 52))]
+          (format-float-exponent-exact neg m e2 precision uppercase))
+        (format-exponent-normalize (format-float-core value) uppercase)))))
+
+;: Render an f32 at source width with Rust LowerExp/UpperExp semantics.
+(define (format-f32-exponent-core
+  [value : f32]
+  [precision-present : bool]
+  [precision : i64]
+  [uppercase : bool]) : String
+  (let
+    [bits32 : u32 (__tl_float_to_bits value)]
+    [bits : u64 (cast bits32 : u64)]
+    [neg : bool (= (bit-and (shr bits 31) (cast 1 : u64)) (cast 1 : u64))]
+    [expf : u64 (bit-and (shr bits 23) (cast 0xff : u64))]
+    [frac : u64 (bit-and bits (cast 0x7fffff : u64))]
+    (begin
+      (when
+        (= expf (cast 0xff : u64))
+        (return
+          (if (= frac (cast 0 : u64))
+            (if neg
+              "-inf"
+              "inf")
+            "NaN")))
+      (when
+        (and (= expf (cast 0 : u64)) (= frac (cast 0 : u64)))
+        (let
+          [zero : String "0"]
+          (return
+            (format-exponent-layout
+              neg
+              (& zero)
+              0
+              precision-present
+              precision
+              uppercase))))
+      (if precision-present
+        (let
+          [m : u64
+            (if (= expf (cast 0 : u64))
+              frac
+              (bit-or frac (shl (cast 1 : u64) 23)))]
+          [e2 : i64
+            (if (= expf (cast 0 : u64))
+              -149
+              (- (- (cast expf : i64) 127) 23))]
+          (format-float-exponent-exact neg m e2 precision uppercase))
+        (format-exponent-normalize (format-f32-core value) uppercase)))))

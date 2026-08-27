@@ -6796,7 +6796,7 @@
               (compiler-semantic-record-field-definition!
                 (owned_view.compiler-owned-shared-view state)
                 struct-name-id
-                field-name-id
+                (ci.intern-syntax-id-value field-name-id)
                 index
                 (owned_view.compiler-owned-shared-view ty))
               (compiler-semantic-walk-type!

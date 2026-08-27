@@ -3803,7 +3803,7 @@
             (ci.intern-generated-name "cleanup-bad")))
         (ast.ast-field-def-cons
           (ast.ast-field-def-id
-            (ci.intern-generated-name "fd")
+            (ci.intern-syntax-id-from-raw (ci.intern-generated-name "fd"))
             (ast.AstType.I64)
             (ast.AstFieldCleanup.No))
           (ast.ast-field-def-list-new)))
@@ -3818,7 +3818,7 @@
         (ast.AstStructCleanup.No)
         (ast.ast-field-def-cons
           (ast.ast-field-def-id
-            (ci.intern-generated-name "fd")
+            (ci.intern-syntax-id-from-raw (ci.intern-generated-name "fd"))
             (ast.AstType.I64)
             (ast.ast-field-cleanup-fn-id
               (ci.intern-syntax-id-from-raw

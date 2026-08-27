@@ -2603,7 +2603,9 @@
         (ctfe-reflect-field-list-from-fields-into
           fields
           (+ index 1)
-          (ctfe-reflect-field-list-push out (CtfeReflectField.Field name ty)))])))
+          (ctfe-reflect-field-list-push
+            out
+            (CtfeReflectField.Field (ci.intern-syntax-id-value name) ty)))])))
 
 (define (ctfe-reflect-field-list-from-fields [fields : ast.AstFieldDefList]) : CtfeReflectFieldList
   (ctfe-reflect-field-list-from-fields-into
@@ -17634,12 +17636,12 @@
     [fields : ast.AstFieldDefList
       (ast.ast-field-def-cons
         (ast.AstFieldDef.Def
-          cbi.compiler-builtin-id-fix-id
+          (ci.intern-syntax-id-from-raw cbi.compiler-builtin-id-fix-id)
           (ast.AstType.I64)
           (ast.AstFieldCleanup.No))
         (ast.ast-field-def-cons
           (ast.AstFieldDef.Def
-            cbi.compiler-builtin-id-fix-label
+            (ci.intern-syntax-id-from-raw cbi.compiler-builtin-id-fix-label)
             (ast.AstType.String)
             (ast.AstFieldCleanup.No))
           (ast.ast-field-def-list-new)))]

@@ -5791,7 +5791,9 @@
         (lint-copy-on-update-field-names-at
           fields
           (+ index 1)
-          (lint-name-set-add names (ci.intern-str name)))])))
+          (lint-name-set-add
+            names
+            (ci.intern-str (ci.intern-syntax-id-value name))))])))
 
 (define (lint-copy-on-update-add-struct
   [name : i64]

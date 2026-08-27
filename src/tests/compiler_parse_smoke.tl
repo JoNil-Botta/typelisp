@@ -932,7 +932,9 @@
                   0
                   (ast.ast-field-def-fallback))
                   [(ast.AstFieldDef.Def field _ _)
-                    (compiler-parse-test-name-id? field "parsed-field")]))]
+                    (compiler-parse-test-name-id?
+                      (ci.intern-syntax-id-value field)
+                      "parsed-field")]))]
             [_ false])
           (match (ast.ast-decl-list-get (& decls) 2 (ast.ast-decl-fallback))
             [(ast.AstDecl.DefFn decl-meta name params ret _ _)

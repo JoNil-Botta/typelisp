@@ -1,9 +1,8 @@
 ;; A nested shared child over dynamic storage releases the owner before growth.
-(import stdlib.array)
 
 (define (main) : i64
   (let
-    [items : (__tl_dyn-array i64) (array.make-array i64 1)]
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     (begin
       (set! (array-ref items 0) 7)
       (let

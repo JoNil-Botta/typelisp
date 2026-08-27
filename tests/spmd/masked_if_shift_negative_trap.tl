@@ -1,12 +1,11 @@
 ;; #5365: one active negative i64 count must use tl_shift_abort (exit 129).
-(import stdlib.array)
 
 (define (main) : i64
   (let
     [n : i64 13]
-    [xs : (__tl_dyn-array i64) (array.make-array i64 n)]
-    [counts : (__tl_dyn-array i64) (array.make-array i64 n)]
-    [out : (__tl_dyn-array i64) (array.make-array i64 n)]
+    [xs : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+    [counts : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+    [out : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     [i : i64 0]
     (begin
       (while (< i n)

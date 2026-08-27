@@ -1,4 +1,3 @@
-(import stdlib.array)
 (import stdlib.byte_buf_core)
 (import stdlib.string)
 (import stdlib.test)
@@ -17,7 +16,7 @@
   (let
     [buf : byte_buf_core.ByteBufBuilder
       (byte_buf_core.byte-buf-builder-with-capacity 2)]
-    [src : (__tl_dyn-array u8) (array.make-array u8 4)]
+    [src : (__tl_dyn-array u8) (__tl_make-array u8 4)]
     (begin
       (test.assert-i64-eq
         (byte_buf_core.byte-buf-builder-len (& buf))

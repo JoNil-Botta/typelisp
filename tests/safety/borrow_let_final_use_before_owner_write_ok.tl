@@ -1,6 +1,5 @@
 ;: A mutable borrow can end after its last use in an ordered let initializer,
 ;: before the body reads the owner.
-(import stdlib.array)
 
 (define (main) : i64
   (let

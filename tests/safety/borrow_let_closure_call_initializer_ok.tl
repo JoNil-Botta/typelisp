@@ -1,6 +1,5 @@
 ;: A mutable-reference capture ends after the closure's final direct call in a
 ;: let initializer, before the body reads the owner.
-(import stdlib.array)
 
 (define (main) : i64
   (let

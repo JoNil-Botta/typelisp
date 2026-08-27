@@ -1,5 +1,4 @@
 ;; AVX2/AVX-512 varying while with f32 recurrence state and i32 lane counters.
-(import stdlib.array)
 
 (define (fill-recurrence
   [remaining : (&mut remaining (__tl_dyn-array i32))]
@@ -37,11 +36,11 @@
 (define (main) : i64
   (let
     [n : i64 19]
-    [remaining : (__tl_dyn-array i32) (array.make-array i32 n)]
-    [x-values : (__tl_dyn-array f32) (array.make-array f32 n)]
-    [y-values : (__tl_dyn-array f32) (array.make-array f32 n)]
-    [z-re : (__tl_dyn-array f32) (array.make-array f32 n)]
-    [z-im : (__tl_dyn-array f32) (array.make-array f32 n)]
+    [remaining : (__tl_dyn-array i32) (__tl_make-array i32 n)]
+    [x-values : (__tl_dyn-array f32) (__tl_make-array f32 n)]
+    [y-values : (__tl_dyn-array f32) (__tl_make-array f32 n)]
+    [z-re : (__tl_dyn-array f32) (__tl_make-array f32 n)]
+    [z-im : (__tl_dyn-array f32) (__tl_make-array f32 n)]
     [i : i64 0]
     [ok : bool true]
     (begin

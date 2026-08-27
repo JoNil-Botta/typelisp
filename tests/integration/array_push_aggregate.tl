@@ -2,7 +2,6 @@
 ;; struct element byte-copies the whole element into the correctly-strided slot
 ;; instead of truncating to 8 bytes / striding by 8. main returns 42 only when
 ;; both pushed structs read back through array-ref with their fields intact.
-(import stdlib.array)
 
 (defstruct P
   (x i64)
@@ -10,7 +9,7 @@
 
 (define (main) : i64
   (let
-    [a : (__tl_dyn-array P) (array.make-array P 0)]
+    [a : (__tl_dyn-array P) (__tl_make-array P 0)]
     (begin
       (__tl_array-push! a (P 30 5))
       (__tl_array-push! a (P 100 7))

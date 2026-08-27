@@ -16,7 +16,6 @@
 ;; because that arm is unreachable for positive `items` entries. `len` is taken
 ;; from the process argument count so no size folds and the guard is a real run
 ;; time decision.
-(import stdlib.array)
 (import stdlib.io)
 
 (define (walk
@@ -52,8 +51,8 @@
 (define (main) : i64
   (let
     [len : i64 (+ 8 (io.arg-count))]
-    [items (array.make-array i64 len)]
-    [other (array.make-array i64 len)]
+    [items (__tl_make-array i64 len)]
+    [other (__tl_make-array i64 len)]
     (begin
       (fill-ones (&mut items) len)
       (if (and

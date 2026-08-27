@@ -1,5 +1,4 @@
 ;; lsp_vector_families.tl - vector-backed LSP state collections.
-(import stdlib.array)
 (import stdlib.vector)
 (import compiler_semantic_index)
 
@@ -208,7 +207,7 @@
   (len i64))
 
 (define (lsp-call-frames-new) : LspCallFrames
-  (LspCallFrames (array.make-array LspCallFrame 0) 0))
+  (LspCallFrames (__tl_make-array LspCallFrame 0) 0))
 
 (define (lsp-call-frames-len [frames : (& frames LspCallFrames)]) : i64
   frames.len)
@@ -248,7 +247,7 @@
         4
         (* old-cap 2))]
     [bigger : (__tl_dyn-array LspCallFrame)
-      (array.make-array LspCallFrame new-cap)]
+      (__tl_make-array LspCallFrame new-cap)]
     (begin
       (lsp-call-frames-copy-range! (&mut bigger) (& frames.slots) frames.len)
       (set! frames.slots bigger))))
@@ -272,7 +271,7 @@
   (set! frames.len 0))
 
 (define (lsp-fold-ranges-new) : LspFoldRanges
-  (LspFoldRanges (array.make-array LspFoldRange 0) 0))
+  (LspFoldRanges (__tl_make-array LspFoldRange 0) 0))
 
 (define (lsp-fold-ranges-len [folds : (& folds LspFoldRanges)]) : i64
   folds.len)
@@ -312,7 +311,7 @@
         4
         (* old-cap 2))]
     [bigger : (__tl_dyn-array LspFoldRange)
-      (array.make-array LspFoldRange new-cap)]
+      (__tl_make-array LspFoldRange new-cap)]
     (begin
       (lsp-fold-ranges-copy-range! (&mut bigger) (& folds.slots) 0 folds.len)
       (set! folds.slots bigger))))

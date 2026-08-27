@@ -11,7 +11,6 @@
 (import compiler_ast_types)
 (import compiler_ctfe)
 (import compiler_intern as ci)
-(import stdlib.array)
 (import stdlib.arena)
 (import stdlib.io)
 (import stdlib.str_cat)
@@ -123,7 +122,7 @@
           (embedded-verify-operand-node
             (compiler_ast_types.ast-node-pool-context-shared-view (& pools)))]
         [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-          (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
+          (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
         (begin
           (set!
             (array-ref operands 0)
@@ -143,7 +142,7 @@
                 (& loaded)
                 "stdlib.array/length"
                 embedded-verify-cookie
-                (array.make-array i64 0)
+                (__tl_make-array i64 0)
                 0)
                 [(tlci_loader.ResultTlciMacroDispatch.Err _) false]
                 [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
@@ -174,7 +173,7 @@
           (embedded-verify-operand-node
             (compiler_ast_types.ast-node-pool-context-shared-view (& pools)))]
         [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-          (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
+          (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
         (begin
           (set!
             (array-ref operands 0)
@@ -194,7 +193,7 @@
                 (& loaded)
                 "stdlib.array/length"
                 embedded-verify-cookie
-                (array.make-array i64 0)
+                (__tl_make-array i64 0)
                 0)
                 [(tlci_loader.ResultTlciMacroDispatch.Err _) false]
                 [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)

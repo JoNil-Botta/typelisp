@@ -1,7 +1,6 @@
 ;; Packed i8/u8 multiplication corpus (#6684). The cases span sub-gang,
 ;; exact-gang, multi-gang, and tail lengths in AVX2 and AVX-512 modes. Scalar
 ;; reference loops cover the boundary bit patterns 00, 01, 7f, 80, and ff.
-(import stdlib.array)
 
 (define (i8-left [i : i64]) : i8
   (match (% i 8)
@@ -309,31 +308,31 @@
 
 (define (run-case [n : i64]) : bool
   (let
-    [a : (__tl_dyn-array i8) (array.make-array i8 n)]
-    [b : (__tl_dyn-array i8) (array.make-array i8 n)]
-    [c : (__tl_dyn-array i8) (array.make-array i8 n)]
-    [ua : (__tl_dyn-array u8) (array.make-array u8 n)]
-    [ub : (__tl_dyn-array u8) (array.make-array u8 n)]
-    [i8-got : (__tl_dyn-array i8) (array.make-array i8 n)]
-    [i8-want : (__tl_dyn-array i8) (array.make-array i8 n)]
-    [u8-got : (__tl_dyn-array u8) (array.make-array u8 n)]
-    [u8-want : (__tl_dyn-array u8) (array.make-array u8 n)]
-    [if-got : (__tl_dyn-array i8) (array.make-array i8 n)]
-    [if-want : (__tl_dyn-array i8) (array.make-array i8 n)]
-    [match-got : (__tl_dyn-array i8) (array.make-array i8 n)]
-    [match-want : (__tl_dyn-array i8) (array.make-array i8 n)]
-    [u8-if-got : (__tl_dyn-array u8) (array.make-array u8 n)]
-    [u8-if-want : (__tl_dyn-array u8) (array.make-array u8 n)]
-    [u8-match-got : (__tl_dyn-array u8) (array.make-array u8 n)]
-    [u8-match-want : (__tl_dyn-array u8) (array.make-array u8 n)]
-    [remaining : (__tl_dyn-array i8) (array.make-array i8 n)]
-    [remaining-want : (__tl_dyn-array i8) (array.make-array i8 n)]
-    [while-got : (__tl_dyn-array i8) (array.make-array i8 n)]
-    [while-want : (__tl_dyn-array i8) (array.make-array i8 n)]
-    [u8-remaining : (__tl_dyn-array u8) (array.make-array u8 n)]
-    [u8-remaining-want : (__tl_dyn-array u8) (array.make-array u8 n)]
-    [u8-while-got : (__tl_dyn-array u8) (array.make-array u8 n)]
-    [u8-while-want : (__tl_dyn-array u8) (array.make-array u8 n)]
+    [a : (__tl_dyn-array i8) (__tl_make-array i8 n)]
+    [b : (__tl_dyn-array i8) (__tl_make-array i8 n)]
+    [c : (__tl_dyn-array i8) (__tl_make-array i8 n)]
+    [ua : (__tl_dyn-array u8) (__tl_make-array u8 n)]
+    [ub : (__tl_dyn-array u8) (__tl_make-array u8 n)]
+    [i8-got : (__tl_dyn-array i8) (__tl_make-array i8 n)]
+    [i8-want : (__tl_dyn-array i8) (__tl_make-array i8 n)]
+    [u8-got : (__tl_dyn-array u8) (__tl_make-array u8 n)]
+    [u8-want : (__tl_dyn-array u8) (__tl_make-array u8 n)]
+    [if-got : (__tl_dyn-array i8) (__tl_make-array i8 n)]
+    [if-want : (__tl_dyn-array i8) (__tl_make-array i8 n)]
+    [match-got : (__tl_dyn-array i8) (__tl_make-array i8 n)]
+    [match-want : (__tl_dyn-array i8) (__tl_make-array i8 n)]
+    [u8-if-got : (__tl_dyn-array u8) (__tl_make-array u8 n)]
+    [u8-if-want : (__tl_dyn-array u8) (__tl_make-array u8 n)]
+    [u8-match-got : (__tl_dyn-array u8) (__tl_make-array u8 n)]
+    [u8-match-want : (__tl_dyn-array u8) (__tl_make-array u8 n)]
+    [remaining : (__tl_dyn-array i8) (__tl_make-array i8 n)]
+    [remaining-want : (__tl_dyn-array i8) (__tl_make-array i8 n)]
+    [while-got : (__tl_dyn-array i8) (__tl_make-array i8 n)]
+    [while-want : (__tl_dyn-array i8) (__tl_make-array i8 n)]
+    [u8-remaining : (__tl_dyn-array u8) (__tl_make-array u8 n)]
+    [u8-remaining-want : (__tl_dyn-array u8) (__tl_make-array u8 n)]
+    [u8-while-got : (__tl_dyn-array u8) (__tl_make-array u8 n)]
+    [u8-while-want : (__tl_dyn-array u8) (__tl_make-array u8 n)]
     [i : i64 0]
     (begin
       (init (&mut a) (&mut b) (&mut c) (&mut ua) (&mut ub) n)

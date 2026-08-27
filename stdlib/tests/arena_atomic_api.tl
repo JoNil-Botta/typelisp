@@ -1,4 +1,3 @@
-(import stdlib.array)
 (import stdlib.arena)
 (import stdlib.thread)
 
@@ -69,7 +68,7 @@
     (< iteration arena-atomic-allocations-per-worker)
     (let
       [length : i64 (arena-atomic-allocation-length worker iteration)]
-      [items : (__tl_dyn-array i64) (array.make-array i64 length)]
+      [items : (__tl_dyn-array i64) (__tl_make-array i64 length)]
       [slot : i64 (arena-atomic-publication-slot worker iteration)]
       (begin
         (set!
@@ -298,10 +297,10 @@
   (let
     [owner : arena.Arena (arena.make-atomic)]
     [published-addresses : (__tl_dyn-array i64)
-      (array.make-array i64 arena-atomic-publication-count)]
+      (__tl_make-array i64 arena-atomic-publication-count)]
     [published-lengths : (__tl_dyn-array i64)
-      (array.make-array i64 arena-atomic-publication-count)]
-    [start-gate : (__tl_dyn-array i64) (array.make-array i64 1)]
+      (__tl_make-array i64 arena-atomic-publication-count)]
+    [start-gate : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     [start-gate-address : i64 (arena-atomic-array-i64-addr start-gate)]
     [_ : unit (arena-atomic-raw-store! start-gate-address 0)]
     [result : i64

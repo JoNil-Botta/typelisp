@@ -4,7 +4,6 @@
 ;; images, and this module also assembles the focused dispatch proof used by
 ;; the loader smoke.
 (import stdlib.byte_buf_core)
-(import stdlib.array)
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
@@ -1689,9 +1688,9 @@
     (if (= count 0)
       (ResultTlciAuxBytes.Ok (tlci-copy-bytes base))
       (let
-        [offsets : (__tl_dyn-array i64) (array.make-array i64 count)]
-        [lengths : (__tl_dyn-array i64) (array.make-array i64 count)]
-        [hashes : (__tl_dyn-array i64) (array.make-array i64 count)]
+        [offsets : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+        [lengths : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+        [hashes : (__tl_dyn-array i64) (__tl_make-array i64 count)]
         [out : byte_buf_core.ByteBufBuilder
           (byte_buf_core.byte-buf-builder-new)]
         [index : i64 0]
@@ -3614,8 +3613,8 @@
     0
     0
     8192
-    (array.make-array String 0)
-    (array.make-array i64 0)
+    (__tl_make-array String 0)
+    (__tl_make-array i64 0)
     0))
 
 (define (tlci-test-image-registration) : TlciImageRegistration
@@ -3692,8 +3691,8 @@
         0
         0
         8192
-        (array.make-array String 0)
-        (array.make-array i64 0)
+        (__tl_make-array String 0)
+        (__tl_make-array i64 0)
         0))
       [(ResultTlciHostAbi.Ok) true]
       [(ResultTlciHostAbi.Err _) false])
@@ -3720,8 +3719,8 @@
           0
           1
           1
-          (array.make-array String 0)
-          (array.make-array i64 0)
+          (__tl_make-array String 0)
+          (__tl_make-array i64 0)
           0))
       "tlci host ABI: bad host callback table magic")
     (tlci-test-host-abi-rejects?
@@ -3735,8 +3734,8 @@
           0
           1
           1
-          (array.make-array String 0)
-          (array.make-array i64 0)
+          (__tl_make-array String 0)
+          (__tl_make-array i64 0)
           0))
       "tlci host ABI: unsupported callback ABI version 3")
     (tlci-test-host-abi-rejects?
@@ -3750,8 +3749,8 @@
           0
           1
           1
-          (array.make-array String 0)
-          (array.make-array i64 0)
+          (__tl_make-array String 0)
+          (__tl_make-array i64 0)
           0))
       "tlci host ABI: host callback table byte-size is smaller than v2")
     (tlci-test-host-abi-rejects?
@@ -3765,8 +3764,8 @@
           0
           0
           1
-          (array.make-array String 0)
-          (array.make-array i64 0)
+          (__tl_make-array String 0)
+          (__tl_make-array i64 0)
           0))
       "tlci host ABI: host callback table reserved0 must be zero")
     (tlci-test-host-abi-rejects?
@@ -3780,8 +3779,8 @@
           0
           1
           1
-          (array.make-array String 0)
-          (array.make-array i64 0)
+          (__tl_make-array String 0)
+          (__tl_make-array i64 0)
           0))
       "tlci host ABI: host callback table reserved2 must be zero")
     (tlci-test-host-abi-rejects?
@@ -3795,8 +3794,8 @@
           0
           0
           0
-          (array.make-array String 0)
-          (array.make-array i64 0)
+          (__tl_make-array String 0)
+          (__tl_make-array i64 0)
           0))
       "tlci host ABI: host abort callback must be nonzero")
     (tlci-test-host-abi-rejects?
@@ -4427,7 +4426,7 @@
     [identity : (__tl_dyn-array u8) (tlci-string->bytes "identity")]
     [ast : (__tl_dyn-array u8) (tlci-string->bytes "ast")]
     [sections : (__tl_dyn-array TlciAuxSection)
-      (array.make-array TlciAuxSection 2)]
+      (__tl_make-array TlciAuxSection 2)]
     (begin
       (set!
         (array-ref sections 0)
@@ -4461,7 +4460,7 @@
 (define (tlci-test-aux-corruption-rejected?) : bool
   (let
     [sections : (__tl_dyn-array TlciAuxSection)
-      (array.make-array TlciAuxSection 1)]
+      (__tl_make-array TlciAuxSection 1)]
     (begin
       (set!
         (array-ref sections 0)
@@ -4488,9 +4487,9 @@
 (define (tlci-test-aux-directory-shapes-ok?) : bool
   (let
     [sections : (__tl_dyn-array TlciAuxSection)
-      (array.make-array TlciAuxSection 2)]
+      (__tl_make-array TlciAuxSection 2)]
     [duplicates : (__tl_dyn-array TlciAuxSection)
-      (array.make-array TlciAuxSection 2)]
+      (__tl_make-array TlciAuxSection 2)]
     [first : (__tl_dyn-array u8) (tlci-string->bytes "first")]
     [unknown : (__tl_dyn-array u8) (tlci-string->bytes "unknown")]
     (begin
@@ -4601,7 +4600,7 @@
 (define (tlci-test-package-source-binding-admission-ok?) : bool
   (let
     [sections : (__tl_dyn-array TlciAuxSection)
-      (array.make-array TlciAuxSection 1)]
+      (__tl_make-array TlciAuxSection 1)]
     [unsupported : (__tl_dyn-array u8) (tlci-string->bytes "future")]
     [short : (__tl_dyn-array u8) (__tl_make-array u8 7)]
     [zero : (__tl_dyn-array u8) (__tl_make-array u8 8)]

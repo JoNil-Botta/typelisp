@@ -4,7 +4,6 @@
 ;# and full conversion surface from `stdlib.byte_buf`. Compiler-hot modules that
 ;# only need builder-style byte accumulation can import this small module without
 ;# pulling the full public owner/view API.
-(import stdlib.array)
 (import stdlib.string)
 
 ;: Append-only owned binary byte buffer. Only the prefix `[0, len)` is live.
@@ -51,7 +50,7 @@
       (if (< capacity 1)
         1
         capacity)]
-    (ByteBufBuilder (array.make-array u8 cap) 0)))
+    (ByteBufBuilder (__tl_make-array u8 cap) 0)))
 
 ;: Create an empty buffer with a small default capacity.
 (define (byte-buf-builder-new) : ByteBufBuilder
@@ -95,7 +94,7 @@
         (if (< doubled min-capacity)
           min-capacity
           doubled)]
-      [bigger : (__tl_dyn-array u8) (array.make-array u8 new-capacity)]
+      [bigger : (__tl_dyn-array u8) (__tl_make-array u8 new-capacity)]
       (begin
         (byte-buf-builder-copy-array-range-into
           (&mut bigger)
@@ -198,7 +197,7 @@
   (begin
     (byte-buf-builder-check-range (byte-buf-builder-len buf) start count)
     (let
-      [out : (__tl_dyn-array u8) (array.make-array u8 count)]
+      [out : (__tl_dyn-array u8) (__tl_make-array u8 count)]
       (begin
         (byte-buf-builder-copy-array-range-into
           (&mut out)

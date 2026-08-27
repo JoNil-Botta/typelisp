@@ -1,4 +1,3 @@
-(import stdlib.array)
 (import stdlib.sync)
 (import (sync.channel i64) as channel_i64)
 (import stdlib.thread)
@@ -24,7 +23,7 @@
 (define (sync-integration-channel-from-ctx [ctx : i64] [offset : i64]) : channel_i64.Channel
   (let
     [raw : (__tl_dyn-array i64)
-      (array.make-array i64 (channel_i64.raw-field-count))]
+      (__tl_make-array i64 (channel_i64.raw-field-count))]
     [i : i64 0]
     (begin
       (while (< i (channel_i64.raw-field-count))
@@ -136,9 +135,9 @@
 (define (sync-integration-run [channel : channel_i64.Channel]) : i64
   (let
     [ctx-a : (__tl_dyn-array i64)
-      (array.make-array i64 (+ (channel_i64.raw-field-count) 2))]
+      (__tl_make-array i64 (+ (channel_i64.raw-field-count) 2))]
     [ctx-b : (__tl_dyn-array i64)
-      (array.make-array i64 (+ (channel_i64.raw-field-count) 2))]
+      (__tl_make-array i64 (+ (channel_i64.raw-field-count) 2))]
     (begin
       (sync-integration-pack-context!
         (&mut ctx-a)

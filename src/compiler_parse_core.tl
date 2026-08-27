@@ -4,7 +4,6 @@
 ;; compile_smoke AST. It stays parser-only: the later selfhost passes consume
 ;; the parsed `AstProgram` for typechecking/lowering.
 (import stdlib.str_cat_runtime as str_cat)
-(import stdlib.array)
 (import stdlib.io)
 (import compiler_intern as ci)
 (import compiler_ast_types as ast)
@@ -1486,11 +1485,11 @@
 (define (compiler-parse-state-new-from-owner
   [owner : (__tl_dyn-array ci.InternCompatState)]) : CompilerParseState
   (let
-    [control : (__tl_dyn-array i64) (array.make-array i64 10)]
-    [keys : (__tl_dyn-array i64) (array.make-array i64 512)]
-    [tags : (__tl_dyn-array i64) (array.make-array i64 512)]
+    [control : (__tl_dyn-array i64) (__tl_make-array i64 10)]
+    [keys : (__tl_dyn-array i64) (__tl_make-array i64 512)]
+    [tags : (__tl_dyn-array i64) (__tl_make-array i64 512)]
     [cache : (__tl_dyn-array sym_i64_env.SymI64Env)
-      (array.make-array sym_i64_env.SymI64Env 1)]
+      (__tl_make-array sym_i64_env.SymI64Env 1)]
     (begin
       (set! (array-ref cache 0) (sym_i64_env.sym-i64-empty))
       (set!
@@ -1518,13 +1517,13 @@
 
 (define (compiler-parse-state-new) : CompilerParseState
   (compiler-parse-state-new-from-owner
-    (array.make-array ci.InternCompatState 0)))
+    (__tl_make-array ci.InternCompatState 0)))
 
 (define (compiler-parse-state-new-with-intern-state
   [intern-state : ci.InternCompatState]) : CompilerParseState
   (let
     [owner : (__tl_dyn-array ci.InternCompatState)
-      (array.make-array ci.InternCompatState 1)]
+      (__tl_make-array ci.InternCompatState 1)]
     (begin
       (set! (array-ref owner 0) intern-state)
       (compiler-parse-state-new-from-owner owner))))
@@ -8887,7 +8886,7 @@
         "parse: struct-set/struct-set! was removed; use (set! value.field replacement)")]
     [(= tag (compiler-parse-tag-expr-retired-make-array))
       (ResultAstExpr.Err
-        "parse: bare make-array was removed; use stdlib.vector or qualified stdlib.array.make-array during the transition")]
+        "parse: bare make-array was removed; use stdlib.vector or qualified stdlib.__tl_make-array during the transition")]
     [(= tag (compiler-parse-tag-expr-retired-array-push))
       (ResultAstExpr.Err
         "parse: bare array-push! was removed; use a vector mutator or qualified stdlib.array.push! during the transition")]
@@ -12284,7 +12283,7 @@
     (reader.sexpr-node-pool-reset!)
     (compiler-parse-semantic-origin-capture-end!)
     (let
-      [cur : (__tl_dyn-array i64) (array.make-array i64 1)]
+      [cur : (__tl_dyn-array i64) (__tl_make-array i64 1)]
       [base-dispatch : sym_i64_env.SymI64Env
         (parse-ast-program-dispatch-with-cfg cfgs)]
       [base-control : i64
@@ -12397,7 +12396,7 @@
       (match (lexer.spanned-result src)
         [(lexer.ResultSpannedTokens.Ok toks)
           (let
-            [cur : (__tl_dyn-array i64) (array.make-array i64 1)]
+            [cur : (__tl_dyn-array i64) (__tl_make-array i64 1)]
             [dispatch : sym_i64_env.SymI64Env (parse-ast-program-dispatch)]
             (begin
               (set! (array-ref cur 0) 0)
@@ -12663,7 +12662,7 @@
   (begin
     (reader.sexpr-node-pool-reset!)
     (let
-      [cur : (__tl_dyn-array i64) (array.make-array i64 1)]
+      [cur : (__tl_dyn-array i64) (__tl_make-array i64 1)]
       [base-dispatch : sym_i64_env.SymI64Env
         (parse-ast-program-dispatch-with-cfg cfgs)]
       [base-control : i64
@@ -12882,7 +12881,7 @@
   (begin
     (reader.sexpr-node-pool-reset!)
     (let
-      [cur : (__tl_dyn-array i64) (array.make-array i64 1)]
+      [cur : (__tl_dyn-array i64) (__tl_make-array i64 1)]
       [base-dispatch : sym_i64_env.SymI64Env
         (parse-ast-program-dispatch-with-cfg cfgs)]
       [base-control : i64
@@ -15107,7 +15106,7 @@
       "parse: unsized (Array T) was removed; use (Array T N), stdlib.vector, or a borrowed Slice")
     (compiler-parse-error-ok?
       "(define (main) : i64 (array-length (make-array i64 1)))"
-      "parse: bare make-array was removed; use stdlib.vector or qualified stdlib.array.make-array during the transition")
+      "parse: bare make-array was removed; use stdlib.vector or qualified stdlib.__tl_make-array during the transition")
     (compiler-parse-error-ok?
       "(define (main [items : (__tl_dyn-array i64)]) : unit (array-push! items 1))"
       "parse: bare array-push! was removed; use a vector mutator or qualified stdlib.array.push! during the transition")

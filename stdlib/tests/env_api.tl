@@ -1,4 +1,3 @@
-(import stdlib.array)
 (import stdlib.env)
 (import stdlib.io)
 (import stdlib.string)
@@ -25,7 +24,7 @@
 ;: Construct an owned three-byte string containing an interior NUL.
 (define (env-api-string-with-nul) : String
   (let
-    [bytes : (__tl_dyn-array u8) (array.make-array u8 3)]
+    [bytes : (__tl_dyn-array u8) (__tl_make-array u8 3)]
     (begin
       (set! (array-ref bytes 0) (cast 'a' : u8))
       (set! (array-ref bytes 1) (cast 0 : u8))

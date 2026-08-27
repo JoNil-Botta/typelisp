@@ -30,7 +30,6 @@
 (import compiler_ast_types)
 (import compiler_ctfe)
 (import compiler_intern as ci)
-(import stdlib.array)
 (import stdlib.arena)
 (import stdlib.byte_buf)
 (import stdlib.io)
@@ -189,7 +188,7 @@
   [progress-path : String]
   [failed-at : (__tl_dyn-array i64)]) : i64
   (let
-    [canaries : (__tl_dyn-array i64) (array.make-array i64 2)]
+    [canaries : (__tl_dyn-array i64) (__tl_make-array i64 2)]
     [pools : compiler_ast_types.AstNodePoolContext
       (compiler_ast_types.ast-node-pool-context-capture-active)]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
@@ -224,7 +223,7 @@
             loaded
             (stress-global-shared-view stress-tier1-identity)
             stress-cookie
-            (array.make-array i64 0)
+            (__tl_make-array i64 0)
             0)
             [(tlci_loader.ResultTlciMacroDispatch.Err _)
               (set! outcome stress-status-dispatch-error)]
@@ -397,14 +396,14 @@
   [progress-path : String]
   [failed-at : (__tl_dyn-array i64)]) : i64
   (let
-    [canaries : (__tl_dyn-array i64) (array.make-array i64 2)]
+    [canaries : (__tl_dyn-array i64) (__tl_make-array i64 2)]
     [pools : compiler_ast_types.AstNodePoolContext
       (compiler_ast_types.ast-node-pool-context-capture-active)]
     [operand-node : i64
       (stress-operand-node
         (compiler_ast_types.ast-node-pool-context-shared-view (& pools)))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-      (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
     [detail : (__tl_dyn-array i64) (__tl_make-array stress-status-ok)]
     [i : i64 0]
     [outcome : i64 stress-status-ok]
@@ -440,7 +439,7 @@
             loaded
             (stress-global-shared-view stress-native-identity)
             stress-cookie
-            (array.make-array i64 0)
+            (__tl_make-array i64 0)
             0)
             [(tlci_loader.ResultTlciMacroDispatch.Err _)
               (set! outcome stress-status-dispatch-error)]
@@ -499,7 +498,7 @@
   [progress-path : String]
   [failed-at : (__tl_dyn-array i64)]) : i64
   (let
-    [canaries : (__tl_dyn-array i64) (array.make-array i64 2)]
+    [canaries : (__tl_dyn-array i64) (__tl_make-array i64 2)]
     [i : i64 0]
     [outcome : i64 stress-status-ok]
     (begin
@@ -513,7 +512,7 @@
             (stress-operand-node
               (compiler_ast_types.ast-node-pool-context-shared-view (& pools)))]
           [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-            (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
+            (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
           (begin
             (when
               (= (% i 1000) 0)
@@ -540,7 +539,7 @@
               loaded
               (stress-global-shared-view stress-native-identity)
               stress-cookie
-              (array.make-array i64 0)
+              (__tl_make-array i64 0)
               0)
               [(tlci_loader.ResultTlciMacroDispatch.Err _)
                 (set! outcome stress-status-dispatch-error)]

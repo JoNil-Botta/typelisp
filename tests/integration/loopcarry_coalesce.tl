@@ -1,4 +1,3 @@
-(import stdlib.array)
 (import stdlib.io)
 
 ;; FORCING / CORRECTNESS test for LLVM-style loop-carry phi coalescing -- mirrors
@@ -55,7 +54,7 @@
   (let
     [s : i64 (io.arg-count)]
     [n : i64 1000]
-    [xs : (__tl_dyn-array i64) (array.make-array i64 1000)]
+    [xs : (__tl_dyn-array i64) (__tl_make-array i64 1000)]
     [i : i64 0]
     (begin
       (while (< i n)

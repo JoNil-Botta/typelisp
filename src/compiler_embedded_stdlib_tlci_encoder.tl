@@ -1,7 +1,6 @@
 ;; Deterministic build-time encoder for the embedded stdlib TLCI envelope.
 ;; This module is used by the payload builder and is not linked into `typelisp`.
 (import compiler_ctfe as ctfe)
-(import stdlib.array)
 (import stdlib.byte_buf_core)
 (import stdlib.string)
 
@@ -124,15 +123,15 @@
               (let
                 [token-start : i64 (+ index 1)]
                 [main : (__tl_dyn-array i64)
-                  (array.make-array
+                  (__tl_make-array
                     i64
                     (compiler-embedded-stdlib-tlci-encoder-main-symbols))]
                 [distance : (__tl_dyn-array i64)
-                  (array.make-array
+                  (__tl_make-array
                     i64
                     (compiler-embedded-stdlib-tlci-encoder-distance-symbols))]
                 [length : (__tl_dyn-array i64)
-                  (array.make-array
+                  (__tl_make-array
                     i64
                     (compiler-embedded-stdlib-tlci-encoder-length-symbols))]
                 [token-index : i64 token-start]
@@ -321,14 +320,14 @@
   [lengths : (__tl_dyn-array i64)]) : CompilerEmbeddedStdlibTlciEncoderCodes
   (let
     [counts : (__tl_dyn-array i64)
-      (array.make-array
+      (__tl_make-array
         i64
         (+ (compiler-embedded-stdlib-tlci-encoder-max-code-bits) 1))]
     [next : (__tl_dyn-array i64)
-      (array.make-array
+      (__tl_make-array
         i64
         (+ (compiler-embedded-stdlib-tlci-encoder-max-code-bits) 1))]
-    [codes : (__tl_dyn-array i64) (array.make-array i64 (array-length lengths))]
+    [codes : (__tl_dyn-array i64) (__tl_make-array i64 (array-length lengths))]
     [symbol : i64 0]
     (begin
       (while (< symbol (array-length lengths))
@@ -365,14 +364,14 @@
   (let
     [alphabet-size : i64 (array-length frequencies)]
     [node-capacity : i64 (* alphabet-size 2)]
-    [weights : (__tl_dyn-array i64) (array.make-array i64 node-capacity)]
-    [minimums : (__tl_dyn-array i64) (array.make-array i64 node-capacity)]
-    [parents : (__tl_dyn-array i64) (array.make-array i64 node-capacity)]
+    [weights : (__tl_dyn-array i64) (__tl_make-array i64 node-capacity)]
+    [minimums : (__tl_dyn-array i64) (__tl_make-array i64 node-capacity)]
+    [parents : (__tl_dyn-array i64) (__tl_make-array i64 node-capacity)]
     [heap : CompilerEmbeddedStdlibTlciEncoderHeap
       (CompilerEmbeddedStdlibTlciEncoderHeap
-        (array.make-array i64 node-capacity)
+        (__tl_make-array i64 node-capacity)
         0)]
-    [lengths : (__tl_dyn-array i64) (array.make-array i64 alphabet-size)]
+    [lengths : (__tl_dyn-array i64) (__tl_make-array i64 alphabet-size)]
     [symbol : i64 0]
     [active : i64 0]
     [only : i64 -1]

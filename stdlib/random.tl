@@ -22,7 +22,6 @@
 ;# `(vector i64)` weighted-index helpers scan caller-owned storage directly. The
 ;# generator is MINSTD/Park-Miller with Schrage constants, so it avoids signed
 ;# `i64` overflow and remains portable across current TypeLisp targets.
-(import stdlib.array)
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.vector)
@@ -174,13 +173,13 @@
 
 ;: Return an empty weight list.
 (define (weight-list-empty) : RandomWeightList
-  (RandomWeightList (array.make-array i64 0) 0))
+  (RandomWeightList (__tl_make-array i64 0) 0))
 
 ;: Prepend `weight` to a weight list, copying `rest` into a right-sized array.
 (define (weight-list-cons [weight : i64] [rest : RandomWeightList]) : RandomWeightList
   (let
     [len : i64 rest.len]
-    [slots : (__tl_dyn-array i64) (array.make-array i64 (+ len 1))]
+    [slots : (__tl_dyn-array i64) (__tl_make-array i64 (+ len 1))]
     [source : (__tl_dyn-array i64) rest.slots]
     [index : i64 0]
     (begin
@@ -311,7 +310,7 @@
   (not windows)
   (define (linux-system-seed) : ResultSystemSeed
     (let
-      [seed : (__tl_dyn-array i64) (array.make-array i64 1)]
+      [seed : (__tl_dyn-array i64) (__tl_make-array i64 1)]
       [read-count : i64
         (linux-syscall-getrandom
           (unsafe
@@ -345,8 +344,8 @@
   windows
   (define (windows-system-seed) : ResultSystemSeed
     (let
-      [counter : (__tl_dyn-array i64) (array.make-array i64 1)]
-      [file-time : (__tl_dyn-array i64) (array.make-array i64 1)]
+      [counter : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+      [file-time : (__tl_dyn-array i64) (__tl_make-array i64 1)]
       [_counter-ok : i32
         (windows-query-performance-counter
           (unsafe

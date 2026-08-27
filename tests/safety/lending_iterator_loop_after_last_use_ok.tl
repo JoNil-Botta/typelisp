@@ -1,5 +1,4 @@
 ;: A lending iterator can advance again after its item dies in each loop body.
-(import stdlib.array)
 
 (defstruct Iter
   (:lifetimes source)
@@ -27,7 +26,7 @@
 
 (define (main) : unit
   (let
-    [items : (__tl_dyn-array i64) (array.make-array i64 1)]
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     [iter : (Iter items) (Iter (&mut items) 0)]
     [round : i64 0]
     (begin

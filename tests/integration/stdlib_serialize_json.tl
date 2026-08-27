@@ -1,6 +1,5 @@
 (import stdlib.json)
 (import stdlib.serialize)
-(import stdlib.array)
 (import stdlib.string)
 (import serialize_enum_fixture as enum_fixture)
 

@@ -1,4 +1,3 @@
-(import stdlib.array)
 
 ;; lint-allow: unused-import
 (import stdlib.string)
@@ -50,7 +49,7 @@
   (let
     [p : Pair (Pair 11 13)]
     [t : (Tuple i64 i64) (tuple 5 37)]
-    [items : (__tl_dyn-array i64) (array.make-array i64 3)]
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 3)]
     [text : String "borrow"]
     [nums : Numbers (Numbers 3 4)]
     [f : (-> (& p Pair) i64)

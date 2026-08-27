@@ -1,6 +1,5 @@
 ;; compiler_specialize.tl - Selfhost comptime function specialization.
 (import stdlib.str_cat_runtime as str_cat)
-(import stdlib.array)
 (import compiler_parse_core as parser)
 (import compiler_ast_types as ast)
 (import compiler_ctfe as ctfe)
@@ -150,12 +149,12 @@
     [expr-segment-bases : i64
       (ast.ast-node-pool-context-expr-segment-bases pools)]
     [records : (__tl_dyn-array SpecGeneratedSymbolRecords)
-      (array.make-array SpecGeneratedSymbolRecords 1)]
+      (__tl_make-array SpecGeneratedSymbolRecords 1)]
     (begin
       (set!
         (array-ref records 0)
         (SpecGeneratedSymbolRecords
-          (array.make-array SpecGeneratedSymbolRecord 0)
+          (__tl_make-array SpecGeneratedSymbolRecord 0)
           0))
       (cfg
         (any compile-profile test)
@@ -185,12 +184,12 @@
       [expr-segment-bases : i64
         (ast.ast-node-pool-context-expr-segment-bases (& pools))]
       [records : (__tl_dyn-array SpecGeneratedSymbolRecords)
-        (array.make-array SpecGeneratedSymbolRecords 1)]
+        (__tl_make-array SpecGeneratedSymbolRecords 1)]
       (begin
         (set!
           (array-ref records 0)
           (SpecGeneratedSymbolRecords
-            (array.make-array SpecGeneratedSymbolRecord 0)
+            (__tl_make-array SpecGeneratedSymbolRecord 0)
             0))
         (SpecOwnerContext
           (__tl_make-array pools)
@@ -214,7 +213,7 @@
   (let
     [count : i64 records.len]
     [bigger : (__tl_dyn-array SpecGeneratedSymbolRecord)
-      (array.make-array SpecGeneratedSymbolRecord (+ (* count 2) 8))]
+      (__tl_make-array SpecGeneratedSymbolRecord (+ (* count 2) 8))]
     (begin
       (spec-generated-symbol-records-copy-range
         (&mut bigger)
@@ -227,7 +226,7 @@
   [records : (&mut records SpecGeneratedSymbolRecords)]
   [item : SpecGeneratedSymbolRecord]) : unit
   (begin
-    (if (< records.len (array.length records.slots))
+    (if (< records.len (array-length records.slots))
       unit
       (spec-generated-symbol-records-grow! records))
     (let
@@ -546,7 +545,7 @@
       (ptr-offset (int->ptr subs.slots-address : (Ptr SpecTypeBinding)) index))))
 
 (define (spec-template-list-new) : SpecTemplateList
-  (SpecTemplateList (array.make-array SpecTemplate 0) 0))
+  (SpecTemplateList (__tl_make-array SpecTemplate 0) 0))
 
 (define (spec-template-list-copy-range
   [dst : (&mut dst (__tl_dyn-array SpecTemplate))]
@@ -564,7 +563,7 @@
   (let
     [count : i64 templates.len]
     [bigger : (__tl_dyn-array SpecTemplate)
-      (array.make-array SpecTemplate (+ (* count 2) 8))]
+      (__tl_make-array SpecTemplate (+ (* count 2) 8))]
     (begin
       (spec-template-list-copy-range (&mut bigger) (& templates.slots) 0 count)
       (set! templates.slots bigger))))
@@ -573,7 +572,7 @@
   [templates : (&mut templates SpecTemplateList)]
   [item : SpecTemplate]) : unit
   (begin
-    (if (< templates.len (array.length templates.slots))
+    (if (< templates.len (array-length templates.slots))
       unit
       (spec-template-list-grow templates))
     (let
@@ -583,13 +582,13 @@
         (set! templates.len (+ count 1))))))
 
 (define (spec-value-list-new) : SpecValueList
-  (SpecValueList (array.make-array ctfe.CompilerCtfeValue 0) 0))
+  (SpecValueList (__tl_make-array ctfe.CompilerCtfeValue 0) 0))
 
 (define (spec-value-cons [head : ctfe.CompilerCtfeValue] [rest : SpecValueList]) : SpecValueList
   (let
     [count : i64 rest.len]
     [slots : (__tl_dyn-array ctfe.CompilerCtfeValue)
-      (array.make-array ctfe.CompilerCtfeValue (+ count 1))]
+      (__tl_make-array ctfe.CompilerCtfeValue (+ count 1))]
     [at : i64 0]
     (begin
       (set! (array-ref slots 0) head)
@@ -600,7 +599,7 @@
       (SpecValueList slots (+ count 1)))))
 
 (define (spec-value-subst-new) : SpecValueSubst
-  (spec-value-subst-from-slots (array.make-array SpecValueBinding 0) 0))
+  (spec-value-subst-from-slots (__tl_make-array SpecValueBinding 0) 0))
 
 (define (spec-value-subst-cons
   [key-id : i64]
@@ -609,7 +608,7 @@
   (let
     [count : i64 rest.len]
     [slots : (__tl_dyn-array SpecValueBinding)
-      (array.make-array SpecValueBinding (+ count 1))]
+      (__tl_make-array SpecValueBinding (+ count 1))]
     [at : i64 0]
     (begin
       (set! (array-ref slots 0) (SpecValueBinding.Bind key-id value))
@@ -620,7 +619,7 @@
       (spec-value-subst-from-slots slots (+ count 1)))))
 
 (define (spec-type-subst-new) : SpecTypeSubst
-  (spec-type-subst-from-slots (array.make-array SpecTypeBinding 0) 0))
+  (spec-type-subst-from-slots (__tl_make-array SpecTypeBinding 0) 0))
 
 (define (spec-value-subst-shared-view [subs : (& subs SpecValueSubst)]) : SpecValueSubst
   (SpecValueSubst subs.slots-address subs.len))
@@ -635,7 +634,7 @@
   (let
     [count : i64 rest.len]
     [slots : (__tl_dyn-array SpecTypeBinding)
-      (array.make-array SpecTypeBinding (+ count 1))]
+      (__tl_make-array SpecTypeBinding (+ count 1))]
     [at : i64 0]
     (begin
       (set! (array-ref slots 0) (SpecTypeBinding.Bind key-id ty))
@@ -937,7 +936,7 @@
 (define (spec-template-shadow-fill-zero
   [slots : (&mut slots (__tl_dyn-array i64))]
   [index : i64]) : unit
-  (if (>= index (array.length slots))
+  (if (>= index (array-length slots))
     unit
     (begin
       (set! (array-ref slots index) 0)
@@ -960,19 +959,19 @@
 
 (define (spec-template-shadow-state-new [template-count : i64]) : SpecTemplateShadowState
   (let
-    [counts : (__tl_dyn-array i64) (array.make-array i64 template-count)]
+    [counts : (__tl_dyn-array i64) (__tl_make-array i64 template-count)]
     [cell : (__tl_dyn-array SpecTemplateShadowStateData)
-      (array.make-array SpecTemplateShadowStateData 1)]
+      (__tl_make-array SpecTemplateShadowStateData 1)]
     (begin
       (spec-template-shadow-fill-zero (&mut counts) 0)
       (set!
         (array-ref cell 0)
         (SpecTemplateShadowStateData
-          (array.make-array i64 8)
-          (array.make-array i64 8)
-          (array.make-array i64 8)
+          (__tl_make-array i64 8)
+          (__tl_make-array i64 8)
+          (__tl_make-array i64 8)
           counts
-          (array.make-array i64 8)
+          (__tl_make-array i64 8)
           0
           -1))
       (SpecTemplateShadowState
@@ -988,10 +987,10 @@
   [data : SpecTemplateShadowStateData]) : SpecTemplateShadowStateData
   (let
     [count : i64 data.len]
-    [next-capacity : i64 (+ (* (array.length data.slots) 2) 8)]
-    [next-slots : (__tl_dyn-array i64) (array.make-array i64 next-capacity)]
-    [next-parents : (__tl_dyn-array i64) (array.make-array i64 next-capacity)]
-    [next-depths : (__tl_dyn-array i64) (array.make-array i64 next-capacity)]
+    [next-capacity : i64 (+ (* (array-length data.slots) 2) 8)]
+    [next-slots : (__tl_dyn-array i64) (__tl_make-array i64 next-capacity)]
+    [next-parents : (__tl_dyn-array i64) (__tl_make-array i64 next-capacity)]
+    [next-depths : (__tl_dyn-array i64) (__tl_make-array i64 next-capacity)]
     (begin
       (spec-template-shadow-copy-range (&mut next-slots) (& data.slots) 0 count)
       (spec-template-shadow-copy-range
@@ -1018,7 +1017,7 @@
   [count : i64]) : SpecTemplateShadowStateData
   (let
     [next : (__tl_dyn-array i64)
-      (array.make-array i64 (+ (* (array.length data.scratch) 2) 8))]
+      (__tl_make-array i64 (+ (* (array-length data.scratch) 2) 8))]
     (begin
       (spec-template-shadow-copy-range (&mut next) (& data.scratch) 0 count)
       (SpecTemplateShadowStateData
@@ -1044,7 +1043,7 @@
   (let
     [data : SpecTemplateShadowStateData (spec-template-shadow-state-data state)]
     (begin
-      (if (< data.len (array.length data.slots))
+      (if (< data.len (array-length data.slots))
         unit
         (set! data (spec-template-shadow-state-grow-records data)))
       (let
@@ -1089,7 +1088,7 @@
               unit)
             (if (and (>= wanted-depth current-depth) (>= wanted 0))
               (begin
-                (if (< scratch-len (array.length data.scratch))
+                (if (< scratch-len (array-length data.scratch))
                   unit
                   (set!
                     data
@@ -1161,7 +1160,7 @@
   (let
     [count : i64 templates.len]
     [values : (__tl_dyn-array SpecMaybeTemplate)
-      (array.make-array SpecMaybeTemplate count)]
+      (__tl_make-array SpecMaybeTemplate count)]
     (begin
       (spec-template-values-fill-empty (&mut values) 0 count)
       (spec-template-env-new
@@ -2464,7 +2463,7 @@
   (let
     [capacity : i64 64]
     [decls : (__tl_dyn-array ast.AstDecl)
-      (array.make-array ast.AstDecl capacity)]
+      (__tl_make-array ast.AstDecl capacity)]
     (GenRegistry (spec_id_i64_map.with-capacity capacity) decls 0)))
 
 (define (gen-registry-structural-key-with-owner
@@ -2537,13 +2536,13 @@
     [old-index : spec_id_i64_map.Map registry.index]
     [old-decls : (__tl_dyn-array ast.AstDecl) registry.decls]
     [old-len : i64 registry.len]
-    [old-capacity : i64 (array.length old-decls)]
+    [old-capacity : i64 (array-length old-decls)]
     [new-capacity : i64
       (if (< old-capacity 1)
         1
         (* old-capacity 2))]
     [new-decls : (__tl_dyn-array ast.AstDecl)
-      (array.make-array ast.AstDecl new-capacity)]
+      (__tl_make-array ast.AstDecl new-capacity)]
     (begin
       (gen-registry-copy-decls
         (spec-array-address old-decls)
@@ -2558,7 +2557,7 @@
   [decl : ast.AstDecl]) : GenRegistry
   (let
     [ready : GenRegistry
-      (if (>= registry.len (array.length registry.decls))
+      (if (>= registry.len (array-length registry.decls))
         (gen-registry-grow registry)
         registry)]
     [slot : i64 ready.len]
@@ -4489,7 +4488,7 @@
     (spec-value-subst-shared-view subs)
     (let
       [slots : (__tl_dyn-array SpecValueBinding)
-        (array.make-array SpecValueBinding subs.len)]
+        (__tl_make-array SpecValueBinding subs.len)]
       [at : i64 0]
       [kept : i64 0]
       (begin
@@ -4603,7 +4602,7 @@
     (spec-type-subst-shared-view subs)
     (let
       [slots : (__tl_dyn-array SpecTypeBinding)
-        (array.make-array SpecTypeBinding subs.len)]
+        (__tl_make-array SpecTypeBinding subs.len)]
       [at : i64 0]
       [kept : i64 0]
       (begin
@@ -10246,7 +10245,7 @@
               (spec-template-env-shadow-state wide)).len
             64)
           (>
-            (array.length
+            (array-length
               (spec-template-shadow-state-data
                 (spec-template-env-shadow-state wide)).slots)
             8)
@@ -11113,7 +11112,7 @@
       (spec-owner-context-new
         (ast.ast-place-shared-view pools)
         (spec_ci.intern-global-shared-view intern-state))]
-    [handles : (__tl_dyn-array i64) (array.make-array i64 count)]
+    [handles : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [index : i64 0]
     [ok : bool true]
     (begin

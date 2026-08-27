@@ -1,4 +1,3 @@
-(import stdlib.array)
 
 ;; FORCING TEST for SCAV2 (backend descriptor-CSE of repeated global-handle
 ;; loads via the owner-map peephole).
@@ -18,7 +17,7 @@
 ;; inliner + TCO so the named body survives for the gate to inspect
 ;; (target/global-handle-gate.sh; FAILS pre-SCAV2 which emits two handle loads).
 (define gtab : (__tl_dyn-array i64)
-  (array.make-array i64 16))
+  (__tl_make-array i64 16))
 
 (define (probe [i : i64]) : i64
   (if (< i -999999)

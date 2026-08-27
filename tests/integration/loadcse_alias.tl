@@ -1,5 +1,4 @@
 (import stdlib.io)
-(import stdlib.array)
 
 ;; MUST-INVALIDATE stress for GAP4 (alias-granular load CSE / store-to-load
 ;; forwarding). Two handles that name the SAME array reach a function as
@@ -23,7 +22,7 @@
   (unsafe
     (AliasView
       (ptr-cast (__tl_array-data items) : (MutPtr i64))
-      (array.length items))))
+      (array-length items))))
 
 (define (alias-ref [items : AliasView] [index : i64]) : i64
   (unsafe
@@ -59,8 +58,8 @@
 (define (main) : i64
   (let
     [n : i64 (+ (io.arg-count) 5)]
-    [xs : (__tl_dyn-array i64) (array.make-array i64 2)]
-    [zs : (__tl_dyn-array i64) (array.make-array i64 (+ n 1))]
+    [xs : (__tl_dyn-array i64) (__tl_make-array i64 2)]
+    [zs : (__tl_dyn-array i64) (__tl_make-array i64 (+ n 1))]
     (begin
       (set! (array-ref xs 0) 10)
       (set! (array-ref xs 1) 20)

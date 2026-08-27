@@ -1,7 +1,6 @@
 ;; Raw thread ABI coverage passes private dynamic-array backing addresses
 ;; between workers. Safe owned thread results use the separate Vec-based
 ;; thread_safe_i64_vec integration fixture.
-(import stdlib.array)
 (import stdlib.thread)
 
 (defmacro (integration-array-i64-addr [items : Expr]) : i64
@@ -38,7 +37,7 @@
     (begin
       (while (< i integration-worker-iterations)
         (let
-          [buf : (__tl_dyn-array i64) (array.make-array i64 16)]
+          [buf : (__tl_dyn-array i64) (__tl_make-array i64 16)]
           (begin
             (set! (array-ref buf 0) (+ value i))
             (set! (array-ref buf 15) (+ (array-ref buf 0) 7))
@@ -112,14 +111,14 @@
 
 (define (main) : i64
   (let
-    [out-a : (__tl_dyn-array i64) (array.make-array i64 1)]
-    [out-b : (__tl_dyn-array i64) (array.make-array i64 1)]
-    [out-c : (__tl_dyn-array i64) (array.make-array i64 1)]
-    [out-d : (__tl_dyn-array i64) (array.make-array i64 1)]
-    [ctx-a : (__tl_dyn-array i64) (array.make-array i64 2)]
-    [ctx-b : (__tl_dyn-array i64) (array.make-array i64 2)]
-    [ctx-c : (__tl_dyn-array i64) (array.make-array i64 2)]
-    [ctx-d : (__tl_dyn-array i64) (array.make-array i64 2)]
+    [out-a : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    [out-b : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    [out-c : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    [out-d : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    [ctx-a : (__tl_dyn-array i64) (__tl_make-array i64 2)]
+    [ctx-b : (__tl_dyn-array i64) (__tl_make-array i64 2)]
+    [ctx-c : (__tl_dyn-array i64) (__tl_make-array i64 2)]
+    [ctx-d : (__tl_dyn-array i64) (__tl_make-array i64 2)]
     (begin
       (set! (array-ref ctx-a 0) (integration-array-i64-addr out-a))
       (set! (array-ref ctx-a 1) 11)

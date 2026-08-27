@@ -1,4 +1,3 @@
-(import stdlib.array)
 
 ;; FORCING TEST for M6-G: a narrow element load whose only reader is its
 ;; widening cast is emitted straight into the CAST's register, not into a
@@ -67,7 +66,7 @@
 
 (define (main) : i64
   (let
-    [bytes : (__tl_dyn-array u8) (array.make-array u8 8)]
+    [bytes : (__tl_dyn-array u8) (__tl_make-array u8 8)]
     [i : i64 0]
     [ok : i64 0]
     (begin

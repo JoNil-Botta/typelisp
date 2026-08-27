@@ -1,5 +1,4 @@
 ;; Direct source-known SPMD helper calls with varying f64 lane arguments.
-(import stdlib.array)
 
 (define (scale [x : f64]) : f64
   (+ (* x 2.0) 1.0))
@@ -24,8 +23,8 @@
 (define (main) : i64
   (let
     [n : i64 13]
-    [xs : (__tl_dyn-array f64) (array.make-array f64 n)]
-    [out : (__tl_dyn-array f64) (array.make-array f64 n)]
+    [xs : (__tl_dyn-array f64) (__tl_make-array f64 n)]
+    [out : (__tl_dyn-array f64) (__tl_make-array f64 n)]
     [i : i64 0]
     (begin
       (while (< i n)

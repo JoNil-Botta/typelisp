@@ -1,6 +1,5 @@
 ;: SPEC safe-code contract: private dynamic-buffer mutable borrows reserve
 ;: before activation (#3581 keeps this surface staged).
-(import stdlib.array)
 
 (define (read-len [items : (& items (__tl_dyn-array i64))]) : i64
   (array-length items))
@@ -12,7 +11,7 @@
 
 (define (main) : i64
   (let
-    [items : (__tl_dyn-array i64) (array.make-array i64 1)]
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     (begin
       (push-with-len (&mut items) (read-len (& items)))
       (push-with-len (&mut items) (array-length items))

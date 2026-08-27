@@ -1,7 +1,6 @@
 ;: SPEC SPMD contract: scan bodies reject nested public SPMD constructs.
 ; Compatibility exception for #3772: SPMD scan operands still use bare array
 ; helpers so the checker sees compiler array ASTs.
-(import stdlib.array)
 
 (define (bad [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit
   (spmd-scan

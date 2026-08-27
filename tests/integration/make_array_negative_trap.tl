@@ -1,6 +1,5 @@
-(import stdlib.array)
 
 (define (main) : i64
   (begin
-    (array.make-array i64 -1)
+    (__tl_make-array i64 -1)
     0))

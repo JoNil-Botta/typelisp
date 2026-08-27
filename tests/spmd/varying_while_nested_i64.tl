@@ -1,6 +1,5 @@
 ;; AVX2/AVX-512 nested varying-while mask coverage. Exact-sized arrays make
 ;; every sub-gang and tail case an inactive-lane bounds-safety check too.
-(import stdlib.array)
 
 (define (fill-nested
   [outer : (&mut outer (__tl_dyn-array i64))]
@@ -41,12 +40,12 @@
 
 (define (run-case [n : i64]) : bool
   (let
-    [outer : (__tl_dyn-array i64) (array.make-array i64 n)]
-    [outer-ref : (__tl_dyn-array i64) (array.make-array i64 n)]
-    [inner : (__tl_dyn-array i64) (array.make-array i64 n)]
-    [inner-ref : (__tl_dyn-array i64) (array.make-array i64 n)]
-    [got : (__tl_dyn-array i64) (array.make-array i64 n)]
-    [want : (__tl_dyn-array i64) (array.make-array i64 n)]
+    [outer : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+    [outer-ref : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+    [inner : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+    [inner-ref : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+    [got : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+    [want : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     [i : i64 0]
     [ok : bool true]
     (begin

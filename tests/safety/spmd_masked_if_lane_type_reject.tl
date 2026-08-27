@@ -1,5 +1,4 @@
 ;: SPEC SPMD contract: masked-if branches reject unsupported lane result types.
-(import stdlib.array)
 
 (define (main
   [xs : (__tl_dyn-array String)]

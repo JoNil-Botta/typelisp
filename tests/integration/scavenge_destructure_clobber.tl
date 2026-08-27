@@ -1,5 +1,4 @@
 (import stdlib.io)
-(import stdlib.array)
 (import stdlib.string)
 
 ;; FORCING / CORRECTNESS test for the register-scavenger fused-destructure clobber
@@ -64,7 +63,7 @@
   (let
     [s : i64 (io.arg-count)]
     [n : i64 6]
-    [slots : (__tl_dyn-array Slot) (array.make-array Slot n)]
+    [slots : (__tl_dyn-array Slot) (__tl_make-array Slot n)]
     (begin
       ;; Distinct heap key strings; ids offset by the seed so they are not folded.
       (set! (array-ref slots 0) (SlotUsed "alpha" (+ s 10) 100))

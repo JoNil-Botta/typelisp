@@ -1,9 +1,8 @@
 ;; A live shared Slice view keeps its dynamic-array owner from being moved.
-(import stdlib.array)
 
 (define (main) : i64
   (let
-    [items : (__tl_dyn-array i64) (array.make-array i64 1)]
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     (begin
       (set! (array-ref items 0) 10)
       (let

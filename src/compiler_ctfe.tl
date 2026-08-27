@@ -12,7 +12,6 @@
 (import stdlib.hashmap)
 (import (hashmap.hashmap i64 i64) as ctfe_key_map)
 (import stdlib.arena)
-(import stdlib.array)
 (import stdlib.byte_buf_core)
 (import compiler_ast_types as ast)
 (import compiler_comptime_diagnostics_core as comptime_diagnostics)
@@ -178,7 +177,7 @@
 (define (compiler-ctfe-macro-state-new) : CompilerCtfeMacroState
   (let
     [cell : (__tl_dyn-array CompilerCtfeMacroStateData)
-      (array.make-array CompilerCtfeMacroStateData 1)]
+      (__tl_make-array CompilerCtfeMacroStateData 1)]
     (begin
       (set!
         (array-ref cell 0)
@@ -1535,7 +1534,7 @@
                 (set! store.segments bigger))))
           (set!
             (array-ref store.segments count)
-            (array.make-array CtfeEnvBinding (ctfe-env-arena-segment-capacity)))
+            (__tl_make-array CtfeEnvBinding (ctfe-env-arena-segment-capacity)))
           (set! store.segment-count (+ count 1))))
       (cfg compile-profile (ctfe-env-profile-note-arena-grow!) unit))))
 
@@ -1640,8 +1639,8 @@
 
 (define (ctfe-layout-field-list-with-capacity [capacity : i64]) : CtfeLayoutFieldList
   (CtfeLayoutFieldList
-    (array.make-array CtfeLayoutField capacity)
-    (array.make-array i64 capacity)
+    (__tl_make-array CtfeLayoutField capacity)
+    (__tl_make-array i64 capacity)
     0))
 
 (define (ctfe-layout-field-list-empty) : CtfeLayoutFieldList
@@ -1667,7 +1666,7 @@
 
 (define (ctfe-layout-info-list-with-capacity [capacity : i64]) : CtfeLayoutInfoList
   (CtfeLayoutInfoList
-    (array.make-array CtfeLayoutInfo capacity)
+    (__tl_make-array CtfeLayoutInfo capacity)
     (ctfe_key_map.with-capacity (+ (* capacity 2) 1))
     0))
 
@@ -1690,13 +1689,13 @@
   [required : i64]) : CtfeLayoutInfoList
   (let
     [slots : (__tl_dyn-array CtfeLayoutInfo) items.slots]
-    [capacity : i64 (array.length slots)]
+    [capacity : i64 (array-length slots)]
     [len : i64 items.len]
     (if (<= required capacity)
       items
       (let
         [grown : (__tl_dyn-array CtfeLayoutInfo)
-          (array.make-array
+          (__tl_make-array
             CtfeLayoutInfo
             (ctfe-metadata-grown-capacity capacity required))]
         [index : i64 0]
@@ -1733,7 +1732,7 @@
       (CtfeLayoutInfoList slots index (+ n 1)))))
 
 (define (ctfe-reflect-field-list-with-capacity [capacity : i64]) : CtfeReflectFieldList
-  (CtfeReflectFieldList (array.make-array CtfeReflectField capacity) 0))
+  (CtfeReflectFieldList (__tl_make-array CtfeReflectField capacity) 0))
 
 (define (ctfe-reflect-field-list-ref
   [items : CtfeReflectFieldList]
@@ -1751,7 +1750,7 @@
       (CtfeReflectFieldList slots (+ n 1)))))
 
 (define (ctfe-reflect-variant-list-with-capacity [capacity : i64]) : CtfeReflectVariantList
-  (CtfeReflectVariantList (array.make-array CtfeReflectVariant capacity) 0))
+  (CtfeReflectVariantList (__tl_make-array CtfeReflectVariant capacity) 0))
 
 (define (ctfe-reflect-variant-list-ref
   [items : CtfeReflectVariantList]
@@ -1770,7 +1769,7 @@
 
 (define (ctfe-reflect-info-list-with-capacity [capacity : i64]) : CtfeReflectInfoList
   (CtfeReflectInfoList
-    (array.make-array CtfeReflectInfo capacity)
+    (__tl_make-array CtfeReflectInfo capacity)
     (ctfe_key_map.with-capacity (+ (* capacity 2) 1))
     0))
 
@@ -1782,13 +1781,13 @@
   [required : i64]) : CtfeReflectInfoList
   (let
     [slots : (__tl_dyn-array CtfeReflectInfo) items.slots]
-    [capacity : i64 (array.length slots)]
+    [capacity : i64 (array-length slots)]
     [len : i64 items.len]
     (if (<= required capacity)
       items
       (let
         [grown : (__tl_dyn-array CtfeReflectInfo)
-          (array.make-array
+          (__tl_make-array
             CtfeReflectInfo
             (ctfe-metadata-grown-capacity capacity required))]
         [index : i64 0]
@@ -6634,11 +6633,11 @@
     [data : (Ptr u8)
       (unsafe
         (string-data (& source)))]
-    [head : (__tl_dyn-array i64) (array.make-array i64 65536)]
+    [head : (__tl_dyn-array i64) (__tl_make-array i64 65536)]
     ;; `previous` needs no -1 fill: chain reads only visit indices already
     ;; written by insert! (head points at an inserted index, and previous[i]
     ;; is stored when i is inserted), so its initial contents are never read.
-    [previous : (__tl_dyn-array i64) (array.make-array i64 source-len)]
+    [previous : (__tl_dyn-array i64) (__tl_make-array i64 source-len)]
     ;; Both index arrays keep a fixed length for the whole compression, so their
     ;; element storage never moves and the raw views below stay valid until the
     ;; owners drop at the end of this let.
@@ -11191,7 +11190,7 @@
 ;; have no CTFE representation; this covers scalar values and the public
 ;; stdlib.comptime syntax pseudo-values backed by CompilerCtfeValue.Expr/CompilerCtfeValue.ExprList.
 (define (ctfe-value-seq-with-capacity [capacity : i64]) : CtfeValueSeq
-  (CtfeValueSeq (array.make-array CompilerCtfeValue capacity) 0))
+  (CtfeValueSeq (__tl_make-array CompilerCtfeValue capacity) 0))
 
 (define (ctfe-value-seq-push [items : CtfeValueSeq] [value : CompilerCtfeValue]) : CtfeValueSeq
   (let

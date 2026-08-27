@@ -1,5 +1,4 @@
 (import stdlib.io)
-(import stdlib.array)
 
 ;; Correctness twin for MULTI-EXIT loop rotation (LCSSA-style exit placement).
 ;;
@@ -97,7 +96,7 @@
 (define (main) : i64
   (let
     [n : i64 (+ (io.arg-count) 5)]
-    [xs : (__tl_dyn-array i64) (array.make-array i64 n)]
+    [xs : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     [i : i64 0]
     (begin
       ;; xs = [0, 3, 6, 9, 12, 15] for n = 6 (no args).

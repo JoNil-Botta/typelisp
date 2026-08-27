@@ -1,5 +1,4 @@
 ;; SPMD inline helper arguments must not be captured by helper-local bindings.
-(import stdlib.array)
 
 (define (bump-with-shadow [x : i64]) : i64
   (let
@@ -30,8 +29,8 @@
 (define (main) : i64
   (let
     [n : i64 13]
-    [xs : (__tl_dyn-array i64) (array.make-array i64 n)]
-    [out : (__tl_dyn-array i64) (array.make-array i64 n)]
+    [xs : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+    [out : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     [i : i64 0]
     (begin
       (while (< i n)

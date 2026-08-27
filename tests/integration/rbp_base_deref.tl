@@ -1,5 +1,4 @@
 (import stdlib.io)
-(import stdlib.array)
 
 ;; FORCING TEST for GAP7: a pool value homed in %rbp (the 6th CSR) that is used
 ;; as a MEMORY BASE.
@@ -72,7 +71,7 @@
   (let
     [n : i64 (+ (io.arg-count) 7)]
     ; n = 8 (no args)
-    [v : (__tl_dyn-array i64) (array.make-array i64 n)]
+    [v : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     [i : i64 0]
     (begin
       (while (< i n)

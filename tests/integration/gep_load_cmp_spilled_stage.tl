@@ -1,4 +1,3 @@
-(import stdlib.array)
 
 ;; FORCING TEST for M6-H (the scavenged M6-D staging register) and for the
 ;; fusion pin that keeps a fused LOAD destination's identity through slot
@@ -121,10 +120,10 @@
 
 (define (main) : i64
   (let
-    [a : (__tl_dyn-array i64) (array.make-array i64 8)]
-    [b : (__tl_dyn-array i64) (array.make-array i64 16)]
-    [c : (__tl_dyn-array i64) (array.make-array i64 8)]
-    [d : (__tl_dyn-array i64) (array.make-array i64 16)]
+    [a : (__tl_dyn-array i64) (__tl_make-array i64 8)]
+    [b : (__tl_dyn-array i64) (__tl_make-array i64 16)]
+    [c : (__tl_dyn-array i64) (__tl_make-array i64 8)]
+    [d : (__tl_dyn-array i64) (__tl_make-array i64 16)]
     [ok : i64 0]
     [trial : i64 0]
     (begin

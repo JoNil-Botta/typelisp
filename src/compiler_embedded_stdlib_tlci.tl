@@ -20,7 +20,6 @@
 (import compiler_ctfe as ctfe_support)
 (import compiler_intern as ci)
 (import compiler_owned_view as owned_view)
-(import stdlib.array)
 (import stdlib.arena)
 (import stdlib.string)
 
@@ -76,7 +75,7 @@
   (__tl_make-array 0))
 (define compiler-embedded-stdlib-tlci-session-image : (__tl_dyn-array
     loader.TlciLoadedImage)
-  (array.make-array loader.TlciLoadedImage 1))
+  (__tl_make-array loader.TlciLoadedImage 1))
 (define compiler-embedded-stdlib-tlci-session-error : (__tl_dyn-array String)
   (__tl_make-array ""))
 
@@ -229,7 +228,7 @@
     [compressed : (__tl_dyn-array u8)
       (compiler-embedded-stdlib-tlci-compressed-shared-view)]
     (if (= (array-length compressed) 0)
-      (array.make-array u8 0)
+      (__tl_make-array u8 0)
       (match (codec.compiler-embedded-stdlib-tlci-codec-decode
         (& compressed)
         (compiler-embedded-stdlib-tlci-raw-limit))
@@ -237,7 +236,7 @@
         [(codec.CompilerEmbeddedStdlibTlciCodecBytes.Err _)
           (begin
             (string.tl_oob_abort)
-            (array.make-array u8 0))]))))
+            (__tl_make-array u8 0))]))))
 
 (define (compiler-embedded-stdlib-tlci-surface) : CompilerEmbeddedStdlibTlciSurface
   (if (= (compiler-embedded-stdlib-tlci-length) 0)
@@ -338,7 +337,7 @@
         (& loaded)
         resolved
         session-cookie
-        (array.make-array i64 0)
+        (__tl_make-array i64 0)
         0))
     (loader.ResultTlciMacroDispatch.Err
       "embedded stdlib tlci session is not loaded")))
@@ -425,36 +424,36 @@
 (define compiler-comptime-host-session-status : i64
   tlci.tlci-host-callback-status-ok)
 (define compiler-comptime-host-pools : (__tl_dyn-array ast.AstNodePoolContext)
-  (array.make-array ast.AstNodePoolContext 1))
+  (__tl_make-array ast.AstNodePoolContext 1))
 (define compiler-comptime-host-operand-cap : i64
   16)
 (define compiler-comptime-host-operands : (__tl_dyn-array
     ctfe_support.CompilerCtfeValue)
-  (array.make-array
+  (__tl_make-array
     ctfe_support.CompilerCtfeValue
     compiler-comptime-host-operand-cap))
 (define compiler-comptime-host-operand-count : i64
   0)
 (define compiler-comptime-host-reflections : (__tl_dyn-array
     ctfe_support.CtfeReflectInfoList)
-  (array.make-array ctfe_support.CtfeReflectInfoList 1))
+  (__tl_make-array ctfe_support.CtfeReflectInfoList 1))
 (define compiler-comptime-host-session-source-names : (__tl_dyn-array
     ci.InternSourceNameSessionHandle)
-  (array.make-array ci.InternSourceNameSessionHandle 1))
+  (__tl_make-array ci.InternSourceNameSessionHandle 1))
 (define compiler-comptime-host-session-macro-state : (__tl_dyn-array
     ctfe_support.CompilerCtfeMacroState)
-  (array.make-array ctfe_support.CompilerCtfeMacroState 1))
+  (__tl_make-array ctfe_support.CompilerCtfeMacroState 1))
 (define compiler-comptime-host-stack-base : (__tl_dyn-array
     ctfe_support.CompilerCtfeValue)
-  (array.make-array ctfe_support.CompilerCtfeValue 64))
+  (__tl_make-array ctfe_support.CompilerCtfeValue 64))
 (define compiler-comptime-host-stack : (__tl_dyn-array
     ctfe_support.CompilerCtfeValue)
-  (array.make-array ctfe_support.CompilerCtfeValue 64))
+  (__tl_make-array ctfe_support.CompilerCtfeValue 64))
 (define compiler-comptime-host-stack-len : i64
   0)
 (define compiler-comptime-host-result : (__tl_dyn-array
     ctfe_support.CompilerCtfeValue)
-  (array.make-array ctfe_support.CompilerCtfeValue 1))
+  (__tl_make-array ctfe_support.CompilerCtfeValue 1))
 (define compiler-comptime-host-result-ready : bool
   false)
 (define compiler-comptime-host-diagnostic : (__tl_dyn-array String)
@@ -482,11 +481,11 @@
   64)
 (define compiler-comptime-host-locals : (__tl_dyn-array
     ctfe_support.CompilerCtfeValue)
-  (array.make-array
+  (__tl_make-array
     ctfe_support.CompilerCtfeValue
     compiler-comptime-host-locals-cap))
 (define compiler-comptime-host-locals-live : (__tl_dyn-array bool)
-  (array.make-array bool compiler-comptime-host-locals-cap))
+  (__tl_make-array bool compiler-comptime-host-locals-cap))
 
 ;; Pop `count` patterns into a fresh list (last-pushed becomes the final
 ;; element), or report failure when any value is not a pattern.
@@ -672,7 +671,7 @@
         1
         (* old-cap 2))]
     [bigger : (__tl_dyn-array ctfe_support.CompilerCtfeValue)
-      (array.make-array ctfe_support.CompilerCtfeValue new-cap)]
+      (__tl_make-array ctfe_support.CompilerCtfeValue new-cap)]
     [index : i64 0]
     (begin
       (while (< index compiler-comptime-host-stack-len)
@@ -9089,8 +9088,8 @@
 
 (define (compiler-comptime-host-registry-new) : CompilerComptimeHostRegistryBuilder
   (CompilerComptimeHostRegistryBuilder
-    (array.make-array String 256)
-    (array.make-array i64 256)
+    (__tl_make-array String 256)
+    (__tl_make-array i64 256)
     0))
 
 (define (compiler-comptime-host-registry-add!

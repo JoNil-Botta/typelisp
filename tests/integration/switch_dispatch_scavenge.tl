@@ -1,4 +1,3 @@
-(import stdlib.array)
 (import stdlib.io)
 
 ;; FORCING TEST for GAP2b-v2: sound emergency-scavenge restore before a
@@ -201,7 +200,7 @@
 
 (define (main) : i64
   (let
-    [p : (__tl_dyn-array Op) (array.make-array Op 6)]
+    [p : (__tl_dyn-array Op) (__tl_make-array Op 6)]
     (begin
       (set! (array-ref p 0) (Op0))
       (set! (array-ref p 1) (Op1))

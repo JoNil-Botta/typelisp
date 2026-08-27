@@ -1,6 +1,5 @@
 ;: SPEC borrow contract: an outer mutable reference cannot be used while an
 ;: inner lexical reborrow is still live.
-(import stdlib.array)
 
 (define (bad [items : (&mut items (__tl_dyn-array i64))]) : unit
   (let

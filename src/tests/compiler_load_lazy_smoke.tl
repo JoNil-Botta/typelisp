@@ -84,14 +84,12 @@
     (lazy-write-text
       "target/cl_lazy_stdlib_array/nested/user.tl"
       "(module nested.user)
-(import stdlib.array)
-(define (len-b) : i64 (array.length (array.make-array i64 2)))")
+(define (len-b) : i64 (array-length (__tl_make-array i64 2)))")
     (lazy-write-text
       "target/cl_lazy_stdlib_array/entry.tl"
       "(module lazy.stdlib.array.entry)
-(import stdlib.array)
 (import nested.user as user)
-(define (len-a) : i64 (array.length (array.make-array i64 1)))
+(define (len-a) : i64 (array-length (__tl_make-array i64 1)))
 (define (main) : i64 (user.len-b))")
     (match (compiler_load.compiler-load-file-with-paths
       "target/cl_lazy_stdlib_array/entry.tl"
@@ -119,16 +117,14 @@
     (lazy-write-text
       "target/cl_lazy_stdlib_array_canonical/nested/user.tl"
       "(module nested.user)
-(import stdlib.array)
 (define (len-b) : i64
-  (stdlib.array.length (stdlib.array.make-array i64 2)))")
+  (stdlib.array-length (stdlib.__tl_make-array i64 2)))")
     (lazy-write-text
       "target/cl_lazy_stdlib_array_canonical/entry.tl"
       "(module lazy.stdlib.array.canonical.entry)
-(import stdlib.array)
 (import nested.user as user)
 (define (len-a) : i64
-  (stdlib.array.length (stdlib.array.make-array i64 1)))
+  (stdlib.array-length (stdlib.__tl_make-array i64 1)))
 (define (main) : i64 (user.len-b))")
     (match (compiler_load.compiler-load-file-with-paths
       "target/cl_lazy_stdlib_array_canonical/entry.tl"

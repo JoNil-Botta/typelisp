@@ -1,6 +1,5 @@
 ;: SPEC safe-code contract: qualified fixed-array writes trap on out-of-bounds
 ;: indexes instead of performing invalid memory access.
-(import stdlib.array)
 
 (define (main) : i64
   (let

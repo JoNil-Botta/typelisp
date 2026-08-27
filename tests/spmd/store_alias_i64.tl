@@ -1,4 +1,3 @@
-(import stdlib.array)
 
 ;; The single mutable reference deliberately reads and writes the same array.
 ;; Sequential gang copies must load both inputs before their corresponding
@@ -14,7 +13,7 @@
 (define (main) : i64
   (let
     [n : i64 257]
-    [values : (__tl_dyn-array i64) (array.make-array i64 260)]
+    [values : (__tl_dyn-array i64) (__tl_make-array i64 260)]
     [i : i64 0]
     [ok : bool true]
     (begin

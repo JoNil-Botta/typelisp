@@ -1,4 +1,3 @@
-(import stdlib.array)
 (import stdlib.arena)
 (import stdlib.string)
 
@@ -12,7 +11,7 @@
       [base : i64 (string-length seed)]
       [mark : arena.ArenaMark (arena.mark)]
       ;; lint-allow: single-element-array-cell
-      [items : (__tl_dyn-array i64) (array.make-array i64 1)]
+      [items : (__tl_dyn-array i64) (__tl_make-array i64 1)]
       (begin
         (set! (array-ref items 0) (+ base 33))
         (unsafe

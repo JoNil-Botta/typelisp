@@ -14,7 +14,6 @@
 ;# `stdlib/text_buf_family.tl`; this module keeps the borrowed compatibility
 ;# namespace and small inline API test surface.
 ;; lint-allow: unused-import
-(import stdlib.array)
 
 ;; lint-allow: unused-import
 (import stdlib.arena)

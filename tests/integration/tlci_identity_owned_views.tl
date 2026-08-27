@@ -1,7 +1,6 @@
 ;; Focused semantic witnesses for the shallow-view helpers introduced by the
 ;; by-value ownership migration. These macros are part of the embedded stdlib
 ;; TLCI inventory, but ordinary discovery does not reach every path together.
-(import stdlib.array)
 (import stdlib.msvc)
 (import stdlib.process)
 (import stdlib.process_runtime)
@@ -12,7 +11,7 @@
 (define (main) : i64
   (let
     [place : TlciIdentityMsvcWitness (TlciIdentityMsvcWitness 7)]
-    [items : (__tl_dyn-array i64) (array.make-array i64 1)]
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     [boxed : (Box i64) (box 29)]
     [text : String "core"]
     [core-view : String

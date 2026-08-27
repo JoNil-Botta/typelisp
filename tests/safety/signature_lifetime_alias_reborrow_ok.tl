@@ -1,7 +1,6 @@
 ;; refs #6053: an explicit input lifetime is a signature-local binder even
 ;; when its spelling differs from the parameter name. It remains available to
 ;; local scalar and aggregate reborrows without becoming a value binding.
-(import stdlib.array)
 
 (defstruct SignatureAliasRec
   (value i64))
@@ -48,7 +47,7 @@
 (define (main) : i64
   (let
     [items : (__tl_dyn-array SignatureAliasRec)
-      (array.make-array SignatureAliasRec 1)]
+      (__tl_make-array SignatureAliasRec 1)]
     [stored : SignatureAliasStored
       (SignatureAliasStored 7 (tuple 8 9) (array 10))]
     [value : i64 11]

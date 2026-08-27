@@ -1,5 +1,4 @@
 ;: A mutable iterator can advance after its prior yielded result is dead.
-(import stdlib.array)
 
 (defstruct Iter
   (:lifetimes source)
@@ -27,7 +26,7 @@
 
 (define (main) : unit
   (let
-    [items : (__tl_dyn-array i64) (array.make-array i64 1)]
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     [iter : (Iter items) (Iter (&mut items) 0)]
     [first (next (&mut iter))]
     (begin

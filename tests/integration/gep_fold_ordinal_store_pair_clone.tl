@@ -31,7 +31,6 @@
 ;: merely wrong (rather than shape-detectable) fails here too. Run at opt0/opt1
 ;: by the manifest and at opt2 by verify-integration.sh, where the multiblock
 ;: inliner and the gep fold both actually run.
-(import stdlib.array)
 
 ;; Two words: tag then payload. Storing one writes base+0 and base+8 through a
 ;; single address computation -- the store-pair peephole's admitted shape.
@@ -160,9 +159,9 @@
 (define (main) : i64
   (let
     [n : i64 96]
-    [src : (__tl_dyn-array u8) (array.make-array u8 n)]
-    [cloned-toks : (__tl_dyn-array GfoTok) (array.make-array GfoTok n)]
-    [fused-toks : (__tl_dyn-array GfoTok) (array.make-array GfoTok n)]
+    [src : (__tl_dyn-array u8) (__tl_make-array u8 n)]
+    [cloned-toks : (__tl_dyn-array GfoTok) (__tl_make-array GfoTok n)]
+    [fused-toks : (__tl_dyn-array GfoTok) (__tl_make-array GfoTok n)]
     [cloned : i64 0]
     [fused : i64 0]
     (begin

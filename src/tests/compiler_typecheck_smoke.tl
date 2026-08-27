@@ -1990,7 +1990,7 @@
 
 ;; Declaration-emitting macros must be able to emit functions with non-trivial
 ;; bodies. The macro-output serializer round-trips arithmetic,
-;; dotted fields, array.make-array, array.ref/set!, let, while,
+;; dotted fields, __tl_make-array, array.ref/set!, let, while,
 ;; and set! back to
 ;; declarations; before that surface existed these fixtures failed with
 ;; "module macro output contains syntax that cannot be parsed as a declaration".
@@ -2003,11 +2003,11 @@
       (len i64)
       (cap i64))
     (define (stack-new) : Stack
-      (Stack (array.make-array i64 4) 0 4))
+      (Stack (__tl_make-array i64 4) 0 4))
     (define (stack-grow [s : Stack]) : Stack
       (let
         [new-cap : i64 (* s.cap 2)]
-        [bigger : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
+        [bigger : (__tl_dyn-array i64) (__tl_make-array i64 new-cap)]
         [i : i64 0]
         (begin
           (while (< i s.len)
@@ -2092,7 +2092,7 @@
       (let [x : ,T v] (ann x : ,T)))
     (define (typed-init) : ,T (init : ,T))
     (define (typed-array [v : ,T]) : (__tl_dyn-array ,T)
-      (let [items : (__tl_dyn-array ,T) (array.make-array ,T 1)]
+      (let [items : (__tl_dyn-array ,T) (__tl_make-array ,T 1)]
         (begin
           (set! (array-ref items 0) v)
           items)))))
@@ -3820,7 +3820,7 @@
 (define (take-array-ref [r : (& items i64)]) : i64 1)
 (define (main) : i64
   (let
-    [items : (__tl_dyn-array i64) (array.make-array i64 1)]
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     [fixed : (Array i64 2) (array 3 4)]
     (begin
       (set! (array-ref items 0) (array-ref fixed 1))
@@ -4494,23 +4494,21 @@
 
 (define (compiler-typecheck-smoke-lazy-import-stdlib-array-source) : String
   "(module main)
-(import stdlib.array)
 (define (main) : i64
   (let
-    [items : (__tl_dyn-array i64) (stdlib.array.make-array i64 0)]
+    [items : (__tl_dyn-array i64) (stdlib.__tl_make-array i64 0)]
     (begin
       (stdlib.array.push! items 41)
-      (+ (stdlib.array.ref items 0) (stdlib.array.length items)))))")
+      (+ (stdlib.array.ref items 0) (stdlib.array-length items)))))")
 
 (define (compiler-typecheck-smoke-lazy-import-stdlib-array-alias-source) : String
   "(module main)
-(import stdlib.array)
 (define (main) : i64
   (let
-    [items : (__tl_dyn-array i64) (array.make-array i64 0)]
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 0)]
     (begin
       (array.push! items 41)
-      (+ (array.ref items 0) (array.length items)))))")
+      (+ (array.ref items 0) (array-length items)))))")
 
 (define (compiler-typecheck-smoke-lazy-import-stdlib-result-source) : String
   "(module main)

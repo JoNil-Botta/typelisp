@@ -1,6 +1,5 @@
 ;; SPMD masked-if corpus (#3356): AVX-512 value-producing masked `if`
 ;; over non-i64 lane result types. Each case uses a non-full tail.
-(import stdlib.array)
 
 (define (init-u32
   [keys : (&mut keys (__tl_dyn-array u32))]
@@ -67,11 +66,11 @@
 
 (define (case-u32 [n : i64]) : bool
   (let
-    [keys : (__tl_dyn-array u32) (array.make-array u32 n)]
-    [left : (__tl_dyn-array u32) (array.make-array u32 n)]
-    [right : (__tl_dyn-array u32) (array.make-array u32 n)]
-    [got : (__tl_dyn-array u32) (array.make-array u32 n)]
-    [want : (__tl_dyn-array u32) (array.make-array u32 n)]
+    [keys : (__tl_dyn-array u32) (__tl_make-array u32 n)]
+    [left : (__tl_dyn-array u32) (__tl_make-array u32 n)]
+    [right : (__tl_dyn-array u32) (__tl_make-array u32 n)]
+    [got : (__tl_dyn-array u32) (__tl_make-array u32 n)]
+    [want : (__tl_dyn-array u32) (__tl_make-array u32 n)]
     [pivot : u32 (cast 40 : u32)]
     (begin
       (init-u32 (&mut keys) (&mut left) (&mut right) n)
@@ -144,11 +143,11 @@
 
 (define (case-u64 [n : i64]) : bool
   (let
-    [keys : (__tl_dyn-array u64) (array.make-array u64 n)]
-    [left : (__tl_dyn-array u64) (array.make-array u64 n)]
-    [right : (__tl_dyn-array u64) (array.make-array u64 n)]
-    [got : (__tl_dyn-array u64) (array.make-array u64 n)]
-    [want : (__tl_dyn-array u64) (array.make-array u64 n)]
+    [keys : (__tl_dyn-array u64) (__tl_make-array u64 n)]
+    [left : (__tl_dyn-array u64) (__tl_make-array u64 n)]
+    [right : (__tl_dyn-array u64) (__tl_make-array u64 n)]
+    [got : (__tl_dyn-array u64) (__tl_make-array u64 n)]
+    [want : (__tl_dyn-array u64) (__tl_make-array u64 n)]
     [pivot : u64 (cast 50 : u64)]
     (begin
       (init-u64 (&mut keys) (&mut left) (&mut right) n)
@@ -221,11 +220,11 @@
 
 (define (case-f32 [n : i64]) : bool
   (let
-    [keys : (__tl_dyn-array f32) (array.make-array f32 n)]
-    [left : (__tl_dyn-array f32) (array.make-array f32 n)]
-    [right : (__tl_dyn-array f32) (array.make-array f32 n)]
-    [got : (__tl_dyn-array f32) (array.make-array f32 n)]
-    [want : (__tl_dyn-array f32) (array.make-array f32 n)]
+    [keys : (__tl_dyn-array f32) (__tl_make-array f32 n)]
+    [left : (__tl_dyn-array f32) (__tl_make-array f32 n)]
+    [right : (__tl_dyn-array f32) (__tl_make-array f32 n)]
+    [got : (__tl_dyn-array f32) (__tl_make-array f32 n)]
+    [want : (__tl_dyn-array f32) (__tl_make-array f32 n)]
     [pivot : f32 9.5]
     (begin
       (init-f32 (&mut keys) (&mut left) (&mut right) n)
@@ -298,11 +297,11 @@
 
 (define (case-f64 [n : i64]) : bool
   (let
-    [keys : (__tl_dyn-array f64) (array.make-array f64 n)]
-    [left : (__tl_dyn-array f64) (array.make-array f64 n)]
-    [right : (__tl_dyn-array f64) (array.make-array f64 n)]
-    [got : (__tl_dyn-array f64) (array.make-array f64 n)]
-    [want : (__tl_dyn-array f64) (array.make-array f64 n)]
+    [keys : (__tl_dyn-array f64) (__tl_make-array f64 n)]
+    [left : (__tl_dyn-array f64) (__tl_make-array f64 n)]
+    [right : (__tl_dyn-array f64) (__tl_make-array f64 n)]
+    [got : (__tl_dyn-array f64) (__tl_make-array f64 n)]
+    [want : (__tl_dyn-array f64) (__tl_make-array f64 n)]
     [pivot : f64 7.5]
     (begin
       (init-f64 (&mut keys) (&mut left) (&mut right) n)
@@ -377,11 +376,11 @@
 
 (define (case-bool [n : i64]) : bool
   (let
-    [keys : (__tl_dyn-array bool) (array.make-array bool n)]
-    [left : (__tl_dyn-array bool) (array.make-array bool n)]
-    [right : (__tl_dyn-array bool) (array.make-array bool n)]
-    [got : (__tl_dyn-array bool) (array.make-array bool n)]
-    [want : (__tl_dyn-array bool) (array.make-array bool n)]
+    [keys : (__tl_dyn-array bool) (__tl_make-array bool n)]
+    [left : (__tl_dyn-array bool) (__tl_make-array bool n)]
+    [right : (__tl_dyn-array bool) (__tl_make-array bool n)]
+    [got : (__tl_dyn-array bool) (__tl_make-array bool n)]
+    [want : (__tl_dyn-array bool) (__tl_make-array bool n)]
     (begin
       (init-bool (&mut keys) (&mut left) (&mut right) n)
       (fill-bool-foreach (& keys) (& left) (& right) (&mut got) n)

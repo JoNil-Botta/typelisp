@@ -1,6 +1,5 @@
 ; Capturing nested aggregate fields in local closure environments (#584).
 ; `main` yields 42 only if every snapshot case holds.
-(import stdlib.array)
 
 ;; lint-allow: unused-import
 (import stdlib.string)
@@ -22,7 +21,7 @@
 
 (define (case-struct-dynarray) : bool
   (let
-    [a : (__tl_dyn-array i64) (array.make-array i64 1)]
+    [a : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     (begin
       (set! (array-ref a 0) 42)
       (let

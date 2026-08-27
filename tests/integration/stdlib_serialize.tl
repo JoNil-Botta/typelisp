@@ -1,5 +1,4 @@
 (import stdlib.serialize)
-(import stdlib.array)
 (import stdlib.comptime)
 (import stdlib.option)
 (import stdlib.result)

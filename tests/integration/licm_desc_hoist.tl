@@ -1,5 +1,4 @@
 (import stdlib.io)
-(import stdlib.array)
 
 ;; FORCING TEST for M-E: loop-invariant descriptor-load hoisting.
 ;;
@@ -31,7 +30,7 @@
 (define (main) : i64
   (let
     [n : i64 (+ (io.arg-count) 7)]
-    [xs : (__tl_dyn-array i64) (array.make-array i64 n)]
+    [xs : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     [i : i64 0]
     (begin
       (while (< i n)

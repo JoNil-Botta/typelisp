@@ -5,7 +5,6 @@
 ;; 42, avx2 = 106, avx512 = 170. A bad SIMD result returns a small failure code
 ;; instead of the tag. Keep the SPMD loop directly inside each variant while
 ;; sharing ordinary scalar setup/checksum helpers across all variants.
-(import stdlib.array)
 
 ;; lint-allow: function-name-case -- assembly dispatch symbol fixture
 (define (dispatch_seed_a [i : i64]) : i64
@@ -43,9 +42,9 @@
 ;; lint-allow: function-name-case -- assembly dispatch symbol fixture
 (define (dispatch_scalar [n : i64]) : i64
   (let
-    [a : (__tl_dyn-array i64) (array.make-array i64 n)]
-    [b : (__tl_dyn-array i64) (array.make-array i64 n)]
-    [out : (__tl_dyn-array i64) (array.make-array i64 n)]
+    [a : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+    [b : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+    [out : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     [acc : i64 0]
     (begin
       (dispatch_fill_inputs (&mut a) (&mut b) n)
@@ -60,9 +59,9 @@
 ;; lint-allow: function-name-case -- assembly dispatch symbol fixture
 (define (dispatch_avx2 [n : i64]) : i64
   (let
-    [a : (__tl_dyn-array i64) (array.make-array i64 n)]
-    [b : (__tl_dyn-array i64) (array.make-array i64 n)]
-    [out : (__tl_dyn-array i64) (array.make-array i64 n)]
+    [a : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+    [b : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+    [out : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     [acc : i64 0]
     (begin
       (dispatch_fill_inputs (&mut a) (&mut b) n)
@@ -77,9 +76,9 @@
 ;; lint-allow: function-name-case -- assembly dispatch symbol fixture
 (define (dispatch_avx512 [n : i64]) : i64
   (let
-    [a : (__tl_dyn-array i64) (array.make-array i64 n)]
-    [b : (__tl_dyn-array i64) (array.make-array i64 n)]
-    [out : (__tl_dyn-array i64) (array.make-array i64 n)]
+    [a : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+    [b : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+    [out : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     [acc : i64 0]
     (begin
       (dispatch_fill_inputs (&mut a) (&mut b) n)

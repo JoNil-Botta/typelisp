@@ -1,4 +1,3 @@
-(import stdlib.array)
 (import stdlib.string)
 
 (extern (tl_region_mark) : u64)
@@ -31,7 +30,7 @@
 (define (main) : i64
   (let
     [s : String (string.append "a" "b")]
-    [arr : (__tl_dyn-array i64) (array.make-array i64 2)]
+    [arr : (__tl_dyn-array i64) (__tl_make-array i64 2)]
     [box : Box (make-box 7)]
     [pair : Pair (make-pair 5 6)]
     [m : u64 (tl_region_mark)]

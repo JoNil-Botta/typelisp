@@ -1,4 +1,3 @@
-(import stdlib.array)
 (import stdlib.thread)
 (import (thread.handle i64) as thread_i64)
 

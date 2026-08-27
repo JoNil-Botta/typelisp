@@ -12,7 +12,6 @@
 ;# array each round (`xs[r] = acc`), creating a cross-round data dependency:
 ;# without it the per-round sum would be loop-invariant and the optimizer
 ;# could collapse every round into a single pass times `rounds`.
-(import stdlib.array)
 (import stdlib.io)
 (import stdlib.vector)
 (import (vector.vector i64) as i64vec)
@@ -35,7 +34,7 @@
   (let
     [n : i64 (+ base-size (io.arg-count))]
     [rounds : i64 (+ base-rounds (io.arg-count))]
-    [xs : i64vec.Vec (i64vec.Vec (array.make-array i64 n) n)]
+    [xs : i64vec.Vec (i64vec.Vec (__tl_make-array i64 n) n)]
     [acc : i64 0]
     [r : i64 0]
     (begin

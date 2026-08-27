@@ -6187,9 +6187,9 @@
 (define (lint-single-element-array-make-array-callee? [name : String]) : bool
   (or
     (string.eq name "__tl_make-array")
-    (string.eq name "array.make-array")
+    (string.eq name "__tl_make-array")
     (string.eq name "array/make-array")
-    (string.eq name "stdlib.array.make-array")))
+    (string.eq name "stdlib.__tl_make-array")))
 
 (define (lint-single-element-array-ref-callee? [name : String]) : bool
   (or

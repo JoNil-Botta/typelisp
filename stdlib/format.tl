@@ -27,7 +27,6 @@
 ;# Builtin placeholder values are `String`, all eight fixed-width integer
 ;# types, `bool`, `char`, `f64`, and `f32`. Structural formatting is
 ;# intentionally separate from this default Display-style protocol.
-(import stdlib.array)
 (import stdlib.comptime)
 (import stdlib.str_cat)
 (import stdlib.string)
@@ -3301,7 +3300,7 @@
 
 ;: A zero-valued formatter BigNum with caller-selected scratch capacity.
 (define (bn-zero-cap [capacity : i64]) : BigNum
-  (BigNum (array.make-array u64 capacity) 0))
+  (BigNum (__tl_make-array u64 capacity) 0))
 
 ;: A zero-valued shortest-formatter BigNum.
 (define (bn-zero) : BigNum
@@ -3375,7 +3374,7 @@
       (if (> a-cap b-cap)
         a-cap
         b-cap)]
-    [r : (__tl_dyn-array u64) (array.make-array u64 capacity)]
+    [r : (__tl_dyn-array u64) (__tl_make-array u64 capacity)]
     [la : i64 a.len]
     [lb : i64 b.len]
     [n : i64
@@ -3412,7 +3411,7 @@
 ;: Product of BigNum a and a value m that fits in 32 bits.
 (define (bn-mul-u32 [a : (& a BigNum)] [m : u64]) : BigNum
   (let
-    [r : (__tl_dyn-array u64) (array.make-array u64 (array-length a.limbs))]
+    [r : (__tl_dyn-array u64) (__tl_make-array u64 (array-length a.limbs))]
     [la : i64 a.len]
     [carry : u64 (cast 0 : u64)]
     [i : i64 0]
@@ -3446,7 +3445,7 @@
     (let
       [limb-shift : i64 (/ n 32)]
       [bit-shift : i64 (% n 32)]
-      [r : (__tl_dyn-array u64) (array.make-array u64 (array-length a.limbs))]
+      [r : (__tl_dyn-array u64) (__tl_make-array u64 (array-length a.limbs))]
       [la : i64 a.len]
       [carry : u64 (cast 0 : u64)]
       [i : i64 0]
@@ -3509,7 +3508,7 @@
 ;: Difference of BigNums a and b, assuming a >= b.
 (define (bn-sub [a : (& a BigNum)] [b : (& b BigNum)]) : BigNum
   (let
-    [r : (__tl_dyn-array u64) (array.make-array u64 (array-length a.limbs))]
+    [r : (__tl_dyn-array u64) (__tl_make-array u64 (array-length a.limbs))]
     [borrow : u64 (cast 0 : u64)]
     [i : i64 0]
     (begin
@@ -3544,7 +3543,7 @@
       [limb-shift : i64 (/ n 32)]
       [bit-shift : i64 (% n 32)]
       [capacity : i64 (array-length a.limbs)]
-      [r : (__tl_dyn-array u64) (array.make-array u64 capacity)]
+      [r : (__tl_dyn-array u64) (__tl_make-array u64 capacity)]
       [out-len : i64
         (if (>= limb-shift a.len)
           0
@@ -3639,7 +3638,7 @@
 ;: Divide a BigNum by one nonzero value that fits in 32 bits.
 (define (bn-div-u32 [a : (& a BigNum)] [divisor : u64]) : BigDivU32Step
   (let
-    [r : (__tl_dyn-array u64) (array.make-array u64 (array-length a.limbs))]
+    [r : (__tl_dyn-array u64) (__tl_make-array u64 (array-length a.limbs))]
     [remainder : u64 (cast 0 : u64)]
     [i : i64 (- a.len 1)]
     (begin
@@ -3710,7 +3709,7 @@
     "0"
     (let
       [out : (__tl_dyn-array u8)
-        (array.make-array u8 stdlib.format.ftoa-fixed-decimal-cap)]
+        (__tl_make-array u8 stdlib.format.ftoa-fixed-decimal-cap)]
       [cursor : i64 stdlib.format.ftoa-fixed-decimal-cap]
       [current : BigNum value]
       (begin
@@ -3744,7 +3743,7 @@
 ;: A string of n zero characters.
 (define (ftoa-zeros [n : i64]) : String
   (let
-    [out : (__tl_dyn-array u8) (array.make-array u8 n)]
+    [out : (__tl_dyn-array u8) (__tl_make-array u8 n)]
     [i : i64 0]
     (begin
       (while (< i n)

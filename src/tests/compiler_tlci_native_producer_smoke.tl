@@ -21,7 +21,6 @@
 (import compiler_parse_core as parse_core)
 (import tlci_core as tlci)
 (import tlci_loader)
-(import stdlib.array)
 (import stdlib.arena)
 (import stdlib.byte_buf)
 (import stdlib.io)
@@ -372,7 +371,7 @@
             loaded
             identity
             producer-test-cookie
-            (array.make-array i64 0)
+            (__tl_make-array i64 0)
             0)
             [(tlci_loader.ResultTlciMacroDispatch.Err _) -1]
             [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
@@ -399,7 +398,7 @@
         [pools : ast.AstNodePoolContext
           (ast.ast-node-pool-context-capture-active)]
         [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-          (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
+          (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
         (begin
           (set! (array-ref operands 0) operand)
           (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
@@ -415,7 +414,7 @@
                 loaded
                 resolved
                 producer-test-cookie
-                (array.make-array i64 0)
+                (__tl_make-array i64 0)
                 0)
                 [(tlci_loader.ResultTlciMacroDispatch.Err _) false]
                 [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
@@ -444,7 +443,7 @@
                         loaded
                         identity
                         producer-test-cookie
-                        (array.make-array i64 0)
+                        (__tl_make-array i64 0)
                         0)
                         [(tlci_loader.ResultTlciMacroDispatch.Err message)
                           (string.eq
@@ -474,7 +473,7 @@
         (& pools)
         (ast.AstExpr.Literal (ast.AstLiteral.String (ci.intern "literal"))))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-      (array.make-array compiler_ctfe.CompilerCtfeValue 2)]
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 2)]
     (begin
       (set!
         (array-ref operands 0)
@@ -801,7 +800,7 @@
         (ast.AstExpr.Var (ci.intern "gamma")))]
     [items : ast.AstExprList (ast.ast-expr-list-new)]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-      (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
     (begin
       (when (>= count 1) (ast.ast-expr-list-push (&mut items) first))
       (when (>= count 2) (ast.ast-expr-list-push (&mut items) second))
@@ -823,7 +822,7 @@
             loaded
             identity
             producer-test-cookie
-            (array.make-array i64 0)
+            (__tl_make-array i64 0)
             0)
             [(tlci_loader.ResultTlciMacroDispatch.Err _) false]
             [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
@@ -901,10 +900,10 @@
   [mixed : bool]) : bool
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
-    [nodes : (__tl_dyn-array i64) (array.make-array i64 5)]
+    [nodes : (__tl_dyn-array i64) (__tl_make-array i64 5)]
     [items : ast.AstExprList (ast.ast-expr-list-new)]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-      (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
     [call-callee : i64
       (producer-test-push-spanned
         (& pools)
@@ -964,7 +963,7 @@
             loaded
             "stdlib.str_cat_runtime/str-cat-scoped"
             producer-test-cookie
-            (array.make-array i64 0)
+            (__tl_make-array i64 0)
             0)
             [(tlci_loader.ResultTlciMacroDispatch.Err _) false]
             [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
@@ -1046,7 +1045,7 @@
     [items : ast.AstExprList (ast.ast-expr-list-new)]
     [carrier : i64 0]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-      (array.make-array compiler_ctfe.CompilerCtfeValue 2)]
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 2)]
     (begin
       (ast.ast-expr-list-push (&mut items) first)
       (ast.ast-expr-list-push (&mut items) second)
@@ -1076,7 +1075,7 @@
             loaded
             identity
             producer-test-cookie
-            (array.make-array i64 0)
+            (__tl_make-array i64 0)
             0)
             [(tlci_loader.ResultTlciMacroDispatch.Err _) false]
             [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
@@ -1182,7 +1181,7 @@
     [carrier : i64 0]
     [idx : i64 0]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-      (array.make-array compiler_ctfe.CompilerCtfeValue 3)]
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 3)]
     (begin
       (compiler_ctfe.ctfe-visible-macro-names-reset!)
       (compiler_ctfe.ctfe-visible-macro-name-add! (ci.intern "foldlike"))
@@ -1234,7 +1233,7 @@
             loaded
             identity
             producer-test-cookie
-            (array.make-array i64 0)
+            (__tl_make-array i64 0)
             0)
             [(tlci_loader.ResultTlciMacroDispatch.Err _) false]
             [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
@@ -1299,7 +1298,7 @@
         (& pools)
         (ast.AstExpr.Literal (ast.ast-lit-int index)))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-      (array.make-array compiler_ctfe.CompilerCtfeValue 2)]
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 2)]
     (begin
       (set!
         (array-ref operands 0)
@@ -1320,7 +1319,7 @@
             loaded
             identity
             producer-test-cookie
-            (array.make-array i64 0)
+            (__tl_make-array i64 0)
             0)
             [(tlci_loader.ResultTlciMacroDispatch.Err _) false]
             [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
@@ -1405,7 +1404,7 @@
         (& pools)
         (ast.AstExpr.Literal (ast.AstLiteral.String (ci.intern "picked.name"))))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-      (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
     (begin
       (set!
         (array-ref operands 0)
@@ -1423,7 +1422,7 @@
             loaded
             identity
             producer-test-cookie
-            (array.make-array i64 0)
+            (__tl_make-array i64 0)
             0)
             [(tlci_loader.ResultTlciMacroDispatch.Err _) false]
             [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
@@ -1459,7 +1458,7 @@
     [operand : i64
       (producer-test-push-spanned (& pools) (ast.AstExpr.Var structural-id))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-      (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
     (begin
       (set!
         (array-ref operands 0)
@@ -1512,7 +1511,7 @@
                     loaded
                     identity
                     producer-test-cookie
-                    (array.make-array i64 0)
+                    (__tl_make-array i64 0)
                     0)
                     [(tlci_loader.ResultTlciMacroDispatch.Err _) false]
                     [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
@@ -1541,7 +1540,7 @@
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [module-id : i64 (ci.intern (owned_view.compiler-owned-shared-view module))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-      (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
     (begin
       (set!
         (array-ref operands 0)
@@ -1561,7 +1560,7 @@
             loaded
             identity
             producer-test-cookie
-            (array.make-array i64 0)
+            (__tl_make-array i64 0)
             0)
             [(tlci_loader.ResultTlciMacroDispatch.Err _) false]
             [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
@@ -1589,7 +1588,7 @@
     [module-id : i64 (ci.intern (owned_view.compiler-owned-shared-view module))]
     [hook-id : i64 (ci.intern hook)]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-      (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
     (begin
       (set!
         (array-ref operands 0)
@@ -1609,7 +1608,7 @@
             loaded
             identity
             producer-test-cookie
-            (array.make-array i64 0)
+            (__tl_make-array i64 0)
             0)
             [(tlci_loader.ResultTlciMacroDispatch.Err _) false]
             [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
@@ -1638,7 +1637,7 @@
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-      (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
     (begin
       (set!
         (array-ref operands 0)
@@ -1659,7 +1658,7 @@
             loaded
             identity
             producer-test-cookie
-            (array.make-array i64 0)
+            (__tl_make-array i64 0)
             0)
             [(tlci_loader.ResultTlciMacroDispatch.Err _) false]
             [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
@@ -1688,7 +1687,7 @@
         (& pools)
         (ast.AstExpr.Var (ci.intern "value")))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-      (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
     (begin
       (set!
         (array-ref operands 0)
@@ -1706,7 +1705,7 @@
             loaded
             identity
             producer-test-cookie
-            (array.make-array i64 0)
+            (__tl_make-array i64 0)
             0)
             [(tlci_loader.ResultTlciMacroDispatch.Err _) false]
             [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
@@ -1739,7 +1738,7 @@
         (owned_view.compiler-owned-shared-view pools)
         (ast.AstType.I64))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-      (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
     (begin
       (set!
         (array-ref operands 0)
@@ -1758,7 +1757,7 @@
             loaded
             identity
             producer-test-cookie
-            (array.make-array i64 0)
+            (__tl_make-array i64 0)
             0)
             [(tlci_loader.ResultTlciMacroDispatch.Err _) false]
             [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
@@ -1790,7 +1789,7 @@
         (owned_view.compiler-owned-shared-view pools)
         (ast.AstType.I64))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-      (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
     (begin
       (set!
         (array-ref operands 0)
@@ -1809,7 +1808,7 @@
             loaded
             identity
             producer-test-cookie
-            (array.make-array i64 0)
+            (__tl_make-array i64 0)
             0)
             [(tlci_loader.ResultTlciMacroDispatch.Err _) false]
             [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
@@ -1854,7 +1853,7 @@
         (& pools)
         (ast.AstExpr.Literal (ast.AstLiteral.String (ci.intern literal))))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-      (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
     (begin
       (set!
         (array-ref operands 0)
@@ -1872,7 +1871,7 @@
             loaded
             identity
             producer-test-cookie
-            (array.make-array i64 0)
+            (__tl_make-array i64 0)
             0)
             [(tlci_loader.ResultTlciMacroDispatch.Err _) false]
             [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
@@ -1921,7 +1920,7 @@
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-      (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
     (begin
       (set! (array-ref operands 0) (producer-test-expr-operand argument))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
@@ -1937,7 +1936,7 @@
             loaded
             identity
             producer-test-cookie
-            (array.make-array i64 0)
+            (__tl_make-array i64 0)
             0)
             [(tlci_loader.ResultTlciMacroDispatch.Err _) false]
             [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
@@ -1962,7 +1961,7 @@
         (& pools)
         (ast.AstExpr.Var (ci.intern argument)))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-      (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
     (begin
       (set!
         (array-ref operands 0)
@@ -1980,7 +1979,7 @@
             loaded
             identity
             producer-test-cookie
-            (array.make-array i64 0)
+            (__tl_make-array i64 0)
             0)
             [(tlci_loader.ResultTlciMacroDispatch.Err _) false]
             [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
@@ -2013,7 +2012,7 @@
         (& pools)
         (ast.AstExpr.Var (ci.intern "value")))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-      (array.make-array compiler_ctfe.CompilerCtfeValue 2)]
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 2)]
     (begin
       (set!
         (array-ref operands 0)
@@ -2034,7 +2033,7 @@
             loaded
             identity
             producer-test-cookie
-            (array.make-array i64 0)
+            (__tl_make-array i64 0)
             0)
             [(tlci_loader.ResultTlciMacroDispatch.Err _) false]
             [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
@@ -2075,7 +2074,7 @@
         (& pools)
         (ast.AstExpr.Var (ci.intern "value")))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-      (array.make-array compiler_ctfe.CompilerCtfeValue 2)]
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 2)]
     (begin
       (set!
         (array-ref operands 0)
@@ -2096,7 +2095,7 @@
             loaded
             identity
             producer-test-cookie
-            (array.make-array i64 0)
+            (__tl_make-array i64 0)
             0)
             [(tlci_loader.ResultTlciMacroDispatch.Err _) false]
             [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
@@ -2116,7 +2115,7 @@
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-      (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
     (begin
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
         (owned_view.compiler-owned-shared-view pools)
@@ -2131,7 +2130,7 @@
             loaded
             identity
             producer-test-cookie
-            (array.make-array i64 0)
+            (__tl_make-array i64 0)
             0)
             [(tlci_loader.ResultTlciMacroDispatch.Err _) false]
             [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
@@ -2185,7 +2184,7 @@
         (& pools)
         (ast.AstExpr.Var (ci.intern "value")))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-      (array.make-array compiler_ctfe.CompilerCtfeValue 2)]
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 2)]
     (begin
       (set!
         (array-ref operands 0)
@@ -2206,7 +2205,7 @@
             loaded
             identity
             producer-test-cookie
-            (array.make-array i64 0)
+            (__tl_make-array i64 0)
             0)
             [(tlci_loader.ResultTlciMacroDispatch.Err _) false]
             [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
@@ -2411,7 +2410,7 @@
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-      (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
     (begin
       (set! (array-ref operands 0) (producer-test-expr-operand "value"))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
@@ -2427,7 +2426,7 @@
             loaded
             identity
             producer-test-cookie
-            (array.make-array i64 0)
+            (__tl_make-array i64 0)
             0)
             [(tlci_loader.ResultTlciMacroDispatch.Err _) false]
             [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
@@ -2483,7 +2482,7 @@
         (& pools)
         (ast.AstExpr.Var (ci.intern "value")))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-      (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
     (begin
       (set!
         (array-ref operands 0)
@@ -2501,7 +2500,7 @@
             loaded
             identity
             producer-test-cookie
-            (array.make-array i64 0)
+            (__tl_make-array i64 0)
             0)
             [(tlci_loader.ResultTlciMacroDispatch.Err _) false]
             [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
@@ -2523,7 +2522,7 @@
         (& pools)
         (ast.AstExpr.Var (ci.intern "value")))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-      (array.make-array compiler_ctfe.CompilerCtfeValue 2)]
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 2)]
     (begin
       (set!
         (array-ref operands 0)
@@ -2544,7 +2543,7 @@
             loaded
             identity
             producer-test-cookie
-            (array.make-array i64 0)
+            (__tl_make-array i64 0)
             0)
             [(tlci_loader.ResultTlciMacroDispatch.Err _) false]
             [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
@@ -2615,7 +2614,7 @@
     [name-id : i64 (ci.intern "Nominal")]
     [canonical-id : i64 (ci.intern-composite-pair-id module-id name-id)]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-      (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
     [infos : compiler_ctfe.CtfeReflectInfoList
       (if (< mode 2)
         (producer-test-nominal-reflections
@@ -2647,7 +2646,7 @@
             loaded
             identity
             producer-test-cookie
-            (array.make-array i64 0)
+            (__tl_make-array i64 0)
             0)
             [(tlci_loader.ResultTlciMacroDispatch.Err _) false]
             [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
@@ -2691,7 +2690,7 @@
     [name-id : i64 (ci.intern "Nominal")]
     [canonical-id : i64 (ci.intern-composite-pair-id module-id name-id)]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-      (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
     (begin
       (set!
         (array-ref operands 0)
@@ -2758,7 +2757,7 @@
         "into-iterator"
         member-id)]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-      (array.make-array compiler_ctfe.CompilerCtfeValue 0)]
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 0)]
     (match expected-suffix
       [(compiler_ctfe.CompilerCtfeValue.String suffix-text suffix-id)
         (let
@@ -2842,7 +2841,7 @@
     [items : ast.AstExprList
       (ast.ast-expr-cons condition (ast.ast-expr-list-new))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-      (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
     (begin
       (set!
         (array-ref operands 0)
@@ -2860,7 +2859,7 @@
             loaded
             identity
             producer-test-cookie
-            (array.make-array i64 0)
+            (__tl_make-array i64 0)
             0)
             [(tlci_loader.ResultTlciMacroDispatch.Err _) false]
             [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
@@ -2900,7 +2899,7 @@
           (ast.ast-expr-cons second (ast.ast-expr-list-new)))
         (ast.ast-expr-list-new))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-      (array.make-array compiler_ctfe.CompilerCtfeValue 2)]
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 2)]
     (begin
       (set!
         (array-ref operands 0)
@@ -2921,7 +2920,7 @@
             loaded
             identity
             producer-test-cookie
-            (array.make-array i64 0)
+            (__tl_make-array i64 0)
             0)
             [(tlci_loader.ResultTlciMacroDispatch.Err _) false]
             [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
@@ -2987,7 +2986,7 @@
         (ast.ast-expr-list-new)
         (ast.ast-expr-cons value (ast.ast-expr-list-new)))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-      (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
     (begin
       (set!
         (array-ref operands 0)
@@ -3006,7 +3005,7 @@
             loaded
             identity
             producer-test-cookie
-            (array.make-array i64 0)
+            (__tl_make-array i64 0)
             0)
             [(tlci_loader.ResultTlciMacroDispatch.Err _) false]
             [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
@@ -3036,7 +3035,7 @@
         first
         (ast.ast-expr-cons second (ast.ast-expr-list-new)))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-      (array.make-array compiler_ctfe.CompilerCtfeValue 2)]
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 2)]
     (begin
       (set!
         (array-ref operands 0)
@@ -3057,7 +3056,7 @@
             loaded
             identity
             producer-test-cookie
-            (array.make-array i64 0)
+            (__tl_make-array i64 0)
             0)
             [(tlci_loader.ResultTlciMacroDispatch.Err _) false]
             [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
@@ -3079,7 +3078,7 @@
         (& pools)
         (ast.AstExpr.Var (ci.intern "value")))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-      (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
     (begin
       (set!
         (array-ref operands 0)
@@ -3097,7 +3096,7 @@
             loaded
             identity
             producer-test-cookie
-            (array.make-array i64 0)
+            (__tl_make-array i64 0)
             0)
             [(tlci_loader.ResultTlciMacroDispatch.Err _) false]
             [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
@@ -3158,7 +3157,7 @@
             string-id)]
         [_ -1])]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-      (array.make-array compiler_ctfe.CompilerCtfeValue 3)]
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 3)]
     (begin
       (set!
         (array-ref operands 0)
@@ -3192,7 +3191,7 @@
             loaded
             identity
             producer-test-cookie
-            (array.make-array i64 0)
+            (__tl_make-array i64 0)
             0)
             [(tlci_loader.ResultTlciMacroDispatch.Err _) false]
             [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
@@ -3255,7 +3254,7 @@
         (& pools)
         (ast.AstExpr.Var (ci.intern "dynamic-value")))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-      (array.make-array compiler_ctfe.CompilerCtfeValue 2)]
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 2)]
     (begin
       (set!
         (array-ref operands 0)
@@ -3276,7 +3275,7 @@
             loaded
             identity
             producer-test-cookie
-            (array.make-array i64 0)
+            (__tl_make-array i64 0)
             0)
             [(tlci_loader.ResultTlciMacroDispatch.Err _) false]
             [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
@@ -3352,7 +3351,7 @@
             (let
               [fallback-operands : (__tl_dyn-array
                 compiler_ctfe.CompilerCtfeValue)
-                (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
+                (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
               (begin
                 (set!
                   (array-ref fallback-operands 0)
@@ -3392,7 +3391,7 @@
               (let
                 [name-count : i64 (producer_test_svec.len (& names))]
                 [name-array : (__tl_dyn-array String)
-                  (array.make-array String name-count)]
+                  (__tl_make-array String name-count)]
                 [name-index : i64 0]
                 [_copy-names : unit
                   (while (< name-index name-count)
@@ -3655,7 +3654,7 @@
           (ast.AstExpr.TypeLiteral outer-id)))]
     [items : ast.AstExprList (ast.ast-expr-cons node (ast.ast-expr-list-new))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-      (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
     (begin
       (set!
         (array-ref operands 0)
@@ -3742,7 +3741,7 @@
         (owned_view.compiler-owned-shared-view pools)
         (ast.AstType.I64))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-      (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
     (begin
       (set!
         (array-ref operands 0)
@@ -3812,7 +3811,7 @@
           (ast.AstExpr.Literal (ast.AstLiteral.String string-id))
           (ast.AstExpr.Var (ci.intern "not-a-string"))))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-      (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
     (begin
       (set!
         (array-ref operands 0)
@@ -3882,7 +3881,7 @@
       (ci.intern-compat-state-generated-name (&mut state) "clone.module")]
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-      (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
     (begin
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open-with-macro-state!
         (owned_view.compiler-owned-shared-view pools)
@@ -3955,7 +3954,7 @@
         (owned_view.compiler-owned-shared-view pools)
         (ast.AstExpr.Literal (ast.AstLiteral.String string-id)))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-      (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
     (begin
       (set!
         (array-ref operands 0)
@@ -4094,7 +4093,7 @@
         type-node
         (ast.ast-expr-cons module-node (ast.ast-expr-list-new)))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-      (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
     (begin
       (set!
         (array-ref operands 0)
@@ -4114,7 +4113,7 @@
             loaded
             identity
             producer-test-cookie
-            (array.make-array i64 0)
+            (__tl_make-array i64 0)
             0)
             [(tlci_loader.ResultTlciMacroDispatch.Err _) false]
             [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
@@ -4160,7 +4159,7 @@
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-      (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
     (begin
       (set!
         (array-ref operands 0)
@@ -4184,7 +4183,7 @@
             loaded
             identity
             producer-test-cookie
-            (array.make-array i64 0)
+            (__tl_make-array i64 0)
             0)
             [(tlci_loader.ResultTlciMacroDispatch.Err _) false]
             [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
@@ -4671,7 +4670,7 @@
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-      (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
     ;; Built through this function's own captured pools: a second capture
     ;; would take its own watermark and hand back a node id the expansion
     ;; then reuses.
@@ -4696,7 +4695,7 @@
             loaded
             "span.macros/spanned"
             producer-test-cookie
-            (array.make-array i64 0)
+            (__tl_make-array i64 0)
             0)
             [(tlci_loader.ResultTlciMacroDispatch.Err _) false]
             [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
@@ -4735,7 +4734,7 @@
               (let
                 [name-count : i64 (producer_test_svec.len (& names))]
                 [name-array : (__tl_dyn-array String)
-                  (array.make-array String name-count)]
+                  (__tl_make-array String name-count)]
                 [name-index : i64 0]
                 [_copy-names : unit
                   (while (< name-index name-count)

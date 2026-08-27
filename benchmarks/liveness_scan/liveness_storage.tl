@@ -1,7 +1,6 @@
 ;# Owned Vec storage for the liveness benchmark's native Slice kernel.
 (module liveness_storage)
 
-(import stdlib.array)
 (import stdlib.string)
 (import stdlib.vector)
 (import (vector.vector i64) as i64vec)
@@ -13,7 +12,7 @@
 (define (string-to-u8-vec [source : String]) : u8vec.Vec
   (let
     [n : i64 (string.string-length source)]
-    [out : u8vec.Vec (u8vec.Vec (array.make-array u8 n) n)]
+    [out : u8vec.Vec (u8vec.Vec (__tl_make-array u8 n) n)]
     [slots (u8vec.slots-mut (&mut out))]
     [src : (Ptr u8)
       (unsafe
@@ -30,7 +29,7 @@
       out)))
 
 (define (zero-i64-vec [n : i64]) : I64Buffer
-  (I64Buffer (i64vec.Vec (array.make-array i64 n) n)))
+  (I64Buffer (i64vec.Vec (__tl_make-array i64 n) n)))
 
 (define (u8-len [items : (& items u8vec.Vec)]) : i64
   (u8vec.len items))

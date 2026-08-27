@@ -1,7 +1,6 @@
 ;; compiler_driver_core.tl - Import-aware selfhost compiler driver helpers.
 (import compiler_owned_view as owned_view)
 (import stdlib.arena)
-(import stdlib.array)
 (import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.string)
@@ -122,15 +121,15 @@
   [pool-arena : i64]) : CompilerDriverState
   (let
     [expr-cell : (__tl_dyn-array compiler_ast_types.AstExprNodePoolState)
-      (array.make-array compiler_ast_types.AstExprNodePoolState 1)]
+      (__tl_make-array compiler_ast_types.AstExprNodePoolState 1)]
     [type-cell : (__tl_dyn-array compiler_ast_types.AstTypeNodePoolState)
-      (array.make-array compiler_ast_types.AstTypeNodePoolState 1)]
+      (__tl_make-array compiler_ast_types.AstTypeNodePoolState 1)]
     [intern-cell : (__tl_dyn-array ci.InternCompatState)
-      (array.make-array ci.InternCompatState 1)]
+      (__tl_make-array ci.InternCompatState 1)]
     [builtin-cell : (__tl_dyn-array cbi.CompilerBuiltinIdsState)
-      (array.make-array cbi.CompilerBuiltinIdsState 1)]
-    [lower-cell : (__tl_dyn-array i64) (array.make-array i64 1)]
-    [pool-arena-cell : (__tl_dyn-array i64) (array.make-array i64 1)]
+      (__tl_make-array cbi.CompilerBuiltinIdsState 1)]
+    [lower-cell : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    [pool-arena-cell : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     [profile-state : profile_state.CompilerProfileState
       (profile_state.compiler-profile-state-new)]
     ;; Intern capability identity is shared by parser, lowering, and backend.
@@ -349,9 +348,9 @@
 ;; detached compat pools (entry arena) once the source arena is detached, so
 ;; `compiler-driver-node-pool-base-arena` cannot name the checked-program arena.
 (define compiler-driver-active-state-pool-arena : (__tl_dyn-array i64)
-  (array.make-array i64 1))
+  (__tl_make-array i64 1))
 (define compiler-driver-active-state-surface-arena : (__tl_dyn-array i64)
-  (array.make-array i64 1))
+  (__tl_make-array i64 1))
 
 ;; Legacy/test adapter for the remaining load/typecheck/lower call graph.
 ;; State-owned table and persistent-arena maintenance uses the explicit

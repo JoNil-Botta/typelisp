@@ -1,7 +1,6 @@
 ;; Checked word-lane shifts (#6685): direct maps and nested masked values use
 ;; the same scalar semantics across empty, short, full, multi-gang, and tail
 ;; lengths. Backing tail lanes carry invalid counts and must stay inactive.
-(import stdlib.array)
 
 (define (count-i16 [i : i64]) : i16
   (match (% i 4)
@@ -16,11 +15,11 @@
 (define (run-direct-i16 [n : i64]) : bool
   (let
     [capacity : i64 96]
-    [xs : (__tl_dyn-array i16) (array.make-array i16 capacity)]
-    [counts : (__tl_dyn-array i16) (array.make-array i16 capacity)]
-    [left : (__tl_dyn-array i16) (array.make-array i16 capacity)]
-    [right : (__tl_dyn-array i16) (array.make-array i16 capacity)]
-    [literal : (__tl_dyn-array i16) (array.make-array i16 capacity)]
+    [xs : (__tl_dyn-array i16) (__tl_make-array i16 capacity)]
+    [counts : (__tl_dyn-array i16) (__tl_make-array i16 capacity)]
+    [left : (__tl_dyn-array i16) (__tl_make-array i16 capacity)]
+    [right : (__tl_dyn-array i16) (__tl_make-array i16 capacity)]
+    [literal : (__tl_dyn-array i16) (__tl_make-array i16 capacity)]
     [i : i64 0]
     [ok : bool true]
     (begin
@@ -57,11 +56,11 @@
 (define (run-direct-u16 [n : i64]) : bool
   (let
     [capacity : i64 96]
-    [xs : (__tl_dyn-array u16) (array.make-array u16 capacity)]
-    [counts : (__tl_dyn-array u16) (array.make-array u16 capacity)]
-    [left : (__tl_dyn-array u16) (array.make-array u16 capacity)]
-    [right : (__tl_dyn-array u16) (array.make-array u16 capacity)]
-    [literal : (__tl_dyn-array u16) (array.make-array u16 capacity)]
+    [xs : (__tl_dyn-array u16) (__tl_make-array u16 capacity)]
+    [counts : (__tl_dyn-array u16) (__tl_make-array u16 capacity)]
+    [left : (__tl_dyn-array u16) (__tl_make-array u16 capacity)]
+    [right : (__tl_dyn-array u16) (__tl_make-array u16 capacity)]
+    [literal : (__tl_dyn-array u16) (__tl_make-array u16 capacity)]
     [i : i64 0]
     [ok : bool true]
     (begin
@@ -98,9 +97,9 @@
 (define (run-masked-i16) : bool
   (let
     [n : i64 77]
-    [xs : (__tl_dyn-array i16) (array.make-array i16 n)]
-    [counts : (__tl_dyn-array i16) (array.make-array i16 n)]
-    [out : (__tl_dyn-array i16) (array.make-array i16 n)]
+    [xs : (__tl_dyn-array i16) (__tl_make-array i16 n)]
+    [counts : (__tl_dyn-array i16) (__tl_make-array i16 n)]
+    [out : (__tl_dyn-array i16) (__tl_make-array i16 n)]
     [i : i64 0]
     [ok : bool true]
     (begin
@@ -148,9 +147,9 @@
 (define (run-masked-u16) : bool
   (let
     [n : i64 77]
-    [xs : (__tl_dyn-array u16) (array.make-array u16 n)]
-    [counts : (__tl_dyn-array u16) (array.make-array u16 n)]
-    [out : (__tl_dyn-array u16) (array.make-array u16 n)]
+    [xs : (__tl_dyn-array u16) (__tl_make-array u16 n)]
+    [counts : (__tl_dyn-array u16) (__tl_make-array u16 n)]
+    [out : (__tl_dyn-array u16) (__tl_make-array u16 n)]
     [i : i64 0]
     [ok : bool true]
     (begin
@@ -190,9 +189,9 @@
 (define (run-masked-while-u16) : bool
   (let
     [n : i64 77]
-    [xs : (__tl_dyn-array u16) (array.make-array u16 n)]
-    [work : (__tl_dyn-array u16) (array.make-array u16 n)]
-    [out : (__tl_dyn-array u16) (array.make-array u16 n)]
+    [xs : (__tl_dyn-array u16) (__tl_make-array u16 n)]
+    [work : (__tl_dyn-array u16) (__tl_make-array u16 n)]
+    [out : (__tl_dyn-array u16) (__tl_make-array u16 n)]
     [i : i64 0]
     [ok : bool true]
     (begin

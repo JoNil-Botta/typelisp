@@ -3,7 +3,6 @@
 ;; The lowerer accepts the checked program and builds a deterministic
 ;; CompilerIrProgram.
 (import stdlib.arena)
-(import stdlib.array)
 (import stdlib.vector)
 (import (vector.vector String) as svec)
 (import compiler_typecheck_core as tc_core)
@@ -371,13 +370,13 @@
 (define (lower-module-name-cache-store-empty) : LowerModuleNameCacheStore
   (LowerModuleNameCacheStore
     (lower_i64_i64_map.with-capacity 16)
-    (array.make-array LowerNameCache 8)
+    (__tl_make-array LowerNameCache 8)
     0))
 
 (define (lower-module-local-view-store-empty) : LowerModuleLocalViewStore
   (LowerModuleLocalViewStore
     (lower_i64_i64_map.with-capacity 16)
-    (array.make-array LowerModuleLocalView 8)
+    (__tl_make-array LowerModuleLocalView 8)
     0))
 
 ;; Contiguous id set: `slots[0, len)` holds the members oldest first, so the old
@@ -685,7 +684,7 @@
 
 (defmacro (compiler-lower-state-cell [T : type] [value : Expr]) : Expr
   `(let
-    [cell : (__tl_dyn-array ,T) (array.make-array ,T 1)]
+    [cell : (__tl_dyn-array ,T) (__tl_make-array ,T 1)]
     (begin
       (set! (array-ref cell 0) ,value)
       (cast
@@ -704,7 +703,7 @@
   [_profile-state : profile_state.CompilerProfileState]) : CompilerLowerState
   (let
     [cells : (__tl_dyn-array i64)
-      (array.make-array i64 (cfg (any compile-profile test) 38 37))]
+      (__tl_make-array i64 (cfg (any compile-profile test) 38 37))]
     [address : i64
       (cast
         (unsafe
@@ -4978,7 +4977,7 @@
         8
         (* old-capacity 2))]
     [next-values : (__tl_dyn-array LowerNameCache)
-      (array.make-array LowerNameCache next-capacity)]
+      (__tl_make-array LowerNameCache next-capacity)]
     (begin
       (lower-module-name-cache-store-copy-prefix!
         (owned_view.compiler-owned-shared-view store.values)
@@ -9451,7 +9450,7 @@
         8
         (* old-capacity 2))]
     [next-values : (__tl_dyn-array LowerModuleLocalView)
-      (array.make-array LowerModuleLocalView next-capacity)]
+      (__tl_make-array LowerModuleLocalView next-capacity)]
     (begin
       (lower-module-local-view-store-copy-prefix!
         (owned_view.compiler-owned-shared-view store.values)
@@ -9832,18 +9831,18 @@
         (arena.Arena storage.arena)
         (let
           [rtf-generations : (__tl_dyn-array i64)
-            (array.make-array i64 tc-rtf-cap)]
-          [rtf-ids : (__tl_dyn-array i64) (array.make-array i64 tc-rtf-cap)]
+            (__tl_make-array i64 tc-rtf-cap)]
+          [rtf-ids : (__tl_dyn-array i64) (__tl_make-array i64 tc-rtf-cap)]
           [rtf-types : (__tl_dyn-array ast.AstType)
-            (array.make-array ast.AstType tc-rtf-cap)]
+            (__tl_make-array ast.AstType tc-rtf-cap)]
           [variant-stamps : (__tl_dyn-array i64)
-            (array.make-array i64 lower-variant-arm-memo-cap)]
+            (__tl_make-array i64 lower-variant-arm-memo-cap)]
           [variant-keys : (__tl_dyn-array i64)
-            (array.make-array i64 lower-variant-arm-memo-cap)]
+            (__tl_make-array i64 lower-variant-arm-memo-cap)]
           [variant-scrutinee-types : (__tl_dyn-array ast.AstType)
-            (array.make-array ast.AstType lower-variant-arm-memo-cap)]
+            (__tl_make-array ast.AstType lower-variant-arm-memo-cap)]
           [variant-outcomes : (__tl_dyn-array LowerVariantArmResolution)
-            (array.make-array
+            (__tl_make-array
               LowerVariantArmResolution
               lower-variant-arm-memo-cap)]
           [index : i64 0]
@@ -9895,7 +9894,7 @@
       [rtf-generation : i64 (+ storage.next-rtf-generation 1)]
       [variant-generation : i64 (+ storage.next-variant-generation 1)]
       [cell : (__tl_dyn-array CompilerLowerFunctionStateData)
-        (array.make-array CompilerLowerFunctionStateData 1)]
+        (__tl_make-array CompilerLowerFunctionStateData 1)]
       [address : i64
         (cast
           (unsafe
@@ -39110,7 +39109,7 @@
   (let
     [count : i64 (lower-c-abi-slot-list-count (lower-global-shared-view slots))]
     [out : (__tl_dyn-array ir.CompilerIrCAbiReturnSlot)
-      (array.make-array ir.CompilerIrCAbiReturnSlot count)]
+      (__tl_make-array ir.CompilerIrCAbiReturnSlot count)]
     (begin
       (lower-c-abi-ir-return-slots-from slots (&mut out) 0 count)
       (ir.CompilerIrCAbiReturnSlotSeq out count))))
@@ -65897,7 +65896,7 @@
     (let
       [count : i64 (- (ast.ast-param-list-len params) index)]
       [slots : (__tl_dyn-array ir.CompilerIrSpmdCallArg)
-        (array.make-array ir.CompilerIrSpmdCallArg count)]
+        (__tl_make-array ir.CompilerIrSpmdCallArg count)]
       [cursor : i64 index]
       (begin
         (while (< cursor (ast.ast-param-list-len params))

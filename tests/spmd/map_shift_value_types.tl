@@ -2,16 +2,15 @@
 ;; counts, signed/logical right shift, full gangs, and partial tails. Backing
 ;; lanes beyond each logical range contain invalid counts; AVX-512 predicated
 ;; tails must not let those inactive counts reach the shift guard.
-(import stdlib.array)
 
 (define (case-i32) : bool
   (let
     [n : i64 19]
     [capacity : i64 32]
-    [xs : (__tl_dyn-array i32) (array.make-array i32 capacity)]
-    [counts : (__tl_dyn-array i32) (array.make-array i32 capacity)]
-    [left : (__tl_dyn-array i32) (array.make-array i32 capacity)]
-    [right : (__tl_dyn-array i32) (array.make-array i32 capacity)]
+    [xs : (__tl_dyn-array i32) (__tl_make-array i32 capacity)]
+    [counts : (__tl_dyn-array i32) (__tl_make-array i32 capacity)]
+    [left : (__tl_dyn-array i32) (__tl_make-array i32 capacity)]
+    [right : (__tl_dyn-array i32) (__tl_make-array i32 capacity)]
     [i : i64 0]
     [ok : bool true]
     (begin
@@ -45,10 +44,10 @@
   (let
     [n : i64 19]
     [capacity : i64 32]
-    [xs : (__tl_dyn-array u32) (array.make-array u32 capacity)]
-    [counts : (__tl_dyn-array u32) (array.make-array u32 capacity)]
-    [left : (__tl_dyn-array u32) (array.make-array u32 capacity)]
-    [right : (__tl_dyn-array u32) (array.make-array u32 capacity)]
+    [xs : (__tl_dyn-array u32) (__tl_make-array u32 capacity)]
+    [counts : (__tl_dyn-array u32) (__tl_make-array u32 capacity)]
+    [left : (__tl_dyn-array u32) (__tl_make-array u32 capacity)]
+    [right : (__tl_dyn-array u32) (__tl_make-array u32 capacity)]
     [i : i64 0]
     [ok : bool true]
     (begin
@@ -82,10 +81,10 @@
   (let
     [n : i64 13]
     [capacity : i64 16]
-    [xs : (__tl_dyn-array i64) (array.make-array i64 capacity)]
-    [counts : (__tl_dyn-array i64) (array.make-array i64 capacity)]
-    [left : (__tl_dyn-array i64) (array.make-array i64 capacity)]
-    [right : (__tl_dyn-array i64) (array.make-array i64 capacity)]
+    [xs : (__tl_dyn-array i64) (__tl_make-array i64 capacity)]
+    [counts : (__tl_dyn-array i64) (__tl_make-array i64 capacity)]
+    [left : (__tl_dyn-array i64) (__tl_make-array i64 capacity)]
+    [right : (__tl_dyn-array i64) (__tl_make-array i64 capacity)]
     [i : i64 0]
     [ok : bool true]
     (begin
@@ -119,10 +118,10 @@
   (let
     [n : i64 13]
     [capacity : i64 16]
-    [xs : (__tl_dyn-array u64) (array.make-array u64 capacity)]
-    [counts : (__tl_dyn-array u64) (array.make-array u64 capacity)]
-    [left : (__tl_dyn-array u64) (array.make-array u64 capacity)]
-    [right : (__tl_dyn-array u64) (array.make-array u64 capacity)]
+    [xs : (__tl_dyn-array u64) (__tl_make-array u64 capacity)]
+    [counts : (__tl_dyn-array u64) (__tl_make-array u64 capacity)]
+    [left : (__tl_dyn-array u64) (__tl_make-array u64 capacity)]
+    [right : (__tl_dyn-array u64) (__tl_make-array u64 capacity)]
     [i : i64 0]
     [ok : bool true]
     (begin

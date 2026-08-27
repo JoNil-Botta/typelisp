@@ -18,7 +18,6 @@
 ;;          outright, and the abort is raised from the ORIGINAL call.
 ;;
 ;; The manifest pins both stderr messages, and they are the same message.
-(import stdlib.array)
 (import stdlib.io)
 (import stdlib.string)
 
@@ -109,10 +108,10 @@
   (let
     [pick : i64 (string.>int (io.arg 1))]
     [len : i64 (+ 8 (io.arg-count))]
-    [items (array.make-array i64 len)]
-    [other (array.make-array i64 len)]
-    [extra (array.make-array i64 len)]
-    [marks (array.make-array i64 4)]
+    [items (__tl_make-array i64 len)]
+    [other (__tl_make-array i64 len)]
+    [extra (__tl_make-array i64 len)]
+    [marks (__tl_make-array i64 4)]
     (begin
       (fill (&mut items) len 2)
       (fill (&mut other) len 3)

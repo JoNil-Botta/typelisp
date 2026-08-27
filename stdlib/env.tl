@@ -14,7 +14,6 @@
 ;# (define fallback : env.EnvMaybeString
 ;#   (let [name : String "TYPELISP_DOC_TEST_MISSING_ENV"] (env.get (& name))))
 ;# ```
-(import stdlib.array)
 (import stdlib.str_cat)
 (import stdlib.string)
 (import stdlib.vector)
@@ -82,7 +81,7 @@
       [n : i64
         (unsafe
           (c-string-length ptr))]
-      [buf : (__tl_dyn-array u8) (array.make-array u8 n)]
+      [buf : (__tl_dyn-array u8) (__tl_make-array u8 n)]
       [i : i64 0]
       (begin
         (while (< i n)
@@ -279,7 +278,7 @@
 (define (c-string-bytes [text : (& text str)]) : (__tl_dyn-array u8)
   (let
     [n : i64 (string-length text)]
-    [bytes : (__tl_dyn-array u8) (array.make-array u8 (+ n 1))]
+    [bytes : (__tl_dyn-array u8) (__tl_make-array u8 (+ n 1))]
     [i : i64 0]
     (begin
       (while (< i n)
@@ -332,7 +331,7 @@
     [name-len : i64 (string-length name)]
     [value-len : i64 (string-length value)]
     [bytes : (__tl_dyn-array u8)
-      (array.make-array u8 (+ (+ name-len value-len) 2))]
+      (__tl_make-array u8 (+ (+ name-len value-len) 2))]
     [i : i64 0]
     (begin
       (while (< i name-len)
@@ -363,7 +362,7 @@
         (linux-environ))]
     [kept : i64 (linux-nonmatching-count environ name)]
     [slots : (__tl_dyn-array u64)
-      (array.make-array
+      (__tl_make-array
         u64
         (+
           (+
@@ -519,7 +518,7 @@
 
 ;: Return an empty environment string list.
 (define (string-list-empty) : EnvStringList
-  (EnvStringList (array.make-array String 0) 0))
+  (EnvStringList (__tl_make-array String 0) 0))
 
 ;: Return the number of entries in `items`.
 (define (string-list-count [items : (& items EnvStringList)]) : i64
@@ -535,7 +534,7 @@
 (define (string-list-cons [value : String] [rest : EnvStringList]) : EnvStringList
   (let
     [n : i64 rest.len]
-    [slots : (__tl_dyn-array String) (array.make-array String (+ n 1))]
+    [slots : (__tl_dyn-array String) (__tl_make-array String (+ n 1))]
     [i : i64 0]
     (begin
       (set! (array-ref slots 0) value)
@@ -549,7 +548,7 @@
 (define (string-list-from-vec [items : svec.Vec]) : EnvStringList
   (let
     [n : i64 (svec.len (& items))]
-    [slots : (__tl_dyn-array String) (array.make-array String n)]
+    [slots : (__tl_dyn-array String) (__tl_make-array String n)]
     [i : i64 0]
     (begin
       (while (< i n)

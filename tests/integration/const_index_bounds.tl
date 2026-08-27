@@ -1,4 +1,3 @@
-(import stdlib.array)
 
 ;; FORCING TEST for GAP6d: a constant array index folds into the bounds-check
 ;; compare instead of being materialised into a register.
@@ -24,7 +23,7 @@
 
 (define (main) : i64
   (let
-    [xs : (__tl_dyn-array i64) (array.make-array i64 5)]
+    [xs : (__tl_dyn-array i64) (__tl_make-array i64 5)]
     (begin
       (set! (array-ref xs 2) 42)
       (if (= (get2 xs 0) 42)

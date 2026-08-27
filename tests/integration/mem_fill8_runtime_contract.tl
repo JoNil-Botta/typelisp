@@ -15,7 +15,6 @@
 ;# cannot itself be rewritten into a fill call and the "outside the window"
 ;# checks compare against distinguishable values. Sizes are past one 4 KiB page
 ;# so a wrongly skipped fill cannot hide in memory that happened to be zero.
-(import stdlib.array)
 (import stdlib.arena)
 (import stdlib.runtime)
 
@@ -79,7 +78,7 @@
 (define (fill-checks) : i64
   (let
     [n : i64 fill-slots]
-    [items : (__tl_dyn-array i64) (array.make-array i64 n)]
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     [slots : (MutPtr u64)
       (unsafe
         (ptr-cast (__tl_array-data items) : (MutPtr u64)))]
@@ -115,7 +114,7 @@
 (define (main) : i64
   (let
     ;; Force the program arena into existence before taking the mark.
-    [_warm : (__tl_dyn-array i64) (array.make-array i64 8)]
+    [_warm : (__tl_dyn-array i64) (__tl_make-array i64 8)]
     [mark : arena.ArenaMark (arena.mark)]
     ;; Virgin arena: this is the state in which tl_array_zero is allowed to
     ;; skip. tl_mem_fill8 must fill anyway.
@@ -127,7 +126,7 @@
       (unsafe
         (arena.rewind mark))
       (let
-        [dirty-items : (__tl_dyn-array i64) (array.make-array i64 65536)]
+        [dirty-items : (__tl_dyn-array i64) (__tl_make-array i64 65536)]
         (dirty! (&mut dirty-items) 65536))
       (unsafe
         (arena.rewind mark))

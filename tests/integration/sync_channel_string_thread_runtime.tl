@@ -1,4 +1,3 @@
-(import stdlib.array)
 (import stdlib.arena)
 (import stdlib.sync)
 (import stdlib.thread)
@@ -104,7 +103,7 @@
   (let
     [owner : arena.Arena (arena.make-atomic)]
     [ctx : (__tl_dyn-array i64)
-      (array.make-array i64 (+ sync.channel-string-raw-field-count 1))]
+      (__tl_make-array i64 (+ sync.channel-string-raw-field-count 1))]
     [expected : i64
       (sync-string-integration-expected-sum sync-string-integration-count)]
     [sent : i64 0]

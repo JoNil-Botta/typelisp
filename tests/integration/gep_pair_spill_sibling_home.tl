@@ -1,4 +1,3 @@
-(import stdlib.array)
 (import stdlib.string)
 
 ;; Regression for paired constant-GEP loads under emergency scavenging.
@@ -13,7 +12,7 @@
   (let
     [nl : i64 (string.string-length name)]
     [vl : i64 (string.string-length value)]
-    [buf : (__tl_dyn-array u8) (array.make-array u8 (+ (+ nl vl) 2))]
+    [buf : (__tl_dyn-array u8) (__tl_make-array u8 (+ (+ nl vl) 2))]
     [i : i64 0]
     (begin
       (while (< i nl)

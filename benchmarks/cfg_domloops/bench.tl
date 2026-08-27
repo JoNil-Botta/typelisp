@@ -39,7 +39,7 @@
 ;# visits nodes in exactly the same order.
 ;#
 ;# Each loop's body collection clears a whole `count`-entry marks array, which
-;# is what `array.make-array bool (opt-cfg-index-block-count index)` costs per
+;# is what `__tl_make-array bool (opt-cfg-index-block-count index)` costs per
 ;# natural loop in `opt-natural-loop-build`. That per-function loop-enumeration
 ;# cost is the one this benchmark exists to track.
 ;#
@@ -49,14 +49,13 @@
 ;# FNV-1a fold with no division, so the printed decimal matches the C baseline's
 ;# `%lld` bit for bit.
 (import stdlib.byte_buf)
-(import stdlib.array)
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.vector)
 (import (vector.vector i64) as i64vec)
 
 (define (cfg-zero-vec [n : i64]) : i64vec.Vec
-  (i64vec.Vec (array.make-array i64 n) n))
+  (i64vec.Vec (__tl_make-array i64 n) n))
 
 (define (cfg-vec-ref [items : (& items i64vec.Vec)] [index : i64]) : i64
   (array-ref (i64vec.slots items) index))

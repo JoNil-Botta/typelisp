@@ -3,7 +3,6 @@
 ;; Usage: counter --cpu N -- executable [arg ...]
 ;; Success prints one tab-separated row:
 ;; counter <retired> <exit-status> <signal> <time-enabled> <time-running>
-(import stdlib.array)
 (import stdlib.io)
 (import stdlib.str_cat)
 (import stdlib.string)
@@ -74,7 +73,7 @@
 
 (define (perf-attr) : (__tl_dyn-array u64)
   (let
-    [attr : (__tl_dyn-array u64) (array.make-array u64 16)]
+    [attr : (__tl_dyn-array u64) (__tl_make-array u64 16)]
     (begin
       ;; perf_event_attr starts with u32 type followed by u32 size.
       (set! (array-ref attr 0) (shl (cast perf-attr-size : u64) 32))
@@ -87,7 +86,7 @@
 
 (define (affinity-mask [cpu : i64]) : (__tl_dyn-array u64)
   (let
-    [mask : (__tl_dyn-array u64) (array.make-array u64 16)]
+    [mask : (__tl_dyn-array u64) (__tl_make-array u64 16)]
     (begin
       (set! (array-ref mask (/ cpu 64)) (shl (cast 1 : u64) (% cpu 64)))
       mask)))
@@ -180,11 +179,11 @@
   (let
     [attr : (__tl_dyn-array u64) (perf-attr)]
     [affinity : (__tl_dyn-array u64) (affinity-mask cpu)]
-    [sync-pipe : (__tl_dyn-array i32) (array.make-array i32 2)]
-    [exec-pipe : (__tl_dyn-array i32) (array.make-array i32 2)]
-    [scratch : (__tl_dyn-array u8) (array.make-array u8 1)]
-    [status-buffer : (__tl_dyn-array i32) (array.make-array i32 1)]
-    [counter-buffer : (__tl_dyn-array u64) (array.make-array u64 3)]
+    [sync-pipe : (__tl_dyn-array i32) (__tl_make-array i32 2)]
+    [exec-pipe : (__tl_dyn-array i32) (__tl_make-array i32 2)]
+    [scratch : (__tl_dyn-array u8) (__tl_make-array u8 1)]
+    [status-buffer : (__tl_dyn-array i32) (__tl_make-array i32 1)]
+    [counter-buffer : (__tl_dyn-array u64) (__tl_make-array u64 3)]
     [devnull-path : (__tl_dyn-array u8) (io.c-string "/dev/null")]
     [exec-addr : i64
       (unsafe

@@ -2,7 +2,6 @@
 ;; a sibling or a descendant of that sibling. On Linux only the first two i64
 ;; source elements are mapped. The second source spelling is under an always-
 ;; empty mask, so a widened or unpredicated load reaches the guard page.
-(import stdlib.array)
 
 (cfg linux (extern (tl_alloc [bytes : u64]) : u64))
 
@@ -58,7 +57,7 @@
             false
             (let
               [source : (__tl_dyn-array i64) (array-i64-from-raw source-data 4)]
-              [destination : (__tl_dyn-array i64) (array.make-array i64 4)]
+              [destination : (__tl_dyn-array i64) (__tl_make-array i64 4)]
               (begin
                 (write-i64! source-data 17)
                 (write-i64! (+ source-data 8) 29)
@@ -85,8 +84,8 @@
 (define (mutation-case) : bool
   (let
     [n : i64 13]
-    [xs : (__tl_dyn-array i64) (array.make-array i64 n)]
-    [out : (__tl_dyn-array i64) (array.make-array i64 n)]
+    [xs : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+    [out : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     [i : i64 0]
     [ok : bool true]
     (begin

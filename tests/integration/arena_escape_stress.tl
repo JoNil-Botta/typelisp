@@ -10,7 +10,6 @@
 ; manual because host reporting differs across CI platforms; stale handles fail
 ; as output/exit mismatches here.
 (import stdlib.arena)
-(import stdlib.array)
 (import stdlib.string)
 
 (extern (tl_alloc [arg0 : u64]) : u64)
@@ -41,7 +40,7 @@
 
 (define (make-items [count : i64] [seed : i64]) : (__tl_dyn-array String)
   (let
-    [items : (__tl_dyn-array String) (array.make-array String count)]
+    [items : (__tl_dyn-array String) (__tl_make-array String count)]
     (begin
       (fill-items (&mut items) 0 count seed)
       items)))

@@ -1,6 +1,5 @@
 ;: SPEC borrow contract: a nested lexical mutable reborrow ends with the inner
 ;: scope, so the outer mutable reference is usable again afterward.
-(import stdlib.array)
 
 (define (touch [slot : (&mut items i64)]) : unit
   unit)

@@ -1,6 +1,5 @@
 ;: SPEC borrow contract: a borrow stored into an outer lifetime-bearing
 ;: aggregate from a loop body is conservatively live across loop iterations.
-(import stdlib.array)
 
 (define (read-items [items : (__tl_dyn-array (& n i64))]) : i64
   1)

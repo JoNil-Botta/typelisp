@@ -1,6 +1,5 @@
 (module spmd_consumer)
 
-(import stdlib.array)
 (import fixture.src.lib as fixture)
 (import (fixture.package-module) as fixture-generated)
 
@@ -129,23 +128,23 @@
 (define (main) : i64
   (let
     [n : i64 70]
-    [out : (__tl_dyn-array i64) (array.make-array i64 n)]
-    [masked : (__tl_dyn-array i64) (array.make-array i64 n)]
-    [uniform-result : (__tl_dyn-array i64) (array.make-array i64 n)]
-    [input-i16 : (__tl_dyn-array i16) (array.make-array i16 n)]
-    [uniform-i16 : (__tl_dyn-array i16) (array.make-array i16 n)]
-    [input-u16 : (__tl_dyn-array u16) (array.make-array u16 n)]
-    [uniform-u16 : (__tl_dyn-array u16) (array.make-array u16 n)]
-    [input-i8 : (__tl_dyn-array i8) (array.make-array i8 n)]
-    [uniform-i8 : (__tl_dyn-array i8) (array.make-array i8 n)]
-    [input-u8 : (__tl_dyn-array u8) (array.make-array u8 n)]
-    [uniform-u8 : (__tl_dyn-array u8) (array.make-array u8 n)]
-    [literal-uniform-result : (__tl_dyn-array i64) (array.make-array i64 n)]
-    [cast-uniform-result : (__tl_dyn-array i64) (array.make-array i64 n)]
-    [f64-input : (__tl_dyn-array f64) (array.make-array f64 n)]
-    [f64-out : (__tl_dyn-array f64) (array.make-array f64 n)]
-    [f32-input : (__tl_dyn-array f32) (array.make-array f32 n)]
-    [f32-out : (__tl_dyn-array f32) (array.make-array f32 n)]
+    [out : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+    [masked : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+    [uniform-result : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+    [input-i16 : (__tl_dyn-array i16) (__tl_make-array i16 n)]
+    [uniform-i16 : (__tl_dyn-array i16) (__tl_make-array i16 n)]
+    [input-u16 : (__tl_dyn-array u16) (__tl_make-array u16 n)]
+    [uniform-u16 : (__tl_dyn-array u16) (__tl_make-array u16 n)]
+    [input-i8 : (__tl_dyn-array i8) (__tl_make-array i8 n)]
+    [uniform-i8 : (__tl_dyn-array i8) (__tl_make-array i8 n)]
+    [input-u8 : (__tl_dyn-array u8) (__tl_make-array u8 n)]
+    [uniform-u8 : (__tl_dyn-array u8) (__tl_make-array u8 n)]
+    [literal-uniform-result : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+    [cast-uniform-result : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+    [f64-input : (__tl_dyn-array f64) (__tl_make-array f64 n)]
+    [f64-out : (__tl_dyn-array f64) (__tl_make-array f64 n)]
+    [f32-input : (__tl_dyn-array f32) (__tl_make-array f32 n)]
+    [f32-out : (__tl_dyn-array f32) (__tl_make-array f32 n)]
     [i : i64 0]
     [out-ok? : bool false]
     [masked-ok? : bool false]

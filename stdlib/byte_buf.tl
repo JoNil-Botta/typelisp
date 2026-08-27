@@ -28,7 +28,6 @@
 ;#       42
 ;#       1)))
 ;# ```
-(import stdlib.array)
 (import stdlib.string)
 
 ;: Owned mutable binary byte buffer. Only the prefix `[0, len)` is live.
@@ -90,7 +89,7 @@
       (if (< capacity 1)
         1
         capacity)]
-    (ByteBuf (array.make-array u8 cap) 0)))
+    (ByteBuf (__tl_make-array u8 cap) 0)))
 
 ;: Create an empty buffer with a small default capacity.
 (define (new) : ByteBuf
@@ -220,7 +219,7 @@
     (if (= n 0)
       ""
       (let
-        [out : (__tl_dyn-array u8) (array.make-array u8 n)]
+        [out : (__tl_dyn-array u8) (__tl_make-array u8 n)]
         [dst : (MutPtr u8)
           (unsafe
             (__tl_array-data out))]
@@ -306,7 +305,7 @@
         (if (< doubled min-capacity)
           min-capacity
           doubled)]
-      [bigger : (__tl_dyn-array u8) (array.make-array u8 new-capacity)]
+      [bigger : (__tl_dyn-array u8) (__tl_make-array u8 new-capacity)]
       (begin
         (byte-buf-copy-slots-range-into
           (&mut bigger)
@@ -434,7 +433,7 @@
 (define (to-array [buf : ByteBuf]) : (__tl_dyn-array u8)
   (let
     [n : i64 (len buf)]
-    [out : (__tl_dyn-array u8) (array.make-array u8 n)]
+    [out : (__tl_dyn-array u8) (__tl_make-array u8 n)]
     (begin
       (byte-buf-copy-slots-range-into (&mut out) 0 (& buf.slots) 0 n)
       out)))

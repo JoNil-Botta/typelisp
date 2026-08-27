@@ -1,5 +1,4 @@
 ;: Lifetime-tagged iterator state can be mutably borrowed and advanced in place.
-(import stdlib.array)
 
 (defstruct Iter
   (:lifetimes source)
@@ -34,7 +33,7 @@
 
 (define (main) : i64
   (let
-    [items : (__tl_dyn-array i64) (array.make-array i64 2)]
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 2)]
     (begin
       (set! (array-ref items 0) 19)
       (set! (array-ref items 1) 23)

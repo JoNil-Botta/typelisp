@@ -1,4 +1,3 @@
-(import stdlib.array)
 (import stdlib.string)
 
 (defmacro (toy-shared-view [place : Expr]) : Expr
@@ -28,7 +27,7 @@
   (Missing))
 
 (define (field-list-empty) : FieldList
-  (FieldList (array.make-array Field 0)))
+  (FieldList (__tl_make-array Field 0)))
 
 (define (field-list-copy-from
   [source : (& source (__tl_dyn-array Field))]
@@ -44,7 +43,7 @@
   (let
     [source : (__tl_dyn-array Field) rest.items]
     [target : (__tl_dyn-array Field)
-      (array.make-array Field (+ (array-length source) 1))]
+      (__tl_make-array Field (+ (array-length source) 1))]
     (begin
       (set! (array-ref target 0) (Field name value))
       (field-list-copy-from (& source) (&mut target) 0)
@@ -74,7 +73,7 @@
     (Found (clone (array-ref items.items index)))))
 
 (define (value-list-empty) : ValueList
-  (ValueList (array.make-array Value 0)))
+  (ValueList (__tl_make-array Value 0)))
 
 (define (value-list-copy-from
   [source : (& source (__tl_dyn-array Value))]
@@ -90,7 +89,7 @@
   (let
     [source : (__tl_dyn-array Value) rest.items]
     [target : (__tl_dyn-array Value)
-      (array.make-array Value (+ (array-length source) 1))]
+      (__tl_make-array Value (+ (array-length source) 1))]
     (begin
       (set! (array-ref target 0) value)
       (value-list-copy-from (& source) (&mut target) 0)

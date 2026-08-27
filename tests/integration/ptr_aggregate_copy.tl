@@ -3,7 +3,6 @@
 ;; A memory aggregate is represented by an address during lowering, while a
 ;; two-word register group carries both words explicitly. ptr-write! must copy
 ;; the complete representation in either case.
-(import stdlib.array)
 
 (defenum Slot
   (Empty)
@@ -16,11 +15,11 @@
 
 (define (main) : i64
   (let
-    [slots : (__tl_dyn-array Slot) (array.make-array Slot 2)]
+    [slots : (__tl_dyn-array Slot) (__tl_make-array Slot 2)]
     [data : (MutPtr Slot)
       (unsafe
         (ptr-cast (__tl_array-data slots) : (MutPtr Slot)))]
-    [pairs : (__tl_dyn-array Pair) (array.make-array Pair 2)]
+    [pairs : (__tl_dyn-array Pair) (__tl_make-array Pair 2)]
     [pair-data : (MutPtr Pair)
       (unsafe
         (ptr-cast (__tl_array-data pairs) : (MutPtr Pair)))]

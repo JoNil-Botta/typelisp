@@ -25,7 +25,6 @@
 ;;
 ;; `len` comes from the process argument count so no size folds and the guard
 ;; is a real run-time decision.
-(import stdlib.array)
 (import stdlib.io)
 
 ;; Element-clean: every write lands in the element storage the parameter's
@@ -142,13 +141,13 @@
 (define (main) : i64
   (let
     [len : i64 (+ 8 (io.arg-count))]
-    [items (array.make-array i64 len)]
-    [other (array.make-array i64 len)]
-    [extra (array.make-array i64 len)]
-    [marks-a (array.make-array i64 len)]
-    [marks-b (array.make-array i64 len)]
-    [marks-c (array.make-array i64 len)]
-    [marks-d (array.make-array i64 len)]
+    [items (__tl_make-array i64 len)]
+    [other (__tl_make-array i64 len)]
+    [extra (__tl_make-array i64 len)]
+    [marks-a (__tl_make-array i64 len)]
+    [marks-b (__tl_make-array i64 len)]
+    [marks-c (__tl_make-array i64 len)]
+    [marks-d (__tl_make-array i64 len)]
     [wa : i64 0]
     [tb : i64 0]
     [wc : i64 0]

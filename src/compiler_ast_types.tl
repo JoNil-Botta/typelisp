@@ -8,7 +8,6 @@
 (import stdlib.str_cat_runtime as str_cat)
 (import compiler_intern as ci)
 (import compiler_builtin_ids as cbi)
-(import stdlib.array)
 (cfg test (import stdlib.io))
 
 ;; Arena access for the node-pool grow paths -- a regrown pool array must
@@ -809,7 +808,7 @@
 (define (ast-param-list-shallow-copy [value : (& value AstParamList)]) : AstParamList
   (let
     [count : i64 value.len]
-    [slots : (__tl_dyn-array AstParam) (array.make-array AstParam count)]
+    [slots : (__tl_dyn-array AstParam) (__tl_make-array AstParam count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -1262,7 +1261,7 @@
     (AstBorrowLifetime.Named id)))
 
 (define (ast-node-pool-segment-base-table-new) : (__tl_dyn-array i64)
-  (array.make-array i64 ast-node-pool-max-segments))
+  (__tl_make-array i64 ast-node-pool-max-segments))
 
 (define (ast-expr-node-pool-biased-segment-base
   [segment : (__tl_dyn-array AstExpr)]
@@ -1275,7 +1274,7 @@
     (* segment-index ast-expr-node-pool-segment-bytes)))
 
 (define ast-node-pool-first-segment : (__tl_dyn-array AstExpr)
-  (array.make-array AstExpr ast-expr-node-pool-segment-size))
+  (__tl_make-array AstExpr ast-expr-node-pool-segment-size))
 (define ast-node-pool-segment-bases : i64
   (let
     [bases : (__tl_dyn-array i64) (ast-node-pool-segment-base-table-new)]
@@ -1296,7 +1295,7 @@
 ;; slot segment.  Sparse record payloads live in the pool's base arena and grow
 ;; independently of the dense slot index.
 (define ast-node-span-slot-first-segment : (__tl_dyn-array i32)
-  (array.make-array i32 ast-expr-node-pool-segment-size))
+  (__tl_make-array i32 ast-expr-node-pool-segment-size))
 (define ast-node-span-slot-segment-bases : i64
   (let
     [bases : (__tl_dyn-array i64) (ast-node-pool-segment-base-table-new)]
@@ -1312,13 +1311,13 @@
         : i64))))
 (define ast-node-canonical-span-records : (__tl_dyn-array
     AstExprCanonicalSpanRecord)
-  (array.make-array
+  (__tl_make-array
     AstExprCanonicalSpanRecord
     ast-expr-span-record-initial-capacity))
 (define ast-node-canonical-span-count : i64
   0)
 (define ast-node-respan-records : (__tl_dyn-array AstExprReSpan)
-  (array.make-array AstExprReSpan ast-expr-span-record-initial-capacity))
+  (__tl_make-array AstExprReSpan ast-expr-span-record-initial-capacity))
 (define ast-node-respan-count : i64
   0)
 (define ast-node-span-records-monotonic? : bool
@@ -1375,11 +1374,11 @@
     [new-segment : (__tl_dyn-array AstExpr)
       (in-arena
         (arena.Arena storage-root)
-        (array.make-array AstExpr ast-expr-node-pool-segment-size))]
+        (__tl_make-array AstExpr ast-expr-node-pool-segment-size))]
     [new-span-slots : (__tl_dyn-array i32)
       (in-arena
         (arena.Arena storage-root)
-        (array.make-array i32 ast-expr-node-pool-segment-size))]
+        (__tl_make-array i32 ast-expr-node-pool-segment-size))]
     (begin
       (unsafe
         (ptr-write!
@@ -1446,7 +1445,7 @@
     [next : (__tl_dyn-array AstExprCanonicalSpanRecord)
       (in-arena
         (arena.Arena node-pool-base-arena)
-        (array.make-array AstExprCanonicalSpanRecord new-capacity))]
+        (__tl_make-array AstExprCanonicalSpanRecord new-capacity))]
     [i : i64 0]
     (begin
       (while (< i ast-node-canonical-span-count)
@@ -1464,7 +1463,7 @@
     [next : (__tl_dyn-array AstExprReSpan)
       (in-arena
         (arena.Arena node-pool-base-arena)
-        (array.make-array AstExprReSpan new-capacity))]
+        (__tl_make-array AstExprReSpan new-capacity))]
     [i : i64 0]
     (begin
       (while (< i ast-node-respan-count)
@@ -1952,13 +1951,13 @@
     [canonical-span-records : (__tl_dyn-array AstExprCanonicalSpanRecord)
       (in-arena
         (arena.Arena base-arena)
-        (array.make-array
+        (__tl_make-array
           AstExprCanonicalSpanRecord
           ast-expr-span-record-initial-capacity))]
     [respan-records : (__tl_dyn-array AstExprReSpan)
       (in-arena
         (arena.Arena base-arena)
-        (array.make-array AstExprReSpan ast-expr-span-record-initial-capacity))]
+        (__tl_make-array AstExprReSpan ast-expr-span-record-initial-capacity))]
     [storage-root : i64 (ast-node-pool-arena-make)]
     [segment-index : i64 0]
     (begin
@@ -1967,11 +1966,11 @@
           [segment : (__tl_dyn-array AstExpr)
             (in-arena
               (arena.Arena storage-root)
-              (array.make-array AstExpr ast-expr-node-pool-segment-size))]
+              (__tl_make-array AstExpr ast-expr-node-pool-segment-size))]
           [span-slots : (__tl_dyn-array i32)
             (in-arena
               (arena.Arena storage-root)
-              (array.make-array i32 ast-expr-node-pool-segment-size))]
+              (__tl_make-array i32 ast-expr-node-pool-segment-size))]
           (begin
             (set!
               (array-ref segment-bases segment-index)
@@ -2072,7 +2071,7 @@
     [next : (__tl_dyn-array AstExprCanonicalSpanRecord)
       (in-arena
         (arena.Arena pool.base-arena)
-        (array.make-array AstExprCanonicalSpanRecord next-capacity))]
+        (__tl_make-array AstExprCanonicalSpanRecord next-capacity))]
     [count : i64 pool.canonical-span-count]
     [i : i64 0]
     (begin
@@ -2091,7 +2090,7 @@
     [next : (__tl_dyn-array AstExprReSpan)
       (in-arena
         (arena.Arena pool.base-arena)
-        (array.make-array AstExprReSpan next-capacity))]
+        (__tl_make-array AstExprReSpan next-capacity))]
     [count : i64 pool.respan-count]
     [i : i64 0]
     (begin
@@ -2402,11 +2401,11 @@
     [new-segment : (__tl_dyn-array AstExpr)
       (in-arena
         (arena.Arena storage-arena)
-        (array.make-array AstExpr ast-expr-node-pool-segment-size))]
+        (__tl_make-array AstExpr ast-expr-node-pool-segment-size))]
     [new-span-slots : (__tl_dyn-array i32)
       (in-arena
         (arena.Arena storage-arena)
-        (array.make-array i32 ast-expr-node-pool-segment-size))]
+        (__tl_make-array i32 ast-expr-node-pool-segment-size))]
     [len : i64 pool.count]
     (begin
       (unsafe
@@ -2741,7 +2740,7 @@
     (* segment-index ast-type-node-pool-segment-bytes)))
 
 (define ty-node-pool-first-segment : (__tl_dyn-array AstType)
-  (array.make-array AstType ast-type-node-pool-segment-size))
+  (__tl_make-array AstType ast-type-node-pool-segment-size))
 (define ty-node-pool-segment-bases : i64
   (let
     [bases : (__tl_dyn-array i64) (ast-node-pool-segment-base-table-new)]
@@ -2790,7 +2789,7 @@
     [new-segment : (__tl_dyn-array AstType)
       (in-arena
         (arena.Arena storage-root)
-        (array.make-array AstType ast-type-node-pool-segment-size))]
+        (__tl_make-array AstType ast-type-node-pool-segment-size))]
     (begin
       (unsafe
         (ptr-write!
@@ -2924,7 +2923,7 @@
     [segment-bases : (__tl_dyn-array i64)
       (in-arena (arena.Arena base-arena) (ast-node-pool-segment-base-table-new))]
     [dedup-slots : (__tl_dyn-array i64)
-      (in-arena (arena.Arena base-arena) (array.make-array i64 dedup-cap))]
+      (in-arena (arena.Arena base-arena) (__tl_make-array i64 dedup-cap))]
     [storage-root : i64 (ast-node-pool-arena-make)]
     [segment-index : i64 0]
     (begin
@@ -2933,7 +2932,7 @@
           [segment : (__tl_dyn-array AstType)
             (in-arena
               (arena.Arena storage-root)
-              (array.make-array AstType ast-type-node-pool-segment-size))]
+              (__tl_make-array AstType ast-type-node-pool-segment-size))]
           (begin
             (set!
               (array-ref segment-bases segment-index)
@@ -3019,7 +3018,7 @@
     [new-segment : (__tl_dyn-array AstType)
       (in-arena
         (arena.Arena storage-arena)
-        (array.make-array AstType ast-type-node-pool-segment-size))]
+        (__tl_make-array AstType ast-type-node-pool-segment-size))]
     [len : i64 pool.count]
     (begin
       (unsafe
@@ -3235,7 +3234,7 @@
 (define ty-node-dedup-capacity : i64
   131072)
 (define ty-node-dedup-slots : (__tl_dyn-array i64)
-  (array.make-array i64 131072))
+  (__tl_make-array i64 131072))
 (define ty-node-dedup-count : i64
   0)
 
@@ -3591,7 +3590,7 @@
     [new-capacity : i64 (* old-capacity 2)]
     [base-arena : i64 node-pool-base-arena]
     [new-slots : (__tl_dyn-array i64)
-      (in-arena (arena.Arena base-arena) (array.make-array i64 new-capacity))]
+      (in-arena (arena.Arena base-arena) (__tl_make-array i64 new-capacity))]
     [mask : i64 (- new-capacity 1)]
     [i : i64 0]
     (begin
@@ -3977,16 +3976,16 @@
   (let
     [expr-cell : (__tl_dyn-array AstExprNodePoolState)
       (if (= allocation-owner-arena 0)
-        (array.make-array AstExprNodePoolState 1)
+        (__tl_make-array AstExprNodePoolState 1)
         (in-arena
           (arena.Arena allocation-owner-arena)
-          (array.make-array AstExprNodePoolState 1)))]
+          (__tl_make-array AstExprNodePoolState 1)))]
     [type-cell : (__tl_dyn-array AstTypeNodePoolState)
       (if (= allocation-owner-arena 0)
-        (array.make-array AstTypeNodePoolState 1)
+        (__tl_make-array AstTypeNodePoolState 1)
         (in-arena
           (arena.Arena allocation-owner-arena)
-          (array.make-array AstTypeNodePoolState 1)))]
+          (__tl_make-array AstTypeNodePoolState 1)))]
     (begin
       ;; The cells and the state records already have their intended owners.
       ;; Publish the records shallowly: an aggregate assignment would create a
@@ -4912,7 +4911,7 @@
         [source-dedup : (__tl_dyn-array i64)
           (ast-place-shared-view source-state.dedup-slots)]
         [dedup-cap : i64 (array-length source-dedup)]
-        [dedup-copy : (__tl_dyn-array i64) (array.make-array i64 dedup-cap)]
+        [dedup-copy : (__tl_dyn-array i64) (__tl_make-array i64 dedup-cap)]
         [dedup-i : i64 0]
         (begin
           (while (< dedup-i dedup-cap)
@@ -5158,12 +5157,12 @@
 ;; This global is initialized at startup in the program arena, so it outlives
 ;; every per-phase arena that can hold a list pointing at it.
 (define ast-empty-i64-slots : (__tl_dyn-array i64)
-  (array.make-array i64 0))
+  (__tl_make-array i64 0))
 
 (define (ast-type-list-with-capacity [capacity : i64]) : AstTypeList
   (if (<= capacity 0)
     (AstTypeList (ast-global-shared-view ast-empty-i64-slots) 0)
-    (AstTypeList (array.make-array i64 capacity) 0)))
+    (AstTypeList (__tl_make-array i64 capacity) 0)))
 
 (define (ast-type-list-new) : AstTypeList
   (ast-type-list-with-capacity 0))
@@ -5201,7 +5200,7 @@
       (if (< old-cap 1)
         1
         (* old-cap 2))]
-    [bigger : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
+    [bigger : (__tl_dyn-array i64) (__tl_make-array i64 new-cap)]
     (begin
       (ast-type-list-copy-range (&mut bigger) (& v.slots) 0 n)
       (set! v.slots bigger))))
@@ -5372,7 +5371,7 @@
 (define (ast-lifetime-list-with-capacity [capacity : i64]) : AstLifetimeList
   (if (<= capacity 0)
     (AstLifetimeList (ast-global-shared-view ast-empty-i64-slots) 0)
-    (AstLifetimeList (array.make-array i64 capacity) 0)))
+    (AstLifetimeList (__tl_make-array i64 capacity) 0)))
 
 (define (ast-lifetime-list-new) : AstLifetimeList
   (ast-lifetime-list-with-capacity 0))
@@ -5410,7 +5409,7 @@
       (if (< old-cap 1)
         1
         (* old-cap 2))]
-    [bigger : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
+    [bigger : (__tl_dyn-array i64) (__tl_make-array i64 new-cap)]
     (begin
       (ast-lifetime-list-copy-range (&mut bigger) (& v.slots) 0 n)
       (set! v.slots bigger))))
@@ -5459,7 +5458,7 @@
       (if (< capacity 0)
         0
         capacity)]
-    (AstParamList (array.make-array AstParam cap) 0)))
+    (AstParamList (__tl_make-array AstParam cap) 0)))
 
 (define (ast-param-list-new) : AstParamList
   (ast-param-list-with-capacity 0))
@@ -5494,7 +5493,7 @@
       (if (< old-cap 1)
         1
         (* old-cap 2))]
-    [bigger : (__tl_dyn-array AstParam) (array.make-array AstParam new-cap)]
+    [bigger : (__tl_dyn-array AstParam) (__tl_make-array AstParam new-cap)]
     (begin
       (ast-param-list-copy-range (&mut bigger) (& v.slots) 0 n)
       (set! v.slots bigger))))
@@ -5532,7 +5531,7 @@
       out)))
 
 (define (ast-macro-type-kind-list-empty) : AstMacroTypeKindList
-  (AstMacroTypeKindList (array.make-array i64 0) 0))
+  (AstMacroTypeKindList (__tl_make-array i64 0) 0))
 
 (define (ast-macro-type-kind-list-with-length [len : i64]) : AstMacroTypeKindList
   (let
@@ -5540,7 +5539,7 @@
       (if (< len 0)
         0
         len)]
-    (AstMacroTypeKindList (array.make-array i64 count) count)))
+    (AstMacroTypeKindList (__tl_make-array i64 count) count)))
 
 (define (ast-macro-type-kind-list-len [kinds : (& kinds AstMacroTypeKindList)]) : i64
   kinds.len)
@@ -5633,7 +5632,7 @@
       (if (< capacity 0)
         0
         capacity)]
-    (AstMacroParamList (array.make-array AstMacroParam cap) 0)))
+    (AstMacroParamList (__tl_make-array AstMacroParam cap) 0)))
 
 (define (ast-macro-param-list-new) : AstMacroParamList
   (ast-macro-param-list-with-capacity 0))
@@ -5669,7 +5668,7 @@
         1
         (* old-cap 2))]
     [bigger : (__tl_dyn-array AstMacroParam)
-      (array.make-array AstMacroParam new-cap)]
+      (__tl_make-array AstMacroParam new-cap)]
     (begin
       (ast-macro-param-list-copy-range (&mut bigger) (& v.slots) 0 n)
       (set! v.slots bigger))))
@@ -5708,7 +5707,7 @@
       (if (< capacity 1)
         1
         capacity)]
-    (AstFieldDefList (array.make-array AstFieldDef cap) 0)))
+    (AstFieldDefList (__tl_make-array AstFieldDef cap) 0)))
 
 (define (ast-field-def-list-new) : AstFieldDefList
   (ast-field-def-list-with-capacity 4))
@@ -5747,7 +5746,7 @@
         1
         (* old-cap 2))]
     [bigger : (__tl_dyn-array AstFieldDef)
-      (array.make-array AstFieldDef new-cap)]
+      (__tl_make-array AstFieldDef new-cap)]
     (begin
       (ast-field-def-list-copy-range (&mut bigger) (& v.slots) 0 n)
       (set! v.slots bigger))))
@@ -5794,7 +5793,7 @@
       (if (< capacity 1)
         1
         capacity)]
-    (AstExternLinkInputList (array.make-array AstExternLinkInput cap) 0)))
+    (AstExternLinkInputList (__tl_make-array AstExternLinkInput cap) 0)))
 
 (define (ast-extern-link-input-list-new) : AstExternLinkInputList
   (ast-extern-link-input-list-with-capacity 4))
@@ -5830,7 +5829,7 @@
         1
         (* old-cap 2))]
     [bigger : (__tl_dyn-array AstExternLinkInput)
-      (array.make-array AstExternLinkInput new-cap)]
+      (__tl_make-array AstExternLinkInput new-cap)]
     (begin
       (ast-extern-link-input-list-copy-range (&mut bigger) (& v.slots) 0 n)
       (set! v.slots bigger))))
@@ -5853,7 +5852,7 @@
 
 (define (ast-spmd-param-class-list-with-capacity [capacity : i64]) : AstSpmdParamClassList
   (AstSpmdParamClassList
-    (array.make-array
+    (__tl_make-array
       AstSpmdParamClass
       (if (< capacity 1)
         1
@@ -5892,7 +5891,7 @@
     [len : i64 items.len]
     [old-cap : i64 (array-length items.slots)]
     [next : (__tl_dyn-array AstSpmdParamClass)
-      (array.make-array
+      (__tl_make-array
         AstSpmdParamClass
         (if (< old-cap 1)
           1
@@ -5916,7 +5915,7 @@
 
 (define (ast-spmd-specialization-list-with-capacity [capacity : i64]) : AstSpmdSpecializationList
   (AstSpmdSpecializationList
-    (array.make-array
+    (__tl_make-array
       AstSpmdSpecialization
       (if (< capacity 1)
         1
@@ -5955,7 +5954,7 @@
     [len : i64 items.len]
     [old-cap : i64 (array-length items.slots)]
     [next : (__tl_dyn-array AstSpmdSpecialization)
-      (array.make-array
+      (__tl_make-array
         AstSpmdSpecialization
         (if (< old-cap 1)
           1
@@ -6051,7 +6050,7 @@
 
 (define (ast-imported-spmd-specialization-list-with-capacity [capacity : i64]) : AstImportedSpmdSpecializationList
   (AstImportedSpmdSpecializationList
-    (array.make-array
+    (__tl_make-array
       AstImportedSpmdSpecialization
       (if (< capacity 1)
         1
@@ -6094,7 +6093,7 @@
     [len : i64 items.len]
     [old-cap : i64 (array-length items.slots)]
     [next : (__tl_dyn-array AstImportedSpmdSpecialization)
-      (array.make-array
+      (__tl_make-array
         AstImportedSpmdSpecialization
         (if (< old-cap 1)
           1
@@ -6127,7 +6126,7 @@
 
 (define (ast-imported-spmd-callable-list-with-capacity [capacity : i64]) : AstImportedSpmdCallableList
   (AstImportedSpmdCallableList
-    (array.make-array
+    (__tl_make-array
       AstImportedSpmdCallable
       (if (< capacity 1)
         1
@@ -6166,7 +6165,7 @@
     [len : i64 items.len]
     [old-cap : i64 (array-length items.slots)]
     [next : (__tl_dyn-array AstImportedSpmdCallable)
-      (array.make-array
+      (__tl_make-array
         AstImportedSpmdCallable
         (if (< old-cap 1)
           1
@@ -6291,7 +6290,7 @@
 ;; Zero-length shared backing, same discipline as `ast-empty-i64-slots`.
 (define ast-empty-variant-payload-cleanup-slots : (__tl_dyn-array
     AstVariantPayloadCleanup)
-  (array.make-array AstVariantPayloadCleanup 0))
+  (__tl_make-array AstVariantPayloadCleanup 0))
 
 (define (ast-variant-payload-cleanup-list-with-capacity [capacity : i64]) : AstVariantPayloadCleanupList
   (if (<= capacity 0)
@@ -6299,7 +6298,7 @@
       (ast-global-shared-view ast-empty-variant-payload-cleanup-slots)
       0)
     (AstVariantPayloadCleanupList
-      (array.make-array AstVariantPayloadCleanup capacity)
+      (__tl_make-array AstVariantPayloadCleanup capacity)
       0)))
 
 ;; Starts empty rather than at capacity 4: a self-compile builds 1.71M of these
@@ -6342,7 +6341,7 @@
         1
         (* old-cap 2))]
     [bigger : (__tl_dyn-array AstVariantPayloadCleanup)
-      (array.make-array AstVariantPayloadCleanup new-cap)]
+      (__tl_make-array AstVariantPayloadCleanup new-cap)]
     (begin
       (ast-variant-payload-cleanup-list-copy-range
         (&mut bigger)
@@ -6414,7 +6413,7 @@
       (if (< capacity 1)
         1
         capacity)]
-    (AstVariantDefList (array.make-array AstVariantDef cap) 0)))
+    (AstVariantDefList (__tl_make-array AstVariantDef cap) 0)))
 
 (define (ast-variant-def-list-new) : AstVariantDefList
   (ast-variant-def-list-with-capacity 4))
@@ -6453,7 +6452,7 @@
         1
         (* old-cap 2))]
     [bigger : (__tl_dyn-array AstVariantDef)
-      (array.make-array AstVariantDef new-cap)]
+      (__tl_make-array AstVariantDef new-cap)]
     (begin
       (ast-variant-def-list-copy-range (&mut bigger) (& v.slots) 0 n)
       (set! v.slots bigger))))
@@ -6512,7 +6511,7 @@
       (if (< capacity 1)
         1
         capacity)]
-    (AstPatternList (array.make-array AstPattern cap) 0)))
+    (AstPatternList (__tl_make-array AstPattern cap) 0)))
 
 (define (ast-pattern-list-new) : AstPatternList
   (ast-pattern-list-with-capacity 4))
@@ -6550,7 +6549,7 @@
       (if (< old-cap 1)
         1
         (* old-cap 2))]
-    [bigger : (__tl_dyn-array AstPattern) (array.make-array AstPattern new-cap)]
+    [bigger : (__tl_dyn-array AstPattern) (__tl_make-array AstPattern new-cap)]
     (begin
       (ast-pattern-list-copy-range (&mut bigger) (& v.slots) 0 n)
       (set! v.slots bigger))))
@@ -6622,7 +6621,7 @@
       (if (< capacity 0)
         0
         capacity)]
-    (AstLetBindingList (array.make-array AstLetBinding cap) 0)))
+    (AstLetBindingList (__tl_make-array AstLetBinding cap) 0)))
 
 (define (ast-let-binding-list-new) : AstLetBindingList
   (ast-let-binding-list-with-capacity 0))
@@ -6658,7 +6657,7 @@
         1
         (* old-cap 2))]
     [bigger : (__tl_dyn-array AstLetBinding)
-      (array.make-array AstLetBinding new-cap)]
+      (__tl_make-array AstLetBinding new-cap)]
     (begin
       (ast-let-binding-list-copy-range (&mut bigger) (& v.slots) 0 n)
       (set! v.slots bigger))))
@@ -6710,7 +6709,7 @@
       (if (< capacity 0)
         0
         capacity)]
-    (AstResourceBindingList (array.make-array AstResourceBinding cap) 0)))
+    (AstResourceBindingList (__tl_make-array AstResourceBinding cap) 0)))
 
 (define (ast-resource-binding-list-new) : AstResourceBindingList
   (ast-resource-binding-list-with-capacity 0))
@@ -6746,7 +6745,7 @@
         1
         (* old-cap 2))]
     [bigger : (__tl_dyn-array AstResourceBinding)
-      (array.make-array AstResourceBinding new-cap)]
+      (__tl_make-array AstResourceBinding new-cap)]
     (begin
       (ast-resource-binding-list-copy-range (&mut bigger) (& v.slots) 0 n)
       (set! v.slots bigger))))
@@ -6803,7 +6802,7 @@
       (if (< capacity 1)
         1
         capacity)]
-    (AstMatchArmList (array.make-array AstMatchArm cap) 0)))
+    (AstMatchArmList (__tl_make-array AstMatchArm cap) 0)))
 
 (define (ast-match-arm-list-new) : AstMatchArmList
   (ast-match-arm-list-with-capacity 4))
@@ -6842,7 +6841,7 @@
         1
         (* old-cap 2))]
     [bigger : (__tl_dyn-array AstMatchArm)
-      (array.make-array AstMatchArm new-cap)]
+      (__tl_make-array AstMatchArm new-cap)]
     (begin
       (ast-match-arm-list-copy-range (&mut bigger) (& v.slots) 0 n)
       (set! v.slots bigger))))
@@ -6893,7 +6892,7 @@
       (if (< capacity 1)
         1
         capacity)]
-    (AstExprList (array.make-array i64 cap) 0)))
+    (AstExprList (__tl_make-array i64 cap) 0)))
 
 (define (ast-expr-list-new) : AstExprList
   (ast-expr-list-with-capacity 4))
@@ -6931,7 +6930,7 @@
       (if (< old-cap 1)
         1
         (* old-cap 2))]
-    [bigger : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
+    [bigger : (__tl_dyn-array i64) (__tl_make-array i64 new-cap)]
     (begin
       (ast-expr-list-copy-range (&mut bigger) (& v.slots) 0 n)
       (set! v.slots bigger))))
@@ -6993,7 +6992,7 @@
       (if (< capacity 1)
         1
         capacity)]
-    (AstExprClauseList (array.make-array AstExprClause cap) 0)))
+    (AstExprClauseList (__tl_make-array AstExprClause cap) 0)))
 
 (define (ast-expr-clause-list-new) : AstExprClauseList
   (ast-expr-clause-list-with-capacity 4))
@@ -7026,7 +7025,7 @@
         1
         (* old-cap 2))]
     [bigger : (__tl_dyn-array AstExprClause)
-      (array.make-array AstExprClause new-cap)]
+      (__tl_make-array AstExprClause new-cap)]
     (begin
       (ast-expr-clause-list-copy-range (&mut bigger) (& v.slots) 0 n)
       (set! v.slots bigger))))
@@ -7079,7 +7078,7 @@
       (if (< capacity 1)
         1
         capacity)]
-    (AstExprBindingClauseList (array.make-array AstExprBindingClause cap) 0)))
+    (AstExprBindingClauseList (__tl_make-array AstExprBindingClause cap) 0)))
 
 (define (ast-expr-binding-clause-list-new) : AstExprBindingClauseList
   (ast-expr-binding-clause-list-with-capacity 4))
@@ -7113,7 +7112,7 @@
         1
         (* old-cap 2))]
     [bigger : (__tl_dyn-array AstExprBindingClause)
-      (array.make-array AstExprBindingClause new-cap)]
+      (__tl_make-array AstExprBindingClause new-cap)]
     (begin
       (ast-expr-binding-clause-list-copy-range (&mut bigger) (& v.slots) 0 n)
       (set! v.slots bigger))))
@@ -7987,7 +7986,7 @@
       (if (< capacity 1)
         1
         capacity)]
-    (AstDispatchVariantList (array.make-array AstDispatchVariant cap) 0)))
+    (AstDispatchVariantList (__tl_make-array AstDispatchVariant cap) 0)))
 
 (define (ast-dispatch-variant-list-new) : AstDispatchVariantList
   (ast-dispatch-variant-list-with-capacity 4))
@@ -8026,7 +8025,7 @@
         1
         (* old-cap 2))]
     [bigger : (__tl_dyn-array AstDispatchVariant)
-      (array.make-array AstDispatchVariant new-cap)]
+      (__tl_make-array AstDispatchVariant new-cap)]
     (begin
       (ast-dispatch-variant-list-copy-range (&mut bigger) (& v.slots) 0 n)
       (set! v.slots bigger))))
@@ -8058,7 +8057,7 @@
       (if (< capacity 1)
         1
         capacity)]
-    (AstDeclList (array.make-array AstDecl cap) 0 0 true)))
+    (AstDeclList (__tl_make-array AstDecl cap) 0 0 true)))
 
 (define (ast-decl-list-new) : AstDeclList
   (ast-decl-list-with-capacity 4))
@@ -8142,7 +8141,7 @@
       (if (< old-cap 1)
         1
         (* old-cap 2))]
-    [bigger : (__tl_dyn-array AstDecl) (array.make-array AstDecl new-cap)]
+    [bigger : (__tl_dyn-array AstDecl) (__tl_make-array AstDecl new-cap)]
     (begin
       (ast-decl-list-copy-range (&mut bigger) (& v.slots) v.offset 0 n)
       (set! v.slots bigger)
@@ -8237,7 +8236,7 @@
           4
           (* new-len 2))]
       [new-offset : i64 (- new-cap new-len)]
-      [slots : (__tl_dyn-array AstDecl) (array.make-array AstDecl new-cap)]
+      [slots : (__tl_dyn-array AstDecl) (__tl_make-array AstDecl new-cap)]
       (begin
         (set! (array-ref slots new-offset) head)
         (ast-decl-list-copy-to
@@ -8549,8 +8548,8 @@
         1
         capacity)]
     (AstDeclPathList
-      (array.make-array String cap)
-      (array.make-array i64 (* cap 2))
+      (__tl_make-array String cap)
+      (__tl_make-array i64 (* cap 2))
       0
       0
       true)))
@@ -8637,9 +8636,9 @@
         1
         (* old-cap 2))]
     [old-total-cap : i64 (array-length v.slots)]
-    [bigger : (__tl_dyn-array String) (array.make-array String new-cap)]
+    [bigger : (__tl_dyn-array String) (__tl_make-array String new-cap)]
     [bigger-owner-ids : (__tl_dyn-array i64)
-      (array.make-array i64 (* new-cap 2))]
+      (__tl_make-array i64 (* new-cap 2))]
     (begin
       (ast-decl-path-list-copy-range (&mut bigger) (& v.slots) v.offset 0 n)
       (ast-decl-module-list-copy-to
@@ -8765,8 +8764,8 @@
           4
           (* new-len 2))]
       [new-offset : i64 (- new-cap new-len)]
-      [slots : (__tl_dyn-array String) (array.make-array String new-cap)]
-      [owner-ids : (__tl_dyn-array i64) (array.make-array i64 (* new-cap 2))]
+      [slots : (__tl_dyn-array String) (__tl_make-array String new-cap)]
+      [owner-ids : (__tl_dyn-array i64) (__tl_make-array i64 (* new-cap 2))]
       [rest-cap : i64 (array-length rest.slots)]
       (begin
         (set! (array-ref slots new-offset) head)
@@ -8826,7 +8825,7 @@
       (if (< capacity 1)
         1
         capacity)]
-    (AstDeclModuleList (array.make-array i64 cap) 0 0 true)))
+    (AstDeclModuleList (__tl_make-array i64 cap) 0 0 true)))
 
 (define (ast-decl-module-list-new) : AstDeclModuleList
   (ast-decl-module-list-with-capacity 4))
@@ -8879,7 +8878,7 @@
       (if (< old-cap 1)
         1
         (* old-cap 2))]
-    [bigger : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
+    [bigger : (__tl_dyn-array i64) (__tl_make-array i64 new-cap)]
     (begin
       (ast-decl-module-list-copy-to (&mut bigger) (& v.slots) v.offset 0 0 n)
       (set! v.slots bigger)
@@ -8931,7 +8930,7 @@
           4
           (* new-len 2))]
       [new-offset : i64 (- new-cap new-len)]
-      [slots : (__tl_dyn-array i64) (array.make-array i64 new-cap)]
+      [slots : (__tl_dyn-array i64) (__tl_make-array i64 new-cap)]
       (begin
         (set! (array-ref slots new-offset) head)
         (ast-decl-module-list-copy-to
@@ -8958,7 +8957,7 @@
   [modules : AstDeclModuleList]) : AstDeclPathList
   (let
     [capacity : i64 (array-length paths.slots)]
-    [owner-ids : (__tl_dyn-array i64) (array.make-array i64 (* capacity 2))]
+    [owner-ids : (__tl_dyn-array i64) (__tl_make-array i64 (* capacity 2))]
     [index : i64 0]
     [count : i64 (ast-decl-path-list-len (& paths))]
     (begin
@@ -9121,7 +9120,7 @@
 (cfg
   compile-profile
   (define ast-compaction-profile-survivor-type-map : (__tl_dyn-array i32)
-    (array.make-array i32 1)))
+    (__tl_make-array i32 1)))
 (cfg
   compile-profile
   (define ast-compaction-profile-source-shared-expr-refs : i64
@@ -9231,7 +9230,7 @@
     ;; remain the unseen sentinel without an O(source-pool-size) initialization
     ;; pass before each compaction.
     ;; Pool ids are bounded below i32::MAX by the 4096-segment pool ceiling.
-    (array.make-array i32 cap)))
+    (__tl_make-array i32 cap)))
 
 (define (ast-compaction-remap-source-pools [remap : AstProgramCompactionRemap]) : AstNodePoolContext
   remap.source-pools)
@@ -11944,7 +11943,7 @@
 ;; stride cannot alias into a passing answer.
 (define (ast-expr-node-stride-pinned?) : bool
   (let
-    [slots : (__tl_dyn-array AstExpr) (array.make-array AstExpr 2)]
+    [slots : (__tl_dyn-array AstExpr) (__tl_make-array AstExpr 2)]
     [_w0 : unit (set! (array-ref slots 0) (AstExpr.Var 0))]
     [_w1 : unit (set! (array-ref slots 1) (AstExpr.Comptime 987654321))]
     [base : i64
@@ -11966,7 +11965,7 @@
 
 (define (ast-type-node-stride-pinned?) : bool
   (let
-    [slots : (__tl_dyn-array AstType) (array.make-array AstType 2)]
+    [slots : (__tl_dyn-array AstType) (__tl_make-array AstType 2)]
     [_w0 : unit (set! (array-ref slots 0) (AstType.I64))]
     [_w1 : unit (set! (array-ref slots 1) (AstType.Array 123456789 42))]
     [base : i64

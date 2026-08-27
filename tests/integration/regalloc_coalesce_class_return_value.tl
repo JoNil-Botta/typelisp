@@ -1,4 +1,3 @@
-(import stdlib.array)
 (import stdlib.io)
 
 ;; Guards the VALUE of a spilled, repeatedly reassigned accumulator whose final
@@ -76,7 +75,7 @@
 (define (main) : i64
   (let
     [n : i64 (io.arg-count)]
-    [src : (__tl_dyn-array u8) (array.make-array u8 40)]
+    [src : (__tl_dyn-array u8) (__tl_make-array u8 40)]
     [i : i64 0]
     [acc : i64 0]
     (begin

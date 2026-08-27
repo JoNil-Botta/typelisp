@@ -879,7 +879,7 @@
   test
   (define (string-test-with-nul) : String
     (let
-      [bytes : (__tl_dyn-array u8) (array.make-array u8 3)]
+      [bytes : (__tl_dyn-array u8) (__tl_make-array u8 3)]
       [dst : (MutPtr u8)
         (unsafe
           (__tl_array-data bytes))]

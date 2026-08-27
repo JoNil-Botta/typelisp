@@ -7,7 +7,6 @@
 ;; as one tab-separated row. A child terminated by a signal reports exit -1.
 ;; The close-on-exec pipe distinguishes an ordinary exit above 128 from a
 ;; signal and reports redirect/execve failures without relying on shell status.
-(import stdlib.array)
 (import stdlib.io)
 (import stdlib.profile)
 (import stdlib.str_cat)
@@ -227,9 +226,9 @@
   (let
     [stdout-path : (__tl_dyn-array u8) (io.c-string (io.arg 1))]
     [stderr-path : (__tl_dyn-array u8) (io.c-string (io.arg 2))]
-    [exec-pipe : (__tl_dyn-array i32) (array.make-array i32 2)]
-    [error-buffer : (__tl_dyn-array i64) (array.make-array i64 1)]
-    [status-buffer : (__tl_dyn-array i32) (array.make-array i32 1)]
+    [exec-pipe : (__tl_dyn-array i32) (__tl_make-array i32 2)]
+    [error-buffer : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    [status-buffer : (__tl_dyn-array i32) (__tl_make-array i32 1)]
     [pipe-status : i64
       (unsafe
         (syscall 293 (array-i32-addr (& exec-pipe)) pipe-close-on-exec))]

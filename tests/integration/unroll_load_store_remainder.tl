@@ -1,4 +1,3 @@
-(import stdlib.array)
 
 ;; Runtime coverage for the load-AND-store body class of the counted-loop
 ;; unroller (src/compiler_optimize.tl, opt-unroll-body-copies).
@@ -58,8 +57,8 @@
 
 (define (run-one [n : i64] [total : i64]) : bool
   (let
-    [dst : (__tl_dyn-array i64) (array.make-array i64 total)]
-    [src : (__tl_dyn-array i64) (array.make-array i64 total)]
+    [dst : (__tl_dyn-array i64) (__tl_make-array i64 total)]
+    [src : (__tl_dyn-array i64) (__tl_make-array i64 total)]
     [i : i64 0]
     (begin
       (while (< i total)

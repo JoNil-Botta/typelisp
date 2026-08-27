@@ -1,7 +1,6 @@
 ;: SPEC SPMD contract: floating-point scan ordering remains deferred for f32.
 ; Compatibility exception for #3772: SPMD value operands still use bare
 ; array-ref so the checker sees the compiler array-read AST.
-(import stdlib.array)
 
 (define (bad [xs : (__tl_dyn-array f32)] [n : i64]) : unit
   (spmd-scan

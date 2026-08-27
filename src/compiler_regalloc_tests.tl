@@ -14,7 +14,6 @@
 (import compiler_ast_types as ast)
 (import compiler_intern as ci)
 (import stdlib.io)
-(import stdlib.array)
 (cfg test (import stdlib.string))
 (import stdlib.hashmap)
 (import (hashmap.hashmap String i64) as reg_string_i64_map)
@@ -156,7 +155,7 @@
   (match func
     [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
       (let
-        [counts : (__tl_dyn-array i64) (array.make-array i64 vars)]
+        [counts : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
         (begin
           (reg.compiler-reg-fill-i64-array
             (reg.compiler-reg-global-shared-view counts)
@@ -172,9 +171,9 @@
   (match (reg.compiler-reg-global-shared-view func)
     [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
       (let
-        [counts : (__tl_dyn-array i64) (array.make-array i64 vars)]
-        [def-status : (__tl_dyn-array i64) (array.make-array i64 vars)]
-        [rebates : (__tl_dyn-array i64) (array.make-array i64 vars)]
+        [counts : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+        [def-status : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+        [rebates : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
         [depths : (__tl_dyn-array i64)
           (reg.compiler-reg-function-loop-depths
             (reg.compiler-reg-global-shared-view blocks))]
@@ -1081,14 +1080,14 @@
               self-name
               (live.compiler-live-ir-block-list-to-seq blocks))]
           [vars : i64 2]
-          [flags : (__tl_dyn-array bool) (array.make-array bool vars)]
-          [csr : (__tl_dyn-array bool) (array.make-array bool vars)]
-          [dropped : (__tl_dyn-array bool) (array.make-array bool vars)]
-          [benefit : (__tl_dyn-array i64) (array.make-array i64 vars)]
-          [cost : (__tl_dyn-array i64) (array.make-array i64 vars)]
-          [max-ref : (__tl_dyn-array i64) (array.make-array i64 vars)]
-          [max-clobber : (__tl_dyn-array i64) (array.make-array i64 vars)]
-          [max-clobber-hot : (__tl_dyn-array i64) (array.make-array i64 vars)]
+          [flags : (__tl_dyn-array bool) (__tl_make-array bool vars)]
+          [csr : (__tl_dyn-array bool) (__tl_make-array bool vars)]
+          [dropped : (__tl_dyn-array bool) (__tl_make-array bool vars)]
+          [benefit : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+          [cost : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+          [max-ref : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+          [max-clobber : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+          [max-clobber-hot : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
           [scores : reg.CompilerRegCallHoleScores
             (reg.CompilerRegCallHoleScores
               (reg.compiler-reg-global-shared-view flags)
@@ -1144,16 +1143,16 @@
   (define (compiler-reg-call-hole-select-ok?) : bool
     (let
       [vars : i64 6]
-      [flags : (__tl_dyn-array bool) (array.make-array bool vars)]
-      [dropped : (__tl_dyn-array bool) (array.make-array bool vars)]
-      [benefit : (__tl_dyn-array i64) (array.make-array i64 vars)]
-      [cost : (__tl_dyn-array i64) (array.make-array i64 vars)]
-      [max-ref : (__tl_dyn-array i64) (array.make-array i64 vars)]
-      [max-clobber : (__tl_dyn-array i64) (array.make-array i64 vars)]
-      [max-clobber-hot : (__tl_dyn-array i64) (array.make-array i64 vars)]
-      [csr : (__tl_dyn-array bool) (array.make-array bool vars)]
-      [picked : (__tl_dyn-array bool) (array.make-array bool vars)]
-      [selected : (__tl_dyn-array i64) (array.make-array i64 vars)]
+      [flags : (__tl_dyn-array bool) (__tl_make-array bool vars)]
+      [dropped : (__tl_dyn-array bool) (__tl_make-array bool vars)]
+      [benefit : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+      [cost : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+      [max-ref : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+      [max-clobber : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+      [max-clobber-hot : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+      [csr : (__tl_dyn-array bool) (__tl_make-array bool vars)]
+      [picked : (__tl_dyn-array bool) (__tl_make-array bool vars)]
+      [selected : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
       [scores : reg.CompilerRegCallHoleScores
         (reg.CompilerRegCallHoleScores
           (reg.compiler-reg-global-shared-view flags)
@@ -1235,14 +1234,14 @@
   (define (compiler-reg-call-hole-csr-qualify-ok?) : bool
     (let
       [vars : i64 4]
-      [flags : (__tl_dyn-array bool) (array.make-array bool vars)]
-      [csr : (__tl_dyn-array bool) (array.make-array bool vars)]
-      [dropped : (__tl_dyn-array bool) (array.make-array bool vars)]
-      [benefit : (__tl_dyn-array i64) (array.make-array i64 vars)]
-      [cost : (__tl_dyn-array i64) (array.make-array i64 vars)]
-      [max-ref : (__tl_dyn-array i64) (array.make-array i64 vars)]
-      [max-clobber : (__tl_dyn-array i64) (array.make-array i64 vars)]
-      [max-clobber-hot : (__tl_dyn-array i64) (array.make-array i64 vars)]
+      [flags : (__tl_dyn-array bool) (__tl_make-array bool vars)]
+      [csr : (__tl_dyn-array bool) (__tl_make-array bool vars)]
+      [dropped : (__tl_dyn-array bool) (__tl_make-array bool vars)]
+      [benefit : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+      [cost : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+      [max-ref : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+      [max-clobber : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+      [max-clobber-hot : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
       [scores : reg.CompilerRegCallHoleScores
         (reg.CompilerRegCallHoleScores
           (reg.compiler-reg-global-shared-view flags)
@@ -1382,8 +1381,8 @@
       [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
         (let
           [width : i64 (+ vars selected-count)]
-          [carrier : (__tl_dyn-array i64) (array.make-array i64 width)]
-          [valid : (__tl_dyn-array bool) (array.make-array bool width)]
+          [carrier : (__tl_dyn-array i64) (__tl_make-array i64 width)]
+          [valid : (__tl_dyn-array bool) (__tl_make-array bool width)]
           [seq : ir.CompilerIrBlockSeq
             (live.compiler-live-ir-block-list-to-seq blocks)]
           [liveness : live.CompilerFunctionLiveness
@@ -1436,7 +1435,7 @@
   (define (compiler-reg-call-hole-test-selection [var : i64]) : (__tl_dyn-array
       i64)
     (let
-      [selected : (__tl_dyn-array i64) (array.make-array i64 1)]
+      [selected : (__tl_dyn-array i64) (__tl_make-array i64 1)]
       (begin
         (set! (array-ref selected 0) var)
         selected))))
@@ -2111,9 +2110,9 @@
           (reg.compiler-reg-var-types-empty)
           (reg.compiler-reg-call-split-empty)
           (reg.compiler-reg-split-plan-empty))]
-      [selected : (__tl_dyn-array i64) (array.make-array i64 4)]
-      [dropped : (__tl_dyn-array bool) (array.make-array bool 4)]
-      [csr : (__tl_dyn-array bool) (array.make-array bool 4)]
+      [selected : (__tl_dyn-array i64) (__tl_make-array i64 4)]
+      [dropped : (__tl_dyn-array bool) (__tl_make-array bool 4)]
+      [csr : (__tl_dyn-array bool) (__tl_make-array bool 4)]
       (begin
         (set! (array-ref selected 0) 0)
         (set! (array-ref selected 1) 1)
@@ -3139,12 +3138,12 @@
               (reg.compiler-reg-global-shared-view nest)
               header
               1)]
-          [depths : (__tl_dyn-array i64) (array.make-array i64 count)]
-          [weights : (__tl_dyn-array i64) (array.make-array i64 count)]
-          [stamp : (__tl_dyn-array i64) (array.make-array i64 vars)]
-          [refs : (__tl_dyn-array i64) (array.make-array i64 vars)]
-          [residents : (__tl_dyn-array i64) (array.make-array i64 32)]
-          [cursor : (__tl_dyn-array i64) (array.make-array i64 2)]
+          [depths : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+          [weights : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+          [stamp : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+          [refs : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+          [residents : (__tl_dyn-array i64) (__tl_make-array i64 32)]
+          [cursor : (__tl_dyn-array i64) (__tl_make-array i64 2)]
           [index : i64 0]
           (begin
             (while (< index count)
@@ -3292,12 +3291,12 @@
       [splice-live : live.CompilerFunctionLiveness
         (live.compiler-live-analyze-function-edge-precise
           (reg.compiler-reg-global-shared-view splice-func))]
-      [weights : (__tl_dyn-array i64) (array.make-array i64 16)]
-      [from : (__tl_dyn-array i64) (array.make-array i64 8)]
-      [to : (__tl_dyn-array i64) (array.make-array i64 8)]
-      [kind : (__tl_dyn-array i64) (array.make-array i64 8)]
-      [weight : (__tl_dyn-array i64) (array.make-array i64 8)]
-      [scratch : (__tl_dyn-array i64) (array.make-array i64 2)]
+      [weights : (__tl_dyn-array i64) (__tl_make-array i64 16)]
+      [from : (__tl_dyn-array i64) (__tl_make-array i64 8)]
+      [to : (__tl_dyn-array i64) (__tl_make-array i64 8)]
+      [kind : (__tl_dyn-array i64) (__tl_make-array i64 8)]
+      [weight : (__tl_dyn-array i64) (__tl_make-array i64 8)]
+      [scratch : (__tl_dyn-array i64) (__tl_make-array i64 2)]
       [dh : i64
         (compiler-reg-loop-park-block-index
           (ir.compiler-ir-global-shared-view direct-seq)
@@ -3718,7 +3717,7 @@
           (reg.compiler-reg-var-types-empty)
           (reg.compiler-reg-call-split-empty)
           (reg.compiler-reg-split-plan-empty))]
-      [dropped : (__tl_dyn-array bool) (array.make-array bool 8)]
+      [dropped : (__tl_dyn-array bool) (__tl_make-array bool 8)]
       (begin
         (reg.compiler-reg-loop-park-plan-reset!
           (reg.compiler-reg-global-shared-view pk))
@@ -4180,7 +4179,7 @@
     (let
       [levels : i64 (compiler-reg-park-nest-levels)]
       [blocks : (__tl_dyn-array ir.CompilerIrBlock)
-        (array.make-array ir.CompilerIrBlock (+ 6 (* 5 levels)))]
+        (__tl_make-array ir.CompilerIrBlock (+ 6 (* 5 levels)))]
       [write : i64 0]
       [level : i64 0]
       (begin
@@ -4901,7 +4900,7 @@
   (define (compiler-reg-mixed-float-call-arg-function) : ir.CompilerIrFunction
     (let
       [args : (__tl_dyn-array ir.CompilerIrValue)
-        (array.make-array ir.CompilerIrValue 4)]
+        (__tl_make-array ir.CompilerIrValue 4)]
       (begin
         (set! (array-ref args 0) (ir.CompilerIrValue.Var 0))
         (set! (array-ref args 1) (ir.CompilerIrValue.Var 1))
@@ -6049,8 +6048,8 @@
   test
   (define (compiler-reg-test-identity-coalesce [n : i64]) : reg.CompilerRegCoalesceMap
     (let
-      [parents : (__tl_dyn-array i64) (array.make-array i64 n)]
-      [sizes : (__tl_dyn-array i64) (array.make-array i64 n)]
+      [parents : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+      [sizes : (__tl_dyn-array i64) (__tl_make-array i64 n)]
       (begin
         (reg.compiler-reg-coalesce-map-init!
           (reg.compiler-reg-global-shared-view parents)
@@ -6063,7 +6062,7 @@
   (define (compiler-reg-win64-arg-result-pref-function) : ir.CompilerIrFunction
     (let
       [args : (__tl_dyn-array ir.CompilerIrValue)
-        (array.make-array ir.CompilerIrValue 5)]
+        (__tl_make-array ir.CompilerIrValue 5)]
       (begin
         (set! (array-ref args 0) (ir.CompilerIrValue.Var 0))
         (set! (array-ref args 1) (ir.CompilerIrValue.Var 1))
@@ -6487,7 +6486,7 @@
       [assignments : reg.CompilerRegAssignmentTable
         (reg.compiler-reg-assignment-table-make vars)]
       [empty-coalesce : reg.CompilerRegCoalesceMap
-        (reg.CompilerRegCoalesceMap (array.make-array i64 0))]
+        (reg.CompilerRegCoalesceMap (__tl_make-array i64 0))]
       (begin
         (reg.compiler-reg-assignment-table-insert
           (reg.compiler-reg-global-shared-view assignments)
@@ -6662,7 +6661,7 @@
     (let
       [func : ir.CompilerIrFunction (compiler-reg-remat-weight-function)]
       [empty-coalesce : reg.CompilerRegCoalesceMap
-        (reg.CompilerRegCoalesceMap (array.make-array i64 0))]
+        (reg.CompilerRegCoalesceMap (__tl_make-array i64 0))]
       [raw : (__tl_dyn-array i64)
         (reg.compiler-reg-function-spill-weights
           (ir.compiler-ir-global-shared-view func))]
@@ -6677,7 +6676,7 @@
         (compiler-reg-function-spill-weights-remat
           (compiler-reg-remat-multi-def-function)
           (reg.compiler-reg-global-shared-view empty-coalesce))]
-      [parents : (__tl_dyn-array i64) (array.make-array i64 2)]
+      [parents : (__tl_dyn-array i64) (__tl_make-array i64 2)]
       (begin
         (set! (array-ref parents 0) 0)
         (set! (array-ref parents 1) 0)
@@ -6842,7 +6841,7 @@
       [func : ir.CompilerIrFunction
         (compiler-reg-remat-spill-weight-eviction-function)]
       [empty-coalesce : reg.CompilerRegCoalesceMap
-        (reg.CompilerRegCoalesceMap (array.make-array i64 0))]
+        (reg.CompilerRegCoalesceMap (__tl_make-array i64 0))]
       [raw : (__tl_dyn-array i64)
         (reg.compiler-reg-function-spill-weights
           (ir.compiler-ir-global-shared-view func))]
@@ -7390,7 +7389,7 @@
       [(ir.CompilerIrFunction.Function _ _ _ vars _)
         (reg.compiler-reg-function-spill-weights-combined
           func
-          (reg.CompilerRegCoalesceMap (array.make-array i64 0))
+          (reg.CompilerRegCoalesceMap (__tl_make-array i64 0))
           vars)])))
 
 (cfg
@@ -8824,10 +8823,10 @@
     (match (compiler-reg-loop-region-fixture define-in-loop? call-in-loop?)
       [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
         (let
-          [cand : (__tl_dyn-array i64) (array.make-array i64 vars)]
-          [order : (__tl_dyn-array i64) (array.make-array i64 vars)]
+          [cand : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+          [order : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
           [buckets : (__tl_dyn-array reg.CompilerRegCallRegionStatSeq)
-            (array.make-array reg.CompilerRegCallRegionStatSeq vars)]
+            (__tl_make-array reg.CompilerRegCallRegionStatSeq vars)]
           [bi : i64 0]
           (begin
             (while (< bi vars)
@@ -8905,7 +8904,7 @@
   (define (compiler-reg-loop-region-ranges [header-lo : i64] [header-hi : i64]) : (__tl_dyn-array
       i64)
     (let
-      [ranges : (__tl_dyn-array i64) (array.make-array i64 6)]
+      [ranges : (__tl_dyn-array i64) (__tl_make-array i64 6)]
       (begin
         (set! (array-ref ranges 0) 3)
         (set! (array-ref ranges 1) (- 0 1))
@@ -8920,7 +8919,7 @@
   (define (compiler-reg-loop-region-depths [header-depth : i64]) : (__tl_dyn-array
       i64)
     (let
-      [depths : (__tl_dyn-array i64) (array.make-array i64 3)]
+      [depths : (__tl_dyn-array i64) (__tl_make-array i64 3)]
       (begin
         (set! (array-ref depths 0) 0)
         (set! (array-ref depths 1) header-depth)
@@ -8931,7 +8930,7 @@
   test
   (define (compiler-reg-loop-region-rotated-ranges) : (__tl_dyn-array i64)
     (let
-      [ranges : (__tl_dyn-array i64) (array.make-array i64 6)]
+      [ranges : (__tl_dyn-array i64) (__tl_make-array i64 6)]
       (begin
         ;; block 0: the preheader, no predecessors
         (set! (array-ref ranges 0) 3)
@@ -8949,7 +8948,7 @@
   test
   (define (compiler-reg-loop-region-rotated-depths) : (__tl_dyn-array i64)
     (let
-      [depths : (__tl_dyn-array i64) (array.make-array i64 3)]
+      [depths : (__tl_dyn-array i64) (__tl_make-array i64 3)]
       (begin
         (set! (array-ref depths 0) 0)
         (set! (array-ref depths 1) 1)
@@ -9028,7 +9027,7 @@
   test
   (define (compiler-reg-loop-region-score-ok?) : bool
     (let
-      [ends : (__tl_dyn-array i64) (array.make-array i64 4)]
+      [ends : (__tl_dyn-array i64) (__tl_make-array i64 4)]
       [one-use-block : reg.CompilerRegCallRegionStat
         (reg.CompilerRegCallRegionStat
           0
@@ -9123,8 +9122,8 @@
   test
   (define (compiler-reg-loop-region-overlap-ok?) : bool
     (let
-      [lo : (__tl_dyn-array i64) (array.make-array i64 4)]
-      [hi : (__tl_dyn-array i64) (array.make-array i64 4)]
+      [lo : (__tl_dyn-array i64) (__tl_make-array i64 4)]
+      [hi : (__tl_dyn-array i64) (__tl_make-array i64 4)]
       (begin
         (set! (array-ref lo 0) 100)
         (set! (array-ref hi 0) 200)
@@ -9281,7 +9280,7 @@
   test
   (define (compiler-reg-evict-test-parents) : (__tl_dyn-array i64)
     (let
-      [parents : (__tl_dyn-array i64) (array.make-array i64 7)]
+      [parents : (__tl_dyn-array i64) (__tl_make-array i64 7)]
       [i : i64 0]
       (begin
         (while (< i 7)
@@ -9297,8 +9296,8 @@
   test
   (define (compiler-reg-evict-test-index [victim-end : i64]) : reg.CompilerRegIntervalIndex
     (let
-      [starts : (__tl_dyn-array i64) (array.make-array i64 7)]
-      [ends : (__tl_dyn-array i64) (array.make-array i64 7)]
+      [starts : (__tl_dyn-array i64) (__tl_make-array i64 7)]
+      [ends : (__tl_dyn-array i64) (__tl_make-array i64 7)]
       (begin
         (reg.compiler-reg-fill-i64-array
           (reg.compiler-reg-global-shared-view starts)
@@ -9313,7 +9312,7 @@
         (reg.CompilerRegIntervalIndex
           starts
           ends
-          (array.make-array reg.CompilerRegIntervalSeq 0))))))
+          (__tl_make-array reg.CompilerRegIntervalSeq 0))))))
 
 (cfg
   test
@@ -9347,11 +9346,11 @@
     (match (compiler-reg-evict-fixture victim-in-loop?)
       [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
         (let
-          [occ-var : (__tl_dyn-array i64) (array.make-array i64 4)]
-          [occ-reg : (__tl_dyn-array i64) (array.make-array i64 4)]
-          [occ-kind : (__tl_dyn-array i64) (array.make-array i64 4)]
-          [evicted : (__tl_dyn-array i64) (array.make-array i64 7)]
-          [weights : (__tl_dyn-array i64) (array.make-array i64 7)]
+          [occ-var : (__tl_dyn-array i64) (__tl_make-array i64 4)]
+          [occ-reg : (__tl_dyn-array i64) (__tl_make-array i64 4)]
+          [occ-kind : (__tl_dyn-array i64) (__tl_make-array i64 4)]
+          [evicted : (__tl_dyn-array i64) (__tl_make-array i64 7)]
+          [weights : (__tl_dyn-array i64) (__tl_make-array i64 7)]
           [parents : (__tl_dyn-array i64) (compiler-reg-evict-test-parents)]
           [metrics : profile_state.CompilerProfileMetrics
             (profile_state.compiler-profile-state-metrics
@@ -9424,8 +9423,8 @@
   test
   (define (compiler-reg-evict-parked-ok?) : bool
     (let
-      [points : (__tl_dyn-array i64) (array.make-array i64 4)]
-      [saves : (__tl_dyn-array i64) (array.make-array i64 4)]
+      [points : (__tl_dyn-array i64) (__tl_make-array i64 4)]
+      [saves : (__tl_dyn-array i64) (__tl_make-array i64 4)]
       (and
         (compiler-reg-evict-picked?
           (compiler-reg-evict-attempt
@@ -9458,8 +9457,8 @@
         false
         1
         false
-        (array.make-array i64 4)
-        (array.make-array i64 4)))))
+        (__tl_make-array i64 4)
+        (__tl_make-array i64 4)))))
 
 ;; (c) BOTH pool registers busy in the region (v3 read inside it, v5 defined
 ;; and consumed inside it): no parked victim exists, refuse cleanly.
@@ -9474,8 +9473,8 @@
         false
         2
         false
-        (array.make-array i64 4)
-        (array.make-array i64 4)))))
+        (__tl_make-array i64 4)
+        (__tl_make-array i64 4)))))
 
 ;; (d) The occupant dies with the region (interval ends at p16, before the exit
 ;; head at p18): the exit is dead, so no reload is emitted at all.
@@ -9490,8 +9489,8 @@
         false
         1
         false
-        (array.make-array i64 4)
-        (array.make-array i64 4))
+        (__tl_make-array i64 4)
+        (__tl_make-array i64 4))
       0
       3
       0
@@ -9519,8 +9518,8 @@
           false
           1
           false
-          (array.make-array i64 4)
-          (array.make-array i64 4)))
+          (__tl_make-array i64 4)
+          (__tl_make-array i64 4)))
       ;; two: accepted
       (compiler-reg-evict-picked?
         (compiler-reg-evict-attempt
@@ -9530,8 +9529,8 @@
           false
           1
           false
-          (array.make-array i64 4)
-          (array.make-array i64 4))
+          (__tl_make-array i64 4)
+          (__tl_make-array i64 4))
         0
         3
         1
@@ -9573,8 +9572,8 @@
         true
         1
         false
-        (array.make-array i64 4)
-        (array.make-array i64 4)))))
+        (__tl_make-array i64 4)
+        (__tl_make-array i64 4)))))
 
 ;; A victim sharing storage with a sibling is refused outright: the reload
 ;; placement argument ("a live victim owns its register alone") does not hold
@@ -9590,8 +9589,8 @@
         false
         1
         true
-        (array.make-array i64 4)
-        (array.make-array i64 4)))))
+        (__tl_make-array i64 4)
+        (__tl_make-array i64 4)))))
 
 ;; Occupant identity is the coalesce ROOT. Two entries of one class are one
 ;; value (lendable); two distinct classes, a pair half, or an accepted shadow
@@ -9600,9 +9599,9 @@
   test
   (define (compiler-reg-evict-sole-occupant-ok?) : bool
     (let
-      [occ-var : (__tl_dyn-array i64) (array.make-array i64 4)]
-      [occ-reg : (__tl_dyn-array i64) (array.make-array i64 4)]
-      [occ-kind : (__tl_dyn-array i64) (array.make-array i64 4)]
+      [occ-var : (__tl_dyn-array i64) (__tl_make-array i64 4)]
+      [occ-reg : (__tl_dyn-array i64) (__tl_make-array i64 4)]
+      [occ-kind : (__tl_dyn-array i64) (__tl_make-array i64 4)]
       [index : reg.CompilerRegIntervalIndex (compiler-reg-evict-test-index 18)]
       [parents : (__tl_dyn-array i64) (compiler-reg-evict-test-parents)]
       [class-parents : (__tl_dyn-array i64) (compiler-reg-evict-test-parents)]
@@ -9767,7 +9766,7 @@
     (match (compiler-reg-evict-fixture false)
       [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
         (let
-          [shadow-regs : (__tl_dyn-array i64) (array.make-array i64 7)]
+          [shadow-regs : (__tl_dyn-array i64) (__tl_make-array i64 7)]
           [split : reg.CompilerRegCallSplit
             (begin
               (reg.compiler-reg-fill-i64-array
@@ -11360,7 +11359,7 @@
         regs
         (reg.compiler-reg-active-seq-empty)
         assignments
-        (array.make-array i64 0)
+        (__tl_make-array i64 0)
         index)
         [(reg.CompilerRegAssignState.State _ out)
           (match (reg.compiler-reg-assignment-table-lookup out 1)
@@ -11929,10 +11928,10 @@
                               (reg.CompilerRegInterval 9 0 10)
                               (reg.compiler-reg-interval-seq-empty)))))))))))
           vars)]
-      [members : (__tl_dyn-array i64) (array.make-array i64 vars)]
-      [parents : (__tl_dyn-array i64) (array.make-array i64 vars)]
-      [poisoned : (__tl_dyn-array bool) (array.make-array bool vars)]
-      [weights : (__tl_dyn-array i64) (array.make-array i64 vars)]
+      [members : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+      [parents : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+      [poisoned : (__tl_dyn-array bool) (__tl_make-array bool vars)]
+      [weights : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
       [assignments : reg.CompilerRegAssignmentTable
         (reg.compiler-reg-assignment-table-make vars)]
       [csr-assignments : reg.CompilerRegAssignmentTable
@@ -11941,7 +11940,7 @@
         (reg.compiler-reg-assignment-table-make vars)]
       [nonoccupying : reg.CompilerRegAssignmentTable
         (reg.compiler-reg-assignment-table-make vars)]
-      [shadow-regs : (__tl_dyn-array i64) (array.make-array i64 2)]
+      [shadow-regs : (__tl_dyn-array i64) (__tl_make-array i64 2)]
       (begin
         (reg.compiler-reg-fill-i64-array
           (reg.compiler-reg-global-shared-view shadow-regs)
@@ -12037,7 +12036,7 @@
                 (ir.CompilerIrValue.Var 2)
                 (ir.CompilerIrCallArgs.One (ir.CompilerIrValue.Var 0))
                 (ast.AstType.I64)))]
-          [pair-conflicts : (__tl_dyn-array i64) (array.make-array i64 vars)]
+          [pair-conflicts : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
           [pair-conflict-count : i64
             (reg.compiler-reg-group-pair-conflict-vars!
               (reg.compiler-reg-global-shared-view interval-index)
@@ -13972,11 +13971,11 @@
 (define (compiler-reg-greedy-live-union-invariant-ok?) : bool
   (let
     [vars : i64 7]
-    [starts : (__tl_dyn-array i64) (array.make-array i64 vars)]
-    [ends : (__tl_dyn-array i64) (array.make-array i64 vars)]
+    [starts : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+    [ends : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
     [segments : (__tl_dyn-array reg.CompilerRegIntervalSeq)
-      (array.make-array reg.CompilerRegIntervalSeq vars)]
-    [ref-counts : (__tl_dyn-array i64) (array.make-array i64 vars)]
+      (__tl_make-array reg.CompilerRegIntervalSeq vars)]
+    [ref-counts : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
     [assignments : reg.CompilerRegAssignmentTable
       (reg.compiler-reg-assignment-table-make vars)]
     [registers : (__tl_dyn-array i64)
@@ -14176,7 +14175,7 @@
           (reg.compiler-reg-global-shared-view assignments)
           (reg.compiler-reg-global-shared-view linux-occupancy)
           (reg.compiler-reg-global-shared-view index)
-          (array.make-array i64 0)
+          (__tl_make-array i64 0)
           0
           1
           (reg.compiler-reg-scratch-default-pool
@@ -14189,7 +14188,7 @@
           (reg.compiler-reg-global-shared-view assignments)
           (reg.compiler-reg-global-shared-view windows-occupancy)
           (reg.compiler-reg-global-shared-view index)
-          (array.make-array i64 0)
+          (__tl_make-array i64 0)
           0
           1
           (reg.compiler-reg-scratch-default-pool
@@ -14203,7 +14202,7 @@
           (reg.compiler-reg-global-shared-view assignments)
           (reg.compiler-reg-global-shared-view windows-occupancy)
           (reg.compiler-reg-global-shared-view index)
-          (array.make-array i64 0)
+          (__tl_make-array i64 0)
           0
           1
           (reg.compiler-reg-scratch-default-pool
@@ -14292,10 +14291,10 @@
             (reg.compiler-reg-interval-seq-empty))))]
     [index : reg.CompilerRegIntervalIndex
       (reg.compiler-reg-interval-index-build intervals 3)]
-    [segmented-starts : (__tl_dyn-array i64) (array.make-array i64 3)]
-    [segmented-ends : (__tl_dyn-array i64) (array.make-array i64 3)]
+    [segmented-starts : (__tl_dyn-array i64) (__tl_make-array i64 3)]
+    [segmented-ends : (__tl_dyn-array i64) (__tl_make-array i64 3)]
     [segmented-segments : (__tl_dyn-array reg.CompilerRegIntervalSeq)
-      (array.make-array reg.CompilerRegIntervalSeq 3)]
+      (__tl_make-array reg.CompilerRegIntervalSeq 3)]
     [_segmented-init : unit
       (begin
         (set! (array-ref segmented-starts 0) 0)
@@ -14332,8 +14331,8 @@
           (reg.CompilerRegLocation.Register cabi.compiler-reg-id-rdi))
         1
         (reg.CompilerRegLocation.Register cabi.compiler-reg-id-rdi))]
-    [coalesced : (__tl_dyn-array i64) (array.make-array i64 3)]
-    [independent : (__tl_dyn-array i64) (array.make-array i64 3)]
+    [coalesced : (__tl_dyn-array i64) (__tl_make-array i64 3)]
+    [independent : (__tl_dyn-array i64) (__tl_make-array i64 3)]
     [requirement : reg.CompilerRegScratchRequirement
       (reg.CompilerRegScratchRequirement
         4
@@ -14411,11 +14410,11 @@
         (reg.compiler-reg-assignment-table-make 2)
         0
         (reg.CompilerRegLocation.Register cabi.compiler-reg-id-r12))]
-    [base-weights : (__tl_dyn-array i64) (array.make-array i64 1)]
-    [raw-weights : (__tl_dyn-array i64) (array.make-array i64 1)]
-    [scratch-weights : (__tl_dyn-array i64) (array.make-array i64 1)]
-    [weights : (__tl_dyn-array i64) (array.make-array i64 2)]
-    [hints : (__tl_dyn-array i64) (array.make-array i64 2)]
+    [base-weights : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    [raw-weights : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    [scratch-weights : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    [weights : (__tl_dyn-array i64) (__tl_make-array i64 2)]
+    [hints : (__tl_dyn-array i64) (__tl_make-array i64 2)]
     (begin
       (set! (array-ref base-weights 0) 3)
       (set! (array-ref raw-weights 0) 1)
@@ -14480,10 +14479,10 @@
         (reg.compiler-reg-assignment-table-make 2)
         0
         (reg.CompilerRegLocation.Register cabi.compiler-reg-id-r12))]
-    [weights : (__tl_dyn-array i64) (array.make-array i64 2)]
-    [hints : (__tl_dyn-array i64) (array.make-array i64 2)]
+    [weights : (__tl_dyn-array i64) (__tl_make-array i64 2)]
+    [hints : (__tl_dyn-array i64) (__tl_make-array i64 2)]
     [excluded : (__tl_dyn-array reg.CompilerRegIdSeq)
-      (array.make-array reg.CompilerRegIdSeq 2)]
+      (__tl_make-array reg.CompilerRegIdSeq 2)]
     (begin
       (set! (array-ref weights 0) 1)
       (set! (array-ref weights 1) 2)
@@ -14969,7 +14968,7 @@
 (define (compiler-reg-indirect-call-arg4-function) : ir.CompilerIrFunction
   (let
     [args : (__tl_dyn-array ir.CompilerIrValue)
-      (array.make-array ir.CompilerIrValue 4)]
+      (__tl_make-array ir.CompilerIrValue 4)]
     (begin
       (set! (array-ref args 0) (ir.CompilerIrValue.Var 1))
       (set! (array-ref args 1) (ir.CompilerIrValue.Var 2))
@@ -15028,7 +15027,7 @@
               (ir.CompilerIrValue.Var 1)
               (ir.CompilerIrValue.Var 2))
             (ir.CompilerIrCAbiReturnSlotSeq
-              (array.make-array ir.CompilerIrCAbiReturnSlot 0)
+              (__tl_make-array ir.CompilerIrCAbiReturnSlot 0)
               0))
           (compiler-reg-test-instr-seq-prepend
             (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
@@ -15654,7 +15653,7 @@
       (reg.compiler-reg-function-moves-with-destructive-and-casts
         (ir.compiler-ir-global-shared-view straight)
         false)]
-    [clobber-eligible : (__tl_dyn-array i64) (array.make-array i64 3)]
+    [clobber-eligible : (__tl_dyn-array i64) (__tl_make-array i64 3)]
     [clobber-moves : reg.CompilerRegMoveSeq
       (begin
         (reg.compiler-reg-fill-i64-array
@@ -15908,9 +15907,9 @@
 ;; unflipped one on the LHS root.
 (define (compiler-reg-alu-copy-hint-for [flip? : bool]) : i64
   (let
-    [hints : (__tl_dyn-array i64) (array.make-array i64 8)]
-    [parents : (__tl_dyn-array i64) (array.make-array i64 8)]
-    [flags : (__tl_dyn-array i64) (array.make-array i64 8)]
+    [hints : (__tl_dyn-array i64) (__tl_make-array i64 8)]
+    [parents : (__tl_dyn-array i64) (__tl_make-array i64 8)]
+    [flags : (__tl_dyn-array i64) (__tl_make-array i64 8)]
     [index : i64 0]
     (begin
       (reg.compiler-reg-fill-i64-array
@@ -17829,10 +17828,10 @@
 
 (define (compiler-reg-segmented-interference-ok?) : bool
   (let
-    [starts : (__tl_dyn-array i64) (array.make-array i64 5)]
-    [ends : (__tl_dyn-array i64) (array.make-array i64 5)]
+    [starts : (__tl_dyn-array i64) (__tl_make-array i64 5)]
+    [ends : (__tl_dyn-array i64) (__tl_make-array i64 5)]
     [segments : (__tl_dyn-array reg.CompilerRegIntervalSeq)
-      (array.make-array reg.CompilerRegIntervalSeq 5)]
+      (__tl_make-array reg.CompilerRegIntervalSeq 5)]
     [segment-index : reg.CompilerRegIntervalIndex
       (reg.CompilerRegIntervalIndex
         (reg.compiler-reg-global-shared-view starts)
@@ -17891,10 +17890,10 @@
 
 (define (compiler-reg-hole-aware-register-reuse-ok?) : bool
   (let
-    [starts : (__tl_dyn-array i64) (array.make-array i64 5)]
-    [ends : (__tl_dyn-array i64) (array.make-array i64 5)]
+    [starts : (__tl_dyn-array i64) (__tl_make-array i64 5)]
+    [ends : (__tl_dyn-array i64) (__tl_make-array i64 5)]
     [segments : (__tl_dyn-array reg.CompilerRegIntervalSeq)
-      (array.make-array reg.CompilerRegIntervalSeq 5)]
+      (__tl_make-array reg.CompilerRegIntervalSeq 5)]
     [segment-index : reg.CompilerRegIntervalIndex
       (reg.CompilerRegIntervalIndex
         (reg.compiler-reg-global-shared-view starts)
@@ -17913,7 +17912,7 @@
         (reg.compiler-reg-active-seq-empty)
         (reg.CompilerRegActive 1 10 cabi.compiler-reg-id-r12))]
     [hole-aware : live.CompilerLiveI64Set (live.compiler-live-set3 0 2 3)]
-    [parents : (__tl_dyn-array i64) (array.make-array i64 5)]
+    [parents : (__tl_dyn-array i64) (__tl_make-array i64 5)]
     (begin
       (reg.compiler-reg-fill-i64-array
         (reg.compiler-reg-global-shared-view starts)
@@ -18032,8 +18031,8 @@
 
 (define (compiler-reg-coalesce-test-i64-types [vars : i64]) : reg.CompilerRegVarTypes
   (let
-    [present : (__tl_dyn-array i64) (array.make-array i64 vars)]
-    [types : (__tl_dyn-array ast.AstType) (array.make-array ast.AstType vars)]
+    [present : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+    [types : (__tl_dyn-array ast.AstType) (__tl_make-array ast.AstType vars)]
     [index : i64 0]
     (begin
       (while (< index vars)
@@ -18070,10 +18069,10 @@
 
 (define (compiler-reg-coalesce-test-segment-index) : reg.CompilerRegIntervalIndex
   (let
-    [starts : (__tl_dyn-array i64) (array.make-array i64 2)]
-    [ends : (__tl_dyn-array i64) (array.make-array i64 2)]
+    [starts : (__tl_dyn-array i64) (__tl_make-array i64 2)]
+    [ends : (__tl_dyn-array i64) (__tl_make-array i64 2)]
     [segments : (__tl_dyn-array reg.CompilerRegIntervalSeq)
-      (array.make-array reg.CompilerRegIntervalSeq 2)]
+      (__tl_make-array reg.CompilerRegIntervalSeq 2)]
     (begin
       (reg.compiler-reg-fill-i64-array
         (reg.compiler-reg-global-shared-view starts)
@@ -18121,7 +18120,7 @@
         types
         (live.compiler-live-set-empty)
         3
-        (array.make-array i64 0))]
+        (__tl_make-array i64 0))]
     [assignments : reg.CompilerRegAssignmentTable
       (reg.compiler-reg-assignment-table-insert
         (reg.compiler-reg-assignment-table-make 3)
@@ -18170,7 +18169,7 @@
         types
         (live.compiler-live-set-empty)
         2
-        (array.make-array i64 0))]
+        (__tl_make-array i64 0))]
     [assignments : reg.CompilerRegAssignmentTable
       (reg.compiler-reg-assignment-table-insert
         (reg.compiler-reg-assignment-table-make 2)
@@ -18199,7 +18198,7 @@
         types
         (live.compiler-live-set-empty)
         2
-        (array.make-array i64 0))]
+        (__tl_make-array i64 0))]
     [assignments : reg.CompilerRegAssignmentTable
       (reg.compiler-reg-assignment-table-insert
         (reg.compiler-reg-assignment-table-make 2)
@@ -18228,7 +18227,7 @@
         types
         (live.compiler-live-set-empty)
         2
-        (array.make-array i64 0))]
+        (__tl_make-array i64 0))]
     [assignments : reg.CompilerRegAssignmentTable
       (reg.compiler-reg-assignment-table-insert
         (reg.compiler-reg-assignment-table-make 2)
@@ -18252,11 +18251,11 @@
 
 (define (compiler-reg-merged-root-overlap-segments-ok?) : bool
   (let
-    [starts : (__tl_dyn-array i64) (array.make-array i64 3)]
-    [ends : (__tl_dyn-array i64) (array.make-array i64 3)]
+    [starts : (__tl_dyn-array i64) (__tl_make-array i64 3)]
+    [ends : (__tl_dyn-array i64) (__tl_make-array i64 3)]
     [segments : (__tl_dyn-array reg.CompilerRegIntervalSeq)
-      (array.make-array reg.CompilerRegIntervalSeq 3)]
-    [parents : (__tl_dyn-array i64) (array.make-array i64 3)]
+      (__tl_make-array reg.CompilerRegIntervalSeq 3)]
+    [parents : (__tl_dyn-array i64) (__tl_make-array i64 3)]
     (begin
       (reg.compiler-reg-fill-i64-array
         (reg.compiler-reg-global-shared-view starts)
@@ -19166,9 +19165,9 @@
         (reg.compiler-reg-interval-index-build intervals 1)
         (live.compiler-live-set-empty)
         (live.compiler-live-set-empty)
-        (array.make-array i64 0)
-        (array.make-array i64 0)
-        (array.make-array i64 0)
+        (__tl_make-array i64 0)
+        (__tl_make-array i64 0)
+        (__tl_make-array i64 0)
         call-points
         (live.compiler-live-set-empty)
         (live.compiler-live-set-empty)
@@ -19257,9 +19256,9 @@
         (clone interval-index)
         (live.compiler-live-set-empty)
         (live.compiler-live-set-empty)
-        (array.make-array i64 0)
-        (array.make-array i64 0)
-        (array.make-array i64 0)
+        (__tl_make-array i64 0)
+        (__tl_make-array i64 0)
+        (__tl_make-array i64 0)
         (live.compiler-live-set-empty)
         (live.compiler-live-set-empty)
         (live.compiler-live-set-empty)
@@ -19276,9 +19275,9 @@
           interval-index
           (live.compiler-live-set-empty)
           (live.compiler-live-set-empty)
-          (array.make-array i64 0)
-          (array.make-array i64 0)
-          (array.make-array i64 0)
+          (__tl_make-array i64 0)
+          (__tl_make-array i64 0)
+          (__tl_make-array i64 0)
           (live.compiler-live-set-empty)
           (live.compiler-live-set-empty)
           (live.compiler-live-set-empty)
@@ -19321,9 +19320,9 @@
       index
       (live.compiler-live-set-empty)
       (live.compiler-live-set-empty)
-      (array.make-array i64 0)
-      (array.make-array i64 0)
-      (array.make-array i64 0)
+      (__tl_make-array i64 0)
+      (__tl_make-array i64 0)
+      (__tl_make-array i64 0)
       (live.compiler-live-set-empty)
       (live.compiler-live-set-empty)
       (live.compiler-live-set-empty)
@@ -19796,7 +19795,7 @@
 
 (define (compiler-reg-vector-stack-mask-words-ok?) : bool
   (let
-    [words : (__tl_dyn-array i64) (array.make-array i64 6)]
+    [words : (__tl_dyn-array i64) (__tl_make-array i64 6)]
     (begin
       (reg.compiler-reg-vector-stack-words-instr!
         (ir.ir-instr-vector-compare
@@ -19905,7 +19904,7 @@
     [classes : live.CompilerLiveUseDef
       (reg.compiler-reg-function-vector-mask-defs
         (reg.compiler-reg-global-shared-view func))]
-    [words : (__tl_dyn-array i64) (array.make-array i64 6)]
+    [words : (__tl_dyn-array i64) (__tl_make-array i64 6)]
     (match (reg.compiler-reg-global-shared-view func)
       [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
         (begin
@@ -20721,7 +20720,7 @@
         (reg.compiler-reg-global-shared-view blocks))]
     [nest : reg.CompilerRegLoopNest (reg.compiler-reg-loop-nest-build blocks)]
     [count : i64 (array-length depths)]
-    [mine : (__tl_dyn-array i64) (array.make-array i64 count)]
+    [mine : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [index : i64 0]
     [ok : bool true]
     (begin

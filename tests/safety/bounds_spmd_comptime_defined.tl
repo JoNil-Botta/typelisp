@@ -1,6 +1,5 @@
 ;: SPEC safe-code contract: in-bounds collection access, checked aggregate
 ;: construction, race-free SPMD, and valid comptime values have defined results.
-(import stdlib.array)
 (import stdlib.string)
 (import stdlib.option)
 (import (option.option i64) as option_i64)
@@ -14,7 +13,7 @@
 
 (define (main) : i64
   (let
-    [items : (__tl_dyn-array i64) (array.make-array i64 3)]
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 3)]
     [p : Point (Point 20 22)]
     [m : option_i64.Option (option_i64.Some 7)]
     (begin

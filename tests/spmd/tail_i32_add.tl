@@ -3,7 +3,6 @@
 ;; masked/scalar tail. Exercises a different element width than the i64 tail
 ;; case. a[i]=i+1, b[i]=3i, out[i]=4i+1; the n=7 checksum is 91, so scalar,
 ;; avx2, and avx512 builds must all exit 91.
-(import stdlib.array)
 
 (define (init
   [a : (&mut a (__tl_dyn-array i32))]
@@ -40,9 +39,9 @@
 (define (main) : i64
   (let
     [n : i64 7]
-    [a : (__tl_dyn-array i32) (array.make-array i32 n)]
-    [b : (__tl_dyn-array i32) (array.make-array i32 n)]
-    [out : (__tl_dyn-array i32) (array.make-array i32 n)]
+    [a : (__tl_dyn-array i32) (__tl_make-array i32 n)]
+    [b : (__tl_dyn-array i32) (__tl_make-array i32 n)]
+    [out : (__tl_dyn-array i32) (__tl_make-array i32 n)]
     (begin
       (init (&mut a) (&mut b) n)
       (fill (& a) (& b) (&mut out) n)

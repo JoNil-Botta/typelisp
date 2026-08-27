@@ -1,5 +1,4 @@
 ;: SPEC SPMD contract: masked-if writes reject scatter-like indexes.
-(import stdlib.array)
 
 (define (main
   [xs : (__tl_dyn-array i64)]

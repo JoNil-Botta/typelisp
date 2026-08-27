@@ -1,13 +1,12 @@
 ;; #5365: invalid counts in inactive branch and tail lanes are unobservable.
-(import stdlib.array)
 
 (define (main) : i64
   (let
     [n : i64 19]
     [total : i64 24]
-    [xs : (__tl_dyn-array i32) (array.make-array i32 total)]
-    [counts : (__tl_dyn-array i32) (array.make-array i32 total)]
-    [out : (__tl_dyn-array i32) (array.make-array i32 n)]
+    [xs : (__tl_dyn-array i32) (__tl_make-array i32 total)]
+    [counts : (__tl_dyn-array i32) (__tl_make-array i32 total)]
+    [out : (__tl_dyn-array i32) (__tl_make-array i32 n)]
     [i : i64 0]
     [ok : bool true]
     (begin

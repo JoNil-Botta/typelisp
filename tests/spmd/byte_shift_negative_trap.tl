@@ -1,13 +1,12 @@
 ;; #6686: one active negative i8 count in a direct map must use
 ;; tl_shift_abort (exit 129).
-(import stdlib.array)
 
 (define (main) : i64
   (let
     [n : i64 77]
-    [xs : (__tl_dyn-array i8) (array.make-array i8 n)]
-    [counts : (__tl_dyn-array i8) (array.make-array i8 n)]
-    [out : (__tl_dyn-array i8) (array.make-array i8 n)]
+    [xs : (__tl_dyn-array i8) (__tl_make-array i8 n)]
+    [counts : (__tl_dyn-array i8) (__tl_make-array i8 n)]
+    [out : (__tl_dyn-array i8) (__tl_make-array i8 n)]
     [i : i64 0]
     (begin
       (while (< i n)

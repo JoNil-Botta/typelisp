@@ -1,4 +1,3 @@
-(import stdlib.array)
 (import stdlib.arena)
 (import stdlib.string)
 
@@ -53,7 +52,7 @@
     (unsafe
       (arena.set! scratch))
     (let
-      [items : (__tl_dyn-array String) (array.make-array String 2)]
+      [items : (__tl_dyn-array String) (__tl_make-array String 2)]
       (begin
         (set! (array-ref items 0) (string.append "d" "0"))
         (set! (array-ref items 1) (string.append "d" "1"))

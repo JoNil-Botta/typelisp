@@ -1,5 +1,4 @@
 ;: SPEC SPMD v1 private-call ABI: function-value varying calls stay rejected.
-(import stdlib.array)
 
 (define (inc [x : i64]) : i64
   (+ x 1))

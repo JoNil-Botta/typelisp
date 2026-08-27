@@ -1,6 +1,5 @@
 ;; Enum matches whose varying source is not a contiguous array lane must use
 ;; the documented SIMD diagnostic instead of silently selecting scalar foreach.
-(import stdlib.array)
 
 (defenum Choice
   (Zero)
@@ -15,8 +14,8 @@
 
 (define (main) : i64
   (let
-    [items : (__tl_dyn-array Choice) (array.make-array Choice 2)]
-    [out : (__tl_dyn-array i64) (array.make-array i64 2)]
+    [items : (__tl_dyn-array Choice) (__tl_make-array Choice 2)]
+    [out : (__tl_dyn-array i64) (__tl_make-array i64 2)]
     (begin
       (set! (array-ref items 0) Zero)
       (set! (array-ref items 1) One)

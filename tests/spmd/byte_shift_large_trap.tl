@@ -1,13 +1,12 @@
 ;; #6686: one active u8 count equal to the lane width in masked value lowering
 ;; must use tl_shift_abort (exit 129).
-(import stdlib.array)
 
 (define (main) : i64
   (let
     [n : i64 77]
-    [xs : (__tl_dyn-array u8) (array.make-array u8 n)]
-    [counts : (__tl_dyn-array u8) (array.make-array u8 n)]
-    [out : (__tl_dyn-array u8) (array.make-array u8 n)]
+    [xs : (__tl_dyn-array u8) (__tl_make-array u8 n)]
+    [counts : (__tl_dyn-array u8) (__tl_make-array u8 n)]
+    [out : (__tl_dyn-array u8) (__tl_make-array u8 n)]
     [i : i64 0]
     (begin
       (while (< i n)

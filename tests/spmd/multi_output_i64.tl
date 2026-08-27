@@ -1,4 +1,3 @@
-(import stdlib.array)
 
 (define (multi-output-case
   [a : (&mut a (__tl_dyn-array i64))]
@@ -43,10 +42,10 @@
 
 (define (main) : i64
   (let
-    [a : (__tl_dyn-array i64) (array.make-array i64 20)]
-    [b : (__tl_dyn-array i64) (array.make-array i64 20)]
-    [out-x : (__tl_dyn-array i64) (array.make-array i64 20)]
-    [out-y : (__tl_dyn-array i64) (array.make-array i64 20)]
+    [a : (__tl_dyn-array i64) (__tl_make-array i64 20)]
+    [b : (__tl_dyn-array i64) (__tl_make-array i64 20)]
+    [out-x : (__tl_dyn-array i64) (__tl_make-array i64 20)]
+    [out-y : (__tl_dyn-array i64) (__tl_make-array i64 20)]
     (if (and
       (multi-output-case (&mut a) (&mut b) (&mut out-x) (&mut out-y) 0)
       (multi-output-case (&mut a) (&mut b) (&mut out-x) (&mut out-y) 3)

@@ -1,4 +1,3 @@
-(import stdlib.array)
 (import stdlib.sync)
 (import stdlib.thread)
 
@@ -150,9 +149,9 @@
 (define (sync-pair-integration-run [channel : sync.ChannelI64PairChannel]) : i64
   (let
     [ctx-a : (__tl_dyn-array i64)
-      (array.make-array i64 (+ sync.channel-i64-pair-raw-field-count 2))]
+      (__tl_make-array i64 (+ sync.channel-i64-pair-raw-field-count 2))]
     [ctx-b : (__tl_dyn-array i64)
-      (array.make-array i64 (+ sync.channel-i64-pair-raw-field-count 2))]
+      (__tl_make-array i64 (+ sync.channel-i64-pair-raw-field-count 2))]
     (begin
       (sync-pair-integration-pack-context!
         (&mut ctx-a)

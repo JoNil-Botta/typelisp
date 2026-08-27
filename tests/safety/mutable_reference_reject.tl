@@ -1,5 +1,4 @@
 ;: SPEC safe-code contract: safe code rejects overlapping mutable borrows.
-(import stdlib.array)
 
 (define (main [items : (__tl_dyn-array i64)]) : unit
   (let

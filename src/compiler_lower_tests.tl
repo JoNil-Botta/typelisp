@@ -33,6 +33,12 @@
 (define (lower-test-renderable-name-id [value : String]) : ci.InternId
   (ci.intern-id-from-renderable (ci.intern-generated-canonical-name value)))
 
+(define (lower-test-renderable-name-id-with-state
+  [interns : ci.InternCompatState]
+  [value : String]) : ci.InternId
+  (ci.intern-id-from-renderable
+    (ci.intern-compat-state-generated-canonical-name interns value)))
+
 (define (lower-name-env-resolve-with-id
   [names : compiler_lower.LowerNameEnv]
   [source-name : String]
@@ -728,12 +734,16 @@
       (compiler_ast_types.ast-expr-cast
         spanned-inner
         (compiler_ast_types.AstType.I64))]
+    [pools : compiler_ast_types.AstNodePoolContext
+      (compiler_ast_types.ast-node-pool-context-capture-active)]
     [diag : compiler_diagnostic.CompilerDiagnostic
-      (compiler_lower.lower-diagnostic-at-expr
+      (compiler_lower.lower-diagnostic-at-expr-with-pools
+        pools
         (compiler_ast_types.ast-node-get wrapped)
         "lower: nested expression diagnostic")]
     [found-span : compiler_ir_types.CompilerMaybeSourceSpan
       (compiler_lower.lower-ast-expr-span
+        pools
         (compiler_ast_types.ast-node-get
           (compiler_ast_types.ast-expr-return spanned-inner)))]
     [diag-ok : bool
@@ -796,11 +806,14 @@
         (compiler_ast_types.ast-resource-binding-cons
           (compiler_ast_types.ast-resource-binding-id b-id spanned-inner plain)
           (compiler_ast_types.ast-resource-binding-list-new)))]
+    [pools : compiler_ast_types.AstNodePoolContext
+      (compiler_ast_types.ast-node-pool-context-capture-active)]
     [ok : bool true]
     (begin
       (unless
         (compiler-lower-maybe-span-start-ok?
           (compiler_lower.lower-ast-expr-span
+            pools
             (compiler_ast_types.AstExpr.Binary
               (compiler_ast_types.AstBinOp.Add)
               plain
@@ -811,6 +824,7 @@
       (unless
         (compiler-lower-maybe-span-start-ok?
           (compiler_lower.lower-ast-expr-span
+            pools
             (compiler_ast_types.AstExpr.Call plain items))
           17
           5)
@@ -818,6 +832,7 @@
       (unless
         (compiler-lower-maybe-span-start-ok?
           (compiler_lower.lower-ast-expr-span
+            pools
             (compiler_ast_types.AstExpr.If plain plain spanned-inner))
           17
           5)
@@ -825,6 +840,7 @@
       (unless
         (compiler-lower-maybe-span-start-ok?
           (compiler_lower.lower-ast-expr-span
+            pools
             (compiler_ast_types.AstExpr.Let
               (box (compiler_ast_types.AstLet.Let bindings plain))))
           17
@@ -833,6 +849,7 @@
       (unless
         (compiler-lower-maybe-span-start-ok?
           (compiler_lower.lower-ast-expr-span
+            pools
             (compiler_ast_types.AstExpr.Match
               (box (compiler_ast_types.AstMatch.Match plain arms))))
           17
@@ -841,6 +858,7 @@
       (unless
         (compiler-lower-maybe-span-start-ok?
           (compiler_lower.lower-ast-expr-span
+            pools
             (compiler_ast_types.AstExpr.WithResource
               (box
                 (compiler_ast_types.AstWithResource.WithResource
@@ -852,6 +870,7 @@
       (unless
         (compiler-lower-maybe-span-start-ok?
           (compiler_lower.lower-ast-expr-span
+            pools
             (compiler_ast_types.AstExpr.SpmdScan
               (box
                 (compiler_ast_types.AstSpmdScan.Scan
@@ -871,6 +890,7 @@
       (unless
         (compiler-lower-maybe-span-start-ok?
           (compiler_lower.lower-ast-expr-span
+            pools
             (compiler_ast_types.AstExpr.Syscall items))
           17
           5)
@@ -6067,6 +6087,9 @@
         (compiler_ast_types.ast-param-list-new)
         (compiler_ast_types.AstType.I64)
         compiler_load.CompilerLoadPackageSpmdInterface.Unavailable)]
+    [lower-state : compiler_lower.CompilerLowerState
+      (compiler_lower.compiler-lower-state-new-with-intern-state
+        (ci.intern-compat-state-capture-active))]
     (match left
       [(compiler_ast_types.AstDecl.Extern _ _ _ left-meta _)
         (match right
@@ -6074,6 +6097,7 @@
             (let
               [left-symbol : i64
                 (compiler_lower.lower-extern-logical-symbol-id
+                  lower-state
                   (compiler_symbols.compiler-symbol-module-key-id-by-id
                     left-module
                     name)
@@ -6082,6 +6106,7 @@
                   (__tl-box-place left-meta))]
               [right-symbol : i64
                 (compiler_lower.lower-extern-logical-symbol-id
+                  lower-state
                   (compiler_symbols.compiler-symbol-module-key-id-by-id
                     right-module
                     name)
@@ -10833,10 +10858,141 @@
             (__tl-box-place diag))]
         (string.contains (& message) (& fragment)))]))
 
+;; Selection, generated linker-name canonicalization, source metadata, and
+;; diagnostic spans all belong to the caller's compile job. A same-shaped
+;; installed decoy must not redirect any of those reads or receive mutations.
+(define (compiler-lower-imported-spmd-owner-isolation-ok?) : bool
+  (let
+    [active-intern-before : ci.InternCompatState
+      (ci.intern-compat-state-capture-active)]
+    [active-pools-before : compiler_ast_types.AstNodePoolContext
+      (compiler_ast_types.ast-node-pool-context-capture-active)]
+    [intern-a : ci.InternCompatState (ci.intern-compat-state-new)]
+    [intern-b : ci.InternCompatState (ci.intern-compat-state-new)]
+    [intern-decoy : ci.InternCompatState (ci.intern-compat-state-new)]
+    [name-a : i64 (ci.intern-compat-state-intern intern-a "owner-a/item.field")]
+    [name-b : i64 (ci.intern-compat-state-intern intern-b "owner-b-plain")]
+    [_decoy-name : i64
+      (ci.intern-compat-state-intern intern-decoy "installed-decoy")]
+    [link-a : i64
+      (ci.intern-compat-state-generated-canonical-name intern-a "_tl_owner_a")]
+    [link-b : i64
+      (ci.intern-compat-state-generated-canonical-name intern-b "_tl_owner_b")]
+    [source-a : ci.InternSourceNameSessionHandle
+      (ci.intern-source-name-session-handle-from-state intern-a)]
+    [source-b : ci.InternSourceNameSessionHandle
+      (ci.intern-source-name-session-handle-from-state intern-b)]
+    [pools-a : compiler_ast_types.AstNodePoolContext
+      (compiler_ast_types.ast-node-pool-context-new-with-capacities 4 1)]
+    [pools-b : compiler_ast_types.AstNodePoolContext
+      (compiler_ast_types.ast-node-pool-context-new-with-capacities 4 1)]
+    [inner-a : i64
+      (compiler_ast_types.ast-node-pool-context-expr-push
+        pools-a
+        (compiler_ast_types.AstExpr.Literal (compiler_ast_types.ast-lit-int 1)))]
+    [_inner-b : i64
+      (compiler_ast_types.ast-node-pool-context-expr-push
+        pools-b
+        (compiler_ast_types.AstExpr.Spanned
+          0
+          (compiler_ast_types.ast-source-span 99 1 99 2)))]
+    [origin-a : compiler_ast_types.AstExpr
+      (compiler_ast_types.AstExpr.Spanned
+        inner-a
+        (compiler_ast_types.ast-source-span 9 4 9 12))]
+    [item-a : compiler_ast_types.AstImportedSpmdSpecialization
+      (compiler_ast_types.AstImportedSpmdSpecialization
+        (ci.intern-id-from-renderable link-a)
+        (ci.intern-id-from-renderable link-a)
+        1
+        (ci.intern-id-from-renderable link-a)
+        (ci.intern-id-from-renderable link-a)
+        0
+        (ci.intern-id-from-renderable link-a))]
+    [empty-callables : compiler_ast_types.AstImportedSpmdCallableList
+      (compiler_ast_types.ast-imported-spmd-callable-list-new)]
+    [decoy-source-before : i64 (ci.intern-compat-state-pool-len intern-decoy)]
+    [decoy-generated-before : i64
+      (ci.intern-compat-state-generated-count intern-decoy)]
+    [decoy-exprs-before : i64
+      (compiler_ast_types.ast-node-pool-context-expr-len pools-b)]
+    [ok : bool false]
+    (begin
+      (ci.intern-compat-state-install! intern-decoy)
+      (compiler_ast_types.ast-node-pool-context-install! pools-b)
+      (let
+        [stripped-a : i64
+          (compiler_lower.lower-imported-spmd-ir-symbol intern-a item-a)]
+        [diagnostic-line : i64
+          (match (compiler_lower.lower-imported-spmd-select
+            intern-a
+            pools-a
+            (ci.intern-id-from-renderable name-a)
+            (& empty-callables)
+            "(-> i64 i64)"
+            (compiler_ir_types.CompilerIrSpmdBackend.Scalar)
+            1
+            "v"
+            0
+            (compiler_ast_types.AstType.I64)
+            origin-a)
+            [(compiler_lower.ResultLowerImportedSpmdSpecialization.Ok _) -1]
+            [(compiler_lower.ResultLowerImportedSpmdSpecialization.Err diag)
+              (compiler_diagnostic.compiler-diagnostic-line
+                (__tl-box-place diag))])]
+        (set!
+          ok
+          (and
+            (= name-a name-b)
+            (= link-a link-b)
+            (string.eq
+              (ci.intern-source-name-session-handle-str source-a name-a)
+              "owner-a/item.field")
+            (string.eq
+              (ci.intern-source-name-session-handle-str source-b name-b)
+              "owner-b-plain")
+            (ci.intern-source-name-session-handle-qualified? source-a name-a)
+            (ci.intern-source-name-session-handle-dotted? source-a name-a)
+            (not
+              (ci.intern-source-name-session-handle-qualified? source-b name-b))
+            (not (ci.intern-source-name-session-handle-dotted? source-b name-b))
+            (string.eq
+              (ci.intern-compat-state-str intern-a stripped-a)
+              "owner_a")
+            (= diagnostic-line 9)
+            (=
+              (ci.intern-compat-state-pool-len intern-decoy)
+              decoy-source-before)
+            (=
+              (ci.intern-compat-state-generated-count intern-decoy)
+              decoy-generated-before)
+            (=
+              (compiler_ast_types.ast-node-pool-context-expr-len pools-b)
+              decoy-exprs-before))))
+      (ci.intern-compat-state-install! active-intern-before)
+      (compiler_ast_types.ast-node-pool-context-install! active-pools-before)
+      (compiler_ast_types.ast-node-pool-context-destroy-storage! pools-a)
+      (compiler_ast_types.ast-node-pool-context-destroy-storage! pools-b)
+      (unsafe
+        (arena.tl_arena_destroy
+          (ci.intern-compat-state-persistent-arena intern-a))
+        (arena.tl_arena_destroy
+          (ci.intern-compat-state-persistent-arena intern-b))
+        (arena.tl_arena_destroy
+          (ci.intern-compat-state-persistent-arena intern-decoy)))
+      ok)))
+
+(test
+  compiler-lower-imported-spmd-owner-isolation
+  (test.assert-true
+    (compiler-lower-imported-spmd-owner-isolation-ok?)
+    "imported SPMD selection and diagnostics use only explicit intern/pool owners"))
+
 (define (compiler-lower-imported-spmd-selection-smoke-ok?) : bool
   (let
+    [interns : ci.InternCompatState (ci.intern-compat-state-capture-active)]
     [canonical-name : ci.InternId
-      (lower-test-renderable-name-id "fixture/helper")]
+      (lower-test-renderable-name-id-with-state interns "fixture/helper")]
     [signature : String "(-> i64 i64)"]
     [specializations : compiler_ast_types.AstImportedSpmdSpecializationList
       (compiler_ast_types.ast-imported-spmd-specialization-list-new)]
@@ -10859,49 +11015,57 @@
     [avx2-message-fragment : String "is not supported in AVX2 backend mode"]
     [origin : compiler_ast_types.AstExpr
       (compiler_ast_types.AstExpr.Literal (compiler_ast_types.ast-lit-int 0))]
+    [pools : compiler_ast_types.AstNodePoolContext
+      (compiler_ast_types.ast-node-pool-context-capture-active)]
     (begin
       (compiler_ast_types.ast-imported-spmd-specialization-list-push
         (&mut specializations)
         (compiler_ast_types.AstImportedSpmdSpecialization
-          (lower-test-renderable-name-id "spmd-call-v1")
-          (lower-test-renderable-name-id "scalar")
+          (lower-test-renderable-name-id-with-state interns "spmd-call-v1")
+          (lower-test-renderable-name-id-with-state interns "scalar")
           1
-          (lower-test-renderable-name-id "v")
-          (lower-test-renderable-name-id "v")
+          (lower-test-renderable-name-id-with-state interns "v")
+          (lower-test-renderable-name-id-with-state interns "v")
           0
-          (lower-test-renderable-name-id "_tl___fixture_helper_scalar")))
+          (lower-test-renderable-name-id-with-state
+            interns
+            "_tl___fixture_helper_scalar")))
       (compiler_ast_types.ast-imported-spmd-callable-list-push
         (&mut callables)
         (compiler_ast_types.AstImportedSpmdCallable
-          (lower-test-renderable-name-id signature)
+          (lower-test-renderable-name-id-with-state interns signature)
           specializations))
       (compiler_ast_types.ast-imported-spmd-callable-list-push
         (&mut duplicate-callables)
         (compiler_ast_types.AstImportedSpmdCallable
-          (lower-test-renderable-name-id signature)
+          (lower-test-renderable-name-id-with-state interns signature)
           specializations))
       (compiler_ast_types.ast-imported-spmd-callable-list-push
         (&mut duplicate-callables)
         (compiler_ast_types.AstImportedSpmdCallable
-          (lower-test-renderable-name-id signature)
+          (lower-test-renderable-name-id-with-state interns signature)
           specializations))
       (compiler_ast_types.ast-imported-spmd-specialization-list-push
         (&mut unsupported-specializations)
         (compiler_ast_types.AstImportedSpmdSpecialization
-          (lower-test-renderable-name-id "spmd-call-v2")
-          (lower-test-renderable-name-id "scalar")
+          (lower-test-renderable-name-id-with-state interns "spmd-call-v2")
+          (lower-test-renderable-name-id-with-state interns "scalar")
           1
-          (lower-test-renderable-name-id "v")
-          (lower-test-renderable-name-id "v")
+          (lower-test-renderable-name-id-with-state interns "v")
+          (lower-test-renderable-name-id-with-state interns "v")
           0
-          (lower-test-renderable-name-id "__fixture_helper_v2")))
+          (lower-test-renderable-name-id-with-state
+            interns
+            "__fixture_helper_v2")))
       (compiler_ast_types.ast-imported-spmd-callable-list-push
         (&mut unsupported-callables)
         (compiler_ast_types.AstImportedSpmdCallable
-          (lower-test-renderable-name-id signature)
+          (lower-test-renderable-name-id-with-state interns signature)
           unsupported-specializations))
       (and
         (match (compiler_lower.lower-imported-spmd-select
+          interns
+          pools
           canonical-name
           (& callables)
           signature
@@ -10914,14 +11078,19 @@
           [(compiler_lower.ResultLowerImportedSpmdSpecialization.Ok selected)
             (and
               (string.eq
-                (ci.intern-id-str selected.symbol)
+                (ci.intern-compat-state-id-str interns selected.symbol)
                 "_tl___fixture_helper_scalar")
               (string.eq
-                (ci.intern-str
-                  (compiler_lower.lower-imported-spmd-ir-symbol selected))
+                (ci.intern-compat-state-str
+                  interns
+                  (compiler_lower.lower-imported-spmd-ir-symbol
+                    interns
+                    selected))
                 "__fixture_helper_scalar"))]
           [(compiler_lower.ResultLowerImportedSpmdSpecialization.Err _) false])
         (match (compiler_lower.lower-imported-spmd-select
+          interns
+          pools
           canonical-name
           (& empty-callables)
           signature
@@ -10940,6 +11109,8 @@
               (string.contains (& message) (& missing-message-fragment)))])
         (compiler-lower-imported-spmd-selection-error-contains?
           (compiler_lower.lower-imported-spmd-select
+            interns
+            pools
             canonical-name
             (& callables)
             "(-> i64 u64)"
@@ -10952,6 +11123,8 @@
           signature-message-fragment)
         (compiler-lower-imported-spmd-selection-error-contains?
           (compiler_lower.lower-imported-spmd-select
+            interns
+            pools
             canonical-name
             (& callables)
             signature
@@ -10964,6 +11137,8 @@
           specialization-message-fragment)
         (compiler-lower-imported-spmd-selection-error-contains?
           (compiler_lower.lower-imported-spmd-select
+            interns
+            pools
             canonical-name
             (& callables)
             signature
@@ -10976,6 +11151,8 @@
           specialization-message-fragment)
         (compiler-lower-imported-spmd-selection-error-contains?
           (compiler_lower.lower-imported-spmd-select
+            interns
+            pools
             canonical-name
             (& unsupported-callables)
             signature
@@ -10988,6 +11165,8 @@
           abi-message-fragment)
         (compiler-lower-imported-spmd-selection-error-contains?
           (compiler_lower.lower-imported-spmd-select
+            interns
+            pools
             canonical-name
             (& duplicate-callables)
             signature
@@ -11000,6 +11179,8 @@
           duplicate-message-fragment)
         (compiler-lower-imported-spmd-selection-error-contains?
           (compiler_lower.lower-imported-spmd-select
+            interns
+            pools
             canonical-name
             (& callables)
             signature
@@ -11009,7 +11190,8 @@
             0
             (compiler_ast_types.AstType.I64)
             origin)
-          avx2-message-fragment)))))
+          avx2-message-fragment)
+        (compiler-lower-imported-spmd-owner-isolation-ok?)))))
 
 (define (compiler-lower-spmd-scalar-call-shape-ok?) : bool
   (and

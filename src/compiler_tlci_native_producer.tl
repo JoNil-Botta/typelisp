@@ -526,6 +526,7 @@
     [(compiler_ast_types.AstExpr.PtrWrite _ _) "ptr-write!"]
     [(compiler_ast_types.AstExpr.PtrOffset _ _) "ptr-offset"]
     [(compiler_ast_types.AstExpr.PtrToInt _) "ptr->int"]
+    [(compiler_ast_types.AstExpr.FixedMakeArray _ _) "make-array"]
     [(compiler_ast_types.AstExpr.MakeArray _ _) "__tl_make-array"]
     [_ "unclassified"]))
 
@@ -6470,9 +6471,7 @@
                                 1))
                             (let
                               [ops : (__tl_dyn-array String)
-                                (__tl_make-array
-                                  String
-                                  embedded-native-ops-cap)]
+                                (__tl_make-array String embedded-native-ops-cap)]
                               [ops-count : (__tl_dyn-array i64)
                                 (__tl_make-array 0)]
                               [opened : i64

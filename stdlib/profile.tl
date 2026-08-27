@@ -3,7 +3,6 @@
 ;# Provides allocation counters and a coarse monotonic millisecond timestamp.
 ;# Time is implemented here over platform FFI/syscalls; allocation counters remain
 ;# allocator-runtime hooks. Import explicitly with `(import stdlib.profile)`.
-
 ;: Shared scratch for the time helper's OS out-parameters. Allocated once at
 ;: module initialization so `now-ms` does not allocate on every sample.
 (define now-scratch : (__tl_dyn-array i64)

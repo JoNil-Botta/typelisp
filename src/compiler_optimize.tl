@@ -10718,10 +10718,8 @@
         0)]
     [id-map : (__tl_dyn-array i64)
       (__tl_make-array i64 (opt-cfg-index-id-map-capacity count))]
-    [succ-rows : (__tl_dyn-array OptI64List)
-      (__tl_make-array OptI64List count)]
-    [pred-rows : (__tl_dyn-array OptI64List)
-      (__tl_make-array OptI64List count)]
+    [succ-rows : (__tl_dyn-array OptI64List) (__tl_make-array OptI64List count)]
+    [pred-rows : (__tl_dyn-array OptI64List) (__tl_make-array OptI64List count)]
     [reachable : (__tl_dyn-array bool) (__tl_make-array bool count)]
     [postorder : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [rpo : (__tl_dyn-array i64) (__tl_make-array i64 count)]
@@ -46394,9 +46392,7 @@
             (OptSwitchCandidateList.Dense slots (+ len 1)))
           (let
             [bigger : (__tl_dyn-array OptSwitchCandidate)
-              (__tl_make-array
-                OptSwitchCandidate
-                (opt-dense-next-capacity len))]
+              (__tl_make-array OptSwitchCandidate (opt-dense-next-capacity len))]
             [index : i64 0]
             (begin
               (while (< index len)
@@ -64261,8 +64257,7 @@
   (match phis
     [(OptUnrollPhiList.Nil)
       (let
-        [items : (__tl_dyn-array OptUnrollPhi)
-          (__tl_make-array OptUnrollPhi 4)]
+        [items : (__tl_dyn-array OptUnrollPhi) (__tl_make-array OptUnrollPhi 4)]
         (begin
           (set! (array-ref items 0) phi)
           (OptUnrollPhiList.Dense items 1)))]
@@ -91037,8 +91032,7 @@
           (__tl_make-array ir.CompilerIrValue frame)]
         [offsets : (__tl_dyn-array ir.CompilerIrValue)
           (__tl_make-array ir.CompilerIrValue frame)]
-        [tys : (__tl_dyn-array ast.AstType)
-          (__tl_make-array ast.AstType frame)]
+        [tys : (__tl_dyn-array ast.AstType) (__tl_make-array ast.AstType frame)]
         [marks : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
         [cands : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
         [_uses : unit
@@ -92394,9 +92388,7 @@
           (OptSuccessorSinkMoves.Dense items (+ len 1)))
         (let
           [bigger : (__tl_dyn-array OptSuccessorSinkMove)
-            (__tl_make-array
-              OptSuccessorSinkMove
-              (opt-dense-next-capacity len))]
+            (__tl_make-array OptSuccessorSinkMove (opt-dense-next-capacity len))]
           [index : i64 0]
           (begin
             (while (< index len)

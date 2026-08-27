@@ -477,7 +477,7 @@ end
     [cur : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     (begin
       (set! (array-ref cur 0) 3)
-      (array.ref cur 0))))")
+      (array-ref cur 0))))")
 
 (define (selfhost-lint-single-element-array-nonzero-source) : String
   "(define (main) : i64

@@ -13,7 +13,7 @@
 
 ;: Allocate the one backing buffer used to pack a long concatenation.
 (define (str-cat-pack-new [count : i64]) : StrCatPack
-  (StrCatPack (stdlib.__tl_make-array String count)))
+  (StrCatPack (__tl_make-array String count)))
 
 ;: Store one String in a compiler-private pack.
 (define (str-cat-pack-part!

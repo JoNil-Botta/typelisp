@@ -447,6 +447,11 @@
         (begin
           (codec.surface-ast-write-i64! out 12)
           (surface-ast-write-expr-list! out items))]
+      [(ast.AstExpr.FixedMakeArray ty-id size)
+        (begin
+          (codec.surface-ast-write-i64! out 85)
+          (codec.surface-ast-write-i64! out ty-id)
+          (codec.surface-ast-write-i64! out size))]
       [(ast.AstExpr.MakeArray ty-id size)
         (begin
           (codec.surface-ast-write-i64! out 13)
@@ -885,6 +890,10 @@
           (codec.surface-ast-read-i64! reader))]
       [(= tag 11) (ast.AstExpr.Array (surface-ast-read-expr-list! reader))]
       [(= tag 12) (ast.AstExpr.DynArray (surface-ast-read-expr-list! reader))]
+      [(= tag 85)
+        (ast.AstExpr.FixedMakeArray
+          (codec.surface-ast-read-i64! reader)
+          (codec.surface-ast-read-i64! reader))]
       [(= tag 13)
         (ast.AstExpr.MakeArray
           (codec.surface-ast-read-i64! reader)

@@ -28,7 +28,6 @@
 ;# program-lifetime arena outside `(with-arena ...)`, or the scoped arena inside
 ;# one.
 ;; lint-allow: unused-import
-
 ;; lint-allow: unused-import
 (import stdlib.arena)
 

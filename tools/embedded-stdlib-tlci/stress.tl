@@ -12,7 +12,7 @@
 ;;
 ;; - tier 1 dispatches the final macro moved off a shell, text_buf/append!,
 ;;   through its two fixed operands and dynamic set!-place callback chain.
-;; - tier 2 dispatches array/length over one set of operands built before the
+;; - tier 2 dispatches core_macros/__tl-box-place over one set of operands built before the
 ;;   loop, auditing the session arguments the callbacks read after every
 ;;   dispatch.
 ;; - tier 3 runs the same native entry but captures pools and pushes a fresh
@@ -302,8 +302,8 @@
       (compiler_ast_types.AstExpr.Var (ci.intern "xs")))
     (compiler_ast_types.ast-source-span 900 7 900 9)))
 
-;: The committed expansion `stdlib.array/length` must produce, checked every
-;: iteration so a silently wrong commit cannot pass as a clean run.
+;: The committed core box-place expansion must produce the legacy bridge node,
+;: checked every iteration so a silently wrong commit cannot pass as a clean run.
 (define (stress-tier3-result-ok?
   [pools : compiler_ast_types.AstNodePoolContext]
   [operand-node : i64]) : bool
@@ -312,20 +312,7 @@
       (match (stress-expr-get
         (compiler_ast_types.ast-node-pool-context-shared-view (& pools))
         node)
-        [(compiler_ast_types.AstExpr.Call callee-id args)
-          (and
-            (match (stress-expr-get
-              (compiler_ast_types.ast-node-pool-context-shared-view (& pools))
-              callee-id)
-              [(compiler_ast_types.AstExpr.Var name-id)
-                (=
-                  name-id
-                  (ci.intern-template-source-id (ci.intern "__tl_array-length")))]
-              [_ false])
-            (= (compiler_ast_types.ast-expr-list-len (& args)) 1)
-            (=
-              (compiler_ast_types.ast-expr-list-get (& args) 0 -1)
-              operand-node))]
+        [(compiler_ast_types.AstExpr.BoxGet inner) (= inner operand-node)]
         [_ false])]
     [_ false]))
 
@@ -333,7 +320,7 @@
 ;: an AST result, so this tier crosses the bridge, the callback trampoline, and
 ;: the pool commit path together. `verify.tl` pins its expansion shape.
 (define stress-native-identity : String
-  "stdlib.array/length")
+  "stdlib.core_macros/__tl-box-place")
 
 ;: The session state a callback reads on entry, re-checked after every
 ;: dispatch. #5460's signature was a `count` argument that did not survive the

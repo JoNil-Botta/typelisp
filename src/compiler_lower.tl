@@ -3886,6 +3886,7 @@
     [(ast.AstExpr.TupleRef target _) (lower-expr-id-span pools target)]
     [(ast.AstExpr.Array values) (lower-expr-list-first-span pools values)]
     [(ast.AstExpr.DynArray values) (lower-expr-list-first-span pools values)]
+    [(ast.AstExpr.FixedMakeArray _ size) (lower-expr-id-span pools size)]
     [(ast.AstExpr.MakeArray _ size) (lower-expr-id-span pools size)]
     [(ast.AstExpr.ArrayRef target index)
       (lower-expr-id-first-span2 pools target index)]
@@ -13222,6 +13223,15 @@
         names
         state
         values)]
+    [(ast.AstExpr.FixedMakeArray _ len-box)
+      (let
+        [len : ast.AstExpr (ast.ast-node-pool-context-expr-get pools len-box)]
+        (lower-reach-expr
+          (lower-global-shared-view pools)
+          (lower-global-shared-view all-functions)
+          names
+          state
+          len))]
     [(ast.AstExpr.MakeArray _ len-box)
       (let
         [len : ast.AstExpr (ast.ast-node-pool-context-expr-get pools len-box)]
@@ -15663,6 +15673,18 @@
       (lower-used-types-add-expr-list session pools used module values)]
     [(ast.AstExpr.DynArray values)
       (lower-used-types-add-expr-list session pools used module values)]
+    [(ast.AstExpr.FixedMakeArray ty-id len-box)
+      (lower-used-types-add-expr-id
+        session
+        (lower-global-shared-view pools)
+        (lower-used-types-add-type
+          session
+          (lower-global-shared-view pools)
+          used
+          (lower-global-shared-view module)
+          (ast.ast-node-pool-context-type-get pools ty-id))
+        (lower-global-shared-view module)
+        len-box)]
     [(ast.AstExpr.MakeArray ty-id len-box)
       (lower-used-types-add-expr-id
         session
@@ -34046,6 +34068,15 @@
           field
           value
           origin))]
+    [(ast.AstExpr.FixedMakeArray _ _)
+      (lower-init-expr
+        (lower-global-shared-view ctx)
+        state
+        (lower-global-shared-view env)
+        type-env
+        (lower-global-shared-view expr-ty)
+        origin
+        expr-ty)]
     [(ast.AstExpr.MakeArray elem-ty-id len-box)
       (let
         [len : ast.AstExpr
@@ -43368,6 +43399,27 @@
           result-ty
           origin))]))
 
+(define (lower-fixed-array-length-or
+  [ctx : tc_core.TcContext]
+  [ty : ast.AstType]
+  [fallback : i64]) : i64
+  (match (tc_core.tc-type-strip-region
+    (tc_core.tc-resolve-type
+      (lower-global-shared-view ctx)
+      (lower-global-shared-view ty)))
+    [(ast.AstType.Array _ count) count]
+    [(ast.AstType.Ref _ inner)
+      (let
+        [inner-ty : ast.AstType
+          (tc_core.tc-context-type-get (lower-global-shared-view ctx) inner)]
+        (lower-fixed-array-length-or ctx inner-ty fallback))]
+    [(ast.AstType.MutRef _ inner)
+      (let
+        [inner-ty : ast.AstType
+          (tc_core.tc-context-type-get (lower-global-shared-view ctx) inner)]
+        (lower-fixed-array-length-or ctx inner-ty fallback))]
+    [_ fallback]))
+
 (define (lower-array-length-load
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -43384,40 +43436,51 @@
                 (tc_core.tc-resolve-type
                   (lower-global-shared-view ctx)
                   (lower-global-shared-view arr-ty)))]
-            (match resolved
-              [(ast.AstType.Ref _ inner)
-                (if (lower-reference-to-slice?
-                  (lower-global-shared-view ctx)
-                  inner)
-                  (match (lower-emit-word
-                    arr-state
-                    arr-value
-                    1
-                    (lower-register-word-type ctx arr-ty 1))
-                    [(LowerExpr.Expr length-state length-value _)
-                      (ResultLowerExpr.Ok
-                        (LowerExpr.Expr
-                          length-state
-                          length-value
-                          (ast.AstType.I64)))])
-                  (lower-array-length-load-descriptor arr-state arr-value))]
-              [(ast.AstType.MutRef _ inner)
-                (if (lower-reference-to-slice?
-                  (lower-global-shared-view ctx)
-                  inner)
-                  (match (lower-emit-word
-                    arr-state
-                    arr-value
-                    1
-                    (lower-register-word-type ctx arr-ty 1))
-                    [(LowerExpr.Expr length-state length-value _)
-                      (ResultLowerExpr.Ok
-                        (LowerExpr.Expr
-                          length-state
-                          length-value
-                          (ast.AstType.I64)))])
-                  (lower-array-length-load-descriptor arr-state arr-value))]
-              [_ (lower-array-length-load-descriptor arr-state arr-value)]))])]
+            [fixed-count : i64
+              (lower-fixed-array-length-or
+                (lower-global-shared-view ctx)
+                (lower-global-shared-view resolved)
+                -1)]
+            (if (>= fixed-count 0)
+              (ResultLowerExpr.Ok
+                (LowerExpr.Expr
+                  arr-state
+                  (ir.CompilerIrValue.I64 fixed-count)
+                  (ast.AstType.I64)))
+              (match resolved
+                [(ast.AstType.Ref _ inner)
+                  (if (lower-reference-to-slice?
+                    (lower-global-shared-view ctx)
+                    inner)
+                    (match (lower-emit-word
+                      arr-state
+                      arr-value
+                      1
+                      (lower-register-word-type ctx arr-ty 1))
+                      [(LowerExpr.Expr length-state length-value _)
+                        (ResultLowerExpr.Ok
+                          (LowerExpr.Expr
+                            length-state
+                            length-value
+                            (ast.AstType.I64)))])
+                    (lower-array-length-load-descriptor arr-state arr-value))]
+                [(ast.AstType.MutRef _ inner)
+                  (if (lower-reference-to-slice?
+                    (lower-global-shared-view ctx)
+                    inner)
+                    (match (lower-emit-word
+                      arr-state
+                      arr-value
+                      1
+                      (lower-register-word-type ctx arr-ty 1))
+                      [(LowerExpr.Expr length-state length-value _)
+                        (ResultLowerExpr.Ok
+                          (LowerExpr.Expr
+                            length-state
+                            length-value
+                            (ast.AstType.I64)))])
+                    (lower-array-length-load-descriptor arr-state arr-value))]
+                [_ (lower-array-length-load-descriptor arr-state arr-value)])))])]
     [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))
 
 (define (lower-array-length-load-descriptor
@@ -49814,6 +49877,8 @@
           name
           tuple-box)
         (lower-spmd-reduce-node-writes-id? ctx name index-box))]
+    [(ast.AstExpr.FixedMakeArray _ len-box)
+      (lower-spmd-reduce-node-writes-id? ctx name len-box)]
     [(ast.AstExpr.MakeArray _ len-box)
       (lower-spmd-reduce-node-writes-id? ctx name len-box)]
     [(ast.AstExpr.ArrayRef array-box index-box)
@@ -72072,6 +72137,8 @@
       (lower-rvo-expr-list-has-early-return? ctx exprs)]
     [(ast.AstExpr.DynArray exprs)
       (lower-rvo-expr-list-has-early-return? ctx exprs)]
+    [(ast.AstExpr.FixedMakeArray _ len-box)
+      (lower-rvo-node-has-early-return? ctx len-box)]
     [(ast.AstExpr.MakeArray _ len-box)
       (lower-rvo-node-has-early-return? ctx len-box)]
     [(ast.AstExpr.ArrayRef arr-box index-box)
@@ -79598,6 +79665,8 @@
       (lower-source-expr-list-has-import-call? pools exprs)]
     [(ast.AstExpr.DynArray exprs)
       (lower-source-expr-list-has-import-call? pools exprs)]
+    [(ast.AstExpr.FixedMakeArray _ len-box)
+      (lower-source-node-has-import-call? pools len-box)]
     [(ast.AstExpr.MakeArray _ len-box)
       (lower-source-node-has-import-call? pools len-box)]
     [(ast.AstExpr.ArrayRef array-box index-box)

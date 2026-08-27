@@ -22,7 +22,7 @@
 (define (probe [i : i64]) : i64
   (if (< i -999999)
     (probe (- i 1))
-    (array.ref gtab i)))
+    (array-ref gtab i)))
 
 (define (main) : i64
   (begin

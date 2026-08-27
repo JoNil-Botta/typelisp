@@ -205,7 +205,7 @@
   (if (>= index count)
     unit
     (begin
-      (set! (array-ref dst index) (array.ref src index))
+      (set! (array-ref dst index) (array-ref src index))
       (spec-generated-symbol-records-copy-range dst src (+ index 1) count))))
 
 (define (spec-generated-symbol-records-grow!
@@ -555,7 +555,7 @@
   (if (>= index count)
     unit
     (begin
-      (set! (array-ref dst index) (array.ref src index))
+      (set! (array-ref dst index) (array-ref src index))
       (spec-template-list-copy-range dst src (+ index 1) count))))
 
 (define (spec-template-list-grow
@@ -594,7 +594,7 @@
       (set! (array-ref slots 0) head)
       (while (< at count)
         (begin
-          (set! (array-ref slots (+ at 1)) (array.ref rest.slots at))
+          (set! (array-ref slots (+ at 1)) (array-ref rest.slots at))
           (set! at (+ at 1))))
       (SpecValueList slots (+ count 1)))))
 
@@ -930,7 +930,7 @@
   (if (>= index count)
     unit
     (begin
-      (set! (array-ref dst index) (array.ref src index))
+      (set! (array-ref dst index) (array-ref src index))
       (spec-template-shadow-copy-range dst src (+ index 1) count))))
 
 (define (spec-template-shadow-fill-zero
@@ -1034,7 +1034,7 @@
   [head : i64]) : i64
   (if (< head 0)
     0
-    (array.ref data.depths head)))
+    (array-ref data.depths head)))
 
 (define (spec-template-shadow-state-append
   [state : SpecTemplateShadowState]
@@ -1079,12 +1079,12 @@
           (begin
             (if (and (>= current-depth wanted-depth) (>= current 0))
               (let
-                [slot : i64 (array.ref data.slots current)]
+                [slot : i64 (array-ref data.slots current)]
                 (begin
                   (set!
                     (array-ref data.counts slot)
-                    (- (array.ref data.counts slot) 1))
-                  (set! current (array.ref data.parents current))))
+                    (- (array-ref data.counts slot) 1))
+                  (set! current (array-ref data.parents current))))
               unit)
             (if (and (>= wanted-depth current-depth) (>= wanted 0))
               (begin
@@ -1095,17 +1095,17 @@
                     (spec-template-shadow-state-grow-scratch data scratch-len)))
                 (set! (array-ref data.scratch scratch-len) wanted)
                 (set! scratch-len (+ scratch-len 1))
-                (set! wanted (array.ref data.parents wanted)))
+                (set! wanted (array-ref data.parents wanted)))
               unit))))
       (while (> scratch-len 0)
         (let
           [next-index : i64 (- scratch-len 1)]
-          [node : i64 (array.ref data.scratch next-index)]
-          [slot : i64 (array.ref data.slots node)]
+          [node : i64 (array-ref data.scratch next-index)]
+          [slot : i64 (array-ref data.slots node)]
           (begin
             (set!
               (array-ref data.counts slot)
-              (+ (array.ref data.counts slot) 1))
+              (+ (array-ref data.counts slot) 1))
             (set! scratch-len next-index))))
       (set! data.active-head wanted-head)
       (spec-template-shadow-state-data-set! state data))))
@@ -1116,7 +1116,7 @@
   [slot : i64]) : bool
   (begin
     (spec-template-shadow-state-activate! state head)
-    (> (array.ref (spec-template-shadow-state-data state).counts slot) 0)))
+    (> (array-ref (spec-template-shadow-state-data state).counts slot) 0)))
 
 (define (spec-template-values-fill-empty
   [values : (&mut values (__tl_dyn-array SpecMaybeTemplate))]
@@ -5887,6 +5887,17 @@
               (ast.AstExpr.DynArray rewritten))
             state2)]
         [(ResultSpecExprList.Err diag) (ResultSpecExpr.Err diag)])]
+    [(ast.AstExpr.FixedMakeArray elem-ty-id len-box)
+      (let
+        [len : ast.AstExpr (spec-state-expr-get state len-box)]
+        (match (spec-rewrite-expr len templates (spec-place-shared-view state))
+          [(ResultSpecExpr.Ok rewritten-len state2)
+            (ResultSpecExpr.Ok
+              (spec-owner-expr-push
+                (spec-state-owner state)
+                (ast.AstExpr.FixedMakeArray elem-ty-id rewritten-len))
+              state2)]
+          [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))]
     [(ast.AstExpr.MakeArray elem-ty-id len-box)
       (let
         [len : ast.AstExpr (spec-state-expr-get state len-box)]
@@ -7190,6 +7201,16 @@
           (ResultSpecSubExpr.Ok
             (spec-owner-expr-push owner (ast.AstExpr.DynArray rewritten)))]
         [(ResultSpecSubExprList.Err diag) (ResultSpecSubExpr.Err diag)])]
+    [(ast.AstExpr.FixedMakeArray elem-ty-id len-box)
+      (let
+        [len : ast.AstExpr (spec-owner-expr-get owner len-box)]
+        (match (spec-substitute-values-expr-with-owner owner len subs)
+          [(ResultSpecSubExpr.Ok rewritten-len)
+            (ResultSpecSubExpr.Ok
+              (spec-owner-expr-push
+                owner
+                (ast.AstExpr.FixedMakeArray elem-ty-id rewritten-len)))]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(ast.AstExpr.MakeArray elem-ty-id len-box)
       (let
         [len : ast.AstExpr (spec-owner-expr-get owner len-box)]
@@ -8281,6 +8302,20 @@
               (spec-owner-pools owner)
               maybe-ty-id)
             subs)))]
+    [(ast.AstExpr.FixedMakeArray elem-ty-id len-box)
+      (let
+        [len : ast.AstExpr (spec-owner-expr-get owner len-box)]
+        (match (spec-substitute-types-expr-with-owner owner len subs)
+          [(ResultSpecSubExpr.Ok rewritten-len)
+            (ResultSpecSubExpr.Ok
+              (ast.ast-expr-fixed-make-array-with-pools
+                (spec-owner-pools owner)
+                (spec-substitute-type-with-owner
+                  owner
+                  (spec-owner-type-get owner elem-ty-id)
+                  subs)
+                rewritten-len))]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(ast.AstExpr.MakeArray elem-ty-id len-box)
       (let
         [len : ast.AstExpr (spec-owner-expr-get owner len-box)]
@@ -11148,7 +11183,7 @@
             (if (string.eq
               (spec_ci.intern-compat-state-str
                 intern-state
-                (array.ref handles index))
+                (array-ref handles index))
               (spec-specialized-name-with-owner owner "wide" values))
               unit
               (set! ok false))

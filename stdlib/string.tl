@@ -840,7 +840,6 @@
 
 ;; Inline test coverage.
 (cfg test (import stdlib.test))
-(cfg test (import stdlib.array))
 
 (cfg
   test

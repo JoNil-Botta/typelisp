@@ -463,25 +463,24 @@ done
 FIXTURE="$WORKDIR/representative-expansion.tl"
 {
     cat <<'EOF'
-(import stdlib.array)
 (define (main) : i64
   (let
-    [items : (__tl_dyn-array i64) (array.make-array i64 1)]
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     (begin
       (set! (array-ref items 0) 7)
 EOF
     _fixture_index=0
     while [ "$_fixture_index" -lt 512 ]; do
         case $((_fixture_index % 4)) in
-            0) echo '      (array.length items)' ;;
-            1) echo '      (array.ref items 0)' ;;
-            2) echo '      (and true true)' ;;
-            3) echo '      (or false true)' ;;
+            0) echo '      (__tl-box-place (box 7))' ;;
+            1) echo '      (and true true)' ;;
+            2) echo '      (or false true)' ;;
+            3) echo '      (unless false unit)' ;;
         esac
         _fixture_index=$((_fixture_index + 1))
     done
     cat <<'EOF'
-      (if (= (array.ref items 0) 7) 42 1))))
+      (if (= (array-ref items 0) 7) 42 1))))
 EOF
 } > "$FIXTURE"
 

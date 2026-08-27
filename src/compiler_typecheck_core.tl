@@ -2366,7 +2366,7 @@
   (tc-body-state-new-with-job-state (tc-serial-job-state)))
 
 (define (tc-body-state-data-value [state : TcBodyState]) : TcBodyStateData
-  (array.ref state.data 0))
+  (array-ref state.data 0))
 
 (define (tc-body-state-data-set!
   [state : (& state TcBodyState)]
@@ -2468,11 +2468,11 @@
         (begin
           (set!
             (array-ref data.early-exit-known word-index)
-            (bit-or (array.ref data.early-exit-known word-index) bit))
+            (bit-or (array-ref data.early-exit-known word-index) bit))
           (if data.early-exit-current
             (set!
               (array-ref data.early-exit-facts word-index)
-              (bit-or (array.ref data.early-exit-facts word-index) bit))
+              (bit-or (array-ref data.early-exit-facts word-index) bit))
             unit)))
       unit)))
 
@@ -2524,11 +2524,11 @@
         [word-index : i64 (/ body-id 64)]
         [bit-index : i64 (% body-id 64)]
         [bit : i64 (shl 1 bit-index)]
-        [known : i64 (array.ref data.early-exit-known word-index)]
+        [known : i64 (array-ref data.early-exit-known word-index)]
         (if (= (bit-and known bit) 0)
           (TcBodyEarlyExitFact.Unknown)
           (let
-            [bits : i64 (array.ref data.early-exit-facts word-index)]
+            [bits : i64 (array-ref data.early-exit-facts word-index)]
             (TcBodyEarlyExitFact.Known (not (= (bit-and bits bit) 0))))))
       (TcBodyEarlyExitFact.Unknown))))
 
@@ -2594,9 +2594,7 @@
               (__tl_make-array i64 (tc-body-type-fact-initial-capacity)))
             (set!
               data.type-fact-types
-              (__tl_make-array
-                ast.AstType
-                (tc-body-type-fact-initial-capacity)))
+              (__tl_make-array ast.AstType (tc-body-type-fact-initial-capacity)))
             (set!
               data.type-fact-closure-codes
               (__tl_make-array i64 (tc-body-type-fact-initial-capacity)))
@@ -2616,9 +2614,9 @@
     [i : i64 index]
     (while (< i count)
       (begin
-        (set! (array-ref dst-types i) (array.ref src-types i))
-        (set! (array-ref dst-closure-codes i) (array.ref src-closure-codes i))
-        (set! (array-ref dst-expr-ids i) (array.ref src-expr-ids i))
+        (set! (array-ref dst-types i) (array-ref src-types i))
+        (set! (array-ref dst-closure-codes i) (array-ref src-closure-codes i))
+        (set! (array-ref dst-expr-ids i) (array-ref src-expr-ids i))
         (set! i (+ i 1))))))
 
 (define (tc-body-type-fact-grow! [state : TcBodyState]) : unit
@@ -2665,7 +2663,7 @@
     (begin
       (while (< i data.type-fact-count)
         (let
-          [expr-id : i64 (array.ref data.type-fact-expr-ids i)]
+          [expr-id : i64 (array-ref data.type-fact-expr-ids i)]
           (begin
             (if (and (>= expr-id 0) (< expr-id index-len))
               (set! (array-ref data.type-fact-index expr-id) 0)
@@ -2696,7 +2694,7 @@
     [data : TcBodyStateData
       (tc-body-state-data-value (tc-global-shared-view state))]
     (if (and (>= expr-id 0) (< expr-id (array-length data.type-fact-index)))
-      (- (array.ref data.type-fact-index expr-id) 1)
+      (- (array-ref data.type-fact-index expr-id) 1)
       -1)))
 
 (define (tc-body-type-facts-start-recording! [state : TcBodyState]) : unit
@@ -2789,7 +2787,7 @@
       data.type-facts-consuming
       (>= slot 0)
       (< slot data.type-fact-count))
-      (array.ref data.type-fact-closure-codes slot)
+      (array-ref data.type-fact-closure-codes slot)
       0)))
 
 (define (tc-body-closure-fact-record!
@@ -7381,7 +7379,7 @@
         unit
         (set!
           (array-ref compiler-tc-body-fact-profile-hits index)
-          (+ (array.ref compiler-tc-body-fact-profile-hits index) 1))))))
+          (+ (array-ref compiler-tc-body-fact-profile-hits index) 1))))))
 
 (cfg
   compile-profile
@@ -7392,7 +7390,7 @@
         unit
         (set!
           (array-ref compiler-tc-body-fact-profile-misses index)
-          (+ (array.ref compiler-tc-body-fact-profile-misses index) 1))))))
+          (+ (array-ref compiler-tc-body-fact-profile-misses index) 1))))))
 
 (cfg
   compile-profile
@@ -7620,11 +7618,11 @@
         (compiler-tc-body-fact-profile-line
           (clone site)
           "hits"
-          (array.ref compiler-tc-body-fact-profile-hits index))
+          (array-ref compiler-tc-body-fact-profile-hits index))
         (compiler-tc-body-fact-profile-line
           site
           "misses"
-          (array.ref compiler-tc-body-fact-profile-misses index))))))
+          (array-ref compiler-tc-body-fact-profile-misses index))))))
 
 (cfg
   compile-profile
@@ -8254,7 +8252,7 @@
   compile-profile
   (define (tc-lp-count [index : i64]) : i64
     (if (tc-lp-index-valid? index)
-      (array.ref tc-lp-counts index)
+      (array-ref tc-lp-counts index)
       0)))
 
 (cfg
@@ -9557,6 +9555,7 @@
       (match (__tl-box-place lambda-box)
         [(ast.AstLambda.Lambda _ _ body) (tc-expr-id-maybe-span body)])]
     [(ast.AstExpr.TupleRef target _) (tc-expr-id-maybe-span target)]
+    [(ast.AstExpr.FixedMakeArray _ size) (tc-expr-id-maybe-span size)]
     [(ast.AstExpr.MakeArray _ size) (tc-expr-id-maybe-span size)]
     [(ast.AstExpr.Set _ value) (tc-expr-id-maybe-span value)]
     [(ast.AstExpr.Ann inner _) (tc-expr-id-maybe-span inner)]
@@ -28360,6 +28359,10 @@
       (tc-source-expr-list-spmd-broadcast-scope-ok expr-bases exprs allow)]
     [(ast.AstExpr.DynArray exprs)
       (tc-source-expr-list-spmd-broadcast-scope-ok expr-bases exprs allow)]
+    [(ast.AstExpr.FixedMakeArray _ len-box)
+      (let
+        [len : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases len-box)]
+        (tc-source-expr-spmd-broadcast-scope-ok expr-bases len allow))]
     [(ast.AstExpr.MakeArray _ len-box)
       (let
         [len : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases len-box)]
@@ -28935,6 +28938,14 @@
       (tc-source-expr-list-policy-ok ctx expr-bases exprs)]
     [(ast.AstExpr.DynArray exprs)
       (tc-source-expr-list-policy-ok ctx expr-bases exprs)]
+    [(ast.AstExpr.FixedMakeArray elem-ty-id len-box)
+      (let
+        [len : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases len-box)]
+        (match (tc-source-type-policy-ok
+          (tc-global-shared-view ctx)
+          (ast.ty-node-get elem-ty-id))
+          [(ResultTcUnit.Ok) (tc-source-expr-policy-ok ctx expr-bases len)]
+          [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
     [(ast.AstExpr.MakeArray elem-ty-id len-box)
       (let
         [len : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases len-box)]
@@ -39597,8 +39608,7 @@
     [max-distance : i64 (tc-unbound-suggestion-max-distance wanted-len)]
     [previous-previous-row : (__tl_dyn-array i64)
       (__tl_make-array i64 (+ wanted-len 1))]
-    [previous-row : (__tl_dyn-array i64)
-      (__tl_make-array i64 (+ wanted-len 1))]
+    [previous-row : (__tl_dyn-array i64) (__tl_make-array i64 (+ wanted-len 1))]
     [current-row : (__tl_dyn-array i64) (__tl_make-array i64 (+ wanted-len 1))]
     [candidate-id : i64 0]
     [candidate-limit : i64 (ci.intern-pool-len)]
@@ -45308,7 +45318,7 @@
       (tc-source-value-bound-id? ctx env name-id))
       (ResultTcType.Ok (ast.AstType.I64))
       (ResultTcType.Err
-        "typecheck: array-length requires dynamic array or borrowed Slice"))
+        "typecheck: array-length requires fixed array, private dynamic array, or borrowed Slice"))
     (tc-length-string-call ctx env name-id func args arg-ty)))
 
 (define (tc-array-length-array-call
@@ -45342,6 +45352,9 @@
     (tc-resolve-type
       (tc-global-shared-view ctx)
       (tc-global-shared-view receiver-ty)))
+    [(ast.AstType.Array elem-ty _)
+      (ResultTcArrayReceiver.Ok
+        (TcArrayReceiver receiver-ty (ast.ty-node-get elem-ty)))]
     [(ast.AstType.DynArray elem-ty)
       (ResultTcArrayReceiver.Ok
         (TcArrayReceiver receiver-ty (ast.ty-node-get elem-ty)))]
@@ -45365,13 +45378,12 @@
         [_ (tc-array-length-receiver ctx (ast.ty-node-get referent-ty))])]
     [_
       (ResultTcArrayReceiver.Err
-        "typecheck: array-length requires dynamic array or borrowed Slice")]))
+        "typecheck: array-length requires fixed array, private dynamic array, or borrowed Slice")]))
 
-;; Runtime `array-length` remains dynamic-array-only. Macro helper environments
-;; bind `array-length` for Expr operands so CTFE can validate fixed-array type
-;; reflection.
-;; Core `length` accepts arrays and string/bytes handles. The stdlib
-;; `string-length` wrapper uses the private `__tl_string_length` intrinsic.
+;; Core `length` / `array-length` accept fixed arrays and supported references;
+;; compiler-private dynamic arrays and borrowed Slice receivers retain their
+;; intrinsic path. The stdlib `string-length` wrapper uses the private
+;; `__tl_string_length` intrinsic.
 (define (tc-array-length-call
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -47605,6 +47617,10 @@
       (tc-ref-closure-expr-list-local-uses-ok? expr-bases exprs name bound)]
     [(ast.AstExpr.DynArray exprs)
       (tc-ref-closure-expr-list-local-uses-ok? expr-bases exprs name bound)]
+    [(ast.AstExpr.FixedMakeArray _ len-box)
+      (let
+        [len : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases len-box)]
+        (tc-ref-closure-local-uses-ok? expr-bases len name bound))]
     [(ast.AstExpr.MakeArray _ len-box)
       (let
         [len : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases len-box)]
@@ -50647,6 +50663,9 @@
     [(ast.AstExpr.PtrWrite _ _)
       (tc-spmd-masked-if-unsupported
         "side effects other than contiguous array writes inside masked branches")]
+    [(ast.AstExpr.FixedMakeArray _ _)
+      (tc-spmd-masked-if-unsupported
+        "allocations that can escape masked branches")]
     [(ast.AstExpr.MakeArray _ _)
       (tc-spmd-masked-if-unsupported
         "allocations that can escape masked branches")]
@@ -51334,6 +51353,10 @@
       (tc-spmd-scan-body-no-nested-list expr-bases exprs)]
     [(ast.AstExpr.DynArray exprs)
       (tc-spmd-scan-body-no-nested-list expr-bases exprs)]
+    [(ast.AstExpr.FixedMakeArray _ len-box)
+      (tc-spmd-scan-body-no-nested-spmd
+        expr-bases
+        (ast.ast-expr-segment-bases-get expr-bases len-box))]
     [(ast.AstExpr.MakeArray _ len-box)
       (tc-spmd-scan-body-no-nested-spmd
         expr-bases
@@ -52574,6 +52597,16 @@
               (tc-spmd-finish expr-ty class next-spmd-env)])]
         [(ResultTcSpmdExprListInfo.Err message)
           (ResultTcSpmdExprInfo.Err message)])]
+    [(ast.AstExpr.FixedMakeArray _ len-box)
+      (let
+        [len : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases len-box)]
+        (match (tc-spmd-expr ctx expr-bases env spmd-env len)
+          [(ResultTcSpmdExprInfo.Ok info)
+            (match info
+              [(TcSpmdExprInfo _ class next-spmd-env)
+                (tc-spmd-finish expr-ty class next-spmd-env)])]
+          [(ResultTcSpmdExprInfo.Err message)
+            (ResultTcSpmdExprInfo.Err message)]))]
     [(ast.AstExpr.MakeArray _ len-box)
       (let
         [len : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases len-box)]
@@ -53943,6 +53976,10 @@
       (tc-expr-list-uses-free-name? expr-bases exprs name bound)]
     [(ast.AstExpr.DynArray exprs)
       (tc-expr-list-uses-free-name? expr-bases exprs name bound)]
+    [(ast.AstExpr.FixedMakeArray _ len-box)
+      (let
+        [len : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases len-box)]
+        (tc-expr-uses-free-name? expr-bases len name bound))]
     [(ast.AstExpr.MakeArray _ len-box)
       (let
         [len : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases len-box)]
@@ -55124,6 +55161,16 @@
         target-1
         target-2
         bound)]
+    [(ast.AstExpr.FixedMakeArray _ len-box)
+      (let
+        [len : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases len-box)]
+        (tc-expr-uses-free-source-id?
+          session
+          expr-bases
+          len
+          target-1
+          target-2
+          bound))]
     [(ast.AstExpr.MakeArray _ len-box)
       (let
         [len : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases len-box)]
@@ -56421,6 +56468,10 @@
       (tc-expr-list-sets-free-name? expr-bases exprs name bound)]
     [(ast.AstExpr.DynArray exprs)
       (tc-expr-list-sets-free-name? expr-bases exprs name bound)]
+    [(ast.AstExpr.FixedMakeArray _ len-box)
+      (let
+        [len : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases len-box)]
+        (tc-expr-sets-free-name? expr-bases len name bound))]
     [(ast.AstExpr.MakeArray _ len-box)
       (let
         [len : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases len-box)]
@@ -66375,6 +66426,34 @@
       (tc-make-array-zero-literal-length? len)
       (not (tc-type-contains-reference? elem)))))
 
+(define (tc-fixed-make-array-expr
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [elem : ast.AstType]
+  [len : ast.AstExpr]) : ResultTcType
+  (let
+    [ctfe-env : ctfe_support.CtfeEnv (tc-ctfe-env (tc-global-shared-view ctx))]
+    (match (ctfe_support.compiler-ctfe-eval
+      len
+      ctfe-env
+      (ctfe_support.ctfe-fuel-limit))
+      [(ctfe_support.ResultCtfe.Ok value _)
+        (match value
+          [(ctfe_support.CompilerCtfeValue.I64 count)
+            (if (< count 0)
+              (ResultTcType.Err
+                "typecheck: make-array length must be a non-negative compile-time integer")
+              (tc-init-expr
+                (tc-global-shared-view ctx)
+                (tc-global-shared-view env)
+                (ast.ast-ty-array elem count)))]
+          [_
+            (ResultTcType.Err
+              "typecheck: make-array length must be a non-negative compile-time integer")])]
+      [(ctfe_support.ResultCtfe.Err _)
+        (ResultTcType.Err
+          "typecheck: make-array length must be a non-negative compile-time integer")])))
+
 ;; An unquote recursively enters ordinary typechecking, which may install a
 ;; different node-pool context during macro expansion. Re-project every child
 ;; read through `ctx`; unlike the non-installing analysis walks above, this
@@ -68341,6 +68420,14 @@
         (tc-global-shared-view ctx)
         (tc-global-shared-view env)
         (tc-global-shared-view exprs))]
+    [(ast.AstExpr.FixedMakeArray elem-ty-id len-box)
+      (tc-fixed-make-array-expr
+        (tc-global-shared-view ctx)
+        (tc-global-shared-view env)
+        (tc-resolve-type
+          (tc-global-shared-view ctx)
+          (tc-context-type-get (tc-global-shared-view ctx) elem-ty-id))
+        (tc-context-expr-get (tc-global-shared-view ctx) len-box))]
     [(ast.AstExpr.MakeArray elem-ty-id len-box)
       (let
         [len : ast.AstExpr
@@ -70351,6 +70438,16 @@
         (tc-global-shared-view seen)
         template?
         exprs)]
+    [(ast.AstExpr.FixedMakeArray _ len)
+      (tc-comptime-purity-node-mode
+        (tc-global-shared-view ctx)
+        expr-bases
+        (tc-global-shared-view env)
+        (tc-global-shared-view bound)
+        (tc-global-shared-view chain)
+        (tc-global-shared-view seen)
+        template?
+        len)]
     [(ast.AstExpr.MakeArray _ len)
       (tc-comptime-purity-node-mode
         (tc-global-shared-view ctx)
@@ -75862,8 +75959,11 @@
           (tc-global-shared-view ctx)
           (& items)
           0)]
-      ;; A make-array element type in expression position is not dependent; the
-      ;; produced value is a length-erased dynamic array.
+      ;; A make-array element type in expression position is not dependent.
+      [(ast.AstExpr.FixedMakeArray _ len-id)
+        (tc-generated-expr-dependent-construct?
+          (tc-global-shared-view ctx)
+          (tc-context-expr-get (tc-global-shared-view ctx) len-id))]
       [(ast.AstExpr.MakeArray _ len-id)
         (tc-generated-expr-dependent-construct?
           (tc-global-shared-view ctx)
@@ -83864,6 +83964,11 @@
             loop-carried
             moved
             exprs)])]
+    [(ast.AstExpr.FixedMakeArray _ inner-box)
+      (let
+        [inner : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-move-check-expr ctx expr-bases env locals loop-carried moved inner))]
     [(ast.AstExpr.MakeArray _ inner-box)
       (let
         [inner : ast.AstExpr
@@ -93195,6 +93300,11 @@
             types)]
         [(ResultTcTypeList.Err _)
           (tc-borrow-check-exprs ctx expr-bases env locals borrowed exprs)])]
+    [(ast.AstExpr.FixedMakeArray _ inner-box)
+      (let
+        [inner : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-borrow-check-expr ctx expr-bases env locals borrowed inner))]
     [(ast.AstExpr.MakeArray _ inner-box)
       (let
         [inner : ast.AstExpr
@@ -94849,6 +94959,11 @@
         exprs)]
     [(ast.AstExpr.DynArray exprs)
       (tc-borrow-gate-exprs-relevant? ctx expr-bases exprs)]
+    [(ast.AstExpr.FixedMakeArray _ len-box)
+      (tc-borrow-gate-expr-relevant?
+        ctx
+        expr-bases
+        (ast.ast-expr-segment-bases-get expr-bases len-box))]
     [(ast.AstExpr.MakeArray _ len-box)
       (tc-borrow-gate-expr-relevant?
         ctx
@@ -103222,6 +103337,19 @@
               svalue
               span))]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
+    [(ast.AstExpr.FixedMakeArray ty-id len-id)
+      (match (macro-type-to-spanned-sexpr
+        session
+        (ast.ty-node-get ty-id)
+        span
+        (tc-global-shared-view origin))
+        [(ResultMacroSexpr.Ok sty)
+          (match (macro-child-to-spanned-sexpr session len-id span origin)
+            [(ResultMacroSexpr.Ok slen)
+              (ResultMacroSexpr.Ok
+                (macro-form2-id (ci.intern "make-array") sty slen span))]
+            [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
+        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(ast.AstExpr.MakeArray ty-id len-id)
       (match (macro-type-to-spanned-sexpr
         session
@@ -106154,6 +106282,12 @@
         expr-bases
         exprs
         shared-path?)]
+    [(ast.AstExpr.FixedMakeArray _ len-box)
+      (macro-hygiene-produced-note-id!
+        (tc-global-shared-view produced)
+        expr-bases
+        len-box
+        shared-path?)]
     [(ast.AstExpr.MakeArray _ len-box)
       (macro-hygiene-produced-note-id!
         (tc-global-shared-view produced)
@@ -107816,6 +107950,21 @@
           (macro-hygiene-expr-list
             expr-bases
             exprs
+            (macro-hygiene-env-shared-view env)
+            (tc-global-shared-view macro-name)
+            depth)))]
+    [(ast.AstExpr.FixedMakeArray ty-id len-box)
+      (let
+        [len : i64 len-box]
+        (ast.ast-expr-fixed-make-array-with-pools
+          (macro-hygiene-env-pools-shared-view env)
+          (macro-hygiene-type
+            (ast.ty-node-get ty-id)
+            (macro-hygiene-env-shared-view env)
+            (tc-global-shared-view macro-name))
+          (macro-hygiene-expr
+            expr-bases
+            len
             (macro-hygiene-env-shared-view env)
             (tc-global-shared-view macro-name)
             depth)))]
@@ -118100,6 +118249,11 @@
         [(ResultMacroExprList.Ok nexprs)
           (ResultMacroExpr.Ok (ast.ast-node-push (ast.AstExpr.DynArray nexprs)))]
         [(ResultMacroExprList.Err diag) (ResultMacroExpr.Err diag)])]
+    [(ast.AstExpr.FixedMakeArray ty-id len-box)
+      (match (macro-expand-node ctx env decls depth len-box)
+        [(ResultMacroExpr.Ok nlen)
+          (ResultMacroExpr.Ok (ast.ast-expr-fixed-make-array-id ty-id nlen))]
+        [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
     [(ast.AstExpr.MakeArray ty-id len-box)
       (match (macro-expand-node ctx env decls depth len-box)
         [(ResultMacroExpr.Ok nlen)
@@ -121391,6 +121545,12 @@
         expr-bases
         (tc-global-shared-view decls)
         exprs)]
+    [(ast.AstExpr.FixedMakeArray _ len)
+      (macro-node-uses-macro?
+        (tc-global-shared-view ctx)
+        expr-bases
+        (tc-global-shared-view decls)
+        len)]
     [(ast.AstExpr.MakeArray _ len)
       (macro-node-uses-macro?
         (tc-global-shared-view ctx)
@@ -122223,6 +122383,10 @@
       (macro-expr-list-might-fire? state expr-bases exprs)]
     [(ast.AstExpr.DynArray exprs)
       (macro-expr-list-might-fire? state expr-bases exprs)]
+    [(ast.AstExpr.FixedMakeArray _ len-box)
+      (let
+        [len : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases len-box)]
+        (macro-expr-might-fire? state expr-bases len))]
     [(ast.AstExpr.MakeArray _ len-box)
       (let
         [len : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases len-box)]
@@ -122825,6 +122989,7 @@
         (ctfe-node-has-type-literal? state b))]
     [(ast.AstExpr.Array exprs) (ctfe-exprs-have-type-literal? state exprs)]
     [(ast.AstExpr.DynArray exprs) (ctfe-exprs-have-type-literal? state exprs)]
+    [(ast.AstExpr.FixedMakeArray _ len) (ctfe-node-has-type-literal? state len)]
     [(ast.AstExpr.MakeArray _ len) (ctfe-node-has-type-literal? state len)]
     [(ast.AstExpr.ArrayRef a i)
       (ctfe-reflection-prescan-or

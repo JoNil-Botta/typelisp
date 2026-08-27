@@ -1041,12 +1041,58 @@
     (announce (classify 1))
     (+ (sign 7) (+ (classify 1) (flag-score true)))))")
 
-;; Dynamic-array length lowering smoke: `array-length` and `length` on a
-;; dynamic array lower to a fat-value length load rather than a runtime call.
+;; Private dynamic-array length lowering smoke: `array-length` and `length`
+;; lower to a fat-value length load rather than a runtime call.
 (define (compiler-lower-array-length-source) : String
   "(define (dyn-len [a : (__tl_dyn-array i64)]) : i64 (array-length a))
 (define (dyn-len-alias [a : (__tl_dyn-array i64)]) : i64 (length a))
 (define (main) : i64 0)")
+
+;; Fixed-array length evaluates each owned/reference receiver but yields the
+;; compile-time element count directly, without a fat-value load or call.
+(define (compiler-lower-fixed-array-length-source) : String
+  "(define (owned-len [a : (Array i64 3)]) : i64 (length a))
+(define (shared-len [a : (& a (Array i64 3))]) : i64 (array-length a))
+(define (mut-len [a : (&mut a (Array i64 3))]) : i64 (length a))
+(define (main) : i64
+  (let
+    [a : (Array i64 3) (array 1 2 3)]
+    (+ (shared-len (& a)) (+ (mut-len (&mut a)) (owned-len a)))))")
+
+(define (compiler-lower-fixed-array-length-shape-ok?) : bool
+  (match (compiler_lower.lower-compiler-source
+    (compiler-lower-fixed-array-length-source))
+    [(compiler_lower.ResultCompilerLower.Ok program _)
+      (match program
+        [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
+          (and
+            (=
+              (lower-test-function-load-count
+                (owned_view.compiler-owned-shared-view functions)
+                "owned-len")
+              0)
+            (=
+              (lower-test-function-load-count
+                (owned_view.compiler-owned-shared-view functions)
+                "shared-len")
+              0)
+            (=
+              (lower-test-function-load-count
+                (owned_view.compiler-owned-shared-view functions)
+                "mut-len")
+              0)
+            (=
+              (lower-test-function-return-count
+                (owned_view.compiler-owned-shared-view functions)
+                "owned-len")
+              1)
+            (=
+              (lower-test-function-return-count
+                (owned_view.compiler-owned-shared-view functions)
+                "shared-len")
+              1)
+            (= (lower-test-function-return-count functions "mut-len") 1))])]
+    [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 ;; `array-ref`/`array-set!` lower to a bounds-checked typed element load/store.
 ;; Taking the array as a parameter avoids needing `make-array` here.

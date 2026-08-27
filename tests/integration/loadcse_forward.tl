@@ -24,8 +24,8 @@
     (begin
       (set! (array-ref xs 0) (+ n 40))
       (set! (array-ref xs 1) (* n 3))
-      (set! (array-ref xs 2) (- (array.ref xs 0) (array.ref xs 1)))
-      (+ (array.ref xs 2) (array.ref xs 1)))))
+      (set! (array-ref xs 2) (- (array-ref xs 0) (array-ref xs 1)))
+      (+ (array-ref xs 2) (array-ref xs 1)))))
 
 (define (main) : i64
   (let

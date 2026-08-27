@@ -16,12 +16,12 @@ cd "$ROOT"
 native_link_detect_host
 
 # Target-conditioned prefix declarations change how much source work the
-# hydrated dependency surface bypasses.
+# hydrated dependency surface bypasses. Removing stdlib.array removes ten
+# declarations from the consumer prefix on both hosts; the by-value ownership
+# cutover's explicit compiler-owned-view import adds one back.
 case "$NL_HOST_OS" in
-    # #6215's explicit compiler-owned-view import adds one declaration to the
-    # hydrated dependency prefix on both hosts.
-    windows) TRUSTED_PREFIX_SKIPPED=224 ;;
-    *) TRUSTED_PREFIX_SKIPPED=219 ;;
+    windows) TRUSTED_PREFIX_SKIPPED=214 ;;
+    *) TRUSTED_PREFIX_SKIPPED=209 ;;
 esac
 
 COMPILER=${1:-${TYPELISP_BIN:-}}

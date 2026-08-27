@@ -44,7 +44,7 @@
       (while (if done
         false
         (< i n))
-        (match (array.ref slots i)
+        (match (array-ref slots i)
           [(SlotEmpty)
             (begin
               (set! out -1)

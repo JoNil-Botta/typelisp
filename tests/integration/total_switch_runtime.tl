@@ -33,7 +33,7 @@
       (set! (array-ref values 5) (TotalSwitchValue.Five))
       (while (< i 6)
         (begin
-          (set! sum (+ sum (total-switch-score (array.ref values i))))
+          (set! sum (+ sum (total-switch-score (array-ref values i))))
           (set! i (+ i 1))))
       (if (= sum 42)
         42

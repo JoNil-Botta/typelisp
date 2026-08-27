@@ -33,7 +33,7 @@
     (begin
       (while (< i n)
         (begin
-          (set! acc (bump (+ acc (array.ref xs i))))
+          (set! acc (bump (+ acc (array-ref xs i))))
           (set! i (+ i 1))))
       acc)))
 

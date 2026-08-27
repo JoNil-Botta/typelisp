@@ -48,7 +48,7 @@
       (set! (array-ref values 11) (GapTag.T11))
       (while (< i 12)
         (begin
-          (set! sum (+ sum (gap-score (array.ref values i))))
+          (set! sum (+ sum (gap-score (array-ref values i))))
           (set! i (+ i 1))))
       ;; 1+2+3+100+5+6+100+8+9+10+100+12 = 356
       (if (= sum 356)

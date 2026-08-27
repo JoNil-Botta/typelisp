@@ -1990,12 +1990,12 @@
 
 ;; Declaration-emitting macros must be able to emit functions with non-trivial
 ;; bodies. The macro-output serializer round-trips arithmetic,
-;; dotted fields, __tl_make-array, array.ref/set!, let, while,
+;; dotted fields, __tl_make-array, array-ref/set!, let, while,
 ;; and set! back to
 ;; declarations; before that surface existed these fixtures failed with
 ;; "module macro output contains syntax that cannot be parsed as a declaration".
 (define (compiler-typecheck-smoke-decls-macro-body-source) : String
-  "(import stdlib.array)
+  "
 (defmacro (int-stack) : Decls
   `(begin
     (defstruct Stack
@@ -2084,7 +2084,7 @@
     (+ (sliceish.len-of v) (psliceish.len-of pv))))")
 
 (define (compiler-typecheck-smoke-type-macro-param-source) : String
-  "(import stdlib.array)
+  "
 (defstruct Pair (value i64))
 (defmacro (emit-pair [T : type]) : Decls
   `(begin
@@ -3816,7 +3816,7 @@
     (compiler-typecheck-smoke-nested-dotted-nominal-source)))
 
 (define (compiler-typecheck-smoke-qualified-array-source) : String
-  "(import stdlib.array)
+  "
 (define (take-array-ref [r : (& items i64)]) : i64 1)
 (define (main) : i64
   (let
@@ -4492,24 +4492,6 @@
 (import stdlib.vector as vec)
 (define (main) : i64 0)")
 
-(define (compiler-typecheck-smoke-lazy-import-stdlib-array-source) : String
-  "(module main)
-(define (main) : i64
-  (let
-    [items : (__tl_dyn-array i64) (stdlib.__tl_make-array i64 0)]
-    (begin
-      (stdlib.array.push! items 41)
-      (+ (stdlib.array.ref items 0) (stdlib.array-length items)))))")
-
-(define (compiler-typecheck-smoke-lazy-import-stdlib-array-alias-source) : String
-  "(module main)
-(define (main) : i64
-  (let
-    [items : (__tl_dyn-array i64) (__tl_make-array i64 0)]
-    (begin
-      (array.push! items 41)
-      (+ (array.ref items 0) (array-length items)))))")
-
 (define (compiler-typecheck-smoke-lazy-import-stdlib-result-source) : String
   "(module main)
 (import stdlib.result)
@@ -5141,51 +5123,6 @@
       (load.compiler-load-surface-summaries-reset!)
       ok)))
 
-(define (compiler-typecheck-smoke-lazy-import-stdlib-array-macro-ok?) : bool
-  (let
-    [ok : bool
-      (begin
-        (load.compiler-load-test-mkdir "target/tc_lazy_stdlib_array")
-        (compiler-typecheck-smoke-write-text
-          "target/tc_lazy_stdlib_array/canonical.tl"
-          (compiler-typecheck-smoke-lazy-import-stdlib-array-source))
-        (match (load.compiler-load-file-with-paths
-          "target/tc_lazy_stdlib_array/canonical.tl"
-          (sym_i64_env.sym-i64-empty))
-          [(load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
-            (let
-              [array-materialized : bool
-                (compiler-typecheck-smoke-paths-contain?
-                  (tc_core.tc-global-shared-view paths)
-                  "stdlib/array.tl")]
-              (match (tc_api.typecheck-compiler-program-with-paths-checked
-                (ast.ast-program decls)
-                paths)
-                [(tc_core.ResultCompilerTypecheckChecked.Ok _ _ _ _)
-                  (if array-materialized
-                    (io.panic
-                      "typecheck: lazy import stdlib.array materialized")
-                    true)]
-                [(tc_core.ResultCompilerTypecheckChecked.Partial _ _ _ _) false]
-                [(tc_core.ResultCompilerTypecheckChecked.Err diag)
-                  (let
-                    [first : diagnostic.CompilerDiagnostic
-                      (diagnostic.compiler-diagnostic-list-first
-                        (diagnostic.compiler-diagnostic-list-box-shared-view
-                          diag))]
-                    [message : String
-                      (diagnostic.compiler-diagnostic-message first)]
-                    (begin
-                      (io.stderr-write (byte_buf.str-as-bytes (& message)))
-                      (io.panic
-                        "typecheck: lazy import stdlib.array nested typecheck failed")))]))]
-          [(load.ResultCompilerLoadWithPaths.Err _)
-            (io.panic "typecheck: lazy import stdlib.array load failed")]))]
-    (begin
-      (tc_core.compiler-typecheck-reset-file-state!)
-      (load.compiler-load-surface-summaries-reset!)
-      ok)))
-
 (define (compiler-typecheck-smoke-lazy-import-stdlib-result-macro-ok?) : bool
   (let
     [ok : bool
@@ -5287,33 +5224,6 @@
                   (begin
                     (io.stderr-write (byte_buf.str-as-bytes (& message)))
                     false))])]
-          [(load.ResultCompilerLoadWithPaths.Err _) false]))]
-    (begin
-      (tc_core.compiler-typecheck-reset-file-state!)
-      (load.compiler-load-surface-summaries-reset!)
-      ok)))
-
-(define (compiler-typecheck-smoke-lazy-import-stdlib-array-alias-ok?) : bool
-  (let
-    [ok : bool
-      (begin
-        (load.compiler-load-test-mkdir "target/tc_lazy_stdlib_array")
-        (compiler-typecheck-smoke-write-text
-          "target/tc_lazy_stdlib_array/alias.tl"
-          (compiler-typecheck-smoke-lazy-import-stdlib-array-alias-source))
-        (match (load.compiler-load-file-with-paths
-          "target/tc_lazy_stdlib_array/alias.tl"
-          (sym_i64_env.sym-i64-empty))
-          [(load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
-            (let
-              [skip-count : i64 (load.compiler-load-lazy-import-skip-count)]
-              (match (tc_api.typecheck-compiler-program-with-paths-checked
-                (ast.ast-program decls)
-                paths)
-                [(tc_core.ResultCompilerTypecheckChecked.Ok _ _ _ _)
-                  (= skip-count 0)]
-                [(tc_core.ResultCompilerTypecheckChecked.Partial _ _ _ _) false]
-                [(tc_core.ResultCompilerTypecheckChecked.Err _) false]))]
           [(load.ResultCompilerLoadWithPaths.Err _) false]))]
     (begin
       (tc_core.compiler-typecheck-reset-file-state!)
@@ -6945,9 +6855,6 @@
       (compiler-typecheck-smoke-lazy-import-stdlib-summary-backed-ok?)
       (io.panic "typecheck: lazy import summary smoke failed"))
     (unless
-      (compiler-typecheck-smoke-lazy-import-stdlib-array-macro-ok?)
-      (io.panic "typecheck: lazy import stdlib.array macro smoke failed"))
-    (unless
       (compiler-typecheck-smoke-lazy-import-stdlib-result-macro-ok?)
       (io.panic "typecheck: lazy import stdlib.result macro smoke failed"))
     (unless
@@ -6956,9 +6863,6 @@
     (unless
       (compiler-typecheck-smoke-result-enum-then-helper-ok?)
       (io.panic "typecheck: result enum then helper smoke failed"))
-    (unless
-      (compiler-typecheck-smoke-lazy-import-stdlib-array-alias-ok?)
-      (io.panic "typecheck: lazy import stdlib.array alias smoke failed"))
     (unless
       (compiler-typecheck-smoke-lazy-import-str-cat-macro-ok?)
       (io.panic "typecheck: lazy import str-cat macro smoke failed"))

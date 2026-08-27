@@ -32,11 +32,6 @@ if grep -Fq '__tl_dyn-array' "$BENCH_SOURCE"; then
     echo "point_transform: caller-authored private dynamic array remains" >&2
     exit 1
 fi
-if grep -Fq '(import stdlib.array)' "$BENCH_SOURCE" ||
-   grep -Fq '(array.make-array ' "$BENCH_SOURCE"; then
-    echo "point_transform: benchmark still owns compatibility array backing" >&2
-    exit 1
-fi
 for required_surface in \
     '(import stdlib.vector)' \
     '(import (vector.vector f32) as f32v)' \

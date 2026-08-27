@@ -318,7 +318,7 @@
           8
           0)]
       (if (= read-count 8)
-        (OkSystemSeed (array.ref seed 0))
+        (OkSystemSeed (array-ref seed 0))
         (system-seed-unavailable)))))
 
 ;: Rotate a 64-bit value left by 17 bits.

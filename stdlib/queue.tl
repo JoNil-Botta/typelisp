@@ -52,7 +52,6 @@
         (comptime.string-append module-name-text ".pop-back-ref!"))]
     `(begin
       (module ,module-name)
-      (import stdlib.array)
       (defstruct ,deque-name
         (slots (__tl_dyn-array ,T))
         (head i64)

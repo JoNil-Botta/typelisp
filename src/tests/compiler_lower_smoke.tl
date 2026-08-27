@@ -876,6 +876,9 @@
         (compiler_lower_tests.compiler-lower-array-length-source))
       (io.panic "lower: array length smoke mismatch"))
     (unless
+      (compiler_lower_tests.compiler-lower-fixed-array-length-shape-ok?)
+      (io.panic "lower: fixed array length shape smoke mismatch"))
+    (unless
       (compiler_lower_tests.compiler-lower-array-access-shape-ok?
         (compiler_lower_tests.compiler-lower-array-access-source))
       (io.panic "lower: array access smoke mismatch"))

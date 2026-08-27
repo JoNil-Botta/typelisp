@@ -210,8 +210,7 @@
 (define (option-list-cons [option : ArgsOption] [rest : ArgsOptionList]) : ArgsOptionList
   (let
     [len : i64 rest.len]
-    [slots : (__tl_dyn-array ArgsOption)
-      (__tl_make-array ArgsOption (+ len 1))]
+    [slots : (__tl_dyn-array ArgsOption) (__tl_make-array ArgsOption (+ len 1))]
     (begin
       (set! (array-ref slots 0) option)
       (option-list-copy! (&mut slots) (& rest.slots) 1 len)

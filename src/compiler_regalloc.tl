@@ -1071,9 +1071,7 @@
       (CompilerRegCallRegionSeq slots (+ len 1)))))
 
 (define (compiler-reg-call-region-stat-seq-empty) : CompilerRegCallRegionStatSeq
-  (CompilerRegCallRegionStatSeq
-    (__tl_make-array CompilerRegCallRegionStat 0)
-    0))
+  (CompilerRegCallRegionStatSeq (__tl_make-array CompilerRegCallRegionStat 0) 0))
 
 (define (compiler-reg-call-region-stat-seq-push
   [rows : CompilerRegCallRegionStatSeq]
@@ -19297,8 +19295,7 @@
               unit)
             (set! i (+ i 1)))))
       (let
-        [out : (__tl_dyn-array i64)
-          (__tl_make-array i64 (+ base-count keep-n))]
+        [out : (__tl_dyn-array i64) (__tl_make-array i64 (+ base-count keep-n))]
         [j : i64 0]
         (begin
           (while (< j base-count)
@@ -20774,10 +20771,7 @@
     [count : i64
       (ir.compiler-ir-block-seq-count (compiler-reg-global-shared-view seq))]
     (if (< count 1)
-      (CompilerRegCallHoleCfg
-        0
-        (__tl_make-array i64 1)
-        (__tl_make-array i64 1))
+      (CompilerRegCallHoleCfg 0 (__tl_make-array i64 1) (__tl_make-array i64 1))
       (let
         [ids : reg_label_i64_map.Map
           (compiler-reg-loop-depth-block-ids-seq
@@ -32809,8 +32803,7 @@
 (define (compiler-reg-greedy-heap-grown-array
   [old : (& old (__tl_dyn-array i64))]) : (__tl_dyn-array i64)
   (let
-    [next : (__tl_dyn-array i64)
-      (__tl_make-array i64 (* (array-length old) 2))]
+    [next : (__tl_dyn-array i64) (__tl_make-array i64 (* (array-length old) 2))]
     (begin
       (compiler-reg-greedy-heap-copy-from!
         (compiler-reg-global-shared-view next)
@@ -48315,8 +48308,7 @@
                   (let
                     [starts : (__tl_dyn-array i64)
                       (__tl_make-array i64 out-vars)]
-                    [ends : (__tl_dyn-array i64)
-                      (__tl_make-array i64 out-vars)]
+                    [ends : (__tl_dyn-array i64) (__tl_make-array i64 out-vars)]
                     [segments : (__tl_dyn-array CompilerRegIntervalSeq)
                       (__tl_make-array CompilerRegIntervalSeq out-vars)]
                     [present : (__tl_dyn-array i64)

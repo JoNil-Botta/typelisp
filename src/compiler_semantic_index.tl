@@ -4040,6 +4040,12 @@
         scope
         env
         items)]
+    [(ast.AstExpr.FixedMakeArray _ size)
+      (compiler-semantic-walk-quasiquote-node!
+        (owned_view.compiler-owned-shared-view state)
+        scope
+        env
+        size)]
     [(ast.AstExpr.MakeArray _ size)
       (compiler-semantic-walk-quasiquote-node!
         (owned_view.compiler-owned-shared-view state)
@@ -6123,6 +6129,16 @@
         scope
         env
         items)]
+    [(ast.AstExpr.FixedMakeArray ty-id size)
+      (begin
+        (compiler-semantic-walk-type!
+          (owned_view.compiler-owned-shared-view state)
+          (tc.tc-context-type-get state.ctx ty-id))
+        (compiler-semantic-walk-node!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          env
+          size))]
     [(ast.AstExpr.MakeArray ty-id size)
       (begin
         (compiler-semantic-walk-type!
@@ -8215,9 +8231,7 @@
           [modules-out : (__tl_dyn-array CompilerSemanticModuleInfo)
             (__tl_make-array CompilerSemanticModuleInfo module-capacity)]
           [module-events-out : (__tl_dyn-array CompilerSemanticModuleEvent)
-            (__tl_make-array
-              CompilerSemanticModuleEvent
-              (+ (* decl-count 2) 8))]
+            (__tl_make-array CompilerSemanticModuleEvent (+ (* decl-count 2) 8))]
           [decl-record-indices : (__tl_dyn-array i64)
             (__tl_make-array i64 symbol-count)]
           [walk-state : CompilerSemanticWalkState
@@ -8654,9 +8668,7 @@
               [scope-events : (__tl_dyn-array CompilerSemanticScopeEvent)
                 (__tl_make-array CompilerSemanticScopeEvent scope-event-count)]
               [module-events : (__tl_dyn-array CompilerSemanticModuleEvent)
-                (__tl_make-array
-                  CompilerSemanticModuleEvent
-                  module-event-count)]
+                (__tl_make-array CompilerSemanticModuleEvent module-event-count)]
               [records : CompilerSemanticRecordVec
                 (owned_view.compiler-owned-box-shared-view walk-state.records)]
               [record-items : (__tl_dyn-array CompilerSemanticRecord)

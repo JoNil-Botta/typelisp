@@ -19,7 +19,6 @@
 ;#     ([i : i64 0 n])
 ;#     (atomic.atomic-i64-add! out (array-ref ix i) 1)))
 ;# ```
-
 ;: Owned zero-initialized storage for sequentially consistent `i64` atomics.
 (defstruct AtomicI64Buffer
   (slots (__tl_dyn-array i64)))

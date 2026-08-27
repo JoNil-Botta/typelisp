@@ -45,7 +45,6 @@
       ["i64"
         `(begin
           (module ,module-name)
-          (import stdlib.array as array_ops)
           (import stdlib.sync as sync)
           (defstruct Channel
             (slots-addr i64)
@@ -134,13 +133,13 @@
               (set! (array-ref dst (+ offset 6)) channel.spaces-handle)))
           (define (load-raw [src : (& src (__tl_dyn-array i64))] [offset : i64]) : Channel
             (Channel
-              (array_ops.ref src offset)
-              (array_ops.ref src (+ offset 1))
-              (array_ops.ref src (+ offset 2))
-              (array_ops.ref src (+ offset 3))
-              (array_ops.ref src (+ offset 4))
-              (array_ops.ref src (+ offset 5))
-              (array_ops.ref src (+ offset 6)))))]
+              (array-ref src offset)
+              (array-ref src (+ offset 1))
+              (array-ref src (+ offset 2))
+              (array-ref src (+ offset 3))
+              (array-ref src (+ offset 4))
+              (array-ref src (+ offset 5))
+              (array-ref src (+ offset 6)))))]
       [_
         `(begin
           (module ,module-name))])))
@@ -159,7 +158,6 @@
       ["i64"
         `(begin
           (module ,module-name)
-          (import stdlib.array as array_ops)
           (import stdlib.sync as sync)
           (defstruct Mutex
             (value-addr i64)
@@ -285,9 +283,9 @@
               (set! (array-ref dst (+ offset 2)) mutex.control-addr)))
           (define (load-raw [src : (& src (__tl_dyn-array i64))] [offset : i64]) : Mutex
             (Mutex
-              (array_ops.ref src offset)
-              (array_ops.ref src (+ offset 1))
-              (array_ops.ref src (+ offset 2)))))]
+              (array-ref src offset)
+              (array-ref src (+ offset 1))
+              (array-ref src (+ offset 2)))))]
       [_
         `(begin
           (module ,module-name))])))

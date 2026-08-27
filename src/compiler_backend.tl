@@ -93223,8 +93223,7 @@
             [flow-count : i64 (array-ref counts 1)]
             [table-cap : i64
               (compiler-backend-layout-table-capacity label-count)]
-            [table : (__tl_dyn-array i64)
-              (__tl_make-array i64 (* 2 table-cap))]
+            [table : (__tl_dyn-array i64) (__tl_make-array i64 (* 2 table-cap))]
             [target : (__tl_dyn-array i64) (__tl_make-array i64 lines)]
             [pred : (__tl_dyn-array i64) (__tl_make-array i64 lines)]
             [refs : (__tl_dyn-array i64)
@@ -93377,11 +93376,7 @@
                   dup-to-raw)
                 0)]
             (if (and (= sinks 0) (= dups 0))
-              (CompilerBackendLayoutPlan
-                starts
-                (__tl_make-array i64 0)
-                lines
-                0)
+              (CompilerBackendLayoutPlan starts (__tl_make-array i64 0) lines 0)
               (let
                 [plan : (__tl_dyn-array i64)
                   (__tl_make-array

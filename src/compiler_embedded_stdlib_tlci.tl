@@ -394,17 +394,17 @@
         [(loader.ResultTlciLoadedImage.Ok loaded)
           (let
             [count : i64 loaded.macro-entry-count]
-            [has-array-length : bool
+            [has-native-sentinel : bool
               (match (loader.tlci-loader-find-macro-entry
                 (& loaded)
-                "stdlib.array/length")
+                "stdlib.core_macros/__tl-box-place")
                 [(loader.ResultTlciMacroEntry.Ok _) true]
                 [(loader.ResultTlciMacroEntry.Err _) false])]
             (match (loader.tlci-loader-release loaded)
               [(loader.ResultTlciLoaderUnit.Err message)
                 (CompilerEmbeddedStdlibTlciValidation.Err message)]
               [(loader.ResultTlciLoaderUnit.Ok)
-                (if (and (> count 0) has-array-length)
+                (if (and (> count 0) has-native-sentinel)
                   (CompilerEmbeddedStdlibTlciValidation.Ok count)
                   (CompilerEmbeddedStdlibTlciValidation.Err
                     "embedded stdlib tlci is missing its macro catalog"))]))]))))

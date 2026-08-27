@@ -85,8 +85,8 @@
   (and
     (= (tuple-ref combo 0) 99)
     (serialize-address-eq? (tuple-ref combo 1) 333 "Rome")
-    (= (array.ref (tuple-ref combo 2) 0) 9)
-    (= (array.ref (tuple-ref combo 2) 1) 10)
+    (= (array-ref (tuple-ref combo 2) 0) 9)
+    (= (array-ref (tuple-ref combo 2) 1) 10)
     (serialize-samples-ok? (tuple-ref combo 3))
     (string.eq (tuple-ref (tuple-ref combo 4) 0) "inner")
     (tuple-ref (tuple-ref combo 4) 1)))

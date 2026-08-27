@@ -21,12 +21,12 @@ native_link_detect_host
 # from the root build.
 case "$NL_HOST_OS" in
     windows)
-        TRUSTED_PREFIX_SKIPPED=230
+        TRUSTED_PREFIX_SKIPPED=220
         FAILURE_PREFIX_SKIPPED=208
         FORCED_SOURCE_FALLBACKS=3
         ;;
     *)
-        TRUSTED_PREFIX_SKIPPED=225
+        TRUSTED_PREFIX_SKIPPED=215
         FAILURE_PREFIX_SKIPPED=203
         FORCED_SOURCE_FALLBACKS=1
         ;;
@@ -412,7 +412,6 @@ EOF
 cat > "$CONSUMER/src/main.tl" <<'EOF'
 (module consumer.src.main)
 
-(import stdlib.array)
 (import left.src.lib as left)
 (import right.src.lib as right)
 (import (left.generated) as left-generated)
@@ -429,7 +428,7 @@ cat > "$CONSUMER/src/main.tl" <<'EOF'
 
 (define (main) : i64
   (let
-    [out : (__tl_dyn-array i64) (array.make-array i64 4)]
+    [out : (__tl_dyn-array i64) (__tl_make-array i64 4)]
     (begin
       (fill (&mut out) 4)
       (if (and

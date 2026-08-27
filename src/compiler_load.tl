@@ -8031,6 +8031,20 @@
         alias
         summary
         locals)]
+    [(ast.AstExpr.FixedMakeArray elem-id length)
+      (compiler-load-lazy-alias-demand-merge
+        (compiler-load-session-state-lazy-type-demand
+          (compiler-load-session-state-shared-view (& state))
+          (ast.ty-node-get elem-id)
+          alias
+          (ast.ast-place-shared-view summary)
+          (sym_i64_env.sym-i64-shared-view (& locals)))
+        (compiler-load-session-state-lazy-expr-demand
+          (compiler-load-session-state-shared-view (& state))
+          (ast.ast-node-get length)
+          alias
+          summary
+          locals))]
     [(ast.AstExpr.MakeArray elem-id length)
       (compiler-load-lazy-alias-demand-merge
         (compiler-load-session-state-lazy-type-demand
@@ -15360,8 +15374,8 @@
 (define (compiler-load-canonical-module-id-ok?) : bool
   (and
     (string.eq
-      (compiler-load-canonical-module-id-from-path "stdlib/array.tl")
-      "stdlib.array")
+      (compiler-load-canonical-module-id-from-path "stdlib/vector.tl")
+      "stdlib.vector")
     (string.eq
       (compiler-load-canonical-module-id-from-path "src\\compiler_intern.tl")
       "src.compiler_intern")

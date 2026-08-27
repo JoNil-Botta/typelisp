@@ -923,6 +923,10 @@
   ;; Expression variant named `Array`; this is not unsized array type syntax.
   (Array AstExprList)
   (DynArray AstExprList)
+  ;; Public `(make-array T N)`: unlike the private runtime-sized MakeArray,
+  ;; `N` must fold to a non-negative compile-time integer and the result is
+  ;; `(Array T N)`.
+  (FixedMakeArray i64 i64)
   (MakeArray i64 i64)
   (ArrayRef i64 i64)
   (ArraySet i64 i64 i64)
@@ -7186,6 +7190,9 @@
 (define (ast-expr-make-array-id [elem-id : i64] [size : i64]) : i64
   (ast-node-push (AstExpr.MakeArray elem-id size)))
 
+(define (ast-expr-fixed-make-array-id [elem-id : i64] [size : i64]) : i64
+  (ast-node-push (AstExpr.FixedMakeArray elem-id size)))
+
 (define (ast-expr-array-ref [target : i64] [index : i64]) : i64
   (ast-node-push (AstExpr.ArrayRef target index)))
 
@@ -7557,6 +7564,14 @@
   (ast-node-pool-context-expr-push
     (ast-global-shared-view pools)
     (AstExpr.MakeArray (ast-node-pool-context-type-push pools elem) size)))
+
+(define (ast-expr-fixed-make-array-with-pools
+  [pools : AstNodePoolContext]
+  [elem : AstType]
+  [size : i64]) : i64
+  (ast-node-pool-context-expr-push
+    (ast-global-shared-view pools)
+    (AstExpr.FixedMakeArray (ast-node-pool-context-type-push pools elem) size)))
 
 (define (ast-expr-make-array-with-cells
   [expr-cell-address : u64]
@@ -10071,6 +10086,10 @@
       (AstExpr.Array (ast-compaction-remap-expr-list remap items))]
     [(AstExpr.DynArray items)
       (AstExpr.DynArray (ast-compaction-remap-expr-list remap items))]
+    [(AstExpr.FixedMakeArray elem-id size)
+      (AstExpr.FixedMakeArray
+        (ast-compaction-remap-type-id remap elem-id)
+        (ast-compaction-remap-expr-id remap size))]
     [(AstExpr.MakeArray elem-id size)
       (AstExpr.MakeArray
         (ast-compaction-remap-type-id remap elem-id)
@@ -10765,6 +10784,7 @@
     [(AstExpr.TupleRef _ _) 11]
     [(AstExpr.Array _) 12]
     [(AstExpr.DynArray _) 74]
+    [(AstExpr.FixedMakeArray _ _) 81]
     [(AstExpr.MakeArray _ _) 13]
     [(AstExpr.ArrayRef _ _) 14]
     [(AstExpr.ArraySet _ _ _) 15]

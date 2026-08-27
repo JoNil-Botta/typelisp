@@ -604,22 +604,22 @@
 (import a)
 (define (main) : i64 a.x)")
 
-;; The qualified stdlib.array macro remains until #3992, but its backing type
-;; is compiler-private now that public Array is fixed-size only.
+;; The implicit core prelude and compiler-private dynamic-buffer forms compose
+;; without any compatibility-module import.
 (define (compiler-check-implicit-core-prelude-source) : String
-  "(import stdlib.array as arr)
+  "
 (define (main) : i64
   (let
     [value : i64 0]
-    [items : (__tl_dyn-array i64) (arr.make-array i64 1)]
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     (begin
       (when (and (> 5 3) (< 2 4) (= 1 1)) (set! value (+ value 10)))
       (unless (or false false false) (set! value (+ value 20)))
       (set! (array-ref items 0) value)
-      (arr.push! items 2)
+      (__tl_array-push! items 2)
       (+
-        (arr.length items)
-        (+ (arr.ref items 0) (arr.ref items 1))))))")
+        (__tl_array-length items)
+        (+ (array-ref items 0) (array-ref items 1))))))")
 
 (define (compiler-check-runtime-stdlib-boundary-io-source) : String
   "(import stdlib.io)
@@ -671,8 +671,8 @@
       (i64vec.push-ref! (&mut items) 1)
       (i64vec.len (& items)))))")
 
-;; Private dynamic-buffer parser coverage. The qualified stdlib.array path is
-;; covered by compiler-check-implicit-core-prelude-source above.
+;; Private dynamic-buffer parser coverage remains separate from public fixed
+;; arrays and generated vectors.
 (define (compiler-check-private-dynamic-buffer-source) : String
   "(define (main) : i64
   (let

@@ -1505,7 +1505,7 @@
     [index : i64 0]
     (while (< index count)
       (begin
-        (set! (array-ref dst index) (array.ref src index))
+        (set! (array-ref dst index) (array-ref src index))
         (set! index (+ index 1))))))
 
 (define (ctfe-env-arena-add-segment! [store : (&mut store CtfeEnvArena)]) : unit
@@ -1702,7 +1702,7 @@
         (begin
           (while (< index len)
             (begin
-              (set! (array-ref grown index) (array.ref slots index))
+              (set! (array-ref grown index) (array-ref slots index))
               (set! index (+ index 1))))
           ;; The id map grows independently on insert. Preserve it so the
           ;; copied vector retains every first-wins slot without rebuilding a
@@ -1715,7 +1715,7 @@
   (ctfe_key_map.contains? (& items.index) key-id))
 
 (define (ctfe-layout-info-list-ref [items : CtfeLayoutInfoList] [index : i64]) : CtfeLayoutInfo
-  (array.ref items.slots index))
+  (array-ref items.slots index))
 
 (define (ctfe-layout-info-list-push-id
   [items : CtfeLayoutInfoList]
@@ -1737,7 +1737,7 @@
 (define (ctfe-reflect-field-list-ref
   [items : CtfeReflectFieldList]
   [index : i64]) : CtfeReflectField
-  (array.ref items.slots index))
+  (array-ref items.slots index))
 
 (define (ctfe-reflect-field-list-push
   [items : CtfeReflectFieldList]
@@ -1755,7 +1755,7 @@
 (define (ctfe-reflect-variant-list-ref
   [items : CtfeReflectVariantList]
   [index : i64]) : CtfeReflectVariant
-  (array.ref items.slots index))
+  (array-ref items.slots index))
 
 (define (ctfe-reflect-variant-list-push
   [items : CtfeReflectVariantList]
@@ -1794,7 +1794,7 @@
         (begin
           (while (< index len)
             (begin
-              (set! (array-ref grown index) (array.ref slots index))
+              (set! (array-ref grown index) (array-ref slots index))
               (set! index (+ index 1))))
           (CtfeReflectInfoList grown items.index len))))))
 
@@ -1804,7 +1804,7 @@
   (ctfe_key_map.contains? (& items.index) key-id))
 
 (define (ctfe-reflect-info-list-ref [items : CtfeReflectInfoList] [index : i64]) : CtfeReflectInfo
-  (array.ref items.slots index))
+  (array-ref items.slots index))
 
 (define (ctfe-reflect-info-list-push-id
   [items : CtfeReflectInfoList]
@@ -1858,7 +1858,7 @@
       [field : CtfeLayoutField (ctfe-layout-field-list-ref fields index)]
       (match field
         [(CtfeLayoutField.Field _ offset)
-          (if (= (array.ref fields.key-ids index) name-id)
+          (if (= (array-ref fields.key-ids index) name-id)
             offset
             (ctfe-layout-field-offset-id-from fields name-id (+ index 1)))]))))
 
@@ -2971,6 +2971,7 @@
     [(ast.AstExpr.TupleRef _ _) "tuple-ref"]
     [(ast.AstExpr.Array _) "array"]
     [(ast.AstExpr.DynArray _) "__tl_make-array"]
+    [(ast.AstExpr.FixedMakeArray _ _) "make-array"]
     [(ast.AstExpr.MakeArray _ _) "__tl_make-array"]
     [(ast.AstExpr.ArrayRef _ _) "array-ref"]
     [(ast.AstExpr.ArraySet _ _ _) "array-set!"]
@@ -13506,6 +13507,22 @@
               (ast.AstType.Expr)
               next-fuel)]
           [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)]))]
+    [(ast.AstExpr.FixedMakeArray ty-id len-box)
+      (let
+        [len : ast.AstExpr (ctfe-ast-get env len-box)]
+        (match (ctfe-quote-type (ctfe-ty-get env ty-id) env expr fuel)
+          [(ResultCtfeQuoteType.Ok quoted-ty type-fuel)
+            (match (ctfe-quote-expr len env type-fuel quasiquote)
+              [(ResultCtfeQuoteExpr.Ok quoted-len _ next-fuel)
+                (ResultCtfeQuoteExpr.Ok
+                  (ast.ast-expr-fixed-make-array-with-pools
+                    (ctfe-env-pools env)
+                    quoted-ty
+                    quoted-len)
+                  (ast.AstType.Expr)
+                  next-fuel)]
+              [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)])]
+          [(ResultCtfeQuoteType.Err diag) (ResultCtfeQuoteExpr.Err diag)]))]
     [(ast.AstExpr.MakeArray ty-id len-box)
       (let
         [len : ast.AstExpr (ctfe-ast-get env len-box)]
@@ -14617,6 +14634,20 @@
         [(ast.AstExpr.DynArray b-items)
           (ctfe-expr-list-eq-in-env env a-items b-items)]
         [_ false])]
+    [(ast.AstExpr.FixedMakeArray a-ty-id a-size-box)
+      (let
+        [a-size : ast.AstExpr (ctfe-ast-get env a-size-box)]
+        (match b
+          [(ast.AstExpr.FixedMakeArray b-ty-id b-size-box)
+            (let
+              [b-size : ast.AstExpr (ctfe-ast-get env b-size-box)]
+              (and
+                (ctfe-type-eq-in-env
+                  env
+                  (ctfe-ty-get env a-ty-id)
+                  (ctfe-ty-get env b-ty-id))
+                (ctfe-expr-eq-in-env env a-size b-size)))]
+          [_ false]))]
     [(ast.AstExpr.MakeArray a-ty-id a-size-box)
       (let
         [a-size : ast.AstExpr (ctfe-ast-get env a-size-box)]

@@ -202,7 +202,6 @@ stdlib_manifest() {
 arena.tl
 atomic.tl
 args.tl
-array.tl
 byte_buf.tl
 byte_buf_core.tl
 clone.tl

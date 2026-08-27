@@ -65126,6 +65126,655 @@
         [(compiler_ir_types.CompilerIrValue.Var var) var]
         [_ (- 0 2)])]))
 
+;; --- P-C: the loop-postcondition bounds-check memo ----------------------------
+;;
+;; The count-then-fill shape, twice over: a counting loop and then a filling
+;; loop walk the same domain, read the same `a[i]`, and check it against the
+;; same `array-length b.slots`. The filling loop's check is the counting loop's
+;; postcondition.
+;;
+;;   entry:  a-payload %6, len(b) %10, b-payload %12
+;;           branch (lt 0, n) body1 exit1
+;;   body1:  %14 = phi [0, entry] [%19, body1]
+;;           %16 = a[%14]; bounds_check %16, %10; b[%16] = 1
+;;           branch (lt %14+1, n) body1 exit1
+;;   exit1:  branch (lt 0, n) body2 exit2
+;;   body2:  %21 = phi [0, exit1] [%26, body2]
+;;           %23 = a[%21]; bounds_check %23, %10; b[%23] = 2
+;;           branch (lt %21+1, n) body2 exit2
+;;   exit2:  return 0
+;;
+;; `exit1` has three predecessors: the counting loop's latch (which proves the
+;; fact) and the entry edge the guard takes when the domain is empty (which
+;; cannot coexist with the filling loop running, since the same `%13` gates
+;; both).
+(defstruct OptPcTestShape
+  ;; The source array reaches the function through a `&mut` parameter and a
+  ;; store lands on its payload between the two loops.
+  (mut-source? bool)
+  ;; The filling loop counts to a different bound.
+  (other-bound? bool)
+  ;; The counting loop has a second exit, so its check did not run on every
+  ;; trip of the domain.
+  (early-exit? bool)
+  ;; The filling loop reads `a[i + 1]`.
+  (shift-index? bool))
+
+(define (opt-pc-test-shape) : OptPcTestShape
+  (OptPcTestShape false false false false))
+
+(define (opt-pc-test-param-type [mut-source? : bool]) : compiler_ast_types.AstType
+  (if mut-source?
+    (compiler_ast_types.AstType.MutRef 0 0)
+    (compiler_ast_types.AstType.Ref 0 0)))
+
+(define (opt-pc-test-params [shape : OptPcTestShape]) : compiler_ir_types.CompilerIrParamList
+  (compiler_ir_types.compiler-ir-param-cons
+    (compiler_ir_types.CompilerIrParam.Param
+      "a"
+      (opt-pc-test-param-type shape.mut-source?)
+      0)
+    (compiler_ir_types.compiler-ir-param-cons
+      (compiler_ir_types.CompilerIrParam.Param
+        "b"
+        (compiler_ast_types.AstType.MutRef 0 0)
+        1)
+      (compiler_ir_types.compiler-ir-param-cons
+        (compiler_ir_types.CompilerIrParam.Param
+          "n"
+          (compiler_ast_types.AstType.I64)
+          2)
+        (compiler_ir_types.CompilerIrParamList.Nil)))))
+
+;; `dst = gep base, offset : ty`
+(define (opt-pc-gep
+  [dst : i64]
+  [base : compiler_ir_types.CompilerIrValue]
+  [offset : compiler_ir_types.CompilerIrValue]
+  [ty : compiler_ast_types.AstType]
+  [tail : compiler_ir_types.CompilerIrInstrSeq]) : compiler_ir_types.CompilerIrInstrSeq
+  (opt-test-instr-seq-prepend
+    (compiler_ir_types.CompilerIrInstr.Gep dst base offset ty)
+    tail))
+
+(define (opt-pc-load
+  [dst : i64]
+  [address : i64]
+  [ty : compiler_ast_types.AstType]
+  [tail : compiler_ir_types.CompilerIrInstrSeq]) : compiler_ir_types.CompilerIrInstrSeq
+  (opt-test-instr-seq-prepend
+    (compiler_ir_types.CompilerIrInstr.Load
+      dst
+      (compiler_ir_types.CompilerIrValue.Var address)
+      ty)
+    tail))
+
+;; The Vec's `slots` handle, its length word and its payload word, off one
+;; parameter: `load (gep p, 0)` then `load (gep handle, 1)` / `(gep handle, 0)`.
+(define (opt-pc-descriptor
+  [param : i64]
+  [gep-handle : i64]
+  [handle : i64]
+  [gep-word : i64]
+  [word : i64]
+  [slot : i64]
+  [tail : compiler_ir_types.CompilerIrInstrSeq]) : compiler_ir_types.CompilerIrInstrSeq
+  (opt-pc-gep
+    gep-handle
+    (compiler_ir_types.CompilerIrValue.Var param)
+    (compiler_ir_types.CompilerIrValue.I64 0)
+    (compiler_ast_types.AstType.U8)
+    (opt-pc-load
+      handle
+      gep-handle
+      (compiler_ast_types.AstType.DynArray 0)
+      (opt-pc-gep
+        gep-word
+        (compiler_ir_types.CompilerIrValue.Var handle)
+        (compiler_ir_types.CompilerIrValue.I64 slot)
+        (compiler_ast_types.AstType.I64)
+        (opt-pc-load word gep-word (compiler_ast_types.AstType.I64) tail)))))
+
+(define (opt-pc-binop
+  [dst : i64]
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [lhs : compiler_ir_types.CompilerIrValue]
+  [rhs : compiler_ir_types.CompilerIrValue]
+  [tail : compiler_ir_types.CompilerIrInstrSeq]) : compiler_ir_types.CompilerIrInstrSeq
+  (opt-test-instr-seq-prepend
+    (compiler_ir_types.CompilerIrInstr.BinOp
+      dst
+      op
+      lhs
+      rhs
+      (compiler_ast_types.AstType.I64))
+    tail))
+
+(define (opt-pc-branch [cond-var : i64] [true-label : i64] [false-label : i64]) : compiler_ir_types.CompilerIrInstrSeq
+  (opt-test-instr-seq-prepend
+    (compiler_ir_types.CompilerIrInstr.Branch
+      (compiler_ir_types.CompilerIrValue.Var cond-var)
+      true-label
+      false-label)
+    (compiler_ir_types.compiler-ir-instr-seq-empty)))
+
+(define (opt-pc-entry-instrs) : compiler_ir_types.CompilerIrInstrSeq
+  ;; %3..%6 = a's handle and payload, %7..%10 = b's handle and length,
+  ;; %11..%12 = b's payload, %13 = the entry guard.
+  (opt-pc-descriptor
+    0
+    3
+    4
+    5
+    6
+    0
+    (opt-pc-descriptor
+      1
+      7
+      8
+      9
+      10
+      1
+      (opt-pc-gep
+        11
+        (compiler_ir_types.CompilerIrValue.Var 8)
+        (compiler_ir_types.CompilerIrValue.I64 0)
+        (compiler_ast_types.AstType.I64)
+        (opt-pc-load
+          12
+          11
+          (compiler_ast_types.AstType.I64)
+          (opt-pc-binop
+            13
+            (compiler_ir_types.CompilerIrBinOp.Lt)
+            (compiler_ir_types.CompilerIrValue.I64 0)
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            (opt-pc-branch
+              13
+              (compiler_ir_types.compiler-ir-label "body1")
+              (compiler_ir_types.compiler-ir-label "exit1"))))))))
+
+;; `v = a[index]` then `bounds_check v, len(b)` then `b[v] = value`.
+(define (opt-pc-body-core
+  [index-var : i64]
+  [gep-a : i64]
+  [value-var : i64]
+  [gep-b : i64]
+  [value : i64]
+  [tail : compiler_ir_types.CompilerIrInstrSeq]) : compiler_ir_types.CompilerIrInstrSeq
+  (opt-pc-gep
+    gep-a
+    (compiler_ir_types.CompilerIrValue.Var 6)
+    (compiler_ir_types.CompilerIrValue.Var index-var)
+    (compiler_ast_types.AstType.I64)
+    (opt-pc-load
+      value-var
+      gep-a
+      (compiler_ast_types.AstType.I64)
+      (opt-test-instr-seq-prepend
+        (compiler_ir_types.CompilerIrInstr.BoundsCheck
+          (compiler_ir_types.CompilerIrValue.Var value-var)
+          (compiler_ir_types.CompilerIrValue.Var 10)
+          0)
+        (opt-pc-gep
+          gep-b
+          (compiler_ir_types.CompilerIrValue.Var 12)
+          (compiler_ir_types.CompilerIrValue.Var value-var)
+          (compiler_ast_types.AstType.I64)
+          (opt-test-instr-seq-prepend
+            (compiler_ir_types.CompilerIrInstr.StorePtr
+              (compiler_ir_types.CompilerIrValue.Var gep-b)
+              (compiler_ir_types.CompilerIrValue.I64 value)
+              (compiler_ast_types.AstType.I64))
+            tail))))))
+
+(define (opt-pc-counter-phi
+  [dst : i64]
+  [seed-label : i64]
+  [next-var : i64]
+  [latch-label : i64]
+  [tail : compiler_ir_types.CompilerIrInstrSeq]) : compiler_ir_types.CompilerIrInstrSeq
+  (opt-test-instr-seq-prepend
+    (compiler_ir_types.CompilerIrInstr.Phi
+      dst
+      (compiler_ir_types.CompilerIrPhiInputList.Cons
+        (compiler_ir_types.CompilerIrValue.I64 0)
+        seed-label
+        (box
+          (compiler_ir_types.CompilerIrPhiInputList.Cons
+            (compiler_ir_types.CompilerIrValue.Var next-var)
+            latch-label
+            (box (compiler_ir_types.CompilerIrPhiInputList.Nil)))))
+      (compiler_ast_types.AstType.I64))
+    tail))
+
+;; body1 with no early exit: check, step, latch test, back edge.
+(define (opt-pc-body1-flat) : compiler_ir_types.CompilerIrInstrSeq
+  (opt-pc-counter-phi
+    14
+    (compiler_ir_types.compiler-ir-label "entry")
+    19
+    (compiler_ir_types.compiler-ir-label "body1")
+    (opt-pc-body-core
+      14
+      15
+      16
+      17
+      1
+      (opt-pc-binop
+        19
+        (compiler_ir_types.CompilerIrBinOp.Add)
+        (compiler_ir_types.CompilerIrValue.Var 14)
+        (compiler_ir_types.CompilerIrValue.I64 1)
+        (opt-pc-binop
+          20
+          (compiler_ir_types.CompilerIrBinOp.Lt)
+          (compiler_ir_types.CompilerIrValue.Var 19)
+          (compiler_ir_types.CompilerIrValue.Var 2)
+          (opt-pc-branch
+            20
+            (compiler_ir_types.compiler-ir-label "body1")
+            (compiler_ir_types.compiler-ir-label "exit1")))))))
+
+;; body1 that may leave the domain early: the check no longer ran on every trip.
+(define (opt-pc-body1-early) : compiler_ir_types.CompilerIrInstrSeq
+  (opt-pc-counter-phi
+    14
+    (compiler_ir_types.compiler-ir-label "entry")
+    19
+    (compiler_ir_types.compiler-ir-label "body1b")
+    (opt-pc-body-core
+      14
+      15
+      16
+      17
+      1
+      (opt-pc-binop
+        28
+        (compiler_ir_types.CompilerIrBinOp.Lt)
+        (compiler_ir_types.CompilerIrValue.Var 16)
+        (compiler_ir_types.CompilerIrValue.I64 7)
+        (opt-pc-branch
+          28
+          (compiler_ir_types.compiler-ir-label "body1b")
+          (compiler_ir_types.compiler-ir-label "exit1"))))))
+
+(define (opt-pc-body1b-instrs) : compiler_ir_types.CompilerIrInstrSeq
+  (opt-pc-binop
+    19
+    (compiler_ir_types.CompilerIrBinOp.Add)
+    (compiler_ir_types.CompilerIrValue.Var 14)
+    (compiler_ir_types.CompilerIrValue.I64 1)
+    (opt-pc-binop
+      20
+      (compiler_ir_types.CompilerIrBinOp.Lt)
+      (compiler_ir_types.CompilerIrValue.Var 19)
+      (compiler_ir_types.CompilerIrValue.Var 2)
+      (opt-pc-branch
+        20
+        (compiler_ir_types.compiler-ir-label "body1")
+        (compiler_ir_types.compiler-ir-label "exit1")))))
+
+(define (opt-pc-exit1-instrs [shape : OptPcTestShape]) : compiler_ir_types.CompilerIrInstrSeq
+  (let
+    [tail : compiler_ir_types.CompilerIrInstrSeq
+      (opt-pc-branch
+        13
+        (compiler_ir_types.compiler-ir-label "body2")
+        (compiler_ir_types.compiler-ir-label "exit2"))]
+    (if shape.mut-source?
+      ;; A store into the SOURCE array's payload, between the two loops.
+      (opt-pc-gep
+        29
+        (compiler_ir_types.CompilerIrValue.Var 6)
+        (compiler_ir_types.CompilerIrValue.I64 0)
+        (compiler_ast_types.AstType.I64)
+        (opt-test-instr-seq-prepend
+          (compiler_ir_types.CompilerIrInstr.StorePtr
+            (compiler_ir_types.CompilerIrValue.Var 29)
+            (compiler_ir_types.CompilerIrValue.I64 9)
+            (compiler_ast_types.AstType.I64))
+          tail))
+      tail)))
+
+(define (opt-pc-body2-latch [shape : OptPcTestShape]) : compiler_ir_types.CompilerIrInstrSeq
+  (opt-pc-binop
+    26
+    (compiler_ir_types.CompilerIrBinOp.Add)
+    (compiler_ir_types.CompilerIrValue.Var 21)
+    (compiler_ir_types.CompilerIrValue.I64 1)
+    (opt-pc-binop
+      27
+      (compiler_ir_types.CompilerIrBinOp.Lt)
+      (compiler_ir_types.CompilerIrValue.Var 26)
+      (if shape.other-bound?
+        (compiler_ir_types.CompilerIrValue.I64 100)
+        (compiler_ir_types.CompilerIrValue.Var 2))
+      (opt-pc-branch
+        27
+        (compiler_ir_types.compiler-ir-label "body2")
+        (compiler_ir_types.compiler-ir-label "exit2")))))
+
+(define (opt-pc-body2-instrs [shape : OptPcTestShape]) : compiler_ir_types.CompilerIrInstrSeq
+  (opt-pc-counter-phi
+    21
+    (compiler_ir_types.compiler-ir-label "exit1")
+    26
+    (compiler_ir_types.compiler-ir-label "body2")
+    (if shape.shift-index?
+      ;; `a[i + 1]`: a different index expression over the same counter.
+      (opt-pc-binop
+        30
+        (compiler_ir_types.CompilerIrBinOp.Add)
+        (compiler_ir_types.CompilerIrValue.Var 21)
+        (compiler_ir_types.CompilerIrValue.I64 1)
+        (opt-pc-body-core 30 22 23 24 2 (opt-pc-body2-latch shape)))
+      (opt-pc-body-core 21 22 23 24 2 (opt-pc-body2-latch shape)))))
+
+(define (opt-pc-test-blocks [shape : OptPcTestShape]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-pc-entry-instrs))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "body1")
+        (if shape.early-exit?
+          (opt-pc-body1-early)
+          (opt-pc-body1-flat)))
+      (opt-pc-test-blocks-tail shape))))
+
+(define (opt-pc-test-blocks-tail [shape : OptPcTestShape]) : compiler_ir_types.CompilerIrBlockList
+  (let
+    [rest : compiler_ir_types.CompilerIrBlockList
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "exit1")
+          (opt-pc-exit1-instrs shape))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "body2")
+            (opt-pc-body2-instrs shape))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "exit2")
+              (opt-mr-return-zero))
+            compiler_ir_types.CompilerIrBlockList.Nil)))]
+    (if shape.early-exit?
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "body1b")
+          (opt-pc-body1b-instrs))
+        rest)
+      rest)))
+
+;; The late slot with NO length-equality families at all: `on?` is false, so
+;; anything that happens is P-C's doing.
+(define (opt-pc-swept-checks [shape : OptPcTestShape]) : i64
+  (let
+    [blocks : compiler_ir_types.CompilerIrBlockList (opt-pc-test-blocks shape)]
+    [func : compiler_ir_types.CompilerIrFunction
+      (compiler_ir_types.CompilerIrFunction.Function
+        (compiler_ir_types.compiler-ir-symbol "lp_test")
+        (opt-pc-test-params shape)
+        (compiler_ast_types.AstType.I64)
+        40
+        blocks)]
+    (compiler_optimize.opt-count-bounds-blocks
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.opt-len-eq-late-sweep
+          (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+          (opt_i64_i64_map.with-capacity 1)
+          (opt_i64_i64_map.with-capacity 1)
+          (opt_i64_i64_map.with-capacity 1)
+          (compiler_optimize.opt-cfg-context-build blocks)
+          func)))))
+
+(define (opt-pc-shape-mut-source) : OptPcTestShape
+  (OptPcTestShape true false false false))
+
+(define (opt-pc-shape-other-bound) : OptPcTestShape
+  (OptPcTestShape false true false false))
+
+(define (opt-pc-shape-early-exit) : OptPcTestShape
+  (OptPcTestShape false false true false))
+
+(define (opt-pc-shape-shift-index) : OptPcTestShape
+  (OptPcTestShape false false false true))
+
+;; The guarded pair, one `if` deep: both loops read `a[i]` and check it only
+;; when it is non-zero, exactly the shape cfg-build-euler-tree's L2/L4 pair has
+;; (`reachable[i] == 1 && idom[i] >= 0 && idom[i] != i`). The filling loop's
+;; THEN arm retires on the counting loop's THEN arm -- the two control paths
+;; from header to check match condition for condition. Its ELSE arm carries the
+;; same `(value, length)` pair and must NOT: the producer proved nothing about
+;; the trips that took the other side.
+;;
+;;   body1:  %16 = a[%14]; branch (ne %16, 0) then1 else1
+;;   then1:  bounds_check %16, %10; b[%16] = 1
+;;   merge1: branch (lt %14+1, n) body1 exit1
+;;   body2:  %23 = a[%21]; branch (ne %23, 0) then2 else2
+;;   then2:  bounds_check %23, %10   <- retires
+;;   else2:  bounds_check %23, %10   <- stays
+(define (opt-pc-guard-body
+  [phi-dst : i64]
+  [seed-label : i64]
+  [next-var : i64]
+  [latch-label : i64]
+  [gep-a : i64]
+  [value-var : i64]
+  [cond-var : i64]
+  [then-label : i64]
+  [else-label : i64]) : compiler_ir_types.CompilerIrInstrSeq
+  (opt-pc-counter-phi
+    phi-dst
+    seed-label
+    next-var
+    latch-label
+    (opt-pc-gep
+      gep-a
+      (compiler_ir_types.CompilerIrValue.Var 6)
+      (compiler_ir_types.CompilerIrValue.Var phi-dst)
+      (compiler_ast_types.AstType.I64)
+      (opt-pc-load
+        value-var
+        gep-a
+        (compiler_ast_types.AstType.I64)
+        (opt-pc-binop
+          cond-var
+          (compiler_ir_types.CompilerIrBinOp.Ne)
+          (compiler_ir_types.CompilerIrValue.Var value-var)
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (opt-pc-branch cond-var then-label else-label))))))
+
+;; `bounds_check v, len(b); b[v] = value; jump merge`
+(define (opt-pc-guard-arm
+  [value-var : i64]
+  [gep-b : i64]
+  [value : i64]
+  [merge-label : i64]) : compiler_ir_types.CompilerIrInstrSeq
+  (opt-test-instr-seq-prepend
+    (compiler_ir_types.CompilerIrInstr.BoundsCheck
+      (compiler_ir_types.CompilerIrValue.Var value-var)
+      (compiler_ir_types.CompilerIrValue.Var 10)
+      0)
+    (opt-pc-gep
+      gep-b
+      (compiler_ir_types.CompilerIrValue.Var 12)
+      (compiler_ir_types.CompilerIrValue.Var value-var)
+      (compiler_ast_types.AstType.I64)
+      (opt-test-instr-seq-prepend
+        (compiler_ir_types.CompilerIrInstr.StorePtr
+          (compiler_ir_types.CompilerIrValue.Var gep-b)
+          (compiler_ir_types.CompilerIrValue.I64 value)
+          (compiler_ast_types.AstType.I64))
+        (opt-test-instr-seq-prepend
+          (compiler_ir_types.CompilerIrInstr.Jump merge-label)
+          (compiler_ir_types.compiler-ir-instr-seq-empty))))))
+
+(define (opt-pc-guard-merge
+  [phi-dst : i64]
+  [next-var : i64]
+  [test-var : i64]
+  [body-label : i64]
+  [exit-label : i64]) : compiler_ir_types.CompilerIrInstrSeq
+  (opt-pc-binop
+    next-var
+    (compiler_ir_types.CompilerIrBinOp.Add)
+    (compiler_ir_types.CompilerIrValue.Var phi-dst)
+    (compiler_ir_types.CompilerIrValue.I64 1)
+    (opt-pc-binop
+      test-var
+      (compiler_ir_types.CompilerIrBinOp.Lt)
+      (compiler_ir_types.CompilerIrValue.Var next-var)
+      (compiler_ir_types.CompilerIrValue.Var 2)
+      (opt-pc-branch test-var body-label exit-label))))
+
+(define (opt-pc-guard-block
+  [name : String]
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [rest : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label name)
+      instrs)
+    rest))
+
+(define (opt-pc-guard-jump [label : String]) : compiler_ir_types.CompilerIrInstrSeq
+  (opt-test-instr-seq-prepend
+    (compiler_ir_types.CompilerIrInstr.Jump
+      (compiler_ir_types.compiler-ir-label label))
+    (compiler_ir_types.compiler-ir-instr-seq-empty)))
+
+(define (opt-pc-guard-blocks) : compiler_ir_types.CompilerIrBlockList
+  (opt-pc-guard-block
+    "entry"
+    (opt-pc-entry-instrs)
+    (opt-pc-guard-block
+      "body1"
+      (opt-pc-guard-body
+        14
+        (compiler_ir_types.compiler-ir-label "entry")
+        19
+        (compiler_ir_types.compiler-ir-label "merge1")
+        15
+        16
+        31
+        (compiler_ir_types.compiler-ir-label "then1")
+        (compiler_ir_types.compiler-ir-label "else1"))
+      (opt-pc-guard-block
+        "then1"
+        (opt-pc-guard-arm
+          16
+          17
+          1
+          (compiler_ir_types.compiler-ir-label "merge1"))
+        (opt-pc-guard-block
+          "else1"
+          (opt-pc-guard-jump "merge1")
+          (opt-pc-guard-block
+            "merge1"
+            (opt-pc-guard-merge
+              14
+              19
+              20
+              (compiler_ir_types.compiler-ir-label "body1")
+              (compiler_ir_types.compiler-ir-label "exit1"))
+            (opt-pc-guard-blocks-tail)))))))
+
+(define (opt-pc-guard-blocks-tail) : compiler_ir_types.CompilerIrBlockList
+  (opt-pc-guard-block
+    "exit1"
+    (opt-pc-branch
+      13
+      (compiler_ir_types.compiler-ir-label "body2")
+      (compiler_ir_types.compiler-ir-label "exit2"))
+    (opt-pc-guard-block
+      "body2"
+      (opt-pc-guard-body
+        21
+        (compiler_ir_types.compiler-ir-label "exit1")
+        26
+        (compiler_ir_types.compiler-ir-label "merge2")
+        22
+        23
+        32
+        (compiler_ir_types.compiler-ir-label "then2")
+        (compiler_ir_types.compiler-ir-label "else2"))
+      (opt-pc-guard-block
+        "then2"
+        (opt-pc-guard-arm
+          23
+          24
+          2
+          (compiler_ir_types.compiler-ir-label "merge2"))
+        (opt-pc-guard-block
+          "else2"
+          (opt-pc-guard-arm
+            23
+            33
+            3
+            (compiler_ir_types.compiler-ir-label "merge2"))
+          (opt-pc-guard-block
+            "merge2"
+            (opt-pc-guard-merge
+              21
+              26
+              27
+              (compiler_ir_types.compiler-ir-label "body2")
+              (compiler_ir_types.compiler-ir-label "exit2"))
+            (opt-pc-guard-block
+              "exit2"
+              (opt-mr-return-zero)
+              compiler_ir_types.CompilerIrBlockList.Nil)))))))
+
+(define (opt-pc-guard-checks) : i64
+  (let
+    [blocks : compiler_ir_types.CompilerIrBlockList (opt-pc-guard-blocks)]
+    [func : compiler_ir_types.CompilerIrFunction
+      (compiler_ir_types.CompilerIrFunction.Function
+        (compiler_ir_types.compiler-ir-symbol "pc_guard_test")
+        (opt-pc-test-params (opt-pc-test-shape))
+        (compiler_ast_types.AstType.I64)
+        40
+        blocks)]
+    (compiler_optimize.opt-count-bounds-blocks
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.opt-len-eq-late-sweep
+          (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+          (opt_i64_i64_map.with-capacity 1)
+          (opt_i64_i64_map.with-capacity 1)
+          (opt_i64_i64_map.with-capacity 1)
+          (compiler_optimize.opt-cfg-context-build blocks)
+          func)))))
+
+(define (compiler-optimize-pc-memo-self-test) : i64
+  (let
+    [retired : i64 (opt-pc-swept-checks (opt-pc-test-shape))]
+    [mut-source : i64 (opt-pc-swept-checks (opt-pc-shape-mut-source))]
+    [other-bound : i64 (opt-pc-swept-checks (opt-pc-shape-other-bound))]
+    [early-exit : i64 (opt-pc-swept-checks (opt-pc-shape-early-exit))]
+    [shift-index : i64 (opt-pc-swept-checks (opt-pc-shape-shift-index))]
+    ;; Three checks in: the counting loop's, and the filling loop's two arms.
+    ;; Only the arm whose control path matches the producer's retires.
+    [guarded : i64 (opt-pc-guard-checks)]
+    (if (and
+      ;; The filling loop's check is gone; the counting loop's stays.
+      (= retired 1)
+      (= mut-source 2)
+      (= other-bound 2)
+      (= early-exit 2)
+      (= shift-index 2)
+      (= guarded 2))
+      42
+      (+
+        (* retired 100000)
+        (+
+          (* mut-source 10000)
+          (+
+            (* other-bound 1000)
+            (+ (* early-exit 100) (+ (* shift-index 10) guarded))))))))
+
 (define (compiler-optimize-pe-exit-only-phi-self-test) : i64
   (let
     ;; the exiting arm's shape: the back edge carries the phi itself
@@ -65942,6 +66591,13 @@
     (compiler-optimize-len-eq-families-self-test)
     42
     "two global Vec cells reset together in one straight-line region with one length are proven length-equal, and a dominating check on one retires the check on the other; a member whose box reaches a parameter-writing callee is dropped, a call that may read a member between the two stores breaks the region, the Vec.len field invariant discharges the unsigned check against the array length, and a constructor whose .len word is not its array length refuses it"))
+
+(test
+  lp-loop-postcondition-check-memo
+  (test.assert-i64-eq
+    (compiler-optimize-pc-memo-self-test)
+    42
+    "a counting loop and a filling loop over one trip domain, both reading `a[i]` and checking it against `array-length b.slots`, let the filling loop's check retire on the counting loop's postcondition; a `&mut` source array written between the two loops, a second loop counting to a different bound, a first loop that can leave its domain early, and a shifted index expression each refuse it; when both loops guard the check behind `a[i] != 0` the matching arm retires and the other arm's check on the same pair stays"))
 
 (test
   bce-version-exit-only-header-phi

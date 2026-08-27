@@ -1550,10 +1550,13 @@ if [ "$NL_HOST_OS" = windows ]; then
     # #6827's range-merge, branch-threading and carrier-dataflow packets
     # (~2,900 compiler-source lines) carried this to 25,131 KiB on the Windows
     # CI probe; ceiling raised one step with the usual headroom.
+    # #6855's guard-algebra, if-convert, load-CSE, lea/cmov and sibling-phi
+    # threading packets (~4,900 compiler-source lines) carried it to 26,324 KiB
+    # on the Windows CI probe; raised one more step.
     assert_profile_counter_at_most_in \
         "$SELFHOST_STDERR" \
         "typecheck.macro.walk_sp_reresolve_alloc_kb" \
-        26000 \
+        27000 \
         "$SELFHOST_STDOUT" \
         "$SELFHOST_STDERR"
     # One constant per boundary: the segment count. capacity and segment_bytes
@@ -1619,6 +1622,12 @@ if [ "$NL_HOST_OS" = windows ]; then
     # 98,566,144 physical payload bytes. Composing #6840's semantic workspace
     # rename provider with #6827 measured 3,029,193 used nodes on the
     # authoritative Windows CI probe and retains the same boundary.
+    # #6855's optimizer/backend/regalloc packets (guard algebra, if-convert casts,
+    # load-CSE precision and join phis, lea/cmov emission, sibling-phi threading,
+    # length-equality families, local splits, invariant-load rematerialisation)
+    # rebased onto #6867's core fixed-array operations stay at 47 segments: the
+    # authoritative Windows probe measured 3,074,738 used nodes, 3,080,192
+    # capacity, and 98,566,144 physical payload bytes.
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_expr_pool macro_expand 47 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
@@ -1668,8 +1677,12 @@ if [ "$NL_HOST_OS" = windows ]; then
     # crosses the next boundary: the direct Windows selfhost probe measured
     # 2,425,185 used nodes, 2,490,368 capacity, and 79,691,776 physical payload
     # bytes.
+    # #6855's allocator packets (local splits, invariant-load rematerialisation)
+    # on top of its optimizer packets crossed ast_expr_pool.typecheck from 38 to
+    # 39 segments: the authoritative Windows probe measured 2,507,253 used nodes,
+    # 2,555,904 capacity, and 81,788,928 physical payload bytes.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool typecheck 38 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool typecheck 39 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # This is the tightest of the four and the one to check first when a series
     # adds compiler source: the copy-call / unsigned-bound-narrowing / chain
@@ -1705,11 +1718,11 @@ if [ "$NL_HOST_OS" = windows ]; then
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_type_pool macro_expand 27 1024 24 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
-    # #3992's stdlib.array removal crosses this type-pool boundary back down:
-    # the authoritative Windows target probe measured 9,173 used nodes, 9 segments,
-    # 9,216 capacity, and 221,184 physical payload bytes.
+    # #6870's reflected-lambda type metadata crosses this type-pool boundary
+    # from 9 to 10 segments: the authoritative Windows target probe measured
+    # 9,221 used nodes, 10,240 capacity, and 245,760 physical payload bytes.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_type_pool typecheck 9 1024 24 \
+        "$SELFHOST_STDERR" ast_type_pool typecheck 10 1024 24 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # Each ownership boundary must expose used nodes, logical capacity, and
     # physical segmentation for both pools. Values vary with the source graph;

@@ -1630,8 +1630,11 @@ if [ "$NL_HOST_OS" = windows ]; then
     # at that boundary on the same base. The last authoritative Windows probes
     # measured 3,074,738 and 3,057,094 used nodes respectively, with 3,080,192
     # capacity and 98,566,144 physical payload bytes.
+    # Composing #6650 with #6873's unsafe raw-pointer formatter crosses the next
+    # boundary: the authoritative Windows CI probe measured 3,091,775 used
+    # nodes, 3,145,728 capacity, and 100,663,296 physical payload bytes.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool macro_expand 47 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool macro_expand 48 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # The three dense optimizer plan containers crossed the checked expression
     # graph into its 33rd segment; the accessor-admission/absorption/fold/sinking

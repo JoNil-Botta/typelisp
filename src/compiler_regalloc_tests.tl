@@ -6293,6 +6293,300 @@
                 (ir.compiler-ir-instr-seq-empty)))))
         ir.CompilerIrBlockList.Nil))))
 
+;; ---------------------------------------------------------------------------
+;; R5: invariant-load facts.
+;;
+;; The shape is cfg-build-csr's, reduced: a `&Vec` parameter, the slots handle
+;; read out of it, the handle's `len` and `data` words, and an ELEMENT store
+;; through the data pointer. Every descriptor word here must stay invariant
+;; across that store -- the handle by the typed-word rule (a handle word is
+;; class 6, the store is class 1), `len`/`data` because their base is a
+;; descriptor handle and a descriptor is outside every payload buffer.
+(cfg
+  test
+  (define (compiler-reg-invariant-descriptor-function
+    [extra : ir.CompilerIrInstrSeq]) : ir.CompilerIrFunction
+    (ir.CompilerIrFunction.Function
+      (ir.compiler-ir-test-symbol "invariant_descriptor")
+      (ir.CompilerIrParamList.Cons
+        (ir.CompilerIrParam.Param "v" (ast.AstType.Ref 0 0) 0)
+        (box ir.CompilerIrParamList.Nil))
+      (ast.AstType.Unit)
+      9
+      (ir.compiler-ir-block-cons
+        (ir.CompilerIrBlock.Block
+          (ir.compiler-ir-label "entry")
+          (compiler-reg-test-instr-seq-prepend
+            (ir.CompilerIrInstr.Gep
+              1
+              (ir.CompilerIrValue.Var 0)
+              (ir.CompilerIrValue.I64 0)
+              (ast.AstType.U8))
+            (compiler-reg-test-instr-seq-prepend
+              (ir.CompilerIrInstr.Load
+                2
+                (ir.CompilerIrValue.Var 1)
+                (ast.AstType.DynArray 0))
+              (compiler-reg-test-instr-seq-prepend
+                (ir.CompilerIrInstr.Gep
+                  3
+                  (ir.CompilerIrValue.Var 2)
+                  (ir.CompilerIrValue.I64 1)
+                  (compiler-reg-i64-ty))
+                (compiler-reg-test-instr-seq-prepend
+                  (ir.CompilerIrInstr.Load
+                    4
+                    (ir.CompilerIrValue.Var 3)
+                    (compiler-reg-i64-ty))
+                  (compiler-reg-test-instr-seq-prepend
+                    (ir.CompilerIrInstr.Gep
+                      5
+                      (ir.CompilerIrValue.Var 2)
+                      (ir.CompilerIrValue.I64 0)
+                      (compiler-reg-i64-ty))
+                    (compiler-reg-test-instr-seq-prepend
+                      (ir.CompilerIrInstr.Load
+                        6
+                        (ir.CompilerIrValue.Var 5)
+                        (ast.AstType.U64))
+                      (compiler-reg-test-instr-seq-prepend
+                        (ir.CompilerIrInstr.Gep
+                          7
+                          (ir.CompilerIrValue.Var 6)
+                          (ir.CompilerIrValue.Var 4)
+                          (compiler-reg-i64-ty))
+                        (compiler-reg-test-instr-seq-prepend
+                          (ir.CompilerIrInstr.StorePtr
+                            (ir.CompilerIrValue.Var 7)
+                            (ir.CompilerIrValue.I64 0)
+                            (compiler-reg-i64-ty))
+                          extra)))))))))
+        ir.CompilerIrBlockList.Nil))))
+
+(cfg
+  test
+  (define (compiler-reg-invariant-return-seq) : ir.CompilerIrInstrSeq
+    (compiler-reg-test-instr-seq-prepend
+      (ir.CompilerIrInstr.Return ir.CompilerIrMaybeValue.No)
+      (ir.compiler-ir-instr-seq-empty))))
+
+(cfg
+  test
+  (define (compiler-reg-invariant-facts-for [extra : ir.CompilerIrInstrSeq]) : reg.CompilerRegInvariantFacts
+    (let
+      [func : ir.CompilerIrFunction
+        (compiler-reg-invariant-descriptor-function extra)]
+      (reg.compiler-reg-invariant-facts-build
+        (ir.compiler-ir-global-shared-view func)
+        (reg.compiler-reg-function-var-types
+          (ir.compiler-ir-global-shared-view func))))))
+
+(cfg
+  test
+  (define (compiler-reg-invariant-word-load-admitted-ok?) : bool
+    (let
+      [facts : reg.CompilerRegInvariantFacts
+        (compiler-reg-invariant-facts-for (compiler-reg-invariant-return-seq))]
+      (and
+        ;; the handle read off the `&Vec` parameter, and both descriptor words
+        (reg.compiler-reg-invariant-facts-word-load?
+          (reg.compiler-reg-global-shared-view facts)
+          2)
+        (reg.compiler-reg-invariant-facts-word-load?
+          (reg.compiler-reg-global-shared-view facts)
+          4)
+        (reg.compiler-reg-invariant-facts-word-load?
+          (reg.compiler-reg-global-shared-view facts)
+          6)
+        ;; recorded against the base the recompute has to re-read
+        (= (array-ref facts.bases 2) 0)
+        (= (array-ref facts.bases 4) 2)
+        (= (array-ref facts.bases 6) 2)
+        (= (array-ref facts.indexes 4) 1)
+        (= (array-ref facts.indexes 6) 0)
+        ;; an element store cannot write a named global cell either
+        facts.cells-clean
+        ;; the ELEMENT address itself is not a descriptor word
+        (not
+          (reg.compiler-reg-invariant-facts-word-load?
+            (reg.compiler-reg-global-shared-view facts)
+            7))))))
+
+;; A FIELD store -- one whose address is a descriptor word rather than an
+;; element of a payload buffer -- may write any of these words, so the whole
+;; function falls back to "nothing is invariant".
+(cfg
+  test
+  (define (compiler-reg-invariant-field-store-refused-ok?) : bool
+    (let
+      [facts : reg.CompilerRegInvariantFacts
+        (compiler-reg-invariant-facts-for
+          (compiler-reg-test-instr-seq-prepend
+            (ir.CompilerIrInstr.StorePtr
+              (ir.CompilerIrValue.Var 3)
+              (ir.CompilerIrValue.I64 0)
+              (compiler-reg-i64-ty))
+            (compiler-reg-invariant-return-seq)))]
+      (and
+        (not
+          (reg.compiler-reg-invariant-facts-word-load?
+            (reg.compiler-reg-global-shared-view facts)
+            2))
+        (not
+          (reg.compiler-reg-invariant-facts-word-load?
+            (reg.compiler-reg-global-shared-view facts)
+            4))
+        (not
+          (reg.compiler-reg-invariant-facts-word-load?
+            (reg.compiler-reg-global-shared-view facts)
+            6))
+        (not facts.cells-clean)))))
+
+;; A CALL that may write memory is the `&mut`-parameter case: the callee can
+;; push through the reference and move `data`/`len`, so no descriptor word of
+;; this function is invariant any more (LLVM refuses the same way through
+;; `isDereferenceableInvariantLoad`'s mod/ref query).
+(cfg
+  test
+  (define (compiler-reg-invariant-call-refused-ok?) : bool
+    (let
+      [facts : reg.CompilerRegInvariantFacts
+        (compiler-reg-invariant-facts-for
+          (compiler-reg-test-instr-seq-prepend
+            (ir.CompilerIrInstr.Call
+              8
+              (ir.compiler-ir-test-symbol "vec_push")
+              ir.CompilerIrCallArgs.Nil
+              (ast.AstType.Unit))
+            (compiler-reg-invariant-return-seq)))]
+      (and
+        (not
+          (reg.compiler-reg-invariant-facts-word-load?
+            (reg.compiler-reg-global-shared-view facts)
+            2))
+        (not
+          (reg.compiler-reg-invariant-facts-word-load?
+            (reg.compiler-reg-global-shared-view facts)
+            4))
+        (not
+          (reg.compiler-reg-invariant-facts-word-load?
+            (reg.compiler-reg-global-shared-view facts)
+            6))
+        (not facts.cells-clean)))))
+
+;; The recipe itself: an invariant descriptor word recomputes as the same
+;; `gep`+`load` pair the function already ran (which the backend's gep fusion
+;; cluster folds into one memory operand), and a zero index needs no address
+;; instruction at all.
+(cfg
+  test
+  (define (compiler-reg-invariant-recipe-ok?) : bool
+    (let
+      [func : ir.CompilerIrFunction
+        (compiler-reg-invariant-descriptor-function
+          (compiler-reg-invariant-return-seq))]
+      [table : reg.CompilerRegRematTable
+        (reg.compiler-reg-remat-table-build
+          (ir.compiler-ir-global-shared-view func)
+          (reg.compiler-reg-function-var-types
+            (ir.compiler-ir-global-shared-view func)))]
+      (and
+        (= (array-ref table.wide 4) 1)
+        (= (array-ref table.kinds 4) (reg.compiler-reg-remat-kind-word-load))
+        (not
+          (reg.compiler-reg-remat-zero-offset?
+            (reg.compiler-reg-global-shared-view table)
+            4))
+        (reg.compiler-reg-remat-zero-offset?
+          (reg.compiler-reg-global-shared-view table)
+          6)
+        (match (reg.compiler-reg-remat-address-instr
+          (reg.compiler-reg-global-shared-view table)
+          20
+          4)
+          [(ir.CompilerIrInstr.Gep dst base offset _)
+            (and
+              (= dst 20)
+              (match base
+                [(ir.CompilerIrValue.Var b) (= b 2)]
+                [_ false])
+              (match offset
+                [(ir.CompilerIrValue.I64 k) (= k 1)]
+                [_ false]))]
+          [_ false])
+        (match (reg.compiler-reg-remat-value-instr
+          (reg.compiler-reg-global-shared-view table)
+          21
+          20
+          1
+          4)
+          [(ir.CompilerIrInstr.Load dst src _)
+            (and
+              (= dst 21)
+              (match src
+                [(ir.CompilerIrValue.Var a) (= a 20)]
+                [_ false]))]
+          [_ false])
+        ;; index 0: the base IS the address, so one instruction serves
+        (match (reg.compiler-reg-remat-value-instr
+          (reg.compiler-reg-global-shared-view table)
+          22
+          22
+          0
+          6)
+          [(ir.CompilerIrInstr.Load dst src _)
+            (and
+              (= dst 22)
+              (match src
+                [(ir.CompilerIrValue.Var b) (= b 2)]
+                [_ false]))]
+          [_ false])))))
+
+;; LLVM's `allUsesAvailableAt`: a recompute may only run where its base operand
+;; is still in a register and still carries that value. A spilled base fails.
+(cfg
+  test
+  (define (compiler-reg-invariant-base-availability-ok?) : bool
+    (let
+      [func : ir.CompilerIrFunction
+        (compiler-reg-invariant-descriptor-function
+          (compiler-reg-invariant-return-seq))]
+      [table : reg.CompilerRegRematTable
+        (reg.compiler-reg-remat-table-build
+          (ir.compiler-ir-global-shared-view func)
+          (reg.compiler-reg-function-var-types
+            (ir.compiler-ir-global-shared-view func)))]
+      [assignments : reg.CompilerRegAssignmentTable
+        (reg.compiler-reg-assignment-table-make 9)]
+      [liveness : live.CompilerFunctionLiveness
+        (live.compiler-live-analyze-function
+          (ir.compiler-ir-global-shared-view func))]
+      (begin
+        (reg.compiler-reg-assignment-table-insert
+          (reg.compiler-reg-global-shared-view assignments)
+          2
+          (reg.CompilerRegLocation.Spill 0))
+        (match (reg.compiler-reg-live-interval-selection
+          (ir.compiler-ir-global-shared-view func)
+          liveness)
+          [(reg.CompilerRegIntervalSelection.Selection _ index)
+            (and
+              ;; base spilled -> refused everywhere
+              (not
+                (reg.compiler-reg-remat-base-available?
+                  (reg.compiler-reg-global-shared-view table)
+                  (reg.compiler-reg-global-shared-view assignments)
+                  (reg.compiler-reg-global-shared-view index)
+                  6
+                  4))
+              ;; a value with no register operand at all is always available
+              (reg.compiler-reg-remat-base-available?
+                (reg.compiler-reg-global-shared-view table)
+                (reg.compiler-reg-global-shared-view assignments)
+                (reg.compiler-reg-global-shared-view index)
+                6
+                0))])))))
+
 (cfg
   test
   (define (compiler-reg-remat-classifier-ok?) : bool
@@ -6348,12 +6642,22 @@
               (ir.compiler-ir-test-symbol "global"))
             (ir.CompilerIrValue.Var 0)
             (compiler-reg-i64-ty))))
+      ;; R5: `gep BASE, K` with a REGISTER base and a constant offset is one
+      ;; `leaq K*w(%base), %r` -- exactly the cost of the reload it replaces --
+      ;; so the shape is admitted here; whether the base is really in a register
+      ;; and live at a given use is the rewrite's per-use question.
+      (compiler-reg-remat-defn?
+        (ir.CompilerIrInstr.Gep
+          19
+          (ir.CompilerIrValue.Var 0)
+          (ir.CompilerIrValue.I64 2)
+          (compiler-reg-i64-ty)))
       (not
         (compiler-reg-remat-defn?
           (ir.CompilerIrInstr.Gep
-            19
+            27
             (ir.CompilerIrValue.Var 0)
-            (ir.CompilerIrValue.I64 2)
+            (ir.CompilerIrValue.Var 1)
             (compiler-reg-i64-ty))))
       (not
         (compiler-reg-remat-defn?
@@ -6410,68 +6714,84 @@
       ;; Static address materialisations: admitted at any word type, unchanged.
       (reg.compiler-reg-remat-recompute-value?
         (ir.CompilerIrValue.GlobalAddr (ir.compiler-ir-test-symbol "global"))
-        (ast.AstType.U64))
+        (ast.AstType.U64)
+        false)
       (reg.compiler-reg-remat-recompute-value?
         (ir.CompilerIrValue.Function (ir.compiler-ir-test-symbol "fn"))
-        (ast.AstType.U64))
+        (ast.AstType.U64)
+        false)
       (reg.compiler-reg-remat-recompute-value?
         (ir.CompilerIrValue.String "s")
-        (ast.AstType.String))
+        (ast.AstType.String)
+        false)
       ;; W3 step (a): integer/bool/char literals at a type whose reload is
       ;; bit-identical to the immediate materialisation.
       (reg.compiler-reg-remat-recompute-value?
         (ir.CompilerIrValue.I64 7)
-        (compiler-reg-i64-ty))
+        (compiler-reg-i64-ty)
+        false)
       (reg.compiler-reg-remat-recompute-value?
         (ir.CompilerIrValue.I64 0)
-        (ast.AstType.U64))
+        (ast.AstType.U64)
+        false)
       (reg.compiler-reg-remat-recompute-value?
         (ir.CompilerIrValue.I64 -1)
-        (compiler-reg-i64-ty))
+        (compiler-reg-i64-ty)
+        false)
       (reg.compiler-reg-remat-recompute-value?
         (ir.CompilerIrValue.Bool false)
-        (ast.AstType.Bool))
+        (ast.AstType.Bool)
+        false)
       (reg.compiler-reg-remat-recompute-value?
         (ir.CompilerIrValue.Bool true)
-        (compiler-reg-i64-ty))
+        (compiler-reg-i64-ty)
+        false)
       (reg.compiler-reg-remat-recompute-value?
         (ir.CompilerIrValue.Char 'x')
-        (ast.AstType.Char))
+        (ast.AstType.Char)
+        false)
       ;; NEGATIVE GATE. A narrow var reloads sign/zero-EXTENDED from its slot
       ;; (movslq / movzbq), so an i64 literal homed there is not reproduced by
       ;; `movl $K` and must be refused.
       (not
         (reg.compiler-reg-remat-recompute-value?
           (ir.CompilerIrValue.I64 7)
-          (ast.AstType.I32)))
+          (ast.AstType.I32)
+          false))
       (not
         (reg.compiler-reg-remat-recompute-value?
           (ir.CompilerIrValue.I64 7)
-          (ast.AstType.U8)))
+          (ast.AstType.U8)
+          false))
       (not
         (reg.compiler-reg-remat-recompute-value?
           (ir.CompilerIrValue.Char 'x')
-          (ast.AstType.U8)))
+          (ast.AstType.U8)
+          false))
       ;; NEGATIVE GATE. A literal in a register-GROUP / handle type is refused:
       ;; the backend errors on a rematerialised group var.
       (not
         (reg.compiler-reg-remat-recompute-value?
           (ir.CompilerIrValue.I64 0)
-          (ast.AstType.String)))
+          (ast.AstType.String)
+          false))
       ;; NEGATIVE GATE. No scalar backend materialisation for f64, and a LOAD
       ;; of a global cell is not a static value.
       (not
         (reg.compiler-reg-remat-recompute-value?
           (ir.CompilerIrValue.F64 0x3ff0000000000000)
-          (compiler-reg-f64-ty)))
+          (compiler-reg-f64-ty)
+          false))
       (not
         (reg.compiler-reg-remat-recompute-value?
           (ir.CompilerIrValue.Global (ir.compiler-ir-test-symbol "global"))
-          (compiler-reg-i64-ty)))
+          (compiler-reg-i64-ty)
+          false))
       (not
         (reg.compiler-reg-remat-recompute-value?
           (ir.CompilerIrValue.Var 0)
-          (compiler-reg-i64-ty))))))
+          (compiler-reg-i64-ty)
+          false)))))
 
 ;; End-to-end for the assignment-level rewrite: a SPILLED single-def literal
 ;; becomes CompilerRegLocation.Remat (so its def store dies and every use
@@ -6499,6 +6819,7 @@
               func
               empty-coalesce
               (live.compiler-live-set-empty)
+              false
               vars)]
           (match (reg.compiler-reg-assignment-table-lookup rewritten var)
             [(reg.CompilerRegMaybeLocation.Some location) location]
@@ -6601,7 +6922,8 @@
         (not
           (reg.compiler-reg-remat-recompute-value?
             (reg.compiler-reg-global-shared-view cell)
-            (compiler-reg-i64-ty)))]
+            (compiler-reg-i64-ty)
+            false))]
       (begin
         (reg.compiler-reg-frozen-globals-begin!)
         (reg.compiler-reg-frozen-globals-finish!)
@@ -6609,12 +6931,14 @@
           [seeded? : bool
             (reg.compiler-reg-remat-recompute-value?
               (reg.compiler-reg-global-shared-view cell)
-              (compiler-reg-i64-ty))]
+              (compiler-reg-i64-ty)
+              false)]
           [narrow-refused? : bool
             (not
               (reg.compiler-reg-remat-recompute-value?
                 (reg.compiler-reg-global-shared-view cell)
-                (ast.AstType.I32)))]
+                (ast.AstType.I32)
+                false))]
           [mov-remat? : bool
             (compiler-reg-location-remat?
               (compiler-reg-remat-assignment-spill-location
@@ -6633,8 +6957,9 @@
               [written-refused? : bool
                 (not
                   (reg.compiler-reg-remat-recompute-value?
-                    cell
-                    (compiler-reg-i64-ty)))]
+                    (reg.compiler-reg-global-shared-view cell)
+                    (compiler-reg-i64-ty)
+                    false))]
               [written-load-refused? : bool
                 (not
                   (compiler-reg-location-remat?
@@ -8426,9 +8751,13 @@
   test
   (define (compiler-reg-remat-parameters-poisoned-ok?) : bool
     (let
+      [func : ir.CompilerIrFunction
+        (compiler-reg-remat-parameter-global-rhs-function)]
       [table : reg.CompilerRegRematTable
         (reg.compiler-reg-remat-table-build
-          (compiler-reg-remat-parameter-global-rhs-function))]
+          (ir.compiler-ir-global-shared-view func)
+          (reg.compiler-reg-function-var-types
+            (ir.compiler-ir-global-shared-view func)))]
       [candidates : (__tl_dyn-array i64) table.candidates]
       (and
         (= (array-ref candidates 0) 2)
@@ -8454,6 +8783,7 @@
           (ir.compiler-ir-global-shared-view func)
           (compiler-reg-test-identity-coalesce 3)
           (live.compiler-live-set-empty)
+          true
           3)]
       (match (reg.compiler-reg-assignment-lookup rewritten 0)
         [(reg.CompilerRegMaybeLocation.Some (reg.CompilerRegLocation.Spill _))
@@ -11946,10 +12276,15 @@
           (reg.compiler-reg-global-shared-view shadow-regs)
           cabi.compiler-reg-id-invalid)
         (set! (array-ref members 0) 0)
+        ;; Greedy worklist keys, not bare weights: the pair pass reads them
+        ;; through compiler-reg-group-pair-weight, which strips the priority band
+        ;; (compiler-reg-priority-keys!). Weights 1 and 10 on that scale.
         (reg.compiler-reg-fill-i64-array
           (reg.compiler-reg-global-shared-view weights)
-          1)
-        (set! (array-ref weights 0) 10)
+          (reg.compiler-reg-priority-band-span))
+        (set!
+          (array-ref weights 0)
+          (* 10 (reg.compiler-reg-priority-band-span)))
         (let
           [v : i64 0]
           (while (< v vars)
@@ -12613,6 +12948,14 @@
       (compiler-reg-color-step-witness-ok?)
       "an induction step joins its counter's web on the same witness a Mov gets, and a counter that outlives the step is refused")))
 
+(cfg
+  test
+  (test
+    regalloc-scalar-web-witness-chain
+    (test.assert-true
+      (compiler-reg-color-witness-chain-ok?)
+      "a chain of witnessed touches collapses into one slot, and a step that outlives its copy is refused")))
+
 ;; M-B2 scalar phi-web slot sharing. Both cases hand the colorer the SAME plan
 ;; intervals -- deliberately overlapping, which is what the conservative model
 ;; produces for a phi and its input, because it counts the input as live AT the
@@ -12976,6 +13319,158 @@
               ;; A counter still live past its step keeps its own home.
               (> live-slots 1)
               (not (= (array-ref live-remap 0) (array-ref live-remap 1))))]
+          [(reg.CompilerRegColoring.None) false])]
+      [(reg.CompilerRegColoring.None) false])))
+
+;; R4-C: the witness RELATION, not a single witnessed pair. Modelled on
+;; intern_table's it-bench accumulator block:
+;;
+;;   header: %0 = phi [%3 latch], [%4 entry]     the carry
+;;   body:   %1 = mul %0, 3                      witness (%0 -> %1)
+;;           %2 = add %1, 5                      witness (%1 -> %2)
+;;           %3 = mov %2                         witness (%2 -> %3)
+;;
+;; The phi visit joins %3 to the carry first, so when %2 is offered through the
+;; ADD witness the all-pairs walk meets the %2/%3 touch -- a pair with a witness
+;; of its own, but not the one being offered. The old single-pair rule refused
+;; it there, and offering %2 again through the MOV witness met the %1/%2 touch
+;; and refused it again, so the add's result took a second slot and the block
+;; stored one register to two slots every iteration.
+;;
+;; `outlives` is the negative: `exit` returns %2, so %2 is still live where %3
+;; is defined, the endpoint equality that carries the witness no longer holds,
+;; and %2 must keep its own home.
+(cfg
+  test
+  (define (compiler-reg-color-witness-chain-blocks [outlives : bool]) : ir.CompilerIrBlockList
+    (ir.compiler-ir-block-cons
+      (ir.CompilerIrBlock.Block
+        (ir.compiler-ir-label "entry")
+        (compiler-reg-test-instr-seq-prepend
+          (ir.CompilerIrInstr.Mov
+            4
+            (ir.CompilerIrValue.I64 0)
+            (compiler-reg-i64-ty))
+          (compiler-reg-test-instr-seq-prepend
+            (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "header"))
+            (ir.compiler-ir-instr-seq-empty))))
+      (ir.compiler-ir-block-cons
+        (ir.CompilerIrBlock.Block
+          (ir.compiler-ir-label "header")
+          (compiler-reg-test-instr-seq-prepend
+            (ir.CompilerIrInstr.Phi
+              0
+              (ir.compiler-ir-phi-input-cons
+                (ir.CompilerIrValue.Var 3)
+                (ir.compiler-ir-label "latch")
+                (ir.compiler-ir-phi-input-cons
+                  (ir.CompilerIrValue.Var 4)
+                  (ir.compiler-ir-label "entry")
+                  ir.CompilerIrPhiInputList.Nil))
+              (compiler-reg-i64-ty))
+            (compiler-reg-test-instr-seq-prepend
+              (ir.CompilerIrInstr.Branch
+                (ir.CompilerIrValue.Var 0)
+                (ir.compiler-ir-label "body")
+                (ir.compiler-ir-label "exit"))
+              (ir.compiler-ir-instr-seq-empty))))
+        (ir.compiler-ir-block-cons
+          (ir.CompilerIrBlock.Block
+            (ir.compiler-ir-label "body")
+            (compiler-reg-test-instr-seq-prepend
+              (ir.CompilerIrInstr.BinOp
+                1
+                (ir.CompilerIrBinOp.Mul)
+                (ir.CompilerIrValue.Var 0)
+                (ir.CompilerIrValue.I64 3)
+                (compiler-reg-i64-ty))
+              (compiler-reg-test-instr-seq-prepend
+                (ir.CompilerIrInstr.BinOp
+                  2
+                  (ir.CompilerIrBinOp.Add)
+                  (ir.CompilerIrValue.Var 1)
+                  (ir.CompilerIrValue.I64 5)
+                  (compiler-reg-i64-ty))
+                (compiler-reg-test-instr-seq-prepend
+                  (ir.CompilerIrInstr.Mov
+                    3
+                    (ir.CompilerIrValue.Var 2)
+                    (compiler-reg-i64-ty))
+                  (compiler-reg-test-instr-seq-prepend
+                    (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "latch"))
+                    (ir.compiler-ir-instr-seq-empty))))))
+          (ir.compiler-ir-block-cons
+            (ir.CompilerIrBlock.Block
+              (ir.compiler-ir-label "latch")
+              (compiler-reg-test-instr-seq-prepend
+                (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "header"))
+                (ir.compiler-ir-instr-seq-empty)))
+            (ir.compiler-ir-block-cons
+              (ir.CompilerIrBlock.Block
+                (ir.compiler-ir-label "exit")
+                (compiler-reg-test-instr-seq-prepend
+                  (ir.CompilerIrInstr.Return
+                    (ir.CompilerIrMaybeValue.Some
+                      (if outlives
+                        (ir.CompilerIrValue.Var 2)
+                        (ir.CompilerIrValue.I64 0))))
+                  (ir.compiler-ir-instr-seq-empty)))
+              ir.CompilerIrBlockList.Nil)))))))
+
+;; Deliberately overlapping conservative intervals, as in the fixtures above:
+;; the ordinary disjoint-interval walk can share nothing, so every merge in the
+;; result is the web logic's doing.
+(cfg
+  test
+  (define (compiler-reg-color-witness-chain-intervals) : reg.CompilerRegIntervalSeq
+    (reg.compiler-reg-interval-seq-prepend
+      (reg.CompilerRegInterval 0 0 20)
+      (reg.compiler-reg-interval-seq-prepend
+        (reg.CompilerRegInterval 1 1 20)
+        (reg.compiler-reg-interval-seq-prepend
+          (reg.CompilerRegInterval 2 2 20)
+          (reg.compiler-reg-interval-seq-prepend
+            (reg.CompilerRegInterval 3 3 20)
+            (reg.compiler-reg-interval-seq-prepend
+              (reg.CompilerRegInterval 4 4 20)
+              (reg.compiler-reg-interval-seq-empty))))))))
+
+(cfg
+  test
+  (define (compiler-reg-color-witness-chain-coloring [outlives : bool]) : reg.CompilerRegColoring
+    (reg.compiler-reg-color-stack-slots
+      (ast.ast-node-pool-reader-type-segment-bases)
+      (reg.CompilerRegPlan.Plan
+        (compiler-reg-color-spill-sharing-assignments 5)
+        (live.compiler-live-set-empty)
+        (compiler-reg-color-witness-chain-intervals)
+        (compiler-reg-color-spill-sharing-types 5)
+        (reg.compiler-reg-call-split-empty)
+        (reg.compiler-reg-split-plan-empty))
+      (live.compiler-live-set-empty)
+      ir.CompilerIrParamList.Nil
+      (compiler-reg-color-witness-chain-blocks outlives)
+      5
+      5
+      (live.compiler-live-set-empty))))
+
+(cfg
+  test
+  (define (compiler-reg-color-witness-chain-ok?) : bool
+    (match (compiler-reg-color-witness-chain-coloring false)
+      [(reg.CompilerRegColoring.Remap chain-remap chain-slots)
+        (match (compiler-reg-color-witness-chain-coloring true)
+          [(reg.CompilerRegColoring.Remap live-remap live-slots)
+            (and
+              ;; Seed, carry, both steps and the back-edge copy share ONE slot.
+              (= chain-slots 1)
+              (= (array-ref chain-remap 0) (array-ref chain-remap 1))
+              (= (array-ref chain-remap 0) (array-ref chain-remap 2))
+              (= (array-ref chain-remap 0) (array-ref chain-remap 3))
+              (= (array-ref chain-remap 0) (array-ref chain-remap 4))
+              ;; A step still live where the copy is defined keeps its own home.
+              (> live-slots 1)
+              (not (= (array-ref live-remap 2) (array-ref live-remap 3))))]
           [(reg.CompilerRegColoring.None) false])]
       [(reg.CompilerRegColoring.None) false])))
 
@@ -14454,7 +14949,18 @@
         [(reg.CompilerRegAssignState.State _ out)
           (and
             (= (array-ref weights 0) 3)
-            (= (array-ref weights 1) 4)
+            ;; R1 scale: the pseudo's demand (1) is combined with the
+            ;; compressed raw tie-break against the same radix (max raw = 1) as a
+            ;; real value's, given the one-unit tie-break, and enqueued in the
+            ;; GLOBAL priority band.
+            (=
+              (array-ref weights 1)
+              (let
+                [span : i64 (reg.compiler-reg-greedy-combine-tie-span)]
+                [priced : i64 (+ (+ span (/ span 2)) 1)]
+                (+
+                  (* priced (reg.compiler-reg-priority-band-span))
+                  (- (reg.compiler-reg-priority-band-span) 1))))
             (compiler-reg-location-spill-offset?
               (reg.compiler-reg-assignment-table-lookup out 0)
               (reg.compiler-reg-stack-slot-offset 0))
@@ -14484,8 +14990,10 @@
     [excluded : (__tl_dyn-array reg.CompilerRegIdSeq)
       (__tl_make-array reg.CompilerRegIdSeq 2)]
     (begin
-      (set! (array-ref weights 0) 1)
-      (set! (array-ref weights 1) 2)
+      ;; Greedy worklist keys (weight * band span + band), not bare weights:
+      ;; the eviction gate strips the band with compiler-reg-priority-key-weight.
+      (set! (array-ref weights 0) (reg.compiler-reg-priority-band-span))
+      (set! (array-ref weights 1) (* 2 (reg.compiler-reg-priority-band-span)))
       (reg.compiler-reg-fill-i64-array
         (reg.compiler-reg-global-shared-view hints)
         -1)
@@ -21636,6 +22144,21 @@
       "compiler-reg-remat-classifier-ok?"
       (cfg test (compiler-reg-remat-classifier-ok?) true))
     (compiler-regalloc-self-test-require!
+      "compiler-reg-invariant-word-load-admitted-ok?"
+      (cfg test (compiler-reg-invariant-word-load-admitted-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-invariant-field-store-refused-ok?"
+      (cfg test (compiler-reg-invariant-field-store-refused-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-invariant-call-refused-ok?"
+      (cfg test (compiler-reg-invariant-call-refused-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-invariant-recipe-ok?"
+      (cfg test (compiler-reg-invariant-recipe-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-invariant-base-availability-ok?"
+      (cfg test (compiler-reg-invariant-base-availability-ok?) true))
+    (compiler-regalloc-self-test-require!
       "compiler-reg-remat-recompute-classifier-ok?"
       (cfg test (compiler-reg-remat-recompute-classifier-ok?) true))
     (compiler-regalloc-self-test-require!
@@ -21782,6 +22305,9 @@
     (compiler-regalloc-self-test-require!
       "compiler-reg-color-carry-priority-ok?"
       (cfg test (compiler-reg-color-carry-priority-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-color-witness-chain-ok?"
+      (cfg test (compiler-reg-color-witness-chain-ok?) true))
     (compiler-regalloc-self-test-require!
       "compiler-reg-color-spill-param-pins-ok?"
       (compiler-reg-color-spill-param-pins-ok?))

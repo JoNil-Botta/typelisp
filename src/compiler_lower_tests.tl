@@ -16970,9 +16970,9 @@
     "scalar lowering preserves independent u8/u64 shift count payloads"))
 
 ;; Structural borrowed-slice references use two integer words end-to-end while
-;; ordinary references retain their one-word pointer representation.  Build the
-;; types directly in a private pool so this test does not depend on public Slice
-;; syntax (which is intentionally opened in a later packet).
+;; ordinary references, including references to raw-pointer values, retain
+;; their one-word pointer representation. Build the types directly in a private
+;; pool so this test does not depend on public Slice syntax.
 (define (compiler-lower-slice-reference-layout-ok?) : bool
   (let
     [active-before : compiler_ast_types.AstNodePoolContext
@@ -17003,12 +17003,24 @@
       (compiler_ast_types.ast-node-pool-context-type-push
         (owned_view.compiler-owned-shared-view pools)
         (compiler_ast_types.AstType.I64))]
+    [pointer-id : i64
+      (compiler_ast_types.ast-node-pool-context-type-push
+        (owned_view.compiler-owned-shared-view pools)
+        (compiler_ast_types.AstType.Ptr elem-id))]
+    [mutable-pointer-id : i64
+      (compiler_ast_types.ast-node-pool-context-type-push
+        (owned_view.compiler-owned-shared-view pools)
+        (compiler_ast_types.AstType.MutPtr elem-id))]
     [ref : compiler_ast_types.AstType
       (compiler_ast_types.AstType.Ref 1 slice-id)]
     [mut-ref : compiler_ast_types.AstType
       (compiler_ast_types.AstType.MutRef 1 region-slice-id)]
     [ordinary-ref : compiler_ast_types.AstType
       (compiler_ast_types.AstType.Ref 1 ordinary-id)]
+    [pointer-ref : compiler_ast_types.AstType
+      (compiler_ast_types.AstType.Ref 1 pointer-id)]
+    [mutable-pointer-ref : compiler_ast_types.AstType
+      (compiler_ast_types.AstType.Ref 1 mutable-pointer-id)]
     [nested-ref : compiler_ast_types.AstType
       (compiler_ast_types.AstType.Ref 1 nested-slice-id)]
     [bare-slice : compiler_ast_types.AstType
@@ -17092,6 +17104,21 @@
               (compiler_typecheck_core.tc-global-shared-view ctx)
               (owned_view.compiler-owned-shared-view ordinary-ref))
             0)
+          (=
+            (compiler_lower.lower-type-size
+              (compiler_typecheck_core.tc-global-shared-view ctx)
+              (owned_view.compiler-owned-shared-view pointer-ref))
+            8)
+          (not
+            (compiler_lower.lower-type-register-resident?
+              (compiler_typecheck_core.tc-global-shared-view ctx)
+              (owned_view.compiler-owned-shared-view pointer-ref)))
+          (compiler_lower.lower-supported-reference-type?
+            (compiler_typecheck_core.tc-global-shared-view ctx)
+            (owned_view.compiler-owned-shared-view pointer-ref))
+          (compiler_lower.lower-supported-reference-type?
+            (compiler_typecheck_core.tc-global-shared-view ctx)
+            (owned_view.compiler-owned-shared-view mutable-pointer-ref))
           (=
             (compiler_lower.lower-type-size
               (compiler_typecheck_core.tc-global-shared-view ctx)

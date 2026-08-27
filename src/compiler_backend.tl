@@ -2240,8 +2240,14 @@
   3)
 (define compiler-backend-scratch-bool-const-hoist-frame-rbx : i64
   4)
-(define compiler-backend-scratch-bool-count : i64
+
+;; R4-B: is the instruction currently being emitted one whose spilled def may
+;; stage through a register found free only over the NARROW window? See
+;; compiler-backend-instr-staging-narrow-ok?.
+(define compiler-backend-scratch-bool-instr-staging-narrow-ok : i64
   5)
+(define compiler-backend-scratch-bool-count : i64
+  6)
 (define compiler-backend-scratch-i64-array-emergency-regs : i64
   0)
 (define compiler-backend-scratch-i64-array-const-hoist-site-points : i64
@@ -13914,7 +13920,7 @@
             (compiler-backend-three-exclude
               (compiler-backend-global-shared-view mask-home)
               (compiler-backend-global-shared-view true-home)
-              false-home)
+              (compiler-backend-global-shared-view false-home))
             3
             "%rax"
             backend-state))]
@@ -13951,12 +13957,20 @@
               type-segment-bases
               (compiler-backend-global-shared-view conditional-reg)
               (compiler-backend-global-shared-view cmov-ty))))]
+      ;; SS-P5(c): the `cmov` is a two-address move whose destination already
+      ;; holds the false value whenever the allocator homed the result where
+      ;; the false operand lives -- the base copy is then `movq %rX, %rX` and
+      ;; is dropped outright rather than left to the load helper.
       [base-asm : String
-        (compiler-backend-load-value-asm
-          (compiler-backend-global-shared-view assignments)
-          on-false
-          (compiler-backend-global-shared-view result-reg)
-          backend-state)]
+        (if (and
+          (not (string.eq false-home ""))
+          (string.eq false-home result-reg))
+          ""
+          (compiler-backend-load-value-asm
+            (compiler-backend-global-shared-view assignments)
+            (compiler-backend-global-shared-view on-false)
+            (compiler-backend-global-shared-view result-reg)
+            backend-state))]
       [conditional-asm : String
         (if conditional-direct?
           ""
@@ -14019,6 +14033,389 @@
             dst
             result-reg
             backend-state))))))
+
+;; True when a register a fused select may write is safe: it exists and is
+;; neither of the two comparison operand homes whose values the `cmp` still has
+;; to read.
+(define (compiler-backend-flags-select-reg-ok?
+  [reg : String]
+  [dest-reg : String]
+  [guard-b : String]) : bool
+  (and
+    (not (string.eq reg ""))
+    (not (string.eq reg dest-reg))
+    (not (string.eq reg guard-b))))
+
+;; The fused select's register choice in its two forms. `peek?` is the PURE
+;; twin used by the admission test (compiler-backend-scavenge-reg-peek is
+;; documented as side-effect-free and returns what the committing call will);
+;; the committing form books the emergency save/restore and the planned
+;; preservation exactly as compiler-backend-planned-or-scavenge-reg does. A
+;; missing modelled scratch under scratch-vreg returns "" -- the admission test
+;; reads that as a decline instead of inventing a register the plan never
+;; reserved.
+(define (compiler-backend-flags-select-reg
+  [peek? : bool]
+  [planned : String]
+  [dst : i64]
+  [exclude : (__tl_dyn-array String)]
+  [exclude-n : i64]
+  [fallback : String]
+  [backend-state : CompilerBackendState]) : String
+  (if (string.eq planned "")
+    (if (compiler-backend-scratch-vreg-enabled?)
+      ""
+      (if peek?
+        (compiler-backend-scavenge-reg-peek
+          dst
+          exclude
+          exclude-n
+          fallback
+          backend-state)
+        (compiler-backend-scavenge-reg
+          dst
+          exclude
+          exclude-n
+          fallback
+          backend-state)))
+    (if peek?
+      planned
+      (begin
+        (compiler-backend-preserve-planned-register!
+          (compiler-backend-global-shared-view planned)
+          backend-state)
+        planned))))
+
+;; SS-P5(b) / VG-P-B: a scalar Select whose mask is the comparison IMMEDIATELY
+;; in front of it and is wanted nowhere else. The mask never becomes a value:
+;; the select's operands are staged first, the comparison then sets EFLAGS, and
+;; a single `cmov<cc>` reads them --
+;;
+;;     cmpq %rcx, %rdx ; movq %rcx, %r15 ; cmovb %rdx, %r15
+;;
+;; where the materialising form spends seven instructions re-deriving the same
+;; condition through a register:
+;;
+;;     movq %rdx, %rax ; cmpq %rcx, %rax ; setb %al ; movzbq %al, %rax ;
+;;     movq %rcx, %r15 ; testq %rax, %rax ; cmovne %rdx, %r15
+;;
+;; CLOBBER SAFETY -- which is the whole of the admission test. Two things must
+;; hold.
+;;
+;; (1) Nothing may write EFLAGS between the `cmp` and the `cmov`. This path
+;;     emits NOTHING between them, so it holds structurally; there is no
+;;     sequence to reason about.
+;;
+;; (2) Nothing emitted BEFORE the `cmp` may disturb the comparison's operands.
+;;     The only instructions ahead of the `cmp` are the two operand stages, and
+;;     the only registers they write are `result-reg` and (when the true
+;;     operand needs staging at all) `conditional-reg`. Memory operands and
+;;     immediates write nothing. So it suffices that neither register is a
+;;     comparison operand home, and that is enforced twice over: both homes go
+;;     into the scavenge exclusion set, AND the register that comes back is
+;;     re-checked against them -- necessary because a PLANNED scratch ignores
+;;     the exclusion set, and the allocator may legitimately hand out a
+;;     comparison operand's register when that operand dies at the comparison.
+;;
+;; Both comparison operands must additionally be register-homed or immediates,
+;; so the comparison stages nothing of its own and really is one instruction.
+;; `result-reg` must also differ from the true operand's home, because the
+;; false value is written into it before the `cmov` reads the true one; and the
+;; two staging registers must differ from each other.
+;;
+;; Every failure returns `No` and the caller emits the ordinary materialising
+;; form, so nothing is lost when the shape does not fit. The peeked (pure)
+;; register queries mean a decline never leaves a booked emergency save behind.
+(define (compiler-backend-emit-select-on-flags
+  [type-segment-bases : i64]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [dst : i64]
+  [on-true : compiler_ir_types.CompilerIrValue]
+  [on-false : compiler_ir_types.CompilerIrValue]
+  [ty : compiler_ast_types.AstType]
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [cmp-lhs : compiler_ir_types.CompilerIrValue]
+  [cmp-rhs : compiler_ir_types.CompilerIrValue]
+  [cmp-ty : compiler_ast_types.AstType]
+  [planned-result : String]
+  [planned-value : String]
+  [backend-state : CompilerBackendState]) : CompilerBackendMaybeAsm
+  (if (not
+    (compiler-backend-intlike-scalar-type?
+      (compiler-backend-global-shared-view ty)))
+    (CompilerBackendMaybeAsm.No)
+    (let
+      [lhs-home : String
+        (compiler-backend-value-scalar-register-home
+          backend-state
+          (compiler-backend-global-shared-view assignments)
+          (compiler-backend-global-shared-view cmp-lhs))]
+      [rhs-home : String
+        (compiler-backend-value-scalar-register-home
+          backend-state
+          (compiler-backend-global-shared-view assignments)
+          (compiler-backend-global-shared-view cmp-rhs))]
+      [lhs-immediate : String
+        (match (compiler-backend-immediate-operand
+          backend-state
+          (compiler-backend-global-shared-view cmp-lhs))
+          [(CompilerBackendMaybeImmediate.Some text) text]
+          [(CompilerBackendMaybeImmediate.No) ""])]
+      [rhs-immediate : String
+        (match (compiler-backend-immediate-operand
+          backend-state
+          (compiler-backend-global-shared-view cmp-rhs))
+          [(CompilerBackendMaybeImmediate.Some text) text]
+          [(CompilerBackendMaybeImmediate.No) ""])]
+      ;; x86 spells the immediate as the SOURCE of `cmp`, so an immediate on
+      ;; the IR's left is taken by reversing the predicate against the register
+      ;; right -- the same exchange the compare/branch lowering performs.
+      [swap? : bool
+        (and
+          (string.eq lhs-home "")
+          (not (string.eq lhs-immediate ""))
+          (not (string.eq rhs-home "")))]
+      [cmov : String
+        (compiler-backend-compare-cmov
+          (if swap?
+            (compiler-backend-compare-swapped-op op)
+            op)
+          (compiler-backend-global-shared-view cmp-ty))]
+      [dest-reg : String
+        (if swap?
+          rhs-home
+          lhs-home)]
+      [source-operand : String
+        (if swap?
+          lhs-immediate
+          (if (not (string.eq rhs-home ""))
+            (compiler-backend-sized-reg
+              type-segment-bases
+              (compiler-backend-global-shared-view rhs-home)
+              (compiler-backend-global-shared-view cmp-ty))
+            rhs-immediate))]
+      ;; The comparison's live operand homes are `dest-reg` (always a register)
+      ;; and, when the source is not an immediate, the source register. A copy
+      ;; is taken because the binding would otherwise move the home out of the
+      ;; operand spellings above.
+      [guard-b : String
+        (if swap?
+          ""
+          (string.copy rhs-home))]
+      [dst-home : String
+        (compiler-backend-value-scalar-register-home
+          backend-state
+          (compiler-backend-global-shared-view assignments)
+          (compiler_ir_types.CompilerIrValue.Var dst))]
+      [true-home : String
+        (compiler-backend-value-scalar-register-home
+          backend-state
+          (compiler-backend-global-shared-view assignments)
+          (compiler-backend-global-shared-view on-true))]
+      [false-home : String
+        (compiler-backend-value-scalar-register-home
+          backend-state
+          (compiler-backend-global-shared-view assignments)
+          (compiler-backend-global-shared-view on-false))]
+      ;; x86 conditional moves have no byte form. Use the full GP home for byte
+      ;; and Bool selects; all typed consumers observe the low byte.
+      [cmov-ty : compiler_ast_types.AstType
+        (if (=
+          (compiler-backend-type-size
+            type-segment-bases
+            (compiler-backend-global-shared-view ty))
+          1)
+          (compiler_ast_types.AstType.U64)
+          (compiler-backend-global-shared-view ty))]
+      ;; The mask is gone, so the result may take its own home even where the
+      ;; materialising form had to step around the mask's register. Taking
+      ;; dst-home is also what makes SS-P5(c) reachable: when the allocator
+      ;; homed the result where the false operand lives, the base copy is gone.
+      ;;
+      ;; That last case is also the one exception to the "not a comparison
+      ;; operand home" rule, and it is not really an exception: when the result
+      ;; register IS the false operand's home the base copy is elided, so
+      ;; NOTHING is written ahead of the `cmp` and there is no clobber to
+      ;; avoid. `min(a, b)` reaches this on every call -- the false arm and the
+      ;; comparison's right operand are the same value.
+      [use-dst-home? : bool
+        (and
+          (not (string.eq dst-home ""))
+          (not (string.eq dst-home true-home))
+          (or
+            (and
+              (not (string.eq false-home ""))
+              (string.eq dst-home false-home))
+            (and
+              (not (string.eq dst-home dest-reg))
+              (not (string.eq dst-home guard-b)))))]
+      [result-exclude : (__tl_dyn-array String)
+        (compiler-backend-four-exclude
+          (compiler-backend-global-shared-view true-home)
+          (compiler-backend-global-shared-view false-home)
+          (compiler-backend-global-shared-view dest-reg)
+          (compiler-backend-global-shared-view guard-b))]
+      [result-peek : String
+        (if use-dst-home?
+          dst-home
+          (compiler-backend-flags-select-reg
+            true
+            (compiler-backend-global-shared-view planned-result)
+            dst
+            (compiler-backend-global-shared-view result-exclude)
+            4
+            "%rax"
+            backend-state))]
+      [conditional-address : String
+        (compiler-backend-value-read-memory-operand
+          (compiler-backend-global-shared-view assignments)
+          (compiler-backend-global-shared-view on-true)
+          backend-state)]
+      [conditional-direct? : bool
+        (or
+          (not (string.eq true-home ""))
+          (not (string.eq conditional-address "")))]
+      [conditional-exclude : (__tl_dyn-array String)
+        (compiler-backend-four-exclude
+          (compiler-backend-global-shared-view result-peek)
+          (compiler-backend-global-shared-view false-home)
+          (compiler-backend-global-shared-view dest-reg)
+          (compiler-backend-global-shared-view guard-b))]
+      [conditional-peek : String
+        (if conditional-direct?
+          ""
+          (compiler-backend-flags-select-reg
+            true
+            (compiler-backend-global-shared-view planned-value)
+            dst
+            (compiler-backend-global-shared-view conditional-exclude)
+            4
+            "%r8"
+            backend-state))]
+      [admissible? : bool
+        (and
+          (not (string.eq cmov ""))
+          (not (string.eq dest-reg ""))
+          (not (string.eq source-operand ""))
+          (or
+            (and
+              (not (string.eq result-peek ""))
+              (not (string.eq false-home ""))
+              (string.eq result-peek false-home))
+            (compiler-backend-flags-select-reg-ok?
+              (compiler-backend-global-shared-view result-peek)
+              (compiler-backend-global-shared-view dest-reg)
+              (compiler-backend-global-shared-view guard-b)))
+          (or
+            conditional-direct?
+            (and
+              (compiler-backend-flags-select-reg-ok?
+                (compiler-backend-global-shared-view conditional-peek)
+                (compiler-backend-global-shared-view dest-reg)
+                (compiler-backend-global-shared-view guard-b))
+              (not (string.eq conditional-peek result-peek)))))]
+      (if (not admissible?)
+        (CompilerBackendMaybeAsm.No)
+        (let
+          [result-reg : String
+            (if use-dst-home?
+              (compiler-backend-global-shared-view dst-home)
+              (compiler-backend-flags-select-reg
+                false
+                (compiler-backend-global-shared-view planned-result)
+                dst
+                (compiler-backend-global-shared-view result-exclude)
+                4
+                "%rax"
+                backend-state))]
+          [conditional-reg : String
+            (if conditional-direct?
+              ""
+              (compiler-backend-flags-select-reg
+                false
+                (compiler-backend-global-shared-view planned-value)
+                dst
+                (compiler-backend-global-shared-view conditional-exclude)
+                4
+                "%r8"
+                backend-state))]
+          ;; The two register queries above are the committing twins of the
+          ;; peeks the admission test read, so they must answer the same. The
+          ;; only thing that runs between the peeks and the commits is the
+          ;; result commit itself, and the emergency booking it may perform
+          ;; touches the save SET, not the occupancy the pick reads. Assert it
+          ;; rather than assume it: a divergence would mean the emission was
+          ;; admitted on registers it did not get, which is precisely the
+          ;; clobber this path exists to avoid, and it must never be silent.
+          [_twin-check : unit
+            (if (and
+              (string.eq
+                (compiler-backend-global-shared-view result-reg)
+                (compiler-backend-global-shared-view result-peek))
+              (string.eq
+                (compiler-backend-global-shared-view conditional-reg)
+                (compiler-backend-global-shared-view conditional-peek)))
+              unit
+              (io.panic
+                "backend: select-on-flags register peek/commit divergence"))]
+          [conditional-operand : String
+            (if (not (string.eq true-home ""))
+              (compiler-backend-sized-reg
+                type-segment-bases
+                (compiler-backend-global-shared-view true-home)
+                (compiler-backend-global-shared-view cmov-ty))
+              (if (not (string.eq conditional-address ""))
+                (compiler-backend-global-shared-view conditional-address)
+                (compiler-backend-sized-reg
+                  type-segment-bases
+                  (compiler-backend-global-shared-view conditional-reg)
+                  (compiler-backend-global-shared-view cmov-ty))))]
+          ;; SS-P5(c).
+          [base-asm : String
+            (if (and
+              (not (string.eq false-home ""))
+              (string.eq false-home result-reg))
+              ""
+              (compiler-backend-load-value-asm
+                (compiler-backend-global-shared-view assignments)
+                (compiler-backend-global-shared-view on-false)
+                (compiler-backend-global-shared-view result-reg)
+                backend-state))]
+          [conditional-asm : String
+            (if conditional-direct?
+              ""
+              (compiler-backend-load-value-asm
+                (compiler-backend-global-shared-view assignments)
+                (compiler-backend-global-shared-view on-true)
+                (compiler-backend-global-shared-view conditional-reg)
+                backend-state))]
+          (CompilerBackendMaybeAsm.Some
+            (str_cat.str-cat
+              base-asm
+              conditional-asm
+              (compiler-backend-binop-cmp-reg-asm
+                type-segment-bases
+                (compiler-backend-global-shared-view cmp-ty)
+                (compiler-backend-global-shared-view source-operand)
+                (compiler-backend-sized-reg
+                  type-segment-bases
+                  (compiler-backend-global-shared-view dest-reg)
+                  (compiler-backend-global-shared-view cmp-ty)))
+              "    "
+              cmov
+              " "
+              conditional-operand
+              ", "
+              (compiler-backend-sized-reg
+                type-segment-bases
+                (compiler-backend-global-shared-view result-reg)
+                (compiler-backend-global-shared-view cmov-ty))
+              "\n"
+              (compiler-backend-emit-store-var-with-plan
+                (compiler-backend-global-shared-view assignments)
+                dst
+                (compiler-backend-global-shared-view result-reg)
+                backend-state))))))))
 
 (define (compiler-backend-emit-select
   [type-segment-bases : i64]
@@ -21428,6 +21825,7 @@
           (compiler-backend-scavenge-pick-with-mask
             backend-state
             (compiler-backend-state-function-state backend-state)
+            0
             0
             exclude
             exclude-n
@@ -33003,6 +33401,37 @@
     [(compiler_ir_types.CompilerIrBinOp.BitTestNe) "je"]
     [_ ""]))
 
+;; SS-P5(b) / VG-P-B: the `cmov` mnemonic that reads a comparison's own flags.
+;; `cmov<cc>` and `j<cc>` name the SAME condition codes, so this is the branch
+;; table above with the mnemonic prefix exchanged and it inherits its
+;; signed/unsigned split unchanged -- an unsigned `lt` is `jb`/`cmovb`, a signed
+;; one `jl`/`cmovl`. The two bit-test predicates are deliberately absent: their
+;; flags come from `bt`/`test`, not from the `cmp` the select-on-flags path
+;; emits, and "" is that path's decline.
+(define (compiler-backend-compare-cmov
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [ty : compiler_ast_types.AstType]) : String
+  (match op
+    [(compiler_ir_types.CompilerIrBinOp.Eq) "cmove"]
+    [(compiler_ir_types.CompilerIrBinOp.Ne) "cmovne"]
+    [(compiler_ir_types.CompilerIrBinOp.Lt)
+      (if (compiler-backend-unsigned-rel-ty? ty)
+        "cmovb"
+        "cmovl")]
+    [(compiler_ir_types.CompilerIrBinOp.Le)
+      (if (compiler-backend-unsigned-rel-ty? ty)
+        "cmovbe"
+        "cmovle")]
+    [(compiler_ir_types.CompilerIrBinOp.Gt)
+      (if (compiler-backend-unsigned-rel-ty? ty)
+        "cmova"
+        "cmovg")]
+    [(compiler_ir_types.CompilerIrBinOp.Ge)
+      (if (compiler-backend-unsigned-rel-ty? ty)
+        "cmovae"
+        "cmovge")]
+    [_ ""]))
+
 ;; x86 encodes an immediate only as the source of cmp.  When the IR puts the
 ;; immediate on the LHS, reverse the predicate and compare it directly against
 ;; the register RHS instead of materialising it in a scavenged register.
@@ -34737,24 +35166,49 @@
 
 ;; GAP9 disp-aware staged address: compose base+index*scale as before, then
 ;; add the folded displacement into the base register.
+;;
+;; SS-P5(a): when the scale is one the SIB byte can spell, the displacement is
+;; the SIB form's OWN field -- `leaq D(base,index,s), base` is the whole of
+;; `leaq (base,index,s), base ; addq $D, base`, and for scale 1 the whole of
+;; `addq index, base ; addq $D, base`. The fold needs D to fit the signed
+;; 32-bit displacement field; anything wider keeps the two-instruction form,
+;; where the `addq $D` at least reaches the imm32-or-wider encodings the
+;; assembler picks.
 (define (compiler-backend-gep-index-base-asm-disp
   [disp : i64]
   [base-reg : String]
   [scale : i64]
   [index-reg : String]) : String
-  (let
-    [tail : String
-      (if (= disp 0)
-        ""
-        (str_cat.str-cat
-          "    addq $"
-          (string.int->string disp)
-          ", "
-          (compiler-backend-global-shared-view base-reg)
-          "\n"))]
+  (if (and
+    (not (= disp 0))
+    (compiler-backend-gep-sib-scale? scale)
+    (compiler-backend-imm32? disp))
     (str_cat.str-cat
-      (compiler-backend-gep-index-base-asm base-reg scale index-reg)
-      tail)))
+      "    leaq "
+      (compiler-backend-gep-index-address-disp
+        disp
+        (compiler-backend-global-shared-view base-reg)
+        scale
+        (compiler-backend-global-shared-view index-reg))
+      ", "
+      base-reg
+      "\n")
+    (let
+      [tail : String
+        (if (= disp 0)
+          ""
+          (str_cat.str-cat
+            "    addq $"
+            (string.int->string disp)
+            ", "
+            (compiler-backend-global-shared-view base-reg)
+            "\n"))]
+      (str_cat.str-cat
+        (compiler-backend-gep-index-base-asm
+          (compiler-backend-global-shared-view base-reg)
+          scale
+          (compiler-backend-global-shared-view index-reg))
+        tail))))
 
 (define (compiler-backend-gep-index-address
   [base-reg : String]
@@ -35016,6 +35470,23 @@
               backend-state
               (compiler-backend-global-shared-view assignments)
               (compiler-backend-global-shared-view offset))]
+          ;; SS-P5(a): the index only ever needs a staging register when the
+          ;; index-composing form WRITES it. `addq idx, base` (scale 1) and
+          ;; `leaq disp(base,idx,s), base` (scale 2/4/8) both READ the index and
+          ;; write only the base, so a register-homed index goes straight into
+          ;; the SIB/add slot and the `movq %rX, %r8` staging copy disappears.
+          ;; The non-SIB scales are excluded because their composition
+          ;; (`shlq $c, idx` / `imulq $c, idx`) scales the index IN PLACE and
+          ;; would destroy the live home; a spilled index has no home to use;
+          ;; and %rbp is refused for the same reason GAP7 refuses it as a base,
+          ;; keeping every staged address off the frame register. `avoid1` and
+          ;; `avoid2` need no test: they name registers this emitter must not
+          ;; WRITE, and the index is only ever read.
+          [direct-index? : bool
+            (and
+              (not (string.eq offset-home ""))
+              (not (string.eq offset-home "%rbp"))
+              (compiler-backend-gep-sib-scale? scale))]
           [use-dst-home? : bool
             (and
               (not (string.eq dst-home ""))
@@ -35035,34 +35506,41 @@
                 planned-address
                 dst
                 (compiler-backend-three-exclude
-                  offset-home
+                  (compiler-backend-global-shared-view offset-home)
                   (compiler-backend-global-shared-view avoid1)
                   (compiler-backend-global-shared-view avoid2))
                 3
                 "%r10"
                 backend-state))]
+          ;; result-reg is never offset-home (use-dst-home? refuses it, and the
+          ;; scavenge excludes it), so loading the base cannot disturb the index
+          ;; this path is about to read.
           [scav-idx : String
-            (compiler-backend-planned-or-scavenge-reg
-              planned-index
-              dst
-              (compiler-backend-three-exclude
-                (compiler-backend-global-shared-view result-reg)
-                (compiler-backend-global-shared-view avoid1)
-                (compiler-backend-global-shared-view avoid2))
-              3
-              "%r8"
-              backend-state)]
+            (if direct-index?
+              offset-home
+              (compiler-backend-planned-or-scavenge-reg
+                planned-index
+                dst
+                (compiler-backend-three-exclude
+                  (compiler-backend-global-shared-view result-reg)
+                  (compiler-backend-global-shared-view avoid1)
+                  (compiler-backend-global-shared-view avoid2))
+                3
+                "%r8"
+                backend-state))]
           (match (compiler-backend-emit-load-value-with-plan
             (compiler-backend-global-shared-view assignments)
             base
             (compiler-backend-global-shared-view result-reg)
             backend-state)
             [(ResultCompilerBackend.Ok base-asm)
-              (match (compiler-backend-emit-load-value-with-plan
-                (compiler-backend-global-shared-view assignments)
-                (compiler-backend-global-shared-view offset)
-                (compiler-backend-global-shared-view scav-idx)
-                backend-state)
+              (match (if direct-index?
+                (ResultCompilerBackend.Ok "")
+                (compiler-backend-emit-load-value-with-plan
+                  (compiler-backend-global-shared-view assignments)
+                  (compiler-backend-global-shared-view offset)
+                  (compiler-backend-global-shared-view scav-idx)
+                  backend-state))
                 [(ResultCompilerBackend.Ok offset-asm)
                   (ResultCompilerBackend.Ok
                     (str_cat.str-cat
@@ -35127,85 +35605,91 @@
   ;; compiler-backend-emit-address-base returns the register home directly when
   ;; available, falling back to loading the pointer into the scavenged base. This
   ;; mirrors the store path (compiler-backend-emit-store-ptr).
-  (let
-    [src-home : String
-      (compiler-backend-value-register-home
-        backend-state
+  (if (compiler-backend-var-remat-home?
+    backend-state
+    (compiler-backend-global-shared-view assignments)
+    dst)
+    ;; R5: same argument as the `mov` arm -- a `load @g` whose destination
+    ;; recomputes at every use has a dead definition.
+    (ResultCompilerBackend.Ok "")
+    (let
+      [src-home : String
+        (compiler-backend-value-register-home
+          backend-state
+          (compiler-backend-global-shared-view assignments)
+          (compiler-backend-global-shared-view src))]
+      [scav-base : String
+        (compiler-backend-planned-or-scavenge-reg-here
+          planned-address
+          (compiler-backend-one-exclude src-home)
+          1
+          "%r10"
+          backend-state)]
+      (match (compiler-backend-emit-address-base
         (compiler-backend-global-shared-view assignments)
-        (compiler-backend-global-shared-view src))]
-    [scav-base : String
-      (compiler-backend-planned-or-scavenge-reg-here
-        planned-address
-        (compiler-backend-one-exclude src-home)
-        1
-        "%r10"
-        backend-state)]
-    (match (compiler-backend-emit-address-base
-      (compiler-backend-global-shared-view assignments)
-      (compiler-backend-global-shared-view src)
-      scav-base
-      backend-state)
-      [(ResultCompilerBackendAddressBase.Ok base-plan)
-        (let
-          [ptr-asm : String base-plan.asm]
-          [base : String
-            (compiler_abi.compiler-abi-register-spelling base-plan.reg)]
-          [base-mem : String
-            (compiler-backend-base-deref
-              (compiler-backend-global-shared-view base))]
-          (ResultCompilerBackend.Ok
-            (if (compiler-backend-float-type?
-              (compiler-backend-global-shared-view ty))
-              (let
-                [dst-home : String
-                  (compiler-backend-var-register-home
-                    backend-state
-                    (compiler-backend-global-shared-view assignments)
-                    dst)]
-                [load-reg : String
-                  (if (string.eq dst-home "")
-                    (let
-                      [no-exclude : (__tl_dyn-array String)
-                        (__tl_make-array String 0)]
-                      (compiler-backend-planned-or-scavenge-xmm-reg
-                        planned-value
-                        dst
-                        no-exclude
-                        0
-                        "%xmm2"
-                        backend-state))
-                    dst-home)]
-                [store-asm : String
-                  (if (string.eq dst-home "")
-                    (compiler-backend-emit-store-float-var-with-plan
+        (compiler-backend-global-shared-view src)
+        scav-base
+        backend-state)
+        [(ResultCompilerBackendAddressBase.Ok base-plan)
+          (let
+            [ptr-asm : String base-plan.asm]
+            [base : String
+              (compiler_abi.compiler-abi-register-spelling base-plan.reg)]
+            [base-mem : String
+              (compiler-backend-base-deref
+                (compiler-backend-global-shared-view base))]
+            (ResultCompilerBackend.Ok
+              (if (compiler-backend-float-type?
+                (compiler-backend-global-shared-view ty))
+                (let
+                  [dst-home : String
+                    (compiler-backend-var-register-home
+                      backend-state
                       (compiler-backend-global-shared-view assignments)
-                      dst
+                      dst)]
+                  [load-reg : String
+                    (if (string.eq dst-home "")
+                      (let
+                        [no-exclude : (__tl_dyn-array String)
+                          (__tl_make-array String 0)]
+                        (compiler-backend-planned-or-scavenge-xmm-reg
+                          planned-value
+                          dst
+                          no-exclude
+                          0
+                          "%xmm2"
+                          backend-state))
+                      dst-home)]
+                  [store-asm : String
+                    (if (string.eq dst-home "")
+                      (compiler-backend-emit-store-float-var-with-plan
+                        (compiler-backend-global-shared-view assignments)
+                        dst
+                        (compiler-backend-global-shared-view load-reg)
+                        (compiler-backend-global-shared-view ty)
+                        backend-state)
+                      "")]
+                  (str_cat.str-cat
+                    ptr-asm
+                    (compiler-backend-emit-load-float-memory
+                      base-mem
                       (compiler-backend-global-shared-view load-reg)
-                      (compiler-backend-global-shared-view ty)
-                      backend-state)
-                    "")]
+                      (compiler-backend-global-shared-view ty))
+                    store-asm))
                 (str_cat.str-cat
                   ptr-asm
-                  (compiler-backend-emit-load-float-memory
+                  (compiler-backend-emit-load-scalar-address-to-var
+                    type-segment-bases
+                    (compiler-backend-global-shared-view assignments)
+                    dst
                     base-mem
-                    (compiler-backend-global-shared-view load-reg)
-                    (compiler-backend-global-shared-view ty))
-                  store-asm))
-              (str_cat.str-cat
-                ptr-asm
-                (compiler-backend-emit-load-scalar-address-to-var
-                  type-segment-bases
-                  (compiler-backend-global-shared-view assignments)
-                  dst
-                  base-mem
-                  (compiler-backend-global-shared-view ty)
-                  (compiler-backend-one-exclude
-                    (compiler-backend-global-shared-view base))
-                  1
-                  planned-value
-                  backend-state)))))]
-      [(ResultCompilerBackendAddressBase.Err message)
-        (ResultCompilerBackend.Err message)])))
+                    (compiler-backend-global-shared-view ty)
+                    (compiler-backend-one-exclude base)
+                    1
+                    planned-value
+                    backend-state)))))]
+        [(ResultCompilerBackendAddressBase.Err message)
+          (ResultCompilerBackend.Err message)]))))
 
 (define (compiler-backend-emit-load-float-address-to-var
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -35373,6 +35857,16 @@
   [r2 : String]
   [r3 : String]) : (__tl_dyn-array String)
   (__tl_make-array r1 r2 r3))
+
+;; Four live-through registers to keep a scavenge off. The select-on-flags path
+;; needs both select operand homes AND both compare operand homes excluded at
+;; once; "" entries are inert (no register spells as the empty string).
+(define (compiler-backend-four-exclude
+  [r1 : String]
+  [r2 : String]
+  [r3 : String]
+  [r4 : String]) : (__tl_dyn-array String)
+  (__tl_make-array r1 r2 r3 r4))
 
 (define (compiler-backend-param-register-exclude-location-count
   [location : compiler_regalloc.CompilerRegLocation]) : i64
@@ -49593,6 +50087,27 @@
               lanes
               backend-state))]))))
 
+;; R5. Is `var`'s home a RECOMPUTE rather than storage? Then this instruction is
+;; its single definition, every use materialises the value for itself, and the
+;; definition is dead -- not just its store. The immediate path already emitted
+;; nothing (compiler-backend-emit-store-immediate-to-var-home); a global cell
+;; read, a `leaq label(%rip)` or a `load @g` still staged the value into a
+;; scavenged register and then dropped it, leaving one dead instruction per
+;; definition. Removing a pure recompute is always safe.
+(define (compiler-backend-var-remat-home?
+  [backend-state : CompilerBackendState]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [var-id : i64]) : bool
+  (match (compiler-backend-emit-assignment-lookup
+    backend-state
+    assignments
+    var-id)
+    [(compiler_regalloc.CompilerRegMaybeLocation.Some location)
+      (match location
+        [(compiler_regalloc.CompilerRegLocation.Remat _) true]
+        [_ false])]
+    [(compiler_regalloc.CompilerRegMaybeLocation.No) false]))
+
 (define (compiler-backend-emit-mov-with-plan
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -49645,6 +50160,13 @@
         (compiler-backend-global-shared-view assignments)
         dst
         (compiler-backend-global-shared-view src))
+      (ResultCompilerBackend.Ok "")]
+    ;; R5: a rematerialised destination has no storage and no live use of this
+    ;; definition -- every use recomputes -- so the whole `mov` is dead.
+    [(compiler-backend-var-remat-home?
+        backend-state
+        (compiler-backend-global-shared-view assignments)
+        dst)
       (ResultCompilerBackend.Ok "")]
     [(compiler-backend-float-type? (compiler-backend-global-shared-view ty))
       (let
@@ -55442,9 +55964,16 @@
       [(>= var (array-length use-counts)) false]
       [else (= (array-ref use-counts var) (array-ref free-counts var))])))
 
-;; The branch condition var at slot `j` when that branch is fed by the
-;; immediately preceding compare or boolean negation (a "free branch" whose
-;; result need not be materialized); otherwise -1.
+;; The condition var at slot `j` when the consumer there is fed by the
+;; immediately preceding compare or boolean negation (a "free" consumer whose
+;; boolean need not be materialized); otherwise -1.
+;;
+;; Two consumers qualify. A BRANCH reads the comparison's flags with its own
+;; `jcc`. A scalar SELECT (SS-P5(b)) reads them with a `cmov<cc>`; the
+;; adjacency requirement is identical, because in both cases the comparison is
+;; re-emitted at the consumer and nothing may sit between them. A vector select
+;; is excluded (its mask is a real ymm/zmm value), as is a select reached
+;; through a copy of the boolean rather than the boolean itself.
 (define (compiler-backend-fuse-free-branch-var
   [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)]
   [j : i64]) : i64
@@ -55472,7 +56001,32 @@
                   (- 0 1))]
               [_ (- 0 1)])]
           [_ (- 0 1)])]
-      [_ (- 0 1)])))
+      [_ (compiler-backend-fuse-free-select-var slots j)])))
+
+;; The Select half of the adjacency test above, kept separate so the branch
+;; shape stays one flat match.
+(define (compiler-backend-fuse-free-select-var
+  [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)]
+  [j : i64]) : i64
+  (match (compiler-backend-global-array-element-shared-view slots j)
+    [(compiler_ir_types.CompilerIrInstr.Select payload-box)
+      (let
+        [mask (compiler-backend-box-field-shared-view payload-box mask)]
+        [lanes (compiler-backend-box-field-shared-view payload-box lanes)]
+        (if (not (= lanes 0))
+          (- 0 1)
+          (match mask
+            [(compiler_ir_types.CompilerIrValue.Var v)
+              (match (compiler-backend-global-array-element-shared-view
+                slots
+                (- j 1))
+                [(compiler_ir_types.CompilerIrInstr.BinOp dst op _ _ _)
+                  (if (and (compiler-backend-compare-op? op) (= dst v))
+                    v
+                    (- 0 1))]
+                [_ (- 0 1)])]
+            [_ (- 0 1)])))]
+    [_ (- 0 1)]))
 
 (define (compiler-backend-count-instr-seq-use-facts
   [counts : (__tl_dyn-array i64)]
@@ -66488,6 +67042,78 @@
                   (compiler-backend-global-shared-view instrs)
                   index
                   out))]
+            ;; SS-P5(b) / VG-P-B: a scalar Select reading this comparison's
+            ;; result and nothing else needs no boolean at all -- the compare's
+            ;; own flags drive one `cmov<cc>`. The scratch registers come from
+            ;; the SELECT's planned ordinals (one instruction ahead), exactly
+            ;; the ones its ordinary emission would have consumed, so the
+            ;; scratch-vreg plan is honoured unchanged. The emitter declines by
+            ;; returning `No` whenever the operand shapes cannot guarantee the
+            ;; compare's operands survive the two staging loads.
+            [(compiler_ir_types.CompilerIrInstr.Select payload-box)
+              (let
+                [select-dst
+                  (compiler-backend-box-field-shared-view payload-box dst)]
+                [select-mask
+                  (compiler-backend-box-field-shared-view payload-box mask)]
+                [select-true
+                  (compiler-backend-box-field-shared-view payload-box on-true)]
+                [select-false
+                  (compiler-backend-box-field-shared-view payload-box on-false)]
+                [select-lanes
+                  (compiler-backend-box-field-shared-view payload-box lanes)]
+                [select-ty
+                  (compiler-backend-box-field-shared-view payload-box ty)]
+                (match (if (and
+                  (= select-lanes 0)
+                  (compiler-backend-branch-uses-var? select-mask dst))
+                  (compiler-backend-emit-select-on-flags
+                    ctx.type-segment-bases
+                    (compiler-backend-global-shared-view ctx.assignments)
+                    select-dst
+                    (compiler-backend-global-shared-view select-true)
+                    (compiler-backend-global-shared-view select-false)
+                    (compiler-backend-global-shared-view select-ty)
+                    (compiler-backend-global-shared-view op)
+                    (compiler-backend-global-shared-view lhs)
+                    (compiler-backend-global-shared-view rhs)
+                    (compiler-backend-binop-operand-ty
+                      (compiler-backend-global-shared-view ctx.types)
+                      (compiler-backend-global-shared-view ctx.global-types)
+                      (compiler-backend-global-shared-view op)
+                      (compiler-backend-global-shared-view lhs)
+                      (compiler-backend-global-shared-view rhs)
+                      (compiler-backend-global-shared-view ty))
+                    (compiler-backend-scratch-plan-register-ahead
+                      (compiler-backend-runtime-plan-scratch
+                        (compiler-backend-global-shared-view ctx.plan))
+                      1
+                      0
+                      (compiler-backend-global-shared-view ctx.backend-state))
+                    (compiler-backend-scratch-plan-register-ahead
+                      (compiler-backend-runtime-plan-scratch
+                        (compiler-backend-global-shared-view ctx.plan))
+                      1
+                      1
+                      (compiler-backend-global-shared-view ctx.backend-state))
+                    (compiler-backend-global-shared-view ctx.backend-state))
+                  (CompilerBackendMaybeAsm.No))
+                  [(CompilerBackendMaybeAsm.Some head)
+                    (compiler-backend-emit-fused-result-rest
+                      ctx
+                      fallthrough
+                      (ResultCompilerBackend.Ok head)
+                      instrs
+                      after-branch
+                      out)]
+                  [(CompilerBackendMaybeAsm.No)
+                    (compiler-backend-emit-instrs-normal
+                      ctx
+                      fallthrough
+                      instr
+                      instrs
+                      index
+                      out)]))]
             [(compiler_ir_types.CompilerIrInstr.UnOp
                 not-dst
                 (compiler_ir_types.CompilerIrUnOp.Not)
@@ -67887,6 +68513,7 @@
             backend-state
             (compiler-backend-state-function-state backend-state)
             0
+            0
             exclude
             exclude-n
             "%r8")]
@@ -68230,7 +68857,8 @@
                                   (compiler-backend-state-function-state
                                     backend-state)
                                   0
-                                  (compiler-backend-global-shared-view exclude)
+                                  0
+                                  exclude
                                   exclude-n
                                   "%r8")
                                 backend-state))
@@ -69538,12 +70166,50 @@
 ;; of the plan (stable, order-independent) and still gives the scavenger every
 ;; callee register the allocator already pays to preserve, used as scratch only
 ;; where the freeness query certifies no live value occupies it.
+;; R4-B: FRESH-REGISTER DEF STAGING -- which instructions may take the narrow
+;; last-resort staging window.
+;;
+;; compiler-backend-scavenge-reg queries a staging register's freeness across
+;; `point + staging-window` (16 = 8 instructions) rather than at the emit point,
+;; because a FUSED destructure emits its field loads in offset order while the
+;; lowering numbers their def points in the REVERSE order: a register-homed
+;; sibling is written into its home BEFORE a spilled sibling's staging load yet
+;; carries a HIGHER interval point, so only a forward window keeps it occupied.
+;; That reordering is a property of the load-fusion families and of nothing else.
+;;
+;; The window is therefore right for loads and far too wide for a plain scalar
+;; computation, whose staging register is dead at the end of the single emitted
+;; step: a register that merely becomes live four instructions later is refused,
+;; and when every candidate is refused the site falls to the EMERGENCY tier,
+;; which borrows an occupied register and wraps the step in a save/restore pair
+;; (2.6, 2.7a). This predicate marks the instructions whose emission reorders
+;; nothing, so their staging pick may retry against the narrow [point, point+2]
+;; window before paying for that wrap.
+;;
+;; Admitted: the scalar compute family whose lowering is `stage operands ->
+;; apply -> write destination` in one step (BinOp/UnOp/Cast/Bitcast/Select) and
+;; the plain register-to-register/immediate Mov. Refused: every load, gep,
+;; store, call, copy and vector form -- the whole set the fusion clusters draw
+;; from -- so the reorder hazard can never reach the narrow tier.
+(define (compiler-backend-instr-staging-narrow-ok?
+  [instr : compiler_ir_types.CompilerIrInstr]) : bool
+  (match instr
+    [(compiler_ir_types.CompilerIrInstr.BinOp _ _ _ _ _) true]
+    [(compiler_ir_types.CompilerIrInstr.UnOp _ _ _ _) true]
+    [(compiler_ir_types.CompilerIrInstr.Cast _ _ _ _) true]
+    [(compiler_ir_types.CompilerIrInstr.Bitcast _ _ _ _) true]
+    [(compiler_ir_types.CompilerIrInstr.Select _) true]
+    [(compiler_ir_types.CompilerIrInstr.Mov _ _ _) true]
+    [_ false]))
+
 ;; Sound-scavenger reserved mask (LLVM RegScavenger model): the pooled-register
 ;; homes of the CURRENT instruction's operand (use) + result (def) vars. The
 ;; scavenge must NEVER return one of these as scratch -- it would clobber an
 ;; operand the instruction reads, or the result it writes (the dst reads "free"
 ;; at the scavenge point but must still be reserved). Set once per instruction
 ;; at the emission dispatcher; consulted in candidate-ok? AND the emergency tier.
+;; The same per-instruction visit records R4-B's narrow-staging admission
+;; (compiler-backend-instr-staging-narrow-ok?), which the staging pick reads.
 ;; Fold instruction uses/def straight into their assigned register-home bits.
 ;; Building generic liveness bitsets here used to allocate and zero two arrays
 ;; per emitted instruction, only to scan them immediately into this small mask.
@@ -69556,6 +70222,11 @@
     [mask-counts : (__tl_dyn-array i64)
       (__tl_make-array -1 function-state.address)]
     (begin
+      (compiler-backend-function-scratch-set-bool!
+        function-state
+        compiler-backend-scratch-bool-instr-staging-narrow-ok
+        (compiler-backend-instr-staging-narrow-ok?
+          (compiler-backend-global-shared-view instr)))
       (compiler-backend-function-state-set-i64!
         function-state
         compiler-backend-function-i64-use-home-mask-value
@@ -69706,6 +70377,60 @@
             (set! i (+ i 1))))
         found))))
 
+;; R4-B: index of the first candidate usable under `mask`, or -1. Same admission
+;; test the main walk uses; only the occupancy mask differs.
+(define (compiler-backend-scavenge-first-ok-index
+  [function-state : CompilerBackendFunctionState]
+  [mask : i64]
+  [exclude-mask : i64]
+  [plan-mask : i64]
+  [cands : (& cands (__tl_dyn-array i64))]
+  [n : i64]) : i64
+  (let
+    [i : i64 0]
+    [found : i64 -1]
+    (begin
+      (while (and (< i n) (< found 0))
+        (begin
+          (when
+            (compiler-backend-scavenge-candidate-ok?
+              function-state
+              mask
+              exclude-mask
+              plan-mask
+              (array-ref cands i))
+            (set! found i))
+          (set! i (+ i 1))))
+      found)))
+
+;; R4-B: the narrow last-resort tier. Reached only when every candidate is
+;; refused under the wide staging window, i.e. immediately before the emergency
+;; tier borrows an occupied register and wraps the step in a save/restore pair.
+;; `narrow-mask` is the SAME occupancy query at the emit point alone, so a
+;; register it reports free holds no live value while the staging register is
+;; live; the only thing the wide window adds is protection against a fused
+;; load group's reordered siblings, and the caller passes a narrower mask only
+;; for instructions whose emission reorders nothing
+;; (compiler-backend-instr-staging-narrow-ok?). Callers with nothing to gain
+;; pass their own occupied mask, which makes this a no-op.
+(define (compiler-backend-scavenge-narrow-index
+  [function-state : CompilerBackendFunctionState]
+  [occupied-mask : i64]
+  [narrow-mask : i64]
+  [exclude-mask : i64]
+  [plan-mask : i64]
+  [cands : (& cands (__tl_dyn-array i64))]
+  [n : i64]) : i64
+  (if (= narrow-mask occupied-mask)
+    -1
+    (compiler-backend-scavenge-first-ok-index
+      function-state
+      narrow-mask
+      exclude-mask
+      plan-mask
+      cands
+      n)))
+
 (define (compiler-backend-scavenge-pick-iter
   [backend-state : CompilerBackendState]
   [function-state : CompilerBackendFunctionState]
@@ -69713,6 +70438,7 @@
   [exclude-n : i64]
   [exclude-mask : i64]
   [occupied-mask : i64]
+  [narrow-mask : i64]
   [plan-mask : i64]
   [fallback : String]
   [cands : (& cands (__tl_dyn-array i64))]
@@ -69720,55 +70446,69 @@
   [n : i64]) : String
   (if (>= i n)
     (let
-      [emidx : i64
-        (compiler-backend-scavenge-emergency-cand-index
+      [nidx : i64
+        (compiler-backend-scavenge-narrow-index
           function-state
-          exclude
-          exclude-n
-          exclude-mask
           occupied-mask
-          (compiler-backend-global-shared-view fallback)
+          narrow-mask
+          exclude-mask
+          plan-mask
           cands
           n)]
-      (if (< emidx 0)
-        (begin
-          (cfg
-            scavenge-census
-            (if (compiler-backend-scavenge-emergency-fallback-free?
-              function-state
-              exclude
-              exclude-n
-              occupied-mask
-              fallback)
-              (compiler-backend-scavenge-census-record-fallback-free!
-                backend-state)
-              (compiler-backend-scavenge-census-record-fallback-last-resort!
-                backend-state))
-            unit)
-          ;; emergency-reg MUST equal the returned reg (emergency-wrap saves/
-          ;; restores it). Give the global save set a copy, then return the
-          ;; owned fallback. (emidx<0 = the fallback is FREE here, preferred; or
-          ;; the pathological all-excluded last resort.)
-          (if (compiler-backend-scavenge-emergency-reg-supported?
-            (compiler-backend-global-shared-view fallback))
-            (compiler-backend-emergency-add!
-              function-state
-              (string.copy fallback))
-            (io.panic
-              (str_cat.str-cat
-                "backend: unsupported scavenge emergency fallback register "
-                (compiler-backend-global-shared-view fallback))))
-          fallback)
-        (begin
-          (cfg
-            scavenge-census
-            (compiler-backend-scavenge-census-record-occupied-candidate!
-              backend-state)
-            unit)
-          (compiler-backend-emergency-add-id!
+      [emidx : i64
+        (if (>= nidx 0)
+          -2
+          (compiler-backend-scavenge-emergency-cand-index
             function-state
-            (array-ref cands emidx))
-          (compiler_abi.compiler-abi-register-spelling (array-ref cands emidx)))))
+            exclude
+            exclude-n
+            exclude-mask
+            occupied-mask
+            (compiler-backend-global-shared-view fallback)
+            cands
+            n))]
+      (if (>= nidx 0)
+        (compiler_abi.compiler-abi-register-spelling (array-ref cands nidx))
+        (if (< emidx 0)
+          (begin
+            (cfg
+              scavenge-census
+              (if (compiler-backend-scavenge-emergency-fallback-free?
+                function-state
+                exclude
+                exclude-n
+                occupied-mask
+                (compiler-backend-global-shared-view fallback))
+                (compiler-backend-scavenge-census-record-fallback-free!
+                  backend-state)
+                (compiler-backend-scavenge-census-record-fallback-last-resort!
+                  backend-state))
+              unit)
+            ;; emergency-reg MUST equal the returned reg (emergency-wrap saves/
+            ;; restores it). Give the global save set a copy, then return the
+            ;; owned fallback. (emidx<0 = the fallback is FREE here, preferred; or
+            ;; the pathological all-excluded last resort.)
+            (if (compiler-backend-scavenge-emergency-reg-supported?
+              (compiler-backend-global-shared-view fallback))
+              (compiler-backend-emergency-add!
+                function-state
+                (string.copy (compiler-backend-global-shared-view fallback)))
+              (io.panic
+                (str_cat.str-cat
+                  "backend: unsupported scavenge emergency fallback register "
+                  (compiler-backend-global-shared-view fallback))))
+            fallback)
+          (begin
+            (cfg
+              scavenge-census
+              (compiler-backend-scavenge-census-record-occupied-candidate!
+                backend-state)
+              unit)
+            (compiler-backend-emergency-add-id!
+              function-state
+              (array-ref cands emidx))
+            (compiler_abi.compiler-abi-register-spelling
+              (array-ref cands emidx))))))
     (if (compiler-backend-scavenge-candidate-ok?
       function-state
       occupied-mask
@@ -69787,6 +70527,7 @@
         exclude-n
         exclude-mask
         occupied-mask
+        narrow-mask
         plan-mask
         fallback
         cands
@@ -69801,6 +70542,7 @@
   [backend-state : CompilerBackendState]
   [function-state : CompilerBackendFunctionState]
   [occupied-mask : i64]
+  [narrow-mask : i64]
   [exclude : (__tl_dyn-array String)]
   [exclude-n : i64]
   [fallback : String]) : String
@@ -69829,6 +70571,7 @@
         exclude-n
         exclude-mask
         occupied-mask
+        narrow-mask
         (compiler-backend-function-scratch-i64
           function-state
           compiler-backend-scratch-i64-scavenge-plan-reg-mask)
@@ -69866,6 +70609,7 @@
         exclude
         exclude-n
         exclude-mask
+        occupied-mask
         occupied-mask
         (compiler-backend-function-scratch-i64
           function-state
@@ -69996,6 +70740,7 @@
 (define (compiler-backend-scavenge-pick-iter-peek
   [function-state : CompilerBackendFunctionState]
   [occupied-mask : i64]
+  [narrow-mask : i64]
   [exclude : (__tl_dyn-array String)]
   [exclude-n : i64]
   [exclude-mask : i64]
@@ -70006,19 +70751,34 @@
   [n : i64]) : String
   (if (>= i n)
     (let
-      [emidx : i64
-        (compiler-backend-scavenge-emergency-cand-index
+      ;; R4-B: mirror the committing walk's narrow last-resort tier, so the peek
+      ;; keeps returning exactly what the committing call will.
+      [nidx : i64
+        (compiler-backend-scavenge-narrow-index
           function-state
-          exclude
-          exclude-n
-          exclude-mask
           occupied-mask
-          (compiler-backend-global-shared-view fallback)
+          narrow-mask
+          exclude-mask
+          plan-mask
           cands
           n)]
-      (if (< emidx 0)
-        fallback
-        (compiler_abi.compiler-abi-register-spelling (array-ref cands emidx))))
+      [emidx : i64
+        (if (>= nidx 0)
+          -2
+          (compiler-backend-scavenge-emergency-cand-index
+            function-state
+            exclude
+            exclude-n
+            exclude-mask
+            occupied-mask
+            (compiler-backend-global-shared-view fallback)
+            cands
+            n))]
+      (if (>= nidx 0)
+        (compiler_abi.compiler-abi-register-spelling (array-ref cands nidx))
+        (if (< emidx 0)
+          fallback
+          (compiler_abi.compiler-abi-register-spelling (array-ref cands emidx)))))
     (if (compiler-backend-scavenge-candidate-ok?
       function-state
       occupied-mask
@@ -70029,6 +70789,7 @@
       (compiler-backend-scavenge-pick-iter-peek
         function-state
         occupied-mask
+        narrow-mask
         exclude
         exclude-n
         exclude-mask
@@ -70041,6 +70802,7 @@
 (define (compiler-backend-scavenge-pick-with-mask-peek
   [function-state : CompilerBackendFunctionState]
   [occupied-mask : i64]
+  [narrow-mask : i64]
   [exclude : (__tl_dyn-array String)]
   [exclude-n : i64]
   [fallback : String]) : String
@@ -70065,6 +70827,7 @@
       (compiler-backend-scavenge-pick-iter-peek
         function-state
         occupied-mask
+        narrow-mask
         exclude
         exclude-n
         exclude-mask
@@ -70115,6 +70878,17 @@
         function-state
         point
         hi-point)
+      (if (compiler-backend-function-scratch-bool?
+        function-state
+        compiler-backend-scratch-bool-instr-staging-narrow-ok)
+        (compiler-backend-scavenge-occupied-mask-over-range
+          function-state
+          point
+          (+ point 2))
+        (compiler-backend-scavenge-occupied-mask-over-range
+          function-state
+          point
+          hi-point))
       ex
       ex-n
       fallback)))
@@ -70171,6 +70945,25 @@
       (if (string.eq dst-home "")
         exclude-n
         (+ exclude-n 1))]
+    ;; R4-B: the last-resort narrow window. The wide query above is the one that
+    ;; decides; this second mask is consulted only when it leaves nothing, and
+    ;; only for instructions whose emission reorders nothing
+    ;; (compiler-backend-instr-staging-narrow-ok?, set once per instruction next
+    ;; to the reserved-home mask). Passing the wide mask itself disables the tier
+    ;; -- compiler-backend-scavenge-narrow-index returns -1 on equality -- so the
+    ;; load-fusion families keep today's behaviour exactly.
+    [narrow-mask : i64
+      (if (compiler-backend-function-scratch-bool?
+        function-state
+        compiler-backend-scratch-bool-instr-staging-narrow-ok)
+        (compiler-backend-scavenge-occupied-mask-over-range
+          function-state
+          point
+          (+ point 2))
+        (compiler-backend-scavenge-occupied-mask-over-range
+          function-state
+          point
+          hi-point))]
     [reg : String
       (compiler-backend-scavenge-pick-with-mask
         backend-state
@@ -70179,6 +70972,7 @@
           function-state
           point
           hi-point)
+        narrow-mask
         ex
         ex-n
         fallback)]
@@ -70223,6 +71017,7 @@
       (compiler-backend-scavenge-pick-with-mask
         backend-state
         function-state
+        (compiler-backend-scavenge-occupied-mask-at-point function-state point)
         (compiler-backend-scavenge-occupied-mask-at-point function-state point)
         exclude
         exclude-n
@@ -74198,6 +74993,221 @@
           (set! b (+ b 1))))
       total)))
 
+;; R5 ORDINAL RESYNC. The GAP9 displacement table is indexed by the ORDINAL of
+;; a `Gep` in walk order, and it is built before register allocation. The remat
+;; rewrite runs after the plan and edits that sequence: it mints recipe geps at
+;; recomputed use sites and retires the address gep of a load whose every use
+;; was recomputed. Re-thread the table onto the final block list rather than let
+;; the emitter consume shifted entries -- a recipe gep is minted with a var id
+;; at or above `pre-vars` and folds nothing, so it takes a fresh zero entry;
+;; every surviving gep keeps the entry it was given, matched by its destination
+;; in the (order-preserving) old sequence. Anything that fails to line up
+;; poisons the function, which is the same loud error the audit already raises.
+(define (compiler-backend-gep-fold-collect-dsts
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [dsts : (__tl_dyn-array i64)]) : i64
+  (let
+    [seq : compiler_ir_types.CompilerIrBlockSeq
+      (compiler_liveness.compiler-live-ir-block-list-to-seq blocks)]
+    [block-count : i64 (compiler_ir_types.compiler-ir-block-seq-count seq)]
+    [b : i64 0]
+    [total : i64 0]
+    (begin
+      (while (< b block-count)
+        (begin
+          (match (compiler_ir_types.compiler-ir-block-seq-ref seq b)
+            [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+              (let
+                [n : i64 (compiler_ir_types.compiler-ir-instr-seq-count instrs)]
+                [j : i64 0]
+                (while (< j n)
+                  (begin
+                    (match (compiler_ir_types.compiler-ir-instr-seq-ref
+                      instrs
+                      j)
+                      [(compiler_ir_types.CompilerIrInstr.Gep dst _ _ _)
+                        (begin
+                          (if (< total (array-length dsts))
+                            (set! (array-ref dsts total) dst)
+                            unit)
+                          (set! total (+ total 1)))]
+                      [_ unit])
+                    (set! j (+ j 1)))))])
+          (set! b (+ b 1))))
+      total)))
+
+(define (compiler-backend-gep-fold-count-blocks-geps
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : i64
+  (compiler-backend-gep-fold-collect-dsts blocks (__tl_make-array i64 0)))
+
+(define (compiler-backend-gep-fold-resync!
+  [function-state : CompilerBackendFunctionState]
+  [type-segment-bases : i64]
+  [old-blocks : compiler_ir_types.CompilerIrBlockList]
+  [new-blocks : compiler_ir_types.CompilerIrBlockList]
+  [pre-vars : i64]) : unit
+  (if (not
+    (compiler-backend-function-state-bool?
+      function-state
+      compiler-backend-function-bool-gep-fold-ready))
+    unit
+    (let
+      [old-count : i64
+        (compiler-backend-gep-fold-count-blocks-geps
+          (compiler-backend-global-shared-view old-blocks))]
+      [new-count : i64
+        (compiler-backend-gep-fold-count-blocks-geps
+          (compiler-backend-global-shared-view new-blocks))]
+      ;; Equal counts do NOT mean the sequence is untouched (one retired gep and
+      ;; one minted recipe gep balance), so the re-thread runs whenever the
+      ;; table is live and the function has any gep at all.
+      (if (= old-count 0)
+        unit
+        (compiler-backend-gep-fold-resync-tables!
+          function-state
+          type-segment-bases
+          old-blocks
+          new-blocks
+          pre-vars
+          old-count
+          new-count)))))
+
+(define (compiler-backend-gep-fold-resync-tables!
+  [function-state : CompilerBackendFunctionState]
+  [type-segment-bases : i64]
+  [old-blocks : compiler_ir_types.CompilerIrBlockList]
+  [new-blocks : compiler_ir_types.CompilerIrBlockList]
+  [pre-vars : i64]
+  [old-count : i64]
+  [new-count : i64]) : unit
+  (let
+    [old-disp : (__tl_dyn-array i64)
+      (compiler-backend-function-state-i64-array
+        function-state
+        compiler-backend-function-i64-array-gep-fold-disp-table)]
+    [old-kind : (__tl_dyn-array i64)
+      (compiler-backend-function-state-i64-array
+        function-state
+        compiler-backend-function-i64-array-gep-fold-kind-table)]
+    [old-scale : (__tl_dyn-array i64)
+      (compiler-backend-function-state-i64-array
+        function-state
+        compiler-backend-function-i64-array-gep-fold-scale-table)]
+    [old-dsts : (__tl_dyn-array i64)
+      (__tl_make-array
+        i64
+        (if (< old-count 1)
+          1
+          old-count))]
+    [_collect : i64
+      (compiler-backend-gep-fold-collect-dsts
+        (compiler-backend-global-shared-view old-blocks)
+        (compiler-backend-global-shared-view old-dsts))]
+    [disp : (__tl_dyn-array i64)
+      (__tl_make-array
+        i64
+        (if (< new-count 1)
+          1
+          new-count))]
+    [kind : (__tl_dyn-array i64)
+      (__tl_make-array
+        i64
+        (if (< new-count 1)
+          1
+          new-count))]
+    [scale : (__tl_dyn-array i64)
+      (__tl_make-array
+        i64
+        (if (< new-count 1)
+          1
+          new-count))]
+    [seq : compiler_ir_types.CompilerIrBlockSeq
+      (compiler_liveness.compiler-live-ir-block-list-to-seq new-blocks)]
+    [block-count : i64 (compiler_ir_types.compiler-ir-block-seq-count seq)]
+    [b : i64 0]
+    [out : i64 0]
+    [cursor : i64 0]
+    [failed : bool false]
+    (begin
+      (if (not (= (array-length old-disp) old-count))
+        (set! failed true)
+        unit)
+      (while (< b block-count)
+        (begin
+          (match (compiler_ir_types.compiler-ir-block-seq-ref seq b)
+            [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+              (let
+                [n : i64 (compiler_ir_types.compiler-ir-instr-seq-count instrs)]
+                [j : i64 0]
+                (while (< j n)
+                  (begin
+                    (match (compiler_ir_types.compiler-ir-instr-seq-ref
+                      instrs
+                      j)
+                      [(compiler_ir_types.CompilerIrInstr.Gep
+                          dst
+                          _
+                          offset
+                          elem-ty)
+                        (if (>= out new-count)
+                          (set! failed true)
+                          (if (>= dst pre-vars)
+                            (begin
+                              (set! (array-ref disp out) 0)
+                              (set!
+                                (array-ref kind out)
+                                (compiler-backend-gep-fold-offset-kind offset))
+                              (set!
+                                (array-ref scale out)
+                                (compiler-backend-type-size
+                                  type-segment-bases
+                                  elem-ty))
+                              (set! out (+ out 1)))
+                            (begin
+                              (while (and
+                                (< cursor old-count)
+                                (not (= (array-ref old-dsts cursor) dst)))
+                                (set! cursor (+ cursor 1)))
+                              (if (>= cursor old-count)
+                                (set! failed true)
+                                (begin
+                                  (set!
+                                    (array-ref disp out)
+                                    (array-ref old-disp cursor))
+                                  (set!
+                                    (array-ref kind out)
+                                    (array-ref old-kind cursor))
+                                  (set!
+                                    (array-ref scale out)
+                                    (array-ref old-scale cursor))
+                                  (set! cursor (+ cursor 1))
+                                  (set! out (+ out 1)))))))]
+                      [_ unit])
+                    (set! j (+ j 1)))))])
+          (set! b (+ b 1))))
+      (if (or failed (not (= out new-count)))
+        (compiler-backend-function-state-set-bool!
+          function-state
+          compiler-backend-function-bool-gep-fold-drift
+          true)
+        (begin
+          (compiler-backend-function-state-set-i64-array!
+            function-state
+            compiler-backend-function-i64-array-gep-fold-disp-table
+            disp)
+          (compiler-backend-function-state-set-i64-array!
+            function-state
+            compiler-backend-function-i64-array-gep-fold-kind-table
+            kind)
+          (compiler-backend-function-state-set-i64-array!
+            function-state
+            compiler-backend-function-i64-array-gep-fold-scale-table
+            scale)
+          (compiler-backend-function-state-set-i64!
+            function-state
+            compiler-backend-function-i64-gep-fold-cursor
+            0))))))
+
 (define (compiler-backend-gep-fold-count-defs
   [defs : (__tl_dyn-array i64)]
   [barr : (__tl_dyn-array compiler_ir_types.CompilerIrBlock)]) : unit
@@ -76804,13 +77814,25 @@
                 _
                 _)
               out-vars])]
+        ;; R5: the remat rewrite is the only stage that edits the `Gep`
+        ;; sequence after the GAP9 displacement table was built, so re-thread
+        ;; the table onto its output before emission consumes the ordinals.
+        [_gep-fold-resync : unit
+          (if call-save-enabled
+            (compiler-backend-gep-fold-resync!
+              function-state
+              type-segment-bases
+              (compiler-backend-global-shared-view rewritten-blocks)
+              (compiler-backend-global-shared-view remat0-blocks)
+              rewritten-vars)
+            unit)]
         ;; SplitKit removed: it was inert on the shipped path (the realization
         ;; declined every recorded piece), replaced by M-G2b's per-call-region
         ;; split + FPO. The final pipeline stage is the identity of the remat
         ;; output.
         [splitkit-rewrite : compiler_regalloc.CompilerRegCallSaveRewrite
           (compiler_regalloc.CompilerRegCallSaveRewrite.Rewrite
-            remat0-blocks
+            (compiler-backend-global-shared-view remat0-blocks)
             remat0-vars
             remat0-vars
             (compiler_regalloc.compiler-reg-assignment-table-empty)

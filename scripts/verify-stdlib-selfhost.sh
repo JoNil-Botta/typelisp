@@ -107,12 +107,21 @@ reject_diag() {
             printf 'typecheck: unbound name missing' ;;
         stdlib/tests/format_plus_nonnumeric_reject.tl)
             printf "format: '+' sign requires a numeric argument" ;;
+        stdlib/tests/format_radix_bool_reject.tl|\
+        stdlib/tests/format_radix_char_reject.tl|\
+        stdlib/tests/format_radix_f32_reject.tl|\
+        stdlib/tests/format_radix_f64_reject.tl|\
+        stdlib/tests/format_radix_nominal_reject.tl|\
+        stdlib/tests/format_radix_pointer_reject.tl|\
+        stdlib/tests/format_radix_reference_reject.tl|\
+        stdlib/tests/format_radix_string_reject.tl)
+            printf 'requires a fixed-width integer argument; got' ;;
         stdlib/tests/format_raw_capture_reject.tl)
             printf "format: Rust raw identifiers use the TypeLisp spelling without 'r#'" ;;
         stdlib/tests/format_specifier_order_reject.tl)
             printf 'format: malformed, duplicated, or out-of-order format specifier' ;;
         stdlib/tests/format_specifier_reject.tl)
-            printf 'format: type selector is parsed but not supported yet: x' ;;
+            printf 'format: type selector is parsed but not supported yet: ?' ;;
         stdlib/tests/format_star_precision_too_few_reject.tl)
             printf 'format: not enough arguments for placeholders' ;;
         stdlib/tests/format_too_few_args_reject.tl)

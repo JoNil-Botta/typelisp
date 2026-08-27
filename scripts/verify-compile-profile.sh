@@ -1625,14 +1625,19 @@ if [ "$NL_HOST_OS" = windows ]; then
     # #6855's optimizer/backend/regalloc packets (guard algebra, if-convert casts,
     # load-CSE precision and join phis, lea/cmov emission, sibling-phi threading,
     # length-equality families, local splits, invariant-load rematerialisation)
-    # rebased onto #6867's core fixed-array operations stay at 47 segments.
+    # rebased onto #6867's core fixed-array operations stay at 47 segments: the
+    # authoritative Windows probe measured 3,074,738 used nodes, 3,080,192
+    # capacity, and 98,566,144 physical payload bytes.
     # #6650's direct format sink plan and stdio macro family independently stay
-    # at that boundary on the same base. The last authoritative Windows probes
-    # measured 3,074,738 and 3,057,094 used nodes respectively, with 3,080,192
-    # capacity and 98,566,144 physical payload bytes.
-    # Composing #6650 with #6873's unsafe raw-pointer formatter crosses the next
-    # boundary: the authoritative Windows CI probe measured 3,091,775 used
-    # nodes, 3,145,728 capacity, and 100,663,296 physical payload bytes.
+    # at that boundary on the same base. Composing #6650 with #6873's unsafe
+    # raw-pointer formatter crossed to 48 segments: the authoritative Windows
+    # CI probe measured 3,091,775 used nodes, 3,145,728 capacity, and 100,663,296
+    # physical payload bytes.
+    # #6877's loop-postcondition bounds-check memo (~1,800 compiler-source lines)
+    # independently crossed ast_expr_pool.macro_expand from 47 to 48 segments:
+    # the authoritative Windows probe measured 3,083,453 used nodes, 3,145,728
+    # capacity, and 100,663,296 physical payload bytes. The composed tree keeps
+    # the exact 48-segment pin pending its required Windows profile probe.
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_expr_pool macro_expand 48 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"

@@ -7,7 +7,9 @@
 ;# literal/dollar/star precision counts. The generated expression evaluates
 ;# each supplied value once and uses one flat `str-cat` expansion. Nonnumeric
 ;# Display precision truncates rendered TypeLisp bytes before padding; float
-;# precision selects exact fixed decimal with round-half-to-even.
+;# precision selects exact fixed decimal with round-half-to-even. Fixed-width
+;# integers additionally support binary, octal, and lower/uppercase hexadecimal
+;# selectors with width-correct signed bit patterns.
 ;# `write!` and `writeln!` reuse that plan and conversion path while sending
 ;# pieces through a canonical destination adapter. They return `FormatResult`
 ;# and do not construct the final combined String.
@@ -436,8 +438,19 @@
                                       argument-type)
                                     argument-type)]
                                 [value-kind : String (type-kind value-type)]
+                                [radix-selector? : bool
+                                  (match selector
+                                    ["b" true]
+                                    ["o" true]
+                                    ["x" true]
+                                    ["X" true]
+                                    [_ false])]
                                 [pointer-selector? : bool
                                   (string.eq selector "p")]
+                                [special-selector? : bool
+                                  (if radix-selector?
+                                    true
+                                    pointer-selector?)]
                                 [raw-pointer? : bool
                                   (if (string.eq value-kind "ptr")
                                     true
@@ -521,7 +534,7 @@
                                       value-type)
                                     false)]
                                 [hook-dispatch : i64
-                                  (if pointer-selector?
+                                  (if special-selector?
                                     4
                                     (+
                                       (if plain-matches?
@@ -701,43 +714,108 @@
                                           `(stdlib.format.format-f32-core
                                             ,value))]
                                       ["ptr"
-                                        (if pointer-selector?
+                                        (if special-selector?
                                           (comptime.expr-string "")
                                           (comptime.comptime-error
                                             (comptime.string-append
                                               "format: unsupported argument type "
                                               value-key)))]
                                       ["mut-ptr"
-                                        (if pointer-selector?
+                                        (if special-selector?
                                           (comptime.expr-string "")
                                           (comptime.comptime-error
                                             (comptime.string-append
                                               "format: unsupported argument type "
                                               value-key)))]
                                       [_
-                                        (if pointer-selector?
+                                        (if special-selector?
                                           (comptime.expr-string "")
                                           (comptime.comptime-error
                                             (comptime.string-append
                                               "format: unsupported argument type "
                                               value-key)))]))]
-                                [rendered : comptime.Expr
-                                  (if pointer-selector?
-                                    (if supported-pointer-argument?
+                                [radix-value : comptime.Expr
+                                  (match value-kind
+                                    ["i8"
                                       (if borrowed?
-                                        `(stdlib.format.format-pointer-core
-                                          (ptr->int (deref ,value)))
-                                        `(stdlib.format.format-pointer-core
-                                          (ptr->int ,value)))
+                                        `(cast (cast (deref ,value) : u8) : u64)
+                                        `(cast (cast ,value : u8) : u64))]
+                                    ["i16"
+                                      (if borrowed?
+                                        `(cast
+                                          (cast (deref ,value) : u16)
+                                          : u64)
+                                        `(cast (cast ,value : u16) : u64))]
+                                    ["i32"
+                                      (if borrowed?
+                                        `(cast
+                                          (cast (deref ,value) : u32)
+                                          : u64)
+                                        `(cast (cast ,value : u32) : u64))]
+                                    ["i64"
+                                      (if borrowed?
+                                        `(cast (deref ,value) : u64)
+                                        `(cast ,value : u64))]
+                                    ["u8"
+                                      (if borrowed?
+                                        `(cast (deref ,value) : u64)
+                                        `(cast ,value : u64))]
+                                    ["u16"
+                                      (if borrowed?
+                                        `(cast (deref ,value) : u64)
+                                        `(cast ,value : u64))]
+                                    ["u32"
+                                      (if borrowed?
+                                        `(cast (deref ,value) : u64)
+                                        `(cast ,value : u64))]
+                                    ["u64"
+                                      (if borrowed?
+                                        `(deref ,value)
+                                        value)]
+                                    [_ (comptime.expr-int 0)])]
+                                [radix-shift : i64
+                                  (match selector
+                                    ["b" 1]
+                                    ["o" 3]
+                                    [_ 4])]
+                                [radix-uppercase : i64
+                                  (if (string.eq selector "X")
+                                    1
+                                    0)]
+                                [rendered : comptime.Expr
+                                  (if radix-selector?
+                                    (if integral?
+                                      `(stdlib.format.format-u64-radix-core
+                                        ,radix-value
+                                        ,(comptime.expr-int radix-shift)
+                                        (!=
+                                          ,(comptime.expr-int radix-uppercase)
+                                          0)
+                                        (!= ,alternate-expr 0))
                                       (comptime.comptime-error
                                         (comptime.string-append
-                                          "format: 'p' selector requires (Ptr T), (MutPtr T), or a shared borrow of a raw-pointer value; got "
-                                          (type-key argument-type))))
-                                    display-rendered)]
+                                          "format: radix selector '"
+                                          (comptime.string-append
+                                            selector
+                                            (comptime.string-append
+                                              "' requires a fixed-width integer argument; got "
+                                              (type-key argument-type))))))
+                                    (if pointer-selector?
+                                      (if supported-pointer-argument?
+                                        (if borrowed?
+                                          `(stdlib.format.format-pointer-core
+                                            (ptr->int (deref ,value)))
+                                          `(stdlib.format.format-pointer-core
+                                            (ptr->int ,value)))
+                                        (comptime.comptime-error
+                                          (comptime.string-append
+                                            "format: 'p' selector requires (Ptr T), (MutPtr T), or a shared borrow of a raw-pointer value; got "
+                                            (type-key argument-type))))
+                                      display-rendered))]
                                 (begin
                                   (if (string.eq selector "")
                                     unit
-                                    (if pointer-selector?
+                                    (if special-selector?
                                       unit
                                       (comptime.comptime-error
                                         (comptime.string-append
@@ -4115,14 +4193,16 @@
                                                     (set! zero-scanning? false))
                                                   (set! zero-scanning? false)))
                                               (set! zero-scanning? false)))
-                                          (if (if (< zero-scan placeholder-end)
-                                            (=
-                                              (cast
-                                                (string.string-ref
-                                                  text
-                                                  zero-scan)
-                                                : i64)
-                                              36)
+                                          (if (if (= zero-scan (+ cursor 1))
+                                            (if (< zero-scan placeholder-end)
+                                              (=
+                                                (cast
+                                                  (string.string-ref
+                                                    text
+                                                    zero-scan)
+                                                  : i64)
+                                                36)
+                                              false)
                                             false)
                                             unit
                                             (begin
@@ -5028,47 +5108,87 @@
       (unsafe
         (string-from-bytes (ptr-cast dst : (Ptr u8)) digits)))))
 
+;: Count the minimal digits needed for one power-of-two radix value.
+;:
+;: `shift` is one for binary, three for octal, or four for hexadecimal. Zero
+;: retains one digit; every other value loses one base digit per shift.
+(define (format-u64-radix-digit-count [value : u64] [shift : i64]) : i64
+  (let
+    [cursor : u64 value]
+    [digits : i64 1]
+    (begin
+      (set! cursor (shr cursor shift))
+      (while (!= cursor (cast 0 : u64))
+        (begin
+          (set! cursor (shr cursor shift))
+          (set! digits (+ digits 1))))
+      digits)))
+
+;: Render one unsigned bit pattern in binary, octal, or hexadecimal.
+;:
+;: Signed callers cast through their same-width unsigned twin before widening,
+;: so this one converter preserves the selected integer type's exact 8/16/32/
+;: 64-bit two's-complement width. The renderer allocates one exact-size String;
+;: prefix/sign/width composition remains in `format-apply-options`.
+(define (format-u64-radix-core
+  [value : u64]
+  [shift : i64]
+  [uppercase? : bool]
+  [alternate? : bool]) : String
+  (let
+    [digits : i64 (format-u64-radix-digit-count value shift)]
+    [prefix-len : i64
+      (if alternate?
+        2
+        0)]
+    [output-len : i64 (+ prefix-len digits)]
+    [dst : (MutPtr u8) (string.string-runtime-alloc output-len)]
+    [remaining : u64 value]
+    [mask : u64 (- (shl (cast 1 : u64) shift) (cast 1 : u64))]
+    [index : i64 (- output-len 1)]
+    (begin
+      (if alternate?
+        (unsafe
+          (begin
+            (ptr-write! dst (cast 48 : u8))
+            (ptr-write!
+              (ptr-offset dst 1)
+              (cast
+                (match shift
+                  [1 98]
+                  [3 111]
+                  [_ 120])
+                : u8))))
+        unit)
+      (while (>= index prefix-len)
+        (let
+          [digit : u64 (bit-and remaining mask)]
+          [code : u64
+            (if (< digit (cast 10 : u64))
+              (+ digit (cast 48 : u64))
+              (+
+                (- digit (cast 10 : u64))
+                (cast
+                  (if uppercase?
+                    65
+                    97)
+                  : u64)))]
+          (begin
+            (unsafe
+              (ptr-write! (ptr-offset dst index) (cast code : u8)))
+            (set! remaining (shr remaining shift))
+            (set! index (- index 1)))))
+      (unsafe
+        (string-from-bytes (ptr-cast dst : (Ptr u8)) output-len)))))
+
 ;: Render one raw-pointer address as minimal lowercase hexadecimal text.
 ;:
 ;: The formatter macro performs the unsafe pointer-to-integer conversion at
 ;: the caller's expansion site. This runtime helper receives only that integer
-;: representation and never dereferences or otherwise uses pointer provenance.
+;: representation, never dereferences or otherwise uses pointer provenance,
+;: and reuses the shared lowercase hexadecimal converter.
 (define (format-pointer-core [address : u64]) : String
-  (let
-    [cursor : u64 address]
-    [digits : i64 1]
-    (begin
-      (while (>= cursor (cast 16 : u64))
-        (begin
-          (set! cursor (/ cursor (cast 16 : u64)))
-          (set! digits (+ digits 1))))
-      (let
-        [output-len : i64 (+ digits 2)]
-        [dst : (MutPtr u8) (string.string-runtime-alloc output-len)]
-        [remaining : u64 address]
-        [index : i64 (- output-len 1)]
-        (begin
-          (unsafe
-            (begin
-              (ptr-write! dst (cast 48 : u8))
-              (ptr-write! (ptr-offset dst 1) (cast 120 : u8))))
-          (while (>= index 2)
-            (let
-              [next : u64 (/ remaining (cast 16 : u64))]
-              [digit : u64 (- remaining (* next (cast 16 : u64)))]
-              (begin
-                (unsafe
-                  (ptr-write!
-                    (ptr-offset dst index)
-                    (cast
-                      (if (< digit (cast 10 : u64))
-                        (+ digit (cast 48 : u64))
-                        (+ (- digit (cast 10 : u64)) (cast 97 : u64)))
-                      : u8)))
-                (set! remaining next)
-                (set! index (- index 1)))))
-          (unsafe
-            (string-from-bytes (ptr-cast dst : (Ptr u8)) output-len)))))))
+  (format-u64-radix-core address 4 false true))
 
 ;: Fixed-capacity base-2^32 bignum backing the pure-TL float formatter.
 (defstruct BigNum

@@ -1449,6 +1449,56 @@
                         "0"
                         "0")
                       (+ bindings-opened body-opened 2)))))))])]
+    [(compiler_ast_types.AstExpr.Lambda lambda-box)
+      (match (__tl-box-place lambda-box)
+        [(compiler_ast_types.AstLambda.Lambda lambda-params maybe-ret body)
+          (let
+            [param-count : i64
+              (compiler_ast_types.ast-param-list-len (& lambda-params))]
+            [payload : String
+              (embedded-native-template-lambda-param-payload (& lambda-params))]
+            [params-opened : i64
+              (embedded-native-template-lambda-param-type-ops
+                params
+                (& lambda-params)
+                0
+                ops
+                ops-count)]
+            (if (< params-opened 0)
+              -1
+              (let
+                [ret-opened : i64
+                  (match maybe-ret
+                    [(compiler_ast_types.AstMaybeType.No) 0]
+                    [(compiler_ast_types.AstMaybeType.Some ret-ty)
+                      (embedded-native-template-type-ops
+                        params
+                        ret-ty
+                        ops
+                        ops-count)])]
+                (if (< ret-opened 0)
+                  -1
+                  (let
+                    [body-opened : i64
+                      (embedded-native-template-ops params body ops ops-count)]
+                    (if (< body-opened 0)
+                      -1
+                      (begin
+                        (embedded-native-template-push!
+                          ops
+                          ops-count
+                          (tlci_core.tlci-host-callback-name-shared-view
+                            tlci_core.tlci-host-callback-name-expr-lambda)
+                          (embedded-native-name-arg
+                            (embedded-native-escape-string payload))
+                          (string.int->string (string.string-length payload))
+                          (string.int->string
+                            (+
+                              (* param-count 2)
+                              (match maybe-ret
+                                [(compiler_ast_types.AstMaybeType.No) 0]
+                                [(compiler_ast_types.AstMaybeType.Some _) 1]))))
+                        (+ params-opened ret-opened body-opened 1))))))))])]
     [(compiler_ast_types.AstExpr.Binary op left-node right-node)
       (let
         [left-opened : i64
@@ -2552,6 +2602,70 @@
           (if (< rest-opened 0)
             -1
             (+ head-opened rest-opened)))))))
+
+;; Lambda parameter names cannot contain newlines. Pack each as
+;; `<flags>:<name>\n`, where bit 0 is comptime and bit 1 is consume, and emit
+;; the corresponding types on the host value stack in the same order. The
+;; final expr-lambda callback validates and combines both streams. Refs #6868.
+(define (embedded-native-template-lambda-param-payload
+  [params : (& params compiler_ast_types.AstParamList)]) : String
+  (let
+    [payload : String ""]
+    [index : i64 0]
+    (begin
+      (while (< index (compiler_ast_types.ast-param-list-len params))
+        (match (compiler_ast_types.ast-param-list-get
+          params
+          index
+          (compiler_ast_types.ast-param-fallback))
+          [(compiler_ast_types.AstParam.Param name _ comptime? consume?)
+            (set!
+              payload
+              (str_cat.str-cat
+                payload
+                (string.int->string
+                  (+
+                    (if comptime?
+                      1
+                      0)
+                    (if consume?
+                      2
+                      0)))
+                ":"
+                (ci.intern-str name)
+                "\n"))])
+        (set! index (+ index 1)))
+      payload)))
+
+(define (embedded-native-template-lambda-param-type-ops
+  [macro-params : (& macro-params compiler_ast_types.AstMacroParamList)]
+  [lambda-params : (& lambda-params compiler_ast_types.AstParamList)]
+  [index : i64]
+  [ops : (__tl_dyn-array String)]
+  [ops-count : (__tl_dyn-array i64)]) : i64
+  (if (>= index (compiler_ast_types.ast-param-list-len lambda-params))
+    0
+    (match (compiler_ast_types.ast-param-list-get
+      lambda-params
+      index
+      (compiler_ast_types.ast-param-fallback))
+      [(compiler_ast_types.AstParam.Param _ ty _ _)
+        (let
+          [head-opened : i64
+            (embedded-native-template-type-ops macro-params ty ops ops-count)]
+          (if (< head-opened 0)
+            -1
+            (let
+              [rest-opened : i64
+                (embedded-native-template-lambda-param-type-ops
+                  macro-params
+                  lambda-params
+                  (+ index 1)
+                  ops
+                  ops-count)]
+              (if (< rest-opened 0)
+                -1
+                (+ head-opened rest-opened)))))])))
 
 (define (embedded-native-template-let-bindings-ops
   [params : (& params compiler_ast_types.AstMacroParamList)]
@@ -8084,6 +8198,7 @@
     "(extern comptime-host-let-binding-list-empty (:symbol \"_tl_comptime_host_let-binding-list-empty\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-let-binding-list-cons (:symbol \"_tl_comptime_host_let-binding-list-cons\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-let (:symbol \"_tl_comptime_host_expr-let\") : (-> i64 i64 i64 i64 i64 i64))\n"
+    "(extern comptime-host-expr-lambda (:symbol \"_tl_comptime_host_expr-lambda\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-type-var (:symbol \"_tl_comptime_host_type-var\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-type-var-args (:symbol \"_tl_comptime_host_type-var-args\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-type-scalar (:symbol \"_tl_comptime_host_type-scalar\") : (-> i64 i64 i64 i64 i64 i64))\n"

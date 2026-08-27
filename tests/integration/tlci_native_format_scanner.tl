@@ -87,8 +87,7 @@
     [text-star-precision : String (format.format "{:.*}" two "seven")]
     [bool-precision : String (format.format "{:.3}" true)]
     [char-zero-precision : String (format.format "{:.0}" 'x')]
-    [integer-radix : String
-      (format.format "{:+#010X}" (cast -1 : i8))]
+    [integer-radix : String (format.format "{:+#010X}" (cast -1 : i8))]
     [rust-counter-one : String
       (format.format "Hello {} is {:.*}" "world" two seven)]
     [rust-counter-two : String

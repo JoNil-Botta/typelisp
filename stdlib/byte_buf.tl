@@ -402,6 +402,40 @@
 (define (append-bytes [buf : ByteBuf] [src : (& source bytes)]) : ByteBuf
   (append-bytes-range buf src 0 (bytes-length src)))
 
+;: Raw Formatter destination adapter for a caller-owned ByteBuf cell.
+;:
+;: `context` points at the live writer cell created by `format.write!`; the
+;: callback is synchronous and the macro moves the updated buffer back into
+;: the caller's place before returning. Zero is the only success status.
+(define (format-writer-cell [buf : ByteBuf]) : (Array ByteBuf 1)
+  (array buf))
+
+(define (format-write-raw [context : i64] [data : (Ptr u8)] [count : i64]) : i64
+  (if (< count 0)
+    22
+    (let
+      [slot : (MutPtr ByteBuf)
+        (unsafe
+          (int->ptr (cast context : u64) : (MutPtr ByteBuf)))]
+      [buf : ByteBuf
+        (unsafe
+          (ptr-read (ptr-cast slot : (Ptr ByteBuf))))]
+      [ready : ByteBuf (reserve buf count)]
+      [start : i64 (len ready)]
+      [index : i64 0]
+      (begin
+        (while (< index count)
+          (begin
+            (set!
+              (array-ref ready.slots (+ start index))
+              (unsafe
+                (ptr-read (ptr-offset data index))))
+            (set! index (+ index 1))))
+        (set! ready.len (+ start count))
+        (unsafe
+          (ptr-write! slot ready))
+        0))))
+
 ;: Copy `count` bytes from `src` starting at `start` into a new buffer.
 (define (from-string-range [src : String] [start : i64] [count : i64]) : ByteBuf
   (append-string-range (with-capacity count) src start count))

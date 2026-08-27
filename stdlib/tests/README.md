@@ -229,6 +229,11 @@ Inline stdlib coverage:
   multi-type owner modules, same-named types from distinct owners, single
   evaluation, non-consuming formatting, shared formatter/output dispatch, and
   import-order independence on Linux and Windows.
+  `tests/integration/format_writer_sinks.tl`, `format_writer_error.tl`,
+  `format_file_writer.tl`, and `format_stdio_family.tl` cover the shared raw
+  Formatter ABI across ByteBuf, TextBuf, FileHandle, stdout, and stderr;
+  exactly-once/lvalue/rvalue/repeated formatting; zero final-String allocation
+  for a preallocated literal sink; first-error retention; and newline behavior.
 - `text_buf.tl` owns inline tests for scoped arena rendering of a program-owned
   text buffer from an inner active arena, empty buffers, repeated appends,
   char/int append helpers, buffer concatenation, clear/reset behavior, and

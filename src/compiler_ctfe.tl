@@ -2914,6 +2914,14 @@
   (Ok ast.AstMaybeType i64)
   (Err (Box cdiag.CompilerDiagnostic)))
 
+(defenum ResultCtfeQuoteParams
+  (Ok ast.AstParamList i64)
+  (Err (Box cdiag.CompilerDiagnostic)))
+
+(defenum ResultCtfeQuoteParamsBuild
+  (Ok i64)
+  (Err (Box cdiag.CompilerDiagnostic)))
+
 (defenum ResultCtfeQuoteLetBindings
   (Ok ast.AstLetBindingList i64)
   (Err (Box cdiag.CompilerDiagnostic)))
@@ -12578,28 +12586,45 @@
 
 (define (ctfe-quote-param-list
   [params : ast.AstParamList]
-  [env : (& env CtfeEnv)]) : ast.AstParamList
+  [env : (& env CtfeEnv)]
+  [origin : ast.AstExpr]
+  [fuel : i64]) : ResultCtfeQuoteParams
   (let
     [out : ast.AstParamList
       (ast.ast-param-list-with-capacity (ast.ast-param-list-len (& params)))]
-    (begin
-      (ctfe-quote-param-list-into (& params) 0 env (&mut out))
-      out)))
+    (match (ctfe-quote-param-list-into (& params) 0 env origin fuel (&mut out))
+      [(ResultCtfeQuoteParamsBuild.Ok out-fuel)
+        (ResultCtfeQuoteParams.Ok out out-fuel)]
+      [(ResultCtfeQuoteParamsBuild.Err diag) (ResultCtfeQuoteParams.Err diag)])))
 
 (define (ctfe-quote-param-list-into
   [params : (& params ast.AstParamList)]
   [index : i64]
   [env : (& env CtfeEnv)]
-  [out : (&mut out ast.AstParamList)]) : unit
+  [origin : ast.AstExpr]
+  [fuel : i64]
+  [out : (&mut out ast.AstParamList)]) : ResultCtfeQuoteParamsBuild
   (if (>= index (ast.ast-param-list-len params))
-    unit
-    (begin
-      (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
-        [(ast.AstParam.Param name ty comptime?)
-          (ast.ast-param-list-push
-            out
-            (ast.AstParam.Param (ctfe-quote-name-id env name) ty comptime?))])
-      (ctfe-quote-param-list-into params (+ index 1) env out))))
+    (ResultCtfeQuoteParamsBuild.Ok fuel)
+    (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
+      [(ast.AstParam.Param name ty comptime?)
+        (match (ctfe-quote-type ty env (clone origin) fuel)
+          [(ResultCtfeQuoteType.Ok quoted-ty next-fuel)
+            (begin
+              (ast.ast-param-list-push
+                out
+                (ast.AstParam.Param
+                  (ctfe-quote-name-id env name)
+                  quoted-ty
+                  comptime?))
+              (ctfe-quote-param-list-into
+                params
+                (+ index 1)
+                env
+                origin
+                next-fuel
+                out))]
+          [(ResultCtfeQuoteType.Err diag) (ResultCtfeQuoteParamsBuild.Err diag)])])))
 
 (define (ctfe-quote-pattern-list
   [patterns : ast.AstPatternList]
@@ -13015,17 +13040,25 @@
         [(ast.AstLambda.Lambda params maybe-ret body-box)
           (let
             [body : ast.AstExpr (ctfe-ast-get env body-box)]
-            (match (ctfe-quote-expr body env fuel quasiquote)
-              [(ResultCtfeQuoteExpr.Ok quoted-body _ next-fuel)
-                (ResultCtfeQuoteExpr.Ok
-                  (ast.ast-expr-lambda-with-pools
-                    (ctfe-env-pools env)
-                    (ctfe-quote-param-list params env)
-                    maybe-ret
-                    quoted-body)
-                  (ast.AstType.Expr)
-                  next-fuel)]
-              [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)]))])]
+            (match (ctfe-quote-param-list params env (clone expr) fuel)
+              [(ResultCtfeQuoteParams.Ok quoted-params params-fuel)
+                (match (ctfe-quote-maybe-type maybe-ret env expr params-fuel)
+                  [(ResultCtfeQuoteMaybeType.Ok quoted-ret ret-fuel)
+                    (match (ctfe-quote-expr body env ret-fuel quasiquote)
+                      [(ResultCtfeQuoteExpr.Ok quoted-body _ next-fuel)
+                        (ResultCtfeQuoteExpr.Ok
+                          (ast.ast-expr-lambda-with-pools
+                            (ctfe-env-pools env)
+                            quoted-params
+                            quoted-ret
+                            quoted-body)
+                          (ast.AstType.Expr)
+                          next-fuel)]
+                      [(ResultCtfeQuoteExpr.Err diag)
+                        (ResultCtfeQuoteExpr.Err diag)])]
+                  [(ResultCtfeQuoteMaybeType.Err diag)
+                    (ResultCtfeQuoteExpr.Err diag)])]
+              [(ResultCtfeQuoteParams.Err diag) (ResultCtfeQuoteExpr.Err diag)]))])]
     [(ast.AstExpr.Tuple exprs)
       (match (ctfe-quote-expr-list exprs env fuel quasiquote)
         [(ResultCtfeQuoteExprList.Ok quoted next-fuel)
@@ -19015,6 +19048,79 @@
             [_ false])]
         [(ResultCtfe.Err _) false]))))
 
+;; Type-position unquotes in lambda annotations preserve the resolved tuple's
+;; heterogeneous references, nominal identity, and lifetime names. Refs #6868.
+(define (compiler-ctfe-quote-lambda-type-unquote-ok?) : bool
+  (let
+    [base-env : CtfeEnv (ctfe-env-empty)]
+    [pools : ast.AstNodePoolContext (ctfe-env-pools (& base-env))]
+    [type-name : i64 (ctfe-materialize-generated-name-id "LambdaType")]
+    [param-name : i64 (ctfe-materialize-generated-name-id "values")]
+    [owner-name : i64 (ctfe-materialize-generated-name-id "Owner")]
+    [owner-region : i64 (ctfe-materialize-generated-name-id "owner-region")]
+    [text-region : i64 (ctfe-materialize-generated-name-id "text-region")]
+    [expected : ast.AstType
+      (ast.ast-ty-tuple
+        (ast.ast-type-cons-with-pools
+          (ast.ast-node-pool-context-shared-view (& pools))
+          (ast.ast-ty-ref-with-pools
+            (ast.ast-node-pool-context-shared-view (& pools))
+            owner-region
+            (ast.AstType.Var owner-name))
+          (ast.ast-type-cons-with-pools
+            (ast.ast-node-pool-context-shared-view (& pools))
+            (ast.ast-ty-ref-with-pools
+              (ast.ast-node-pool-context-shared-view (& pools))
+              text-region
+              (ast.AstType.Str))
+            (ast.ast-type-list-new))))]
+    [env : CtfeEnv
+      (ctfe-env-extend-id
+        base-env
+        type-name
+        (CompilerCtfeValue.Type (clone expected)))]
+    [type-unquote : ast.AstType
+      (ast.ast-ty-var-args
+        cbi.compiler-builtin-id-fix-unquote
+        (ast.ast-lifetime-cons type-name (ast.ast-lifetime-list-new)))]
+    [body : i64 (ctfe-ast-push env (ast.AstExpr.Var param-name))]
+    [lambda-node : i64
+      (ast.ast-expr-lambda-with-pools
+        (ast.ast-node-pool-context-shared-view (& pools))
+        (ast.ast-param-cons
+          (ast.AstParam.Param param-name (clone type-unquote) false)
+          (ast.ast-param-list-new))
+        (ast.AstMaybeType.Some type-unquote)
+        body)]
+    [quasiquoted : i64 (ast.ast-expr-quasiquote-with-pools pools lambda-node)]
+    (match (compiler-ctfe-eval
+      (ctfe-ast-get env quasiquoted)
+      env
+      (ctfe-fuel-limit))
+      [(ResultCtfe.Ok value _)
+        (match value
+          [(CompilerCtfeValue.Expr node (ast.AstType.Expr))
+            (match (ctfe-ast-get env node)
+              [(ast.AstExpr.Lambda lambda-box)
+                (match (__tl-box-place lambda-box)
+                  [(ast.AstLambda.Lambda params maybe-ret _)
+                    (and
+                      (= (ast.ast-param-list-len (& params)) 1)
+                      (match (ast.ast-param-list-get
+                        (& params)
+                        0
+                        (ast.ast-param-fallback))
+                        [(ast.AstParam.Param _ actual false)
+                          (ctfe-type-eq-in-env env actual (clone expected))]
+                        [_ false])
+                      (match maybe-ret
+                        [(ast.AstMaybeType.Some actual)
+                          (ctfe-type-eq-in-env env actual expected)]
+                        [(ast.AstMaybeType.No) false]))])]
+              [_ false])]
+          [_ false])]
+      [(ResultCtfe.Err _) false])))
+
 (define (compiler-ctfe-captured-quote-syntax-ok?) : bool
   (let
     [base-env : CtfeEnv (ctfe-env-empty)]
@@ -19806,6 +19912,7 @@
     (unless (compiler-ctfe-checked-expr-inspectors-ok?) (return 1))
     (unless (compiler-ctfe-checked-expr-rejects-non-bool-cond-ok?) (return 1))
     (unless (compiler-ctfe-quote-syntax-ok?) (return 1))
+    (unless (compiler-ctfe-quote-lambda-type-unquote-ok?) (return 1))
     (unless (compiler-ctfe-captured-quote-syntax-ok?) (return 1))
     (unless (compiler-ctfe-expr-pattern-match-ok?) (return 1))
     (unless (compiler-ctfe-local-while-ok?) (return 1))

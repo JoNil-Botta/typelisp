@@ -806,6 +806,12 @@
 (define tlci-host-callback-name-expr-let : String
   "expr-let")
 
+;; expr-lambda reconstructs a quasiquoted lambda from its parameter types,
+;; optional return type, and body. The parameter names/flags are carried in a
+;; compact immediate payload so the value stack remains syntax-only.
+(define tlci-host-callback-name-expr-lambda : String
+  "expr-lambda")
+
 ;; Typed template bindings (refs #5603): type-var pushes the AstType.Var for
 ;; caller bytes (unmarked, matching the interpreted type quote); let-binding-
 ;; typed pops the type value then the init expression and pushes a binding

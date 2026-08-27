@@ -1779,6 +1779,93 @@
           (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
           ok)))))
 
+(define (producer-test-lambda-result-ok?
+  [pools : ast.AstNodePoolContext]
+  [expected : ast.AstType]) : bool
+  (match (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-value)
+    [(compiler_ctfe.CompilerCtfeValue.Expr node (ast.AstType.Expr))
+      (match (producer-test-expr-get pools node)
+        [(ast.AstExpr.Lambda lambda-box)
+          (match (__tl-box-place lambda-box)
+            [(ast.AstLambda.Lambda params maybe-ret body)
+              (and
+                (= (ast.ast-param-list-len (& params)) 1)
+                (match (ast.ast-param-list-get
+                  (& params)
+                  0
+                  (ast.ast-param-fallback))
+                  [(ast.AstParam.Param name actual false)
+                    (and
+                      (= name (producer-test-name-id "value"))
+                      (compiler_ctfe.ctfe-type-eq actual (clone expected)))]
+                  [_ false])
+                (match maybe-ret
+                  [(ast.AstMaybeType.Some actual)
+                    (compiler_ctfe.ctfe-type-eq actual expected)]
+                  [_ false])
+                (match (producer-test-expr-get pools body)
+                  [(ast.AstExpr.Var name)
+                    (= name (producer-test-name-id "value"))]
+                  [_ false]))])]
+        [_ false])]
+    [_ false]))
+
+;; A lambda template consumes type-position unquotes for both its parameter
+;; and return annotations on the package-native route. Refs #6868.
+(define (producer-test-dispatch-lambda?
+  [loaded : (& loaded tlci_loader.TlciLoadedImage)]
+  [identity : String]) : bool
+  (let
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [owner-region : i64 (ci.intern "lambda-owner-region")]
+    [text-region : i64 (ci.intern "lambda-text-region")]
+    [lambda-ty : ast.AstType
+      (ast.ast-ty-tuple
+        (ast.ast-type-cons-with-pools
+          (owned_view.compiler-owned-shared-view pools)
+          (ast.ast-ty-ref-with-pools
+            (owned_view.compiler-owned-shared-view pools)
+            owner-region
+            (ast.AstType.Var (ci.intern "package.model/Owner")))
+          (ast.ast-type-cons-with-pools
+            (owned_view.compiler-owned-shared-view pools)
+            (ast.ast-ty-ref-with-pools
+              (owned_view.compiler-owned-shared-view pools)
+              text-region
+              (ast.AstType.Str))
+            (ast.ast-type-list-new))))]
+    [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
+    (begin
+      (set!
+        (array-ref operands 0)
+        (compiler_ctfe.CompilerCtfeValue.Type
+          (owned_view.compiler-owned-shared-view lambda-ty)))
+      (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
+        (owned_view.compiler-owned-shared-view pools)
+        (owned_view.compiler-owned-shared-view operands)
+        1
+        64
+        producer-test-cookie
+        (compiler_ctfe.ctfe-reflect-info-list-empty))
+      (let
+        [ok : bool
+          (match (tlci_loader.tlci-loader-dispatch-macro
+            loaded
+            identity
+            producer-test-cookie
+            (__tl_make-array i64 0)
+            0)
+            [(tlci_loader.ResultTlciMacroDispatch.Err _) false]
+            [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
+              (and
+                (= dispatch.status tlci.tlci-host-callback-status-ok)
+                (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-ready?)
+                (producer-test-lambda-result-ok? pools lambda-ty))])]
+        (begin
+          (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
+          ok)))))
+
 (define (producer-test-dispatch-type-expr-list?
   [loaded : (& loaded tlci_loader.TlciLoadedImage)]
   [identity : String]) : bool
@@ -3533,11 +3620,11 @@
           (and
             (string.eq
               default-report
-              "package.multi/multi\ttemplate-node:lambda\n")
+              "package.multi/multi\ttemplate-node:in-arena\n")
             (=
               (producer-test-string-count
                 (owned_view.compiler-owned-shared-view full-report)
-                "package.multi/multi\tblocked\ttemplate-node:lambda\n")
+                "package.multi/multi\tblocked\ttemplate-node:in-arena\n")
               1)
             (=
               (producer-test-string-count
@@ -3607,7 +3694,7 @@
     [captures : compiler_tlci_native_producer.TlciNativeMacroCaptures
       (compiler_tlci_native_producer.tlci-native-macro-captures-new)]
     (match (parse_core.parse-ast-source
-      "(module package.multi)\n(defmacro (multi [value : Expr]) : Expr `(begin (lambda ([x : i64]) x) (with-arena a value) ,value))\n")
+      "(module package.multi)\n(defmacro (multi [value : Expr]) : Expr `(begin (in-arena a value) (with-arena a value) ,value))\n")
       [(parse_core.ResultAstProgram.Err _) false]
       [(parse_core.ResultAstProgram.Ok program)
         (match program
@@ -4230,6 +4317,7 @@
 (defmacro (tytpl [T : type] [value : Expr]) : Expr `(stdlib.eq.struct-eq-fields ,T 0 ,value))
 (defmacro (gen [T : type] [value : Expr]) : Module (let [module-name : Expr (expr-var (comptime.string-append \"test.gen.\" (type-key T)))] `(begin (module ,module-name) (define (id [x : ,T]) : ,T x))))
 (defmacro (localtype [T : type] [value : Expr]) : Expr (let [U : type T] `(cast ,value : ,U)))
+(defmacro (lambdatpl [T : type]) : Expr `(lambda ([value : ,T]) : ,T value))
 (defmacro (modname [format : Module]) : Expr (comptime.expr-var (comptime.module-name format)))
 (defmacro (modhook [format : Module]) : Expr (comptime.module-hook format \"object-field\"))
 (defmacro (classify [value : Expr]) : Expr `(match value [(Some _) true] [None false]))
@@ -4315,13 +4403,13 @@
                         (let
                           [ok : bool
                             (and
-                              (= (array-length name-array) 43)
-                              (= captures.len 43)
+                              (= (array-length name-array) 44)
+                              (= captures.len 44)
                               (=
                                 (array-ref
                                   compiler_tlci_native_producer.embedded-stdlib-tlci-native-report-count
                                   0)
-                                42)
+                                43)
                               (=
                                 (array-ref
                                   compiler_tlci_native_producer.embedded-stdlib-tlci-native-report-partial-count
@@ -4370,6 +4458,9 @@
                               (producer-test-dispatch-local-type?
                                 (& loaded)
                                 "package.macros/localtype")
+                              (producer-test-dispatch-lambda?
+                                (& loaded)
+                                "package.macros/lambdatpl")
                               (producer-test-dispatch-module-name?
                                 (& loaded)
                                 "package.macros/modname"

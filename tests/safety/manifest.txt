@@ -425,6 +425,7 @@ arena_cookbook_double_buffer_stale_reject|check-fail|tests/safety/arena_cookbook
 arena_cookbook_longer_lived_store_reject|check-fail|tests/safety/arena_cookbook_longer_lived_store_reject.tl|-|cannot store region-tagged value into struct field
 arena_cookbook_closure_capture_reject|check-fail|tests/safety/arena_cookbook_closure_capture_reject.tl|-|lambda cannot capture region-tagged value
 lambda_mut_capture_alias_reject|check-fail|tests/safety/lambda_mut_capture_alias_reject.tl|-|reference-capturing closure value would escape lexical scope
+comptime_lambda_reference_escape_reject|check-fail|tests/safety/comptime_lambda_reference_escape_reject.tl|-|lambda cannot capture immutable reference; reference value would escape lexical scope
 lambda_mut_capture_moved_reference_reject|check-fail|tests/safety/lambda_mut_capture_moved_reference_reject.tl|-|use of moved value `exclusive`
 lambda_mut_capture_owner_read_live_reject|check-fail|tests/safety/lambda_mut_capture_owner_read_live_reject.tl|-|cannot read mutably borrowed place
 lambda_capture_source_reuse_reject|check-fail|tests/safety/lambda_capture_source_reuse_reject.tl|-|use of moved value `owned`

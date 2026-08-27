@@ -1619,12 +1619,13 @@ if [ "$NL_HOST_OS" = windows ]; then
     # 98,566,144 physical payload bytes. Composing #6840's semantic workspace
     # rename provider with #6827 measured 3,029,193 used nodes on the
     # authoritative Windows CI probe and retains the same boundary.
-    # #6650's direct format sink plan and stdio macro family cross the next
-    # macro-expand expression boundary: the authoritative Windows CI probe
-    # measured 3,085,431 used nodes, 3,145,728 capacity, and 100,663,296
-    # physical payload bytes.
+    # #6650's direct format sink plan and stdio macro family crossed the next
+    # boundary on its original base. Composing #6867's fixed-array core brings
+    # the graph back to 47 segments: the authoritative Windows CI probe measured
+    # 3,057,094 used nodes, 3,080,192 capacity, and 98,566,144 physical payload
+    # bytes.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool macro_expand 48 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool macro_expand 47 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # The three dense optimizer plan containers crossed the checked expression
     # graph into its 33rd segment; the accessor-admission/absorption/fold/sinking
@@ -1673,9 +1674,10 @@ if [ "$NL_HOST_OS" = windows ]; then
     # 2,425,185 used nodes, 2,490,368 capacity, and 79,691,776 physical payload
     # bytes.
     # #6650's direct format sink plan and stdio macro family cross the next
-    # typecheck expression boundary: the authoritative Windows CI probe
-    # measured 2,497,319 used nodes, 2,555,904 capacity, and 81,788,928 physical
-    # payload bytes.
+    # typecheck expression boundary. Composed with #6867's fixed-array core, the
+    # authoritative Windows CI probe measured 2,491,282 used nodes, 2,555,904
+    # capacity, and 81,788,928 physical payload bytes -- only 914 nodes past the
+    # 38-segment line.
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_expr_pool typecheck 39 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"

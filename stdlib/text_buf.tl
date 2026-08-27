@@ -73,6 +73,10 @@
 (define (format-writer-cell [buf : TextBuf]) : (Array TextBuf 1)
   (array buf))
 
+;: Append one raw callback range to the TextBuf stored at `context`.
+;:
+;: Returns zero on success and a stable nonzero status for an invalid byte
+;: count. The callback copies retained data and updates the caller-owned cell.
 (define (format-write-raw [context : i64] [data : (Ptr u8)] [count : i64]) : i64
   (if (< count 0)
     22

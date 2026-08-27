@@ -409,6 +409,10 @@
 (define (format-writer-cell [buf : ByteBuf]) : (Array ByteBuf 1)
   (array buf))
 
+;: Append one raw callback range to the ByteBuf stored at `context`.
+;:
+;: Returns zero on success and a stable nonzero status for an invalid byte
+;: count. The caller-owned cell is updated synchronously before returning.
 (define (format-write-raw [context : i64] [data : (Ptr u8)] [count : i64]) : i64
   (if (< count 0)
     22

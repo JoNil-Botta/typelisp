@@ -28,8 +28,9 @@
 ;# ```
 ;#
 ;# Builtin placeholder values are `String`, all eight fixed-width integer
-;# types, `bool`, `char`, `f64`, and `f32`. Structural formatting is
-;# intentionally separate from this default Display-style protocol.
+;# types, `bool`, `char`, `f64`, and `f32`. The `p` selector additionally
+;# accepts raw pointers in an unsafe call-site context. Structural formatting
+;# is intentionally separate from this default Display-style protocol.
 (import stdlib.comptime)
 (import stdlib.str_cat)
 (import stdlib.string)
@@ -435,6 +436,18 @@
                                       argument-type)
                                     argument-type)]
                                 [value-kind : String (type-kind value-type)]
+                                [pointer-selector? : bool
+                                  (string.eq selector "p")]
+                                [raw-pointer? : bool
+                                  (if (string.eq value-kind "ptr")
+                                    true
+                                    (string.eq value-kind "mut-ptr"))]
+                                [supported-pointer-argument? : bool
+                                  (if raw-pointer?
+                                    (if borrowed?
+                                      (string.eq argument-kind "ref")
+                                      true)
+                                    false)]
                                 [nominal? : bool
                                   (match value-kind
                                     ["struct" true]
@@ -508,13 +521,15 @@
                                       value-type)
                                     false)]
                                 [hook-dispatch : i64
-                                  (+
-                                    (if plain-matches?
-                                      1
-                                      0)
-                                    (if qualified-matches?
-                                      2
-                                      0))]
+                                  (if pointer-selector?
+                                    4
+                                    (+
+                                      (if plain-matches?
+                                        1
+                                        0)
+                                      (if qualified-matches?
+                                        2
+                                        0)))]
                                 [hook-present? : bool
                                   (if plain-present?
                                     true
@@ -538,10 +553,13 @@
                                 [numeric? : bool
                                   (if integral?
                                     true
-                                    float?)]
-                                [rendered : comptime.Expr
+                                    (if float?
+                                      true
+                                      pointer-selector?))]
+                                [display-rendered : comptime.Expr
                                   (if nominal?
                                     (match hook-dispatch
+                                      [4 (comptime.expr-string "")]
                                       [3
                                         (comptime.comptime-error
                                           (comptime.string-append
@@ -682,18 +700,49 @@
                                             (deref ,value))
                                           `(stdlib.format.format-f32-core
                                             ,value))]
+                                      ["ptr"
+                                        (if pointer-selector?
+                                          (comptime.expr-string "")
+                                          (comptime.comptime-error
+                                            (comptime.string-append
+                                              "format: unsupported argument type "
+                                              value-key)))]
+                                      ["mut-ptr"
+                                        (if pointer-selector?
+                                          (comptime.expr-string "")
+                                          (comptime.comptime-error
+                                            (comptime.string-append
+                                              "format: unsupported argument type "
+                                              value-key)))]
                                       [_
-                                        (comptime.comptime-error
-                                          (comptime.string-append
-                                            "format: unsupported argument type "
-                                            value-key))]))]
+                                        (if pointer-selector?
+                                          (comptime.expr-string "")
+                                          (comptime.comptime-error
+                                            (comptime.string-append
+                                              "format: unsupported argument type "
+                                              value-key)))]))]
+                                [rendered : comptime.Expr
+                                  (if pointer-selector?
+                                    (if supported-pointer-argument?
+                                      (if borrowed?
+                                        `(stdlib.format.format-pointer-core
+                                          (ptr->int (deref ,value)))
+                                        `(stdlib.format.format-pointer-core
+                                          (ptr->int ,value)))
+                                      (comptime.comptime-error
+                                        (comptime.string-append
+                                          "format: 'p' selector requires (Ptr T), (MutPtr T), or a shared borrow of a raw-pointer value; got "
+                                          (type-key argument-type))))
+                                    display-rendered)]
                                 (begin
                                   (if (string.eq selector "")
                                     unit
-                                    (comptime.comptime-error
-                                      (comptime.string-append
-                                        "format: type selector is parsed but not supported yet: "
-                                        selector)))
+                                    (if pointer-selector?
+                                      unit
+                                      (comptime.comptime-error
+                                        (comptime.string-append
+                                          "format: type selector is parsed but not supported yet: "
+                                          selector))))
                                   (if (= sign 1)
                                     (if numeric?
                                       unit
@@ -773,7 +822,10 @@
                                     [precision-applies? : bool
                                       (if (= precision-kind 0)
                                         false
-                                        (not integral?))]
+                                        (not
+                                          (if integral?
+                                            true
+                                            pointer-selector?)))]
                                     [default-options? : bool
                                       (if (= fill-code 32)
                                         (if (= alignment 0)
@@ -805,6 +857,20 @@
                                       (if width-runtime?
                                         width-var
                                         resolved-width)]
+                                    [pointer-alternate? : bool
+                                      (if pointer-selector?
+                                        (= alternate 1)
+                                        false)]
+                                    [effective-width : comptime.Expr
+                                      (if pointer-alternate?
+                                        (if (= width-kind 0)
+                                          (comptime.expr-int 18)
+                                          transported-width)
+                                        transported-width)]
+                                    [effective-zero : comptime.Expr
+                                      (if pointer-alternate?
+                                        (comptime.expr-int 1)
+                                        zero-expr)]
                                     [transported-precision : comptime.Expr
                                       (if precision-runtime?
                                         precision-var
@@ -844,8 +910,8 @@
                                               ,alignment-expr
                                               ,sign-expr
                                               (!= ,alternate-expr 0)
-                                              (!= ,zero-expr 0)
-                                              ,transported-width
+                                              (!= ,effective-zero 0)
+                                              ,effective-width
                                               (!= ,precision-kind-expr 0)
                                               ,transported-precision))
                                           `(stdlib.format.format-apply-options
@@ -856,8 +922,8 @@
                                               ,alignment-expr
                                               ,sign-expr
                                               (!= ,alternate-expr 0)
-                                              (!= ,zero-expr 0)
-                                              ,transported-width
+                                              (!= ,effective-zero 0)
+                                              ,effective-width
                                               (!= ,precision-kind-expr 0)
                                               ,transported-precision))))]
                                     [precision-checked : comptime.Expr
@@ -4961,6 +5027,48 @@
             (set! index (- index 1)))))
       (unsafe
         (string-from-bytes (ptr-cast dst : (Ptr u8)) digits)))))
+
+;: Render one raw-pointer address as minimal lowercase hexadecimal text.
+;:
+;: The formatter macro performs the unsafe pointer-to-integer conversion at
+;: the caller's expansion site. This runtime helper receives only that integer
+;: representation and never dereferences or otherwise uses pointer provenance.
+(define (format-pointer-core [address : u64]) : String
+  (let
+    [cursor : u64 address]
+    [digits : i64 1]
+    (begin
+      (while (>= cursor (cast 16 : u64))
+        (begin
+          (set! cursor (/ cursor (cast 16 : u64)))
+          (set! digits (+ digits 1))))
+      (let
+        [output-len : i64 (+ digits 2)]
+        [dst : (MutPtr u8) (string.string-runtime-alloc output-len)]
+        [remaining : u64 address]
+        [index : i64 (- output-len 1)]
+        (begin
+          (unsafe
+            (begin
+              (ptr-write! dst (cast 48 : u8))
+              (ptr-write! (ptr-offset dst 1) (cast 120 : u8))))
+          (while (>= index 2)
+            (let
+              [next : u64 (/ remaining (cast 16 : u64))]
+              [digit : u64 (- remaining (* next (cast 16 : u64)))]
+              (begin
+                (unsafe
+                  (ptr-write!
+                    (ptr-offset dst index)
+                    (cast
+                      (if (< digit (cast 10 : u64))
+                        (+ digit (cast 48 : u64))
+                        (+ (- digit (cast 10 : u64)) (cast 97 : u64)))
+                      : u8)))
+                (set! remaining next)
+                (set! index (- index 1)))))
+          (unsafe
+            (string-from-bytes (ptr-cast dst : (Ptr u8)) output-len)))))))
 
 ;: Fixed-capacity base-2^32 bignum backing the pure-TL float formatter.
 (defstruct BigNum

@@ -267,6 +267,7 @@ stdlib/tests/arena_patterns.tl|42|-|-|-
 stdlib/tests/byte_buf_api.tl|42|-|-
 stdlib/tests/byte_buf_core_api.tl|42|-|-
 stdlib/tests/format_api.tl|42|-|-|-
+stdlib/tests/format_pointer.tl|42|printf:0x0\n|literal:0x0000000000000000|-
 stdlib/tests/format_float_precision.tl|42|-|-|-
 stdlib/tests/format_float_precision_length_overflow.tl|134|-|literal:format: fixed float output length overflow|-
 stdlib/tests/format_precision_io.tl|42|printf:abc/   tr\n1.25/-0000.00\n|literal:er/1.2|-

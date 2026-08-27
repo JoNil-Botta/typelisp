@@ -147,17 +147,25 @@ Vec bang place macros as available yet.
   resolved precision. `String`, borrowed `str`, `bool`, `char`, and owner-hook
   output truncate to the resolved number of TypeLisp bytes before width/fill/
   alignment. The byte count deliberately does not decode UTF-8 and may split a
-  multi-byte sequence; NUL and high bytes remain ordinary text bytes. Float
-  fixed precision remains a focused follow-up feature. Integer `b`, `o`, `x`,
+  multi-byte sequence; NUL and high bytes remain ordinary text bytes. Integer
+  `b`, `o`, `x`,
   and `X` selectors render binary, octal, and lower/uppercase hexadecimal;
   negative signed values retain their exact 8/16/32/64-bit two's-complement
-  pattern, and `#` supplies `0b`/`0o`/`0x`. Other type selectors retain focused
-  unsupported-semantics diagnostics. Supported values are `String`, all eight
-  fixed-width integer types, `bool`, `char`, `f64`, and `f32`. Integers use
-  full-range decimal Display or the selected radix; floats use source-width
-  shortest round-tripping decimal Display without exponent notation and with
-  canonical `NaN` spelling. Every supplied expression is evaluated once in
-  source order.
+  pattern, and `#` supplies `0b`/`0o`/`0x`. The `p`
+  selector accepts direct `(Ptr T)` / `(MutPtr T)` values and shared borrows of
+  those values. It emits minimal lowercase `0x` address text; `#p` defaults to
+  16 zero-padded digits on 64-bit targets, and explicit width, alignment, fill,
+  sign, and zero padding follow Rust 1.98. Because expansion uses `ptr->int`
+  without inserting an unsafe block, every pointer-format call must itself be
+  inside `(unsafe ...)`; formatting never dereferences the pointer. The text
+  discloses an address and is only a diagnostic snapshot, not stable identity,
+  uniqueness, liveness, persistence, provenance, or a supported integer/pointer
+  round-trip. Other type selectors remain focused unsupported-semantics
+  diagnostics. Default Display values are `String`, all eight fixed-width
+  integer types, `bool`, `char`, `f64`, and `f32`. Integers use full-range
+  decimal Display or the selected radix; floats use source-width shortest
+  round-tripping decimal Display without exponent notation and with canonical
+  `NaN` spelling. Every supplied expression is evaluated once in source order.
   A nominal struct or
   enum delegates to its canonical owner module's exact
   `to-string : (& T) -> String` hook; modules with multiple nominal types may

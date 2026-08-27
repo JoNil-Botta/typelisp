@@ -88,6 +88,13 @@
     [bool-precision : String (format.format "{:.3}" true)]
     [char-zero-precision : String (format.format "{:.0}" 'x')]
     [integer-radix : String (format.format "{:+#010X}" (cast -1 : i8))]
+    [null-pointer : (Ptr i64) (ptr-null : (Ptr i64))]
+    [pointer-text : String
+      (unsafe
+        (format.format "{:p}" null-pointer))]
+    [pointer-alternate : String
+      (unsafe
+        (format.format "{:#p}" null-pointer))]
     [rust-counter-one : String
       (format.format "Hello {} is {:.*}" "world" two seven)]
     [rust-counter-two : String
@@ -125,6 +132,8 @@
       (string.eq bool-precision "tru")
       (string.eq char-zero-precision "")
       (string.eq integer-radix "+0x00000FF")
+      (string.eq pointer-text "0x0")
+      (string.eq pointer-alternate "0x0000000000000000")
       (string.eq rust-counter-one "Hello world is 7")
       (string.eq rust-counter-two "Hello world is 7")
       (string.eq rust-counter-three "Hello world is 7")

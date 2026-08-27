@@ -232,6 +232,12 @@ Inline stdlib coverage:
   invalid/overflowed indices, malformed/captured/raw/bare names,
   named ordering/duplication/unused cases, the documented non-ASCII whitespace
   limitation, and missing or wrongly typed canonical owner hooks.
+  `format_pointer.tl` pins Rust 1.98-compatible raw-pointer `p` output for null,
+  non-null shape, direct const/mutable pointers, a shared borrow, alternate,
+  width/alignment/fill/sign/zero/precision composition, and stdout/stderr paths.
+  Its rejection fixtures cover every excluded pointer-like/value category;
+  the safety corpus separately proves that generated `ptr->int` remains gated
+  by the caller's explicit unsafe context.
   `tests/integration/format_owner_*` covers positive struct/enum/nested hooks,
   multi-type owner modules, same-named types from distinct owners, single
   evaluation, non-consuming formatting, shared formatter/output dispatch, and

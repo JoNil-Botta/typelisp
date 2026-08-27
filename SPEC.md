@@ -6428,12 +6428,36 @@ the prefix lowercase. A requested plus precedes that prefix, and sign-aware
 zero padding follows the sign and prefix while counting both toward width.
 Radix precision is accepted and ignored like ordinary integral Display.
 Nonnumeric values receive a selector/type diagnostic. The selectors `?`, `x?`,
-`X?`, `p`, `e`, and `E` are parsed into the same plan but currently produce
-focused unsupported-semantics diagnostics. Malformed, duplicated, or
-out-of-order options are rejected during macro expansion.
+`X?`, `e`, and `E` are parsed into the same plan but currently produce focused
+unsupported-semantics diagnostics. Malformed, duplicated, or out-of-order
+options are rejected during macro expansion.
 
-The built-in placeholder types are `String`, `i8`, `i16`, `i32`, `i64`, `u8`,
-`u16`, `u32`, `u64`, `bool`, `char`, `f64`, and `f32`. Signed integers render
+The `p` selector accepts direct `(Ptr T)` and `(MutPtr T)` values, plus a shared
+borrow whose referent has either raw-pointer type. It never dereferences the raw
+pointer. Formatting exposes its address through `ptr->int`, so the macro call
+must appear inside `(unsafe ...)`; macro expansion deliberately preserves that
+operation at the call site instead of granting its own unsafe context. Checked
+references (including mutable references), boxes, slices, strings, integers,
+functions, and nominal values are rejected with a pointer-selector diagnostic.
+Plain `p` uses minimal lowercase hexadecimal with an unconditional `0x` prefix,
+including `0x0` for null. On the 64-bit targets, `#p` with omitted width uses 16
+zero-padded address digits after the prefix. An explicit width replaces that
+default, includes the prefix and any requested sign, and may grow the output;
+content itself is never truncated. Alternate pointer formatting uses
+prefix-aware zero padding and therefore overrides alignment and fill, matching
+Rust 1.98. Ordinary pointer width, alignment, fill, `+`, `0`, and ignored
+precision otherwise use the common numeric option path.
+
+Pointer text discloses process address-layout information and must not be sent
+to an untrusted observer without considering that leak. It is a diagnostic
+snapshot only: it is not stable across runs, builds, hosts, allocations, or
+movement; it does not prove identity, uniqueness, liveness, ownership, or
+persistence; and it carries no recoverable provenance. Programs must not parse
+it and use `int->ptr` as a round-trip or validity mechanism.
+
+The default built-in placeholder types are `String`, `i8`, `i16`, `i32`, `i64`,
+`u8`, `u16`, `u32`, `u64`, `bool`, `char`, `f64`, and `f32`; raw pointers are
+available only through `p` as described above. Signed integers render
 their decimal magnitude with a leading minus when negative; unsigned conversion
 preserves the complete `u64` range. The four integral radix selectors use one
 unsigned conversion path after same-width signed-to-unsigned conversion. Float

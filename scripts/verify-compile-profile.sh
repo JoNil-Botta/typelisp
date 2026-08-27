@@ -1624,11 +1624,12 @@ if [ "$NL_HOST_OS" = windows ]; then
     # authoritative Windows CI probe and retains the same boundary.
     # #6855's optimizer/backend/regalloc packets (guard algebra, if-convert casts,
     # load-CSE precision and join phis, lea/cmov emission, sibling-phi threading,
-    # length-equality families, local splits) crossed ast_expr_pool.macro_expand
-    # from 47 to 48 segments: the authoritative Windows probe measured 3,083,665
-    # used nodes, 3,145,728 capacity, and 100,663,296 physical payload bytes.
+    # length-equality families, local splits, invariant-load rematerialisation)
+    # rebased onto #6867's core fixed-array operations stay at 47 segments: the
+    # authoritative Windows probe measured 3,074,738 used nodes, 3,080,192
+    # capacity, and 98,566,144 physical payload bytes.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool macro_expand 48 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool macro_expand 47 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # The three dense optimizer plan containers crossed the checked expression
     # graph into its 33rd segment; the accessor-admission/absorption/fold/sinking

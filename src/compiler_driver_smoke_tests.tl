@@ -210,6 +210,7 @@
           (unless
             (=
               (compiler_lower.lower-extern-logical-symbol-id
+                lower-state
                 source-id
                 "same-name"
                 source-id
@@ -219,6 +220,7 @@
           (unless
             (=
               (compiler_lower.lower-extern-logical-symbol-id
+                lower-state
                 source-id
                 "same-name"
                 source-id
@@ -228,6 +230,7 @@
           (unless
             (=
               (compiler_lower.lower-extern-logical-symbol-id
+                lower-state
                 source-id
                 "same-name"
                 source-id
@@ -237,6 +240,7 @@
           (let
             [module-symbol : i64
               (compiler_lower.lower-extern-logical-symbol-id
+                lower-state
                 module-logical-id
                 (owned_view.compiler-owned-shared-view module-name)
                 source-id
@@ -295,9 +299,13 @@
       (let
         [source-id : i64 (ci.intern "other-name")]
         [link-id : i64 (ci.intern-generated-name "other-name")]
+        [lower-state-b : compiler_lower.CompilerLowerState
+          (compiler_lower.compiler-lower-state-new-with-intern-state
+            (ci.intern-compat-state-capture-active))]
         (unless
           (=
             (compiler_lower.lower-extern-logical-symbol-id
+              lower-state-b
               source-id
               "other-name"
               source-id

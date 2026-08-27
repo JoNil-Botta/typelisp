@@ -12728,7 +12728,7 @@
           (lower-test-renderable-name-id-with-state (&mut interns) "v")
           0
           (lower-test-renderable-name-id-with-state
-            interns
+            (&mut interns)
             "_tl___fixture_helper_scalar")))
       (compiler_ast_types.ast-imported-spmd-callable-list-push
         (&mut callables)
@@ -12763,7 +12763,7 @@
           (lower-test-renderable-name-id-with-state (&mut interns) "v")
           0
           (lower-test-renderable-name-id-with-state
-            interns
+            (&mut interns)
             "__fixture_helper_v2")))
       (compiler_ast_types.ast-imported-spmd-callable-list-push
         (&mut unsupported-callables)

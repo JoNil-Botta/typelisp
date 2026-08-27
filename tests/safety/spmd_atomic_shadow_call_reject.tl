@@ -1,6 +1,4 @@
 ;: Only the stdlib extern atomic helpers can bypass varying-call rejection.
-(import stdlib.array)
-
 (define (atomic-i64-add!
   [out : (__tl_dyn-array i64)]
   [index : i64]

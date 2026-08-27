@@ -1,13 +1,11 @@
 ;; #5679: one active count equal to the u32 width in a direct map must use
 ;; tl_shift_abort (exit 129).
-(import stdlib.array)
-
 (define (main) : i64
   (let
     [n : i64 19]
-    [xs : (__tl_dyn-array u32) (array.make-array u32 n)]
-    [counts : (__tl_dyn-array u32) (array.make-array u32 n)]
-    [out : (__tl_dyn-array u32) (array.make-array u32 n)]
+    [xs : (__tl_dyn-array u32) (__tl_make-array u32 n)]
+    [counts : (__tl_dyn-array u32) (__tl_make-array u32 n)]
+    [out : (__tl_dyn-array u32) (__tl_make-array u32 n)]
     [i : i64 0]
     (begin
       (while (< i n)

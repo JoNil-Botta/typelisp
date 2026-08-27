@@ -54,7 +54,6 @@
 ;# 2^64 in both languages, so the printed decimal matches the C baseline's
 ;# `%lld`.
 (import stdlib.byte_buf)
-(import stdlib.array)
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.vector)
@@ -521,7 +520,7 @@
 (define (ls-string-to-vec [text : String]) : u8vec.Vec
   (let
     [n : i64 (string-length text)]
-    [out : u8vec.Vec (u8vec.Vec (array.make-array u8 n) n)]
+    [out : u8vec.Vec (u8vec.Vec (__tl_make-array u8 n) n)]
     [slots (u8vec.slots-mut (&mut out))]
     [src : (Ptr u8)
       (unsafe

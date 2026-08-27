@@ -58,7 +58,6 @@
 ;# printed decimal matches the C baseline's `%lld`.
 (module intern_table_kernel)
 
-(import stdlib.array)
 (import stdlib.string)
 (import stdlib.vector)
 (import (vector.vector u8) as u8vec)
@@ -82,7 +81,7 @@
 (define (it-string-to-u8-vec [source : String]) : u8vec.Vec
   (let
     [n : i64 (string.string-length source)]
-    [out : u8vec.Vec (u8vec.Vec (array.make-array u8 n) n)]
+    [out : u8vec.Vec (u8vec.Vec (__tl_make-array u8 n) n)]
     [slots (u8vec.slots-mut (&mut out))]
     [src : (Ptr u8)
       (unsafe
@@ -99,10 +98,10 @@
       out)))
 
 (define (it-zero-i64-vec [n : i64]) : i64vec.Vec
-  (i64vec.Vec (array.make-array i64 n) n))
+  (i64vec.Vec (__tl_make-array i64 n) n))
 
 (define (it-zero-u8-vec [n : i64]) : u8vec.Vec
-  (u8vec.Vec (array.make-array u8 n) n))
+  (u8vec.Vec (__tl_make-array u8 n) n))
 
 (define (it-u8-len [items : (& items u8vec.Vec)]) : i64
   (u8vec.len items))

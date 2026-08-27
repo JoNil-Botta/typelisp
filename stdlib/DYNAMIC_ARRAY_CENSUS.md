@@ -30,9 +30,9 @@ rejected. This census records the remaining compiler-private
   process fixtures that exercise private storage and lowering behavior.
 
 These uses spell the type `__tl_dyn-array` and call private intrinsics such as
-`__tl_make-array`, `__tl_array-push!`, and `__tl_array-data`. The qualified
-`stdlib.array` macro wrappers remain a transitional internal facility while
-their callers migrate to fixed arrays or generated collections.
+`__tl_make-array`, `__tl_array-push!`, and `__tl_array-data`. Public fixed-array
+construction, length, indexing, and place writes are import-free core forms;
+growable public collections use generated vectors.
 
 ## Coverage That Must Remain
 

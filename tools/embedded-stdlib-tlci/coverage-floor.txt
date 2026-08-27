@@ -29,8 +29,9 @@
 # catalog addition to hide one. Issue #6645 removes stdlib.io's duplicate
 # format-with transformer after moving the canonical implementation to
 # stdlib.format, shrinking the catalog to 107 without reintroducing any
-# fallback route.
-native-entries-min 107
+# fallback route. The fixed-array core migration then removes the four
+# compatibility-module macros, leaving 103 fully native entries.
+native-entries-min 103
 shell-entries-max 0
 partial-entries-max 0
 interpreted-arms-max 0

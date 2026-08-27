@@ -1,4 +1,3 @@
-(import stdlib.array)
 (import stdlib.io)
 
 ;; FORCING TEST for GAP2b-v2: sound emergency-scavenge restore before a
@@ -60,7 +59,7 @@
           (set! a9 (bit-and (+ (* a9 3) a10) 281474976710655))
           (set! a10 (bit-and (+ (* a10 3) a11) 281474976710655))
           (set! a11 (bit-and (+ (* a11 3) a0) 281474976710655))
-          (match (array.ref program (% i plen))
+          (match (array-ref program (% i plen))
             [(Op0) (set! a0 (bit-and (+ a0 1000003) 281474976710655))]
             [(Op1) (set! a1 (bit-and (+ a1 1007922) 281474976710655))]
             [(Op2) (set! a2 (bit-and (+ a2 1015841) 281474976710655))]
@@ -201,7 +200,7 @@
 
 (define (main) : i64
   (let
-    [p : (__tl_dyn-array Op) (array.make-array Op 6)]
+    [p : (__tl_dyn-array Op) (__tl_make-array Op 6)]
     (begin
       (set! (array-ref p 0) (Op0))
       (set! (array-ref p 1) (Op1))

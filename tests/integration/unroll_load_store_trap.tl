@@ -1,4 +1,3 @@
-(import stdlib.array)
 (import stdlib.io)
 (import stdlib.string)
 
@@ -31,8 +30,8 @@
 (define (main) : i64
   (let
     [len : i64 (string.>int (io.arg 1))]
-    [dst : (__tl_dyn-array i64) (array.make-array i64 len)]
-    [src : (__tl_dyn-array i64) (array.make-array i64 (+ len 1))]
+    [dst : (__tl_dyn-array i64) (__tl_make-array i64 len)]
+    [src : (__tl_dyn-array i64) (__tl_make-array i64 (+ len 1))]
     [i : i64 0]
     [acc : i64 0]
     (begin

@@ -1,5 +1,4 @@
 ;; compiler_backend_tests.tl - Selfhost backend test helpers split from production backend.
-(import stdlib.array)
 (import stdlib.io)
 (import compiler_object as cobj)
 (import compiler_object_coff as coff)
@@ -316,7 +315,7 @@
                   starts
                   ends
                   assignment-index
-                  (array.make-array compiler_regalloc.CompilerRegIntervalSeq 0)
+                  (__tl_make-array compiler_regalloc.CompilerRegIntervalSeq 0)
                   slot-vars)
                 slot-vars))])))))
 
@@ -3835,7 +3834,7 @@
       (compiler_backend.compiler-backend-test-get-compiler-backend-emit-current-count
         backend-state)]
     [slot-data : (__tl_dyn-array compiler_ir_types.CompilerIrCAbiReturnSlot)
-      (array.make-array compiler_ir_types.CompilerIrCAbiReturnSlot 1)]
+      (__tl_make-array compiler_ir_types.CompilerIrCAbiReturnSlot 1)]
     [_fill-slot-data : unit
       (set!
         (array-ref slot-data 0)
@@ -3963,7 +3962,7 @@
 (define (compiler-backend-c-abi-return-store-two-int-slots) : compiler_ir_types.CompilerIrCAbiReturnSlotSeq
   (let
     [slots : (__tl_dyn-array compiler_ir_types.CompilerIrCAbiReturnSlot)
-      (array.make-array compiler_ir_types.CompilerIrCAbiReturnSlot 2)]
+      (__tl_make-array compiler_ir_types.CompilerIrCAbiReturnSlot 2)]
     (begin
       (set!
         (array-ref slots 0)
@@ -9475,7 +9474,7 @@
 
 (define (compiler-backend-ir-walker-call-use-counts-ok?) : bool
   (let
-    [counts : (__tl_dyn-array i64) (array.make-array i64 12)]
+    [counts : (__tl_dyn-array i64) (__tl_make-array i64 12)]
     (begin
       (compiler_backend.compiler-backend-count-instr-uses
         counts
@@ -9566,7 +9565,7 @@
 (define (compiler-backend-ir-walker-program-collections-ok?) : bool
   (let
     [call-array : (__tl_dyn-array compiler_ir_types.CompilerIrValue)
-      (array.make-array compiler_ir_types.CompilerIrValue 2)]
+      (__tl_make-array compiler_ir_types.CompilerIrValue 2)]
     (begin
       (set!
         (array-ref call-array 0)
@@ -11756,7 +11755,7 @@
     [count : i64 compiler-backend-long-block-instr-count]
     [total : i64 (+ count 1)]
     [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-      (array.make-array compiler_ir_types.CompilerIrInstr total)]
+      (__tl_make-array compiler_ir_types.CompilerIrInstr total)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -14820,9 +14819,9 @@ g:
     scratch-vreg
     (let
       [items : (__tl_dyn-array compiler_regalloc.CompilerRegScratchAssignment)
-        (array.make-array compiler_regalloc.CompilerRegScratchAssignment 1)]
-      [firsts : (__tl_dyn-array i64) (array.make-array i64 1)]
-      [slots : (__tl_dyn-array i64) (array.make-array i64 1)]
+        (__tl_make-array compiler_regalloc.CompilerRegScratchAssignment 1)]
+      [firsts : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+      [slots : (__tl_dyn-array i64) (__tl_make-array i64 1)]
       [_plan-init : unit
         (begin
           (set!
@@ -19113,7 +19112,7 @@ g:
       (compiler_regalloc.compiler-reg-assignment-table-empty)
       (compiler_regalloc.compiler-reg-id-seq-empty)
       (compiler_ir_types.CompilerIrBlockSeq
-        (array.make-array compiler_ir_types.CompilerIrBlock 0)
+        (__tl_make-array compiler_ir_types.CompilerIrBlock 0)
         0))
     (compiler_regalloc.compiler-reg-assignment-table-empty)
     (compiler_regalloc.compiler-reg-var-types-empty)
@@ -23164,7 +23163,7 @@ g:
           backend-state
           (compiler_ir_types.compiler-source-spans-empty))
         (compiler_diagnostic.compiler-diagnostic-at-start "" "")
-        (array.make-array i64 0)
+        (__tl_make-array i64 0)
         backend-state
         (compiler_backend.compiler-backend-state-function-state backend-state))
       (compiler_backend.CompilerBackendMaybeLabel.No)
@@ -40551,7 +40550,7 @@ g:
             13)
           13
           4
-          (array.make-array String 0)
+          (__tl_make-array String 0)
           0
           "%r8"))
       (set!
@@ -40733,7 +40732,7 @@ g:
 (define (compiler-backend-scratch-vreg-c-abi-return-test-blocks) : compiler_ir_types.CompilerIrBlockList
   (let
     [slot-data : (__tl_dyn-array compiler_ir_types.CompilerIrCAbiReturnSlot)
-      (array.make-array compiler_ir_types.CompilerIrCAbiReturnSlot 1)]
+      (__tl_make-array compiler_ir_types.CompilerIrCAbiReturnSlot 1)]
     [_fill-slot-data : unit
       (set!
         (array-ref slot-data 0)
@@ -42791,8 +42790,8 @@ g:
       [backend-state : compiler_backend.CompilerBackendState
         (compiler_backend.compiler-backend-state-new
           (ci.intern-compat-state-capture-active))]
-      [occupied : (__tl_dyn-array i64) (array.make-array i64 2)]
-      [scratch : (__tl_dyn-array i64) (array.make-array i64 2)]
+      [occupied : (__tl_dyn-array i64) (__tl_make-array i64 2)]
+      [scratch : (__tl_dyn-array i64) (__tl_make-array i64 2)]
       [r8 : i64 (compiler_backend.compiler-backend-scavenge-reg-bit "%r8")]
       [r10 : i64 (compiler_backend.compiler-backend-scavenge-reg-bit "%r10")]
       [ok : bool false]
@@ -43325,7 +43324,7 @@ g:
                 (compiler_ast_types.AstType.F64)
                 "scratch_float_global(%rip)"
                 index
-                (array.make-array String 0)
+                (__tl_make-array String 0)
                 0
                 "%xmm13"
                 backend-state)
@@ -44705,14 +44704,14 @@ g:
     scratch-vreg
     (let
       [items : (__tl_dyn-array compiler_regalloc.CompilerRegScratchAssignment)
-        (array.make-array compiler_regalloc.CompilerRegScratchAssignment 5)]
-      [starts : (__tl_dyn-array i64) (array.make-array i64 5)]
-      [ends : (__tl_dyn-array i64) (array.make-array i64 5)]
+        (__tl_make-array compiler_regalloc.CompilerRegScratchAssignment 5)]
+      [starts : (__tl_dyn-array i64) (__tl_make-array i64 5)]
+      [ends : (__tl_dyn-array i64) (__tl_make-array i64 5)]
       [segments : (__tl_dyn-array compiler_regalloc.CompilerRegIntervalSeq)
-        (array.make-array compiler_regalloc.CompilerRegIntervalSeq 5)]
-      [present : (__tl_dyn-array i64) (array.make-array i64 5)]
+        (__tl_make-array compiler_regalloc.CompilerRegIntervalSeq 5)]
+      [present : (__tl_dyn-array i64) (__tl_make-array i64 5)]
       [types : (__tl_dyn-array compiler_ast_types.AstType)
-        (array.make-array compiler_ast_types.AstType 5)]
+        (__tl_make-array compiler_ast_types.AstType 5)]
       [assignments : compiler_regalloc.CompilerRegAssignmentTable
         (compiler_regalloc.compiler-reg-assignment-table-make 5)]
       [registers : (__tl_dyn-array i64)
@@ -44724,7 +44723,7 @@ g:
           (compiler_regalloc.CompilerRegIntervalIndex starts ends segments)
           registers
           (array-length registers))]
-      [ref-counts : (__tl_dyn-array i64) (array.make-array i64 5)]
+      [ref-counts : (__tl_dyn-array i64) (__tl_make-array i64 5)]
       [gp-fixed-rcx : compiler_regalloc.CompilerRegScratchConstraint
         (compiler_regalloc.CompilerRegScratchConstraint
           (compiler_regalloc.CompilerRegScratchClass.Gp)
@@ -44857,7 +44856,7 @@ g:
           assignments
           occupancy
           (compiler_regalloc.CompilerRegIntervalIndex starts ends segments)
-          (array.make-array i64 0)
+          (__tl_make-array i64 0)
           ref-counts
           registers
           (array-length registers)
@@ -45565,7 +45564,7 @@ g:
             starts
             ends
             assignment-index
-            (array.make-array compiler_regalloc.CompilerRegIntervalSeq 0)
+            (__tl_make-array compiler_regalloc.CompilerRegIntervalSeq 0)
             5)]
         (and
           (= (array-length masks) 5)
@@ -45655,7 +45654,7 @@ g:
     [starts : (__tl_dyn-array i64) (__tl_make-array i64 2)]
     [ends : (__tl_dyn-array i64) (__tl_make-array i64 2)]
     [segments : (__tl_dyn-array compiler_regalloc.CompilerRegIntervalSeq)
-      (array.make-array compiler_regalloc.CompilerRegIntervalSeq rows)]
+      (__tl_make-array compiler_regalloc.CompilerRegIntervalSeq rows)]
     (begin
       (set! (array-ref starts 0) 0)
       (set! (array-ref ends 0) 16)
@@ -46117,7 +46116,7 @@ g:
               starts
               ends
               assignment-index
-              (array.make-array compiler_regalloc.CompilerRegIntervalSeq 0)
+              (__tl_make-array compiler_regalloc.CompilerRegIntervalSeq 0)
               3)
             3)])
       (compiler_backend.compiler-backend-test-set-compiler-backend-emit-instr-post-base!
@@ -46347,7 +46346,7 @@ g:
         (compiler_regalloc.compiler-reg-assignment-table-with-min-capacity
           assignments
           vars)
-        (array.make-array compiler_regalloc.CompilerRegIntervalSeq 0)
+        (__tl_make-array compiler_regalloc.CompilerRegIntervalSeq 0)
         0
         vars))))
 
@@ -46543,9 +46542,9 @@ g:
     scratch-vreg
     (let
       [items : (__tl_dyn-array compiler_regalloc.CompilerRegScratchAssignment)
-        (array.make-array compiler_regalloc.CompilerRegScratchAssignment 1)]
-      [firsts : (__tl_dyn-array i64) (array.make-array i64 1)]
-      [slots : (__tl_dyn-array i64) (array.make-array i64 1)]
+        (__tl_make-array compiler_regalloc.CompilerRegScratchAssignment 1)]
+      [firsts : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+      [slots : (__tl_dyn-array i64) (__tl_make-array i64 1)]
       [_plan-init : unit
         (begin
           (set!
@@ -46639,9 +46638,9 @@ g:
     scratch-vreg
     (let
       [items : (__tl_dyn-array compiler_regalloc.CompilerRegScratchAssignment)
-        (array.make-array compiler_regalloc.CompilerRegScratchAssignment 1)]
-      [firsts : (__tl_dyn-array i64) (array.make-array i64 1)]
-      [slots : (__tl_dyn-array i64) (array.make-array i64 1)]
+        (__tl_make-array compiler_regalloc.CompilerRegScratchAssignment 1)]
+      [firsts : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+      [slots : (__tl_dyn-array i64) (__tl_make-array i64 1)]
       [_plan-init : unit
         (begin
           (set!
@@ -46737,9 +46736,9 @@ g:
     scratch-vreg
     (let
       [items : (__tl_dyn-array compiler_regalloc.CompilerRegScratchAssignment)
-        (array.make-array compiler_regalloc.CompilerRegScratchAssignment 2)]
-      [firsts : (__tl_dyn-array i64) (array.make-array i64 1)]
-      [slots : (__tl_dyn-array i64) (array.make-array i64 1)]
+        (__tl_make-array compiler_regalloc.CompilerRegScratchAssignment 2)]
+      [firsts : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+      [slots : (__tl_dyn-array i64) (__tl_make-array i64 1)]
       [_plan-init : unit
         (begin
           (set!
@@ -48042,7 +48041,7 @@ g:
 (define (compiler-backend-assembly-stream-test-chunks [a? : bool]) : (__tl_dyn-array
     String)
   (let
-    [chunks : (__tl_dyn-array String) (array.make-array String 65)]
+    [chunks : (__tl_dyn-array String) (__tl_make-array String 65)]
     [prefix : String
       (if a?
         "a_fill_"
@@ -48846,8 +48845,8 @@ b_keep:
           (compiler_backend.CompilerBackendMode.Avx2))
         (compiler_backend.compiler-backend-set-scavenge-ctx-ready!
           function-a
-          (array.make-array i64 0)
-          (array.make-array i64 0)
+          (__tl_make-array i64 0)
+          (__tl_make-array i64 0)
           (compiler_regalloc.compiler-reg-assignment-table-empty)
           0
           scratch-occupied-a
@@ -48899,7 +48898,7 @@ b_keep:
     [scratch-xmm-a : String
       (compiler_backend.compiler-backend-scavenge-xmm-reg
         -1
-        (array.make-array String 0)
+        (__tl_make-array String 0)
         0
         "%xmm2"
         state-a)]

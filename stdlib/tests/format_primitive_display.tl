@@ -1,4 +1,3 @@
-(import stdlib.array)
 (import stdlib.format)
 (import stdlib.io)
 (import stdlib.math)
@@ -100,8 +99,8 @@
 
 (define (f64-display-table-ok?) : bool
   (let
-    [bits : (__tl_dyn-array u64) (array.make-array u64 17)]
-    [expected : (__tl_dyn-array String) (array.make-array String 17)]
+    [bits : (__tl_dyn-array u64) (__tl_make-array u64 17)]
+    [expected : (__tl_dyn-array String) (__tl_make-array String 17)]
     [i : i64 0]
     [ok : bool true]
     (begin
@@ -164,8 +163,8 @@
 
 (define (f32-display-table-ok?) : bool
   (let
-    [bits : (__tl_dyn-array u32) (array.make-array u32 16)]
-    [expected : (__tl_dyn-array String) (array.make-array String 16)]
+    [bits : (__tl_dyn-array u32) (__tl_make-array u32 16)]
+    [expected : (__tl_dyn-array String) (__tl_make-array String 16)]
     [i : i64 0]
     [ok : bool true]
     (begin

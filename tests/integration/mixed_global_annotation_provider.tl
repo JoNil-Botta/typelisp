@@ -1,5 +1,3 @@
-(import stdlib.array)
-
 (defenum MixedGlobalAnnotationItem
   (Value i64))
 
@@ -11,7 +9,7 @@
 
 (define mixed-global-annotation-items : (__tl_dyn-array
     MixedGlobalAnnotationItem)
-  (array.make-array MixedGlobalAnnotationItem 1))
+  (__tl_make-array MixedGlobalAnnotationItem 1))
 
 (define (mixed-global-annotation-items-shared-view) : (__tl_dyn-array
     MixedGlobalAnnotationItem)

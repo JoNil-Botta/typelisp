@@ -7,7 +7,6 @@
 (import compiler_float)
 (import compiler_profile_state as profile_state)
 (import stdlib.io)
-(import stdlib.array)
 (import stdlib.arena)
 (import stdlib.comptime)
 (import stdlib.hashmap)
@@ -4209,7 +4208,7 @@
         (opt-test-symbol "aggregate_callee")
         compiler_ir_types.CompilerIrCallArgs.Nil
         (compiler_ir_types.CompilerIrCAbiReturnSlotSeq
-          (array.make-array compiler_ir_types.CompilerIrCAbiReturnSlot 0)
+          (__tl_make-array compiler_ir_types.CompilerIrCAbiReturnSlot 0)
           0))]
     [indirect-store : compiler_ir_types.CompilerIrInstr
       (compiler_ir_types.ir-instr-call-indirect-cabi-store-result
@@ -4218,7 +4217,7 @@
           (opt-test-symbol "aggregate_indirect_callee"))
         compiler_ir_types.CompilerIrCallArgs.Nil
         (compiler_ir_types.CompilerIrCAbiReturnSlotSeq
-          (array.make-array compiler_ir_types.CompilerIrCAbiReturnSlot 0)
+          (__tl_make-array compiler_ir_types.CompilerIrCAbiReturnSlot 0)
           0))]
     [tail : compiler_ir_types.CompilerIrInstr
       (compiler_ir_types.CompilerIrInstr.TailCallIndirect
@@ -7927,8 +7926,8 @@
   (let
     [chain : compiler_ir_types.CompilerIrBlock
       (opt-load-sink-run (opt-load-sink-chain-blocks))]
-    [expected : (__tl_dyn-array i64) (array.make-array i64 10)]
-    [bounds-expected : (__tl_dyn-array i64) (array.make-array i64 7)]
+    [expected : (__tl_dyn-array i64) (__tl_make-array i64 10)]
+    [bounds-expected : (__tl_dyn-array i64) (__tl_make-array i64 7)]
     (begin
       (set! (array-ref expected 0) 14)
       (set! (array-ref expected 1) 15)
@@ -16969,7 +16968,7 @@
 (define (opt-inline-switch-caller-call-named [callee-name : i64]) : compiler_ir_types.CompilerIrInstr
   (let
     [args : (__tl_dyn-array compiler_ir_types.CompilerIrValue)
-      (array.make-array compiler_ir_types.CompilerIrValue 3)]
+      (__tl_make-array compiler_ir_types.CompilerIrValue 3)]
     (begin
       ;; Swap the first two arguments so the Switch scrutinee and BoundsCheck
       ;; index must both be remapped rather than retaining their callee ids.
@@ -17213,7 +17212,7 @@
 (define (opt-inline-loop-site-call [callee-name : i64] [dst : i64]) : compiler_ir_types.CompilerIrInstr
   (let
     [args : (__tl_dyn-array compiler_ir_types.CompilerIrValue)
-      (array.make-array compiler_ir_types.CompilerIrValue 3)]
+      (__tl_make-array compiler_ir_types.CompilerIrValue 3)]
     (begin
       (set! (array-ref args 0) (compiler_ir_types.CompilerIrValue.Var 1))
       (set! (array-ref args 1) (compiler_ir_types.CompilerIrValue.Var 0))
@@ -17489,7 +17488,7 @@
 (define (opt-inline-dup-leaf-call-zero-instrs [helper-name : i64]) : compiler_ir_types.CompilerIrInstrSeq
   (let
     [args : (__tl_dyn-array compiler_ir_types.CompilerIrValue)
-      (array.make-array compiler_ir_types.CompilerIrValue 1)]
+      (__tl_make-array compiler_ir_types.CompilerIrValue 1)]
     (begin
       (set! (array-ref args 0) (compiler_ir_types.CompilerIrValue.Var 0))
       (opt-test-instrs-with-tail
@@ -18472,7 +18471,7 @@
 (define (opt-inline-wide-call [callee-name : i64] [params : i64] [dst : i64]) : compiler_ir_types.CompilerIrInstr
   (let
     [args : (__tl_dyn-array compiler_ir_types.CompilerIrValue)
-      (array.make-array compiler_ir_types.CompilerIrValue params)]
+      (__tl_make-array compiler_ir_types.CompilerIrValue params)]
     (begin
       (opt-inline-wide-fill-args! args 0 params 0)
       (compiler_ir_types.CompilerIrInstr.Call
@@ -19504,7 +19503,7 @@
   [symbols : OptInlineMultiTestSymbols]
   [count : i64]) : compiler_optimize.OptSlotList
   (let
-    [all : (__tl_dyn-array i64) (array.make-array i64 5)]
+    [all : (__tl_dyn-array i64) (__tl_make-array i64 5)]
     [acc : compiler_optimize.OptSlotList (compiler_optimize.OptSlotList.Nil)]
     [i : i64 0]
     (begin
@@ -19526,7 +19525,7 @@
   [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [count : i64]) : i64
   (let
-    [names : (__tl_dyn-array String) (array.make-array String 5)]
+    [names : (__tl_dyn-array String) (__tl_make-array String 5)]
     [total : i64 0]
     [i : i64 0]
     (begin
@@ -20805,7 +20804,7 @@
 (define (opt-inline-hot-loop-mid-leaf-call-instrs [helper-name : i64]) : compiler_ir_types.CompilerIrInstrSeq
   (let
     [args : (__tl_dyn-array compiler_ir_types.CompilerIrValue)
-      (array.make-array compiler_ir_types.CompilerIrValue 1)]
+      (__tl_make-array compiler_ir_types.CompilerIrValue 1)]
     (begin
       (set! (array-ref args 0) (compiler_ir_types.CompilerIrValue.Var 0))
       (opt-test-instrs-with-tail
@@ -24841,7 +24840,7 @@
         (compiler_ir_types.CompilerIrValue.Var 2)
         (compiler_ast_types.AstType.I64))]
     [buckets : (__tl_dyn-array compiler_optimize.OptGlobalExprFacts)
-      (array.make-array compiler_optimize.OptGlobalExprFacts 1)]
+      (__tl_make-array compiler_optimize.OptGlobalExprFacts 1)]
     [table : compiler_optimize.OptGlobalExprFactTable
       (compiler_optimize.OptGlobalExprFactTable buckets)]
     [doms : compiler_optimize.OptDomInfo
@@ -24897,7 +24896,7 @@
         (compiler_ir_types.CompilerIrValue.Var 2)
         (compiler_ast_types.AstType.I64))]
     [buckets : (__tl_dyn-array compiler_optimize.OptGvnBucket)
-      (array.make-array compiler_optimize.OptGvnBucket 1)]
+      (__tl_make-array compiler_optimize.OptGvnBucket 1)]
     [table : compiler_optimize.OptGvnMap (compiler_optimize.OptGvnMap buckets)]
     (begin
       (set! (array-ref buckets 0) (compiler_optimize.OptGvnBucket.Nil))
@@ -29762,7 +29761,7 @@
   (let
     [count : i64 (+ (compiler_optimize.opt-ssa-block-budget) 1)]
     [slots : (__tl_dyn-array compiler_ir_types.CompilerIrBlock)
-      (array.make-array compiler_ir_types.CompilerIrBlock count)]
+      (__tl_make-array compiler_ir_types.CompilerIrBlock count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -46815,7 +46814,7 @@
 (define (opt-bce-mb-eq-runtime-make [n : i64] [seed : i64]) : (__tl_dyn-array
     u8)
   (let
-    [out : (__tl_dyn-array u8) (array.make-array u8 n)]
+    [out : (__tl_dyn-array u8) (__tl_make-array u8 n)]
     [i : i64 0]
     (begin
       (while (< i n)
@@ -47450,7 +47449,7 @@
 ;; results are asserted here.
 (define (opt-bce-sb-runtime-make [n : i64] [step : i64]) : (__tl_dyn-array i64)
   (let
-    [out : (__tl_dyn-array i64) (array.make-array i64 n)]
+    [out : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     [i : i64 0]
     (begin
       (while (< i n)
@@ -47715,7 +47714,7 @@
 (define (opt-merged-loop-test-callee-args) : compiler_ir_types.CompilerIrCallArgs
   (let
     [args : (__tl_dyn-array compiler_ir_types.CompilerIrValue)
-      (array.make-array compiler_ir_types.CompilerIrValue 3)]
+      (__tl_make-array compiler_ir_types.CompilerIrValue 3)]
     (begin
       (set! (array-ref args 0) (compiler_ir_types.CompilerIrValue.Var 0))
       (set! (array-ref args 1) (compiler_ir_types.CompilerIrValue.Var 1))
@@ -47725,7 +47724,7 @@
 (define (opt-merged-loop-test-tail-args [rounds : i64]) : compiler_ir_types.CompilerIrCallArgs
   (let
     [args : (__tl_dyn-array compiler_ir_types.CompilerIrValue)
-      (array.make-array compiler_ir_types.CompilerIrValue 4)]
+      (__tl_make-array compiler_ir_types.CompilerIrValue 4)]
     (begin
       ;; The first three arguments are unchanged. Identity writes must not
       ;; survive the tail-recursion conversion plus register-value SSA pipeline.
@@ -48790,8 +48789,8 @@
 (test
   licm-descriptor-header-runtime
   (let
-    [arr : (__tl_dyn-array i64) (array.make-array i64 8)]
-    [work : (__tl_dyn-array i64) (array.make-array i64 5)]
+    [arr : (__tl_dyn-array i64) (__tl_make-array i64 8)]
+    [work : (__tl_dyn-array i64) (__tl_make-array i64 5)]
     (begin
       (set! (array-ref arr 0) 3)
       (set! (array-ref arr 1) 1)
@@ -48853,7 +48852,7 @@
 (define (opt-licm-compat-direct-result) : i64
   (let
     [items : (__tl_dyn-array OptLicmCompatDirectHolder)
-      (array.make-array OptLicmCompatDirectHolder 1)]
+      (__tl_make-array OptLicmCompatDirectHolder 1)]
     (begin
       (set! (array-ref items 0) (OptLicmCompatDirectHolder 1))
       (let
@@ -48888,10 +48887,10 @@
 
 (define (opt-licm-compat-nested-result) : i64
   (let
-    [old-items : (__tl_dyn-array i64) (array.make-array i64 1)]
-    [new-items : (__tl_dyn-array i64) (array.make-array i64 1)]
+    [old-items : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    [new-items : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     [holders : (__tl_dyn-array OptLicmCompatNestedHolder)
-      (array.make-array OptLicmCompatNestedHolder 1)]
+      (__tl_make-array OptLicmCompatNestedHolder 1)]
     (begin
       (set! (array-ref old-items 0) 10)
       (set! (array-ref new-items 0) 20)
@@ -58325,8 +58324,8 @@
 (test
   unroll-const-guard-runtime-boundaries
   (let
-    [data : (__tl_dyn-array u8) (array.make-array u8 16)]
-    [tight : (__tl_dyn-array u8) (array.make-array u8 8)]
+    [data : (__tl_dyn-array u8) (__tl_make-array u8 16)]
+    [tight : (__tl_dyn-array u8) (__tl_make-array u8 8)]
     (begin
       (opt-lc-runtime-fill! data 0 0)
       (test.assert-i64-eq
@@ -58351,7 +58350,7 @@
 (test
   load-combine-runtime-word
   (let
-    [data : (__tl_dyn-array u8) (array.make-array u8 16)]
+    [data : (__tl_dyn-array u8) (__tl_make-array u8 16)]
     (begin
       (opt-lc-runtime-fill! data 3 0)
       (test.assert-i64-eq
@@ -58842,7 +58841,7 @@
       (compiler_ir_types.CompilerIrBlock.Block
         (compiler_ir_types.compiler-ir-label-none)
         (compiler_ir_types.CompilerIrInstrSeq
-          (array.make-array compiler_ir_types.CompilerIrInstr 0)
+          (__tl_make-array compiler_ir_types.CompilerIrInstr 0)
           0))]
     [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
       (if (= index 0)
@@ -58855,7 +58854,7 @@
         (compiler_ir_types.CompilerIrBlock.Block
           (compiler_ir_types.compiler-ir-label-none)
           (compiler_ir_types.CompilerIrInstrSeq
-            (array.make-array compiler_ir_types.CompilerIrInstr 0)
+            (__tl_make-array compiler_ir_types.CompilerIrInstr 0)
             0))
         (compiler_ir_types.compiler-ir-block-seq-ref seq index))]))
 
@@ -63730,8 +63729,8 @@
       (compiler_optimize.opt-licm-insert-before-terminator-seq
         (opt-dense-insertion-test-licm-hoisted 40 41)
         no-term)]
-    [expected-inserted : (__tl_dyn-array i64) (array.make-array i64 6)]
-    [expected-appended : (__tl_dyn-array i64) (array.make-array i64 4)]
+    [expected-inserted : (__tl_dyn-array i64) (__tl_make-array i64 6)]
+    [expected-appended : (__tl_dyn-array i64) (__tl_make-array i64 4)]
     (begin
       (set! (array-ref expected-inserted 0) 10)
       (set! (array-ref expected-inserted 1) 11)
@@ -63849,7 +63848,7 @@
 (define opt-gc-runtime-cell : i64
   3)
 (define opt-gc-runtime-table : (__tl_dyn-array i64)
-  (array.make-array i64 4))
+  (__tl_make-array i64 4))
 
 (define (opt-gc-runtime-load! [v : i64]) : unit
   (set! opt-gc-runtime-cell v))
@@ -64017,7 +64016,7 @@
 ;; gep+load+compare form): (bit-and arr[k], mask) ==/!= 0 must evaluate as a
 ;; bit test, not an equality compare.
 (define opt-bt-expand-witness-arr : (__tl_dyn-array i64)
-  (array.make-array i64 8))
+  (__tl_make-array i64 8))
 
 (define (opt-bt-expand-witness-run [k : i64]) : i64
   (let
@@ -64748,7 +64747,7 @@
 ;; strided read loop, and a descending read loop) compiled by the pipeline
 ;; carrying the multi-application scheduler must compute exact results.
 (define opt-loop-budget-runtime-table : (__tl_dyn-array i64)
-  (array.make-array i64 64))
+  (__tl_make-array i64 64))
 
 (define (opt-loop-budget-runtime-run [n : i64]) : i64
   (let
@@ -65608,7 +65607,7 @@
   [inputs : compiler_ir_types.CompilerIrPhiInputList]
   [gen : i64]) : compiler_ir_types.CompilerIrBlockList
   (let
-    [cell : (__tl_dyn-array i64) (array.make-array i64 1)]
+    [cell : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     (begin
       (set! (array-ref cell 0) 900)
       (compiler_optimize.opt-bce-mb-sink-check-blocks-from

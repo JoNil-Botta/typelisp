@@ -1,9 +1,7 @@
-(import stdlib.array)
-
 ;; FORCING TEST for GAP6d: a constant array index folds into the bounds-check
 ;; compare instead of being materialised into a register.
 ;;
-;; `(array.ref xs 2)` has a CONSTANT index (2) but a DYNAMIC length (xs is
+;; `(array-ref xs 2)` has a CONSTANT index (2) but a DYNAMIC length (xs is
 ;; a param of unknown size, so the check cannot be optimised away). Before GAP6d
 ;; the index was materialised and compared:
 ;;     movl $2, %rIDX
@@ -20,11 +18,11 @@
 (define (get2 [xs : (__tl_dyn-array i64)] [poke : i64]) : i64
   (if (< poke 0)
     (get2 xs (+ poke 1))
-    (array.ref xs 2)))
+    (array-ref xs 2)))
 
 (define (main) : i64
   (let
-    [xs : (__tl_dyn-array i64) (array.make-array i64 5)]
+    [xs : (__tl_dyn-array i64) (__tl_make-array i64 5)]
     (begin
       (set! (array-ref xs 2) 42)
       (if (= (get2 xs 0) 42)

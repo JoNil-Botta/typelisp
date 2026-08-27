@@ -1,5 +1,4 @@
 (import stdlib.io)
-(import stdlib.array)
 
 ;; FORCING TEST for T1-6 (a) (System V red-zone leaf frames), pinned by
 ;; scripts/verify-asm-shape-gates.sh:check_red_zone_leaf. Four shapes:
@@ -300,7 +299,7 @@
   (let
     ;; (io.arg-count) = 1 without args; it blocks constant folding.
     [v : i64 (io.arg-count)]
-    [xs : (__tl_dyn-array i64) (array.make-array i64 4)]
+    [xs : (__tl_dyn-array i64) (__tl_make-array i64 4)]
     [_seed : unit (set! (array-ref xs 3) 11)]
     [s : i64 (rzl-slots (+ v 3) v)]
     [bg : i64 (rzl-big (+ v 3) v)]

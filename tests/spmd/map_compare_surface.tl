@@ -1,19 +1,17 @@
 ;; Direct comparison maps (#5679): the full predicate surface plus unsigned
 ;; integer and floating-point lanes. Bool stores use the masked vector planner;
 ;; this fixture pins that route as part of the contiguous-map operator surface.
-(import stdlib.array)
-
 (define (case-i64-predicates) : bool
   (let
     [n : i64 13]
-    [left : (__tl_dyn-array i64) (array.make-array i64 n)]
-    [right : (__tl_dyn-array i64) (array.make-array i64 n)]
-    [eq-out : (__tl_dyn-array bool) (array.make-array bool n)]
-    [ne-out : (__tl_dyn-array bool) (array.make-array bool n)]
-    [lt-out : (__tl_dyn-array bool) (array.make-array bool n)]
-    [le-out : (__tl_dyn-array bool) (array.make-array bool n)]
-    [gt-out : (__tl_dyn-array bool) (array.make-array bool n)]
-    [ge-out : (__tl_dyn-array bool) (array.make-array bool n)]
+    [left : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+    [right : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+    [eq-out : (__tl_dyn-array bool) (__tl_make-array bool n)]
+    [ne-out : (__tl_dyn-array bool) (__tl_make-array bool n)]
+    [lt-out : (__tl_dyn-array bool) (__tl_make-array bool n)]
+    [le-out : (__tl_dyn-array bool) (__tl_make-array bool n)]
+    [gt-out : (__tl_dyn-array bool) (__tl_make-array bool n)]
+    [ge-out : (__tl_dyn-array bool) (__tl_make-array bool n)]
     [i : i64 0]
     [ok : bool true]
     (begin
@@ -58,15 +56,15 @@
 (define (case-other-lanes) : bool
   (let
     [n : i64 19]
-    [u-left : (__tl_dyn-array u32) (array.make-array u32 n)]
-    [u-right : (__tl_dyn-array u32) (array.make-array u32 n)]
-    [u-out : (__tl_dyn-array bool) (array.make-array bool n)]
-    [f32-left : (__tl_dyn-array f32) (array.make-array f32 n)]
-    [f32-right : (__tl_dyn-array f32) (array.make-array f32 n)]
-    [f32-out : (__tl_dyn-array bool) (array.make-array bool n)]
-    [f64-left : (__tl_dyn-array f64) (array.make-array f64 n)]
-    [f64-right : (__tl_dyn-array f64) (array.make-array f64 n)]
-    [f64-out : (__tl_dyn-array bool) (array.make-array bool n)]
+    [u-left : (__tl_dyn-array u32) (__tl_make-array u32 n)]
+    [u-right : (__tl_dyn-array u32) (__tl_make-array u32 n)]
+    [u-out : (__tl_dyn-array bool) (__tl_make-array bool n)]
+    [f32-left : (__tl_dyn-array f32) (__tl_make-array f32 n)]
+    [f32-right : (__tl_dyn-array f32) (__tl_make-array f32 n)]
+    [f32-out : (__tl_dyn-array bool) (__tl_make-array bool n)]
+    [f64-left : (__tl_dyn-array f64) (__tl_make-array f64 n)]
+    [f64-right : (__tl_dyn-array f64) (__tl_make-array f64 n)]
+    [f64-out : (__tl_dyn-array bool) (__tl_make-array bool n)]
     [i : i64 0]
     [ok : bool true]
     (begin

@@ -240,7 +240,7 @@
         `(let
           [old-slots : (& map (__tl_dyn-array GeneratedHashmapSlot))
             (& map.slots)]
-          [old-count : i64 (array_ops.length old-slots)]
+          [old-count : i64 (__tl_array-length old-slots)]
           (while (< scan old-count)
             (begin
               (let
@@ -284,7 +284,7 @@
               (ptr-cast
                 (__tl_array-data map.slots)
                 : (Ptr GeneratedHashmapSlot)))]
-          [cap : i64 (array_ops.length slots)]
+          [cap : i64 (__tl_array-length slots)]
           ;; A zero-length table is reachable through a ZII-initialized map, and
           ;; its mask would be -1 -- the guard is what keeps the masked cursor
           ;; in bounds, not decoration.
@@ -349,7 +349,7 @@
                     : (MutPtr GeneratedHashmapSlot)))]
               ;; with-capacity and grow! preserve a positive power-of-two
               ;; capacity, making the masked initial cursor in bounds.
-              [cap : i64 (array_ops.length map.slots)]
+              [cap : i64 (__tl_array-length map.slots)]
               [hash : i64 (* key 6364136223846793005)]
               [mask : i64 (- cap 1)]
               [cursor : i64 (bit-and hash mask)]
@@ -581,7 +581,7 @@
                 (ptr-cast
                   (__tl_array-data map.slots)
                   : (Ptr GeneratedHashmapSlot)))]
-            [cap : i64 (array_ops.length slots)]
+            [cap : i64 (__tl_array-length slots)]
             (if (<= cap 0)
               -1
               (let
@@ -626,7 +626,7 @@
         [data : (Ptr GeneratedHashmapSlot)
           (unsafe
             (ptr-cast (__tl_array-data map.slots) : (Ptr GeneratedHashmapSlot)))]
-        [cap : i64 (array_ops.length slots)]
+        [cap : i64 (__tl_array-length slots)]
         (if (<= cap 0)
           (LookupMissing)
           (let
@@ -723,7 +723,7 @@
               (ptr-cast
                 (__tl_array-data map.slots)
                 : (Ptr GeneratedHashmapSlot)))]
-          [cap : i64 (array_ops.length slots)]
+          [cap : i64 (__tl_array-length slots)]
           [index : i64
             (if (< from 0)
               0
@@ -854,7 +854,6 @@
                 "; expected i64, String, struct, or enum")))))
       `(begin
         (module ,module-name)
-        (import stdlib.array as array_ops)
         (import stdlib.hash as hash_mod)
         (import stdlib.string as string_mod)
         ,@key-module-imports
@@ -938,7 +937,7 @@
                   1
                   capacity))]
             (Map
-              (array_ops.make-array GeneratedHashmapSlot cap)
+              (__tl_make-array GeneratedHashmapSlot cap)
               0
               (growth-limit-for cap))))
         (define (new) : Map
@@ -946,9 +945,9 @@
         (define (len [map : (& map Map)]) : i64
           map.len)
         (define (capacity [map : (& map Map)]) : i64
-          (array_ops.length map.slots))
+          (__tl_array-length map.slots))
         (define (capacity-mut [map : (&mut map Map)]) : i64
-          (array_ops.length map.slots))
+          (__tl_array-length map.slots))
         (define (clear-ref! [map : (&mut map Map)]) : unit
           (let
             [cap : i64 (capacity-mut map)]
@@ -1007,10 +1006,10 @@
                 1
                 (* old-capacity 2))]
             [fresh : (__tl_dyn-array GeneratedHashmapSlot)
-              (array_ops.make-array GeneratedHashmapSlot new-capacity)]
+              (__tl_make-array GeneratedHashmapSlot new-capacity)]
             [scan : i64 0]
             ;; Read the capacity back off `fresh` and mask with that, under an
-            ;; explicit `cap >= 1` guard. `array_ops.length fresh` is
+            ;; explicit `cap >= 1` guard. `__tl_array-length fresh` is
             ;; `new-capacity` by construction, so the arithmetic is unchanged --
             ;; but it gives the optimizer ONE value serving as both the mask base
             ;; and the bound on every `array-ref fresh`, which is what lets it
@@ -1018,7 +1017,7 @@
             ;; bounds checks. Masking only bounds the index when `cap >= 1`
             ;; (at `cap = 0` the mask is -1 and masking bounds nothing), so the
             ;; guard is what makes the proof available rather than decoration.
-            [cap : i64 (array_ops.length fresh)]
+            [cap : i64 (__tl_array-length fresh)]
             [mask : i64 (- cap 1)]
             (begin
               (if (>= cap 1)
@@ -1090,7 +1089,7 @@
             [slots : (&mut map (__tl_dyn-array GeneratedHashmapSlot))
               (&mut map.slots)]
             [result : GeneratedHashmapProbe
-              (probe (& slots) (array_ops.length slots) key hash)]
+              (probe (& slots) (__tl_array-length slots) key hash)]
             (match result
               [(GeneratedHashmapProbe.Found index)
                 (MutEntry slots index true ,query-owned-key hash)]

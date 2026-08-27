@@ -12,7 +12,6 @@
 (import compiler_ast_types)
 (import compiler_ctfe)
 (import compiler_intern as ci)
-(import stdlib.array)
 (import stdlib.io)
 (import stdlib.string)
 
@@ -42,7 +41,7 @@
         pools
         (compiler_ast_types.AstExpr.Var (ci.intern "x")))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-      (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
     [callee-name : String "__tl_array-length"]
     (begin
       (set!
@@ -141,7 +140,7 @@
     [pools : compiler_ast_types.AstNodePoolContext
       (compiler_ast_types.ast-node-pool-context-capture-active)]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-      (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
     [i64-kind : String "i64"]
     [string-kind : String "string"]
     (begin
@@ -321,7 +320,7 @@
     [pools : compiler_ast_types.AstNodePoolContext
       (compiler_ast_types.ast-node-pool-context-capture-active)]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-      (array.make-array compiler_ctfe.CompilerCtfeValue 0)]
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 0)]
     (begin
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
         pools
@@ -432,7 +431,7 @@
     [pools : compiler_ast_types.AstNodePoolContext
       (compiler_ast_types.ast-node-pool-context-capture-active)]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-      (array.make-array compiler_ctfe.CompilerCtfeValue 0)]
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 0)]
     [type-name : String "T"]
     (begin
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
@@ -537,7 +536,7 @@
     [pools : compiler_ast_types.AstNodePoolContext
       (compiler_ast_types.ast-node-pool-context-capture-active)]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-      (array.make-array compiler_ctfe.CompilerCtfeValue 0)]
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 0)]
     [one : String "Borrowed\ntext"]
     [many : String "LifetimePair\nleft\nright"]
     [truncated : String "Broken\nonly"]
@@ -658,7 +657,7 @@
         pools
         (compiler_ast_types.AstExpr.Var (ci.intern "index")))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-      (array.make-array compiler_ctfe.CompilerCtfeValue 3)]
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 3)]
     (begin
       (set!
         (array-ref operands 0)
@@ -778,7 +777,7 @@
         (compiler_ast_types.AstExpr.Literal
           (compiler_ast_types.AstLiteral.Unit)))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-      (array.make-array compiler_ctfe.CompilerCtfeValue 3)]
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 3)]
     [binding-name : String "out"]
     (begin
       (set!
@@ -908,7 +907,7 @@
       (compiler_ast_types.ast-expr-list-with-capacity 1)]
     [begin-node : i64 0]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-      (array.make-array compiler_ctfe.CompilerCtfeValue 4)]
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 4)]
     (begin
       (compiler_ast_types.ast-expr-list-push (&mut items) item-node)
       (set!
@@ -1161,7 +1160,7 @@
     [pools : compiler_ast_types.AstNodePoolContext
       (compiler_ast_types.ast-node-pool-context-capture-active)]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-      (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
     (begin
       (set! (array-ref operands 0) (compiler_ctfe.CompilerCtfeValue.Bool true))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
@@ -1231,7 +1230,7 @@
     [pools : compiler_ast_types.AstNodePoolContext
       (compiler_ast_types.ast-node-pool-context-capture-active)]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-      (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
     [index : i64 0]
     [ok : bool true]
     (begin
@@ -1332,7 +1331,7 @@
         pools
         (compiler_ast_types.AstExpr.Var binding-name))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-      (array.make-array compiler_ctfe.CompilerCtfeValue 3)]
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 3)]
     (begin
       (set!
         (array-ref operands 0)
@@ -1460,7 +1459,7 @@
     [name-id : i64 (ci.intern "name-field")]
     [string-id : i64 (ci.intern "string-field")]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-      (array.make-array compiler_ctfe.CompilerCtfeValue 5)]
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 5)]
     (begin
       (set!
         (array-ref operands 0)
@@ -1675,7 +1674,7 @@
         (compiler_ast_types.AstExpr.Literal
           (compiler_ast_types.AstLiteral.Bool true)))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-      (array.make-array compiler_ctfe.CompilerCtfeValue 5)]
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 5)]
     [prefix : String "p"]
     (begin
       (compiler_ast_types.ast-type-list-push
@@ -2027,7 +2026,7 @@
     [pools : compiler_ast_types.AstNodePoolContext
       (compiler_ast_types.ast-node-pool-context-capture-active)]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-      (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
     [prefix : String "p"]
     (begin
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
@@ -2072,7 +2071,7 @@
         condition-node
         (compiler_ast_types.ast-expr-list-new))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-      (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
     (begin
       (set!
         (array-ref operands 0)
@@ -2137,7 +2136,7 @@
     [clauses : compiler_ast_types.AstExprClauseList
       (compiler_ast_types.ast-expr-clause-list-new)]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-      (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
     (begin
       (compiler_ast_types.ast-expr-clause-list-push
         (&mut clauses)
@@ -2193,7 +2192,7 @@
     [pools : compiler_ast_types.AstNodePoolContext
       (compiler_ast_types.ast-node-pool-context-capture-active)]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-      (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
     [macro-name : String "nested-macro"]
     [macro-name-id : i64 (ci.intern macro-name)]
     (begin
@@ -2241,7 +2240,7 @@
     [pools : compiler_ast_types.AstNodePoolContext
       (compiler_ast_types.ast-node-pool-context-capture-active)]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-      (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
     (begin
       (set! (array-ref operands 0) (compiler_ctfe.CompilerCtfeValue.Bool true))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
@@ -2300,7 +2299,7 @@
     [pools : compiler_ast_types.AstNodePoolContext
       (compiler_ast_types.ast-node-pool-context-capture-active)]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-      (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
     (begin
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
         pools
@@ -2368,7 +2367,7 @@
     [pools : compiler_ast_types.AstNodePoolContext
       (compiler_ast_types.ast-node-pool-context-capture-active)]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-      (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
     [message : String "native comptime abort control"]
     (begin
       (set! (array-ref operands 0) (compiler_ctfe.CompilerCtfeValue.Bool true))

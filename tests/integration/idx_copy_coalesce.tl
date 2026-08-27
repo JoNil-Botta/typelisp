@@ -1,5 +1,4 @@
 (import stdlib.io)
-(import stdlib.array)
 
 ;; FORCING TEST for M-C part 1: same-value coalescing of copies OF mutable
 ;; sources. `sum-loop` is a call-free loop whose `array-ref` bounds check
@@ -20,14 +19,14 @@
     (begin
       (while (< i n)
         (begin
-          (set! acc (+ acc (array.ref xs i)))
+          (set! acc (+ acc (array-ref xs i)))
           (set! i (+ i 1))))
       acc)))
 
 (define (main) : i64
   (let
     [n : i64 (+ (io.arg-count) 5)]
-    [xs : (__tl_dyn-array i64) (array.make-array i64 n)]
+    [xs : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     [i : i64 0]
     (begin
       (while (< i n)

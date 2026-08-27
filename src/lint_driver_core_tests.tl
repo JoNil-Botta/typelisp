@@ -473,10 +473,10 @@ end
 (define (selfhost-lint-single-element-array-dotted-source) : String
   "(define (main) : i64
   (let
-    [cur : (__tl_dyn-array i64) (array.make-array i64 1)]
+    [cur : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     (begin
       (set! (array-ref cur 0) 3)
-      (array.ref cur 0))))")
+      (array-ref cur 0))))")
 
 (define (selfhost-lint-single-element-array-nonzero-source) : String
   "(define (main) : i64
@@ -514,7 +514,7 @@ end
 (define (selfhost-lint-dynamic-array-literal-dotted-source) : String
   "(define (make-items [a : i64] [b : i64] [c : i64]) : (__tl_dyn-array i64)
   (let
-    [items : (__tl_dyn-array i64) (array.make-array i64 3)]
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 3)]
     (begin
       (set! (array-ref items 0) a)
       (set! (array-ref items 1) b)

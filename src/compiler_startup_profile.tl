@@ -4,7 +4,6 @@
 ;; raw monotonic ticks in one fixed array and render them after compilation, so
 ;; formatting and stderr I/O cannot inflate the measured compile preamble.
 (import compiler_startup_clock as startup_clock)
-(import stdlib.array)
 (import stdlib.io)
 (import stdlib.profile)
 (import stdlib.str_cat_runtime as str_cat)
@@ -13,7 +12,7 @@
 (define compiler-startup-profile-marker-count : i64
   13)
 (define compiler-startup-profile-ticks : (__tl_dyn-array i64)
-  (array.make-array i64 compiler-startup-profile-marker-count))
+  (__tl_make-array i64 compiler-startup-profile-marker-count))
 
 (define (compiler-startup-profile-mark! [index : i64]) : unit
   (set! (array-ref compiler-startup-profile-ticks index) (profile.now-ticks)))

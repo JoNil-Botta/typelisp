@@ -4,7 +4,6 @@
 ;; model is intentionally close to the Rust IR: functions contain blocks, blocks
 ;; contain typed instructions, and instructions use explicit vars/values.
 (import stdlib.string)
-(import stdlib.array)
 (import compiler_intern as ci)
 (import compiler_intern_state as cis)
 (import compiler_builtin_ids as cbi)
@@ -186,7 +185,7 @@
 ;; backend want. Only emission and diagnostics ask for the text back. `-1` is
 ;; the absent label, matching the symbol family's negative-id contract.
 (define compiler-ir-label-slots : (__tl_dyn-array String)
-  (array.make-array String 1024))
+  (__tl_make-array String 1024))
 (define compiler-ir-label-count : i64
   0)
 (define compiler-ir-label-ids : ir_label_map.Map
@@ -197,7 +196,7 @@
 (define (compiler-ir-label-grow!) : unit
   (let
     [old-len : i64 (array-length compiler-ir-label-slots)]
-    [next : (__tl_dyn-array String) (array.make-array String (* old-len 2))]
+    [next : (__tl_dyn-array String) (__tl_make-array String (* old-len 2))]
     [index : i64 0]
     (begin
       (while (< index old-len)
@@ -232,7 +231,7 @@
     (in-arena
       (arena.Arena (compiler-ir-label-arena))
       (begin
-        (set! compiler-ir-label-slots (array.make-array String 1024))
+        (set! compiler-ir-label-slots (__tl_make-array String 1024))
         (set! compiler-ir-label-ids (ir_label_map.with-capacity 2048))
         (set! compiler-ir-label-count 0)
         (set! compiler-ir-label-seeded true)))))
@@ -332,7 +331,7 @@
   (* 4 (ci.intern-capacity)))
 
 (define compiler-ir-symbol-slots : (__tl_dyn-array String)
-  (array.make-array String 1024))
+  (__tl_make-array String 1024))
 (define compiler-ir-symbol-count : i64
   0)
 (define compiler-ir-symbol-ids : ir_label_map.Map
@@ -343,7 +342,7 @@
 (define (compiler-ir-symbol-grow!) : unit
   (let
     [old-len : i64 (array-length compiler-ir-symbol-slots)]
-    [next : (__tl_dyn-array String) (array.make-array String (* old-len 2))]
+    [next : (__tl_dyn-array String) (__tl_make-array String (* old-len 2))]
     [index : i64 0]
     (begin
       (while (< index old-len)
@@ -380,7 +379,7 @@
       (begin
         (unsafe
           (arena.tl_arena_set (compiler-ir-symbol-arena)))
-        (set! compiler-ir-symbol-slots (array.make-array String 1024))
+        (set! compiler-ir-symbol-slots (__tl_make-array String 1024))
         (set! compiler-ir-symbol-ids (ir_label_map.with-capacity 2048))
         (set! compiler-ir-symbol-count 0)
         (set! compiler-ir-symbol-seeded true)
@@ -895,12 +894,12 @@
       (CompilerIrInstrCallIndirectCAbiStoreResultPayload base callee args slots))))
 
 (define (compiler-ir-spmd-call-arg-seq-empty) : CompilerIrSpmdCallArgSeq
-  (CompilerIrSpmdCallArgSeq (array.make-array CompilerIrSpmdCallArg 0) 0))
+  (CompilerIrSpmdCallArgSeq (__tl_make-array CompilerIrSpmdCallArg 0) 0))
 
 (define (compiler-ir-spmd-call-arg-seq1 [arg : CompilerIrSpmdCallArg]) : CompilerIrSpmdCallArgSeq
   (let
     [slots : (__tl_dyn-array CompilerIrSpmdCallArg)
-      (array.make-array CompilerIrSpmdCallArg 1)]
+      (__tl_make-array CompilerIrSpmdCallArg 1)]
     (begin
       (set! (array-ref slots 0) arg)
       (CompilerIrSpmdCallArgSeq slots 1))))
@@ -910,7 +909,7 @@
   [b : CompilerIrSpmdCallArg]) : CompilerIrSpmdCallArgSeq
   (let
     [slots : (__tl_dyn-array CompilerIrSpmdCallArg)
-      (array.make-array CompilerIrSpmdCallArg 2)]
+      (__tl_make-array CompilerIrSpmdCallArg 2)]
     (begin
       (set! (array-ref slots 0) a)
       (set! (array-ref slots 1) b)
@@ -918,7 +917,7 @@
 
 (define (compiler-ir-spmd-call-arg-builder-with-capacity [capacity : i64]) : CompilerIrSpmdCallArgBuilder
   (CompilerIrSpmdCallArgBuilder
-    (array.make-array
+    (__tl_make-array
       CompilerIrSpmdCallArg
       (compiler-ir-builder-capacity capacity))
     0))
@@ -943,7 +942,7 @@
         1
         (* old-cap 2))]
     [bigger : (__tl_dyn-array CompilerIrSpmdCallArg)
-      (array.make-array CompilerIrSpmdCallArg new-cap)]
+      (__tl_make-array CompilerIrSpmdCallArg new-cap)]
     (begin
       (compiler-ir-spmd-call-arg-builder-copy-range!
         (&mut bigger)
@@ -970,7 +969,7 @@
     (CompilerIrSpmdCallArgSeq builder.slots builder.len)
     (let
       [slots : (__tl_dyn-array CompilerIrSpmdCallArg)
-        (array.make-array CompilerIrSpmdCallArg builder.len)]
+        (__tl_make-array CompilerIrSpmdCallArg builder.len)]
       (begin
         (compiler-ir-spmd-call-arg-builder-copy-range!
           (&mut slots)
@@ -982,7 +981,7 @@
   [builder : (& builder CompilerIrSpmdCallArgBuilder)]) : CompilerIrSpmdCallArgSeq
   (let
     [slots : (__tl_dyn-array CompilerIrSpmdCallArg)
-      (array.make-array CompilerIrSpmdCallArg builder.len)]
+      (__tl_make-array CompilerIrSpmdCallArg builder.len)]
     (begin
       (compiler-ir-spmd-call-arg-builder-copy-range!
         (&mut slots)
@@ -995,7 +994,7 @@
   [extra : CompilerIrSpmdCallArg]) : CompilerIrSpmdCallArgSeq
   (let
     [slots : (__tl_dyn-array CompilerIrSpmdCallArg)
-      (array.make-array CompilerIrSpmdCallArg (+ args.len 1))]
+      (__tl_make-array CompilerIrSpmdCallArg (+ args.len 1))]
     (begin
       (compiler-ir-spmd-call-arg-builder-copy-range!
         (&mut slots)
@@ -1195,7 +1194,7 @@
   (let
     [count : i64 (+ 1 (compiler-ir-phi-input-list-count rest))]
     [slots : (__tl_dyn-array CompilerIrPhiInput)
-      (array.make-array CompilerIrPhiInput count)]
+      (__tl_make-array CompilerIrPhiInput count)]
     (begin
       (set! (array-ref slots 0) (CompilerIrPhiInput value label))
       (compiler-ir-phi-input-list-fill-array rest slots 1)
@@ -1235,7 +1234,7 @@
   (let
     [count : i64 (compiler-ir-phi-input-list-count inputs)]
     [slots : (__tl_dyn-array CompilerIrPhiInput)
-      (array.make-array CompilerIrPhiInput count)]
+      (__tl_make-array CompilerIrPhiInput count)]
     (begin
       (compiler-ir-phi-input-list-fill-array inputs slots 0)
       (CompilerIrPhiInputSeq slots count))))
@@ -1278,12 +1277,12 @@
         (compiler-ir-phi-input-seq-from-list inputs))]))
 
 (define (compiler-ir-switch-case-seq-empty) : CompilerIrSwitchCaseSeq
-  (CompilerIrSwitchCaseSeq (array.make-array CompilerIrSwitchCase 0) 0))
+  (CompilerIrSwitchCaseSeq (__tl_make-array CompilerIrSwitchCase 0) 0))
 
 (define (compiler-ir-switch-case-seq1 [a : CompilerIrSwitchCase]) : CompilerIrSwitchCaseSeq
   (let
     [slots : (__tl_dyn-array CompilerIrSwitchCase)
-      (array.make-array CompilerIrSwitchCase 1)]
+      (__tl_make-array CompilerIrSwitchCase 1)]
     (begin
       (set! (array-ref slots 0) a)
       (CompilerIrSwitchCaseSeq slots 1))))
@@ -1293,7 +1292,7 @@
   [b : CompilerIrSwitchCase]) : CompilerIrSwitchCaseSeq
   (let
     [slots : (__tl_dyn-array CompilerIrSwitchCase)
-      (array.make-array CompilerIrSwitchCase 2)]
+      (__tl_make-array CompilerIrSwitchCase 2)]
     (begin
       (set! (array-ref slots 0) a)
       (set! (array-ref slots 1) b)
@@ -1305,7 +1304,7 @@
   [c : CompilerIrSwitchCase]) : CompilerIrSwitchCaseSeq
   (let
     [slots : (__tl_dyn-array CompilerIrSwitchCase)
-      (array.make-array CompilerIrSwitchCase 3)]
+      (__tl_make-array CompilerIrSwitchCase 3)]
     (begin
       (set! (array-ref slots 0) a)
       (set! (array-ref slots 1) b)
@@ -1322,7 +1321,7 @@
 
 (define (compiler-ir-switch-case-builder-with-capacity [capacity : i64]) : CompilerIrSwitchCaseBuilder
   (CompilerIrSwitchCaseBuilder
-    (array.make-array
+    (__tl_make-array
       CompilerIrSwitchCase
       (compiler-ir-builder-capacity capacity))
     0))
@@ -1347,7 +1346,7 @@
         1
         (* old-cap 2))]
     [bigger : (__tl_dyn-array CompilerIrSwitchCase)
-      (array.make-array CompilerIrSwitchCase new-cap)]
+      (__tl_make-array CompilerIrSwitchCase new-cap)]
     (begin
       (compiler-ir-switch-case-builder-copy-range!
         (&mut bigger)
@@ -1374,7 +1373,7 @@
     (CompilerIrSwitchCaseSeq builder.slots builder.len)
     (let
       [slots : (__tl_dyn-array CompilerIrSwitchCase)
-        (array.make-array CompilerIrSwitchCase builder.len)]
+        (__tl_make-array CompilerIrSwitchCase builder.len)]
       (begin
         (compiler-ir-switch-case-builder-copy-range!
           (&mut slots)
@@ -1383,12 +1382,12 @@
         (CompilerIrSwitchCaseSeq slots builder.len)))))
 
 (define (compiler-ir-instr-seq-empty) : CompilerIrInstrSeq
-  (CompilerIrInstrSeq (array.make-array CompilerIrInstr 0) 0))
+  (CompilerIrInstrSeq (__tl_make-array CompilerIrInstr 0) 0))
 
 (define (compiler-ir-instr-seq1 [first : CompilerIrInstr]) : CompilerIrInstrSeq
   (let
     [slots : (__tl_dyn-array CompilerIrInstr)
-      (array.make-array CompilerIrInstr 1)]
+      (__tl_make-array CompilerIrInstr 1)]
     (begin
       (set! (array-ref slots 0) first)
       (CompilerIrInstrSeq slots 1))))
@@ -1398,7 +1397,7 @@
   [second : CompilerIrInstr]) : CompilerIrInstrSeq
   (let
     [slots : (__tl_dyn-array CompilerIrInstr)
-      (array.make-array CompilerIrInstr 2)]
+      (__tl_make-array CompilerIrInstr 2)]
     (begin
       (set! (array-ref slots 0) first)
       (set! (array-ref slots 1) second)
@@ -1410,7 +1409,7 @@
   [third : CompilerIrInstr]) : CompilerIrInstrSeq
   (let
     [slots : (__tl_dyn-array CompilerIrInstr)
-      (array.make-array CompilerIrInstr 3)]
+      (__tl_make-array CompilerIrInstr 3)]
     (begin
       (set! (array-ref slots 0) first)
       (set! (array-ref slots 1) second)
@@ -1424,7 +1423,7 @@
   [fourth : CompilerIrInstr]) : CompilerIrInstrSeq
   (let
     [slots : (__tl_dyn-array CompilerIrInstr)
-      (array.make-array CompilerIrInstr 4)]
+      (__tl_make-array CompilerIrInstr 4)]
     (begin
       (set! (array-ref slots 0) first)
       (set! (array-ref slots 1) second)
@@ -1440,7 +1439,7 @@
   [fifth : CompilerIrInstr]) : CompilerIrInstrSeq
   (let
     [slots : (__tl_dyn-array CompilerIrInstr)
-      (array.make-array CompilerIrInstr 5)]
+      (__tl_make-array CompilerIrInstr 5)]
     (begin
       (set! (array-ref slots 0) first)
       (set! (array-ref slots 1) second)
@@ -1649,7 +1648,7 @@
   (let
     [count : i64 (compiler-ir-block-list-count-cons blocks)]
     [slots : (__tl_dyn-array CompilerIrBlock)
-      (array.make-array CompilerIrBlock count)]
+      (__tl_make-array CompilerIrBlock count)]
     (begin
       (compiler-ir-block-list-fill-array blocks slots 0)
       (CompilerIrBlockSeq slots count))))
@@ -1659,7 +1658,7 @@
   (let
     [count : i64 (compiler-ir-block-list-count-cons blocks)]
     [slots : (__tl_dyn-array CompilerIrBlock)
-      (array.make-array CompilerIrBlock count)]
+      (__tl_make-array CompilerIrBlock count)]
     (begin
       (compiler-ir-block-list-fill-array-reversed blocks slots (- count 1))
       (CompilerIrBlockSeq slots count))))
@@ -1725,7 +1724,7 @@
   (let
     [count : i64 (+ 1 (compiler-ir-param-list-count rest))]
     [slots : (__tl_dyn-array CompilerIrParam)
-      (array.make-array CompilerIrParam count)]
+      (__tl_make-array CompilerIrParam count)]
     (begin
       (set! (array-ref slots 0) param)
       (compiler-ir-param-list-fill-array rest slots 1)
@@ -1765,7 +1764,7 @@
   (let
     [count : i64 (compiler-ir-param-list-count params)]
     [slots : (__tl_dyn-array CompilerIrParam)
-      (array.make-array CompilerIrParam count)]
+      (__tl_make-array CompilerIrParam count)]
     (begin
       (compiler-ir-param-list-fill-array params slots 0)
       (CompilerIrParamSeq slots count))))
@@ -2526,7 +2525,7 @@
     [count : i64 seq.len]
     [src : (__tl_dyn-array CompilerIrSpmdCallArg) seq.slots]
     [dst : (__tl_dyn-array CompilerIrSpmdCallArg)
-      (array.make-array CompilerIrSpmdCallArg count)]
+      (__tl_make-array CompilerIrSpmdCallArg count)]
     (begin
       (compiler-ir-clone-spmd-call-arg-seq-fill pools src dst 0 count)
       (CompilerIrSpmdCallArgSeq dst count))))
@@ -2575,7 +2574,7 @@
     [count : i64 seq.len]
     [src : (__tl_dyn-array CompilerIrCAbiReturnSlot) seq.slots]
     [dst : (__tl_dyn-array CompilerIrCAbiReturnSlot)
-      (array.make-array CompilerIrCAbiReturnSlot count)]
+      (__tl_make-array CompilerIrCAbiReturnSlot count)]
     (begin
       (compiler-ir-clone-c-abi-return-slot-seq-fill pools src dst 0 count)
       (CompilerIrCAbiReturnSlotSeq dst count))))
@@ -2630,7 +2629,7 @@
 (define (compiler-ir-clone-switch-case-seq [cases : CompilerIrSwitchCaseSeq]) : CompilerIrSwitchCaseSeq
   (let
     [slots : (__tl_dyn-array CompilerIrSwitchCase)
-      (array.make-array CompilerIrSwitchCase cases.len)]
+      (__tl_make-array CompilerIrSwitchCase cases.len)]
     [index : i64 0]
     (begin
       (while (< index cases.len)
@@ -3161,7 +3160,7 @@
     [count : i64 instrs.len]
     [src : (__tl_dyn-array CompilerIrInstr) instrs.slots]
     [dst : (__tl_dyn-array CompilerIrInstr)
-      (array.make-array CompilerIrInstr count)]
+      (__tl_make-array CompilerIrInstr count)]
     (begin
       (compiler-ir-clone-instr-seq-fill pools src dst 0 count)
       (CompilerIrInstrSeq dst count))))
@@ -3384,7 +3383,7 @@
     [count : i64 seq.len]
     [source : (__tl_dyn-array CompilerIrFunction) seq.slots]
     [dest : (__tl_dyn-array CompilerIrFunction)
-      (array.make-array CompilerIrFunction count)]
+      (__tl_make-array CompilerIrFunction count)]
     [i : i64 0]
     (begin
       (while (< i count)
@@ -7900,8 +7899,8 @@
       (let
         [types : CompilerIrRepresentationVarTypes
           (CompilerIrRepresentationVarTypes
-            (array.make-array i64 vars)
-            (array.make-array ast.AstType vars))]
+            (__tl_make-array i64 vars)
+            (__tl_make-array ast.AstType vars))]
         (begin
           (compiler-ir-representation-param-types! params types)
           (compiler-ir-representation-block-types! blocks types)
@@ -8997,7 +8996,7 @@
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-reader-context-current)]
     [slot-data : (__tl_dyn-array CompilerIrCAbiReturnSlot)
-      (array.make-array CompilerIrCAbiReturnSlot 2)]
+      (__tl_make-array CompilerIrCAbiReturnSlot 2)]
     [_fill : unit
       (begin
         (set!

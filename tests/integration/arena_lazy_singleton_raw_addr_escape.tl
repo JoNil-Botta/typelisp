@@ -32,7 +32,6 @@
 ;
 ; Exit 42 on success, like the other arena-ownership fixtures.
 (import stdlib.arena)
-(import stdlib.array)
 
 (define session-magic : i64
   305419896)
@@ -41,9 +40,9 @@
 ; storage the open produced. Only the address is kept, exactly as the loader
 ; keeps `host-table-addr`.
 (define session-open-flag : (__tl_dyn-array i64)
-  (array.make-array i64 1))
+  (__tl_make-array i64 1))
 (define session-addr-cell : (__tl_dyn-array i64)
-  (array.make-array i64 1))
+  (__tl_make-array i64 1))
 
 ; Flip to false to get the defect back: the storage is then owned by whatever
 ; arena is current at the first call, i.e. by a generation.
@@ -73,7 +72,7 @@
           (unsafe
             (arena.tl_arena_set owner-arena))
           unit)]
-      [storage : (__tl_dyn-array i64) (array.make-array i64 8)]
+      [storage : (__tl_dyn-array i64) (__tl_make-array i64 8)]
       [_fill : unit (set! (array-ref storage 0) session-magic)]
       [addr : i64 (raw-addr-of storage)]
       [_restore : unit
@@ -109,7 +108,7 @@
       (while (< step batch-size)
         (begin
           ; Ordinary per-declaration garbage in the generation.
-          (set! (array-ref (array.make-array i64 16) 0) step)
+          (set! (array-ref (__tl_make-array i64 16) 0) step)
           (if (>= index open-batch)
             (begin
               (session-open! owner-arena)

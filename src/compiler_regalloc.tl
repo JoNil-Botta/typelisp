@@ -6,7 +6,6 @@
 ;; %rsp/%rbp reserved and admit caller-saved integer/XMM registers only for
 ;; values that cannot be clobbered by call emission.
 (import stdlib.io)
-(import stdlib.array)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.hashmap)
@@ -386,7 +385,7 @@
   1)
 
 (define (compiler-reg-call-evict-seq-empty) : CompilerRegCallEvictSeq
-  (CompilerRegCallEvictSeq (array.make-array CompilerRegCallEvict 0) 0))
+  (CompilerRegCallEvictSeq (__tl_make-array CompilerRegCallEvict 0) 0))
 
 (define (compiler-reg-call-evict-seq-push
   [seq : CompilerRegCallEvictSeq]
@@ -401,7 +400,7 @@
         (CompilerRegCallEvictSeq slots (+ len 1)))
       (let
         [grown : (__tl_dyn-array CompilerRegCallEvict)
-          (array.make-array
+          (__tl_make-array
             CompilerRegCallEvict
             (if (< cap 4)
               4
@@ -447,12 +446,12 @@
     [(CompilerRegCallSplit _ _ _ evictions) evictions]))
 
 (define (compiler-reg-call-region-seq-empty) : CompilerRegCallRegionSeq
-  (CompilerRegCallRegionSeq (array.make-array CompilerRegCallRegion 0) 0))
+  (CompilerRegCallRegionSeq (__tl_make-array CompilerRegCallRegion 0) 0))
 
 (define (compiler-reg-call-split-empty) : CompilerRegCallSplit
   (CompilerRegCallSplit
     (live.compiler-live-set-empty)
-    (array.make-array i64 0)
+    (__tl_make-array i64 0)
     (compiler-reg-call-region-seq-empty)
     (compiler-reg-call-evict-seq-empty)))
 
@@ -713,10 +712,10 @@
   (parents (__tl_dyn-array i64)))
 
 (define (compiler-reg-id-seq-empty) : CompilerRegIdSeq
-  (CompilerRegIdSeq (array.make-array i64 0) 0))
+  (CompilerRegIdSeq (__tl_make-array i64 0) 0))
 
 (define (compiler-reg-id-seq-with-capacity [capacity : i64]) : CompilerRegIdSeq
-  (CompilerRegIdSeq (array.make-array i64 capacity) 0))
+  (CompilerRegIdSeq (__tl_make-array i64 capacity) 0))
 
 (defmacro (compiler-reg-id-seq-count [items : CompilerRegIdSeq]) : i64
   `(__tl-project-field-name ,items "len"))
@@ -736,7 +735,7 @@
         unit
         (let
           [bigger : (__tl_dyn-array i64)
-            (array.make-array
+            (__tl_make-array
               i64
               (if (< (array-length slots) 4)
                 4
@@ -770,10 +769,10 @@
       out)))
 
 (define (compiler-reg-label-seq-empty) : CompilerRegLabelSeq
-  (CompilerRegLabelSeq (array.make-array i64 0) 0))
+  (CompilerRegLabelSeq (__tl_make-array i64 0) 0))
 
 (define (compiler-reg-label-seq-with-capacity [capacity : i64]) : CompilerRegLabelSeq
-  (CompilerRegLabelSeq (array.make-array i64 capacity) 0))
+  (CompilerRegLabelSeq (__tl_make-array i64 capacity) 0))
 
 (defmacro (compiler-reg-label-seq-count [items : CompilerRegLabelSeq]) : i64
   `(__tl-project-field-name ,items "len"))
@@ -792,7 +791,7 @@
         unit
         (let
           [bigger : (__tl_dyn-array i64)
-            (array.make-array
+            (__tl_make-array
               i64
               (if (< (array-length slots) 4)
                 4
@@ -858,10 +857,10 @@
     (* cap 2)))
 
 (define (compiler-reg-interval-seq-empty) : CompilerRegIntervalSeq
-  (CompilerRegIntervalSeq (array.make-array CompilerRegInterval 0) 0))
+  (CompilerRegIntervalSeq (__tl_make-array CompilerRegInterval 0) 0))
 
 (define (compiler-reg-interval-seq-with-capacity [capacity : i64]) : CompilerRegIntervalSeq
-  (CompilerRegIntervalSeq (array.make-array CompilerRegInterval capacity) 0))
+  (CompilerRegIntervalSeq (__tl_make-array CompilerRegInterval capacity) 0))
 
 (defmacro (compiler-reg-interval-seq-count [items : CompilerRegIntervalSeq]) : i64
   `(__tl-project-field-name ,items "len"))
@@ -886,7 +885,7 @@
         1
         (* (array-length slots) 2))]
     [bigger : (__tl_dyn-array CompilerRegInterval)
-      (array.make-array CompilerRegInterval capacity)]
+      (__tl_make-array CompilerRegInterval capacity)]
     [index : i64 0]
     (begin
       (while (< index len)
@@ -908,7 +907,7 @@
           1
           (* (array-length old-slots) 2)))]
     [slots : (__tl_dyn-array CompilerRegInterval)
-      (array.make-array CompilerRegInterval capacity)]
+      (__tl_make-array CompilerRegInterval capacity)]
     [index : i64 0]
     (begin
       ;; Prepend is intentionally persistent: some cold fixture/worklist
@@ -953,7 +952,7 @@
       out)))
 
 (define (compiler-reg-edge-copy-seq-empty) : CompilerRegEdgeCopySeq
-  (CompilerRegEdgeCopySeq (array.make-array CompilerRegEdgeCopy 0) 0))
+  (CompilerRegEdgeCopySeq (__tl_make-array CompilerRegEdgeCopy 0) 0))
 
 (define (compiler-reg-edge-copy-seq-push
   [copies : CompilerRegEdgeCopySeq]
@@ -966,7 +965,7 @@
         unit
         (let
           [bigger : (__tl_dyn-array CompilerRegEdgeCopy)
-            (array.make-array
+            (__tl_make-array
               CompilerRegEdgeCopy
               (compiler-reg-seq-grown-capacity (array-length slots)))]
           [i : i64 0]
@@ -980,10 +979,10 @@
       (CompilerRegEdgeCopySeq slots (+ len 1)))))
 
 (define (compiler-reg-active-seq-empty) : CompilerRegActiveSeq
-  (CompilerRegActiveSeq (array.make-array CompilerRegActive 0) 0))
+  (CompilerRegActiveSeq (__tl_make-array CompilerRegActive 0) 0))
 
 (define (compiler-reg-move-seq-empty) : CompilerRegMoveSeq
-  (CompilerRegMoveSeq (array.make-array CompilerRegMove 0) 0))
+  (CompilerRegMoveSeq (__tl_make-array CompilerRegMove 0) 0))
 
 (define (compiler-reg-move-seq-push
   [moves : CompilerRegMoveSeq]
@@ -996,7 +995,7 @@
         unit
         (let
           [bigger : (__tl_dyn-array CompilerRegMove)
-            (array.make-array
+            (__tl_make-array
               CompilerRegMove
               (compiler-reg-seq-grown-capacity (array-length slots)))]
           [i : i64 0]
@@ -1020,7 +1019,7 @@
         unit
         (let
           [bigger : (__tl_dyn-array CompilerRegCallRegion)
-            (array.make-array
+            (__tl_make-array
               CompilerRegCallRegion
               (compiler-reg-seq-grown-capacity (array-length slots)))]
           [i : i64 0]
@@ -1034,9 +1033,7 @@
       (CompilerRegCallRegionSeq slots (+ len 1)))))
 
 (define (compiler-reg-call-region-stat-seq-empty) : CompilerRegCallRegionStatSeq
-  (CompilerRegCallRegionStatSeq
-    (array.make-array CompilerRegCallRegionStat 0)
-    0))
+  (CompilerRegCallRegionStatSeq (__tl_make-array CompilerRegCallRegionStat 0) 0))
 
 (define (compiler-reg-call-region-stat-seq-push
   [rows : CompilerRegCallRegionStatSeq]
@@ -1049,7 +1046,7 @@
         unit
         (let
           [bigger : (__tl_dyn-array CompilerRegCallRegionStat)
-            (array.make-array
+            (__tl_make-array
               CompilerRegCallRegionStat
               (compiler-reg-seq-grown-capacity (array-length slots)))]
           [i : i64 0]
@@ -1628,16 +1625,16 @@
 
 (define (compiler-reg-var-types-empty) : CompilerRegVarTypes
   (CompilerRegVarTypes
-    (array.make-array i64 0)
-    (array.make-array ast.AstType 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array ast.AstType 0)
     (ir.compiler-ir-representation-index-empty)
     (compiler-reg-profile-metrics-new)))
 
 (define (compiler-reg-var-types-empty-with-representations
   [representations : ir.CompilerIrRepresentationIndex]) : CompilerRegVarTypes
   (CompilerRegVarTypes
-    (array.make-array i64 0)
-    (array.make-array ast.AstType 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array ast.AstType 0)
     representations
     (compiler-reg-profile-metrics-new)))
 
@@ -1687,9 +1684,9 @@
             (if (> (+ var 1) grown)
               (+ var 1)
               grown)]
-          [present : (__tl_dyn-array i64) (array.make-array i64 new-len)]
+          [present : (__tl_dyn-array i64) (__tl_make-array i64 new-len)]
           [items : (__tl_dyn-array ast.AstType)
-            (array.make-array ast.AstType new-len)]
+            (__tl_make-array ast.AstType new-len)]
           [index : i64 0]
           (begin
             (while (< index old-len)
@@ -1845,9 +1842,9 @@
   (match func
     [(ir.CompilerIrFunction.Function _ params _ vars blocks)
       (let
-        [present : (__tl_dyn-array i64) (array.make-array i64 vars)]
+        [present : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
         [types : (__tl_dyn-array ast.AstType)
-          (array.make-array ast.AstType vars)]
+          (__tl_make-array ast.AstType vars)]
         (begin
           (compiler-reg-param-types-array! params present types)
           (compiler-reg-block-list-types-array! blocks present types)
@@ -2418,13 +2415,13 @@
   (match func
     [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
       (let
-        [none : (__tl_dyn-array i64) (array.make-array i64 0)]
+        [none : (__tl_dyn-array i64) (__tl_make-array i64 0)]
         [probe : i64 (compiler-reg-alu-prefer-rhs-blocks blocks none none 0)]
         (if (= probe 0)
           none
           (let
-            [flags : (__tl_dyn-array i64) (array.make-array i64 vars)]
-            [counts : (__tl_dyn-array i64) (array.make-array i64 vars)]
+            [flags : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+            [counts : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
             (begin
               (compiler-reg-alu-use-counts-blocks! blocks counts)
               (compiler-reg-alu-prefer-rhs-blocks blocks flags counts 0)
@@ -2836,9 +2833,9 @@
   (match func
     [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
       (let
-        [anchors : (__tl_dyn-array i64) (array.make-array i64 vars)]
-        [defs : (__tl_dyn-array i64) (array.make-array i64 vars)]
-        [uses : (__tl_dyn-array i64) (array.make-array i64 vars)]
+        [anchors : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+        [defs : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+        [uses : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
         (begin
           (compiler-reg-destructive-mark-move-vars!
             (compiler-reg-function-moves func false)
@@ -2879,7 +2876,7 @@
   (match func
     [(ir.CompilerIrFunction.Function _ _ _ vars _)
       (let
-        [eligible : (__tl_dyn-array i64) (array.make-array i64 vars)]
+        [eligible : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
         (begin
           (compiler-reg-fill-i64-array eligible 1)
           (compiler-reg-function-moves-with-destructive-and-casts-eligible
@@ -2987,7 +2984,7 @@
   [func : ir.CompilerIrFunction]
   [vars : i64]) : (__tl_dyn-array i64)
   (let
-    [preferences : (__tl_dyn-array i64) (array.make-array i64 vars)]
+    [preferences : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
     (begin
       (compiler-reg-fill-i64-array preferences -1)
       (match func
@@ -3014,9 +3011,9 @@
       (if (< vars 1)
         1
         vars)]
-    [present : (__tl_dyn-array i64) (array.make-array i64 n)]
+    [present : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     [items : (__tl_dyn-array CompilerRegLocation)
-      (array.make-array CompilerRegLocation n)]
+      (__tl_make-array CompilerRegLocation n)]
     (begin
       (compiler-reg-fill-location-array items (CompilerRegLocation.Spill 0))
       (CompilerRegAssignmentTable present items))))
@@ -3167,10 +3164,10 @@
   [intervals : CompilerRegIntervalSeq]
   [vars : i64]) : CompilerRegIntervalIndex
   (let
-    [starts : (__tl_dyn-array i64) (array.make-array i64 vars)]
-    [ends : (__tl_dyn-array i64) (array.make-array i64 vars)]
+    [starts : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+    [ends : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
     [segments : (__tl_dyn-array CompilerRegIntervalSeq)
-      (array.make-array CompilerRegIntervalSeq 0)]
+      (__tl_make-array CompilerRegIntervalSeq 0)]
     (begin
       (compiler-reg-fill-i64-array starts -1)
       (compiler-reg-fill-i64-array ends -1)
@@ -3341,7 +3338,7 @@
         (if (compiler-reg-interval-seq-empty? existing)
           (let
             [slots : (__tl_dyn-array CompilerRegInterval)
-              (array.make-array CompilerRegInterval 1)]
+              (__tl_make-array CompilerRegInterval 1)]
             (begin
               (set! (array-ref slots 0) interval)
               (set! (array-ref segments var) (CompilerRegIntervalSeq slots 1))))
@@ -3498,7 +3495,7 @@
 ;; than assumed: `var-limit` is the MINIMUM of all four lengths, so
 ;; `0 <= item-var < var-limit` puts the index inside every one of them. (In
 ;; practice the four are equal -- `compiler-reg-live-interval-selection` is the
-;; only root of this walk and allocates each as `(array.make-array i64 vars)` --
+;; only root of this walk and allocates each as `(__tl_make-array i64 vars)` --
 ;; but nothing here depends on that.) `item-var < 0` stays tested: it cannot
 ;; happen (`index >= 0` and the De Bruijn table holds 0..31) but it is the other
 ;; half of the range proof, not a redundant test.
@@ -4068,7 +4065,7 @@
         0
         (+ index 1))]
     [slots : (__tl_dyn-array CompilerRegInterval)
-      (array.make-array CompilerRegInterval (+ old-len additional-capacity))]
+      (__tl_make-array CompilerRegInterval (+ old-len additional-capacity))]
     [out-len : i64 old-len]
     [copy-index : i64 0]
     [var : i64 0]
@@ -4098,8 +4095,8 @@
   (match func
     [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
       (let
-        [starts : (__tl_dyn-array i64) (array.make-array i64 vars)]
-        [ends : (__tl_dyn-array i64) (array.make-array i64 vars)]
+        [starts : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+        [ends : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
         (begin
           (compiler-reg-fill-i64-array starts -1)
           (compiler-reg-fill-i64-array ends -1)
@@ -4271,12 +4268,12 @@
   (match func
     [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
       (let
-        [starts : (__tl_dyn-array i64) (array.make-array i64 vars)]
-        [ends : (__tl_dyn-array i64) (array.make-array i64 vars)]
+        [starts : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+        [ends : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
         [segments : (__tl_dyn-array CompilerRegIntervalSeq)
-          (array.make-array CompilerRegIntervalSeq vars)]
-        [segment-starts : (__tl_dyn-array i64) (array.make-array i64 vars)]
-        [segment-ends : (__tl_dyn-array i64) (array.make-array i64 vars)]
+          (__tl_make-array CompilerRegIntervalSeq vars)]
+        [segment-starts : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+        [segment-ends : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
         (begin
           (compiler-reg-fill-i64-array starts -1)
           (compiler-reg-fill-i64-array ends -1)
@@ -4347,7 +4344,7 @@
       (if (< vars 1)
         1
         (+ (live.compiler-live-set-word-index (- vars 1)) 1))]
-    [words : (__tl_dyn-array i64) (array.make-array i64 word-count)]
+    [words : (__tl_dyn-array i64) (__tl_make-array i64 word-count)]
     [v : i64 0]
     [limit : i64
       (if (< vars (array-length mask))
@@ -4772,9 +4769,9 @@
     [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
       (let
         [segments : (__tl_dyn-array CompilerRegIntervalSeq)
-          (array.make-array CompilerRegIntervalSeq vars)]
-        [segment-starts : (__tl_dyn-array i64) (array.make-array i64 vars)]
-        [segment-ends : (__tl_dyn-array i64) (array.make-array i64 vars)]
+          (__tl_make-array CompilerRegIntervalSeq vars)]
+        [segment-starts : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+        [segment-ends : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
         [mask-words : (__tl_dyn-array i64)
           (compiler-reg-ep-mask-words mask vars)]
         [mask-limit : i64 (compiler-reg-ep-mask-word-limit mask-words)]
@@ -5151,7 +5148,7 @@
   (match func
     [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
       (let
-        [mask : (__tl_dyn-array i64) (array.make-array i64 vars)]
+        [mask : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
         (begin
           (compiler-reg-phi-touched-safe-blocks!
             blocks
@@ -5176,7 +5173,7 @@
     [cons-segs : (__tl_dyn-array CompilerRegIntervalSeq) cons-index.segments]
     [n : i64 (array-length cons-starts)]
     [hybrid-segs : (__tl_dyn-array CompilerRegIntervalSeq)
-      (array.make-array CompilerRegIntervalSeq n)]
+      (__tl_make-array CompilerRegIntervalSeq n)]
     [v : i64 0]
     (begin
       (while (< v n)
@@ -5600,12 +5597,12 @@
         [count : i64 (array-length live-blocks)]
         [words : i64 (compiler-reg-bits-words vars)]
         [cells : i64 (* count words)]
-        [use-rows : (__tl_dyn-array i64) (array.make-array i64 cells)]
-        [def-rows : (__tl_dyn-array i64) (array.make-array i64 cells)]
-        [live-in : (__tl_dyn-array i64) (array.make-array i64 cells)]
-        [live-out : (__tl_dyn-array i64) (array.make-array i64 cells)]
-        [starts : (__tl_dyn-array i64) (array.make-array i64 vars)]
-        [ends : (__tl_dyn-array i64) (array.make-array i64 vars)]
+        [use-rows : (__tl_dyn-array i64) (__tl_make-array i64 cells)]
+        [def-rows : (__tl_dyn-array i64) (__tl_make-array i64 cells)]
+        [live-in : (__tl_dyn-array i64) (__tl_make-array i64 cells)]
+        [live-out : (__tl_dyn-array i64) (__tl_make-array i64 cells)]
+        [starts : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+        [ends : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
         (begin
           (compiler-reg-fill-i64-array starts -1)
           (compiler-reg-fill-i64-array ends -1)
@@ -7148,7 +7145,7 @@
   (let
     [count : i64 (compiler-reg-interval-seq-count candidates)]
     [items : (__tl_dyn-array CompilerRegInterval)
-      (array.make-array CompilerRegInterval count)]
+      (__tl_make-array CompilerRegInterval count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -7584,7 +7581,7 @@
         unit
         (let
           [bigger : (__tl_dyn-array CompilerRegActive)
-            (array.make-array
+            (__tl_make-array
               CompilerRegActive
               (compiler-reg-seq-grown-capacity (array-length slots)))]
           [i : i64 0]
@@ -8407,7 +8404,7 @@
   (match func
     [(ir.CompilerIrFunction.Function _ params _ vars blocks)
       (let
-        [counts : (__tl_dyn-array i64) (array.make-array i64 vars)]
+        [counts : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
         (begin
           (compiler-reg-param-count-defs! params counts)
           (compiler-reg-count-block-defs! blocks counts)
@@ -8542,8 +8539,8 @@
     [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
       (let
         [counts : (__tl_dyn-array i64) (compiler-reg-function-def-counts func)]
-        [phi-defs : (__tl_dyn-array i64) (array.make-array i64 vars)]
-        [parents : (__tl_dyn-array i64) (array.make-array i64 vars)]
+        [phi-defs : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+        [parents : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
         [index : i64 0]
         (begin
           (compiler-reg-mark-phi-defs-blocks! blocks phi-defs)
@@ -8558,7 +8555,7 @@
   [func : ir.CompilerIrFunction]) : (__tl_dyn-array i64)
   (compiler-reg-function-same-value-parents-filtered
     func
-    (array.make-array i64 0)))
+    (__tl_make-array i64 0)))
 
 (define (compiler-reg-same-value-eligible-vars
   [interval-index : CompilerRegIntervalIndex]
@@ -8567,7 +8564,7 @@
     [starts : (__tl_dyn-array i64) interval-index.starts]
     [ends : (__tl_dyn-array i64) interval-index.ends]
     [eligible : (__tl_dyn-array i64)
-      (array.make-array i64 (array-length starts))]
+      (__tl_make-array i64 (array-length starts))]
     [var : i64 0]
     (begin
       (while (< var (array-length starts))
@@ -9028,12 +9025,12 @@
     [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
       (let
         [counts : (__tl_dyn-array i64) (compiler-reg-function-def-counts func)]
-        [phi-defs : (__tl_dyn-array i64) (array.make-array i64 vars)]
-        [parents : (__tl_dyn-array i64) (array.make-array i64 vars)]
-        [class-multi : (__tl_dyn-array i64) (array.make-array i64 vars)]
-        [int-ok : (__tl_dyn-array i64) (array.make-array i64 vars)]
-        [bucket : (__tl_dyn-array i64) (array.make-array i64 vars)]
-        [def-off : (__tl_dyn-array i64) (array.make-array i64 (+ vars 1))]
+        [phi-defs : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+        [parents : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+        [class-multi : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+        [int-ok : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+        [bucket : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+        [def-off : (__tl_dyn-array i64) (__tl_make-array i64 (+ vars 1))]
         [index : i64 0]
         (begin
           (compiler-reg-mark-phi-defs-blocks! blocks phi-defs)
@@ -9049,12 +9046,12 @@
           (let
             [total : i64 (array-ref def-off vars)]
             [def-pts : (__tl_dyn-array i64)
-              (array.make-array
+              (__tl_make-array
                 i64
                 (if (< total 1)
                   1
                   total))]
-            [cursor : (__tl_dyn-array i64) (array.make-array i64 vars)]
+            [cursor : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
             (begin
               (while (< index vars)
                 (begin
@@ -9502,16 +9499,16 @@
   [vars : i64]
   [sv-parents : (__tl_dyn-array i64)]) : CompilerRegCoalesceMap
   (if (compiler-reg-move-list-empty? moves)
-    (CompilerRegCoalesceMap (array.make-array i64 0))
+    (CompilerRegCoalesceMap (__tl_make-array i64 0))
     (let
       [n : i64
         (if (< vars 1)
           1
           vars)]
-      [parents : (__tl_dyn-array i64) (array.make-array i64 n)]
-      [sizes : (__tl_dyn-array i64) (array.make-array i64 n)]
-      [root-start : (__tl_dyn-array i64) (array.make-array i64 n)]
-      [root-end : (__tl_dyn-array i64) (array.make-array i64 n)]
+      [parents : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+      [sizes : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+      [root-start : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+      [root-end : (__tl_dyn-array i64) (__tl_make-array i64 n)]
       (begin
         (compiler-reg-coalesce-map-init! parents sizes 0)
         (compiler-reg-coalesce-init-coarse!
@@ -9819,7 +9816,7 @@
   [func : ir.CompilerIrFunction]
   [prefer-rhs : (__tl_dyn-array i64)]) : (__tl_dyn-array i64)
   (let
-    [hints : (__tl_dyn-array i64) (array.make-array i64 n)]
+    [hints : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     [parents : (__tl_dyn-array i64) coalesce.parents]
     (begin
       (compiler-reg-fill-i64-array hints -1)
@@ -11265,7 +11262,7 @@
     [count : i64 (ir.compiler-ir-block-seq-count seq)]
     (if (< count 1)
       (let
-        [none : (__tl_dyn-array i64) (array.make-array i64 0)]
+        [none : (__tl_dyn-array i64) (__tl_make-array i64 0)]
         (CompilerRegLoopNest count 0 none 0 none none none none none none none))
       (let
         [ids : reg_label_i64_map.Map
@@ -11275,9 +11272,9 @@
               (compiler-reg-bits-map-capacity count))
             0)]
         [succ-bound : i64 (compiler-reg-loop-nest-succ-bound seq)]
-        [succ-offsets : (__tl_dyn-array i64) (array.make-array i64 (+ count 1))]
+        [succ-offsets : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
         [succ-targets : (__tl_dyn-array i64)
-          (array.make-array i64 (+ succ-bound 1))]
+          (__tl_make-array i64 (+ succ-bound 1))]
         [closes? : bool false]
         (begin
           (set!
@@ -11304,15 +11301,15 @@
               succ-offsets
               succ-offsets)
             (let
-              [state : (__tl_dyn-array i64) (array.make-array i64 count)]
+              [state : (__tl_dyn-array i64) (__tl_make-array i64 count)]
               [stack-node : (__tl_dyn-array i64)
-                (array.make-array i64 (+ count 1))]
+                (__tl_make-array i64 (+ count 1))]
               [stack-edge : (__tl_dyn-array i64)
-                (array.make-array i64 (+ count 1))]
+                (__tl_make-array i64 (+ count 1))]
               [back-source : (__tl_dyn-array i64)
-                (array.make-array i64 (+ succ-bound 1))]
+                (__tl_make-array i64 (+ succ-bound 1))]
               [back-target : (__tl_dyn-array i64)
-                (array.make-array i64 (+ succ-bound 1))]
+                (__tl_make-array i64 (+ succ-bound 1))]
               [found : i64
                 (compiler-reg-loop-nest-back-edges!
                   count
@@ -11342,17 +11339,17 @@
                   succ-offsets)
                 (let
                   [pred-offsets : (__tl_dyn-array i64)
-                    (array.make-array i64 (+ count 1))]
+                    (__tl_make-array i64 (+ count 1))]
                   [pred-sources : (__tl_dyn-array i64)
-                    (array.make-array i64 (+ succ-bound 1))]
-                  [cursor : (__tl_dyn-array i64) (array.make-array i64 count)]
-                  [stamp : (__tl_dyn-array i64) (array.make-array i64 count)]
+                    (__tl_make-array i64 (+ succ-bound 1))]
+                  [cursor : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+                  [stamp : (__tl_dyn-array i64) (__tl_make-array i64 count)]
                   [work : (__tl_dyn-array i64)
-                    (array.make-array i64 (+ count 1))]
+                    (__tl_make-array i64 (+ count 1))]
                   [members : (__tl_dyn-array i64)
-                    (array.make-array i64 (+ count 1))]
+                    (__tl_make-array i64 (+ count 1))]
                   [headers : (__tl_dyn-array i64)
-                    (array.make-array i64 (+ found 1))]
+                    (__tl_make-array i64 (+ found 1))]
                   [header-count : i64 0]
                   (begin
                     (compiler-reg-loop-nest-fill-pred!
@@ -11604,7 +11601,7 @@
   [seq : ir.CompilerIrBlockSeq]
   [count : i64]) : (__tl_dyn-array i64)
   (let
-    [spans : (__tl_dyn-array i64) (array.make-array i64 (* 2 count))]
+    [spans : (__tl_dyn-array i64) (__tl_make-array i64 (* 2 count))]
     (begin
       (compiler-reg-fill-i64-array spans (- 0 1))
       (compiler-reg-loop-nest-spans!
@@ -11691,7 +11688,7 @@
     [seq : ir.CompilerIrBlockSeq
       (live.compiler-live-ir-block-list-to-seq blocks)]
     [count : i64 (ir.compiler-ir-block-seq-count seq)]
-    [depths : (__tl_dyn-array i64) (array.make-array i64 count)]
+    [depths : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     (if (< count 1)
       depths
       (begin
@@ -12272,9 +12269,9 @@
     [parents : (__tl_dyn-array i64) coalesce.parents]
     [merged-roots : live.CompilerLiveI64Set
       (compiler-reg-coalesce-merged-root-set coalesce)]
-    [flags : (__tl_dyn-array i64) (array.make-array i64 vars)]
+    [flags : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
     [vals : (__tl_dyn-array ir.CompilerIrValue)
-      (array.make-array ir.CompilerIrValue vars)]
+      (__tl_make-array ir.CompilerIrValue vars)]
     [v : i64 0]
     (begin
       (compiler-reg-remat-init-vals! vals vars)
@@ -12709,7 +12706,7 @@
   [depths : (__tl_dyn-array i64)]
   [vars : i64]) : (__tl_dyn-array i64)
   (let
-    [rebates : (__tl_dyn-array i64) (array.make-array i64 vars)]
+    [rebates : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
     (begin
       (compiler-reg-foldable-rebate-blocks! rebates blocks depths 0)
       rebates)))
@@ -12719,7 +12716,7 @@
   (match func
     [(ir.CompilerIrFunction.Function _ _ _ vars blocks)
       (let
-        [counts : (__tl_dyn-array i64) (array.make-array i64 vars)]
+        [counts : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
         [depths : (__tl_dyn-array i64)
           (compiler-reg-function-loop-depths blocks)]
         (begin
@@ -12733,9 +12730,9 @@
   (match func
     [(ir.CompilerIrFunction.Function _ _ _ fn-vars blocks)
       (let
-        [raw : (__tl_dyn-array i64) (array.make-array i64 fn-vars)]
-        [def-status : (__tl_dyn-array i64) (array.make-array i64 fn-vars)]
-        [rebates : (__tl_dyn-array i64) (array.make-array i64 fn-vars)]
+        [raw : (__tl_dyn-array i64) (__tl_make-array i64 fn-vars)]
+        [def-status : (__tl_dyn-array i64) (__tl_make-array i64 fn-vars)]
+        [rebates : (__tl_dyn-array i64) (__tl_make-array i64 fn-vars)]
         [depths : (__tl_dyn-array i64)
           (compiler-reg-function-loop-depths blocks)]
         [allow-invariant-loads : bool
@@ -12750,7 +12747,7 @@
             0
             allow-invariant-loads)
           (let
-            [discounted : (__tl_dyn-array i64) (array.make-array i64 fn-vars)]
+            [discounted : (__tl_dyn-array i64) (__tl_make-array i64 fn-vars)]
             (begin
               (compiler-reg-copy-i64-array! discounted raw 0)
               ;; Rebate the memory-operand-foldable mentions before the remat
@@ -12877,7 +12874,7 @@
   [blocks : (__tl_dyn-array live.CompilerLiveBlock)]) : (__tl_dyn-array i64)
   (let
     [pred-counts : (__tl_dyn-array i64)
-      (array.make-array i64 (array-length blocks))]
+      (__tl_make-array i64 (array-length blocks))]
     (begin
       (compiler-reg-edge-copy-count-preds-blocks! liveness blocks pred-counts 0)
       pred-counts)))
@@ -13231,7 +13228,7 @@
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
     [out : (__tl_dyn-array ir.CompilerIrInstr)
-      (array.make-array ir.CompilerIrInstr (+ count 1))]
+      (__tl_make-array ir.CompilerIrInstr (+ count 1))]
     [index : i64 0]
     (begin
       (while (< index insert-at)
@@ -13289,7 +13286,7 @@
       (let
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
         [slots : (__tl_dyn-array ir.CompilerIrBlock)
-          (array.make-array ir.CompilerIrBlock count)]
+          (__tl_make-array ir.CompilerIrBlock count)]
         [i : i64 0]
         [found : bool false]
         [target : i64 (compiler-reg-edge-copy-target-label copy)]
@@ -13891,7 +13888,7 @@
       (let
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
         [slots : (__tl_dyn-array ir.CompilerIrBlock)
-          (array.make-array ir.CompilerIrBlock count)]
+          (__tl_make-array ir.CompilerIrBlock count)]
         [i : i64 0]
         (begin
           (while (< i count)
@@ -14256,7 +14253,7 @@
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
     [out : (__tl_dyn-array ir.CompilerIrInstr)
-      (array.make-array ir.CompilerIrInstr count)]
+      (__tl_make-array ir.CompilerIrInstr count)]
     [index : i64 0]
     (begin
       (while (< index (- count 1))
@@ -14356,7 +14353,7 @@
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
     [out : (__tl_dyn-array ir.CompilerIrInstr)
-      (array.make-array ir.CompilerIrInstr count)]
+      (__tl_make-array ir.CompilerIrInstr count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -14499,7 +14496,7 @@
               (compiler-reg-bits-map-capacity count))
             0)]
         [nest : CompilerRegLoopNest (compiler-reg-loop-nest-build-seq seq)]
-        [header-pred : (__tl_dyn-array i64) (array.make-array i64 count)]
+        [header-pred : (__tl_dyn-array i64) (__tl_make-array i64 count)]
         (begin
           (compiler-reg-fill-i64-array header-pred (- 0 1))
           (match (reg_label_i64_map.get (& ids) header-label)
@@ -15159,7 +15156,7 @@
   [block-array : (__tl_dyn-array ir.CompilerIrBlock)]) : (__tl_dyn-array i64)
   (let
     [n : i64 (array-length block-array)]
-    [points : (__tl_dyn-array i64) (array.make-array i64 (+ n 1))]
+    [points : (__tl_dyn-array i64) (__tl_make-array i64 (+ n 1))]
     [i : i64 0]
     [acc : i64 0]
     (begin
@@ -15320,7 +15317,7 @@
     i64)
   (let
     [n : i64 (array-length live-blocks)]
-    [ranges : (__tl_dyn-array i64) (array.make-array i64 (* 2 n))]
+    [ranges : (__tl_dyn-array i64) (__tl_make-array i64 (* 2 n))]
     [b : i64 0]
     (begin
       (while (< b n)
@@ -16642,7 +16639,7 @@
     [source : (__tl_dyn-array CompilerRegEdgeCopy) copies.slots]
     [count : i64 copies.len]
     [out : (__tl_dyn-array CompilerRegEdgeCopy)
-      (array.make-array
+      (__tl_make-array
         CompilerRegEdgeCopy
         (if (< count 1)
           1
@@ -16693,7 +16690,7 @@
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
     [out : (__tl_dyn-array ir.CompilerIrInstr)
-      (array.make-array ir.CompilerIrInstr count)]
+      (__tl_make-array ir.CompilerIrInstr count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -16728,7 +16725,7 @@
       (let
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
         [slots : (__tl_dyn-array ir.CompilerIrBlock)
-          (array.make-array ir.CompilerIrBlock count)]
+          (__tl_make-array ir.CompilerIrBlock count)]
         [index : i64 0]
         (begin
           (while (< index count)
@@ -16864,7 +16861,7 @@
                     type-info
                     group-vars
                     vars
-                    (array.make-array i64 0))]
+                    (__tl_make-array i64 0))]
                 [parents : (__tl_dyn-array i64) coalesce.parents]
                 [merged-roots : live.CompilerLiveI64Set
                   (compiler-reg-coalesce-merged-root-set coalesce)]
@@ -17006,7 +17003,7 @@
                 type-info
                 group-vars
                 vars
-                (array.make-array i64 0))]
+                (__tl_make-array i64 0))]
             [parents : (__tl_dyn-array i64) coalesce.parents]
             [merged-roots : live.CompilerLiveI64Set
               (compiler-reg-coalesce-merged-root-set coalesce)]
@@ -17978,7 +17975,7 @@
     [csr-count : i64
       (cabi.compiler-abi-callee-saved-gp-register-count target-abi)]
     [keep : (__tl_dyn-array i64)
-      (array.make-array
+      (__tl_make-array
         i64
         (if (< csr-count 1)
           1
@@ -18002,8 +17999,7 @@
               unit)
             (set! i (+ i 1)))))
       (let
-        [out : (__tl_dyn-array i64)
-          (array.make-array i64 (+ base-count keep-n))]
+        [out : (__tl_dyn-array i64) (__tl_make-array i64 (+ base-count keep-n))]
         [j : i64 0]
         (begin
           (while (< j base-count)
@@ -18201,7 +18197,7 @@
                       bare-prefix))]
                 [_ last])]
             [out : (__tl_dyn-array ir.CompilerIrInstr)
-              (array.make-array ir.CompilerIrInstr count)]
+              (__tl_make-array ir.CompilerIrInstr count)]
             [i : i64 0]
             (begin
               (while (< i count)
@@ -18350,9 +18346,9 @@
                 (ir.compiler-ir-block-seq-ref seq 0))))
             func
             (let
-              [states : (__tl_dyn-array i64) (array.make-array i64 count)]
-              [fruitful : (__tl_dyn-array i64) (array.make-array i64 count)]
-              [queue : (__tl_dyn-array i64) (array.make-array i64 count)]
+              [states : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+              [fruitful : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+              [queue : (__tl_dyn-array i64) (__tl_make-array i64 count)]
               [head : i64 0]
               [tail : i64 0]
               [scan : i64 0]
@@ -18529,11 +18525,11 @@
                         [out-count : i64
                           (+ (+ count return-count) (+ framed-count 1))]
                         [out : (__tl_dyn-array ir.CompilerIrBlock)
-                          (array.make-array ir.CompilerIrBlock out-count)]
+                          (__tl_make-array ir.CompilerIrBlock out-count)]
                         [out-index : i64 0]
                         [i : i64 0]
                         [save-instrs : (__tl_dyn-array ir.CompilerIrInstr)
-                          (array.make-array ir.CompilerIrInstr 1)]
+                          (__tl_make-array ir.CompilerIrInstr 1)]
                         (if (compiler-reg-early-exit-label-collision?
                           seq
                           states
@@ -18852,7 +18848,7 @@
         seq
         depths
         join-block
-        (array.make-array bool (ir.compiler-ir-block-seq-count seq)))]
+        (__tl_make-array bool (ir.compiler-ir-block-seq-count seq)))]
     [call-label : i64
       (compiler-reg-cold-call-block-label
         (ir.compiler-ir-block-seq-ref seq call-block))]
@@ -18953,7 +18949,7 @@
     [old-count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [out-count : i64 (+ old-count (* 2 selected-count))]
     [out : (__tl_dyn-array ir.CompilerIrInstr)
-      (array.make-array ir.CompilerIrInstr out-count)]
+      (__tl_make-array ir.CompilerIrInstr out-count)]
     [w : i64 0]
     [i : i64 0]
     (begin
@@ -19026,7 +19022,7 @@
                     [(ir.CompilerIrBlock.Block _ instrs) instrs])]
                 [call-instr : ir.CompilerIrInstr
                   (ir.compiler-ir-instr-seq-ref call-instrs 0)]
-                [selected : (__tl_dyn-array i64) (array.make-array i64 12)]
+                [selected : (__tl_dyn-array i64) (__tl_make-array i64 12)]
                 [selected-count : i64
                   (compiler-reg-cold-call-select-live!
                     type-segment-bases
@@ -19047,7 +19043,7 @@
                   (let
                     [count : i64 (ir.compiler-ir-block-seq-count seq)]
                     [out : (__tl_dyn-array ir.CompilerIrBlock)
-                      (array.make-array ir.CompilerIrBlock count)]
+                      (__tl_make-array ir.CompilerIrBlock count)]
                     [b : i64 0]
                     (begin
                       (while (< b count)
@@ -19309,7 +19305,7 @@
     i64)
   (let
     [count : i64 (array-length depths)]
-    [out : (__tl_dyn-array i64) (array.make-array i64 count)]
+    [out : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -19333,10 +19329,7 @@
   (let
     [count : i64 (ir.compiler-ir-block-seq-count seq)]
     (if (< count 1)
-      (CompilerRegCallHoleCfg
-        0
-        (array.make-array i64 1)
-        (array.make-array i64 1))
+      (CompilerRegCallHoleCfg 0 (__tl_make-array i64 1) (__tl_make-array i64 1))
       (let
         [ids : reg_label_i64_map.Map
           (compiler-reg-loop-depth-block-ids-seq
@@ -19345,8 +19338,8 @@
               (compiler-reg-bits-map-capacity count))
             0)]
         [bound : i64 (compiler-reg-loop-nest-succ-bound seq)]
-        [offsets : (__tl_dyn-array i64) (array.make-array i64 (+ count 1))]
-        [targets : (__tl_dyn-array i64) (array.make-array i64 (+ bound 1))]
+        [offsets : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
+        [targets : (__tl_dyn-array i64) (__tl_make-array i64 (+ bound 1))]
         [_closes? : bool
           (compiler-reg-loop-nest-fill-succ! seq ids offsets targets)]
         (CompilerRegCallHoleCfg count offsets targets)))))
@@ -19764,8 +19757,8 @@
   [generation : i64]) : unit
   (let
     [count : i64 (ir.compiler-ir-block-seq-count seq)]
-    [best : (__tl_dyn-array i64) (array.make-array i64 count)]
-    [best-depth : (__tl_dyn-array i64) (array.make-array i64 count)]
+    [best : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [best-depth : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     ;; `compiler-reg-loop-nest-depths!` issued stamp generations 1..header-count
     ;; on this nest, so the innermost-header walk continues strictly above them.
     [stamp-generation : i64
@@ -19847,19 +19840,19 @@
   [seq : ir.CompilerIrBlockSeq]) : CompilerRegCallHoleWeights
   (let
     [count : i64 (ir.compiler-ir-block-seq-count seq)]
-    [depths : (__tl_dyn-array i64) (array.make-array i64 count)]
-    [cold : (__tl_dyn-array bool) (array.make-array bool count)]
+    [depths : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [cold : (__tl_dyn-array bool) (__tl_make-array bool count)]
     (if (< count 1)
-      (CompilerRegCallHoleWeights (array.make-array i64 count) cold)
+      (CompilerRegCallHoleWeights (__tl_make-array i64 count) cold)
       (let
         [nest : CompilerRegLoopNest (compiler-reg-loop-nest-build-seq seq)]
         [_depths : unit (compiler-reg-loop-nest-depths! nest depths)]
         [weights : (__tl_dyn-array i64)
           (compiler-reg-call-hole-block-weights depths)]
         [cfg : CompilerRegCallHoleCfg (compiler-reg-call-hole-cfg-build seq)]
-        [visited : (__tl_dyn-array i64) (array.make-array i64 count)]
-        [seen : (__tl_dyn-array i64) (array.make-array i64 count)]
-        [stack : (__tl_dyn-array i64) (array.make-array i64 (+ count 1))]
+        [visited : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+        [seen : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+        [stack : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
         [index : i64 0]
         [generation : i64 0]
         (begin
@@ -20208,7 +20201,7 @@
   [seq : ir.CompilerIrBlockSeq]
   [weights : (__tl_dyn-array i64)]) : unit
   (let
-    [rebates : (__tl_dyn-array i64) (array.make-array i64 (array-length refs))]
+    [rebates : (__tl_dyn-array i64) (__tl_make-array i64 (array-length refs))]
     [count : i64 (ir.compiler-ir-block-seq-count seq)]
     [index : i64 0]
     (begin
@@ -20909,8 +20902,8 @@
 ;; falls back to.
 (define (compiler-reg-call-hole-flow-degenerate [count : i64]) : CompilerRegCallHoleFlow
   (let
-    [store-in : (__tl_dyn-array i64) (array.make-array i64 (+ count 1))]
-    [reload-out : (__tl_dyn-array i64) (array.make-array i64 (+ count 1))]
+    [store-in : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
+    [reload-out : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
     (begin
       ;; EVERY bit, not only the ones the selection uses: the conservative
       ;; answer must not depend on the mask being the right width. A selection
@@ -21331,13 +21324,13 @@
       (let
         [cfg : CompilerRegCallHoleCfg (compiler-reg-call-hole-cfg-build seq)]
         [edges : i64 (array-ref cfg.succ-offsets count)]
-        [pred-offsets : (__tl_dyn-array i64) (array.make-array i64 (+ count 1))]
-        [pred-sources : (__tl_dyn-array i64) (array.make-array i64 (+ edges 1))]
-        [cursor : (__tl_dyn-array i64) (array.make-array i64 count)]
-        [store-in : (__tl_dyn-array i64) (array.make-array i64 (+ count 1))]
-        [store-out : (__tl_dyn-array i64) (array.make-array i64 (+ count 1))]
-        [need-in : (__tl_dyn-array i64) (array.make-array i64 (+ count 1))]
-        [reload-out : (__tl_dyn-array i64) (array.make-array i64 (+ count 1))]
+        [pred-offsets : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
+        [pred-sources : (__tl_dyn-array i64) (__tl_make-array i64 (+ edges 1))]
+        [cursor : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+        [store-in : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
+        [store-out : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
+        [need-in : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
+        [reload-out : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
         [index : i64 0]
         [pass : i64 0]
         [changed : bool true]
@@ -21583,7 +21576,7 @@
   (let
     [count : i64 (ir.compiler-ir-block-seq-count seq)]
     [out : (__tl_dyn-array ir.CompilerIrBlock)
-      (array.make-array ir.CompilerIrBlock count)]
+      (__tl_make-array ir.CompilerIrBlock count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -21816,7 +21809,7 @@
   [vars : i64]
   [plan : CompilerRegPlan]) : i64
   (let
-    [refs : (__tl_dyn-array i64) (array.make-array i64 vars)]
+    [refs : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
     [assignments : CompilerRegAssignmentTable
       (compiler-reg-plan-assignments plan)]
     [entry : i64 (compiler-reg-call-hole-entry-weight weights)]
@@ -22112,8 +22105,8 @@
               0)
               none
               (let
-                [flags : (__tl_dyn-array bool) (array.make-array bool vars)]
-                [csr : (__tl_dyn-array bool) (array.make-array bool vars)]
+                [flags : (__tl_dyn-array bool) (__tl_make-array bool vars)]
+                [csr : (__tl_dyn-array bool) (__tl_make-array bool vars)]
                 [eligible : i64
                   (compiler-reg-call-hole-mark-candidates!
                     type-segment-bases
@@ -22137,13 +22130,13 @@
                         self-name
                         seq)]
                     [weights : (__tl_dyn-array i64) cold-arms.weights]
-                    [benefit : (__tl_dyn-array i64) (array.make-array i64 vars)]
-                    [cost : (__tl_dyn-array i64) (array.make-array i64 vars)]
-                    [max-ref : (__tl_dyn-array i64) (array.make-array i64 vars)]
+                    [benefit : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+                    [cost : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+                    [max-ref : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
                     [max-clobber : (__tl_dyn-array i64)
-                      (array.make-array i64 vars)]
+                      (__tl_make-array i64 vars)]
                     [max-clobber-hot : (__tl_dyn-array i64)
-                      (array.make-array i64 vars)]
+                      (__tl_make-array i64 vars)]
                     ;; Edge-precise liveness: a phi's inputs belong to their own
                     ;; predecessor edges, so a loop's back-edge input is not
                     ;; reported live across a preheader call it never reaches.
@@ -22168,7 +22161,7 @@
                         cost
                         max-clobber
                         max-clobber-hot
-                        (array.make-array bool vars))]
+                        (__tl_make-array bool vars))]
                     (if (= spans 0)
                       none
                       (compiler-reg-call-hole-split-round
@@ -22196,17 +22189,17 @@
                           (CompilerRegCallHoleScores
                             flags
                             csr
-                            (array.make-array bool vars)
+                            (__tl_make-array bool vars)
                             benefit
                             cost
                             max-ref
                             max-clobber
                             max-clobber-hot
                             (* 2 (compiler-reg-call-hole-entry-weight weights))))
-                        (array.make-array bool vars)
-                        (array.make-array i64 vars)
-                        (array.make-array bool vars)
-                        (array.make-array
+                        (__tl_make-array bool vars)
+                        (__tl_make-array i64 vars)
+                        (__tl_make-array bool vars)
+                        (__tl_make-array
                           i64
                           (compiler-reg-call-hole-max-selected))
                         0)))))))))]))
@@ -22376,7 +22369,7 @@
     i64)
   (let
     [count : i64 (array-length depths)]
-    [out : (__tl_dyn-array i64) (array.make-array i64 count)]
+    [out : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -22425,22 +22418,22 @@
 
 (define (compiler-reg-loop-park-plan-make [blocks : i64] [vars : i64]) : CompilerRegLoopParkPlan
   (CompilerRegLoopParkPlan
-    (array.make-array i64 (compiler-reg-loop-park-max-parked))
-    (array.make-array i64 (compiler-reg-loop-park-max-parked))
-    (array.make-array i64 (compiler-reg-loop-park-max-parked))
-    (array.make-array i64 (compiler-reg-loop-park-max-parked))
-    (array.make-array i64 (compiler-reg-loop-park-max-parked))
-    (array.make-array i64 (compiler-reg-loop-park-max-sites))
-    (array.make-array i64 (compiler-reg-loop-park-max-sites))
-    (array.make-array i64 (compiler-reg-loop-park-max-sites))
-    (array.make-array i64 (compiler-reg-loop-park-max-sites))
-    (array.make-array i64 (compiler-reg-loop-park-max-sites))
-    (array.make-array i64 (compiler-reg-loop-park-max-sites))
-    (array.make-array i64 blocks)
-    (array.make-array i64 blocks)
-    (array.make-array i64 vars)
-    (array.make-array i64 (compiler-reg-loop-park-max-loops))
-    (array.make-array i64 3)))
+    (__tl_make-array i64 (compiler-reg-loop-park-max-parked))
+    (__tl_make-array i64 (compiler-reg-loop-park-max-parked))
+    (__tl_make-array i64 (compiler-reg-loop-park-max-parked))
+    (__tl_make-array i64 (compiler-reg-loop-park-max-parked))
+    (__tl_make-array i64 (compiler-reg-loop-park-max-parked))
+    (__tl_make-array i64 (compiler-reg-loop-park-max-sites))
+    (__tl_make-array i64 (compiler-reg-loop-park-max-sites))
+    (__tl_make-array i64 (compiler-reg-loop-park-max-sites))
+    (__tl_make-array i64 (compiler-reg-loop-park-max-sites))
+    (__tl_make-array i64 (compiler-reg-loop-park-max-sites))
+    (__tl_make-array i64 (compiler-reg-loop-park-max-sites))
+    (__tl_make-array i64 blocks)
+    (__tl_make-array i64 blocks)
+    (__tl_make-array i64 vars)
+    (__tl_make-array i64 (compiler-reg-loop-park-max-loops))
+    (__tl_make-array i64 3)))
 
 (define (compiler-reg-loop-park-plan-reset! [pk : CompilerRegLoopParkPlan]) : unit
   (begin
@@ -23214,21 +23207,21 @@
 
 (define (compiler-reg-loop-park-scratch-make [vars : i64]) : CompilerRegLoopParkScratch
   (CompilerRegLoopParkScratch
-    (array.make-array i64 vars)
-    (array.make-array i64 vars)
-    (array.make-array i64 (compiler-reg-loop-park-max-residents))
-    (array.make-array bool vars)
-    (array.make-array bool vars)
-    (array.make-array bool vars)
-    (array.make-array i64 (compiler-reg-loop-park-max-loop-sites))
-    (array.make-array i64 (compiler-reg-loop-park-max-loop-sites))
-    (array.make-array i64 (compiler-reg-loop-park-max-loop-sites))
-    (array.make-array i64 (compiler-reg-loop-park-max-loop-sites))
-    (array.make-array i64 (compiler-reg-loop-park-max-loop-sites))
-    (array.make-array i64 (compiler-reg-loop-park-max-per-loop))
-    (array.make-array i64 (compiler-reg-loop-park-max-per-loop))
-    (array.make-array i64 (compiler-reg-loop-park-max-per-loop))
-    (array.make-array i64 2)))
+    (__tl_make-array i64 vars)
+    (__tl_make-array i64 vars)
+    (__tl_make-array i64 (compiler-reg-loop-park-max-residents))
+    (__tl_make-array bool vars)
+    (__tl_make-array bool vars)
+    (__tl_make-array bool vars)
+    (__tl_make-array i64 (compiler-reg-loop-park-max-loop-sites))
+    (__tl_make-array i64 (compiler-reg-loop-park-max-loop-sites))
+    (__tl_make-array i64 (compiler-reg-loop-park-max-loop-sites))
+    (__tl_make-array i64 (compiler-reg-loop-park-max-loop-sites))
+    (__tl_make-array i64 (compiler-reg-loop-park-max-loop-sites))
+    (__tl_make-array i64 (compiler-reg-loop-park-max-per-loop))
+    (__tl_make-array i64 (compiler-reg-loop-park-max-per-loop))
+    (__tl_make-array i64 (compiler-reg-loop-park-max-per-loop))
+    (__tl_make-array i64 2)))
 
 (define (compiler-reg-loop-park-scratch-reset!
   [sc : CompilerRegLoopParkScratch]) : unit
@@ -23761,7 +23754,7 @@
     [slots : (__tl_dyn-array ir.CompilerIrSwitchCase) cases.slots]
     [count : i64 cases.len]
     [out : (__tl_dyn-array ir.CompilerIrSwitchCase)
-      (array.make-array ir.CompilerIrSwitchCase count)]
+      (__tl_make-array ir.CompilerIrSwitchCase count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -23851,7 +23844,7 @@
         [slots : (__tl_dyn-array ir.CompilerIrPhiInput) pseq.slots]
         [count : i64 pseq.len]
         [out : (__tl_dyn-array ir.CompilerIrPhiInput)
-          (array.make-array ir.CompilerIrPhiInput count)]
+          (__tl_make-array ir.CompilerIrPhiInput count)]
         [index : i64 0]
         (begin
           (while (< index count)
@@ -24057,7 +24050,7 @@
     [splices : i64 (compiler-reg-loop-park-splice-count pk)]
     [sites : i64 (compiler-reg-loop-park-site-count pk)]
     [out : (__tl_dyn-array ir.CompilerIrBlock)
-      (array.make-array ir.CompilerIrBlock (+ count splices))]
+      (__tl_make-array ir.CompilerIrBlock (+ count splices))]
     [index : i64 0]
     [write : i64 count]
     (begin
@@ -24289,20 +24282,20 @@
               (= (compiler-reg-loop-nest-header-count nest) 0))
               none
               (let
-                [depths : (__tl_dyn-array i64) (array.make-array i64 count)]
+                [depths : (__tl_dyn-array i64) (__tl_make-array i64 count)]
                 [_depths : unit (compiler-reg-loop-nest-depths! nest depths)]
                 [weights : (__tl_dyn-array i64)
                   (compiler-reg-loop-park-block-weights depths)]
                 [order : (__tl_dyn-array i64)
-                  (array.make-array i64 (compiler-reg-loop-park-max-headers))]
+                  (__tl_make-array i64 (compiler-reg-loop-park-max-headers))]
                 [used : (__tl_dyn-array bool)
-                  (array.make-array bool nest.header-count)]
+                  (__tl_make-array bool nest.header-count)]
                 [order-count : i64
                   (compiler-reg-loop-park-order-headers! nest depths order used)]
                 (if (= order-count 0)
                   none
                   (let
-                    [benefit : (__tl_dyn-array i64) (array.make-array i64 vars)]
+                    [benefit : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
                     [_benefit : unit
                       (compiler-reg-call-hole-ref-weights! benefit seq weights)]
                     [ineligible : live.CompilerLiveI64Set
@@ -24312,7 +24305,7 @@
                         type-info
                         target-abi)]
                     [spilled : (__tl_dyn-array bool)
-                      (array.make-array bool vars)]
+                      (__tl_make-array bool vars)]
                     [spilled-count : i64
                       (compiler-reg-call-hole-mark-eligible!
                         type-segment-bases
@@ -24367,7 +24360,7 @@
                         (compiler-reg-loop-park-plan-make count vars)
                         order
                         order-count
-                        (array.make-array bool count)
+                        (__tl_make-array bool count)
                         0)))))))))]))
 
 (define (compiler-reg-call-region-root
@@ -24580,43 +24573,43 @@
     [bslots : (__tl_dyn-array ir.CompilerIrBlock) seq.slots]
     [nblocks : i64 seq.len]
     [cur-region : (__tl_dyn-array i64)
-      (array.make-array
+      (__tl_make-array
         i64
         (if (< n 1)
           1
           n))]
     [cur-lo : (__tl_dyn-array i64)
-      (array.make-array
+      (__tl_make-array
         i64
         (if (< n 1)
           1
           n))]
     [cur-hi : (__tl_dyn-array i64)
-      (array.make-array
+      (__tl_make-array
         i64
         (if (< n 1)
           1
           n))]
     [cur-uses : (__tl_dyn-array i64)
-      (array.make-array
+      (__tl_make-array
         i64
         (if (< n 1)
           1
           n))]
     [cur-defs : (__tl_dyn-array i64)
-      (array.make-array
+      (__tl_make-array
         i64
         (if (< n 1)
           1
           n))]
     [cur-firstdef : (__tl_dyn-array i64)
-      (array.make-array
+      (__tl_make-array
         i64
         (if (< n 1)
           1
           n))]
     [cur-depth : (__tl_dyn-array i64)
-      (array.make-array
+      (__tl_make-array
         i64
         (if (< n 1)
           1
@@ -24817,7 +24810,7 @@
   [ids : reg_label_i64_map.Map]) : (__tl_dyn-array i64)
   (let
     [ranges : (__tl_dyn-array i64)
-      (array.make-array
+      (__tl_make-array
         i64
         (*
           2
@@ -25148,9 +25141,9 @@
               (reg_label_i64_map.with-capacity
                 (compiler-reg-bits-map-capacity nblocks))
               0))]
-        [stamp : (__tl_dyn-array i64) (array.make-array i64 an)]
-        [uses : (__tl_dyn-array i64) (array.make-array i64 an)]
-        [defs : (__tl_dyn-array i64) (array.make-array i64 an)]
+        [stamp : (__tl_dyn-array i64) (__tl_make-array i64 an)]
+        [uses : (__tl_dyn-array i64) (__tl_make-array i64 an)]
+        [defs : (__tl_dyn-array i64) (__tl_make-array i64 an)]
         [h : i64 1]
         (begin
           (compiler-reg-fill-i64-array stamp (- 0 1))
@@ -26340,13 +26333,13 @@
                     ;; exits, which are different problems with different fixes.
                     [raw-exits : i64 0]
                     [stamp : (__tl_dyn-array i64)
-                      (array.make-array
+                      (__tl_make-array
                         i64
                         (if (< n 1)
                           1
                           n))]
                     [busy : (__tl_dyn-array i64)
-                      (array.make-array
+                      (__tl_make-array
                         i64
                         (if (< pool-count 1)
                           1
@@ -26694,9 +26687,9 @@
       (compiler-reg-clobber-kind-points type-segment-bases func 0)]
     [remat-cands : (__tl_dyn-array i64)
       (__tl-project-field (compiler-reg-remat-table-build func) candidates)]
-    [root-has-remat : (__tl_dyn-array i64) (array.make-array i64 an)]
-    [cand : (__tl_dyn-array i64) (array.make-array i64 an)]
-    [order : (__tl_dyn-array i64) (array.make-array i64 an)]
+    [root-has-remat : (__tl_dyn-array i64) (__tl_make-array i64 an)]
+    [cand : (__tl_dyn-array i64) (__tl_make-array i64 an)]
+    [order : (__tl_dyn-array i64) (__tl_make-array i64 an)]
     [v : i64 0]
     (begin
       (while (< v (array-length remat-cands))
@@ -26728,7 +26721,7 @@
         ;; end (members have no eff-index entry of their own); unknown ->
         ;; conservative far end (an unneeded exit store is safe, a missing
         ;; one is a miscompile).
-        [vend : (__tl_dyn-array i64) (array.make-array i64 an)]
+        [vend : (__tl_dyn-array i64) (__tl_make-array i64 an)]
         (begin
           ;; extend candidacy to coalesce-class MEMBERS of accepted roots:
           ;; their refs are attributed per-var (see note-set!), so each member
@@ -26786,7 +26779,7 @@
                   [depths : (__tl_dyn-array i64)
                     (compiler-reg-function-loop-depths blocks)]
                   [buckets : (__tl_dyn-array CompilerRegCallRegionStatSeq)
-                    (array.make-array CompilerRegCallRegionStatSeq an)]
+                    (__tl_make-array CompilerRegCallRegionStatSeq an)]
                   [present : (__tl_dyn-array i64) assignments.present]
                   [items : (__tl_dyn-array CompilerRegLocation)
                     assignments.items]
@@ -26805,43 +26798,43 @@
                   ;; register PAIR can contribute two entries and every accepted
                   ;; shadow root appends one, so size 3n bounds it.
                   [occ-var : (__tl_dyn-array i64)
-                    (array.make-array i64 (+ (* 3 an) 1))]
+                    (__tl_make-array i64 (+ (* 3 an) 1))]
                   [occ-reg : (__tl_dyn-array i64)
-                    (array.make-array i64 (+ (* 3 an) 1))]
+                    (__tl_make-array i64 (+ (* 3 an) 1))]
                   ;; scalar / pair-half / accepted-shadow, so the eviction
                   ;; search can tell a lendable home from one it must not touch
                   [occ-kind : (__tl_dyn-array i64)
-                    (array.make-array i64 (+ (* 3 an) 1))]
+                    (__tl_make-array i64 (+ (* 3 an) 1))]
                   [occ-n : i64 0]
                   ;; one lend per victim per function (the greedy's single-
                   ;; evictee discipline): the second root wanting the same
                   ;; parked value refuses rather than nesting two save/reload
                   ;; protocols over the same register
-                  [evicted : (__tl_dyn-array i64) (array.make-array i64 an)]
+                  [evicted : (__tl_dyn-array i64) (__tl_make-array i64 an)]
                   [evictions : CompilerRegCallEvictSeq
                     (compiler-reg-call-evict-seq-empty)]
                   [evict-budget : i64 (compiler-reg-call-region-evict-cap)]
                   [evict-attempts : i64
                     (compiler-reg-call-region-evict-attempt-cap)]
                   [evict-points : (__tl_dyn-array i64)
-                    (array.make-array
+                    (__tl_make-array
                       i64
                       (+ (compiler-reg-call-region-evict-exit-cap) 1))]
                   [evict-saves : (__tl_dyn-array i64)
-                    (array.make-array
+                    (__tl_make-array
                       i64
                       (+ (compiler-reg-call-region-evict-def-cap) 1))]
                   [shadows : live.CompilerLiveI64Set
                     (live.compiler-live-set-empty)]
-                  [shadow-regs : (__tl_dyn-array i64) (array.make-array i64 an)]
+                  [shadow-regs : (__tl_dyn-array i64) (__tl_make-array i64 an)]
                   [regions : CompilerRegCallRegionSeq
                     (compiler-reg-call-region-seq-empty)]
                   [budget : i64 (compiler-reg-call-region-function-cap)]
                   [root-cap : i64 (compiler-reg-call-region-root-cap)]
-                  [picked-lo : (__tl_dyn-array i64) (array.make-array i64 4)]
-                  [picked-hi : (__tl_dyn-array i64) (array.make-array i64 4)]
-                  [picked-entry : (__tl_dyn-array i64) (array.make-array i64 4)]
-                  [picked-exit : (__tl_dyn-array i64) (array.make-array i64 4)]
+                  [picked-lo : (__tl_dyn-array i64) (__tl_make-array i64 4)]
+                  [picked-hi : (__tl_dyn-array i64) (__tl_make-array i64 4)]
+                  [picked-entry : (__tl_dyn-array i64) (__tl_make-array i64 4)]
+                  [picked-exit : (__tl_dyn-array i64) (__tl_make-array i64 4)]
                   [idx : i64 0]
                   [ci : i64 0]
                   (begin
@@ -27359,7 +27352,7 @@
 (cfg
   (any regalloc-census test)
   (define (compiler-reg-call-span-census-empty) : CompilerRegCallSpanCensus
-    (CompilerRegCallSpanCensus (array.make-array i64 12))))
+    (CompilerRegCallSpanCensus (__tl_make-array i64 12))))
 
 (cfg
   (any regalloc-census test)
@@ -28677,10 +28670,10 @@
       interval-index.segments]
     [parents : (__tl_dyn-array i64) coalesce.parents]
     [n : i64 (array-length orig-starts)]
-    [root-starts : (__tl_dyn-array i64) (array.make-array i64 n)]
-    [root-ends : (__tl_dyn-array i64) (array.make-array i64 n)]
+    [root-starts : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+    [root-ends : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     [root-segs : (__tl_dyn-array CompilerRegIntervalSeq)
-      (array.make-array CompilerRegIntervalSeq n)]
+      (__tl_make-array CompilerRegIntervalSeq n)]
     [v : i64 0]
     (begin
       (compiler-reg-fill-i64-array root-starts -1)
@@ -28846,22 +28839,22 @@
 ;; is carried but inert; M2+ replace it with a populated plan from the greedy.
 (define (compiler-reg-split-plan-empty) : CompilerRegSplitPlan
   (CompilerRegSplitPlan
-    (array.make-array i64 0)
-    (array.make-array i64 0)
-    (array.make-array i64 0)
-    (array.make-array i64 0)
-    (array.make-array i64 0)
-    (array.make-array CompilerRegOccupantSplit 0)
-    (array.make-array i64 0)))
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array CompilerRegOccupantSplit 0)
+    (__tl_make-array i64 0)))
 
 (define (compiler-reg-split-plan-with-coalesce [parents : (__tl_dyn-array i64)]) : CompilerRegSplitPlan
   (CompilerRegSplitPlan
-    (array.make-array i64 0)
-    (array.make-array i64 0)
-    (array.make-array i64 0)
-    (array.make-array i64 0)
-    (array.make-array i64 0)
-    (array.make-array CompilerRegOccupantSplit 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array CompilerRegOccupantSplit 0)
     parents))
 
 ;; The spill-weight eviction scores a candidate by its use count,
@@ -28878,7 +28871,7 @@
   [vars : i64]) : (__tl_dyn-array i64)
   (let
     [parents : (__tl_dyn-array i64) coalesce.parents]
-    [out : (__tl_dyn-array i64) (array.make-array i64 vars)]
+    [out : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
     [v : i64 0]
     (begin
       (while (< v vars)
@@ -28930,7 +28923,7 @@
   [rcount : i64]) : (__tl_dyn-array i64)
   (let
     [out : (__tl_dyn-array i64)
-      (array.make-array i64 (compiler-reg-greedy-pool-index-capacity))]
+      (__tl_make-array i64 (compiler-reg-greedy-pool-index-capacity))]
     [i : i64 0]
     (begin
       (compiler-reg-fill-i64-array out -1)
@@ -28998,7 +28991,7 @@
   3)
 
 (define (compiler-reg-live-union-empty) : CompilerRegLiveUnion
-  (CompilerRegLiveUnion (array.make-array i64 0) 0))
+  (CompilerRegLiveUnion (__tl_make-array i64 0) 0))
 
 ;; Below every real program point and above i64 underflow, so `es < end` holds
 ;; unconditionally for a point-0 segment without special-casing either side.
@@ -29103,7 +29096,7 @@
           (if (< doubled need)
             need
             doubled)]
-        [bigger : (__tl_dyn-array i64) (array.make-array i64 (* grown words))]
+        [bigger : (__tl_dyn-array i64) (__tl_make-array i64 (* grown words))]
         [copy : i64 (* union.count words)]
         [index : i64 0]
         (begin
@@ -29386,15 +29379,15 @@
         1
         rcount)]
     [words : (__tl_dyn-array i64)
-      (array.make-array i64 (* storage-reg-count storage-word-count))]
+      (__tl_make-array i64 (* storage-reg-count storage-word-count))]
     [primary : (__tl_dyn-array i64)
-      (array.make-array
+      (__tl_make-array
         i64
         (if (< n 1)
           1
           n))]
     [secondary : (__tl_dyn-array i64)
-      (array.make-array
+      (__tl_make-array
         i64
         (if (< n 1)
           1
@@ -29405,9 +29398,9 @@
     ;; first takes a resident: in the average function almost no pool register
     ;; is ever occupied.
     [live-union : (__tl_dyn-array CompilerRegLiveUnion)
-      (array.make-array CompilerRegLiveUnion storage-reg-count)]
+      (__tl_make-array CompilerRegLiveUnion storage-reg-count)]
     [live-union-coarse : (__tl_dyn-array i64)
-      (array.make-array i64 storage-reg-count)]
+      (__tl_make-array i64 storage-reg-count)]
     [occupancy : CompilerRegGreedyOccupancy
       (CompilerRegGreedyOccupancy
         words
@@ -30286,7 +30279,7 @@
   (if (< count 2)
     unit
     (let
-      [buf : (__tl_dyn-array i64) (array.make-array i64 count)]
+      [buf : (__tl_dyn-array i64) (__tl_make-array i64 count)]
       [width : i64 1]
       [flipped : bool false]
       (begin
@@ -30318,7 +30311,7 @@
   [raw : (__tl_dyn-array i64)]) : (__tl_dyn-array i64)
   (let
     [n : i64 (array-length discounted)]
-    [out : (__tl_dyn-array i64) (array.make-array i64 n)]
+    [out : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     [max-raw : i64 0]
     [v : i64 0]
     (begin
@@ -30448,8 +30441,7 @@
 (define (compiler-reg-greedy-heap-grown-array
   [old : (& old (__tl_dyn-array i64))]) : (__tl_dyn-array i64)
   (let
-    [next : (__tl_dyn-array i64)
-      (array.make-array i64 (* (array-length old) 2))]
+    [next : (__tl_dyn-array i64) (__tl_make-array i64 (* (array-length old) 2))]
     (begin
       (compiler-reg-greedy-heap-copy-from! next old 0)
       next)))
@@ -30671,11 +30663,11 @@
       (if (< n 1)
         1
         n)]
-    [pending : (__tl_dyn-array i64) (array.make-array i64 cap)]
-    [evict-count : (__tl_dyn-array i64) (array.make-array i64 cap)]
+    [pending : (__tl_dyn-array i64) (__tl_make-array i64 cap)]
+    [evict-count : (__tl_dyn-array i64) (__tl_make-array i64 cap)]
     [heap : CompilerRegGreedyHeap
       (CompilerRegGreedyHeap
-        (array.make-array
+        (__tl_make-array
           i64
           (if (< (- count i) 1)
             1
@@ -30952,7 +30944,7 @@
   (let
     [vars : i64 (array-length interval-index.starts)]
     [out : (__tl_dyn-array CompilerRegIdSeq)
-      (array.make-array CompilerRegIdSeq vars)]
+      (__tl_make-array CompilerRegIdSeq vars)]
     [i : i64 0]
     (begin
       (while (< i vars)
@@ -31314,7 +31306,7 @@
   [coalesce : CompilerRegCoalesceMap]
   [n : i64]) : (__tl_dyn-array i64)
   (let
-    [prefs : (__tl_dyn-array i64) (array.make-array i64 n)]
+    [prefs : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     [parents : (__tl_dyn-array i64) coalesce.parents]
     [pool : CompilerRegIdSeq
       (compiler-reg-greedy-integer-pool-for-abi target-abi)]
@@ -31624,7 +31616,7 @@
   [coalesce : CompilerRegCoalesceMap]
   [n : i64]) : (__tl_dyn-array i64)
   (let
-    [prefs : (__tl_dyn-array i64) (array.make-array i64 n)]
+    [prefs : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     [parents : (__tl_dyn-array i64) coalesce.parents]
     [pool : CompilerRegIdSeq (compiler-reg-xmm-registers-for-abi target-abi)]
     (begin
@@ -31930,13 +31922,13 @@
     [n : i64 (array-length assignments.present)]
     [rcount : i64 (compiler-reg-id-seq-count regs)]
     [reg-arr : (__tl_dyn-array i64)
-      (array.make-array
+      (__tl_make-array
         i64
         (if (< (compiler-reg-id-seq-count regs) 1)
           1
           (compiler-reg-id-seq-count regs)))]
     [order : (__tl_dyn-array i64)
-      (array.make-array
+      (__tl_make-array
         i64
         (if (< (array-length assignments.present) 1)
           1
@@ -31944,7 +31936,7 @@
     ;; RS_* stage per root (RS_New until selectOrSplit runs); the post-pass region
     ;; split rescues the RS_Split entries.
     [stages : (__tl_dyn-array i64)
-      (array.make-array
+      (__tl_make-array
         i64
         (if (< (array-length assignments.present) 1)
           1
@@ -32014,7 +32006,7 @@
     callee-regs
     caller-saved-count
     unspillable-from
-    (array.make-array CompilerRegIdSeq 0)))
+    (__tl_make-array CompilerRegIdSeq 0)))
 
 ;; ============================================================================
 ;; GAP2b: register-PAIR homing for 16-byte group values. The greedy
@@ -32765,9 +32757,9 @@
               blocks)]
           [def-counts : (__tl_dyn-array i64)
             (compiler-reg-function-def-counts func)]
-          [parents : (__tl_dyn-array i64) (array.make-array i64 vars)]
-          [poisoned : (__tl_dyn-array bool) (array.make-array bool vars)]
-          [members : (__tl_dyn-array i64) (array.make-array i64 vars)]
+          [parents : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+          [poisoned : (__tl_dyn-array bool) (__tl_make-array bool vars)]
+          [members : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
           [v : i64 0]
           (begin
             (while (< v vars)
@@ -32892,7 +32884,7 @@
             (compiler-reg-group-pair-candidate-count caller-saved-ok?)]
           ;; The member-interference scan is the same for every candidate
           ;; register, so collect the interfering vars once here.
-          [conflicts : (__tl_dyn-array i64) (array.make-array i64 vars)]
+          [conflicts : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
           [conflict-count : i64
             (compiler-reg-group-pair-conflict-vars!
               interval-index
@@ -33188,7 +33180,7 @@
     [alu-prefer-rhs : (__tl_dyn-array i64)
       (if allow-caller-saved-zero-call
         (compiler-reg-function-alu-prefer-rhs func)
-        (array.make-array i64 0))]
+        (__tl_make-array i64 0))]
     [raw-moves
       : CompilerRegMoveSeq
       ;; Phi back-edge moves NON-strict so loop-carried phi/copy pairs coalesce
@@ -33359,7 +33351,7 @@
           group-vars
           (array-length coalesce-index.starts)
           sv-parents)
-        (CompilerRegCoalesceMap (array.make-array i64 0)))]
+        (CompilerRegCoalesceMap (__tl_make-array i64 0)))]
     ;; Collapse coalesce classes to one root candidate each, and run
     ;; the allocation passes over those roots with an EMPTY coalesce map (the
     ;; merge already realised coalescing, so no per-member coalesce-location is
@@ -33373,7 +33365,7 @@
       (cfg
         scratch-vreg
         (compiler-reg-low-xmm-exclusions eff-index low-xmm-clobber-points)
-        (array.make-array CompilerRegIdSeq 0))]
+        (__tl_make-array CompilerRegIdSeq 0))]
     ;; `div-points` / `shift-points` (kinds 1 and 2) are the sets bound above;
     ;; the GAP3c pin demotion below and the greedy share that one computation.
     ;; GAP3c: validate every ABI pin against its coalesce-class hull now that
@@ -33540,14 +33532,14 @@
           func
           coalesce
           (array-length interval-index.starts))
-        (array.make-array i64 0))]
+        (__tl_make-array i64 0))]
     [base-eviction-raw-counts : (__tl_dyn-array i64)
       (if (and allow-caller-saved-zero-call (> early-scratch-count 0))
         (compiler-reg-merge-ref-counts
           coalesce
           (compiler-reg-function-spill-weights func)
           (array-length interval-index.starts))
-        (array.make-array i64 0))]
+        (__tl_make-array i64 0))]
     [eviction-ref-counts : (__tl_dyn-array i64)
       (compiler-reg-early-scratch-extend-weights
         base-eviction-ref-counts
@@ -33611,7 +33603,7 @@
           (live.compiler-live-set-empty)
           base-eviction-ref-counts
           copy-hints
-          (array.make-array i64 0)
+          (__tl_make-array i64 0)
           call-points
           div-points
           shift-points
@@ -33791,7 +33783,7 @@
           mask-vars))]
     [vector-preferences : (__tl_dyn-array i64)
       (if vector-mask-empty?
-        (array.make-array i64 0)
+        (__tl_make-array i64 0)
         (compiler-reg-function-select-false-preferences
           func
           (array-length interval-index.starts)))]
@@ -33822,9 +33814,9 @@
           interval-index
           (live.compiler-live-set-empty)
           (live.compiler-live-set-empty)
-          (array.make-array i64 0)
+          (__tl_make-array i64 0)
           vector-preferences
-          (array.make-array i64 0)
+          (__tl_make-array i64 0)
           xmm-call-points
           div-points
           shift-points
@@ -33856,7 +33848,7 @@
           (compiler-reg-mask-registers)
           (compiler-reg-active-seq-empty)
           vector-assignments
-          (array.make-array i64 0)
+          (__tl_make-array i64 0)
           interval-index))]
     [assignments : CompilerRegAssignmentTable
       (match mask-state
@@ -34942,7 +34934,7 @@
   [count : i64]
   [vars : i64]) : (__tl_dyn-array i64)
   (let
-    [ends : (__tl_dyn-array i64) (array.make-array i64 vars)]
+    [ends : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
     [i : i64 0]
     (begin
       (while (< i vars)
@@ -35624,8 +35616,8 @@
       unit
       (let
         [candidates : (__tl_dyn-array i64)
-          (array.make-array i64 (compiler-reg-color-instr-total blocks 0))]
-        [cursor : (__tl_dyn-array i64) (array.make-array i64 2)]
+          (__tl_make-array i64 (compiler-reg-color-instr-total blocks 0))]
+        [cursor : (__tl_dyn-array i64) (__tl_make-array i64 2)]
         [changed : bool
           (compiler-reg-color-propagate-root-blocks
             blocks
@@ -36165,14 +36157,14 @@
   ;; Detection reads and writes only the three arrays it is handed, and most
   ;; functions have no storage range at all, so only those three are allocated
   ;; and seeded up front; the six the rest of the pass needs are built inside
-  ;; the non-empty branch. `range-size` is not seeded: `array.make-array`
+  ;; the non-empty branch. `range-size` is not seeded: `__tl_make-array`
   ;; zero-fills, detection writes [0, range-count) itself, and
   ;; `compiler-reg-color-storage-ranges` reads no element past that bound.
   ;; `invalid` likewise starts all-false from the zero-fill.
   (let
-    [range-of-var : (__tl_dyn-array i64) (array.make-array i64 vars)]
-    [range-base : (__tl_dyn-array i64) (array.make-array i64 vars)]
-    [range-size : (__tl_dyn-array i64) (array.make-array i64 vars)]
+    [range-of-var : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+    [range-base : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+    [range-size : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
     [_cleared : unit
       (let
         [i : i64 0]
@@ -36191,12 +36183,12 @@
     (if (= range-count 0)
       from
       (let
-        [range-starts : (__tl_dyn-array i64) (array.make-array i64 vars)]
-        [range-ends : (__tl_dyn-array i64) (array.make-array i64 vars)]
-        [invalid : (__tl_dyn-array bool) (array.make-array bool vars)]
-        [roots : (__tl_dyn-array i64) (array.make-array i64 vars)]
-        [starts : (__tl_dyn-array i64) (array.make-array i64 vars)]
-        [ends : (__tl_dyn-array i64) (array.make-array i64 vars)]
+        [range-starts : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+        [range-ends : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+        [invalid : (__tl_dyn-array bool) (__tl_make-array bool vars)]
+        [roots : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+        [starts : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+        [ends : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
         [max-start : i64 9223372036854775807]
         [_seeded : unit
           (let
@@ -36259,8 +36251,8 @@
   [vars : i64]
   [types : CompilerRegVarTypes]) : CompilerRegVarTypes
   (let
-    [present : (__tl_dyn-array i64) (array.make-array i64 vars)]
-    [items : (__tl_dyn-array ast.AstType) (array.make-array ast.AstType vars)]
+    [present : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+    [items : (__tl_dyn-array ast.AstType) (__tl_make-array ast.AstType vars)]
     (begin
       (compiler-reg-color-scatter-types remap present items types)
       (CompilerRegVarTypes present items types.representations types.metrics))))
@@ -36302,9 +36294,9 @@
   [vars : i64]
   [assignments : CompilerRegAssignmentTable]) : CompilerRegAssignmentTable
   (let
-    [present : (__tl_dyn-array i64) (array.make-array i64 vars)]
+    [present : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
     [items : (__tl_dyn-array CompilerRegLocation)
-      (array.make-array CompilerRegLocation vars)]
+      (__tl_make-array CompilerRegLocation vars)]
     (begin
       (compiler-reg-fill-location-array items (CompilerRegLocation.Spill 0))
       (compiler-reg-color-scatter-assignments remap present items assignments)
@@ -37571,8 +37563,8 @@
   [hull-starts : (__tl_dyn-array i64)]
   [vector-stack-words : (__tl_dyn-array i64)]) : (__tl_dyn-array i64)
   (let
-    [alias : (__tl_dyn-array i64) (array.make-array i64 vars)]
-    [eligible : (__tl_dyn-array bool) (array.make-array bool vars)]
+    [alias : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+    [eligible : (__tl_dyn-array bool) (__tl_make-array bool vars)]
     [_cleared : unit (compiler-reg-fill-i64-array alias (- 0 1))]
     [_eligible : unit
       (compiler-reg-color-scalar-alias-eligible!
@@ -37584,15 +37576,15 @@
     (begin
       (if (compiler-reg-color-scalar-alias-candidate-blocks? blocks eligible)
         (let
-          [ep-starts : (__tl_dyn-array i64) (array.make-array i64 vars)]
-          [ep-ends : (__tl_dyn-array i64) (array.make-array i64 vars)]
-          [web-end : (__tl_dyn-array i64) (array.make-array i64 vars)]
-          [web-root : (__tl_dyn-array bool) (array.make-array bool vars)]
+          [ep-starts : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+          [ep-ends : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+          [web-end : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+          [web-root : (__tl_dyn-array bool) (__tl_make-array bool vars)]
           ;; Intrusive circular member list + size, one web per variable to start
           ;; (a singleton's `web-next` points at itself).
-          [web-next : (__tl_dyn-array i64) (array.make-array i64 vars)]
-          [web-size : (__tl_dyn-array i64) (array.make-array i64 vars)]
-          [phi-def : (__tl_dyn-array bool) (array.make-array bool vars)]
+          [web-next : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+          [web-size : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+          [phi-def : (__tl_dyn-array bool) (__tl_make-array bool vars)]
           [liveness : live.CompilerFunctionLiveness
             (live.compiler-live-analyze-blocks-edge-precise blocks vars)]
           (begin
@@ -37747,7 +37739,7 @@
     (if (compiler-reg-interval-seq-empty? intervals)
       CompilerRegColoring.None
       (let
-        [vector-stack-words : (__tl_dyn-array i64) (array.make-array i64 vars)]
+        [vector-stack-words : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
         [_vector-stack-words : unit
           (begin
             (compiler-reg-vector-stack-words-params! params vector-stack-words)
@@ -37761,19 +37753,19 @@
               vars
               (compiler-reg-vector-stack-extra-slots vector-stack-words 0 0))
             8)]
-        [slot-ends : (__tl_dyn-array i64) (array.make-array i64 slots)]
+        [slot-ends : (__tl_dyn-array i64) (__tl_make-array i64 slots)]
         [assignments : CompilerRegAssignmentTable
           (compiler-reg-plan-assignments plan)]
         [assignment-index : CompilerRegAssignmentTable
           (compiler-reg-assignment-table-with-min-capacity assignments vars)]
         [ineligible : live.CompilerLiveI64Set
           (compiler-reg-plan-ineligible plan)]
-        [colorable : (__tl_dyn-array bool) (array.make-array bool vars)]
+        [colorable : (__tl_dyn-array bool) (__tl_make-array bool vars)]
         ;; Boolean, not a count: the only question asked below is whether the
         ;; variable is referenced at all (see compiler-reg-ref-marks-blocks!).
-        [references : (__tl_dyn-array bool) (array.make-array bool vars)]
-        [remap : (__tl_dyn-array i64) (array.make-array i64 vars)]
-        ;; `colorable` is not cleared here: `array.make-array` zero-fills its
+        [references : (__tl_dyn-array bool) (__tl_make-array bool vars)]
+        [remap : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+        ;; `colorable` is not cleared here: `__tl_make-array` zero-fills its
         ;; backing store (bool's default is the all-zero byte), so every element
         ;; already reads `false`, and `compiler-reg-color-flags` below only
         ;; overwrites the entries it decides. `references` above relies on the
@@ -37826,9 +37818,9 @@
             (compiler-reg-ref-marks-blocks! references blocks)
             (compiler-reg-spmd-avx2-special-param-references! params references))]
         [var-tys : (__tl_dyn-array ast.AstType)
-          (array.make-array ast.AstType vars)]
+          (__tl_make-array ast.AstType vars)]
         [slot-tys : (__tl_dyn-array ast.AstType)
-          (array.make-array ast.AstType slots)]
+          (__tl_make-array ast.AstType slots)]
         [_typed : unit
           (compiler-reg-color-var-tys (compiler-reg-plan-types plan) var-tys)]
         [param-floor : i64
@@ -37837,7 +37829,7 @@
         ;; after the parameter pins are in `remap`, which is the last write
         ;; before the walk itself starts filling it -- and read by the web
         ;; builder and by the interval filter below.
-        [slot-eligible : (__tl_dyn-array bool) (array.make-array bool vars)]
+        [slot-eligible : (__tl_dyn-array bool) (__tl_make-array bool vars)]
         [_slot-eligible : unit
           (compiler-reg-color-slot-eligible!
             slot-eligible
@@ -37850,8 +37842,8 @@
         ;; Conservative per-var hulls of the plan intervals, shared by the
         ;; scalar-web membership gate below and the group-Mov overlay further
         ;; down (both only ever read them).
-        [hull-starts : (__tl_dyn-array i64) (array.make-array i64 vars)]
-        [hull-ends : (__tl_dyn-array i64) (array.make-array i64 vars)]
+        [hull-starts : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+        [hull-ends : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
         [_hull-bounds : unit
           (begin
             (compiler-reg-fill-i64-array hull-starts (- 0 1))
@@ -37871,7 +37863,7 @@
             hull-starts
             vector-stack-words)]
         [sorted : (__tl_dyn-array CompilerRegInterval)
-          (array.make-array
+          (__tl_make-array
             CompilerRegInterval
             (compiler-reg-interval-seq-count intervals))]
         ;; Only the walk-eligible intervals land in `sorted`; `sorted-count`
@@ -37924,7 +37916,7 @@
           ;; private-slot loop below: an aliased dst shares its root's slot
           ;; pair instead of taking a fresh one.
           (let
-            [alias : (__tl_dyn-array i64) (array.make-array i64 vars)]
+            [alias : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
             (begin
               (compiler-reg-fill-i64-array alias (- 0 1))
               (compiler-reg-color-group-mov-alias-blocks!
@@ -38038,7 +38030,7 @@
           ;; `taken` starts all-false from the zero-filled allocation, as
           ;; `references` and `colorable` above do.
           (let
-            [taken : (__tl_dyn-array bool) (array.make-array bool vars)]
+            [taken : (__tl_dyn-array bool) (__tl_make-array bool vars)]
             [i : i64 0]
             [free : i64 0]
             (begin
@@ -38091,7 +38083,7 @@
   [values : ir.CompilerIrValueSeq]) : ir.CompilerIrValueSeq
   (let
     [slots : (__tl_dyn-array ir.CompilerIrValue)
-      (array.make-array ir.CompilerIrValue values.len)]
+      (__tl_make-array ir.CompilerIrValue values.len)]
     [index : i64 0]
     (begin
       (while (< index values.len)
@@ -38133,7 +38125,7 @@
       (let
         [count : i64 (array-length items)]
         [out : (__tl_dyn-array ir.CompilerIrValue)
-          (array.make-array ir.CompilerIrValue count)]
+          (__tl_make-array ir.CompilerIrValue count)]
         [i : i64 0]
         (begin
           (while (< i count)
@@ -38159,7 +38151,7 @@
   [args : ir.CompilerIrSpmdCallArgSeq]) : ir.CompilerIrSpmdCallArgSeq
   (let
     [out : (__tl_dyn-array ir.CompilerIrSpmdCallArg)
-      (array.make-array ir.CompilerIrSpmdCallArg args.len)]
+      (__tl_make-array ir.CompilerIrSpmdCallArg args.len)]
     [i : i64 0]
     (begin
       (while (< i args.len)
@@ -38606,7 +38598,7 @@
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
     [out : (__tl_dyn-array ir.CompilerIrInstr)
-      (array.make-array ir.CompilerIrInstr count)]
+      (__tl_make-array ir.CompilerIrInstr count)]
     [index : i64 0]
     (begin
       (while (< index count)
@@ -38634,7 +38626,7 @@
       (let
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
         [slots : (__tl_dyn-array ir.CompilerIrBlock)
-          (array.make-array ir.CompilerIrBlock count)]
+          (__tl_make-array ir.CompilerIrBlock count)]
         [i : i64 0]
         (begin
           (while (< i count)
@@ -38713,9 +38705,9 @@
           (if (> (array-length extra-present) (array-length base-present))
             (array-length extra-present)
             (array-length base-present))]
-        [present : (__tl_dyn-array i64) (array.make-array i64 size)]
+        [present : (__tl_dyn-array i64) (__tl_make-array i64 size)]
         [items : (__tl_dyn-array ast.AstType)
-          (array.make-array ast.AstType size)]
+          (__tl_make-array ast.AstType size)]
         [index : i64 0]
         (begin
           (while (< index (array-length base-present))
@@ -38981,9 +38973,9 @@
 
 (define (compiler-reg-scratch-plan-empty) : CompilerRegScratchPlan
   (CompilerRegScratchPlan
-    (array.make-array CompilerRegScratchAssignment 0)
-    (array.make-array i64 0)
-    (array.make-array i64 0)))
+    (__tl_make-array CompilerRegScratchAssignment 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)))
 
 (define (compiler-reg-scratch-plan-count [plan : CompilerRegScratchPlan]) : i64
   (array-length plan.items))
@@ -42330,8 +42322,8 @@
   (let
     [instr-slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [len : i64 instrs.len]
-    [group-firsts : (__tl_dyn-array i64) (array.make-array i64 len)]
-    [group-lasts : (__tl_dyn-array i64) (array.make-array i64 len)]
+    [group-firsts : (__tl_dyn-array i64) (__tl_make-array i64 len)]
+    [group-lasts : (__tl_dyn-array i64) (__tl_make-array i64 len)]
     [i : i64 0]
     [instruction : i64 instruction-start]
     [item : i64 item-start]
@@ -42726,8 +42718,8 @@
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [len : i64 instrs.len]
-    [group-firsts : (__tl_dyn-array i64) (array.make-array i64 len)]
-    [group-lasts : (__tl_dyn-array i64) (array.make-array i64 len)]
+    [group-firsts : (__tl_dyn-array i64) (__tl_make-array i64 len)]
+    [group-lasts : (__tl_dyn-array i64) (__tl_make-array i64 len)]
     [i : i64 0]
     [instruction : i64 instruction-start]
     [scratch : i64 scratch-start]
@@ -42930,23 +42922,23 @@
             base-index
             base-types
             base-assignments
-            (array.make-array i64 0)
-            (array.make-array CompilerRegIdSeq 0)
+            (__tl_make-array i64 0)
+            (__tl_make-array CompilerRegIdSeq 0)
             scratch-base
             0)
           (let
             [out-vars : i64 (+ scratch-base scratch-count)]
-            [starts : (__tl_dyn-array i64) (array.make-array i64 out-vars)]
-            [ends : (__tl_dyn-array i64) (array.make-array i64 out-vars)]
+            [starts : (__tl_dyn-array i64) (__tl_make-array i64 out-vars)]
+            [ends : (__tl_dyn-array i64) (__tl_make-array i64 out-vars)]
             [segments : (__tl_dyn-array CompilerRegIntervalSeq)
-              (array.make-array CompilerRegIntervalSeq out-vars)]
-            [present : (__tl_dyn-array i64) (array.make-array i64 out-vars)]
+              (__tl_make-array CompilerRegIntervalSeq out-vars)]
+            [present : (__tl_dyn-array i64) (__tl_make-array i64 out-vars)]
             [types : (__tl_dyn-array ast.AstType)
-              (array.make-array ast.AstType out-vars)]
+              (__tl_make-array ast.AstType out-vars)]
             [scratch-weights : (__tl_dyn-array i64)
-              (array.make-array i64 scratch-count)]
+              (__tl_make-array i64 scratch-count)]
             [scratch-excluded : (__tl_dyn-array CompilerRegIdSeq)
-              (array.make-array CompilerRegIdSeq out-vars)]
+              (__tl_make-array CompilerRegIdSeq out-vars)]
             [depths : (__tl_dyn-array i64)
               (compiler-reg-function-loop-depths blocks)]
             [assignment-view : CompilerRegAssignmentTable base-assignments]
@@ -43015,7 +43007,7 @@
   (if (= scratch-count 0)
     weights
     (let
-      [out : (__tl_dyn-array i64) (array.make-array i64 vars)]
+      [out : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
       [max-raw : i64 0]
       [r : i64 0]
       [v : i64 scratch-base]
@@ -43335,7 +43327,7 @@
           (cabi.CompilerRegTargetAbi.Linux))
         xmm-registers)]
     [out : (__tl_dyn-array i64)
-      (array.make-array i64 (compiler-reg-id-seq-count registers))]
+      (__tl_make-array i64 (compiler-reg-id-seq-count registers))]
     (begin
       (compiler-reg-greedy-id-seq-to-array registers out 0)
       out)))
@@ -43497,8 +43489,8 @@
   [vars : i64]) : CompilerRegScratchCoalescedHulls
   (let
     [starts : (__tl_dyn-array i64)
-      (array.make-array i64 (* vars register-count))]
-    [ends : (__tl_dyn-array i64) (array.make-array i64 (* vars register-count))]
+      (__tl_make-array i64 (* vars register-count))]
+    [ends : (__tl_dyn-array i64) (__tl_make-array i64 (* vars register-count))]
     [index : i64 0]
     (begin
       (compiler-reg-fill-i64-array starts -1)
@@ -43549,9 +43541,9 @@
               unit)
             (set! index (+ index 1)))))
       (let
-        [counts : (__tl_dyn-array i64) (array.make-array i64 register-count)]
+        [counts : (__tl_dyn-array i64) (__tl_make-array i64 register-count)]
         [offsets : (__tl_dyn-array i64)
-          (array.make-array i64 (+ register-count 1))]
+          (__tl_make-array i64 (+ register-count 1))]
         [root : i64 0]
         (begin
           ;; Count the actual root/register hulls; empty cells in the dense
@@ -43583,9 +43575,9 @@
               (set! (array-ref offsets register-count) total)
               (let
                 [items : (__tl_dyn-array CompilerRegInterval)
-                  (array.make-array CompilerRegInterval total)]
+                  (__tl_make-array CompilerRegInterval total)]
                 [cursors : (__tl_dyn-array i64)
-                  (array.make-array i64 register-count)]
+                  (__tl_make-array i64 register-count)]
                 (begin
                   (compiler-reg-copy-i64-array! cursors offsets 0)
                   (set! root 0)
@@ -43684,7 +43676,7 @@
   [_index : i64]
   [vars : i64]) : bool
   (let
-    [registers : (__tl_dyn-array i64) (array.make-array i64 1)]
+    [registers : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     [_init : unit (set! (array-ref registers 0) reg)]
     (compiler-reg-scratch-register-coalesced-hulls-from?
       (compiler-reg-scratch-coalesced-hulls
@@ -43785,13 +43777,13 @@
     assignments
     occupancy
     interval-index
-    (array.make-array i64 0)
+    (__tl_make-array i64 0)
     (CompilerRegScratchCoalescedHulls
-      (array.make-array CompilerRegInterval 0)
-      (array.make-array i64 1)
+      (__tl_make-array CompilerRegInterval 0)
+      (__tl_make-array i64 1)
       0)
     ref-counts
-    (array.make-array CompilerRegScratchAssignment 0)
+    (__tl_make-array CompilerRegScratchAssignment 0)
     -1
     var
     vars
@@ -44304,9 +44296,9 @@
             (CompilerRegScratchPlanResult.Result
               plan
               (CompilerRegScratchPlan
-                (array.make-array CompilerRegScratchAssignment 0)
-                (array.make-array i64 instruction-count)
-                (array.make-array i64 instruction-count)))
+                (__tl_make-array CompilerRegScratchAssignment 0)
+                (__tl_make-array i64 instruction-count)
+                (__tl_make-array i64 instruction-count)))
             (let
               [out-vars : i64 (+ _vars scratch-count)]
               [scratch-policy : CompilerRegScratchPolicy
@@ -44332,23 +44324,22 @@
                 [(CompilerRegIntervalSelection.Selection _ base-index)
                   (let
                     [starts : (__tl_dyn-array i64)
-                      (array.make-array i64 out-vars)]
-                    [ends : (__tl_dyn-array i64)
-                      (array.make-array i64 out-vars)]
+                      (__tl_make-array i64 out-vars)]
+                    [ends : (__tl_dyn-array i64) (__tl_make-array i64 out-vars)]
                     [segments : (__tl_dyn-array CompilerRegIntervalSeq)
-                      (array.make-array CompilerRegIntervalSeq out-vars)]
+                      (__tl_make-array CompilerRegIntervalSeq out-vars)]
                     [present : (__tl_dyn-array i64)
-                      (array.make-array i64 out-vars)]
+                      (__tl_make-array i64 out-vars)]
                     [types : (__tl_dyn-array ast.AstType)
-                      (array.make-array ast.AstType out-vars)]
+                      (__tl_make-array ast.AstType out-vars)]
                     [items : (__tl_dyn-array CompilerRegScratchAssignment)
-                      (array.make-array
+                      (__tl_make-array
                         CompilerRegScratchAssignment
                         scratch-count)]
                     [firsts : (__tl_dyn-array i64)
-                      (array.make-array i64 instruction-count)]
+                      (__tl_make-array i64 instruction-count)]
                     [slot-counts : (__tl_dyn-array i64)
-                      (array.make-array i64 instruction-count)]
+                      (__tl_make-array i64 instruction-count)]
                     (begin
                       (compiler-reg-fill-i64-array starts -1)
                       (compiler-reg-fill-i64-array ends -1)
@@ -44427,7 +44418,7 @@
                             scratch-registers
                             scratch-register-count)]
                         [scratch-ref-counts : (__tl_dyn-array i64)
-                          (array.make-array i64 _vars)]
+                          (__tl_make-array i64 _vars)]
                         [gp-pool : CompilerRegIdSeq
                           (compiler-reg-scratch-default-pool
                             _abi
@@ -44514,7 +44505,7 @@
 
 (define (compiler-reg-caller-save-remap [vars : i64]) : (__tl_dyn-array i64)
   (let
-    [remap : (__tl_dyn-array i64) (array.make-array i64 vars)]
+    [remap : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
     (begin
       (compiler-reg-caller-save-remap-fill! remap 0)
       remap)))
@@ -44734,42 +44725,42 @@
         [evictions : CompilerRegCallEvictSeq
           (compiler-reg-plan-caller-save-evictions plan)]
         [e-count : i64 evictions.len]
-        [e-var : (__tl_dyn-array i64) (array.make-array i64 (+ e-count 1))]
-        [e-point : (__tl_dyn-array i64) (array.make-array i64 (+ e-count 1))]
-        [e-kind : (__tl_dyn-array i64) (array.make-array i64 (+ e-count 1))]
+        [e-var : (__tl_dyn-array i64) (__tl_make-array i64 (+ e-count 1))]
+        [e-point : (__tl_dyn-array i64) (__tl_make-array i64 (+ e-count 1))]
+        [e-kind : (__tl_dyn-array i64) (__tl_make-array i64 (+ e-count 1))]
         [e-cursor : i64 0]
         ;; victim var -> the slot-homed var minted for its save, -1 = none yet
         [evict-w : (__tl_dyn-array i64)
-          (array.make-array
+          (__tl_make-array
             i64
             (if (< vars 1)
               1
               vars))]
-        [r-var : (__tl_dyn-array i64) (array.make-array i64 count)]
-        [r-lo : (__tl_dyn-array i64) (array.make-array i64 count)]
-        [r-hi : (__tl_dyn-array i64) (array.make-array i64 count)]
-        [r-entry : (__tl_dyn-array i64) (array.make-array i64 count)]
-        [r-exit : (__tl_dyn-array i64) (array.make-array i64 count)]
+        [r-var : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+        [r-lo : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+        [r-hi : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+        [r-entry : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+        [r-exit : (__tl_dyn-array i64) (__tl_make-array i64 count)]
         [remap : (__tl_dyn-array i64) (compiler-reg-caller-save-remap vars)]
         [act-w : (__tl_dyn-array i64)
-          (array.make-array
+          (__tl_make-array
             i64
             (if (< vars 1)
               1
               vars))]
         [act-hi : (__tl_dyn-array i64)
-          (array.make-array
+          (__tl_make-array
             i64
             (if (< vars 1)
               1
               vars))]
         [act-exit : (__tl_dyn-array i64)
-          (array.make-array
+          (__tl_make-array
             i64
             (if (< vars 1)
               1
               vars))]
-        [active : (__tl_dyn-array i64) (array.make-array i64 (+ count 1))]
+        [active : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
         [active-n : i64 0]
         [next-var : i64 vars]
         [extra-assignments : CompilerRegAssignmentTable
@@ -45212,17 +45203,17 @@
   (match func
     [(ir.CompilerIrFunction.Function _ params _ vars blocks)
       (let
-        [def-counts : (__tl_dyn-array i64) (array.make-array i64 vars)]
-        [candidates : (__tl_dyn-array i64) (array.make-array i64 vars)]
-        [kinds : (__tl_dyn-array i64) (array.make-array i64 vars)]
+        [def-counts : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+        [candidates : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+        [kinds : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
         [values : (__tl_dyn-array ir.CompilerIrValue)
-          (array.make-array ir.CompilerIrValue vars)]
+          (__tl_make-array ir.CompilerIrValue vars)]
         [offsets : (__tl_dyn-array ir.CompilerIrValue)
-          (array.make-array ir.CompilerIrValue vars)]
+          (__tl_make-array ir.CompilerIrValue vars)]
         [op-types : (__tl_dyn-array ast.AstType)
-          (array.make-array ast.AstType vars)]
+          (__tl_make-array ast.AstType vars)]
         [types : (__tl_dyn-array ast.AstType)
-          (array.make-array ast.AstType vars)]
+          (__tl_make-array ast.AstType vars)]
         [allow-invariant-loads : bool
           (compiler-reg-remat-invariant-loads-ok? func)]
         [table : CompilerRegRematTable
@@ -45806,7 +45797,7 @@
                 type-info
                 group-vars
                 vars
-                (array.make-array i64 0))]
+                (__tl_make-array i64 0))]
             [parents : (__tl_dyn-array i64) coalesce.parents]
             [merged-roots : live.CompilerLiveI64Set
               (compiler-reg-coalesce-merged-root-set coalesce)]

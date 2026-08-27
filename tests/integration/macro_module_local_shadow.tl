@@ -4,7 +4,6 @@
 ;; boundary that exposed the compile-root leak. They are intentionally unused.
 (import stdlib.io as _padding_io)
 (import stdlib.string as _padding_string)
-(import stdlib.array as _padding_array)
 (import stdlib.arena as _padding_arena)
 (import stdlib.hash as _padding_hash)
 (import stdlib.byte_buf_core as _padding_byte_buf)

@@ -1,6 +1,5 @@
 ;; Raw atomic/thread ABI coverage intentionally shares private dynamic-array
 ;; backing addresses. This is not the public owned thread-result surface.
-(import stdlib.array)
 (import stdlib.thread)
 
 (define atomic-counter-iterations : i64
@@ -66,9 +65,9 @@
 
 (define (main) : i64
   (let
-    [counter : (__tl_dyn-array i64) (array.make-array i64 1)]
-    [ctx-a : (__tl_dyn-array i64) (array.make-array i64 2)]
-    [ctx-b : (__tl_dyn-array i64) (array.make-array i64 2)]
+    [counter : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    [ctx-a : (__tl_dyn-array i64) (__tl_make-array i64 2)]
+    [ctx-b : (__tl_dyn-array i64) (__tl_make-array i64 2)]
     [counter-addr : i64 (atomic-counter-array-i64-addr counter)]
     (begin
       (set! (array-ref counter 0) 0)

@@ -1,5 +1,3 @@
-(import stdlib.array)
-
 (define (init-i16 [xs : (__tl_dyn-array i16)] [n : i64]) : unit
   (let
     [i : i64 0]
@@ -50,9 +48,9 @@
 
 (define (case-i16 [n : i64]) : bool
   (let
-    [xs : (__tl_dyn-array i16) (array.make-array i16 n)]
-    [got : (__tl_dyn-array i16) (array.make-array i16 n)]
-    [want : (__tl_dyn-array i16) (array.make-array i16 n)]
+    [xs : (__tl_dyn-array i16) (__tl_make-array i16 n)]
+    [got : (__tl_dyn-array i16) (__tl_make-array i16 n)]
+    [want : (__tl_dyn-array i16) (__tl_make-array i16 n)]
     [pivot : i16 (cast 0 : i16)]
     [one : i16 (cast 1 : i16)]
     (begin
@@ -111,9 +109,9 @@
 
 (define (case-u16 [n : i64]) : bool
   (let
-    [xs : (__tl_dyn-array u16) (array.make-array u16 n)]
-    [got : (__tl_dyn-array u16) (array.make-array u16 n)]
-    [want : (__tl_dyn-array u16) (array.make-array u16 n)]
+    [xs : (__tl_dyn-array u16) (__tl_make-array u16 n)]
+    [got : (__tl_dyn-array u16) (__tl_make-array u16 n)]
+    [want : (__tl_dyn-array u16) (__tl_make-array u16 n)]
     [limit : u16 (cast 500 : u16)]
     [one : u16 (cast 1 : u16)]
     (begin

@@ -12,7 +12,6 @@
 (import stdlib.hashmap)
 (import (hashmap.hashmap i64 i64) as ctfe_key_map)
 (import stdlib.arena)
-(import stdlib.array)
 (import stdlib.byte_buf_core)
 (import compiler_ast_types as ast)
 (import compiler_comptime_diagnostics_core as comptime_diagnostics)
@@ -177,7 +176,7 @@
 (define (compiler-ctfe-macro-state-new) : CompilerCtfeMacroState
   (let
     [cell : (__tl_dyn-array CompilerCtfeMacroStateData)
-      (array.make-array CompilerCtfeMacroStateData 1)]
+      (__tl_make-array CompilerCtfeMacroStateData 1)]
     (begin
       (set!
         (array-ref cell 0)
@@ -1343,7 +1342,7 @@
     [index : i64 0]
     (while (< index count)
       (begin
-        (set! (array-ref dst index) (array.ref src index))
+        (set! (array-ref dst index) (array-ref src index))
         (set! index (+ index 1))))))
 
 (define (ctfe-env-arena-add-segment! [store : (&mut store CtfeEnvArena)]) : unit
@@ -1372,7 +1371,7 @@
                 (set! store.segments bigger))))
           (set!
             (array-ref store.segments count)
-            (array.make-array CtfeEnvBinding (ctfe-env-arena-segment-capacity)))
+            (__tl_make-array CtfeEnvBinding (ctfe-env-arena-segment-capacity)))
           (set! store.segment-count (+ count 1))))
       (cfg compile-profile (ctfe-env-profile-note-arena-grow!) unit))))
 
@@ -1392,7 +1391,7 @@
     [segment-index : i64 (/ index (ctfe-env-arena-segment-capacity))]
     [offset : i64 (- index (* segment-index (ctfe-env-arena-segment-capacity)))]
     [segment : (__tl_dyn-array CtfeEnvBinding)
-      (array.ref store.segments segment-index)]
+      (array-ref store.segments segment-index)]
     (set! (array-ref segment offset) binding)))
 
 (define (ctfe-env-arena-binding-at [store : CtfeEnvArena] [index : i64]) : CtfeEnvBinding
@@ -1400,7 +1399,7 @@
     [segment-index : i64 (/ index (ctfe-env-arena-segment-capacity))]
     [offset : i64 (- index (* segment-index (ctfe-env-arena-segment-capacity)))]
     [segment : (__tl_dyn-array CtfeEnvBinding)
-      (array.ref store.segments segment-index)]
+      (array-ref store.segments segment-index)]
     (unsafe
       (ptr-read (ptr-offset (__tl_array-data segment) offset)))))
 
@@ -1466,15 +1465,15 @@
 
 (define (ctfe-layout-field-list-with-capacity [capacity : i64]) : CtfeLayoutFieldList
   (CtfeLayoutFieldList
-    (array.make-array CtfeLayoutField capacity)
-    (array.make-array i64 capacity)
+    (__tl_make-array CtfeLayoutField capacity)
+    (__tl_make-array i64 capacity)
     0))
 
 (define (ctfe-layout-field-list-empty) : CtfeLayoutFieldList
   (ctfe-layout-field-list-with-capacity 0))
 
 (define (ctfe-layout-field-list-ref [items : CtfeLayoutFieldList] [index : i64]) : CtfeLayoutField
-  (array.ref items.slots index))
+  (array-ref items.slots index))
 
 (define (ctfe-layout-field-list-push-id
   [items : CtfeLayoutFieldList]
@@ -1491,7 +1490,7 @@
 
 (define (ctfe-layout-info-list-with-capacity [capacity : i64]) : CtfeLayoutInfoList
   (CtfeLayoutInfoList
-    (array.make-array CtfeLayoutInfo capacity)
+    (__tl_make-array CtfeLayoutInfo capacity)
     (ctfe_key_map.with-capacity (+ (* capacity 2) 1))
     0))
 
@@ -1514,20 +1513,20 @@
   [required : i64]) : CtfeLayoutInfoList
   (let
     [slots : (__tl_dyn-array CtfeLayoutInfo) items.slots]
-    [capacity : i64 (array.length slots)]
+    [capacity : i64 (__tl_array-length slots)]
     [len : i64 items.len]
     (if (<= required capacity)
       items
       (let
         [grown : (__tl_dyn-array CtfeLayoutInfo)
-          (array.make-array
+          (__tl_make-array
             CtfeLayoutInfo
             (ctfe-metadata-grown-capacity capacity required))]
         [index : i64 0]
         (begin
           (while (< index len)
             (begin
-              (set! (array-ref grown index) (array.ref slots index))
+              (set! (array-ref grown index) (array-ref slots index))
               (set! index (+ index 1))))
           ;; The id map grows independently on insert. Preserve it so the
           ;; copied vector retains every first-wins slot without rebuilding a
@@ -1540,7 +1539,7 @@
   (ctfe_key_map.contains? (& items.index) key-id))
 
 (define (ctfe-layout-info-list-ref [items : CtfeLayoutInfoList] [index : i64]) : CtfeLayoutInfo
-  (array.ref items.slots index))
+  (array-ref items.slots index))
 
 (define (ctfe-layout-info-list-push-id
   [items : CtfeLayoutInfoList (:consume)]
@@ -1556,12 +1555,12 @@
       (CtfeLayoutInfoList slots index (+ n 1)))))
 
 (define (ctfe-reflect-field-list-with-capacity [capacity : i64]) : CtfeReflectFieldList
-  (CtfeReflectFieldList (array.make-array CtfeReflectField capacity) 0))
+  (CtfeReflectFieldList (__tl_make-array CtfeReflectField capacity) 0))
 
 (define (ctfe-reflect-field-list-ref
   [items : CtfeReflectFieldList]
   [index : i64]) : CtfeReflectField
-  (array.ref items.slots index))
+  (array-ref items.slots index))
 
 (define (ctfe-reflect-field-list-push
   [items : CtfeReflectFieldList]
@@ -1574,12 +1573,12 @@
       (CtfeReflectFieldList slots (+ n 1)))))
 
 (define (ctfe-reflect-variant-list-with-capacity [capacity : i64]) : CtfeReflectVariantList
-  (CtfeReflectVariantList (array.make-array CtfeReflectVariant capacity) 0))
+  (CtfeReflectVariantList (__tl_make-array CtfeReflectVariant capacity) 0))
 
 (define (ctfe-reflect-variant-list-ref
   [items : CtfeReflectVariantList]
   [index : i64]) : CtfeReflectVariant
-  (array.ref items.slots index))
+  (array-ref items.slots index))
 
 (define (ctfe-reflect-variant-list-push
   [items : CtfeReflectVariantList]
@@ -1593,7 +1592,7 @@
 
 (define (ctfe-reflect-info-list-with-capacity [capacity : i64]) : CtfeReflectInfoList
   (CtfeReflectInfoList
-    (array.make-array CtfeReflectInfo capacity)
+    (__tl_make-array CtfeReflectInfo capacity)
     (ctfe_key_map.with-capacity (+ (* capacity 2) 1))
     0))
 
@@ -1605,20 +1604,20 @@
   [required : i64]) : CtfeReflectInfoList
   (let
     [slots : (__tl_dyn-array CtfeReflectInfo) items.slots]
-    [capacity : i64 (array.length slots)]
+    [capacity : i64 (__tl_array-length slots)]
     [len : i64 items.len]
     (if (<= required capacity)
       items
       (let
         [grown : (__tl_dyn-array CtfeReflectInfo)
-          (array.make-array
+          (__tl_make-array
             CtfeReflectInfo
             (ctfe-metadata-grown-capacity capacity required))]
         [index : i64 0]
         (begin
           (while (< index len)
             (begin
-              (set! (array-ref grown index) (array.ref slots index))
+              (set! (array-ref grown index) (array-ref slots index))
               (set! index (+ index 1))))
           (CtfeReflectInfoList grown items.index len))))))
 
@@ -1628,7 +1627,7 @@
   (ctfe_key_map.contains? (& items.index) key-id))
 
 (define (ctfe-reflect-info-list-ref [items : CtfeReflectInfoList] [index : i64]) : CtfeReflectInfo
-  (array.ref items.slots index))
+  (array-ref items.slots index))
 
 (define (ctfe-reflect-info-list-push-id
   [items : CtfeReflectInfoList (:consume)]
@@ -1681,7 +1680,7 @@
       [field : CtfeLayoutField (ctfe-layout-field-list-ref fields index)]
       (match field
         [(CtfeLayoutField.Field _ offset)
-          (if (= (array.ref fields.key-ids index) name-id)
+          (if (= (array-ref fields.key-ids index) name-id)
             offset
             (ctfe-layout-field-offset-id-from fields name-id (+ index 1)))]))))
 
@@ -2616,6 +2615,7 @@
     [(ast.AstExpr.TupleRef _ _) "tuple-ref"]
     [(ast.AstExpr.Array _) "array"]
     [(ast.AstExpr.DynArray _) "__tl_make-array"]
+    [(ast.AstExpr.FixedMakeArray _ _) "make-array"]
     [(ast.AstExpr.MakeArray _ _) "__tl_make-array"]
     [(ast.AstExpr.ArrayRef _ _) "array-ref"]
     [(ast.AstExpr.ArraySet _ _ _) "array-set!"]
@@ -6219,11 +6219,11 @@
     [data : (Ptr u8)
       (unsafe
         (string-data (& source)))]
-    [head : (__tl_dyn-array i64) (array.make-array i64 65536)]
+    [head : (__tl_dyn-array i64) (__tl_make-array i64 65536)]
     ;; `previous` needs no -1 fill: chain reads only visit indices already
     ;; written by insert! (head points at an inserted index, and previous[i]
     ;; is stored when i is inserted), so its initial contents are never read.
-    [previous : (__tl_dyn-array i64) (array.make-array i64 source-len)]
+    [previous : (__tl_dyn-array i64) (__tl_make-array i64 source-len)]
     ;; Both index arrays keep a fixed length for the whole compression, so their
     ;; element storage never moves and the raw views below stay valid until the
     ;; owners drop at the end of this let.
@@ -10554,7 +10554,7 @@
 ;; have no CTFE representation; this covers scalar values and the public
 ;; stdlib.comptime syntax pseudo-values backed by CompilerCtfeValue.Expr/CompilerCtfeValue.ExprList.
 (define (ctfe-value-seq-with-capacity [capacity : i64]) : CtfeValueSeq
-  (CtfeValueSeq (array.make-array CompilerCtfeValue capacity) 0))
+  (CtfeValueSeq (__tl_make-array CompilerCtfeValue capacity) 0))
 
 (define (ctfe-value-seq-push [items : CtfeValueSeq] [value : CompilerCtfeValue]) : CtfeValueSeq
   (let
@@ -10655,7 +10655,7 @@
     (if (>= index values.len)
       (CtfePatternMatch.No)
       (let
-        [value : CompilerCtfeValue (array.ref values.slots index)]
+        [value : CompilerCtfeValue (array-ref values.slots index)]
         (match (ctfe-match-pattern
           (ast.ast-pattern-list-get patterns index (ast.ast-pattern-fallback))
           value
@@ -12757,6 +12757,22 @@
               (ast.AstType.Expr)
               next-fuel)]
           [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)]))]
+    [(ast.AstExpr.FixedMakeArray ty-id len-box)
+      (let
+        [len : ast.AstExpr (ctfe-ast-get env len-box)]
+        (match (ctfe-quote-type (ctfe-ty-get env ty-id) env expr fuel)
+          [(ResultCtfeQuoteType.Ok quoted-ty type-fuel)
+            (match (ctfe-quote-expr len env type-fuel quasiquote)
+              [(ResultCtfeQuoteExpr.Ok quoted-len _ next-fuel)
+                (ResultCtfeQuoteExpr.Ok
+                  (ast.ast-expr-fixed-make-array-with-pools
+                    (ctfe-env-pools env)
+                    quoted-ty
+                    quoted-len)
+                  (ast.AstType.Expr)
+                  next-fuel)]
+              [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)])]
+          [(ResultCtfeQuoteType.Err diag) (ResultCtfeQuoteExpr.Err diag)]))]
     [(ast.AstExpr.MakeArray ty-id len-box)
       (let
         [len : ast.AstExpr (ctfe-ast-get env len-box)]
@@ -13836,6 +13852,20 @@
         [(ast.AstExpr.DynArray b-items)
           (ctfe-expr-list-eq-in-env env a-items b-items)]
         [_ false])]
+    [(ast.AstExpr.FixedMakeArray a-ty-id a-size-box)
+      (let
+        [a-size : ast.AstExpr (ctfe-ast-get env a-size-box)]
+        (match b
+          [(ast.AstExpr.FixedMakeArray b-ty-id b-size-box)
+            (let
+              [b-size : ast.AstExpr (ctfe-ast-get env b-size-box)]
+              (and
+                (ctfe-type-eq-in-env
+                  env
+                  (ctfe-ty-get env a-ty-id)
+                  (ctfe-ty-get env b-ty-id))
+                (ctfe-expr-eq-in-env env a-size b-size)))]
+          [_ false]))]
     [(ast.AstExpr.MakeArray a-ty-id a-size-box)
       (let
         [a-size : ast.AstExpr (ctfe-ast-get env a-size-box)]

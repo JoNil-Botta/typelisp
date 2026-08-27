@@ -1,7 +1,5 @@
 ;; refs #2606: ptr-offset over an inline aggregate pointee must stride by the
 ;; aggregate byte size, not by the backend's pointer-sized aggregate handle.
-(import stdlib.array)
-
 (defstruct PtrOffsetTriple
   (a i64)
   (b i64)
@@ -10,7 +8,7 @@
 (define (main) : i64
   (let
     [items : (__tl_dyn-array PtrOffsetTriple)
-      (array.make-array PtrOffsetTriple 2)]
+      (__tl_make-array PtrOffsetTriple 2)]
     (begin
       (set! (array-ref items 0) (PtrOffsetTriple 1 2 3))
       (set! (array-ref items 1) (PtrOffsetTriple 13 17 19))

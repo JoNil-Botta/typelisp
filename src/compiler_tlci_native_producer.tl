@@ -20,7 +20,6 @@
 (import compiler_builtin_ids as cbi)
 (import compiler_intern as ci)
 (import stdlib.str_cat_runtime as str_cat)
-(import stdlib.array)
 (import stdlib.string)
 
 (defmacro (embedded-native-global-shared-view [place : Expr]) : Expr
@@ -70,9 +69,9 @@
 (define embedded-native-locals-cap : i64
   64)
 (define embedded-native-local-names : (__tl_dyn-array String)
-  (array.make-array String embedded-native-locals-cap))
+  (__tl_make-array String embedded-native-locals-cap))
 (define embedded-native-local-bools : (__tl_dyn-array bool)
-  (array.make-array bool embedded-native-locals-cap))
+  (__tl_make-array bool embedded-native-locals-cap))
 (define embedded-native-local-len : (__tl_dyn-array i64)
   (__tl_make-array 0))
 
@@ -88,9 +87,9 @@
 (define embedded-native-data-locals-cap : i64
   64)
 (define embedded-native-data-local-names : (__tl_dyn-array String)
-  (array.make-array String embedded-native-data-locals-cap))
+  (__tl_make-array String embedded-native-data-locals-cap))
 (define embedded-native-data-local-texts : (__tl_dyn-array String)
-  (array.make-array String embedded-native-data-locals-cap))
+  (__tl_make-array String embedded-native-data-locals-cap))
 (define embedded-native-data-local-len : (__tl_dyn-array i64)
   (__tl_make-array 0))
 
@@ -182,7 +181,7 @@
   (len i64))
 
 (define (tlci-native-macro-captures-new) : TlciNativeMacroCaptures
-  (TlciNativeMacroCaptures (array.make-array TlciNativeMacroCapture 0) 0))
+  (TlciNativeMacroCaptures (__tl_make-array TlciNativeMacroCapture 0) 0))
 
 (define (tlci-native-macro-captures-copy-range!
   [dst : (&mut dst (__tl_dyn-array TlciNativeMacroCapture))]
@@ -204,7 +203,7 @@
         1
         (* old-cap 2))]
     [bigger : (__tl_dyn-array TlciNativeMacroCapture)
-      (array.make-array TlciNativeMacroCapture new-cap)]
+      (__tl_make-array TlciNativeMacroCapture new-cap)]
     (begin
       (tlci-native-macro-captures-copy-range!
         (&mut bigger)
@@ -313,13 +312,13 @@
 (define embedded-native-full-blocker-cap : i64
   256)
 (define embedded-native-full-blockers : (__tl_dyn-array String)
-  (array.make-array String embedded-native-full-blocker-cap))
+  (__tl_make-array String embedded-native-full-blocker-cap))
 (define embedded-native-full-blocker-len : i64
   0)
 (define embedded-native-full-blocker-events : i64
   0)
 (define embedded-native-full-walked : (__tl_dyn-array String)
-  (array.make-array String embedded-native-full-blocker-cap))
+  (__tl_make-array String embedded-native-full-blocker-cap))
 (define embedded-native-full-walked-len : i64
   0)
 (define embedded-native-full-blocker-overflow : bool
@@ -523,6 +522,7 @@
     [(compiler_ast_types.AstExpr.PtrWrite _ _) "ptr-write!"]
     [(compiler_ast_types.AstExpr.PtrOffset _ _) "ptr-offset"]
     [(compiler_ast_types.AstExpr.PtrToInt _) "ptr->int"]
+    [(compiler_ast_types.AstExpr.FixedMakeArray _ _) "make-array"]
     [(compiler_ast_types.AstExpr.MakeArray _ _) "__tl_make-array"]
     [_ "unclassified"]))
 
@@ -4246,7 +4246,7 @@
   [arg : String]) : EmbeddedNativeDataValue
   (let
     [ops : (__tl_dyn-array String)
-      (array.make-array String embedded-native-ops-cap)]
+      (__tl_make-array String embedded-native-ops-cap)]
     [ops-count : (__tl_dyn-array i64) (__tl_make-array 0)]
     [type-opened : i64
       (embedded-native-computed-expr-ops params type-node ops ops-count)]
@@ -4275,7 +4275,7 @@
   [op : String]) : EmbeddedNativeDataValue
   (let
     [ops : (__tl_dyn-array String)
-      (array.make-array String embedded-native-ops-cap)]
+      (__tl_make-array String embedded-native-ops-cap)]
     [ops-count : (__tl_dyn-array i64) (__tl_make-array 0)]
     [left-opened : i64
       (embedded-native-computed-expr-ops params left-node ops ops-count)]
@@ -4543,7 +4543,7 @@
   [sid : i64]) : EmbeddedNativeDataValue
   (let
     [ops : (__tl_dyn-array String)
-      (array.make-array String embedded-native-ops-cap)]
+      (__tl_make-array String embedded-native-ops-cap)]
     [ops-count : (__tl_dyn-array i64) (__tl_make-array 0)]
     [scrutinee-opened : i64
       (embedded-native-computed-expr-ops params scrutinee ops ops-count)]
@@ -5640,7 +5640,7 @@
                   (= argc 1))
                 (let
                   [ops : (__tl_dyn-array String)
-                    (array.make-array String embedded-native-ops-cap)]
+                    (__tl_make-array String embedded-native-ops-cap)]
                   [ops-count : (__tl_dyn-array i64) (__tl_make-array 0)]
                   [opened : i64
                     (embedded-native-computed-expr-ops
@@ -5669,7 +5669,7 @@
   [final : String]) : String
   (let
     [ops : (__tl_dyn-array String)
-      (array.make-array String embedded-native-ops-cap)]
+      (__tl_make-array String embedded-native-ops-cap)]
     [ops-count : (__tl_dyn-array i64) (__tl_make-array 0)]
     [opened : i64
       (if (match (embedded-stdlib-tlci-unwrap-expr node)
@@ -5978,7 +5978,7 @@
   [arg-c : String]) : (__tl_dyn-array String)
   (let
     [ops : (__tl_dyn-array String)
-      (array.make-array String embedded-native-ops-cap)]
+      (__tl_make-array String embedded-native-ops-cap)]
     [ops-count : (__tl_dyn-array i64) (__tl_make-array 0)]
     (begin
       (embedded-native-template-push! ops ops-count op arg-a arg-b arg-c)
@@ -6037,9 +6037,7 @@
                                 1))
                             (let
                               [ops : (__tl_dyn-array String)
-                                (array.make-array
-                                  String
-                                  embedded-native-ops-cap)]
+                                (__tl_make-array String embedded-native-ops-cap)]
                               [ops-count : (__tl_dyn-array i64)
                                 (__tl_make-array 0)]
                               [opened : i64
@@ -7772,7 +7770,7 @@
   [body-node : i64]) : String
   (let
     [ops : (__tl_dyn-array String)
-      (array.make-array String embedded-native-ops-cap)]
+      (__tl_make-array String embedded-native-ops-cap)]
     [ops-count : (__tl_dyn-array i64) (__tl_make-array 0)]
     [opened : i64 (embedded-native-body-ops params body-node ops ops-count)]
     (if (or (< opened 0) (>= (array-ref ops-count 0) embedded-native-ops-cap))
@@ -8260,7 +8258,7 @@
   [image : cobj.CompilerObjectImage]
   [count : i64]) : (__tl_dyn-array i64)
   (let
-    [out : (__tl_dyn-array i64) (array.make-array i64 count)]
+    [out : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [index : i64 0]
     [ok : bool true]
     (begin
@@ -8277,7 +8275,7 @@
               (set! index (+ index 1))))))
       (if ok
         out
-        (array.make-array i64 0)))))
+        (__tl_make-array i64 0)))))
 
 ;; Compile the generated transformer program and assemble the native package
 ;; image. Identities without captured sources become interpreted-fallback

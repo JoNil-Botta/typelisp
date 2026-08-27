@@ -3,7 +3,6 @@
 ;; The declaration form emits a versioned envelope containing arbitrary bytes,
 ;; despite its historical name. Consumers choose a raw-size limit appropriate
 ;; for their payload before this module allocates the output buffer.
-(import stdlib.array)
 (import stdlib.string)
 
 (defenum CompilerLzssFrame
@@ -107,7 +106,7 @@
   (let
     [payload-len : i64 (array-length payload)]
     [compressed-len : i64 (- payload-len compressed-start)]
-    [out : (__tl_dyn-array u8) (array.make-array u8 raw-len)]
+    [out : (__tl_dyn-array u8) (__tl_make-array u8 raw-len)]
     [compressed-index : i64 0]
     [out-index : i64 0]
     [valid : bool true]

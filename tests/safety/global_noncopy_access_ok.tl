@@ -1,6 +1,5 @@
 ;: Non-Copy globals are permanent places: declarations, borrows, mutation,
 ;: replacement, and reads of Copy values/projections remain legal.
-(import stdlib.array)
 (import stdlib.string)
 
 (defstruct GlobalOwner
@@ -12,7 +11,7 @@
 (define global-fixed-owners : (Array String 2)
   (array "left" "right"))
 (define global-items : (__tl_dyn-array i64)
-  (array.make-array i64 2))
+  (__tl_make-array i64 2))
 (define global-box : (Box i64)
   (box 40))
 (define global-owner : GlobalOwner

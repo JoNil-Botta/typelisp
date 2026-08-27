@@ -1,6 +1,4 @@
 ;: SPEC SPMD contract: masked-if branches do not yet support gather reads.
-(import stdlib.array)
-
 (define (main
   [xs : (__tl_dyn-array i64)]
   [ix : (__tl_dyn-array i64)]

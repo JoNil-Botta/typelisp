@@ -1,5 +1,3 @@
-(import stdlib.array)
-
 ;; FORCING TEST for the gep-element copy addressing fold.
 ;;
 ;; Both functions below copy a whole 32-byte struct to or from a dynamically
@@ -62,7 +60,7 @@
 
 (define (main) : i64
   (let
-    [xs : (__tl_dyn-array Quad) (array.make-array Quad 8)]
+    [xs : (__tl_dyn-array Quad) (__tl_make-array Quad 8)]
     [i : i64 0]
     [acc : i64 0]
     (begin

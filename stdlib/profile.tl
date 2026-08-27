@@ -3,12 +3,10 @@
 ;# Provides allocation counters and a coarse monotonic millisecond timestamp.
 ;# Time is implemented here over platform FFI/syscalls; allocation counters remain
 ;# allocator-runtime hooks. Import explicitly with `(import stdlib.profile)`.
-(import stdlib.array)
-
 ;: Shared scratch for the time helper's OS out-parameters. Allocated once at
 ;: module initialization so `now-ms` does not allocate on every sample.
 (define now-scratch : (__tl_dyn-array i64)
-  (array.make-array i64 2))
+  (__tl_make-array i64 2))
 
 ;: Windows kernel32 high-resolution performance counter bindings.
 (cfg
@@ -188,7 +186,7 @@
 ;: Allocate private dynamic storage so allocation counters have observable work.
 (define (test-allocation) : (__tl_dyn-array i64)
   (let
-    [items : (__tl_dyn-array i64) (array.make-array i64 4)]
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 4)]
     (begin
       (set! (array-ref items 0) 12)
       items)))

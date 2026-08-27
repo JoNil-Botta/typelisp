@@ -2329,6 +2329,10 @@
     [(ast.AstExpr.Array exprs) (selfhost-lint-dead-expr-list-refs exprs refs)]
     [(ast.AstExpr.DynArray exprs)
       (selfhost-lint-dead-expr-list-refs exprs refs)]
+    [(ast.AstExpr.FixedMakeArray elem-id len)
+      (selfhost-lint-dead-expr-refs
+        (ast.ast-node-get len)
+        (selfhost-lint-dead-type-refs (ast.ty-node-get elem-id) refs))]
     [(ast.AstExpr.MakeArray elem-id len)
       (selfhost-lint-dead-expr-refs
         (ast.ast-node-get len)

@@ -11,7 +11,6 @@
 (import compiler_ast_types)
 (import compiler_ctfe)
 (import compiler_intern as ci)
-(import stdlib.array)
 (import stdlib.arena)
 (import stdlib.io)
 (import stdlib.str_cat)
@@ -90,18 +89,7 @@
   (match (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-value)
     [(compiler_ctfe.CompilerCtfeValue.Expr node _)
       (match (embedded-verify-expr-get pools node)
-        [(compiler_ast_types.AstExpr.Call callee-id args)
-          (and
-            (match (embedded-verify-expr-get pools callee-id)
-              [(compiler_ast_types.AstExpr.Var name-id)
-                (=
-                  name-id
-                  (ci.intern-template-source-id (ci.intern "__tl_array-length")))]
-              [_ false])
-            (= (compiler_ast_types.ast-expr-list-len (& args)) 1)
-            (=
-              (compiler_ast_types.ast-expr-list-get (& args) 0 -1)
-              operand-node))]
+        [(compiler_ast_types.AstExpr.BoxGet inner) (= inner operand-node)]
         [_ false])]
     [_ false]))
 
@@ -117,7 +105,7 @@
           (compiler_ast_types.ast-node-pool-context-capture-active)]
         [operand-node : i64 (embedded-verify-operand-node pools)]
         [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-          (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
+          (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
         (begin
           (set!
             (array-ref operands 0)
@@ -135,9 +123,9 @@
             [ok : bool
               (match (tlci_loader.tlci-loader-dispatch-macro
                 (& loaded)
-                "stdlib.array/length"
+                "stdlib.core_macros/__tl-box-place"
                 embedded-verify-cookie
-                (array.make-array i64 0)
+                (__tl_make-array i64 0)
                 0)
                 [(tlci_loader.ResultTlciMacroDispatch.Err _) false]
                 [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
@@ -166,7 +154,7 @@
           (compiler_ast_types.ast-node-pool-context-capture-active)]
         [operand-node : i64 (embedded-verify-operand-node pools)]
         [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-          (array.make-array compiler_ctfe.CompilerCtfeValue 1)]
+          (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
         (begin
           (set!
             (array-ref operands 0)
@@ -184,9 +172,9 @@
             [ok : bool
               (match (tlci_loader.tlci-loader-dispatch-macro
                 (& loaded)
-                "stdlib.array/length"
+                "stdlib.core_macros/__tl-box-place"
                 embedded-verify-cookie
-                (array.make-array i64 0)
+                (__tl_make-array i64 0)
                 0)
                 [(tlci_loader.ResultTlciMacroDispatch.Err _) false]
                 [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
@@ -210,7 +198,7 @@
         1)]
     [(compiler_embedded_stdlib_tlci.CompilerEmbeddedStdlibTlciValidation.Ok
         count)
-      (if (= count 107)
+      (if (= count 103)
         (if (and
           (embedded-verify-payload-exact-and-bounded?)
           (embedded-verify-native-array-length-ok?)
@@ -230,6 +218,6 @@
         (begin
           (io.print-error
             (str_cat.str-cat
-              "embedded stdlib tlci macro count mismatch: expected 107, got "
+              "embedded stdlib tlci macro count mismatch: expected 103, got "
               (string.int->string count)))
           2))]))

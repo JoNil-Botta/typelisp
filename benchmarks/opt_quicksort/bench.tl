@@ -11,7 +11,6 @@
 ;# in-place swaps. The array size and round count are runtime arguments, so the
 ;# whole computation cannot be constant-folded. Results stay in `[0, prime)` so
 ;# the printed decimal matches the C baseline's `%lld`.
-(import stdlib.array)
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.vector)
@@ -92,7 +91,7 @@
 
 (define (qs-bench [n : i64] [rounds : i64]) : u64
   (let
-    [xs : u64vec.Vec (u64vec.Vec (array.make-array u64 n) n)]
+    [xs : u64vec.Vec (u64vec.Vec (__tl_make-array u64 n) n)]
     [round : i64 0]
     [acc : u64 0]
     [seed : u64 1]

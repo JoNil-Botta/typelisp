@@ -1,4 +1,3 @@
-(import stdlib.array)
 (import stdlib.sync)
 (import (sync.mutex i64) as mutex_i64)
 (import stdlib.thread)
@@ -80,9 +79,9 @@
 (define (sync-mutex-integration-run [mutex : mutex_i64.Mutex]) : i64
   (let
     [ctx-a : (__tl_dyn-array i64)
-      (array.make-array i64 (+ (mutex_i64.raw-field-count) 1))]
+      (__tl_make-array i64 (+ (mutex_i64.raw-field-count) 1))]
     [ctx-b : (__tl_dyn-array i64)
-      (array.make-array i64 (+ (mutex_i64.raw-field-count) 1))]
+      (__tl_make-array i64 (+ (mutex_i64.raw-field-count) 1))]
     (begin
       (sync-mutex-integration-pack-context! ctx-a mutex)
       (sync-mutex-integration-pack-context! ctx-b mutex)

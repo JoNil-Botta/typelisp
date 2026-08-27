@@ -66,14 +66,13 @@
 ;# checksum is a wrapping 64-bit FNV-1a fold with no division, so the printed
 ;# decimal matches the C baseline's `%lld` bit for bit.
 (import stdlib.byte_buf)
-(import stdlib.array)
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.vector)
 (import (vector.vector i64) as i64vec)
 
 (define (pl-zero-vec [n : i64]) : i64vec.Vec
-  (i64vec.Vec (array.make-array i64 n) n))
+  (i64vec.Vec (__tl_make-array i64 n) n))
 
 (define (pl-vec-ref [items : (& items i64vec.Vec)] [index : i64]) : i64
   (array-ref (i64vec.slots items) index))

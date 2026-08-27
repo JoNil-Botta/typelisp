@@ -2,8 +2,6 @@
 ;; for full AVX2/AVX-512 gangs over n = 8.
 ; Compatibility exception for #3772: SPMD value operands still use bare
 ; array-ref so the checker sees the compiler array-read AST.
-(import stdlib.array)
-
 (define (init [xs : (__tl_dyn-array u64)] [n : i64]) : unit
   (let
     [i : i64 0]
@@ -34,8 +32,8 @@
 (define (main) : i64
   (let
     [n : i64 8]
-    [xs : (__tl_dyn-array u64) (array.make-array u64 n)]
-    [out : (__tl_dyn-array u64) (array.make-array u64 n)]
+    [xs : (__tl_dyn-array u64) (__tl_make-array u64 n)]
+    [out : (__tl_dyn-array u64) (__tl_make-array u64 n)]
     (begin
       (init xs n)
       (fill xs out n)

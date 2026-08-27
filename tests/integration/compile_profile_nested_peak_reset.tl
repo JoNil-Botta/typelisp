@@ -1,10 +1,9 @@
 ;; compile_profile_nested_peak_reset.tl - Compile-wide peak reset fixture.
-(import stdlib.array)
 (import stdlib.profile)
 
 (define (transient-allocation) : i64
   (let
-    [items : (__tl_dyn-array i64) (array.make-array i64 4096)]
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 4096)]
     (begin
       (set! (array-ref items 0) 37)
       (array-ref items 0))))

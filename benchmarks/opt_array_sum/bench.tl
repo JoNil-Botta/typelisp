@@ -1,4 +1,3 @@
-(import stdlib.array)
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.vector)
@@ -28,7 +27,7 @@
 (define (main) : i64
   (let
     [n : i64 (string.>int (io.arg 1))]
-    [xs : i64vec.Vec (i64vec.Vec (array.make-array i64 n) n)]
+    [xs : i64vec.Vec (i64vec.Vec (__tl_make-array i64 n) n)]
     (begin
       (fill (&mut xs) n)
       (io.println "{}" (sum-array (& xs) n))

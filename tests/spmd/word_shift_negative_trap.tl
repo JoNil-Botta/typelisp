@@ -1,13 +1,11 @@
 ;; #6685: one active negative i16 count in a direct map must use
 ;; tl_shift_abort (exit 129).
-(import stdlib.array)
-
 (define (main) : i64
   (let
     [n : i64 77]
-    [xs : (__tl_dyn-array i16) (array.make-array i16 n)]
-    [counts : (__tl_dyn-array i16) (array.make-array i16 n)]
-    [out : (__tl_dyn-array i16) (array.make-array i16 n)]
+    [xs : (__tl_dyn-array i16) (__tl_make-array i16 n)]
+    [counts : (__tl_dyn-array i16) (__tl_make-array i16 n)]
+    [out : (__tl_dyn-array i16) (__tl_make-array i16 n)]
     [i : i64 0]
     (begin
       (while (< i n)

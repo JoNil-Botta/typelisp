@@ -3,7 +3,6 @@
 ;; The lowerer accepts the checked program and builds a deterministic
 ;; CompilerIrProgram.
 (import stdlib.arena)
-(import stdlib.array)
 (import stdlib.vector)
 (import (vector.vector String) as svec)
 (import compiler_typecheck_core as tc_core)
@@ -353,13 +352,13 @@
 (define (lower-module-name-cache-store-empty) : LowerModuleNameCacheStore
   (LowerModuleNameCacheStore
     (lower_i64_i64_map.with-capacity 16)
-    (array.make-array LowerNameCache 8)
+    (__tl_make-array LowerNameCache 8)
     0))
 
 (define (lower-module-local-view-store-empty) : LowerModuleLocalViewStore
   (LowerModuleLocalViewStore
     (lower_i64_i64_map.with-capacity 16)
-    (array.make-array LowerModuleLocalView 8)
+    (__tl_make-array LowerModuleLocalView 8)
     0))
 
 ;; Contiguous id set: `slots[0, len)` holds the members oldest first, so the old
@@ -665,14 +664,14 @@
         : (MutPtr ,_T))
       ,value)))
 
-(defmacro (compiler-lower-state-cell [T : type] [value : Expr]) : Expr
+(defmacro (compiler-lower-state-cell [_T : type] [value : Expr]) : Expr
   `(let
-    [cell : (__tl_dyn-array ,T) (array.make-array ,T 1)]
+    [cell : (__tl_dyn-array ,_T) (__tl_make-array ,_T 1)]
     (begin
       (set! (array-ref cell 0) ,value)
       (cast
         (unsafe
-          (ptr->int (ptr-cast (__tl_array-data cell) : (Ptr ,T))))
+          (ptr->int (ptr-cast (__tl_array-data cell) : (Ptr ,_T))))
         : i64))))
 
 (define (compiler-lower-state-from-address [address : i64]) : CompilerLowerState
@@ -686,7 +685,7 @@
   [_profile-state : profile_state.CompilerProfileState]) : CompilerLowerState
   (let
     [cells : (__tl_dyn-array i64)
-      (array.make-array i64 (cfg (any compile-profile test) 38 37))]
+      (__tl_make-array i64 (cfg (any compile-profile test) 38 37))]
     [address : i64
       (cast
         (unsafe
@@ -3703,6 +3702,7 @@
     [(ast.AstExpr.TupleRef target _) (lower-expr-id-span pools target)]
     [(ast.AstExpr.Array values) (lower-expr-list-first-span pools values)]
     [(ast.AstExpr.DynArray values) (lower-expr-list-first-span pools values)]
+    [(ast.AstExpr.FixedMakeArray _ size) (lower-expr-id-span pools size)]
     [(ast.AstExpr.MakeArray _ size) (lower-expr-id-span pools size)]
     [(ast.AstExpr.ArrayRef target index)
       (lower-expr-id-first-span2 pools target index)]
@@ -4783,7 +4783,7 @@
         8
         (* old-capacity 2))]
     [next-values : (__tl_dyn-array LowerNameCache)
-      (array.make-array LowerNameCache next-capacity)]
+      (__tl_make-array LowerNameCache next-capacity)]
     (begin
       (lower-module-name-cache-store-copy-prefix!
         store.values
@@ -9071,7 +9071,7 @@
         8
         (* old-capacity 2))]
     [next-values : (__tl_dyn-array LowerModuleLocalView)
-      (array.make-array LowerModuleLocalView next-capacity)]
+      (__tl_make-array LowerModuleLocalView next-capacity)]
     (begin
       (lower-module-local-view-store-copy-prefix!
         store.values
@@ -9431,18 +9431,18 @@
         (arena.Arena storage.arena)
         (let
           [rtf-generations : (__tl_dyn-array i64)
-            (array.make-array i64 tc-rtf-cap)]
-          [rtf-ids : (__tl_dyn-array i64) (array.make-array i64 tc-rtf-cap)]
+            (__tl_make-array i64 tc-rtf-cap)]
+          [rtf-ids : (__tl_dyn-array i64) (__tl_make-array i64 tc-rtf-cap)]
           [rtf-types : (__tl_dyn-array ast.AstType)
-            (array.make-array ast.AstType tc-rtf-cap)]
+            (__tl_make-array ast.AstType tc-rtf-cap)]
           [variant-stamps : (__tl_dyn-array i64)
-            (array.make-array i64 lower-variant-arm-memo-cap)]
+            (__tl_make-array i64 lower-variant-arm-memo-cap)]
           [variant-keys : (__tl_dyn-array i64)
-            (array.make-array i64 lower-variant-arm-memo-cap)]
+            (__tl_make-array i64 lower-variant-arm-memo-cap)]
           [variant-scrutinee-types : (__tl_dyn-array ast.AstType)
-            (array.make-array ast.AstType lower-variant-arm-memo-cap)]
+            (__tl_make-array ast.AstType lower-variant-arm-memo-cap)]
           [variant-outcomes : (__tl_dyn-array LowerVariantArmResolution)
-            (array.make-array
+            (__tl_make-array
               LowerVariantArmResolution
               lower-variant-arm-memo-cap)]
           [index : i64 0]
@@ -9494,7 +9494,7 @@
       [rtf-generation : i64 (+ storage.next-rtf-generation 1)]
       [variant-generation : i64 (+ storage.next-variant-generation 1)]
       [cell : (__tl_dyn-array CompilerLowerFunctionStateData)
-        (array.make-array CompilerLowerFunctionStateData 1)]
+        (__tl_make-array CompilerLowerFunctionStateData 1)]
       [address : i64
         (cast
           (unsafe
@@ -12512,6 +12512,10 @@
       (lower-reach-expr-list pools all-functions names state values)]
     [(ast.AstExpr.DynArray values)
       (lower-reach-expr-list pools all-functions names state values)]
+    [(ast.AstExpr.FixedMakeArray _ len-box)
+      (let
+        [len : ast.AstExpr (ast.ast-node-pool-context-expr-get pools len-box)]
+        (lower-reach-expr pools all-functions names state len))]
     [(ast.AstExpr.MakeArray _ len-box)
       (let
         [len : ast.AstExpr (ast.ast-node-pool-context-expr-get pools len-box)]
@@ -14613,6 +14617,18 @@
       (lower-used-types-add-expr-list session pools used module values)]
     [(ast.AstExpr.DynArray values)
       (lower-used-types-add-expr-list session pools used module values)]
+    [(ast.AstExpr.FixedMakeArray ty-id len-box)
+      (lower-used-types-add-expr-id
+        session
+        pools
+        (lower-used-types-add-type
+          session
+          pools
+          used
+          module
+          (ast.ast-node-pool-context-type-get pools ty-id))
+        module
+        len-box)]
     [(ast.AstExpr.MakeArray ty-id len-box)
       (lower-used-types-add-expr-id
         session
@@ -31208,6 +31224,8 @@
         [receiver : ast.AstExpr (lower-context-expr-get ctx receiver-box)]
         [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
         (lower-struct-set ctx state env type-env receiver field value origin))]
+    [(ast.AstExpr.FixedMakeArray _ _)
+      (lower-init-expr ctx state env type-env expr-ty origin expr-ty)]
     [(ast.AstExpr.MakeArray elem-ty-id len-box)
       (let
         [len : ast.AstExpr (lower-context-expr-get ctx len-box)]
@@ -35224,7 +35242,7 @@
   (let
     [count : i64 (lower-c-abi-slot-list-count slots)]
     [out : (__tl_dyn-array ir.CompilerIrCAbiReturnSlot)
-      (array.make-array ir.CompilerIrCAbiReturnSlot count)]
+      (__tl_make-array ir.CompilerIrCAbiReturnSlot count)]
     (begin
       (lower-c-abi-ir-return-slots-from slots out 0 count)
       (ir.CompilerIrCAbiReturnSlotSeq out count))))
@@ -39127,6 +39145,24 @@
           result-ty
           origin))]))
 
+(define (lower-fixed-array-length-or
+  [ctx : tc_core.TcContext]
+  [ty : ast.AstType]
+  [fallback : i64]) : i64
+  (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))
+    [(ast.AstType.Array _ count) count]
+    [(ast.AstType.Ref _ inner)
+      (lower-fixed-array-length-or
+        ctx
+        (tc_core.tc-context-type-get ctx inner)
+        fallback)]
+    [(ast.AstType.MutRef _ inner)
+      (lower-fixed-array-length-or
+        ctx
+        (tc_core.tc-context-type-get ctx inner)
+        fallback)]
+    [_ fallback]))
+
 (define (lower-array-length-load
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -39141,36 +39177,43 @@
             [resolved : ast.AstType
               (tc_core.tc-type-strip-region
                 (tc_core.tc-resolve-type ctx arr-ty))]
-            (match resolved
-              [(ast.AstType.Ref _ inner)
-                (if (lower-reference-to-slice? ctx inner)
-                  (match (lower-emit-word
-                    arr-state
-                    arr-value
-                    1
-                    (lower-register-word-type ctx arr-ty 1))
-                    [(LowerExpr.Expr length-state length-value _)
-                      (ResultLowerExpr.Ok
-                        (LowerExpr.Expr
-                          length-state
-                          length-value
-                          (ast.AstType.I64)))])
-                  (lower-array-length-load-descriptor arr-state arr-value))]
-              [(ast.AstType.MutRef _ inner)
-                (if (lower-reference-to-slice? ctx inner)
-                  (match (lower-emit-word
-                    arr-state
-                    arr-value
-                    1
-                    (lower-register-word-type ctx arr-ty 1))
-                    [(LowerExpr.Expr length-state length-value _)
-                      (ResultLowerExpr.Ok
-                        (LowerExpr.Expr
-                          length-state
-                          length-value
-                          (ast.AstType.I64)))])
-                  (lower-array-length-load-descriptor arr-state arr-value))]
-              [_ (lower-array-length-load-descriptor arr-state arr-value)]))])]
+            [fixed-count : i64 (lower-fixed-array-length-or ctx resolved -1)]
+            (if (>= fixed-count 0)
+              (ResultLowerExpr.Ok
+                (LowerExpr.Expr
+                  arr-state
+                  (ir.CompilerIrValue.I64 fixed-count)
+                  (ast.AstType.I64)))
+              (match resolved
+                [(ast.AstType.Ref _ inner)
+                  (if (lower-reference-to-slice? ctx inner)
+                    (match (lower-emit-word
+                      arr-state
+                      arr-value
+                      1
+                      (lower-register-word-type ctx arr-ty 1))
+                      [(LowerExpr.Expr length-state length-value _)
+                        (ResultLowerExpr.Ok
+                          (LowerExpr.Expr
+                            length-state
+                            length-value
+                            (ast.AstType.I64)))])
+                    (lower-array-length-load-descriptor arr-state arr-value))]
+                [(ast.AstType.MutRef _ inner)
+                  (if (lower-reference-to-slice? ctx inner)
+                    (match (lower-emit-word
+                      arr-state
+                      arr-value
+                      1
+                      (lower-register-word-type ctx arr-ty 1))
+                      [(LowerExpr.Expr length-state length-value _)
+                        (ResultLowerExpr.Ok
+                          (LowerExpr.Expr
+                            length-state
+                            length-value
+                            (ast.AstType.I64)))])
+                    (lower-array-length-load-descriptor arr-state arr-value))]
+                [_ (lower-array-length-load-descriptor arr-state arr-value)])))])]
     [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))
 
 (define (lower-array-length-load-descriptor
@@ -45021,6 +45064,8 @@
       (or
         (lower-spmd-reduce-node-writes-id? ctx name tuple-box)
         (lower-spmd-reduce-node-writes-id? ctx name index-box))]
+    [(ast.AstExpr.FixedMakeArray _ len-box)
+      (lower-spmd-reduce-node-writes-id? ctx name len-box)]
     [(ast.AstExpr.MakeArray _ len-box)
       (lower-spmd-reduce-node-writes-id? ctx name len-box)]
     [(ast.AstExpr.ArrayRef array-box index-box)
@@ -60035,7 +60080,7 @@
     (let
       [count : i64 (- (ast.ast-param-list-len params) index)]
       [slots : (__tl_dyn-array ir.CompilerIrSpmdCallArg)
-        (array.make-array ir.CompilerIrSpmdCallArg count)]
+        (__tl_make-array ir.CompilerIrSpmdCallArg count)]
       [cursor : i64 index]
       (begin
         (while (< cursor (ast.ast-param-list-len params))
@@ -65754,6 +65799,8 @@
       (lower-rvo-expr-list-has-early-return? ctx exprs)]
     [(ast.AstExpr.DynArray exprs)
       (lower-rvo-expr-list-has-early-return? ctx exprs)]
+    [(ast.AstExpr.FixedMakeArray _ len-box)
+      (lower-rvo-node-has-early-return? ctx len-box)]
     [(ast.AstExpr.MakeArray _ len-box)
       (lower-rvo-node-has-early-return? ctx len-box)]
     [(ast.AstExpr.ArrayRef arr-box index-box)
@@ -72828,6 +72875,8 @@
       (lower-source-expr-list-has-import-call? pools exprs)]
     [(ast.AstExpr.DynArray exprs)
       (lower-source-expr-list-has-import-call? pools exprs)]
+    [(ast.AstExpr.FixedMakeArray _ len-box)
+      (lower-source-node-has-import-call? pools len-box)]
     [(ast.AstExpr.MakeArray _ len-box)
       (lower-source-node-has-import-call? pools len-box)]
     [(ast.AstExpr.ArrayRef array-box index-box)

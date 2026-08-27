@@ -1,7 +1,6 @@
 ;; compiler_semantic_index.tl - Owned semantic source index for compiler tooling.
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.byte_buf)
-(import stdlib.array)
 (import stdlib.io)
 (import stdlib.arena)
 (import stdlib.string)
@@ -501,25 +500,25 @@
 (define (compiler-semantic-source-index-empty) : CompilerSemanticSourceIndex
   (CompilerSemanticSourceIndex
     0
-    (array.make-array CompilerSemanticRecord 0)
+    (__tl_make-array CompilerSemanticRecord 0)
     0
-    (array.make-array String 0)
+    (__tl_make-array String 0)
     0
     false
-    (array.make-array CompilerSemanticSourcePathInfo 0)
+    (__tl_make-array CompilerSemanticSourcePathInfo 0)
     0
-    (array.make-array CompilerSemanticModuleInfo 0)
+    (__tl_make-array CompilerSemanticModuleInfo 0)
     0
-    (array.make-array CompilerSemanticModuleEvent 0)
+    (__tl_make-array CompilerSemanticModuleEvent 0)
     0
-    (array.make-array CompilerSemanticScopeEvent 0)
+    (__tl_make-array CompilerSemanticScopeEvent 0)
     0
     0
-    (array.make-array CompilerSemanticBinding 0)
+    (__tl_make-array CompilerSemanticBinding 0)
     0
-    (array.make-array CompilerSemanticTopCandidateRef 0)
-    (array.make-array String 0)
-    (array.make-array CompilerSemanticVisibleBinding 0)
+    (__tl_make-array CompilerSemanticTopCandidateRef 0)
+    (__tl_make-array String 0)
+    (__tl_make-array CompilerSemanticVisibleBinding 0)
     0))
 
 (define (compiler-semantic-source-index-empty-owned) : CompilerSemanticSourceIndex
@@ -533,25 +532,25 @@
         (arena.Arena owner)
         (CompilerSemanticSourceIndex
           owner
-          (array.make-array CompilerSemanticRecord 0)
+          (__tl_make-array CompilerSemanticRecord 0)
           0
-          (array.make-array String 0)
+          (__tl_make-array String 0)
           0
           false
-          (array.make-array CompilerSemanticSourcePathInfo 0)
+          (__tl_make-array CompilerSemanticSourcePathInfo 0)
           0
-          (array.make-array CompilerSemanticModuleInfo 0)
+          (__tl_make-array CompilerSemanticModuleInfo 0)
           0
-          (array.make-array CompilerSemanticModuleEvent 0)
+          (__tl_make-array CompilerSemanticModuleEvent 0)
           0
-          (array.make-array CompilerSemanticScopeEvent 0)
+          (__tl_make-array CompilerSemanticScopeEvent 0)
           0
           0
-          (array.make-array CompilerSemanticBinding 0)
+          (__tl_make-array CompilerSemanticBinding 0)
           0
-          (array.make-array CompilerSemanticTopCandidateRef 0)
-          (array.make-array String 0)
-          (array.make-array CompilerSemanticVisibleBinding 0)
+          (__tl_make-array CompilerSemanticTopCandidateRef 0)
+          (__tl_make-array String 0)
+          (__tl_make-array CompilerSemanticVisibleBinding 0)
           0)))))
 
 (define (compiler-semantic-binding-snapshot-empty) : CompilerSemanticBindingSnapshot
@@ -559,12 +558,12 @@
 
 (define (compiler-semantic-binding-vec-new [capacity : i64]) : CompilerSemanticBindingVec
   (CompilerSemanticBindingVec
-    (array.make-array
+    (__tl_make-array
       CompilerSemanticBinding
       (if (< capacity 1)
         1
         capacity))
-    (array.make-array
+    (__tl_make-array
       bool
       (if (< capacity 1)
         1
@@ -582,8 +581,8 @@
         1
         (* old-capacity 2))]
     [new-items : (__tl_dyn-array CompilerSemanticBinding)
-      (array.make-array CompilerSemanticBinding new-capacity)]
-    [new-live : (__tl_dyn-array bool) (array.make-array bool new-capacity)]
+      (__tl_make-array CompilerSemanticBinding new-capacity)]
+    [new-live : (__tl_dyn-array bool) (__tl_make-array bool new-capacity)]
     [index : i64 0]
     (begin
       (while (< index bindings.len)
@@ -617,12 +616,12 @@
 
 (define (compiler-semantic-scope-event-vec-new [capacity : i64]) : CompilerSemanticScopeEventVec
   (CompilerSemanticScopeEventVec
-    (array.make-array
+    (__tl_make-array
       CompilerSemanticScopeEvent
       (if (< capacity 1)
         1
         capacity))
-    (array.make-array
+    (__tl_make-array
       bool
       (if (< capacity 1)
         1
@@ -640,8 +639,8 @@
         1
         (* old-capacity 2))]
     [new-items : (__tl_dyn-array CompilerSemanticScopeEvent)
-      (array.make-array CompilerSemanticScopeEvent new-capacity)]
-    [new-live : (__tl_dyn-array bool) (array.make-array bool new-capacity)]
+      (__tl_make-array CompilerSemanticScopeEvent new-capacity)]
+    [new-live : (__tl_dyn-array bool) (__tl_make-array bool new-capacity)]
     [index : i64 0]
     (begin
       (while (< index events.len)
@@ -942,12 +941,12 @@
 
 (define (compiler-semantic-record-vec-new [capacity : i64]) : CompilerSemanticRecordVec
   (CompilerSemanticRecordVec
-    (array.make-array
+    (__tl_make-array
       CompilerSemanticRecord
       (if (< capacity 1)
         1
         capacity))
-    (array.make-array
+    (__tl_make-array
       bool
       (if (< capacity 1)
         1
@@ -965,8 +964,8 @@
         1
         (* old-capacity 2))]
     [new-items : (__tl_dyn-array CompilerSemanticRecord)
-      (array.make-array CompilerSemanticRecord new-capacity)]
-    [new-live : (__tl_dyn-array bool) (array.make-array bool new-capacity)]
+      (__tl_make-array CompilerSemanticRecord new-capacity)]
+    [new-live : (__tl_dyn-array bool) (__tl_make-array bool new-capacity)]
     [index : i64 0]
     (begin
       (while (< index records.len)
@@ -2517,8 +2516,8 @@
     [slots : (__tl_dyn-array CompilerSemanticCanonicalBuildSlot)
       (in-arena
         scratch
-        (array.make-array CompilerSemanticCanonicalBuildSlot capacity))]
-    [symbols : (__tl_dyn-array String) (array.make-array String record-len)]
+        (__tl_make-array CompilerSemanticCanonicalBuildSlot capacity))]
+    [symbols : (__tl_dyn-array String) (__tl_make-array String record-len)]
     [canonical-len : i64 0]
     [record-index : i64 0]
     [pass : i64 0]
@@ -3761,6 +3760,8 @@
       (compiler-semantic-walk-quasiquote-list! state scope env items)]
     [(ast.AstExpr.DynArray items)
       (compiler-semantic-walk-quasiquote-list! state scope env items)]
+    [(ast.AstExpr.FixedMakeArray _ size)
+      (compiler-semantic-walk-quasiquote-node! state scope env size)]
     [(ast.AstExpr.MakeArray _ size)
       (compiler-semantic-walk-quasiquote-node! state scope env size)]
     [(ast.AstExpr.ArrayRef target index)
@@ -5029,7 +5030,7 @@
                   session
                   source-name-id
                   root-source-id)]
-              [fields : (__tl_dyn-array i64) (array.make-array i64 depth)]
+              [fields : (__tl_dyn-array i64) (__tl_make-array i64 depth)]
               [next-remaining : i64 remaining-id]
               [fill : i64 0]
               [recv-text : String (ci.intern-str root-source-id)]
@@ -5249,6 +5250,12 @@
       (compiler-semantic-walk-expr-list! state scope env items)]
     [(ast.AstExpr.DynArray items)
       (compiler-semantic-walk-expr-list! state scope env items)]
+    [(ast.AstExpr.FixedMakeArray ty-id size)
+      (begin
+        (compiler-semantic-walk-type!
+          state
+          (tc.tc-context-type-get state.ctx ty-id))
+        (compiler-semantic-walk-node! state scope env size))]
     [(ast.AstExpr.MakeArray ty-id size)
       (begin
         (compiler-semantic-walk-type!
@@ -6211,7 +6218,7 @@
     unit
     (let
       [scratch : (__tl_dyn-array CompilerSemanticScopeEvent)
-        (array.make-array CompilerSemanticScopeEvent len)]
+        (__tl_make-array CompilerSemanticScopeEvent len)]
       [width : i64 1]
       (while (< width len)
         (let
@@ -6271,7 +6278,7 @@
     unit
     (let
       [scratch : (__tl_dyn-array CompilerSemanticModuleEvent)
-        (array.make-array CompilerSemanticModuleEvent len)]
+        (__tl_make-array CompilerSemanticModuleEvent len)]
       [width : i64 1]
       (while (< width len)
         (let
@@ -6323,8 +6330,8 @@
   [raw-len : i64]
   [out : (__tl_dyn-array CompilerSemanticScopeEvent)]) : unit
   (let
-    [counts : (__tl_dyn-array i64) (array.make-array i64 path-len)]
-    [cursors : (__tl_dyn-array i64) (array.make-array i64 path-len)]
+    [counts : (__tl_dyn-array i64) (__tl_make-array i64 path-len)]
+    [cursors : (__tl_dyn-array i64) (__tl_make-array i64 path-len)]
     [index : i64 0]
     (begin
       (while (< index raw-len)
@@ -6378,8 +6385,8 @@
   [raw-len : i64]
   [out : (__tl_dyn-array CompilerSemanticModuleEvent)]) : unit
   (let
-    [counts : (__tl_dyn-array i64) (array.make-array i64 path-len)]
-    [cursors : (__tl_dyn-array i64) (array.make-array i64 path-len)]
+    [counts : (__tl_dyn-array i64) (__tl_make-array i64 path-len)]
+    [cursors : (__tl_dyn-array i64) (__tl_make-array i64 path-len)]
     [index : i64 0]
     (begin
       (while (< index raw-len)
@@ -6518,7 +6525,7 @@
     unit
     (let
       [scratch : (__tl_dyn-array CompilerSemanticTopCandidateRef)
-        (array.make-array CompilerSemanticTopCandidateRef len)]
+        (__tl_make-array CompilerSemanticTopCandidateRef len)]
       [width : i64 1]
       (while (< width len)
         (let
@@ -6762,8 +6769,8 @@
             cbi.compiler-builtin-id-core-macros-module)
             cbi.compiler-builtin-id-core-macros-module
             cbi.compiler-builtin-id-core-macros-legacy-module)]
-        [counts : (__tl_dyn-array i64) (array.make-array i64 module-len)]
-        [cursors : (__tl_dyn-array i64) (array.make-array i64 module-len)]
+        [counts : (__tl_dyn-array i64) (__tl_make-array i64 module-len)]
+        [cursors : (__tl_dyn-array i64) (__tl_make-array i64 module-len)]
         [module-index : i64 0]
         [cursor : i64 0]
         (begin
@@ -6928,15 +6935,13 @@
           [path-capacity : i64 (+ decl-count 4)]
           [module-capacity : i64 (+ decl-count 4)]
           [paths-out : (__tl_dyn-array CompilerSemanticSourcePathInfo)
-            (array.make-array CompilerSemanticSourcePathInfo path-capacity)]
+            (__tl_make-array CompilerSemanticSourcePathInfo path-capacity)]
           [modules-out : (__tl_dyn-array CompilerSemanticModuleInfo)
-            (array.make-array CompilerSemanticModuleInfo module-capacity)]
+            (__tl_make-array CompilerSemanticModuleInfo module-capacity)]
           [module-events-out : (__tl_dyn-array CompilerSemanticModuleEvent)
-            (array.make-array
-              CompilerSemanticModuleEvent
-              (+ (* decl-count 2) 8))]
+            (__tl_make-array CompilerSemanticModuleEvent (+ (* decl-count 2) 8))]
           [decl-record-indices : (__tl_dyn-array i64)
-            (array.make-array i64 symbol-count)]
+            (__tl_make-array i64 symbol-count)]
           [walk-state : CompilerSemanticWalkState
             (CompilerSemanticWalkState
               ctx
@@ -6977,13 +6982,13 @@
                   (box 0)
                   (box 1)
                   (box 1)))
-              (array.make-array
+              (__tl_make-array
                 i64
                 (ast.ast-node-pool-context-expr-len (tc.tc-context-pools ctx)))
               (box 0)
               (box false)
               parse_core.CompilerParseMaybeSemanticOriginRun.None
-              (array.make-array i64 12))]
+              (__tl_make-array i64 12))]
           [index : i64 0]
           [cached-path : String ""]
           [cached-source : String ""]
@@ -7317,20 +7322,18 @@
                   (compiler-semantic-top-candidate-capacity ctx module-count)
                   0)]
               [top-candidates : (__tl_dyn-array CompilerSemanticTopCandidateRef)
-                (array.make-array CompilerSemanticTopCandidateRef top-capacity)]
+                (__tl_make-array CompilerSemanticTopCandidateRef top-capacity)]
               [top-labels : (__tl_dyn-array String)
-                (array.make-array String top-capacity)]
+                (__tl_make-array String top-capacity)]
               [raw-scope-events : CompilerSemanticScopeEventVec
                 (__tl-box-place visibility-storage.scope-events)]
               [scope-event-count : i64 raw-scope-events.len]
               [module-event-count : i64
                 (__tl-box-place visibility-storage.module-event-len)]
               [scope-events : (__tl_dyn-array CompilerSemanticScopeEvent)
-                (array.make-array CompilerSemanticScopeEvent scope-event-count)]
+                (__tl_make-array CompilerSemanticScopeEvent scope-event-count)]
               [module-events : (__tl_dyn-array CompilerSemanticModuleEvent)
-                (array.make-array
-                  CompilerSemanticModuleEvent
-                  module-event-count)]
+                (__tl_make-array CompilerSemanticModuleEvent module-event-count)]
               [top-candidate-count : i64 0]
               (begin
                 (compiler-semantic-bucket-scope-events!
@@ -7362,7 +7365,7 @@
                 (let
                   [top-visible-bindings : (__tl_dyn-array
                     CompilerSemanticVisibleBinding)
-                    (array.make-array
+                    (__tl_make-array
                       CompilerSemanticVisibleBinding
                       top-candidate-count)]
                   (begin

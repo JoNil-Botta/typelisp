@@ -14,7 +14,6 @@
 ;#     [(time.OkTimeUnit) 42]
 ;#     [(time.ErrTimeUnit _) 1]))
 ;# ```
-(import stdlib.array)
 (import stdlib.string)
 
 ;: Recoverable time source error.
@@ -74,7 +73,7 @@
   (not windows)
   (define (linux-clock-ms [clock-id : i64]) : ResultTimeMs
     (let
-      [timespec : (__tl_dyn-array i64) (array.make-array i64 2)]
+      [timespec : (__tl_dyn-array i64) (__tl_make-array i64 2)]
       [status : i64
         (unsafe
           (syscall 228 clock-id (stdlib.time.array-addr timespec)))]
@@ -93,8 +92,8 @@
   (not windows)
   (define (linux-sleep-ms [milliseconds : i64]) : ResultTimeUnit
     (let
-      [request : (__tl_dyn-array i64) (array.make-array i64 2)]
-      [remaining : (__tl_dyn-array i64) (array.make-array i64 2)]
+      [request : (__tl_dyn-array i64) (__tl_make-array i64 2)]
+      [remaining : (__tl_dyn-array i64) (__tl_make-array i64 2)]
       [done : bool false]
       [ok : bool false]
       (begin
@@ -149,7 +148,7 @@
   windows
   (define (windows-unix-ms) : ResultTimeMs
     (let
-      [file-time : (__tl_dyn-array i64) (array.make-array i64 1)]
+      [file-time : (__tl_dyn-array i64) (__tl_make-array i64 1)]
       [_ok : unit
         (stdlib.time.windows-get-system-time-as-file-time
           (unsafe
@@ -167,8 +166,8 @@
   windows
   (define (windows-monotonic-ms) : ResultTimeMs
     (let
-      [counter : (__tl_dyn-array i64) (array.make-array i64 1)]
-      [freq : (__tl_dyn-array i64) (array.make-array i64 1)]
+      [counter : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+      [freq : (__tl_dyn-array i64) (__tl_make-array i64 1)]
       [counter-ok : i32
         (stdlib.time.windows-query-performance-counter
           (unsafe
@@ -236,8 +235,8 @@
   windows
   (define (windows-sleep-ms [milliseconds : i64]) : ResultTimeUnit
     (let
-      [counter : (__tl_dyn-array i64) (array.make-array i64 1)]
-      [frequency-buffer : (__tl_dyn-array i64) (array.make-array i64 1)]
+      [counter : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+      [frequency-buffer : (__tl_dyn-array i64) (__tl_make-array i64 1)]
       [counter-ok : i32
         (stdlib.time.windows-query-performance-counter
           (unsafe
@@ -387,7 +386,7 @@
       "time: sleep duration must be nonnegative")
     (stdlib.time.test-assert-unit-ok (stdlib.time.sleep-ms 0))
     (let
-      [converted : (__tl_dyn-array i64) (array.make-array i64 2)]
+      [converted : (__tl_dyn-array i64) (__tl_make-array i64 2)]
       (begin
         (stdlib.time.timespec-from-ms! converted 9223372036854775807)
         (stdlib.time.test-assert-i64-eq

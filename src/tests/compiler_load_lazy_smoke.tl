@@ -1,6 +1,7 @@
 ;; compiler_load_lazy_smoke.tl - Lazy dotted import loader smokes.
 (import stdlib.byte_buf)
 (import stdlib.io)
+(import stdlib.str_cat_runtime as str_cat)
 (import stdlib.string)
 (import stdlib.vector)
 (import (vector.vector String) as svec)
@@ -8,6 +9,7 @@
 (import compiler_cfg_core as cfg)
 (import compiler_ast_types as ast)
 (import compiler_builtin_ids as cbi)
+(import compiler_diagnostic as cdiag)
 (import compiler_intern as ci)
 (import compiler_parse_core as parser)
 (import read as reader)
@@ -76,80 +78,27 @@
           (compiler_load.compiler-load-test-seen-contains? seen "nested.dep"))]
       [(compiler_load.ResultCompilerLoadWithPaths.Err _) false])))
 
-(define (lazy-used-stdlib-array-dotted-import-ok?) : bool
+(define (lazy-removed-array-module-rejected?) : bool
   (begin
-    (compiler_load.compiler-load-test-mkdir "target/cl_lazy_stdlib_array")
-    (compiler_load.compiler-load-test-mkdir
-      "target/cl_lazy_stdlib_array/nested")
+    (compiler_load.compiler-load-test-mkdir "target/cl_removed_array_module")
     (lazy-write-text
-      "target/cl_lazy_stdlib_array/nested/user.tl"
-      "(module nested.user)
-(import stdlib.array)
-(define (len-b) : i64 (array.length (array.make-array i64 2)))")
-    (lazy-write-text
-      "target/cl_lazy_stdlib_array/entry.tl"
-      "(module lazy.stdlib.array.entry)
-(import stdlib.array)
-(import nested.user as user)
-(define (len-a) : i64 (array.length (array.make-array i64 1)))
-(define (main) : i64 (user.len-b))")
+      "target/cl_removed_array_module/entry.tl"
+      (str_cat.str-cat
+        "(module removed.array.entry)\n(import stdlib."
+        "array)\n(define (main) : i64 42)"))
     (match (compiler_load.compiler-load-file-with-paths
-      "target/cl_lazy_stdlib_array/entry.tl"
+      "target/cl_removed_array_module/entry.tl"
       (sym_i64_env.sym-i64-empty))
-      [(compiler_load.ResultCompilerLoadWithPaths.Ok decls _ _ seen)
-        (and
-          (= (compiler_load.compiler-load-lazy-import-skip-count) 0)
-          (compiler_load.compiler-load-decl-list-has-import-alias?
-            decls
-            "stdlib.array"
-            "array")
-          (compiler_load.compiler-load-test-seen-contains?
-            seen
-            "lazy.stdlib.array.entry")
-          (compiler_load.compiler-load-test-seen-contains? seen "nested.user")
-          (compiler_load.compiler-load-test-seen-contains? seen "stdlib.array"))]
-      [(compiler_load.ResultCompilerLoadWithPaths.Err _) false])))
-
-(define (lazy-canonical-stdlib-array-import-ok?) : bool
-  (begin
-    (compiler_load.compiler-load-test-mkdir
-      "target/cl_lazy_stdlib_array_canonical")
-    (compiler_load.compiler-load-test-mkdir
-      "target/cl_lazy_stdlib_array_canonical/nested")
-    (lazy-write-text
-      "target/cl_lazy_stdlib_array_canonical/nested/user.tl"
-      "(module nested.user)
-(import stdlib.array)
-(define (len-b) : i64
-  (stdlib.array.length (stdlib.array.make-array i64 2)))")
-    (lazy-write-text
-      "target/cl_lazy_stdlib_array_canonical/entry.tl"
-      "(module lazy.stdlib.array.canonical.entry)
-(import stdlib.array)
-(import nested.user as user)
-(define (len-a) : i64
-  (stdlib.array.length (stdlib.array.make-array i64 1)))
-(define (main) : i64 (user.len-b))")
-    (match (compiler_load.compiler-load-file-with-paths
-      "target/cl_lazy_stdlib_array_canonical/entry.tl"
-      (sym_i64_env.sym-i64-empty))
-      [(compiler_load.ResultCompilerLoadWithPaths.Ok decls _ _ seen)
-        (and
-          (= (compiler_load.compiler-load-lazy-import-skip-count) 2)
-          (= (compiler_load.compiler-load-decl-list-count decls) 9)
-          (compiler_load.compiler-load-decl-list-has-import-alias?
-            decls
-            "stdlib.array"
-            "array")
-          (compiler_load.compiler-load-test-seen-contains?
-            seen
-            "lazy.stdlib.array.canonical.entry")
-          (compiler_load.compiler-load-test-seen-contains? seen "nested.user")
-          (not
-            (compiler_load.compiler-load-test-seen-contains?
-              seen
-              "stdlib.array")))]
-      [(compiler_load.ResultCompilerLoadWithPaths.Err _) false])))
+      [(compiler_load.ResultCompilerLoadWithPaths.Ok _ _ _ _) false]
+      [(compiler_load.ResultCompilerLoadWithPaths.Err diagnostic)
+        (let
+          [message : String
+            (cdiag.compiler-diagnostic-message (__tl-box-place diagnostic))]
+          (and
+            (compiler_load.compiler-load-string-contains?
+              message
+              "compiler-load: cannot read import stdlib/")
+            (compiler_load.compiler-load-string-contains? message "array.tl")))])))
 
 (define (lazy-stdlib-result-macro-import-ok?) : bool
   (begin
@@ -767,11 +716,8 @@
       (lazy-used-dotted-import-ok?)
       (return (io.panic "lazy used dotted import smoke mismatch")))
     (unless
-      (lazy-used-stdlib-array-dotted-import-ok?)
-      (return (io.panic "lazy used stdlib.array dotted import smoke mismatch")))
-    (unless
-      (lazy-canonical-stdlib-array-import-ok?)
-      (return (io.panic "lazy canonical stdlib.array import smoke mismatch")))
+      (lazy-removed-array-module-rejected?)
+      (return (io.panic "removed array module import was accepted")))
     (unless
       (lazy-stdlib-result-macro-import-ok?)
       (return (io.panic "lazy stdlib.result macro import smoke mismatch")))

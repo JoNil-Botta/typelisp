@@ -272,7 +272,6 @@
 
 (import stdlib.process)
 (import stdlib.string)
-(import stdlib.array)
 
 ;: Copy a borrowed string into active-arena owned storage.
 (define (string-owned [value : (& value str)]) : String
@@ -282,7 +281,7 @@
 (define (args-owned [args : (ProcessBorrowedStringList text)]) : process.ProcessStringList
   (let
     [n : i64 (args-count args)]
-    [slots : (__tl_dyn-array String) (array.make-array String n)]
+    [slots : (__tl_dyn-array String) (__tl_make-array String n)]
     [i : i64 0]
     (begin
       (while (< i n)
@@ -295,8 +294,8 @@
 (define (env-owned [env : (ProcessBorrowedEnvList text)]) : process.ProcessEnvList
   (let
     [n : i64 (env-count env)]
-    [names : (__tl_dyn-array String) (array.make-array String n)]
-    [values : (__tl_dyn-array String) (array.make-array String n)]
+    [names : (__tl_dyn-array String) (__tl_make-array String n)]
+    [values : (__tl_dyn-array String) (__tl_make-array String n)]
     [i : i64 0]
     (begin
       (while (< i n)

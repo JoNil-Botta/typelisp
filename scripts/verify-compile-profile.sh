@@ -1676,8 +1676,12 @@ if [ "$NL_HOST_OS" = windows ]; then
     # crosses the next boundary: the direct Windows selfhost probe measured
     # 2,425,185 used nodes, 2,490,368 capacity, and 79,691,776 physical payload
     # bytes.
+    # #6855's allocator packets (local splits, invariant-load rematerialisation)
+    # on top of its optimizer packets crossed ast_expr_pool.typecheck from 38 to
+    # 39 segments: the authoritative Windows probe measured 2,507,253 used nodes,
+    # 2,555,904 capacity, and 81,788,928 physical payload bytes.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool typecheck 38 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool typecheck 39 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # This is the tightest of the four and the one to check first when a series
     # adds compiler source: the copy-call / unsigned-bound-narrowing / chain

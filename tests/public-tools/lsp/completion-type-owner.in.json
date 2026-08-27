@@ -1,0 +1,7 @@
+[
+  {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"rootUri":"${{TMP_URI}}","capabilities":{}}},
+  {"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"${{TMP_URI}}/main.tl","languageId":"typelisp","version":1,"text":"(module app.main)\n(import feature.types as dep)\n(define thing : dep.AB (dep.AB 1))\n(define result : i64 thing.beta)"}}},
+  {"jsonrpc":"2.0","id":2,"method":"textDocument/completion","params":{"textDocument":{"uri":"${{TMP_URI}}/main.tl"},"position":{"line":3,"character":27}}},
+  {"jsonrpc":"2.0","id":3,"method":"shutdown","params":null},
+  {"jsonrpc":"2.0","method":"exit"}
+]

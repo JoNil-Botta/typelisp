@@ -1236,7 +1236,11 @@
   [index : (& index CompilerSemanticSourceIndex)]
   [path : String]
   [byte-offset : i64]) : CompilerSemanticMaybeVisibleBindingQuery
-  (if (or (<= index.owner-arena 0) (not index.complete) (< byte-offset 0))
+  ;; Recovery indexes retain only identities and visibility boundaries proven
+  ;; against the current buffer.  They are therefore safe for completion even
+  ;; though consumers that require a fully checked program still distinguish
+  ;; them through `compiler-semantic-source-index-complete?`.
+  (if (or (<= index.owner-arena 0) (< byte-offset 0))
     CompilerSemanticMaybeVisibleBindingQuery.None
     (let
       [normalized : String (cload.compiler-load-normalize-path path)]
@@ -1424,7 +1428,6 @@
   [query : CompilerSemanticVisibleBindingQuery]) : bool
   (and
     (> index.owner-arena 0)
-    index.complete
     (>= query.path-index 0)
     (< query.path-index index.path-len)
     (>= query.module-index 0)
@@ -8237,7 +8240,10 @@
               (box
                 (compiler-semantic-binding-vec-new
                   (* (ast.ast-decl-list-len (& decls)) 2)))
-              complete
+              ;; Recovery walks already omit locals whose checked facts are
+              ;; unavailable. Retain the remaining proven visibility graph so
+              ;; immutable tooling can serve the current partial snapshot.
+              true
               -1
               -1
               (box
@@ -8339,11 +8345,9 @@
                   (if module-changed
                     (set!
                       walk-state.module-index
-                      (if complete
-                        (compiler-semantic-module-index-ensure!
-                          (owned_view.compiler-owned-shared-view walk-state)
-                          module-id)
-                        -1))
+                      (compiler-semantic-module-index-ensure!
+                        (owned_view.compiler-owned-shared-view walk-state)
+                        module-id))
                     unit)
                   (if path-changed
                     (set!
@@ -8645,14 +8649,9 @@
               [raw-scope-events : CompilerSemanticScopeEventVec
                 (owned_view.compiler-owned-box-shared-view
                   visibility-storage.scope-events)]
-              [scope-event-count : i64
-                (if complete
-                  raw-scope-events.len
-                  0)]
+              [scope-event-count : i64 raw-scope-events.len]
               [module-event-count : i64
-                (if complete
-                  (__tl-box-place visibility-storage.module-event-len)
-                  0)]
+                (__tl-box-place visibility-storage.module-event-len)]
               [scope-events : (__tl_dyn-array CompilerSemanticScopeEvent)
                 (array.make-array CompilerSemanticScopeEvent scope-event-count)]
               [module-events : (__tl_dyn-array CompilerSemanticModuleEvent)
@@ -8672,36 +8671,32 @@
                 (owned_view.compiler-owned-box-shared-view walk-state.bindings)]
               [binding-items : (__tl_dyn-array CompilerSemanticBinding)
                 (owned_view.compiler-owned-shared-view bindings.items)]
-              [binding-count : i64
-                (if complete
-                  bindings.len
-                  0)]
+              [binding-count : i64 bindings.len]
               [top-candidate-count : i64 0]
               (begin
+                (compiler-semantic-bucket-scope-events!
+                  (owned_view.compiler-owned-shared-view paths-out)
+                  path-count
+                  raw-scope-events.items
+                  scope-event-count
+                  (owned_view.compiler-owned-shared-view scope-events))
+                (compiler-semantic-bucket-module-events!
+                  (owned_view.compiler-owned-shared-view paths-out)
+                  path-count
+                  (owned_view.compiler-owned-shared-view module-events-out)
+                  module-event-count
+                  (owned_view.compiler-owned-shared-view module-events))
                 (if complete
-                  (begin
-                    (compiler-semantic-bucket-scope-events!
-                      (owned_view.compiler-owned-shared-view paths-out)
-                      path-count
-                      raw-scope-events.items
-                      scope-event-count
-                      (owned_view.compiler-owned-shared-view scope-events))
-                    (compiler-semantic-bucket-module-events!
-                      (owned_view.compiler-owned-shared-view paths-out)
-                      path-count
-                      (owned_view.compiler-owned-shared-view module-events-out)
-                      module-event-count
-                      (owned_view.compiler-owned-shared-view module-events))
-                    (set!
-                      top-candidate-count
-                      (compiler-semantic-build-top-candidates!
-                        ctx
-                        (owned_view.compiler-owned-shared-view modules-out)
-                        module-count
-                        decl-record-indices
-                        (owned_view.compiler-owned-shared-view record-items)
-                        (owned_view.compiler-owned-shared-view top-candidates)
-                        (owned_view.compiler-owned-shared-view top-labels))))
+                  (set!
+                    top-candidate-count
+                    (compiler-semantic-build-top-candidates!
+                      ctx
+                      (owned_view.compiler-owned-shared-view modules-out)
+                      module-count
+                      decl-record-indices
+                      (owned_view.compiler-owned-shared-view record-items)
+                      (owned_view.compiler-owned-shared-view top-candidates)
+                      (owned_view.compiler-owned-shared-view top-labels)))
                   unit)
                 (let
                   [top-visible-bindings : (__tl_dyn-array
@@ -8738,10 +8733,7 @@
                           module-event-count
                           scope-events
                           scope-event-count
-                          (if complete
-                            (__tl-box-place
-                              visibility-storage.scope-region-count)
-                            0)
+                          (__tl-box-place visibility-storage.scope-region-count)
                           binding-items
                           binding-count
                           top-candidates
@@ -9198,6 +9190,18 @@
         left.symbol.declaration-ordinal)
       (csym.compiler-registry-handle-owner-index
         right.symbol.declaration-ordinal))))
+
+;; Public, identity-only member lookup for immutable tooling consumers.  A
+;; field or enum-member handle encodes its owning struct/enum declaration;
+;; callers never need access to the compiler registry that produced it.
+(define (compiler-semantic-member-symbol-owned-by?
+  [owner : (& owner CompilerSemanticSymbolId)]
+  [member : (& member CompilerSemanticSymbolId)]) : bool
+  (and
+    (= owner.module-id member.module-id)
+    (=
+      owner.declaration-ordinal
+      (csym.compiler-registry-handle-owner-index member.declaration-ordinal))))
 
 (define (compiler-semantic-rename-kind-eq?
   [left : (& left CompilerSemanticSymbolKind)]
@@ -11858,8 +11862,14 @@
                     (match (compiler-semantic-source-index-query
                       (& partial)
                       (owned_view.compiler-owned-shared-view path)
-                      0)
-                      [(CompilerSemanticMaybeVisibleBindingQuery.None) true]
+                      partial-same-local.span.end-byte)
+                      [(CompilerSemanticMaybeVisibleBindingQuery.Some query)
+                        (>
+                          (compiler-semantic-source-index-visible-binding-count
+                            (& partial)
+                            query
+                            (compiler-semantic-binding-namespace-value-mask))
+                          0)]
                       [_ false])
                     (>= partial-good-index 0)
                     (>= partial-broken-index 0)

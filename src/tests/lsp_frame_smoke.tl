@@ -258,10 +258,6 @@
 
 (define (lsp-completion-smoke-ok?) : bool
   (let
-    [src : String
-      "(define (square [x : i64]) : i64 (* x x)) (define answer : i64 42)"]
-    [names : lsp_svec.Vec
-      (lsp_frame_core.lsp-collect-def-names src (lsp_svec.new))]
     [keywords : lsp_svec.Vec
       (lsp_frame_core.lsp-split-spaces (lsp_frame_core.lsp-completion-keywords))]
     [builtins : lsp_svec.Vec
@@ -269,8 +265,7 @@
     [types : lsp_svec.Vec
       (lsp_frame_core.lsp-split-spaces (lsp_frame_core.lsp-completion-types))]
     (and
-      (lsp-smoke-string-vec-contains? names "square")
-      (lsp-smoke-string-vec-contains? names "answer")
+      (lsp_frame_core.lsp-completion-provider-smoke-ok?)
       (lsp-smoke-string-vec-contains? keywords "define")
       (lsp-smoke-string-vec-contains? builtins "deref")
       (not (lsp-smoke-string-vec-contains? builtins "make-array"))

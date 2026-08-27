@@ -39408,13 +39408,14 @@
             [else (set! i (+ i 1))])))
       (< left-len right-len))))
 
-;; Reuse two rows for every candidate. Suggestions run only after lookup has
+;; Reuse three rows for every candidate. Suggestions run only after lookup has
 ;; failed, and this keeps the rare error path bounded to O(length(name)) storage.
 (define (tc-unbound-edit-distance
   [wanted : String]
   [candidate : String]
-  [first-row : (&mut first-row (__tl_dyn-array i64))]
-  [second-row : (&mut second-row (__tl_dyn-array i64))]) : i64
+  [previous-previous-row : (&mut previous-previous-row (__tl_dyn-array i64))]
+  [previous-row : (&mut previous-row (__tl_dyn-array i64))]
+  [current-row : (&mut current-row (__tl_dyn-array i64))]) : i64
   (let
     [wanted-len : i64 (string.string-length wanted)]
     [candidate-len : i64 (string.string-length candidate)]
@@ -39423,19 +39424,19 @@
     (begin
       (while (<= j wanted-len)
         (begin
-          (set! (array-ref first-row j) j)
+          (set! (array-ref previous-row j) j)
           (set! j (+ j 1))))
       (while (<= i candidate-len)
         (begin
-          (set! (array-ref second-row 0) i)
+          (set! (array-ref current-row 0) i)
           (set! j 1)
           (while (<= j wanted-len)
             (let
-              [deletion : i64 (+ (array-ref first-row j) 1)]
-              [insertion : i64 (+ (array-ref second-row (- j 1)) 1)]
+              [deletion : i64 (+ (array-ref previous-row j) 1)]
+              [insertion : i64 (+ (array-ref current-row (- j 1)) 1)]
               [substitution : i64
                 (+
-                  (array-ref first-row (- j 1))
+                  (array-ref previous-row (- j 1))
                   (if (string.char-eq
                     (string.string-ref candidate (- i 1))
                     (string.string-ref wanted (- j 1)))
@@ -39449,15 +39450,64 @@
                 (if (< substitution best)
                   (set! best substitution)
                   unit)
-                (set! (array-ref second-row j) best)
+                ;; Optimal-string-alignment distance treats one adjacent swap
+                ;; as one edit. The extra prior row keeps the error path
+                ;; bounded to O(length(name)) storage.
+                (when
+                  (and
+                    (> i 1)
+                    (> j 1)
+                    (string.char-eq
+                      (string.string-ref candidate (- i 1))
+                      (string.string-ref wanted (- j 2)))
+                    (string.char-eq
+                      (string.string-ref candidate (- i 2))
+                      (string.string-ref wanted (- j 1))))
+                  (let
+                    [transposition : i64
+                      (+ (array-ref previous-previous-row (- j 2)) 1)]
+                    (when (< transposition best) (set! best transposition))))
+                (set! (array-ref current-row j) best)
                 (set! j (+ j 1)))))
           (set! j 0)
           (while (<= j wanted-len)
             (begin
-              (set! (array-ref first-row j) (array-ref second-row j))
+              (set!
+                (array-ref previous-previous-row j)
+                (array-ref previous-row j))
+              (set! (array-ref previous-row j) (array-ref current-row j))
               (set! j (+ j 1))))
           (set! i (+ i 1))))
-      (array-ref first-row wanted-len))))
+      (array-ref previous-row wanted-len))))
+
+(cfg
+  test
+  (test
+    tc-unbound-edit-distance-adjacent-transposition
+    (let
+      [len : i64 5]
+      [previous-previous-row : (__tl_dyn-array i64) (array.make-array i64 len)]
+      [previous-row : (__tl_dyn-array i64) (array.make-array i64 len)]
+      [current-row : (__tl_dyn-array i64) (array.make-array i64 len)]
+      (unless
+        (and
+          (=
+            (tc-unbound-edit-distance
+              "emti"
+              "emit"
+              (&mut previous-previous-row)
+              (&mut previous-row)
+              (&mut current-row))
+            1)
+          (=
+            (tc-unbound-edit-distance
+              "emit"
+              "emit"
+              (&mut previous-previous-row)
+              (&mut previous-row)
+              (&mut current-row))
+            0))
+        (io.panic "typecheck: adjacent-transposition distance failed")))))
 
 (define (tc-unbound-candidate-visible-id?
   [module-qualified : bool]
@@ -39546,8 +39596,11 @@
     [wanted-len : i64
       (string.string-length (tc-global-shared-view wanted-text))]
     [max-distance : i64 (tc-unbound-suggestion-max-distance wanted-len)]
-    [first-row : (__tl_dyn-array i64) (array.make-array i64 (+ wanted-len 1))]
-    [second-row : (__tl_dyn-array i64) (array.make-array i64 (+ wanted-len 1))]
+    [previous-previous-row : (__tl_dyn-array i64)
+      (array.make-array i64 (+ wanted-len 1))]
+    [previous-row : (__tl_dyn-array i64)
+      (array.make-array i64 (+ wanted-len 1))]
+    [current-row : (__tl_dyn-array i64) (array.make-array i64 (+ wanted-len 1))]
     [candidate-id : i64 0]
     [candidate-limit : i64 (ci.intern-pool-len)]
     [owner-stamp : i64
@@ -39605,8 +39658,9 @@
                           (tc-unbound-edit-distance
                             (tc-global-shared-view wanted-text)
                             (tc-global-shared-view candidate)
-                            (&mut first-row)
-                            (&mut second-row))]
+                            (&mut previous-previous-row)
+                            (&mut previous-row)
+                            (&mut current-row))]
                         [better : bool
                           (and
                             (<= distance max-distance)
@@ -39680,8 +39734,9 @@
                             (tc-unbound-edit-distance
                               (tc-global-shared-view wanted-text)
                               (tc-global-shared-view candidate)
-                              (&mut first-row)
-                              (&mut second-row))]
+                              (&mut previous-previous-row)
+                              (&mut previous-row)
+                              (&mut current-row))]
                           [better : bool
                             (and
                               (<= distance max-distance)

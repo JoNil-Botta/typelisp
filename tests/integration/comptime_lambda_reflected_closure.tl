@@ -12,16 +12,18 @@
 ;; reflected type of the heterogeneous shared-reference tuple.
 (defmacro (render-anchor-package-twice [anchors : Expr]) : i64
   (let
-    [T : Expr (comptime.expr-type anchors)]
+    ;; lint-allow: unused-variable -- consumed in generated type positions.
+    [reflected-type : Expr (comptime.expr-type anchors)]
     [renderer : Expr
-      `(lambda ([values : ,T]) : i64
+      `(lambda ([values : ,reflected-type]) : i64
         (+
           (read-owner (tuple-ref values 0))
           (string-length (tuple-ref values 1))))]
     `(let
-      [renderer : (-> ,T i64) ,renderer]
-      [anchors : ,T ,anchors]
-      [arguments : (Tuple (-> ,T i64) ,T) (tuple renderer anchors)]
+      [renderer : (-> ,reflected-type i64) ,renderer]
+      [anchors : ,reflected-type ,anchors]
+      [arguments : (Tuple (-> ,reflected-type i64) ,reflected-type)
+        (tuple renderer anchors)]
       (+
         ((tuple-ref arguments 0) (tuple-ref arguments 1))
         ((tuple-ref arguments 0) (tuple-ref arguments 1))))))
@@ -82,10 +84,8 @@
     (+ (reader) (reader))))
 
 (define (main) : i64
-  (if (= (lvalue-case) 33)
-    (if (= (rvalue-case) 2)
-      (if (= (direct-generated-capture-case) 18)
-        42
-        3)
-      2)
-    1))
+  (begin
+    (unless (= (lvalue-case) 33) (return 1))
+    (unless (= (rvalue-case) 2) (return 2))
+    (unless (= (direct-generated-capture-case) 18) (return 3))
+    42))

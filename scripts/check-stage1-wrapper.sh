@@ -521,7 +521,7 @@ EOF
     # natively, and it caught a real producer bug in #5712.
     #
     # That acceptance is enforced rather than only described (#5778): this gate
-    # has a 26000ms cap in scripts/check-ci-timing-budgets.sh and is denylisted
+    # has a 36000ms cap in scripts/check-ci-timing-budgets.sh and is denylisted
     # in scripts/analyze-ci-timing-trends.sh, so the trend report no longer
     # re-raises it. Adding another case of this weight here moves the measured
     # row, so change the cap in the same commit rather than after CI says so.

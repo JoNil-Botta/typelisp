@@ -252,14 +252,24 @@
       (match func
         [(compiler_ir_types.CompilerIrFunction.Function _ stored _ _ _)
           (and
-            (= (compiler_ir_types.compiler-ir-param-seq-count stored) 2)
-            (compiler-ir-smoke-param-seq-entry-i64? stored 0 "value" 2)
+            (= (compiler_ir_types.compiler-ir-param-seq-count
+              (compiler_ir_types.compiler-ir-global-shared-view stored)) 2)
+            (compiler-ir-smoke-param-seq-entry-i64?
+              (compiler_ir_types.compiler-ir-global-shared-view stored)
+              0
+              "value"
+              2)
             (compiler-ir-smoke-param-seq-entry-bool? stored 1 "flag" 5))])
       (match cloned
         [(compiler_ir_types.CompilerIrFunction.Function _ stored _ _ _)
           (and
-            (= (compiler_ir_types.compiler-ir-param-seq-count stored) 2)
-            (compiler-ir-smoke-param-seq-entry-i64? stored 0 "value" 2)
+            (= (compiler_ir_types.compiler-ir-param-seq-count
+              (compiler_ir_types.compiler-ir-global-shared-view stored)) 2)
+            (compiler-ir-smoke-param-seq-entry-i64?
+              (compiler_ir_types.compiler-ir-global-shared-view stored)
+              0
+              "value"
+              2)
             (compiler-ir-smoke-param-seq-entry-bool? stored 1 "flag" 5))]))))
 
 (define (compiler-ir-smoke-function-seq-count-two?
@@ -1235,7 +1245,10 @@
                     (compiler_ir_types.compiler-ir-instr-seq-empty))))))))]
     [params : compiler_ir_types.CompilerIrParamSeq
       (compiler_ir_types.compiler-ir-param-seq-prepend
-        (compiler_ir_types.CompilerIrParam.Param "group" signature-ty 0)
+        (compiler_ir_types.CompilerIrParam.Param
+          "group"
+          (ast.ast-global-shared-view signature-ty)
+          0)
         (compiler_ir_types.compiler-ir-param-seq-empty))]
     [program : compiler_ir_types.CompilerIrProgram
       (compiler_ir_types.CompilerIrProgram.Program

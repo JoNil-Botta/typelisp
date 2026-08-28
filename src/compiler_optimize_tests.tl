@@ -6189,7 +6189,10 @@
 
 (define (opt-divrem-test-params [ty : compiler_ast_types.AstType]) : compiler_ir_types.CompilerIrParamSeq
   (compiler_ir_types.compiler-ir-param-seq-prepend
-    (compiler_ir_types.CompilerIrParam.Param "lhs" ty 0)
+    (compiler_ir_types.CompilerIrParam.Param
+      "lhs"
+      (compiler_ast_types.ast-global-shared-view ty)
+      0)
     (compiler_ir_types.compiler-ir-param-seq-prepend
       (compiler_ir_types.CompilerIrParam.Param "rhs" ty 1)
       (compiler_ir_types.compiler-ir-param-seq-empty))))
@@ -7455,7 +7458,7 @@
       (compiler_optimize.opt-sccp-blocks
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (compiler_ir_types.compiler-ir-param-seq-empty)
-        sccp-input)]
+        (compiler_optimize.compiler-opt-global-shared-view sccp-input))]
     (cond
       [(not (opt_i64_i64_map.contains? (& table) symbols.konst)) 1]
       [(not
@@ -13929,7 +13932,9 @@
         (compiler_optimize.compiler-opt-global-shared-view blocks))]
     [redef : compiler_ir_types.CompilerIrBlockList (opt-rule-a-redef-blocks)]
     [after-redef : compiler_ir_types.CompilerIrBlockList
-      (opt-rule-a-run (compiler_ir_types.compiler-ir-param-seq-empty) redef)]
+      (opt-rule-a-run
+        (compiler_ir_types.compiler-ir-param-seq-empty)
+        (compiler_optimize.compiler-opt-global-shared-view redef))]
     (cond
       [(not
           (=
@@ -16592,7 +16597,7 @@
             (compiler_ast_types.AstType.I64)
             1)
           (compiler_ir_types.compiler-ir-param-seq-empty)))
-      ret
+      (compiler_ast_types.ast-global-shared-view ret)
       3
       (compiler_ir_types.compiler-ir-block-cons
         (compiler_ir_types.CompilerIrBlock.Block
@@ -25045,9 +25050,11 @@
     [source-callee-name : i64 (opt-test-symbol "inline_source_collision")]
     [source-caller-name : i64 (opt-test-symbol "source_collision_main")]
     [private-params : compiler_ir_types.CompilerIrParamSeq
-      (opt-inline-private-memory-test-params private-ty)]
+      (opt-inline-private-memory-test-params
+        (compiler_optimize.compiler-opt-global-shared-view private-ty))]
     [source-params : compiler_ir_types.CompilerIrParamSeq
-      (opt-inline-private-memory-test-params source-ty)]
+      (opt-inline-private-memory-test-params
+        (compiler_optimize.compiler-opt-global-shared-view source-ty))]
     [private-callee : compiler_ir_types.CompilerIrFunction
       (opt-inline-private-memory-test-callee
         private-callee-name
@@ -29064,11 +29071,12 @@
       (compiler_optimize.opt-sccp-blocks
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
         (compiler_ir_types.compiler-ir-param-seq-empty)
-        branch-source)]
+        (compiler_optimize.compiler-opt-global-shared-view branch-source))]
     [branch-context-result : compiler_optimize.OptBlockCtxResult
       (compiler_optimize.opt-sccp-blocks-with-context-result
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        (compiler_optimize.opt-cfg-context-build branch-source)
+        (compiler_optimize.opt-cfg-context-build
+          (compiler_optimize.compiler-opt-global-shared-view branch-source))
         (compiler_ir_types.compiler-ir-param-seq-empty)
         branch-source)]
     [branch-context : compiler_ir_types.CompilerIrBlockList
@@ -32687,7 +32695,10 @@
       (compiler_ast_types.AstType.Bool)
       0)
     (compiler_ir_types.compiler-ir-param-seq-prepend
-      (compiler_ir_types.CompilerIrParam.Param "left" ty 1)
+      (compiler_ir_types.CompilerIrParam.Param
+        "left"
+        (compiler_ast_types.ast-global-shared-view ty)
+        1)
       (compiler_ir_types.compiler-ir-param-seq-prepend
         (compiler_ir_types.CompilerIrParam.Param "right" ty 2)
         (compiler_ir_types.compiler-ir-param-seq-empty)))))
@@ -32769,7 +32780,10 @@
 
 (define (opt-ssa-fixed-handle-loop-params [ty : compiler_ast_types.AstType]) : compiler_ir_types.CompilerIrParamSeq
   (compiler_ir_types.compiler-ir-param-seq-prepend
-    (compiler_ir_types.CompilerIrParam.Param "seed" ty 0)
+    (compiler_ir_types.CompilerIrParam.Param
+      "seed"
+      (compiler_ast_types.ast-global-shared-view ty)
+      0)
     (compiler_ir_types.compiler-ir-param-seq-prepend
       (compiler_ir_types.CompilerIrParam.Param "next" ty 1)
       (compiler_ir_types.compiler-ir-param-seq-prepend
@@ -32859,9 +32873,12 @@
   (compiler_ir_types.CompilerIrFunction.Function
     (opt-test-symbol "ssa_fixed_handle_address_taken")
     (compiler_ir_types.compiler-ir-param-seq-prepend
-      (compiler_ir_types.CompilerIrParam.Param "value" ty 0)
+      (compiler_ir_types.CompilerIrParam.Param
+        "value"
+        (compiler_ast_types.ast-global-shared-view ty)
+        0)
       (compiler_ir_types.compiler-ir-param-seq-empty))
-    ty
+    (compiler_ast_types.ast-global-shared-view ty)
     3
     (compiler_ir_types.compiler-ir-block-cons
       (compiler_ir_types.CompilerIrBlock.Block
@@ -32886,9 +32903,12 @@
   (compiler_ir_types.CompilerIrFunction.Function
     (opt-test-symbol "ssa_fixed_handle_unsupported_dst")
     (compiler_ir_types.compiler-ir-param-seq-prepend
-      (compiler_ir_types.CompilerIrParam.Param "value" ty 0)
+      (compiler_ir_types.CompilerIrParam.Param
+        "value"
+        (compiler_ast_types.ast-global-shared-view ty)
+        0)
       (compiler_ir_types.compiler-ir-param-seq-empty))
-    ty
+    (compiler_ast_types.ast-global-shared-view ty)
     2
     (compiler_ir_types.compiler-ir-block-cons
       (compiler_ir_types.CompilerIrBlock.Block

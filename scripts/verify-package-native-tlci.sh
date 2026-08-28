@@ -19,8 +19,8 @@ native_link_detect_host
 # hydrated dependency surface bypasses. Removing stdlib.array removes ten
 # declarations from the consumer prefix on both hosts.
 case "$NL_HOST_OS" in
-    windows) TRUSTED_PREFIX_SKIPPED=213 ;;
-    *) TRUSTED_PREFIX_SKIPPED=208 ;;
+    windows) TRUSTED_PREFIX_SKIPPED=214 ;;
+    *) TRUSTED_PREFIX_SKIPPED=209 ;;
 esac
 
 COMPILER=${1:-${TYPELISP_BIN:-}}

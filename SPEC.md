@@ -6455,6 +6455,19 @@ are parsed into the same plan but currently produce focused unsupported-
 semantics diagnostics. Malformed, duplicated, or out-of-order options are
 rejected during macro expansion.
 
+The pre-dispatch byte-Debug core used by future `?` formatting is nevertheless
+defined for `String`, borrowed `str`, and `char`. String/str output uses double
+quotes and char output uses single quotes. Printable ASCII `0x20..0x7e` is
+literal except for backslash and the active delimiter; the inactive quote is
+literal. NUL, tab, LF, CR, backslash, and the active delimiter use `\\0`,
+`\\t`, `\\n`, `\\r`, `\\\\`, and a backslash plus that delimiter. Every other
+byte uses lowercase fixed-width `\\xNN`. The result is therefore ASCII-only
+even for bytes above `0x7f`; this byte-oriented rule is an approved difference
+from Rust's Unicode-oriented Debug. A checked count pass completes before one
+backing-byte allocation and the write pass, and signed-`i64` length overflow
+traps before deriving or writing a destination. This core does not by itself
+enable `?`, `#?`, `x?`, or `X?` selector dispatch.
+
 The `p` selector accepts direct `(Ptr T)` and `(MutPtr T)` values, plus a shared
 borrow whose referent has either raw-pointer type. It never dereferences the raw
 pointer. Formatting exposes its address through `ptr->int`, so the macro call

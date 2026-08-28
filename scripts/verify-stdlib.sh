@@ -267,6 +267,8 @@ stdlib/tests/arena_patterns.tl|42|-|-|-
 stdlib/tests/byte_buf_api.tl|42|-|-
 stdlib/tests/byte_buf_core_api.tl|42|-|-
 stdlib/tests/format_api.tl|42|-|-|-
+stdlib/tests/format_debug_bytes.tl|42|-|-|-
+stdlib/tests/format_debug_length_overflow.tl|134|-|literal:format: Debug output length overflow|-
 stdlib/tests/format_exponent.tl|42|-|-|-
 stdlib/tests/format_exponent_io.tl|42|printf:1.234e4\n|literal:1E-45|-
 stdlib/tests/format_exponent_length_overflow.tl|134|-|literal:format: exponent output length overflow|-

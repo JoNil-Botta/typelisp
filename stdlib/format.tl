@@ -62,6 +62,186 @@
       [else
         (format-runtime-abort-string "format: unsupported non-printable char")])))
 
+;: Classify one byte for delimiter-aware Debug escaping.
+;:
+;: Class 0 is literal, 1..6 are NUL/tab/LF/CR/backslash/active-delimiter,
+;: and 7 is fixed-width hexadecimal. Keeping this decision in one function
+;: makes the count and write passes use exactly the same escape policy.
+(define (format-debug-byte-class [byte : u8] [delimiter : u8]) : i64
+  (let
+    [code : i64 (cast byte : i64)]
+    (cond
+      [(= code 0) 1]
+      [(= code 9) 2]
+      [(= code 10) 3]
+      [(= code 13) 4]
+      [(= code 92) 5]
+      [(= byte delimiter) 6]
+      [(and (>= code 32) (<= code 126)) 0]
+      [else 7])))
+
+;: Return the byte width of one classified Debug escape.
+(define (format-debug-byte-width [escape-class : i64]) : i64
+  (if (= escape-class 0)
+    1
+    (if (= escape-class 7)
+      4
+      2)))
+
+;: Add one escape width while keeping output length in signed-i64 range.
+(define (format-debug-checked-length-add [current : i64] [amount : i64]) : i64
+  (if (> current (- 9223372036854775807 amount))
+    (format-runtime-abort-string "format: Debug output length overflow")
+    (+ current amount)))
+
+;: Read either a raw range byte or the inline byte used by the char wrapper.
+(define (format-debug-source-byte
+  [source : (Ptr u8)]
+  [index : i64]
+  [single-byte : u8]
+  [single-byte-source? : bool]) : u8
+  (if single-byte-source?
+    single-byte
+    (unsafe
+      (ptr-read (ptr-offset source index)))))
+
+;: Count the exact quoted Debug output before allocation or destination writes.
+(define (format-debug-rendered-length
+  [source : (Ptr u8)]
+  [source-len : i64]
+  [single-byte : u8]
+  [single-byte-source? : bool]
+  [delimiter : u8]) : i64
+  (let
+    [index : i64 0]
+    [output-len : i64 2]
+    (begin
+      (while (< index source-len)
+        (let
+          [byte : u8
+            (format-debug-source-byte
+              source
+              index
+              single-byte
+              single-byte-source?)]
+          [escape-class : i64 (format-debug-byte-class byte delimiter)]
+          (begin
+            (set!
+              output-len
+              (format-debug-checked-length-add
+                output-len
+                (format-debug-byte-width escape-class)))
+            (set! index (+ index 1)))))
+      output-len)))
+
+;: Convert one four-bit value to a lowercase ASCII hexadecimal digit.
+(define (format-debug-hex-digit [value : i64]) : u8
+  (cast
+    (if (< value 10)
+      (+ 48 value)
+      (+ 87 value))
+    : u8))
+
+;: Write one byte into a caller-validated Debug destination range.
+(define (format-debug-write-code!
+  [dst : (MutPtr u8)]
+  [offset : i64]
+  [byte : u8]) : unit
+  (unsafe
+    (ptr-write! (ptr-offset dst offset) byte)))
+
+;: Write one classified Debug byte and return the next destination cursor.
+(define (format-debug-write-byte!
+  [dst : (MutPtr u8)]
+  [cursor : i64]
+  [byte : u8]
+  [escape-class : i64]) : i64
+  (begin
+    (if (= escape-class 0)
+      (format-debug-write-code! dst cursor byte)
+      (begin
+        (format-debug-write-code! dst cursor (cast 92 : u8))
+        (match escape-class
+          [1 (format-debug-write-code! dst (+ cursor 1) (cast 48 : u8))]
+          [2 (format-debug-write-code! dst (+ cursor 1) (cast 116 : u8))]
+          [3 (format-debug-write-code! dst (+ cursor 1) (cast 110 : u8))]
+          [4 (format-debug-write-code! dst (+ cursor 1) (cast 114 : u8))]
+          [5 (format-debug-write-code! dst (+ cursor 1) (cast 92 : u8))]
+          [6 (format-debug-write-code! dst (+ cursor 1) byte)]
+          [_
+            (begin
+              (format-debug-write-code! dst (+ cursor 1) (cast 120 : u8))
+              (format-debug-write-code!
+                dst
+                (+ cursor 2)
+                (format-debug-hex-digit (/ (cast byte : i64) 16)))
+              (format-debug-write-code!
+                dst
+                (+ cursor 3)
+                (format-debug-hex-digit (% (cast byte : i64) 16))))])))
+    (+ cursor (format-debug-byte-width escape-class))))
+
+;: Render a byte range with one active quote delimiter.
+;:
+;: The count pass completes, including every checked length addition, before
+;: allocation or destination derivation. The write pass then fills exactly one
+;: fresh String allocation without constructing per-byte chunk Strings.
+(define (format-debug-bytes-core
+  [source : (Ptr u8)]
+  [source-len : i64]
+  [single-byte : u8]
+  [single-byte-source? : bool]
+  [delimiter : u8]) : String
+  (let
+    [output-len : i64
+      (format-debug-rendered-length
+        source
+        source-len
+        single-byte
+        single-byte-source?
+        delimiter)]
+    [dst : (MutPtr u8) (string.string-runtime-alloc output-len)]
+    [index : i64 0]
+    [cursor : i64 1]
+    (begin
+      (format-debug-write-code! dst 0 delimiter)
+      (while (< index source-len)
+        (let
+          [byte : u8
+            (format-debug-source-byte
+              source
+              index
+              single-byte
+              single-byte-source?)]
+          [escape-class : i64 (format-debug-byte-class byte delimiter)]
+          (begin
+            (set!
+              cursor
+              (format-debug-write-byte! dst cursor byte escape-class))
+            (set! index (+ index 1)))))
+      (format-debug-write-code! dst cursor delimiter)
+      (unsafe
+        (string-from-bytes (ptr-cast dst : (Ptr u8)) output-len)))))
+
+;: Render owned String or borrowed str bytes as double-quoted Debug text.
+(define (format-debug-string-core [value : (& value str)]) : String
+  (format-debug-bytes-core
+    (unsafe
+      (string-data value))
+    (string.string-length value)
+    (cast 0 : u8)
+    false
+    (cast 34 : u8)))
+
+;: Render one byte-oriented char as single-quoted Debug text.
+(define (format-debug-char-core [value : char]) : String
+  (format-debug-bytes-core
+    (ptr-null : (Ptr u8))
+    1
+    (cast value : u8)
+    true
+    (cast 39 : u8)))
+
 ;: Common runtime formatting options produced by the literal template plan.
 ;:
 ;: Alignment uses `0` for the value category's default, `1` for left, `2` for

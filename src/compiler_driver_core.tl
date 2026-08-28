@@ -1480,24 +1480,28 @@
       (begin
         (ci.intern-profile-reset! left-address)
         (ci.intern-profile-reset! right-address)
-        (ci.intern-compat-state-reset! left-intern)
-        (ci.intern-compat-state-reset! right-intern)
+        (ci.intern-compat-state-reset! (&mut left-intern))
+        (ci.intern-compat-state-reset! (&mut right-intern))
         (let
           [left-source : i64
-            (ci.intern-compat-state-intern left-intern "left-profile-source")]
+            (ci.intern-compat-state-intern
+              (&mut left-intern)
+              "left-profile-source")]
           [right-source : i64
-            (ci.intern-compat-state-intern right-intern "right-profile-source")]
+            (ci.intern-compat-state-intern
+              (&mut right-intern)
+              "right-profile-source")]
           [left-canonical : i64
             (ci.intern-compat-state-generated-canonical-name
-              left-intern
+              (&mut left-intern)
               "left-profile-canonical")]
           [left-canonical-again : i64
             (ci.intern-compat-state-generated-canonical-name
-              left-intern
+              (&mut left-intern)
               "left-profile-canonical")]
           [right-generated : i64
             (ci.intern-compat-state-generated-name
-              right-intern
+              (&mut right-intern)
               "right-profile-generated")]
           (begin
             ;; A known larger observation proves max and total use the same
@@ -1516,7 +1520,7 @@
               left-canonical-again
               "canonical generated insertion is counted once")
             (ci.intern-profile-reset! right-address)
-            (ci.intern-compat-state-reset! right-intern)
+            (ci.intern-compat-state-reset! (&mut right-intern))
             (test.assert-i64-eq
               (ci.intern-profile-value
                 left-address

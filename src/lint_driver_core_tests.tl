@@ -1390,16 +1390,16 @@ end
     [platform-linux-count : i64
       (lint_driver_core.selfhost-lint-package-dead-count-for-source
         "pkg/platform_cfg.tl"
-        platform-cfg-source
+        (owned_view.compiler-owned-string-place-shared-view platform-cfg-source)
         platform-linux-decls)]
     [platform-windows-count : i64
       (lint_driver_core.selfhost-lint-package-dead-count-for-source
         "pkg/platform_cfg.tl"
         platform-cfg-source
-        platform-windows-decls)]
+        (owned_view.compiler-owned-shared-view platform-windows-decls))]
     [platform-windows-storage-index : i64
       (lint_driver_core.selfhost-lint-dead-decls-index-of
-        platform-windows-decls
+        (owned_view.compiler-owned-shared-view platform-windows-decls)
         "profile-clock-storage")]
     [qualified-import-decls : lint_driver_core.SelfhostLintDeadDecls
       (selfhost-lint-package-dead-qualified-import-fixture-decls)]

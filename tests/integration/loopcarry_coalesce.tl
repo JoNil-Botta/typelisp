@@ -29,7 +29,10 @@
     0
     (+ 1 (sink (- x 1)))))
 
-(define (count-below [xs : (__tl_dyn-array i64)] [n : i64] [pivot : i64]) : i64
+(define (count-below
+  [xs : (&mut xs (__tl_dyn-array i64))]
+  [n : i64]
+  [pivot : i64]) : i64
   (let
     [store : i64 0]
     [scan : i64 0]
@@ -61,8 +64,8 @@
       ;; xs[scan] < pivot  <=>  scan + s < threshold + s  <=>  scan < threshold,
       ;; so count = threshold (clamped to n). Both calls leave xs unchanged.
       (let
-        [r1 : i64 (count-below xs n (+ 500 s))]
-        [r2 : i64 (count-below xs n (+ 300 s))]
+        [r1 : i64 (count-below (&mut xs) n (+ 500 s))]
+        [r2 : i64 (count-below (&mut xs) n (+ 300 s))]
         (if (and (= r1 500) (= r2 300))
           42
           1)))))

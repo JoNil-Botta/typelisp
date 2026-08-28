@@ -1,5 +1,6 @@
 ;; compiler_profile_summary.tl - bounded deterministic job-owned reports.
 (import stdlib.str_cat_runtime as str_cat)
+(import compiler_owned_view as owned_view)
 (import compiler_profile_state as profile_state)
 (import stdlib.hash)
 (import stdlib.io)
@@ -31,61 +32,81 @@
 (define compiler-profile-summary-exact-table-capacity : i64
   8448)
 
+(defmacro (compiler-profile-summary-array-element-shared-view
+  [items : Expr]
+  [index : Expr]) : Expr
+  `(unsafe
+    (ptr-read (ptr-offset (__tl_array-data ,items) ,index))))
+
 (define (compiler-profile-summary-keys
   [state : profile_state.CompilerProfileState]) : (__tl_dyn-array i64)
-  (profile_state.compiler-profile-state-summary-keys state))
+  (profile_state.compiler-profile-state-summary-keys
+    (profile_state.compiler-profile-state-shared-view state)))
 
 (define (compiler-profile-summary-names
   [state : profile_state.CompilerProfileState]) : (__tl_dyn-array String)
-  (profile_state.compiler-profile-state-summary-names state))
+  (profile_state.compiler-profile-state-summary-names
+    (profile_state.compiler-profile-state-shared-view state)))
 
 (define (compiler-profile-summary-elapsed
   [state : profile_state.CompilerProfileState]) : (__tl_dyn-array i64)
-  (profile_state.compiler-profile-state-summary-elapsed state))
+  (profile_state.compiler-profile-state-summary-elapsed
+    (profile_state.compiler-profile-state-shared-view state)))
 
 (define (compiler-profile-summary-calls
   [state : profile_state.CompilerProfileState]) : (__tl_dyn-array i64)
-  (profile_state.compiler-profile-state-summary-calls state))
+  (profile_state.compiler-profile-state-summary-calls
+    (profile_state.compiler-profile-state-shared-view state)))
 
 (define (compiler-profile-summary-counts
   [state : profile_state.CompilerProfileState]) : (__tl_dyn-array i64)
-  (profile_state.compiler-profile-state-summary-counts state))
+  (profile_state.compiler-profile-state-summary-counts
+    (profile_state.compiler-profile-state-shared-view state)))
 
 (define (compiler-profile-summary-total-elapsed
   [state : profile_state.CompilerProfileState]) : (__tl_dyn-array i64)
-  (profile_state.compiler-profile-state-summary-total-elapsed state))
+  (profile_state.compiler-profile-state-summary-total-elapsed
+    (profile_state.compiler-profile-state-shared-view state)))
 
 (define (compiler-profile-summary-total-calls
   [state : profile_state.CompilerProfileState]) : (__tl_dyn-array i64)
-  (profile_state.compiler-profile-state-summary-total-calls state))
+  (profile_state.compiler-profile-state-summary-total-calls
+    (profile_state.compiler-profile-state-shared-view state)))
 
 (define (compiler-profile-summary-exact-slots
   [state : profile_state.CompilerProfileState]) : (__tl_dyn-array i64)
-  (profile_state.compiler-profile-state-summary-exact-slots state))
+  (profile_state.compiler-profile-state-summary-exact-slots
+    (profile_state.compiler-profile-state-shared-view state)))
 
 (define (compiler-profile-summary-exact-counts
   [state : profile_state.CompilerProfileState]) : (__tl_dyn-array i64)
-  (profile_state.compiler-profile-state-summary-exact-counts state))
+  (profile_state.compiler-profile-state-summary-exact-counts
+    (profile_state.compiler-profile-state-shared-view state)))
 
 (define (compiler-profile-summary-exact-names
   [state : profile_state.CompilerProfileState]) : (__tl_dyn-array String)
-  (profile_state.compiler-profile-state-summary-exact-names state))
+  (profile_state.compiler-profile-state-summary-exact-names
+    (profile_state.compiler-profile-state-shared-view state)))
 
 (define (compiler-profile-summary-exact-keys
   [state : profile_state.CompilerProfileState]) : (__tl_dyn-array i64)
-  (profile_state.compiler-profile-state-summary-exact-keys state))
+  (profile_state.compiler-profile-state-summary-exact-keys
+    (profile_state.compiler-profile-state-shared-view state)))
 
 (define (compiler-profile-summary-exact-elapsed
   [state : profile_state.CompilerProfileState]) : (__tl_dyn-array i64)
-  (profile_state.compiler-profile-state-summary-exact-elapsed state))
+  (profile_state.compiler-profile-state-summary-exact-elapsed
+    (profile_state.compiler-profile-state-shared-view state)))
 
 (define (compiler-profile-summary-exact-calls
   [state : profile_state.CompilerProfileState]) : (__tl_dyn-array i64)
-  (profile_state.compiler-profile-state-summary-exact-calls state))
+  (profile_state.compiler-profile-state-summary-exact-calls
+    (profile_state.compiler-profile-state-shared-view state)))
 
 (define (compiler-profile-summary-exact-top
   [state : profile_state.CompilerProfileState]) : (__tl_dyn-array i64)
-  (profile_state.compiler-profile-state-summary-exact-top state))
+  (profile_state.compiler-profile-state-summary-exact-top
+    (profile_state.compiler-profile-state-shared-view state)))
 
 (define (compiler-profile-summary-exact-scope? [scope : i64]) : bool
   (or
@@ -139,9 +160,11 @@
   (let
     [offset : i64 (compiler-profile-summary-exact-offset scope index)]
     [elapsed-values : (__tl_dyn-array i64)
-      (compiler-profile-summary-exact-elapsed state)]
+      (compiler-profile-summary-exact-elapsed
+        (profile_state.compiler-profile-state-shared-view state))]
     [call-values : (__tl_dyn-array i64)
-      (compiler-profile-summary-exact-calls state)]
+      (compiler-profile-summary-exact-calls
+        (profile_state.compiler-profile-state-shared-view state))]
     (if fresh
       (begin
         (set! (array-ref elapsed-values offset) elapsed)
@@ -166,12 +189,18 @@
       (compiler-profile-summary-exact-table-scope-capacity scope)]
     [table-offset : i64 (compiler-profile-summary-exact-table-offset scope)]
     [dense-offset : i64 (compiler-profile-summary-exact-offset scope 0)]
-    [slots : (__tl_dyn-array i64) (compiler-profile-summary-exact-slots state)]
+    [slots : (__tl_dyn-array i64)
+      (compiler-profile-summary-exact-slots
+        (profile_state.compiler-profile-state-shared-view state))]
     [counts : (__tl_dyn-array i64)
-      (compiler-profile-summary-exact-counts state)]
+      (compiler-profile-summary-exact-counts
+        (profile_state.compiler-profile-state-shared-view state))]
     [names : (__tl_dyn-array String)
-      (compiler-profile-summary-exact-names state)]
-    [keys : (__tl_dyn-array i64) (compiler-profile-summary-exact-keys state)]
+      (compiler-profile-summary-exact-names
+        (profile_state.compiler-profile-state-shared-view state))]
+    [keys : (__tl_dyn-array i64)
+      (compiler-profile-summary-exact-keys
+        (profile_state.compiler-profile-state-shared-view state))]
     [slot : i64 (+ table-offset (% key table-capacity))]
     [probes : i64 0]
     [index : i64 -1]
@@ -207,20 +236,31 @@
                   (set! probes (+ probes 1))))))))
       (if (< index 0)
         (io.panic "compile-profile summary exact table is full")
-        (compiler-profile-summary-record-at! state scope index elapsed fresh)))))
+        (compiler-profile-summary-record-at!
+          (profile_state.compiler-profile-state-shared-view state)
+          scope
+          index
+          elapsed
+          fresh)))))
 
 (define (compiler-profile-summary-reset!
   [state : profile_state.CompilerProfileState]) : unit
   (let
-    [counts : (__tl_dyn-array i64) (compiler-profile-summary-counts state)]
+    [counts : (__tl_dyn-array i64)
+      (compiler-profile-summary-counts
+        (profile_state.compiler-profile-state-shared-view state))]
     [total-elapsed : (__tl_dyn-array i64)
-      (compiler-profile-summary-total-elapsed state)]
+      (compiler-profile-summary-total-elapsed
+        (profile_state.compiler-profile-state-shared-view state))]
     [total-calls : (__tl_dyn-array i64)
-      (compiler-profile-summary-total-calls state)]
+      (compiler-profile-summary-total-calls
+        (profile_state.compiler-profile-state-shared-view state))]
     [exact-slots : (__tl_dyn-array i64)
-      (compiler-profile-summary-exact-slots state)]
+      (compiler-profile-summary-exact-slots
+        (profile_state.compiler-profile-state-shared-view state))]
     [exact-counts : (__tl_dyn-array i64)
-      (compiler-profile-summary-exact-counts state)]
+      (compiler-profile-summary-exact-counts
+        (profile_state.compiler-profile-state-shared-view state))]
     [scope : i64 0]
     [slot : i64 0]
     (begin
@@ -256,7 +296,9 @@
   [count : i64]
   [key : i64]) : i64
   (let
-    [keys : (__tl_dyn-array i64) (compiler-profile-summary-keys state)]
+    [keys : (__tl_dyn-array i64)
+      (compiler-profile-summary-keys
+        (profile_state.compiler-profile-state-shared-view state))]
     [rank : i64 0]
     [found : i64 -1]
     (begin
@@ -274,20 +316,30 @@
   [left : i64]
   [right : i64]) : unit
   (let
-    [keys : (__tl_dyn-array i64) (compiler-profile-summary-keys state)]
-    [names : (__tl_dyn-array String) (compiler-profile-summary-names state)]
+    [keys : (__tl_dyn-array i64)
+      (compiler-profile-summary-keys
+        (profile_state.compiler-profile-state-shared-view state))]
+    [names : (__tl_dyn-array String)
+      (compiler-profile-summary-names
+        (profile_state.compiler-profile-state-shared-view state))]
     [elapsed-values : (__tl_dyn-array i64)
-      (compiler-profile-summary-elapsed state)]
-    [call-values : (__tl_dyn-array i64) (compiler-profile-summary-calls state)]
+      (compiler-profile-summary-elapsed
+        (profile_state.compiler-profile-state-shared-view state))]
+    [call-values : (__tl_dyn-array i64)
+      (compiler-profile-summary-calls
+        (profile_state.compiler-profile-state-shared-view state))]
     [li : i64 (compiler-profile-summary-offset scope left)]
     [ri : i64 (compiler-profile-summary-offset scope right)]
     [key : i64 (array-ref keys li)]
-    [name : String (array-ref names li)]
+    [name : String
+      (compiler-profile-summary-array-element-shared-view names li)]
     [elapsed : i64 (array-ref elapsed-values li)]
     [calls : i64 (array-ref call-values li)]
     (begin
       (set! (array-ref keys li) (array-ref keys ri))
-      (set! (array-ref names li) (array-ref names ri))
+      (set!
+        (array-ref names li)
+        (compiler-profile-summary-array-element-shared-view names ri))
       (set! (array-ref elapsed-values li) (array-ref elapsed-values ri))
       (set! (array-ref call-values li) (array-ref call-values ri))
       (set! (array-ref keys ri) key)
@@ -302,9 +354,12 @@
   (if (<= rank 0)
     unit
     (let
-      [keys : (__tl_dyn-array i64) (compiler-profile-summary-keys state)]
+      [keys : (__tl_dyn-array i64)
+        (compiler-profile-summary-keys
+          (profile_state.compiler-profile-state-shared-view state))]
       [elapsed-values : (__tl_dyn-array i64)
-        (compiler-profile-summary-elapsed state)]
+        (compiler-profile-summary-elapsed
+          (profile_state.compiler-profile-state-shared-view state))]
       [i : i64 (compiler-profile-summary-offset scope rank)]
       [p : i64 (compiler-profile-summary-offset scope (- rank 1))]
       (if (compiler-profile-summary-better?
@@ -313,8 +368,15 @@
         (array-ref keys p)
         (array-ref elapsed-values p))
         (begin
-          (compiler-profile-summary-swap! state scope rank (- rank 1))
-          (compiler-profile-summary-bubble! state scope (- rank 1)))
+          (compiler-profile-summary-swap!
+            (profile_state.compiler-profile-state-shared-view state)
+            scope
+            rank
+            (- rank 1))
+          (compiler-profile-summary-bubble!
+            (profile_state.compiler-profile-state-shared-view state)
+            scope
+            (- rank 1)))
         unit))))
 
 (define (compiler-profile-summary-consider!
@@ -325,14 +387,28 @@
   [elapsed : i64]
   [calls : i64]) : unit
   (let
-    [counts : (__tl_dyn-array i64) (compiler-profile-summary-counts state)]
-    [keys : (__tl_dyn-array i64) (compiler-profile-summary-keys state)]
-    [names : (__tl_dyn-array String) (compiler-profile-summary-names state)]
+    [counts : (__tl_dyn-array i64)
+      (compiler-profile-summary-counts
+        (profile_state.compiler-profile-state-shared-view state))]
+    [keys : (__tl_dyn-array i64)
+      (compiler-profile-summary-keys
+        (profile_state.compiler-profile-state-shared-view state))]
+    [names : (__tl_dyn-array String)
+      (compiler-profile-summary-names
+        (profile_state.compiler-profile-state-shared-view state))]
     [elapsed-values : (__tl_dyn-array i64)
-      (compiler-profile-summary-elapsed state)]
-    [call-values : (__tl_dyn-array i64) (compiler-profile-summary-calls state)]
+      (compiler-profile-summary-elapsed
+        (profile_state.compiler-profile-state-shared-view state))]
+    [call-values : (__tl_dyn-array i64)
+      (compiler-profile-summary-calls
+        (profile_state.compiler-profile-state-shared-view state))]
     [count : i64 (array-ref counts scope)]
-    [found : i64 (compiler-profile-summary-find state scope count key)]
+    [found : i64
+      (compiler-profile-summary-find
+        (profile_state.compiler-profile-state-shared-view state)
+        scope
+        count
+        key)]
     (if (>= found 0)
       (let
         [index : i64 (compiler-profile-summary-offset scope found)]
@@ -343,7 +419,10 @@
           (set!
             (array-ref call-values index)
             (+ (array-ref call-values index) calls))
-          (compiler-profile-summary-bubble! state scope found)))
+          (compiler-profile-summary-bubble!
+            (profile_state.compiler-profile-state-shared-view state)
+            scope
+            found)))
       (let
         [rank : i64
           (if (< count compiler-profile-summary-top-count)
@@ -365,7 +444,10 @@
             (if (< count compiler-profile-summary-top-count)
               (set! (array-ref counts scope) (+ count 1))
               unit)
-            (compiler-profile-summary-bubble! state scope rank))
+            (compiler-profile-summary-bubble!
+              (profile_state.compiler-profile-state-shared-view state)
+              scope
+              rank))
           unit)))))
 
 (define (compiler-profile-summary-note-key!
@@ -376,17 +458,30 @@
   [elapsed : i64]) : unit
   (let
     [total-elapsed : (__tl_dyn-array i64)
-      (compiler-profile-summary-total-elapsed state)]
+      (compiler-profile-summary-total-elapsed
+        (profile_state.compiler-profile-state-shared-view state))]
     [total-calls : (__tl_dyn-array i64)
-      (compiler-profile-summary-total-calls state)]
+      (compiler-profile-summary-total-calls
+        (profile_state.compiler-profile-state-shared-view state))]
     (begin
       (set!
         (array-ref total-elapsed scope)
         (+ (array-ref total-elapsed scope) elapsed))
       (set! (array-ref total-calls scope) (+ (array-ref total-calls scope) 1))
       (if (compiler-profile-summary-exact-scope? scope)
-        (compiler-profile-summary-note-exact! state scope key name elapsed)
-        (compiler-profile-summary-consider! state scope key name elapsed 1)))))
+        (compiler-profile-summary-note-exact!
+          (profile_state.compiler-profile-state-shared-view state)
+          scope
+          key
+          name
+          elapsed)
+        (compiler-profile-summary-consider!
+          (profile_state.compiler-profile-state-shared-view state)
+          scope
+          key
+          name
+          elapsed
+          1)))))
 
 (define (compiler-profile-summary-note!
   [state : profile_state.CompilerProfileState]
@@ -394,13 +489,13 @@
   [name : String]
   [elapsed : i64]) : unit
   (compiler-profile-summary-note-key!
-    state
+    (profile_state.compiler-profile-state-shared-view state)
     scope
     (hash.string-key name)
     name
     elapsed))
 
-(define (compiler-profile-summary-module [name : String]) : String
+(define (compiler-profile-summary-module [name : (& name str)]) : String
   (let
     [length : i64 (string.string-length name)]
     [index : i64 0]
@@ -434,7 +529,7 @@
   (let
     [module : String (compiler-profile-summary-module name)]
     (compiler-profile-summary-note-key!
-      state
+      (profile_state.compiler-profile-state-shared-view state)
       scope
       (hash.string-key module)
       name
@@ -444,13 +539,21 @@
   [state : profile_state.CompilerProfileState]
   [scope : i64]) : unit
   (let
-    [counts : (__tl_dyn-array i64) (compiler-profile-summary-counts state)]
+    [counts : (__tl_dyn-array i64)
+      (compiler-profile-summary-counts
+        (profile_state.compiler-profile-state-shared-view state))]
     [exact-counts : (__tl_dyn-array i64)
-      (compiler-profile-summary-exact-counts state)]
-    [keys : (__tl_dyn-array i64) (compiler-profile-summary-exact-keys state)]
+      (compiler-profile-summary-exact-counts
+        (profile_state.compiler-profile-state-shared-view state))]
+    [keys : (__tl_dyn-array i64)
+      (compiler-profile-summary-exact-keys
+        (profile_state.compiler-profile-state-shared-view state))]
     [elapsed-values : (__tl_dyn-array i64)
-      (compiler-profile-summary-exact-elapsed state)]
-    [top : (__tl_dyn-array i64) (compiler-profile-summary-exact-top state)]
+      (compiler-profile-summary-exact-elapsed
+        (profile_state.compiler-profile-state-shared-view state))]
+    [top : (__tl_dyn-array i64)
+      (compiler-profile-summary-exact-top
+        (profile_state.compiler-profile-state-shared-view state))]
     [count : i64
       (array-ref
         exact-counts
@@ -530,27 +633,41 @@
   [kind : String]) : unit
   (begin
     (if (compiler-profile-summary-exact-scope? scope)
-      (compiler-profile-summary-rank-exact! state scope)
+      (compiler-profile-summary-rank-exact!
+        (profile_state.compiler-profile-state-shared-view state)
+        scope)
       unit)
     (let
-      [counts : (__tl_dyn-array i64) (compiler-profile-summary-counts state)]
-      [names : (__tl_dyn-array String) (compiler-profile-summary-names state)]
+      [counts : (__tl_dyn-array i64)
+        (compiler-profile-summary-counts
+          (profile_state.compiler-profile-state-shared-view state))]
+      [names : (__tl_dyn-array String)
+        (compiler-profile-summary-names
+          (profile_state.compiler-profile-state-shared-view state))]
       [elapsed-values : (__tl_dyn-array i64)
-        (compiler-profile-summary-elapsed state)]
+        (compiler-profile-summary-elapsed
+          (profile_state.compiler-profile-state-shared-view state))]
       [call-values : (__tl_dyn-array i64)
-        (compiler-profile-summary-calls state)]
+        (compiler-profile-summary-calls
+          (profile_state.compiler-profile-state-shared-view state))]
       [exact-names : (__tl_dyn-array String)
-        (compiler-profile-summary-exact-names state)]
+        (compiler-profile-summary-exact-names
+          (profile_state.compiler-profile-state-shared-view state))]
       [exact-elapsed : (__tl_dyn-array i64)
-        (compiler-profile-summary-exact-elapsed state)]
+        (compiler-profile-summary-exact-elapsed
+          (profile_state.compiler-profile-state-shared-view state))]
       [exact-calls : (__tl_dyn-array i64)
-        (compiler-profile-summary-exact-calls state)]
+        (compiler-profile-summary-exact-calls
+          (profile_state.compiler-profile-state-shared-view state))]
       [exact-top : (__tl_dyn-array i64)
-        (compiler-profile-summary-exact-top state)]
+        (compiler-profile-summary-exact-top
+          (profile_state.compiler-profile-state-shared-view state))]
       [total-elapsed : (__tl_dyn-array i64)
-        (compiler-profile-summary-total-elapsed state)]
+        (compiler-profile-summary-total-elapsed
+          (profile_state.compiler-profile-state-shared-view state))]
       [total-calls : (__tl_dyn-array i64)
-        (compiler-profile-summary-total-calls state)]
+        (compiler-profile-summary-total-calls
+          (profile_state.compiler-profile-state-shared-view state))]
       [count : i64 (array-ref counts scope)]
       [rank : i64 0]
       [shown-elapsed : i64 0]
@@ -581,8 +698,8 @@
                 (array-ref call-values index))]
             (begin
               (compiler-profile-summary-line
-                scope-name
-                kind
+                (owned_view.compiler-owned-shared-view scope-name)
+                (owned_view.compiler-owned-shared-view kind)
                 (+ rank 1)
                 (if (compiler-profile-summary-exact-scope? scope)
                   (if (string.eq kind "module")
@@ -596,8 +713,8 @@
               (set! shown-calls (+ shown-calls calls))
               (set! rank (+ rank 1)))))
         (compiler-profile-summary-line
-          scope-name
-          kind
+          (owned_view.compiler-owned-shared-view scope-name)
+          (owned_view.compiler-owned-shared-view kind)
           0
           "<remainder>"
           (- (array-ref total-elapsed scope) shown-elapsed)
@@ -610,11 +727,13 @@
   (let
     [count : i64
       (array-ref
-        (compiler-profile-summary-exact-counts state)
+        (compiler-profile-summary-exact-counts
+          (profile_state.compiler-profile-state-shared-view state))
         (compiler-profile-summary-exact-scope-index scope))]
     [offset : i64 (compiler-profile-summary-exact-offset scope 0)]
     [names : (__tl_dyn-array String)
-      (compiler-profile-summary-exact-names state)]
+      (compiler-profile-summary-exact-names
+        (profile_state.compiler-profile-state-shared-view state))]
     [index : i64 0]
     [found : i64 -1]
     (begin
@@ -629,24 +748,78 @@
     [state : profile_state.CompilerProfileState
       (profile_state.compiler-profile-state-new)]
     (begin
-      (compiler-profile-summary-reset! state)
+      (compiler-profile-summary-reset!
+        (profile_state.compiler-profile-state-shared-view state))
       ;; "target" begins below the retained top eight, then returns to first.
-      (compiler-profile-summary-note! state scope "target" 1)
-      (compiler-profile-summary-note! state scope "a" 10)
-      (compiler-profile-summary-note! state scope "b" 10)
-      (compiler-profile-summary-note! state scope "c" 10)
-      (compiler-profile-summary-note! state scope "d" 10)
-      (compiler-profile-summary-note! state scope "e" 10)
-      (compiler-profile-summary-note! state scope "f" 10)
-      (compiler-profile-summary-note! state scope "g" 10)
-      (compiler-profile-summary-note! state scope "h" 10)
-      (compiler-profile-summary-note! state scope "i" 10)
-      (compiler-profile-summary-note! state scope "target" 100)
-      (compiler-profile-summary-note! state scope "target" 100)
-      (compiler-profile-summary-rank-exact! state scope)
+      (compiler-profile-summary-note!
+        (profile_state.compiler-profile-state-shared-view state)
+        scope
+        "target"
+        1)
+      (compiler-profile-summary-note!
+        (profile_state.compiler-profile-state-shared-view state)
+        scope
+        "a"
+        10)
+      (compiler-profile-summary-note!
+        (profile_state.compiler-profile-state-shared-view state)
+        scope
+        "b"
+        10)
+      (compiler-profile-summary-note!
+        (profile_state.compiler-profile-state-shared-view state)
+        scope
+        "c"
+        10)
+      (compiler-profile-summary-note!
+        (profile_state.compiler-profile-state-shared-view state)
+        scope
+        "d"
+        10)
+      (compiler-profile-summary-note!
+        (profile_state.compiler-profile-state-shared-view state)
+        scope
+        "e"
+        10)
+      (compiler-profile-summary-note!
+        (profile_state.compiler-profile-state-shared-view state)
+        scope
+        "f"
+        10)
+      (compiler-profile-summary-note!
+        (profile_state.compiler-profile-state-shared-view state)
+        scope
+        "g"
+        10)
+      (compiler-profile-summary-note!
+        (profile_state.compiler-profile-state-shared-view state)
+        scope
+        "h"
+        10)
+      (compiler-profile-summary-note!
+        (profile_state.compiler-profile-state-shared-view state)
+        scope
+        "i"
+        10)
+      (compiler-profile-summary-note!
+        (profile_state.compiler-profile-state-shared-view state)
+        scope
+        "target"
+        100)
+      (compiler-profile-summary-note!
+        (profile_state.compiler-profile-state-shared-view state)
+        scope
+        "target"
+        100)
+      (compiler-profile-summary-rank-exact!
+        (profile_state.compiler-profile-state-shared-view state)
+        scope)
       (let
         [target : i64
-          (compiler-profile-summary-exact-find state scope "target")]
+          (compiler-profile-summary-exact-find
+            (profile_state.compiler-profile-state-shared-view state)
+            scope
+            "target")]
         [top-offset : i64
           (*
             (compiler-profile-summary-exact-scope-index scope)
@@ -654,9 +827,13 @@
         [first : i64
           (compiler-profile-summary-exact-offset
             scope
-            (array-ref (compiler-profile-summary-exact-top state) top-offset))]
+            (array-ref
+              (compiler-profile-summary-exact-top
+                (profile_state.compiler-profile-state-shared-view state))
+              top-offset))]
         [exact-names : (__tl_dyn-array String)
-          (compiler-profile-summary-exact-names state)]
+          (compiler-profile-summary-exact-names
+            (profile_state.compiler-profile-state-shared-view state))]
         [rank : i64 0]
         [shown-elapsed : i64 0]
         [shown-calls : i64 0]
@@ -667,22 +844,32 @@
             (& expected)
             "exact recurring row returns to rank one")
           (test.assert-i64-eq
-            (array-ref (compiler-profile-summary-exact-elapsed state) target)
+            (array-ref
+              (compiler-profile-summary-exact-elapsed
+                (profile_state.compiler-profile-state-shared-view state))
+              target)
             201
             "exact recurring row retains elapsed time")
           (test.assert-i64-eq
-            (array-ref (compiler-profile-summary-exact-calls state) target)
+            (array-ref
+              (compiler-profile-summary-exact-calls
+                (profile_state.compiler-profile-state-shared-view state))
+              target)
             3
             "exact recurring row retains call count")
           (while (<
             rank
-            (array-ref (compiler-profile-summary-counts state) scope))
+            (array-ref
+              (compiler-profile-summary-counts
+                (profile_state.compiler-profile-state-shared-view state))
+              scope))
             (let
               [index : i64
                 (compiler-profile-summary-exact-offset
                   scope
                   (array-ref
-                    (compiler-profile-summary-exact-top state)
+                    (compiler-profile-summary-exact-top
+                      (profile_state.compiler-profile-state-shared-view state))
                     (+ top-offset rank)))]
               (begin
                 (set!
@@ -690,25 +877,33 @@
                   (+
                     shown-elapsed
                     (array-ref
-                      (compiler-profile-summary-exact-elapsed state)
+                      (compiler-profile-summary-exact-elapsed
+                        (profile_state.compiler-profile-state-shared-view state))
                       index)))
                 (set!
                   shown-calls
                   (+
                     shown-calls
                     (array-ref
-                      (compiler-profile-summary-exact-calls state)
+                      (compiler-profile-summary-exact-calls
+                        (profile_state.compiler-profile-state-shared-view state))
                       index)))
                 (set! rank (+ rank 1)))))
           (test.assert-i64-eq
             (-
-              (array-ref (compiler-profile-summary-total-elapsed state) scope)
+              (array-ref
+                (compiler-profile-summary-total-elapsed
+                  (profile_state.compiler-profile-state-shared-view state))
+                scope)
               shown-elapsed)
             20
             "exact recurring scope remainder retains elapsed time")
           (test.assert-i64-eq
             (-
-              (array-ref (compiler-profile-summary-total-calls state) scope)
+              (array-ref
+                (compiler-profile-summary-total-calls
+                  (profile_state.compiler-profile-state-shared-view state))
+                scope)
               shown-calls)
             2
             "exact recurring scope remainder retains call count"))))))
@@ -731,104 +926,123 @@
     [right : profile_state.CompilerProfileState
       (profile_state.compiler-profile-state-new)]
     (begin
-      (compiler-profile-summary-reset! left)
-      (compiler-profile-summary-reset! right)
+      (compiler-profile-summary-reset!
+        (profile_state.compiler-profile-state-shared-view left))
+      (compiler-profile-summary-reset!
+        (profile_state.compiler-profile-state-shared-view right))
       ;; Interleave overlapping optimizer and backend identities.
       (compiler-profile-summary-note!
-        left
+        (profile_state.compiler-profile-state-shared-view left)
         compiler-profile-summary-optimizer-pass
         "shared-pass"
         11)
       (compiler-profile-summary-note!
-        right
+        (profile_state.compiler-profile-state-shared-view right)
         compiler-profile-summary-optimizer-pass
         "shared-pass"
         3)
       (compiler-profile-summary-note!
-        left
+        (profile_state.compiler-profile-state-shared-view left)
         compiler-profile-summary-backend-module
         "shared/module::left"
         7)
       (compiler-profile-summary-note!
-        right
+        (profile_state.compiler-profile-state-shared-view right)
         compiler-profile-summary-backend-module
         "shared/module::right"
         19)
       (compiler-profile-summary-note!
-        left
+        (profile_state.compiler-profile-state-shared-view left)
         compiler-profile-summary-optimizer-pass
         "shared-pass"
         5)
-      (compiler-profile-summary-reset! right)
+      (compiler-profile-summary-reset!
+        (profile_state.compiler-profile-state-shared-view right))
       (compiler-profile-summary-note!
-        right
+        (profile_state.compiler-profile-state-shared-view right)
         compiler-profile-summary-optimizer-pass
         "right-only"
         23)
       (compiler-profile-summary-rank-exact!
-        left
+        (profile_state.compiler-profile-state-shared-view left)
         compiler-profile-summary-optimizer-pass)
       (compiler-profile-summary-rank-exact!
-        left
+        (profile_state.compiler-profile-state-shared-view left)
         compiler-profile-summary-backend-module)
       (compiler-profile-summary-rank-exact!
-        right
+        (profile_state.compiler-profile-state-shared-view right)
         compiler-profile-summary-optimizer-pass)
       (let
         [left-names : (__tl_dyn-array String)
-          (compiler-profile-summary-exact-names left)]
+          (compiler-profile-summary-exact-names
+            (profile_state.compiler-profile-state-shared-view left))]
         [right-names : (__tl_dyn-array String)
-          (compiler-profile-summary-exact-names right)]
+          (compiler-profile-summary-exact-names
+            (profile_state.compiler-profile-state-shared-view right))]
         [left-pass : i64
           (compiler-profile-summary-exact-find
-            left
+            (profile_state.compiler-profile-state-shared-view left)
             compiler-profile-summary-optimizer-pass
             "shared-pass")]
         [left-backend : i64
           (compiler-profile-summary-exact-find
-            left
+            (profile_state.compiler-profile-state-shared-view left)
             compiler-profile-summary-backend-module
             "shared/module::left")]
         [right-pass : i64
           (compiler-profile-summary-exact-find
-            right
+            (profile_state.compiler-profile-state-shared-view right)
             compiler-profile-summary-optimizer-pass
             "right-only")]
         [left-pass-top : i64
           (compiler-profile-summary-exact-offset
             compiler-profile-summary-optimizer-pass
-            (array-ref (compiler-profile-summary-exact-top left) 0))]
+            (array-ref
+              (compiler-profile-summary-exact-top
+                (profile_state.compiler-profile-state-shared-view left))
+              0))]
         [right-pass-top : i64
           (compiler-profile-summary-exact-offset
             compiler-profile-summary-optimizer-pass
-            (array-ref (compiler-profile-summary-exact-top right) 0))]
+            (array-ref
+              (compiler-profile-summary-exact-top
+                (profile_state.compiler-profile-state-shared-view right))
+              0))]
         [left-pass-name : String "shared-pass"]
         [right-pass-name : String "right-only"]
         (begin
           (test.assert-i64-eq
-            (array-ref (compiler-profile-summary-exact-elapsed left) left-pass)
+            (array-ref
+              (compiler-profile-summary-exact-elapsed
+                (profile_state.compiler-profile-state-shared-view left))
+              left-pass)
             16
             "left optimizer elapsed survives right reset")
           (test.assert-i64-eq
-            (array-ref (compiler-profile-summary-exact-calls left) left-pass)
+            (array-ref
+              (compiler-profile-summary-exact-calls
+                (profile_state.compiler-profile-state-shared-view left))
+              left-pass)
             2
             "left optimizer calls stay independent")
           (test.assert-i64-eq
             (array-ref
-              (compiler-profile-summary-exact-elapsed left)
+              (compiler-profile-summary-exact-elapsed
+                (profile_state.compiler-profile-state-shared-view left))
               left-backend)
             7
             "left backend row survives right reset")
           (test.assert-i64-eq
             (compiler-profile-summary-exact-find
-              right
+              (profile_state.compiler-profile-state-shared-view right)
               compiler-profile-summary-optimizer-pass
               "shared-pass")
             -1
             "right reset removes only right rows")
           (test.assert-i64-eq
             (array-ref
-              (compiler-profile-summary-exact-elapsed right)
+              (compiler-profile-summary-exact-elapsed
+                (profile_state.compiler-profile-state-shared-view right))
               right-pass)
             23
             "right optimizer row remains independent")

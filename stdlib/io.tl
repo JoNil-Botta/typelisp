@@ -253,7 +253,7 @@
   false)
 
 ;: Copy `text` into NUL-terminated private storage for C library calls.
-(define (c-string [text : String]) : (__tl_dyn-array u8)
+(define (c-string [text : (& text str)]) : (__tl_dyn-array u8)
   (let
     [n : i64 (string-length text)]
     [buf : (__tl_dyn-array u8) (__tl_make-array u8 (+ n 1))]
@@ -266,15 +266,17 @@
       (set! (array-ref buf n) (cast '\0' : u8))
       buf)))
 
-;: Return a mutable pointer to private byte storage.
-(define (array-ptr [buf : (__tl_dyn-array u8)]) : (MutPtr u8)
-  (unsafe
-    (__tl_array-data buf)))
+;: Return a mutable pointer to a dynamic array's private byte storage.
+;: This is a macro so the low-level array-data operation reads the caller's
+;: place without transferring ownership of the array header.
+(defmacro (array-ptr [buf : comptime.Expr]) : (MutPtr u8)
+  `(unsafe
+    (__tl_array-data ,buf)))
 
-;: Return a const pointer to private byte storage.
-(define (array-const-ptr [buf : (__tl_dyn-array u8)]) : (Ptr u8)
-  (unsafe
-    (ptr-cast (__tl_array-data buf) : (Ptr u8))))
+;: Return a const pointer to a dynamic array's private byte storage.
+(defmacro (array-const-ptr [buf : comptime.Expr]) : (Ptr u8)
+  `(unsafe
+    (ptr-cast (__tl_array-data ,buf) : (Ptr u8))))
 
 ;: Return a const pointer to a String's byte storage.
 (define (string-const-ptr [text : (& text str)]) : (Ptr u8)
@@ -612,7 +614,7 @@
           (BigNum r.limbs 0))))))
 
 ;: Compare BigNums a and b; -1 if a<b, 0 if equal, 1 if a>b.
-(define (bn-cmp [a : BigNum] [b : BigNum]) : i64
+(define (bn-cmp [a : (& a BigNum)] [b : (& b BigNum)]) : i64
   (let
     [la : i64 a.len]
     [lb : i64 b.len]
@@ -643,7 +645,7 @@
             res))))))
 
 ;: Limb count of arr with high zero limbs trimmed, starting from hint.
-(define (bn-norm-len [arr : (__tl_dyn-array u64)] [hint : i64]) : i64
+(define (bn-norm-len [arr : (& arr (__tl_dyn-array u64))] [hint : i64]) : i64
   (let
     [i : i64 hint]
     (begin
@@ -652,7 +654,7 @@
       i)))
 
 ;: Sum of BigNums a and b.
-(define (bn-add [a : BigNum] [b : BigNum]) : BigNum
+(define (bn-add [a : (& a BigNum)] [b : (& b BigNum)]) : BigNum
   (let
     [r : (__tl_dyn-array u64) (__tl_make-array u64 stdlib.io.ftoa-cap)]
     [la : i64 a.len]
@@ -684,10 +686,12 @@
         (begin
           (set! (array-ref r i) carry)
           (set! n (+ n 1))))
-      (BigNum r (bn-norm-len r n)))))
+      (let
+        [normalized-len : i64 (bn-norm-len r n)]
+        (BigNum r normalized-len)))))
 
 ;: Product of BigNum a and a value m that fits in 32 bits.
-(define (bn-mul-u32 [a : BigNum] [m : u64]) : BigNum
+(define (bn-mul-u32 [a : (& a BigNum)] [m : u64]) : BigNum
   (let
     [r : (__tl_dyn-array u64) (__tl_make-array u64 stdlib.io.ftoa-cap)]
     [la : i64 a.len]
@@ -706,12 +710,14 @@
           (set! (array-ref r i) (bit-and carry stdlib.io.ftoa-mask32))
           (set! carry (shr carry 32))
           (set! i (+ i 1))))
-      (BigNum r (bn-norm-len r i)))))
+      (let
+        [normalized-len : i64 (bn-norm-len r i)]
+        (BigNum r normalized-len)))))
 
 ;: BigNum a shifted left by n bits.
-(define (bn-shl-bits [a : BigNum] [n : i64]) : BigNum
+(define (bn-shl-bits [a : (& a BigNum)] [n : i64]) : BigNum
   (if (= a.len 0)
-    a
+    (bn-zero)
     (let
       [limb-shift : i64 (/ n 32)]
       [bit-shift : i64 (% n 32)]
@@ -737,17 +743,22 @@
         (when
           (and (not (= bit-shift 0)) (> carry (cast 0 : u64)))
           (set! (array-ref r (+ la limb-shift)) carry))
-        (BigNum r (bn-norm-len r (+ la (+ limb-shift 1))))))))
+        (let
+          [normalized-len : i64 (bn-norm-len r (+ la (+ limb-shift 1)))]
+          (BigNum r normalized-len))))))
 
 ;: Product of BigNum a and the 64-bit value m.
-(define (bn-mul-u64 [a : BigNum] [m : u64]) : BigNum
+(define (bn-mul-u64 [a : (& a BigNum)] [m : u64]) : BigNum
   (let
     [lo : u64 (bit-and m stdlib.io.ftoa-mask32)]
     [hi : u64 (shr m 32)]
     [low : BigNum (bn-mul-u32 a lo)]
     (if (= hi (cast 0 : u64))
       low
-      (bn-add low (bn-shl-bits (bn-mul-u32 a hi) 32)))))
+      (let
+        [high-base : BigNum (bn-mul-u32 a hi)]
+        [high : BigNum (bn-shl-bits high-base 32)]
+        (bn-add low high)))))
 
 ;: BigNum a multiplied by ten raised to p.
 (define (bn-mul-pow10 [a : BigNum] [p : i64]) : BigNum
@@ -762,7 +773,7 @@
       r)))
 
 ;: floor(num/den) as u64, assuming the quotient fits in 60 bits.
-(define (bn-div-floor-u64 [num : BigNum] [den : BigNum]) : u64
+(define (bn-div-floor-u64 [num : (& num BigNum)] [den : (& den BigNum)]) : u64
   (let
     [q : u64 (cast 0 : u64)]
     [bit : i64 59]
@@ -802,7 +813,10 @@
 
 ;: Append one decimal digit to an exact bignum significand.
 (define (float-bn-append-digit [value : BigNum] [digit : i64]) : BigNum
-  (bn-add (bn-mul-u32 value (cast 10 : u64)) (bn-from-u64 (cast digit : u64))))
+  (let
+    [scaled : BigNum (bn-mul-u32 value (cast 10 : u64))]
+    [tail : BigNum (bn-from-u64 (cast digit : u64))]
+    (bn-add scaled tail)))
 
 ;: Parse decimal text into exact sign, significand, and decimal exponent.
 (define (float-parse-decimal [text : String]) : IoFloatMaybeDecimal
@@ -953,7 +967,7 @@
       i)))
 
 ;: Bit length of a non-negative BigNum.
-(define (float-bn-bit-length [value : BigNum]) : i64
+(define (float-bn-bit-length [value : (& value BigNum)]) : i64
   (let
     [len : i64 value.len]
     (if (= len 0)
@@ -963,22 +977,26 @@
         (+ (stdlib.io.ftoa-msb-index (array-ref value.limbs (- len 1))) 1)))))
 
 ;: Floor log2 of the positive rational `num / den`.
-(define (float-ratio-floor-log2 [num : BigNum] [den : BigNum]) : i64
+(define (float-ratio-floor-log2 [num : (& num BigNum)] [den : (& den BigNum)]) : i64
   (let
     [estimate : i64
       (-
         (stdlib.io.float-bn-bit-length num)
         (stdlib.io.float-bn-bit-length den))]
-    [ok : bool
-      (if (>= estimate 0)
-        (>= (bn-cmp num (bn-shl-bits den estimate)) 0)
-        (>= (bn-cmp (bn-shl-bits num (- 0 estimate)) den) 0))]
-    (if ok
-      estimate
-      (- estimate 1))))
+    (if (>= estimate 0)
+      (let
+        [shifted-den : BigNum (bn-shl-bits den estimate)]
+        (if (>= (bn-cmp num shifted-den) 0)
+          estimate
+          (- estimate 1)))
+      (let
+        [shifted-num : BigNum (bn-shl-bits num (- 0 estimate))]
+        (if (>= (bn-cmp shifted-num den) 0)
+          estimate
+          (- estimate 1))))))
 
 ;: Rounded quotient of `num / den`, ties to even.
-(define (float-round-div-u64 [num : BigNum] [den : BigNum]) : u64
+(define (float-round-div-u64 [num : (& num BigNum)] [den : (& den BigNum)]) : u64
   (let
     [q : u64 (bn-div-floor-u64 num den)]
     [twice-num : BigNum (bn-shl-bits num 1)]
@@ -995,8 +1013,12 @@
 ;: Rounded quotient of `num * 2^shift / den`, ties to even.
 (define (float-round-scaled-u64 [num : BigNum] [den : BigNum] [shift : i64]) : u64
   (if (>= shift 0)
-    (stdlib.io.float-round-div-u64 (stdlib.io.bn-shl-bits num shift) den)
-    (stdlib.io.float-round-div-u64 num (stdlib.io.bn-shl-bits den (- 0 shift)))))
+    (let
+      [scaled-num : BigNum (stdlib.io.bn-shl-bits num shift)]
+      (stdlib.io.float-round-div-u64 scaled-num den))
+    (let
+      [scaled-den : BigNum (stdlib.io.bn-shl-bits den (- 0 shift))]
+      (stdlib.io.float-round-div-u64 num scaled-den))))
 
 ;: Reinterpret IEEE-754 binary64 bits as f64.
 (define (float-f64-from-bits [bits : u64]) : f64
@@ -1166,7 +1188,7 @@
             (byte_buf.from-array-prefix buf offset)))))))
 
 ;: Return the host status code for reading `path`.
-(define (read-file-status [path : String]) : i64
+(define (read-file-status [path : (& path str)]) : i64
   (let
     [path-bytes : (__tl_dyn-array u8) (stdlib.io.c-string path)]
     [fd : i64
@@ -1203,7 +1225,7 @@
 
 ;: Write borrowed bytes to `path` using `flags`, returning a host status code.
 (define (write-path-status
-  [path : String]
+  [path : (& path str)]
   [contents : (& contents bytes)]
   [flags : i64]) : i64
   (let
@@ -1221,21 +1243,23 @@
           status)))))
 
 ;: Return the host status code for writing borrowed bytes to `path`.
-(define (write-file-status [path : String] [contents : (& contents bytes)]) : i64
+(define (write-file-status
+  [path : (& path str)]
+  [contents : (& contents bytes)]) : i64
   (stdlib.io.write-path-status
     path
     contents
     (stdlib.io.open-write-truncate-flags)))
 
 ;: Render the raw `write-file` panic payload with path and host status.
-(define (write-file-failure-message [path : String] [status : i64]) : String
+(define (write-file-failure-message [path : (& path str)] [status : i64]) : String
   (str_cat.str-cat
     "tl: write-file failed: "
-    (stdlib.io.error-message (stdlib.io.error-from-owned-status path status))
+    (stdlib.io.error-message (stdlib.io.error-from-status path status))
     "\n"))
 
 ;: Write borrowed bytes to a whole file, aborting on host write failure.
-(define (write-file [path : String] [contents : (& contents bytes)]) : unit
+(define (write-file [path : (& path str)] [contents : (& contents bytes)]) : unit
   (let
     [status : i64 (stdlib.io.write-file-status path contents)]
     (if (= status 0)
@@ -1243,7 +1267,9 @@
       (panic (stdlib.io.write-file-failure-message path status)))))
 
 ;: Return the host status code for appending borrowed bytes to `path`.
-(define (append-file-status [path : String] [contents : (& contents bytes)]) : i64
+(define (append-file-status
+  [path : (& path str)]
+  [contents : (& contents bytes)]) : i64
   (stdlib.io.write-path-status
     path
     contents
@@ -1957,7 +1983,7 @@
   read.bytes)
 
 ;: Return true when a stdin read observed EOF after the read completed.
-(define (stdin-read-eof? [read : StdinRead]) : bool
+(define (stdin-read-eof? [read : (& read StdinRead)]) : bool
   read.eof)
 
 ;: Return the current sticky stdin EOF state without performing a read.
@@ -2127,7 +2153,7 @@
       [(ErrIoBytes error)
         (begin
           (io-edges-test-assert-true
-            (error-not-found? error)
+            (error-not-found? (io-test-global-shared-view error))
             "missing read error kind")
           (io-edges-test-assert-owned-string-eq
             (error-message error)
@@ -2170,8 +2196,8 @@
 
 (cfg
   test
-  (define (io-edges-test-try-file-exists? [path : String]) : ResultIoBool
-    (try-file-exists? (& path))))
+  (define (io-edges-test-try-file-exists? [path : (& path str)]) : ResultIoBool
+    (try-file-exists? path)))
 
 (cfg
   test
@@ -2212,15 +2238,17 @@
 
 (cfg
   test
-  (define (io-edges-test-append-file [path : String] [contents : String]) : unit
-    (append-file (& path) (byte_buf.str-as-bytes (& contents)))))
+  (define (io-edges-test-append-file
+    [path : (& path str)]
+    [contents : (& contents str)]) : unit
+    (append-file path (byte_buf.str-as-bytes contents))))
 
 (cfg
   test
   (define (io-edges-test-expect-invalid-path [error : IoError]) : unit
     (begin
       (io-edges-test-assert-true
-        (error-invalid-path? error)
+        (error-invalid-path? (io-test-global-shared-view error))
         "invalid path error kind")
       (io-edges-test-assert-owned-string-eq
         (error-message error)
@@ -2476,14 +2504,14 @@
     (match result
       [(OkIoRead read)
         (begin
+          (io-handle-test-assert-bool-eq
+            read.eof
+            expected-eof
+            (str_cat.str-cat (string.copy (& message)) " eof"))
           (io-handle-test-assert-owned-string-eq
             (byte_buf.to-string (file-read-bytes read))
             expected-bytes
-            (str_cat.str-cat message " bytes"))
-          (io-handle-test-assert-bool-eq
-            (file-read-eof? read)
-            expected-eof
-            (str_cat.str-cat message " eof")))]
+            (str_cat.str-cat message " bytes")))]
       [(ErrIoRead error)
         (panic (str_cat.str-cat message (error-message error)))])))
 
@@ -2511,13 +2539,13 @@
 
 (cfg
   test
-  (define (io-handle-test-try-read-file [path : String]) : ResultIoBytes
-    (try-read-file (& path))))
+  (define (io-handle-test-try-read-file [path : (& path str)]) : ResultIoBytes
+    (try-read-file path)))
 
 (cfg
   test
-  (define (io-handle-test-try-file-exists? [path : String]) : ResultIoBool
-    (try-file-exists? (& path))))
+  (define (io-handle-test-try-file-exists? [path : (& path str)]) : ResultIoBool
+    (try-file-exists? path)))
 
 (cfg
   test
@@ -2548,8 +2576,8 @@
 
 (cfg
   test
-  (define (io-handle-test-file-open [path : String] [mode : OpenMode]) : ResultIoFile
-    (file-open (& path) mode)))
+  (define (io-handle-test-file-open [path : (& path str)] [mode : OpenMode]) : ResultIoFile
+    (file-open path mode)))
 
 (cfg
   test
@@ -2559,7 +2587,7 @@
 (cfg
   test
   (define (io-handle-test-assert-file-contents
-    [path : String]
+    [path : (& path str)]
     [expected : String]
     [message : String]) : unit
     (match (io-handle-test-try-read-file path)
@@ -2574,7 +2602,7 @@
 (cfg
   test
   (define (io-handle-test-assert-file-exists
-    [path : String]
+    [path : (& path str)]
     [expected : bool]
     [message : String]) : unit
     (match (io-handle-test-try-file-exists? path)
@@ -2595,9 +2623,7 @@
               "abcdef")
             "seed read handle file: ")
           (io-handle-test-expect-open-ok
-            (io-handle-test-file-open
-              (io-test-global-shared-view handle-read-file)
-              OpenRead)
+            (io-handle-test-file-open handle-read-file OpenRead)
             "open read: "))]
       (begin
         (io-handle-test-assert-read-invalid
@@ -2657,9 +2683,7 @@
           "flush"
           "invalid flush handle returns unsupported")
         (io-handle-test-assert-open-not-found
-          (io-handle-test-file-open
-            (io-test-global-shared-view handle-missing-file)
-            OpenRead)
+          (io-handle-test-file-open handle-missing-file OpenRead)
           "missing read open")
         (io-handle-test-assert-open-invalid
           (io-handle-test-file-open "" OpenRead)
@@ -2672,9 +2696,7 @@
         (let
           [truncate-handle : FileHandle
             (io-handle-test-expect-open-ok
-              (io-handle-test-file-open
-                (io-test-global-shared-view handle-truncate-file)
-                OpenWriteTruncate)
+              (io-handle-test-file-open handle-truncate-file OpenWriteTruncate)
               "open truncate: ")]
           (begin
             (io-handle-test-assert-read-unsupported
@@ -2696,7 +2718,7 @@
               (file-close truncate-handle)
               "close truncate handle: ")
             (io-handle-test-assert-file-contents
-              (io-test-global-shared-view handle-truncate-file)
+              handle-truncate-file
               "alpha-beta"
               "truncate writes replace existing file")
             (io-handle-test-assert-unit-unsupported
@@ -2715,9 +2737,7 @@
         (let
           [read-only-handle : FileHandle
             (io-handle-test-expect-open-ok
-              (io-handle-test-file-open
-                (io-test-global-shared-view handle-truncate-file)
-                OpenRead)
+              (io-handle-test-file-open handle-truncate-file OpenRead)
               "open read-only for write test: ")]
           (begin
             (io-handle-test-assert-unit-unsupported
@@ -2739,9 +2759,7 @@
         (let
           [append-handle : FileHandle
             (io-handle-test-expect-open-ok
-              (io-handle-test-file-open
-                (io-test-global-shared-view handle-append-file)
-                OpenWriteAppend)
+              (io-handle-test-file-open handle-append-file OpenWriteAppend)
               "open append existing: ")]
           (begin
             (io-handle-test-assert-ok-unit
@@ -2754,7 +2772,7 @@
               (file-close append-handle)
               "close append handle: ")
             (io-handle-test-assert-file-contents
-              (io-test-global-shared-view handle-append-file)
+              handle-append-file
               "seed-tail"
               "append mode writes at end of file")))
         (let
@@ -2799,9 +2817,7 @@
           (let
             [handle : FileHandle
               (io-handle-test-expect-open-ok
-                (io-handle-test-file-open
-                  (io-test-global-shared-view handle-read-file)
-                  OpenRead)
+                (io-handle-test-file-open handle-read-file OpenRead)
                 "reopen reusable read handle: ")]
             (begin
               (io-handle-test-assert-ok-unit
@@ -2818,9 +2834,7 @@
         windows
         (begin
           (io-handle-test-assert-open-not-found
-            (io-handle-test-file-open
-              (io-test-global-shared-view handle-missing-file)
-              OpenRead)
+            (io-handle-test-file-open handle-missing-file OpenRead)
             "windows missing read handle reports not found")
           (io-handle-test-assert-read-unsupported
             (file-read-chunk (FileHandle 1) 1)

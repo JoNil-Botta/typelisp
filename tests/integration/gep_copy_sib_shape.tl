@@ -43,17 +43,17 @@
   (c i64)
   (d i64))
 
-(define (take [xs : (__tl_dyn-array Quad)] [i : i64]) : Quad
+(define (take [xs : (& xs (__tl_dyn-array Quad))] [i : i64]) : Quad
   (if (> i 1000000)
     (take xs (- i 1000000))
     (array-ref xs i)))
 
-(define (put [xs : (__tl_dyn-array Quad)] [i : i64] [v : Quad]) : unit
+(define (put [xs : (&mut xs (__tl_dyn-array Quad))] [i : i64] [v : Quad]) : unit
   (if (> i 1000000)
     (put xs (- i 1000000) v)
     (set! (array-ref xs i) v)))
 
-(define (take-const [xs : (__tl_dyn-array Quad)] [i : i64]) : Quad
+(define (take-const [xs : (& xs (__tl_dyn-array Quad))] [i : i64]) : Quad
   (if (> i 1000000)
     (take-const xs (- i 1000000))
     (array-ref xs 3)))
@@ -66,18 +66,18 @@
     (begin
       (while (< i 8)
         (begin
-          (put xs i (Quad (+ i 1) (+ i 2) (+ i 3) (+ i 4)))
+          (put (&mut xs) i (Quad (+ i 1) (+ i 2) (+ i 3) (+ i 4)))
           (set! i (+ i 1))))
       (set! i 0)
       (while (< i 8)
         (let
-          [q : Quad (take xs i)]
+          [q : Quad (take (& xs) i)]
           (begin
             (set! acc (+ acc (+ (+ q.a q.b) (+ q.c q.d))))
             (set! i (+ i 1)))))
       ;; xs[3] is (4, 5, 6, 7), so the constant-index read sums to 22.
       (let
-        [q3 : Quad (take-const xs 0)]
+        [q3 : Quad (take-const (& xs) 0)]
         [const-acc : i64 (+ (+ q3.a q3.b) (+ q3.c q3.d))]
         ;; sum over i in 0..7 of (4i + 10) = 4*28 + 80 = 192
         (if (and (= acc 192) (= const-acc 22))

@@ -4,7 +4,7 @@
 (import stdlib.vector)
 (import (vector.vector String) as svec)
 
-(define (env-api-assert-true [condition : bool] [message : String]) : unit
+(define (env-api-assert-true [condition : bool] [message : (& message str)]) : unit
   (if condition
     unit
     (io.panic message)))
@@ -12,13 +12,13 @@
 (define (env-api-assert-i64-eq
   [actual : i64]
   [expected : i64]
-  [message : String]) : unit
+  [message : (& message str)]) : unit
   (env-api-assert-true (= actual expected) message))
 
 (define (env-api-assert-string-eq
   [actual : String]
   [expected : String]
-  [message : String]) : unit
+  [message : (& message str)]) : unit
   (env-api-assert-true (string.eq actual expected) message))
 
 ;: Construct an owned three-byte string containing an interior NUL.

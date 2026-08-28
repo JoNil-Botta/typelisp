@@ -25,7 +25,7 @@
   [width : i64]
   [height : i64]
   [limit : i32]
-  [output : (__tl_dyn-array i32)]) : unit
+  [output : (&mut output (__tl_dyn-array i32))]) : unit
   (let
     [dx : f32 (/ (- x1 x0) (cast width : f32))]
     [dy : f32 (/ (- y1 y0) (cast height : f32))]
@@ -62,7 +62,7 @@
         1
         1
         12
-        output)
+        (&mut output))
       (set! bounded (array-ref output 0))
       (render-scalar-image!
         (cast 3.0 : f32)
@@ -72,7 +72,7 @@
         1
         1
         12
-        output)
+        (&mut output))
       (set! immediate (array-ref output 0))
       (render-scalar-image!
         (cast 0.0 : f32)
@@ -82,7 +82,7 @@
         1
         1
         7
-        output)
+        (&mut output))
       (set! maxed (array-ref output 0))
       (if (and (= bounded 12) (= immediate 0) (= maxed 7))
         42

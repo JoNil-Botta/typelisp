@@ -72,7 +72,7 @@
 
 ;; Return the end index (exclusive) of the digit run that starts at `start`.
 ;; Prelude `and` short-circuits, so `string.char-at` is reached only in bounds.
-(define (scan-int-end [src : String] [start : i64] [n : i64]) : i64
+(define (scan-int-end [src : (& src str)] [start : i64] [n : i64]) : i64
   (let
     [j : i64 start]
     (begin
@@ -258,15 +258,19 @@
 ;; ============================ Evaluator ===================================
 ;; A recursive tree walk over the real `Expr` AST. `Expr.Num` yields its literal;
 ;; each binary node recurses into both children and combines them with the
-;; matching arithmetic op (`/` is integer division). The bound recursive payloads
-;; (`a`/`b`) are pointers to the child enums, passed straight back into `eval`.
-(define (eval [e : Expr]) : i64
+;; matching arithmetic op (`/` is integer division). The borrowed match keeps
+;; ownership of the tree with the caller while each boxed child is visited.
+(define (eval [e : (& e Expr)]) : i64
   (match e
-    [(Expr.Num n) n]
-    [(Expr.Add a b) (+ (eval (__tl-box-place a)) (eval (__tl-box-place b)))]
-    [(Expr.Sub a b) (- (eval (__tl-box-place a)) (eval (__tl-box-place b)))]
-    [(Expr.Mul a b) (* (eval (__tl-box-place a)) (eval (__tl-box-place b)))]
-    [(Expr.Div a b) (/ (eval (__tl-box-place a)) (eval (__tl-box-place b)))]))
+    [(Expr.Num n) (deref n)]
+    [(Expr.Add a b)
+      (+ (eval (& (deref (deref a)))) (eval (& (deref (deref b)))))]
+    [(Expr.Sub a b)
+      (- (eval (& (deref (deref a)))) (eval (& (deref (deref b)))))]
+    [(Expr.Mul a b)
+      (* (eval (& (deref (deref a)))) (eval (& (deref (deref b)))))]
+    [(Expr.Div a b)
+      (/ (eval (& (deref (deref a)))) (eval (& (deref (deref b)))))]))
 
 ;; ============================ End to end ==================================
 ;; Run the full front-end on "2 + 3 * 4":
@@ -287,7 +291,8 @@
     (begin
       (lex "2 + 3 * 4" (&mut toks))
       (let
-        [result : i64 (eval (parse (& toks)))]
+        [expr : Expr (parse (& toks))]
+        [result : i64 (eval (& expr))]
         (begin
           (io.print-format "{}" "calculator result: ")
           (io.println "{}" result)

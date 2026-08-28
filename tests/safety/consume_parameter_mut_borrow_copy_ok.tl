@@ -3,9 +3,7 @@
 (defstruct Payload
   (value i64))
 
-(define (borrow-and-consume
-  [_value : (&mut value i64)]
-  [payload : Payload (:consume)]) : i64
+(define (borrow-and-consume [_value : (&mut value i64)] [payload : Payload]) : i64
   payload.value)
 
 (define (main) : i64

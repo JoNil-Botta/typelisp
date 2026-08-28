@@ -22,6 +22,7 @@
 (import stdlib.test)
 (import stdlib.io)
 (import stdlib.arena)
+(import compiler_owned_view as owned_view)
 
 ;; --- fixtures moved from production compiler_lower.tl -------------------------
 (define (lower-test-generated-name-id [value : String]) : i64
@@ -34,7 +35,7 @@
   (ci.intern-id-from-renderable (ci.intern-generated-canonical-name value)))
 
 (define (lower-test-renderable-name-id-with-state
-  [interns : ci.InternCompatState]
+  [interns : (&mut interns ci.InternCompatState)]
   [value : String]) : ci.InternId
   (ci.intern-id-from-renderable
     (ci.intern-compat-state-generated-canonical-name interns value)))
@@ -154,8 +155,10 @@
         1)]
     [merged : compiler_lower.LowerArrayVarSet
       (compiler_lower.lower-array-var-set-merge left right)]
-    [vars : (__tl_dyn-array i64) merged.vars]
-    [offsets : (__tl_dyn-array i64) merged.offsets]
+    [vars : (__tl_dyn-array i64)
+      (owned_view.compiler-owned-shared-view merged.vars)]
+    [offsets : (__tl_dyn-array i64)
+      (owned_view.compiler-owned-shared-view merged.offsets)]
     (and
       (= merged.count 3)
       (= (array-length vars) 3)
@@ -176,19 +179,21 @@
 ;; threaded accumulators become loop state.
 (define (lower-skip-runtime-until-next-module
   [decls : compiler_ast_types.AstDeclList]) : compiler_ast_types.AstDeclList
-  (match (compiler_ast_types.ast-decl-list-step decls)
+  (match (compiler_ast_types.ast-decl-list-step
+    (owned_view.compiler-owned-shared-view decls))
     [(compiler_ast_types.AstDeclListStep.Nil)
       (compiler_ast_types.ast-decl-list-new)]
     [(compiler_ast_types.AstDeclListStep.Cons decl rest)
       (let
         [rest : compiler_ast_types.AstDeclList rest]
-        (match decl
+        (match (owned_view.compiler-owned-shared-view decl)
           [(compiler_ast_types.AstDecl.Module _) decls]
           [_
             (let
               [kept-rest : compiler_ast_types.AstDeclList
                 (lower-skip-runtime-until-next-module rest)]
-              (if (compiler_lower.lower-type-decl? decl)
+              (if (compiler_lower.lower-type-decl?
+                (owned_view.compiler-owned-shared-view decl))
                 (compiler_ast_types.ast-decl-list-prepend-builder
                   decl
                   kept-rest)
@@ -392,7 +397,7 @@
     (__tl_string_length item.borrowed)))
 (define (main [text : String] [owned : String]) : i64
   (let
-    [borrowed : (RefBox text) (ref-box-borrowed (& text) owned)]
+    [borrowed : (RefBox text) (ref-box-borrowed (& text) (clone owned))]
     [owned-box : (RefBox text) (ref-box-owned (& text) owned)]
     (+ (ref-box-length borrowed) (ref-box-length owned-box))))")
 
@@ -427,7 +432,7 @@
 (define (main [text : String] [old : String] [replacement : String] [owned : String]) : i64
   (let
     [borrowed : (ReplaceResult text old replacement)
-      (replace-borrowed (& text) (& old) (& replacement) owned)]
+      (replace-borrowed (& text) (& old) (& replacement) (clone owned))]
     [owned-result : (ReplaceResult text old replacement)
       (replace-owned (& text) (& old) (& replacement) owned)]
     (+ (replace-score borrowed) (replace-score owned-result))))")
@@ -667,7 +672,9 @@
       (compiler_lower.lower-compiler-source "(define (main) : i64 0)")]
     [generation-after : i64 (ci.intern-generation)]
     [_restore : unit
-      (compiler_load.compiler-load-session-state-use! previous-state)]
+      (compiler_load.compiler-load-session-state-use!
+        (compiler_load.compiler-load-session-state-shared-view
+          (& previous-state)))]
     (and
       (compiler_load.compiler-load-session-state-standalone-reset-safe?
         previous-state)
@@ -825,7 +832,9 @@
         (compiler-lower-maybe-span-start-ok?
           (compiler_lower.lower-ast-expr-span
             pools
-            (compiler_ast_types.AstExpr.Call plain items))
+            (compiler_ast_types.AstExpr.Call
+              plain
+              (owned_view.compiler-owned-shared-view items)))
           17
           5)
         (set! ok false))
@@ -863,7 +872,7 @@
               (box
                 (compiler_ast_types.AstWithResource.WithResource
                   resources
-                  items))))
+                  (owned_view.compiler-owned-shared-view items)))))
           17
           5)
         (set! ok false))
@@ -918,7 +927,7 @@
     [(compiler_lower.ResultCompilerLower.Err diag-box)
       (let
         [diag : compiler_diagnostic.CompilerDiagnostic
-          (__tl-box-place diag-box)]
+          (compiler_diagnostic.compiler-diagnostic-box-shared-view diag-box)]
         (and
           (string.eq
             (compiler_diagnostic.compiler-diagnostic-message diag)
@@ -1057,11 +1066,31 @@
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
-            (= (lower-test-function-load-count functions "owned-len") 0)
-            (= (lower-test-function-load-count functions "shared-len") 0)
-            (= (lower-test-function-load-count functions "mut-len") 0)
-            (= (lower-test-function-return-count functions "owned-len") 1)
-            (= (lower-test-function-return-count functions "shared-len") 1)
+            (=
+              (lower-test-function-load-count
+                (owned_view.compiler-owned-shared-view functions)
+                "owned-len")
+              0)
+            (=
+              (lower-test-function-load-count
+                (owned_view.compiler-owned-shared-view functions)
+                "shared-len")
+              0)
+            (=
+              (lower-test-function-load-count
+                (owned_view.compiler-owned-shared-view functions)
+                "mut-len")
+              0)
+            (=
+              (lower-test-function-return-count
+                (owned_view.compiler-owned-shared-view functions)
+                "owned-len")
+              1)
+            (=
+              (lower-test-function-return-count
+                (owned_view.compiler-owned-shared-view functions)
+                "shared-len")
+              1)
             (= (lower-test-function-return-count functions "mut-len") 1))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
@@ -1094,7 +1123,7 @@
 ;; dynamic-array fat `{ptr, len}` layout.
 (define (compiler-lower-fixed-array-access-source) : String
   "(define (get [a : (Array i64 3)] [i : i64]) : i64 (array-ref a i))
-(define (put [a : (Array i64 3) (:consume)] [i : i64] [v : i64]) : unit (set! (array-ref a i) v))
+(define (put [a : (Array i64 3)] [i : i64] [v : i64]) : unit (set! (array-ref a i) v))
 (define (main) : i64 0)")
 
 ;; A direct fixed-array borrow must be packed into the two-word Slice ABI at a
@@ -1124,22 +1153,33 @@
         (match program
           [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
             (and
-              (= (lower-test-function-pack-count functions "main") 1)
               (=
-                (lower-test-function-pack-shape-count functions "main" pools)
+                (lower-test-function-pack-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "main")
+                1)
+              (=
+                (lower-test-function-pack-shape-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "main"
+                  (owned_view.compiler-owned-shared-view pools))
                 1)
               (=
                 (lower-test-function-pack-count
-                  functions
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
                   "slice-from-array-ref")
                 1)
               (=
                 (lower-test-function-pack-shape-count
-                  functions
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
                   "slice-from-array-ref"
                   pools)
                 1)
-              (= (lower-test-function-pack-count functions "slice-forward") 0))]))]
+              (=
+                (lower-test-function-pack-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "slice-forward")
+                0))]))]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-slice-split-at-source) : String
@@ -1157,22 +1197,34 @@
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
             (=
-              (lower-test-function-call-count functions "split" "tl_oob_abort")
+              (lower-test-function-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "split"
+                "tl_oob_abort")
               1)
             (=
               (lower-test-function-binop-op-count
-                functions
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "split"
                 compiler_ir_types.CompilerIrBinOp.Le)
               1)
             (=
               (lower-test-function-binop-op-count
-                functions
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "split"
                 compiler_ir_types.CompilerIrBinOp.Sub)
               1)
-            (= (lower-test-function-call-count functions "split" "tl_alloc") 0)
-            (>= (lower-test-function-pack-count functions "split") 2))])]
+            (=
+              (lower-test-function-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "split"
+                "tl_alloc")
+              0)
+            (>=
+              (lower-test-function-pack-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "split")
+              2))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-slice-split-at-shape-ok?) : bool
@@ -1212,10 +1264,27 @@
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
-            (= (lower-test-function-call-count functions "main" "tl_alloc") 0)
-            (>= (lower-test-function-alloc-count functions "main") 2)
-            (>= (lower-test-function-addr-of-count functions "main") 2)
-            (>= (lower-test-function-load-count functions "main") 2))])]
+            (=
+              (lower-test-function-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main"
+                "tl_alloc")
+              0)
+            (>=
+              (lower-test-function-alloc-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main")
+              2)
+            (>=
+              (lower-test-function-addr-of-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main")
+              2)
+            (>=
+              (lower-test-function-load-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main")
+              2))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-mut-ref-array-field-access-source) : String
@@ -1386,30 +1455,32 @@
           (match lowered
             [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
               (and
-                (lower-test-function-defined? functions "tl::stdlib.io/io-len")
+                (lower-test-function-defined?
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "tl::stdlib.io/io-len")
                 (not
                   (lower-test-function-defined?
-                    functions
+                    (compiler_ir_types.compiler-ir-global-shared-view functions)
                     "stdlib/string.tl::stdlib.string/string.string-length"))
                 (not
                   (lower-test-function-defined?
-                    functions
+                    (compiler_ir_types.compiler-ir-global-shared-view functions)
                     "string.tl::stdlib.string/string.string-length"))
                 (not
                   (lower-test-function-defined?
-                    functions
+                    (compiler_ir_types.compiler-ir-global-shared-view functions)
                     "stdlib/string.tl::stdlib.string/string-length"))
                 (not
                   (lower-test-function-defined?
-                    functions
+                    (compiler_ir_types.compiler-ir-global-shared-view functions)
                     "string.tl::stdlib.string/string-length")))])]
         [(compiler_lower.ResultCompilerLower.Err _) false])]
     [(compiler_parse_core.ResultAstProgram.Err _) false]))
 
 (define (compiler-lower-string-runtime-source) : String
-  "(define (io.emit-string [text : String]) : unit
+  "(define (io.emit-string [text : (& text str)]) : unit
   unit)
-(define (io.emit-str [text : String]) : unit
+(define (io.emit-str [text : (& text str)]) : unit
   (io.emit-string text))
 (define (string.append [left : (& left str)] [right : (& right str)]) : String
   \"joined\")
@@ -1430,8 +1501,8 @@
     [spaced : String \" x\"]
     [digits : String \"7\"]
     (begin
-      (io.emit-string joined)
-      (io.emit-str extended)
+      (io.emit-string (& joined))
+      (io.emit-str (& extended))
       (+ (__tl_string_length (& joined))
         (+ (__tl_string_length (& extended))
           (+ (__tl_string_to_int (& digits))
@@ -1456,14 +1527,14 @@
       (+ (__tl_string_length four) (__tl_string_length five)))))")
 
 (define (compiler-lower-emit-string-stdlib-source) : String
-  "(define (io.emit-string [text : String]) : unit
+  "(define (io.emit-string [text : (& text str)]) : unit
   unit)
-(define (io.emit-str [text : String]) : unit
+(define (io.emit-str [text : (& text str)]) : unit
   (io.emit-string text))
 (define (main [text : String]) : i64
   (begin
-    (io.emit-string text)
-    (io.emit-str text)
+    (io.emit-string (& text))
+    (io.emit-str (& text))
     0))")
 
 (define (compiler-lower-borrowed-str-param-source) : String
@@ -1552,14 +1623,14 @@
         (__tl_string_length (io.read-stdin-bytes count)))))")
 
 (define (compiler-lower-env-builtin-source) : String
-  "(define (var-exists? [name : String]) : bool true)
-(define (var-value [name : String]) : String name)
+  "(define (var-exists? [name : (& name str)]) : bool true)
+(define (var-value [name : (& name str)]) : String \"value\")
 (define (path-separator) : String \":\")
 (define (main [name : String]) : i64
   (let
     [separator : String (path-separator)]
-    [value : String (var-value name)]
-    (if (var-exists? name)
+    [value : String (var-value (& name))]
+    (if (var-exists? (& name))
       (+ (__tl_string_length value) (__tl_string_length separator))
       (__tl_string_length separator))))")
 
@@ -1810,23 +1881,23 @@
   (begin
     (clone
       (tuple
-        (CloneChunk0 s)
-        (CloneChunk1 s)
-        (CloneChunk2 s)
-        (CloneChunk3 s)
-        (CloneChunk4 s)
-        (CloneChunk5 s)
-        (CloneChunk6 s)
-        (CloneChunk7 s)
-        (CloneChunk8 s)
-        (CloneChunk9 s)
-        (CloneChunk10 s)
-        (CloneChunk11 s)
-        (CloneChunk12 s)
-        (CloneChunk13 s)
-        (CloneChunk14 s)
-        (CloneChunk15 s)
-        (CloneChunk16 s)
+        (CloneChunk0 (clone s))
+        (CloneChunk1 (clone s))
+        (CloneChunk2 (clone s))
+        (CloneChunk3 (clone s))
+        (CloneChunk4 (clone s))
+        (CloneChunk5 (clone s))
+        (CloneChunk6 (clone s))
+        (CloneChunk7 (clone s))
+        (CloneChunk8 (clone s))
+        (CloneChunk9 (clone s))
+        (CloneChunk10 (clone s))
+        (CloneChunk11 (clone s))
+        (CloneChunk12 (clone s))
+        (CloneChunk13 (clone s))
+        (CloneChunk14 (clone s))
+        (CloneChunk15 (clone s))
+        (CloneChunk16 (clone s))
         (CloneChunk17 s)))
     0))")
 
@@ -1837,10 +1908,18 @@
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
-            (lower-test-function-defined? functions ".::clone$CloneChunk17")
-            (lower-test-function-defined? functions ".::clone$CloneChunk2")
-            (lower-test-function-defined? functions ".::clone$CloneChunk1")
-            (lower-test-function-defined? functions ".::clone$CloneChunk0"))])]
+            (lower-test-function-defined?
+              (compiler_ir_types.compiler-ir-global-shared-view functions)
+              ".::clone$CloneChunk17")
+            (lower-test-function-defined?
+              (compiler_ir_types.compiler-ir-global-shared-view functions)
+              ".::clone$CloneChunk2")
+            (lower-test-function-defined?
+              (compiler_ir_types.compiler-ir-global-shared-view functions)
+              ".::clone$CloneChunk1")
+            (lower-test-function-defined?
+              (compiler_ir_types.compiler-ir-global-shared-view functions)
+              ".::clone$CloneChunk0"))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 ;; Nominal clone helpers are declaration macros now, so clone-producing lowering
@@ -1867,8 +1946,16 @@
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
-            (>= (lower-test-function-store-ptr-count functions "main") 2)
-            (>= (lower-test-function-load-count functions "main") 1))])]
+            (>=
+              (lower-test-function-store-ptr-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main")
+              2)
+            (>=
+              (lower-test-function-load-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main")
+              1))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-clone-shape-ok?) : bool
@@ -1882,7 +1969,7 @@
             (begin
               (if (>
                 (lower-test-function-call-count
-                  functions
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
                   ".::clone-tuple"
                   "tl_substring")
                 0)
@@ -1890,7 +1977,7 @@
                 (set! ok false))
               (if (>
                 (lower-test-function-call-count
-                  functions
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
                   ".::clone-tuple"
                   "tl_alloc")
                 0)
@@ -1898,7 +1985,7 @@
                 (set! ok false))
               (if (>
                 (lower-test-function-call-count
-                  functions
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
                   ".::clone-fixed"
                   "tl_substring")
                 1)
@@ -1906,20 +1993,22 @@
                 (set! ok false))
               (if (>
                 (lower-test-function-call-count
-                  functions
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
                   ".::clone-dyn"
                   "tl_alloc")
                 1)
                 unit
                 (set! ok false))
               (if (>
-                (lower-test-function-branch-count functions ".::clone-dyn")
+                (lower-test-function-branch-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  ".::clone-dyn")
                 0)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-function-call-count
-                  functions
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
                   ".::clone-holder"
                   ".::clone$Holder")
                 1)
@@ -1927,7 +2016,7 @@
                 (set! ok false))
               (if (=
                 (lower-test-function-call-count
-                  functions
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
                   ".::clone-tree"
                   ".::clone$StringTree")
                 1)
@@ -1935,7 +2024,7 @@
                 (set! ok false))
               (if (>
                 (lower-test-function-call-count
-                  functions
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
                   ".::clone$Holder"
                   "tl_substring")
                 0)
@@ -1943,7 +2032,7 @@
                 (set! ok false))
               (if (>
                 (lower-test-function-call-count
-                  functions
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
                   ".::clone$Holder"
                   "tl_alloc")
                 0)
@@ -1951,7 +2040,7 @@
                 (set! ok false))
               (if (>
                 (lower-test-function-call-count
-                  functions
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
                   ".::clone$StringTree"
                   "tl_substring")
                 0)
@@ -1971,20 +2060,22 @@
             (begin
               (if (=
                 (lower-test-function-call-count
-                  functions
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
                   ".::copy-i64-items"
                   "tl_memcpy")
                 1)
                 unit
                 (set! ok false))
               (if (=
-                (lower-test-function-branch-count functions ".::copy-i64-items")
+                (lower-test-function-branch-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  ".::copy-i64-items")
                 0)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-function-call-count
-                  functions
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
                   ".::copy-word-items"
                   "tl_memcpy")
                 1)
@@ -1992,14 +2083,14 @@
                 (set! ok false))
               (if (=
                 (lower-test-function-branch-count
-                  functions
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
                   ".::copy-word-items")
                 0)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-function-call-count
-                  functions
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
                   ".::copy-string-items"
                   "tl_memcpy")
                 0)
@@ -2007,7 +2098,7 @@
                 (set! ok false))
               (if (>
                 (lower-test-function-call-count
-                  functions
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
                   ".::copy-string-items"
                   "tl_substring")
                 0)
@@ -2015,7 +2106,7 @@
                 (set! ok false))
               (if (>
                 (lower-test-function-branch-count
-                  functions
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
                   ".::copy-string-items")
                 0)
                 unit
@@ -2030,13 +2121,19 @@
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
-            (lower-test-function-defined? functions ".::clone$NestedClone")
-            (lower-test-function-defined? functions ".::clone$UsedClone")
+            (lower-test-function-defined?
+              (compiler_ir_types.compiler-ir-global-shared-view functions)
+              ".::clone$NestedClone")
+            (lower-test-function-defined?
+              (compiler_ir_types.compiler-ir-global-shared-view functions)
+              ".::clone$UsedClone")
             (not
-              (lower-test-function-defined? functions ".::clone$UnusedClone"))
+              (lower-test-function-defined?
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                ".::clone$UnusedClone"))
             (=
               (lower-test-function-call-count
-                functions
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
                 ".::clone$NestedClone"
                 ".::clone$UsedClone")
               1))])]
@@ -2280,17 +2377,17 @@
 (define (compiler-lower-inline-direct-store-source) : String
   "(defstruct Wide (a i64) (b i64) (c i64))
 (defstruct Holder (wide Wide) (tail i64))
-(define (direct-field [h : Holder (:consume)]) : i64
+(define (direct-field [h : Holder]) : i64
   (begin
     (set! h.wide (Wide 1 2 3))
     0))
-(define (direct-init [h : Holder (:consume)]) : i64
+(define (direct-init [h : Holder]) : i64
   (begin
     (set! h.wide (init : Wide))
     0))
 (define (direct-dyn-array [items : (__tl_dyn-array Wide)] [i : i64]) : unit
   (set! (array-ref items i) (Wide 4 5 6)))
-(define (direct-fixed-array [items : (Array Wide 2) (:consume)] [i : i64]) : unit
+(define (direct-fixed-array [items : (Array Wide 2)] [i : i64]) : unit
   (set! (array-ref items i) (Wide 7 8 9)))
 (define (direct-fixed-literal) : (Array Wide 2)
   (array (Wide 10 11 12) (Wide 13 14 15)))")
@@ -2355,21 +2452,39 @@
             [ok : bool true]
             (begin
               (if (=
-                (lower-test-function-call-count functions "main" "tl_alloc")
+                (lower-test-function-call-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "main"
+                  "tl_alloc")
                 0)
                 unit
                 (set! ok false))
-              (if (>= (lower-test-function-alloc-count functions "main") 3)
+              (if (>=
+                (lower-test-function-alloc-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "main")
+                3)
                 unit
                 (set! ok false))
-              (if (= (lower-test-function-addr-of-count functions "main") 1)
+              (if (=
+                (lower-test-function-addr-of-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "main")
+                1)
                 unit
                 (set! ok false))
-              (if (>= (lower-test-function-store-ptr-count functions "main") 3)
+              (if (>=
+                (lower-test-function-store-ptr-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "main")
+                3)
                 unit
                 (set! ok false))
               (if (>
-                (lower-test-function-gep-offset-count functions "main" 16)
+                (lower-test-function-gep-offset-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "main"
+                  16)
                 0)
                 unit
                 (set! ok false))
@@ -2386,25 +2501,47 @@
             [ok : bool true]
             (begin
               (if (=
-                (lower-test-function-call-count functions "main" "tl_alloc")
+                (lower-test-function-call-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "main"
+                  "tl_alloc")
                 0)
                 unit
                 (set! ok false))
-              (if (>= (lower-test-function-alloc-count functions "main") 3)
+              (if (>=
+                (lower-test-function-alloc-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "main")
+                3)
                 unit
                 (set! ok false))
-              (if (= (lower-test-function-addr-of-count functions "main") 1)
+              (if (=
+                (lower-test-function-addr-of-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "main")
+                1)
                 unit
                 (set! ok false))
-              (if (>= (lower-test-function-store-ptr-count functions "main") 3)
+              (if (>=
+                (lower-test-function-store-ptr-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "main")
+                3)
                 unit
                 (set! ok false))
               (if (>
-                (lower-test-function-gep-offset-count functions "main" 16)
+                (lower-test-function-gep-offset-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "main"
+                  16)
                 0)
                 unit
                 (set! ok false))
-              (if (> (lower-test-function-branch-count functions "main") 0)
+              (if (>
+                (lower-test-function-branch-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "main")
+                0)
                 unit
                 (set! ok false))
               ok))])]
@@ -2420,17 +2557,32 @@
             [ok : bool true]
             (begin
               (if (=
-                (lower-test-function-call-count functions "main" "tl_alloc")
+                (lower-test-function-call-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "main"
+                  "tl_alloc")
                 2)
                 unit
                 (set! ok false))
-              (if (>= (lower-test-function-alloc-count functions "main") 6)
+              (if (>=
+                (lower-test-function-alloc-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "main")
+                6)
                 unit
                 (set! ok false))
-              (if (>= (lower-test-function-addr-of-count functions "main") 2)
+              (if (>=
+                (lower-test-function-addr-of-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "main")
+                2)
                 unit
                 (set! ok false))
-              (if (>= (lower-test-function-store-ptr-count functions "main") 4)
+              (if (>=
+                (lower-test-function-store-ptr-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "main")
+                4)
                 unit
                 (set! ok false))
               ok))])]
@@ -2444,7 +2596,7 @@
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (>
             (lower-test-functions-call-count
-              functions
+              (compiler_ir_types.compiler-ir-global-shared-view functions)
               "stdlib.maybe_string/maybe-string-single")
             0)])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
@@ -2464,7 +2616,10 @@
         [(compiler_ir_types.CompilerIrProgram.Program _ pair-functions _)
           (let
             [pair-copy-count : i64
-              (lower-test-function-copy-bytes-count pair-functions "id-pair")]
+              (lower-test-function-copy-bytes-count
+                (compiler_ir_types.compiler-ir-global-shared-view
+                  pair-functions)
+                "id-pair")]
             [pair-store-count : i64
               (lower-test-function-store-ptr-count pair-functions "id-pair")]
             (match (compiler_lower.lower-compiler-source-with-mode
@@ -2496,11 +2651,13 @@
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
             (=
-              (lower-test-function-copy-bytes-count functions "return216-id")
+              (lower-test-function-copy-bytes-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "return216-id")
               1)
             (=
               (lower-test-function-call-count
-                functions
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "return216-id"
                 "tl_memcpy")
               0))])]
@@ -2547,7 +2704,8 @@
           (let
             [constructor-copy-count : i64
               (lower-test-function-copy-bytes-count
-                constructor-functions
+                (compiler_ir_types.compiler-ir-global-shared-view
+                  constructor-functions)
                 "from-choice")]
             [constructor-phi-count : i64
               (lower-test-function-phi-count
@@ -2567,7 +2725,8 @@
                       (= constructor-phi-count 0)
                       (>
                         (lower-test-function-copy-bytes-count
-                          generic-functions
+                          (compiler_ir_types.compiler-ir-global-shared-view
+                            generic-functions)
                           "from-choice")
                         0)
                       (=
@@ -2585,8 +2744,17 @@
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
-            (= (lower-test-function-call-count functions "main" "tl_alloc") 0)
-            (> (lower-test-function-branch-count functions "main") 0))])]
+            (=
+              (lower-test-function-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main"
+                "tl_alloc")
+              0)
+            (>
+              (lower-test-function-branch-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main")
+              0))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-inline-direct-store-copy-shape-ok?) : bool
@@ -2598,22 +2766,28 @@
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
             (=
-              (lower-test-function-copy-bytes-count functions "direct-field")
+              (lower-test-function-copy-bytes-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "direct-field")
               0)
-            (= (lower-test-function-copy-bytes-count functions "direct-init") 0)
             (=
               (lower-test-function-copy-bytes-count
-                functions
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "direct-init")
+              0)
+            (=
+              (lower-test-function-copy-bytes-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "direct-dyn-array")
               0)
             (=
               (lower-test-function-copy-bytes-count
-                functions
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "direct-fixed-array")
               0)
             (>
               (lower-test-function-copy-bytes-count
-                functions
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "direct-fixed-literal")
               0))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
@@ -2960,8 +3134,14 @@
   (match (compiler_lower.lower-compiler-source src)
     [(compiler_lower.ResultCompilerLower.Ok _ spans)
       (and
-        (= (compiler_ir_types.compiler-source-spans-count spans) 2)
-        (compiler-lower-span-start-line-ok? spans "inc" 3)
+        (=
+          (compiler_ir_types.compiler-source-spans-count
+            (owned_view.compiler-owned-shared-view spans))
+          2)
+        (compiler-lower-span-start-line-ok?
+          (owned_view.compiler-owned-shared-view spans)
+          "inc"
+          3)
         (compiler-lower-span-start-line-ok? spans "main" 5))]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
@@ -3093,8 +3273,13 @@
 
 (define (lower-test-pack-values-shape?
   [values : compiler_ir_types.CompilerIrValueSeq]) : bool
-  (if (= (compiler_ir_types.compiler-ir-value-seq-count values) 2)
-    (match (compiler_ir_types.compiler-ir-value-seq-ref values 1)
+  (if (=
+    (compiler_ir_types.compiler-ir-value-seq-count
+      (owned_view.compiler-owned-shared-view values))
+    2)
+    (match (compiler_ir_types.compiler-ir-value-seq-ref
+      (owned_view.compiler-owned-shared-view values)
+      1)
       [(compiler_ir_types.CompilerIrValue.I64 length) (= length 3)]
       [_ false])
     false))
@@ -3127,7 +3312,10 @@
         0)]
     [(compiler_ir_types.CompilerIrInstr.CallCAbiStoreResult payload-box)
       (let
-        [call-name (__tl-project-field (__tl-box-place payload-box) name)]
+        [call-name
+          (__tl-project-field
+            (compiler_ir_types.compiler-ir-box-shared-view payload-box)
+            name)]
         (if (string.eq
           (compiler_ir_types.compiler-ir-symbol-text call-name)
           name)
@@ -3197,7 +3385,9 @@
       (lower-test-value-function-count value name)]
     [(compiler_ir_types.CompilerIrCallArgs.Two a b)
       (+
-        (lower-test-value-function-count a name)
+        (lower-test-value-function-count
+          a
+          (owned_view.compiler-owned-shared-view name))
         (lower-test-value-function-count b name))]
     [(compiler_ir_types.CompilerIrCallArgs.Array values)
       (lower-test-call-args-array-function-count values name 0)]))
@@ -3209,7 +3399,9 @@
   (if (>= index (array-length values))
     0
     (+
-      (lower-test-value-function-count (array-ref values index) name)
+      (lower-test-value-function-count
+        (compiler_ir_types.compiler-ir-array-shared-view values index)
+        (owned_view.compiler-owned-shared-view name))
       (lower-test-call-args-array-function-count values name (+ index 1)))))
 
 (define (lower-test-instr-return-function-count
@@ -3298,8 +3490,11 @@
   (match instr
     [(compiler_ir_types.CompilerIrInstr.VectorBinOp payload-box)
       (let
-        [op (__tl-project-field (__tl-box-place payload-box) op)]
-        (if (lower-test-binop-same? op want)
+        [op
+          (compiler_ir_types.compiler-ir-box-field-shared-view payload-box op)]
+        (if (lower-test-binop-same?
+          (owned_view.compiler-owned-shared-view op)
+          want)
           1
           0))]
     [_ 0]))
@@ -3349,8 +3544,8 @@
 (define (lower-test-instr-seq-spmd-call-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -3358,7 +3553,10 @@
         (begin
           (set!
             acc
-            (+ acc (lower-test-instr-spmd-call-count (array-ref slots index))))
+            (+
+              acc
+              (lower-test-instr-spmd-call-count
+                (compiler_ir_types.compiler-ir-array-shared-view slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -3371,7 +3569,8 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-spmd-call-count instrs)
-            (lower-test-blocks-spmd-call-count (__tl-box-place rest)))])]
+            (lower-test-blocks-spmd-call-count
+              (compiler_ir_types.compiler-ir-box-shared-view rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-block-seq-spmd-call-count seq)]))
 
@@ -3385,7 +3584,7 @@
     (begin
       (while (< index count)
         (begin
-          (match (array-ref slots index)
+          (match (compiler_ir_types.compiler-ir-array-shared-view slots index)
             [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
               (set! acc (+ acc (lower-test-instr-seq-spmd-call-count instrs)))])
           (set! index (+ index 1))))
@@ -3407,7 +3606,7 @@
     (begin
       (while (and (< index count) (< result 0))
         (begin
-          (match (array-ref slots index)
+          (match (compiler_ir_types.compiler-ir-array-shared-view slots index)
             [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ blocks)
               (if (string.eq
                 (compiler_ir_types.compiler-ir-symbol-text fname)
@@ -3432,14 +3631,26 @@
   [elem-ty : compiler_ast_types.AstType]) : i64
   (match instr
     [(compiler_ir_types.CompilerIrInstr.VectorLoad _ _ _ actual-lanes actual-ty)
-      (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
+      (if (lower-test-vector-shape?
+        actual-lanes
+        (owned_view.compiler-owned-shared-view actual-ty)
+        lanes
+        (owned_view.compiler-owned-shared-view elem-ty))
         1
         0)]
     [(compiler_ir_types.CompilerIrInstr.VectorBinOp payload-box)
       (let
-        [actual-lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
-        [actual-ty (__tl-project-field (__tl-box-place payload-box) ty)]
-        (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
+        [actual-lanes
+          (compiler_ir_types.compiler-ir-box-field-shared-view
+            payload-box
+            lanes)]
+        [actual-ty
+          (compiler_ir_types.compiler-ir-box-field-shared-view payload-box ty)]
+        (if (lower-test-vector-shape?
+          actual-lanes
+          (owned_view.compiler-owned-shared-view actual-ty)
+          lanes
+          (owned_view.compiler-owned-shared-view elem-ty))
           1
           0))]
     [(compiler_ir_types.CompilerIrInstr.VectorReduce
@@ -3448,42 +3659,86 @@
         _
         actual-lanes
         actual-ty)
-      (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
+      (if (lower-test-vector-shape?
+        actual-lanes
+        (owned_view.compiler-owned-shared-view actual-ty)
+        lanes
+        (owned_view.compiler-owned-shared-view elem-ty))
         1
         0)]
     [(compiler_ir_types.CompilerIrInstr.VectorStore payload-box)
       (let
-        [actual-lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
-        [actual-ty (__tl-project-field (__tl-box-place payload-box) ty)]
-        (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
+        [actual-lanes
+          (compiler_ir_types.compiler-ir-box-field-shared-view
+            payload-box
+            lanes)]
+        [actual-ty
+          (compiler_ir_types.compiler-ir-box-field-shared-view payload-box ty)]
+        (if (lower-test-vector-shape?
+          actual-lanes
+          (owned_view.compiler-owned-shared-view actual-ty)
+          lanes
+          (owned_view.compiler-owned-shared-view elem-ty))
           1
           0))]
     [(compiler_ir_types.CompilerIrInstr.PredicatedLoad payload-box)
       (let
-        [actual-lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
-        [actual-ty (__tl-project-field (__tl-box-place payload-box) ty)]
-        (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
+        [actual-lanes
+          (compiler_ir_types.compiler-ir-box-field-shared-view
+            payload-box
+            lanes)]
+        [actual-ty
+          (compiler_ir_types.compiler-ir-box-field-shared-view payload-box ty)]
+        (if (lower-test-vector-shape?
+          actual-lanes
+          (owned_view.compiler-owned-shared-view actual-ty)
+          lanes
+          (owned_view.compiler-owned-shared-view elem-ty))
           1
           0))]
     [(compiler_ir_types.CompilerIrInstr.GatherLoad payload-box)
       (let
-        [actual-lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
-        [actual-ty (__tl-project-field (__tl-box-place payload-box) ty)]
-        (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
+        [actual-lanes
+          (compiler_ir_types.compiler-ir-box-field-shared-view
+            payload-box
+            lanes)]
+        [actual-ty
+          (compiler_ir_types.compiler-ir-box-field-shared-view payload-box ty)]
+        (if (lower-test-vector-shape?
+          actual-lanes
+          (owned_view.compiler-owned-shared-view actual-ty)
+          lanes
+          (owned_view.compiler-owned-shared-view elem-ty))
           1
           0))]
     [(compiler_ir_types.CompilerIrInstr.PredicatedStore payload-box)
       (let
-        [actual-lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
-        [actual-ty (__tl-project-field (__tl-box-place payload-box) ty)]
-        (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
+        [actual-lanes
+          (compiler_ir_types.compiler-ir-box-field-shared-view
+            payload-box
+            lanes)]
+        [actual-ty
+          (compiler_ir_types.compiler-ir-box-field-shared-view payload-box ty)]
+        (if (lower-test-vector-shape?
+          actual-lanes
+          (owned_view.compiler-owned-shared-view actual-ty)
+          lanes
+          (owned_view.compiler-owned-shared-view elem-ty))
           1
           0))]
     [(compiler_ir_types.CompilerIrInstr.Select payload-box)
       (let
-        [actual-lanes (__tl-project-field (__tl-box-place payload-box) lanes)]
-        [actual-ty (__tl-project-field (__tl-box-place payload-box) ty)]
-        (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
+        [actual-lanes
+          (compiler_ir_types.compiler-ir-box-field-shared-view
+            payload-box
+            lanes)]
+        [actual-ty
+          (compiler_ir_types.compiler-ir-box-field-shared-view payload-box ty)]
+        (if (lower-test-vector-shape?
+          actual-lanes
+          (owned_view.compiler-owned-shared-view actual-ty)
+          lanes
+          (owned_view.compiler-owned-shared-view elem-ty))
           1
           0))]
     [(compiler_ir_types.CompilerIrInstr.Splat _ _ actual-lanes actual-ty)
@@ -3666,23 +3921,10 @@
         (begin
           (set!
             acc
-            (+ acc (lower-test-instr-phi-count (array-ref slots index))))
-          (set! index (+ index 1))))
-      acc)))
-
-(define (lower-test-instr-seq-load-count
-  [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
-  (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
-    [count : i64 instrs.len]
-    [index : i64 0]
-    [acc : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            acc
-            (+ acc (lower-test-instr-load-count (array-ref slots index))))
+            (+
+              acc
+              (lower-test-instr-phi-count
+                (compiler_ir_types.compiler-ir-array-shared-view slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -3703,33 +3945,19 @@
             (+
               acc
               (lower-test-instr-splat-shape-count
-                (array-ref slots index)
+                (owned_view.compiler-owned-array-element-shared-view
+                  slots
+                  index)
                 lanes
-                elem-ty)))
+                (owned_view.compiler-owned-shared-view elem-ty))))
           (set! index (+ index 1))))
       acc)))
 
-(define (lower-test-instr-seq-branch-count
+(define (lower-test-instr-seq-load-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
-    [index : i64 0]
-    [acc : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            acc
-            (+ acc (lower-test-instr-branch-count (array-ref slots index))))
-          (set! index (+ index 1))))
-      acc)))
-
-(define (lower-test-instr-seq-total-enum-branch-count
-  [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
-  (let
     [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
-    [count : i64 instrs.len]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -3739,15 +3967,54 @@
             acc
             (+
               acc
-              (lower-test-instr-total-enum-branch-count (array-ref slots index))))
+              (lower-test-instr-load-count
+                (compiler_ir_types.compiler-ir-array-shared-view slots index))))
+          (set! index (+ index 1))))
+      acc)))
+
+(define (lower-test-instr-seq-branch-count
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
+  (let
+    [count : i64 instrs.len]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [index : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            acc
+            (+
+              acc
+              (lower-test-instr-branch-count
+                (compiler_ir_types.compiler-ir-array-shared-view slots index))))
+          (set! index (+ index 1))))
+      acc)))
+
+(define (lower-test-instr-seq-total-enum-branch-count
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
+  (let
+    [count : i64 instrs.len]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [index : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            acc
+            (+
+              acc
+              (lower-test-instr-total-enum-branch-count
+                (compiler_ir_types.compiler-ir-array-shared-view slots index))))
           (set! index (+ index 1))))
       acc)))
 
 (define (lower-test-instr-seq-bounds-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -3755,15 +4022,18 @@
         (begin
           (set!
             acc
-            (+ acc (lower-test-instr-bounds-count (array-ref slots index))))
+            (+
+              acc
+              (lower-test-instr-bounds-count
+                (compiler_ir_types.compiler-ir-array-shared-view slots index))))
           (set! index (+ index 1))))
       acc)))
 
 (define (lower-test-instr-seq-return-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -3771,15 +4041,18 @@
         (begin
           (set!
             acc
-            (+ acc (lower-test-instr-return-count (array-ref slots index))))
+            (+
+              acc
+              (lower-test-instr-return-count
+                (compiler_ir_types.compiler-ir-array-shared-view slots index))))
           (set! index (+ index 1))))
       acc)))
 
 (define (lower-test-instr-seq-pack-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -3787,7 +4060,10 @@
         (begin
           (set!
             acc
-            (+ acc (lower-test-instr-pack-count (array-ref slots index))))
+            (+
+              acc
+              (lower-test-instr-pack-count
+                (compiler_ir_types.compiler-ir-array-shared-view slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -3795,8 +4071,8 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [pools : compiler_ast_types.AstNodePoolContext]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -3806,7 +4082,9 @@
             acc
             (+
               acc
-              (lower-test-instr-pack-shape-count (array-ref slots index) pools)))
+              (lower-test-instr-pack-shape-count
+                (compiler_ir_types.compiler-ir-array-shared-view slots index)
+                (owned_view.compiler-owned-shared-view pools))))
           (set! index (+ index 1))))
       acc)))
 
@@ -3814,8 +4092,8 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [name : String]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -3823,7 +4101,11 @@
         (begin
           (set!
             acc
-            (+ acc (lower-test-instr-call-count (array-ref slots index) name)))
+            (+
+              acc
+              (lower-test-instr-call-count
+                (compiler_ir_types.compiler-ir-array-shared-view slots index)
+                (compiler_ir_types.compiler-ir-global-shared-view name))))
           (set! index (+ index 1))))
       acc)))
 
@@ -3832,8 +4114,8 @@
   [first : String]
   [second : String]) : bool
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [index : i64 0]
     [seen-first : bool false]
     [done : bool false]
@@ -3841,13 +4123,18 @@
     (begin
       (while (and (< index count) (not done))
         (let
-          [instr : compiler_ir_types.CompilerIrInstr (array-ref slots index)]
+          [instr : compiler_ir_types.CompilerIrInstr
+            (compiler_ir_types.compiler-ir-array-shared-view slots index)]
           (begin
-            (if (lower-test-instr-call-name? instr second)
+            (if (lower-test-instr-call-name?
+              (compiler_ir_types.compiler-ir-global-shared-view instr)
+              (compiler_ir_types.compiler-ir-global-shared-view second))
               (begin
                 (set! result seen-first)
                 (set! done true))
-              (if (lower-test-instr-call-name? instr first)
+              (if (lower-test-instr-call-name?
+                (compiler_ir_types.compiler-ir-global-shared-view instr)
+                (compiler_ir_types.compiler-ir-global-shared-view first))
                 (set! seen-first true)
                 unit))
             (set! index (+ index 1)))))
@@ -3856,40 +4143,8 @@
 (define (lower-test-instr-seq-cpuid-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
-    [index : i64 0]
-    [acc : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            acc
-            (+ acc (lower-test-instr-cpuid-count (array-ref slots index))))
-          (set! index (+ index 1))))
-      acc)))
-
-(define (lower-test-instr-seq-xgetbv-count
-  [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
-  (let
     [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
-    [count : i64 instrs.len]
-    [index : i64 0]
-    [acc : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            acc
-            (+ acc (lower-test-instr-xgetbv-count (array-ref slots index))))
-          (set! index (+ index 1))))
-      acc)))
-
-(define (lower-test-instr-seq-indirect-call-count
-  [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
-  (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
-    [count : i64 instrs.len]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -3899,15 +4154,54 @@
             acc
             (+
               acc
-              (lower-test-instr-indirect-call-count (array-ref slots index))))
+              (lower-test-instr-cpuid-count
+                (compiler_ir_types.compiler-ir-array-shared-view slots index))))
+          (set! index (+ index 1))))
+      acc)))
+
+(define (lower-test-instr-seq-xgetbv-count
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
+  (let
+    [count : i64 instrs.len]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [index : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            acc
+            (+
+              acc
+              (lower-test-instr-xgetbv-count
+                (compiler_ir_types.compiler-ir-array-shared-view slots index))))
+          (set! index (+ index 1))))
+      acc)))
+
+(define (lower-test-instr-seq-indirect-call-count
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
+  (let
+    [count : i64 instrs.len]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [index : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            acc
+            (+
+              acc
+              (lower-test-instr-indirect-call-count
+                (compiler_ir_types.compiler-ir-array-shared-view slots index))))
           (set! index (+ index 1))))
       acc)))
 
 (define (lower-test-instr-seq-indirect-tail-call-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -3918,15 +4212,15 @@
             (+
               acc
               (lower-test-instr-indirect-tail-call-count
-                (array-ref slots index))))
+                (compiler_ir_types.compiler-ir-array-shared-view slots index))))
           (set! index (+ index 1))))
       acc)))
 
 (define (lower-test-instr-seq-indirect-c-call-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -3936,15 +4230,16 @@
             acc
             (+
               acc
-              (lower-test-instr-indirect-c-call-count (array-ref slots index))))
+              (lower-test-instr-indirect-c-call-count
+                (compiler_ir_types.compiler-ir-array-shared-view slots index))))
           (set! index (+ index 1))))
       acc)))
 
 (define (lower-test-instr-seq-indirect-unit-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -3954,7 +4249,8 @@
             acc
             (+
               acc
-              (lower-test-instr-indirect-unit-count (array-ref slots index))))
+              (lower-test-instr-indirect-unit-count
+                (compiler_ir_types.compiler-ir-array-shared-view slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -3962,8 +4258,8 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [function-name : String]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -3974,8 +4270,8 @@
             (+
               acc
               (lower-test-instr-return-function-count
-                (array-ref slots index)
-                function-name)))
+                (compiler_ir_types.compiler-ir-array-shared-view slots index)
+                (owned_view.compiler-owned-shared-view function-name))))
           (set! index (+ index 1))))
       acc)))
 
@@ -3983,8 +4279,8 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [function-name : String]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -3995,8 +4291,8 @@
             (+
               acc
               (lower-test-instr-indirect-callee-function-count
-                (array-ref slots index)
-                function-name)))
+                (compiler_ir_types.compiler-ir-array-shared-view slots index)
+                (owned_view.compiler-owned-shared-view function-name))))
           (set! index (+ index 1))))
       acc)))
 
@@ -4005,8 +4301,8 @@
   [call-name : String]
   [function-name : String]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -4017,9 +4313,9 @@
             (+
               acc
               (lower-test-instr-call-arg-function-count
-                (array-ref slots index)
-                call-name
-                function-name)))
+                (compiler_ir_types.compiler-ir-array-shared-view slots index)
+                (owned_view.compiler-owned-shared-view call-name)
+                (owned_view.compiler-owned-shared-view function-name))))
           (set! index (+ index 1))))
       acc)))
 
@@ -4027,8 +4323,8 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [name : String]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -4038,95 +4334,17 @@
             acc
             (+
               acc
-              (lower-test-instr-tail-call-count (array-ref slots index) name)))
+              (lower-test-instr-tail-call-count
+                (compiler_ir_types.compiler-ir-array-shared-view slots index)
+                (compiler_ir_types.compiler-ir-global-shared-view name))))
           (set! index (+ index 1))))
       acc)))
 
 (define (lower-test-instr-seq-store-ptr-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
-    [index : i64 0]
-    [acc : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            acc
-            (+ acc (lower-test-instr-store-ptr-count (array-ref slots index))))
-          (set! index (+ index 1))))
-      acc)))
-
-(define (lower-test-instr-seq-copy-bytes-count
-  [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
-  (let
     [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
-    [count : i64 instrs.len]
-    [index : i64 0]
-    [acc : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            acc
-            (+ acc (lower-test-instr-copy-bytes-count (array-ref slots index))))
-          (set! index (+ index 1))))
-      acc)))
-
-(define (lower-test-instr-seq-alloc-count
-  [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
-  (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
-    [count : i64 instrs.len]
-    [index : i64 0]
-    [acc : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            acc
-            (+ acc (lower-test-instr-alloc-count (array-ref slots index))))
-          (set! index (+ index 1))))
-      acc)))
-
-(define (lower-test-instr-seq-addr-of-count
-  [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
-  (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
-    [count : i64 instrs.len]
-    [index : i64 0]
-    [acc : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            acc
-            (+ acc (lower-test-instr-addr-of-count (array-ref slots index))))
-          (set! index (+ index 1))))
-      acc)))
-
-(define (lower-test-instr-seq-vector-load-count
-  [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
-  (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
-    [count : i64 instrs.len]
-    [index : i64 0]
-    [acc : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            acc
-            (+ acc (lower-test-instr-vector-load-count (array-ref slots index))))
-          (set! index (+ index 1))))
-      acc)))
-
-(define (lower-test-instr-seq-vector-binop-count
-  [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
-  (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
-    [count : i64 instrs.len]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -4136,7 +4354,103 @@
             acc
             (+
               acc
-              (lower-test-instr-vector-binop-count (array-ref slots index))))
+              (lower-test-instr-store-ptr-count
+                (compiler_ir_types.compiler-ir-array-shared-view slots index))))
+          (set! index (+ index 1))))
+      acc)))
+
+(define (lower-test-instr-seq-copy-bytes-count
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
+  (let
+    [count : i64 instrs.len]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [index : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            acc
+            (+
+              acc
+              (lower-test-instr-copy-bytes-count
+                (compiler_ir_types.compiler-ir-array-shared-view slots index))))
+          (set! index (+ index 1))))
+      acc)))
+
+(define (lower-test-instr-seq-alloc-count
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
+  (let
+    [count : i64 instrs.len]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [index : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            acc
+            (+
+              acc
+              (lower-test-instr-alloc-count
+                (compiler_ir_types.compiler-ir-array-shared-view slots index))))
+          (set! index (+ index 1))))
+      acc)))
+
+(define (lower-test-instr-seq-addr-of-count
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
+  (let
+    [count : i64 instrs.len]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [index : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            acc
+            (+
+              acc
+              (lower-test-instr-addr-of-count
+                (compiler_ir_types.compiler-ir-array-shared-view slots index))))
+          (set! index (+ index 1))))
+      acc)))
+
+(define (lower-test-instr-seq-vector-load-count
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
+  (let
+    [count : i64 instrs.len]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [index : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            acc
+            (+
+              acc
+              (lower-test-instr-vector-load-count
+                (compiler_ir_types.compiler-ir-array-shared-view slots index))))
+          (set! index (+ index 1))))
+      acc)))
+
+(define (lower-test-instr-seq-vector-binop-count
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
+  (let
+    [count : i64 instrs.len]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
+    [index : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            acc
+            (+
+              acc
+              (lower-test-instr-vector-binop-count
+                (compiler_ir_types.compiler-ir-array-shared-view slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -4144,8 +4458,8 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [want : compiler_ir_types.CompilerIrBinOp]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -4156,16 +4470,16 @@
             (+
               acc
               (lower-test-instr-vector-binop-op-count
-                (array-ref slots index)
-                want)))
+                (compiler_ir_types.compiler-ir-array-shared-view slots index)
+                (owned_view.compiler-owned-shared-view want))))
           (set! index (+ index 1))))
       acc)))
 
 (define (lower-test-instr-seq-vector-reduce-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -4175,15 +4489,16 @@
             acc
             (+
               acc
-              (lower-test-instr-vector-reduce-count (array-ref slots index))))
+              (lower-test-instr-vector-reduce-count
+                (compiler_ir_types.compiler-ir-array-shared-view slots index))))
           (set! index (+ index 1))))
       acc)))
 
 (define (lower-test-instr-seq-vector-store-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -4193,15 +4508,16 @@
             acc
             (+
               acc
-              (lower-test-instr-vector-store-count (array-ref slots index))))
+              (lower-test-instr-vector-store-count
+                (compiler_ir_types.compiler-ir-array-shared-view slots index))))
           (set! index (+ index 1))))
       acc)))
 
 (define (lower-test-instr-seq-predicated-load-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -4211,15 +4527,16 @@
             acc
             (+
               acc
-              (lower-test-instr-predicated-load-count (array-ref slots index))))
+              (lower-test-instr-predicated-load-count
+                (compiler_ir_types.compiler-ir-array-shared-view slots index))))
           (set! index (+ index 1))))
       acc)))
 
 (define (lower-test-instr-seq-predicated-store-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -4229,15 +4546,16 @@
             acc
             (+
               acc
-              (lower-test-instr-predicated-store-count (array-ref slots index))))
+              (lower-test-instr-predicated-store-count
+                (compiler_ir_types.compiler-ir-array-shared-view slots index))))
           (set! index (+ index 1))))
       acc)))
 
 (define (lower-test-instr-seq-select-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -4245,15 +4563,18 @@
         (begin
           (set!
             acc
-            (+ acc (lower-test-instr-select-count (array-ref slots index))))
+            (+
+              acc
+              (lower-test-instr-select-count
+                (compiler_ir_types.compiler-ir-array-shared-view slots index))))
           (set! index (+ index 1))))
       acc)))
 
 (define (lower-test-instr-seq-tail-mask-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -4261,7 +4582,10 @@
         (begin
           (set!
             acc
-            (+ acc (lower-test-instr-tail-mask-count (array-ref slots index))))
+            (+
+              acc
+              (lower-test-instr-tail-mask-count
+                (compiler_ir_types.compiler-ir-array-shared-view slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -4270,8 +4594,8 @@
   [lanes : i64]
   [elem-ty : compiler_ast_types.AstType]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -4282,17 +4606,17 @@
             (+
               acc
               (lower-test-instr-vector-shape-count
-                (array-ref slots index)
+                (compiler_ir_types.compiler-ir-array-shared-view slots index)
                 lanes
-                elem-ty)))
+                (compiler_ast_types.ast-global-shared-view elem-ty))))
           (set! index (+ index 1))))
       acc)))
 
 (define (lower-test-instr-seq-u64-mov-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -4300,7 +4624,10 @@
         (begin
           (set!
             acc
-            (+ acc (lower-test-instr-u64-mov-count (array-ref slots index))))
+            (+
+              acc
+              (lower-test-instr-u64-mov-count
+                (compiler_ir_types.compiler-ir-array-shared-view slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -4308,8 +4635,8 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [op : compiler_ir_types.CompilerIrBinOp]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -4317,7 +4644,11 @@
         (begin
           (set!
             acc
-            (+ acc (lower-test-instr-binop-op-count (array-ref slots index) op)))
+            (+
+              acc
+              (lower-test-instr-binop-op-count
+                (compiler_ir_types.compiler-ir-array-shared-view slots index)
+                (compiler_ir_types.compiler-ir-global-shared-view op))))
           (set! index (+ index 1))))
       acc)))
 
@@ -4325,8 +4656,8 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [op : compiler_ir_types.CompilerIrBinOp]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -4336,15 +4667,17 @@
             acc
             (+
               acc
-              (lower-test-instr-i64-binop-op-count (array-ref slots index) op)))
+              (lower-test-instr-i64-binop-op-count
+                (compiler_ir_types.compiler-ir-array-shared-view slots index)
+                (compiler_ir_types.compiler-ir-global-shared-view op))))
           (set! index (+ index 1))))
       acc)))
 
 (define (lower-test-instr-seq-cast-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -4352,15 +4685,18 @@
         (begin
           (set!
             acc
-            (+ acc (lower-test-instr-cast-count (array-ref slots index))))
+            (+
+              acc
+              (lower-test-instr-cast-count
+                (compiler_ir_types.compiler-ir-array-shared-view slots index))))
           (set! index (+ index 1))))
       acc)))
 
 (define (lower-test-instr-seq-bitcast-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -4368,7 +4704,10 @@
         (begin
           (set!
             acc
-            (+ acc (lower-test-instr-bitcast-count (array-ref slots index))))
+            (+
+              acc
+              (lower-test-instr-bitcast-count
+                (compiler_ir_types.compiler-ir-array-shared-view slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -4376,8 +4715,8 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [name : String]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -4387,7 +4726,9 @@
             acc
             (+
               acc
-              (lower-test-instr-store-global-count (array-ref slots index) name)))
+              (lower-test-instr-store-global-count
+                (compiler_ir_types.compiler-ir-array-shared-view slots index)
+                (compiler_ir_types.compiler-ir-global-shared-view name))))
           (set! index (+ index 1))))
       acc)))
 
@@ -4400,7 +4741,8 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-phi-count instrs)
-            (lower-test-blocks-phi-count (__tl-box-place rest)))])]
+            (lower-test-blocks-phi-count
+              (compiler_ir_types.compiler-ir-box-shared-view rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-phi-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -4414,7 +4756,8 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-load-count instrs)
-            (lower-test-blocks-load-count (__tl-box-place rest)))])]
+            (lower-test-blocks-load-count
+              (compiler_ir_types.compiler-ir-box-shared-view rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-load-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -4429,9 +4772,12 @@
       (match block
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
-            (lower-test-instr-seq-splat-shape-count instrs lanes elem-ty)
+            (lower-test-instr-seq-splat-shape-count
+              instrs
+              lanes
+              (owned_view.compiler-owned-shared-view elem-ty))
             (lower-test-blocks-splat-shape-count
-              (__tl-box-place rest)
+              (compiler_ir_types.compiler-ir-box-shared-view rest)
               lanes
               elem-ty))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
@@ -4453,7 +4799,7 @@
             want-label)
             (lower-test-instr-seq-load-count instrs)
             (lower-test-blocks-label-load-count
-              (__tl-box-place rest)
+              (compiler_ir_types.compiler-ir-box-shared-view rest)
               want-label))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-label-load-count
@@ -4469,7 +4815,8 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-branch-count instrs)
-            (lower-test-blocks-branch-count (__tl-box-place rest)))])]
+            (lower-test-blocks-branch-count
+              (compiler_ir_types.compiler-ir-box-shared-view rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-branch-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -4483,7 +4830,8 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-total-enum-branch-count instrs)
-            (lower-test-blocks-total-enum-branch-count (__tl-box-place rest)))])]
+            (lower-test-blocks-total-enum-branch-count
+              (compiler_ir_types.compiler-ir-box-shared-view rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-total-enum-branch-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -4497,7 +4845,8 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-bounds-count instrs)
-            (lower-test-blocks-bounds-count (__tl-box-place rest)))])]
+            (lower-test-blocks-bounds-count
+              (compiler_ir_types.compiler-ir-box-shared-view rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-bounds-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -4511,7 +4860,8 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-return-count instrs)
-            (lower-test-blocks-return-count (__tl-box-place rest)))])]
+            (lower-test-blocks-return-count
+              (compiler_ir_types.compiler-ir-box-shared-view rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-return-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -4525,7 +4875,8 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-pack-count instrs)
-            (lower-test-blocks-pack-count (__tl-box-place rest)))])]
+            (lower-test-blocks-pack-count
+              (compiler_ir_types.compiler-ir-box-shared-view rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-pack-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -4539,8 +4890,12 @@
       (match block
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
-            (lower-test-instr-seq-pack-shape-count instrs pools)
-            (lower-test-blocks-pack-shape-count (__tl-box-place rest) pools))])]
+            (lower-test-instr-seq-pack-shape-count
+              instrs
+              (compiler_ast_types.ast-global-shared-view pools))
+            (lower-test-blocks-pack-shape-count
+              (compiler_ir_types.compiler-ir-box-shared-view rest)
+              pools))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-pack-shape-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq)
@@ -4555,8 +4910,12 @@
       (match block
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
-            (lower-test-instr-seq-call-count instrs name)
-            (lower-test-blocks-call-count (__tl-box-place rest) name))])]
+            (lower-test-instr-seq-call-count
+              instrs
+              (compiler_ir_types.compiler-ir-global-shared-view name))
+            (lower-test-blocks-call-count
+              (compiler_ir_types.compiler-ir-box-shared-view rest)
+              name))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-call-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq)
@@ -4571,9 +4930,15 @@
     [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
       (match block
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
-          (if (lower-test-instr-seq-call-before? instrs first second)
+          (if (lower-test-instr-seq-call-before?
+            instrs
+            (compiler_ir_types.compiler-ir-global-shared-view first)
+            (compiler_ir_types.compiler-ir-global-shared-view second))
             true
-            (lower-test-blocks-call-before? (__tl-box-place rest) first second))])]
+            (lower-test-blocks-call-before?
+              (compiler_ir_types.compiler-ir-box-shared-view rest)
+              first
+              second))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-call-before?
         (compiler_ir_types.compiler-ir-block-seq-to-list seq)
@@ -4589,7 +4954,8 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-cpuid-count instrs)
-            (lower-test-blocks-cpuid-count (__tl-box-place rest)))])]
+            (lower-test-blocks-cpuid-count
+              (compiler_ir_types.compiler-ir-box-shared-view rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-cpuid-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -4603,7 +4969,8 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-xgetbv-count instrs)
-            (lower-test-blocks-xgetbv-count (__tl-box-place rest)))])]
+            (lower-test-blocks-xgetbv-count
+              (compiler_ir_types.compiler-ir-box-shared-view rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-xgetbv-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -4617,7 +4984,8 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-indirect-call-count instrs)
-            (lower-test-blocks-indirect-call-count (__tl-box-place rest)))])]
+            (lower-test-blocks-indirect-call-count
+              (compiler_ir_types.compiler-ir-box-shared-view rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-indirect-call-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -4631,7 +4999,8 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-indirect-tail-call-count instrs)
-            (lower-test-blocks-indirect-tail-call-count (__tl-box-place rest)))])]
+            (lower-test-blocks-indirect-tail-call-count
+              (compiler_ir_types.compiler-ir-box-shared-view rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-indirect-tail-call-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -4645,7 +5014,8 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-indirect-c-call-count instrs)
-            (lower-test-blocks-indirect-c-call-count (__tl-box-place rest)))])]
+            (lower-test-blocks-indirect-c-call-count
+              (compiler_ir_types.compiler-ir-box-shared-view rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-indirect-c-call-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -4659,7 +5029,8 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-indirect-unit-count instrs)
-            (lower-test-blocks-indirect-unit-count (__tl-box-place rest)))])]
+            (lower-test-blocks-indirect-unit-count
+              (compiler_ir_types.compiler-ir-box-shared-view rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-indirect-unit-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -4673,9 +5044,11 @@
       (match block
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
-            (lower-test-instr-seq-return-function-count instrs function-name)
+            (lower-test-instr-seq-return-function-count
+              instrs
+              (compiler_ir_types.compiler-ir-global-shared-view function-name))
             (lower-test-blocks-return-function-count
-              (__tl-box-place rest)
+              (compiler_ir_types.compiler-ir-box-shared-view rest)
               function-name))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-return-function-count
@@ -4693,9 +5066,9 @@
           (+
             (lower-test-instr-seq-indirect-callee-function-count
               instrs
-              function-name)
+              (owned_view.compiler-owned-shared-view function-name))
             (lower-test-blocks-indirect-callee-function-count
-              (__tl-box-place rest)
+              (compiler_ir_types.compiler-ir-box-shared-view rest)
               function-name))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-indirect-callee-function-count
@@ -4714,10 +5087,10 @@
           (+
             (lower-test-instr-seq-call-arg-function-count
               instrs
-              call-name
-              function-name)
+              (owned_view.compiler-owned-shared-view call-name)
+              (owned_view.compiler-owned-shared-view function-name))
             (lower-test-blocks-call-arg-function-count
-              (__tl-box-place rest)
+              (compiler_ir_types.compiler-ir-box-shared-view rest)
               call-name
               function-name))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
@@ -4735,8 +5108,12 @@
       (match block
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
-            (lower-test-instr-seq-tail-call-count instrs name)
-            (lower-test-blocks-tail-call-count (__tl-box-place rest) name))])]
+            (lower-test-instr-seq-tail-call-count
+              instrs
+              (compiler_ir_types.compiler-ir-global-shared-view name))
+            (lower-test-blocks-tail-call-count
+              (compiler_ir_types.compiler-ir-box-shared-view rest)
+              name))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-tail-call-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq)
@@ -4751,7 +5128,8 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-store-ptr-count instrs)
-            (lower-test-blocks-store-ptr-count (__tl-box-place rest)))])]
+            (lower-test-blocks-store-ptr-count
+              (compiler_ir_types.compiler-ir-box-shared-view rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-store-ptr-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -4765,7 +5143,8 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-copy-bytes-count instrs)
-            (lower-test-blocks-copy-bytes-count (__tl-box-place rest)))])]
+            (lower-test-blocks-copy-bytes-count
+              (compiler_ir_types.compiler-ir-box-shared-view rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-copy-bytes-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -4779,7 +5158,8 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-alloc-count instrs)
-            (lower-test-blocks-alloc-count (__tl-box-place rest)))])]
+            (lower-test-blocks-alloc-count
+              (compiler_ir_types.compiler-ir-box-shared-view rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-alloc-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -4793,7 +5173,8 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-addr-of-count instrs)
-            (lower-test-blocks-addr-of-count (__tl-box-place rest)))])]
+            (lower-test-blocks-addr-of-count
+              (compiler_ir_types.compiler-ir-box-shared-view rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-addr-of-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -4807,7 +5188,8 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-vector-load-count instrs)
-            (lower-test-blocks-vector-load-count (__tl-box-place rest)))])]
+            (lower-test-blocks-vector-load-count
+              (compiler_ir_types.compiler-ir-box-shared-view rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-vector-load-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -4821,7 +5203,8 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-vector-binop-count instrs)
-            (lower-test-blocks-vector-binop-count (__tl-box-place rest)))])]
+            (lower-test-blocks-vector-binop-count
+              (compiler_ir_types.compiler-ir-box-shared-view rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-vector-binop-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -4835,8 +5218,12 @@
       (match block
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
-            (lower-test-instr-seq-vector-binop-op-count instrs want)
-            (lower-test-blocks-vector-binop-op-count (__tl-box-place rest) want))])]
+            (lower-test-instr-seq-vector-binop-op-count
+              instrs
+              (owned_view.compiler-owned-shared-view want))
+            (lower-test-blocks-vector-binop-op-count
+              (compiler_ir_types.compiler-ir-box-shared-view rest)
+              want))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-vector-binop-op-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq)
@@ -4851,7 +5238,8 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-vector-reduce-count instrs)
-            (lower-test-blocks-vector-reduce-count (__tl-box-place rest)))])]
+            (lower-test-blocks-vector-reduce-count
+              (compiler_ir_types.compiler-ir-box-shared-view rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-vector-reduce-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -4865,7 +5253,8 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-vector-store-count instrs)
-            (lower-test-blocks-vector-store-count (__tl-box-place rest)))])]
+            (lower-test-blocks-vector-store-count
+              (compiler_ir_types.compiler-ir-box-shared-view rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-vector-store-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -4879,7 +5268,8 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-predicated-load-count instrs)
-            (lower-test-blocks-predicated-load-count (__tl-box-place rest)))])]
+            (lower-test-blocks-predicated-load-count
+              (compiler_ir_types.compiler-ir-box-shared-view rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-predicated-load-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -4893,7 +5283,8 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-predicated-store-count instrs)
-            (lower-test-blocks-predicated-store-count (__tl-box-place rest)))])]
+            (lower-test-blocks-predicated-store-count
+              (compiler_ir_types.compiler-ir-box-shared-view rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-predicated-store-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -4907,7 +5298,8 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-select-count instrs)
-            (lower-test-blocks-select-count (__tl-box-place rest)))])]
+            (lower-test-blocks-select-count
+              (compiler_ir_types.compiler-ir-box-shared-view rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-select-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -4921,7 +5313,8 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-tail-mask-count instrs)
-            (lower-test-blocks-tail-mask-count (__tl-box-place rest)))])]
+            (lower-test-blocks-tail-mask-count
+              (compiler_ir_types.compiler-ir-box-shared-view rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-tail-mask-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -4936,9 +5329,12 @@
       (match block
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
-            (lower-test-instr-seq-vector-shape-count instrs lanes elem-ty)
+            (lower-test-instr-seq-vector-shape-count
+              instrs
+              lanes
+              (compiler_ast_types.ast-global-shared-view elem-ty))
             (lower-test-blocks-vector-shape-count
-              (__tl-box-place rest)
+              (compiler_ir_types.compiler-ir-box-shared-view rest)
               lanes
               elem-ty))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
@@ -4956,7 +5352,8 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-u64-mov-count instrs)
-            (lower-test-blocks-u64-mov-count (__tl-box-place rest)))])]
+            (lower-test-blocks-u64-mov-count
+              (compiler_ir_types.compiler-ir-box-shared-view rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-u64-mov-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -4970,8 +5367,12 @@
       (match block
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
-            (lower-test-instr-seq-binop-op-count instrs op)
-            (lower-test-blocks-binop-op-count (__tl-box-place rest) op))])]
+            (lower-test-instr-seq-binop-op-count
+              instrs
+              (compiler_ir_types.compiler-ir-global-shared-view op))
+            (lower-test-blocks-binop-op-count
+              (compiler_ir_types.compiler-ir-box-shared-view rest)
+              op))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-binop-op-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq)
@@ -4986,8 +5387,12 @@
       (match block
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
-            (lower-test-instr-seq-i64-binop-op-count instrs op)
-            (lower-test-blocks-i64-binop-op-count (__tl-box-place rest) op))])]
+            (lower-test-instr-seq-i64-binop-op-count
+              instrs
+              (compiler_ir_types.compiler-ir-global-shared-view op))
+            (lower-test-blocks-i64-binop-op-count
+              (compiler_ir_types.compiler-ir-box-shared-view rest)
+              op))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-i64-binop-op-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq)
@@ -5002,7 +5407,8 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-cast-count instrs)
-            (lower-test-blocks-cast-count (__tl-box-place rest)))])]
+            (lower-test-blocks-cast-count
+              (compiler_ir_types.compiler-ir-box-shared-view rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-cast-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -5016,7 +5422,8 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-bitcast-count instrs)
-            (lower-test-blocks-bitcast-count (__tl-box-place rest)))])]
+            (lower-test-blocks-bitcast-count
+              (compiler_ir_types.compiler-ir-box-shared-view rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-bitcast-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -5030,8 +5437,12 @@
       (match block
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
-            (lower-test-instr-seq-store-global-count instrs name)
-            (lower-test-blocks-store-global-count (__tl-box-place rest) name))])]
+            (lower-test-instr-seq-store-global-count
+              instrs
+              (compiler_ir_types.compiler-ir-global-shared-view name))
+            (lower-test-blocks-store-global-count
+              (compiler_ir_types.compiler-ir-box-shared-view rest)
+              name))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-store-global-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq)
@@ -5051,8 +5462,10 @@
     (LowerTestMaybeFunction.No)
     (let
       [func : compiler_ir_types.CompilerIrFunction
-        (compiler_ir_types.compiler-ir-function-seq-ref funcs index)]
-      (match func
+        (compiler_ir_types.compiler-ir-function-seq-ref
+          (compiler_ir_types.compiler-ir-global-shared-view funcs)
+          index)]
+      (match (compiler_ir_types.compiler-ir-global-shared-view func)
         [(compiler_ir_types.CompilerIrFunction.Function fname _ _ _ _)
           (if (string.eq (compiler_ir_types.compiler-ir-symbol-text fname) name)
             (LowerTestMaybeFunction.Some func)
@@ -5212,9 +5625,17 @@
     (begin
       (while (< index funcs.len)
         (begin
-          (match (compiler_ir_types.compiler-ir-function-seq-ref funcs index)
+          (match (compiler_ir_types.compiler-ir-function-seq-ref
+            (compiler_ir_types.compiler-ir-global-shared-view funcs)
+            index)
             [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
-              (set! count (+ count (lower-test-blocks-call-count blocks name)))])
+              (set!
+                count
+                (+
+                  count
+                  (lower-test-blocks-call-count
+                    blocks
+                    (compiler_ir_types.compiler-ir-global-shared-view name))))])
           (set! index (+ index 1))))
       count)))
 
@@ -5226,7 +5647,9 @@
     (begin
       (while (< index funcs.len)
         (begin
-          (match (compiler_ir_types.compiler-ir-function-seq-ref funcs index)
+          (match (compiler_ir_types.compiler-ir-function-seq-ref
+            (compiler_ir_types.compiler-ir-global-shared-view funcs)
+            index)
             [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
               (set! count (+ count (lower-test-blocks-branch-count blocks)))])
           (set! index (+ index 1))))
@@ -5240,7 +5663,9 @@
     (begin
       (while (< index funcs.len)
         (begin
-          (match (compiler_ir_types.compiler-ir-function-seq-ref funcs index)
+          (match (compiler_ir_types.compiler-ir-function-seq-ref
+            (compiler_ir_types.compiler-ir-global-shared-view funcs)
+            index)
             [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
               (set! count (+ count (lower-test-blocks-return-count blocks)))])
           (set! index (+ index 1))))
@@ -5255,11 +5680,17 @@
     (begin
       (while (< index funcs.len)
         (begin
-          (match (compiler_ir_types.compiler-ir-function-seq-ref funcs index)
+          (match (compiler_ir_types.compiler-ir-function-seq-ref
+            (compiler_ir_types.compiler-ir-global-shared-view funcs)
+            index)
             [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
               (set!
                 count
-                (+ count (lower-test-blocks-tail-call-count blocks name)))])
+                (+
+                  count
+                  (lower-test-blocks-tail-call-count
+                    blocks
+                    (compiler_ir_types.compiler-ir-global-shared-view name))))])
           (set! index (+ index 1))))
       count)))
 
@@ -5267,7 +5698,9 @@
   [funcs : compiler_ir_types.CompilerIrFunctionSeq]
   [name : String]) : i64
   (+
-    (lower-test-functions-call-count funcs name)
+    (lower-test-functions-call-count
+      (owned_view.compiler-owned-shared-view funcs)
+      (owned_view.compiler-owned-shared-view name))
     (lower-test-functions-tail-call-count funcs name)))
 
 (define (lower-test-functions-cpuid-count
@@ -5278,7 +5711,9 @@
     (begin
       (while (< index funcs.len)
         (begin
-          (match (compiler_ir_types.compiler-ir-function-seq-ref funcs index)
+          (match (compiler_ir_types.compiler-ir-function-seq-ref
+            (compiler_ir_types.compiler-ir-global-shared-view funcs)
+            index)
             [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
               (set! count (+ count (lower-test-blocks-cpuid-count blocks)))])
           (set! index (+ index 1))))
@@ -5292,7 +5727,9 @@
     (begin
       (while (< index funcs.len)
         (begin
-          (match (compiler_ir_types.compiler-ir-function-seq-ref funcs index)
+          (match (compiler_ir_types.compiler-ir-function-seq-ref
+            (compiler_ir_types.compiler-ir-global-shared-view funcs)
+            index)
             [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
               (set! count (+ count (lower-test-blocks-xgetbv-count blocks)))])
           (set! index (+ index 1))))
@@ -5416,7 +5853,10 @@
   [name : String]
   [call-name : String]) : i64
   (+
-    (lower-test-function-call-count funcs name call-name)
+    (lower-test-function-call-count
+      (owned_view.compiler-owned-shared-view funcs)
+      (owned_view.compiler-owned-shared-view name)
+      (owned_view.compiler-owned-shared-view call-name))
     (lower-test-function-tail-call-count funcs name call-name)))
 
 (define (lower-test-function-store-ptr-count
@@ -5622,7 +6062,9 @@
     (begin
       (while (< index funcs.len)
         (begin
-          (match (compiler_ir_types.compiler-ir-function-seq-ref funcs index)
+          (match (compiler_ir_types.compiler-ir-function-seq-ref
+            (compiler_ir_types.compiler-ir-global-shared-view funcs)
+            index)
             [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
               (set! count (+ count (lower-test-blocks-bitcast-count blocks)))])
           (set! index (+ index 1))))
@@ -5645,11 +6087,13 @@
   [index : i64]) : bool
   (if (>= index globals.len)
     false
-    (match (compiler_ir_types.compiler-ir-global-seq-ref globals index)
+    (match (compiler_ir_types.compiler-ir-global-seq-ref
+      (owned_view.compiler-owned-shared-view globals)
+      index)
       [(compiler_ir_types.CompilerIrGlobal.Global global-name _ _)
         (if (string.eq
           (compiler_ir_types.compiler-ir-symbol-text global-name)
-          name)
+          (owned_view.compiler-owned-shared-view name))
           true
           (lower-test-global-seq-has-name-at? globals name (+ index 1)))])))
 
@@ -5673,55 +6117,84 @@
               "__tl_dispatch_variant_avx512_dot__dot-avx512"]
             [ok : bool true]
             (begin
-              (if (lower-test-global-list-has-name? globals cache-name)
+              (if (lower-test-global-list-has-name?
+                globals
+                (owned_view.compiler-owned-shared-view cache-name))
                 unit
                 (set! ok false))
-              (if (lower-test-function-defined? functions "dot")
+              (if (lower-test-function-defined?
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "dot")
                 unit
                 (set! ok false))
-              (if (lower-test-function-defined? functions scalar-name)
+              (if (lower-test-function-defined?
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                (owned_view.compiler-owned-shared-view scalar-name))
                 unit
                 (set! ok false))
-              (if (lower-test-function-defined? functions avx2-name)
+              (if (lower-test-function-defined?
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                (owned_view.compiler-owned-shared-view avx2-name))
                 unit
                 (set! ok false))
-              (if (lower-test-function-defined? functions avx512-name)
+              (if (lower-test-function-defined?
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                (owned_view.compiler-owned-shared-view avx512-name))
                 unit
                 (set! ok false))
               (when
-                (lower-test-function-defined? functions "dot-scalar")
+                (lower-test-function-defined?
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "dot-scalar")
                 (set! ok false))
               (when
-                (lower-test-function-defined? functions "dot-avx2")
+                (lower-test-function-defined?
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "dot-avx2")
                 (set! ok false))
               (when
-                (lower-test-function-defined? functions "dot-avx512")
+                (lower-test-function-defined?
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "dot-avx512")
                 (set! ok false))
-              (if (= (lower-test-function-call-count functions "main" "dot") 1)
+              (if (=
+                (lower-test-function-call-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "main"
+                  "dot")
+                1)
                 unit
                 (set! ok false))
               (if (>=
-                (lower-test-function-indirect-call-count functions "dot")
+                (lower-test-function-indirect-call-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "dot")
                 4)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-function-store-global-count
-                  functions
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
                   "dot"
                   cache-name)
                 3)
                 unit
                 (set! ok false))
-              (if (>= (lower-test-functions-cpuid-count functions) 6)
+              (if (>=
+                (lower-test-functions-cpuid-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions))
+                6)
                 unit
                 (set! ok false))
-              (if (= (lower-test-functions-xgetbv-count functions) 2)
+              (if (=
+                (lower-test-functions-xgetbv-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions))
+                2)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-function-indirect-callee-function-count
-                  functions
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
                   "dot"
                   scalar-name)
                 1)
@@ -5729,7 +6202,7 @@
                 (set! ok false))
               (if (=
                 (lower-test-function-indirect-callee-function-count
-                  functions
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
                   "dot"
                   avx2-name)
                 1)
@@ -5737,7 +6210,7 @@
                 (set! ok false))
               (if (=
                 (lower-test-function-indirect-callee-function-count
-                  functions
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
                   "dot"
                   avx512-name)
                 1)
@@ -5751,12 +6224,23 @@
     (compiler-lower-defdispatch-structural-source)
     (compiler_lower.CompilerLowerMode.LinuxScalar))
     [(compiler_lower.ResultCompilerLower.Ok program _)
-      (match program
+      (match (owned_view.compiler-owned-shared-view program)
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
-            (lower-test-function-defined? functions "dot")
-            (= (lower-test-function-call-count functions "main" "dot") 1)
-            (>= (lower-test-function-indirect-call-count functions "dot") 1))])]
+            (lower-test-function-defined?
+              (compiler_ir_types.compiler-ir-global-shared-view functions)
+              "dot")
+            (=
+              (lower-test-function-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main"
+                "dot")
+              1)
+            (>=
+              (lower-test-function-indirect-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "dot")
+              1))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-defdispatch-shared-helper-ok?) : bool
@@ -5773,21 +6257,29 @@
               "__tl_dispatch_variant_avx512_dot__dot-avx512"]
             [ok : bool true]
             (begin
-              (if (lower-test-function-defined? functions "dispatch-helper")
+              (if (lower-test-function-defined?
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "dispatch-helper")
                 unit
                 (set! ok false))
               (when
-                (lower-test-function-defined? functions "dot-scalar")
+                (lower-test-function-defined?
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "dot-scalar")
                 (set! ok false))
               (when
-                (lower-test-function-defined? functions "dot-avx2")
+                (lower-test-function-defined?
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "dot-avx2")
                 (set! ok false))
               (when
-                (lower-test-function-defined? functions "dot-avx512")
+                (lower-test-function-defined?
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "dot-avx512")
                 (set! ok false))
               (if (=
                 (lower-test-function-direct-call-count
-                  functions
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
                   scalar-name
                   "dispatch-helper")
                 1)
@@ -5795,7 +6287,7 @@
                 (set! ok false))
               (if (=
                 (lower-test-function-direct-call-count
-                  functions
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
                   avx2-name
                   "dispatch-helper")
                 1)
@@ -5803,7 +6295,7 @@
                 (set! ok false))
               (if (=
                 (lower-test-function-direct-call-count
-                  functions
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
                   avx512-name
                   "dispatch-helper")
                 1)
@@ -5833,10 +6325,11 @@
   (match (compiler_parse_core.parse-ast-source
     (compiler-lower-generated-path-source))
     [(compiler_parse_core.ResultAstProgram.Ok program)
-      (match program
+      (match (owned_view.compiler-owned-shared-view program)
         [(compiler_ast_types.AstProgram.Program decls-box)
           (let
-            [decls : compiler_ast_types.AstDeclList (__tl-box-place decls-box)]
+            [decls : compiler_ast_types.AstDeclList
+              (compiler_ast_types.ast-decl-list-box-shared-view decls-box)]
             [args : compiler_ast_types.AstExprList
               (compiler_ast_types.ast-expr-list-new)]
             (begin
@@ -5851,7 +6344,7 @@
                   (compiler_ast_types.AstGeneratedDeclMeta.Some
                     "point-family"
                     "Point"
-                    args
+                    (owned_view.compiler-owned-shared-view args)
                     "")
                   (compiler_ast_types.ast-decl-list-get
                     (& decls)
@@ -5877,11 +6370,18 @@
                   (match lowered
                     [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
                       (and
-                        (lower-test-function-defined? functions "lib.tl::after")
-                        (lower-test-function-defined? functions "main")
+                        (lower-test-function-defined?
+                          (compiler_ir_types.compiler-ir-global-shared-view
+                            functions)
+                          "lib.tl::after")
+                        (lower-test-function-defined?
+                          (compiler_ir_types.compiler-ir-global-shared-view
+                            functions)
+                          "main")
                         (=
                           (lower-test-function-direct-call-count
-                            functions
+                            (compiler_ir_types.compiler-ir-global-shared-view
+                              functions)
                             "main"
                             "lib.tl::after")
                           1))])]
@@ -5917,11 +6417,19 @@
                 (lower-test-global-list-has-name? globals "lib.tl::answer")
                 (>
                   (lower-test-functions-direct-call-count
-                    functions
+                    (compiler_ir_types.compiler-ir-global-shared-view functions)
                     "lib.tl::inc")
                   0)
-                (> (lower-test-function-binop-count functions "lib.tl::inc") 0)
-                (>= (lower-test-function-binop-count functions "main") 0))])]
+                (>
+                  (lower-test-function-binop-count
+                    (compiler_ir_types.compiler-ir-global-shared-view functions)
+                    "lib.tl::inc")
+                  0)
+                (>=
+                  (lower-test-function-binop-count
+                    (compiler_ir_types.compiler-ir-global-shared-view functions)
+                    "main")
+                  0))])]
         [(compiler_lower.ResultCompilerLower.Err _) false])]
     [(compiler_parse_core.ResultAstProgram.Err _) false]))
 
@@ -5952,12 +6460,14 @@
             [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
               (and
                 (lower-test-function-defined?
-                  functions
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
                   "stdlib/runtime.tl::runtime-helper")
-                (lower-test-function-defined? functions "main")
+                (lower-test-function-defined?
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "main")
                 (=
                   (lower-test-function-call-count
-                    functions
+                    (compiler_ir_types.compiler-ir-global-shared-view functions)
                     "main"
                     "app/src/main.tl::app-helper")
                   1))])]
@@ -5988,11 +6498,25 @@
       (match lowered
         [(compiler_ir_types.CompilerIrProgram.Program globals functions _)
           (and
-            (lower-test-global-list-has-name? globals "left/same")
+            (lower-test-global-list-has-name?
+              (owned_view.compiler-owned-shared-view globals)
+              "left/same")
             (lower-test-global-list-has-name? globals "right/same")
-            (> (lower-test-functions-call-count functions "left/get") 0)
-            (> (lower-test-functions-call-count functions "right/get") 0)
-            (> (lower-test-function-binop-count functions "main") 0))])]
+            (>
+              (lower-test-functions-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "left/get")
+              0)
+            (>
+              (lower-test-functions-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "right/get")
+              0)
+            (>
+              (lower-test-function-binop-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main")
+              0))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-import-alias-source) : String
@@ -6019,8 +6543,16 @@
       (match lowered
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
-            (> (lower-test-functions-call-count functions "data/get") 0)
-            (= (lower-test-functions-call-count functions "d/get") 0))])]
+            (>
+              (lower-test-functions-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "data/get")
+              0)
+            (=
+              (lower-test-functions-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "d/get")
+              0))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-package-alias-collision-source) : String
@@ -6066,13 +6598,13 @@
               (and
                 (=
                   (lower-test-function-call-count
-                    functions
+                    (compiler_ir_types.compiler-ir-global-shared-view functions)
                     "main"
                     "surface_left/src/lib.tl::left.src.lib/same")
                   1)
                 (=
                   (lower-test-function-call-count
-                    functions
+                    (compiler_ir_types.compiler-ir-global-shared-view functions)
                     "main"
                     "surface_right/src/lib.tl::right.src.lib/same")
                   1))])]
@@ -6122,7 +6654,8 @@
                     name)
                   "same"
                   name
-                  (__tl-box-place left-meta))]
+                  (compiler_ast_types.ast-extern-metadata-box-shared-view
+                    left-meta))]
               [right-symbol : i64
                 (compiler_lower.lower-extern-logical-symbol-id
                   lower-state
@@ -6131,7 +6664,8 @@
                     name)
                   "same"
                   name
-                  (__tl-box-place right-meta))]
+                  (compiler_ast_types.ast-extern-metadata-box-shared-view
+                    right-meta))]
               (and
                 (not (= left-symbol right-symbol))
                 (string.eq
@@ -6172,13 +6706,22 @@
         alias)]
     (and
       (=
-        (compiler_lower.lower-name-env-lookup-logical-id aliased alias-key -1)
+        (compiler_lower.lower-name-env-lookup-logical-id
+          (compiler_lower.lower-global-shared-view aliased)
+          alias-key
+          -1)
         target-key)
       (=
-        (compiler_lower.lower-name-env-lookup-symbol-id aliased alias-key -1)
+        (compiler_lower.lower-name-env-lookup-symbol-id
+          (compiler_lower.lower-global-shared-view aliased)
+          alias-key
+          -1)
         symbol-id)
       (=
-        (compiler_lower.lower-name-env-lookup-symbol-id aliased target-key -1)
+        (compiler_lower.lower-name-env-lookup-symbol-id
+          (compiler_lower.lower-global-shared-view aliased)
+          target-key
+          -1)
         symbol-id))))
 
 (define (compiler-lower-dotted-import-default-alias-source) : String
@@ -6195,22 +6738,32 @@
       (match lowered
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
-            (> (lower-test-functions-call-count functions "pkg.data/get") 0)
-            (= (lower-test-functions-call-count functions "data/get") 0))])]
+            (>
+              (lower-test-functions-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "pkg.data/get")
+              0)
+            (=
+              (lower-test-functions-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "data/get")
+              0))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-dotted-import-string-call-source) : String
   "(module pkg.string)
-(define (eq [left : String] [right : String]) : bool (= (__tl_string_length left) (__tl_string_length right)))
+(define (eq [left : (& left str)] [right : (& right str)]) : bool (= (__tl_string_length left) (__tl_string_length right)))
 (module pkg.args)
 (import pkg.string)
 (defstruct ArgsOptionSpec (long String))
 (define (args-option-spec-long [spec : ArgsOptionSpec]) : String
   spec.long)
-(define (args-option-spec-matches-long? [spec : ArgsOptionSpec] [name : String]) : bool
-  (if (not (string.eq (args-option-spec-long spec) \"\"))
-    (string.eq (args-option-spec-long spec) name)
-    false))")
+(define (args-option-spec-matches-long? [spec : ArgsOptionSpec] [name : (& name str)]) : bool
+  (let
+    [long : String (args-option-spec-long spec)]
+    (if (not (string.eq long \"\"))
+      (string.eq long name)
+      false)))")
 
 (define (compiler-lower-dotted-import-string-call-ok?) : bool
   (match (compiler_lower.lower-compiler-source
@@ -6218,7 +6771,11 @@
     [(compiler_lower.ResultCompilerLower.Ok lowered _)
       (match lowered
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
-          (> (lower-test-functions-call-count functions "pkg.string/eq") 0)])]
+          (>
+            (lower-test-functions-call-count
+              (compiler_ir_types.compiler-ir-global-shared-view functions)
+              "pkg.string/eq")
+            0)])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-module-function-returning-struct-source) : String
@@ -6240,7 +6797,11 @@
     [(compiler_lower.ResultCompilerLower.Ok lowered _)
       (match lowered
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
-          (> (lower-test-functions-call-count functions "data/cand-nth") 0)])]
+          (>
+            (lower-test-functions-call-count
+              (compiler_ir_types.compiler-ir-global-shared-view functions)
+              "data/cand-nth")
+            0)])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-module-function-returning-enum-source) : String
@@ -6260,7 +6821,11 @@
     [(compiler_lower.ResultCompilerLower.Ok lowered _)
       (match lowered
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
-          (> (lower-test-functions-call-count functions "main/get") 0)])]
+          (>
+            (lower-test-functions-call-count
+              (compiler_ir_types.compiler-ir-global-shared-view functions)
+              "main/get")
+            0)])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-imported-enum-aggregate-payload-source) : String
@@ -6281,7 +6846,11 @@
     [(compiler_lower.ResultCompilerLower.Ok lowered _)
       (match lowered
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
-          (> (lower-test-function-copy-bytes-count functions "main/make") 0)])]
+          (>
+            (lower-test-function-copy-bytes-count
+              (compiler_ir_types.compiler-ir-global-shared-view functions)
+              "main/make")
+            0)])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-module-macro-codegen-source) : String
@@ -6305,24 +6874,30 @@
       (match lowered
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
-            (lower-test-function-defined? functions "generated.intbox/make")
-            (lower-test-function-defined? functions "generated.intbox/double")
-            (lower-test-function-defined? functions "generated.intbox/bumped")
+            (lower-test-function-defined?
+              (compiler_ir_types.compiler-ir-global-shared-view functions)
+              "generated.intbox/make")
+            (lower-test-function-defined?
+              (compiler_ir_types.compiler-ir-global-shared-view functions)
+              "generated.intbox/double")
+            (lower-test-function-defined?
+              (compiler_ir_types.compiler-ir-global-shared-view functions)
+              "generated.intbox/bumped")
             (=
               (lower-test-function-call-count
-                functions
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "main"
                 "generated.intbox/make")
               1)
             (=
               (lower-test-function-call-count
-                functions
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "main"
                 "generated.intbox/bumped")
               1)
             (=
               (lower-test-function-call-count
-                functions
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "generated.intbox/bumped"
                 "generated.intbox/double")
               1))])]
@@ -6348,10 +6923,10 @@
               globals
               "generated.global_init_user/answer")
             (lower-test-function-defined?
-              functions
+              (compiler_ir_types.compiler-ir-global-shared-view functions)
               "__global_init_generated.global_init_user/answer")
             (lower-test-function-defined?
-              functions
+              (compiler_ir_types.compiler-ir-global-shared-view functions)
               "generated.global_init_user/read-answer"))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
@@ -6401,7 +6976,8 @@
         (compiler_lower.lower-function-decl-count
           (compiler_ast_types.ast-decl-cons
             (compiler_ast_types.ast-decl-comptime-decl
-              (compiler_ast_types.ast-decl-unsafe fn))
+              (compiler_ast_types.ast-decl-unsafe
+                (owned_view.compiler-owned-shared-view fn)))
             (compiler_ast_types.ast-decl-list-new)))
         1)
       (=
@@ -6438,7 +7014,7 @@
             [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
               (>
                 (lower-test-functions-direct-call-count
-                  functions
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
                   "__tl_specialized_alloc_type_i64_none")
                 0)])]
         [(compiler_lower.ResultCompilerLower.Err _) false])]
@@ -6486,14 +7062,24 @@
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
-            (= (lower-test-function-call-count functions "main" "big-use") 1)
+            (=
+              (lower-test-function-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main"
+                "big-use")
+              1)
             ;; `Big` is a 16-byte all-integer struct, register-resident,
             ;; so building `(Big 1 2)` does not heap-allocate -- the value is
             ;; constructed in a register pair. The Win64 C ABI still requires the
             ;; >8 B aggregate to be passed BY REFERENCE, so exactly one tl_alloc
             ;; remains: the byref buffer the register pair is spilled into before
             ;; the call (down from two when construction also allocated).
-            (>= (lower-test-function-call-count functions "main" "tl_alloc") 1))])]
+            (>=
+              (lower-test-function-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main"
+                "tl_alloc")
+              1))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-c-abi-windows-nested-small-aggregate-shape-ok?) : bool
@@ -6505,7 +7091,7 @@
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (=
             (lower-test-function-call-count
-              functions
+              (compiler_ir_types.compiler-ir-global-shared-view functions)
               "main"
               "outer-float-box-use")
             1)])]
@@ -6521,15 +7107,27 @@
           (and
             (=
               (lower-test-function-call-count
-                functions
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "main"
                 "float-pair-make")
               1)
             (=
-              (lower-test-function-call-count functions "main" "float-pair-use")
+              (lower-test-function-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main"
+                "float-pair-use")
               1)
-            (= (lower-test-function-call-count functions "main" "tl_alloc") 0)
-            (>= (lower-test-function-bitcast-count functions "main") 2))])]
+            (=
+              (lower-test-function-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main"
+                "tl_alloc")
+              0)
+            (>=
+              (lower-test-function-bitcast-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main")
+              2))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-extern-link-inputs-ok?
@@ -6600,10 +7198,28 @@
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
-            (= (lower-test-function-call-count functions "main" "raw-fn") 0)
-            (= (lower-test-function-call-count functions "main" "direct-fn") 1)
-            (= (lower-test-function-indirect-call-count functions "main") 0)
-            (= (lower-test-function-indirect-c-call-count functions "main") 2))])]
+            (=
+              (lower-test-function-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main"
+                "raw-fn")
+              0)
+            (=
+              (lower-test-function-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main"
+                "direct-fn")
+              1)
+            (=
+              (lower-test-function-indirect-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main")
+              0)
+            (=
+              (lower-test-function-indirect-c-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main")
+              2))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-c-abi-linux-tag-only-enum-source) : String
@@ -6636,10 +7252,22 @@
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
             (=
-              (lower-test-function-call-count functions "main" "status-next")
+              (lower-test-function-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main"
+                "status-next")
               2)
-            (= (lower-test-function-indirect-c-call-count functions "main") 1)
-            (= (lower-test-function-call-count functions "main" "tl_alloc") 0))])]
+            (=
+              (lower-test-function-indirect-c-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main")
+              1)
+            (=
+              (lower-test-function-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main"
+                "tl_alloc")
+              0))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-c-abi-payload-enum-source) : String
@@ -6671,12 +7299,34 @@
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
             (=
-              (lower-test-function-call-count functions "main" "small-score")
+              (lower-test-function-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main"
+                "small-score")
               1)
-            (= (lower-test-function-call-count functions "main" "box-score") 1)
-            (= (lower-test-function-call-count functions "main" "box-make") 1)
-            (= (lower-test-function-call-count functions "main" "wide-make") 1)
-            (= (lower-test-function-indirect-c-call-count functions "main") 1))])]
+            (=
+              (lower-test-function-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main"
+                "box-score")
+              1)
+            (=
+              (lower-test-function-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main"
+                "box-make")
+              1)
+            (=
+              (lower-test-function-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main"
+                "wide-make")
+              1)
+            (=
+              (lower-test-function-indirect-c-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main")
+              1))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-c-abi-windows-enum-aggregate-source) : String
@@ -6741,20 +7391,40 @@
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
             (=
-              (lower-test-function-call-count functions "main" "status-pick")
+              (lower-test-function-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main"
+                "status-pick")
               1)
-            (=
-              (lower-test-function-call-count functions "main" "small-score")
-              1)
-            (= (lower-test-function-call-count functions "main" "wide-score") 1)
             (=
               (lower-test-function-call-count
-                functions
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main"
+                "small-score")
+              1)
+            (=
+              (lower-test-function-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main"
+                "wide-score")
+              1)
+            (=
+              (lower-test-function-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "main"
                 "return-choice-make")
               1)
-            (= (lower-test-function-indirect-c-call-count functions "main") 4)
-            (>= (lower-test-function-call-count functions "main" "tl_alloc") 3))])]
+            (=
+              (lower-test-function-indirect-c-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main")
+              4)
+            (>=
+              (lower-test-function-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main"
+                "tl_alloc")
+              3))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-global-source) : String
@@ -6781,10 +7451,14 @@
               (if (= externs.len 1)
                 unit
                 (set! ok false))
-              (if (lower-test-global-list-has-name? globals "answer")
+              (if (lower-test-global-list-has-name?
+                (owned_view.compiler-owned-shared-view globals)
+                "answer")
                 unit
                 (set! ok false))
-              (if (lower-test-global-list-has-name? globals "flag")
+              (if (lower-test-global-list-has-name?
+                (owned_view.compiler-owned-shared-view globals)
+                "flag")
                 unit
                 (set! ok false))
               (if (lower-test-global-list-has-name? globals "widened")
@@ -6795,7 +7469,7 @@
                 (set! ok false))
               (if (>
                 (lower-test-function-store-global-count
-                  functions
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
                   "main"
                   "answer")
                 0)
@@ -6826,7 +7500,7 @@
             (begin
               (if (>
                 (lower-test-function-binop-op-count
-                  functions
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
                   "bits"
                   compiler_ir_types.CompilerIrBinOp.BitAnd)
                 1)
@@ -6834,7 +7508,7 @@
                 (set! ok false))
               (if (>
                 (lower-test-function-binop-op-count
-                  functions
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
                   "bits"
                   compiler_ir_types.CompilerIrBinOp.BitOr)
                 0)
@@ -6842,7 +7516,7 @@
                 (set! ok false))
               (if (>
                 (lower-test-function-binop-op-count
-                  functions
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
                   "bits"
                   compiler_ir_types.CompilerIrBinOp.BitXor)
                 1)
@@ -6850,7 +7524,7 @@
                 (set! ok false))
               (if (>
                 (lower-test-function-binop-op-count
-                  functions
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
                   "bits"
                   (compiler_ir_types.CompilerIrBinOp.Shl
                     (compiler_ast_types.AstType.I32)))
@@ -6859,7 +7533,7 @@
                 (set! ok false))
               (if (>
                 (lower-test-function-binop-op-count
-                  functions
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
                   "bits"
                   (compiler_ir_types.CompilerIrBinOp.Shr
                     (compiler_ast_types.AstType.I32)))
@@ -6868,7 +7542,7 @@
                 (set! ok false))
               (if (>
                 (lower-test-function-binop-op-count
-                  functions
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
                   "floaty"
                   compiler_ir_types.CompilerIrBinOp.Add)
                 0)
@@ -6876,13 +7550,17 @@
                 (set! ok false))
               (if (>
                 (lower-test-function-binop-op-count
-                  functions
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
                   "floaty"
                   compiler_ir_types.CompilerIrBinOp.Lt)
                 0)
                 unit
                 (set! ok false))
-              (if (> (lower-test-function-cast-count functions "casts") 0)
+              (if (>
+                (lower-test-function-cast-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "casts")
+                0)
                 unit
                 (set! ok false))
               ok))])]
@@ -7010,8 +7688,18 @@
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
-            (= (lower-test-function-tail-call-count functions "loop" "loop") 1)
-            (= (lower-test-function-call-count functions "loop" "loop") 0))])]
+            (=
+              (lower-test-function-tail-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "loop"
+                "loop")
+              1)
+            (=
+              (lower-test-function-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "loop"
+                "loop")
+              0))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-tail-context-shape-ok?) : bool
@@ -7021,8 +7709,18 @@
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
-            (= (lower-test-function-tail-call-count functions "loop" "loop") 1)
-            (= (lower-test-function-call-count functions "loop" "loop") 0))])]
+            (=
+              (lower-test-function-tail-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "loop"
+                "loop")
+              1)
+            (=
+              (lower-test-function-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "loop"
+                "loop")
+              0))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-tail-operand-shape-ok?) : bool
@@ -7032,8 +7730,18 @@
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
-            (= (lower-test-function-tail-call-count functions "loop" "loop") 0)
-            (> (lower-test-function-call-count functions "loop" "loop") 0))])]
+            (=
+              (lower-test-function-tail-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "loop"
+                "loop")
+              0)
+            (>
+              (lower-test-function-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "loop"
+                "loop")
+              0))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-tail-direct-shape-ok?) : bool
@@ -7044,9 +7752,17 @@
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
             (=
-              (lower-test-function-tail-call-count functions "step" "finish")
+              (lower-test-function-tail-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "step"
+                "finish")
               1)
-            (= (lower-test-function-call-count functions "step" "finish") 0))])]
+            (=
+              (lower-test-function-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "step"
+                "finish")
+              0))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-tail-direct-stack-shape-ok?) : bool
@@ -7057,9 +7773,17 @@
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
             (=
-              (lower-test-function-tail-call-count functions "step5" "finish5")
+              (lower-test-function-tail-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "step5"
+                "finish5")
               1)
-            (= (lower-test-function-call-count functions "step5" "finish5") 0))])]
+            (=
+              (lower-test-function-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "step5"
+                "finish5")
+              0))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-tail-aggregate-return-shape-ok?) : bool
@@ -7069,12 +7793,30 @@
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
-            (= (lower-test-function-tail-call-count functions "step" "step") 1)
-            (= (lower-test-function-call-count functions "step" "step") 0)
             (=
-              (lower-test-function-tail-call-count functions "step" "finish")
+              (lower-test-function-tail-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "step"
+                "step")
               1)
-            (= (lower-test-function-call-count functions "step" "finish") 0))])]
+            (=
+              (lower-test-function-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "step"
+                "step")
+              0)
+            (=
+              (lower-test-function-tail-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "step"
+                "finish")
+              1)
+            (=
+              (lower-test-function-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "step"
+                "finish")
+              0))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-tail-aggregate-param-shape-ok?) : bool
@@ -7084,12 +7826,30 @@
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
-            (= (lower-test-function-tail-call-count functions "step" "step") 1)
-            (= (lower-test-function-call-count functions "step" "step") 0)
             (=
-              (lower-test-function-tail-call-count functions "step" "finish")
+              (lower-test-function-tail-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "step"
+                "step")
               1)
-            (= (lower-test-function-call-count functions "step" "finish") 0))])]
+            (=
+              (lower-test-function-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "step"
+                "step")
+              0)
+            (=
+              (lower-test-function-tail-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "step"
+                "finish")
+              1)
+            (=
+              (lower-test-function-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "step"
+                "finish")
+              0))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-tail-aggregate-local-shape-ok?) : bool
@@ -7100,9 +7860,17 @@
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
             (=
-              (lower-test-function-tail-call-count functions "step" "finish")
+              (lower-test-function-tail-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "step"
+                "finish")
               0)
-            (> (lower-test-function-call-count functions "step" "finish") 0))])]
+            (>
+              (lower-test-function-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "step"
+                "finish")
+              0))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-tail-aggregate-reassigned-param-shape-ok?) : bool
@@ -7113,9 +7881,17 @@
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
             (=
-              (lower-test-function-tail-call-count functions "step" "finish")
+              (lower-test-function-tail-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "step"
+                "finish")
               0)
-            (> (lower-test-function-call-count functions "step" "finish") 0))])]
+            (>
+              (lower-test-function-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "step"
+                "finish")
+              0))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-tail-indirect-shape-ok?) : bool
@@ -7126,9 +7902,15 @@
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
             (=
-              (lower-test-function-indirect-tail-call-count functions "step")
+              (lower-test-function-indirect-tail-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "step")
               1)
-            (= (lower-test-function-indirect-call-count functions "step") 0))])]
+            (=
+              (lower-test-function-indirect-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "step")
+              0))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-tail-indirect-aggregate-param-shape-ok?) : bool
@@ -7139,9 +7921,15 @@
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
             (=
-              (lower-test-function-indirect-tail-call-count functions "step")
+              (lower-test-function-indirect-tail-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "step")
               1)
-            (= (lower-test-function-indirect-call-count functions "step") 0))])]
+            (=
+              (lower-test-function-indirect-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "step")
+              0))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-tail-indirect-aggregate-return-shape-ok?) : bool
@@ -7152,9 +7940,15 @@
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
             (=
-              (lower-test-function-indirect-tail-call-count functions "step")
+              (lower-test-function-indirect-tail-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "step")
               1)
-            (= (lower-test-function-indirect-call-count functions "step") 0))])]
+            (=
+              (lower-test-function-indirect-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "step")
+              0))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-tail-cleanup-shape-ok?) : bool
@@ -7165,9 +7959,17 @@
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
             (=
-              (lower-test-function-tail-call-count functions "step" "finish")
+              (lower-test-function-tail-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "step"
+                "finish")
               0)
-            (> (lower-test-function-call-count functions "step" "finish") 0))])]
+            (>
+              (lower-test-function-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "step"
+                "finish")
+              0))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-tail-call-shape-ok?) : bool
@@ -7239,8 +8041,8 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [want : i64]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -7250,7 +8052,9 @@
             acc
             (+
               acc
-              (lower-test-instr-i64-mov-count (array-ref slots index) want)))
+              (lower-test-instr-i64-mov-count
+                (compiler_ir_types.compiler-ir-array-shared-view slots index)
+                want)))
           (set! index (+ index 1))))
       acc)))
 
@@ -7258,8 +8062,8 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [want : u64]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -7269,15 +8073,17 @@
             acc
             (+
               acc
-              (lower-test-instr-f64-mov-count (array-ref slots index) want)))
+              (lower-test-instr-f64-mov-count
+                (compiler_ir_types.compiler-ir-array-shared-view slots index)
+                want)))
           (set! index (+ index 1))))
       acc)))
 
 (define (lower-test-instr-seq-binop-count
   [instrs : compiler_ir_types.CompilerIrInstrSeq]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -7285,7 +8091,10 @@
         (begin
           (set!
             acc
-            (+ acc (lower-test-instr-binop-count (array-ref slots index))))
+            (+
+              acc
+              (lower-test-instr-binop-count
+                (compiler_ir_types.compiler-ir-array-shared-view slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -7293,8 +8102,8 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [want : i64]) : i64
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
     [index : i64 0]
     [acc : i64 0]
     (begin
@@ -7304,7 +8113,9 @@
             acc
             (+
               acc
-              (lower-test-instr-gep-offset-count (array-ref slots index) want)))
+              (lower-test-instr-gep-offset-count
+                (compiler_ir_types.compiler-ir-array-shared-view slots index)
+                want)))
           (set! index (+ index 1))))
       acc)))
 
@@ -7318,7 +8129,9 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-i64-mov-count instrs want)
-            (lower-test-blocks-i64-mov-count (__tl-box-place rest) want))])]
+            (lower-test-blocks-i64-mov-count
+              (compiler_ir_types.compiler-ir-box-shared-view rest)
+              want))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-i64-mov-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq)
@@ -7334,7 +8147,9 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-f64-mov-count instrs want)
-            (lower-test-blocks-f64-mov-count (__tl-box-place rest) want))])]
+            (lower-test-blocks-f64-mov-count
+              (compiler_ir_types.compiler-ir-box-shared-view rest)
+              want))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-f64-mov-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq)
@@ -7349,7 +8164,8 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-binop-count instrs)
-            (lower-test-blocks-binop-count (__tl-box-place rest)))])]
+            (lower-test-blocks-binop-count
+              (compiler_ir_types.compiler-ir-box-shared-view rest)))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-binop-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
@@ -7364,7 +8180,9 @@
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
           (+
             (lower-test-instr-seq-gep-offset-count instrs want)
-            (lower-test-blocks-gep-offset-count (__tl-box-place rest) want))])]
+            (lower-test-blocks-gep-offset-count
+              (compiler_ir_types.compiler-ir-box-shared-view rest)
+              want))])]
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (lower-test-blocks-gep-offset-count
         (compiler_ir_types.compiler-ir-block-seq-to-list seq)
@@ -7419,8 +8237,17 @@
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
-            (> (lower-test-function-i64-mov-count functions "main" want) 0)
-            (= (lower-test-function-binop-count functions "main") 0))])]
+            (>
+              (lower-test-function-i64-mov-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main"
+                want)
+              0)
+            (=
+              (lower-test-function-binop-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main")
+              0))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-comptime-float-fold-ok?
@@ -7434,11 +8261,15 @@
           (and
             (>
               (lower-test-function-f64-mov-count-bits
-                functions
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "main"
                 (compiler_lower.lower-float-literal-bits want ty))
               0)
-            (= (lower-test-function-binop-count functions "main") 0))])]
+            (=
+              (lower-test-function-binop-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main")
+              0))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-comptime-f64-fold-ok? [src : String] [want : String]) : bool
@@ -7461,10 +8292,26 @@
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
-            (= (lower-test-function-phi-count functions "classify") 0)
-            (= (lower-test-function-phi-count functions "flag-score") 0)
-            (= (lower-test-function-phi-count functions "sign") 0)
-            (= (lower-test-function-phi-count functions "announce") 0))])]
+            (=
+              (lower-test-function-phi-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "classify")
+              0)
+            (=
+              (lower-test-function-phi-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "flag-score")
+              0)
+            (=
+              (lower-test-function-phi-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "sign")
+              0)
+            (=
+              (lower-test-function-phi-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "announce")
+              0))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 ;; Tail-position enum matches also return directly from their arms. Payload
@@ -7475,12 +8322,36 @@
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
-            (= (lower-test-function-phi-count functions "score") 0)
-            (= (lower-test-function-phi-count functions "zero-call") 0)
-            (= (lower-test-function-phi-count functions "or-zero") 0)
-            (= (lower-test-function-phi-count functions "touch") 0)
-            (> (lower-test-function-load-count functions "score") 1)
-            (> (lower-test-function-load-count functions "or-zero") 1))])]
+            (=
+              (lower-test-function-phi-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "score")
+              0)
+            (=
+              (lower-test-function-phi-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "zero-call")
+              0)
+            (=
+              (lower-test-function-phi-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "or-zero")
+              0)
+            (=
+              (lower-test-function-phi-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "touch")
+              0)
+            (>
+              (lower-test-function-load-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "score")
+              1)
+            (>
+              (lower-test-function-load-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "or-zero")
+              1))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-two-variant-fallthrough-shape-ok?) : bool
@@ -7492,12 +8363,15 @@
           (and
             (=
               (lower-test-function-binop-op-count
-                functions
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "score"
                 compiler_ir_types.CompilerIrBinOp.Eq)
               1)
             (=
-              (lower-test-function-call-count functions "score" "tl_oob_abort")
+              (lower-test-function-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "score"
+                "tl_oob_abort")
               0))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
@@ -7509,21 +8383,33 @@
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
             (>=
-              (lower-test-function-total-enum-branch-count functions "large")
+              (lower-test-function-total-enum-branch-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "large")
               4)
             (=
-              (lower-test-function-total-enum-branch-count functions "small")
+              (lower-test-function-total-enum-branch-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "small")
               0)
             ;; The outer two-arm match remains ordinary while its nested
             ;; six-variant match independently carries the total proof.
             (=
-              (lower-test-function-total-enum-branch-count functions "nested")
+              (lower-test-function-total-enum-branch-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "nested")
               4)
-            (= (lower-test-function-branch-count functions "nested") 6)
+            (=
+              (lower-test-function-branch-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "nested")
+              6)
             ;; A catch-all makes the match exhaustive as source syntax, but it
             ;; does not prove that the compared tags cover the enum domain.
             (=
-              (lower-test-function-total-enum-branch-count functions "partial")
+              (lower-test-function-total-enum-branch-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "partial")
               0))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
@@ -7534,10 +8420,26 @@
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
-            (= (lower-test-functions-call-count functions "tl_string_eq") 0)
-            (= (lower-test-functions-call-count functions "string-eq") 0)
-            (> (lower-test-function-branch-count functions "classify") 2)
-            (> (lower-test-function-load-count functions "classify") 2))])]
+            (=
+              (lower-test-functions-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "tl_string_eq")
+              0)
+            (=
+              (lower-test-functions-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "string-eq")
+              0)
+            (>
+              (lower-test-function-branch-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "classify")
+              2)
+            (>
+              (lower-test-function-load-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "classify")
+              2))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-borrowed-enum-match-shape-ok?) : bool
@@ -7547,10 +8449,28 @@
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
-            (> (lower-test-function-phi-count functions "score") 0)
-            (> (lower-test-function-call-count functions "score" "take") 0)
-            (> (lower-test-function-gep-offset-count functions "score" 8) 0)
-            (> (lower-test-function-branch-count functions "slot-score") 0))])]
+            (>
+              (lower-test-function-phi-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "score")
+              0)
+            (>
+              (lower-test-function-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "score"
+                "take")
+              0)
+            (>
+              (lower-test-function-gep-offset-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "score"
+                8)
+              0)
+            (>
+              (lower-test-function-branch-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "slot-score")
+              0))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-result-try-shape-ok? [src : String]) : bool
@@ -7559,10 +8479,26 @@
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
-            (> (lower-test-function-branch-count functions ".::sum") 1)
-            (> (lower-test-function-return-count functions ".::sum") 2)
-            (> (lower-test-function-return-count functions ".::chain") 1)
-            (> (lower-test-function-load-count functions ".::sum") 3))])]
+            (>
+              (lower-test-function-branch-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                ".::sum")
+              1)
+            (>
+              (lower-test-function-return-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                ".::sum")
+              2)
+            (>
+              (lower-test-function-return-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                ".::chain")
+              1)
+            (>
+              (lower-test-function-load-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                ".::sum")
+              3))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-option-try-shape-ok?) : bool
@@ -7572,8 +8508,16 @@
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
-            (> (lower-test-function-branch-count functions "main") 1)
-            (> (lower-test-function-return-count functions "main") 2))])]
+            (>
+              (lower-test-function-branch-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main")
+              1)
+            (>
+              (lower-test-function-return-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main")
+              2))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-return-shape-ok?) : bool
@@ -7581,7 +8525,11 @@
     [(compiler_lower.ResultCompilerLower.Ok program _)
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
-          (> (lower-test-function-return-count functions "main") 1)])]
+          (>
+            (lower-test-function-return-count
+              (compiler_ir_types.compiler-ir-global-shared-view functions)
+              "main")
+            1)])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-return-with-arena-shape-ok?) : bool
@@ -7591,8 +8539,16 @@
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
-            (> (lower-test-function-return-count functions "main") 1)
-            (> (lower-test-functions-call-count functions "tl_region_reset") 1))])]
+            (>
+              (lower-test-function-return-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main")
+              1)
+            (>
+              (lower-test-functions-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "tl_region_reset")
+              1))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-resource-with-shape-ok?) : bool
@@ -7602,10 +8558,26 @@
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
-            (= (lower-test-functions-call-count functions ".::close-a") 3)
-            (= (lower-test-functions-call-count functions ".::close-b") 2)
-            (> (lower-test-function-return-count functions "main") 2)
-            (> (lower-test-function-branch-count functions "main") 2))])]
+            (=
+              (lower-test-functions-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                ".::close-a")
+              3)
+            (=
+              (lower-test-functions-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                ".::close-b")
+              2)
+            (>
+              (lower-test-function-return-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main")
+              2)
+            (>
+              (lower-test-function-branch-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main")
+              2))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-resource-with-nested-shape-ok?) : bool
@@ -7615,8 +8587,16 @@
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
-            (= (lower-test-functions-call-count functions ".::close-a") 1)
-            (= (lower-test-functions-call-count functions ".::close-b") 1))])]
+            (=
+              (lower-test-functions-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                ".::close-a")
+              1)
+            (=
+              (lower-test-functions-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                ".::close-b")
+              1))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-cleanup-struct-shape-ok?) : bool
@@ -7628,17 +8608,21 @@
           (and
             (=
               (lower-test-function-direct-call-count
-                functions
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
                 ".::cleanup-file-handle"
                 ".::close-fd")
               1)
             (>
               (lower-test-function-direct-call-count
-                functions
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "main"
                 ".::cleanup-file-handle")
               1)
-            (> (lower-test-function-return-count functions "main") 1))])]
+            (>
+              (lower-test-function-return-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main")
+              1))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-cleanup-struct-nested-shape-ok?) : bool
@@ -7650,24 +8634,24 @@
           (and
             (=
               (lower-test-function-direct-call-count
-                functions
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "cleanup-file-handle"
                 "close-fd")
               1)
             (=
               (lower-test-function-call-count
-                functions
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "cleanup-buffered-file"
                 "close-buffer")
               1)
             (=
               (lower-test-function-direct-call-count
-                functions
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "cleanup-buffered-file"
                 "cleanup-file-handle")
               1)
             (lower-test-function-call-before?
-              functions
+              (compiler_ir_types.compiler-ir-global-shared-view functions)
               "cleanup-buffered-file"
               "close-buffer"
               "cleanup-file-handle"))])]
@@ -7679,8 +8663,16 @@
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
-            (> (lower-test-function-bounds-count functions "get") 0)
-            (> (lower-test-function-bounds-count functions "put") 0))])]
+            (>
+              (lower-test-function-bounds-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "get")
+              0)
+            (>
+              (lower-test-function-bounds-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "put")
+              0))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-array-take-shape-ok?) : bool
@@ -7690,10 +8682,26 @@
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
-            (>= (lower-test-function-bounds-count functions "take-item") 2)
-            (>= (lower-test-function-branch-count functions "take-item") 2)
-            (>= (lower-test-function-store-ptr-count functions "take-item") 3)
-            (>= (lower-test-function-load-count functions "take-item") 3))])]
+            (>=
+              (lower-test-function-bounds-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "take-item")
+              2)
+            (>=
+              (lower-test-function-branch-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "take-item")
+              2)
+            (>=
+              (lower-test-function-store-ptr-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "take-item")
+              3)
+            (>=
+              (lower-test-function-load-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "take-item")
+              3))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-mut-ref-array-field-access-shape-ok?) : bool
@@ -7703,10 +8711,26 @@
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
-            (> (lower-test-function-load-count functions "array-bag-handle") 0)
-            (> (lower-test-function-load-count functions "len") 0)
-            (> (lower-test-function-bounds-count functions "get") 0)
-            (> (lower-test-function-bounds-count functions "put") 0))])]
+            (>
+              (lower-test-function-load-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "array-bag-handle")
+              0)
+            (>
+              (lower-test-function-load-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "len")
+              0)
+            (>
+              (lower-test-function-bounds-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "get")
+              0)
+            (>
+              (lower-test-function-bounds-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "put")
+              0))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-fixed-array-access-shape-ok? [src : String]) : bool
@@ -7717,22 +8741,48 @@
           (let
             [ok : bool true]
             (begin
-              (if (> (lower-test-function-bounds-count functions "get") 0)
+              (if (>
+                (lower-test-function-bounds-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "get")
+                0)
                 unit
                 (set! ok false))
-              (if (> (lower-test-function-load-count functions "get") 0)
+              (if (>
+                (lower-test-function-load-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "get")
+                0)
                 unit
                 (set! ok false))
-              (if (> (lower-test-function-bounds-count functions "put") 0)
+              (if (>
+                (lower-test-function-bounds-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "put")
+                0)
                 unit
                 (set! ok false))
-              (if (= (lower-test-function-gep-offset-count functions "get" 1) 0)
+              (if (=
+                (lower-test-function-gep-offset-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "get"
+                  1)
+                0)
                 unit
                 (set! ok false))
-              (if (= (lower-test-function-gep-offset-count functions "put" 1) 0)
+              (if (=
+                (lower-test-function-gep-offset-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "put"
+                  1)
+                0)
                 unit
                 (set! ok false))
-              (if (> (lower-test-function-store-ptr-count functions "put") 0)
+              (if (>
+                (lower-test-function-store-ptr-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "put")
+                0)
                 unit
                 (set! ok false))
               ok))])]
@@ -7745,9 +8795,22 @@
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
-            (= (lower-test-function-call-count functions "main" "tl_alloc") 0)
-            (>= (lower-test-function-alloc-count functions "main") 3)
-            (= (lower-test-function-addr-of-count functions "main") 1))])]
+            (=
+              (lower-test-function-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main"
+                "tl_alloc")
+              0)
+            (>=
+              (lower-test-function-alloc-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main")
+              3)
+            (=
+              (lower-test-function-addr-of-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main")
+              1))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-fixed-array-aggregate-layout-shape-ok?) : bool
@@ -7757,9 +8820,23 @@
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
-            (= (lower-test-function-call-count functions "main" "tl_alloc") 0)
-            (> (lower-test-function-gep-offset-count functions "main" 16) 0)
-            (= (lower-test-function-copy-bytes-count functions "main") 0))])]
+            (=
+              (lower-test-function-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main"
+                "tl_alloc")
+              0)
+            (>
+              (lower-test-function-gep-offset-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main"
+                16)
+              0)
+            (=
+              (lower-test-function-copy-bytes-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main")
+              0))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-array-push-shape-ok? [src : String]) : bool
@@ -7768,10 +8845,26 @@
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
-            (> (lower-test-functions-call-count functions "tl_alloc") 0)
-            (> (lower-test-functions-call-count functions "tl_oob_abort") 0)
-            (> (lower-test-function-binop-count functions "grow") 0)
-            (> (lower-test-function-store-ptr-count functions "grow") 0))])]
+            (>
+              (lower-test-functions-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "tl_alloc")
+              0)
+            (>
+              (lower-test-functions-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "tl_oob_abort")
+              0)
+            (>
+              (lower-test-function-binop-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "grow")
+              0)
+            (>
+              (lower-test-function-store-ptr-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "grow")
+              0))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-make-array-shape-ok? [src : String]) : bool
@@ -7780,25 +8873,36 @@
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
-            (> (lower-test-functions-call-count functions "tl_alloc") 1)
-            (> (lower-test-functions-call-count functions "tl_oob_abort") 0)
+            (>
+              (lower-test-functions-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "tl_alloc")
+              1)
+            (>
+              (lower-test-functions-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "tl_oob_abort")
+              0)
             (>=
               (lower-test-function-i64-binop-op-count
-                functions
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "main"
                 (compiler_ir_types.CompilerIrBinOp.Le))
               2)
             (=
               (lower-test-function-binop-op-count
-                functions
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "main"
                 (compiler_ir_types.CompilerIrBinOp.Le))
               (lower-test-function-i64-binop-op-count
-                functions
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "main"
                 (compiler_ir_types.CompilerIrBinOp.Le)))
             (=
-              (lower-test-function-call-count functions "main" "tl_array_zero")
+              (lower-test-function-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main"
+                "tl_array_zero")
               1))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
@@ -7809,10 +8913,21 @@
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
             (=
-              (lower-test-function-call-count functions "main" "tl_array_fill8")
+              (lower-test-function-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main"
+                "tl_array_fill8")
               1)
-            (>= (lower-test-function-store-ptr-count functions "main") 2)
-            (> (lower-test-functions-call-count functions "tl_alloc") 0))])]
+            (>=
+              (lower-test-function-store-ptr-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main")
+              2)
+            (>
+              (lower-test-functions-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "tl_alloc")
+              0))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-dyn-array-literal-shape-ok?) : bool
@@ -7822,11 +8937,23 @@
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
-            (= (lower-test-function-call-count functions "main" "tl_alloc") 2)
             (=
-              (lower-test-function-call-count functions "main" "tl_array_zero")
+              (lower-test-function-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main"
+                "tl_alloc")
+              2)
+            (=
+              (lower-test-function-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main"
+                "tl_array_zero")
               0)
-            (>= (lower-test-function-store-ptr-count functions "main") 3))])]
+            (>=
+              (lower-test-function-store-ptr-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main")
+              3))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-make-array-register-resident-zero-fill-shape-ok?) : bool
@@ -7841,10 +8968,16 @@
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
             (=
-              (lower-test-function-call-count functions "main" "tl_array_zero")
+              (lower-test-function-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main"
+                "tl_array_zero")
               1)
             (=
-              (lower-test-function-call-count functions "main" "tl_array_fill8")
+              (lower-test-function-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main"
+                "tl_array_fill8")
               0))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
@@ -7857,50 +8990,58 @@
             [ok : bool true]
             (begin
               (if (=
-                (lower-test-functions-call-count functions "tl_substring")
+                (lower-test-functions-call-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "tl_substring")
                 0)
                 unit
                 (set! ok false))
               (if (=
-                (lower-test-functions-call-count functions "tl_string_concat")
+                (lower-test-functions-call-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "tl_string_concat")
                 0)
                 unit
                 (set! ok false))
               (if (=
-                (lower-test-functions-call-count functions "tl_oob_abort")
+                (lower-test-functions-call-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "tl_oob_abort")
                 0)
                 unit
                 (set! ok false))
               (if (>
                 (lower-test-functions-direct-call-count
-                  functions
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
                   "string.substring")
                 0)
                 unit
                 (set! ok false))
               (if (>
                 (lower-test-functions-direct-call-count
-                  functions
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
                   "string.append")
                 0)
                 unit
                 (set! ok false))
               (if (>
                 (lower-test-functions-direct-call-count
-                  functions
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
                   "string.concat")
                 0)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-direct-call-count
-                  functions
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
                   "io.emit-string")
                 2)
                 unit
                 (set! ok false))
               (if (=
-                (lower-test-functions-direct-call-count functions "io.emit-str")
+                (lower-test-functions-direct-call-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "io.emit-str")
                 1)
                 unit
                 (set! ok false))
@@ -7917,28 +9058,36 @@
             [ok : bool true]
             (begin
               (if (=
-                (lower-test-functions-call-count functions "tl_string_concat")
+                (lower-test-functions-call-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "tl_string_concat")
                 0)
                 unit
                 (set! ok false))
               (if (=
-                (lower-test-functions-call-count functions "tl_string_concat3")
+                (lower-test-functions-call-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "tl_string_concat3")
                 0)
                 unit
                 (set! ok false))
               (if (=
-                (lower-test-functions-call-count functions "tl_string_concat4")
+                (lower-test-functions-call-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "tl_string_concat4")
                 0)
                 unit
                 (set! ok false))
               (if (=
-                (lower-test-functions-call-count functions "tl_string_concat5")
+                (lower-test-functions-call-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "tl_string_concat5")
                 0)
                 unit
                 (set! ok false))
               (if (>
                 (lower-test-functions-direct-call-count
-                  functions
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
                   "string.append")
                 0)
                 unit
@@ -7955,11 +9104,13 @@
           (and
             (=
               (lower-test-functions-direct-call-count
-                functions
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "io.emit-string")
               2)
             (=
-              (lower-test-functions-direct-call-count functions "io.emit-str")
+              (lower-test-functions-direct-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "io.emit-str")
               1))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
@@ -7974,7 +9125,7 @@
             (begin
               (if (>
                 (lower-test-function-direct-call-count
-                  functions
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
                   "main"
                   "borrowed-score")
                 0)
@@ -7982,14 +9133,16 @@
                 (set! ok false))
               (if (>
                 (lower-test-function-gep-offset-count
-                  functions
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
                   "borrowed-score"
                   1)
                 0)
                 unit
                 (set! ok false))
               (if (=
-                (lower-test-functions-call-count functions "string-length")
+                (lower-test-functions-call-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "string-length")
                 0)
                 unit
                 (set! ok false))
@@ -8013,18 +9166,25 @@
                 (begin
                   (if (=
                     (lower-test-function-call-count
-                      functions
-                      name
+                      (compiler_ir_types.compiler-ir-global-shared-view
+                        functions)
+                      (owned_view.compiler-owned-shared-view name)
                       "tl_hash_string")
                     0)
                     unit
                     (set! ok false))
-                  (if (> (lower-test-function-bounds-count functions name) 0)
+                  (if (>
+                    (lower-test-function-bounds-count
+                      (compiler_ir_types.compiler-ir-global-shared-view
+                        functions)
+                      (owned_view.compiler-owned-shared-view name))
+                    0)
                     unit
                     (set! ok false))
                   (if (=
                     (lower-test-function-direct-call-count
-                      functions
+                      (compiler_ir_types.compiler-ir-global-shared-view
+                        functions)
                       "main"
                       name)
                     1)
@@ -8045,26 +9205,39 @@
             (begin
               (if (>
                 (lower-test-function-call-count
-                  functions
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
                   "ref-return"
                   "tl_alloc")
                 0)
                 unit
                 (set! ok false))
               (if (=
-                (lower-test-function-call-count functions "ref-id" "tl_alloc")
+                (lower-test-function-call-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "ref-id"
+                  "tl_alloc")
                 0)
                 unit
                 (set! ok false))
-              (if (> (lower-test-function-store-ptr-count functions "main") 1)
-                unit
-                (set! ok false))
-              (if (=
-                (lower-test-function-return-count functions "ref-return")
+              (if (>
+                (lower-test-function-store-ptr-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "main")
                 1)
                 unit
                 (set! ok false))
-              (if (= (lower-test-function-return-count functions "ref-id") 1)
+              (if (=
+                (lower-test-function-return-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "ref-return")
+                1)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-function-return-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "ref-id")
+                1)
                 unit
                 (set! ok false))
               ok))])]
@@ -8080,20 +9253,25 @@
             [ok : bool true]
             (begin
               (if (>
-                (lower-test-function-gep-offset-count functions "borrow-pair" 0)
+                (lower-test-function-gep-offset-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "borrow-pair"
+                  0)
                 0)
                 unit
                 (set! ok false))
               (if (>
                 (lower-test-function-gep-offset-count
-                  functions
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
                   "borrow-tuple"
                   0)
                 0)
                 unit
                 (set! ok false))
               (if (>
-                (lower-test-function-bounds-count functions "borrow-array")
+                (lower-test-function-bounds-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "borrow-array")
                 0)
                 unit
                 (set! ok false))
@@ -8112,11 +9290,15 @@
           (and
             (=
               (lower-test-function-direct-call-count
-                functions
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "main"
                 "take-inner")
               1)
-            (= (lower-test-function-load-count functions "main") 0))])]
+            (=
+              (lower-test-function-load-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main")
+              0))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-reference-nominal-aggregate-ok?) : bool
@@ -8132,15 +9314,35 @@
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
             (>
-              (lower-test-functions-call-count functions "string.string-length")
+              (lower-test-functions-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "string.string-length")
               0)
-            (> (lower-test-functions-call-count functions "string.append") 0)
             (>
-              (lower-test-functions-call-count functions "string.string-ref")
+              (lower-test-functions-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "string.append")
               0)
-            (> (lower-test-functions-call-count functions "string.char-at") 0)
-            (= (lower-test-functions-call-count functions "tl_string_concat") 0)
-            (= (lower-test-functions-call-count functions "tl_oob_abort") 0))])]
+            (>
+              (lower-test-functions-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "string.string-ref")
+              0)
+            (>
+              (lower-test-functions-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "string.char-at")
+              0)
+            (=
+              (lower-test-functions-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "tl_string_concat")
+              0)
+            (=
+              (lower-test-functions-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "tl_oob_abort")
+              0))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-function-value-shape-ok?) : bool
@@ -8154,34 +9356,44 @@
             (begin
               (if (=
                 (lower-test-function-indirect-tail-call-count
-                  functions
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
                   "apply1")
                 1)
                 unit
                 (set! ok false))
               (if (=
-                (lower-test-function-indirect-call-count functions "apply1")
+                (lower-test-function-indirect-call-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "apply1")
                 0)
                 unit
                 (set! ok false))
-              (if (= (lower-test-function-call-count functions "apply1" "f") 0)
+              (if (=
+                (lower-test-function-call-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "apply1"
+                  "f")
+                0)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-function-indirect-tail-call-count
-                  functions
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
                   "shadow-inc")
                 1)
                 unit
                 (set! ok false))
               (if (=
-                (lower-test-function-call-count functions "shadow-inc" "inc")
+                (lower-test-function-call-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "shadow-inc"
+                  "inc")
                 0)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-function-call-arg-function-count
-                  functions
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
                   "main"
                   "apply1"
                   "inc")
@@ -8199,9 +9411,15 @@
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
             (=
-              (lower-test-function-indirect-tail-call-count functions "main")
+              (lower-test-function-indirect-tail-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main")
               1)
-            (= (lower-test-function-indirect-call-count functions "main") 0))])]
+            (=
+              (lower-test-function-indirect-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main")
+              0))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-noncapturing-lambda-value-ok?) : bool
@@ -8213,14 +9431,21 @@
           (let
             [lambda-name : String "__tl_lambda_get-fn_0"]
             (and
-              (= (compiler_ir_types.compiler-ir-function-seq-count functions) 2)
+              (=
+                (compiler_ir_types.compiler-ir-function-seq-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions))
+                2)
               (=
                 (lower-test-function-return-function-count
-                  functions
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
                   "get-fn"
-                  lambda-name)
+                  (owned_view.compiler-owned-shared-view lambda-name))
                 1)
-              (> (lower-test-function-binop-count functions lambda-name) 0)))])]
+              (>
+                (lower-test-function-binop-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  lambda-name)
+                0)))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-immediate-lambda-call-ok?) : bool
@@ -8232,18 +9457,26 @@
           (let
             [lambda-name : String "__tl_lambda_main_0"]
             (and
-              (= (compiler_ir_types.compiler-ir-function-seq-count functions) 2)
               (=
-                (lower-test-function-indirect-tail-call-count functions "main")
+                (compiler_ir_types.compiler-ir-function-seq-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions))
+                2)
+              (=
+                (lower-test-function-indirect-tail-call-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "main")
                 1)
               (=
                 (lower-test-function-indirect-callee-function-count
-                  functions
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
                   "main"
-                  lambda-name)
+                  (owned_view.compiler-owned-shared-view lambda-name))
                 1)
               (=
-                (lower-test-function-call-count functions "main" lambda-name)
+                (lower-test-function-call-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "main"
+                  lambda-name)
                 0)))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
@@ -8256,11 +9489,18 @@
           (let
             [lambda-name : String "__tl_lambda_main_0"]
             (and
-              (= (compiler_ir_types.compiler-ir-function-seq-count functions) 2)
-              (= (lower-test-function-indirect-unit-count functions "main") 1)
+              (=
+                (compiler_ir_types.compiler-ir-function-seq-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions))
+                2)
+              (=
+                (lower-test-function-indirect-unit-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "main")
+                1)
               (=
                 (lower-test-function-indirect-callee-function-count
-                  functions
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
                   "main"
                   lambda-name)
                 1)))])]
@@ -8283,22 +9523,37 @@
             [ok : bool true]
             (begin
               (if (=
-                (compiler_ir_types.compiler-ir-function-seq-count functions)
+                (compiler_ir_types.compiler-ir-function-seq-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions))
                 2)
                 unit
                 (set! ok false))
               (if (=
-                (lower-test-function-indirect-tail-call-count functions "main")
+                (lower-test-function-indirect-tail-call-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "main")
                 1)
                 unit
                 (set! ok false))
-              (if (>= (lower-test-function-store-ptr-count functions "main") 3)
+              (if (>=
+                (lower-test-function-store-ptr-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "main")
+                3)
                 unit
                 (set! ok false))
-              (if (>= (lower-test-functions-call-count functions "tl_alloc") 2)
+              (if (>=
+                (lower-test-functions-call-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "tl_alloc")
+                2)
                 unit
                 (set! ok false))
-              (if (>= (lower-test-function-load-count functions lambda-name) 1)
+              (if (>=
+                (lower-test-function-load-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  lambda-name)
+                1)
                 unit
                 (set! ok false))
               ok))])]
@@ -8315,24 +9570,29 @@
             [ok : bool true]
             (begin
               (if (=
-                (compiler_ir_types.compiler-ir-function-seq-count functions)
+                (compiler_ir_types.compiler-ir-function-seq-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions))
                 3)
                 unit
                 (set! ok false))
               (if (=
-                (lower-test-function-indirect-tail-call-count functions "main")
+                (lower-test-function-indirect-tail-call-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "main")
                 1)
                 unit
                 (set! ok false))
               (if (>=
                 (lower-test-function-indirect-tail-call-count
-                  functions
-                  capturing-name)
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  (owned_view.compiler-owned-shared-view capturing-name))
                 1)
                 unit
                 (set! ok false))
               (if (>=
-                (lower-test-function-load-count functions capturing-name)
+                (lower-test-function-load-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  capturing-name)
                 2)
                 unit
                 (set! ok false))
@@ -8350,19 +9610,30 @@
             [ok : bool true]
             (begin
               (if (=
-                (compiler_ir_types.compiler-ir-function-seq-count functions)
+                (compiler_ir_types.compiler-ir-function-seq-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions))
                 2)
                 unit
                 (set! ok false))
               (if (=
-                (lower-test-function-indirect-tail-call-count functions "main")
+                (lower-test-function-indirect-tail-call-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "main")
                 1)
                 unit
                 (set! ok false))
-              (if (>= (lower-test-functions-call-count functions "tl_alloc") 3)
+              (if (>=
+                (lower-test-functions-call-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "tl_alloc")
+                3)
                 unit
                 (set! ok false))
-              (if (>= (lower-test-function-load-count functions lambda-name) 2)
+              (if (>=
+                (lower-test-function-load-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  lambda-name)
+                2)
                 unit
                 (set! ok false))
               ok))])]
@@ -8379,22 +9650,37 @@
             [ok : bool true]
             (begin
               (if (=
-                (compiler_ir_types.compiler-ir-function-seq-count functions)
+                (compiler_ir_types.compiler-ir-function-seq-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions))
                 2)
                 unit
                 (set! ok false))
               (if (=
-                (lower-test-function-indirect-tail-call-count functions "main")
+                (lower-test-function-indirect-tail-call-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "main")
                 1)
                 unit
                 (set! ok false))
-              (if (>= (lower-test-functions-call-count functions "tl_alloc") 5)
+              (if (>=
+                (lower-test-functions-call-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "tl_alloc")
+                5)
                 unit
                 (set! ok false))
-              (if (>= (lower-test-function-store-ptr-count functions "main") 8)
+              (if (>=
+                (lower-test-function-store-ptr-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "main")
+                8)
                 unit
                 (set! ok false))
-              (if (>= (lower-test-function-load-count functions lambda-name) 4)
+              (if (>=
+                (lower-test-function-load-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  lambda-name)
+                4)
                 unit
                 (set! ok false))
               ok))])]
@@ -8407,10 +9693,19 @@
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
-            (= (compiler_ir_types.compiler-ir-function-seq-count functions) 2)
-            (= (lower-test-function-indirect-call-count functions "main") 1)
+            (=
+              (compiler_ir_types.compiler-ir-function-seq-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions))
+              2)
+            (=
+              (lower-test-function-indirect-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main")
+              1)
             (>=
-              (lower-test-function-pack-count functions "__tl_lambda_main_0")
+              (lower-test-function-pack-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "__tl_lambda_main_0")
               1))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
@@ -8421,12 +9716,21 @@
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
-            (= (compiler_ir_types.compiler-ir-function-seq-count functions) 2)
+            (=
+              (compiler_ir_types.compiler-ir-function-seq-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions))
+              2)
             (string.eq
-              (lower-test-function-param-name functions "__tl_lambda_main_0" 0)
+              (lower-test-function-param-name
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "__tl_lambda_main_0"
+                0)
               "__tl_env")
             (string.eq
-              (lower-test-function-param-name functions "__tl_lambda_main_0" 1)
+              (lower-test-function-param-name
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "__tl_lambda_main_0"
+                1)
               "__sret"))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
@@ -8437,9 +9741,18 @@
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
-            (= (compiler_ir_types.compiler-ir-function-seq-count functions) 2)
             (=
-              (lower-test-function-indirect-tail-call-count functions "main")
+              (compiler_ir_types.compiler-ir-function-seq-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions))
+              2)
+            (=
+              (compiler_ir_types.compiler-ir-function-seq-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions))
+              2)
+            (=
+              (lower-test-function-indirect-tail-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main")
               1))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
@@ -8454,16 +9767,23 @@
             [ok : bool true]
             (begin
               (if (=
-                (compiler_ir_types.compiler-ir-function-seq-count functions)
+                (compiler_ir_types.compiler-ir-function-seq-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions))
                 2)
                 unit
                 (set! ok false))
               (if (=
-                (lower-test-function-indirect-call-count functions "main")
+                (lower-test-function-indirect-call-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "main")
                 1)
                 unit
                 (set! ok false))
-              (if (>= (lower-test-function-load-count functions lambda-name) 1)
+              (if (>=
+                (lower-test-function-load-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  lambda-name)
+                1)
                 unit
                 (set! ok false))
               ok))])]
@@ -8480,16 +9800,23 @@
             [ok : bool true]
             (begin
               (if (=
-                (compiler_ir_types.compiler-ir-function-seq-count functions)
+                (compiler_ir_types.compiler-ir-function-seq-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions))
                 2)
                 unit
                 (set! ok false))
               (if (=
-                (lower-test-function-indirect-call-count functions "main")
+                (lower-test-function-indirect-call-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "main")
                 1)
                 unit
                 (set! ok false))
-              (if (>= (lower-test-function-load-count functions lambda-name) 1)
+              (if (>=
+                (lower-test-function-load-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  lambda-name)
+                1)
                 unit
                 (set! ok false))
               ok))])]
@@ -8518,133 +9845,169 @@
             (begin
               (if (=
                 (lower-test-functions-call-count
-                  functions
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
                   ".L_tl_fs_mkdir_status")
                 0)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count
-                  functions
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
                   ".L_tl_fs_remove_file_status")
                 0)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count
-                  functions
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
                   ".L_tl_fs_remove_dir_status")
                 0)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count
-                  functions
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
                   ".L_tl_fs_rename_status")
                 0)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count
-                  functions
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
                   ".L_tl_fs_read_dir_status")
                 0)
                 unit
                 (set! ok false))
               (if (=
-                (lower-test-functions-call-count functions ".L_tl_fs_read_dir")
+                (lower-test-functions-call-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  ".L_tl_fs_read_dir")
                 0)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count
-                  functions
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
                   ".L_tl_fs_file_kind_status")
                 0)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count
-                  functions
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
                   ".L_tl_fs_file_size_status")
                 0)
                 unit
                 (set! ok false))
               (if (=
-                (lower-test-functions-call-count functions ".L_tl_fs_file_size")
+                (lower-test-functions-call-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  ".L_tl_fs_file_size")
                 0)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count
-                  functions
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
                   ".L_tl_fs_process_id")
                 0)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count
-                  functions
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
                   "tl_fs_current_dir_status")
                 0)
                 unit
                 (set! ok false))
               (if (=
-                (lower-test-functions-call-count functions "tl_fs_current_dir")
+                (lower-test-functions-call-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "tl_fs_current_dir")
                 0)
                 unit
                 (set! ok false))
               (if (=
-                (lower-test-functions-call-count functions "mkdir-status")
+                (lower-test-functions-call-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "mkdir-status")
                 1)
                 unit
                 (set! ok false))
               (if (=
-                (lower-test-functions-call-count functions "remove-file-status")
+                (lower-test-functions-call-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "remove-file-status")
                 1)
                 unit
                 (set! ok false))
               (if (=
-                (lower-test-functions-call-count functions "remove-dir-status")
+                (lower-test-functions-call-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "remove-dir-status")
                 1)
                 unit
                 (set! ok false))
               (if (=
-                (lower-test-functions-call-count functions "rename-status")
+                (lower-test-functions-call-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "rename-status")
                 1)
                 unit
                 (set! ok false))
               (if (=
-                (lower-test-functions-call-count functions "read-dir-status")
-                1)
-                unit
-                (set! ok false))
-              (if (= (lower-test-functions-call-count functions "read-dir") 1)
-                unit
-                (set! ok false))
-              (if (=
-                (lower-test-functions-call-count functions "file-kind-status")
+                (lower-test-functions-call-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "read-dir-status")
                 1)
                 unit
                 (set! ok false))
               (if (=
-                (lower-test-functions-call-count functions "file-size-status")
-                1)
-                unit
-                (set! ok false))
-              (if (= (lower-test-functions-call-count functions "file-size") 1)
-                unit
-                (set! ok false))
-              (if (= (lower-test-functions-call-count functions "process-id") 1)
-                unit
-                (set! ok false))
-              (if (=
-                (lower-test-functions-call-count functions "current-dir-status")
+                (lower-test-functions-call-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "read-dir")
                 1)
                 unit
                 (set! ok false))
               (if (=
-                (lower-test-functions-call-count functions "current-dir")
+                (lower-test-functions-call-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "file-kind-status")
+                1)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "file-size-status")
+                1)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "file-size")
+                1)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "process-id")
+                1)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "current-dir-status")
+                1)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "current-dir")
                 1)
                 unit
                 (set! ok false))
@@ -8666,8 +10029,16 @@
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
-            (> (lower-test-functions-call-count functions "tl_region_mark") 0)
-            (> (lower-test-functions-call-count functions "tl_region_reset") 0))])]
+            (>
+              (lower-test-functions-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "tl_region_mark")
+              0)
+            (>
+              (lower-test-functions-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "tl_region_reset")
+              0))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-with-arena-source [src : String]) : String
@@ -8752,10 +10123,26 @@
 (define (compiler-lower-with-escape-arena-functions-shape-ok?
   [functions : compiler_ir_types.CompilerIrFunctionSeq]) : bool
   (and
-    (>= (lower-test-functions-call-count functions "tl_arena_current") 3)
-    (>= (lower-test-functions-call-count functions "tl_arena_set") 4)
-    (> (lower-test-functions-call-count functions "tl_region_mark") 0)
-    (> (lower-test-functions-call-count functions "tl_region_reset") 0)))
+    (>=
+      (lower-test-functions-call-count
+        (compiler_ir_types.compiler-ir-global-shared-view functions)
+        "tl_arena_current")
+      3)
+    (>=
+      (lower-test-functions-call-count
+        (compiler_ir_types.compiler-ir-global-shared-view functions)
+        "tl_arena_set")
+      4)
+    (>
+      (lower-test-functions-call-count
+        (compiler_ir_types.compiler-ir-global-shared-view functions)
+        "tl_region_mark")
+      0)
+    (>
+      (lower-test-functions-call-count
+        (compiler_ir_types.compiler-ir-global-shared-view functions)
+        "tl_region_reset")
+      0)))
 
 (define (compiler-lower-with-escape-arena-shape-ok? [src : String]) : bool
   (match (compiler_lower.lower-compiler-source src)
@@ -8774,8 +10161,15 @@
           (and
             (compiler-lower-with-escape-arena-shape-ok?
               (compiler-lower-with-escape-array-source))
-            (> (lower-test-functions-call-count functions "tl_alloc") 1)
-            (> (lower-test-functions-branch-count functions) 0))])]
+            (>
+              (lower-test-functions-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "tl_alloc")
+              1)
+            (>
+              (lower-test-functions-branch-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions))
+              0))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-with-escape-box-shape-ok?) : bool
@@ -8787,8 +10181,16 @@
           (and
             (compiler-lower-with-escape-arena-shape-ok?
               (compiler-lower-with-escape-box-source))
-            (> (lower-test-functions-call-count functions "tl_alloc") 0)
-            (> (lower-test-functions-call-count functions "tl_substring") 0))])]
+            (>
+              (lower-test-functions-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "tl_alloc")
+              0)
+            (>
+              (lower-test-functions-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "tl_substring")
+              0))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-with-escape-owning-shape-ok?) : bool
@@ -8798,8 +10200,13 @@
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
-            (compiler-lower-with-escape-arena-functions-shape-ok? functions)
-            (> (lower-test-functions-call-count functions "tl_alloc") 0))])]
+            (compiler-lower-with-escape-arena-functions-shape-ok?
+              (compiler_ir_types.compiler-ir-global-shared-view functions))
+            (>
+              (lower-test-functions-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "tl_alloc")
+              0))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-with-escape-shape-ok?) : bool
@@ -8818,7 +10225,11 @@
               (and
                 (compiler-lower-with-escape-arena-shape-ok?
                   (compiler-lower-with-escape-string-source))
-                (> (lower-test-functions-call-count functions "tl_substring") 0))])]
+                (>
+                  (lower-test-functions-call-count
+                    (compiler_ir_types.compiler-ir-global-shared-view functions)
+                    "tl_substring")
+                  0))])]
         [(compiler_lower.ResultCompilerLower.Err _) false])
         unit
         (set! ok false))
@@ -8927,12 +10338,36 @@
 (define (compiler-lower-with-scratch-arena-functions-shape-ok?
   [functions : compiler_ir_types.CompilerIrFunctionSeq]) : bool
   (and
-    (>= (lower-test-functions-call-count functions "tl_arena_current") 3)
-    (>= (lower-test-functions-call-count functions "tl_arena_set") 3)
-    (>= (lower-test-functions-call-count functions "tl_arena_make") 1)
-    (>= (lower-test-functions-call-count functions "tl_arena_destroy") 1)
-    (= (lower-test-functions-call-count functions "tl_region_mark") 0)
-    (= (lower-test-functions-call-count functions "tl_region_reset") 0)))
+    (>=
+      (lower-test-functions-call-count
+        (compiler_ir_types.compiler-ir-global-shared-view functions)
+        "tl_arena_current")
+      3)
+    (>=
+      (lower-test-functions-call-count
+        (compiler_ir_types.compiler-ir-global-shared-view functions)
+        "tl_arena_set")
+      3)
+    (>=
+      (lower-test-functions-call-count
+        (compiler_ir_types.compiler-ir-global-shared-view functions)
+        "tl_arena_make")
+      1)
+    (>=
+      (lower-test-functions-call-count
+        (compiler_ir_types.compiler-ir-global-shared-view functions)
+        "tl_arena_destroy")
+      1)
+    (=
+      (lower-test-functions-call-count
+        (compiler_ir_types.compiler-ir-global-shared-view functions)
+        "tl_region_mark")
+      0)
+    (=
+      (lower-test-functions-call-count
+        (compiler_ir_types.compiler-ir-global-shared-view functions)
+        "tl_region_reset")
+      0)))
 
 (define (compiler-lower-with-scratch-arena-shape-ok? [src : String]) : bool
   (match (compiler_lower.lower-compiler-source src)
@@ -8949,8 +10384,13 @@
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
-            (compiler-lower-with-scratch-arena-functions-shape-ok? functions)
-            (> (lower-test-functions-call-count functions "tl_alloc") 0))])]
+            (compiler-lower-with-scratch-arena-functions-shape-ok?
+              (compiler_ir_types.compiler-ir-global-shared-view functions))
+            (>
+              (lower-test-functions-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "tl_alloc")
+              0))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-with-scratch-shape-ok?) : bool
@@ -8969,7 +10409,11 @@
               (and
                 (compiler-lower-with-scratch-arena-shape-ok?
                   (compiler-lower-with-scratch-string-source))
-                (> (lower-test-functions-call-count functions "tl_substring") 0))])]
+                (>
+                  (lower-test-functions-call-count
+                    (compiler_ir_types.compiler-ir-global-shared-view functions)
+                    "tl_substring")
+                  0))])]
         [(compiler_lower.ResultCompilerLower.Err _) false])
         unit
         (set! ok false))
@@ -8991,11 +10435,11 @@
             [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
               (and
                 (lower-test-function-defined?
-                  functions
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
                   "stdlib/runtime.tl::substring")
                 (>
                   (lower-test-function-call-count
-                    functions
+                    (compiler_ir_types.compiler-ir-global-shared-view functions)
                     "main"
                     "tl_substring")
                   0))])]
@@ -9015,11 +10459,11 @@
             [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
               (and
                 (lower-test-function-defined?
-                  functions
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
                   "stdlib/runtime.tl::substring")
                 (>
                   (lower-test-function-call-count
-                    functions
+                    (compiler_ir_types.compiler-ir-global-shared-view functions)
                     "main"
                     "tl_substring")
                   0))])]
@@ -9039,11 +10483,11 @@
             [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
               (and
                 (lower-test-function-defined?
-                  functions
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
                   "stdlib/runtime.tl::substring")
                 (>
                   (lower-test-function-call-count
-                    functions
+                    (compiler_ir_types.compiler-ir-global-shared-view functions)
                     "main"
                     "tl_substring")
                   0))])]
@@ -9063,15 +10507,15 @@
             [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
               (and
                 (lower-test-function-defined?
-                  functions
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
                   "stdlib/runtime.tl::atomic-i64-fetch-add-ptr!")
                 (not
                   (lower-test-function-defined?
-                    functions
+                    (compiler_ir_types.compiler-ir-global-shared-view functions)
                     "stdlib/runtime.tl::atomic-i64-load-ptr"))
                 (>
                   (lower-test-function-call-count
-                    functions
+                    (compiler_ir_types.compiler-ir-global-shared-view functions)
                     "main"
                     "tl_atomic_i64_fetch_add_ptr")
                   0))])]
@@ -9113,13 +10557,13 @@
           (and
             (=
               (lower-test-function-call-count
-                functions
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "main"
                 "tl_tls_current_arena_load")
               1)
             (=
               (lower-test-function-call-count
-                functions
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "main"
                 "tl_tls_current_arena_store")
               1))])]
@@ -9136,10 +10580,14 @@
             [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
               (and
                 (>=
-                  (lower-test-functions-call-count functions "tl_arena_current")
+                  (lower-test-functions-call-count
+                    (compiler_ir_types.compiler-ir-global-shared-view functions)
+                    "tl_arena_current")
                   1)
                 (>=
-                  (lower-test-functions-call-count functions "tl_arena_set")
+                  (lower-test-functions-call-count
+                    (compiler_ir_types.compiler-ir-global-shared-view functions)
+                    "tl_arena_set")
                   2))])]
         [(compiler_lower.ResultCompilerLower.Err _) false])
         unit
@@ -9151,12 +10599,19 @@
             [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
               (and
                 (>=
-                  (lower-test-functions-call-count functions "tl_arena_current")
+                  (lower-test-functions-call-count
+                    (compiler_ir_types.compiler-ir-global-shared-view functions)
+                    "tl_arena_current")
                   1)
                 (>=
-                  (lower-test-functions-call-count functions "tl_arena_set")
+                  (lower-test-functions-call-count
+                    (compiler_ir_types.compiler-ir-global-shared-view functions)
+                    "tl_arena_set")
                   3)
-                (> (lower-test-functions-return-count functions) 1))])]
+                (>
+                  (lower-test-functions-return-count
+                    (compiler_ir_types.compiler-ir-global-shared-view functions))
+                  1))])]
         [(compiler_lower.ResultCompilerLower.Err _) false])
         unit
         (set! ok false))
@@ -9168,9 +10623,24 @@
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
-            (= (lower-test-function-call-count functions "main" "tl_alloc") 0)
-            (> (lower-test-function-gep-offset-count functions "main" 4) 0)
-            (> (lower-test-function-gep-offset-count functions "main" 12) 0))])]
+            (=
+              (lower-test-function-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main"
+                "tl_alloc")
+              0)
+            (>
+              (lower-test-function-gep-offset-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main"
+                4)
+              0)
+            (>
+              (lower-test-function-gep-offset-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main"
+                12)
+              0))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 ;; `foreach` scalar lowering: a foreach `main` lowers to a loop, so its
@@ -9182,8 +10652,16 @@
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
-            (> (lower-test-function-branch-count functions "main") 0)
-            (> (lower-test-function-binop-count functions "main") 1))])]
+            (>
+              (lower-test-function-branch-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main")
+              0)
+            (>
+              (lower-test-function-binop-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main")
+              1))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-avx2-foreach-map-source) : String
@@ -9360,25 +10838,39 @@
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (let
             [load-count : i64
-              (lower-test-function-vector-load-count functions "fill")]
+              (lower-test-function-vector-load-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [binop-count : i64
-              (lower-test-function-vector-binop-count functions "fill")]
+              (lower-test-function-vector-binop-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [store-count : i64
-              (lower-test-function-vector-store-count functions "fill")]
+              (lower-test-function-vector-store-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [pred-load-count : i64
-              (lower-test-function-predicated-load-count functions "fill")]
+              (lower-test-function-predicated-load-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [pred-store-count : i64
-              (lower-test-function-predicated-store-count functions "fill")]
+              (lower-test-function-predicated-store-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [tail-mask-count : i64
-              (lower-test-function-tail-mask-count functions "fill")]
+              (lower-test-function-tail-mask-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [shape-count : i64
               (lower-test-function-vector-shape-count
-                functions
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "fill"
                 lanes
                 elem-ty)]
             [tail-store-count : i64
-              (lower-test-function-store-ptr-count functions "fill")]
+              (lower-test-function-store-ptr-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             (compiler-lower-and8
               (= load-count 2)
               (= binop-count 2)
@@ -9452,25 +10944,39 @@
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (let
             [load-count : i64
-              (lower-test-function-vector-load-count functions "fill")]
+              (lower-test-function-vector-load-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [binop-count : i64
-              (lower-test-function-vector-binop-count functions "fill")]
+              (lower-test-function-vector-binop-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [store-count : i64
-              (lower-test-function-vector-store-count functions "fill")]
+              (lower-test-function-vector-store-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [pred-load-count : i64
-              (lower-test-function-predicated-load-count functions "fill")]
+              (lower-test-function-predicated-load-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [pred-store-count : i64
-              (lower-test-function-predicated-store-count functions "fill")]
+              (lower-test-function-predicated-store-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [tail-mask-count : i64
-              (lower-test-function-tail-mask-count functions "fill")]
+              (lower-test-function-tail-mask-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [shape-count : i64
               (lower-test-function-vector-shape-count
-                functions
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "fill"
                 lanes
                 elem-ty)]
             [tail-store-count : i64
-              (lower-test-function-store-ptr-count functions "fill")]
+              (lower-test-function-store-ptr-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             (compiler-lower-and8
               (= load-count want-loads)
               (= binop-count (* want-binops 2))
@@ -9573,16 +11079,28 @@
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
-            (= (lower-test-function-vector-load-count functions "fill") 0)
-            (= (lower-test-function-vector-store-count functions "fill") 1)
+            (=
+              (lower-test-function-vector-load-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")
+              0)
+            (=
+              (lower-test-function-vector-store-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")
+              1)
             (=
               (lower-test-function-vector-shape-count
-                functions
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "fill"
                 lanes
                 elem-ty)
               2)
-            (> (lower-test-function-bounds-count functions "fill") 0))])]
+            (>
+              (lower-test-function-bounds-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")
+              0))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-spmd-broadcast-avx2-shape-ok?) : bool
@@ -9623,25 +11141,39 @@
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (let
             [load-count : i64
-              (lower-test-function-vector-load-count functions "fill")]
+              (lower-test-function-vector-load-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [binop-count : i64
-              (lower-test-function-vector-binop-count functions "fill")]
+              (lower-test-function-vector-binop-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [store-count : i64
-              (lower-test-function-vector-store-count functions "fill")]
+              (lower-test-function-vector-store-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [pred-load-count : i64
-              (lower-test-function-predicated-load-count functions "fill")]
+              (lower-test-function-predicated-load-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [pred-store-count : i64
-              (lower-test-function-predicated-store-count functions "fill")]
+              (lower-test-function-predicated-store-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [tail-mask-count : i64
-              (lower-test-function-tail-mask-count functions "fill")]
+              (lower-test-function-tail-mask-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [shape-count : i64
               (lower-test-function-vector-shape-count
-                functions
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "fill"
                 lanes
                 elem-ty)]
             [tail-store-count : i64
-              (lower-test-function-store-ptr-count functions "fill")]
+              (lower-test-function-store-ptr-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             (compiler-lower-and8
               (= load-count 2)
               (= binop-count 2)
@@ -9716,25 +11248,39 @@
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (let
             [load-count : i64
-              (lower-test-function-vector-load-count functions "fill")]
+              (lower-test-function-vector-load-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [binop-count : i64
-              (lower-test-function-vector-binop-count functions "fill")]
+              (lower-test-function-vector-binop-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [store-count : i64
-              (lower-test-function-vector-store-count functions "fill")]
+              (lower-test-function-vector-store-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [pred-load-count : i64
-              (lower-test-function-predicated-load-count functions "fill")]
+              (lower-test-function-predicated-load-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [pred-store-count : i64
-              (lower-test-function-predicated-store-count functions "fill")]
+              (lower-test-function-predicated-store-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [tail-mask-count : i64
-              (lower-test-function-tail-mask-count functions "fill")]
+              (lower-test-function-tail-mask-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [shape-count : i64
               (lower-test-function-vector-shape-count
-                functions
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "fill"
                 lanes
                 elem-ty)]
             [tail-store-count : i64
-              (lower-test-function-store-ptr-count functions "fill")]
+              (lower-test-function-store-ptr-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             (compiler-lower-and8
               (= load-count want-loads)
               (= binop-count want-binops)
@@ -9848,18 +11394,38 @@
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
-            (= (lower-test-function-vector-load-count functions "fill") 0)
-            (= (lower-test-function-vector-store-count functions "fill") 1)
-            (= (lower-test-function-predicated-store-count functions "fill") 1)
-            (= (lower-test-function-tail-mask-count functions "fill") 1)
+            (=
+              (lower-test-function-vector-load-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")
+              0)
+            (=
+              (lower-test-function-vector-store-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")
+              1)
+            (=
+              (lower-test-function-predicated-store-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")
+              1)
+            (=
+              (lower-test-function-tail-mask-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")
+              1)
             (=
               (lower-test-function-vector-shape-count
-                functions
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "fill"
                 lanes
                 elem-ty)
               4)
-            (> (lower-test-function-bounds-count functions "fill") 0))])]
+            (>
+              (lower-test-function-bounds-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")
+              0))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-spmd-broadcast-avx512-shape-ok?) : bool
@@ -9981,13 +11547,18 @@
     [(compiler_lower.ResultCompilerLower.Ok program _)
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
-          (and
-            (=
-              (lower-test-function-vector-load-count functions "fill")
-              vector-loads)
-            (=
-              (lower-test-function-predicated-load-count functions "fill")
-              predicated-loads))])]
+          (let
+            [actual-vector-loads : i64
+              (lower-test-function-vector-load-count
+                (owned_view.compiler-owned-shared-view functions)
+                "fill")]
+            [actual-predicated-loads : i64
+              (lower-test-function-predicated-load-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
+            (and
+              (= actual-vector-loads vector-loads)
+              (= actual-predicated-loads predicated-loads)))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-masked-preheader-cache-counts-ok?
@@ -10004,7 +11575,7 @@
             ;; each materialized once for the full body and vector tail.
             (=
               (lower-test-function-splat-shape-count
-                functions
+                (owned_view.compiler-owned-shared-view functions)
                 "fill"
                 lanes
                 (compiler_ast_types.AstType.I64))
@@ -10012,11 +11583,14 @@
             ;; Dynamic-array slot-0 loads live in entry, never in either vector
             ;; body. The scalar tail deliberately retains its checked reloads.
             (=
-              (lower-test-function-label-load-count functions "fill" "entry")
+              (lower-test-function-label-load-count
+                (owned_view.compiler-owned-shared-view functions)
+                "fill"
+                "entry")
               4)
             (=
               (lower-test-function-label-load-count
-                functions
+                (owned_view.compiler-owned-shared-view functions)
                 "fill"
                 "foreach_avx512_mask_body.1")
               0)
@@ -10270,19 +11844,33 @@
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (let
             [load-count : i64
-              (lower-test-function-vector-load-count functions "fill")]
+              (lower-test-function-vector-load-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [store-count : i64
-              (lower-test-function-vector-store-count functions "fill")]
+              (lower-test-function-vector-store-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [binop-count : i64
-              (lower-test-function-vector-binop-count functions "fill")]
+              (lower-test-function-vector-binop-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [pred-load-count : i64
-              (lower-test-function-predicated-load-count functions "fill")]
+              (lower-test-function-predicated-load-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [pred-store-count : i64
-              (lower-test-function-predicated-store-count functions "fill")]
+              (lower-test-function-predicated-store-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [tail-mask-count : i64
-              (lower-test-function-tail-mask-count functions "fill")]
+              (lower-test-function-tail-mask-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [tail-store-count : i64
-              (lower-test-function-store-ptr-count functions "fill")]
+              (lower-test-function-store-ptr-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             (compiler-lower-and8
               (= load-count 1)
               (= store-count 0)
@@ -10311,25 +11899,39 @@
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (let
             [load-count : i64
-              (lower-test-function-vector-load-count functions "fill")]
+              (lower-test-function-vector-load-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [store-count : i64
-              (lower-test-function-vector-store-count functions "fill")]
+              (lower-test-function-vector-store-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [binop-count : i64
-              (lower-test-function-vector-binop-count functions "fill")]
+              (lower-test-function-vector-binop-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [pred-load-count : i64
-              (lower-test-function-predicated-load-count functions "fill")]
+              (lower-test-function-predicated-load-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [pred-store-count : i64
-              (lower-test-function-predicated-store-count functions "fill")]
+              (lower-test-function-predicated-store-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [tail-mask-count : i64
-              (lower-test-function-tail-mask-count functions "fill")]
+              (lower-test-function-tail-mask-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [shape-count : i64
               (lower-test-function-vector-shape-count
-                functions
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "fill"
                 8
                 (compiler_ast_types.AstType.I64))]
             [tail-store-count : i64
-              (lower-test-function-store-ptr-count functions "fill")]
+              (lower-test-function-store-ptr-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             (compiler-lower-and8
               (= load-count 0)
               (= store-count 0)
@@ -10350,25 +11952,39 @@
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (let
             [load-count : i64
-              (lower-test-function-vector-load-count functions "fill")]
+              (lower-test-function-vector-load-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [store-count : i64
-              (lower-test-function-vector-store-count functions "fill")]
+              (lower-test-function-vector-store-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [binop-count : i64
-              (lower-test-function-vector-binop-count functions "fill")]
+              (lower-test-function-vector-binop-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [pred-load-count : i64
-              (lower-test-function-predicated-load-count functions "fill")]
+              (lower-test-function-predicated-load-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [pred-store-count : i64
-              (lower-test-function-predicated-store-count functions "fill")]
+              (lower-test-function-predicated-store-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [tail-mask-count : i64
-              (lower-test-function-tail-mask-count functions "fill")]
+              (lower-test-function-tail-mask-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [shape-count : i64
               (lower-test-function-vector-shape-count
-                functions
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "fill"
                 8
                 (compiler_ast_types.AstType.I64))]
             [tail-store-count : i64
-              (lower-test-function-store-ptr-count functions "fill")]
+              (lower-test-function-store-ptr-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             (compiler-lower-and8
               (= load-count 0)
               (= store-count 0)
@@ -10389,27 +12005,43 @@
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (let
             [load-count : i64
-              (lower-test-function-vector-load-count functions "fill")]
+              (lower-test-function-vector-load-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [store-count : i64
-              (lower-test-function-vector-store-count functions "fill")]
+              (lower-test-function-vector-store-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [binop-count : i64
-              (lower-test-function-vector-binop-count functions "fill")]
+              (lower-test-function-vector-binop-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [pred-load-count : i64
-              (lower-test-function-predicated-load-count functions "fill")]
+              (lower-test-function-predicated-load-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [pred-store-count : i64
-              (lower-test-function-predicated-store-count functions "fill")]
+              (lower-test-function-predicated-store-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [select-count : i64
-              (lower-test-function-select-count functions "fill")]
+              (lower-test-function-select-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [tail-mask-count : i64
-              (lower-test-function-tail-mask-count functions "fill")]
+              (lower-test-function-tail-mask-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [shape-count : i64
               (lower-test-function-vector-shape-count
-                functions
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "fill"
                 8
                 (compiler_ast_types.AstType.I64))]
             [tail-store-count : i64
-              (lower-test-function-store-ptr-count functions "fill")]
+              (lower-test-function-store-ptr-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             (compiler-lower-and8
               (= load-count 1)
               (= store-count 1)
@@ -10435,22 +12067,36 @@
                 mode
                 (compiler_ast_types.AstType.I64))]
             [load-count : i64
-              (lower-test-function-vector-load-count functions "fill")]
+              (lower-test-function-vector-load-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [store-count : i64
-              (lower-test-function-vector-store-count functions "fill")]
+              (lower-test-function-vector-store-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [binop-count : i64
-              (lower-test-function-vector-binop-count functions "fill")]
+              (lower-test-function-vector-binop-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [pred-load-count : i64
-              (lower-test-function-predicated-load-count functions "fill")]
+              (lower-test-function-predicated-load-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [pred-store-count : i64
-              (lower-test-function-predicated-store-count functions "fill")]
+              (lower-test-function-predicated-store-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [select-count : i64
-              (lower-test-function-select-count functions "fill")]
+              (lower-test-function-select-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [tail-mask-count : i64
-              (lower-test-function-tail-mask-count functions "fill")]
+              (lower-test-function-tail-mask-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [shape-count : i64
               (lower-test-function-vector-shape-count
-                functions
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "fill"
                 lanes
                 (compiler_ast_types.AstType.I64))]
@@ -10481,26 +12127,34 @@
                 mode
                 (compiler_ast_types.AstType.I64))]
             [binop-count : i64
-              (lower-test-function-vector-binop-count functions "fill")]
+              (lower-test-function-vector-binop-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [bit-or-count : i64
               (lower-test-function-vector-binop-op-count
-                functions
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "fill"
                 (compiler_ir_types.CompilerIrBinOp.BitOr))]
             [bit-xor-count : i64
               (lower-test-function-vector-binop-op-count
-                functions
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "fill"
                 (compiler_ir_types.CompilerIrBinOp.BitXor))]
             [pred-load-count : i64
-              (lower-test-function-predicated-load-count functions "fill")]
+              (lower-test-function-predicated-load-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [pred-store-count : i64
-              (lower-test-function-predicated-store-count functions "fill")]
+              (lower-test-function-predicated-store-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [select-count : i64
-              (lower-test-function-select-count functions "fill")]
+              (lower-test-function-select-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [shape-count : i64
               (lower-test-function-vector-shape-count
-                functions
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "fill"
                 lanes
                 (compiler_ast_types.AstType.I64))]
@@ -10529,21 +12183,23 @@
                 (compiler_ast_types.AstType.I64))]
             [shl-count : i64
               (lower-test-function-vector-binop-op-count
-                functions
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "fill"
                 (compiler_ir_types.CompilerIrBinOp.Shl
                   (compiler_ast_types.AstType.I64)))]
             [shr-count : i64
               (lower-test-function-vector-binop-op-count
-                functions
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "fill"
                 (compiler_ir_types.CompilerIrBinOp.Shr
                   (compiler_ast_types.AstType.I64)))]
             [abort-count : i64
-              (lower-test-functions-call-count functions "tl_shift_abort")]
+              (lower-test-functions-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "tl_shift_abort")]
             [shape-count : i64
               (lower-test-function-vector-shape-count
-                functions
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "fill"
                 lanes
                 (compiler_ast_types.AstType.I64))]
@@ -10580,21 +12236,23 @@
                 (compiler_ast_types.AstType.I16))]
             [shl-count : i64
               (lower-test-function-vector-binop-op-count
-                functions
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "fill"
                 (compiler_ir_types.CompilerIrBinOp.Shl
                   (compiler_ast_types.AstType.I16)))]
             [shr-count : i64
               (lower-test-function-vector-binop-op-count
-                functions
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "fill"
                 (compiler_ir_types.CompilerIrBinOp.Shr
                   (compiler_ast_types.AstType.I16)))]
             [abort-count : i64
-              (lower-test-functions-call-count functions "tl_shift_abort")]
+              (lower-test-functions-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "tl_shift_abort")]
             [shape-count : i64
               (lower-test-function-vector-shape-count
-                functions
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "fill"
                 lanes
                 (compiler_ast_types.AstType.I16))]
@@ -10657,23 +12315,35 @@
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (let
             [load-count : i64
-              (lower-test-function-vector-load-count functions "fill")]
+              (lower-test-function-vector-load-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [store-count : i64
-              (lower-test-function-vector-store-count functions "fill")]
+              (lower-test-function-vector-store-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [pred-load-count : i64
-              (lower-test-function-predicated-load-count functions "fill")]
+              (lower-test-function-predicated-load-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [pred-store-count : i64
-              (lower-test-function-predicated-store-count functions "fill")]
+              (lower-test-function-predicated-store-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [tail-mask-count : i64
-              (lower-test-function-tail-mask-count functions "fill")]
+              (lower-test-function-tail-mask-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [shape-count : i64
               (lower-test-function-vector-shape-count
-                functions
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "fill"
                 8
                 (compiler_ast_types.AstType.I64))]
             [tail-store-count : i64
-              (lower-test-function-store-ptr-count functions "fill")]
+              (lower-test-function-store-ptr-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             (compiler-lower-and8
               (= load-count 1)
               (= store-count 0)
@@ -10694,17 +12364,29 @@
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (let
             [load-count : i64
-              (lower-test-function-vector-load-count functions "fill")]
+              (lower-test-function-vector-load-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [store-count : i64
-              (lower-test-function-vector-store-count functions "fill")]
+              (lower-test-function-vector-store-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [pred-load-count : i64
-              (lower-test-function-predicated-load-count functions "fill")]
+              (lower-test-function-predicated-load-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [pred-store-count : i64
-              (lower-test-function-predicated-store-count functions "fill")]
+              (lower-test-function-predicated-store-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [select-count : i64
-              (lower-test-function-select-count functions "fill")]
+              (lower-test-function-select-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             [tail-mask-count : i64
-              (lower-test-function-tail-mask-count functions "fill")]
+              (lower-test-function-tail-mask-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")]
             (and
               (>
                 (+
@@ -10735,7 +12417,11 @@
     [(compiler_lower.ResultCompilerLower.Ok program _)
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
-          (= (lower-test-function-vector-load-count functions "fill") 0)])]
+          (=
+            (lower-test-function-vector-load-count
+              (compiler_ir_types.compiler-ir-global-shared-view functions)
+              "fill")
+            0)])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-spmd-lane-array-source) : String
@@ -10754,16 +12440,32 @@
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
-            (> (lower-test-function-vector-load-count functions "fill") 0)
-            (> (lower-test-function-vector-store-count functions "fill") 0)
-            (> (lower-test-function-bounds-count functions "fill") 0)
+            (>
+              (lower-test-function-vector-load-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")
+              0)
+            (>
+              (lower-test-function-vector-store-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")
+              0)
+            (>
+              (lower-test-function-bounds-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")
+              0)
             (if predicated?
               (and
                 (>
-                  (lower-test-function-predicated-load-count functions "fill")
+                  (lower-test-function-predicated-load-count
+                    (compiler_ir_types.compiler-ir-global-shared-view functions)
+                    "fill")
                   0)
                 (>
-                  (lower-test-function-predicated-store-count functions "fill")
+                  (lower-test-function-predicated-store-count
+                    (compiler_ir_types.compiler-ir-global-shared-view functions)
+                    "fill")
                   0))
               true))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
@@ -10822,7 +12524,9 @@
     [(compiler_lower.ResultCompilerLower.Ok program _)
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
-          (lower-test-function-spmd-call-count functions "fill")])]
+          (lower-test-function-spmd-call-count
+            (compiler_ir_types.compiler-ir-global-shared-view functions)
+            "fill")])]
     [(compiler_lower.ResultCompilerLower.Err _) (- 0 1)]))
 
 (define (compiler-lower-spmd-source-function-count
@@ -10832,7 +12536,8 @@
     [(compiler_lower.ResultCompilerLower.Ok program _)
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
-          (compiler_ir_types.compiler-ir-function-seq-count functions)])]
+          (compiler_ir_types.compiler-ir-function-seq-count
+            (compiler_ir_types.compiler-ir-global-shared-view functions))])]
     [(compiler_lower.ResultCompilerLower.Err _) (- 0 1)]))
 
 (define (compiler-lower-spmd-scalar-call-shape-source) : String
@@ -10889,29 +12594,44 @@
     [intern-a : ci.InternCompatState (ci.intern-compat-state-new)]
     [intern-b : ci.InternCompatState (ci.intern-compat-state-new)]
     [intern-decoy : ci.InternCompatState (ci.intern-compat-state-new)]
-    [name-a : i64 (ci.intern-compat-state-intern intern-a "owner-a/item.field")]
-    [name-b : i64 (ci.intern-compat-state-intern intern-b "owner-b-plain")]
+    [name-a : i64
+      (ci.intern-compat-state-intern (&mut intern-a) "owner-a/item.field")]
+    [name-b : i64
+      (ci.intern-compat-state-intern (&mut intern-b) "owner-b-plain")]
     [_decoy-name : i64
-      (ci.intern-compat-state-intern intern-decoy "installed-decoy")]
+      (ci.intern-compat-state-intern (&mut intern-decoy) "installed-decoy")]
     [link-a : i64
-      (ci.intern-compat-state-generated-canonical-name intern-a "_tl_owner_a")]
+      (ci.intern-compat-state-generated-canonical-name
+        (&mut intern-a)
+        "_tl_owner_a")]
     [link-b : i64
-      (ci.intern-compat-state-generated-canonical-name intern-b "_tl_owner_b")]
+      (ci.intern-compat-state-generated-canonical-name
+        (&mut intern-b)
+        "_tl_owner_b")]
     [source-a : ci.InternSourceNameSessionHandle
-      (ci.intern-source-name-session-handle-from-state intern-a)]
+      (ci.intern-source-name-session-handle-from-state (& intern-a))]
     [source-b : ci.InternSourceNameSessionHandle
-      (ci.intern-source-name-session-handle-from-state intern-b)]
+      (ci.intern-source-name-session-handle-from-state (& intern-b))]
+    [lower-a : compiler_lower.CompilerLowerState
+      (compiler_lower.compiler-lower-state-new-with-intern-state
+        (owned_view.compiler-owned-shared-view intern-a))]
+    [structural-a : cis.InternStructuralKey
+      (cis.intern-structural-session-composite-pair-key
+        (compiler_lower.compiler-lower-state-structural-session
+          (owned_view.compiler-owned-shared-view lower-a))
+        name-a
+        link-a)]
     [pools-a : compiler_ast_types.AstNodePoolContext
       (compiler_ast_types.ast-node-pool-context-new-with-capacities 4 1)]
     [pools-b : compiler_ast_types.AstNodePoolContext
       (compiler_ast_types.ast-node-pool-context-new-with-capacities 4 1)]
     [inner-a : i64
       (compiler_ast_types.ast-node-pool-context-expr-push
-        pools-a
+        (owned_view.compiler-owned-shared-view pools-a)
         (compiler_ast_types.AstExpr.Literal (compiler_ast_types.ast-lit-int 1)))]
     [_inner-b : i64
       (compiler_ast_types.ast-node-pool-context-expr-push
-        pools-b
+        (owned_view.compiler-owned-shared-view pools-b)
         (compiler_ast_types.AstExpr.Spanned
           0
           (compiler_ast_types.ast-source-span 99 1 99 2)))]
@@ -10930,22 +12650,26 @@
         (ci.intern-id-from-renderable link-a))]
     [empty-callables : compiler_ast_types.AstImportedSpmdCallableList
       (compiler_ast_types.ast-imported-spmd-callable-list-new)]
-    [decoy-source-before : i64 (ci.intern-compat-state-pool-len intern-decoy)]
+    [decoy-source-before : i64
+      (ci.intern-compat-state-pool-len (& intern-decoy))]
     [decoy-generated-before : i64
-      (ci.intern-compat-state-generated-count intern-decoy)]
+      (ci.intern-compat-state-generated-count (& intern-decoy))]
     [decoy-exprs-before : i64
-      (compiler_ast_types.ast-node-pool-context-expr-len pools-b)]
+      (compiler_ast_types.ast-node-pool-context-expr-len
+        (owned_view.compiler-owned-shared-view pools-b))]
     [ok : bool false]
     (begin
-      (ci.intern-compat-state-install! intern-decoy)
-      (compiler_ast_types.ast-node-pool-context-install! pools-b)
+      (ci.intern-compat-state-install!
+        (owned_view.compiler-owned-shared-view intern-decoy))
+      (compiler_ast_types.ast-node-pool-context-install!
+        (owned_view.compiler-owned-shared-view pools-b))
       (let
         [stripped-a : i64
-          (compiler_lower.lower-imported-spmd-ir-symbol intern-a item-a)]
+          (compiler_lower.lower-imported-spmd-ir-symbol (&mut intern-a) item-a)]
         [diagnostic-line : i64
           (match (compiler_lower.lower-imported-spmd-select
-            intern-a
-            pools-a
+            (& intern-a)
+            (owned_view.compiler-owned-shared-view pools-a)
             (ci.intern-id-from-renderable name-a)
             (& empty-callables)
             "(-> i64 i64)"
@@ -10976,17 +12700,28 @@
               (ci.intern-source-name-session-handle-qualified? source-b name-b))
             (not (ci.intern-source-name-session-handle-dotted? source-b name-b))
             (string.eq
-              (ci.intern-compat-state-str intern-a stripped-a)
+              (ci.intern-compat-state-str (& intern-a) stripped-a)
               "owner_a")
+            (string.eq
+              (compiler_lower.compiler-lower-state-name-text
+                (owned_view.compiler-owned-shared-view lower-a)
+                name-a)
+              "owner-a/item.field")
+            (string.eq
+              (compiler_lower.compiler-lower-state-name-text
+                (owned_view.compiler-owned-shared-view lower-a)
+                (cis.intern-structural-key-raw structural-a))
+              "owner-a/item.field/_tl_owner_a")
             (= diagnostic-line 9)
             (=
-              (ci.intern-compat-state-pool-len intern-decoy)
+              (ci.intern-compat-state-pool-len (& intern-decoy))
               decoy-source-before)
             (=
-              (ci.intern-compat-state-generated-count intern-decoy)
+              (ci.intern-compat-state-generated-count (& intern-decoy))
               decoy-generated-before)
             (=
-              (compiler_ast_types.ast-node-pool-context-expr-len pools-b)
+              (compiler_ast_types.ast-node-pool-context-expr-len
+                (owned_view.compiler-owned-shared-view pools-b))
               decoy-exprs-before))))
       (ci.intern-compat-state-install! active-intern-before)
       (compiler_ast_types.ast-node-pool-context-install! active-pools-before)
@@ -10994,11 +12729,11 @@
       (compiler_ast_types.ast-node-pool-context-destroy-storage! pools-b)
       (unsafe
         (arena.tl_arena_destroy
-          (ci.intern-compat-state-persistent-arena intern-a))
+          (ci.intern-compat-state-persistent-arena (& intern-a)))
         (arena.tl_arena_destroy
-          (ci.intern-compat-state-persistent-arena intern-b))
+          (ci.intern-compat-state-persistent-arena (& intern-b)))
         (arena.tl_arena_destroy
-          (ci.intern-compat-state-persistent-arena intern-decoy)))
+          (ci.intern-compat-state-persistent-arena (& intern-decoy))))
       ok)))
 
 (test
@@ -11011,7 +12746,7 @@
   (let
     [interns : ci.InternCompatState (ci.intern-compat-state-capture-active)]
     [canonical-name : ci.InternId
-      (lower-test-renderable-name-id-with-state interns "fixture/helper")]
+      (lower-test-renderable-name-id-with-state (&mut interns) "fixture/helper")]
     [signature : String "(-> i64 i64)"]
     [specializations : compiler_ast_types.AstImportedSpmdSpecializationList
       (compiler_ast_types.ast-imported-spmd-specialization-list-new)]
@@ -11040,60 +12775,72 @@
       (compiler_ast_types.ast-imported-spmd-specialization-list-push
         (&mut specializations)
         (compiler_ast_types.AstImportedSpmdSpecialization
-          (lower-test-renderable-name-id-with-state interns "spmd-call-v1")
-          (lower-test-renderable-name-id-with-state interns "scalar")
+          (lower-test-renderable-name-id-with-state
+            (&mut interns)
+            "spmd-call-v1")
+          (lower-test-renderable-name-id-with-state (&mut interns) "scalar")
           1
-          (lower-test-renderable-name-id-with-state interns "v")
-          (lower-test-renderable-name-id-with-state interns "v")
+          (lower-test-renderable-name-id-with-state (&mut interns) "v")
+          (lower-test-renderable-name-id-with-state (&mut interns) "v")
           0
           (lower-test-renderable-name-id-with-state
-            interns
+            (&mut interns)
             "_tl___fixture_helper_scalar")))
       (compiler_ast_types.ast-imported-spmd-callable-list-push
         (&mut callables)
         (compiler_ast_types.AstImportedSpmdCallable
-          (lower-test-renderable-name-id-with-state interns signature)
-          specializations))
+          (lower-test-renderable-name-id-with-state
+            (&mut interns)
+            (owned_view.compiler-owned-shared-view signature))
+          (owned_view.compiler-owned-shared-view specializations)))
       (compiler_ast_types.ast-imported-spmd-callable-list-push
         (&mut duplicate-callables)
         (compiler_ast_types.AstImportedSpmdCallable
-          (lower-test-renderable-name-id-with-state interns signature)
-          specializations))
+          (lower-test-renderable-name-id-with-state
+            (&mut interns)
+            (owned_view.compiler-owned-shared-view signature))
+          (owned_view.compiler-owned-shared-view specializations)))
       (compiler_ast_types.ast-imported-spmd-callable-list-push
         (&mut duplicate-callables)
         (compiler_ast_types.AstImportedSpmdCallable
-          (lower-test-renderable-name-id-with-state interns signature)
-          specializations))
+          (lower-test-renderable-name-id-with-state
+            (&mut interns)
+            (owned_view.compiler-owned-shared-view signature))
+          (owned_view.compiler-owned-shared-view specializations)))
       (compiler_ast_types.ast-imported-spmd-specialization-list-push
         (&mut unsupported-specializations)
         (compiler_ast_types.AstImportedSpmdSpecialization
-          (lower-test-renderable-name-id-with-state interns "spmd-call-v2")
-          (lower-test-renderable-name-id-with-state interns "scalar")
+          (lower-test-renderable-name-id-with-state
+            (&mut interns)
+            "spmd-call-v2")
+          (lower-test-renderable-name-id-with-state (&mut interns) "scalar")
           1
-          (lower-test-renderable-name-id-with-state interns "v")
-          (lower-test-renderable-name-id-with-state interns "v")
+          (lower-test-renderable-name-id-with-state (&mut interns) "v")
+          (lower-test-renderable-name-id-with-state (&mut interns) "v")
           0
           (lower-test-renderable-name-id-with-state
-            interns
+            (&mut interns)
             "__fixture_helper_v2")))
       (compiler_ast_types.ast-imported-spmd-callable-list-push
         (&mut unsupported-callables)
         (compiler_ast_types.AstImportedSpmdCallable
-          (lower-test-renderable-name-id-with-state interns signature)
+          (lower-test-renderable-name-id-with-state
+            (&mut interns)
+            (owned_view.compiler-owned-shared-view signature))
           unsupported-specializations))
       (and
         (match (compiler_lower.lower-imported-spmd-select
-          interns
-          pools
+          (& interns)
+          (owned_view.compiler-owned-shared-view pools)
           canonical-name
           (& callables)
-          signature
+          (owned_view.compiler-owned-shared-view signature)
           (compiler_ir_types.CompilerIrSpmdBackend.Scalar)
           1
           "v"
           0
           (compiler_ast_types.AstType.I64)
-          origin)
+          (owned_view.compiler-owned-shared-view origin))
           [(compiler_lower.ResultLowerImportedSpmdSpecialization.Ok selected)
             (and
               (string.eq
@@ -11103,22 +12850,22 @@
                 (ci.intern-compat-state-str
                   interns
                   (compiler_lower.lower-imported-spmd-ir-symbol
-                    interns
+                    (&mut interns)
                     selected))
                 "__fixture_helper_scalar"))]
           [(compiler_lower.ResultLowerImportedSpmdSpecialization.Err _) false])
         (match (compiler_lower.lower-imported-spmd-select
-          interns
-          pools
+          (& interns)
+          (owned_view.compiler-owned-shared-view pools)
           canonical-name
           (& empty-callables)
-          signature
+          (owned_view.compiler-owned-shared-view signature)
           (compiler_ir_types.CompilerIrSpmdBackend.Scalar)
           1
           "v"
           0
           (compiler_ast_types.AstType.I64)
-          origin)
+          (owned_view.compiler-owned-shared-view origin))
           [(compiler_lower.ResultLowerImportedSpmdSpecialization.Ok _) false]
           [(compiler_lower.ResultLowerImportedSpmdSpecialization.Err diag)
             (let
@@ -11128,8 +12875,8 @@
               (string.contains (& message) (& missing-message-fragment)))])
         (compiler-lower-imported-spmd-selection-error-contains?
           (compiler_lower.lower-imported-spmd-select
-            interns
-            pools
+            (& interns)
+            (owned_view.compiler-owned-shared-view pools)
             canonical-name
             (& callables)
             "(-> i64 u64)"
@@ -11138,77 +12885,78 @@
             "v"
             0
             (compiler_ast_types.AstType.I64)
-            origin)
+            (owned_view.compiler-owned-shared-view origin))
           signature-message-fragment)
         (compiler-lower-imported-spmd-selection-error-contains?
           (compiler_lower.lower-imported-spmd-select
-            interns
-            pools
+            (& interns)
+            (owned_view.compiler-owned-shared-view pools)
             canonical-name
             (& callables)
-            signature
+            (owned_view.compiler-owned-shared-view signature)
             (compiler_ir_types.CompilerIrSpmdBackend.Avx512)
             8
             "v"
             0
             (compiler_ast_types.AstType.I64)
-            origin)
-          specialization-message-fragment)
+            (owned_view.compiler-owned-shared-view origin))
+          (owned_view.compiler-owned-shared-view
+            specialization-message-fragment))
         (compiler-lower-imported-spmd-selection-error-contains?
           (compiler_lower.lower-imported-spmd-select
-            interns
-            pools
+            (& interns)
+            (owned_view.compiler-owned-shared-view pools)
             canonical-name
             (& callables)
-            signature
+            (owned_view.compiler-owned-shared-view signature)
             (compiler_ir_types.CompilerIrSpmdBackend.Scalar)
             1
             "v"
             -1
             (compiler_ast_types.AstType.I64)
-            origin)
+            (owned_view.compiler-owned-shared-view origin))
           specialization-message-fragment)
         (compiler-lower-imported-spmd-selection-error-contains?
           (compiler_lower.lower-imported-spmd-select
-            interns
-            pools
+            (& interns)
+            (owned_view.compiler-owned-shared-view pools)
             canonical-name
             (& unsupported-callables)
-            signature
+            (owned_view.compiler-owned-shared-view signature)
             (compiler_ir_types.CompilerIrSpmdBackend.Scalar)
             1
             "v"
             0
             (compiler_ast_types.AstType.I64)
-            origin)
+            (owned_view.compiler-owned-shared-view origin))
           abi-message-fragment)
         (compiler-lower-imported-spmd-selection-error-contains?
           (compiler_lower.lower-imported-spmd-select
-            interns
-            pools
+            (& interns)
+            (owned_view.compiler-owned-shared-view pools)
             canonical-name
             (& duplicate-callables)
-            signature
+            (owned_view.compiler-owned-shared-view signature)
             (compiler_ir_types.CompilerIrSpmdBackend.Scalar)
             1
             "v"
             0
             (compiler_ast_types.AstType.I64)
-            origin)
+            (owned_view.compiler-owned-shared-view origin))
           duplicate-message-fragment)
         (compiler-lower-imported-spmd-selection-error-contains?
           (compiler_lower.lower-imported-spmd-select
-            interns
-            pools
+            (& interns)
+            (owned_view.compiler-owned-shared-view pools)
             canonical-name
             (& callables)
-            signature
+            (owned_view.compiler-owned-shared-view signature)
             (compiler_ir_types.CompilerIrSpmdBackend.Avx2)
             4
             "v"
             0
             (compiler_ast_types.AstType.I64)
-            origin)
+            (owned_view.compiler-owned-shared-view origin))
           avx2-message-fragment)
         (compiler-lower-imported-spmd-owner-isolation-ok?)))))
 
@@ -11222,9 +12970,20 @@
         (match program
           [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
             (and
-              (> (lower-test-function-spmd-call-count functions "fill-value") 0)
-              (> (lower-test-function-spmd-call-count functions "fill-unit") 0)
-              (> (compiler_ir_types.compiler-ir-function-seq-count functions) 4))])]
+              (>
+                (lower-test-function-spmd-call-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "fill-value")
+                0)
+              (>
+                (lower-test-function-spmd-call-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "fill-unit")
+                0)
+              (>
+                (compiler_ir_types.compiler-ir-function-seq-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions))
+                4))])]
       [(compiler_lower.ResultCompilerLower.Err _) false])))
 
 (define (compiler-lower-spmd-varying-local-call-shape-ok?) : bool
@@ -11242,10 +13001,14 @@
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
-            (= (lower-test-function-spmd-call-count functions "fill") 0)
+            (=
+              (lower-test-function-spmd-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "fill")
+              0)
             (=
               (lower-test-function-binop-op-count
-                functions
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "fill"
                 (compiler_ir_types.CompilerIrBinOp.Add))
               5))])]
@@ -11365,19 +13128,33 @@
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
-            (= (lower-test-function-vector-load-count functions "f") 1)
-            (= (lower-test-function-vector-reduce-count functions "f") 1)
             (=
-              (lower-test-function-vector-binop-count functions "f")
+              (lower-test-function-vector-load-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "f")
+              1)
+            (=
+              (lower-test-function-vector-reduce-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "f")
+              1)
+            (=
+              (lower-test-function-vector-binop-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "f")
               vector-binops)
             (=
               (lower-test-function-vector-shape-count
-                functions
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "f"
                 lanes
                 elem-ty)
               vector-shapes)
-            (> (lower-test-function-bounds-count functions "f") 0))])]
+            (>
+              (lower-test-function-bounds-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "f")
+              0))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-spmd-bool-reduce-shape-ok?
@@ -11389,18 +13166,38 @@
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
-            (= (lower-test-function-vector-load-count functions "f") 0)
-            (= (lower-test-function-vector-reduce-count functions "f") 0)
-            (= (lower-test-function-predicated-load-count functions "f") 1)
-            (= (lower-test-function-tail-mask-count functions "f") 1)
+            (=
+              (lower-test-function-vector-load-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "f")
+              0)
+            (=
+              (lower-test-function-vector-reduce-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "f")
+              0)
+            (=
+              (lower-test-function-predicated-load-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "f")
+              1)
+            (=
+              (lower-test-function-tail-mask-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "f")
+              1)
             (=
               (lower-test-function-vector-shape-count
-                functions
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "f"
                 lanes
                 (compiler_ast_types.AstType.Bool))
               1)
-            (> (lower-test-function-bounds-count functions "f") 0))])]
+            (>
+              (lower-test-function-bounds-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "f")
+              0))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-spmd-reduce-map-fused-shape-ok?
@@ -11415,17 +13212,33 @@
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
-            (= (lower-test-function-vector-load-count functions "f") 1)
-            (= (lower-test-function-vector-reduce-count functions "f") 1)
-            (= (lower-test-function-vector-binop-count functions "f") 4)
+            (=
+              (lower-test-function-vector-load-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "f")
+              1)
+            (=
+              (lower-test-function-vector-reduce-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "f")
+              1)
+            (=
+              (lower-test-function-vector-binop-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "f")
+              4)
             (=
               (lower-test-function-vector-shape-count
-                functions
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "f"
                 lanes
                 (compiler_ast_types.AstType.I64))
               9)
-            (> (lower-test-function-bounds-count functions "f") 0))])]
+            (>
+              (lower-test-function-bounds-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "f")
+              0))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-avx512-spmd-reduce-shape-ok?
@@ -11441,19 +13254,33 @@
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
-            (= (lower-test-function-vector-load-count functions "f") 1)
-            (= (lower-test-function-vector-reduce-count functions "f") 1)
             (=
-              (lower-test-function-vector-binop-count functions "f")
+              (lower-test-function-vector-load-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "f")
+              1)
+            (=
+              (lower-test-function-vector-reduce-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "f")
+              1)
+            (=
+              (lower-test-function-vector-binop-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "f")
               vector-binops)
             (=
               (lower-test-function-vector-shape-count
-                functions
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "f"
                 lanes
                 elem-ty)
               vector-shapes)
-            (> (lower-test-function-bounds-count functions "f") 0))])]
+            (>
+              (lower-test-function-bounds-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "f")
+              0))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-spmd-reduce-lane-identity-source) : String
@@ -11470,17 +13297,33 @@
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
-            (= (lower-test-function-vector-load-count functions "f") 0)
-            (= (lower-test-function-vector-reduce-count functions "f") 1)
-            (= (lower-test-function-vector-binop-count functions "f") 2)
+            (=
+              (lower-test-function-vector-load-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "f")
+              0)
+            (=
+              (lower-test-function-vector-reduce-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "f")
+              1)
+            (=
+              (lower-test-function-vector-binop-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "f")
+              2)
             (=
               (lower-test-function-vector-shape-count
-                functions
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "f"
                 lanes
                 (compiler_ast_types.AstType.I64))
               5)
-            (= (lower-test-function-bounds-count functions "f") 0))])]
+            (=
+              (lower-test-function-bounds-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "f")
+              0))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-spmd-reduce-gather-source-shape-ok?
@@ -11492,16 +13335,28 @@
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
-            (= (lower-test-function-vector-load-count functions "f") 0)
-            (= (lower-test-function-vector-reduce-count functions "f") 1)
+            (=
+              (lower-test-function-vector-load-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "f")
+              0)
+            (=
+              (lower-test-function-vector-reduce-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "f")
+              1)
             (=
               (lower-test-function-vector-shape-count
-                functions
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "f"
                 lanes
                 (compiler_ast_types.AstType.F32))
               2)
-            (> (lower-test-function-bounds-count functions "f") 0))])]
+            (>
+              (lower-test-function-bounds-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "f")
+              0))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-spmd-reduce-gather-shape-ok?
@@ -11833,8 +13688,16 @@
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
-            (> (lower-test-function-branch-count functions "f") 0)
-            (= (lower-test-function-binop-count functions "f") 0))])]
+            (>
+              (lower-test-function-branch-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "f")
+              0)
+            (=
+              (lower-test-function-binop-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "f")
+              0))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-and-or-short-circuit-shape-ok?) : bool
@@ -11859,9 +13722,22 @@
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
-            (= (lower-test-function-call-count functions "main" "tl_alloc") 0)
-            (= (lower-test-function-addr-of-count functions "main") 1)
-            (>= (lower-test-function-store-ptr-count functions "main") 2))])]
+            (=
+              (lower-test-function-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main"
+                "tl_alloc")
+              0)
+            (=
+              (lower-test-function-addr-of-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main")
+              1)
+            (>=
+              (lower-test-function-store-ptr-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main")
+              2))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-register-addr-of-shape-ok?) : bool
@@ -11871,11 +13747,34 @@
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
-            (= (lower-test-function-call-count functions "main" "tl_alloc") 0)
-            (>= (lower-test-function-addr-of-count functions "main") 3)
-            (>= (lower-test-function-gep-offset-count functions "main" 4) 1)
-            (>= (lower-test-function-gep-offset-count functions "main" 8) 1)
-            (>= (lower-test-function-store-ptr-count functions "main") 2))])]
+            (=
+              (lower-test-function-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main"
+                "tl_alloc")
+              0)
+            (>=
+              (lower-test-function-addr-of-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main")
+              3)
+            (>=
+              (lower-test-function-gep-offset-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main"
+                4)
+              1)
+            (>=
+              (lower-test-function-gep-offset-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main"
+                8)
+              1)
+            (>=
+              (lower-test-function-store-ptr-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main")
+              2))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-raw-pointer-call-value-shape-ok?) : bool
@@ -11885,10 +13784,26 @@
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
-            (= (lower-test-functions-call-count functions "raw-make") 1)
-            (= (lower-test-functions-call-count functions "raw-value") 1)
-            (= (lower-test-function-store-ptr-count functions "main") 1)
-            (> (lower-test-function-u64-mov-count functions "main") 0))])]
+            (=
+              (lower-test-functions-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "raw-make")
+              1)
+            (=
+              (lower-test-functions-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "raw-value")
+              1)
+            (=
+              (lower-test-function-store-ptr-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main")
+              1)
+            (>
+              (lower-test-function-u64-mov-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main")
+              0))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-raw-pointer-aggregate-copy-shape-ok?) : bool
@@ -11898,10 +13813,26 @@
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
-            (= (lower-test-function-copy-bytes-count functions "copy-slot") 1)
-            (= (lower-test-function-store-ptr-count functions "copy-slot") 0)
-            (= (lower-test-function-copy-bytes-count functions "copy-pair") 0)
-            (= (lower-test-function-store-ptr-count functions "copy-pair") 2))])]
+            (=
+              (lower-test-function-copy-bytes-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "copy-slot")
+              1)
+            (=
+              (lower-test-function-store-ptr-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "copy-slot")
+              0)
+            (=
+              (lower-test-function-copy-bytes-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "copy-pair")
+              0)
+            (=
+              (lower-test-function-store-ptr-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "copy-pair")
+              2))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-string-length-ok?) : bool
@@ -11915,18 +13846,20 @@
               (and
                 (>
                   (lower-test-function-gep-offset-count
-                    functions
+                    (compiler_ir_types.compiler-ir-global-shared-view functions)
                     "core-str-len"
                     1)
                   0)
                 (>
                   (lower-test-function-gep-offset-count
-                    functions
+                    (compiler_ir_types.compiler-ir-global-shared-view functions)
                     "core-str-len-borrow"
                     1)
                   0)
                 (=
-                  (lower-test-functions-direct-call-count functions "length")
+                  (lower-test-functions-direct-call-count
+                    (compiler_ir_types.compiler-ir-global-shared-view functions)
+                    "length")
                   0))])]
         [(compiler_lower.ResultCompilerLower.Err _) false])]
     [(compiler_parse_core.ResultAstProgram.Err _) false]))
@@ -11938,19 +13871,39 @@
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
-            (= (lower-test-function-bitcast-count functions "f64-bits") 1)
-            (= (lower-test-function-bitcast-count functions "f32-bits") 1)
-            (= (lower-test-function-bitcast-count functions "f64-from") 1)
-            (= (lower-test-function-bitcast-count functions "f32-from") 1)
-            (= (lower-test-functions-call-count functions "tl_alloc") 0)
+            (=
+              (lower-test-function-bitcast-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "f64-bits")
+              1)
+            (=
+              (lower-test-function-bitcast-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "f32-bits")
+              1)
+            (=
+              (lower-test-function-bitcast-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "f64-from")
+              1)
+            (=
+              (lower-test-function-bitcast-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "f32-from")
+              1)
+            (=
+              (lower-test-functions-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "tl_alloc")
+              0)
             (=
               (lower-test-functions-direct-call-count
-                functions
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "__tl_float_to_bits")
               0)
             (=
               (lower-test-functions-direct-call-count
-                functions
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "__tl_float_from_bits")
               0))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
@@ -11962,10 +13915,13 @@
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
-            (= (lower-test-functions-bitcast-count functions) 0)
+            (=
+              (lower-test-functions-bitcast-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions))
+              0)
             (=
               (lower-test-functions-direct-call-count
-                functions
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "__tl_float_to_bits")
               0))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
@@ -11981,7 +13937,10 @@
         [(compiler_lower.ResultCompilerLower.Ok lowered _)
           (match lowered
             [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
-              (= (lower-test-functions-bitcast-count functions) 0)])]
+              (=
+                (lower-test-functions-bitcast-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions))
+                0)])]
         [(compiler_lower.ResultCompilerLower.Err _) false])]
     [(compiler_parse_core.ResultAstProgram.Err _) false]))
 
@@ -12012,45 +13971,57 @@
             [ok : bool true]
             (begin
               (if (=
-                (lower-test-functions-call-count functions ".L_tl_flush_stdout")
-                0)
-                unit
-                (set! ok false))
-              (if (=
-                (lower-test-functions-call-count functions ".L_tl_stdin_eof")
+                (lower-test-functions-call-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  ".L_tl_flush_stdout")
                 0)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count
-                  functions
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  ".L_tl_stdin_eof")
+                0)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
                   ".L_tl_read_stdin_line")
                 0)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count
-                  functions
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
                   ".L_tl_read_stdin_bytes")
                 0)
                 unit
                 (set! ok false))
               (if (=
-                (lower-test-functions-call-count functions "flush-stdout")
-                1)
-                unit
-                (set! ok false))
-              (if (= (lower-test-functions-call-count functions "stdin-eof?") 1)
-                unit
-                (set! ok false))
-              (if (=
-                (lower-test-functions-call-count functions "read-stdin-line")
+                (lower-test-functions-call-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "flush-stdout")
                 1)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count
-                  functions
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "stdin-eof?")
+                1)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "read-stdin-line")
+                1)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
                   "io.read-stdin-bytes")
                 1)
                 unit
@@ -12068,28 +14039,36 @@
             [ok : bool true]
             (begin
               (if (=
-                (lower-test-functions-call-count functions "tl_env_var_exists")
+                (lower-test-functions-call-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "tl_env_var_exists")
                 0)
                 unit
                 (set! ok false))
               (if (=
-                (lower-test-functions-call-count functions "tl_env_var_value")
+                (lower-test-functions-call-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "tl_env_var_value")
                 0)
                 unit
                 (set! ok false))
               (if (=
-                (lower-test-functions-direct-call-count functions "var-exists?")
-                1)
-                unit
-                (set! ok false))
-              (if (=
-                (lower-test-functions-direct-call-count functions "var-value")
+                (lower-test-functions-direct-call-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "var-exists?")
                 1)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-direct-call-count
-                  functions
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "var-value")
+                1)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-direct-call-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
                   "path-separator")
                 1)
                 unit
@@ -12138,22 +14117,44 @@
           (let
             [ok : bool true]
             (begin
-              (if (>= (lower-test-functions-cpuid-count functions) 4)
+              (if (>=
+                (lower-test-functions-cpuid-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions))
+                4)
                 unit
                 (set! ok false))
-              (if (= (lower-test-functions-xgetbv-count functions) 1)
+              (if (=
+                (lower-test-functions-xgetbv-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions))
+                1)
                 unit
                 (set! ok false))
-              (if (= (lower-test-functions-call-count functions "cpuid") 0)
+              (if (=
+                (lower-test-functions-call-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "cpuid")
+                0)
                 unit
                 (set! ok false))
-              (if (= (lower-test-functions-call-count functions "xgetbv") 0)
+              (if (=
+                (lower-test-functions-call-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "xgetbv")
+                0)
                 unit
                 (set! ok false))
-              (if (= (lower-test-functions-call-count functions "tl_cpuid") 0)
+              (if (=
+                (lower-test-functions-call-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "tl_cpuid")
+                0)
                 unit
                 (set! ok false))
-              (if (= (lower-test-functions-call-count functions "tl_xgetbv") 0)
+              (if (=
+                (lower-test-functions-call-count
+                  (compiler_ir_types.compiler-ir-global-shared-view functions)
+                  "tl_xgetbv")
+                0)
                 unit
                 (set! ok false))
               ok))])]
@@ -12222,7 +14223,8 @@
       ok)))
 
 (define (lower-test-decl-list-count [decls : compiler_ast_types.AstDeclList]) : i64
-  (match (compiler_ast_types.ast-decl-list-step decls)
+  (match (compiler_ast_types.ast-decl-list-step
+    (owned_view.compiler-owned-shared-view decls))
     [(compiler_ast_types.AstDeclListStep.Nil) 0]
     [(compiler_ast_types.AstDeclListStep.Cons _ rest)
       (let
@@ -12241,25 +14243,25 @@
           [(compiler_ast_types.AstDecl.DefFn decl-meta found _ _ _ _)
             (if (string.eq
               (compiler_typecheck_core.tc-env-key-name-text found)
-              name)
+              (owned_view.compiler-owned-shared-view name))
               true
               (lower-test-decl-list-defines? rest name))]
           [(compiler_ast_types.AstDecl.DefEnum decl-meta found _ _)
             (if (string.eq
               (compiler_typecheck_core.tc-env-key-name-text found)
-              name)
+              (owned_view.compiler-owned-shared-view name))
               true
               (lower-test-decl-list-defines? rest name))]
           [(compiler_ast_types.AstDecl.DefEnumLifetimes decl-meta found _ _ _)
             (if (string.eq
               (compiler_typecheck_core.tc-env-key-name-text found)
-              name)
+              (owned_view.compiler-owned-shared-view name))
               true
               (lower-test-decl-list-defines? rest name))]
           [(compiler_ast_types.AstDecl.DefStruct decl-meta found _ _ _)
             (if (string.eq
               (compiler_typecheck_core.tc-env-key-name-text found)
-              name)
+              (owned_view.compiler-owned-shared-view name))
               true
               (lower-test-decl-list-defines? rest name))]
           [(compiler_ast_types.AstDecl.DefStructLifetimes
@@ -12271,17 +14273,18 @@
               _)
             (if (string.eq
               (compiler_typecheck_core.tc-env-key-name-text found)
-              name)
+              (owned_view.compiler-owned-shared-view name))
               true
               (lower-test-decl-list-defines? rest name))]
           [(compiler_ast_types.AstDecl.Unsafe inner-box)
             (let
-              [inner : compiler_ast_types.AstDecl (__tl-box-place inner-box)]
+              [inner : compiler_ast_types.AstDecl
+                (compiler_ast_types.ast-decl-box-shared-view inner-box)]
               (if (lower-test-decl-list-defines?
                 (compiler_ast_types.ast-decl-cons
                   inner
                   (compiler_ast_types.ast-decl-list-new))
-                name)
+                (owned_view.compiler-owned-shared-view name))
                 true
                 (lower-test-decl-list-defines? rest name)))]
           [_ (lower-test-decl-list-defines? rest name)]))]))
@@ -12489,9 +14492,16 @@
     [kept : compiler_ast_types.AstDeclList
       (lower-skip-runtime-until-next-module decls)]
     (and
-      (= (lower-test-decl-list-count kept) 3)
-      (lower-test-decl-list-defines? kept "ExprClauseList")
-      (lower-test-decl-list-defines? kept "main")
+      (=
+        (lower-test-decl-list-count
+          (owned_view.compiler-owned-shared-view kept))
+        3)
+      (lower-test-decl-list-defines?
+        (owned_view.compiler-owned-shared-view kept)
+        "ExprClauseList")
+      (lower-test-decl-list-defines?
+        (owned_view.compiler-owned-shared-view kept)
+        "main")
       (not (lower-test-decl-list-defines? kept "ctfe-runtime-helper")))))
 
 (define (compiler-lower-stdlib-comptime-type-prune-keeps-types-ok?) : bool
@@ -12529,10 +14539,11 @@
                         (compiler_ast_types.ast-lit-int 0))))
                   (compiler_ast_types.ast-decl-list-new)))))))]
     [names : compiler_lower.LowerNameEnv
-      (match program
+      (match (owned_view.compiler-owned-shared-view program)
         [(compiler_ast_types.AstProgram.Program decls-box)
           (let
-            [decls : compiler_ast_types.AstDeclList (__tl-box-place decls-box)]
+            [decls : compiler_ast_types.AstDeclList
+              (compiler_ast_types.ast-decl-list-box-shared-view decls-box)]
             (compiler_lower.lower-name-env-from-decls
               decls
               (compiler_ast_types.ast-decl-path-list-new)
@@ -12549,10 +14560,15 @@
         (match kept-program
           [(compiler_ast_types.AstProgram.Program kept-box)
             (let
-              [kept : compiler_ast_types.AstDeclList (__tl-box-place kept-box)]
+              [kept : compiler_ast_types.AstDeclList
+                (compiler_ast_types.ast-decl-list-box-shared-view kept-box)]
               (and
-                (lower-test-decl-list-defines? kept "ExprClauseList")
-                (lower-test-decl-list-defines? kept "main")
+                (lower-test-decl-list-defines?
+                  (owned_view.compiler-owned-shared-view kept)
+                  "ExprClauseList")
+                (lower-test-decl-list-defines?
+                  (owned_view.compiler-owned-shared-view kept)
+                  "main")
                 (not (lower-test-decl-list-defines? kept "ctfe-runtime-helper"))))])])))
 
 (define (compiler-lower-stdlib-comptime-nullary-enum-runtime-skip-ok?) : bool
@@ -12949,20 +14965,22 @@
     [no-main-program : compiler_ast_types.AstProgram
       (compiler-lower-ast-dce-no-main-program)]
     [names : compiler_lower.LowerNameEnv
-      (match program
+      (match (owned_view.compiler-owned-shared-view program)
         [(compiler_ast_types.AstProgram.Program decls-box)
           (let
-            [decls : compiler_ast_types.AstDeclList (__tl-box-place decls-box)]
+            [decls : compiler_ast_types.AstDeclList
+              (compiler_ast_types.ast-decl-list-box-shared-view decls-box)]
             (compiler_lower.lower-name-env-from-decls
               decls
               (compiler_ast_types.ast-decl-path-list-new)
               "entry.tl"
               compiler_lower.LowerNameEnv.Nil))])]
     [no-main-names : compiler_lower.LowerNameEnv
-      (match no-main-program
+      (match (owned_view.compiler-owned-shared-view no-main-program)
         [(compiler_ast_types.AstProgram.Program decls-box)
           (let
-            [decls : compiler_ast_types.AstDeclList (__tl-box-place decls-box)]
+            [decls : compiler_ast_types.AstDeclList
+              (compiler_ast_types.ast-decl-list-box-shared-view decls-box)]
             (compiler_lower.lower-name-env-from-decls
               decls
               (compiler_ast_types.ast-decl-path-list-new)
@@ -12988,18 +15006,31 @@
               [(compiler_ast_types.AstProgram.Program kept-box)
                 (let
                   [kept : compiler_ast_types.AstDeclList
-                    (__tl-box-place kept-box)]
+                    (compiler_ast_types.ast-decl-list-box-shared-view kept-box)]
                   (match kept-no-main
                     [(compiler_ast_types.AstProgram.Program no-main-kept-box)
                       (let
                         [no-main-kept : compiler_ast_types.AstDeclList
-                          (__tl-box-place no-main-kept-box)]
+                          (compiler_ast_types.ast-decl-list-box-shared-view
+                            no-main-kept-box)]
                         (and
-                          (= (lower-test-decl-list-count kept) 4)
-                          (lower-test-decl-list-defines? kept "main")
-                          (lower-test-decl-list-defines? kept "helper")
-                          (lower-test-decl-list-defines? kept "callback-target")
-                          (not (lower-test-decl-list-defines? kept "dead"))
+                          (=
+                            (lower-test-decl-list-count
+                              (owned_view.compiler-owned-shared-view kept))
+                            4)
+                          (lower-test-decl-list-defines?
+                            (owned_view.compiler-owned-shared-view kept)
+                            "main")
+                          (lower-test-decl-list-defines?
+                            (owned_view.compiler-owned-shared-view kept)
+                            "helper")
+                          (lower-test-decl-list-defines?
+                            (owned_view.compiler-owned-shared-view kept)
+                            "callback-target")
+                          (not
+                            (lower-test-decl-list-defines?
+                              (owned_view.compiler-owned-shared-view kept)
+                              "dead"))
                           (= (lower-test-decl-list-count no-main-kept) 2)))]))])])])))
 
 (define (compiler-lower-type-decl-dce-ok?) : bool
@@ -13009,13 +15040,14 @@
     [paths : compiler_ast_types.AstDeclPathList
       (compiler-lower-type-decl-dce-paths)]
     [names : compiler_lower.LowerNameEnv
-      (match program
+      (match (owned_view.compiler-owned-shared-view program)
         [(compiler_ast_types.AstProgram.Program decls-box)
           (let
-            [decls : compiler_ast_types.AstDeclList (__tl-box-place decls-box)]
+            [decls : compiler_ast_types.AstDeclList
+              (compiler_ast_types.ast-decl-list-box-shared-view decls-box)]
             (compiler_lower.lower-name-env-from-decls
               decls
-              paths
+              (owned_view.compiler-owned-shared-view paths)
               "entry.tl"
               compiler_lower.LowerNameEnv.Nil))])]
     [pruned : compiler_lower.LowerPrunedProgram
@@ -13025,14 +15057,30 @@
         (match kept-program
           [(compiler_ast_types.AstProgram.Program kept-box)
             (let
-              [kept : compiler_ast_types.AstDeclList (__tl-box-place kept-box)]
+              [kept : compiler_ast_types.AstDeclList
+                (compiler_ast_types.ast-decl-list-box-shared-view kept-box)]
               (and
-                (= (lower-test-decl-list-count kept) 3)
-                (lower-test-decl-list-defines? kept "main")
-                (lower-test-decl-list-defines? kept "UsedBox")
-                (lower-test-decl-list-defines? kept "UsedEnum")
-                (not (lower-test-decl-list-defines? kept "DeadBox"))
-                (not (lower-test-decl-list-defines? kept "DeadEnum"))))])])))
+                (=
+                  (lower-test-decl-list-count
+                    (owned_view.compiler-owned-shared-view kept))
+                  3)
+                (lower-test-decl-list-defines?
+                  (owned_view.compiler-owned-shared-view kept)
+                  "main")
+                (lower-test-decl-list-defines?
+                  (owned_view.compiler-owned-shared-view kept)
+                  "UsedBox")
+                (lower-test-decl-list-defines?
+                  (owned_view.compiler-owned-shared-view kept)
+                  "UsedEnum")
+                (not
+                  (lower-test-decl-list-defines?
+                    (owned_view.compiler-owned-shared-view kept)
+                    "DeadBox"))
+                (not
+                  (lower-test-decl-list-defines?
+                    (owned_view.compiler-owned-shared-view kept)
+                    "DeadEnum"))))])])))
 
 (define (compiler-lower-type-decl-dce-qualified-base-ok?) : bool
   (let
@@ -13041,13 +15089,14 @@
     [paths : compiler_ast_types.AstDeclPathList
       (compiler-lower-type-decl-dce-qualified-base-paths)]
     [names : compiler_lower.LowerNameEnv
-      (match program
+      (match (owned_view.compiler-owned-shared-view program)
         [(compiler_ast_types.AstProgram.Program decls-box)
           (let
-            [decls : compiler_ast_types.AstDeclList (__tl-box-place decls-box)]
+            [decls : compiler_ast_types.AstDeclList
+              (compiler_ast_types.ast-decl-list-box-shared-view decls-box)]
             (compiler_lower.lower-name-env-from-decls
               decls
-              paths
+              (owned_view.compiler-owned-shared-view paths)
               "entry.tl"
               compiler_lower.LowerNameEnv.Nil))])]
     [pruned : compiler_lower.LowerPrunedProgram
@@ -13057,12 +15106,23 @@
         (match kept-program
           [(compiler_ast_types.AstProgram.Program kept-box)
             (let
-              [kept : compiler_ast_types.AstDeclList (__tl-box-place kept-box)]
+              [kept : compiler_ast_types.AstDeclList
+                (compiler_ast_types.ast-decl-list-box-shared-view kept-box)]
               (and
-                (= (lower-test-decl-list-count kept) 2)
-                (lower-test-decl-list-defines? kept "main")
-                (lower-test-decl-list-defines? kept "io.ResultIoString")
-                (not (lower-test-decl-list-defines? kept "io.DeadResult"))))])])))
+                (=
+                  (lower-test-decl-list-count
+                    (owned_view.compiler-owned-shared-view kept))
+                  2)
+                (lower-test-decl-list-defines?
+                  (owned_view.compiler-owned-shared-view kept)
+                  "main")
+                (lower-test-decl-list-defines?
+                  (owned_view.compiler-owned-shared-view kept)
+                  "io.ResultIoString")
+                (not
+                  (lower-test-decl-list-defines?
+                    (owned_view.compiler-owned-shared-view kept)
+                    "io.DeadResult"))))])])))
 
 (define (compiler-lower-type-decl-dce-arena-support-ok?) : bool
   (let
@@ -13071,13 +15131,14 @@
     [paths : compiler_ast_types.AstDeclPathList
       (compiler-lower-type-decl-dce-arena-support-paths)]
     [names : compiler_lower.LowerNameEnv
-      (match program
+      (match (owned_view.compiler-owned-shared-view program)
         [(compiler_ast_types.AstProgram.Program decls-box)
           (let
-            [decls : compiler_ast_types.AstDeclList (__tl-box-place decls-box)]
+            [decls : compiler_ast_types.AstDeclList
+              (compiler_ast_types.ast-decl-list-box-shared-view decls-box)]
             (compiler_lower.lower-name-env-from-decls
               decls
-              paths
+              (owned_view.compiler-owned-shared-view paths)
               "entry.tl"
               compiler_lower.LowerNameEnv.Nil))])]
     [pruned : compiler_lower.LowerPrunedProgram
@@ -13087,13 +15148,25 @@
         (match kept-program
           [(compiler_ast_types.AstProgram.Program kept-box)
             (let
-              [kept : compiler_ast_types.AstDeclList (__tl-box-place kept-box)]
+              [kept : compiler_ast_types.AstDeclList
+                (compiler_ast_types.ast-decl-list-box-shared-view kept-box)]
               (and
-                (lower-test-decl-list-defines? kept "main")
-                (lower-test-decl-list-defines? kept "ThreadBox")
-                (lower-test-decl-list-defines? kept "Arena")
-                (lower-test-decl-list-defines? kept "ArenaMark")
-                (not (lower-test-decl-list-defines? kept "DeadArenaPeer"))))])])))
+                (lower-test-decl-list-defines?
+                  (owned_view.compiler-owned-shared-view kept)
+                  "main")
+                (lower-test-decl-list-defines?
+                  (owned_view.compiler-owned-shared-view kept)
+                  "ThreadBox")
+                (lower-test-decl-list-defines?
+                  (owned_view.compiler-owned-shared-view kept)
+                  "Arena")
+                (lower-test-decl-list-defines?
+                  (owned_view.compiler-owned-shared-view kept)
+                  "ArenaMark")
+                (not
+                  (lower-test-decl-list-defines?
+                    (owned_view.compiler-owned-shared-view kept)
+                    "DeadArenaPeer"))))])])))
 
 (define (compiler-lower-type-decl-dce-test-body-ok?) : bool
   (let
@@ -13102,13 +15175,14 @@
     [paths : compiler_ast_types.AstDeclPathList
       (compiler-lower-type-decl-dce-test-body-paths)]
     [names : compiler_lower.LowerNameEnv
-      (match program
+      (match (owned_view.compiler-owned-shared-view program)
         [(compiler_ast_types.AstProgram.Program decls-box)
           (let
-            [decls : compiler_ast_types.AstDeclList (__tl-box-place decls-box)]
+            [decls : compiler_ast_types.AstDeclList
+              (compiler_ast_types.ast-decl-list-box-shared-view decls-box)]
             (compiler_lower.lower-name-env-from-decls
               decls
-              paths
+              (owned_view.compiler-owned-shared-view paths)
               "entry.tl"
               compiler_lower.LowerNameEnv.Nil))])]
     [pruned : compiler_lower.LowerPrunedProgram
@@ -13118,12 +15192,23 @@
         (match kept-program
           [(compiler_ast_types.AstProgram.Program kept-box)
             (let
-              [kept : compiler_ast_types.AstDeclList (__tl-box-place kept-box)]
+              [kept : compiler_ast_types.AstDeclList
+                (compiler_ast_types.ast-decl-list-box-shared-view kept-box)]
               (and
-                (= (lower-test-decl-list-count kept) 3)
-                (lower-test-decl-list-defines? kept "main")
-                (lower-test-decl-list-defines? kept "ImportedMark")
-                (not (lower-test-decl-list-defines? kept "DeadMark"))))])])))
+                (=
+                  (lower-test-decl-list-count
+                    (owned_view.compiler-owned-shared-view kept))
+                  3)
+                (lower-test-decl-list-defines?
+                  (owned_view.compiler-owned-shared-view kept)
+                  "main")
+                (lower-test-decl-list-defines?
+                  (owned_view.compiler-owned-shared-view kept)
+                  "ImportedMark")
+                (not
+                  (lower-test-decl-list-defines?
+                    (owned_view.compiler-owned-shared-view kept)
+                    "DeadMark"))))])])))
 
 (define (compiler-lower-type-decl-dce-body-pattern-ok?) : bool
   (let
@@ -13132,13 +15217,14 @@
     [paths : compiler_ast_types.AstDeclPathList
       (compiler-lower-type-decl-dce-body-pattern-paths)]
     [names : compiler_lower.LowerNameEnv
-      (match program
+      (match (owned_view.compiler-owned-shared-view program)
         [(compiler_ast_types.AstProgram.Program decls-box)
           (let
-            [decls : compiler_ast_types.AstDeclList (__tl-box-place decls-box)]
+            [decls : compiler_ast_types.AstDeclList
+              (compiler_ast_types.ast-decl-list-box-shared-view decls-box)]
             (compiler_lower.lower-name-env-from-decls
               decls
-              paths
+              (owned_view.compiler-owned-shared-view paths)
               "entry.tl"
               compiler_lower.LowerNameEnv.Nil))])]
     [pruned : compiler_lower.LowerPrunedProgram
@@ -13148,21 +15234,30 @@
         (match kept-program
           [(compiler_ast_types.AstProgram.Program kept-box)
             (let
-              [kept : compiler_ast_types.AstDeclList (__tl-box-place kept-box)]
+              [kept : compiler_ast_types.AstDeclList
+                (compiler_ast_types.ast-decl-list-box-shared-view kept-box)]
               (and
-                (lower-test-decl-list-defines? kept "main")
-                (lower-test-decl-list-defines? kept "QPoint")
-                (not (lower-test-decl-list-defines? kept "DeadGeom"))))])])))
+                (lower-test-decl-list-defines?
+                  (owned_view.compiler-owned-shared-view kept)
+                  "main")
+                (lower-test-decl-list-defines?
+                  (owned_view.compiler-owned-shared-view kept)
+                  "QPoint")
+                (not
+                  (lower-test-decl-list-defines?
+                    (owned_view.compiler-owned-shared-view kept)
+                    "DeadGeom"))))])])))
 
 (define (compiler-lower-macro-body-dce-ok?) : bool
   (let
     [program : compiler_ast_types.AstProgram
       (compiler-lower-macro-body-dce-program)]
     [names : compiler_lower.LowerNameEnv
-      (match program
+      (match (owned_view.compiler-owned-shared-view program)
         [(compiler_ast_types.AstProgram.Program decls-box)
           (let
-            [decls : compiler_ast_types.AstDeclList (__tl-box-place decls-box)]
+            [decls : compiler_ast_types.AstDeclList
+              (compiler_ast_types.ast-decl-list-box-shared-view decls-box)]
             (compiler_lower.lower-name-env-from-decls
               decls
               (compiler_ast_types.ast-decl-path-list-new)
@@ -13179,11 +15274,20 @@
         (match kept-program
           [(compiler_ast_types.AstProgram.Program kept-box)
             (let
-              [kept : compiler_ast_types.AstDeclList (__tl-box-place kept-box)]
+              [kept : compiler_ast_types.AstDeclList
+                (compiler_ast_types.ast-decl-list-box-shared-view kept-box)]
               (and
-                (= (lower-test-decl-list-count kept) 2)
-                (lower-test-decl-list-defines? kept "main")
-                (not (lower-test-decl-list-defines? kept "macro-only-helper"))))])])))
+                (=
+                  (lower-test-decl-list-count
+                    (owned_view.compiler-owned-shared-view kept))
+                  2)
+                (lower-test-decl-list-defines?
+                  (owned_view.compiler-owned-shared-view kept)
+                  "main")
+                (not
+                  (lower-test-decl-list-defines?
+                    (owned_view.compiler-owned-shared-view kept)
+                    "macro-only-helper"))))])])))
 
 (define (compiler-lower-stdlib-comptime-runtime-dce-ok?) : bool
   (match (lower-compiler-program-with-decl-paths
@@ -13194,29 +15298,46 @@
       (match lowered
         [(compiler_ir_types.CompilerIrProgram.Program _ functions externs)
           (and
-            (= (compiler_ir_types.compiler-ir-function-seq-count functions) 1)
+            (=
+              (compiler_ir_types.compiler-ir-function-seq-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions))
+              1)
             (= (compiler_ir_types.compiler-ir-extern-seq-count externs) 0)
-            (lower-test-function-defined? functions "main"))])]
+            (lower-test-function-defined?
+              (compiler_ir_types.compiler-ir-global-shared-view functions)
+              "main"))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-unsafe-ast-dce-kept-ok?
   [kept : compiler_ast_types.AstDeclList]) : bool
   (and
-    (= (lower-test-decl-list-count kept) 3)
-    (lower-test-decl-list-defines? kept "main")
-    (lower-test-decl-list-defines? kept "unsafe-helper")
-    (lower-test-decl-list-defines? kept "unsafe-entry")
-    (not (lower-test-decl-list-defines? kept "dead-helper"))
+    (=
+      (lower-test-decl-list-count (owned_view.compiler-owned-shared-view kept))
+      3)
+    (lower-test-decl-list-defines?
+      (owned_view.compiler-owned-shared-view kept)
+      "main")
+    (lower-test-decl-list-defines?
+      (owned_view.compiler-owned-shared-view kept)
+      "unsafe-helper")
+    (lower-test-decl-list-defines?
+      (owned_view.compiler-owned-shared-view kept)
+      "unsafe-entry")
+    (not
+      (lower-test-decl-list-defines?
+        (owned_view.compiler-owned-shared-view kept)
+        "dead-helper"))
     (not (lower-test-decl-list-defines? kept "dead-unsafe"))))
 
 (define (compiler-lower-unsafe-ast-dce-ok?) : bool
   (match (compiler_parse_core.parse-ast-source
     (compiler-lower-unsafe-ast-dce-source))
     [(compiler_parse_core.ResultAstProgram.Ok program)
-      (match program
+      (match (owned_view.compiler-owned-shared-view program)
         [(compiler_ast_types.AstProgram.Program decls-box)
           (let
-            [decls : compiler_ast_types.AstDeclList (__tl-box-place decls-box)]
+            [decls : compiler_ast_types.AstDeclList
+              (compiler_ast_types.ast-decl-list-box-shared-view decls-box)]
             [names : compiler_lower.LowerNameEnv
               (compiler_lower.lower-name-env-from-decls
                 decls
@@ -13234,7 +15355,8 @@
                 (match kept-program
                   [(compiler_ast_types.AstProgram.Program kept-box)
                     (compiler-lower-unsafe-ast-dce-kept-ok?
-                      (__tl-box-place kept-box))])]))])]
+                      (compiler_ast_types.ast-decl-list-box-shared-view
+                        kept-box))])]))])]
     [(compiler_parse_core.ResultAstProgram.Err _) false]))
 
 (define (compiler-lower-name-env-dense-snapshots-ok?) : bool
@@ -13278,19 +15400,19 @@
         source-id
         child-logical-id
         child-symbol-id
-        base)]
+        (compiler_lower.lower-global-shared-view base))]
     [sibling : compiler_lower.LowerNameEnv
       (compiler_lower.lower-name-env-bind-logical-symbol-id
         sibling-id
         sibling-id
         sibling-symbol-id
-        base)]
+        (compiler_lower.lower-global-shared-view base))]
     [grown : compiler_lower.LowerNameEnv
       (compiler_lower.lower-name-env-bind-logical-symbol-id
         source-id
         child-logical-id
         grown-symbol-id
-        child)]
+        (compiler_lower.lower-global-shared-view child))]
     [grow-index : i64 1]
     [_grow : unit
       (while (< grow-index 16)
@@ -13304,13 +15426,14 @@
               grown))
           (set! grow-index (+ grow-index 1))))]
     [copied : compiler_lower.LowerNameEnv
-      (compiler_lower.lower-name-env-copy-active child)]
+      (compiler_lower.lower-name-env-copy-active
+        (compiler_lower.lower-global-shared-view child))]
     [copy-branch : compiler_lower.LowerNameEnv
       (compiler_lower.lower-name-env-bind-logical-symbol-id
         source-id
         source-id
         copy-branch-symbol-id
-        copied)]
+        (compiler_lower.lower-global-shared-view copied))]
     [right : compiler_lower.LowerNameEnv
       (compiler_lower.lower-name-env-bind-logical-symbol-id
         alias-id
@@ -13328,13 +15451,17 @@
           left-old-symbol-id
           compiler_lower.LowerNameEnv.Nil))]
     [appended : compiler_lower.LowerNameEnv
-      (compiler_lower.lower-name-env-append left right)]
+      (compiler_lower.lower-name-env-append
+        (compiler_lower.lower-global-shared-view left)
+        (compiler_lower.lower-global-shared-view right))]
     [previous-global : compiler_lower.LowerNameCache
       (compiler_lower.lower-active-global-name-cache-current lower-state)]
     [_set-global : unit
       (compiler_lower.lower-active-global-name-cache-set!
         lower-state
-        (compiler_lower.lower-name-cache-from-env lower-state base))]
+        (compiler_lower.lower-name-cache-from-env
+          lower-state
+          (compiler_lower.lower-global-shared-view base)))]
     [overlay : compiler_lower.LowerNameCache
       (compiler_lower.lower-name-cache-overlay
         lower-state
@@ -13346,46 +15473,94 @@
         (ci.intern-generated-canonical-name "dense-overlay-module"))]
     [ok : bool
       (and
-        (= (compiler_lower.lower-name-env-count base) 1)
-        (= (compiler_lower.lower-name-env-count child) 2)
-        (= (compiler_lower.lower-name-env-count sibling) 2)
-        (= (compiler_lower.lower-name-env-count grown) 18)
-        (= (compiler_lower.lower-name-env-count copied) 2)
-        (= (compiler_lower.lower-name-env-count copy-branch) 3)
-        (= (compiler_lower.lower-name-env-count appended) 3)
         (=
-          (compiler_lower.lower-name-env-lookup-symbol-id base source-id -1)
+          (compiler_lower.lower-name-env-count
+            (compiler_lower.lower-global-shared-view base))
+          1)
+        (=
+          (compiler_lower.lower-name-env-count
+            (compiler_lower.lower-global-shared-view child))
+          2)
+        (=
+          (compiler_lower.lower-name-env-count
+            (compiler_lower.lower-global-shared-view sibling))
+          2)
+        (=
+          (compiler_lower.lower-name-env-count
+            (compiler_lower.lower-global-shared-view grown))
+          18)
+        (=
+          (compiler_lower.lower-name-env-count
+            (compiler_lower.lower-global-shared-view copied))
+          2)
+        (=
+          (compiler_lower.lower-name-env-count
+            (compiler_lower.lower-global-shared-view copy-branch))
+          3)
+        (=
+          (compiler_lower.lower-name-env-count
+            (compiler_lower.lower-global-shared-view appended))
+          3)
+        (=
+          (compiler_lower.lower-name-env-lookup-symbol-id
+            (compiler_lower.lower-global-shared-view base)
+            source-id
+            -1)
           base-symbol-id)
         (=
-          (compiler_lower.lower-name-env-lookup-symbol-id child source-id -1)
-          child-symbol-id)
-        (=
-          (compiler_lower.lower-name-env-lookup-symbol-id sibling source-id -1)
-          base-symbol-id)
-        (=
-          (compiler_lower.lower-name-env-lookup-symbol-id grown source-id -1)
-          grown-symbol-id)
-        (=
-          (compiler_lower.lower-name-env-lookup-symbol-id sibling sibling-id -1)
-          sibling-symbol-id)
-        (=
-          (compiler_lower.lower-name-env-lookup-symbol-id copied source-id -1)
+          (compiler_lower.lower-name-env-lookup-symbol-id
+            (compiler_lower.lower-global-shared-view child)
+            source-id
+            -1)
           child-symbol-id)
         (=
           (compiler_lower.lower-name-env-lookup-symbol-id
-            copy-branch
+            (compiler_lower.lower-global-shared-view sibling)
+            source-id
+            -1)
+          base-symbol-id)
+        (=
+          (compiler_lower.lower-name-env-lookup-symbol-id
+            (compiler_lower.lower-global-shared-view grown)
+            source-id
+            -1)
+          grown-symbol-id)
+        (=
+          (compiler_lower.lower-name-env-lookup-symbol-id
+            (compiler_lower.lower-global-shared-view sibling)
+            sibling-id
+            -1)
+          sibling-symbol-id)
+        (=
+          (compiler_lower.lower-name-env-lookup-symbol-id
+            (compiler_lower.lower-global-shared-view copied)
+            source-id
+            -1)
+          child-symbol-id)
+        (=
+          (compiler_lower.lower-name-env-lookup-symbol-id
+            (compiler_lower.lower-global-shared-view copy-branch)
             source-id
             -1)
           copy-branch-symbol-id)
         (=
-          (compiler_lower.lower-name-env-lookup-symbol-id appended alias-id -1)
+          (compiler_lower.lower-name-env-lookup-symbol-id
+            (compiler_lower.lower-global-shared-view appended)
+            alias-id
+            -1)
           left-new-symbol-id)
         (=
-          (compiler_lower.lower-name-env-lookup-symbol-id right alias-id -1)
+          (compiler_lower.lower-name-env-lookup-symbol-id
+            (compiler_lower.lower-global-shared-view right)
+            alias-id
+            -1)
           right-symbol-id)
         (string.eq
           (compiler_typecheck_core.tc-env-key-name-text
-            (compiler_lower.lower-name-env-lookup-symbol-id copied source-id -1))
+            (compiler_lower.lower-name-env-lookup-symbol-id
+              (compiler_lower.lower-global-shared-view copied)
+              source-id
+              -1))
           (compiler_typecheck_core.tc-env-key-name-text child-symbol-id))
         (=
           (compiler_lower.lower-name-cache-lookup-symbol-id
@@ -13399,7 +15574,8 @@
             source-id
             -1)
           base-symbol-id)
-        (match (compiler_lower.lower-name-env-view child)
+        (match (compiler_lower.lower-name-env-view
+          (compiler_lower.lower-global-shared-view child))
           [(compiler_lower.LowerNameEnvView.Bind head-source _ head-symbol rest)
             (and
               (= head-source source-id)
@@ -13444,19 +15620,19 @@
     (compiler_typecheck_core.tc-expr-uses-free-source-id?
       session
       expr-bases
-      tree
+      (compiler_ast_types.ast-global-shared-view tree)
       when-id
       unless-id
       compiler_typecheck_core.TcNameIdList.Nil)
     (or
       (compiler_typecheck_core.tc-expr-uses-free-name?
         expr-bases
-        tree
+        (compiler_ast_types.ast-global-shared-view tree)
         "when"
         compiler_typecheck_core.TcStringList.Nil)
       (compiler_typecheck_core.tc-expr-uses-free-name?
         expr-bases
-        tree
+        (compiler_ast_types.ast-global-shared-view tree)
         "unless"
         compiler_typecheck_core.TcStringList.Nil))))
 
@@ -13501,7 +15677,7 @@
     [hyg-when-id : i64
       (compiler_typecheck_core.macro-hygiene-local-id
         session
-        hygiene-ctx
+        (owned_view.compiler-owned-shared-view hygiene-ctx)
         1
         when-id)]
     [hyg-x-id : i64
@@ -13515,14 +15691,18 @@
       (compiler_typecheck_core.tc-module-name-id-by-id
         (ci.intern "stdlib.io")
         when-id)]
-    [push-var
-      (lambda ([name-id : i64]) : i64
-        (compiler_ast_types.ast-node-pool-context-expr-push
-          pools
-          (compiler_ast_types.AstExpr.Var name-id)))]
-    [when-var : i64 (push-var when-id)]
-    [hyg-when-var : i64 (push-var hyg-when-id)]
-    [x-var : i64 (push-var x-id)]
+    [when-var : i64
+      (compiler_ast_types.ast-node-pool-context-expr-push
+        (compiler_ast_types.ast-global-shared-view pools)
+        (compiler_ast_types.AstExpr.Var when-id))]
+    [hyg-when-var : i64
+      (compiler_ast_types.ast-node-pool-context-expr-push
+        (compiler_ast_types.ast-global-shared-view pools)
+        (compiler_ast_types.AstExpr.Var hyg-when-id))]
+    [x-var : i64
+      (compiler_ast_types.ast-node-pool-context-expr-push
+        (compiler_ast_types.ast-global-shared-view pools)
+        (compiler_ast_types.AstExpr.Var x-id))]
     (and
       (compiler-lower-compat-prescan-id-parity?
         session
@@ -13682,58 +15862,74 @@
       (compiler_ast_types.ast-node-pool-context-capture-active)]
     [intern-a : ci.InternCompatState (ci.intern-compat-state-new)]
     [intern-b : ci.InternCompatState (ci.intern-compat-state-new)]
-    [module-a : i64 (ci.intern-compat-state-intern intern-a "owner-a")]
-    [cleanup-a : i64 (ci.intern-compat-state-intern intern-a "cleanup-a")]
-    [_module-b : i64 (ci.intern-compat-state-intern intern-b "decoy-b")]
-    [_cleanup-b : i64 (ci.intern-compat-state-intern intern-b "cleanup-b")]
+    [module-a : i64 (ci.intern-compat-state-intern (&mut intern-a) "owner-a")]
+    [cleanup-a : i64
+      (ci.intern-compat-state-intern (&mut intern-a) "cleanup-a")]
+    [_module-b : i64 (ci.intern-compat-state-intern (&mut intern-b) "decoy-b")]
+    [_cleanup-b : i64
+      (ci.intern-compat-state-intern (&mut intern-b) "cleanup-b")]
     [pools-a : compiler_ast_types.AstNodePoolContext
       (compiler_ast_types.ast-node-pool-context-new-with-capacities 8 1)]
     [pools-b : compiler_ast_types.AstNodePoolContext
       (compiler_ast_types.ast-node-pool-context-new-with-capacities 8 1)]
     [lower-a : compiler_lower.CompilerLowerState
-      (compiler_lower.compiler-lower-state-new-with-intern-state intern-a)]
+      (compiler_lower.compiler-lower-state-new-with-intern-state
+        (owned_view.compiler-owned-shared-view intern-a))]
     [generated-b-before : i64 (ci.intern-compat-state-generated-count intern-b)]
     [expr-b-before : i64
       (compiler_ast_types.ast-node-pool-context-expr-len pools-b)]
     [ok : bool false]
     (begin
-      (ci.intern-compat-state-install! intern-b)
-      (compiler_ast_types.ast-node-pool-context-install! pools-b)
+      (ci.intern-compat-state-install!
+        (owned_view.compiler-owned-shared-view intern-b))
+      (compiler_ast_types.ast-node-pool-context-install!
+        (owned_view.compiler-owned-shared-view pools-b))
       (let
         [_active-generated-b : i64
-          (ci.intern-compat-state-generated-name intern-b "decoy-generated-b")]
+          (ci.intern-compat-state-generated-name
+            (&mut intern-b)
+            "decoy-generated-b")]
         [generated-b-after : i64
           (ci.intern-compat-state-generated-count intern-b)]
-        [param-a : i64 (compiler_lower.lower-struct-cleanup-param-id lower-a)]
+        [param-a : i64
+          (compiler_lower.lower-struct-cleanup-param-id
+            (owned_view.compiler-owned-shared-view lower-a))]
         [param-again-a : i64
-          (compiler_lower.lower-struct-cleanup-param-id lower-a)]
+          (compiler_lower.lower-struct-cleanup-param-id
+            (owned_view.compiler-owned-shared-view lower-a))]
         [payload-a : i64
-          (compiler_lower.lower-enum-cleanup-payload-id lower-a 0)]
+          (compiler_lower.lower-enum-cleanup-payload-id
+            (owned_view.compiler-owned-shared-view lower-a)
+            0)]
         [payload-again-a : i64
-          (compiler_lower.lower-enum-cleanup-payload-id lower-a 0)]
+          (compiler_lower.lower-enum-cleanup-payload-id
+            (owned_view.compiler-owned-shared-view lower-a)
+            0)]
         [qualified-a : i64
           (ci.intern-compat-state-generated-canonical-qualified-name
-            intern-a
+            (&mut intern-a)
             "owner-a/cleanup-a"
             module-a
             cleanup-a)]
         [_enum-call-a : i64
           (compiler_lower.lower-enum-cleanup-call-expr
-            pools-a
+            (owned_view.compiler-owned-shared-view pools-a)
             cleanup-a
             payload-a)]
         [_struct-call-a : i64
           (compiler_lower.lower-struct-cleanup-call-expr
-            pools-a
+            (owned_view.compiler-owned-shared-view pools-a)
             cleanup-a
             param-a
             cleanup-a)]
+        [lower-a-interns : ci.InternCompatState
+          (compiler_lower.compiler-lower-state-interns
+            (owned_view.compiler-owned-shared-view lower-a))]
         (set!
           ok
           (and
             (=
-              (ci.intern-compat-state-table-id
-                (compiler_lower.compiler-lower-state-interns lower-a))
+              (ci.intern-compat-state-table-id (& lower-a-interns))
               (ci.intern-compat-state-table-id intern-a))
             (= param-a param-again-a)
             (= payload-a payload-again-a)
@@ -13788,18 +15984,18 @@
     [state : cbi.CompilerBuiltinIdsState (cbi.state-new)]
     (begin
       (cbi.state-set-generation!
-        state
+        (&mut state)
         (ci.intern-compat-state-generation intern-state))
       (cbi.state-set-metadata!
-        state
+        (&mut state)
         (ci.intern-compat-state-table-id intern-state)
         (ci.intern-compat-state-pool-len intern-state)
         true)
-      (cbi.state-set! state 90 comptime-id)
-      (cbi.state-set! state 91 comptime-error-id)
-      (cbi.state-set! state 94 bare-id)
-      (cbi.state-set! state 149 stdlib-comptime-id)
-      (cbi.state-set! state 150 stdlib-error-id)
+      (cbi.state-set! (&mut state) 90 comptime-id)
+      (cbi.state-set! (&mut state) 91 comptime-error-id)
+      (cbi.state-set! (&mut state) 94 bare-id)
+      (cbi.state-set! (&mut state) 149 stdlib-comptime-id)
+      (cbi.state-set! (&mut state) 150 stdlib-error-id)
       state)))
 
 ;; Cache identity is the pair `(table-id, reset generation)`, not a numeric ID
@@ -13813,36 +16009,45 @@
     [intern-a : ci.InternCompatState (ci.intern-compat-state-new)]
     [intern-b : ci.InternCompatState (ci.intern-compat-state-new)]
     [intern-decoy : ci.InternCompatState (ci.intern-compat-state-new)]
-    [a-bare : i64 (ci.intern-compat-state-intern intern-a "comptime-error")]
+    [a-bare : i64
+      (ci.intern-compat-state-intern (&mut intern-a) "comptime-error")]
     [a-comptime : i64
-      (ci.intern-compat-state-intern intern-a "comptime.comptime-error")]
-    [a-error : i64 (ci.intern-compat-state-intern intern-a "comptime.error")]
+      (ci.intern-compat-state-intern (&mut intern-a) "comptime.comptime-error")]
+    [a-error : i64
+      (ci.intern-compat-state-intern (&mut intern-a) "comptime.error")]
     [a-stdlib-comptime : i64
-      (ci.intern-compat-state-intern intern-a "stdlib.comptime.comptime-error")]
+      (ci.intern-compat-state-intern
+        (&mut intern-a)
+        "stdlib.comptime.comptime-error")]
     [a-stdlib-error : i64
-      (ci.intern-compat-state-intern intern-a "stdlib.comptime.error")]
-    [b-decoy : i64 (ci.intern-compat-state-intern intern-b "owner-b-decoy")]
+      (ci.intern-compat-state-intern (&mut intern-a) "stdlib.comptime.error")]
+    [b-decoy : i64
+      (ci.intern-compat-state-intern (&mut intern-b) "owner-b-decoy")]
     [_b-decoy-2 : i64
-      (ci.intern-compat-state-intern intern-b "owner-b-decoy-2")]
+      (ci.intern-compat-state-intern (&mut intern-b) "owner-b-decoy-2")]
     [_b-decoy-3 : i64
-      (ci.intern-compat-state-intern intern-b "owner-b-decoy-3")]
+      (ci.intern-compat-state-intern (&mut intern-b) "owner-b-decoy-3")]
     [_b-decoy-4 : i64
-      (ci.intern-compat-state-intern intern-b "owner-b-decoy-4")]
+      (ci.intern-compat-state-intern (&mut intern-b) "owner-b-decoy-4")]
     [_b-decoy-5 : i64
-      (ci.intern-compat-state-intern intern-b "owner-b-decoy-5")]
-    [b-bare : i64 (ci.intern-compat-state-intern intern-b "comptime-error")]
+      (ci.intern-compat-state-intern (&mut intern-b) "owner-b-decoy-5")]
+    [b-bare : i64
+      (ci.intern-compat-state-intern (&mut intern-b) "comptime-error")]
     [b-comptime : i64
-      (ci.intern-compat-state-intern intern-b "comptime.comptime-error")]
-    [b-error : i64 (ci.intern-compat-state-intern intern-b "comptime.error")]
+      (ci.intern-compat-state-intern (&mut intern-b) "comptime.comptime-error")]
+    [b-error : i64
+      (ci.intern-compat-state-intern (&mut intern-b) "comptime.error")]
     [b-stdlib-comptime : i64
-      (ci.intern-compat-state-intern intern-b "stdlib.comptime.comptime-error")]
+      (ci.intern-compat-state-intern
+        (&mut intern-b)
+        "stdlib.comptime.comptime-error")]
     [b-stdlib-error : i64
-      (ci.intern-compat-state-intern intern-b "stdlib.comptime.error")]
+      (ci.intern-compat-state-intern (&mut intern-b) "stdlib.comptime.error")]
     [decoy-id : i64
-      (ci.intern-compat-state-intern intern-decoy "installed-decoy")]
+      (ci.intern-compat-state-intern (&mut intern-decoy) "installed-decoy")]
     [builtins-a : cbi.CompilerBuiltinIdsState
       (compiler-lower-comptime-error-test-builtins
-        intern-a
+        (owned_view.compiler-owned-shared-view intern-a)
         a-comptime
         a-error
         a-bare
@@ -13850,7 +16055,7 @@
         a-stdlib-error)]
     [builtins-b : cbi.CompilerBuiltinIdsState
       (compiler-lower-comptime-error-test-builtins
-        intern-b
+        (owned_view.compiler-owned-shared-view intern-b)
         b-comptime
         b-error
         b-bare
@@ -13858,65 +16063,90 @@
         b-stdlib-error)]
     [builtins-decoy : cbi.CompilerBuiltinIdsState
       (compiler-lower-comptime-error-test-builtins
-        intern-decoy
+        (owned_view.compiler-owned-shared-view intern-decoy)
         decoy-id
         decoy-id
         decoy-id
         decoy-id
         decoy-id)]
     [lower-a : compiler_lower.CompilerLowerState
-      (compiler_lower.compiler-lower-state-new-with-intern-state intern-a)]
+      (compiler_lower.compiler-lower-state-new-with-intern-state
+        (owned_view.compiler-owned-shared-view intern-a))]
     [lower-b : compiler_lower.CompilerLowerState
-      (compiler_lower.compiler-lower-state-new-with-intern-state intern-b)]
+      (compiler_lower.compiler-lower-state-new-with-intern-state
+        (owned_view.compiler-owned-shared-view intern-b))]
     [initial-a : compiler_lower.CompilerLowerStateObservation
-      (compiler_lower.compiler-lower-state-observe lower-a)]
+      (compiler_lower.compiler-lower-state-observe
+        (owned_view.compiler-owned-shared-view lower-a))]
     [ok : bool false]
     (begin
-      (ci.intern-compat-state-install! intern-decoy)
+      (ci.intern-compat-state-install!
+        (owned_view.compiler-owned-shared-view intern-decoy))
       (cbi.state-install! builtins-decoy)
-      (compiler_lower.lower-comptime-error-ids-ensure! lower-a builtins-a)
-      (compiler_lower.lower-comptime-error-ids-ensure! lower-b builtins-b)
+      (compiler_lower.lower-comptime-error-ids-ensure!
+        (owned_view.compiler-owned-shared-view lower-a)
+        (owned_view.compiler-owned-shared-view builtins-a))
+      (compiler_lower.lower-comptime-error-ids-ensure!
+        (owned_view.compiler-owned-shared-view lower-b)
+        (owned_view.compiler-owned-shared-view builtins-b))
       (let
         [b-before-reuse : compiler_lower.CompilerLowerStateObservation
-          (compiler_lower.compiler-lower-state-observe lower-b)]
+          (compiler_lower.compiler-lower-state-observe
+            (owned_view.compiler-owned-shared-view lower-b))]
         [old-generation : i64 (ci.intern-compat-state-generation intern-a)]
         (begin
-          (compiler_lower.compiler-lower-state-reset! lower-a)
+          (compiler_lower.compiler-lower-state-reset!
+            (owned_view.compiler-owned-shared-view lower-a))
           (let
             [reset-ok? : bool
-              (compiler_lower.compiler-lower-state-reset? lower-a)]
+              (compiler_lower.compiler-lower-state-reset?
+                (owned_view.compiler-owned-shared-view lower-a))]
             (begin
-              (ci.intern-compat-state-reset! intern-a)
+              (ci.intern-compat-state-reset! (&mut intern-a))
               (let
                 [_a-new-decoy-1 : i64
-                  (ci.intern-compat-state-intern intern-a "owner-a-new-decoy-1")]
+                  (ci.intern-compat-state-intern
+                    (&mut intern-a)
+                    "owner-a-new-decoy-1")]
                 [_a-new-decoy-2 : i64
-                  (ci.intern-compat-state-intern intern-a "owner-a-new-decoy-2")]
+                  (ci.intern-compat-state-intern
+                    (&mut intern-a)
+                    "owner-a-new-decoy-2")]
                 [_a-new-decoy-3 : i64
-                  (ci.intern-compat-state-intern intern-a "owner-a-new-decoy-3")]
+                  (ci.intern-compat-state-intern
+                    (&mut intern-a)
+                    "owner-a-new-decoy-3")]
                 [_a-new-decoy-4 : i64
-                  (ci.intern-compat-state-intern intern-a "owner-a-new-decoy-4")]
+                  (ci.intern-compat-state-intern
+                    (&mut intern-a)
+                    "owner-a-new-decoy-4")]
                 [_a-new-decoy-5 : i64
-                  (ci.intern-compat-state-intern intern-a "owner-a-new-decoy-5")]
+                  (ci.intern-compat-state-intern
+                    (&mut intern-a)
+                    "owner-a-new-decoy-5")]
                 [a-new-bare : i64
-                  (ci.intern-compat-state-intern intern-a "comptime-error")]
+                  (ci.intern-compat-state-intern
+                    (&mut intern-a)
+                    "comptime-error")]
                 [a-new-comptime : i64
                   (ci.intern-compat-state-intern
-                    intern-a
+                    (&mut intern-a)
                     "comptime.comptime-error")]
                 [a-new-error : i64
-                  (ci.intern-compat-state-intern intern-a "comptime.error")]
+                  (ci.intern-compat-state-intern
+                    (&mut intern-a)
+                    "comptime.error")]
                 [a-new-stdlib-comptime : i64
                   (ci.intern-compat-state-intern
-                    intern-a
+                    (&mut intern-a)
                     "stdlib.comptime.comptime-error")]
                 [a-new-stdlib-error : i64
                   (ci.intern-compat-state-intern
-                    intern-a
+                    (&mut intern-a)
                     "stdlib.comptime.error")]
                 [builtins-a-reused : cbi.CompilerBuiltinIdsState
                   (compiler-lower-comptime-error-test-builtins
-                    intern-a
+                    (owned_view.compiler-owned-shared-view intern-a)
                     a-new-comptime
                     a-new-error
                     a-new-bare
@@ -13924,7 +16154,7 @@
                     a-new-stdlib-error)]
                 (begin
                   (compiler_lower.lower-comptime-error-ids-ensure!
-                    lower-a
+                    (owned_view.compiler-owned-shared-view lower-a)
                     builtins-a-reused)
                   (set!
                     ok
@@ -13939,20 +16169,21 @@
                       (not
                         (compiler_lower.compiler-lower-state-observation-eq?
                           initial-a
-                          (compiler_lower.compiler-lower-state-observe lower-a)))
+                          (compiler_lower.compiler-lower-state-observe
+                            (owned_view.compiler-owned-shared-view lower-a))))
                       (compiler_lower.lower-comptime-error-call-id?
-                        lower-a
+                        (owned_view.compiler-owned-shared-view lower-a)
                         a-new-bare)
                       (not
                         (compiler_lower.lower-comptime-error-call-id?
-                          lower-a
+                          (owned_view.compiler-owned-shared-view lower-a)
                           a-bare))
                       (compiler_lower.lower-comptime-error-call-id?
-                        lower-b
+                        (owned_view.compiler-owned-shared-view lower-b)
                         b-bare)
                       (not
                         (compiler_lower.lower-comptime-error-call-id?
-                          lower-b
+                          (owned_view.compiler-owned-shared-view lower-b)
                           b-decoy))
                       reset-ok?
                       (not
@@ -13961,7 +16192,8 @@
                           (ci.intern-compat-state-generation intern-a)))
                       (compiler_lower.compiler-lower-state-observation-eq?
                         b-before-reuse
-                        (compiler_lower.compiler-lower-state-observe lower-b))
+                        (compiler_lower.compiler-lower-state-observe
+                          (owned_view.compiler-owned-shared-view lower-b)))
                       (=
                         (ci.intern-active-table-id)
                         (ci.intern-compat-state-table-id intern-decoy))
@@ -14029,26 +16261,53 @@
         (compiler_lower.LowerCAbiSlot.Slot (compiler_ast_types.AstType.I64) 0)
         (compiler_lower.LowerCAbiSlot.Slot (compiler_ast_types.AstType.F64) 8))]
     (and
-      (= (compiler_lower.lower-name-env-count names) 2)
+      (=
+        (compiler_lower.lower-name-env-count
+          (owned_view.compiler-owned-shared-view names))
+        2)
       (string.eq
         (lower-name-env-resolve-with-id names "source-b" source-b-id)
         "logical-b")
-      (= (lower-capture-list-count captures) 2)
-      (compiler_lower.lower-capture-list-contains-name? captures 102)
-      (lower-capture-list-storage-entry? captures 0 102 2 8)
+      (=
+        (lower-capture-list-count
+          (owned_view.compiler-owned-shared-view captures))
+        2)
+      (compiler_lower.lower-capture-list-contains-name?
+        (owned_view.compiler-owned-shared-view captures)
+        102)
+      (lower-capture-list-storage-entry?
+        (owned_view.compiler-owned-shared-view captures)
+        0
+        102
+        2
+        8)
       (lower-capture-list-storage-entry? captures 1 101 1 0)
-      (= (lower-cleanup-stack-count cleanups) 2)
-      (lower-cleanup-stack-entry? cleanups 0 201 301)
+      (=
+        (lower-cleanup-stack-count
+          (owned_view.compiler-owned-shared-view cleanups))
+        2)
+      (lower-cleanup-stack-entry?
+        (owned_view.compiler-owned-shared-view cleanups)
+        0
+        201
+        301)
       (lower-cleanup-stack-entry? cleanups 1 202 302)
-      (= (compiler_lower.lower-c-abi-slot-list-count slots) 2)
-      (match (compiler_lower.lower-c-abi-slot-list-ref slots 0)
+      (=
+        (compiler_lower.lower-c-abi-slot-list-count
+          (compiler_lower.lower-global-shared-view slots))
+        2)
+      (match (compiler_lower.lower-c-abi-slot-list-ref
+        (compiler_lower.lower-global-shared-view slots)
+        0)
         [(compiler_lower.LowerCAbiSlot.Slot ty offset)
           (and
             (= offset 0)
             (compiler_typecheck_core.tc-type-eq
               ty
               (compiler_ast_types.AstType.I64)))])
-      (match (compiler_lower.lower-c-abi-slot-list-ref slots 1)
+      (match (compiler_lower.lower-c-abi-slot-list-ref
+        (compiler_lower.lower-global-shared-view slots)
+        1)
         [(compiler_lower.LowerCAbiSlot.Slot ty offset)
           (and
             (= offset 8)
@@ -14070,7 +16329,8 @@
         "name_cache_split_alias_3940"
         "name_cache_split_value_3940")]
     [split-source-missing-before : bool
-      (match (ci.intern-lookup split-source)
+      (match (ci.intern-lookup
+        (owned_view.compiler-owned-shared-view split-source))
         [(InternLookupFound _) false]
         [(InternLookupMissing) true])]
     [split-alias-id : i64
@@ -14085,11 +16345,11 @@
     [names : compiler_lower.LowerNameEnv
       (compiler_lower.lower-name-env-bind-logical-id
         split-source-id
-        split-logical
+        (owned_view.compiler-owned-shared-view split-logical)
         split-source-id
         (compiler_lower.lower-name-env-bind-logical-id
           source-id
-          logical
+          (owned_view.compiler-owned-shared-view logical)
           source-id
           compiler_lower.LowerNameEnv.Nil))]
     [cache : compiler_lower.LowerNameCache
@@ -14105,7 +16365,7 @@
         [(InternLookupFound _) false]
         [(InternLookupMissing) true])
       (match (compiler_lower.lower-name-cache-resolve-id-display
-        cache
+        (owned_view.compiler-owned-shared-view cache)
         source-id)
         [(compiler_typecheck_core.TcMaybeString.Some resolved)
           (string.eq resolved logical)]
@@ -14164,16 +16424,24 @@
         (compiler_lower.compiler-lower-function-state-rtf-generation
           function-state))
       (= (array-ref storage.rtf-ids slot) key)
-      (compiler_ast_types.ast-type-eq? (array-ref storage.rtf-types slot) ty)
+      (compiler_ast_types.ast-type-eq?
+        (owned_view.compiler-owned-array-element-shared-view
+          storage.rtf-types
+          slot)
+        (owned_view.compiler-owned-shared-view ty))
       (=
         (array-ref storage.variant-stamps slot)
         (compiler_lower.compiler-lower-function-state-variant-generation
           function-state))
       (= (array-ref storage.variant-keys slot) key)
       (compiler_ast_types.ast-type-eq?
-        (array-ref storage.variant-scrutinee-types slot)
-        ty)
-      (match (array-ref storage.variant-outcomes slot)
+        (owned_view.compiler-owned-array-element-shared-view
+          storage.variant-scrutinee-types
+          slot)
+        (owned_view.compiler-owned-shared-view ty))
+      (match (owned_view.compiler-owned-array-element-shared-view
+        storage.variant-outcomes
+        slot)
         [(compiler_lower.LowerVariantArmResolution.Missing name)
           (string.eq name outcome-name)]
         [_ false]))))
@@ -14218,14 +16486,14 @@
         [source-id : i64
           (ci.intern-generated-name "lower-function-state-isolation-temp")]
         [symbol : i64 81173]
+        [interns-a : ci.InternCompatState
+          (compiler_lower.compiler-lower-state-interns owner-a)]
+        [interns-b : ci.InternCompatState
+          (compiler_lower.compiler-lower-state-interns owner-b)]
         [identity-a : i64
-          (ci.intern-compat-state-intern
-            (compiler_lower.compiler-lower-state-interns owner-a)
-            "identity-a")]
+          (ci.intern-compat-state-intern (&mut interns-a) "identity-a")]
         [identity-b : i64
-          (ci.intern-compat-state-intern
-            (compiler_lower.compiler-lower-state-interns owner-b)
-            "identity-b")]
+          (ci.intern-compat-state-intern (&mut interns-b) "identity-b")]
         [registered-a : compiler_lower.LowerSpmdPackageSymbolRegistration
           (compiler_lower.lower-spmd-package-symbol-register
             owner-a
@@ -14436,7 +16704,7 @@
     [intern-state : ci.InternCompatState
       (compiler_lower.compiler-lower-state-interns state)]
     [canonical : i64
-      (ci.intern-compat-state-intern intern-state "profile-pkg/helper")]
+      (ci.intern-compat-state-intern (&mut intern-state) "profile-pkg/helper")]
     [classes : compiler_ast_types.AstSpmdParamClassList
       (compiler_ast_types.ast-spmd-param-class-list-new)]
     [_class : unit
@@ -14453,7 +16721,7 @@
         (compiler_ast_types.AstType.I64)
         (compiler_ir_types.CompilerIrSpmdBackend.Avx512)
         8
-        classes
+        (owned_view.compiler-owned-shared-view classes)
         (compiler_ast_types.AstSpmdResultClass.Varying)
         0)]
     [repeat : i64
@@ -14466,7 +16734,7 @@
         (compiler_ast_types.AstType.I64)
         (compiler_ir_types.CompilerIrSpmdBackend.Avx512)
         8
-        classes
+        (owned_view.compiler-owned-shared-view classes)
         (compiler_ast_types.AstSpmdResultClass.Varying)
         0)]
     [expected : String
@@ -14485,17 +16753,17 @@
         (=
           (string.string-length
             (ci.intern-compat-state-str
-              intern-state
+              (owned_view.compiler-owned-shared-view intern-state)
               (compiler_lower.lower-spmd-package-structural-identity
-                intern-state
+                (owned_view.compiler-owned-shared-view intern-state)
                 first)))
           0)
         (=
           (string.string-length
             (ci.intern-compat-state-str
-              intern-state
+              (owned_view.compiler-owned-shared-view intern-state)
               (compiler_lower.lower-spmd-package-structural-linker-symbol
-                intern-state
+                (owned_view.compiler-owned-shared-view intern-state)
                 first)))
           0))]
     (begin
@@ -14504,30 +16772,30 @@
         lazy-before
         (=
           (compiler_lower.lower-spmd-package-structural-identity
-            intern-state
+            (owned_view.compiler-owned-shared-view intern-state)
             first)
           (compiler_lower.lower-spmd-package-structural-identity
-            intern-state
+            (owned_view.compiler-owned-shared-view intern-state)
             repeat))
         (=
           (compiler_lower.lower-spmd-package-structural-linker-symbol
-            intern-state
+            (owned_view.compiler-owned-shared-view intern-state)
             first)
           (compiler_lower.lower-spmd-package-structural-linker-symbol
-            intern-state
+            (owned_view.compiler-owned-shared-view intern-state)
             repeat))
         (=
           (compiler_lower.lower-spmd-package-structural-registration-key
-            intern-state
+            (owned_view.compiler-owned-shared-view intern-state)
             first)
           (compiler_lower.lower-spmd-package-structural-registration-key
-            intern-state
+            (owned_view.compiler-owned-shared-view intern-state)
             repeat))
         (string.eq
           (ci.intern-compat-state-str
-            intern-state
+            (owned_view.compiler-owned-shared-view intern-state)
             (compiler_lower.lower-spmd-package-structural-linker-symbol
-              intern-state
+              (owned_view.compiler-owned-shared-view intern-state)
               first))
           expected)
         (=
@@ -14556,18 +16824,27 @@
       (compiler_lower.compiler-lower-state-new)]
     [module : String "type_cache_mod_3939"]
     [name : String "TypeCacheThing3939"]
-    [module-id : i64 (ci.intern-generated-name module)]
-    [name-id : i64 (ci.intern-generated-name name)]
+    [module-id : i64
+      (ci.intern-generated-name (owned_view.compiler-owned-shared-view module))]
+    [name-id : i64
+      (ci.intern-generated-name (owned_view.compiler-owned-shared-view name))]
     [qualified-name : String
-      (compiler_symbols.compiler-symbol-module-key module name)]
+      (compiler_symbols.compiler-symbol-module-key
+        (owned_view.compiler-owned-shared-view module)
+        name)]
     [qualified-id : i64
       (compiler_symbols.compiler-symbol-module-key-id-by-id module-id name-id)]
     [fallback-name : String "TypeCacheFallback3939"]
-    [fallback-id : i64 (ci.intern-generated-name fallback-name)]
+    [fallback-id : i64
+      (ci.intern-generated-name
+        (owned_view.compiler-owned-shared-view fallback-name))]
     [fallback-primary : String
-      (compiler_symbols.compiler-symbol-module-key module fallback-name)]
+      (compiler_symbols.compiler-symbol-module-key
+        module
+        (owned_view.compiler-owned-shared-view fallback-name))]
     [fallback-primary-missing-before : bool
-      (match (ci.intern-lookup fallback-primary)
+      (match (ci.intern-lookup
+        (owned_view.compiler-owned-shared-view fallback-primary))
         [(InternLookupFound _) false]
         [(InternLookupMissing) true])]
     [env : compiler_typecheck_core.TcTypeEnv
@@ -14583,7 +16860,7 @@
     [missing : String "TypeCacheMissing3939"]
     [missing-id : i64 (+ (ci.intern-capacity) 3939)]
     [missing-before : bool
-      (match (ci.intern-lookup missing)
+      (match (ci.intern-lookup (owned_view.compiler-owned-shared-view missing))
         [(InternLookupFound _) false]
         [(InternLookupMissing) true])]
     (and
@@ -14595,7 +16872,7 @@
       fallback-primary-missing-before
       missing-before
       (match (compiler_lower.lower-type-cache-lookup-id
-        cache
+        (owned_view.compiler-owned-shared-view cache)
         qualified-id
         qualified-name)
         [(compiler_typecheck_core.ResultTcType.Ok ty)
@@ -14604,7 +16881,7 @@
             (compiler_ast_types.AstType.I64))]
         [(compiler_typecheck_core.ResultTcType.Err _) false])
       (match (compiler_lower.lower-type-cache-lookup-id
-        cache
+        (owned_view.compiler-owned-shared-view cache)
         fallback-id
         fallback-name)
         [(compiler_typecheck_core.ResultTcType.Ok ty)
@@ -14615,7 +16892,7 @@
       (match (compiler_lower.lower-type-cache-lookup-id
         cache
         missing-id
-        missing)
+        (owned_view.compiler-owned-shared-view missing))
         [(compiler_typecheck_core.ResultTcType.Ok _) false]
         [(compiler_typecheck_core.ResultTcType.Err _) true])
       (match (ci.intern-lookup fallback-primary)
@@ -14649,28 +16926,28 @@
           (and
             (=
               (lower-test-function-binop-op-count
-                functions
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "shift-u8"
                 (compiler_ir_types.CompilerIrBinOp.Shl
                   (compiler_ast_types.AstType.U8)))
               1)
             (=
               (lower-test-function-binop-op-count
-                functions
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "shift-u64"
                 (compiler_ir_types.CompilerIrBinOp.Shr
                   (compiler_ast_types.AstType.U64)))
               1)
             (=
               (lower-test-function-binop-op-count
-                functions
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "shift-u8"
                 (compiler_ir_types.CompilerIrBinOp.Shl
                   (compiler_ast_types.AstType.U64)))
               0)
             (=
               (lower-test-function-binop-op-count
-                functions
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "shift-u64"
                 (compiler_ir_types.CompilerIrBinOp.Shr
                   (compiler_ast_types.AstType.U8)))
@@ -14695,35 +16972,35 @@
       (compiler_ast_types.ast-node-pool-context-new-with-capacities 4 16)]
     [elem-id : i64
       (compiler_ast_types.ast-node-pool-context-type-push
-        pools
+        (owned_view.compiler-owned-shared-view pools)
         (compiler_ast_types.AstType.I64))]
     [slice-id : i64
       (compiler_ast_types.ast-node-pool-context-type-push
-        pools
+        (owned_view.compiler-owned-shared-view pools)
         (compiler_ast_types.AstType.Slice elem-id))]
     [region-slice-id : i64
       (compiler_ast_types.ast-node-pool-context-type-push
-        pools
+        (owned_view.compiler-owned-shared-view pools)
         (compiler_ast_types.AstType.Region 7 slice-id))]
     [nested-ref-element-id : i64
       (compiler_ast_types.ast-node-pool-context-type-push
-        pools
+        (owned_view.compiler-owned-shared-view pools)
         (compiler_ast_types.AstType.Ref 1 elem-id))]
     [nested-slice-id : i64
       (compiler_ast_types.ast-node-pool-context-type-push
-        pools
+        (owned_view.compiler-owned-shared-view pools)
         (compiler_ast_types.AstType.Slice nested-ref-element-id))]
     [ordinary-id : i64
       (compiler_ast_types.ast-node-pool-context-type-push
-        pools
+        (owned_view.compiler-owned-shared-view pools)
         (compiler_ast_types.AstType.I64))]
     [pointer-id : i64
       (compiler_ast_types.ast-node-pool-context-type-push
-        pools
+        (owned_view.compiler-owned-shared-view pools)
         (compiler_ast_types.AstType.Ptr elem-id))]
     [mutable-pointer-id : i64
       (compiler_ast_types.ast-node-pool-context-type-push
-        pools
+        (owned_view.compiler-owned-shared-view pools)
         (compiler_ast_types.AstType.MutPtr elem-id))]
     [ref : compiler_ast_types.AstType
       (compiler_ast_types.AstType.Ref 1 slice-id)]
@@ -14746,54 +17023,139 @@
         (compiler_symbols.compiler-registries-empty)
         ""
         0
-        pools)]
+        (owned_view.compiler-owned-shared-view pools))]
     [layouts : compiler_ctfe.CtfeLayoutInfoList
       (compiler_ctfe.ctfe-layout-info-list-empty)]
     [ok : bool false]
     (begin
-      (compiler_ast_types.ast-node-pool-context-install! pools)
+      (compiler_ast_types.ast-node-pool-context-install!
+        (owned_view.compiler-owned-shared-view pools))
       (set!
         ok
         (and
-          (= (compiler_lower.lower-type-size ctx ref) 16)
-          (= (compiler_lower.lower-type-align ctx ref) 8)
-          (compiler_lower.lower-type-register-resident? ctx ref)
-          (= (compiler_lower.lower-type-register-words ctx ref) 2)
+          (=
+            (compiler_lower.lower-type-size
+              (compiler_typecheck_core.tc-global-shared-view ctx)
+              (owned_view.compiler-owned-shared-view ref))
+            16)
+          (=
+            (compiler_lower.lower-type-align
+              (compiler_typecheck_core.tc-global-shared-view ctx)
+              (owned_view.compiler-owned-shared-view ref))
+            8)
+          (compiler_lower.lower-type-register-resident?
+            (compiler_typecheck_core.tc-global-shared-view ctx)
+            (owned_view.compiler-owned-shared-view ref))
+          (=
+            (compiler_lower.lower-type-register-words
+              (compiler_typecheck_core.tc-global-shared-view ctx)
+              (owned_view.compiler-owned-shared-view ref))
+            2)
           (compiler_typecheck_core.tc-type-eq
-            (compiler_lower.lower-register-word-type ctx ref 0)
+            (compiler_lower.lower-register-word-type
+              (compiler_typecheck_core.tc-global-shared-view ctx)
+              (owned_view.compiler-owned-shared-view ref)
+              0)
             (compiler_ast_types.AstType.U64))
           (compiler_typecheck_core.tc-type-eq
-            (compiler_lower.lower-register-word-type ctx ref 1)
+            (compiler_lower.lower-register-word-type
+              (compiler_typecheck_core.tc-global-shared-view ctx)
+              (owned_view.compiler-owned-shared-view ref)
+              1)
             (compiler_ast_types.AstType.I64))
-          (= (compiler_lower.lower-type-size ctx mut-ref) 16)
-          (= (compiler_lower.lower-type-align ctx mut-ref) 8)
-          (compiler_lower.lower-type-register-resident? ctx mut-ref)
-          (= (compiler_lower.lower-type-register-words ctx mut-ref) 2)
-          (= (compiler_lower.lower-type-size ctx ordinary-ref) 8)
-          (not (compiler_lower.lower-type-register-resident? ctx ordinary-ref))
-          (= (compiler_lower.lower-type-register-words ctx ordinary-ref) 0)
-          (= (compiler_lower.lower-type-size ctx pointer-ref) 8)
-          (not (compiler_lower.lower-type-register-resident? ctx pointer-ref))
-          (compiler_lower.lower-supported-reference-type? ctx pointer-ref)
-          (compiler_lower.lower-supported-reference-type?
-            ctx
-            mutable-pointer-ref)
-          (= (compiler_lower.lower-type-size ctx bare-slice) 0)
-          (not (compiler_lower.lower-type-register-resident? ctx bare-slice))
-          (compiler_lower.lower-supported-reference-type? ctx ref)
-          (compiler_lower.lower-supported-reference-type? ctx mut-ref)
-          (not (compiler_lower.lower-supported-reference-type? ctx bare-slice))
-          (not (compiler_lower.lower-supported-reference-type? ctx nested-ref))
-          (= (compiler_ctfe.ctfe-type-size-with-pools pools layouts ref) 16)
-          (= (compiler_ctfe.ctfe-type-align-with-pools pools layouts mut-ref) 8)
           (=
-            (compiler_ctfe.ctfe-type-size-with-pools pools layouts ordinary-ref)
+            (compiler_lower.lower-type-size
+              (compiler_typecheck_core.tc-global-shared-view ctx)
+              (owned_view.compiler-owned-shared-view mut-ref))
+            16)
+          (=
+            (compiler_lower.lower-type-align
+              (compiler_typecheck_core.tc-global-shared-view ctx)
+              (owned_view.compiler-owned-shared-view mut-ref))
+            8)
+          (compiler_lower.lower-type-register-resident?
+            (compiler_typecheck_core.tc-global-shared-view ctx)
+            (owned_view.compiler-owned-shared-view mut-ref))
+          (=
+            (compiler_lower.lower-type-register-words
+              (compiler_typecheck_core.tc-global-shared-view ctx)
+              (owned_view.compiler-owned-shared-view mut-ref))
+            2)
+          (=
+            (compiler_lower.lower-type-size
+              (compiler_typecheck_core.tc-global-shared-view ctx)
+              (owned_view.compiler-owned-shared-view ordinary-ref))
+            8)
+          (not
+            (compiler_lower.lower-type-register-resident?
+              (compiler_typecheck_core.tc-global-shared-view ctx)
+              (owned_view.compiler-owned-shared-view ordinary-ref)))
+          (=
+            (compiler_lower.lower-type-register-words
+              (compiler_typecheck_core.tc-global-shared-view ctx)
+              (owned_view.compiler-owned-shared-view ordinary-ref))
+            0)
+          (=
+            (compiler_lower.lower-type-size
+              (compiler_typecheck_core.tc-global-shared-view ctx)
+              (owned_view.compiler-owned-shared-view pointer-ref))
+            8)
+          (not
+            (compiler_lower.lower-type-register-resident?
+              (compiler_typecheck_core.tc-global-shared-view ctx)
+              (owned_view.compiler-owned-shared-view pointer-ref)))
+          (compiler_lower.lower-supported-reference-type?
+            (compiler_typecheck_core.tc-global-shared-view ctx)
+            (owned_view.compiler-owned-shared-view pointer-ref))
+          (compiler_lower.lower-supported-reference-type?
+            (compiler_typecheck_core.tc-global-shared-view ctx)
+            (owned_view.compiler-owned-shared-view mutable-pointer-ref))
+          (=
+            (compiler_lower.lower-type-size
+              (compiler_typecheck_core.tc-global-shared-view ctx)
+              (owned_view.compiler-owned-shared-view bare-slice))
+            0)
+          (not
+            (compiler_lower.lower-type-register-resident?
+              (compiler_typecheck_core.tc-global-shared-view ctx)
+              (owned_view.compiler-owned-shared-view bare-slice)))
+          (compiler_lower.lower-supported-reference-type?
+            (compiler_typecheck_core.tc-global-shared-view ctx)
+            (owned_view.compiler-owned-shared-view ref))
+          (compiler_lower.lower-supported-reference-type?
+            (compiler_typecheck_core.tc-global-shared-view ctx)
+            (owned_view.compiler-owned-shared-view mut-ref))
+          (not
+            (compiler_lower.lower-supported-reference-type?
+              (compiler_typecheck_core.tc-global-shared-view ctx)
+              (owned_view.compiler-owned-shared-view bare-slice)))
+          (not
+            (compiler_lower.lower-supported-reference-type?
+              (compiler_typecheck_core.tc-global-shared-view ctx)
+              (owned_view.compiler-owned-shared-view nested-ref)))
+          (=
+            (compiler_ctfe.ctfe-type-size-with-pools
+              (owned_view.compiler-owned-shared-view pools)
+              (owned_view.compiler-owned-shared-view layouts)
+              (owned_view.compiler-owned-shared-view ref))
+            16)
+          (=
+            (compiler_ctfe.ctfe-type-align-with-pools
+              (owned_view.compiler-owned-shared-view pools)
+              (owned_view.compiler-owned-shared-view layouts)
+              mut-ref)
+            8)
+          (=
+            (compiler_ctfe.ctfe-type-size-with-pools
+              (owned_view.compiler-owned-shared-view pools)
+              (owned_view.compiler-owned-shared-view layouts)
+              ordinary-ref)
             8)
           (=
             (compiler_ctfe.ctfe-type-size-with-pools pools layouts bare-slice)
             -1)
           (match (compiler_typecheck_core.tc-inline-aggregate-type-layout
-            ctx
+            (compiler_typecheck_core.tc-global-shared-view ctx)
             ref)
             [(compiler_typecheck_core.ResultTcLayoutInfo.Ok info)
               (and
@@ -14826,24 +17188,48 @@
     (begin
       ;; width-64 index and length: the check is still emitted, and the only
       ;; surviving cast is the gep-offset one.
-      (if (= (lower-test-function-bounds-count functions "get") 1)
+      (if (=
+        (lower-test-function-bounds-count
+          (compiler_ir_types.compiler-ir-global-shared-view functions)
+          "get")
+        1)
         unit
         (set! ok false))
-      (if (= (lower-test-function-cast-count functions "get") 1)
+      (if (=
+        (lower-test-function-cast-count
+          (compiler_ir_types.compiler-ir-global-shared-view functions)
+          "get")
+        1)
         unit
         (set! ok false))
       ;; narrow index: the extension cast is still required.
-      (if (= (lower-test-function-bounds-count functions "get-narrow") 1)
+      (if (=
+        (lower-test-function-bounds-count
+          (compiler_ir_types.compiler-ir-global-shared-view functions)
+          "get-narrow")
+        1)
         unit
         (set! ok false))
-      (if (= (lower-test-function-cast-count functions "get-narrow") 2)
+      (if (=
+        (lower-test-function-cast-count
+          (compiler_ir_types.compiler-ir-global-shared-view functions)
+          "get-narrow")
+        2)
         unit
         (set! ok false))
       ;; a width-64 cast with no bounds-check consumer is left alone.
-      (if (= (lower-test-function-bounds-count functions "plain-cast") 0)
+      (if (=
+        (lower-test-function-bounds-count
+          (compiler_ir_types.compiler-ir-global-shared-view functions)
+          "plain-cast")
+        0)
         unit
         (set! ok false))
-      (if (= (lower-test-function-cast-count functions "plain-cast") 1)
+      (if (=
+        (lower-test-function-cast-count
+          (compiler_ir_types.compiler-ir-global-shared-view functions)
+          "plain-cast")
+        1)
         unit
         (set! ok false))
       ok)))
@@ -14912,27 +17298,27 @@
       (compiler_ast_types.ast-node-pool-context-new-with-capacities 4 64)]
     [u8-id : i64
       (compiler_ast_types.ast-node-pool-context-type-push
-        pools
+        (compiler_ast_types.ast-global-shared-view pools)
         (compiler_ast_types.AstType.U8))]
     [u64-id : i64
       (compiler_ast_types.ast-node-pool-context-type-push
-        pools
+        (compiler_ast_types.ast-global-shared-view pools)
         (compiler_ast_types.AstType.U64))]
     [f32-id : i64
       (compiler_ast_types.ast-node-pool-context-type-push
-        pools
+        (compiler_ast_types.ast-global-shared-view pools)
         (compiler_ast_types.AstType.F32))]
     [f64-id : i64
       (compiler_ast_types.ast-node-pool-context-type-push
-        pools
+        (compiler_ast_types.ast-global-shared-view pools)
         (compiler_ast_types.AstType.F64))]
     [string-id : i64
       (compiler_ast_types.ast-node-pool-context-type-push
-        pools
+        (compiler_ast_types.ast-global-shared-view pools)
         (compiler_ast_types.AstType.String))]
     [slice-id : i64
       (compiler_ast_types.ast-node-pool-context-type-push
-        pools
+        (compiler_ast_types.ast-global-shared-view pools)
         (compiler_ast_types.AstType.Slice u8-id))]
     [empty-elements : compiler_ast_types.AstTypeList
       (compiler_ast_types.ast-type-list-new)]
@@ -14965,16 +17351,16 @@
     [slice-ref-elements : compiler_ast_types.AstTypeList
       (compiler_ast_types.ast-type-list-cons-id
         (compiler_ast_types.ast-node-pool-context-type-push
-          pools
+          (compiler_ast_types.ast-global-shared-view pools)
           (compiler_ast_types.AstType.Ref 1 slice-id))
         (compiler_ast_types.ast-type-list-new))]
     [nested-id : i64
       (compiler_ast_types.ast-node-pool-context-type-push
-        pools
+        (compiler_ast_types.ast-global-shared-view pools)
         (compiler_ast_types.AstType.Tuple (box u8-u64-elements)))]
     [array-u8-id : i64
       (compiler_ast_types.ast-node-pool-context-type-push
-        pools
+        (compiler_ast_types.ast-global-shared-view pools)
         (compiler_ast_types.AstType.Array u8-id 3))]
     [nested-elements : compiler_ast_types.AstTypeList
       (compiler_ast_types.ast-type-list-cons-id
@@ -14995,7 +17381,7 @@
         (compiler_symbols.compiler-registries-empty)
         ""
         0
-        pools)]
+        (compiler_ast_types.ast-global-shared-view pools))]
     [empty : compiler_ast_types.AstType
       (compiler_ast_types.AstType.Tuple (box empty-elements))]
     [u8-tuple : compiler_ast_types.AstType
@@ -15022,53 +17408,142 @@
       (compiler_ast_types.AstType.Array nested-id 2)]
     [ok : bool false]
     (begin
-      (compiler_ast_types.ast-node-pool-context-install! pools)
+      (compiler_ast_types.ast-node-pool-context-install!
+        (compiler_ast_types.ast-global-shared-view pools))
       (set!
         ok
         (and
-          (= (compiler_lower.lower-type-size ctx empty) 0)
-          (= (compiler_lower.lower-type-align ctx empty) 1)
-          (= (compiler_lower.lower-type-size ctx u8-tuple) 1)
-          (= (compiler_lower.lower-type-align ctx u8-tuple) 1)
-          (= (compiler_lower.lower-type-size ctx u8-u64) 16)
-          (= (compiler_lower.lower-type-align ctx u8-u64) 8)
-          (= (compiler_lower.lower-type-size ctx f32-f32) 8)
-          (= (compiler_lower.lower-type-align ctx f32-f32) 4)
-          (= (compiler_lower.lower-type-size ctx nested) 24)
-          (= (compiler_lower.lower-type-align ctx nested) 8)
-          (= (compiler_lower.lower-type-size ctx array-u8) 3)
-          (= (compiler_lower.lower-type-align ctx array-u8) 1)
-          (= (compiler_lower.lower-type-size ctx array-nested) 32)
-          (= (compiler_lower.lower-type-align ctx array-nested) 8)
-          (= (compiler_lower.lower-type-size ctx tuple-array) 16)
-          (= (compiler_lower.lower-type-align ctx tuple-array) 8)
-          (= (compiler_lower.lower-type-size ctx tuple-string) 8)
-          (= (compiler_lower.lower-type-size ctx array-string) 16)
-          (= (compiler_lower.lower-type-size ctx slice-ref-tuple) 16)
-          (compiler_lower.lower-type-inline-storage? ctx u8-u64)
-          (not (compiler_lower.lower-type-register-resident? ctx u8-u64))
+          (=
+            (compiler_lower.lower-type-size
+              (compiler_typecheck_core.tc-global-shared-view ctx)
+              (compiler_ast_types.ast-global-shared-view empty))
+            0)
+          (=
+            (compiler_lower.lower-type-align
+              (compiler_typecheck_core.tc-global-shared-view ctx)
+              (compiler_ast_types.ast-global-shared-view empty))
+            1)
+          (=
+            (compiler_lower.lower-type-size
+              (compiler_typecheck_core.tc-global-shared-view ctx)
+              (compiler_ast_types.ast-global-shared-view u8-tuple))
+            1)
+          (=
+            (compiler_lower.lower-type-align
+              (compiler_typecheck_core.tc-global-shared-view ctx)
+              (compiler_ast_types.ast-global-shared-view u8-tuple))
+            1)
+          (=
+            (compiler_lower.lower-type-size
+              (compiler_typecheck_core.tc-global-shared-view ctx)
+              (compiler_ast_types.ast-global-shared-view u8-u64))
+            16)
+          (=
+            (compiler_lower.lower-type-align
+              (compiler_typecheck_core.tc-global-shared-view ctx)
+              (compiler_ast_types.ast-global-shared-view u8-u64))
+            8)
+          (=
+            (compiler_lower.lower-type-size
+              (compiler_typecheck_core.tc-global-shared-view ctx)
+              (compiler_ast_types.ast-global-shared-view f32-f32))
+            8)
+          (=
+            (compiler_lower.lower-type-align
+              (compiler_typecheck_core.tc-global-shared-view ctx)
+              (compiler_ast_types.ast-global-shared-view f32-f32))
+            4)
+          (=
+            (compiler_lower.lower-type-size
+              (compiler_typecheck_core.tc-global-shared-view ctx)
+              (compiler_ast_types.ast-global-shared-view nested))
+            24)
+          (=
+            (compiler_lower.lower-type-align
+              (compiler_typecheck_core.tc-global-shared-view ctx)
+              (compiler_ast_types.ast-global-shared-view nested))
+            8)
+          (=
+            (compiler_lower.lower-type-size
+              (compiler_typecheck_core.tc-global-shared-view ctx)
+              (compiler_ast_types.ast-global-shared-view array-u8))
+            3)
+          (=
+            (compiler_lower.lower-type-align
+              (compiler_typecheck_core.tc-global-shared-view ctx)
+              (compiler_ast_types.ast-global-shared-view array-u8))
+            1)
+          (=
+            (compiler_lower.lower-type-size
+              (compiler_typecheck_core.tc-global-shared-view ctx)
+              (compiler_ast_types.ast-global-shared-view array-nested))
+            32)
+          (=
+            (compiler_lower.lower-type-align
+              (compiler_typecheck_core.tc-global-shared-view ctx)
+              (compiler_ast_types.ast-global-shared-view array-nested))
+            8)
+          (=
+            (compiler_lower.lower-type-size
+              (compiler_typecheck_core.tc-global-shared-view ctx)
+              (compiler_ast_types.ast-global-shared-view tuple-array))
+            16)
+          (=
+            (compiler_lower.lower-type-align
+              (compiler_typecheck_core.tc-global-shared-view ctx)
+              (compiler_ast_types.ast-global-shared-view tuple-array))
+            8)
+          (=
+            (compiler_lower.lower-type-size
+              (compiler_typecheck_core.tc-global-shared-view ctx)
+              (compiler_ast_types.ast-global-shared-view tuple-string))
+            8)
+          (=
+            (compiler_lower.lower-type-size
+              (compiler_typecheck_core.tc-global-shared-view ctx)
+              (compiler_ast_types.ast-global-shared-view array-string))
+            16)
+          (=
+            (compiler_lower.lower-type-size
+              (compiler_typecheck_core.tc-global-shared-view ctx)
+              (compiler_ast_types.ast-global-shared-view slice-ref-tuple))
+            16)
+          (compiler_lower.lower-type-inline-storage?
+            (compiler_typecheck_core.tc-global-shared-view ctx)
+            (compiler_ast_types.ast-global-shared-view u8-u64))
+          (not
+            (compiler_lower.lower-type-register-resident?
+              (compiler_typecheck_core.tc-global-shared-view ctx)
+              (compiler_ast_types.ast-global-shared-view u8-u64)))
           (match (compiler_lower.lower-internal-aggregate-class
-            ctx
+            (compiler_typecheck_core.tc-global-shared-view ctx)
             (compiler_lower.CompilerLowerMode.LinuxScalar)
-            u8-tuple)
+            (compiler_ast_types.ast-global-shared-view u8-tuple))
             [(compiler_lower.LowerCAbiAggregate.Register slots size)
               (and
                 (= size 1)
-                (= (compiler_lower.lower-c-abi-slot-list-count slots) 1)
-                (match (compiler_lower.lower-c-abi-slot-list-ref slots 0)
+                (=
+                  (compiler_lower.lower-c-abi-slot-list-count
+                    (compiler_lower.lower-global-shared-view slots))
+                  1)
+                (match (compiler_lower.lower-c-abi-slot-list-ref
+                  (compiler_lower.lower-global-shared-view slots)
+                  0)
                   [(compiler_lower.LowerCAbiSlot.Slot ty _)
                     (compiler_typecheck_core.tc-type-eq
                       ty
                       (compiler_ast_types.AstType.U8))]))]
             [_ false])
           (match (compiler_lower.lower-internal-aggregate-class
-            ctx
+            (compiler_typecheck_core.tc-global-shared-view ctx)
             (compiler_lower.CompilerLowerMode.LinuxScalar)
-            f32-f32)
+            (compiler_ast_types.ast-global-shared-view f32-f32))
             [(compiler_lower.LowerCAbiAggregate.Register slots size)
               (and
                 (= size 8)
-                (match (compiler_lower.lower-c-abi-slot-list-ref slots 0)
+                (match (compiler_lower.lower-c-abi-slot-list-ref
+                  (compiler_lower.lower-global-shared-view slots)
+                  0)
                   [(compiler_lower.LowerCAbiSlot.Slot ty offset)
                     (and
                       (= offset 0)
@@ -15077,85 +17552,104 @@
                         (compiler_ast_types.AstType.F64)))]))]
             [_ false])
           (match (compiler_lower.lower-internal-aggregate-class
-            ctx
+            (compiler_typecheck_core.tc-global-shared-view ctx)
             (compiler_lower.CompilerLowerMode.LinuxScalar)
-            u8-f64)
+            (compiler_ast_types.ast-global-shared-view u8-f64))
             [(compiler_lower.LowerCAbiAggregate.Register slots size)
               (and
                 (= size 16)
-                (= (compiler_lower.lower-c-abi-slot-list-count slots) 2)
-                (match (compiler_lower.lower-c-abi-slot-list-ref slots 0)
+                (=
+                  (compiler_lower.lower-c-abi-slot-list-count
+                    (compiler_lower.lower-global-shared-view slots))
+                  2)
+                (match (compiler_lower.lower-c-abi-slot-list-ref
+                  (compiler_lower.lower-global-shared-view slots)
+                  0)
                   [(compiler_lower.LowerCAbiSlot.Slot ty _)
                     (compiler_typecheck_core.tc-type-eq
                       ty
                       (compiler_ast_types.AstType.U64))])
-                (match (compiler_lower.lower-c-abi-slot-list-ref slots 1)
+                (match (compiler_lower.lower-c-abi-slot-list-ref
+                  (compiler_lower.lower-global-shared-view slots)
+                  1)
                   [(compiler_lower.LowerCAbiSlot.Slot ty _)
                     (compiler_typecheck_core.tc-type-eq
                       ty
                       (compiler_ast_types.AstType.F64))]))]
             [_ false])
           (match (compiler_lower.lower-internal-aggregate-class
-            ctx
+            (compiler_typecheck_core.tc-global-shared-view ctx)
             (compiler_lower.CompilerLowerMode.LinuxScalar)
-            tuple-string)
+            (compiler_ast_types.ast-global-shared-view tuple-string))
             [(compiler_lower.LowerCAbiAggregate.Register slots size)
               (and
                 (= size 8)
-                (= (compiler_lower.lower-c-abi-slot-list-count slots) 1)
-                (match (compiler_lower.lower-c-abi-slot-list-ref slots 0)
+                (=
+                  (compiler_lower.lower-c-abi-slot-list-count
+                    (compiler_lower.lower-global-shared-view slots))
+                  1)
+                (match (compiler_lower.lower-c-abi-slot-list-ref
+                  (compiler_lower.lower-global-shared-view slots)
+                  0)
                   [(compiler_lower.LowerCAbiSlot.Slot ty _)
                     (compiler_typecheck_core.tc-type-eq
                       ty
                       (compiler_ast_types.AstType.U64))]))]
             [_ false])
           (match (compiler_lower.lower-internal-aggregate-class
-            ctx
+            (compiler_typecheck_core.tc-global-shared-view ctx)
             (compiler_lower.CompilerLowerMode.LinuxScalar)
-            array-string)
+            (compiler_ast_types.ast-global-shared-view array-string))
             [(compiler_lower.LowerCAbiAggregate.Register slots size)
               (and
                 (= size 16)
-                (= (compiler_lower.lower-c-abi-slot-list-count slots) 2)
-                (match (compiler_lower.lower-c-abi-slot-list-ref slots 0)
+                (=
+                  (compiler_lower.lower-c-abi-slot-list-count
+                    (compiler_lower.lower-global-shared-view slots))
+                  2)
+                (match (compiler_lower.lower-c-abi-slot-list-ref
+                  (compiler_lower.lower-global-shared-view slots)
+                  0)
                   [(compiler_lower.LowerCAbiSlot.Slot ty _)
                     (compiler_typecheck_core.tc-type-eq
                       ty
                       (compiler_ast_types.AstType.U64))])
-                (match (compiler_lower.lower-c-abi-slot-list-ref slots 1)
+                (match (compiler_lower.lower-c-abi-slot-list-ref
+                  (compiler_lower.lower-global-shared-view slots)
+                  1)
                   [(compiler_lower.LowerCAbiSlot.Slot ty _)
                     (compiler_typecheck_core.tc-type-eq
                       ty
                       (compiler_ast_types.AstType.U64))]))]
             [_ false])
           (match (compiler_lower.lower-internal-aggregate-class
-            ctx
+            (compiler_typecheck_core.tc-global-shared-view ctx)
             (compiler_lower.CompilerLowerMode.LinuxScalar)
-            array-nested)
+            (compiler_ast_types.ast-global-shared-view array-nested))
             [(compiler_lower.LowerCAbiAggregate.Memory size) (= size 32)]
             [_ false])
           (match (compiler_lower.lower-internal-return-aggregate-class
-            ctx
+            (compiler_typecheck_core.tc-global-shared-view ctx)
             (compiler_lower.CompilerLowerMode.LinuxScalar)
-            array-nested)
+            (compiler_ast_types.ast-global-shared-view array-nested))
             [(compiler_lower.LowerCAbiAggregate.Sret size) (= size 32)]
             [_ false])
           (match (compiler_lower.lower-internal-aggregate-class
-            ctx
+            (compiler_typecheck_core.tc-global-shared-view ctx)
             (compiler_lower.CompilerLowerMode.WindowsScalar)
-            array-u8)
+            (compiler_ast_types.ast-global-shared-view array-u8))
             [(compiler_lower.LowerCAbiAggregate.ByRef size) (= size 3)]
             [_ false])
           (match (compiler_lower.lower-internal-return-aggregate-class
-            ctx
+            (compiler_typecheck_core.tc-global-shared-view ctx)
             (compiler_lower.CompilerLowerMode.WindowsScalar)
-            array-u8)
+            (compiler_ast_types.ast-global-shared-view array-u8))
             [(compiler_lower.LowerCAbiAggregate.Sret size) (= size 3)]
             [_ false])
           (match (compiler_lower.lower-internal-aggregate-class
-            ctx
+            (compiler_typecheck_core.tc-global-shared-view ctx)
             (compiler_lower.CompilerLowerMode.WindowsScalar)
-            tuple-string)
+            (compiler_ast_types.ast-global-shared-view tuple-string))
             [(compiler_lower.LowerCAbiAggregate.Integer ty size)
               (and
                 (= size 8)
@@ -15164,53 +17658,60 @@
                   (compiler_ast_types.AstType.U64)))]
             [_ false])
           (match (compiler_lower.lower-internal-aggregate-class
-            ctx
+            (compiler_typecheck_core.tc-global-shared-view ctx)
             (compiler_lower.CompilerLowerMode.LinuxScalar)
-            slice-ref-tuple)
+            (compiler_ast_types.ast-global-shared-view slice-ref-tuple))
             [(compiler_lower.LowerCAbiAggregate.Register slots size)
               (and
                 (= size 16)
-                (= (compiler_lower.lower-c-abi-slot-list-count slots) 2)
-                (match (compiler_lower.lower-c-abi-slot-list-ref slots 0)
+                (=
+                  (compiler_lower.lower-c-abi-slot-list-count
+                    (compiler_lower.lower-global-shared-view slots))
+                  2)
+                (match (compiler_lower.lower-c-abi-slot-list-ref
+                  (compiler_lower.lower-global-shared-view slots)
+                  0)
                   [(compiler_lower.LowerCAbiSlot.Slot ty _)
                     (compiler_typecheck_core.tc-type-eq
                       ty
                       (compiler_ast_types.AstType.U64))])
-                (match (compiler_lower.lower-c-abi-slot-list-ref slots 1)
+                (match (compiler_lower.lower-c-abi-slot-list-ref
+                  (compiler_lower.lower-global-shared-view slots)
+                  1)
                   [(compiler_lower.LowerCAbiSlot.Slot ty _)
                     (compiler_typecheck_core.tc-type-eq
                       ty
                       (compiler_ast_types.AstType.U64))]))]
             [_ false])
           (match (compiler_lower.lower-internal-aggregate-class
-            ctx
+            (compiler_typecheck_core.tc-global-shared-view ctx)
             (compiler_lower.CompilerLowerMode.WindowsScalar)
-            u8-u64)
+            (compiler_ast_types.ast-global-shared-view u8-u64))
             [(compiler_lower.LowerCAbiAggregate.ByRef size) (= size 16)]
             [_ false])
           (match (compiler_lower.lower-internal-return-aggregate-class
-            ctx
+            (compiler_typecheck_core.tc-global-shared-view ctx)
             (compiler_lower.CompilerLowerMode.WindowsScalar)
-            u8-u64)
+            (compiler_ast_types.ast-global-shared-view u8-u64))
             [(compiler_lower.LowerCAbiAggregate.Sret size) (= size 16)]
             [_ false])
           (match (compiler_lower.lower-internal-aggregate-class
-            ctx
+            (compiler_typecheck_core.tc-global-shared-view ctx)
             (compiler_lower.CompilerLowerMode.LinuxScalar)
-            empty)
+            (compiler_ast_types.ast-global-shared-view empty))
             [(compiler_lower.LowerCAbiAggregate.Unsupported _) true]
             [_ false])
           ;; Extern C aggregate selection remains nominal-only.
           (match (compiler_lower.lower-c-abi-aggregate-class
-            ctx
+            (compiler_typecheck_core.tc-global-shared-view ctx)
             (compiler_lower.CompilerLowerMode.LinuxScalar)
-            u8-u64)
+            (compiler_ast_types.ast-global-shared-view u8-u64))
             [(compiler_lower.LowerCAbiAggregate.No) true]
             [_ false])
           (match (compiler_lower.lower-c-abi-return-aggregate-class
-            ctx
+            (compiler_typecheck_core.tc-global-shared-view ctx)
             (compiler_lower.CompilerLowerMode.LinuxScalar)
-            array-u8)
+            (compiler_ast_types.ast-global-shared-view array-u8))
             [(compiler_lower.LowerCAbiAggregate.No) true]
             [_ false])))
       (compiler_ast_types.ast-node-pool-context-install! active-before)
@@ -15230,31 +17731,51 @@
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
-            (lower-test-function-defined? functions "tuple-roundtrip")
-            (lower-test-function-defined? functions "array-roundtrip")
-            (= (lower-test-function-param-count functions "tuple-roundtrip") 1)
-            (= (lower-test-function-param-count functions "array-roundtrip") 2)
+            (lower-test-function-defined?
+              (compiler_ir_types.compiler-ir-global-shared-view functions)
+              "tuple-roundtrip")
+            (lower-test-function-defined?
+              (compiler_ir_types.compiler-ir-global-shared-view functions)
+              "array-roundtrip")
+            (=
+              (lower-test-function-param-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "tuple-roundtrip")
+              1)
+            (=
+              (lower-test-function-param-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "array-roundtrip")
+              2)
             (=
               (lower-test-function-call-count
-                functions
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "main"
                 "tuple-roundtrip")
               1)
             (=
               (lower-test-function-call-count
-                functions
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "main"
                 "array-roundtrip")
               1)
             (>=
-              (lower-test-function-store-ptr-count functions "tuple-roundtrip")
+              (lower-test-function-store-ptr-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "tuple-roundtrip")
               2)
             (>=
-              (lower-test-function-copy-bytes-count functions "array-roundtrip")
+              (lower-test-function-copy-bytes-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "array-roundtrip")
               1)
             ;; Tuple register-group transport is packed at the call boundary;
             ;; the array return takes the leading hidden sret path.
-            (>= (lower-test-function-pack-count functions "main") 1))])]
+            (>=
+              (lower-test-function-pack-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main")
+              1))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (test
@@ -15271,28 +17792,46 @@
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
-            (lower-test-function-defined? functions "array-roundtrip")
-            (lower-test-function-defined? functions "scalar-roundtrip")
-            (= (lower-test-function-param-count functions "array-roundtrip") 2)
-            (= (lower-test-function-param-count functions "scalar-roundtrip") 1)
+            (lower-test-function-defined?
+              (compiler_ir_types.compiler-ir-global-shared-view functions)
+              "array-roundtrip")
+            (lower-test-function-defined?
+              (compiler_ir_types.compiler-ir-global-shared-view functions)
+              "scalar-roundtrip")
+            (=
+              (lower-test-function-param-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "array-roundtrip")
+              2)
+            (=
+              (lower-test-function-param-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "scalar-roundtrip")
+              1)
             (=
               (lower-test-function-call-count
-                functions
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "main"
                 "array-roundtrip")
               1)
             (=
               (lower-test-function-call-count
-                functions
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
                 "main"
                 "scalar-roundtrip")
               1)
             (>=
-              (lower-test-function-copy-bytes-count functions "array-roundtrip")
+              (lower-test-function-copy-bytes-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "array-roundtrip")
               1)
             ;; Win64 ByRef parameters are copied into a private caller buffer;
             ;; the >8-byte result uses a leading sret pointer.
-            (>= (lower-test-function-copy-bytes-count functions "main") 1))])]
+            (>=
+              (lower-test-function-copy-bytes-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main")
+              1))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-internal-windows-u8-three-shape-ok?) : bool
@@ -15303,15 +17842,34 @@
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
-            (lower-test-function-defined? functions "roundtrip")
+            (lower-test-function-defined?
+              (compiler_ir_types.compiler-ir-global-shared-view functions)
+              "roundtrip")
             ;; Leading caller-owned sret plus one ByRef source parameter.
-            (= (lower-test-function-param-count functions "roundtrip") 2)
-            (= (lower-test-function-call-count functions "main" "roundtrip") 1)
+            (=
+              (lower-test-function-param-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "roundtrip")
+              2)
+            (=
+              (lower-test-function-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main"
+                "roundtrip")
+              1)
             ;; Three-byte copies lower to two scalar load/store chunks rather
             ;; than a bulk CopyBytes instruction. The callee copies into sret;
             ;; main has three literal stores plus the two ByRef-copy stores.
-            (>= (lower-test-function-store-ptr-count functions "roundtrip") 2)
-            (>= (lower-test-function-store-ptr-count functions "main") 5))])]
+            (>=
+              (lower-test-function-store-ptr-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "roundtrip")
+              2)
+            (>=
+              (lower-test-function-store-ptr-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main")
+              5))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-internal-early-return-shape-ok?) : bool
@@ -15322,9 +17880,15 @@
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
-            (>= (lower-test-function-pack-count functions "tuple-early") 1)
             (>=
-              (lower-test-function-copy-bytes-count functions "array-early")
+              (lower-test-function-pack-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "tuple-early")
+              1)
+            (>=
+              (lower-test-function-copy-bytes-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "array-early")
               1))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
@@ -15335,8 +17899,16 @@
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
-            (= (lower-test-function-indirect-call-count functions "main") 1)
-            (>= (lower-test-function-pack-count functions "main") 1))])]
+            (=
+              (lower-test-function-indirect-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main")
+              1)
+            (>=
+              (lower-test-function-pack-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "main")
+              1))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-internal-tail-structural-shape-ok?) : bool
@@ -15346,8 +17918,18 @@
       (match program
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
-            (= (lower-test-function-tail-call-count functions "loop" "loop") 0)
-            (> (lower-test-function-call-count functions "loop" "loop") 0))])]
+            (=
+              (lower-test-function-tail-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "loop"
+                "loop")
+              0)
+            (>
+              (lower-test-function-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "loop"
+                "loop")
+              0))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-internal-unsupported-diagnostics-ok?) : bool
@@ -15400,10 +17982,22 @@
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
             (=
-              (lower-test-function-tail-call-count functions "step" "finish")
+              (lower-test-function-tail-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "step"
+                "finish")
               0)
-            (= (lower-test-function-call-count functions "step" "finish") 1)
-            (>= (lower-test-function-pack-count functions "step") 1))])]
+            (=
+              (lower-test-function-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "step"
+                "finish")
+              1)
+            (>=
+              (lower-test-function-pack-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "step")
+              1))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-internal-indirect-tail-structural-param-shape-ok?) : bool
@@ -15415,10 +18009,20 @@
         [(compiler_ir_types.CompilerIrProgram.Program _ functions _)
           (and
             (=
-              (lower-test-function-indirect-tail-call-count functions "step")
+              (lower-test-function-indirect-tail-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "step")
               0)
-            (= (lower-test-function-indirect-call-count functions "step") 1)
-            (>= (lower-test-function-pack-count functions "step") 1))])]
+            (=
+              (lower-test-function-indirect-call-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "step")
+              1)
+            (>=
+              (lower-test-function-pack-count
+                (compiler_ir_types.compiler-ir-global-shared-view functions)
+                "step")
+              1))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
 
 (test

@@ -1,5 +1,6 @@
 (import stdlib.process)
 (import stdlib.io)
+(import stdlib.string)
 (import stdlib.test)
 (import stdlib.vector)
 (import (vector.vector String) as svec)
@@ -7,14 +8,14 @@
 (define (assert-owned-string-eq
   [actual : String]
   [expected : String]
-  [message : String]) : unit
-  (test.assert-string-eq (& actual) (& expected) message))
+  [message : (& message str)]) : unit
+  (test.assert-string-eq (& actual) (& expected) (string.copy message)))
 
 (define (assert-process-string-list
   [items : process.ProcessStringList]
   [first : String]
   [second : String]
-  [message : String]) : unit
+  [message : (& message str)]) : unit
   (let
     [a : process.ProcessStringStep (process.string-step items)]
     (if (not (process.string-step-present? a))
@@ -41,15 +42,17 @@
 
 (define (assert-process-string-empty
   [items : process.ProcessStringList]
-  [message : String]) : unit
-  (if (process.string-step-present? (process.string-step items))
-    (io.panic message)
-    unit))
+  [message : (& message str)]) : unit
+  (let
+    [step : process.ProcessStringStep (process.string-step items)]
+    (if (process.string-step-present? step)
+      (io.panic message)
+      unit)))
 
 (define (assert-process-string-list1
   [items : process.ProcessStringList]
   [first : String]
-  [message : String]) : unit
+  [message : (& message str)]) : unit
   (let
     [a : process.ProcessStringStep (process.string-step items)]
     (if (not (process.string-step-present? a))
@@ -66,7 +69,7 @@
   [first : String]
   [second : String]
   [third : String]
-  [message : String]) : unit
+  [message : (& message str)]) : unit
   (let
     [a : process.ProcessStringStep (process.string-step items)]
     (if (not (process.string-step-present? a))
@@ -103,7 +106,7 @@
 (define (assert-process-some-string
   [value : process.ProcessMaybeString]
   [expected : String]
-  [message : String]) : unit
+  [message : (& message str)]) : unit
   (let
     [info : process.ProcessMaybeStringInfo (process.maybe-string-info value)]
     (if (process.maybe-string-info-present? info)
@@ -115,16 +118,18 @@
 
 (define (assert-process-no-string
   [value : process.ProcessMaybeString]
-  [message : String]) : unit
-  (if (process.maybe-string-info-present? (process.maybe-string-info value))
-    (io.panic message)
-    unit))
+  [message : (& message str)]) : unit
+  (let
+    [info : process.ProcessMaybeStringInfo (process.maybe-string-info value)]
+    (if (process.maybe-string-info-present? info)
+      (io.panic message)
+      unit)))
 
 (define (assert-process-env-head
   [env : process.ProcessEnvList]
   [expected-name : String]
   [expected-value : String]
-  [message : String]) : unit
+  [message : (& message str)]) : unit
   (let
     [step : process.ProcessEnvStep (process.env-step env)]
     (if (not (process.env-step-present? step))
@@ -145,7 +150,7 @@
   [first-value : String]
   [second-name : String]
   [second-value : String]
-  [message : String]) : unit
+  [message : (& message str)]) : unit
   (let
     [first : process.ProcessEnvStep (process.env-step env)]
     (if (not (process.env-step-present? first))
@@ -181,7 +186,7 @@
 (define (assert-process-env-validation
   [value : process.ProcessMaybeString]
   [expected : String]
-  [message : String]) : unit
+  [message : (& message str)]) : unit
   (assert-process-some-string value expected message))
 
 (define (process-api-string-vec0) : svec.Vec
@@ -240,22 +245,26 @@
 
 (define (assert-process-invalid-command
   [result : process.ResultProcessOutput]
-  [message : String]) : unit
+  [message : (& message str)]) : unit
   (begin
-    (test.assert-true (process.result-invalid-command? result) message)
+    (test.assert-true
+      (process.result-invalid-command? (clone result))
+      (string.copy message))
     (assert-owned-string-eq
       (process.result-error-message-or result "ok")
-      message
+      (string.copy message)
       message)))
 
 (define (assert-process-child-invalid-command
   [result : process.ResultProcessChild]
-  [message : String]) : unit
+  [message : (& message str)]) : unit
   (begin
-    (test.assert-true (process.child-result-invalid-command? result) message)
+    (test.assert-true
+      (process.child-result-invalid-command? (clone result))
+      (string.copy message))
     (assert-owned-string-eq
       (process.child-result-error-message-or result "ok")
-      message
+      (string.copy message)
       message)))
 
 (define (main) : i64
@@ -268,28 +277,37 @@
       (process.command-with-arg
         (process.command-with-env
           (process.command-with-stdin
-            (process.command-with-cwd (process.command "echo" args) "target")
+            (process.command-with-cwd
+              (process.command "echo" (clone args))
+              "target")
             "stdin")
           "TL_TEST"
           "1")
         "!")]
+    [default-command : process.ProcessCommand
+      (process.command "echo" (process.args-empty))]
+    [invalid-command : process.ProcessCommand
+      (process.command "" (process.args-empty))]
     (begin
       (process.test-env-dense-api)
       (assert-owned-string-eq
         (process.command-executable command)
         "echo"
         "process executable")
-      (assert-process-string-list args "hello" "world" "process argv")
+      (assert-process-string-list (clone args) "hello" "world" "process argv")
       (assert-process-string-list3
         (process.command-argv command)
         "hello"
         "world"
         "!"
         "process argv append")
-      (test.assert-i64-eq
-        (process.args-count (process.command-argv command))
-        3
-        "process argv count")
+      (let
+        [command-args : process.ProcessStringList
+          (process.command-argv command)]
+        (test.assert-i64-eq
+          (process.args-count command-args)
+          3
+          "process argv count"))
       (assert-process-string-list3
         (process.args-append args (process.args-single "again"))
         "hello"
@@ -303,6 +321,18 @@
         [replace-argv : svec.Vec
           (process-api-string-vec3 "vec" "replace" "argv")]
         [tail-argv : svec.Vec (process-api-string-vec2 "vec" "tail")]
+        [empty-command : process.ProcessCommand
+          (process.command-from-argv-vec "echo" (& empty-argv))]
+        [solo-command : process.ProcessCommand
+          (process.command-from-argv-vec "echo" (& solo-argv))]
+        [multi-command : process.ProcessCommand
+          (process.command-from-argv-vec "echo" (& multi-argv))]
+        [replace-command : process.ProcessCommand
+          (process.command-with-argv-vec (clone command) (& replace-argv))]
+        [append-command : process.ProcessCommand
+          (process.command-with-args-vec
+            (process.command "echo" (process.args-single "base"))
+            (& tail-argv))]
         (begin
           (assert-process-string-empty
             (process.args-from-string-vec (& empty-argv))
@@ -318,33 +348,26 @@
             "!"
             "process argv vec multi")
           (assert-process-string-empty
-            (process.command-argv
-              (process.command-from-argv-vec "echo" (& empty-argv)))
+            (process.command-argv empty-command)
             "process command argv vec empty")
           (assert-process-string-list1
-            (process.command-argv
-              (process.command-from-argv-vec "echo" (& solo-argv)))
+            (process.command-argv solo-command)
             "solo"
             "process command argv vec single")
           (assert-process-string-list3
-            (process.command-argv
-              (process.command-from-argv-vec "echo" (& multi-argv)))
+            (process.command-argv multi-command)
             "hello"
             "world"
             "!"
             "process command argv vec multi")
           (assert-process-string-list3
-            (process.command-argv
-              (process.command-with-argv-vec command (& replace-argv)))
+            (process.command-argv replace-command)
             "vec"
             "replace"
             "argv"
             "process command argv vec replace")
           (assert-process-string-list3
-            (process.command-argv
-              (process.command-with-args-vec
-                (process.command "echo" (process.args-single "base"))
-                (& tail-argv)))
+            (process.command-argv append-command)
             "base"
             "vec"
             "tail"
@@ -362,18 +385,22 @@
         "TL_TEST"
         "1"
         "process env")
-      (test.assert-i64-eq
-        (process.env-count (process.command-env command))
-        1
-        "process env count")
-      (assert-process-env-head
-        (process.command-env
+      (let
+        [command-env : process.ProcessEnvList (process.command-env command)]
+        (test.assert-i64-eq
+          (process.env-count command-env)
+          1
+          "process env count"))
+      (let
+        [replaced-env-command : process.ProcessCommand
           (process.command-with-env-list
-            command
-            (process.env-cons "TL_REPLACED" "yes" (process.env-empty))))
-        "TL_REPLACED"
-        "yes"
-        "process env list")
+            (clone command)
+            (process.env-cons "TL_REPLACED" "yes" (process.env-empty)))]
+        (assert-process-env-head
+          (process.command-env replaced-env-command)
+          "TL_REPLACED"
+          "yes"
+          "process env list"))
       (let
         [env-vec-empty : process.ProcessEnvVec (process.env-vec-new)]
         [env-vec : process.ProcessEnvVec
@@ -384,6 +411,8 @@
         [bad-name : process.ProcessEnvVec
           (process-api-env-vec1 "BAD=NAME" "bad")]
         [bad-shape : process.ProcessEnvVec (process-api-bad-shape-env-vec)]
+        [env-command : process.ProcessCommand
+          (process.command-with-env-vec (clone command) (& env-vec))]
         (begin
           (test.assert-i64-eq
             (process.env-vec-count (& env-vec-empty))
@@ -407,8 +436,7 @@
             "two"
             "process env vec order")
           (assert-process-env-list2
-            (process.command-env
-              (process.command-with-env-vec command (& env-vec)))
+            (process.command-env env-command)
             "TL_FIRST"
             "one"
             "TL_SECOND"
@@ -435,43 +463,46 @@
             "process env vec shape")
           (assert-process-invalid-command
             (process.output
-              (process.command-with-env-vec command (& bad-empty)))
+              (process.command-with-env-vec (clone command) (& bad-empty)))
             "process: environment variable name is empty")
           (assert-process-child-invalid-command
-            (process.start (process.command-with-env-vec command (& bad-name)))
+            (process.start
+              (process.command-with-env-vec (clone command) (& bad-name)))
             "process: environment variable name contains '='")))
       (assert-process-no-string
-        (process.command-cwd (process.command "echo" (process.args-empty)))
+        (process.command-cwd default-command)
         "process default cwd")
       (assert-process-invalid-command
         (process.output (process.command "" (process.args-empty)))
         "process: executable path is empty")
       (assert-process-invalid-command
-        (process.output (process.command-with-cwd command ""))
+        (process.output (process.command-with-cwd (clone command) ""))
         "process: cwd path is empty")
       (assert-process-invalid-command
-        (process.output (process.command-with-env command "" "1"))
+        (process.output (process.command-with-env (clone command) "" "1"))
         "process: environment variable name is empty")
       (assert-process-invalid-command
-        (process.output (process.command-with-env command "BAD=NAME" "1"))
+        (process.output
+          (process.command-with-env (clone command) "BAD=NAME" "1"))
         "process: environment variable name contains '='")
       (assert-process-child-invalid-command
         (process.start (process.command "" (process.args-empty)))
         "process: executable path is empty")
       (assert-process-child-invalid-command
-        (process.start (process.command-with-cwd command ""))
+        (process.start (process.command-with-cwd (clone command) ""))
         "process: cwd path is empty")
       (assert-process-child-invalid-command
-        (process.start (process.command-with-env command "" "1"))
+        (process.start (process.command-with-env (clone command) "" "1"))
         "process: environment variable name is empty")
       (assert-process-child-invalid-command
-        (process.start (process.command-with-env command "BAD=NAME" "1"))
+        (process.start
+          (process.command-with-env (clone command) "BAD=NAME" "1"))
         "process: environment variable name contains '='")
       (test.assert-true
         (process.command-valid? command)
         "process valid command")
       (test.assert-false
-        (process.command-valid? (process.command "" (process.args-empty)))
+        (process.command-valid? invalid-command)
         "process invalid empty executable")
       (test.assert-true
         (process.result-success?

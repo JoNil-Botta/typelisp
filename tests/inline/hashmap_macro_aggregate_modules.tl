@@ -44,29 +44,29 @@
         (map_nested_i64.is-empty? (& m))
         "fresh aggregate-key empty")
       (map_nested_i64.insert! m alpha 10)
-      (map_nested_i64.insert! m beta 20)
+      (map_nested_i64.insert! m (clone beta) 20)
       (test.assert-i64-eq
         (map_nested_i64.len (& m))
         2
         "aggregate-key insert len")
       (test.assert-i64-eq
         (map_nested_i64.lookup-value-or
-          (map_nested_i64.get (& m) alpha-copy)
+          (map_nested_i64.get (& m) (clone alpha-copy))
           -1)
         10
         "aggregate-key owned get by equal copy")
       (test.assert-true
         (map_nested_i64.borrowed-value-found?
-          (map_nested_i64.get-value-borrowed (& m) beta))
+          (map_nested_i64.get-value-borrowed (& m) (clone beta)))
         "aggregate-key borrowed value get")
       (test.assert-false
         (map_nested_i64.contains? (& m) missing)
         "aggregate-key missing absent")
       (test.assert-true
-        (map_nested_i64.remove-ok? (map_nested_i64.remove! m beta))
+        (map_nested_i64.remove-ok? (map_nested_i64.remove! m (clone beta)))
         "aggregate-key remove")
       (test.assert-false
-        (map_nested_i64.contains? (& m) beta)
+        (map_nested_i64.contains? (& m) (clone beta))
         "aggregate-key removed absent")
       (match (map_nested_i64.entry-or-insert! m beta 22)
         [(map_nested_i64.EntryOrInsertInserted value)
@@ -212,19 +212,19 @@
       (map_generic_struct.insert! structs left 41)
       (test.assert-i64-eq
         (map_generic_struct.lookup-value-or
-          (map_generic_struct.get (& structs) equal)
+          (map_generic_struct.get (& structs) (clone equal))
           -1)
         41
         "generic struct key uses generated hash and equality")
       (test.assert-true
-        (map_generic_struct.contains? (& structs) equal)
+        (map_generic_struct.contains? (& structs) (clone equal))
         "generic struct query remains reusable")
       (test.assert-false
         (map_generic_struct.contains? (& structs) other-variant)
         "nested enum variant contributes to key identity")
       (let
         [entry : (map_generic_struct.MutEntry structs)
-          (map_generic_struct.get-mut-entry (&mut structs) equal)]
+          (map_generic_struct.get-mut-entry (&mut structs) (clone equal))]
         (begin
           (test.assert-true
             (map_generic_struct.mut-entry-present? entry)
@@ -265,28 +265,28 @@
     [next : i64 1]
     (begin
       (test.assert-i64-eq
-        (bit-and (map_generic_array.hash-key first-query) 7)
-        (bit-and (map_generic_array.hash-key collision) 7)
+        (bit-and (map_generic_array.hash-key (clone first-query)) 7)
+        (bit-and (map_generic_array.hash-key (clone collision)) 7)
         "fixed-array fixture keys collide in the initial table")
-      (map_generic_array.insert! m owned-first 10)
+      (map_generic_array.insert! m (clone owned-first) 10)
       (set! (array-ref owned-first 0) 99)
       (test.assert-i64-eq
         (map_generic_array.lookup-value-or
-          (map_generic_array.get (& m) first-query)
+          (map_generic_array.get (& m) (clone first-query))
           -1)
         10
         "insertion clones an aggregate key into map ownership")
-      (map_generic_array.insert! m collision 20)
+      (map_generic_array.insert! m (clone collision) 20)
       (test.assert-true
         (map_generic_array.remove-ok? (map_generic_array.remove! m first-query))
         "fixed-array collision head removed")
       (test.assert-i64-eq
         (map_generic_array.lookup-value-or
-          (map_generic_array.get (& m) collision)
+          (map_generic_array.get (& m) (clone collision))
           -1)
         20
         "fixed-array lookup crosses a tombstone")
-      (map_generic_array.insert! m replacement 30)
+      (map_generic_array.insert! m (clone replacement) 30)
       (while (< next 20)
         (begin
           (if (or (= next 8) (= next 16))

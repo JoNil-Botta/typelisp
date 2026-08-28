@@ -1,5 +1,6 @@
 # identity	declared-params	shape	result	fixture	native-status	fuel	comparison
 stdlib.clone/synthesize-helpers	1	variadic	decls	tests/integration/clone_deep_copy.tl	ok	default	assembly
+stdlib.core_macros/__tl-compiler-owned-shared-view-dyn-ref-as	2	fixed	expr	tests/integration/tlci_identity_owned_views.tl	ok	default	assembly
 stdlib.core_macros/__tl-project-field	2	fixed	expr	tests/integration/tlci_native_index_folds.tl	ok	default	assembly
 stdlib.core_macros/__tl-project-set-field	3	fixed	expr	tests/integration/tlci_identity_public_gaps.tl	ok	default	assembly
 stdlib.core_macros/__tl-project-field-name	2	fixed	expr	tests/integration/generated_hashmap_global_mutation.tl	ok	default	assembly
@@ -11,6 +12,7 @@ stdlib.core_macros/when	2	variadic	expr	tests/integration/stdlib_serialize_json.
 stdlib.core_macros/unless	2	variadic	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
 stdlib.core_macros/cond	1	variadic	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
 stdlib.core_macros/for	2	variadic	expr	tests/integration/for_macro.tl	ok	default	assembly
+stdlib.eq/eq-shared-view	1	fixed	expr	tests/integration/stdlib_eq_aggregate.tl	ok	default	assembly
 stdlib.eq/struct-eq-fields	4	fixed	expr	tests/integration/stdlib_hash_generated.tl	ok	default	assembly
 stdlib.eq/tuple-eq-elements	4	fixed	expr	tests/integration/stdlib_eq_aggregate.tl	ok	default	assembly
 stdlib.eq/inline-fixed-array-eq	4	fixed	expr	tests/integration/stdlib_eq_aggregate.tl	ok	default	assembly
@@ -35,6 +37,8 @@ stdlib.format/format-write-literal-callback	5	fixed	expr	tests/integration/forma
 stdlib.format/format-write-expand	4	fixed	expr	tests/integration/format_writer_sinks.tl	ok	default	assembly
 stdlib.format/write!	3	variadic	expr	tests/integration/format_writer_sinks.tl	ok	default	assembly
 stdlib.format/writeln!	3	variadic	expr	tests/integration/format_writer_sinks.tl	ok	default	assembly
+stdlib.hash/hash-shared-view	1	fixed	expr	tests/integration/stdlib_hash_generated.tl	ok	default	assembly
+stdlib.hash/hash-array-shared-view	2	fixed	expr	tests/integration/stdlib_hash_generated.tl	ok	default	assembly
 stdlib.hash/inline-hash	2	fixed	expr	tests/integration/stdlib_hash_generated.tl	ok	default	assembly
 stdlib.hash/struct-hash-fields	4	fixed	expr	tests/integration/stdlib_hash_generated.tl	ok	default	assembly
 stdlib.hash/tuple-hash-elements	4	fixed	expr	tests/integration/stdlib_hash_generated.tl	ok	default	assembly
@@ -44,11 +48,16 @@ stdlib.hash/enum-hash-dispatch	3	fixed	expr	tests/integration/stdlib_hash_genera
 stdlib.hash/hash-once	1	fixed	expr	tests/integration/stdlib_hash_generated.tl	ok	default	assembly
 stdlib.hash/hash	1	fixed	module	tests/integration/stdlib_hash_generated.tl	ok	default	assembly
 stdlib.hashmap/hashmap	2	fixed	module	tests/integration/hashmap_nominal_value_local_smoke.tl	ok	default	assembly
+stdlib.io/array-ptr	1	fixed	expr	tests/integration/tlci_native_index_folds.tl	ok	default	assembly
+stdlib.io/array-const-ptr	1	fixed	expr	tests/integration/tlci_native_index_folds.tl	ok	default	assembly
 stdlib.io/print	2	variadic	expr	tests/integration/format_stdio_family.tl	ok	default	assembly
 stdlib.io/println	2	variadic	expr	tests/integration/tlci_native_format_scanner.tl	ok	default	assembly
 stdlib.io/eprint	2	variadic	expr	tests/integration/format_stdio_family.tl	ok	default	assembly
 stdlib.io/eprintln	2	variadic	expr	tests/integration/format_stdio_family.tl	ok	default	assembly
 stdlib.io/print-format	2	variadic	expr	tests/integration/tlci_native_format_scanner.tl	ok	default	assembly
+stdlib.json/json-shared-view	1	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
+stdlib.json/json-array-element-shared-view	2	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
+stdlib.json/json-box-shared-view	1	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
 stdlib.json/encode-bool	1	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
 stdlib.json/decode-bool	2	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
 stdlib.json/encode-int	2	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
@@ -73,8 +82,17 @@ stdlib.math/log	1	fixed	expr	tests/integration/tlci_identity_public_gaps.tl	ok	d
 stdlib.math/pow	2	fixed	expr	tests/integration/tlci_identity_public_gaps.tl	ok	default	assembly
 stdlib.math/abs	1	fixed	expr	tests/integration/tlci_native_template_nodes.tl	ok	default	assembly
 stdlib.math/sqrt	1	fixed	expr	tests/integration/tlci_identity_public_gaps.tl	ok	default	assembly
+stdlib.msvc/msvc-shared-view	1	fixed	expr	tests/integration/tlci_identity_owned_views.tl	ok	default	assembly
+stdlib.msvc/msvc-array-element-shared-view	2	fixed	expr	tests/integration/tlci_identity_owned_views.tl	ok	default	assembly
+stdlib.msvc/msvc-box-shared-view	1	fixed	expr	tests/integration/tlci_identity_owned_views.tl	ok	default	assembly
+stdlib.process/process-place-shared-view	1	fixed	expr	tests/integration/tlci_identity_owned_views.tl	ok	default	assembly
+stdlib.process/process-array-shared-view	2	fixed	expr	tests/integration/tlci_identity_owned_views.tl	ok	default	assembly
+stdlib.process_runtime/process-runtime-place-shared-view	1	fixed	expr	tests/integration/tlci_identity_owned_views.tl	ok	default	assembly
+stdlib.process_runtime/process-runtime-array-shared-view	2	fixed	expr	tests/integration/tlci_identity_owned_views.tl	ok	default	assembly
 stdlib.queue/deque	1	fixed	module	tests/integration/tlci_identity_public_gaps.tl	ok	default	assembly
 stdlib.result/result	2	fixed	module	tests/integration/generated_option_result_families.tl	ok	default	assembly
+stdlib.serialize/serialize-shared-view	1	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
+stdlib.serialize/serialize-array-element-shared-view	2	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
 stdlib.serialize/array-fixed-length	1	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
 stdlib.serialize/encode-tuple-elements	6	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
 stdlib.serialize/decode-tuple-items	7	variadic	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
@@ -108,6 +126,7 @@ stdlib.text_buf/append-char!	2	fixed	expr	tests/integration/tlci_identity_public
 stdlib.text_buf/append-int!	2	fixed	expr	tests/integration/tlci_identity_public_gaps.tl	ok	default	assembly
 stdlib.text_buf/clear!	1	fixed	expr	tests/integration/tlci_identity_public_gaps.tl	ok	default	assembly
 stdlib.text_buf/reset!	1	fixed	expr	tests/integration/tlci_identity_public_gaps.tl	ok	default	assembly
+stdlib.text_buf_family/text-buf-family-shared-view	1	fixed	expr	tests/integration/stdlib_text_buf.tl	ok	default	assembly
 stdlib.text_buf_family/text-buf-owned-store-write!	3	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
 stdlib.text_buf_family/text-buf-owned-store-commit!	3	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
 stdlib.text_buf_family/owned	0	fixed	decls	tests/integration/stdlib_serialize_json.tl	ok	default	assembly

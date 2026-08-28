@@ -193,7 +193,7 @@
                 (begin
                   (set! iter.index (+ index 1))
                   (IterMutNext.Item (&mut (array-ref iter.slots index)))))))
-          (define (into-iterator [v : Vec (:consume)]) : IntoIter
+          (define (into-iterator [v : Vec]) : IntoIter
             (IntoIter v 0))
           (define (into-next [iter : (&mut state IntoIter)]) : IntoNext
             (let
@@ -305,7 +305,7 @@
               (__tl_array-push! v.state.slots value)
               (__tl_array-push! v.state.live true)
               (set! v.len (+ index 1)))))
-        (define (push-owned [v : Vec (:consume)] [value : ,T]) : Vec
+        (define (push-owned [v : Vec] [value : ,T]) : Vec
           (begin
             (push-ref! (&mut v) value)
             v))
@@ -534,7 +534,7 @@
                           (set! (array-ref live index) true)
                           (set! index (+ index 1))))
                       live)))
-                (define (into-iterator [v : ,vec-name (:consume)]) : ,into-iter-name
+                (define (into-iterator [v : ,vec-name]) : ,into-iter-name
                   (let
                     [len : i64 v.len]
                     [live : (__tl_dyn-array bool) (into-live-slots len)]
@@ -571,9 +571,9 @@
                   (if (>= lo hi)
                     unit
                     (let
-                      [tmp : ,T (array-ref items lo)]
+                      [tmp : ,T (clone (array-ref items lo))]
                       (begin
-                        (set! (array-ref items lo) (array-ref items hi))
+                        (set! (array-ref items lo) (clone (array-ref items hi)))
                         (set! (array-ref items hi) tmp)
                         (reverse-range! items (+ lo 1) (- hi 1))))))
                 (define (reverse-ref! [v : (&mut v ,vec-name)]) : unit
@@ -594,7 +594,7 @@
                     (fold-from
                       v
                       (+ index 1)
-                      (step acc (array-ref (slots v) index))
+                      (step acc (clone (array-ref (slots v) index)))
                       step)))
                 (define (fold
                   [v : (& v ,vec-name)]
@@ -609,7 +609,9 @@
                   (if (>= index (len v))
                     unit
                     (begin
-                      (push-ref! out (mapper (array-ref (slots v) index)))
+                      (push-ref!
+                        out
+                        (mapper (clone (array-ref (slots v) index))))
                       (map-build-from v (+ index 1) out mapper))))
                 (define (map-from
                   [v : (& v ,vec-name)]
@@ -628,7 +630,9 @@
                   [index : i64]) : bool
                   (if (>= index (len v))
                     false
-                    (if (value_eq.eq (array-ref (slots v) index) x)
+                    (if (value_eq.eq
+                      (clone (array-ref (slots v) index))
+                      (clone x))
                       true
                       (contains-from? v x (+ index 1)))))
                 (define (contains? [v : (& v ,vec-name)] [x : ,T]) : bool

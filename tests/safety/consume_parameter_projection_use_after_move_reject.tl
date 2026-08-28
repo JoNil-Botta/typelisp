@@ -4,7 +4,7 @@
   (text String)
   (value i64))
 
-(define (consume-length [text : String (:consume)]) : i64
+(define (consume-length [text : String]) : i64
   (string-length text))
 
 (define (main) : i64

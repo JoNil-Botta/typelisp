@@ -4,6 +4,7 @@
 (import stdlib.io)
 (import (vector.vector String) as cli_svec)
 (import compile_cli_core)
+(import compiler_owned_view as owned_view)
 
 (define (compile-cli-batch-vector-entry-at?
   [entries : (& entries cli_svec.Vec)]
@@ -24,10 +25,10 @@
     [entries : cli_svec.Vec (cli_svec.new)]
     [status : i64
       (compile_cli_core.compile-cli-batch-parse-entries-into!
-        source
+        (owned_view.compiler-owned-shared-view source)
         0
         1
-        (string.string-length source)
+        (string.string-length (owned_view.compiler-owned-shared-view source))
         (&mut entries))]
     [empty : cli_svec.Vec (cli_svec.new)]
     [empty-status : i64
@@ -72,10 +73,10 @@
     [entries : cli_svec.Vec (cli_svec.new)]
     [status : i64
       (compile_cli_core.compile-cli-windows-batch-parse-entries-into!
-        source
+        (owned_view.compiler-owned-shared-view source)
         0
         1
-        (string.string-length source)
+        (string.string-length (owned_view.compiler-owned-shared-view source))
         (&mut entries))]
     [results : cli_svec.Vec (cli_svec.new)]
     (begin

@@ -8,7 +8,7 @@
 (define (make-u8 [value : i64]) : u8
   (cast value : u8))
 
-(define (string-byte [text : String] [index : i64]) : u8
+(define (string-byte [text : (& text str)] [index : i64]) : u8
   (unsafe
     (ptr-read (ptr-offset (string-data (& text)) index))))
 

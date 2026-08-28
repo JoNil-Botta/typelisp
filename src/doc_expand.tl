@@ -1,4 +1,5 @@
 ;; doc_expand.tl - Expansion-aware generated-module docs.
+(import compiler_owned_view as owned_view)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.io)
 (import stdlib.string)
@@ -191,7 +192,9 @@
 (define (doc-import-form-list-push-unique!
   [forms : (&mut forms doc_import_form_vec.Vec)]
   [form : String]) : unit
-  (if (doc-import-form-list-mut-contains? forms form)
+  (if (doc-import-form-list-mut-contains?
+    forms
+    (owned_view.compiler-owned-shared-view form))
     unit
     (doc_import_form_vec.push-ref! forms form)))
 
@@ -207,7 +210,10 @@
       (doc-import-form-list-source-from forms (+ index 1) count))))
 
 (define (doc-import-form-list-source [forms : doc_import_form_vec.Vec]) : String
-  (doc-import-form-list-source-from forms 0 (doc_import_form_vec.len (& forms))))
+  (doc-import-form-list-source-from
+    (owned_view.compiler-owned-shared-view forms)
+    0
+    (doc_import_form_vec.len (& forms))))
 
 (define (doc-import-alias-string
   [ctx : DocExpandContext]
@@ -241,7 +247,11 @@
 (define (doc-ast-type-list-source
   [ctx : DocExpandContext]
   [types : ast.AstTypeList]) : String
-  (doc-ast-type-list-source-from ctx types 0 (ast.ast-type-list-len (& types))))
+  (doc-ast-type-list-source-from
+    ctx
+    (owned_view.compiler-owned-shared-view types)
+    0
+    (ast.ast-type-list-len (& types))))
 
 (define (doc-ast-lifetime-list-source-from
   [ctx : DocExpandContext]
@@ -298,14 +308,18 @@
     [(ast.AstType.Func args-box ret)
       (doc-cat5
         "(-> "
-        (doc-ast-type-list-source ctx (__tl-box-place args-box))
+        (doc-ast-type-list-source
+          ctx
+          (owned_view.compiler-owned-box-shared-view args-box))
         " "
         (doc-ast-type-id-source ctx ret)
         ")")]
     [(ast.AstType.Tuple elems-box)
       (doc-cat3
         "(Tuple "
-        (doc-ast-type-list-source ctx (__tl-box-place elems-box))
+        (doc-ast-type-list-source
+          ctx
+          (owned_view.compiler-owned-box-shared-view elems-box))
         ")")]
     [(ast.AstType.Array elem size)
       (doc-cat5
@@ -350,9 +364,7 @@
     [(ast.AstType.Ptr elem)
       (doc-cat3 "(Ptr " (doc-ast-type-id-source ctx elem) ")")]
     [(ast.AstType.MutPtr elem)
-      (doc-cat3 "(MutPtr " (doc-ast-type-id-source ctx elem) ")")]
-    [(ast.AstType.Consume inner)
-      (doc-cat3 "(:consume " (doc-ast-type-id-source ctx inner) ")")]))
+      (doc-cat3 "(MutPtr " (doc-ast-type-id-source ctx elem) ")")]))
 
 (define (doc-expand-escape-string-loop
   [text : String]
@@ -376,10 +388,14 @@
         (doc-cat2 out piece)))))
 
 (define (doc-expand-escape-string [text : String]) : String
-  (doc-expand-escape-string-loop text 0 (string.string-length text) ""))
+  (doc-expand-escape-string-loop
+    (owned_view.compiler-owned-shared-view text)
+    0
+    (string.string-length (owned_view.compiler-owned-shared-view text))
+    ""))
 
 (define (doc-ast-literal-source [ctx : DocExpandContext] [lit : ast.AstLiteral]) : String
-  (match lit
+  (match (owned_view.compiler-owned-shared-view lit)
     [(ast.AstLiteral.Int _ _) (ast.ast-lit-int-text lit)]
     [(ast.AstLiteral.Float text) text]
     [(ast.AstLiteral.Bool value)
@@ -409,7 +425,11 @@
 (define (doc-ast-expr-list-source
   [ctx : DocExpandContext]
   [exprs : ast.AstExprList]) : String
-  (doc-ast-expr-list-source-from ctx exprs 0 (ast.ast-expr-list-len (& exprs))))
+  (doc-ast-expr-list-source-from
+    ctx
+    (owned_view.compiler-owned-shared-view exprs)
+    0
+    (ast.ast-expr-list-len (& exprs))))
 
 (define (doc-ast-expr-source [ctx : DocExpandContext] [expr-id : i64]) : String
   (match (ast.ast-expr-unspan
@@ -494,12 +514,12 @@
     [(ast.AstDecl.Unsafe inner-box)
       (doc-macro-import-examples-from-decl
         ctx
-        (__tl-box-place inner-box)
+        (owned_view.compiler-owned-box-shared-view inner-box)
         examples)]
     [(ast.AstDecl.ModuleBody _ body-box)
       (doc-macro-import-examples-from-decls-into
         ctx
-        (__tl-box-place body-box)
+        (owned_view.compiler-owned-box-shared-view body-box)
         examples)]
     [_ unit]))
 
@@ -564,7 +584,10 @@
   (if (>= index examples.len)
     ""
     (let
-      [example : DocGeneratedTargetExample (array-ref examples.slots index)]
+      [example : DocGeneratedTargetExample
+        (owned_view.compiler-owned-array-element-shared-view
+          examples.slots
+          index)]
       (if (string.eq example.target target)
         example.form
         (doc-generated-target-example-mut-find-from examples target (+ index 1))))))
@@ -583,7 +606,9 @@
     (= (string.string-length form) 0)
     (>
       (string.string-length
-        (doc-generated-target-example-mut-find examples target))
+        (doc-generated-target-example-mut-find
+          examples
+          (owned_view.compiler-owned-shared-view target)))
       0))
     unit
     (doc_generated_target_example_vec.push-ref!
@@ -617,13 +642,13 @@
     [(ast.AstDecl.Unsafe inner-box)
       (doc-generated-target-examples-from-decl
         ctx
-        (__tl-box-place inner-box)
+        (owned_view.compiler-owned-box-shared-view inner-box)
         macro-examples
         targets)]
     [(ast.AstDecl.ModuleBody _ body-box)
       (doc-generated-target-examples-from-decls-into
         ctx
-        (__tl-box-place body-box)
+        (owned_view.compiler-owned-box-shared-view body-box)
         macro-examples
         targets)]
     [_ unit]))
@@ -640,7 +665,7 @@
         (doc-generated-target-examples-from-decl
           ctx
           decl
-          macro-examples
+          (owned_view.compiler-owned-shared-view macro-examples)
           targets)
         (doc-generated-target-examples-from-decls-into
           ctx
@@ -672,21 +697,13 @@
 
 (define (doc-ast-param-source [ctx : DocExpandContext] [param : ast.AstParam]) : String
   (match param
-    [(ast.AstParam.Param name ty _ consume?)
-      (if consume?
-        (doc-cat6
-          "["
-          (doc-expand-source-name ctx name)
-          " : "
-          (doc-ast-type-source ctx ty)
-          " (:consume)"
-          "]")
-        (doc-cat5
-          "["
-          (doc-expand-source-name ctx name)
-          " : "
-          (doc-ast-type-source ctx ty)
-          "]"))]))
+    [(ast.AstParam.Param name ty _)
+      (doc-cat5
+        "["
+        (doc-expand-source-name ctx name)
+        " : "
+        (doc-ast-type-source ctx ty)
+        "]")]))
 
 (define (doc-ast-param-list-source-from
   [ctx : DocExpandContext]
@@ -702,15 +719,19 @@
         (ast.ast-param-list-get
           (& params)
           index
-          (ast.AstParam.Param 0 (ast.AstType.Unit) false false)))
-      (doc-ast-param-list-source-from ctx params (+ index 1) count))))
+          (ast.AstParam.Param 0 (ast.AstType.Unit) false)))
+      (doc-ast-param-list-source-from
+        ctx
+        (owned_view.compiler-owned-shared-view params)
+        (+ index 1)
+        count))))
 
 (define (doc-ast-param-list-source
   [ctx : DocExpandContext]
   [params : ast.AstParamList]) : String
   (doc-ast-param-list-source-from
     ctx
-    params
+    (owned_view.compiler-owned-shared-view params)
     0
     (ast.ast-param-list-len (& params))))
 
@@ -772,7 +793,7 @@
   [params : ast.AstMacroParamList]) : String
   (doc-ast-macro-param-list-source-from
     ctx
-    params
+    (owned_view.compiler-owned-shared-view params)
     0
     (ast.ast-macro-param-list-len (& params))))
 
@@ -809,7 +830,7 @@
   [fields : ast.AstFieldDefList]) : String
   (doc-ast-field-list-source-from
     ctx
-    fields
+    (owned_view.compiler-owned-shared-view fields)
     0
     (ast.ast-field-def-list-len (& fields))))
 
@@ -835,7 +856,7 @@
         (doc-expand-source-name ctx name)
         (doc-ast-variant-payload-source-from
           ctx
-          fields
+          (owned_view.compiler-owned-shared-view fields)
           0
           (ast.ast-type-list-len (& fields)))
         ")")]))
@@ -864,7 +885,7 @@
   [variants : ast.AstVariantDefList]) : String
   (doc-ast-variant-list-source-from
     ctx
-    variants
+    (owned_view.compiler-owned-shared-view variants)
     0
     (ast.ast-variant-def-list-len (& variants))))
 
@@ -1006,13 +1027,16 @@
             (doc-ast-lifetime-list-source ctx lifetimes)
             fields)))]
     [(ast.AstDecl.Unsafe inner-box)
-      (doc-ast-decl-item ctx (__tl-box-place inner-box))]
+      (doc-ast-decl-item
+        ctx
+        (owned_view.compiler-owned-box-shared-view inner-box))]
     [_ (DocMaybeItem.No)]))
 
 (define (doc-ast-generated-decl-item
   [ctx : DocExpandContext]
   [decl : ast.AstDecl]) : DocMaybeItem
-  (match (ast.ast-decl-generated-meta decl)
+  (match (ast.ast-decl-generated-meta
+    (owned_view.compiler-owned-shared-view decl))
     [(ast.AstGeneratedDeclMeta.Some _ _ _ _) (doc-ast-decl-item ctx decl)]
     [(ast.AstGeneratedDeclMeta.No) (DocMaybeItem.No)]))
 
@@ -1031,12 +1055,18 @@
   (if (>= index count)
     unit
     (begin
-      (doc_item_vec.push-ref! out (doc_extract.doc-item-list-ref items index))
+      (doc_item_vec.push-ref!
+        out
+        (doc_extract.doc-item-list-ref
+          (owned_view.compiler-owned-shared-view items)
+          index))
       (doc-generated-copy-items out items (+ index 1) count))))
 
 (define (doc-generated-module-items [form : String] [items : doc_item_vec.Vec]) : doc_item_vec.Vec
   (let
-    [count : i64 (doc_extract.doc-item-list-count items)]
+    [count : i64
+      (doc_extract.doc-item-list-count
+        (owned_view.compiler-owned-shared-view items))]
     [out : doc_item_vec.Vec (doc_item_vec.with-capacity (+ count 1))]
     (begin
       (doc_item_vec.push-ref! (&mut out) (doc-generated-import-item form))
@@ -1050,7 +1080,10 @@
   [targets : doc_generated_target_example_vec.Vec]
   [modules : (&mut modules doc_module_vec.Vec)]) : unit
   (let
-    [form : String (doc-generated-target-example-find (& targets) module-name)]
+    [form : String
+      (doc-generated-target-example-find
+        (& targets)
+        (owned_view.compiler-owned-shared-view module-name))]
     (if (and
       has-generated
       (> (string.string-length module-name) 0)
@@ -1077,26 +1110,27 @@
     [done : bool false]
     (begin
       (while (not done)
-        (match (ast.ast-decl-list-step cursor)
+        (match (ast.ast-decl-list-step
+          (owned_view.compiler-owned-shared-view cursor))
           [(ast.AstDeclListStep.Nil)
             (begin
               (doc-generated-flush-module!
-                current-module
-                items
+                (owned_view.compiler-owned-shared-view current-module)
+                (owned_view.compiler-owned-shared-view items)
                 has-generated
-                targets
+                (owned_view.compiler-owned-shared-view targets)
                 (&mut modules))
               (set! done true))]
           [(ast.AstDeclListStep.Cons decl rest)
             (begin
-              (match decl
+              (match (owned_view.compiler-owned-shared-view decl)
                 [(ast.AstDecl.Module next-module)
                   (begin
                     (doc-generated-flush-module!
-                      current-module
-                      items
+                      (owned_view.compiler-owned-shared-view current-module)
+                      (owned_view.compiler-owned-shared-view items)
                       has-generated
-                      targets
+                      (owned_view.compiler-owned-shared-view targets)
                       (&mut modules))
                     (set!
                       current-module
@@ -1128,12 +1162,16 @@
   [intern-state : ci.InternCompatState]) : ResultDocExpandedModules
   (let
     [ctx : DocExpandContext
-      (doc-expand-context-from-pools-and-intern-state pools intern-state)]
+      (doc-expand-context-from-pools-and-intern-state
+        (owned_view.compiler-owned-shared-view pools)
+        (owned_view.compiler-owned-shared-view intern-state))]
     [macro-examples : doc_macro_import_example_vec.Vec
-      (doc-macro-import-examples-from-decls ctx decls)]
+      (doc-macro-import-examples-from-decls
+        (owned_view.compiler-owned-shared-view ctx)
+        (owned_view.compiler-owned-shared-view decls))]
     (match (compiler_typecheck_api.typecheck-compiler-doc-expand-program-with-paths-and-load-state-and-job-state-and-pools-and-intern-state
-      load-state
-      job-state
+      (owned_view.compiler-owned-shared-view load-state)
+      (owned_view.compiler-owned-shared-view job-state)
       (ast.ast-program decls)
       paths
       stdlib-roots
@@ -1143,20 +1181,22 @@
         (match expanded
           [(ast.AstProgram.Program expanded-box)
             (let
-              [expanded-decls : ast.AstDeclList (__tl-box-place expanded-box)]
+              [expanded-decls : ast.AstDeclList
+                (ast.ast-decl-list-box-shared-view expanded-box)]
               [targets : doc_generated_target_example_vec.Vec
                 (doc-generated-target-examples-from-decls
-                  ctx
-                  expanded-decls
+                  (owned_view.compiler-owned-shared-view ctx)
+                  (owned_view.compiler-owned-shared-view expanded-decls)
                   macro-examples)]
               (ResultDocExpandedModules.Ok
                 (doc-generated-modules-from-expanded-decls
-                  ctx
+                  (owned_view.compiler-owned-shared-view ctx)
                   expanded-decls
                   targets)))])]
       [(compiler_typecheck_api.ResultCompilerDocExpand.Err diag)
         (ResultDocExpandedModules.Err
-          (cdiag.compiler-diagnostic-render (__tl-box-place diag)))])))
+          (cdiag.compiler-diagnostic-render
+            (cdiag.compiler-diagnostic-box-shared-view diag)))])))
 
 (define (doc-expand-find-prefix [text : String] [prefix : String] [from : i64]) : i64
   (let
@@ -1166,7 +1206,10 @@
     (begin
       (while (and (< i n) (= found n))
         (begin
-          (if (doc_extract.doc-string-prefix-at? text prefix i)
+          (if (doc_extract.doc-string-prefix-at?
+            (owned_view.compiler-owned-shared-view text)
+            (owned_view.compiler-owned-shared-view prefix)
+            i)
             (set! found i)
             unit)
           (set! i (+ i 1))))
@@ -1177,7 +1220,11 @@
   [line-start : i64]
   [line-end : i64]) : i64
   (let
-    [first : i64 (doc_extract.doc-first-nonspace text line-start line-end)]
+    [first : i64
+      (doc_extract.doc-first-nonspace
+        (owned_view.compiler-owned-shared-view text)
+        line-start
+        line-end)]
     (if (doc_extract.doc-string-prefix-at? text "```" first)
       first
       line-end)))
@@ -1187,7 +1234,11 @@
   [line-start : i64]
   [line-end : i64]) : bool
   (let
-    [fence : i64 (doc-expand-fence-line-start text line-start line-end)]
+    [fence : i64
+      (doc-expand-fence-line-start
+        (owned_view.compiler-owned-shared-view text)
+        line-start
+        line-end)]
     (if (< fence line-end)
       (doc_extract.doc-string-contains?
         (string.substring text fence (- line-end fence))
@@ -1201,28 +1252,67 @@
     (begin
       (while (and (< pos n) (= found n))
         (let
-          [line-end : i64 (doc_extract.doc-line-end text pos n)]
+          [line-end : i64
+            (doc_extract.doc-line-end
+              (owned_view.compiler-owned-shared-view text)
+              pos
+              n)]
           (begin
-            (if (doc-expand-ignored-fence-line? text pos line-end)
+            (if (doc-expand-ignored-fence-line?
+              (owned_view.compiler-owned-shared-view text)
+              pos
+              line-end)
               (set! found pos)
               unit)
-            (set! pos (doc_extract.doc-next-line-start text line-end n)))))
+            (set!
+              pos
+              (doc_extract.doc-next-line-start
+                (owned_view.compiler-owned-shared-view text)
+                line-end
+                n)))))
       found)))
 
 (define (doc-expand-skip-fence [text : String] [cursor : i64] [n : i64]) : i64
   (let
-    [open-end : i64 (doc_extract.doc-line-end text cursor n)]
-    [pos : i64 (doc_extract.doc-next-line-start text open-end n)]
+    [open-end : i64
+      (doc_extract.doc-line-end
+        (owned_view.compiler-owned-shared-view text)
+        cursor
+        n)]
+    [pos : i64
+      (doc_extract.doc-next-line-start
+        (owned_view.compiler-owned-shared-view text)
+        open-end
+        n)]
     [done : bool false]
     (begin
       (while (and (< pos n) (not done))
         (let
-          [line-end : i64 (doc_extract.doc-line-end text pos n)]
-          (if (< (doc-expand-fence-line-start text pos line-end) line-end)
+          [line-end : i64
+            (doc_extract.doc-line-end
+              (owned_view.compiler-owned-shared-view text)
+              pos
+              n)]
+          (if (<
+            (doc-expand-fence-line-start
+              (owned_view.compiler-owned-shared-view text)
+              pos
+              line-end)
+            line-end)
             (begin
-              (set! pos (doc_extract.doc-next-line-start text line-end n))
+              (set!
+                pos
+                (doc_extract.doc-next-line-start
+                  (owned_view.compiler-owned-shared-view text)
+                  line-end
+                  n))
               (set! done true))
-            (set! pos (doc_extract.doc-next-line-start text line-end n)))))
+            (set!
+              pos
+              (doc_extract.doc-next-line-start
+                (owned_view.compiler-owned-shared-view text)
+                line-end
+                n)))))
       pos)))
 
 (define (doc-import-forms-from-doc-text [doc-text : String]) : DocImportFormScan
@@ -1235,18 +1325,34 @@
       (while (< cursor n)
         (let
           [ignored-fence : i64
-            (doc-expand-next-ignored-fence doc-text cursor n)]
-          [start : i64 (doc-expand-find-prefix doc-text "(import " cursor)]
+            (doc-expand-next-ignored-fence
+              (owned_view.compiler-owned-shared-view doc-text)
+              cursor
+              n)]
+          [start : i64
+            (doc-expand-find-prefix
+              (owned_view.compiler-owned-shared-view doc-text)
+              "(import "
+              cursor)]
           (if (< ignored-fence start)
-            (set! cursor (doc-expand-skip-fence doc-text ignored-fence n))
+            (set!
+              cursor
+              (doc-expand-skip-fence
+                (owned_view.compiler-owned-shared-view doc-text)
+                ignored-fence
+                n))
             (if (< start n)
               (let
-                [end : i64 (doc_extract.doc-scan-form-end doc-text start n)]
+                [end : i64
+                  (doc_extract.doc-scan-form-end
+                    (owned_view.compiler-owned-shared-view doc-text)
+                    start
+                    n)]
                 [form : String (string.substring doc-text start (- end start))]
                 (begin
                   (doc-import-form-list-push-unique! (&mut forms) form)
                   (if (doc_extract.doc-string-prefix-at?
-                    doc-text
+                    (owned_view.compiler-owned-shared-view doc-text)
                     "(import ("
                     start)
                     (set! has-macro true)
@@ -1274,45 +1380,53 @@
         [scan : DocImportFormScan (doc-import-forms-from-doc-text module-doc)]
         (if (not scan.has-macro)
           (ResultDocExpandedModules.Ok (doc_module_vec.new))
-          (begin
-            (compiler_load.compiler-load-session-state-use-with-intern-state!
-              load-state
-              intern-state)
-            (ast.ast-node-pool-context-install! pools)
-            (ci.intern-compat-state-install! intern-state)
-            (let
-              [loaded : compiler_load.ResultCompilerLoadWithPaths
-                (compiler_load.compiler-load-source-with-paths-and-roots-expect-cfg-with-pools
-                  load-state
-                  (doc-cat2 source-path ".doc-examples.tl")
-                  (doc-expanded-example-source scan.forms)
-                  (sym_i64_env.sym-i64-empty)
-                  stdlib-roots
-                  ast.AstMaybeModuleName.No
-                  (parser.compiler-cfg-empty)
-                  pools)]
-              (begin
-                ;; Preserve segments appended through the explicit loader and
-                ;; publish that completed owner for legacy expansion readers.
-                (ast.ast-node-pool-context-install! pools)
-                (ci.intern-compat-state-capture-from-globals! intern-state)
-                (match loaded
-                  [(compiler_load.ResultCompilerLoadWithPaths.Ok
-                      decls
-                      paths
-                      _
-                      _)
-                    (doc-expanded-generated-modules-from-loaded-decls-with-state-and-pools-and-intern-state
-                      load-state
-                      job-state
-                      decls
-                      paths
-                      stdlib-roots
-                      pools
-                      intern-state)]
-                  [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
-                    (ResultDocExpandedModules.Err
-                      (cdiag.compiler-diagnostic-render (__tl-box-place diag)))]))))))]))
+          (let
+            [intern-state : ci.InternCompatState
+              (owned_view.compiler-owned-shared-view intern-state)]
+            (begin
+              (compiler_load.compiler-load-session-state-use-with-intern-state!
+                (owned_view.compiler-owned-shared-view load-state)
+                (owned_view.compiler-owned-shared-view intern-state))
+              (ast.ast-node-pool-context-install!
+                (owned_view.compiler-owned-shared-view pools))
+              (ci.intern-compat-state-install!
+                (owned_view.compiler-owned-shared-view intern-state))
+              (let
+                [loaded : compiler_load.ResultCompilerLoadWithPaths
+                  (compiler_load.compiler-load-source-with-paths-and-roots-expect-cfg-with-pools
+                    (owned_view.compiler-owned-shared-view load-state)
+                    (doc-cat2 source-path ".doc-examples.tl")
+                    (doc-expanded-example-source scan.forms)
+                    (sym_i64_env.sym-i64-empty)
+                    (owned_view.compiler-owned-shared-view stdlib-roots)
+                    ast.AstMaybeModuleName.No
+                    (parser.compiler-cfg-empty)
+                    (owned_view.compiler-owned-shared-view pools))]
+                (begin
+                  ;; Preserve segments appended through the explicit loader and
+                  ;; publish that completed owner for legacy expansion readers.
+                  (ast.ast-node-pool-context-install!
+                    (owned_view.compiler-owned-shared-view pools))
+                  (ci.intern-compat-state-capture-from-globals!
+                    (&mut intern-state))
+                  (match loaded
+                    [(compiler_load.ResultCompilerLoadWithPaths.Ok
+                        decls
+                        paths
+                        _
+                        _)
+                      (doc-expanded-generated-modules-from-loaded-decls-with-state-and-pools-and-intern-state
+                        (owned_view.compiler-owned-shared-view load-state)
+                        (owned_view.compiler-owned-shared-view job-state)
+                        decls
+                        paths
+                        (owned_view.compiler-owned-shared-view stdlib-roots)
+                        (owned_view.compiler-owned-shared-view pools)
+                        (owned_view.compiler-owned-shared-view intern-state))]
+                    [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
+                      (ResultDocExpandedModules.Err
+                        (cdiag.compiler-diagnostic-render
+                          (cdiag.compiler-diagnostic-box-shared-view diag)))])))))))]))
 
 (define (doc-expand-smoke-source) : String
   "(module doc.generated.fixture)
@@ -1347,7 +1461,8 @@
         (ci.intern-compat-state-capture-active))]
     (match parsed
       [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
-        (match (ast.ast-decl-list-step (__tl-box-place decls-box))
+        (match (ast.ast-decl-list-step
+          (owned_view.compiler-owned-box-shared-view decls-box))
           [(ast.AstDeclListStep.Cons
               (ast.AstDecl.DefMacro decl-meta _ params _ _)
               rest)
@@ -1411,16 +1526,18 @@
           (set! index (+ index 1))))
       (unless
         (and
-          (= (doc_extract.doc-item-list-count items) 6)
+          (= (doc_extract.doc-item-list-count (clone items)) 6)
           (= (doc_import_form_vec.len (& forms)) 6)
           (= (doc_macro_import_example_vec.len (& macro-examples)) 6)
           (= (doc_generated_target_example_vec.len (& targets)) 6)
-          (= (doc_render.doc-module-list-count modules) 6)
+          (= (doc_render.doc-module-list-count (clone modules)) 6)
           (string.eq
-            (doc_extract.doc-item-name (doc_extract.doc-item-list-ref items 0))
+            (doc_extract.doc-item-name
+              (doc_extract.doc-item-list-ref (clone items) 0))
             "0")
           (string.eq
-            (doc_extract.doc-item-name (doc_extract.doc-item-list-ref items 5))
+            (doc_extract.doc-item-name
+              (doc_extract.doc-item-list-ref (clone items) 5))
             "5")
           (string.eq (doc_import_form_vec.get (& forms) 0 "") "0")
           (string.eq (doc_import_form_vec.get (& forms) 5 "") "5")
@@ -1442,11 +1559,11 @@
             "5")
           (string.eq
             (doc_render.doc-module-path
-              (doc_render.doc-module-list-ref modules 0))
+              (doc_render.doc-module-list-ref (clone modules) 0))
             "0")
           (string.eq
             (doc_render.doc-module-path
-              (doc_render.doc-module-list-ref modules 5))
+              (doc_render.doc-module-list-ref (clone modules) 5))
             "5"))
         (io.panic "doc-expand: generated vector growth/order mismatch")))))
 
@@ -1458,33 +1575,47 @@
       (ast.ast-node-pool-context-capture-active)]
     [intern-a : ci.InternCompatState (ci.intern-compat-state-new)]
     [intern-b : ci.InternCompatState (ci.intern-compat-state-new)]
-    [name-a : i64 (ci.intern-compat-state-intern intern-a "owner-a-name")]
-    [name-b : i64 (ci.intern-compat-state-intern intern-b "decoy-b-name")]
+    [name-a : i64
+      (ci.intern-compat-state-intern (&mut intern-a) "owner-a-name")]
+    [name-b : i64
+      (ci.intern-compat-state-intern (&mut intern-b) "decoy-b-name")]
     [pools-a : ast.AstNodePoolContext
       (ast.ast-node-pool-context-new-with-capacities 4 2)]
     [pools-b : ast.AstNodePoolContext
       (ast.ast-node-pool-context-new-with-capacities 4 2)]
     [type-a : i64
-      (ast.ast-node-pool-context-type-push pools-a (ast.AstType.Struct name-a))]
+      (ast.ast-node-pool-context-type-push
+        (owned_view.compiler-owned-shared-view pools-a)
+        (ast.AstType.Struct name-a))]
     [type-b : i64
-      (ast.ast-node-pool-context-type-push pools-b (ast.AstType.I64))]
+      (ast.ast-node-pool-context-type-push
+        (owned_view.compiler-owned-shared-view pools-b)
+        (ast.AstType.I64))]
     [expr-a : i64
       (ast.ast-node-pool-context-expr-push
-        pools-a
+        (owned_view.compiler-owned-shared-view pools-a)
         (ast.AstExpr.TypeLiteral type-a))]
     [expr-b : i64
       (ast.ast-node-pool-context-expr-push
-        pools-b
+        (owned_view.compiler-owned-shared-view pools-b)
         (ast.AstExpr.Literal (ast.ast-lit-int 99)))]
     [ctx-a : DocExpandContext
-      (doc-expand-context-from-pools-and-intern-state pools-a intern-a)]
-    [decoy-intern-before : i64 (ci.intern-compat-state-pool-len intern-b)]
-    [decoy-exprs-before : i64 (ast.ast-node-pool-context-expr-len pools-b)]
-    [decoy-types-before : i64 (ast.ast-node-pool-context-type-len pools-b)]
+      (doc-expand-context-from-pools-and-intern-state
+        (owned_view.compiler-owned-shared-view pools-a)
+        (owned_view.compiler-owned-shared-view intern-a))]
+    [decoy-intern-before : i64 (ci.intern-compat-state-pool-len (& intern-b))]
+    [decoy-exprs-before : i64
+      (ast.ast-node-pool-context-expr-len
+        (owned_view.compiler-owned-shared-view pools-b))]
+    [decoy-types-before : i64
+      (ast.ast-node-pool-context-type-len
+        (owned_view.compiler-owned-shared-view pools-b))]
     [ok : bool false]
     (begin
-      (ci.intern-compat-state-install! intern-b)
-      (ast.ast-node-pool-context-install! pools-b)
+      (ci.intern-compat-state-install!
+        (owned_view.compiler-owned-shared-view intern-b))
+      (ast.ast-node-pool-context-install!
+        (owned_view.compiler-owned-shared-view pools-b))
       (set!
         ok
         (and
@@ -1492,20 +1623,28 @@
           (= type-a type-b)
           (= expr-a expr-b)
           (string.eq (doc-ast-expr-source ctx-a expr-a) "(type owner-a-name)")
-          (= (ci.intern-compat-state-pool-len intern-b) decoy-intern-before)
-          (= (ast.ast-node-pool-context-expr-len pools-b) decoy-exprs-before)
-          (= (ast.ast-node-pool-context-type-len pools-b) decoy-types-before)
+          (= (ci.intern-compat-state-pool-len (& intern-b)) decoy-intern-before)
+          (=
+            (ast.ast-node-pool-context-expr-len
+              (owned_view.compiler-owned-shared-view pools-b))
+            decoy-exprs-before)
+          (=
+            (ast.ast-node-pool-context-type-len
+              (owned_view.compiler-owned-shared-view pools-b))
+            decoy-types-before)
           (=
             (ci.intern-active-table-id)
-            (ci.intern-compat-state-table-id intern-b))
+            (ci.intern-compat-state-table-id (& intern-b)))
           (=
             (ast.ast-node-pool-active-expr-segment-bases)
-            (ast.ast-node-pool-context-expr-segment-bases pools-b))
+            (ast.ast-node-pool-context-expr-segment-bases (& pools-b)))
           (=
             (ast.ast-node-pool-reader-type-segment-bases)
-            (ast.ast-node-pool-context-type-segment-bases pools-b))))
-      (ci.intern-compat-state-install! home-intern)
-      (ast.ast-node-pool-context-install! home-pools)
+            (ast.ast-node-pool-context-type-segment-bases (& pools-b)))))
+      (ci.intern-compat-state-install!
+        (owned_view.compiler-owned-shared-view home-intern))
+      (ast.ast-node-pool-context-install!
+        (owned_view.compiler-owned-shared-view home-pools))
       (ast.ast-node-pool-context-destroy-storage! pools-a)
       (ast.ast-node-pool-context-destroy-storage! pools-b)
       (unless
@@ -1519,7 +1658,7 @@
       "doc_expand_smoke.tl"
       (doc-expand-smoke-source)
       (sym_i64_env.sym-i64-empty)
-      roots)
+      (owned_view.compiler-owned-shared-view roots))
       [(compiler_load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
         (let
           [pools : ast.AstNodePoolContext
@@ -1531,23 +1670,29 @@
             (tc.tc-serial-job-state)
             decls
             paths
-            roots
-            pools
-            intern-state)
+            (owned_view.compiler-owned-shared-view roots)
+            (owned_view.compiler-owned-shared-view pools)
+            (owned_view.compiler-owned-shared-view intern-state))
             [(ResultDocExpandedModules.Ok modules)
               (let
                 [rendered : String
                   (doc_render.doc-render-module-graph-markdown modules)]
                 (if (and
                   (doc_extract.doc-string-contains?
-                    rendered
+                    (owned_view.compiler-owned-shared-view rendered)
                     "doc.generated.fixture.box\\_i64")
                   (doc_extract.doc-string-contains?
-                    rendered
+                    (owned_view.compiler-owned-shared-view rendered)
                     "(import (boxmod i64) as ibox)")
-                  (doc_extract.doc-string-contains? rendered "### Box")
-                  (doc_extract.doc-string-contains? rendered "### Status")
-                  (doc_extract.doc-string-contains? rendered "### new"))
+                  (doc_extract.doc-string-contains?
+                    (owned_view.compiler-owned-shared-view rendered)
+                    "### Box")
+                  (doc_extract.doc-string-contains?
+                    (owned_view.compiler-owned-shared-view rendered)
+                    "### Status")
+                  (doc_extract.doc-string-contains?
+                    (owned_view.compiler-owned-shared-view rendered)
+                    "### new"))
                   42
                   (io.panic "doc-expand: generated module docs smoke mismatch")))]
             [(ResultDocExpandedModules.Err message)
@@ -1556,7 +1701,8 @@
         (io.panic
           (doc-cat2
             "doc-expand: load failed: "
-            (cdiag.compiler-diagnostic-render (__tl-box-place diag))))])))
+            (cdiag.compiler-diagnostic-render
+              (cdiag.compiler-diagnostic-box-shared-view diag))))])))
 
 (define (doc-expand-ignore-fence-smoke) : i64
   (let

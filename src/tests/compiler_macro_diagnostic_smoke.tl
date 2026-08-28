@@ -17,7 +17,7 @@
   (io.write-file path (byte_buf.str-as-bytes (& contents))))
 
 (define (macro-diagnostic-frame-at?
-  [labels : diagnostic.CompilerDiagnosticLabelList]
+  [labels : (& labels diagnostic.CompilerDiagnosticLabelList)]
   [index : i64]
   [path : String]
   [line : i64]
@@ -55,7 +55,7 @@
       (let
         [diag : diagnostic.CompilerDiagnostic
           (diagnostic.compiler-diagnostic-list-first
-            (__tl-box-place diagnostics))]
+            (diagnostic.compiler-diagnostic-list-box-shared-view diagnostics))]
         [labels : diagnostic.CompilerDiagnosticLabelList
           (diagnostic.compiler-diagnostic-secondary-spans diag)]
         (and
@@ -70,7 +70,7 @@
             (diagnostic.compiler-diagnostic-label-list-count labels)
             frame-count)
           (macro-diagnostic-frame-at?
-            labels
+            (& labels)
             0
             ""
             first-line
@@ -79,7 +79,7 @@
           (if (= frame-count 1)
             true
             (macro-diagnostic-frame-at?
-              labels
+              (& labels)
               1
               ""
               second-line
@@ -207,7 +207,7 @@
   [frame-col : i64]
   [macro-name : String]) : bool
   (match (load.compiler-load-file-with-paths-and-roots-cfg
-    entry-path
+    (load.compiler-load-global-shared-view entry-path)
     (sym_i64_env.sym-i64-empty)
     roots
     (parser.compiler-cfg-empty))
@@ -219,7 +219,8 @@
           (let
             [diag : diagnostic.CompilerDiagnostic
               (diagnostic.compiler-diagnostic-list-first
-                (__tl-box-place diagnostics))]
+                (diagnostic.compiler-diagnostic-list-box-shared-view
+                  diagnostics))]
             [labels : diagnostic.CompilerDiagnosticLabelList
               (diagnostic.compiler-diagnostic-secondary-spans diag)]
             [ok : bool
@@ -235,7 +236,7 @@
                 (= (diagnostic.compiler-diagnostic-col diag) primary-col)
                 (= (diagnostic.compiler-diagnostic-label-list-count labels) 1)
                 (macro-diagnostic-frame-at?
-                  labels
+                  (& labels)
                   0
                   entry-path
                   frame-line
@@ -256,20 +257,30 @@
   (let
     [dir : String "target/tc_macro_diagnostic_frames"]
     [provider : String
-      (load.compiler-load-join-root-path dir "tc_macro_diagnostic_provider.tl")]
+      (load.compiler-load-join-root-path
+        (load.compiler-load-global-shared-view dir)
+        "tc_macro_diagnostic_provider.tl")]
     [generated-entry : String
-      (load.compiler-load-join-root-path dir "generated_entry.tl")]
+      (load.compiler-load-join-root-path
+        (load.compiler-load-global-shared-view dir)
+        "generated_entry.tl")]
     [caller-entry : String
-      (load.compiler-load-join-root-path dir "caller_entry.tl")]
+      (load.compiler-load-join-root-path
+        (load.compiler-load-global-shared-view dir)
+        "caller_entry.tl")]
     [binding-entry : String
-      (load.compiler-load-join-root-path dir "binding_entry.tl")]
+      (load.compiler-load-join-root-path
+        (load.compiler-load-global-shared-view dir)
+        "binding_entry.tl")]
     [native-entry : String
-      (load.compiler-load-join-root-path dir "native_entry.tl")]
+      (load.compiler-load-join-root-path
+        (load.compiler-load-global-shared-view dir)
+        "native_entry.tl")]
     [roots : svec.Vec (svec.new)]
     (begin
       (load.compiler-load-test-mkdir dir)
       (macro-diagnostic-write-text
-        provider
+        (load.compiler-load-global-shared-view provider)
         "(module tc_macro_diagnostic_provider)
 (defmacro (bad [value : Expr]) : Expr
   `(+ ,value true))
@@ -278,19 +289,19 @@
 (defmacro (bindingbad [binding : ExprBindingClause]) : Expr
   (comptime.expr-binding-clause-init binding))")
       (macro-diagnostic-write-text
-        generated-entry
+        (load.compiler-load-global-shared-view generated-entry)
         "(import tc_macro_diagnostic_provider as dep)
 (define (main) : i64 (dep.bad 1))")
       (macro-diagnostic-write-text
-        caller-entry
+        (load.compiler-load-global-shared-view caller-entry)
         "(import tc_macro_diagnostic_provider as dep)
 (define (main) : i64 (dep.callerbad missing))")
       (macro-diagnostic-write-text
-        binding-entry
+        (load.compiler-load-global-shared-view binding-entry)
         "(import tc_macro_diagnostic_provider as dep)
 (define (main) : i64 (dep.bindingbad [item missing]))")
       (macro-diagnostic-write-text
-        native-entry
+        (load.compiler-load-global-shared-view native-entry)
         "(import stdlib.core_macros)
 (import stdlib.fs as fs)
 (define (main) : String (fs.path-join-many missing))")
@@ -298,9 +309,9 @@
       (let
         [generated-ok : bool
           (macro-diagnostic-loaded-shape?
-            generated-entry
-            roots
-            provider
+            (load.compiler-load-global-shared-view generated-entry)
+            (load.compiler-load-global-shared-view roots)
+            (load.compiler-load-global-shared-view provider)
             3
             14
             2
@@ -314,9 +325,9 @@
           (let
             [caller-ok : bool
               (macro-diagnostic-loaded-shape?
-                caller-entry
-                roots
-                caller-entry
+                (load.compiler-load-global-shared-view caller-entry)
+                (load.compiler-load-global-shared-view roots)
+                (load.compiler-load-global-shared-view caller-entry)
                 2
                 37
                 2
@@ -330,9 +341,9 @@
               (let
                 [binding-ok : bool
                   (macro-diagnostic-loaded-shape?
-                    binding-entry
-                    roots
-                    binding-entry
+                    (load.compiler-load-global-shared-view binding-entry)
+                    (load.compiler-load-global-shared-view roots)
+                    (load.compiler-load-global-shared-view binding-entry)
                     2
                     44
                     2
@@ -347,9 +358,9 @@
                   (let
                     [native-ok : bool
                       (macro-diagnostic-loaded-shape?
-                        native-entry
-                        roots
-                        native-entry
+                        (load.compiler-load-global-shared-view native-entry)
+                        (load.compiler-load-global-shared-view roots)
+                        (load.compiler-load-global-shared-view native-entry)
                         3
                         44
                         3

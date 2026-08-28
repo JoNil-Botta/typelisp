@@ -1,4 +1,5 @@
 ;; compiler_backend_object_target_windows.tl - Windows direct-object policy leaf.
+(import compiler_owned_view as owned_view)
 (import stdlib.byte_buf_core)
 (import compiler_backend_object_target as object_target)
 (import compiler_object as cobj)
@@ -315,10 +316,10 @@
         (object_target.compiler-backend-object-symbol-local-section
           (object_target.compiler-backend-object-symbol-export-section
             parts
-            entry
+            (owned_view.compiler-owned-shared-view entry)
             (cobj.CompilerObjectSectionKind.Text)
             (cobj.CompilerObjectSymbolKind.Function))
-          entry-end
+          (owned_view.compiler-owned-shared-view entry-end)
           (cobj.CompilerObjectSectionKind.Text)
           (cobj.CompilerObjectSymbolKind.Function))
         "ExitProcess"
@@ -326,7 +327,8 @@
     [with-label : object_target.CompilerBackendObjectTargetParts
       (object_target.compiler-backend-object-add-text
         with-symbols
-        (cobj.CompilerObjectX64Instr.Label entry))]
+        (cobj.CompilerObjectX64Instr.Label
+          (owned_view.compiler-owned-shared-view entry)))]
     [with-sub : object_target.CompilerBackendObjectTargetParts
       (object_target.compiler-backend-object-add-text
         with-label
@@ -334,7 +336,7 @@
     [with-setup-call : object_target.CompilerBackendObjectTargetParts
       (object_target.compiler-backend-object-add-call-instr
         with-sub
-        entry
+        (owned_view.compiler-owned-shared-view entry)
         "tl_setup_argv")]
     [with-gs-clear : object_target.CompilerBackendObjectTargetParts
       (object_target.compiler-backend-object-add-text-bytes
@@ -343,21 +345,21 @@
     [with-argc : object_target.CompilerBackendObjectTargetParts
       (object_target.compiler-backend-object-add-rip-instr
         with-gs-clear
-        entry
+        (owned_view.compiler-owned-shared-view entry)
         (cobj.CompilerObjectRelocationKind.RipValue)
         ".L_tl_argc"
         (cobj.CompilerObjectX64Instr.MovRcxRip ".L_tl_argc"))]
     [with-argv : object_target.CompilerBackendObjectTargetParts
       (object_target.compiler-backend-object-add-rip-instr
         with-argc
-        entry
+        (owned_view.compiler-owned-shared-view entry)
         (cobj.CompilerObjectRelocationKind.RipValue)
         ".L_tl_argv"
         (cobj.CompilerObjectX64Instr.MovRdxRip ".L_tl_argv"))]
     [with-main-call : object_target.CompilerBackendObjectTargetParts
       (object_target.compiler-backend-object-add-call-instr
         with-argv
-        entry
+        (owned_view.compiler-owned-shared-view entry)
         "main")]
     [with-move-exit-code : object_target.CompilerBackendObjectTargetParts
       (object_target.compiler-backend-object-add-text
@@ -382,14 +384,15 @@
     [with-xdata-symbol : object_target.CompilerBackendObjectTargetParts
       (object_target.compiler-backend-object-symbol-local-section
         parts
-        xdata-label
+        (owned_view.compiler-owned-shared-view xdata-label)
         (cobj.CompilerObjectSectionKind.Xdata)
         (cobj.CompilerObjectSymbolKind.Data))]
     [with-xdata : object_target.CompilerBackendObjectTargetParts
       (object_target.compiler-backend-object-add-xdata
         (object_target.compiler-backend-object-add-xdata
           with-xdata-symbol
-          (cobj.CompilerObjectDataRecord.Label xdata-label))
+          (cobj.CompilerObjectDataRecord.Label
+            (owned_view.compiler-owned-shared-view xdata-label)))
         (cobj.CompilerObjectDataRecord.Bytes
           (compiler-backend-object-entry-xdata-bytes)))]
     [with-pdata-begin : object_target.CompilerBackendObjectTargetParts
@@ -397,7 +400,8 @@
         (object_target.compiler-backend-object-add-pdata-relocation
           (object_target.compiler-backend-object-add-pdata
             with-xdata
-            (cobj.CompilerObjectDataRecord.Label pdata-begin))
+            (cobj.CompilerObjectDataRecord.Label
+              (owned_view.compiler-owned-shared-view pdata-begin)))
           pdata-begin
           (cobj.CompilerObjectRelocationKind.Addr32Nb)
           "_tl_start")
@@ -407,7 +411,8 @@
         (object_target.compiler-backend-object-add-pdata-relocation
           (object_target.compiler-backend-object-add-pdata
             with-pdata-begin
-            (cobj.CompilerObjectDataRecord.Label pdata-end))
+            (cobj.CompilerObjectDataRecord.Label
+              (owned_view.compiler-owned-shared-view pdata-end)))
           pdata-end
           (cobj.CompilerObjectRelocationKind.Addr32Nb)
           ".L_tl_start_end")
@@ -416,10 +421,11 @@
       (object_target.compiler-backend-object-add-pdata-relocation
         (object_target.compiler-backend-object-add-pdata
           with-pdata-end
-          (cobj.CompilerObjectDataRecord.Label pdata-unwind))
+          (cobj.CompilerObjectDataRecord.Label
+            (owned_view.compiler-owned-shared-view pdata-unwind)))
         pdata-unwind
         (cobj.CompilerObjectRelocationKind.Addr32Nb)
-        xdata-label)
+        (owned_view.compiler-owned-shared-view xdata-label))
       (cobj.CompilerObjectDataRecord.SymbolRva32 xdata-label))))
 
 (define (compiler-backend-object-add-entry
@@ -436,21 +442,23 @@
     [empty-instrs : cobj.CompilerObjectX64InstrList
       (object_target.compiler-backend-object-empty-instrs)]
     [sections4 : cobj.CompilerObjectSectionBuilder
-      (object_target.compiler-backend-object-base-sections parts 7)]
+      (object_target.compiler-backend-object-base-sections
+        (owned_view.compiler-owned-shared-view parts)
+        7)]
     [sections5 : cobj.CompilerObjectSectionBuilder
       (cobj.compiler-object-section-builder-push
         sections4
         (cobj.CompilerObjectSection.Section
           (cobj.CompilerObjectSectionKind.Pdata)
           (cobj.compiler-object-data-record-builder-finish parts.pdata)
-          empty-instrs))]
+          (owned_view.compiler-owned-shared-view empty-instrs)))]
     [sections6 : cobj.CompilerObjectSectionBuilder
       (cobj.compiler-object-section-builder-push
         sections5
         (cobj.CompilerObjectSection.Section
           (cobj.CompilerObjectSectionKind.Xdata)
           (cobj.compiler-object-data-record-builder-finish parts.xdata)
-          empty-instrs))]
+          (owned_view.compiler-owned-shared-view empty-instrs)))]
     (cobj.compiler-object-section-builder-finish
       (cobj.compiler-object-section-builder-push
         sections6
@@ -515,6 +523,10 @@
         with-entry
         (cobj.CompilerObjectDataRecord.Zero 0))]
     (cobj.CompilerObjectImage
-      (compiler-backend-object-image-sections final-parts emit-native-entry)
-      (compiler-backend-object-image-symbols final-parts emit-native-entry)
+      (compiler-backend-object-image-sections
+        (owned_view.compiler-owned-shared-view final-parts)
+        emit-native-entry)
+      (compiler-backend-object-image-symbols
+        (owned_view.compiler-owned-shared-view final-parts)
+        emit-native-entry)
       (compiler-backend-object-image-relocations final-parts emit-native-entry))))

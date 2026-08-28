@@ -14,6 +14,14 @@
     embedded-stdlib-tlci)
   (import stdlib.byte_buf_core))
 
+(defmacro (surface-facts-shared-view [place : Expr]) : Expr
+  `(unsafe
+    (ptr-read (ptr-addr-of ,place))))
+
+(defmacro (surface-facts-array-shared-view [items : Expr] [index : Expr]) : Expr
+  `(unsafe
+    (ptr-read (ptr-offset (__tl_array-data ,items) ,index))))
+
 (defstruct SurfaceTypecheckFacts
   (macro-prefix-decl-count i64)
   (prefix-decl-count i64)
@@ -279,18 +287,15 @@
     [summary-functions : i64]
     [summary-externs : i64]) : SurfaceTypecheckFacts
     (let
-      [count : i64
-        (__tl-project-field
-          (surface-typecheck-facts-recording-observations-shared-view)
-          len)]
+      [observations : SurfaceCloneObservationSeq
+        (surface-typecheck-facts-recording-observations-shared-view)]
+      [count : i64 observations.len]
       [decl-keys : (__tl_dyn-array i64) (__tl_make-array i64 count)]
       [root-keys : (__tl_dyn-array i64) (__tl_make-array i64 count)]
       [call-indices : (__tl_dyn-array i64) (__tl_make-array i64 count)]
       [index : i64 0]
       [slots : (__tl_dyn-array SurfaceCloneObservation)
-        (__tl-project-field
-          (surface-typecheck-facts-recording-observations-shared-view)
-          slots)]
+        (surface-facts-shared-view observations.slots)]
       (begin
         (while (< index count)
           (let
@@ -349,9 +354,9 @@
     (<= left (- surface-typecheck-facts-max-count right))))
 
 (define (surface-typecheck-facts-observations-valid?
-  [decl-keys : (__tl_dyn-array i64)]
-  [root-keys : (__tl_dyn-array i64)]
-  [call-indices : (__tl_dyn-array i64)]) : bool
+  [decl-keys : (& decl-keys (__tl_dyn-array i64))]
+  [root-keys : (& root-keys (__tl_dyn-array i64))]
+  [call-indices : (& call-indices (__tl_dyn-array i64))]) : bool
   (let
     [count : i64 (array-length decl-keys)]
     [index : i64 0]
@@ -382,7 +387,8 @@
             (set! ok false))))
       ok)))
 
-(define (surface-typecheck-facts-valid? [facts : SurfaceTypecheckFacts]) : bool
+(define (surface-typecheck-facts-valid?
+  [facts : (& facts SurfaceTypecheckFacts)]) : bool
   (and
     (surface-typecheck-facts-positive-count-valid?
       facts.macro-prefix-decl-count)
@@ -497,16 +503,6 @@
         (= builder.next-clone-call-index 0))
       (and
         (surface-typecheck-facts-positive-count-valid? builder.fragment-count)
-        (surface-typecheck-facts-valid?
-          (SurfaceTypecheckFacts
-            builder.macro-prefix-decl-count
-            builder.prefix-decl-count
-            builder.summary-values
-            builder.summary-functions
-            builder.summary-externs
-            builder.clone-decl-keys
-            builder.clone-root-keys
-            builder.clone-call-indices))
         (if (= observation-count 0)
           (= builder.next-clone-call-index 0)
           (and
@@ -516,7 +512,19 @@
               builder.next-clone-call-index
               (+
                 (array-ref builder.clone-call-indices (- observation-count 1))
-                1))))))))
+                1))))
+        (let
+          [facts : SurfaceTypecheckFacts
+            (SurfaceTypecheckFacts
+              builder.macro-prefix-decl-count
+              builder.prefix-decl-count
+              builder.summary-values
+              builder.summary-functions
+              builder.summary-externs
+              builder.clone-decl-keys
+              builder.clone-root-keys
+              builder.clone-call-indices)]
+          (surface-typecheck-facts-valid? (& facts)))))))
 
 (define (surface-typecheck-facts-copy-i64-range!
   [dst : (&mut dst (__tl_dyn-array i64))]
@@ -533,7 +541,9 @@
   [builder : SurfaceTypecheckFactsBuilder]
   [fragment : SurfaceTypecheckFacts]) : ResultSurfaceTypecheckFactsBuilder
   (cond
-    [(not (surface-typecheck-facts-builder-valid? builder))
+    [(not
+        (surface-typecheck-facts-builder-valid?
+          (surface-facts-shared-view builder)))
       (ResultSurfaceTypecheckFactsBuilder.Err
         "surface facts: invalid composition builder")]
     [(not (surface-typecheck-facts-valid? fragment))
@@ -637,7 +647,9 @@
   [builder : SurfaceTypecheckFactsBuilder]) : ResultSurfaceTypecheckFacts
   (if (or
     (= builder.fragment-count 0)
-    (not (surface-typecheck-facts-builder-valid? builder)))
+    (not
+      (surface-typecheck-facts-builder-valid?
+        (surface-facts-shared-view builder))))
     (ResultSurfaceTypecheckFacts.Err
       "surface facts: empty or invalid composition")
     (ResultSurfaceTypecheckFacts.Ok
@@ -752,16 +764,19 @@
           (set! ok false)
           unit)
         (surface-typecheck-facts-clear!)
-        (if (surface-typecheck-facts-publish! first)
+        (if (surface-typecheck-facts-publish! (surface-facts-shared-view first))
           unit
           (set! ok false))
         ;; Invalid publication is atomic: the active first fragment survives.
-        (if (surface-typecheck-facts-publish! bad-order)
+        (if (surface-typecheck-facts-publish!
+          (surface-facts-shared-view bad-order))
           (set! ok false)
           unit)
         (if (and
           (surface-typecheck-facts-active?)
-          (surface-typecheck-facts-eq? (surface-typecheck-facts-current) first))
+          (surface-typecheck-facts-eq?
+            (surface-typecheck-facts-current)
+            (surface-facts-shared-view first)))
           unit
           (set! ok false))
         (surface-typecheck-facts-clear!)
@@ -769,23 +784,31 @@
           (set! ok false)
           unit)
         ;; A cleared publication can be reused without retaining stale facts.
-        (if (surface-typecheck-facts-publish! first)
+        (if (surface-typecheck-facts-publish! (surface-facts-shared-view first))
           unit
           (set! ok false))
         (if (and
           (surface-typecheck-facts-active?)
-          (surface-typecheck-facts-eq? (surface-typecheck-facts-current) first))
+          (surface-typecheck-facts-eq?
+            (surface-typecheck-facts-current)
+            (surface-facts-shared-view first)))
           unit
           (set! ok false))
         (surface-typecheck-facts-clear!)
-        (match (surface-typecheck-facts-builder-append builder first)
+        (match (surface-typecheck-facts-builder-append
+          (surface-facts-shared-view builder)
+          (surface-facts-shared-view first))
           [(ResultSurfaceTypecheckFactsBuilder.Err _) (set! ok false)]
           [(ResultSurfaceTypecheckFactsBuilder.Ok next) (set! builder next)])
         ;; A rejected fragment leaves the completed prefix reusable.
-        (match (surface-typecheck-facts-builder-append builder bad-order)
+        (match (surface-typecheck-facts-builder-append
+          (surface-facts-shared-view builder)
+          (surface-facts-shared-view bad-order))
           [(ResultSurfaceTypecheckFactsBuilder.Err _) unit]
           [(ResultSurfaceTypecheckFactsBuilder.Ok _) (set! ok false)])
-        (match (surface-typecheck-facts-builder-append builder second)
+        (match (surface-typecheck-facts-builder-append
+          (surface-facts-shared-view builder)
+          (surface-facts-shared-view second))
           [(ResultSurfaceTypecheckFactsBuilder.Err _) (set! ok false)]
           [(ResultSurfaceTypecheckFactsBuilder.Ok next) (set! builder next)])
         (match (surface-typecheck-facts-builder-finish builder)
@@ -799,7 +822,7 @@
                 (= composed.summary-functions 24)
                 (= composed.summary-externs 30)
                 (surface-typecheck-facts-i64-array-eq?
-                  composed.clone-call-indices
+                  (surface-facts-shared-view composed.clone-call-indices)
                   (__tl_make-array 0 0 2 3 4)))
                 unit
                 (set! ok false))
@@ -870,13 +893,13 @@
             (let
               [decl-key : i64
                 (surface_identity.surface-identity-portable-id
-                  structural-session
+                  (surface-facts-shared-view structural-session)
                   (array-ref decl-keys index)
                   source-count
                   identity-count)]
               [root-key : i64
                 (surface_identity.surface-identity-portable-id
-                  structural-session
+                  (surface-facts-shared-view structural-session)
                   (array-ref root-keys index)
                   source-count
                   identity-count)]
@@ -907,7 +930,7 @@
       (SurfaceTypecheckFactReader bytes offset ok message))))
 
 (define (surface-typecheck-fact-reader-fail!
-  [reader : SurfaceTypecheckFactReader]
+  [reader : (& reader SurfaceTypecheckFactReader)]
   [message : String]) : unit
   (if (array-ref reader.ok 0)
     (begin
@@ -916,11 +939,12 @@
     unit))
 
 (define (surface-typecheck-fact-reader-u64!
-  [reader : SurfaceTypecheckFactReader]) : i64
+  [reader : (& reader SurfaceTypecheckFactReader)]) : i64
   (let
     [offset : i64 (array-ref reader.offset 0)]
-    [bytes : (__tl_dyn-array u8) reader.bytes]
-    (if (or (not (array-ref reader.ok 0)) (> offset (- (array-length bytes) 8)))
+    (if (or
+      (not (array-ref reader.ok 0))
+      (> offset (- (array-length reader.bytes) 8)))
       (begin
         (surface-typecheck-fact-reader-fail!
           reader
@@ -928,7 +952,7 @@
         -1)
       (begin
         (set! (array-ref reader.offset 0) (+ offset 8))
-        (binary.surface-binary-read-u64 bytes offset)))))
+        (binary.surface-binary-read-u64 reader.bytes offset)))))
 
 (define (surface-typecheck-facts-portable-id-valid?
   [id : i64]
@@ -1023,8 +1047,9 @@
                 call-indices)]
             (cond
               [(not (array-ref reader.ok 0))
-                (ResultSurfaceTypecheckFacts.Err (array-ref reader.message 0))]
-              [(not (= (array-ref reader.offset 0) (array-length bytes)))
+                (ResultSurfaceTypecheckFacts.Err
+                  (surface-facts-array-shared-view reader.message 0))]
+              [(not (= (array-ref reader.offset 0) (array-length reader.bytes)))
                 (ResultSurfaceTypecheckFacts.Err
                   "surface facts: trailing payload bytes")]
               [(not (surface-typecheck-facts-valid? facts))

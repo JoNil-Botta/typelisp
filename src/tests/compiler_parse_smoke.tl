@@ -8,6 +8,7 @@
 (import compiler_diagnostic_tests)
 (import compiler_builtin_ids as cbi)
 (import compiler_intern as ci)
+(import compiler_owned_view as owned_view)
 (import stdlib.io)
 
 (define (compiler-parse-test-decl-origin-start-ok?
@@ -33,9 +34,14 @@
         [(compiler_parse_core.ResultAstProgram.Ok
             (ast.AstProgram.Program decls-box))
           (let
-            [decls : ast.AstDeclList (__tl-box-place decls-box)]
-            [tail1 : ast.AstDeclList (ast.ast-decl-list-tail decls)]
-            [tail2 : ast.AstDeclList (ast.ast-decl-list-tail tail1)]
+            [decls : ast.AstDeclList
+              (ast.ast-decl-list-box-shared-view decls-box)]
+            [tail1 : ast.AstDeclList
+              (ast.ast-decl-list-tail
+                (owned_view.compiler-owned-shared-view decls))]
+            [tail2 : ast.AstDeclList
+              (ast.ast-decl-list-tail
+                (owned_view.compiler-owned-shared-view tail1))]
             [replacement : ast.AstDeclList (ast.ast-decl-list-with-capacity 3)]
             [alias1 : ast.AstDeclList (ast.ast-decl-list-with-capacity 3)]
             [alias2 : ast.AstDeclList (ast.ast-decl-list-with-capacity 3)]
@@ -57,7 +63,7 @@
               (compiler_parse_core.compiler-parse-decl-origin-register-list-aliases!
                 (& alias1)
                 0
-                replacement)
+                (owned_view.compiler-owned-shared-view replacement))
               (ast.ast-decl-list-append-from (&mut alias2) (& alias1) 0)
               (compiler_parse_core.compiler-parse-decl-origin-register-list-aliases!
                 (& alias2)
@@ -188,7 +194,7 @@
         index
         expected-count
         expected-kind
-        expected-name
+        (owned_view.compiler-owned-shared-view expected-name)
         start-line
         start-col
         end-line
@@ -273,7 +279,8 @@
         [(compiler_parse_core.ResultAstProgram.Ok
             (ast.AstProgram.Program decls-box))
           (let
-            [decls : ast.AstDeclList (__tl-box-place decls-box)]
+            [decls : ast.AstDeclList
+              (ast.ast-decl-list-box-shared-view decls-box)]
             (set!
               ok
               (and
@@ -609,7 +616,8 @@
         [(compiler_parse_core.ResultAstProgram.Ok
             (ast.AstProgram.Program decls-box))
           (let
-            [decls : ast.AstDeclList (__tl-box-place decls-box)]
+            [decls : ast.AstDeclList
+              (ast.ast-decl-list-box-shared-view decls-box)]
             (set!
               ok
               (and
@@ -669,8 +677,11 @@
         [(compiler_parse_core.ResultAstProgram.Ok
             (ast.AstProgram.Program decls-box))
           (let
-            [decls : ast.AstDeclList (__tl-box-place decls-box)]
-            [tail : ast.AstDeclList (ast.ast-decl-list-tail decls)]
+            [decls : ast.AstDeclList
+              (ast.ast-decl-list-box-shared-view decls-box)]
+            [tail : ast.AstDeclList
+              (ast.ast-decl-list-tail
+                (owned_view.compiler-owned-shared-view decls))]
             [alias : ast.AstDeclList (ast.ast-decl-list-with-capacity 1)]
             [generated : ast.AstDeclList (ast.ast-decl-list-with-capacity 2)]
             (begin
@@ -746,11 +757,13 @@
         [(compiler_parse_core.ResultAstProgram.Ok
             (ast.AstProgram.Program decls-box))
           (let
-            [decls : ast.AstDeclList (__tl-box-place decls-box)]
+            [decls : ast.AstDeclList
+              (ast.ast-decl-list-box-shared-view decls-box)]
             (match (ast.ast-decl-list-get (& decls) 0 (ast.ast-decl-fallback))
               [(ast.AstDecl.ModuleBody _ body-box)
                 (let
-                  [body : ast.AstDeclList (__tl-box-place body-box)]
+                  [body : ast.AstDeclList
+                    (ast.ast-decl-list-box-shared-view body-box)]
                   (set!
                     ok
                     (and
@@ -833,7 +846,8 @@
         [(compiler_parse_core.ResultAstProgram.Ok
             (ast.AstProgram.Program decls-box))
           (let
-            [decls : ast.AstDeclList (__tl-box-place decls-box)]
+            [decls : ast.AstDeclList
+              (ast.ast-decl-list-box-shared-view decls-box)]
             (begin
               (set!
                 ok
@@ -869,7 +883,7 @@
     [(compiler_parse_core.ResultAstProgram.Ok
         (ast.AstProgram.Program decls-box))
       (let
-        [decls : ast.AstDeclList (__tl-box-place decls-box)]
+        [decls : ast.AstDeclList (ast.ast-decl-list-box-shared-view decls-box)]
         (match (ast.ast-decl-list-get (& decls) 0 (ast.ast-decl-fallback))
           [(ast.AstDecl.DefStruct decl-meta _ _ _ fields)
             (let
@@ -903,7 +917,7 @@
     [(compiler_parse_core.ResultAstProgram.Ok
         (ast.AstProgram.Program decls-box))
       (let
-        [decls : ast.AstDeclList (__tl-box-place decls-box)]
+        [decls : ast.AstDeclList (ast.ast-decl-list-box-shared-view decls-box)]
         (and
           (match (ast.ast-decl-list-get (& decls) 0 (ast.ast-decl-fallback))
             [(ast.AstDecl.Module name)
@@ -930,7 +944,7 @@
                   (& params)
                   0
                   (ast.ast-param-fallback))
-                  [(ast.AstParam.Param param ty _ _)
+                  [(ast.AstParam.Param param ty _)
                     (and
                       (compiler-parse-test-name-id? param "parsed-param")
                       (match ty
@@ -997,7 +1011,7 @@
     [(compiler_parse_core.ResultAstProgramDiagnostic.Ok
         (ast.AstProgram.Program decls-box))
       (let
-        [decls : ast.AstDeclList (__tl-box-place decls-box)]
+        [decls : ast.AstDeclList (ast.ast-decl-list-box-shared-view decls-box)]
         (match (ast.ast-decl-list-step decls)
           [(ast.AstDeclListStep.Cons
               (ast.AstDecl.Import
@@ -1040,7 +1054,7 @@
     [intern-state : ci.InternCompatState (ci.intern-compat-state-new)]
     [parse-state : compiler_parse_core.CompilerParseState
       (compiler_parse_core.compiler-parse-state-new-with-intern-state
-        intern-state)]
+        (owned_view.compiler-owned-shared-view intern-state))]
     [pools : ast.AstNodePoolContext
       (ast.ast-node-pool-context-new-with-capacities 64 32)]
     [first-len : i64 0]
@@ -1050,15 +1064,16 @@
       ;; The temporary driver bridge seeds builtins through the installed
       ;; globals. Explicit lexing must capture that scalar advance, then publish
       ;; each file's new count so the next file cannot rewind the same owner.
-      (ci.intern-compat-state-install! intern-state)
+      (ci.intern-compat-state-install!
+        (owned_view.compiler-owned-shared-view intern-state))
       (cbi.compiler-builtin-reset!)
       (cbi.compiler-builtin-initialize-for-parse!)
       (set!
         ok
         (compiler-parse-state-source-ok?
           "(define (first-owner-fn [first-owner-param : i64]) : i64 first-owner-param)"
-          parse-state
-          pools))
+          (owned_view.compiler-owned-shared-view parse-state)
+          (owned_view.compiler-owned-shared-view pools)))
       (set! first-len (ci.intern-compat-state-pool-len intern-state))
       (set!
         ok
@@ -1067,8 +1082,8 @@
           (= first-len (ci.intern-pool-len))
           (compiler-parse-state-source-ok?
             "(define (second-owner-fn [second-owner-param : i64]) : i64 (+ second-owner-param 1))"
-            parse-state
-            pools)))
+            (owned_view.compiler-owned-shared-view parse-state)
+            (owned_view.compiler-owned-shared-view pools))))
       (set! second-len (ci.intern-compat-state-pool-len intern-state))
       (set!
         ok
@@ -1090,14 +1105,16 @@
     (begin
       ;; Seed fixed builtin IDs identically in both inactive owners, then leave
       ;; the active table as a decoy while lexing and parsing through A and B.
-      (ci.intern-compat-state-install! state-a)
+      (ci.intern-compat-state-install!
+        (owned_view.compiler-owned-shared-view state-a))
       (cbi.compiler-builtin-reset!)
       (cbi.compiler-builtin-initialize-for-parse!)
-      (ci.intern-compat-state-capture-from-globals! state-a)
-      (ci.intern-compat-state-install! state-b)
+      (ci.intern-compat-state-capture-from-globals! (&mut state-a))
+      (ci.intern-compat-state-install!
+        (owned_view.compiler-owned-shared-view state-b))
       (cbi.compiler-builtin-reset!)
       (cbi.compiler-builtin-initialize-for-parse!)
-      (ci.intern-compat-state-capture-from-globals! state-b)
+      (ci.intern-compat-state-capture-from-globals! (&mut state-b))
       (ci.intern-compat-state-install! home)
       (cbi.compiler-builtin-reset!)
       (cbi.compiler-builtin-initialize-for-parse!)
@@ -1107,10 +1124,10 @@
         [active-len-before : i64 (ci.intern-pool-len)]
         [parse-state-a : compiler_parse_core.CompilerParseState
           (compiler_parse_core.compiler-parse-state-new-with-intern-state
-            state-a)]
+            (owned_view.compiler-owned-shared-view state-a))]
         [parse-state-b : compiler_parse_core.CompilerParseState
           (compiler_parse_core.compiler-parse-state-new-with-intern-state
-            state-b)]
+            (owned_view.compiler-owned-shared-view state-b))]
         [pools-a : ast.AstNodePoolContext
           (ast.ast-node-pool-context-new-with-capacities 64 32)]
         [pools-b : ast.AstNodePoolContext
@@ -1121,15 +1138,15 @@
             (compiler-parse-state-diagnostic-message
               "owner-a.tl"
               "(defmacro (bad [T : type (:owner-a)]) : Module unit)"
-              parse-state-a
-              pools-a))
+              (owned_view.compiler-owned-shared-view parse-state-a)
+              (owned_view.compiler-owned-shared-view pools-a)))
           (set!
             message-b
             (compiler-parse-state-diagnostic-message
               "owner-b.tl"
               "(defmacro (bad [T : type (:owner-b)]) : Module unit)"
-              parse-state-b
-              pools-b))
+              (owned_view.compiler-owned-shared-view parse-state-b)
+              (owned_view.compiler-owned-shared-view pools-b)))
           (set!
             ok
             (and
@@ -1189,23 +1206,23 @@
   [edit : diagnostic.CompilerDiagnosticTextEdit]) : diagnostic.CompilerDiagnosticMaybeString
   (let
     [span : diagnostic.CompilerDiagnosticSpan
-      (diagnostic.compiler-diagnostic-text-edit-span edit)]
+      (diagnostic.compiler-diagnostic-text-edit-span (clone edit))]
     [start : i64
       (compiler-diagnostic-test-source-position-index
-        source
+        (clone source)
         (diagnostic.compiler-diagnostic-span-start-line span)
         (diagnostic.compiler-diagnostic-span-start-col span))]
     [end : i64
       (compiler-diagnostic-test-source-position-index
-        source
+        (clone source)
         (diagnostic.compiler-diagnostic-span-end-line span)
         (diagnostic.compiler-diagnostic-span-end-col span))]
-    [source-len : i64 (string.string-length source)]
+    [source-len : i64 (string.string-length (clone source))]
     (if (or (< start 0) (< end start))
       CompilerDiagnosticNoString
       (CompilerDiagnosticSomeString
         (str_cat.str-cat
-          (string.substring source 0 start)
+          (string.substring (clone source) 0 start)
           (diagnostic.compiler-diagnostic-text-edit-replacement edit)
           (string.substring source end (- source-len end)))))))
 
@@ -1238,7 +1255,7 @@
             (diagnostic.CompilerDiagnosticSpan "other.tl" 2 3 2 5)
             "λ")))]
     [diag : diagnostic.CompilerDiagnostic
-      (diagnostic.compiler-diagnostic-with-fix plain fix)]
+      (diagnostic.compiler-diagnostic-with-fix (clone plain) fix)]
     [copied : diagnostic.CompilerDiagnostic
       (diagnostic.compiler-diagnostic-copy diag)]
     [moved : diagnostic.CompilerDiagnostic
@@ -1254,12 +1271,14 @@
       (= fixes.len 1)
       (let
         [copied-fix : diagnostic.CompilerDiagnosticFix
-          (array-ref fixes.slots 0)]
+          (owned_view.compiler-owned-array-element-shared-view fixes.slots 0)]
         [edits : diagnostic.CompilerDiagnosticTextEditSeq
-          (diagnostic.compiler-diagnostic-fix-edits copied-fix)]
+          (diagnostic.compiler-diagnostic-fix-edits
+            (owned_view.compiler-owned-shared-view copied-fix))]
         (and
           (string.eq
-            (diagnostic.compiler-diagnostic-fix-title copied-fix)
+            (diagnostic.compiler-diagnostic-fix-title
+              (owned_view.compiler-owned-shared-view copied-fix))
             "Apply both edits")
           (match (diagnostic.compiler-diagnostic-fix-applicability copied-fix)
             [CompilerDiagnosticMachineApplicable true]
@@ -1267,13 +1286,17 @@
           (= edits.len 2)
           (let
             [first : diagnostic.CompilerDiagnosticTextEdit
-              (array-ref edits.slots 0)]
+              (owned_view.compiler-owned-array-element-shared-view
+                edits.slots
+                0)]
             [second : diagnostic.CompilerDiagnosticTextEdit
-              (array-ref edits.slots 1)]
+              (owned_view.compiler-owned-array-element-shared-view
+                edits.slots
+                1)]
             [first-span : diagnostic.CompilerDiagnosticSpan
-              (diagnostic.compiler-diagnostic-text-edit-span first)]
+              (diagnostic.compiler-diagnostic-text-edit-span (clone first))]
             [second-span : diagnostic.CompilerDiagnosticSpan
-              (diagnostic.compiler-diagnostic-text-edit-span second)]
+              (diagnostic.compiler-diagnostic-text-edit-span (clone second))]
             (and
               (string.eq
                 (diagnostic.compiler-diagnostic-span-path first-span)
@@ -1296,7 +1319,7 @@
       (diagnostic.compiler-diagnostic-simple "invalid.tl" 1 1 "invalid")]
     [unknown : diagnostic.CompilerDiagnostic
       (diagnostic.compiler-diagnostic-with-fix
-        base
+        (clone base)
         (diagnostic.compiler-diagnostic-fix-new
           "Unknown span"
           CompilerDiagnosticMachineApplicable

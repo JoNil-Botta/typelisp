@@ -5,7 +5,9 @@
 (import stdlib.str_cat)
 (import stdlib.string)
 
-(define (embedded-stdlib-verify-line-end [manifest : String] [start : i64]) : i64
+(define (embedded-stdlib-verify-line-end
+  [manifest : (& manifest str)]
+  [start : i64]) : i64
   (let
     [index : i64 start]
     [length : i64 (string.string-length manifest)]
@@ -21,11 +23,12 @@
       (string.substring line 0 (- length 1))
       line)))
 
-(define (embedded-stdlib-verify-one [suffix : String]) : bool
+(define (embedded-stdlib-verify-one [suffix : (& suffix str)]) : bool
   (let
     [expected : String
       (byte_buf.to-string (io.read-file (str_cat.str-cat "stdlib/" suffix)))]
-    (match (embedded.compiler-embedded-stdlib-lookup suffix)
+    (match (embedded.compiler-embedded-stdlib-lookup
+      (string.substring suffix 0 (string.string-length suffix)))
       [(embedded.CompilerEmbeddedStdlibSomeSource actual)
         (string.eq expected actual)]
       [(embedded.CompilerEmbeddedStdlibNoSource) false])))
@@ -34,7 +37,7 @@
   (if (>= start (string.string-length manifest))
     true
     (let
-      [end : i64 (embedded-stdlib-verify-line-end manifest start)]
+      [end : i64 (embedded-stdlib-verify-line-end (& manifest) start)]
       [line : String
         (embedded-stdlib-verify-trim-cr
           (string.substring manifest start (- end start)))]
@@ -43,7 +46,9 @@
           (+ end 1)
           end)]
       (if (and
-        (or (= (string.string-length line) 0) (embedded-stdlib-verify-one line))
+        (or
+          (= (string.string-length line) 0)
+          (embedded-stdlib-verify-one (& line)))
         (embedded-stdlib-verify-lines manifest next))
         true
         (begin

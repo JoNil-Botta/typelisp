@@ -24,8 +24,8 @@
           (ptr-read (int->ptr (cast handle : u64) : (Ptr (__tl_dyn-array i64)))))))))
 
 (define (masked-cache-copy
-  [source : (__tl_dyn-array i64)]
-  [destination : (__tl_dyn-array i64)]) : unit
+  [source : (& source (__tl_dyn-array i64))]
+  [destination : (&mut destination (__tl_dyn-array i64))]) : unit
   (foreach
     ([i : i64 0 4])
     (set!
@@ -36,7 +36,7 @@
           (- (array-ref source i) 1))
         (if (< i 0)
           (array-ref source i)
-          7)))))
+          (cast 7 : i64))))))
 
 (cfg
   linux
@@ -60,7 +60,7 @@
               (begin
                 (write-i64! source-data 17)
                 (write-i64! (+ source-data 8) 29)
-                (masked-cache-copy source destination)
+                (masked-cache-copy (& source) (&mut destination))
                 (let
                   [source-free : i64
                     (unsafe

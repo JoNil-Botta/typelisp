@@ -94,7 +94,7 @@
       (compiler_diagnostic.compiler-diagnostic-simple "leaf.tl" 7 22 "source")]
     [fallback : compiler_diagnostic.CompilerDiagnostic
       (compiler_diagnostic.compiler-diagnostic-with-fallback-path
-        unlocated
+        (clone unlocated)
         "root.tl")]
     [preserved : compiler_diagnostic.CompilerDiagnostic
       (compiler_diagnostic.compiler-diagnostic-with-fallback-path
@@ -159,7 +159,9 @@
           "has note")
         "generated identity: generated:demo")]
     [source-out : String
-      (compiler_diagnostic.compiler-diagnostic-render-source diag "a\nb\n")]
+      (compiler_diagnostic.compiler-diagnostic-render-source
+        (clone diag)
+        "a\nb\n")]
     (and
       (string.eq
         (compiler_diagnostic.compiler-diagnostic-render diag)
@@ -270,7 +272,9 @@
     [uncoded : compiler_diagnostic.CompilerDiagnostic
       (compiler_diagnostic.compiler-diagnostic-simple "none.tl" 1 1 "none")]
     [coded : compiler_diagnostic.CompilerDiagnostic
-      (compiler_diagnostic.compiler-diagnostic-with-code uncoded "E1234")]
+      (compiler_diagnostic.compiler-diagnostic-with-code
+        (clone uncoded)
+        "E1234")]
     (and
       (string.eq
         (compiler_diagnostic.compiler-diagnostic-code-or-empty uncoded)
@@ -284,17 +288,17 @@
     [base : compiler_diagnostic.CompilerDiagnostic
       (compiler_diagnostic.compiler-diagnostic-simple "dense.tl" 1 1 "base")]
     [note-one : compiler_diagnostic.CompilerDiagnostic
-      (compiler_diagnostic.compiler-diagnostic-with-note base "one")]
+      (compiler_diagnostic.compiler-diagnostic-with-note (clone base) "one")]
     [note-two : compiler_diagnostic.CompilerDiagnostic
-      (compiler_diagnostic.compiler-diagnostic-with-note note-one "two")]
+      (compiler_diagnostic.compiler-diagnostic-with-note (clone note-one) "two")]
     [label-one : compiler_diagnostic.CompilerDiagnostic
       (compiler_diagnostic.compiler-diagnostic-with-secondary
-        base
+        (clone base)
         (compiler_diagnostic.CompilerDiagnosticSpan "one.tl" 1 1 1 2)
         compiler_diagnostic.CompilerDiagnosticNoString)]
     [label-two : compiler_diagnostic.CompilerDiagnostic
       (compiler_diagnostic.compiler-diagnostic-with-secondary
-        label-one
+        (clone label-one)
         (compiler_diagnostic.CompilerDiagnosticSpan "two.tl" 2 1 2 2)
         compiler_diagnostic.CompilerDiagnosticNoString)]
     [base-notes : compiler_diagnostic.CompilerDiagnosticNoteList
@@ -362,18 +366,21 @@
           (compiler_diagnostic.compiler-diagnostic-list-count
             single-diagnostics)
           1)
-        (= (compiler_diagnostic.compiler-diagnostic-list-count diagnostics) 3)
+        (=
+          (compiler_diagnostic.compiler-diagnostic-list-count
+            (clone diagnostics))
+          3)
         (=
           (compiler_diagnostic.compiler-diagnostic-line
-            (compiler_diagnostic.compiler-diagnostic-list-get diagnostics 0))
+            (compiler_diagnostic.compiler-diagnostic-list-ref (& diagnostics) 0))
           1)
         (=
           (compiler_diagnostic.compiler-diagnostic-line
-            (compiler_diagnostic.compiler-diagnostic-list-get diagnostics 1))
+            (compiler_diagnostic.compiler-diagnostic-list-ref (& diagnostics) 1))
           2)
         (=
           (compiler_diagnostic.compiler-diagnostic-line
-            (compiler_diagnostic.compiler-diagnostic-list-get diagnostics 2))
+            (compiler_diagnostic.compiler-diagnostic-list-ref (& diagnostics) 2))
           3)))))
 
 ;; Pin every classifier row against a real message from the typechecker, using

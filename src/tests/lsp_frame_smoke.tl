@@ -14,6 +14,7 @@
 (import compiler_diagnostic as cdiag)
 (import compiler_semantic_index as semantic_index)
 (import compiler_typecheck_core as tc_core)
+(import compiler_owned_view as owned_view)
 (import format_rules)
 (import lint_core)
 (import lsp_frame_core)
@@ -148,11 +149,13 @@
   [version : i64]) : lsp_vector_families.LspServerState
   (let
     [normalized : String (lsp_frame_core.lsp-normalized-absolute-path path)]
-    [uri : String (lsp_frame_core.lsp-resolved-path-to-file-uri normalized)]
+    [uri : String
+      (lsp_frame_core.lsp-resolved-path-to-file-uri
+        (owned_view.compiler-owned-shared-view normalized))]
     [docs : lsp_document_vec.Vec
       (lsp_frame_core.lsp-documents-set-versioned
-        state.documents
-        uri
+        (owned_view.compiler-owned-shared-view state.documents)
+        (owned_view.compiler-owned-shared-view uri)
         normalized
         text
         version
@@ -171,7 +174,9 @@
   (let
     [uri : String (lsp_frame_core.lsp-resolved-path-to-file-uri path)]
     [docs : lsp_document_vec.Vec
-      (lsp_frame_core.lsp-documents-remove state.documents uri)]
+      (lsp_frame_core.lsp-documents-remove
+        (owned_view.compiler-owned-shared-view state.documents)
+        (owned_view.compiler-owned-shared-view uri))]
     (match (lsp_frame_core.lsp-server-state-refresh-document-result
       state
       (lsp_frame_core.LspDocumentHandleResult.Continue docs)
@@ -237,17 +242,17 @@
     uri))
 
 (define (lsp-smoke-string-vec-contains?
-  [items : lsp_svec.Vec]
-  [needle : String]) : bool
+  [items : (& items lsp_svec.Vec)]
+  [needle : (& needle str)]) : bool
   (let
     [idx : i64 0]
     [found : bool false]
     (begin
-      (while (< idx (lsp_svec.len (& items)))
-        (if (string.eq (lsp_svec.get (& items) idx "") needle)
+      (while (< idx (lsp_svec.len items))
+        (if (string.eq (lsp_svec.get items idx "") needle)
           (begin
             (set! found true)
-            (set! idx (lsp_svec.len (& items))))
+            (set! idx (lsp_svec.len items)))
           (set! idx (+ idx 1))))
       found)))
 
@@ -271,7 +276,9 @@
       (not (lsp-smoke-string-vec-contains? builtins "box-get"))
       (lsp-smoke-string-vec-contains? types "i64"))))
 
-(define (lsp-smoke-index-of [haystack : String] [needle : String]) : i64
+(define (lsp-smoke-index-of
+  [haystack : (& haystack str)]
+  [needle : (& needle str)]) : i64
   (let
     [n : i64 (string.string-length haystack)]
     [m : i64 (string.string-length needle)]
@@ -279,9 +286,7 @@
     [found : i64 -1]
     (begin
       (while (and (< i n) (< found 0))
-        (if (and
-          (<= (+ i m) n)
-          (string.is-string-prefix-at (& haystack) (& needle) i))
+        (if (and (<= (+ i m) n) (string.is-string-prefix-at haystack needle i))
           (set! found i)
           (set! i (+ i 1))))
       found)))
@@ -298,11 +303,13 @@
   (lsp_frame_core.lsp-frame-run-transcript (& input) (lsp_svec.new) false))
 
 (define (lsp-transcript-result-contains?
-  [result : lsp_frame_core.LspTranscriptResult]
-  [needle : String]) : bool
-  (string.contains (& result.stdout) (& needle)))
+  [result : (& result lsp_frame_core.LspTranscriptResult)]
+  [needle : (& needle str)]) : bool
+  (string.contains result.stdout needle))
 
-(define (lsp-smoke-count-substring [text : String] [needle : String]) : i64
+(define (lsp-smoke-count-substring
+  [text : (& text str)]
+  [needle : (& needle str)]) : i64
   (let
     [text-len : i64 (string.string-length text)]
     [needle-len : i64 (string.string-length needle)]
@@ -310,7 +317,7 @@
     [count : i64 0]
     (begin
       (while (<= (+ index needle-len) text-len)
-        (if (string.is-string-prefix-at (& text) (& needle) index)
+        (if (string.is-string-prefix-at text needle index)
           (begin
             (set! count (+ count 1))
             (set! index (+ index needle-len)))
@@ -361,7 +368,7 @@
       (str_cat.str-cat
         (lsp-transcript-frame initialize)
         (lsp-transcript-frame shutdown)
-        (lsp-transcript-frame exit))]
+        (lsp-transcript-frame (owned_view.compiler-owned-shared-view exit)))]
     [ordered : lsp_frame_core.LspTranscriptResult (lsp-transcript-run input)]
     [out : String ordered.stdout]
     [first-id : String "\"id\":41"]
@@ -437,12 +444,39 @@
     [exit : String "{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}"]
     [input : String
       (str_cat.str-cat
-        (lsp-transcript-frame (lsp-transcript-did-open uri valid-source))
-        (lsp-transcript-frame (lsp-transcript-signature-help uri 101 2 9))
-        (lsp-transcript-frame (lsp-transcript-signature-help uri 102 2 9))
-        (lsp-transcript-frame (lsp-transcript-did-change uri partial-source 2))
-        (lsp-transcript-frame (lsp-transcript-signature-help uri 103 2 9))
-        (lsp-transcript-frame (lsp-transcript-signature-help uri 104 99 0))
+        (lsp-transcript-frame
+          (lsp-transcript-did-open
+            (owned_view.compiler-owned-shared-view uri)
+            valid-source))
+        (lsp-transcript-frame
+          (lsp-transcript-signature-help
+            (owned_view.compiler-owned-shared-view uri)
+            101
+            2
+            9))
+        (lsp-transcript-frame
+          (lsp-transcript-signature-help
+            (owned_view.compiler-owned-shared-view uri)
+            102
+            2
+            9))
+        (lsp-transcript-frame
+          (lsp-transcript-did-change
+            (owned_view.compiler-owned-shared-view uri)
+            partial-source
+            2))
+        (lsp-transcript-frame
+          (lsp-transcript-signature-help
+            (owned_view.compiler-owned-shared-view uri)
+            103
+            2
+            9))
+        (lsp-transcript-frame
+          (lsp-transcript-signature-help
+            (owned_view.compiler-owned-shared-view uri)
+            104
+            99
+            0))
         (lsp-transcript-frame exit))]
     [result : lsp_frame_core.LspTranscriptResult (lsp-transcript-run input)]
     [signature : String "\"label\":\"(add [left : i64] [right : i64]) : i64\""]
@@ -470,7 +504,10 @@
     [exit : String "{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}"]
     [input : String
       (str_cat.str-cat
-        (lsp-transcript-frame (lsp-transcript-did-open uri text))
+        (lsp-transcript-frame
+          (lsp-transcript-did-open
+            (owned_view.compiler-owned-shared-view uri)
+            (owned_view.compiler-owned-shared-view text)))
         (lsp-transcript-frame (lsp-transcript-check uri id))
         (lsp-transcript-frame exit))]
     (lsp-transcript-run input)))
@@ -482,9 +519,15 @@
     [valid-source : String "(define (same) : i64 1)"]
     [invalid-source : String "(define (same) : i64 true)"]
     [first : lsp_frame_core.LspTranscriptResult
-      (lsp-transcript-check-session uri valid-source 71)]
+      (lsp-transcript-check-session
+        (owned_view.compiler-owned-shared-view uri)
+        valid-source
+        71)]
     [second : lsp_frame_core.LspTranscriptResult
-      (lsp-transcript-check-session uri invalid-source 72)]
+      (lsp-transcript-check-session
+        (owned_view.compiler-owned-shared-view uri)
+        invalid-source
+        72)]
     [exit : String "{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}"]
     [missing-input : String
       (str_cat.str-cat
@@ -504,6 +547,8 @@
       (lsp-transcript-result-contains? missing unreadable)
       (not lsp_frame_core.lsp-frame-memory-active)
       (= lsp_frame_core.lsp-document-cache-arena 0)
+      ;; Every transcript retires its standalone compiler arena. Its cold
+      ;; spanned parse sidecars must be truncated before that arena is gone.
       (= (reader.sp-node-pool-len) 0))))
 
 (define (lsp-multiple-diagnostics-smoke-ok?) : bool
@@ -552,9 +597,11 @@
     [dep-b-path : String "target/lsp_multi_dep_b.tl"]
     [root-uri : String (lsp_frame_core.lsp-resolved-path-to-file-uri root-path)]
     [dep-a-uri : String
-      (lsp_frame_core.lsp-resolved-path-to-file-uri dep-a-path)]
+      (lsp_frame_core.lsp-resolved-path-to-file-uri
+        (owned_view.compiler-owned-shared-view dep-a-path))]
     [dep-b-uri : String
-      (lsp_frame_core.lsp-resolved-path-to-file-uri dep-b-path)]
+      (lsp_frame_core.lsp-resolved-path-to-file-uri
+        (owned_view.compiler-owned-shared-view dep-b-path))]
     [source : String
       "(import lsp_multi_dep_a)\\n(import lsp_multi_dep_b)\\n(define (main) : i64 0)"]
     [valid-source : String "(define (main) : i64 0)"]
@@ -568,7 +615,10 @@
       (let
         [input : String
           (str_cat.str-cat
-            (lsp-transcript-frame (lsp-transcript-did-open root-uri source))
+            (lsp-transcript-frame
+              (lsp-transcript-did-open
+                (owned_view.compiler-owned-shared-view root-uri)
+                source))
             (lsp-transcript-frame
               (lsp-transcript-did-change root-uri valid-source 2))
             (lsp-transcript-frame exit))]
@@ -632,7 +682,9 @@
           [hints : json.JsonSeq
             (lsp_frame_core.lsp-inlay-build inlay-state src 0 0)]
           [rendered : String
-            (json.stringify (lsp_frame_core.lsp-json-array hints))]
+            (json.stringify
+              (lsp_frame_core.lsp-json-array
+                (owned_view.compiler-owned-shared-view hints)))]
           [type-label : String "\": i64\""]
           [total-pos : String "\"character\":33"]
           [next-pos : String "\"character\":59"]
@@ -659,7 +711,7 @@
     [open : String
       (lsp_frame_core.lsp-str7
         "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\""
-        uri
+        (owned_view.compiler-owned-shared-view uri)
         "\",\"languageId\":\"typelisp\",\"version\":1,\"text\":"
         (json.stringify (json.JsonString source))
         "}}}"
@@ -690,12 +742,16 @@
 (define (lsp-formatting-smoke-ok?) : bool
   (let
     [messy : String "(define   (f)  :  i64   (+ 1   2))"]
-    (match (format_rules.format-rules-render-source-width-result messy 80)
+    (match (format_rules.format-rules-render-source-width-result
+      (owned_view.compiler-owned-shared-view messy)
+      80)
       [(ResultFormatString.Ok formatted)
         (let
           [rendered : String
             (json.stringify
-              (lsp_frame_core.lsp-formatting-edit messy formatted))]
+              (lsp_frame_core.lsp-formatting-edit
+                messy
+                (owned_view.compiler-owned-shared-view formatted)))]
           [sig : String "(define (f) : i64"]
           [newtext-key : String "\"newText\""]
           [range-key : String "\"range\""]
@@ -709,8 +765,12 @@
   (let
     [messy : String "(define   (f)  :  i64   (+ 1   2))"]
     [invalid : String "(define (f) : i64"]
-    [formatted : String (lsp_frame_core.lsp-format-edit-text messy)]
-    [fallback : String (lsp_frame_core.lsp-format-edit-text invalid)]
+    [formatted : String
+      (lsp_frame_core.lsp-format-edit-text
+        (owned_view.compiler-owned-shared-view messy))]
+    [fallback : String
+      (lsp_frame_core.lsp-format-edit-text
+        (owned_view.compiler-owned-shared-view invalid))]
     [sig : String "(define (f) : i64"]
     (and
       (string.contains (& formatted) (& sig))
@@ -745,7 +805,7 @@
         (tc_core.tc-inlay-hints-enable-for-state! inlay-state)
         (match (check_core.compiler-check-source-with-roots-and-cfg-and-job-state
           "test.tl"
-          src
+          (owned_view.compiler-owned-shared-view src)
           (lsp_svec.new)
           (check_core.compiler-check-language-cfgs)
           job-state)
@@ -805,21 +865,24 @@
     [docs1 : lsp_document_vec.Vec
       (lsp_frame_core.lsp-documents-set
         docs0
-        uri
-        path
+        (owned_view.compiler-owned-shared-view uri)
+        (owned_view.compiler-owned-shared-view path)
         ""
-        (lsp_frame_core.lsp-diagnostic-uris-single uri))]
+        (lsp_frame_core.lsp-diagnostic-uris-single
+          (owned_view.compiler-owned-shared-view uri)))]
     [doc1 : lsp_vector_families.LspDocument
       (lsp_document_vec.get (& docs1) 0 (lsp_frame_core.lsp-document-fallback))]
     [empty-decls : lsp_decl_vec.Vec
-      (lsp_frame_core.lsp-document-decls doc1 docs1)]
+      (lsp_frame_core.lsp-document-decls
+        (owned_view.compiler-owned-shared-view doc1)
+        (owned_view.compiler-owned-shared-view docs1))]
     [cached-empty-doc : lsp_vector_families.LspDocument
       (lsp_document_vec.get (& docs1) 0 (lsp_frame_core.lsp-document-fallback))]
     [docs2 : lsp_document_vec.Vec
       (lsp_frame_core.lsp-documents-set
         docs1
-        uri
-        path
+        (owned_view.compiler-owned-shared-view uri)
+        (owned_view.compiler-owned-shared-view path)
         ""
         (lsp_frame_core.lsp-diagnostic-uris-single "diag"))]
     [same-text-doc : lsp_vector_families.LspDocument
@@ -834,7 +897,9 @@
     [changed-doc : lsp_vector_families.LspDocument
       (lsp_document_vec.get (& docs3) 0 (lsp_frame_core.lsp-document-fallback))]
     [changed-decls : lsp_decl_vec.Vec
-      (lsp_frame_core.lsp-document-decls changed-doc docs3)]
+      (lsp_frame_core.lsp-document-decls
+        (owned_view.compiler-owned-shared-view changed-doc)
+        (owned_view.compiler-owned-shared-view docs3))]
     [cached-changed-doc : lsp_vector_families.LspDocument
       (lsp_document_vec.get (& docs3) 0 (lsp_frame_core.lsp-document-fallback))]
     (and
@@ -850,7 +915,9 @@
   (let
     [dir : String "target"]
     [path : String "target/lsp_disk_resync_smoke.tl"]
-    [uri : String (lsp_frame_core.lsp-resolved-path-to-file-uri path)]
+    [uri : String
+      (lsp_frame_core.lsp-resolved-path-to-file-uri
+        (owned_view.compiler-owned-shared-view path))]
     [stale-text : String "(define stale : i64 0)"]
     [disk-text : String "(define fresh : i64 1)"]
     [overlay-text : String "(define overlay : i64 2)"]
@@ -859,24 +926,31 @@
     [params : json.Json
       (lsp_frame_core.lsp-json-object1
         "textDocument"
-        (lsp_frame_core.lsp-json-object1 "uri" (json.JsonString uri)))]
+        (lsp_frame_core.lsp-json-object1
+          "uri"
+          (json.JsonString (owned_view.compiler-owned-shared-view uri))))]
     [docs : lsp_document_vec.Vec (lsp_document_vec.new)]
     (begin
       (match (fs.try-mkdir-if-missing (& dir))
         [(io.OkIoUnit) unit]
         [(io.ErrIoUnit _) unit])
-      (lsp-smoke-write-text path disk-text)
+      (lsp-smoke-write-text
+        (owned_view.compiler-owned-shared-view path)
+        disk-text)
       (set!
         docs
         (lsp_frame_core.lsp-documents-set
           docs
-          uri
-          path
+          (owned_view.compiler-owned-shared-view uri)
+          (owned_view.compiler-owned-shared-view path)
           stale-text
-          (lsp_frame_core.lsp-diagnostic-uris-single uri)))
+          (lsp_frame_core.lsp-diagnostic-uris-single
+            (owned_view.compiler-owned-shared-view uri))))
       (let
         [lookup-ok : bool
-          (match (lsp_frame_core.lsp-get-document params docs)
+          (match (lsp_frame_core.lsp-get-document
+            (owned_view.compiler-owned-shared-view params)
+            (owned_view.compiler-owned-shared-view docs))
             [(lsp_frame_core.LspDocumentLookup.Found _ text _)
               (string.contains (& text) (& fresh-name))]
             [(lsp_frame_core.LspDocumentLookup.Missing) false])]
@@ -890,7 +964,9 @@
             (string.contains (& cached-doc.text) (& fresh-name))
             (not cached-doc.decls-valid))]
         [decls-ok : bool
-          (match (lsp_frame_core.lsp-get-document-decls params docs)
+          (match (lsp_frame_core.lsp-get-document-decls
+            (owned_view.compiler-owned-shared-view params)
+            (owned_view.compiler-owned-shared-view docs))
             [(lsp_frame_core.LspDocumentDeclsLookup.Found _ text _ decls)
               (let
                 [entry : lsp_vector_families.LspDeclEntry
@@ -911,18 +987,23 @@
         [versioned-docs : lsp_document_vec.Vec
           (lsp_frame_core.lsp-documents-set-versioned
             (lsp_document_vec.new)
-            uri
-            path
-            overlay-text
+            (owned_view.compiler-owned-shared-view uri)
+            (owned_view.compiler-owned-shared-view path)
+            (owned_view.compiler-owned-shared-view overlay-text)
             7
-            (lsp_frame_core.lsp-diagnostic-uris-single uri))]
+            (lsp_frame_core.lsp-diagnostic-uris-single
+              (owned_view.compiler-owned-shared-view uri)))]
         [versioned-lookup-ok : bool
-          (match (lsp_frame_core.lsp-get-document params versioned-docs)
+          (match (lsp_frame_core.lsp-get-document
+            (owned_view.compiler-owned-shared-view params)
+            (owned_view.compiler-owned-shared-view versioned-docs))
             [(lsp_frame_core.LspDocumentLookup.Found _ text _)
               (string.contains (& text) (& overlay-name))]
             [(lsp_frame_core.LspDocumentLookup.Missing) false])]
         [versioned-decls-ok : bool
-          (match (lsp_frame_core.lsp-get-document-decls params versioned-docs)
+          (match (lsp_frame_core.lsp-get-document-decls
+            (owned_view.compiler-owned-shared-view params)
+            (owned_view.compiler-owned-shared-view versioned-docs))
             [(lsp_frame_core.LspDocumentDeclsLookup.Found _ text _ decls)
               (let
                 [entry : lsp_vector_families.LspDeclEntry
@@ -955,26 +1036,30 @@
   (let
     [dir : String "target"]
     [path : String "target/lsp_edit_save_doc_smoke.tl"]
-    [uri : String (lsp_frame_core.lsp-resolved-path-to-file-uri path)]
+    [uri : String
+      (lsp_frame_core.lsp-resolved-path-to-file-uri
+        (owned_view.compiler-owned-shared-view path))]
     [initial : String "(define (main) : i64 1)"]
     [updated : String "(define (main) : i64 42)"]
     [docs : lsp_document_vec.Vec
       (lsp_frame_core.lsp-documents-set
         (lsp_document_vec.new)
-        uri
-        path
+        (owned_view.compiler-owned-shared-view uri)
+        (owned_view.compiler-owned-shared-view path)
         initial
-        (lsp_frame_core.lsp-diagnostic-uris-single uri))]
+        (lsp_frame_core.lsp-diagnostic-uris-single
+          (owned_view.compiler-owned-shared-view uri)))]
     (begin
       (match (fs.try-mkdir-if-missing (& dir))
         [(io.OkIoUnit) unit]
         [(io.ErrIoUnit _) unit])
       (match (lsp_frame_core.lsp-tl-save-doc
         docs
-        uri
-        path
-        (lsp_frame_core.lsp-diagnostic-uris-single uri)
-        updated)
+        (owned_view.compiler-owned-shared-view uri)
+        (owned_view.compiler-owned-shared-view path)
+        (lsp_frame_core.lsp-diagnostic-uris-single
+          (owned_view.compiler-owned-shared-view uri))
+        (owned_view.compiler-owned-shared-view updated))
         [(lsp_frame_core.LspSaveResult.Ok next-docs)
           (let
             [disk-text : String (byte_buf.to-string (io.read-file path))]
@@ -1076,8 +1161,8 @@
       "[{\"range\":{\"start\":{\"line\":11,\"character\":11},\"end\":{\"line\":11,\"character\":15}},\"kind\":1},{\"range\":{\"start\":{\"line\":12,\"character\":22},\"end\":{\"line\":12,\"character\":26}},\"kind\":2}]"]
     [capability : String "\"documentHighlightProvider\":true"]
     (match (semantic_index.compiler-check-source-index-with-roots
-      path
-      source
+      (owned_view.compiler-owned-shared-view path)
+      (owned_view.compiler-owned-shared-view source)
       (lsp_svec.new))
       [(semantic_index.ResultCompilerCheckWithSemanticIndex.Partial _ partial)
         (begin
@@ -1091,9 +1176,9 @@
             (lsp_frame_core.lsp-documents-set-semantic-index
               (lsp_frame_core.lsp-documents-set-versioned
                 (lsp_document_vec.new)
-                uri
-                path
-                source
+                (owned_view.compiler-owned-shared-view uri)
+                (owned_view.compiler-owned-shared-view path)
+                (owned_view.compiler-owned-shared-view source)
                 1
                 (lsp_frame_core.lsp-diagnostic-uris-empty))
               uri
@@ -1107,27 +1192,45 @@
           [top-results : lsp_frame_core.LspDocumentHighlightResults
             (lsp_frame_core.lsp-document-highlights-at
               (& doc)
-              (lsp_frame_core.lsp-offset-at-position source 7 22))]
+              (lsp_frame_core.lsp-offset-at-position
+                (owned_view.compiler-owned-shared-view source)
+                7
+                22))]
           [local-results : lsp_frame_core.LspDocumentHighlightResults
             (lsp_frame_core.lsp-document-highlights-at
               (& doc)
-              (lsp_frame_core.lsp-offset-at-position source 6 33))]
+              (lsp_frame_core.lsp-offset-at-position
+                (owned_view.compiler-owned-shared-view source)
+                6
+                33))]
           [slot-results : lsp_frame_core.LspDocumentHighlightResults
             (lsp_frame_core.lsp-document-highlights-at
               (& doc)
-              (lsp_frame_core.lsp-offset-at-position source 1 16))]
+              (lsp_frame_core.lsp-offset-at-position
+                (owned_view.compiler-owned-shared-view source)
+                1
+                16))]
           [wrap-results : lsp_frame_core.LspDocumentHighlightResults
             (lsp_frame_core.lsp-document-highlights-at
               (& doc)
-              (lsp_frame_core.lsp-offset-at-position source 12 23))]
+              (lsp_frame_core.lsp-offset-at-position
+                (owned_view.compiler-owned-shared-view source)
+                12
+                23))]
           [comment-results : lsp_frame_core.LspDocumentHighlightResults
             (lsp_frame_core.lsp-document-highlights-at
               (& doc)
-              (lsp_frame_core.lsp-offset-at-position source 8 3))]
+              (lsp_frame_core.lsp-offset-at-position
+                (owned_view.compiler-owned-shared-view source)
+                8
+                3))]
           [string-results : lsp_frame_core.LspDocumentHighlightResults
             (lsp_frame_core.lsp-document-highlights-at
               (& doc)
-              (lsp_frame_core.lsp-offset-at-position source 9 24))]
+              (lsp_frame_core.lsp-offset-at-position
+                (owned_view.compiler-owned-shared-view source)
+                9
+                24))]
           [record-count : i64
             (semantic_index.compiler-semantic-source-index-len
               (& doc.semantic.index))]
@@ -1201,8 +1304,11 @@
         (match data
           [(json.JsonArray boxed-items)
             (let
-              [items : json.JsonSeq (__tl-box-place boxed-items)]
-              [length : i64 (json.list-count items)]
+              [items : json.JsonSeq
+                (owned_view.compiler-owned-reference-shared-view
+                  (& (__tl-box-place boxed-items)))]
+              [length : i64
+                (json.list-count (owned_view.compiler-owned-shared-view items))]
               [index : i64 0]
               [line : i64 0]
               [start : i64 0]
@@ -1215,15 +1321,26 @@
               (begin
                 (while (<= (+ index 4) (- length 1))
                   (let
-                    [delta-line : i64 (lsp-semantic-token-json-i64 items index)]
+                    [delta-line : i64
+                      (lsp-semantic-token-json-i64
+                        (owned_view.compiler-owned-shared-view items)
+                        index)]
                     [delta-start : i64
-                      (lsp-semantic-token-json-i64 items (+ index 1))]
+                      (lsp-semantic-token-json-i64
+                        (owned_view.compiler-owned-shared-view items)
+                        (+ index 1))]
                     [token-length : i64
-                      (lsp-semantic-token-json-i64 items (+ index 2))]
+                      (lsp-semantic-token-json-i64
+                        (owned_view.compiler-owned-shared-view items)
+                        (+ index 2))]
                     [token-type : i64
-                      (lsp-semantic-token-json-i64 items (+ index 3))]
+                      (lsp-semantic-token-json-i64
+                        (owned_view.compiler-owned-shared-view items)
+                        (+ index 3))]
                     [modifiers : i64
-                      (lsp-semantic-token-json-i64 items (+ index 4))]
+                      (lsp-semantic-token-json-i64
+                        (owned_view.compiler-owned-shared-view items)
+                        (+ index 4))]
                     (begin
                       (if (or
                         (< delta-line 0)
@@ -1245,14 +1362,14 @@
                         (set! ok false)
                         unit)
                       (match (lsp_frame_core.lsp-offset-at-position-checked
-                        source
+                        (owned_view.compiler-owned-shared-view source)
                         line
                         start)
                         [(lsp_frame_core.LspOffsetLookup.Missing)
                           (set! ok false)]
                         [(lsp_frame_core.LspOffsetLookup.Found _) unit])
                       (match (lsp_frame_core.lsp-offset-at-position-checked
-                        source
+                        (owned_view.compiler-owned-shared-view source)
                         line
                         (+ start token-length))
                         [(lsp_frame_core.LspOffsetLookup.Missing)
@@ -1279,7 +1396,7 @@
         (lsp_document_vec.new)
         uri
         path
-        source
+        (owned_view.compiler-owned-shared-view source)
         1
         (lsp_frame_core.lsp-diagnostic-uris-empty))]
     [doc : lsp_vector_families.LspDocument
@@ -1287,15 +1404,21 @@
     [_utf16 : unit (lsp_frame_core.lsp-position-encoding-use-utf16!)]
     [utf16-result : json.Json
       (lsp_frame_core.lsp-semantic-tokens-for-document (& doc))]
-    [utf16-rendered : String (json.stringify utf16-result)]
+    [utf16-rendered : String
+      (json.stringify (owned_view.compiler-owned-shared-view utf16-result))]
     [utf16-decoded : LspSemanticTokenDecode
-      (lsp-semantic-token-decode utf16-result source)]
+      (lsp-semantic-token-decode
+        utf16-result
+        (owned_view.compiler-owned-shared-view source))]
     [_utf8 : unit (lsp_frame_core.lsp-position-encoding-use-utf8!)]
     [utf8-result : json.Json
       (lsp_frame_core.lsp-semantic-tokens-for-document (& doc))]
-    [utf8-rendered : String (json.stringify utf8-result)]
+    [utf8-rendered : String
+      (json.stringify (owned_view.compiler-owned-shared-view utf8-result))]
     [utf8-decoded : LspSemanticTokenDecode
-      (lsp-semantic-token-decode utf8-result source)]
+      (lsp-semantic-token-decode
+        utf8-result
+        (owned_view.compiler-owned-shared-view source))]
     (begin
       (lsp_frame_core.lsp-position-encoding-use-utf16!)
       (and
@@ -1326,8 +1449,8 @@
       "\"tokenModifiers\":[\"declaration\",\"definition\",\"readonly\",\"defaultLibrary\"]"]
     [provider : String "\"semanticTokensProvider\""]
     (match (semantic_index.compiler-check-source-index-with-roots
-      path
-      source
+      (owned_view.compiler-owned-shared-view path)
+      (owned_view.compiler-owned-shared-view source)
       (lsp_svec.new))
       [(semantic_index.ResultCompilerCheckWithSemanticIndex.Err _) false]
       [(semantic_index.ResultCompilerCheckWithSemanticIndex.Partial _ partial)
@@ -1341,12 +1464,12 @@
             (lsp_frame_core.lsp-documents-set-semantic-index
               (lsp_frame_core.lsp-documents-set-versioned
                 (lsp_document_vec.new)
-                uri
-                path
-                source
+                (owned_view.compiler-owned-shared-view uri)
+                (owned_view.compiler-owned-shared-view path)
+                (owned_view.compiler-owned-shared-view source)
                 1
                 (lsp_frame_core.lsp-diagnostic-uris-empty))
-              uri
+              (owned_view.compiler-owned-shared-view uri)
               1
               index)]
           [doc : lsp_vector_families.LspDocument
@@ -1359,14 +1482,16 @@
           [repeated-result : json.Json
             (lsp_frame_core.lsp-semantic-tokens-for-document (& doc))]
           [decoded : LspSemanticTokenDecode
-            (lsp-semantic-token-decode semantic-result source)]
+            (lsp-semantic-token-decode
+              (owned_view.compiler-owned-shared-view semantic-result)
+              (owned_view.compiler-owned-shared-view source))]
           [changed-source : String "(define changed : i64 7) ; stale Pair"]
           [changed-docs : lsp_document_vec.Vec
             (lsp_frame_core.lsp-documents-set-versioned
               docs
-              uri
-              path
-              changed-source
+              (owned_view.compiler-owned-shared-view uri)
+              (owned_view.compiler-owned-shared-view path)
+              (owned_view.compiler-owned-shared-view changed-source)
               2
               (lsp_frame_core.lsp-diagnostic-uris-empty))]
           [changed-doc : lsp_vector_families.LspDocument
@@ -1377,7 +1502,9 @@
           [stale-result : json.Json
             (lsp_frame_core.lsp-semantic-tokens-for-document (& changed-doc))]
           [stale-decoded : LspSemanticTokenDecode
-            (lsp-semantic-token-decode stale-result changed-source)]
+            (lsp-semantic-token-decode
+              stale-result
+              (owned_view.compiler-owned-shared-view changed-source))]
           [all-types : i64 (- (shl 1 13) 1)]
           [semantic-only-types : i64 (- (shl 1 8) 1)]
           [ok : bool
@@ -1518,9 +1645,9 @@
     [first-sibling : String
       "{\"startLine\":0,\"startCharacter\":1,\"endLine\":1,\"endCharacter\":0}"]
     (and
-      (= (json.list-count nested) depth)
+      (= (json.list-count (owned_view.compiler-owned-shared-view nested)) depth)
       (string.eq (lsp-fold-first-json nested) outermost)
-      (= (json.list-count wide) depth)
+      (= (json.list-count (owned_view.compiler-owned-shared-view wide)) depth)
       (string.eq (lsp-fold-first-json wide) first-sibling))))
 
 (define (lsp-call-context-deep-source [depth : i64]) : String
@@ -1559,7 +1686,7 @@
     (and
       (lsp_frame_core.lsp-call-context-is?
         (lsp_frame_core.lsp-call-context-at-offset
-          deep
+          (owned_view.compiler-owned-shared-view deep)
           (string.string-length deep))
         deep-form
         (+ deep-form 1)
@@ -1567,14 +1694,14 @@
         0)
       (lsp_frame_core.lsp-call-context-is?
         (lsp_frame_core.lsp-call-context-at-offset
-          wide
+          (owned_view.compiler-owned-shared-view wide)
           (string.string-length wide))
         wide-form
         (+ wide-form 1)
         (+ wide-form 7)
         1)
       (lsp_frame_core.lsp-completion-context-at-end-is?
-        deep
+        (owned_view.compiler-owned-shared-view deep)
         0
         (string.string-length deep)
         (string.string-length deep)
@@ -1585,7 +1712,7 @@
         deep-form
         0)
       (lsp_frame_core.lsp-completion-context-at-end-is?
-        wide
+        (owned_view.compiler-owned-shared-view wide)
         0
         (string.string-length wide)
         (string.string-length wide)
@@ -1610,7 +1737,10 @@
       (set!
         utf16-before-space
         (lsp_frame_core.lsp-call-context-is?
-          (lsp_frame_core.lsp-call-context-at-position source 0 9)
+          (lsp_frame_core.lsp-call-context-at-position
+            (owned_view.compiler-owned-shared-view source)
+            0
+            9)
           3
           4
           8
@@ -1618,7 +1748,10 @@
       (set!
         utf16-after-space
         (lsp_frame_core.lsp-call-context-is?
-          (lsp_frame_core.lsp-call-context-at-position source 0 10)
+          (lsp_frame_core.lsp-call-context-at-position
+            (owned_view.compiler-owned-shared-view source)
+            0
+            10)
           3
           4
           8
@@ -1627,7 +1760,10 @@
       (set!
         utf8-before-space
         (lsp_frame_core.lsp-call-context-is?
-          (lsp_frame_core.lsp-call-context-at-position source 0 12)
+          (lsp_frame_core.lsp-call-context-at-position
+            (owned_view.compiler-owned-shared-view source)
+            0
+            12)
           3
           4
           8
@@ -1635,7 +1771,10 @@
       (set!
         utf8-after-space
         (lsp_frame_core.lsp-call-context-is?
-          (lsp_frame_core.lsp-call-context-at-position source 0 13)
+          (lsp_frame_core.lsp-call-context-at-position
+            (owned_view.compiler-owned-shared-view source)
+            0
+            13)
           3
           4
           8
@@ -1679,8 +1818,14 @@
     [input : String
       (str_cat.str-cat
         (lsp-transcript-frame initialize)
-        (lsp-transcript-frame (lsp-transcript-did-open uri source))
-        (lsp-transcript-frame (lsp-transcript-semantic-tokens uri 83))
+        (lsp-transcript-frame
+          (lsp-transcript-did-open
+            (owned_view.compiler-owned-shared-view uri)
+            source))
+        (lsp-transcript-frame
+          (lsp-transcript-semantic-tokens
+            (owned_view.compiler-owned-shared-view uri)
+            83))
         (lsp-transcript-frame (lsp-transcript-semantic-tokens missing-uri 85))
         (lsp-transcript-frame missing-params)
         (lsp-transcript-frame exit))]
@@ -1709,8 +1854,14 @@
     [exit : String "{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}"]
     [input : String
       (str_cat.str-cat
-        (lsp-transcript-frame (lsp-transcript-did-open uri source))
-        (lsp-transcript-frame (lsp-transcript-folding-range uri 81))
+        (lsp-transcript-frame
+          (lsp-transcript-did-open
+            (owned_view.compiler-owned-shared-view uri)
+            source))
+        (lsp-transcript-frame
+          (lsp-transcript-folding-range
+            (owned_view.compiler-owned-shared-view uri)
+            81))
         (lsp-transcript-frame (lsp-transcript-folding-range missing-uri 82))
         (lsp-transcript-frame exit))]
     [result : lsp_frame_core.LspTranscriptResult (lsp-transcript-run input)]
@@ -1735,12 +1886,12 @@
       (lsp-transcript-run
         (str_cat.str-cat
           (lsp-transcript-frame missing)
-          (lsp-transcript-frame exit)))]
+          (lsp-transcript-frame (owned_view.compiler-owned-shared-view exit))))]
     [utf8-result : lsp_frame_core.LspTranscriptResult
       (lsp-transcript-run
         (str_cat.str-cat
           (lsp-transcript-frame offered)
-          (lsp-transcript-frame exit)))]
+          (lsp-transcript-frame (owned_view.compiler-owned-shared-view exit))))]
     [fallback-result : lsp_frame_core.LspTranscriptResult
       (lsp-transcript-run
         (str_cat.str-cat
@@ -1764,18 +1915,46 @@
       (lsp_frame_core.lsp-position-encoding-use-utf16!)
       (let
         [after-two : lsp_frame_core.LspLineCol
-          (lsp_frame_core.lsp-line-col-at-offset source 3)]
+          (lsp_frame_core.lsp-line-col-at-offset
+            (owned_view.compiler-owned-shared-view source)
+            3)]
         [after-three : lsp_frame_core.LspLineCol
-          (lsp_frame_core.lsp-line-col-cache-at-offset! (&mut cache) source 6)]
+          (lsp_frame_core.lsp-line-col-cache-at-offset!
+            (&mut cache)
+            (owned_view.compiler-owned-shared-view source)
+            6)]
         [after-four : lsp_frame_core.LspLineCol
-          (lsp_frame_core.lsp-line-col-cache-at-offset! (&mut cache) source 10)]
+          (lsp_frame_core.lsp-line-col-cache-at-offset!
+            (&mut cache)
+            (owned_view.compiler-owned-shared-view source)
+            10)]
         (set!
           utf16-ok
           (and
-            (= (lsp_frame_core.lsp-offset-at-position source 0 2) 3)
-            (= (lsp_frame_core.lsp-offset-at-position source 0 3) 6)
-            (= (lsp_frame_core.lsp-offset-at-position source 0 4) 10)
-            (= (lsp_frame_core.lsp-offset-at-position source 0 5) 10)
+            (=
+              (lsp_frame_core.lsp-offset-at-position
+                (owned_view.compiler-owned-shared-view source)
+                0
+                2)
+              3)
+            (=
+              (lsp_frame_core.lsp-offset-at-position
+                (owned_view.compiler-owned-shared-view source)
+                0
+                3)
+              6)
+            (=
+              (lsp_frame_core.lsp-offset-at-position
+                (owned_view.compiler-owned-shared-view source)
+                0
+                4)
+              10)
+            (=
+              (lsp_frame_core.lsp-offset-at-position
+                (owned_view.compiler-owned-shared-view source)
+                0
+                5)
+              10)
             (= after-two.col 3)
             (= after-three.col 4)
             (= after-four.col 6))))
@@ -1783,17 +1962,40 @@
       (set! cache (lsp_frame_core.LspLineColCache -1 1 1))
       (let
         [after-two : lsp_frame_core.LspLineCol
-          (lsp_frame_core.lsp-line-col-at-offset source 3)]
+          (lsp_frame_core.lsp-line-col-at-offset
+            (owned_view.compiler-owned-shared-view source)
+            3)]
         [after-three : lsp_frame_core.LspLineCol
-          (lsp_frame_core.lsp-line-col-cache-at-offset! (&mut cache) source 6)]
+          (lsp_frame_core.lsp-line-col-cache-at-offset!
+            (&mut cache)
+            (owned_view.compiler-owned-shared-view source)
+            6)]
         [after-four : lsp_frame_core.LspLineCol
-          (lsp_frame_core.lsp-line-col-cache-at-offset! (&mut cache) source 10)]
+          (lsp_frame_core.lsp-line-col-cache-at-offset!
+            (&mut cache)
+            (owned_view.compiler-owned-shared-view source)
+            10)]
         (set!
           utf8-ok
           (and
-            (= (lsp_frame_core.lsp-offset-at-position source 0 3) 3)
-            (= (lsp_frame_core.lsp-offset-at-position source 0 6) 6)
-            (= (lsp_frame_core.lsp-offset-at-position source 0 10) 10)
+            (=
+              (lsp_frame_core.lsp-offset-at-position
+                (owned_view.compiler-owned-shared-view source)
+                0
+                3)
+              3)
+            (=
+              (lsp_frame_core.lsp-offset-at-position
+                (owned_view.compiler-owned-shared-view source)
+                0
+                6)
+              6)
+            (=
+              (lsp_frame_core.lsp-offset-at-position
+                (owned_view.compiler-owned-shared-view source)
+                0
+                10)
+              10)
             (= after-two.col 4)
             (= after-three.col 7)
             (= after-four.col 11))))
@@ -1816,7 +2018,10 @@
       (set!
         utf16-rendered
         (json.stringify
-          (lsp_frame_core.lsp-range-from-compiler-span "" source span)))
+          (lsp_frame_core.lsp-range-from-compiler-span
+            ""
+            (owned_view.compiler-owned-shared-view source)
+            (owned_view.compiler-owned-shared-view span))))
       (lsp_frame_core.lsp-position-encoding-use-utf8!)
       (set!
         utf8-rendered
@@ -1847,19 +2052,38 @@
   (let
     [path-a : String "target/code_action_a.tl"]
     [path-b : String "target/code_action_b.tl"]
-    [uri-a : String (lsp_frame_core.lsp-resolved-path-to-file-uri path-a)]
-    [uri-b : String (lsp_frame_core.lsp-resolved-path-to-file-uri path-b)]
+    [uri-a : String
+      (lsp_frame_core.lsp-resolved-path-to-file-uri
+        (owned_view.compiler-owned-shared-view path-a))]
+    [uri-b : String
+      (lsp_frame_core.lsp-resolved-path-to-file-uri
+        (owned_view.compiler-owned-shared-view path-b))]
     [docs : lsp_document_vec.Vec (lsp_document_vec.new)]
     [edits : cdiag.CompilerDiagnosticTextEditSeq
       (lsp-code-action-edit-seq
         (cdiag.compiler-diagnostic-text-edit-new
-          (cdiag.CompilerDiagnosticSpan path-a 1 3 1 6)
+          (cdiag.CompilerDiagnosticSpan
+            (owned_view.compiler-owned-shared-view path-a)
+            1
+            3
+            1
+            6)
           "bar")
         (cdiag.compiler-diagnostic-text-edit-new
-          (cdiag.CompilerDiagnosticSpan path-a 2 1 2 2)
+          (cdiag.CompilerDiagnosticSpan
+            (owned_view.compiler-owned-shared-view path-a)
+            2
+            1
+            2
+            2)
           "y")
         (cdiag.compiler-diagnostic-text-edit-new
-          (cdiag.CompilerDiagnosticSpan path-b 1 1 1 2)
+          (cdiag.CompilerDiagnosticSpan
+            (owned_view.compiler-owned-shared-view path-b)
+            1
+            1
+            1
+            2)
           "z"))]
     [missing-edits : cdiag.CompilerDiagnosticTextEditSeq
       (cdiag.compiler-diagnostic-text-edit-single
@@ -1872,8 +2096,8 @@
         docs
         (lsp_frame_core.lsp-documents-set-versioned
           docs
-          uri-a
-          path-a
+          (owned_view.compiler-owned-shared-view uri-a)
+          (owned_view.compiler-owned-shared-view path-a)
           "λfoo\nx"
           7
           (lsp_frame_core.lsp-diagnostic-uris-empty)))
@@ -1881,15 +2105,18 @@
         docs
         (lsp_frame_core.lsp-documents-set-versioned
           docs
-          uri-b
-          path-b
+          (owned_view.compiler-owned-shared-view uri-b)
+          (owned_view.compiler-owned-shared-view path-b)
           "q"
           9
           (lsp_frame_core.lsp-diagnostic-uris-empty)))
       (let
         [rendered : String
           (json.stringify
-            (lsp_frame_core.lsp-code-action-workspace-edit docs path-a edits))]
+            (lsp_frame_core.lsp-code-action-workspace-edit
+              (owned_view.compiler-owned-shared-view docs)
+              (owned_view.compiler-owned-shared-view path-a)
+              (owned_view.compiler-owned-shared-view edits)))]
         [utf-range : String
           "\"start\":{\"line\":0,\"character\":1},\"end\":{\"line\":0,\"character\":4}"]
         [first-version : String "\"version\":7"]
@@ -1899,24 +2126,32 @@
         [unversioned : lsp_document_vec.Vec
           (lsp_frame_core.lsp-documents-set
             (lsp_document_vec.new)
-            uri-a
-            path-a
+            (owned_view.compiler-owned-shared-view uri-a)
+            (owned_view.compiler-owned-shared-view path-a)
             "λfoo\nx"
             (lsp_frame_core.lsp-diagnostic-uris-empty))]
         (and
-          (lsp_frame_core.lsp-code-action-all-edits-open? docs path-a edits)
+          (lsp_frame_core.lsp-code-action-all-edits-open?
+            (owned_view.compiler-owned-shared-view docs)
+            (owned_view.compiler-owned-shared-view path-a)
+            (owned_view.compiler-owned-shared-view edits))
           (not
             (lsp_frame_core.lsp-code-action-all-edits-open?
-              docs
-              path-a
-              missing-edits))
+              (owned_view.compiler-owned-shared-view docs)
+              (owned_view.compiler-owned-shared-view path-a)
+              (owned_view.compiler-owned-shared-view missing-edits)))
           (not
             (lsp_frame_core.lsp-code-action-all-edits-open?
-              unversioned
-              path-a
+              (owned_view.compiler-owned-shared-view unversioned)
+              (owned_view.compiler-owned-shared-view path-a)
               (cdiag.compiler-diagnostic-text-edit-single
                 (cdiag.compiler-diagnostic-text-edit-new
-                  (cdiag.CompilerDiagnosticSpan path-a 1 3 1 6)
+                  (cdiag.CompilerDiagnosticSpan
+                    (owned_view.compiler-owned-shared-view path-a)
+                    1
+                    3
+                    1
+                    6)
                   "bar"))))
           (string.contains (& rendered) (& uri-a))
           (string.contains (& rendered) (& uri-b))
@@ -1965,7 +2200,11 @@
         "end"
         (lsp_frame_core.lsp-position 1 2))]
     [diagnostic : json.Json
-      (lsp_frame_core.lsp-lint-finding-diagnostic text 3 0 finding)]
+      (lsp_frame_core.lsp-lint-finding-diagnostic
+        (owned_view.compiler-owned-shared-view text)
+        3
+        0
+        (owned_view.compiler-owned-shared-view finding))]
     [diagnostics : json.JsonSeq
       (lsp_frame_core.lsp-json-list-cons diagnostic (json.list-empty))]
     [edit-rendered : String
@@ -1974,7 +2213,7 @@
           "file:///lint.tl"
           3
           text
-          finding))]
+          (owned_view.compiler-owned-shared-view finding)))]
     [directive : String "\"newText\":\"  ;; lint-allow: single-begin\\n\""]
     [insertion : String
       "\"start\":{\"line\":1,\"character\":0},\"end\":{\"line\":1,\"character\":0}"]
@@ -1985,8 +2224,8 @@
         [findings : lint_core.LintFindings (lint_core.LintFindings slots 2)]
         (and
           (match (lsp_frame_core.lsp-code-action-find-diagnostic-from
-            diagnostics
-            request-range
+            (owned_view.compiler-owned-shared-view diagnostics)
+            (owned_view.compiler-owned-shared-view request-range)
             3
             "lint"
             0
@@ -1994,8 +2233,8 @@
             [(lsp_frame_core.LspJsonValue.Found _) true]
             [(lsp_frame_core.LspJsonValue.Missing) false])
           (match (lsp_frame_core.lsp-code-action-find-diagnostic-from
-            diagnostics
-            cursor-range
+            (owned_view.compiler-owned-shared-view diagnostics)
+            (owned_view.compiler-owned-shared-view cursor-range)
             3
             "lint"
             0
@@ -2003,8 +2242,8 @@
             [(lsp_frame_core.LspJsonValue.Found _) true]
             [(lsp_frame_core.LspJsonValue.Missing) false])
           (match (lsp_frame_core.lsp-code-action-find-diagnostic-from
-            diagnostics
-            adjacent-range
+            (owned_view.compiler-owned-shared-view diagnostics)
+            (owned_view.compiler-owned-shared-view adjacent-range)
             3
             "lint"
             0
@@ -2012,8 +2251,8 @@
             [(lsp_frame_core.LspJsonValue.Found _) false]
             [(lsp_frame_core.LspJsonValue.Missing) true])
           (match (lsp_frame_core.lsp-code-action-find-diagnostic-from
-            diagnostics
-            request-range
+            (owned_view.compiler-owned-shared-view diagnostics)
+            (owned_view.compiler-owned-shared-view request-range)
             4
             "lint"
             0
@@ -2021,8 +2260,8 @@
             [(lsp_frame_core.LspJsonValue.Found _) false]
             [(lsp_frame_core.LspJsonValue.Missing) true])
           (match (lsp_frame_core.lsp-code-action-find-diagnostic-from
-            diagnostics
-            far-range
+            (owned_view.compiler-owned-shared-view diagnostics)
+            (owned_view.compiler-owned-shared-view far-range)
             3
             "lint"
             0
@@ -2030,8 +2269,8 @@
             [(lsp_frame_core.LspJsonValue.Found _) false]
             [(lsp_frame_core.LspJsonValue.Missing) true])
           (lsp_frame_core.lsp-code-action-lint-duplicate-before?
-            findings
-            finding
+            (owned_view.compiler-owned-shared-view findings)
+            (owned_view.compiler-owned-shared-view finding)
             1)
           (string.eq (lsp_frame_core.lsp-code-action-newline "a\r\nb") "\r\n")
           (string.contains (& edit-rendered) (& directive))
@@ -2049,15 +2288,15 @@
     [range-prefix : String
       (lsp_frame_core.lsp-str5
         "\"},\"range\":{\"start\":{\"line\":"
-        line-text
+        (owned_view.compiler-owned-shared-view line-text)
         ",\"character\":3},\"end\":{\"line\":"
-        line-text
+        (owned_view.compiler-owned-shared-view line-text)
         ",\"character\":4}},\"context\":{\"diagnostics\":[{\"range\":{\"start\":{\"line\":")]
     [range-suffix : String
       (lsp_frame_core.lsp-str5
-        line-text
+        (owned_view.compiler-owned-shared-view line-text)
         ",\"character\":3},\"end\":{\"line\":"
-        line-text
+        (owned_view.compiler-owned-shared-view line-text)
         ",\"character\":4}},\"severity\":1,\"source\":\"typelisp\",\"code\":\"E0201\",\"message\":\"opaque\",\"data\":{\"version\":"
         (string.int->string version))]
     (lsp_frame_core.lsp-str7
@@ -2085,13 +2324,34 @@
     [exit : String "{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}"]
     [input : String
       (str_cat.str-cat
-        (lsp-transcript-frame (lsp-transcript-did-open uri source))
         (lsp-transcript-frame
-          (lsp-transcript-code-action uri 91 1 4 0 "quickfix"))
+          (lsp-transcript-did-open
+            (owned_view.compiler-owned-shared-view uri)
+            source))
         (lsp-transcript-frame
-          (lsp-transcript-code-action uri 92 0 4 0 "quickfix"))
+          (lsp-transcript-code-action
+            (owned_view.compiler-owned-shared-view uri)
+            91
+            1
+            4
+            0
+            "quickfix"))
         (lsp-transcript-frame
-          (lsp-transcript-code-action uri 93 1 4 0 "refactor"))
+          (lsp-transcript-code-action
+            (owned_view.compiler-owned-shared-view uri)
+            92
+            0
+            4
+            0
+            "quickfix"))
+        (lsp-transcript-frame
+          (lsp-transcript-code-action
+            (owned_view.compiler-owned-shared-view uri)
+            93
+            1
+            4
+            0
+            "refactor"))
         (lsp-transcript-frame exit))]
     [result : lsp_frame_core.LspTranscriptResult (lsp-transcript-run input)]
     [action : String
@@ -2122,7 +2382,10 @@
     [exit : String "{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}"]
     [input : String
       (str_cat.str-cat
-        (lsp-transcript-frame (lsp-transcript-did-open uri source))
+        (lsp-transcript-frame
+          (lsp-transcript-did-open
+            (owned_view.compiler-owned-shared-view uri)
+            source))
         (lsp-transcript-frame
           (lsp-transcript-code-action uri 94 1 7 1 "quickfix"))
         (lsp-transcript-frame exit))]
@@ -2163,10 +2426,15 @@
     [create-path : String "target/lsp_workspace_index/b/create.tl"]
     [refresh-path : String "target/lsp_workspace_index/b/refresh.tl"]
     [single-path : String "target/lsp_workspace_index/single.tl"]
-    [root-a-uri : String (lsp_frame_core.lsp-resolved-path-to-file-uri root-a)]
+    [root-a-uri : String
+      (lsp_frame_core.lsp-resolved-path-to-file-uri
+        (owned_view.compiler-owned-shared-view root-a))]
     [root-a-src-uri : String
-      (lsp_frame_core.lsp-resolved-path-to-file-uri root-a-src)]
-    [root-b-uri : String (lsp_frame_core.lsp-resolved-path-to-file-uri root-b)]
+      (lsp_frame_core.lsp-resolved-path-to-file-uri
+        (owned_view.compiler-owned-shared-view root-a-src))]
+    [root-b-uri : String
+      (lsp_frame_core.lsp-resolved-path-to-file-uri
+        (owned_view.compiler-owned-shared-view root-b))]
     [workspace-capabilities : String
       (json.stringify (lsp_frame_core.lsp-initialize-result))]
     [workspace-capability : String
@@ -2175,38 +2443,58 @@
     [ok : bool true]
     [_setup : unit
       (begin
-        (lsp-smoke-mkdir base)
-        (lsp-smoke-mkdir root-a)
-        (lsp-smoke-mkdir root-a-src)
-        (lsp-smoke-mkdir root-a-target)
-        (lsp-smoke-mkdir root-a-tests)
-        (lsp-smoke-mkdir root-a-nested)
-        (lsp-smoke-mkdir root-b)
-        (lsp-smoke-remove-file root-a-cycle)
-        (lsp-smoke-remove-file create-path)
-        (lsp-smoke-remove-file refresh-path)
-        (lsp-smoke-write-text disk-path "(define disk-value : i64 1)")
+        (lsp-smoke-mkdir (owned_view.compiler-owned-shared-view base))
+        (lsp-smoke-mkdir (owned_view.compiler-owned-shared-view root-a))
+        (lsp-smoke-mkdir (owned_view.compiler-owned-shared-view root-a-src))
+        (lsp-smoke-mkdir (owned_view.compiler-owned-shared-view root-a-target))
+        (lsp-smoke-mkdir (owned_view.compiler-owned-shared-view root-a-tests))
+        (lsp-smoke-mkdir (owned_view.compiler-owned-shared-view root-a-nested))
+        (lsp-smoke-mkdir (owned_view.compiler-owned-shared-view root-b))
+        (lsp-smoke-remove-file
+          (owned_view.compiler-owned-shared-view root-a-cycle))
+        (lsp-smoke-remove-file
+          (owned_view.compiler-owned-shared-view create-path))
+        (lsp-smoke-remove-file
+          (owned_view.compiler-owned-shared-view refresh-path))
         (lsp-smoke-write-text
-          explicit-path
+          (owned_view.compiler-owned-shared-view disk-path)
+          "(define disk-value : i64 1)")
+        (lsp-smoke-write-text
+          (owned_view.compiler-owned-shared-view explicit-path)
           "(module explicit.mod) (define explicit-value : i64 2)")
         (lsp-smoke-write-text
-          target-path
+          (owned_view.compiler-owned-shared-view target-path)
           "(define ignored-target-value : i64 3)")
-        (lsp-smoke-write-text tests-path "(define ignored-test-value : i64 4)")
-        (lsp-smoke-write-text nested-manifest "")
         (lsp-smoke-write-text
-          nested-path
+          (owned_view.compiler-owned-shared-view tests-path)
+          "(define ignored-test-value : i64 4)")
+        (lsp-smoke-write-text
+          (owned_view.compiler-owned-shared-view nested-manifest)
+          "")
+        (lsp-smoke-write-text
+          (owned_view.compiler-owned-shared-view nested-path)
           "(define ignored-nested-value : i64 5)")
-        (lsp-smoke-write-text b-path "(define b-value : i64 6)")
-        (if (lsp-smoke-make-directory-cycle-link root-a-cycle)
+        (lsp-smoke-write-text
+          (owned_view.compiler-owned-shared-view b-path)
+          "(define b-value : i64 6)")
+        (if (lsp-smoke-make-directory-cycle-link
+          (owned_view.compiler-owned-shared-view root-a-cycle))
           unit
           (begin
             (io.print-error "workspace index smoke: cannot create cycle link\n")
             (set! ok false)))
-        (lsp_svec.push-ref! (&mut roots) root-a-uri)
-        (lsp_svec.push-ref! (&mut roots) root-a-uri)
-        (lsp_svec.push-ref! (&mut roots) root-a-src-uri)
-        (lsp_svec.push-ref! (&mut roots) root-b-uri)
+        (lsp_svec.push-ref!
+          (&mut roots)
+          (owned_view.compiler-owned-shared-view root-a-uri))
+        (lsp_svec.push-ref!
+          (&mut roots)
+          (owned_view.compiler-owned-shared-view root-a-uri))
+        (lsp_svec.push-ref!
+          (&mut roots)
+          (owned_view.compiler-owned-shared-view root-a-src-uri))
+        (lsp_svec.push-ref!
+          (&mut roots)
+          (owned_view.compiler-owned-shared-view root-b-uri))
         (lsp_svec.push-ref! (&mut roots) "https://example.invalid/workspace"))]
     [single-state : lsp_vector_families.LspServerState
       (lsp-smoke-state-with-overlay
@@ -2224,7 +2512,7 @@
               [path : String
                 (lsp_frame_core.lsp-str4
                   "target/lsp_workspace_index/single-"
-                  suffix
+                  (owned_view.compiler-owned-shared-view suffix)
                   ""
                   ".tl")]
               [text : String
@@ -2280,14 +2568,14 @@
           (& state)
           "disk-value"
           "src.disk"
-          root-a-uri
+          (owned_view.compiler-owned-shared-view root-a-uri)
           false
           false)
         (lsp-smoke-state-row-matches?
           (& state)
           "explicit-value"
           "explicit.mod"
-          root-a-uri
+          (owned_view.compiler-owned-shared-view root-a-uri)
           true
           false)
         (= (lsp-smoke-state-name-count (& state) "b-value") 1)
@@ -2308,7 +2596,7 @@
         state
         (lsp-smoke-state-with-overlay
           state
-          disk-path
+          (owned_view.compiler-owned-shared-view disk-path)
           "(define overlay-value : i64 8)"
           2))
       (if (and
@@ -2317,7 +2605,7 @@
           (& state)
           "overlay-value"
           "src.disk"
-          root-a-uri
+          (owned_view.compiler-owned-shared-view root-a-uri)
           false
           true)
         (string.eq (lsp-smoke-state-name-at (& state) 0) "overlay-value"))
@@ -2325,8 +2613,15 @@
         (begin
           (io.print-error "workspace index smoke: open overlay\n")
           (set! ok false)))
-      (lsp-smoke-write-text disk-path "(define watcher-value : i64 9)")
-      (set! state (lsp-smoke-state-watch state disk-path 2))
+      (lsp-smoke-write-text
+        (owned_view.compiler-owned-shared-view disk-path)
+        "(define watcher-value : i64 9)")
+      (set!
+        state
+        (lsp-smoke-state-watch
+          state
+          (owned_view.compiler-owned-shared-view disk-path)
+          2))
       (if (and
         (= (lsp-smoke-state-name-count (& state) "watcher-value") 0)
         (= (lsp-smoke-state-name-count (& state) "overlay-value") 1)
@@ -2335,14 +2630,23 @@
         (begin
           (io.print-error "workspace index smoke: watcher below overlay\n")
           (set! ok false)))
-      (lsp-smoke-remove-file disk-path)
-      (set! state (lsp-smoke-state-watch state disk-path 3))
+      (lsp-smoke-remove-file (owned_view.compiler-owned-shared-view disk-path))
+      (set!
+        state
+        (lsp-smoke-state-watch
+          state
+          (owned_view.compiler-owned-shared-view disk-path)
+          3))
       (if (= (lsp-smoke-state-name-count (& state) "overlay-value") 1)
         unit
         (begin
           (io.print-error "workspace index smoke: delete below overlay\n")
           (set! ok false)))
-      (set! state (lsp-smoke-state-close state disk-path))
+      (set!
+        state
+        (lsp-smoke-state-close
+          state
+          (owned_view.compiler-owned-shared-view disk-path)))
       (if (and
         (= (lsp-smoke-state-name-count (& state) "overlay-value") 0)
         (= (lsp-smoke-state-source-count (& state)) 2))
@@ -2350,15 +2654,29 @@
         (begin
           (io.print-error "workspace index smoke: close missing overlay\n")
           (set! ok false)))
-      (lsp-smoke-write-text create-path "(define created-value : i64 10)")
-      (set! state (lsp-smoke-state-watch state create-path 1))
+      (lsp-smoke-write-text
+        (owned_view.compiler-owned-shared-view create-path)
+        "(define created-value : i64 10)")
+      (set!
+        state
+        (lsp-smoke-state-watch
+          state
+          (owned_view.compiler-owned-shared-view create-path)
+          1))
       (if (= (lsp-smoke-state-name-count (& state) "created-value") 1)
         unit
         (begin
           (io.print-error "workspace index smoke: create event\n")
           (set! ok false)))
-      (lsp-smoke-write-text create-path "(define changed-value : i64 11)")
-      (set! state (lsp-smoke-state-watch state create-path 2))
+      (lsp-smoke-write-text
+        (owned_view.compiler-owned-shared-view create-path)
+        "(define changed-value : i64 11)")
+      (set!
+        state
+        (lsp-smoke-state-watch
+          state
+          (owned_view.compiler-owned-shared-view create-path)
+          2))
       (if (and
         (= (lsp-smoke-state-name-count (& state) "created-value") 0)
         (= (lsp-smoke-state-name-count (& state) "changed-value") 1)
@@ -2371,10 +2689,14 @@
         state
         (lsp-smoke-state-with-overlay
           state
-          create-path
+          (owned_view.compiler-owned-shared-view create-path)
           "(define create-overlay-value : i64 12)"
           3))
-      (set! state (lsp-smoke-state-close state create-path))
+      (set!
+        state
+        (lsp-smoke-state-close
+          state
+          (owned_view.compiler-owned-shared-view create-path)))
       (if (and
         (= (lsp-smoke-state-name-count (& state) "create-overlay-value") 0)
         (= (lsp-smoke-state-name-count (& state) "changed-value") 1))
@@ -2382,15 +2704,28 @@
         (begin
           (io.print-error "workspace index smoke: close restores disk\n")
           (set! ok false)))
-      (lsp-smoke-remove-file create-path)
-      (set! state (lsp-smoke-state-watch state create-path 3))
+      (lsp-smoke-remove-file
+        (owned_view.compiler-owned-shared-view create-path))
+      (set!
+        state
+        (lsp-smoke-state-watch
+          state
+          (owned_view.compiler-owned-shared-view create-path)
+          3))
       (if (= (lsp-smoke-state-name-count (& state) "changed-value") 0)
         unit
         (begin
           (io.print-error "workspace index smoke: delete event\n")
           (set! ok false)))
-      (lsp-smoke-write-text refresh-path "(define refresh-value-0 : i64 13)")
-      (set! state (lsp-smoke-state-watch state refresh-path 1))
+      (lsp-smoke-write-text
+        (owned_view.compiler-owned-shared-view refresh-path)
+        "(define refresh-value-0 : i64 13)")
+      (set!
+        state
+        (lsp-smoke-state-watch
+          state
+          (owned_view.compiler-owned-shared-view refresh-path)
+          1))
       (let
         [iteration : i64 1]
         (while (< iteration 21)
@@ -2402,17 +2737,31 @@
                 (string.int->string iteration)
                 "")]
             [source : String
-              (lsp_frame_core.lsp-str3 "(define " name " : i64 13)")]
+              (lsp_frame_core.lsp-str3
+                "(define "
+                (owned_view.compiler-owned-shared-view name)
+                " : i64 13")]
             (begin
-              (lsp-smoke-write-text refresh-path source)
-              (set! state (lsp-smoke-state-watch state refresh-path 2))
+              (lsp-smoke-write-text
+                (owned_view.compiler-owned-shared-view refresh-path)
+                source)
+              (set!
+                state
+                (lsp-smoke-state-watch
+                  state
+                  (owned_view.compiler-owned-shared-view refresh-path)
+                  2))
               (if (and
                 (not (= owner state.owner-arena))
                 (= (lsp-smoke-state-source-count (& state)) 3)
                 (=
                   (lsp_frame_core.lsp-server-state-declaration-count (& state))
                   3)
-                (= (lsp-smoke-state-name-count (& state) name) 1)
+                (=
+                  (lsp-smoke-state-name-count
+                    (& state)
+                    (owned_view.compiler-owned-shared-view name))
+                  1)
                 (string.eq (lsp-smoke-state-name-at (& state) 2) name))
                 unit
                 (begin
@@ -2423,7 +2772,9 @@
         [added : lsp_svec.Vec (lsp_svec.new)]
         [removed : lsp_svec.Vec (lsp_svec.new)]
         (begin
-          (lsp_svec.push-ref! (&mut removed) root-a-uri)
+          (lsp_svec.push-ref!
+            (&mut removed)
+            (owned_view.compiler-owned-shared-view root-a-uri))
           (set! state (lsp-smoke-state-workspace-event state added removed))))
       (if (and
         (= (lsp-smoke-state-root-count (& state)) 2)
@@ -2432,7 +2783,7 @@
           (& state)
           "explicit-value"
           "explicit.mod"
-          root-a-src-uri
+          (owned_view.compiler-owned-shared-view root-a-src-uri)
           true
           false))
         unit
@@ -2443,7 +2794,9 @@
         [added : lsp_svec.Vec (lsp_svec.new)]
         [removed : lsp_svec.Vec (lsp_svec.new)]
         (begin
-          (lsp_svec.push-ref! (&mut removed) root-b-uri)
+          (lsp_svec.push-ref!
+            (&mut removed)
+            (owned_view.compiler-owned-shared-view root-b-uri))
           (set! state (lsp-smoke-state-workspace-event state added removed))))
       (if (and
         (= (lsp-smoke-state-root-count (& state)) 1)
@@ -2458,7 +2811,9 @@
         [added : lsp_svec.Vec (lsp_svec.new)]
         [removed : lsp_svec.Vec (lsp_svec.new)]
         (begin
-          (lsp_svec.push-ref! (&mut added) root-b-uri)
+          (lsp_svec.push-ref!
+            (&mut added)
+            (owned_view.compiler-owned-shared-view root-b-uri))
           (set! state (lsp-smoke-state-workspace-event state added removed))))
       (if (and
         (= (lsp-smoke-state-root-count (& state)) 2)
@@ -2472,7 +2827,9 @@
       (let
         [fallback-roots : lsp_svec.Vec (lsp_svec.new)]
         [fallback-state : lsp_vector_families.LspServerState
-          (lsp-smoke-initialize-state fallback-roots root-b-uri)]
+          (lsp-smoke-initialize-state
+            fallback-roots
+            (owned_view.compiler-owned-shared-view root-b-uri))]
         (begin
           (if (and
             (= (lsp-smoke-state-root-count (& fallback-state)) 1)

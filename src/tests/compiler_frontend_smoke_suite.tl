@@ -17,17 +17,18 @@
 (import compiler_embedded_stdlib as embedded_stdlib)
 (import doc_test)
 (import compiler_builtin_ids as cbi)
+(import compiler_owned_view as owned_view)
 
 (define (compiler-ctfe-source-parity-value-eq?
   [a : compiler_ctfe.CompilerCtfeValue]
   [b : compiler_ctfe.CompilerCtfeValue]
-  [env : compiler_ctfe.CtfeEnv]) : bool
+  [env : (& env compiler_ctfe.CtfeEnv)]) : bool
   (match (compiler_ctfe.ctfe-apply-binop
     (ast.AstBinOp.Eq)
     a
     b
     (ast.AstExpr.Literal (ast.AstLiteral.Unit))
-    env
+    (compiler_ctfe.ctfe-env-shared-view env)
     (compiler_ctfe.ctfe-fuel-limit))
     [(compiler_ctfe.ResultCtfe.Ok value _)
       (match value
@@ -53,28 +54,31 @@
   (if (>= index arity)
     env
     (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
-      [(ast.AstParam.Param name _ _ _)
+      [(ast.AstParam.Param name _ _)
         (compiler-ctfe-source-parity-bind-params
           (compiler_ctfe.ctfe-env-extend-id
             env
             name
-            (compiler-ctfe-source-parity-arg index first second))
+            (compiler-ctfe-source-parity-arg
+              index
+              (owned_view.compiler-owned-shared-view first)
+              (owned_view.compiler-owned-shared-view second)))
           params
-          first
-          second
+          (owned_view.compiler-owned-shared-view first)
+          (owned_view.compiler-owned-shared-view second)
           arity
           (+ index 1))])))
 
 (define (compiler-ctfe-source-parity-param-var
-  [env : compiler_ctfe.CtfeEnv]
+  [env : (& env compiler_ctfe.CtfeEnv)]
   [params : (& params ast.AstParamList)]
   [index : i64]) : i64
   (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
-    [(ast.AstParam.Param name _ _ _)
+    [(ast.AstParam.Param name _ _)
       (compiler_ctfe.ctfe-ast-push env (ast.AstExpr.Var name))]))
 
 (define (compiler-ctfe-source-parity-direct-call
-  [env : compiler_ctfe.CtfeEnv]
+  [env : (& env compiler_ctfe.CtfeEnv)]
   [params : (& params ast.AstParamList)]
   [builtin-index : i64]
   [arity : i64]) : i64
@@ -107,29 +111,29 @@
         0)]
     [direct-call : i64
       (compiler-ctfe-source-parity-direct-call
-        env
+        (& env)
         (& params)
         builtin-index
         arity)]
     (match (compiler_ctfe.compiler-ctfe-eval
-      (compiler_ctfe.ctfe-ast-get env body)
-      env
+      (compiler_ctfe.ctfe-ast-get (& env) body)
+      (& env)
       (compiler_ctfe.ctfe-fuel-limit))
       [(compiler_ctfe.ResultCtfe.Ok source-value _)
         (match (compiler_ctfe.compiler-ctfe-eval
-          (compiler_ctfe.ctfe-ast-get env direct-call)
-          env
+          (compiler_ctfe.ctfe-ast-get (& env) direct-call)
+          (& env)
           (compiler_ctfe.ctfe-fuel-limit))
           [(compiler_ctfe.ResultCtfe.Ok direct-value _)
             (compiler-ctfe-source-parity-value-eq?
               source-value
               direct-value
-              env)]
+              (& env))]
           [(compiler_ctfe.ResultCtfe.Err _) false])]
       [(compiler_ctfe.ResultCtfe.Err source-diag)
         (match (compiler_ctfe.compiler-ctfe-eval
-          (compiler_ctfe.ctfe-ast-get env direct-call)
-          env
+          (compiler_ctfe.ctfe-ast-get (& env) direct-call)
+          (& env)
           (compiler_ctfe.ctfe-fuel-limit))
           [(compiler_ctfe.ResultCtfe.Err direct-diag)
             (string.eq
@@ -147,7 +151,7 @@
   [arity : i64]) : bool
   (if (>= index (ast.ast-decl-list-len (& decls)))
     false
-    (match (ast.ast-decl-list-ref decls index)
+    (match (ast.ast-decl-list-ref (ast.ast-global-shared-view decls) index)
       [(ast.AstDecl.DefFn _ found-name params _ body _)
         (if (= found-name name-id)
           (compiler-ctfe-source-parity-eval-decl
@@ -158,7 +162,7 @@
             second
             arity)
           (compiler-ctfe-source-parity-find
-            decls
+            (ast.ast-global-shared-view decls)
             (+ index 1)
             name-id
             builtin-index
@@ -167,7 +171,7 @@
             arity))]
       [_
         (compiler-ctfe-source-parity-find
-          decls
+          (ast.ast-global-shared-view decls)
           (+ index 1)
           name-id
           builtin-index
@@ -175,7 +179,7 @@
           second
           arity)])))
 
-(define (compiler-ctfe-source-parity-check
+(define (compiler-ctfe-source-parity-check-owned
   [decls : ast.AstDeclList]
   [name : String]
   [builtin-index : i64]
@@ -185,11 +189,26 @@
   (compiler-ctfe-source-parity-find
     decls
     0
-    (ci.intern name)
+    (ci.intern (owned_view.compiler-owned-shared-view name))
     builtin-index
     first
     second
     arity))
+
+(defmacro (compiler-ctfe-source-parity-check
+  [decls : Expr]
+  [name : Expr]
+  [builtin-index : Expr]
+  [first : Expr]
+  [second : Expr]
+  [arity : Expr]) : Expr
+  `(compiler-ctfe-source-parity-check-owned
+    (ast.ast-global-shared-view ,decls)
+    ,name
+    ,builtin-index
+    (owned_view.compiler-owned-shared-view ,first)
+    (owned_view.compiler-owned-shared-view ,second)
+    ,arity))
 
 (define (compiler-ctfe-source-placeholder-bind-params
   [env : compiler_ctfe.CtfeEnv]
@@ -198,7 +217,7 @@
   (if (>= index (ast.ast-param-list-len params))
     env
     (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
-      [(ast.AstParam.Param name _ _ _)
+      [(ast.AstParam.Param name _ _)
         (compiler-ctfe-source-placeholder-bind-params
           (compiler_ctfe.ctfe-env-extend-id
             env
@@ -234,32 +253,37 @@
   [message : String]) : bool
   (if (>= index (ast.ast-decl-list-len (& decls)))
     false
-    (match (ast.ast-decl-list-ref decls index)
+    (match (ast.ast-decl-list-ref (ast.ast-global-shared-view decls) index)
       [(ast.AstDecl.DefFn _ found-name params _ body _)
         (if (= found-name name-id)
           (compiler-ctfe-source-placeholder-eval? params body message)
           (compiler-ctfe-source-placeholder-find?
-            decls
+            (ast.ast-global-shared-view decls)
             (+ index 1)
             name-id
             message))]
       [_
         (compiler-ctfe-source-placeholder-find?
-          decls
+          (ast.ast-global-shared-view decls)
           (+ index 1)
           name-id
           message)])))
 
-(define (compiler-ctfe-source-placeholder-check?
+(define (compiler-ctfe-source-placeholder-check-owned?
   [decls : ast.AstDeclList]
   [name : String]) : bool
   (compiler-ctfe-source-placeholder-find?
     decls
     0
-    (ci.intern name)
+    (ci.intern (owned_view.compiler-owned-shared-view name))
     (str_cat.str-cat
       name
       " CTFE intrinsic reached without compiler interception")))
+
+(defmacro (compiler-ctfe-source-placeholder-check? [decls : Expr] [name : Expr]) : Expr
+  `(compiler-ctfe-source-placeholder-check-owned?
+    (ast.ast-global-shared-view ,decls)
+    ,name))
 
 (define (compiler-ctfe-stdlib-source-parity-for-decls?
   [decls : ast.AstDeclList]) : bool
@@ -293,6 +317,9 @@
       (compiler_ctfe.CompilerCtfeValue.Expr if-node (ast.AstType.I64))]
     [exprs : ast.AstExprList (ast.ast-expr-list-new)]
     [clause : ast.AstExprClause (ast.ast-expr-clause true-node false-node)]
+    [clause-value : compiler_ctfe.CompilerCtfeValue
+      (compiler_ctfe.CompilerCtfeValue.ExprClause
+        (owned_view.compiler-owned-shared-view clause))]
     [clauses : ast.AstExprClauseList (ast.ast-expr-clause-list-new)]
     [binding : ast.AstExprBindingClause
       (ast.ast-expr-binding-clause-id
@@ -304,6 +331,9 @@
         (ast.ast-source-span 0 0 0 0))]
     [bindings : ast.AstExprBindingClauseList
       (ast.ast-expr-binding-clause-list-new)]
+    [binding-value : compiler_ctfe.CompilerCtfeValue
+      (compiler_ctfe.CompilerCtfeValue.ExprBindingClause
+        (owned_view.compiler-owned-shared-view binding))]
     [unused : compiler_ctfe.CompilerCtfeValue
       (compiler_ctfe.CompilerCtfeValue.Unit)]
     [zero : compiler_ctfe.CompilerCtfeValue
@@ -315,199 +345,212 @@
       (ast.ast-expr-list-push (&mut exprs) false-node)
       (ast.ast-expr-clause-list-push (&mut clauses) clause)
       (ast.ast-expr-binding-clause-list-push (&mut bindings) binding)
-      (and
-        (compiler-ctfe-source-parity-check
-          decls
-          "expr-bool?"
-          19
-          true-expr
-          unused
-          1)
-        (compiler-ctfe-source-parity-check
-          decls
-          "expr-bool?"
-          19
-          if-expr
-          unused
-          1)
-        (compiler-ctfe-source-parity-check
-          decls
-          "expr-bool-value"
-          20
-          false-expr
-          unused
-          1)
-        (compiler-ctfe-source-parity-check
-          decls
-          "expr-bool-value"
-          20
-          if-expr
-          unused
-          1)
-        (compiler-ctfe-source-parity-check decls "expr-if?" 21 if-expr unused 1)
-        (compiler-ctfe-source-parity-check
-          decls
-          "expr-if?"
-          21
-          true-expr
-          unused
-          1)
-        (compiler-ctfe-source-parity-check
-          decls
-          "expr-if-cond"
-          22
-          if-expr
-          unused
-          1)
-        (compiler-ctfe-source-parity-check
-          decls
-          "expr-if-cond"
-          22
-          true-expr
-          unused
-          1)
-        (compiler-ctfe-source-parity-check
-          decls
-          "expr-if-then"
-          23
-          if-expr
-          unused
-          1)
-        (compiler-ctfe-source-parity-check
-          decls
-          "expr-if-then"
-          23
-          true-expr
-          unused
-          1)
-        (compiler-ctfe-source-parity-check
-          decls
-          "expr-if-else"
-          24
-          if-expr
-          unused
-          1)
-        (compiler-ctfe-source-parity-check
-          decls
-          "expr-if-else"
-          24
-          true-expr
-          unused
-          1)
-        (compiler-ctfe-source-parity-check
-          decls
-          "expr-clause-first"
-          25
-          (compiler_ctfe.CompilerCtfeValue.ExprClause clause)
-          unused
-          1)
-        (compiler-ctfe-source-parity-check
-          decls
-          "expr-clause-second"
-          26
-          (compiler_ctfe.CompilerCtfeValue.ExprClause clause)
-          unused
-          1)
-        (compiler-ctfe-source-parity-check
-          decls
-          "expr-list-length"
-          51
-          (compiler_ctfe.CompilerCtfeValue.ExprList exprs)
-          unused
-          1)
-        (compiler-ctfe-source-parity-check
-          decls
-          "expr-list-nth"
-          54
-          (compiler_ctfe.CompilerCtfeValue.ExprList exprs)
-          zero
-          2)
-        (compiler-ctfe-source-parity-check
-          decls
-          "expr-list-nth"
-          54
-          (compiler_ctfe.CompilerCtfeValue.ExprList exprs)
-          out-of-range
-          2)
-        (compiler-ctfe-source-parity-check
-          decls
-          "expr-clause-list-length"
-          56
-          (compiler_ctfe.CompilerCtfeValue.ExprClauseList clauses)
-          unused
-          1)
-        (compiler-ctfe-source-parity-check
-          decls
-          "expr-clause-list-nth"
-          59
-          (compiler_ctfe.CompilerCtfeValue.ExprClauseList clauses)
-          zero
-          2)
-        (compiler-ctfe-source-parity-check
-          decls
-          "expr-clause-list-nth"
-          59
-          (compiler_ctfe.CompilerCtfeValue.ExprClauseList clauses)
-          out-of-range
-          2)
-        (compiler-ctfe-source-parity-check
-          decls
-          "expr-binding-clause-name"
-          61
-          (compiler_ctfe.CompilerCtfeValue.ExprBindingClause binding)
-          unused
-          1)
-        (compiler-ctfe-source-parity-check
-          decls
-          "expr-binding-clause-has-type?"
-          62
-          (compiler_ctfe.CompilerCtfeValue.ExprBindingClause binding)
-          unused
-          1)
-        (compiler-ctfe-source-parity-check
-          decls
-          "expr-binding-clause-type"
-          63
-          (compiler_ctfe.CompilerCtfeValue.ExprBindingClause binding)
-          unused
-          1)
-        (compiler-ctfe-source-parity-check
-          decls
-          "expr-binding-clause-init"
-          64
-          (compiler_ctfe.CompilerCtfeValue.ExprBindingClause binding)
-          unused
-          1)
-        (compiler-ctfe-source-parity-check
-          decls
-          "expr-binding-clause-list-length"
-          66
-          (compiler_ctfe.CompilerCtfeValue.ExprBindingClauseList bindings)
-          unused
-          1)
-        (compiler-ctfe-source-parity-check
-          decls
-          "expr-binding-clause-list-nth"
-          69
-          (compiler_ctfe.CompilerCtfeValue.ExprBindingClauseList bindings)
-          zero
-          2)
-        (compiler-ctfe-source-parity-check
-          decls
-          "expr-binding-clause-list-nth"
-          69
-          (compiler_ctfe.CompilerCtfeValue.ExprBindingClauseList bindings)
-          out-of-range
-          2)
-        (compiler-ctfe-source-placeholder-check? decls "expr-list-cons")
-        (compiler-ctfe-source-placeholder-check?
-          decls
-          "expr-clause-list-fold-if")
-        (compiler-ctfe-source-placeholder-check? decls "pattern-list-cons")
-        (compiler-ctfe-source-placeholder-check? decls "match-arm-list-cons")
-        (compiler-ctfe-source-placeholder-check?
-          decls
-          "expr-clause-list->expr-list")))))
+      (let
+        [expr-list-value : compiler_ctfe.CompilerCtfeValue
+          (compiler_ctfe.CompilerCtfeValue.ExprList exprs)]
+        [clause-list-value : compiler_ctfe.CompilerCtfeValue
+          (compiler_ctfe.CompilerCtfeValue.ExprClauseList clauses)]
+        [binding-list-value : compiler_ctfe.CompilerCtfeValue
+          (compiler_ctfe.CompilerCtfeValue.ExprBindingClauseList bindings)]
+        (and
+          (compiler-ctfe-source-parity-check
+            decls
+            "expr-bool?"
+            19
+            true-expr
+            unused
+            1)
+          (compiler-ctfe-source-parity-check
+            decls
+            "expr-bool?"
+            19
+            if-expr
+            unused
+            1)
+          (compiler-ctfe-source-parity-check
+            decls
+            "expr-bool-value"
+            20
+            false-expr
+            unused
+            1)
+          (compiler-ctfe-source-parity-check
+            decls
+            "expr-bool-value"
+            20
+            if-expr
+            unused
+            1)
+          (compiler-ctfe-source-parity-check
+            decls
+            "expr-if?"
+            21
+            if-expr
+            unused
+            1)
+          (compiler-ctfe-source-parity-check
+            decls
+            "expr-if?"
+            21
+            true-expr
+            unused
+            1)
+          (compiler-ctfe-source-parity-check
+            decls
+            "expr-if-cond"
+            22
+            if-expr
+            unused
+            1)
+          (compiler-ctfe-source-parity-check
+            decls
+            "expr-if-cond"
+            22
+            true-expr
+            unused
+            1)
+          (compiler-ctfe-source-parity-check
+            decls
+            "expr-if-then"
+            23
+            if-expr
+            unused
+            1)
+          (compiler-ctfe-source-parity-check
+            decls
+            "expr-if-then"
+            23
+            true-expr
+            unused
+            1)
+          (compiler-ctfe-source-parity-check
+            decls
+            "expr-if-else"
+            24
+            if-expr
+            unused
+            1)
+          (compiler-ctfe-source-parity-check
+            decls
+            "expr-if-else"
+            24
+            true-expr
+            unused
+            1)
+          (compiler-ctfe-source-parity-check
+            decls
+            "expr-clause-first"
+            25
+            clause-value
+            unused
+            1)
+          (compiler-ctfe-source-parity-check
+            decls
+            "expr-clause-second"
+            26
+            clause-value
+            unused
+            1)
+          (compiler-ctfe-source-parity-check
+            decls
+            "expr-list-length"
+            51
+            expr-list-value
+            unused
+            1)
+          (compiler-ctfe-source-parity-check
+            decls
+            "expr-list-nth"
+            54
+            expr-list-value
+            zero
+            2)
+          (compiler-ctfe-source-parity-check
+            decls
+            "expr-list-nth"
+            54
+            expr-list-value
+            out-of-range
+            2)
+          (compiler-ctfe-source-parity-check
+            decls
+            "expr-clause-list-length"
+            56
+            clause-list-value
+            unused
+            1)
+          (compiler-ctfe-source-parity-check
+            decls
+            "expr-clause-list-nth"
+            59
+            clause-list-value
+            zero
+            2)
+          (compiler-ctfe-source-parity-check
+            decls
+            "expr-clause-list-nth"
+            59
+            clause-list-value
+            out-of-range
+            2)
+          (compiler-ctfe-source-parity-check
+            decls
+            "expr-binding-clause-name"
+            61
+            binding-value
+            unused
+            1)
+          (compiler-ctfe-source-parity-check
+            decls
+            "expr-binding-clause-has-type?"
+            62
+            binding-value
+            unused
+            1)
+          (compiler-ctfe-source-parity-check
+            decls
+            "expr-binding-clause-type"
+            63
+            binding-value
+            unused
+            1)
+          (compiler-ctfe-source-parity-check
+            decls
+            "expr-binding-clause-init"
+            64
+            binding-value
+            unused
+            1)
+          (compiler-ctfe-source-parity-check
+            decls
+            "expr-binding-clause-list-length"
+            66
+            binding-list-value
+            unused
+            1)
+          (compiler-ctfe-source-parity-check
+            decls
+            "expr-binding-clause-list-nth"
+            69
+            binding-list-value
+            zero
+            2)
+          (compiler-ctfe-source-parity-check
+            decls
+            "expr-binding-clause-list-nth"
+            69
+            binding-list-value
+            out-of-range
+            2)
+          (compiler-ctfe-source-placeholder-check? decls "expr-list-cons")
+          (compiler-ctfe-source-placeholder-check?
+            decls
+            "expr-clause-list-fold-if")
+          (compiler-ctfe-source-placeholder-check? decls "pattern-list-cons")
+          (compiler-ctfe-source-placeholder-check? decls "match-arm-list-cons")
+          (compiler-ctfe-source-placeholder-check?
+            decls
+            "expr-clause-list->expr-list"))))))
 
 (define (compiler-ctfe-stdlib-source-parity-ok?) : bool
   (begin
@@ -520,7 +563,7 @@
             (match program
               [(ast.AstProgram.Program decls-box)
                 (compiler-ctfe-stdlib-source-parity-for-decls?
-                  (__tl-box-place decls-box))])]
+                  (owned_view.compiler-owned-box-shared-view decls-box))])]
           [(parser.ResultAstProgram.Err _) false])]
       [(embedded_stdlib.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource)
         false])))
@@ -530,8 +573,9 @@
     [started-ms : i64
       (compiler_semantic_index.compiler-semantic-index-smoke-timing-start)]
     [result : process.ResultProcessOutput
-      (process.output (process.command (io.arg 0) (process.args-single name)))]
-    [status : i64 (process.result-status-or result -1)]
+      (process.output
+        (process.command (io.arg 0) (process.args-single (clone name))))]
+    [status : i64 (process.result-status-or (clone result) -1)]
     [timing-ok : bool
       (compiler_semantic_index.compiler-semantic-index-smoke-timing-record
         (str_cat.str-cat "child-" name)

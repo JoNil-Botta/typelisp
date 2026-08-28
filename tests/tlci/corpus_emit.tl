@@ -32,15 +32,15 @@
     (begin
       ;; One inert load-base fixup, entry, and symbol record. The fixture is
       ;; parsed and inspected, never mapped or executed.
-      (tlci_core.tlci-set-u64! fixups 0 0)
-      (tlci_core.tlci-set-u64! entries 0 0)
-      (tlci_core.tlci-set-u64! entries 8 0)
-      (tlci_core.tlci-set-u64! entries 16 0)
-      (tlci_core.tlci-set-u64! symbols 0 0)
-      (tlci_core.tlci-set-u64! symbols 8 0)
-      (tlci_core.tlci-set-u64! symbols 16 2)
-      (tlci_core.tlci-set-u64! symbols 24 0)
-      (tlci_core.tlci-set-u64! symbols 32 3)
+      (tlci_core.tlci-set-u64! (&mut fixups) 0 0)
+      (tlci_core.tlci-set-u64! (&mut entries) 0 0)
+      (tlci_core.tlci-set-u64! (&mut entries) 8 0)
+      (tlci_core.tlci-set-u64! (&mut entries) 16 0)
+      (tlci_core.tlci-set-u64! (&mut symbols) 0 0)
+      (tlci_core.tlci-set-u64! (&mut symbols) 8 0)
+      (tlci_core.tlci-set-u64! (&mut symbols) 16 2)
+      (tlci_core.tlci-set-u64! (&mut symbols) 24 0)
+      (tlci_core.tlci-set-u64! (&mut symbols) 32 3)
       (tlci_core.tlci-make-image
         tlci_core.tlci-host-platform-x86-64-legacy
         tlci_core.tlci-callback-abi-version

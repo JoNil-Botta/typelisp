@@ -1,6 +1,7 @@
 ;; stdlib_text_buf.tl - Integration witness for stdlib/text_buf.tl.
 (import stdlib.text_buf)
 (import stdlib.text_buf_borrowed)
+(import stdlib.text_buf_family)
 (import stdlib.arena)
 (import stdlib.io)
 (import stdlib.string)
@@ -22,15 +23,15 @@
       (text_buf.append
         (text_buf.append (text_buf.append (text_buf.empty) "a") "b")
         "c")]
-    [left : text_buf.TextBuf (text_buf.append base "-left")]
-    [right : text_buf.TextBuf (text_buf.append base "-right")]
+    [left : text_buf.TextBuf (text_buf.append (clone base) "-left")]
+    [right : text_buf.TextBuf (text_buf.append (clone base) "-right")]
     (and
       (= (text_buf.length base) 3)
       (= (text_buf.length left) 8)
       (= (text_buf.length right) 9)
-      (= (text_buf.chunk-count base.chunks 0) 3)
-      (= (text_buf.chunk-count left.chunks 0) 4)
-      (= (text_buf.chunk-count right.chunks 0) 4)
+      (= (text_buf.chunk-count (clone base.chunks) 0) 3)
+      (= (text_buf.chunk-count (clone left.chunks) 0) 4)
+      (= (text_buf.chunk-count (clone right.chunks) 0) 4)
       (string.eq (text_buf.render base) "abc")
       (string.eq (text_buf.render left) "abc-left")
       (string.eq (text_buf.render right) "abc-right"))))
@@ -45,17 +46,17 @@
           (text_buf.append with-int "!")))]
     [noise : String
       (with-scratch (string.append "clobber:" (string.int->string 99)))]
-    [child : text_buf.TextBuf (text_buf.append escaped "child")]
+    [child : text_buf.TextBuf (text_buf.append (clone escaped) "child")]
     [noise-again : String
       (with-scratch (string.append "clobber-again:" (string.int->string 100)))]
     (and
       (string.eq (& noise) "clobber:99")
       (string.eq (& noise-again) "clobber-again:100")
       (= (text_buf.length escaped) 11)
-      (= (text_buf.chunk-count escaped.chunks 0) 3)
+      (= (text_buf.chunk-count (clone escaped.chunks) 0) 3)
       (string.eq (text_buf.render escaped) "clone:2718!")
       (= (text_buf.length child) 16)
-      (= (text_buf.chunk-count child.chunks 0) 4)
+      (= (text_buf.chunk-count (clone child.chunks) 0) 4)
       (string.eq (text_buf.render child) "clone:2718!child"))))
 
 (define (text-buf-owned-nested-arena-integration-ok?) : bool
@@ -68,12 +69,12 @@
           (set! base (text_buf.append base "o"))
           (set! i (+ i 1))))
       (let
-        [outer-arena : arena.Arena (arena.make)]
+        [outer-arena (arena.make)]
         [child-ok : bool
           (with-escape
             outer-arena
             (let
-              [child : text_buf.TextBuf (text_buf.append base "-inner")]
+              [child : text_buf.TextBuf (text_buf.append (clone base) "-inner")]
               (string.eq
                 (text_buf.render child)
                 "oooooooooooooooooooooooooooooooo-inner")))]
@@ -81,7 +82,8 @@
           (with-escape
             outer-arena
             (let
-              [sibling : text_buf.TextBuf (text_buf.append base "-sibling")]
+              [sibling : text_buf.TextBuf
+                (text_buf.append (clone base) "-sibling")]
               (string.eq
                 (text_buf.render sibling)
                 "oooooooooooooooooooooooooooooooo-sibling")))]
@@ -113,9 +115,13 @@
     [base : (text_buf_borrowed.TextBufBorrowed source)
       (text_buf_borrowed.empty-like (& source))]
     [left : (text_buf_borrowed.TextBufBorrowed source)
-      (text_buf_borrowed.append-char base '!')]
+      (text_buf_borrowed.append-char
+        (text_buf_family.text-buf-family-shared-view base)
+        '!')]
     [right : (text_buf_borrowed.TextBufBorrowed source)
-      (text_buf_borrowed.append-owned base "?")]
+      (text_buf_borrowed.append-owned
+        (text_buf_family.text-buf-family-shared-view base)
+        "?")]
     (and
       (= (text_buf_borrowed.chunk-count base) 0)
       (= (text_buf_borrowed.length base) 0)
@@ -137,12 +143,19 @@
           "b")
         '!')]
     [left : (text_buf_borrowed.TextBufBorrowed source)
-      (text_buf_borrowed.append-owned base "-left")]
+      (text_buf_borrowed.append-owned
+        (text_buf_family.text-buf-family-shared-view base)
+        "-left")]
     [right : (text_buf_borrowed.TextBufBorrowed source)
-      (text_buf_borrowed.append-owned base "-right")]
+      (text_buf_borrowed.append-owned
+        (text_buf_family.text-buf-family-shared-view base)
+        "-right")]
     (and
       (= (text_buf_borrowed.chunk-count base) 3)
-      (string.eq (text_buf_borrowed.render base) "ab!")
+      (string.eq
+        (text_buf_borrowed.render
+          (text_buf_family.text-buf-family-shared-view base))
+        "ab!")
       (= (text_buf_borrowed.chunk-count left) 4)
       (= (text_buf_borrowed.chunk-count right) 4)
       (string.eq (text_buf_borrowed.render left) "ab!-left")
@@ -163,14 +176,18 @@
           (set! base (text_buf_borrowed.append base (& source)))
           (set! index (+ index 1))))
       (let
-        [outer-arena : arena.Arena (arena.make)]
+        [outer-arena (arena.make)]
         (with-escape
           outer-arena
           (let
             [child : (text_buf_borrowed.TextBufBorrowed source)
-              (text_buf_borrowed.append-copy base (& child-source))]
+              (text_buf_borrowed.append-copy
+                (text_buf_family.text-buf-family-shared-view base)
+                (& child-source))]
             [sibling : (text_buf_borrowed.TextBufBorrowed source)
-              (text_buf_borrowed.append-copy base (& sibling-source))]
+              (text_buf_borrowed.append-copy
+                (text_buf_family.text-buf-family-shared-view base)
+                (& sibling-source))]
             (and
               (= (text_buf_borrowed.chunk-count base) 33)
               (= (text_buf_borrowed.length base) 33)
@@ -204,12 +221,19 @@
           (set! index (+ index 1))))
       (let
         [left : (text_buf_borrowed.TextBufBorrowed source)
-          (text_buf_borrowed.append-owned many "-left")]
+          (text_buf_borrowed.append-owned
+            (text_buf_family.text-buf-family-shared-view many)
+            "-left")]
         [right : (text_buf_borrowed.TextBufBorrowed source)
-          (text_buf_borrowed.append-owned many "-right")]
+          (text_buf_borrowed.append-owned
+            (text_buf_family.text-buf-family-shared-view many)
+            "-right")]
         (and
           (= (text_buf_borrowed.chunk-count many) 6)
-          (string.eq (text_buf_borrowed.render many) "seedxxxxx")
+          (string.eq
+            (text_buf_borrowed.render
+              (text_buf_family.text-buf-family-shared-view many))
+            "seedxxxxx")
           (string.eq (text_buf_borrowed.render left) "seedxxxxx-left")
           (string.eq (text_buf_borrowed.render right) "seedxxxxx-right")
           (= (text_buf_borrowed.chunk-count many) 6)
@@ -221,23 +245,37 @@
     [empty : (text_buf_borrowed.TextBufBorrowed source)
       (text_buf_borrowed.empty-like (& source))]
     [left : (text_buf_borrowed.TextBufBorrowed source)
-      (text_buf_borrowed.append-slice empty (& source) 0 2)]
+      (text_buf_borrowed.append-slice
+        (text_buf_family.text-buf-family-shared-view empty)
+        (& source)
+        0
+        2)]
     [right : (text_buf_borrowed.TextBufBorrowed source)
       (text_buf_borrowed.append-char
         (text_buf_borrowed.append-owned
-          (text_buf_borrowed.append-slice empty (& source) 2 1)
+          (text_buf_borrowed.append-slice
+            (text_buf_family.text-buf-family-shared-view empty)
+            (& source)
+            2
+            1)
           "-")
         '!')]
     [joined : (text_buf_borrowed.TextBufBorrowed source)
       (text_buf_borrowed.append-buffer left right)]
     [same-base : (text_buf_borrowed.TextBufBorrowed source)
       (text_buf_borrowed.append-owned
-        (text_buf_borrowed.append-slice empty (& source) 0 1)
+        (text_buf_borrowed.append-slice
+          (text_buf_family.text-buf-family-shared-view empty)
+          (& source)
+          0
+          1)
         "-")]
     [same-joined : (text_buf_borrowed.TextBufBorrowed source)
-      (text_buf_borrowed.append-buffer same-base same-base)]
+      (text_buf_borrowed.append-buffer
+        (text_buf_family.text-buf-family-shared-view same-base)
+        same-base)]
     [owned-rendered : String
-      (match joined
+      (match (text_buf_family.text-buf-family-shared-view joined)
         [(text_buf_borrowed.TextBufBorrowed joined-chunks joined-len)
           (let
             [owned : text_buf.TextBuf
@@ -247,7 +285,10 @@
             (text_buf.render owned))])]
     (and
       (= (text_buf_borrowed.chunk-count joined) 4)
-      (string.eq (text_buf_borrowed.render joined) "abc-!")
+      (string.eq
+        (text_buf_borrowed.render
+          (text_buf_family.text-buf-family-shared-view joined))
+        "abc-!")
       (string.eq owned-rendered (text_buf_borrowed.render joined))
       (= (text_buf_borrowed.chunk-count same-joined) 4)
       (string.eq (text_buf_borrowed.render same-joined) "a-a-"))))
@@ -264,7 +305,11 @@
         2
         1)]
     [merged : (text_buf_borrowed.TextBufBorrowed source)
-      (text_buf_borrowed.append-slice base (& source) 3 1)]
+      (text_buf_borrowed.append-slice
+        (text_buf_family.text-buf-family-shared-view base)
+        (& source)
+        3
+        1)]
     (and
       (= (text_buf_borrowed.chunk-count base) 2)
       (= (text_buf_borrowed.chunk-count merged) 2)
@@ -298,6 +343,40 @@
       (string.eq readback "file-out")
       false)))
 
+(define (text-buf-large-text [rounds : i64]) : String
+  (let
+    [text : String "x"]
+    [index : i64 0]
+    (begin
+      (while (< index rounds)
+        (begin
+          (set! text (string.append (& text) (& text)))
+          (set! index (+ index 1))))
+      text)))
+
+(define (text-buf-batched-write-file-integration-ok?) : bool
+  (let
+    [path : String "target/stdlib-text-buf-batched-write-file.txt"]
+    [chunk : String (text-buf-large-text 19)]
+    [buf : text_buf.TextBuf
+      (text_buf.append
+        (text_buf.append
+          (text_buf.append (text_buf.empty) (string.copy (& chunk)))
+          (string.copy (& chunk)))
+        chunk)]
+    [status : i64 (text_buf.write-file path buf)]
+    [readback : String (byte_buf.to-string (io.read-file path))]
+    (and (= status io.io-status-ok) (= (string-length (& readback)) 1572864))))
+
+(define (text-buf-oversized-chunk-write-file-integration-ok?) : bool
+  (let
+    [path : String "target/stdlib-text-buf-oversized-chunk-write-file.txt"]
+    [buf : text_buf.TextBuf
+      (text_buf.append (text_buf.empty) (text-buf-large-text 21))]
+    [status : i64 (text_buf.write-file path buf)]
+    [readback : String (byte_buf.to-string (io.read-file path))]
+    (and (= status io.io-status-ok) (= (string-length (& readback)) 2097152))))
+
 (define (main) : i64
   (begin
     (unless (text-buf-integration-ok?) (return 2))
@@ -313,4 +392,6 @@
     (unless (text-buf-borrowed-replay-integration-ok?) (return 12))
     (unless (text-buf-borrowed-merge-persistence-integration-ok?) (return 13))
     (unless (text-buf-owned-clone-out-integration-ok?) (return 14))
+    (unless (text-buf-batched-write-file-integration-ok?) (return 15))
+    (unless (text-buf-oversized-chunk-write-file-integration-ok?) (return 16))
     42))

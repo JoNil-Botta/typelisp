@@ -262,6 +262,320 @@
         (io.panic "lint: unknown rule should not be found")])
     unit))
 
+;; Keep discarded-value fixture construction beside the no-effect assertions.
+;; These tests share tail-walk semantics but are independent of reachability.
+(define (lint-no-effect-smoke
+  [vx : i64]
+  [one : i64]
+  [unit-expr : i64]
+  [set-ok-false : i64]) : unit
+  (let
+    [discarded-add : i64 (ast.ast-expr-binary (ast.AstBinOp.Add) one vx)]
+    [discarded-cast : i64 (ast.ast-expr-cast one (ast.AstType.I64))]
+    [discarded-call : i64
+      (ast.ast-expr-call (lint-test-var "side-effect?") (ast.ast-expr-list-new))]
+    [no-effect-literal-begin : i64
+      (ast.ast-node-push
+        (ast.AstExpr.Begin
+          (ast.ast-expr-cons one (ast.ast-expr-cons vx (ast.ast-expr-list-new)))))]
+    [no-effect-var-begin : i64
+      (ast.ast-node-push
+        (ast.AstExpr.Begin
+          (ast.ast-expr-cons vx (ast.ast-expr-cons one (ast.ast-expr-list-new)))))]
+    [no-effect-add-begin : i64
+      (ast.ast-node-push
+        (ast.AstExpr.Begin
+          (ast.ast-expr-cons
+            discarded-add
+            (ast.ast-expr-cons vx (ast.ast-expr-list-new)))))]
+    [no-effect-cast-begin : i64
+      (ast.ast-node-push
+        (ast.AstExpr.Begin
+          (ast.ast-expr-cons
+            discarded-cast
+            (ast.ast-expr-cons vx (ast.ast-expr-list-new)))))]
+    [no-effect-tail-begin : i64
+      (ast.ast-node-push
+        (ast.AstExpr.Begin
+          (ast.ast-expr-cons
+            unit-expr
+            (ast.ast-expr-cons one (ast.ast-expr-list-new)))))]
+    [no-effect-clean-call-begin : i64
+      (ast.ast-node-push
+        (ast.AstExpr.Begin
+          (ast.ast-expr-cons
+            discarded-call
+            (ast.ast-expr-cons vx (ast.ast-expr-list-new)))))]
+    [no-effect-clean-mutation-begin : i64
+      (ast.ast-node-push
+        (ast.AstExpr.Begin
+          (ast.ast-expr-cons
+            set-ok-false
+            (ast.ast-expr-cons vx (ast.ast-expr-list-new)))))]
+    [no-effect-unsafe-begin : i64
+      (ast.ast-node-push
+        (ast.AstExpr.Unsafe
+          (ast.ast-expr-cons one (ast.ast-expr-cons vx (ast.ast-expr-list-new)))))]
+    [spanned-no-effect-var : i64
+      (ast.ast-node-push
+        (ast.AstExpr.Begin
+          (ast.ast-expr-cons
+            (ast.ast-expr-spanned vx (ast.ast-source-span 31 9 31 10))
+            (ast.ast-expr-cons one (ast.ast-expr-list-new)))))]
+    (begin
+      (if (=
+        (lint_core.lint-findings-count
+          (lint-test-walk-tail
+            no-effect-literal-begin
+            (lint_core.lint-default-ladder-threshold)
+            (lint_core.lint-findings-empty)))
+        1)
+        unit
+        (io.panic "lint: discarded literal should be flagged"))
+      (match (lint_core.lint-findings-get
+        (lint-test-walk-tail
+          spanned-no-effect-var
+          (lint_core.lint-default-ladder-threshold)
+          (lint_core.lint-findings-empty))
+        0)
+        [(lint_core.LintMaybeFinding.Some finding)
+          (let
+            [fspan : ast.AstSourceSpan finding.span]
+            (if (and
+              (= (ast.ast-source-span-start-line fspan) 31)
+              (string.eq finding.rule-id (lint_core.lint-rule-no-effect-id)))
+              unit
+              (io.panic "lint: no-effect finding should carry rule id and span")))]
+        [(lint_core.LintMaybeFinding.No)
+          (io.panic
+            "lint: discarded variable should produce a no-effect finding")])
+      (if (=
+        (lint_core.lint-findings-count
+          (lint-test-walk-tail
+            no-effect-var-begin
+            (lint_core.lint-default-ladder-threshold)
+            (lint_core.lint-findings-empty)))
+        1)
+        unit
+        (io.panic "lint: discarded variable should be flagged"))
+      (if (=
+        (lint_core.lint-findings-count
+          (lint-test-walk-tail
+            no-effect-add-begin
+            (lint_core.lint-default-ladder-threshold)
+            (lint_core.lint-findings-empty)))
+        1)
+        unit
+        (io.panic "lint: discarded arithmetic should be flagged"))
+      (if (=
+        (lint_core.lint-findings-count
+          (lint-test-walk-tail
+            no-effect-cast-begin
+            (lint_core.lint-default-ladder-threshold)
+            (lint_core.lint-findings-empty)))
+        1)
+        unit
+        (io.panic "lint: discarded cast should be flagged"))
+      (if (=
+        (lint_core.lint-findings-count
+          (lint-test-walk-tail
+            no-effect-tail-begin
+            (lint_core.lint-default-ladder-threshold)
+            (lint_core.lint-findings-empty)))
+        0)
+        unit
+        (io.panic "lint: tail expression should not be flagged as no-effect"))
+      (if (=
+        (lint_core.lint-findings-count
+          (lint-test-walk-tail
+            no-effect-clean-call-begin
+            (lint_core.lint-default-ladder-threshold)
+            (lint_core.lint-findings-empty)))
+        0)
+        unit
+        (io.panic "lint: discarded call should not be flagged as no-effect"))
+      (if (=
+        (lint_core.lint-findings-count
+          (lint-test-walk-tail
+            no-effect-clean-mutation-begin
+            (lint_core.lint-default-ladder-threshold)
+            (lint_core.lint-findings-empty)))
+        0)
+        unit
+        (io.panic "lint: discarded mutation should not be flagged as no-effect"))
+      (if (=
+        (lint_core.lint-findings-count
+          (lint-test-walk-tail
+            no-effect-unsafe-begin
+            (lint_core.lint-default-ladder-threshold)
+            (lint_core.lint-findings-empty)))
+        0)
+        unit
+        (io.panic "lint: unsafe block should not be flagged as no-effect"))
+      unit)))
+
+;; Terminal-expression fixtures exercise unreachable-code and the coupled
+;; redundant-divergence-padding finding without bloating the entry smoke.
+(define (lint-reachability-smoke
+  [vx : i64]
+  [vy : i64]
+  [one : i64]
+  [unit-expr : i64]
+  [return-one : i64]) : unit
+  (let
+    [spanned-unreachable-var : i64
+      (ast.ast-expr-spanned vx (ast.ast-source-span 41 9 41 10))]
+    [unreachable-return-begin : i64
+      (ast.ast-node-push
+        (ast.AstExpr.Begin
+          (ast.ast-expr-cons
+            return-one
+            (ast.ast-expr-cons
+              spanned-unreachable-var
+              (ast.ast-expr-cons vy (ast.ast-expr-list-new))))))]
+    [panic-call : i64
+      (ast.ast-expr-call
+        (lint-test-var "panic")
+        (ast.ast-expr-cons one (ast.ast-expr-list-new)))]
+    [spanned-panic-call : i64
+      (ast.ast-expr-spanned panic-call (ast.ast-source-span 43 9 43 24))]
+    [qualified-panic-call : i64
+      (ast.ast-expr-call
+        (lint-test-var "io.panic")
+        (ast.ast-expr-cons one (ast.ast-expr-list-new)))]
+    [spanned-qualified-panic-call : i64
+      (ast.ast-expr-spanned
+        qualified-panic-call
+        (ast.ast-source-span 44 9 44 27))]
+    [redundant-padding-begin : i64
+      (ast.ast-node-push
+        (ast.AstExpr.Begin
+          (ast.ast-expr-cons
+            spanned-panic-call
+            (ast.ast-expr-cons vx (ast.ast-expr-list-new)))))]
+    [qualified-padding-begin : i64
+      (ast.ast-node-push
+        (ast.AstExpr.Begin
+          (ast.ast-expr-cons
+            spanned-qualified-panic-call
+            (ast.ast-expr-cons vx (ast.ast-expr-list-new)))))]
+    [clean-panic-tail-begin : i64
+      (ast.ast-node-push
+        (ast.AstExpr.Begin
+          (ast.ast-expr-cons
+            unit-expr
+            (ast.ast-expr-cons spanned-panic-call (ast.ast-expr-list-new)))))]
+    [unreachable-panic-unsafe : i64
+      (ast.ast-node-push
+        (ast.AstExpr.Unsafe
+          (ast.ast-expr-cons
+            panic-call
+            (ast.ast-expr-cons vx (ast.ast-expr-list-new)))))]
+    [branch-local-return-begin : i64
+      (ast.ast-node-push
+        (ast.AstExpr.Begin
+          (ast.ast-expr-cons
+            (ast.ast-expr-if vx return-one return-one)
+            (ast.ast-expr-cons vx (ast.ast-expr-list-new)))))]
+    (begin
+      (if (=
+        (lint_core.lint-findings-count
+          (lint-test-walk-tail
+            unreachable-return-begin
+            (lint_core.lint-default-ladder-threshold)
+            (lint_core.lint-findings-empty)))
+        1)
+        unit
+        (io.panic
+          "lint: return should flag following unreachable expression once"))
+      (match (lint_core.lint-findings-get
+        (lint-test-walk-tail
+          unreachable-return-begin
+          (lint_core.lint-default-ladder-threshold)
+          (lint_core.lint-findings-empty))
+        0)
+        [(lint_core.LintMaybeFinding.Some finding)
+          (let
+            [fspan : ast.AstSourceSpan finding.span]
+            (if (and
+              (= (ast.ast-source-span-start-line fspan) 41)
+              (string.eq
+                finding.rule-id
+                (lint_core.lint-rule-unreachable-code-id)))
+              unit
+              (io.panic
+                "lint: unreachable-code finding should carry rule id and span")))]
+        [(lint_core.LintMaybeFinding.No)
+          (io.panic "lint: unreachable-code should produce a finding")])
+      (if (=
+        (lint_core.lint-findings-count
+          (lint-test-walk-tail
+            unreachable-panic-unsafe
+            (lint_core.lint-default-ladder-threshold)
+            (lint_core.lint-findings-empty)))
+        2)
+        unit
+        (io.panic "lint: panic in unsafe should flag unreachable and padding"))
+      (if (=
+        (lint_core.lint-findings-count
+          (lint-test-walk-tail
+            redundant-padding-begin
+            (lint_core.lint-default-ladder-threshold)
+            (lint_core.lint-findings-empty)))
+        2)
+        unit
+        (io.panic
+          "lint: redundant divergence padding should flag with unreachable"))
+      (if (=
+        (lint_core.lint-findings-count
+          (lint-test-walk-tail
+            qualified-padding-begin
+            (lint_core.lint-default-ladder-threshold)
+            (lint_core.lint-findings-empty)))
+        2)
+        unit
+        (io.panic "lint: qualified panic padding should flag with unreachable"))
+      (match (lint_core.lint-findings-get
+        (lint-test-walk-tail
+          redundant-padding-begin
+          (lint_core.lint-default-ladder-threshold)
+          (lint_core.lint-findings-empty))
+        0)
+        [(lint_core.LintMaybeFinding.Some finding)
+          (let
+            [fspan : ast.AstSourceSpan finding.span]
+            (if (and
+              (= (ast.ast-source-span-start-line fspan) 43)
+              (string.eq
+                finding.rule-id
+                (lint_core.lint-rule-redundant-divergence-padding-id)))
+              unit
+              (io.panic
+                "lint: redundant divergence padding finding should carry rule id and span")))]
+        [(lint_core.LintMaybeFinding.No)
+          (io.panic
+            "lint: redundant divergence padding should produce a finding")])
+      (if (=
+        (lint_core.lint-findings-count
+          (lint-test-walk-tail
+            clean-panic-tail-begin
+            (lint_core.lint-default-ladder-threshold)
+            (lint_core.lint-findings-empty)))
+        0)
+        unit
+        (io.panic "lint: tail panic without padding should stay clean"))
+      (if (=
+        (lint_core.lint-findings-count
+          (lint-test-walk-tail
+            branch-local-return-begin
+            (lint_core.lint-default-ladder-threshold)
+            (lint_core.lint-findings-empty)))
+        0)
+        unit
+        (io.panic
+          "lint: branch-local return should not make following code unreachable"))
+      unit)))
+
 (define (compiler-lint-self-test) : i64
   (let
     [vx : i64 (lint-test-var "x")]
@@ -410,112 +724,6 @@
       (ast.ast-expr-call and-callee (lint-test-expr-list2 and-xy and-yz))]
     [spanned-and-cascade : i64
       (ast.ast-expr-spanned and-cascade (ast.ast-source-span 21 7 21 30))]
-    [discarded-add : i64 (ast.ast-expr-binary (ast.AstBinOp.Add) one vx)]
-    [discarded-cast : i64 (ast.ast-expr-cast one (ast.AstType.I64))]
-    [discarded-call : i64
-      (ast.ast-expr-call (lint-test-var "side-effect?") (ast.ast-expr-list-new))]
-    [no-effect-literal-begin : i64
-      (ast.ast-node-push
-        (ast.AstExpr.Begin
-          (ast.ast-expr-cons one (ast.ast-expr-cons vx (ast.ast-expr-list-new)))))]
-    [no-effect-var-begin : i64
-      (ast.ast-node-push
-        (ast.AstExpr.Begin
-          (ast.ast-expr-cons vx (ast.ast-expr-cons one (ast.ast-expr-list-new)))))]
-    [no-effect-add-begin : i64
-      (ast.ast-node-push
-        (ast.AstExpr.Begin
-          (ast.ast-expr-cons
-            discarded-add
-            (ast.ast-expr-cons vx (ast.ast-expr-list-new)))))]
-    [no-effect-cast-begin : i64
-      (ast.ast-node-push
-        (ast.AstExpr.Begin
-          (ast.ast-expr-cons
-            discarded-cast
-            (ast.ast-expr-cons vx (ast.ast-expr-list-new)))))]
-    [no-effect-tail-begin : i64
-      (ast.ast-node-push
-        (ast.AstExpr.Begin
-          (ast.ast-expr-cons
-            unit-expr
-            (ast.ast-expr-cons one (ast.ast-expr-list-new)))))]
-    [no-effect-clean-call-begin : i64
-      (ast.ast-node-push
-        (ast.AstExpr.Begin
-          (ast.ast-expr-cons
-            discarded-call
-            (ast.ast-expr-cons vx (ast.ast-expr-list-new)))))]
-    [no-effect-clean-mutation-begin : i64
-      (ast.ast-node-push
-        (ast.AstExpr.Begin
-          (ast.ast-expr-cons
-            set-ok-false
-            (ast.ast-expr-cons vx (ast.ast-expr-list-new)))))]
-    [no-effect-unsafe-begin : i64
-      (ast.ast-node-push
-        (ast.AstExpr.Unsafe
-          (ast.ast-expr-cons one (ast.ast-expr-cons vx (ast.ast-expr-list-new)))))]
-    [spanned-no-effect-var : i64
-      (ast.ast-node-push
-        (ast.AstExpr.Begin
-          (ast.ast-expr-cons
-            (ast.ast-expr-spanned vx (ast.ast-source-span 31 9 31 10))
-            (ast.ast-expr-cons one (ast.ast-expr-list-new)))))]
-    [spanned-unreachable-var : i64
-      (ast.ast-expr-spanned vx (ast.ast-source-span 41 9 41 10))]
-    [unreachable-return-begin : i64
-      (ast.ast-node-push
-        (ast.AstExpr.Begin
-          (ast.ast-expr-cons
-            return-one
-            (ast.ast-expr-cons
-              spanned-unreachable-var
-              (ast.ast-expr-cons vy (ast.ast-expr-list-new))))))]
-    [panic-call : i64
-      (ast.ast-expr-call
-        (lint-test-var "panic")
-        (ast.ast-expr-cons one (ast.ast-expr-list-new)))]
-    [spanned-panic-call : i64
-      (ast.ast-expr-spanned panic-call (ast.ast-source-span 43 9 43 24))]
-    [qualified-panic-call : i64
-      (ast.ast-expr-call
-        (lint-test-var "io.panic")
-        (ast.ast-expr-cons one (ast.ast-expr-list-new)))]
-    [spanned-qualified-panic-call : i64
-      (ast.ast-expr-spanned
-        qualified-panic-call
-        (ast.ast-source-span 44 9 44 27))]
-    [redundant-padding-begin : i64
-      (ast.ast-node-push
-        (ast.AstExpr.Begin
-          (ast.ast-expr-cons
-            spanned-panic-call
-            (ast.ast-expr-cons vx (ast.ast-expr-list-new)))))]
-    [qualified-padding-begin : i64
-      (ast.ast-node-push
-        (ast.AstExpr.Begin
-          (ast.ast-expr-cons
-            spanned-qualified-panic-call
-            (ast.ast-expr-cons vx (ast.ast-expr-list-new)))))]
-    [clean-panic-tail-begin : i64
-      (ast.ast-node-push
-        (ast.AstExpr.Begin
-          (ast.ast-expr-cons
-            unit-expr
-            (ast.ast-expr-cons spanned-panic-call (ast.ast-expr-list-new)))))]
-    [unreachable-panic-unsafe : i64
-      (ast.ast-node-push
-        (ast.AstExpr.Unsafe
-          (ast.ast-expr-cons
-            panic-call
-            (ast.ast-expr-cons vx (ast.ast-expr-list-new)))))]
-    [branch-local-return-begin : i64
-      (ast.ast-node-push
-        (ast.AstExpr.Begin
-          (ast.ast-expr-cons
-            (ast.ast-expr-if vx return-one return-one)
-            (ast.ast-expr-cons vx (ast.ast-expr-list-new)))))]
     [single-begin : i64
       (ast.ast-node-push
         (ast.AstExpr.Begin (ast.ast-expr-cons vx (ast.ast-expr-list-new))))]
@@ -964,190 +1172,7 @@
         [(lint_core.LintMaybeFinding.No)
           (io.panic
             "lint: core.cond call should produce transitional qualifier finding")])
-      (if (=
-        (lint_core.lint-findings-count
-          (lint-test-walk-tail
-            no-effect-literal-begin
-            (lint_core.lint-default-ladder-threshold)
-            (lint_core.lint-findings-empty)))
-        1)
-        unit
-        (io.panic "lint: discarded literal should be flagged"))
-      (match (lint_core.lint-findings-get
-        (lint-test-walk-tail
-          spanned-no-effect-var
-          (lint_core.lint-default-ladder-threshold)
-          (lint_core.lint-findings-empty))
-        0)
-        [(lint_core.LintMaybeFinding.Some finding)
-          (let
-            [fspan : ast.AstSourceSpan finding.span]
-            (if (and
-              (= (ast.ast-source-span-start-line fspan) 31)
-              (string.eq finding.rule-id (lint_core.lint-rule-no-effect-id)))
-              unit
-              (io.panic "lint: no-effect finding should carry rule id and span")))]
-        [(lint_core.LintMaybeFinding.No)
-          (io.panic
-            "lint: discarded variable should produce a no-effect finding")])
-      (if (=
-        (lint_core.lint-findings-count
-          (lint-test-walk-tail
-            no-effect-var-begin
-            (lint_core.lint-default-ladder-threshold)
-            (lint_core.lint-findings-empty)))
-        1)
-        unit
-        (io.panic "lint: discarded variable should be flagged"))
-      (if (=
-        (lint_core.lint-findings-count
-          (lint-test-walk-tail
-            no-effect-add-begin
-            (lint_core.lint-default-ladder-threshold)
-            (lint_core.lint-findings-empty)))
-        1)
-        unit
-        (io.panic "lint: discarded arithmetic should be flagged"))
-      (if (=
-        (lint_core.lint-findings-count
-          (lint-test-walk-tail
-            no-effect-cast-begin
-            (lint_core.lint-default-ladder-threshold)
-            (lint_core.lint-findings-empty)))
-        1)
-        unit
-        (io.panic "lint: discarded cast should be flagged"))
-      (if (=
-        (lint_core.lint-findings-count
-          (lint-test-walk-tail
-            no-effect-tail-begin
-            (lint_core.lint-default-ladder-threshold)
-            (lint_core.lint-findings-empty)))
-        0)
-        unit
-        (io.panic "lint: tail expression should not be flagged as no-effect"))
-      (if (=
-        (lint_core.lint-findings-count
-          (lint-test-walk-tail
-            no-effect-clean-call-begin
-            (lint_core.lint-default-ladder-threshold)
-            (lint_core.lint-findings-empty)))
-        0)
-        unit
-        (io.panic "lint: discarded call should not be flagged as no-effect"))
-      (if (=
-        (lint_core.lint-findings-count
-          (lint-test-walk-tail
-            no-effect-clean-mutation-begin
-            (lint_core.lint-default-ladder-threshold)
-            (lint_core.lint-findings-empty)))
-        0)
-        unit
-        (io.panic "lint: discarded mutation should not be flagged as no-effect"))
-      (if (=
-        (lint_core.lint-findings-count
-          (lint-test-walk-tail
-            no-effect-unsafe-begin
-            (lint_core.lint-default-ladder-threshold)
-            (lint_core.lint-findings-empty)))
-        0)
-        unit
-        (io.panic "lint: unsafe block should not be flagged as no-effect"))
-      (if (=
-        (lint_core.lint-findings-count
-          (lint-test-walk-tail
-            unreachable-return-begin
-            (lint_core.lint-default-ladder-threshold)
-            (lint_core.lint-findings-empty)))
-        1)
-        unit
-        (io.panic
-          "lint: return should flag following unreachable expression once"))
-      (match (lint_core.lint-findings-get
-        (lint-test-walk-tail
-          unreachable-return-begin
-          (lint_core.lint-default-ladder-threshold)
-          (lint_core.lint-findings-empty))
-        0)
-        [(lint_core.LintMaybeFinding.Some finding)
-          (let
-            [fspan : ast.AstSourceSpan finding.span]
-            (if (and
-              (= (ast.ast-source-span-start-line fspan) 41)
-              (string.eq
-                finding.rule-id
-                (lint_core.lint-rule-unreachable-code-id)))
-              unit
-              (io.panic
-                "lint: unreachable-code finding should carry rule id and span")))]
-        [(lint_core.LintMaybeFinding.No)
-          (io.panic "lint: unreachable-code should produce a finding")])
-      (if (=
-        (lint_core.lint-findings-count
-          (lint-test-walk-tail
-            unreachable-panic-unsafe
-            (lint_core.lint-default-ladder-threshold)
-            (lint_core.lint-findings-empty)))
-        2)
-        unit
-        (io.panic "lint: panic in unsafe should flag unreachable and padding"))
-      (if (=
-        (lint_core.lint-findings-count
-          (lint-test-walk-tail
-            redundant-padding-begin
-            (lint_core.lint-default-ladder-threshold)
-            (lint_core.lint-findings-empty)))
-        2)
-        unit
-        (io.panic
-          "lint: redundant divergence padding should flag with unreachable"))
-      (if (=
-        (lint_core.lint-findings-count
-          (lint-test-walk-tail
-            qualified-padding-begin
-            (lint_core.lint-default-ladder-threshold)
-            (lint_core.lint-findings-empty)))
-        2)
-        unit
-        (io.panic "lint: qualified panic padding should flag with unreachable"))
-      (match (lint_core.lint-findings-get
-        (lint-test-walk-tail
-          redundant-padding-begin
-          (lint_core.lint-default-ladder-threshold)
-          (lint_core.lint-findings-empty))
-        0)
-        [(lint_core.LintMaybeFinding.Some finding)
-          (let
-            [fspan : ast.AstSourceSpan finding.span]
-            (if (and
-              (= (ast.ast-source-span-start-line fspan) 43)
-              (string.eq
-                finding.rule-id
-                (lint_core.lint-rule-redundant-divergence-padding-id)))
-              unit
-              (io.panic
-                "lint: redundant divergence padding finding should carry rule id and span")))]
-        [(lint_core.LintMaybeFinding.No)
-          (io.panic
-            "lint: redundant divergence padding should produce a finding")])
-      (if (=
-        (lint_core.lint-findings-count
-          (lint-test-walk-tail
-            clean-panic-tail-begin
-            (lint_core.lint-default-ladder-threshold)
-            (lint_core.lint-findings-empty)))
-        0)
-        unit
-        (io.panic "lint: tail panic without padding should stay clean"))
-      (if (=
-        (lint_core.lint-findings-count
-          (lint-test-walk-tail
-            branch-local-return-begin
-            (lint_core.lint-default-ladder-threshold)
-            (lint_core.lint-findings-empty)))
-        0)
-        unit
-        (io.panic
-          "lint: branch-local return should not make following code unreachable"))
+      (lint-no-effect-smoke vx one unit-expr set-ok-false)
+      (lint-reachability-smoke vx vy one unit-expr return-one)
       (lint-rule-registry-smoke)
       42)))

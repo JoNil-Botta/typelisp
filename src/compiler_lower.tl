@@ -26136,8 +26136,8 @@
   [mode : CompilerLowerMode]
   [params : ast.AstParamList]
   [source-start : i64]
-  [leading-sret? : bool]) : ir.CompilerIrParamList
-  (ir.compiler-ir-param-cons
+  [leading-sret? : bool]) : ir.CompilerIrParamSeq
+  (ir.compiler-ir-param-seq-prepend
     (ir.CompilerIrParam.Param "__tl_env" (ast.AstType.U64) 0)
     (lower-internal-param-list ctx mode params source-start leading-sret?)))
 
@@ -26304,7 +26304,7 @@
                       sret-var)
                       [(ResultLowerState.Ok final-state)
                         (let
-                          [source-params : ir.CompilerIrParamList
+                          [source-params : ir.CompilerIrParamSeq
                             (if structural-params?
                               (lower-captured-internal-param-list
                                 ctx
@@ -26313,24 +26313,24 @@
                                 source-start
                                 structural-sret?)
                               (let
-                                [source : ir.CompilerIrParamList
+                                [source : ir.CompilerIrParamSeq
                                   (lower-param-list ctx params source-start)]
-                                [with-sret : ir.CompilerIrParamList
+                                [with-sret : ir.CompilerIrParamSeq
                                   (if structural-sret?
-                                    (ir.compiler-ir-param-cons
+                                    (ir.compiler-ir-param-seq-prepend
                                       (ir.CompilerIrParam.Param
                                         "__sret"
                                         (ast.AstType.U64)
                                         1)
                                       source)
                                     source)]
-                                (ir.compiler-ir-param-cons
+                                (ir.compiler-ir-param-seq-prepend
                                   (ir.CompilerIrParam.Param
                                     "__tl_env"
                                     (ast.AstType.U64)
                                     0)
                                   with-sret)))]
-                          [all-params : ir.CompilerIrParamList
+                          [all-params : ir.CompilerIrParamSeq
                             (if nominal-sret?
                               (lower-param-list-append-sret
                                 source-params
@@ -66278,39 +66278,59 @@
   [params : ast.AstParamList]
   [args : ir.CompilerIrSpmdCallArgSeq]
   [mode : CompilerLowerMode]
-  [idx : i64]) : ir.CompilerIrParamList
-  (lower-spmd-private-param-list-at lower-state ctx (& params) args mode 0 idx))
+  [idx : i64]) : ir.CompilerIrParamSeq
+  (let
+    [builder : ir.CompilerIrParamBuilder
+      (ir.compiler-ir-param-builder-with-capacity
+        (ast.ast-param-list-len (& params)))]
+    (begin
+      (lower-spmd-private-param-list-into!
+        lower-state
+        ctx
+        (& params)
+        args
+        mode
+        0
+        idx
+        (&mut builder))
+      (ir.compiler-ir-param-builder-to-seq builder))))
 
-(define (lower-spmd-private-param-list-at
+(define (lower-spmd-private-param-list-into!
   [lower-state : CompilerLowerState]
   [ctx : tc_core.TcContext]
   [params : (& params ast.AstParamList)]
   [args : ir.CompilerIrSpmdCallArgSeq]
   [mode : CompilerLowerMode]
   [index : i64]
-  [idx : i64]) : ir.CompilerIrParamList
+  [idx : i64]
+  [builder : (&mut builder ir.CompilerIrParamBuilder)]) : unit
   (if (>= index (ast.ast-param-list-len params))
-    ir.CompilerIrParamList.Nil
+    unit
     (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
       [(ast.AstParam.Param name ty _)
         (match (lower-spmd-call-arg-at (lower-global-shared-view args) index)
           [(ir.CompilerIrSpmdCallArg.Arg class _ _)
-            (ir.compiler-ir-param-cons
-              (ir.CompilerIrParam.Param
-                (lower-spmd-private-param-name lower-state name class mode)
-                (lower-one-word-register-storage-type
-                  (lower-global-shared-view ctx)
-                  (tc_core.tc-type-without-regions
-                    (tc_core.tc-resolve-type (lower-global-shared-view ctx) ty)))
-                idx)
-              (lower-spmd-private-param-list-at
+            (begin
+              (ir.compiler-ir-param-builder-push!
+                builder
+                (ir.CompilerIrParam.Param
+                  (lower-spmd-private-param-name lower-state name class mode)
+                  (lower-one-word-register-storage-type
+                    (lower-global-shared-view ctx)
+                    (tc_core.tc-type-without-regions
+                      (tc_core.tc-resolve-type
+                        (lower-global-shared-view ctx)
+                        ty)))
+                  idx))
+              (lower-spmd-private-param-list-into!
                 lower-state
-                ctx
+                (lower-global-shared-view ctx)
                 params
                 args
                 mode
                 (+ index 1)
-                (+ idx 1)))])])))
+                (+ idx 1)
+                builder))])])))
 
 (define (lower-spmd-private-helper-name
   [names : LowerNameCache]
@@ -66389,26 +66409,11 @@
   (ir.compiler-ir-spmd-call-arg-seq-append args extra))
 
 (define (lower-spmd-private-param-list-append-index
-  [params : ir.CompilerIrParamList]
-  [var-id : i64]) : ir.CompilerIrParamList
-  (match (ir.compiler-ir-param-list-force-cons params)
-    [(ir.CompilerIrParamList.Nil)
-      (ir.compiler-ir-param-cons
-        (ir.CompilerIrParam.Param
-          "__tl_spmd_index_base"
-          (ast.AstType.I64)
-          var-id)
-        ir.CompilerIrParamList.Nil)]
-    [(ir.CompilerIrParamList.Array seq)
-      (lower-spmd-private-param-list-append-index
-        (ir.compiler-ir-param-seq-to-list seq)
-        var-id)]
-    [(ir.CompilerIrParamList.Cons head rest)
-      (ir.compiler-ir-param-cons
-        head
-        (lower-spmd-private-param-list-append-index
-          (lower-box-shared-view rest)
-          var-id))]))
+  [params : ir.CompilerIrParamSeq]
+  [var-id : i64]) : ir.CompilerIrParamSeq
+  (ir.compiler-ir-param-seq-append-one
+    params
+    (ir.CompilerIrParam.Param "__tl_spmd_index_base" (ast.AstType.I64) var-id)))
 
 (define (lower-spmd-simd-helper-function
   [ctx : tc_core.TcContext]
@@ -66541,7 +66546,7 @@
                   (lower-global-shared-view final-state)
                   (ir.CompilerIrFunction.Function
                     hidden-name
-                    (ir.compiler-ir-param-cons
+                    (ir.compiler-ir-param-seq-prepend
                       (ir.CompilerIrParam.Param
                         (if (lower-mode-avx2? mode)
                           "__tl_spmd_active_mask_avx2"
@@ -66549,7 +66554,7 @@
                         (ast.AstType.Bool)
                         0)
                       (let
-                        [source-params : ir.CompilerIrParamList
+                        [source-params : ir.CompilerIrParamSeq
                           (lower-spmd-private-param-list
                             (compiler-lower-state-from-name-cache names)
                             ctx
@@ -66640,7 +66645,7 @@
             (lower-global-shared-view final-state)
             (ir.CompilerIrFunction.Function
               hidden-name
-              (ir.compiler-ir-param-cons
+              (ir.compiler-ir-param-seq-prepend
                 (ir.CompilerIrParam.Param
                   "__tl_spmd_active_mask"
                   (ast.AstType.Bool)
@@ -74412,8 +74417,14 @@
 (define (lower-param-list
   [ctx : tc_core.TcContext]
   [params : ast.AstParamList]
-  [idx : i64]) : ir.CompilerIrParamList
-  (lower-param-list-at ctx (& params) 0 idx))
+  [idx : i64]) : ir.CompilerIrParamSeq
+  (let
+    [builder : ir.CompilerIrParamBuilder
+      (ir.compiler-ir-param-builder-with-capacity
+        (ast.ast-param-list-len (& params)))]
+    (begin
+      (lower-param-list-into! ctx (& params) 0 idx (&mut builder))
+      (ir.compiler-ir-param-builder-to-seq builder))))
 
 ;; Internal functions keep one physical IR argument per source parameter. A
 ;; structural sret pointer, when present, is the first physical argument; the
@@ -74424,35 +74435,56 @@
   [mode : CompilerLowerMode]
   [params : ast.AstParamList]
   [source-start : i64]
-  [leading-sret? : bool]) : ir.CompilerIrParamList
+  [leading-sret? : bool]) : ir.CompilerIrParamSeq
   (let
-    [source : ir.CompilerIrParamList
-      (lower-internal-param-list-at ctx mode (& params) 0 source-start)]
+    [source : ir.CompilerIrParamSeq
+      (let
+        [builder : ir.CompilerIrParamBuilder
+          (ir.compiler-ir-param-builder-with-capacity
+            (ast.ast-param-list-len (& params)))]
+        (begin
+          (lower-internal-param-list-into!
+            ctx
+            mode
+            (& params)
+            0
+            source-start
+            (&mut builder))
+          (ir.compiler-ir-param-builder-to-seq builder)))]
     (if leading-sret?
-      (ir.compiler-ir-param-cons
+      (ir.compiler-ir-param-seq-prepend
         (ir.CompilerIrParam.Param "__sret" (ast.AstType.U64) (- source-start 1))
         source)
       source)))
 
-(define (lower-internal-param-list-at
+(define (lower-internal-param-list-into!
   [ctx : tc_core.TcContext]
   [mode : CompilerLowerMode]
   [params : (& params ast.AstParamList)]
   [index : i64]
-  [idx : i64]) : ir.CompilerIrParamList
+  [idx : i64]
+  [builder : (&mut builder ir.CompilerIrParamBuilder)]) : unit
   (if (>= index (ast.ast-param-list-len params))
-    ir.CompilerIrParamList.Nil
+    unit
     (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
       [(ast.AstParam.Param name ty _)
-        (ir.compiler-ir-param-cons
-          (ir.CompilerIrParam.Param
-            (tc_core.tc-env-key-name-text name)
-            (lower-internal-param-physical-type
-              (lower-global-shared-view ctx)
-              mode
-              ty)
-            idx)
-          (lower-internal-param-list-at ctx mode params (+ index 1) (+ idx 1)))])))
+        (begin
+          (ir.compiler-ir-param-builder-push!
+            builder
+            (ir.CompilerIrParam.Param
+              (tc_core.tc-env-key-name-text name)
+              (lower-internal-param-physical-type
+                (lower-global-shared-view ctx)
+                mode
+                ty)
+              idx))
+          (lower-internal-param-list-into!
+            (lower-global-shared-view ctx)
+            mode
+            params
+            (+ index 1)
+            (+ idx 1)
+            builder))])))
 
 (define (lower-internal-param-storage-two
   [physical : ir.CompilerIrValue]
@@ -74633,44 +74665,42 @@
     type-env
     origin))
 
-(define (lower-param-list-at
+(define (lower-param-list-into!
   [ctx : tc_core.TcContext]
   [params : (& params ast.AstParamList)]
   [index : i64]
-  [idx : i64]) : ir.CompilerIrParamList
+  [idx : i64]
+  [builder : (&mut builder ir.CompilerIrParamBuilder)]) : unit
   (if (>= index (ast.ast-param-list-len params))
-    ir.CompilerIrParamList.Nil
+    unit
     (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
       [(ast.AstParam.Param name ty _)
-        (ir.compiler-ir-param-cons
-          (ir.CompilerIrParam.Param
-            (tc_core.tc-env-key-name-text name)
-            (lower-one-word-register-storage-type
-              (lower-global-shared-view ctx)
-              (tc_core.tc-type-without-regions
-                (tc_core.tc-resolve-type (lower-global-shared-view ctx) ty)))
-            idx)
-          (lower-param-list-at ctx params (+ index 1) (+ idx 1)))])))
+        (begin
+          (ir.compiler-ir-param-builder-push!
+            builder
+            (ir.CompilerIrParam.Param
+              (tc_core.tc-env-key-name-text name)
+              (lower-one-word-register-storage-type
+                (lower-global-shared-view ctx)
+                (tc_core.tc-type-without-regions
+                  (tc_core.tc-resolve-type (lower-global-shared-view ctx) ty)))
+              idx))
+          (lower-param-list-into!
+            (lower-global-shared-view ctx)
+            params
+            (+ index 1)
+            (+ idx 1)
+            builder))])))
 
 ;; sret ABI: append the hidden result-slot pointer param at index
 ;; `sret-var` (the var id reserved just past the real params). Internal calling
 ;; convention only -- C-ABI externs keep their own ABI on a separate path.
 (define (lower-param-list-append-sret
-  [params : ir.CompilerIrParamList]
-  [sret-var : i64]) : ir.CompilerIrParamList
-  (match (ir.compiler-ir-param-list-force-cons params)
-    [(ir.CompilerIrParamList.Nil)
-      (ir.compiler-ir-param-cons
-        (ir.CompilerIrParam.Param "__sret" (ast.AstType.U64) sret-var)
-        ir.CompilerIrParamList.Nil)]
-    [(ir.CompilerIrParamList.Array seq)
-      (lower-param-list-append-sret
-        (ir.compiler-ir-param-seq-to-list seq)
-        sret-var)]
-    [(ir.CompilerIrParamList.Cons head rest)
-      (ir.compiler-ir-param-cons
-        head
-        (lower-param-list-append-sret (lower-box-shared-view rest) sret-var))]))
+  [params : ir.CompilerIrParamSeq]
+  [sret-var : i64]) : ir.CompilerIrParamSeq
+  (ir.compiler-ir-param-seq-append-one
+    params
+    (ir.CompilerIrParam.Param "__sret" (ast.AstType.U64) sret-var)))
 
 (define (lower-supported-function-param-type?
   [ctx : tc_core.TcContext]
@@ -74912,7 +74942,7 @@
                     sret-var)
                     [(ResultLowerState.Ok final-state)
                       (let
-                        [source-params : ir.CompilerIrParamList
+                        [source-params : ir.CompilerIrParamSeq
                           (if structural-params?
                             (lower-internal-param-list
                               ctx
@@ -74921,17 +74951,17 @@
                               source-start
                               structural-sret?)
                             (let
-                              [source : ir.CompilerIrParamList
+                              [source : ir.CompilerIrParamSeq
                                 (lower-param-list ctx params source-start)]
                               (if structural-sret?
-                                (ir.compiler-ir-param-cons
+                                (ir.compiler-ir-param-seq-prepend
                                   (ir.CompilerIrParam.Param
                                     "__sret"
                                     (ast.AstType.U64)
                                     (- source-start 1))
                                   source)
                                 source)))]
-                        [all-params : ir.CompilerIrParamList
+                        [all-params : ir.CompilerIrParamSeq
                           (if nominal-sret?
                             (lower-param-list-append-sret
                               source-params
@@ -76355,40 +76385,61 @@
   [mode : CompilerLowerMode]
   [types : ast.AstTypeList]
   [source-start : i64]
-  [leading-sret? : bool]) : ir.CompilerIrParamList
-  (if leading-sret?
-    (ir.compiler-ir-param-cons
-      (ir.CompilerIrParam.Param "__sret" (ast.AstType.U64) 0)
-      (lower-dispatch-physical-param-list-at ctx mode (& types) 0 source-start))
-    (lower-dispatch-physical-param-list-at ctx mode (& types) 0 source-start)))
+  [leading-sret? : bool]) : ir.CompilerIrParamSeq
+  (let
+    [builder : ir.CompilerIrParamBuilder
+      (ir.compiler-ir-param-builder-with-capacity
+        (+
+          (ast.ast-type-list-len (& types))
+          (if leading-sret?
+            1
+            0)))]
+    (begin
+      (if leading-sret?
+        (ir.compiler-ir-param-builder-push!
+          (&mut builder)
+          (ir.CompilerIrParam.Param "__sret" (ast.AstType.U64) 0))
+        unit)
+      (lower-dispatch-physical-param-list-into!
+        ctx
+        mode
+        (& types)
+        0
+        source-start
+        (&mut builder))
+      (ir.compiler-ir-param-builder-to-seq builder))))
 
-(define (lower-dispatch-physical-param-list-at
+(define (lower-dispatch-physical-param-list-into!
   [ctx : tc_core.TcContext]
   [mode : CompilerLowerMode]
   [types : (& types ast.AstTypeList)]
   [index : i64]
-  [idx : i64]) : ir.CompilerIrParamList
+  [idx : i64]
+  [builder : (&mut builder ir.CompilerIrParamBuilder)]) : unit
   (if (>= index (ast.ast-type-list-len types))
-    ir.CompilerIrParamList.Nil
+    unit
     (let
       [source-ty : ast.AstType
         (tc_core.tc-context-type-get
           (lower-global-shared-view ctx)
           (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
-      (ir.compiler-ir-param-cons
-        (ir.CompilerIrParam.Param
-          (str_cat.str-cat "arg" (string.int->string index))
-          (lower-internal-param-physical-type
-            (lower-global-shared-view ctx)
-            mode
-            source-ty)
-          idx)
-        (lower-dispatch-physical-param-list-at
-          ctx
+      (begin
+        (ir.compiler-ir-param-builder-push!
+          builder
+          (ir.CompilerIrParam.Param
+            (str_cat.str-cat "arg" (string.int->string index))
+            (lower-internal-param-physical-type
+              (lower-global-shared-view ctx)
+              mode
+              source-ty)
+            idx))
+        (lower-dispatch-physical-param-list-into!
+          (lower-global-shared-view ctx)
           mode
           types
           (+ index 1)
-          (+ idx 1))))))
+          (+ idx 1)
+          builder)))))
 
 (define (lower-dispatch-physical-param-values [count : i64] [idx : i64]) : ir.CompilerIrValueSeq
   (let

@@ -5491,24 +5491,15 @@
     [(LowerTestMaybeFunction.Some func)
       (match func
         [(compiler_ir_types.CompilerIrFunction.Function _ params _ _ _)
-          (compiler_ir_types.compiler-ir-param-list-count params)])]))
+          (compiler_ir_types.compiler-ir-param-seq-count params)])]))
 
 (define (lower-test-param-name-at
-  [params : compiler_ir_types.CompilerIrParamList]
+  [params : compiler_ir_types.CompilerIrParamSeq]
   [index : i64]) : String
-  (match (compiler_ir_types.compiler-ir-param-list-force-cons params)
-    [(compiler_ir_types.CompilerIrParamList.Nil) ""]
-    [(compiler_ir_types.CompilerIrParamList.Array seq)
-      (lower-test-param-name-at
-        (compiler_ir_types.compiler-ir-param-seq-to-list seq)
-        index)]
-    [(compiler_ir_types.CompilerIrParamList.Cons param rest)
-      (if (= index 0)
-        (match param
-          [(compiler_ir_types.CompilerIrParam.Param name _ _) name])
-        (lower-test-param-name-at
-          (compiler_ir_types.compiler-ir-box-shared-view rest)
-          (- index 1)))]))
+  (if (or (< index 0) (>= index params.len))
+    ""
+    (match (compiler_ir_types.compiler-ir-param-seq-ref params index)
+      [(compiler_ir_types.CompilerIrParam.Param name _ _) name])))
 
 (define (lower-test-function-param-name
   [funcs : compiler_ir_types.CompilerIrFunctionSeq]

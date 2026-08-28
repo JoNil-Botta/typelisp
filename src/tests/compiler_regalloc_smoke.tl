@@ -37,7 +37,7 @@
           (reg_tests.compiler-reg-i64-ty)))]
     (ir.CompilerIrFunction.Function
       (ci.intern-generated-canonical-name "spmd_call")
-      ir.CompilerIrParamList.Nil
+      (ir.compiler-ir-param-seq-empty)
       (reg_tests.compiler-reg-i64-ty)
       5
       (ir.compiler-ir-block-cons
@@ -121,9 +121,9 @@
 (define (compiler-reg-smoke-descriptor-pair-function) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
     (ci.intern-generated-canonical-name "descriptor_pair")
-    (ir.compiler-ir-param-cons
+    (ir.compiler-ir-param-seq-prepend
       (ir.CompilerIrParam.Param "handle" (ast.AstType.String) 0)
-      ir.CompilerIrParamList.Nil)
+      (ir.compiler-ir-param-seq-empty))
     (ast.AstType.I64)
     8
     (ir.compiler-ir-block-cons

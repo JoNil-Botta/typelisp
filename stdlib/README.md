@@ -168,7 +168,15 @@ Vec bang place macros as available yet.
   discloses an address and is only a diagnostic snapshot, not stable identity,
   uniqueness, liveness, persistence, provenance, or a supported integer/pointer
   round-trip. Other type selectors remain focused unsupported-semantics
-  diagnostics. Default Display values are `String`, all eight fixed-width
+  diagnostics. A pre-dispatch byte-Debug core is available for the future
+  `?` implementation through `format-debug-string-core` and
+  `format-debug-char-core`: it quotes String/borrowed-str and char values with
+  their active delimiter, uses `\\0`/`\\t`/`\\n`/`\\r`, escapes backslash and
+  only that delimiter, and renders every other non-printable or high byte as
+  lowercase fixed-width `\\xNN`. This output is deliberately ASCII-only, an
+  approved difference from Rust's Unicode-oriented Debug; landing the helper
+  does not make any Debug selector dispatch yet. Default Display values are
+  `String`, all eight fixed-width
   integer types, `bool`, `char`, `f64`, and `f32`. Integers use full-range
   decimal Display or the selected radix; floats use source-width shortest
   round-tripping decimal Display without exponent notation and with canonical

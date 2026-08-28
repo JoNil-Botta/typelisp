@@ -45471,10 +45471,13 @@
 ;; type-name map build). It is invariant across a compile, but `tc-clone-able-
 ;; type?` is invoked once per `(clone ...)` / `with-escape` body in the program,
 ;; so recomputing it each time was a large repeated cost. Cache it per compile:
-;; populated eagerly in the typecheck entry (program arena, so the cached map
-;; never dangles into a scratch arena) and reset per compile in macro-expand-
-;; program / the REPL entry. When not yet populated (e.g. REPL one-shot checks)
-;; the set is rebuilt without caching, preserving correctness.
+;; populated eagerly in the typecheck entry and reset per compile in macro-
+;; expand-program / the REPL entry. Clone checks can also run while the segmented
+;; macro program is still active. Those checks populate the same cache in the
+;; stable AST-pool arena, and a splice invalidates it only when module/import/type
+;; declarations changed. Function-body expression expansion can therefore reuse
+;; the whole-program fixpoint without retaining scratch-arena storage or hiding a
+;; generated nominal declaration.
 (define tc-clone-able-cache-ready : bool
   false)
 (define tc-clone-able-cache : clone_support.CloneNameSet
@@ -45773,14 +45776,28 @@
           (clone_support.clone-fixpoint (& pools) (& decls) (& all-type-names)))])))
 
 (define (tc-clone-able-cache-populate! [ctx : TcContext]) : unit
-  (begin
-    (set! tc-clone-able-cache (tc-clone-able-set-build ctx))
-    (set! tc-clone-able-cache-ready true)))
+  (let
+    [pools : ast.AstNodePoolContext
+      (tc-context-pools (tc-global-shared-view ctx))]
+    [cache-arena : i64
+      (ast.ast-node-pool-context-base-arena (tc-global-shared-view pools))]
+    [previous-arena : i64 (arena.tl_arena_current)]
+    (begin
+      (unsafe
+        (arena.tl_arena_set cache-arena))
+      (set!
+        tc-clone-able-cache
+        (tc-clone-able-set-build (tc-global-shared-view ctx)))
+      (unsafe
+        (arena.tl_arena_set previous-arena))
+      (set! tc-clone-able-cache-ready true))))
 
 (define (tc-clone-able-set [ctx : TcContext]) : clone_support.CloneNameSet
   (if tc-clone-able-cache-ready
     (tc-global-shared-view tc-clone-able-cache)
-    (tc-clone-able-set-build ctx)))
+    (begin
+      (tc-clone-able-cache-populate! (tc-global-shared-view ctx))
+      (tc-global-shared-view tc-clone-able-cache))))
 
 (define (tc-clone-unsupported-path-type
   [pools : (& pools ast.AstNodePoolContext)]
@@ -99142,6 +99159,25 @@
           (set! index (+ index 1))))
       (ast.AstDeclPathList slots owner-ids 0 decl-count true))))
 
+(define (macro-segmented-decl-list-affects-clone-set?
+  [decls : (& decls ast.AstDeclList)]) : bool
+  (let
+    [index : i64 0]
+    [count : i64 (ast.ast-decl-list-len decls)]
+    [found : bool false]
+    (begin
+      (while (and (not found) (< index count))
+        (begin
+          (if (or
+            (ast.ast-decl-list-unwrapped-module-or-import-at? decls index)
+            (ast.ast-decl-list-unwrapped-module-or-type-definition-at?
+              decls
+              index))
+            (set! found true)
+            unit)
+          (set! index (+ index 1))))
+      found)))
+
 (define (macro-segmented-program-splice-current-in-scratch!
   [state : TcJobState]
   [middle : ast.AstDeclList]
@@ -99156,6 +99192,15 @@
     [node-decls : ast.AstDeclList node.decls]
     [node-paths : ast.AstDeclPathList node.paths]
     [node-count : i64 (ast.ast-decl-list-len (& node-decls))]
+    [clone-set-changed : bool
+      (or
+        (ast.ast-decl-list-unwrapped-module-or-import-at?
+          (& node-decls)
+          data.cursor)
+        (ast.ast-decl-list-unwrapped-module-or-type-definition-at?
+          (& node-decls)
+          data.cursor)
+        (macro-segmented-decl-list-affects-clone-set? (& middle)))]
     [suffix-count : i64 (- node-count next-index)]
     [suffix-head : i64
       (if (> suffix-count 0)
@@ -99180,6 +99225,9 @@
           suffix-head)
         suffix-head)]
     (begin
+      (if clone-set-changed
+        (tc-clone-able-cache-reset!)
+        unit)
       (cfg compile-profile (compiler-tc-walk-segment-split-note! middle-count))
       (set! data.head next-head)
       (set! data.cursor 0)

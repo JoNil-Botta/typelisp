@@ -1874,7 +1874,7 @@
   (match actual
     [(ast.AstType.Tuple elems-box)
       (let
-        [elems : ast.AstTypeList (__tl-box-place elems-box)]
+        [elems : ast.AstTypeList (ast.ast-type-list-box-shared-view elems-box)]
         (and
           (= (ast.ast-type-list-len (& elems)) 2)
           (match (ast.ast-node-pool-context-type-get
@@ -1970,7 +1970,7 @@
             (ast.ast-type-list-new))))]
     [operand : i64
       (producer-test-push-spanned
-        (owned_view.compiler-owned-shared-view pools)
+        (& pools)
         (ast.AstExpr.Var (ci.intern "anchors")))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
       (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]

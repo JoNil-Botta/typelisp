@@ -217,12 +217,12 @@
 
 (define (compiler-ir-smoke-dense-function-params-ok?) : bool
   (let
-    [params : compiler_ir_types.CompilerIrParamList
-      (compiler_ir_types.compiler-ir-param-cons
+    [params : compiler_ir_types.CompilerIrParamSeq
+      (compiler_ir_types.compiler-ir-param-seq-prepend
         (compiler_ir_types.CompilerIrParam.Param "value" (ast.AstType.I64) 2)
-        (compiler_ir_types.compiler-ir-param-cons
+        (compiler_ir_types.compiler-ir-param-seq-prepend
           (compiler_ir_types.CompilerIrParam.Param "flag" (ast.AstType.Bool) 5)
-          compiler_ir_types.CompilerIrParamList.Nil))]
+          (compiler_ir_types.compiler-ir-param-seq-empty)))]
     [func : compiler_ir_types.CompilerIrFunction
       (compiler_ir_types.CompilerIrFunction.Function
         (compiler-ir-smoke-symbol-id "with_params")
@@ -237,22 +237,16 @@
     (and
       (match func
         [(compiler_ir_types.CompilerIrFunction.Function _ stored _ _ _)
-          (match stored
-            [(compiler_ir_types.CompilerIrParamList.Array seq)
-              (and
-                (= (compiler_ir_types.compiler-ir-param-seq-count seq) 2)
-                (compiler-ir-smoke-param-seq-entry-i64? seq 0 "value" 2)
-                (compiler-ir-smoke-param-seq-entry-bool? seq 1 "flag" 5))]
-            [_ false])])
+          (and
+            (= (compiler_ir_types.compiler-ir-param-seq-count stored) 2)
+            (compiler-ir-smoke-param-seq-entry-i64? stored 0 "value" 2)
+            (compiler-ir-smoke-param-seq-entry-bool? stored 1 "flag" 5))])
       (match cloned
         [(compiler_ir_types.CompilerIrFunction.Function _ stored _ _ _)
-          (match stored
-            [(compiler_ir_types.CompilerIrParamList.Array seq)
-              (and
-                (= (compiler_ir_types.compiler-ir-param-seq-count seq) 2)
-                (compiler-ir-smoke-param-seq-entry-i64? seq 0 "value" 2)
-                (compiler-ir-smoke-param-seq-entry-bool? seq 1 "flag" 5))]
-            [_ false])]))))
+          (and
+            (= (compiler_ir_types.compiler-ir-param-seq-count stored) 2)
+            (compiler-ir-smoke-param-seq-entry-i64? stored 0 "value" 2)
+            (compiler-ir-smoke-param-seq-entry-bool? stored 1 "flag" 5))]))))
 
 (define (compiler-ir-smoke-function-seq-count-two?
   [functions : compiler_ir_types.CompilerIrFunctionSeq]) : bool
@@ -387,14 +381,14 @@
     [first : compiler_ir_types.CompilerIrFunction
       (compiler_ir_types.CompilerIrFunction.Function
         (compiler-ir-smoke-symbol-id "first")
-        compiler_ir_types.CompilerIrParamList.Nil
+        (compiler_ir_types.compiler-ir-param-seq-empty)
         (ast.AstType.I64)
         2
         blocks)]
     [second : compiler_ir_types.CompilerIrFunction
       (compiler_ir_types.CompilerIrFunction.Function
         (compiler-ir-smoke-symbol-id "second")
-        compiler_ir_types.CompilerIrParamList.Nil
+        (compiler_ir_types.compiler-ir-param-seq-empty)
         (ast.AstType.I64)
         2
         blocks)]
@@ -458,21 +452,21 @@
     [first-func : compiler_ir_types.CompilerIrFunction
       (compiler_ir_types.CompilerIrFunction.Function
         (compiler-ir-smoke-symbol-id "first-func")
-        compiler_ir_types.CompilerIrParamList.Nil
+        (compiler_ir_types.compiler-ir-param-seq-empty)
         (ast.AstType.Unit)
         0
         compact-blocks)]
     [second-func : compiler_ir_types.CompilerIrFunction
       (compiler_ir_types.CompilerIrFunction.Function
         (compiler-ir-smoke-symbol-id "second-func")
-        compiler_ir_types.CompilerIrParamList.Nil
+        (compiler_ir_types.compiler-ir-param-seq-empty)
         (ast.AstType.Unit)
         0
         compact-blocks)]
     [third-func : compiler_ir_types.CompilerIrFunction
       (compiler_ir_types.CompilerIrFunction.Function
         (compiler-ir-smoke-symbol-id "third-func")
-        compiler_ir_types.CompilerIrParamList.Nil
+        (compiler_ir_types.compiler-ir-param-seq-empty)
         (ast.AstType.Unit)
         0
         compact-blocks)]
@@ -1093,10 +1087,10 @@
                       (compiler_ir_types.CompilerIrValue.I64 0)
                       (compiler_ir_types.CompilerIrDescriptorPairKind.OwnedString))
                     (compiler_ir_types.compiler-ir-instr-seq-empty))))))))]
-    [params : compiler_ir_types.CompilerIrParamList
-      (compiler_ir_types.compiler-ir-param-cons
+    [params : compiler_ir_types.CompilerIrParamSeq
+      (compiler_ir_types.compiler-ir-param-seq-prepend
         (compiler_ir_types.CompilerIrParam.Param "group" signature-ty 0)
-        compiler_ir_types.CompilerIrParamList.Nil)]
+        (compiler_ir_types.compiler-ir-param-seq-empty))]
     [program : compiler_ir_types.CompilerIrProgram
       (compiler_ir_types.CompilerIrProgram.Program
         (compiler_ir_types.compiler-ir-global-seq-empty)

@@ -173,10 +173,10 @@
               [_ (ir.compiler-ir-label-none)])
             (ir.compiler-ir-label-none))])]))
 
-(define (opt-switch-test-params) : ir.CompilerIrParamList
-  (ir.compiler-ir-param-cons
+(define (opt-switch-test-params) : ir.CompilerIrParamSeq
+  (ir.compiler-ir-param-seq-prepend
     (ir.CompilerIrParam.Param "tag" (ast.AstType.I64) 0)
-    (ir.CompilerIrParamList.Nil)))
+    (ir.compiler-ir-param-seq-empty)))
 
 (define (opt-switch-test-function [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
@@ -2067,14 +2067,14 @@
       [(not (= redefined-index 1)) 5]
       [else 42])))
 
-(define (smoke-ssa-iv-bce-params) : ir.CompilerIrParamList
-  (ir.compiler-ir-param-cons
+(define (smoke-ssa-iv-bce-params) : ir.CompilerIrParamSeq
+  (ir.compiler-ir-param-seq-prepend
     (ir.CompilerIrParam.Param "text" (ast.AstType.String) 2)
-    (ir.compiler-ir-param-cons
+    (ir.compiler-ir-param-seq-prepend
       (ir.CompilerIrParam.Param "other" (ast.AstType.String) 20)
-      (ir.compiler-ir-param-cons
+      (ir.compiler-ir-param-seq-prepend
         (ir.CompilerIrParam.Param "start" (ast.AstType.I64) 30)
-        (ir.CompilerIrParamList.Nil)))))
+        (ir.compiler-ir-param-seq-empty)))))
 
 (define (smoke-ssa-iv-bce-entry) : ir.CompilerIrBlock
   (ir.CompilerIrBlock.Block
@@ -2313,12 +2313,12 @@
 ;; backedge with the stepped value.  The first input does not need a separately
 ;; materialized comparison fact when the same literal bound proves it directly;
 ;; every nonliteral/backedge input still has to be discharged on its own edge.
-(define (smoke-rotated-bce-params) : ir.CompilerIrParamList
-  (ir.compiler-ir-param-cons
+(define (smoke-rotated-bce-params) : ir.CompilerIrParamSeq
+  (ir.compiler-ir-param-seq-prepend
     (ir.CompilerIrParam.Param "backing-length" (ast.AstType.I64) 4)
-    (ir.compiler-ir-param-cons
+    (ir.compiler-ir-param-seq-prepend
       (ir.CompilerIrParam.Param "other-length" (ast.AstType.I64) 5)
-      (ir.CompilerIrParamList.Nil))))
+      (ir.compiler-ir-param-seq-empty))))
 
 (define (smoke-rotated-bce-entry
   [start : ir.CompilerIrValue]
@@ -3261,7 +3261,7 @@
   [call : ir.CompilerIrInstr]) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
     symbols.main
-    ir.CompilerIrParamList.Nil
+    (ir.compiler-ir-param-seq-empty)
     (ast.AstType.I64)
     3
     (ir.compiler-ir-block-cons
@@ -3296,16 +3296,16 @@
                   (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 2)))))
             ir.CompilerIrBlockList.Nil))))))
 
-(define (smoke-inline-phi-params) : ir.CompilerIrParamList
-  (ir.compiler-ir-param-cons
+(define (smoke-inline-phi-params) : ir.CompilerIrParamSeq
+  (ir.compiler-ir-param-seq-prepend
     (ir.CompilerIrParam.Param "a" (ast.AstType.I64) 0)
-    (ir.compiler-ir-param-cons
+    (ir.compiler-ir-param-seq-prepend
       (ir.CompilerIrParam.Param "b" (ast.AstType.I64) 1)
-      (ir.compiler-ir-param-cons
+      (ir.compiler-ir-param-seq-prepend
         (ir.CompilerIrParam.Param "c" (ast.AstType.I64) 2)
-        (ir.compiler-ir-param-cons
+        (ir.compiler-ir-param-seq-prepend
           (ir.CompilerIrParam.Param "d" (ast.AstType.I64) 3)
-          ir.CompilerIrParamList.Nil)))))
+          (ir.compiler-ir-param-seq-empty))))))
 
 (define (smoke-inline-phi-callee-mov) : ir.CompilerIrInstr
   (ir.CompilerIrInstr.Mov 4 (ir.CompilerIrValue.I64 7) (ast.AstType.I64)))
@@ -3552,12 +3552,12 @@
 ;; the target-neutral IR boundary.  These fixtures intentionally exercise the
 ;; positive existing-value diamond and the two most important refusal rules
 ;; (arm-local computation and a multiply-used And result).
-(define (smoke-c27-params) : ir.CompilerIrParamList
-  (ir.compiler-ir-param-cons
+(define (smoke-c27-params) : ir.CompilerIrParamSeq
+  (ir.compiler-ir-param-seq-prepend
     (ir.CompilerIrParam.Param "cond" (ast.AstType.Bool) 0)
-    (ir.compiler-ir-param-cons
+    (ir.compiler-ir-param-seq-prepend
       (ir.CompilerIrParam.Param "x" (ast.AstType.I64) 1)
-      (ir.CompilerIrParamList.Nil))))
+      (ir.compiler-ir-param-seq-empty))))
 
 (define (smoke-c27-if-convert-function [computed-arm? : bool]) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
@@ -3713,9 +3713,9 @@
 (define (smoke-c27-compare-function [extra-use? : bool]) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
     (compiler_optimize_tests.opt-test-symbol "c27_bit_test")
-    (ir.compiler-ir-param-cons
+    (ir.compiler-ir-param-seq-prepend
       (ir.CompilerIrParam.Param "x" (ast.AstType.I64) 0)
-      (ir.CompilerIrParamList.Nil))
+      (ir.compiler-ir-param-seq-empty))
     (ast.AstType.I64)
     4
     (ir.compiler-ir-block-cons
@@ -3820,11 +3820,11 @@
   [cmp-const : i64]) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
     (compiler_optimize_tests.opt-test-symbol "c27_mask_test")
-    (ir.compiler-ir-param-cons
+    (ir.compiler-ir-param-seq-prepend
       (ir.CompilerIrParam.Param "x" (ast.AstType.I64) 0)
-      (ir.compiler-ir-param-cons
+      (ir.compiler-ir-param-seq-prepend
         (ir.CompilerIrParam.Param "m" (ast.AstType.I64) 1)
-        (ir.CompilerIrParamList.Nil)))
+        (ir.compiler-ir-param-seq-empty)))
     (ast.AstType.I64)
     4
     (ir.compiler-ir-block-cons

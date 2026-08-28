@@ -1732,25 +1732,17 @@
       (set! (array-ref types var) ty))))
 
 (define (compiler-reg-param-types-array!
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [present : (__tl_dyn-array i64)]
   [types : (__tl_dyn-array ast.AstType)]) : unit
-  (match (ir.compiler-ir-param-list-force-cons params)
-    [(ir.CompilerIrParamList.Nil) unit]
-    [(ir.CompilerIrParamList.Array seq)
-      (compiler-reg-param-types-array!
-        (ir.compiler-ir-param-seq-to-list seq)
-        present
-        types)]
-    [(ir.CompilerIrParamList.Cons param rest)
-      (match param
-        [(ir.CompilerIrParam.Param _ ty id)
-          (begin
-            (compiler-reg-var-type-array-set! present types id ty)
-            (compiler-reg-param-types-array!
-              (__tl-box-place rest)
-              present
-              types))])]))
+  (let
+    [position : i64 0]
+    (while (< position params.len)
+      (begin
+        (match (ir.compiler-ir-param-seq-ref params position)
+          [(ir.CompilerIrParam.Param _ ty id)
+            (compiler-reg-var-type-array-set! present types id ty)])
+        (set! position (+ position 1))))))
 
 (define (compiler-reg-instr-def-type-array!
   [instr : ir.CompilerIrInstr]
@@ -5680,21 +5672,23 @@
           (set! index (+ index 1))))
       out)))
 
+(define (compiler-reg-ineligible-params-from
+  [params : ir.CompilerIrParamSeq]
+  [set : live.CompilerLiveI64Set]
+  [position : i64]) : live.CompilerLiveI64Set
+  (if (>= position params.len)
+    set
+    (match (ir.compiler-ir-param-seq-ref params position)
+      [(ir.CompilerIrParam.Param _ _ var)
+        (compiler-reg-ineligible-params-from
+          params
+          (live.compiler-live-set-insert set var)
+          (+ position 1))])))
+
 (define (compiler-reg-ineligible-params
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [set : live.CompilerLiveI64Set]) : live.CompilerLiveI64Set
-  (match (ir.compiler-ir-param-list-force-cons params)
-    [(ir.CompilerIrParamList.Nil) set]
-    [(ir.CompilerIrParamList.Array seq)
-      (compiler-reg-ineligible-params
-        (ir.compiler-ir-param-seq-to-list seq)
-        set)]
-    [(ir.CompilerIrParamList.Cons param rest)
-      (match param
-        [(ir.CompilerIrParam.Param _ _ var)
-          (compiler-reg-ineligible-params
-            (__tl-box-place rest)
-            (live.compiler-live-set-insert set var))])]))
+  (compiler-reg-ineligible-params-from params set 0))
 
 (define (compiler-reg-integer-param-type?
   [type-segment-bases : i64]
@@ -5941,7 +5935,7 @@
   [type-segment-bases : i64]
   [representations : ir.CompilerIrRepresentationIndex]
   [target-abi : cabi.CompilerRegTargetAbi]
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [interval-index : CompilerRegIntervalIndex]
   [assignments : CompilerRegAssignmentTable]
   [ineligible : live.CompilerLiveI64Set]
@@ -5954,172 +5948,152 @@
   [div-points : live.CompilerLiveI64Set]
   [shift-points : live.CompilerLiveI64Set]
   [low-xmm-points : live.CompilerLiveI64Set]) : CompilerRegParamAssignPlan
-  (match (ir.compiler-ir-param-list-force-cons params)
-    [(ir.CompilerIrParamList.Nil)
-      (CompilerRegParamAssignPlan.Plan assignments ineligible blocked)]
-    [(ir.CompilerIrParamList.Array seq)
-      (compiler-reg-param-assign-walk
-        type-segment-bases
-        representations
-        target-abi
-        (ir.compiler-ir-param-seq-to-list seq)
-        interval-index
-        assignments
-        ineligible
-        blocked
-        int-idx
-        float-idx
-        position
-        pins-ok?
-        call-points
-        div-points
-        shift-points
-        low-xmm-points)]
-    [(ir.CompilerIrParamList.Cons param rest)
-      (match param
-        [(ir.CompilerIrParam.Param _ ty var-id)
-          (let
-            [is-float : bool (compiler-reg-float-type? ty)]
-            [is-group : bool
-              (compiler-reg-type-register-group?
-                type-segment-bases
-                representations
-                ty)]
-            [next-int : i64
+  (if (>= position params.len)
+    (CompilerRegParamAssignPlan.Plan assignments ineligible blocked)
+    (match (ir.compiler-ir-param-seq-ref params position)
+      [(ir.CompilerIrParam.Param _ ty var-id)
+        (let
+          [is-float : bool (compiler-reg-float-type? ty)]
+          [is-group : bool
+            (compiler-reg-type-register-group?
+              type-segment-bases
+              representations
+              ty)]
+          [next-int : i64
+            (if is-float
+              int-idx
+              (+ int-idx 1))]
+          [next-float : i64
+            (if is-float
+              (+ float-idx 1)
+              float-idx)]
+          [next-position : i64 (+ position 1)]
+          ;; A register-group param occupies TWO ABI slots; this walk's
+          ;; int-idx accounting does not model that, so every pin PAST a
+          ;; group param is disabled (the group itself never pins).
+          [tail-pins-ok? : bool (and pins-ok? (not is-group))]
+          [reg : CompilerRegMaybeId
+            (if (and pins-ok? (not is-group))
               (if is-float
-                int-idx
-                (+ int-idx 1))]
-            [next-float : i64
-              (if is-float
-                (+ float-idx 1)
-                float-idx)]
-            [next-position : i64 (+ position 1)]
-            ;; A register-group param occupies TWO ABI slots; this walk's
-            ;; int-idx accounting does not model that, so every pin PAST a
-            ;; group param is disabled (the group itself never pins).
-            [tail-pins-ok? : bool (and pins-ok? (not is-group))]
-            [reg : CompilerRegMaybeId
-              (if (and pins-ok? (not is-group))
-                (if is-float
-                  (compiler-reg-param-float-reg target-abi float-idx position)
-                  (if (compiler-reg-integer-param-type?
-                    type-segment-bases
-                    representations
-                    ty)
-                    (compiler-reg-param-int-reg target-abi int-idx position)
-                    CompilerRegMaybeId.No))
-                CompilerRegMaybeId.No)]
-            (match reg
-              [(CompilerRegMaybeId.Some home)
-                ;; GAP3c: the pin gate is PER-INTERVAL and per-register (the
-                ;; old function-global backend-clobber-point? gate revoked
-                ;; every pin on any call/div/shift anywhere -- apply_op's div
-                ;; disqualified pins its add arm never reached). The pinned
-                ;; var is deliberately NOT inserted into `blocked`: the greedy
-                ;; skips already-assigned vars, and plan-from's coalesce-hull
-                ;; validation (compiler-reg-param-pins-demote!) may still
-                ;; revoke the pin, after which the param must compete as an
-                ;; ordinary callee-saved greedy candidate.
-                (if (and
-                  (compiler-reg-param-pin-clobber-free?
-                    interval-index
-                    call-points
-                    div-points
-                    shift-points
-                    low-xmm-points
-                    var-id
-                    home)
-                  (compiler-reg-param-pin-safe?
-                    assignments
-                    interval-index
-                    ineligible
-                    var-id
-                    home))
-                  (compiler-reg-param-assign-walk
-                    type-segment-bases
-                    representations
-                    target-abi
-                    (__tl-box-place rest)
-                    interval-index
-                    (compiler-reg-assignment-table-insert
-                      assignments
-                      var-id
-                      (CompilerRegLocation.Register home))
-                    ineligible
-                    blocked
-                    next-int
-                    next-float
-                    next-position
-                    tail-pins-ok?
-                    call-points
-                    div-points
-                    shift-points
-                    low-xmm-points)
-                  ;; Pin-unsafe scalar param: integer and float scalar params
-                  ;; are greedy-eligible -- leave it out of
-                  ;; ineligible/blocked so the greedy may home it callee-saved.
-                  (compiler-reg-param-assign-walk
-                    type-segment-bases
-                    representations
-                    target-abi
-                    (__tl-box-place rest)
-                    interval-index
-                    assignments
-                    ineligible
-                    blocked
-                    next-int
-                    next-float
-                    next-position
-                    tail-pins-ok?
-                    call-points
-                    div-points
-                    shift-points
-                    low-xmm-points))]
-              [(CompilerRegMaybeId.No)
-                ;; No ABI pin available (skipped arg register, stack-passed
-                ;; position, post-group position, or non-pinnable type). A
-                ;; greedy-eligible param stays unblocked (M-A candidate);
-                ;; group/otherwise-ineligible params keep the legacy
-                ;; stack home. base-ineligible members (address-taken, stack
-                ;; call args, ...) are already in both sets and stay excluded.
-                (if (compiler-reg-param-greedy-eligible?
+                (compiler-reg-param-float-reg target-abi float-idx position)
+                (if (compiler-reg-integer-param-type?
                   type-segment-bases
                   representations
                   ty)
-                  (compiler-reg-param-assign-walk
-                    type-segment-bases
-                    representations
-                    target-abi
-                    (__tl-box-place rest)
-                    interval-index
+                  (compiler-reg-param-int-reg target-abi int-idx position)
+                  CompilerRegMaybeId.No))
+              CompilerRegMaybeId.No)]
+          (match reg
+            [(CompilerRegMaybeId.Some home)
+              ;; GAP3c: the pin gate is PER-INTERVAL and per-register (the
+              ;; old function-global backend-clobber-point? gate revoked
+              ;; every pin on any call/div/shift anywhere -- apply_op's div
+              ;; disqualified pins its add arm never reached). The pinned
+              ;; var is deliberately NOT inserted into `blocked`: the greedy
+              ;; skips already-assigned vars, and plan-from's coalesce-hull
+              ;; validation (compiler-reg-param-pins-demote!) may still
+              ;; revoke the pin, after which the param must compete as an
+              ;; ordinary callee-saved greedy candidate.
+              (if (and
+                (compiler-reg-param-pin-clobber-free?
+                  interval-index
+                  call-points
+                  div-points
+                  shift-points
+                  low-xmm-points
+                  var-id
+                  home)
+                (compiler-reg-param-pin-safe?
+                  assignments
+                  interval-index
+                  ineligible
+                  var-id
+                  home))
+                (compiler-reg-param-assign-walk
+                  type-segment-bases
+                  representations
+                  target-abi
+                  params
+                  interval-index
+                  (compiler-reg-assignment-table-insert
                     assignments
-                    ineligible
-                    blocked
-                    next-int
-                    next-float
-                    next-position
-                    tail-pins-ok?
-                    call-points
-                    div-points
-                    shift-points
-                    low-xmm-points)
-                  (compiler-reg-param-assign-walk
-                    type-segment-bases
-                    representations
-                    target-abi
-                    (__tl-box-place rest)
-                    interval-index
-                    assignments
-                    (live.compiler-live-set-insert ineligible var-id)
-                    (live.compiler-live-set-insert blocked var-id)
-                    next-int
-                    next-float
-                    next-position
-                    tail-pins-ok?
-                    call-points
-                    div-points
-                    shift-points
-                    low-xmm-points))]))])]))
+                    var-id
+                    (CompilerRegLocation.Register home))
+                  ineligible
+                  blocked
+                  next-int
+                  next-float
+                  next-position
+                  tail-pins-ok?
+                  call-points
+                  div-points
+                  shift-points
+                  low-xmm-points)
+                ;; Pin-unsafe scalar param: integer and float scalar params
+                ;; are greedy-eligible -- leave it out of
+                ;; ineligible/blocked so the greedy may home it callee-saved.
+                (compiler-reg-param-assign-walk
+                  type-segment-bases
+                  representations
+                  target-abi
+                  params
+                  interval-index
+                  assignments
+                  ineligible
+                  blocked
+                  next-int
+                  next-float
+                  next-position
+                  tail-pins-ok?
+                  call-points
+                  div-points
+                  shift-points
+                  low-xmm-points))]
+            [(CompilerRegMaybeId.No)
+              ;; No ABI pin available (skipped arg register, stack-passed
+              ;; position, post-group position, or non-pinnable type). A
+              ;; greedy-eligible param stays unblocked (M-A candidate);
+              ;; group/otherwise-ineligible params keep the legacy
+              ;; stack home. base-ineligible members (address-taken, stack
+              ;; call args, ...) are already in both sets and stay excluded.
+              (if (compiler-reg-param-greedy-eligible?
+                type-segment-bases
+                representations
+                ty)
+                (compiler-reg-param-assign-walk
+                  type-segment-bases
+                  representations
+                  target-abi
+                  params
+                  interval-index
+                  assignments
+                  ineligible
+                  blocked
+                  next-int
+                  next-float
+                  next-position
+                  tail-pins-ok?
+                  call-points
+                  div-points
+                  shift-points
+                  low-xmm-points)
+                (compiler-reg-param-assign-walk
+                  type-segment-bases
+                  representations
+                  target-abi
+                  params
+                  interval-index
+                  assignments
+                  (live.compiler-live-set-insert ineligible var-id)
+                  (live.compiler-live-set-insert blocked var-id)
+                  next-int
+                  next-float
+                  next-position
+                  tail-pins-ok?
+                  call-points
+                  div-points
+                  shift-points
+                  low-xmm-points))]))])))
 
 (define (compiler-reg-param-assign-plan
   [type-segment-bases : i64]
@@ -6132,98 +6106,37 @@
   [ignore-single-cold-call? : bool]) : CompilerRegParamAssignPlan
   (match func
     [(ir.CompilerIrFunction.Function _ params _ _ _)
-      (match (ir.compiler-ir-param-list-force-cons params)
-        [(ir.CompilerIrParamList.Nil)
-          (CompilerRegParamAssignPlan.Plan
-            (compiler-reg-assignment-table-make vars)
-            base-ineligible
-            base-ineligible)]
-        [(ir.CompilerIrParamList.Array seq)
-          (let
-            [assignments : CompilerRegAssignmentTable
-              (compiler-reg-assignment-table-make vars)]
-            (compiler-reg-param-assign-walk
-              type-segment-bases
-              representations
-              target-abi
-              (ir.compiler-ir-param-seq-to-list seq)
-              interval-index
-              assignments
-              base-ineligible
-              base-ineligible
-              0
-              0
-              0
-              true
-              (if ignore-single-cold-call?
-                (live.compiler-live-set-empty)
-                ;; Kind 6, not kind 0: the tail-call family is excluded. An ABI
-                ;; pin asks "may this param stay in its incoming argument
-                ;; register for its whole interval?", i.e. must the value
-                ;; SURVIVE every point inside that interval. No value survives a
-                ;; tail call (control never returns), so a tail call inside the
-                ;; hull never invalidates a pin -- see kind 6 in
-                ;; compiler-reg-clobber-instr-kind?. The marshalling that
-                ;; overwrites the pinned register happens on the arm that jumps
-                ;; out, and it reads the pin before writing it (the sound arg
-                ;; parallel move).
-                (compiler-reg-clobber-kind-points type-segment-bases func 6))
-              (compiler-reg-clobber-kind-points type-segment-bases func 1)
-              (compiler-reg-clobber-kind-points type-segment-bases func 2)
-              (cfg
-                scratch-vreg
-                (compiler-reg-clobber-kind-points type-segment-bases func 5)
-                (live.compiler-live-set-empty))))]
-        [(ir.CompilerIrParamList.Cons _ _)
-          (let
-            [assignments : CompilerRegAssignmentTable
-              (compiler-reg-assignment-table-make vars)]
-            ;; M-A (RC1): the walk always runs -- non-pinned greedy-eligible
-            ;; params stay out of ineligible/blocked in ALL functions and
-            ;; compete in the greedy for a callee-saved home.
-            ;; GAP3c: the pin gate is PER-INTERVAL and per-register instead of
-            ;; the old function-global backend-clobber-point? test: a param
-            ;; whose live range crosses no clobber point that could overwrite
-            ;; ITS register keeps the incoming ABI register even in a function
-            ;; with calls/divs/shifts elsewhere (the greedy's kind 0/1/2 point
-            ;; sets; see compiler-reg-param-pin-clobber-free?). The walk's
-            ;; per-var check uses the param's OWN interval; plan-from
-            ;; re-validates every surviving pin against its coalesce-class
-            ;; hull once the coalesce map exists (a disjoint-coalesced member
-            ;; may extend the pinned register's effective range past a
-            ;; clobber; compiler-reg-param-pins-demote!).
-            (compiler-reg-param-assign-walk
-              type-segment-bases
-              representations
-              target-abi
-              params
-              interval-index
-              assignments
-              base-ineligible
-              base-ineligible
-              0
-              0
-              0
-              true
-              (if ignore-single-cold-call?
-                (live.compiler-live-set-empty)
-                ;; Kind 6, not kind 0: the tail-call family is excluded. An ABI
-                ;; pin asks "may this param stay in its incoming argument
-                ;; register for its whole interval?", i.e. must the value
-                ;; SURVIVE every point inside that interval. No value survives a
-                ;; tail call (control never returns), so a tail call inside the
-                ;; hull never invalidates a pin -- see kind 6 in
-                ;; compiler-reg-clobber-instr-kind?. The marshalling that
-                ;; overwrites the pinned register happens on the arm that jumps
-                ;; out, and it reads the pin before writing it (the sound arg
-                ;; parallel move).
-                (compiler-reg-clobber-kind-points type-segment-bases func 6))
-              (compiler-reg-clobber-kind-points type-segment-bases func 1)
-              (compiler-reg-clobber-kind-points type-segment-bases func 2)
-              (cfg
-                scratch-vreg
-                (compiler-reg-clobber-kind-points type-segment-bases func 5)
-                (live.compiler-live-set-empty))))])]))
+      (let
+        [assignments : CompilerRegAssignmentTable
+          (compiler-reg-assignment-table-make vars)]
+        ;; M-A (RC1): the walk always runs -- non-pinned greedy-eligible
+        ;; params stay out of ineligible/blocked in ALL functions and compete
+        ;; in the greedy for a callee-saved home. GAP3c applies its per-var,
+        ;; per-register clobber test to each dense parameter slot.
+        (compiler-reg-param-assign-walk
+          type-segment-bases
+          representations
+          target-abi
+          params
+          interval-index
+          assignments
+          base-ineligible
+          base-ineligible
+          0
+          0
+          0
+          true
+          (if ignore-single-cold-call?
+            (live.compiler-live-set-empty)
+            ;; Kind 6 excludes tail calls: control never returns, and the
+            ;; marshalling arm reads an incoming pin before overwriting it.
+            (compiler-reg-clobber-kind-points type-segment-bases func 6))
+          (compiler-reg-clobber-kind-points type-segment-bases func 1)
+          (compiler-reg-clobber-kind-points type-segment-bases func 2)
+          (cfg
+            scratch-vreg
+            (compiler-reg-clobber-kind-points type-segment-bases func 5)
+            (live.compiler-live-set-empty))))]))
 
 (define (compiler-reg-ineligible-instr
   [instr : ir.CompilerIrInstr]
@@ -7322,28 +7235,30 @@
           [_ set]))]
     [_ set]))
 
+(define (compiler-reg-spmd-private-param-defs-from
+  [params : ir.CompilerIrParamSeq]
+  [vector-set : live.CompilerLiveI64Set]
+  [mask-set : live.CompilerLiveI64Set]
+  [position : i64]) : live.CompilerLiveUseDef
+  (if (>= position params.len)
+    (live.CompilerLiveUseDef vector-set mask-set)
+    (match (ir.compiler-ir-param-seq-ref params position)
+      [(ir.CompilerIrParam.Param name _ var)
+        (compiler-reg-spmd-private-param-defs-from
+          params
+          (if (compiler-reg-spmd-varying-param? name)
+            (live.compiler-live-set-insert vector-set var)
+            vector-set)
+          (if (compiler-reg-spmd-mask-param? name)
+            (live.compiler-live-set-insert mask-set var)
+            mask-set)
+          (+ position 1))])))
+
 (define (compiler-reg-spmd-private-param-defs
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [vector-set : live.CompilerLiveI64Set]
   [mask-set : live.CompilerLiveI64Set]) : live.CompilerLiveUseDef
-  (match (ir.compiler-ir-param-list-force-cons params)
-    [(ir.CompilerIrParamList.Nil) (live.CompilerLiveUseDef vector-set mask-set)]
-    [(ir.CompilerIrParamList.Array seq)
-      (compiler-reg-spmd-private-param-defs
-        (ir.compiler-ir-param-seq-to-list seq)
-        vector-set
-        mask-set)]
-    [(ir.CompilerIrParamList.Cons param rest)
-      (match param
-        [(ir.CompilerIrParam.Param name _ var)
-          (compiler-reg-spmd-private-param-defs
-            (__tl-box-place rest)
-            (if (compiler-reg-spmd-varying-param? name)
-              (live.compiler-live-set-insert vector-set var)
-              vector-set)
-            (if (compiler-reg-spmd-mask-param? name)
-              (live.compiler-live-set-insert mask-set var)
-              mask-set))])]))
+  (compiler-reg-spmd-private-param-defs-from params vector-set mask-set 0))
 
 (define (compiler-reg-vector-mask-defs-instr-seq
   [instrs : ir.CompilerIrInstrSeq]
@@ -8399,20 +8314,16 @@
             (set! i (+ i 1)))))]))
 
 (define (compiler-reg-param-count-defs!
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [counts : (__tl_dyn-array i64)]) : unit
-  (match (ir.compiler-ir-param-list-force-cons params)
-    [(ir.CompilerIrParamList.Nil) unit]
-    [(ir.CompilerIrParamList.Array seq)
-      (compiler-reg-param-count-defs!
-        (ir.compiler-ir-param-seq-to-list seq)
-        counts)]
-    [(ir.CompilerIrParamList.Cons param rest)
-      (match param
-        [(ir.CompilerIrParam.Param _ _ id)
-          (begin
-            (compiler-reg-count-def! counts id)
-            (compiler-reg-param-count-defs! (__tl-box-place rest) counts))])]))
+  (let
+    [position : i64 0]
+    (while (< position params.len)
+      (begin
+        (match (ir.compiler-ir-param-seq-ref params position)
+          [(ir.CompilerIrParam.Param _ _ id)
+            (compiler-reg-count-def! counts id)])
+        (set! position (+ position 1))))))
 
 (define (compiler-reg-function-def-counts [func : ir.CompilerIrFunction]) : (__tl_dyn-array
     i64)
@@ -22569,70 +22480,57 @@
   [type-segment-bases : i64]
   [representations : ir.CompilerIrRepresentationIndex]
   [target-abi : cabi.CompilerRegTargetAbi]
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [assignments : CompilerRegAssignmentTable]
   [int-idx : i64]
   [float-idx : i64]
   [position : i64]
   [pins-ok? : bool]
   [total : i64]) : i64
-  (match (ir.compiler-ir-param-list-force-cons params)
-    [(ir.CompilerIrParamList.Nil) total]
-    [(ir.CompilerIrParamList.Array seq)
-      (compiler-reg-call-hole-param-copy-walk
-        type-segment-bases
-        representations
-        target-abi
-        (ir.compiler-ir-param-seq-to-list seq)
-        assignments
-        int-idx
-        float-idx
-        position
-        pins-ok?
-        total)]
-    [(ir.CompilerIrParamList.Cons param rest)
-      (match param
-        [(ir.CompilerIrParam.Param _ ty var-id)
-          (let
-            [is-float : bool (compiler-reg-float-type? ty)]
-            [is-group : bool
-              (compiler-reg-type-register-group?
-                type-segment-bases
-                representations
-                ty)]
-            [reg : CompilerRegMaybeId
-              (if (and pins-ok? (not is-group))
-                (if is-float
-                  (compiler-reg-param-float-reg target-abi float-idx position)
-                  (if (compiler-reg-integer-param-type?
-                    type-segment-bases
-                    representations
-                    ty)
-                    (compiler-reg-param-int-reg target-abi int-idx position)
-                    CompilerRegMaybeId.No))
-                CompilerRegMaybeId.No)]
-            (compiler-reg-call-hole-param-copy-walk
+  (if (>= position params.len)
+    total
+    (match (ir.compiler-ir-param-seq-ref params position)
+      [(ir.CompilerIrParam.Param _ ty var-id)
+        (let
+          [is-float : bool (compiler-reg-float-type? ty)]
+          [is-group : bool
+            (compiler-reg-type-register-group?
               type-segment-bases
               representations
-              target-abi
-              (__tl-box-place rest)
-              assignments
+              ty)]
+          [reg : CompilerRegMaybeId
+            (if (and pins-ok? (not is-group))
               (if is-float
-                int-idx
-                (+ int-idx 1))
-              (if is-float
-                (+ float-idx 1)
-                float-idx)
-              (+ position 1)
-              (and pins-ok? (not is-group))
-              (match reg
-                [(CompilerRegMaybeId.No) total]
-                [(CompilerRegMaybeId.Some home)
-                  (if (compiler-reg-location-register?
-                    (compiler-reg-assignment-lookup assignments var-id)
-                    home)
-                    total
-                    (+ total 1))])))])]))
+                (compiler-reg-param-float-reg target-abi float-idx position)
+                (if (compiler-reg-integer-param-type?
+                  type-segment-bases
+                  representations
+                  ty)
+                  (compiler-reg-param-int-reg target-abi int-idx position)
+                  CompilerRegMaybeId.No))
+              CompilerRegMaybeId.No)]
+          (compiler-reg-call-hole-param-copy-walk
+            type-segment-bases
+            representations
+            target-abi
+            params
+            assignments
+            (if is-float
+              int-idx
+              (+ int-idx 1))
+            (if is-float
+              (+ float-idx 1)
+              float-idx)
+            (+ position 1)
+            (and pins-ok? (not is-group))
+            (match reg
+              [(CompilerRegMaybeId.No) total]
+              [(CompilerRegMaybeId.Some home)
+                (if (compiler-reg-location-register?
+                  (compiler-reg-assignment-lookup assignments var-id)
+                  home)
+                  total
+                  (+ total 1))])))])))
 
 ;; Estimated cost of a plan on its own function, in instructions:
 ;;
@@ -22654,7 +22552,7 @@
 (define (compiler-reg-call-hole-plan-cost
   [type-segment-bases : i64]
   [target-abi : cabi.CompilerRegTargetAbi]
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [representations : ir.CompilerIrRepresentationIndex]
   [seq : ir.CompilerIrBlockSeq]
   [weights : (__tl_dyn-array i64)]
@@ -22694,7 +22592,7 @@
           (set! var (+ var 1))))
       total)))
 
-(define (compiler-reg-function-params [func : ir.CompilerIrFunction]) : ir.CompilerIrParamList
+(define (compiler-reg-function-params [func : ir.CompilerIrFunction]) : ir.CompilerIrParamSeq
   (match func
     [(ir.CompilerIrFunction.Function _ params _ _ _) params]))
 
@@ -33906,7 +33804,7 @@
 ;; `blocked` (GAP3c walk), so its root competes in the greedy as an ordinary
 ;; callee-saved candidate, exactly the M-A contract.
 (define (compiler-reg-param-pins-demote-walk!
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [assignments : CompilerRegAssignmentTable]
   [parents : (__tl_dyn-array i64)]
   [eff-index : CompilerRegIntervalIndex]
@@ -33914,21 +33812,11 @@
   [div-points : live.CompilerLiveI64Set]
   [shift-points : live.CompilerLiveI64Set]
   [low-xmm-points : live.CompilerLiveI64Set]) : unit
-  (match (ir.compiler-ir-param-list-force-cons params)
-    [(ir.CompilerIrParamList.Nil) unit]
-    [(ir.CompilerIrParamList.Array seq)
-      (compiler-reg-param-pins-demote-walk!
-        (ir.compiler-ir-param-seq-to-list seq)
-        assignments
-        parents
-        eff-index
-        call-points
-        div-points
-        shift-points
-        low-xmm-points)]
-    [(ir.CompilerIrParamList.Cons param rest)
+  (let
+    [position : i64 0]
+    (while (< position params.len)
       (begin
-        (match param
+        (match (ir.compiler-ir-param-seq-ref params position)
           [(ir.CompilerIrParam.Param _ _ var-id)
             (match (compiler-reg-assignment-table-lookup assignments var-id)
               [(CompilerRegMaybeLocation.Some location)
@@ -33959,15 +33847,7 @@
                           unit)))]
                   [_ unit])]
               [(CompilerRegMaybeLocation.No) unit])])
-        (compiler-reg-param-pins-demote-walk!
-          (__tl-box-place rest)
-          assignments
-          parents
-          eff-index
-          call-points
-          div-points
-          shift-points
-          low-xmm-points))]))
+        (set! position (+ position 1))))))
 
 (define (compiler-reg-param-pins-demote!
   [func : ir.CompilerIrFunction]
@@ -35015,47 +34895,43 @@
       out)))
 
 (define (compiler-reg-param-intervals-extend-entry!
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [interval-index : CompilerRegIntervalIndex]) : unit
-  (match (ir.compiler-ir-param-list-force-cons params)
-    [(ir.CompilerIrParamList.Nil) unit]
-    [(ir.CompilerIrParamList.Array seq)
-      (compiler-reg-param-intervals-extend-entry!
-        (ir.compiler-ir-param-seq-to-list seq)
-        interval-index)]
-    [(ir.CompilerIrParamList.Cons param rest)
-      (match param
-        [(ir.CompilerIrParam.Param _ _ var)
-          (let
-            [starts : (__tl_dyn-array i64) interval-index.starts]
-            [segments : (__tl_dyn-array CompilerRegIntervalSeq)
-              interval-index.segments]
-            (begin
-              (if (and
-                (>= var 0)
-                (< var (array-length starts))
-                (> (array-ref starts var) 0))
-                (begin
-                  (set! (array-ref starts var) 0)
-                  (if (< var (array-length segments))
-                    (let
-                      [segs : CompilerRegIntervalSeq (array-ref segments var)]
-                      [min-start : i64
-                        (compiler-reg-param-segments-min-start segs (- 0 1))]
-                      (if (> min-start 0)
-                        (begin
-                          (set!
-                            (array-ref segments var)
-                            (compiler-reg-param-segments-extend-entry
-                              segs
-                              min-start))
-                          unit)
-                        unit))
-                    unit))
-                unit)
-              (compiler-reg-param-intervals-extend-entry!
-                (__tl-box-place rest)
-                interval-index)))])]))
+  (let
+    [position : i64 0]
+    (while (< position params.len)
+      (begin
+        (match (ir.compiler-ir-param-seq-ref params position)
+          [(ir.CompilerIrParam.Param _ _ var)
+            (let
+              [starts : (__tl_dyn-array i64) interval-index.starts]
+              [segments : (__tl_dyn-array CompilerRegIntervalSeq)
+                interval-index.segments]
+              (begin
+                (if (and
+                  (>= var 0)
+                  (< var (array-length starts))
+                  (> (array-ref starts var) 0))
+                  (begin
+                    (set! (array-ref starts var) 0)
+                    (if (< var (array-length segments))
+                      (let
+                        [segs : CompilerRegIntervalSeq (array-ref segments var)]
+                        [min-start : i64
+                          (compiler-reg-param-segments-min-start segs (- 0 1))]
+                        (if (> min-start 0)
+                          (begin
+                            (set!
+                              (array-ref segments var)
+                              (compiler-reg-param-segments-extend-entry
+                                segs
+                                min-start))
+                            unit)
+                          unit))
+                      unit))
+                  unit)
+                unit))])
+        (set! position (+ position 1))))))
 
 (define (compiler-reg-live-set-insert-range
   [set : live.CompilerLiveI64Set]
@@ -35453,38 +35329,30 @@
     (compiler-reg-string-prefix? name "__tl_spmd_mask_arg_avx2_")))
 
 (define (compiler-reg-vector-stack-words-params!
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [words : (__tl_dyn-array i64)]) : unit
-  (match (ir.compiler-ir-param-list-force-cons params)
-    [(ir.CompilerIrParamList.Nil) unit]
-    [(ir.CompilerIrParamList.Array seq)
-      (compiler-reg-vector-stack-words-params!
-        (ir.compiler-ir-param-seq-to-list seq)
-        words)]
-    [(ir.CompilerIrParamList.Cons param rest)
+  (let
+    [position : i64 0]
+    (while (< position params.len)
       (begin
-        (match param
+        (match (ir.compiler-ir-param-seq-ref params position)
           [(ir.CompilerIrParam.Param name _ var)
             (if (compiler-reg-spmd-avx2-special-param? name)
               (compiler-reg-vector-stack-words-set-mask! words var)
               unit)])
-        (compiler-reg-vector-stack-words-params! (__tl-box-place rest) words))]))
+        (set! position (+ position 1))))))
 
 (define (compiler-reg-spmd-avx2-special-param-references!
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [references : (__tl_dyn-array bool)]) : unit
   ;; The backend materializes every private ABI parameter before instruction
   ;; emission, including an active mask unused by the helper body. Keep those
   ;; prologue-only writes in the private-range allocation census.
-  (match (ir.compiler-ir-param-list-force-cons params)
-    [(ir.CompilerIrParamList.Nil) unit]
-    [(ir.CompilerIrParamList.Array seq)
-      (compiler-reg-spmd-avx2-special-param-references!
-        (ir.compiler-ir-param-seq-to-list seq)
-        references)]
-    [(ir.CompilerIrParamList.Cons param rest)
+  (let
+    [position : i64 0]
+    (while (< position params.len)
       (begin
-        (match param
+        (match (ir.compiler-ir-param-seq-ref params position)
           [(ir.CompilerIrParam.Param name _ var)
             (if (and
               (compiler-reg-spmd-avx2-special-param? name)
@@ -35492,9 +35360,7 @@
               (< var (array-length references)))
               (set! (array-ref references var) true)
               unit)])
-        (compiler-reg-spmd-avx2-special-param-references!
-          (__tl-box-place rest)
-          references))]))
+        (set! position (+ position 1))))))
 
 (define (compiler-reg-vector-stack-words-instr!
   [instr : ir.CompilerIrInstr]
@@ -37214,36 +37080,31 @@
 ;; their ids so those slots are never shared. AVX2 private SPMD parameters need
 ;; a four-word YMM range, so leave those unpinned for the private-range pass.
 (define (compiler-reg-color-param-pins
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [remap : (__tl_dyn-array i64)]
   [slot-ends : (__tl_dyn-array i64)]
   [highest : i64]) : i64
-  (match (ir.compiler-ir-param-list-force-cons params)
-    [(ir.CompilerIrParamList.Nil) highest]
-    [(ir.CompilerIrParamList.Array seq)
-      (compiler-reg-color-param-pins
-        (ir.compiler-ir-param-seq-to-list seq)
-        remap
-        slot-ends
-        highest)]
-    [(ir.CompilerIrParamList.Cons param rest)
-      (match param
-        [(ir.CompilerIrParam.Param name _ var-id)
-          (begin
-            (if (and
-              (not (compiler-reg-spmd-avx2-special-param? name))
-              (< var-id (array-length remap)))
+  (let
+    [position : i64 0]
+    [out : i64 highest]
+    (begin
+      (while (< position params.len)
+        (begin
+          (match (ir.compiler-ir-param-seq-ref params position)
+            [(ir.CompilerIrParam.Param name _ var-id)
               (begin
-                (set! (array-ref remap var-id) var-id)
-                (set! (array-ref slot-ends var-id) 9223372036854775807))
-              unit)
-            (compiler-reg-color-param-pins
-              (__tl-box-place rest)
-              remap
-              slot-ends
-              (if (compiler-reg-spmd-avx2-special-param? name)
-                highest
-                (compiler-reg-max highest (+ var-id 1)))))])]))
+                (if (and
+                  (not (compiler-reg-spmd-avx2-special-param? name))
+                  (< var-id (array-length remap)))
+                  (begin
+                    (set! (array-ref remap var-id) var-id)
+                    (set! (array-ref slot-ends var-id) 9223372036854775807))
+                  unit)
+                (if (compiler-reg-spmd-avx2-special-param? name)
+                  unit
+                  (set! out (compiler-reg-max out (+ var-id 1)))))])
+          (set! position (+ position 1))))
+      out)))
 
 ;; --- M-B: stack-homed register-group Mov coalescing -------------------------
 ;; A group-typed `IrInstrMov dst <- src` between two slot-resident group vars
@@ -38824,7 +38685,7 @@
   [type-segment-bases : i64]
   [plan : CompilerRegPlan]
   [group-vars : live.CompilerLiveI64Set]
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [blocks : ir.CompilerIrBlockList]
   [vars : i64]
   [slot-candidate-vars : i64]
@@ -39193,17 +39054,24 @@
 
 (define (compiler-reg-remap-params
   [remap : (__tl_dyn-array i64)]
-  [params : ir.CompilerIrParamList]) : ir.CompilerIrParamList
-  (match (ir.compiler-ir-param-list-force-cons params)
-    [(ir.CompilerIrParamList.Nil) ir.CompilerIrParamList.Nil]
-    [(ir.CompilerIrParamList.Array seq)
-      (compiler-reg-remap-params remap (ir.compiler-ir-param-seq-to-list seq))]
-    [(ir.CompilerIrParamList.Cons param rest)
-      (match param
-        [(ir.CompilerIrParam.Param name ty var)
-          (ir.compiler-ir-param-cons
-            (ir.CompilerIrParam.Param name ty (compiler-reg-remap-id remap var))
-            (compiler-reg-remap-params remap (__tl-box-place rest)))])]))
+  [params : ir.CompilerIrParamSeq]) : ir.CompilerIrParamSeq
+  (let
+    [slots : (__tl_dyn-array ir.CompilerIrParam)
+      (__tl_make-array ir.CompilerIrParam params.len)]
+    [position : i64 0]
+    (begin
+      (while (< position params.len)
+        (begin
+          (match (ir.compiler-ir-param-seq-ref params position)
+            [(ir.CompilerIrParam.Param name ty var)
+              (set!
+                (array-ref slots position)
+                (ir.CompilerIrParam.Param
+                  name
+                  ty
+                  (compiler-reg-remap-id remap var)))])
+          (set! position (+ position 1))))
+      (ir.CompilerIrParamSeq slots params.len))))
 
 (define (compiler-reg-remap-call-args
   [remap : (__tl_dyn-array i64)]

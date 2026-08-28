@@ -6013,6 +6013,87 @@
             "movabsq $146028910097")))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
+;; A loop-wide literal home is injected just after its resolved preheader label.
+;; The array allocation below makes that preheader callful: injecting the
+;; 2^32 literal there puts it in a caller-saved register before `tl_alloc` and
+;; `tl_array_zero`, and the subtraction loop later observes the clobbered home.
+;; This is the reduced `stdlib.format/bn-sub` failure from #6875.
+(define compiler-backend-callful-preheader-wide-literal-source : String
+  "(defstruct BigNum
+  (limbs (__tl_dyn-array u64))
+  (len i64))
+(define (bn-norm-len [limbs : (__tl_dyn-array u64)] [len : i64]) : i64
+  (let
+    [out : i64 len]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (if (> out 0)
+          (if (= (array-ref limbs (- out 1)) (cast 0 : u64))
+            (set! out (- out 1))
+            (set! done true))
+          (set! done true)))
+      out)))
+(define (bn-sub [a : BigNum] [b : BigNum]) : BigNum
+  (let
+    [r : (__tl_dyn-array u64) (__tl_make-array u64 (array-length a.limbs))]
+    [borrow : u64 (cast 0 : u64)]
+    [i : i64 0]
+    (begin
+      (while (< i a.len)
+        (let
+          [av : u64 (array-ref a.limbs i)]
+          [bv : u64
+            (if (< i b.len)
+              (array-ref b.limbs i)
+              (cast 0 : u64))]
+          [subtrahend : u64 (+ bv borrow)]
+          (begin
+            (if (>= av subtrahend)
+              (begin
+                (set! (array-ref r i) (- av subtrahend))
+                (set! borrow (cast 0 : u64)))
+              (begin
+                (set!
+                  (array-ref r i)
+                  (- (+ av (cast 0x100000000 : u64)) subtrahend))
+                (set! borrow (cast 1 : u64))))
+            (set! i (+ i 1)))))
+      (BigNum r (bn-norm-len r a.len)))))
+(define keep2 : (-> BigNum BigNum BigNum) bn-sub)
+(define (main) : i64 0)")
+
+(define (compiler-backend-callful-preheader-wide-literal-target-ok?
+  [target : compiler_backend.CompilerBackendTarget]) : bool
+  (match (compiler-backend-emit-source-opt2-for-target
+    (string.copy (& compiler-backend-callful-preheader-wide-literal-source))
+    target)
+    [(compiler_backend.ResultCompilerBackend.Ok asm)
+      (and
+        (compiler_backend.compiler-backend-string-contains?
+          (compiler_backend.compiler-backend-global-shared-view asm)
+          "    call tl_alloc\n")
+        (compiler_backend.compiler-backend-string-contains?
+          (compiler_backend.compiler-backend-global-shared-view asm)
+          "    call tl_array_zero\n")
+        ;; A declined hoist rematerializes at the loop use. The ordinary use
+        ;; spelling is `movq`; `movabsq` is unique to the preheader injection.
+        (compiler_backend.compiler-backend-string-contains?
+          (compiler_backend.compiler-backend-global-shared-view asm)
+          "    movq $4294967296")
+        (not
+          (compiler_backend.compiler-backend-string-contains?
+            (compiler_backend.compiler-backend-global-shared-view asm)
+            "    movabsq $4294967296")))]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-callful-preheader-wide-literal-ok?) : bool
+  (and
+    (compiler-backend-callful-preheader-wide-literal-target-ok?
+      (compiler_backend.CompilerBackendTarget.Linux))
+    (compiler-backend-callful-preheader-wide-literal-target-ok?
+      (compiler_backend.CompilerBackendTarget.Windows))))
+
 (define (compiler-backend-tail-dispatch-no-csr-ok?) : bool
   (match (compiler-backend-emit-source-opt2-for-target
     (string.copy (& compiler-backend-tail-dispatch-source))
@@ -54095,6 +54176,7 @@ b_keep:
         (compiler-backend-const-hoist-award-weight-ok?)
         (compiler-backend-const-hoist-award-tie-ok?)
         (compiler-backend-const-hoist-respects-scratch-plan-ok?)
+        (compiler-backend-callful-preheader-wide-literal-ok?)
         (compiler-backend-shrinkwrap-admission-state-ok?)
         (compiler-backend-shrinkwrap-large-guard-win64-ok?)
         (compiler-backend-scavenge-occupancy-cache-ok?)

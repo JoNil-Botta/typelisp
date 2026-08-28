@@ -24871,10 +24871,12 @@
 ;; placed at the head of the guard chain. Walk outside-preds level by level:
 ;; every chain node must be call-free and strictly decrease the region's
 ;; lowest index (so the walk terminates), and the chain ends at a single
-;; predecessor whose terminator is an unconditional Jump. Returns that
-;; predecessor's block index to inject after, or -1 when no such dominator
-;; exists. Side-entry freedom over the resolved span is re-checked by the
-;; caller with h := the resolved index.
+;; CALL-FREE predecessor whose terminator is an unconditional Jump. The final
+;; predecessor matters too: injection happens immediately after its label, so
+;; a later call in that same block would clobber a caller-saved constant home
+;; before the loop reads it. Returns that predecessor's block index to inject
+;; after, or -1 when no such dominator exists. Side-entry freedom over the
+;; resolved span is re-checked by the caller with h := the resolved index.
 (define (compiler-backend-const-hoist-resolve-inject
   [orig : (__tl_dyn-array compiler_ir_types.CompilerIrBlock)]
   [ids : backend_label_i64_map.Map]
@@ -24902,11 +24904,16 @@
             [(= count 1)
               (let
                 [p : i64 (array-ref preds 0)]
-                (if (=
-                  (compiler-backend-const-hoist-jump-target
+                (if (and
+                  (compiler-backend-const-hoist-block-call-free?
                     (compiler-backend-global-array-element-shared-view orig p))
-                  (compiler-backend-const-hoist-block-label
-                    (compiler-backend-global-array-element-shared-view orig lo)))
+                  (=
+                    (compiler-backend-const-hoist-jump-target
+                      (compiler-backend-global-array-element-shared-view orig p))
+                    (compiler-backend-const-hoist-block-label
+                      (compiler-backend-global-array-element-shared-view
+                        orig
+                        lo))))
                   (begin
                     (set! found p)
                     (set! done true))
@@ -25324,8 +25331,9 @@
                             h
                             generation)]
                         ;; Two qualifying shapes:
-                        ;;  * h > 0 with a single out-of-loop predecessor P
-                        ;;    (P < h, ends in Jump h): inject AFTER P's label;
+                        ;;  * h > 0 with a single call-free out-of-loop
+                        ;;    predecessor P (P < h, ends in Jump h): inject
+                        ;;    AFTER P's label;
                         ;;  * h = 0 (opt-tailrec loops: the header IS the entry
                         ;;    block) with NO out-of-loop predecessor at all:
                         ;;    inject BEFORE block 0's label = at prologue end,
@@ -25354,6 +25362,10 @@
                               (and
                                 (>= p 0)
                                 (< p h)
+                                (compiler-backend-const-hoist-block-call-free?
+                                  (compiler-backend-global-array-element-shared-view
+                                    orig
+                                    p))
                                 (=
                                   (compiler-backend-const-hoist-jump-target
                                     (compiler-backend-global-array-element-shared-view

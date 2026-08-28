@@ -25032,6 +25032,36 @@
       (and
         (opt-used-contains hot-uses dst)
         (opt-licm-global-value-invariant? globals loop-defs hoisted src))]
+    ;; Pure SIMD values use the same hot-consumer gate as scalar arithmetic:
+    ;; moving one out lengthens a vector or mask live range across the loop,
+    ;; so a bypassable cold use does not pay for the added pressure.  Keep the
+    ;; source instruction itself -- no scalar Mov can represent these values --
+    ;; and let the ordered body walk add each moved dst to `hoisted`, which in
+    ;; turn admits dependent invariant SIMD chains in program order.
+    [(ir.CompilerIrInstr.Splat dst src _ _)
+      (and
+        (opt-used-contains hot-uses dst)
+        (opt-licm-global-value-invariant? globals loop-defs hoisted src))]
+    [(ir.CompilerIrInstr.VectorBinOp payload-box)
+      (let
+        [dst (compiler-opt-box-field-shared-view payload-box dst)]
+        [op (compiler-opt-box-field-shared-view payload-box op)]
+        [lhs (compiler-opt-box-field-shared-view payload-box lhs)]
+        [rhs (compiler-opt-box-field-shared-view payload-box rhs)]
+        (and
+          (opt-used-contains hot-uses dst)
+          ;; A checked vector div/mod/shift may still trap when executed.  Do
+          ;; not speculate it into a preheader for a zero-trip loop.
+          (not (opt-binop-traps? op))
+          (opt-licm-global-values-invariant? globals loop-defs hoisted lhs rhs)))]
+    [(ir.CompilerIrInstr.VectorCompare payload-box)
+      (let
+        [dst (compiler-opt-box-field-shared-view payload-box dst)]
+        [lhs (compiler-opt-box-field-shared-view payload-box lhs)]
+        [rhs (compiler-opt-box-field-shared-view payload-box rhs)]
+        (and
+          (opt-used-contains hot-uses dst)
+          (opt-licm-global-values-invariant? globals loop-defs hoisted lhs rhs)))]
     [(ir.CompilerIrInstr.Gep dst base offset ty)
       (and
         (opt-gvn-stable-var? sources dst)
@@ -26672,7 +26702,7 @@
   [late? : bool]
   [loop-defs : opt_i64_i64_map.Map]
   [instr : ir.CompilerIrInstr]) : bool
-  (match instr
+  (match (compiler-opt-global-shared-view instr)
     [(ir.CompilerIrInstr.Mov _ src _)
       (and late? (opt-licm-seed-value? loop-defs src))]
     [(ir.CompilerIrInstr.Cast _ src _ _)
@@ -26685,6 +26715,20 @@
         (not (opt-binop-traps? op))
         (opt-licm-seed-values? loop-defs lhs rhs))]
     [(ir.CompilerIrInstr.UnOp _ _ src _) (opt-licm-seed-value? loop-defs src)]
+    [(ir.CompilerIrInstr.Splat _ src _ _) (opt-licm-seed-value? loop-defs src)]
+    [(ir.CompilerIrInstr.VectorBinOp payload-box)
+      (let
+        [op (compiler-opt-box-field-shared-view payload-box op)]
+        [lhs (compiler-opt-box-field-shared-view payload-box lhs)]
+        [rhs (compiler-opt-box-field-shared-view payload-box rhs)]
+        (and
+          (not (opt-binop-traps? op))
+          (opt-licm-seed-values? loop-defs lhs rhs)))]
+    [(ir.CompilerIrInstr.VectorCompare payload-box)
+      (let
+        [lhs (compiler-opt-box-field-shared-view payload-box lhs)]
+        [rhs (compiler-opt-box-field-shared-view payload-box rhs)]
+        (opt-licm-seed-values? loop-defs lhs rhs))]
     [(ir.CompilerIrInstr.Gep _ base offset _)
       (opt-licm-seed-values? loop-defs base offset)]
     [(ir.CompilerIrInstr.Load _ src _) (opt-licm-seed-value? loop-defs src)]

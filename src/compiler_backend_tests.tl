@@ -254,7 +254,7 @@
 
 (define (compiler-backend-test-scavenge-install-ctx!
   [name : String]
-  [params : compiler_ir_types.CompilerIrParamList]
+  [params : compiler_ir_types.CompilerIrParamSeq]
   [ret-ty : compiler_ast_types.AstType]
   [slot-vars : i64]
   [emit-blocks : compiler_ir_types.CompilerIrBlockList]
@@ -3620,7 +3620,7 @@
       (begin
         (compiler-backend-test-scavenge-install-ctx!
           "indirect_c_call_shape"
-          compiler_ir_types.CompilerIrParamList.Nil
+          (compiler_ir_types.compiler-ir-param-seq-empty)
           (compiler_ast_types.AstType.I64)
           3
           blocks
@@ -3886,7 +3886,7 @@
       (begin
         (compiler-backend-test-scavenge-install-ctx!
           "indirect_c_abi_store_result_shape"
-          compiler_ir_types.CompilerIrParamList.Nil
+          (compiler_ir_types.compiler-ir-param-seq-empty)
           (compiler_ast_types.AstType.Unit)
           3
           blocks
@@ -4040,7 +4040,7 @@
       (begin
         (compiler-backend-test-scavenge-install-ctx!
           "cabi_return_store_r11_occupied_shape"
-          compiler_ir_types.CompilerIrParamList.Nil
+          (compiler_ir_types.compiler-ir-param-seq-empty)
           (compiler_ast_types.AstType.Unit)
           1
           blocks
@@ -5230,7 +5230,7 @@
     (compiler_ir_types.compiler-ir-function-seq-prepend
       (compiler_ir_types.CompilerIrFunction.Function
         (ci.intern "side_effect")
-        compiler_ir_types.CompilerIrParamList.Nil
+        (compiler_ir_types.compiler-ir-param-seq-empty)
         (compiler_ast_types.AstType.Unit)
         0
         (compiler_ir_types.compiler-ir-block-cons
@@ -5244,7 +5244,7 @@
       (compiler_ir_types.compiler-ir-function-seq-prepend
         (compiler_ir_types.CompilerIrFunction.Function
           (ci.intern "main")
-          compiler_ir_types.CompilerIrParamList.Nil
+          (compiler_ir_types.compiler-ir-param-seq-empty)
           (compiler_ast_types.AstType.I64)
           8
           (compiler_ir_types.compiler-ir-block-cons
@@ -7636,7 +7636,7 @@
         (compiler_ir_types.CompilerIrFunction.Function
           (compiler_ir_types.compiler-ir-symbol
             "__tl_internal_abi_ir_owned_6219_fixture")
-          compiler_ir_types.CompilerIrParamList.Nil
+          (compiler_ir_types.compiler-ir-param-seq-empty)
           (compiler_ast_types.AstType.I64)
           2
           blocks)
@@ -7727,16 +7727,16 @@
       (compiler_ast_types.AstType.Struct
         (compiler_ir_types.compiler-ir-symbol
           "__tl_internal_abi_group_m3__sig3"))]
-    [params : compiler_ir_types.CompilerIrParamList
-      (compiler_ir_types.compiler-ir-param-cons
+    [params : compiler_ir_types.CompilerIrParamSeq
+      (compiler_ir_types.compiler-ir-param-seq-prepend
         (compiler_ir_types.CompilerIrParam.Param "p0" type0 0)
-        (compiler_ir_types.compiler-ir-param-cons
+        (compiler_ir_types.compiler-ir-param-seq-prepend
           (compiler_ir_types.CompilerIrParam.Param "p1" type1 1)
-          (compiler_ir_types.compiler-ir-param-cons
+          (compiler_ir_types.compiler-ir-param-seq-prepend
             (compiler_ir_types.CompilerIrParam.Param "p2" type2 2)
-            (compiler_ir_types.compiler-ir-param-cons
+            (compiler_ir_types.compiler-ir-param-seq-prepend
               (compiler_ir_types.CompilerIrParam.Param "p3" type3 3)
-              compiler_ir_types.CompilerIrParamList.Nil))))]
+              (compiler_ir_types.compiler-ir-param-seq-empty)))))]
     [functions : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_ir_types.compiler-ir-function-seq-prepend
         (compiler_ir_types.CompilerIrFunction.Function
@@ -7994,15 +7994,15 @@
       (match asm11
         [(compiler_backend.ResultCompilerBackend.Ok text) text]
         [(compiler_backend.ResultCompilerBackend.Err _) ""])]
-    [param-types : compiler_ir_types.CompilerIrParamList
-      (compiler_ir_types.compiler-ir-param-cons
+    [param-types : compiler_ir_types.CompilerIrParamSeq
+      (compiler_ir_types.compiler-ir-param-seq-prepend
         (compiler_ir_types.CompilerIrParam.Param "mem" memory24 0)
-        (compiler_ir_types.compiler-ir-param-cons
+        (compiler_ir_types.compiler-ir-param-seq-prepend
           (compiler_ir_types.CompilerIrParam.Param
             "scalar"
             (compiler_ast_types.AstType.I64)
             1)
-          compiler_ir_types.CompilerIrParamList.Nil))]
+          (compiler_ir_types.compiler-ir-param-seq-empty)))]
     [param-assignments : compiler_regalloc.CompilerRegAssignmentTable
       (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
@@ -8140,10 +8140,10 @@
         (compiler_ir_types.CompilerIrCallArgs.One
           (compiler_ir_types.CompilerIrValue.Var 0))]
       [name : i64 (ci.intern "private_memory_scratch_callee")]
-      [params : compiler_ir_types.CompilerIrParamList
-        (compiler_ir_types.compiler-ir-param-cons
+      [params : compiler_ir_types.CompilerIrParamSeq
+        (compiler_ir_types.compiler-ir-param-seq-prepend
           (compiler_ir_types.CompilerIrParam.Param "mem" memory 0)
-          compiler_ir_types.CompilerIrParamList.Nil)]
+          (compiler_ir_types.compiler-ir-param-seq-empty))]
       [_index : compiler_backend.CompilerBackendProgramIndex
         (compiler_backend.compiler-backend-program-index-build
           bases
@@ -8447,7 +8447,7 @@
       (compiler_ir_types.compiler-ir-function-seq-prepend
         (compiler_ir_types.CompilerIrFunction.Function
           (ci.intern "main")
-          compiler_ir_types.CompilerIrParamList.Nil
+          (compiler_ir_types.compiler-ir-param-seq-empty)
           (compiler_ast_types.AstType.I64)
           3
           (compiler_ir_types.compiler-ir-block-cons
@@ -8479,7 +8479,7 @@
       (compiler_ir_types.compiler-ir-function-seq-prepend
         (compiler_ir_types.CompilerIrFunction.Function
           (ci.intern "main")
-          compiler_ir_types.CompilerIrParamList.Nil
+          (compiler_ir_types.compiler-ir-param-seq-empty)
           (compiler_ast_types.AstType.I64)
           3
           (compiler_ir_types.compiler-ir-block-cons
@@ -8588,12 +8588,12 @@
 (define (compiler-backend-descriptor-pair-consumer) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
     (ci.intern "descriptor_pair_consume")
-    (compiler_ir_types.compiler-ir-param-cons
+    (compiler_ir_types.compiler-ir-param-seq-prepend
       (compiler_ir_types.CompilerIrParam.Param
         "handle"
         (compiler_ast_types.AstType.String)
         0)
-      compiler_ir_types.CompilerIrParamList.Nil)
+      (compiler_ir_types.compiler-ir-param-seq-empty))
     (compiler_ast_types.AstType.I64)
     3
     (compiler_ir_types.compiler-ir-block-cons
@@ -8623,7 +8623,7 @@
       (compiler_ir_types.CompilerIrDescriptorPairKind.OwnedString)]
     (compiler_ir_types.CompilerIrFunction.Function
       (ci.intern "main")
-      compiler_ir_types.CompilerIrParamList.Nil
+      (compiler_ir_types.compiler-ir-param-seq-empty)
       (compiler_ast_types.AstType.I64)
       18
       (compiler_ir_types.compiler-ir-block-cons
@@ -9016,7 +9016,7 @@
       (compiler_ir_types.CompilerIrDescriptorPairKind.OwnedString)]
     (compiler_ir_types.CompilerIrFunction.Function
       (ci.intern "main")
-      compiler_ir_types.CompilerIrParamList.Nil
+      (compiler_ir_types.compiler-ir-param-seq-empty)
       (compiler_ast_types.AstType.I64)
       4
       (compiler_ir_types.compiler-ir-block-cons
@@ -9625,7 +9625,7 @@
           (compiler_ir_types.compiler-ir-function-seq-prepend
             (compiler_ir_types.CompilerIrFunction.Function
               (ci.intern "main")
-              compiler_ir_types.CompilerIrParamList.Nil
+              (compiler_ir_types.compiler-ir-param-seq-empty)
               (compiler_ast_types.AstType.I64)
               3
               blocks)
@@ -9755,7 +9755,7 @@
       (compiler_ir_types.compiler-ir-function-seq-prepend
         (compiler_ir_types.CompilerIrFunction.Function
           (ci.intern "main")
-          compiler_ir_types.CompilerIrParamList.Nil
+          (compiler_ir_types.compiler-ir-param-seq-empty)
           (compiler_ast_types.AstType.I64)
           5
           blocks)
@@ -11525,7 +11525,7 @@
       (compiler_ir_types.compiler-ir-function-seq-prepend
         (compiler_ir_types.CompilerIrFunction.Function
           (ci.intern "group_seed")
-          compiler_ir_types.CompilerIrParamList.Nil
+          (compiler_ir_types.compiler-ir-param-seq-empty)
           (compiler_ast_types.AstType.Unit)
           3
           (compiler_ir_types.compiler-ir-block-cons
@@ -11545,9 +11545,9 @@
         (compiler_ir_types.compiler-ir-function-seq-prepend
           (compiler_ir_types.CompilerIrFunction.Function
             (ci.intern "consume_group")
-            (compiler_ir_types.compiler-ir-param-cons
+            (compiler_ir_types.compiler-ir-param-seq-prepend
               (compiler_ir_types.CompilerIrParam.Param "value" ty 0)
-              compiler_ir_types.CompilerIrParamList.Nil)
+              (compiler_ir_types.compiler-ir-param-seq-empty))
             (compiler_ast_types.AstType.I64)
             1
             compiler_ir_types.CompilerIrBlockList.Nil)
@@ -12929,7 +12929,7 @@ g:
     (compiler_ir_types.compiler-ir-function-seq-prepend
       (compiler_ir_types.CompilerIrFunction.Function
         (ci.intern "main")
-        compiler_ir_types.CompilerIrParamList.Nil
+        (compiler_ir_types.compiler-ir-param-seq-empty)
         (compiler_ast_types.AstType.I64)
         0
         (compiler_ir_types.compiler-ir-block-cons
@@ -13604,7 +13604,7 @@ g:
     (compiler_ir_types.compiler-ir-function-seq-prepend
       (compiler_ir_types.CompilerIrFunction.Function
         (ci.intern "callee")
-        compiler_ir_types.CompilerIrParamList.Nil
+        (compiler_ir_types.compiler-ir-param-seq-empty)
         (compiler_ast_types.AstType.I64)
         0
         (compiler_ir_types.compiler-ir-block-cons
@@ -13619,7 +13619,7 @@ g:
       (compiler_ir_types.compiler-ir-function-seq-prepend
         (compiler_ir_types.CompilerIrFunction.Function
           (ci.intern "main")
-          compiler_ir_types.CompilerIrParamList.Nil
+          (compiler_ir_types.compiler-ir-param-seq-empty)
           (compiler_ast_types.AstType.I64)
           1
           (compiler_ir_types.compiler-ir-block-cons
@@ -16659,7 +16659,7 @@ g:
     (compiler_ir_types.compiler-ir-function-seq-prepend
       (compiler_ir_types.CompilerIrFunction.Function
         name-id
-        compiler_ir_types.CompilerIrParamList.Nil
+        (compiler_ir_types.compiler-ir-param-seq-empty)
         (compiler_ast_types.AstType.I64)
         0
         (compiler_ir_types.compiler-ir-block-cons
@@ -16681,7 +16681,7 @@ g:
     (compiler_ir_types.compiler-ir-function-seq-prepend
       (compiler_ir_types.CompilerIrFunction.Function
         name-id
-        compiler_ir_types.CompilerIrParamList.Nil
+        (compiler_ir_types.compiler-ir-param-seq-empty)
         (compiler_ast_types.AstType.I64)
         0
         (compiler_ir_types.compiler-ir-block-cons
@@ -16696,7 +16696,7 @@ g:
       (compiler_ir_types.compiler-ir-function-seq-prepend
         (compiler_ir_types.CompilerIrFunction.Function
           name-id
-          compiler_ir_types.CompilerIrParamList.Nil
+          (compiler_ir_types.compiler-ir-param-seq-empty)
           (compiler_ast_types.AstType.I64)
           0
           (compiler_ir_types.compiler-ir-block-cons
@@ -17308,7 +17308,7 @@ g:
         (compiler_ir_types.compiler-ir-function-seq-prepend
           (compiler_ir_types.CompilerIrFunction.Function
             (ci.intern "main")
-            compiler_ir_types.CompilerIrParamList.Nil
+            (compiler_ir_types.compiler-ir-param-seq-empty)
             (compiler_ast_types.AstType.I64)
             4
             (compiler_ir_types.compiler-ir-block-cons
@@ -17359,7 +17359,7 @@ g:
     (compiler_ir_types.compiler-ir-function-seq-prepend
       (compiler_ir_types.CompilerIrFunction.Function
         (ci.intern "main")
-        compiler_ir_types.CompilerIrParamList.Nil
+        (compiler_ir_types.compiler-ir-param-seq-empty)
         (compiler_ast_types.AstType.I64)
         1
         (compiler_ir_types.compiler-ir-block-cons
@@ -17516,7 +17516,7 @@ g:
     (compiler_ir_types.compiler-ir-function-seq-prepend
       (compiler_ir_types.CompilerIrFunction.Function
         (ci.intern "main")
-        compiler_ir_types.CompilerIrParamList.Nil
+        (compiler_ir_types.compiler-ir-param-seq-empty)
         (compiler_ast_types.AstType.I64)
         2
         (compiler-backend-total-switch-test-blocks true))
@@ -17581,7 +17581,7 @@ g:
     (compiler_ir_types.compiler-ir-function-seq-prepend
       (compiler_ir_types.CompilerIrFunction.Function
         (ci.intern "main")
-        compiler_ir_types.CompilerIrParamList.Nil
+        (compiler_ir_types.compiler-ir-param-seq-empty)
         (compiler_ast_types.AstType.I64)
         2
         (compiler-backend-forwarded-total-switch-test-blocks))
@@ -17594,7 +17594,7 @@ g:
     (compiler_ir_types.compiler-ir-function-seq-prepend
       (compiler_ir_types.CompilerIrFunction.Function
         (ci.intern "main")
-        compiler_ir_types.CompilerIrParamList.Nil
+        (compiler_ir_types.compiler-ir-param-seq-empty)
         (compiler_ast_types.AstType.I64)
         2
         (compiler-backend-total-switch-test-blocks false))
@@ -17819,7 +17819,7 @@ g:
     (compiler_ir_types.compiler-ir-function-seq-prepend
       (compiler_ir_types.CompilerIrFunction.Function
         (ci.intern "main")
-        compiler_ir_types.CompilerIrParamList.Nil
+        (compiler_ir_types.compiler-ir-param-seq-empty)
         (compiler_ast_types.AstType.I64)
         1
         (compiler_ir_types.compiler-ir-block-cons
@@ -17907,7 +17907,7 @@ g:
     (compiler_ir_types.compiler-ir-function-seq-prepend
       (compiler_ir_types.CompilerIrFunction.Function
         (ci.intern "main")
-        compiler_ir_types.CompilerIrParamList.Nil
+        (compiler_ir_types.compiler-ir-param-seq-empty)
         (compiler_ast_types.AstType.I64)
         1
         (compiler_ir_types.compiler-ir-block-cons
@@ -17945,7 +17945,7 @@ g:
     (compiler_ir_types.compiler-ir-function-seq-prepend
       (compiler_ir_types.CompilerIrFunction.Function
         (ci.intern "main")
-        compiler_ir_types.CompilerIrParamList.Nil
+        (compiler_ir_types.compiler-ir-param-seq-empty)
         (compiler_ast_types.AstType.I64)
         2
         (compiler_ir_types.compiler-ir-block-cons
@@ -18035,7 +18035,7 @@ g:
     (compiler_ir_types.compiler-ir-function-seq-prepend
       (compiler_ir_types.CompilerIrFunction.Function
         (ci.intern "main")
-        compiler_ir_types.CompilerIrParamList.Nil
+        (compiler_ir_types.compiler-ir-param-seq-empty)
         (compiler_ast_types.AstType.I64)
         2
         (compiler_ir_types.compiler-ir-block-cons
@@ -21249,7 +21249,7 @@ g:
 (define (compiler-backend-vector-call-lifetime-function) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
     (ci.intern "vector_call_lifetime")
-    compiler_ir_types.CompilerIrParamList.Nil
+    (compiler_ir_types.compiler-ir-param-seq-empty)
     (compiler_ast_types.AstType.Unit)
     3
     (compiler_ir_types.compiler-ir-block-cons
@@ -22148,7 +22148,7 @@ g:
 (define (compiler-backend-avx512-mask-spill-function) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
     (ci.intern "mask_spill")
-    compiler_ir_types.CompilerIrParamList.Nil
+    (compiler_ir_types.compiler-ir-param-seq-empty)
     (compiler_ast_types.AstType.I64)
     20
     (compiler_ir_types.compiler-ir-block-cons
@@ -22403,7 +22403,7 @@ g:
         (compiler_ir_types.CompilerIrValue.Var 1))]
     (compiler_ir_types.CompilerIrFunction.Function
       (ci.intern name)
-      compiler_ir_types.CompilerIrParamList.Nil
+      (compiler_ir_types.compiler-ir-param-seq-empty)
       (compiler_ast_types.AstType.Unit)
       3
       (compiler_ir_types.compiler-ir-block-cons
@@ -23266,7 +23266,7 @@ g:
         (compiler_ir_types.compiler-ir-function-seq-prepend
           (compiler_ir_types.CompilerIrFunction.Function
             (ci.intern "main")
-            compiler_ir_types.CompilerIrParamList.Nil
+            (compiler_ir_types.compiler-ir-param-seq-empty)
             (compiler_ast_types.AstType.I64)
             4
             (compiler_ir_types.compiler-ir-block-cons
@@ -24478,7 +24478,7 @@ g:
       (compiler_ir_types.compiler-ir-function-seq-prepend
         (compiler_ir_types.CompilerIrFunction.Function
           (ci.intern "arena-debug-plan-test")
-          compiler_ir_types.CompilerIrParamList.Nil
+          (compiler_ir_types.compiler-ir-param-seq-empty)
           (compiler_ast_types.AstType.Unit)
           1
           (compiler_ir_types.compiler-ir-block-cons
@@ -24537,7 +24537,7 @@ g:
 (define (compiler-backend-runtime-prelude-test-function [name : String]) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
     (ci.intern name)
-    compiler_ir_types.CompilerIrParamList.Nil
+    (compiler_ir_types.compiler-ir-param-seq-empty)
     (compiler_ast_types.AstType.Unit)
     0
     compiler_ir_types.CompilerIrBlockList.Nil))
@@ -26768,7 +26768,7 @@ g:
       (begin
         (compiler-backend-test-scavenge-install-ctx!
           "gep_load_live_through"
-          compiler_ir_types.CompilerIrParamList.Nil
+          (compiler_ir_types.compiler-ir-param-seq-empty)
           (compiler_ast_types.AstType.I64)
           8
           blocks
@@ -27095,7 +27095,7 @@ g:
       (begin
         (compiler-backend-test-scavenge-install-ctx!
           "gep_load_multi_emergency"
-          compiler_ir_types.CompilerIrParamList.Nil
+          (compiler_ir_types.compiler-ir-param-seq-empty)
           (compiler_ast_types.AstType.I64)
           40
           blocks
@@ -27369,7 +27369,7 @@ g:
       (begin
         (compiler-backend-test-scavenge-install-ctx!
           "copy_bytes_live_through"
-          compiler_ir_types.CompilerIrParamList.Nil
+          (compiler_ir_types.compiler-ir-param-seq-empty)
           (compiler_ast_types.AstType.I64)
           6
           blocks
@@ -27522,7 +27522,7 @@ g:
       (begin
         (compiler-backend-test-scavenge-install-ctx!
           "copy_bytes_run_protect"
-          compiler_ir_types.CompilerIrParamList.Nil
+          (compiler_ir_types.compiler-ir-param-seq-empty)
           (compiler_ast_types.AstType.I64)
           10
           blocks
@@ -34563,7 +34563,7 @@ g:
           (compiler_backend.compiler-backend-state-function-state backend-state))
         (compiler-backend-test-scavenge-install-ctx!
           "divmod_polish"
-          compiler_ir_types.CompilerIrParamList.Nil
+          (compiler_ir_types.compiler-ir-param-seq-empty)
           (compiler_ast_types.AstType.I64)
           8
           blocks
@@ -34861,7 +34861,7 @@ g:
           (compiler_backend.compiler-backend-state-function-state backend-state))
         (compiler-backend-test-scavenge-install-ctx!
           "c22_divmod_store_collision"
-          compiler_ir_types.CompilerIrParamList.Nil
+          (compiler_ir_types.compiler-ir-param-seq-empty)
           (compiler_ast_types.AstType.I64)
           15
           blocks
@@ -35588,7 +35588,7 @@ g:
     (compiler_ir_types.compiler-ir-function-seq-prepend
       (compiler_ir_types.CompilerIrFunction.Function
         (ci.intern "main")
-        compiler_ir_types.CompilerIrParamList.Nil
+        (compiler_ir_types.compiler-ir-param-seq-empty)
         (compiler_ast_types.AstType.I64)
         1
         (compiler_ir_types.compiler-ir-block-cons
@@ -36262,10 +36262,10 @@ g:
       (compiler-backend-register-group-test-type)]
     [index : compiler_backend.CompilerBackendProgramIndex
       (compiler-backend-register-group-test-index)]
-    [params : compiler_ir_types.CompilerIrParamList
-      (compiler_ir_types.compiler-ir-param-cons
+    [params : compiler_ir_types.CompilerIrParamSeq
+      (compiler_ir_types.compiler-ir-param-seq-prepend
         (compiler_ir_types.CompilerIrParam.Param "pair" ty 0)
-        compiler_ir_types.CompilerIrParamList.Nil)]
+        (compiler_ir_types.compiler-ir-param-seq-empty))]
     [reg-assignments : compiler_regalloc.CompilerRegAssignmentTable
       (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
@@ -36346,10 +36346,10 @@ g:
       (compiler-backend-register-group-test-type)]
     [index : compiler_backend.CompilerBackendProgramIndex
       (compiler-backend-register-group-test-index)]
-    [params : compiler_ir_types.CompilerIrParamList
-      (compiler_ir_types.compiler-ir-param-cons
+    [params : compiler_ir_types.CompilerIrParamSeq
+      (compiler_ir_types.compiler-ir-param-seq-prepend
         (compiler_ir_types.CompilerIrParam.Param "pair" ty 0)
-        compiler_ir_types.CompilerIrParamList.Nil)]
+        (compiler_ir_types.compiler-ir-param-seq-empty))]
     [function-state : compiler_backend.CompilerBackendFunctionState
       (compiler_backend.compiler-backend-state-function-state
         index.backend-state)]
@@ -36412,12 +36412,12 @@ g:
       (compiler-backend-linux-atomic-int-group-type)]
     [mixed-group : compiler_ast_types.AstType
       (compiler-backend-linux-atomic-mixed-group-type)]
-    [params : compiler_ir_types.CompilerIrParamList
-      (compiler_ir_types.compiler-ir-param-cons
+    [params : compiler_ir_types.CompilerIrParamSeq
+      (compiler_ir_types.compiler-ir-param-seq-prepend
         (compiler_ir_types.CompilerIrParam.Param "ints" int-group 0)
-        (compiler_ir_types.compiler-ir-param-cons
+        (compiler_ir_types.compiler-ir-param-seq-prepend
           (compiler_ir_types.CompilerIrParam.Param "mixed" mixed-group 1)
-          compiler_ir_types.CompilerIrParamList.Nil))]
+          (compiler_ir_types.compiler-ir-param-seq-empty)))]
     (compiler_backend.compiler-backend-program-index-build
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
       (compiler_ir_types.compiler-ir-function-seq-prepend
@@ -36478,24 +36478,24 @@ g:
       (compiler_ir_types.compiler-ir-call-args-from-seq values))))
 
 (define (compiler-backend-linux-atomic-pressure-params
-  [group : compiler_ast_types.AstType]) : compiler_ir_types.CompilerIrParamList
+  [group : compiler_ast_types.AstType]) : compiler_ir_types.CompilerIrParamSeq
   (let
-    [params : compiler_ir_types.CompilerIrParamList
-      (compiler_ir_types.compiler-ir-param-cons
+    [params : compiler_ir_types.CompilerIrParamSeq
+      (compiler_ir_types.compiler-ir-param-seq-prepend
         (compiler_ir_types.CompilerIrParam.Param "group" group 0)
-        (compiler_ir_types.compiler-ir-param-cons
+        (compiler_ir_types.compiler-ir-param-seq-prepend
           (compiler_ir_types.CompilerIrParam.Param
             "tail"
             (compiler_ast_types.AstType.I64)
             6)
-          compiler_ir_types.CompilerIrParamList.Nil))]
+          (compiler_ir_types.compiler-ir-param-seq-empty)))]
     [i : i64 5]
     (begin
       (while (> i 0)
         (begin
           (set!
             params
-            (compiler_ir_types.compiler-ir-param-cons
+            (compiler_ir_types.compiler-ir-param-seq-prepend
               (compiler_ir_types.CompilerIrParam.Param
                 (str_cat.str-cat "scalar" (string.int->string i))
                 (compiler_ast_types.AstType.I64)
@@ -36691,9 +36691,9 @@ g:
         bases
         target
         mixed-assignments
-        (compiler_ir_types.compiler-ir-param-cons
+        (compiler_ir_types.compiler-ir-param-seq-prepend
           (compiler_ir_types.CompilerIrParam.Param "mixed" mixed-group 0)
-          compiler_ir_types.CompilerIrParamList.Nil)
+          (compiler_ir_types.compiler-ir-param-seq-empty))
         0
         0
         0
@@ -36758,14 +36758,14 @@ g:
         bases
         target
         exhausted-assignments
-        (compiler_ir_types.compiler-ir-param-cons
+        (compiler_ir_types.compiler-ir-param-seq-prepend
           (compiler_ir_types.CompilerIrParam.Param "mixed" mixed-group 0)
-          (compiler_ir_types.compiler-ir-param-cons
+          (compiler_ir_types.compiler-ir-param-seq-prepend
             (compiler_ir_types.CompilerIrParam.Param
               "tail"
               (compiler_ast_types.AstType.F64)
               1)
-            compiler_ir_types.CompilerIrParamList.Nil))
+            (compiler_ir_types.compiler-ir-param-seq-empty)))
         6
         0
         6
@@ -37496,7 +37496,7 @@ g:
       (begin
         (compiler-backend-test-scavenge-install-ctx!
           "indirect_tail_call_r11_callee_shape"
-          compiler_ir_types.CompilerIrParamList.Nil
+          (compiler_ir_types.compiler-ir-param-seq-empty)
           (compiler_ast_types.AstType.I64)
           1
           blocks
@@ -37826,12 +37826,12 @@ g:
   (compiler_ir_types.compiler-ir-function-seq-prepend
     (compiler_ir_types.CompilerIrFunction.Function
       (ci.intern "known_target")
-      (compiler_ir_types.compiler-ir-param-cons
+      (compiler_ir_types.compiler-ir-param-seq-prepend
         (compiler_ir_types.CompilerIrParam.Param
           "x"
           (compiler_ast_types.AstType.I64)
           0)
-        compiler_ir_types.CompilerIrParamList.Nil)
+        (compiler_ir_types.compiler-ir-param-seq-empty))
       (compiler_ast_types.AstType.I64)
       1
       compiler_ir_types.CompilerIrBlockList.Nil)
@@ -38275,7 +38275,7 @@ g:
     (compiler_ir_types.compiler-ir-function-seq-prepend
       (compiler_ir_types.CompilerIrFunction.Function
         (ci.intern "pkg/a.tl::helper")
-        compiler_ir_types.CompilerIrParamList.Nil
+        (compiler_ir_types.compiler-ir-param-seq-empty)
         (compiler_ast_types.AstType.I64)
         0
         (compiler_ir_types.compiler-ir-block-cons
@@ -38290,7 +38290,7 @@ g:
       (compiler_ir_types.compiler-ir-function-seq-prepend
         (compiler_ir_types.CompilerIrFunction.Function
           (ci.intern "pkg_a.tl::helper")
-          compiler_ir_types.CompilerIrParamList.Nil
+          (compiler_ir_types.compiler-ir-param-seq-empty)
           (compiler_ast_types.AstType.I64)
           0
           (compiler_ir_types.compiler-ir-block-cons
@@ -38578,7 +38578,7 @@ g:
       (begin
         (compiler-backend-test-scavenge-install-ctx!
           "_tl_test"
-          compiler_ir_types.CompilerIrParamList.Nil
+          (compiler_ir_types.compiler-ir-param-seq-empty)
           (compiler_ast_types.AstType.U64)
           1
           blocks
@@ -38814,7 +38814,7 @@ g:
       (begin
         (compiler-backend-test-scavenge-install-ctx!
           "inline_fast_alloc_emergency"
-          compiler_ir_types.CompilerIrParamList.Nil
+          (compiler_ir_types.compiler-ir-param-seq-empty)
           (compiler_ast_types.AstType.I64)
           50
           blocks
@@ -39281,19 +39281,19 @@ g:
   (compiler_ir_types.compiler-ir-function-seq-prepend
     (compiler_ir_types.CompilerIrFunction.Function
       (ci.intern "pkg/really-long-backend-index-function")
-      (compiler_ir_types.compiler-ir-param-cons
+      (compiler_ir_types.compiler-ir-param-seq-prepend
         (compiler_ir_types.CompilerIrParam.Param
           "x"
           (compiler_ast_types.AstType.I64)
           0)
-        compiler_ir_types.CompilerIrParamList.Nil)
+        (compiler_ir_types.compiler-ir-param-seq-empty))
       (compiler_ast_types.AstType.I64)
       1
       compiler_ir_types.CompilerIrBlockList.Nil)
     (compiler_ir_types.compiler-ir-function-seq-prepend
       (compiler_ir_types.CompilerIrFunction.Function
         (ci.intern "short_fn")
-        compiler_ir_types.CompilerIrParamList.Nil
+        (compiler_ir_types.compiler-ir-param-seq-empty)
         (compiler_ast_types.AstType.Unit)
         0
         compiler_ir_types.CompilerIrBlockList.Nil)
@@ -39954,7 +39954,7 @@ g:
         (compiler_ir_types.compiler-ir-function-seq-prepend
           (compiler_ir_types.CompilerIrFunction.Function
             fn-id
-            compiler_ir_types.CompilerIrParamList.Nil
+            (compiler_ir_types.compiler-ir-param-seq-empty)
             (compiler_ast_types.AstType.I64)
             0
             compiler_ir_types.CompilerIrBlockList.Nil)
@@ -40095,7 +40095,7 @@ g:
           (compiler_ir_types.compiler-ir-function-seq-prepend
             (compiler_ir_types.CompilerIrFunction.Function
               fn-id
-              compiler_ir_types.CompilerIrParamList.Nil
+              (compiler_ir_types.compiler-ir-param-seq-empty)
               (compiler_ast_types.AstType.Unit)
               0
               compiler_ir_types.CompilerIrBlockList.Nil)
@@ -41898,7 +41898,7 @@ g:
       (compiler_ir_types.compiler-ir-function-seq-prepend
         (compiler_ir_types.CompilerIrFunction.Function
           (ci.intern "scratch_mixed_aggregate_index")
-          compiler_ir_types.CompilerIrParamList.Nil
+          (compiler_ir_types.compiler-ir-param-seq-empty)
           (compiler_ast_types.AstType.I64)
           1
           (compiler_ir_types.compiler-ir-block-cons
@@ -42253,7 +42253,7 @@ g:
     abi
     (compiler_ir_types.CompilerIrFunction.Function
       (ci.intern name)
-      compiler_ir_types.CompilerIrParamList.Nil
+      (compiler_ir_types.compiler-ir-param-seq-empty)
       (compiler_ast_types.AstType.I64)
       vars
       blocks)
@@ -42271,7 +42271,7 @@ g:
     abi
     (compiler_ir_types.CompilerIrFunction.Function
       (ci.intern name)
-      compiler_ir_types.CompilerIrParamList.Nil
+      (compiler_ir_types.compiler-ir-param-seq-empty)
       (compiler_ast_types.AstType.I64)
       vars
       blocks)
@@ -42301,7 +42301,7 @@ g:
     (compiler_abi.CompilerRegTargetAbi.Linux)
     (compiler_ir_types.CompilerIrFunction.Function
       (ci.intern name)
-      compiler_ir_types.CompilerIrParamList.Nil
+      (compiler_ir_types.compiler-ir-param-seq-empty)
       (compiler_ast_types.AstType.I64)
       vars
       blocks)
@@ -45379,17 +45379,17 @@ g:
 (define (compiler-backend-shrinkwrap-param-phi-fixture) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
     (compiler_ir_types.compiler-ir-test-symbol "early_exit_param_phi")
-    (compiler_ir_types.compiler-ir-param-cons
+    (compiler_ir_types.compiler-ir-param-seq-prepend
       (compiler_ir_types.CompilerIrParam.Param
         "start"
         (compiler_ast_types.AstType.I64)
         0)
-      (compiler_ir_types.compiler-ir-param-cons
+      (compiler_ir_types.compiler-ir-param-seq-prepend
         (compiler_ir_types.CompilerIrParam.Param
           "end"
           (compiler_ast_types.AstType.I64)
           1)
-        compiler_ir_types.CompilerIrParamList.Nil))
+        (compiler_ir_types.compiler-ir-param-seq-empty)))
     (compiler_ast_types.AstType.Unit)
     6
     (compiler_ir_types.compiler-ir-block-cons
@@ -46246,7 +46246,7 @@ g:
     (begin
       (compiler-backend-test-scavenge-install-ctx!
         "scavenge_loop_live_through"
-        compiler_ir_types.CompilerIrParamList.Nil
+        (compiler_ir_types.compiler-ir-param-seq-empty)
         (compiler_ast_types.AstType.I64)
         7
         blocks
@@ -46569,7 +46569,7 @@ g:
     (begin
       (compiler-backend-test-scavenge-install-ctx!
         "phi_rotated_back_edge"
-        compiler_ir_types.CompilerIrParamList.Nil
+        (compiler_ir_types.compiler-ir-param-seq-empty)
         (compiler_ast_types.AstType.I64)
         12
         (compiler-backend-phi-rotated-back-edge-blocks)
@@ -46823,33 +46823,33 @@ g:
 
 (define (compiler-backend-param-spill-stack-scratch-preserves-home-ok?) : bool
   (let
-    [params : compiler_ir_types.CompilerIrParamList
-      (compiler_ir_types.compiler-ir-param-cons
+    [params : compiler_ir_types.CompilerIrParamSeq
+      (compiler_ir_types.compiler-ir-param-seq-prepend
         (compiler_ir_types.CompilerIrParam.Param
           "a"
           (compiler_ast_types.AstType.U64)
           0)
-        (compiler_ir_types.compiler-ir-param-cons
+        (compiler_ir_types.compiler-ir-param-seq-prepend
           (compiler_ir_types.CompilerIrParam.Param
             "b"
             (compiler_ast_types.AstType.U64)
             1)
-          (compiler_ir_types.compiler-ir-param-cons
+          (compiler_ir_types.compiler-ir-param-seq-prepend
             (compiler_ir_types.CompilerIrParam.Param
               "c"
               (compiler_ast_types.AstType.U64)
               2)
-            (compiler_ir_types.compiler-ir-param-cons
+            (compiler_ir_types.compiler-ir-param-seq-prepend
               (compiler_ir_types.CompilerIrParam.Param
                 "d"
                 (compiler_ast_types.AstType.U64)
                 3)
-              (compiler_ir_types.compiler-ir-param-cons
+              (compiler_ir_types.compiler-ir-param-seq-prepend
                 (compiler_ir_types.CompilerIrParam.Param
                   "e"
                   (compiler_ast_types.AstType.Bool)
                   4)
-                compiler_ir_types.CompilerIrParamList.Nil)))))]
+                (compiler_ir_types.compiler-ir-param-seq-empty))))))]
     [assignments : compiler_regalloc.CompilerRegAssignmentTable
       (compiler_regalloc.compiler-reg-assignments-prepend
         (compiler_regalloc.CompilerRegAssignment
@@ -49717,12 +49717,12 @@ b_keep:
 (define (compiler-backend-placement-seh-function) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
     (ci.intern "placement_loop")
-    (compiler_ir_types.CompilerIrParamList.Cons
+    (compiler_ir_types.compiler-ir-param-seq-prepend
       (compiler_ir_types.CompilerIrParam.Param
         "n"
         (compiler_ast_types.AstType.I64)
         0)
-      (box compiler_ir_types.CompilerIrParamList.Nil))
+      (compiler_ir_types.compiler-ir-param-seq-empty))
     (compiler_ast_types.AstType.I64)
     6
     (compiler_ir_types.CompilerIrBlockList.Array
@@ -49795,7 +49795,7 @@ b_keep:
 (define (compiler-backend-placement-seh-main) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
     (ci.intern "main")
-    compiler_ir_types.CompilerIrParamList.Nil
+    (compiler_ir_types.compiler-ir-param-seq-empty)
     (compiler_ast_types.AstType.I64)
     1
     (compiler_ir_types.CompilerIrBlockList.Array

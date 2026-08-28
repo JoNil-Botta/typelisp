@@ -460,7 +460,7 @@
 (define (compiler-live-straight-function) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
     (ir.compiler-ir-test-symbol "straight")
-    ir.CompilerIrParamList.Nil
+    (ir.compiler-ir-param-seq-empty)
     (compiler-live-i64-ty)
     3
     (ir.compiler-ir-block-cons
@@ -484,7 +484,7 @@
 (define (compiler-live-branch-function) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
     (ir.compiler-ir-test-symbol "branch")
-    ir.CompilerIrParamList.Nil
+    (ir.compiler-ir-param-seq-empty)
     (compiler-live-i64-ty)
     3
     (ir.compiler-ir-block-cons
@@ -512,7 +512,7 @@
 (define (compiler-live-phi-function) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
     (ir.compiler-ir-test-symbol "phi")
-    ir.CompilerIrParamList.Nil
+    (ir.compiler-ir-param-seq-empty)
     (compiler-live-i64-ty)
     4
     (ir.compiler-ir-block-cons

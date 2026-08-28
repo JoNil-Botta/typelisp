@@ -32,11 +32,11 @@
     (ir.compiler-ir-function-seq-prepend
       (ir.CompilerIrFunction.Function
         (ir.compiler-ir-label "main")
-        (ir.compiler-ir-param-cons
+        (ir.compiler-ir-param-seq-prepend
           (ir.CompilerIrParam.Param "index" (ast.AstType.I64) 0)
-          (ir.compiler-ir-param-cons
+          (ir.compiler-ir-param-seq-prepend
             (ir.CompilerIrParam.Param "length" (ast.AstType.I64) 1)
-            ir.CompilerIrParamList.Nil))
+            (ir.compiler-ir-param-seq-empty)))
         (ast.AstType.I64)
         4
         (ir.compiler-ir-block-cons

@@ -672,7 +672,37 @@
 (define (fmt-token-capacity-estimate [n : i64]) : i64
   (+ (/ n 3) 16))
 
-(define (format-lex-result [src : String]) : ResultFormatTokenStream
+(define (fmt-recovery-token-delimiter? [c : char]) : bool
+  (or
+    (fmt-char-class? c 1)
+    (= c '(')
+    (= c ')')
+    (= c '[')
+    (= c ']')
+    (= c ';')
+    (= c '"')
+    (= c '\'')
+    (= c '`')
+    (= c ',')))
+
+(define (fmt-scan-recovery-token-end [data : (Ptr u8)] [start : i64] [n : i64]) : i64
+  (let
+    [i : i64 start]
+    (begin
+      (while (and
+        (< i n)
+        (not
+          (fmt-recovery-token-delimiter? (fmt-source-byte-bounds-proven data i))))
+        (set! i (+ i 1)))
+      (if (> i start)
+        i
+        (+ start 1)))))
+
+;; The recovering mode is used by editor tooling on incomplete buffers. It
+;; retains every proven token before an error, treats an unterminated string as
+;; a string through EOF, and advances past other malformed source without
+;; guessing an identifier. The formatter keeps the strict result surface.
+(define (format-lex-mode-result [src : String] [recover : bool]) : ResultFormatTokenStream
   (let
     [n : i64 (string.string-length src)]
     [data : (Ptr u8)
@@ -750,7 +780,17 @@
                       (set! count (+ count 1))
                       (set! i end))]
                   [(ResultFmtMaybeCharEnd.Err err)
-                    (return (ResultFormatTokenStream.Err err))]
+                    (if recover
+                      (begin
+                        (fmt-store-token
+                          tokens
+                          starts
+                          count
+                          i
+                          (FormatToken.Quote))
+                        (set! count (+ count 1))
+                        (set! i (+ i 1)))
+                      (return (ResultFormatTokenStream.Err err)))]
                   [(ResultFmtMaybeCharEnd.No)
                     (begin
                       (fmt-store-token
@@ -819,7 +859,17 @@
                       (set! count (+ count 1))
                       (set! i end))]
                   [(result_fmt_i64.Err err)
-                    (return (ResultFormatTokenStream.Err err))])]
+                    (if recover
+                      (begin
+                        (fmt-store-token
+                          tokens
+                          starts
+                          count
+                          i
+                          (FormatToken.String (string.substring src i (- n i))))
+                        (set! count (+ count 1))
+                        (set! i n))
+                      (return (ResultFormatTokenStream.Err err)))])]
               [(fmt-starts-number data i n)
                 (match (fmt-scan-number-end-result src data i n)
                   [(result_fmt_i64.Ok end)
@@ -833,7 +883,19 @@
                       (set! count (+ count 1))
                       (set! i end))]
                   [(result_fmt_i64.Err err)
-                    (return (ResultFormatTokenStream.Err err))])]
+                    (if recover
+                      (let
+                        [end : i64 (fmt-scan-recovery-token-end data i n)]
+                        (begin
+                          (fmt-store-token
+                            tokens
+                            starts
+                            count
+                            i
+                            (FormatToken.Int (string.substring src i (- end i))))
+                          (set! count (+ count 1))
+                          (set! i end)))
+                      (return (ResultFormatTokenStream.Err err)))])]
               [(fmt-char-class? c 4)
                 (let
                   [end : i64 (fmt-scan-symbol-end data i n)]
@@ -847,12 +909,14 @@
                     (set! count (+ count 1))
                     (set! i end)))]
               [else
-                (return
-                  (ResultFormatTokenStream.Err
-                    (fmt-source-error-at
-                      src
-                      i
-                      "format lexer: unexpected character")))]))))
+                (if recover
+                  (set! i (+ i 1))
+                  (return
+                    (ResultFormatTokenStream.Err
+                      (fmt-source-error-at
+                        src
+                        i
+                        "format lexer: unexpected character"))))]))))
       (if (>= count cap)
         (let
           [newcap : i64 (* cap 2)]
@@ -864,6 +928,21 @@
       (fmt-store-token tokens starts count n (FormatToken.End))
       (ResultFormatTokenStream.Ok
         (FormatTokenStream src tokens starts (+ count 1))))))
+
+(define (format-lex-result [src : String]) : ResultFormatTokenStream
+  (format-lex-mode-result src false))
+
+(define (format-lex-recover [src : String]) : FormatTokenStream
+  (match (format-lex-mode-result src true)
+    [(ResultFormatTokenStream.Ok stream) stream]
+    ;; Recovering mode consumes every error path above. Keep this arm total so
+    ;; callers do not need a second fallback grammar if that invariant changes.
+    [(ResultFormatTokenStream.Err _)
+      (FormatTokenStream
+        src
+        (__tl_make-array FormatToken 0)
+        (__tl_make-array i64 0)
+        0)]))
 
 (define (format-lex [src : String]) : FormatTokenStream
   (match (format-lex-result src)

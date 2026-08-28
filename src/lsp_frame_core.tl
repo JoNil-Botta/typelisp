@@ -25,6 +25,7 @@
 (import compiler_load)
 (import compiler_parse_core as parser)
 (import compiler_typecheck_core as tc)
+(import format_tokens)
 (import format_rules)
 (import lint_core as lint)
 (import lint_driver_core)
@@ -232,6 +233,21 @@
   (offset i64)
   (line i64)
   (col i64))
+
+;; One request-local semantic-token candidate. Byte ranges remain the common
+;; merge key; negotiated line/character positions are computed once after the
+;; radix sort. `priority` resolves equal-start overlaps (exact semantic facts
+;; precede lexical classifications).
+(defstruct LspSemanticTokenCandidate
+  (start-byte i64)
+  (end-byte i64)
+  (token-type i64)
+  (modifiers i64)
+  (priority i64))
+
+(defstruct LspSemanticTokenCandidates
+  (slots (__tl_dyn-array LspSemanticTokenCandidate))
+  (len i64))
 
 (defstruct LspDocumentHighlightCandidate
   (start-byte i64)
@@ -1023,6 +1039,46 @@
 (define (lsp-write-parse-error [message : String]) : unit
   (lsp-write-error json.JsonNull -32700 message))
 
+(define (lsp-semantic-token-legend-types) : json.Json
+  (let
+    [items : (__tl_dyn-array json.Json) (__tl_make-array json.Json 13)]
+    (begin
+      (set! (array-ref items 0) (json.JsonString "namespace"))
+      (set! (array-ref items 1) (json.JsonString "type"))
+      (set! (array-ref items 2) (json.JsonString "enumMember"))
+      (set! (array-ref items 3) (json.JsonString "function"))
+      (set! (array-ref items 4) (json.JsonString "macro"))
+      (set! (array-ref items 5) (json.JsonString "parameter"))
+      (set! (array-ref items 6) (json.JsonString "variable"))
+      (set! (array-ref items 7) (json.JsonString "property"))
+      (set! (array-ref items 8) (json.JsonString "keyword"))
+      (set! (array-ref items 9) (json.JsonString "comment"))
+      (set! (array-ref items 10) (json.JsonString "string"))
+      (set! (array-ref items 11) (json.JsonString "number"))
+      (set! (array-ref items 12) (json.JsonString "operator"))
+      (lsp-json-array (json.JsonSeq items 13)))))
+
+(define (lsp-semantic-token-legend-modifiers) : json.Json
+  (let
+    [items : (__tl_dyn-array json.Json) (__tl_make-array json.Json 4)]
+    (begin
+      (set! (array-ref items 0) (json.JsonString "declaration"))
+      (set! (array-ref items 1) (json.JsonString "definition"))
+      (set! (array-ref items 2) (json.JsonString "readonly"))
+      (set! (array-ref items 3) (json.JsonString "defaultLibrary"))
+      (lsp-json-array (json.JsonSeq items 4)))))
+
+(define (lsp-semantic-token-provider-capability) : json.Json
+  (lsp-json-object2
+    "legend"
+    (lsp-json-object2
+      "tokenTypes"
+      (lsp-semantic-token-legend-types)
+      "tokenModifiers"
+      (lsp-semantic-token-legend-modifiers))
+    "full"
+    (json.JsonBool true)))
+
 (define (lsp-initialize-result) : json.Json
   (lsp-json-object2
     "capabilities"
@@ -1094,18 +1150,21 @@
                                     "foldingRangeProvider"
                                     (json.JsonBool true)
                                     (lsp-json-member
-                                      "workspaceSymbolProvider"
-                                      (json.JsonBool true)
+                                      "semanticTokensProvider"
+                                      (lsp-semantic-token-provider-capability)
                                       (lsp-json-member
-                                        "workspace"
-                                        (lsp-json-object1
-                                          "workspaceFolders"
-                                          (lsp-json-object2
-                                            "supported"
-                                            (json.JsonBool true)
-                                            "changeNotifications"
-                                            (json.JsonBool true)))
-                                        (json.member-list-empty)))))))))))))))))))
+                                        "workspaceSymbolProvider"
+                                        (json.JsonBool true)
+                                        (lsp-json-member
+                                          "workspace"
+                                          (lsp-json-object1
+                                            "workspaceFolders"
+                                            (lsp-json-object2
+                                              "supported"
+                                              (json.JsonBool true)
+                                              "changeNotifications"
+                                              (json.JsonBool true)))
+                                          (json.member-list-empty))))))))))))))))))))
     "serverInfo"
     (lsp-json-object2
       "name"
@@ -12727,6 +12786,566 @@
                   (lsp-document-refresh-from-disk docs index))
                 LspSemanticDocumentLookup.Missing))])])))
 
+;; --------------------------------------------------------------------------
+;; Full semantic tokens (textDocument/semanticTokens/full).
+;;
+;; Lexical candidates come from the formatter's recovering, comment-preserving
+;; lexer over the authoritative current text. Exact records are overlaid only
+;; from a current document-owned semantic snapshot. A fixed-pass radix sort
+;; keeps construction linear in source tokens plus semantic records without a
+;; generated collection family or per-token source rescans.
+;; --------------------------------------------------------------------------
+(define lsp-semantic-token-type-namespace : i64
+  0)
+(define lsp-semantic-token-type-type : i64
+  1)
+(define lsp-semantic-token-type-enum-member : i64
+  2)
+(define lsp-semantic-token-type-function : i64
+  3)
+(define lsp-semantic-token-type-macro : i64
+  4)
+(define lsp-semantic-token-type-parameter : i64
+  5)
+(define lsp-semantic-token-type-variable : i64
+  6)
+(define lsp-semantic-token-type-property : i64
+  7)
+(define lsp-semantic-token-type-keyword : i64
+  8)
+(define lsp-semantic-token-type-comment : i64
+  9)
+(define lsp-semantic-token-type-string : i64
+  10)
+(define lsp-semantic-token-type-number : i64
+  11)
+(define lsp-semantic-token-type-operator : i64
+  12)
+(define lsp-semantic-token-modifier-declaration : i64
+  1)
+(define lsp-semantic-token-modifier-definition : i64
+  2)
+
+(define (lsp-semantic-token-candidates-new) : LspSemanticTokenCandidates
+  (LspSemanticTokenCandidates (__tl_make-array LspSemanticTokenCandidate 32) 0))
+
+(define (lsp-semantic-token-candidate-copy-one!
+  [dst : (&mut dst (__tl_dyn-array LspSemanticTokenCandidate))]
+  [dst-index : i64]
+  [src : (& src (__tl_dyn-array LspSemanticTokenCandidate))]
+  [src-index : i64]) : unit
+  (set! (array-ref dst dst-index) (array-ref src src-index)))
+
+(define (lsp-semantic-token-candidate-copy-range!
+  [dst : (&mut dst (__tl_dyn-array LspSemanticTokenCandidate))]
+  [src : (& src (__tl_dyn-array LspSemanticTokenCandidate))]
+  [index : i64]
+  [count : i64]) : unit
+  (if (< index count)
+    (begin
+      (lsp-semantic-token-candidate-copy-one! dst index src index)
+      (lsp-semantic-token-candidate-copy-range! dst src (+ index 1) count))
+    unit))
+
+(define (lsp-semantic-token-candidates-grow!
+  [tokens : (&mut tokens LspSemanticTokenCandidates)]) : unit
+  (let
+    [old-cap : i64 (array-length tokens.slots)]
+    [new-cap : i64
+      (if (< old-cap 32)
+        32
+        (* old-cap 2))]
+    [bigger : (__tl_dyn-array LspSemanticTokenCandidate)
+      (__tl_make-array LspSemanticTokenCandidate new-cap)]
+    (begin
+      (lsp-semantic-token-candidate-copy-range!
+        (&mut bigger)
+        (& tokens.slots)
+        0
+        tokens.len)
+      (set! tokens.slots bigger))))
+
+(define (lsp-semantic-token-candidates-push!
+  [tokens : (&mut tokens LspSemanticTokenCandidates)]
+  [candidate : LspSemanticTokenCandidate]) : unit
+  (begin
+    (if (>= tokens.len (array-length tokens.slots))
+      (lsp-semantic-token-candidates-grow! tokens)
+      unit)
+    (set! (array-ref tokens.slots tokens.len) candidate)
+    (set! tokens.len (+ tokens.len 1))))
+
+;; LSP semantic tokens cannot cross a line. CR is excluded from a CRLF line
+;; segment even though byte offsets continue through both terminator bytes.
+(define (lsp-semantic-token-add-split-span!
+  [tokens : (&mut tokens LspSemanticTokenCandidates)]
+  [text : String]
+  [start : i64]
+  [end : i64]
+  [token-type : i64]
+  [modifiers : i64]
+  [priority : i64]) : unit
+  (let
+    [n : i64 (string.string-length text)]
+    [safe-start : i64
+      (if (< start 0)
+        0
+        start)]
+    [safe-end : i64
+      (if (> end n)
+        n
+        end)]
+    [segment-start : i64 safe-start]
+    [index : i64 safe-start]
+    (begin
+      (while (< index safe-end)
+        (if (= (string.string-ref text index) '\n')
+          (let
+            [segment-end : i64
+              (if (and
+                (> index segment-start)
+                (= (string.string-ref text (- index 1)) '\r'))
+                (- index 1)
+                index)]
+            (begin
+              (if (> segment-end segment-start)
+                (lsp-semantic-token-candidates-push!
+                  tokens
+                  (LspSemanticTokenCandidate
+                    segment-start
+                    segment-end
+                    token-type
+                    modifiers
+                    priority))
+                unit)
+              (set! segment-start (+ index 1))
+              (set! index (+ index 1))))
+          (set! index (+ index 1))))
+      (let
+        [final-end : i64
+          (if (and
+            (> safe-end segment-start)
+            (< safe-end n)
+            (= (string.string-ref text safe-end) '\n')
+            (= (string.string-ref text (- safe-end 1)) '\r'))
+            (- safe-end 1)
+            safe-end)]
+        (if (> final-end segment-start)
+          (lsp-semantic-token-candidates-push!
+            tokens
+            (LspSemanticTokenCandidate
+              segment-start
+              final-end
+              token-type
+              modifiers
+              priority))
+          unit)))))
+
+(define (lsp-semantic-token-keyword? [name : String]) : bool
+  (lsp-rename-space-list-contains?
+    "define lambda let if begin while break continue set! return match foreach cond when unless and or with-arena with-escape with-scratch in-arena try unsafe quote quasiquote unquote ann init cast type defstruct defenum defmacro defdispatch import export extern module comptime include-str include-bin test cfg spmd-reduce spmd-scan spmd-broadcast spmd-shuffle program-index program-count else"
+    name))
+
+(define (lsp-semantic-token-operator? [name : String]) : bool
+  (lsp-rename-space-list-contains?
+    "+ - * / % = != < <= > >= neg bit-and bit-or bit-xor bit-not shl shr"
+    name))
+
+(define (lsp-semantic-token-add-lexical!
+  [tokens : (&mut tokens LspSemanticTokenCandidates)]
+  [text : String]) : unit
+  (let
+    [stream : format_tokens.FormatTokenStream
+      (format_tokens.format-lex-recover
+        (owned_view.compiler-owned-shared-view text))]
+    [index : i64 0]
+    ;; 0 is an ordinary datum, 1 is a parenthesized form head, and 2 is the
+    ;; first datum in a bracket arm. Brackets also introduce parameters and let
+    ;; bindings, so only `else` is a keyword in their head position.
+    [head-position : i64 0]
+    (begin
+      (while (<
+        index
+        (format_tokens.format-token-count
+          (owned_view.compiler-owned-shared-view stream)))
+        (let
+          [start : i64
+            (format_tokens.format-token-start
+              (owned_view.compiler-owned-shared-view stream)
+              index)]
+          [tok : format_tokens.FormatToken
+            (format_tokens.format-token-at
+              (owned_view.compiler-owned-shared-view stream)
+              index)]
+          (begin
+            (match tok
+              [(format_tokens.FormatToken.LParen) (set! head-position 1)]
+              [(format_tokens.FormatToken.LBracket) (set! head-position 2)]
+              [(format_tokens.FormatToken.Comment spelling)
+                (lsp-semantic-token-add-split-span!
+                  tokens
+                  (owned_view.compiler-owned-shared-view text)
+                  start
+                  (+ start (string.string-length spelling))
+                  lsp-semantic-token-type-comment
+                  0
+                  1)]
+              [(format_tokens.FormatToken.String spelling)
+                (begin
+                  (lsp-semantic-token-add-split-span!
+                    tokens
+                    (owned_view.compiler-owned-shared-view text)
+                    start
+                    (+ start (string.string-length spelling))
+                    lsp-semantic-token-type-string
+                    0
+                    1)
+                  (set! head-position 0))]
+              [(format_tokens.FormatToken.Char spelling)
+                (begin
+                  (lsp-semantic-token-add-split-span!
+                    tokens
+                    (owned_view.compiler-owned-shared-view text)
+                    start
+                    (+ start (string.string-length spelling))
+                    lsp-semantic-token-type-string
+                    0
+                    1)
+                  (set! head-position 0))]
+              [(format_tokens.FormatToken.Int spelling)
+                (begin
+                  (lsp-semantic-token-add-split-span!
+                    tokens
+                    (owned_view.compiler-owned-shared-view text)
+                    start
+                    (+ start (string.string-length spelling))
+                    lsp-semantic-token-type-number
+                    0
+                    1)
+                  (set! head-position 0))]
+              [(format_tokens.FormatToken.Symbol spelling)
+                (begin
+                  (if (= head-position 1)
+                    (cond
+                      [(lsp-semantic-token-keyword?
+                          (owned_view.compiler-owned-shared-view spelling))
+                        (lsp-semantic-token-add-split-span!
+                          tokens
+                          (owned_view.compiler-owned-shared-view text)
+                          start
+                          (+
+                            start
+                            (string.string-length
+                              (owned_view.compiler-owned-shared-view spelling)))
+                          lsp-semantic-token-type-keyword
+                          0
+                          0)]
+                      [(lsp-semantic-token-operator?
+                          (owned_view.compiler-owned-shared-view spelling))
+                        (lsp-semantic-token-add-split-span!
+                          tokens
+                          (owned_view.compiler-owned-shared-view text)
+                          start
+                          (+
+                            start
+                            (string.string-length
+                              (owned_view.compiler-owned-shared-view spelling)))
+                          lsp-semantic-token-type-operator
+                          0
+                          0)]
+                      [else unit])
+                    (if (and
+                      (= head-position 2)
+                      (string.eq
+                        (owned_view.compiler-owned-shared-view spelling)
+                        "else"))
+                      (lsp-semantic-token-add-split-span!
+                        tokens
+                        (owned_view.compiler-owned-shared-view text)
+                        start
+                        (+
+                          start
+                          (string.string-length
+                            (owned_view.compiler-owned-shared-view spelling)))
+                        lsp-semantic-token-type-keyword
+                        0
+                        0)
+                      unit))
+                  (set! head-position 0))]
+              [(format_tokens.FormatToken.End) unit]
+              [_ (set! head-position 0)])
+            (set! index (+ index 1)))))
+      unit)))
+
+(define (lsp-semantic-token-type-for-kind
+  [kind : compiler_semantic_index.CompilerSemanticSymbolKind]) : i64
+  (match kind
+    [(compiler_semantic_index.CompilerSemanticSymbolKind.Module)
+      lsp-semantic-token-type-namespace]
+    [(compiler_semantic_index.CompilerSemanticSymbolKind.Struct)
+      lsp-semantic-token-type-type]
+    [(compiler_semantic_index.CompilerSemanticSymbolKind.Enum)
+      lsp-semantic-token-type-type]
+    [(compiler_semantic_index.CompilerSemanticSymbolKind.EnumMember)
+      lsp-semantic-token-type-enum-member]
+    [(compiler_semantic_index.CompilerSemanticSymbolKind.Function)
+      lsp-semantic-token-type-function]
+    [(compiler_semantic_index.CompilerSemanticSymbolKind.ExternFunction)
+      lsp-semantic-token-type-function]
+    [(compiler_semantic_index.CompilerSemanticSymbolKind.Macro)
+      lsp-semantic-token-type-macro]
+    [(compiler_semantic_index.CompilerSemanticSymbolKind.Parameter)
+      lsp-semantic-token-type-parameter]
+    [(compiler_semantic_index.CompilerSemanticSymbolKind.Field)
+      lsp-semantic-token-type-property]
+    [_ lsp-semantic-token-type-variable]))
+
+(define (lsp-semantic-token-modifiers-for-record
+  [record : compiler_semantic_index.CompilerSemanticRecord]) : i64
+  (match record.role
+    [(compiler_semantic_index.CompilerSemanticRecordRole.Use) 0]
+    [(compiler_semantic_index.CompilerSemanticRecordRole.Definition)
+      (match record.kind
+        [(compiler_semantic_index.CompilerSemanticSymbolKind.ExternValue)
+          lsp-semantic-token-modifier-declaration]
+        [(compiler_semantic_index.CompilerSemanticSymbolKind.ExternFunction)
+          lsp-semantic-token-modifier-declaration]
+        [_ lsp-semantic-token-modifier-definition])]))
+
+(define (lsp-semantic-token-add-records!
+  [tokens : (&mut tokens LspSemanticTokenCandidates)]
+  [doc : (& doc lsp_vector_families.LspDocument)]) : unit
+  (match (lsp-document-semantic-snapshot-status doc)
+    [(LspSemanticSnapshotStatus.Current _ _)
+      (let
+        [index : compiler_semantic_index.CompilerSemanticSourceIndex
+          doc.semantic.index]
+        [source-text : String (string.copy (& doc.text))]
+        [record-index : i64 0]
+        (while (<
+          record-index
+          (compiler_semantic_index.compiler-semantic-source-index-len (& index)))
+          (let
+            [record : compiler_semantic_index.CompilerSemanticRecord
+              (compiler_semantic_index.compiler-semantic-source-index-get
+                (& index)
+                record-index)]
+            [span : compiler_semantic_index.CompilerSemanticSpan
+              (lsp-rename-effective-span
+                (owned_view.compiler-owned-shared-view record.span)
+                (owned_view.compiler-owned-shared-view record.display-name)
+                (owned_view.compiler-owned-shared-view source-text))]
+            [source : ast.AstSourceSpan span.source]
+            [exact-editable? : bool
+              (lsp-semantic-record-exact-editable? (& record))]
+            [path-match? : bool
+              (string.eq
+                (owned_view.compiler-owned-shared-view span.path)
+                doc.path)]
+            [single-line? : bool
+              (=
+                (ast.ast-source-span-start-line
+                  (owned_view.compiler-owned-shared-view source))
+                (ast.ast-source-span-end-line
+                  (owned_view.compiler-owned-shared-view source)))]
+            (begin
+              (if (and
+                exact-editable?
+                path-match?
+                (>= span.start-byte 0)
+                (> span.end-byte span.start-byte)
+                (<= span.end-byte (string.string-length source-text))
+                single-line?)
+                (lsp-semantic-token-candidates-push!
+                  tokens
+                  (LspSemanticTokenCandidate
+                    span.start-byte
+                    span.end-byte
+                    (lsp-semantic-token-type-for-kind record.kind)
+                    (lsp-semantic-token-modifiers-for-record
+                      (owned_view.compiler-owned-shared-view record))
+                    3))
+                unit)
+              (set! record-index (+ record-index 1))))))]
+    [_ unit]))
+
+(define (lsp-semantic-token-radix-copy-back!
+  [tokens : (&mut tokens LspSemanticTokenCandidates)]
+  [scratch : (& scratch (__tl_dyn-array LspSemanticTokenCandidate))]) : unit
+  (lsp-semantic-token-candidate-copy-range!
+    (&mut tokens.slots)
+    scratch
+    0
+    tokens.len))
+
+(define (lsp-semantic-token-sort!
+  [tokens : (&mut tokens LspSemanticTokenCandidates)]) : unit
+  (let
+    [scratch : (__tl_dyn-array LspSemanticTokenCandidate)
+      (__tl_make-array LspSemanticTokenCandidate tokens.len)]
+    [counts : (__tl_dyn-array i64) (__tl_make-array i64 256)]
+    [index : i64 0]
+    [sum : i64 0]
+    [pass : i64 0]
+    (begin
+      ;; Stable secondary key: larger priority comes first at an equal start.
+      (while (< index tokens.len)
+        (let
+          [key : i64 (- 3 (array-ref tokens.slots index).priority)]
+          (begin
+            (set! (array-ref counts key) (+ (array-ref counts key) 1))
+            (set! index (+ index 1)))))
+      (set! index 0)
+      (set! sum 0)
+      (while (< index 4)
+        (let
+          [count : i64 (array-ref counts index)]
+          (begin
+            (set! (array-ref counts index) sum)
+            (set! sum (+ sum count))
+            (set! index (+ index 1)))))
+      (set! index 0)
+      (while (< index tokens.len)
+        (let
+          [candidate : LspSemanticTokenCandidate (array-ref tokens.slots index)]
+          [key : i64 (- 3 candidate.priority)]
+          [out : i64 (array-ref counts key)]
+          (begin
+            (lsp-semantic-token-candidate-copy-one!
+              (&mut scratch)
+              out
+              (& tokens.slots)
+              index)
+            (set! (array-ref counts key) (+ out 1))
+            (set! index (+ index 1)))))
+      (lsp-semantic-token-radix-copy-back! tokens (& scratch))
+      ;; Stable primary key: non-negative byte start, least-significant byte
+      ;; first. Eight fixed passes preserve linear complexity on i64 targets.
+      (while (< pass 8)
+        (begin
+          (set! index 0)
+          (while (< index 256)
+            (begin
+              (set! (array-ref counts index) 0)
+              (set! index (+ index 1))))
+          (set! index 0)
+          (while (< index tokens.len)
+            (let
+              [candidate : LspSemanticTokenCandidate
+                (array-ref tokens.slots index)]
+              [key : i64 (bit-and (shr candidate.start-byte (* pass 8)) 255)]
+              (begin
+                (set! (array-ref counts key) (+ (array-ref counts key) 1))
+                (set! index (+ index 1)))))
+          (set! index 0)
+          (set! sum 0)
+          (while (< index 256)
+            (let
+              [count : i64 (array-ref counts index)]
+              (begin
+                (set! (array-ref counts index) sum)
+                (set! sum (+ sum count))
+                (set! index (+ index 1)))))
+          (set! index 0)
+          (while (< index tokens.len)
+            (let
+              [candidate : LspSemanticTokenCandidate
+                (array-ref tokens.slots index)]
+              [key : i64 (bit-and (shr candidate.start-byte (* pass 8)) 255)]
+              [out : i64 (array-ref counts key)]
+              (begin
+                (lsp-semantic-token-candidate-copy-one!
+                  (&mut scratch)
+                  out
+                  (& tokens.slots)
+                  index)
+                (set! (array-ref counts key) (+ out 1))
+                (set! index (+ index 1)))))
+          (lsp-semantic-token-radix-copy-back! tokens (& scratch))
+          (set! pass (+ pass 1)))))))
+
+(define (lsp-semantic-tokens-for-document
+  [doc : (& doc lsp_vector_families.LspDocument)]) : json.Json
+  (let
+    [source-text : String (string.copy (& doc.text))]
+    [tokens : LspSemanticTokenCandidates (lsp-semantic-token-candidates-new)]
+    [_lexical : unit
+      (lsp-semantic-token-add-lexical!
+        (&mut tokens)
+        (owned_view.compiler-owned-shared-view source-text))]
+    [_semantic : unit (lsp-semantic-token-add-records! (&mut tokens) doc)]
+    [_sort : unit (lsp-semantic-token-sort! (&mut tokens))]
+    [encoded : (__tl_dyn-array json.Json)
+      (__tl_make-array json.Json (* tokens.len 5))]
+    [cache : LspLineColCache (LspLineColCache -1 1 1)]
+    [candidate-index : i64 0]
+    [encoded-len : i64 0]
+    [last-end : i64 -1]
+    [previous-line : i64 0]
+    [previous-start : i64 0]
+    (begin
+      (while (< candidate-index tokens.len)
+        (let
+          [candidate : LspSemanticTokenCandidate
+            (array-ref tokens.slots candidate-index)]
+          (begin
+            (if (>= candidate.start-byte last-end)
+              (let
+                [start : LspLineCol
+                  (lsp-line-col-cache-at-offset!
+                    (&mut cache)
+                    (owned_view.compiler-owned-shared-view source-text)
+                    candidate.start-byte)]
+                [end : LspLineCol
+                  (lsp-line-col-cache-at-offset!
+                    (&mut cache)
+                    (owned_view.compiler-owned-shared-view source-text)
+                    candidate.end-byte)]
+                [line : i64 (- start.line 1)]
+                [start-character : i64 (- start.col 1)]
+                [length : i64 (- end.col start.col)]
+                [delta-line : i64 (- line previous-line)]
+                [delta-start : i64
+                  (if (= delta-line 0)
+                    (- start-character previous-start)
+                    start-character)]
+                (if (and (= start.line end.line) (> length 0))
+                  (begin
+                    (set!
+                      (array-ref encoded encoded-len)
+                      (lsp-json-number delta-line))
+                    (set!
+                      (array-ref encoded (+ encoded-len 1))
+                      (lsp-json-number delta-start))
+                    (set!
+                      (array-ref encoded (+ encoded-len 2))
+                      (lsp-json-number length))
+                    (set!
+                      (array-ref encoded (+ encoded-len 3))
+                      (lsp-json-number candidate.token-type))
+                    (set!
+                      (array-ref encoded (+ encoded-len 4))
+                      (lsp-json-number candidate.modifiers))
+                    (set! encoded-len (+ encoded-len 5))
+                    (set! previous-line line)
+                    (set! previous-start start-character)
+                    (set! last-end candidate.end-byte))
+                  unit))
+              unit)
+            (set! candidate-index (+ candidate-index 1)))))
+      (lsp-json-object1
+        "data"
+        (lsp-json-array (json.JsonSeq encoded encoded-len))))))
+
+(define (lsp-handle-semantic-tokens-with-params!
+  [id : json.Json]
+  [params : json.Json]
+  [docs : lsp_document_vec.Vec]) : unit
+  (match (lsp-get-semantic-document params docs)
+    [(LspSemanticDocumentLookup.Found doc)
+      (lsp-write-response id (lsp-semantic-tokens-for-document (& doc)))]
+    [(LspSemanticDocumentLookup.Missing) (lsp-write-response id json.JsonNull)]))
+
 (define (lsp-get-document-decls
   [params : json.Json]
   [docs : lsp_document_vec.Vec]) : LspDocumentDeclsLookup
@@ -16507,6 +17126,41 @@
                 (arena.tl_arena_destroy scratch)))
             (LspHandleResult.Continue state)))])))
 
+;; Semantic-token arrays and their lexical stream are request-local. The open
+;; document and its immutable semantic owner remain in the server-state arena.
+(define (lsp-handle-semantic-tokens-message
+  [message : json.Json]
+  [state : lsp_vector_families.LspServerState]) : LspHandleResult
+  (let
+    [id-key : String "id"]
+    (match (json.object-get
+      (owned_view.compiler-owned-shared-view message)
+      (& id-key))
+      [(json.JsonMissing) (LspHandleResult.Continue state)]
+      [(json.JsonFound id)
+        (let
+          [previous : i64 (arena.tl_arena_current)]
+          [scratch : i64 (arena.tl_arena_make)]
+          [_install : unit
+            (unsafe
+              (arena.tl_arena_set scratch))]
+          [params-key : String "params"]
+          (begin
+            (match (json.object-get
+              (owned_view.compiler-owned-shared-view message)
+              (& params-key))
+              [(json.JsonMissing) (lsp-write-response id json.JsonNull)]
+              [(json.JsonFound params)
+                (lsp-handle-semantic-tokens-with-params!
+                  id
+                  params
+                  (owned_view.compiler-owned-shared-view state.documents))])
+            (unsafe
+              (begin
+                (arena.tl_arena_set previous)
+                (arena.tl_arena_destroy scratch)))
+            (LspHandleResult.Continue state)))])))
+
 ;; Production state dispatch. All long-lived data crosses the loop through the
 ;; explicit aggregate; document providers never receive mutable workspace
 ;; vectors.
@@ -16539,6 +17193,8 @@
           (lsp-handle-references-message message state stdlib-roots)]
         [(string.eq method "textDocument/completion")
           (lsp-handle-completion-message message state)]
+        [(string.eq method "textDocument/semanticTokens/full")
+          (lsp-handle-semantic-tokens-message message state)]
         [(or
             (string.eq method "workspace/symbol")
             (string.eq method "tl/projectSearch"))

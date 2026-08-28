@@ -65,6 +65,40 @@
 (defmacro (reset! [buf : comptime.Expr]) : unit
   `(clear-ref! (&mut ,buf)))
 
+;: Raw Formatter destination adapter for a caller-owned TextBuf cell.
+;:
+;: TextBuf retains chunks, so this adapter copies each callback range into the
+;: active arena. It never constructs the final combined text; `render` remains
+;: the explicit materialization boundary.
+(define (format-writer-cell [buf : TextBuf]) : (Array TextBuf 1)
+  (array buf))
+
+;: Append one raw callback range to the TextBuf stored at `context`.
+;:
+;: Returns zero on success and a stable nonzero status for an invalid byte
+;: count. The callback copies retained data and updates the caller-owned cell.
+(define (format-write-raw [context : i64] [data : (Ptr u8)] [count : i64]) : i64
+  (if (< count 0)
+    22
+    (let
+      [slot : (MutPtr TextBuf)
+        (unsafe
+          (int->ptr (cast context : u64) : (MutPtr TextBuf)))]
+      [buf : TextBuf
+        (unsafe
+          (ptr-read (ptr-cast slot : (Ptr TextBuf))))]
+      [storage : (MutPtr u8) (string.string-runtime-alloc count)]
+      [chunk : String
+        (begin
+          (string.str-copy-bytes-into data storage 0 count)
+          (unsafe
+            (string-from-bytes (ptr-cast storage : (Ptr u8)) count)))]
+      [next : TextBuf (append buf chunk)]
+      (begin
+        (unsafe
+          (ptr-write! slot next))
+        0))))
+
 (test
   text-buf-scoped-arena-render-policy
   (let

@@ -30,8 +30,10 @@
 # format-with transformer after moving the canonical implementation to
 # stdlib.format, shrinking the catalog to 107 without reintroducing any
 # fallback route. The fixed-array core migration then removes the four
-# compatibility-module macros, leaving 103 fully native entries.
-native-entries-min 103
+# compatibility-module macros, leaving 103 fully native entries. Issue #6650
+# adds the direct format sink macro family and its streaming plan helpers,
+# growing the fully native catalog to 116 entries.
+native-entries-min 116
 shell-entries-max 0
 partial-entries-max 0
 interpreted-arms-max 0

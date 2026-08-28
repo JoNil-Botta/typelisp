@@ -3,14 +3,16 @@
 ;# Provides file, argv, panic, and stdio helpers through direct extern bindings
 ;# to platform FFI symbols plus low-level language forms for argv and raw bytes.
 ;#
-;# Public platform-facing functions such as the `print-format` / `println`
+;# Public platform-facing functions such as the `print` / `println` and
+;# `eprint` / `eprintln`
 ;# format macros, `panic`, `arg`,
 ;# `read-file`, `write-file`, file-handle status helpers, and stdin/stdout
 ;# helpers are stdlib definitions in this module. Programs must import this module
 ;# to use them.
 ;#
-;# Use `print-format` to write formatted values without a newline and `println`
-;# to append exactly one newline. Use `stdout-write` for borrowed raw bytes.
+;# Use `print` / `eprint` to write formatted values without a newline and their
+;# `*ln` siblings to append exactly one newline. `print-format` is a migration
+;# alias for `print`. Use `stdout-write` for borrowed raw bytes.
 ;#
 ;# The `try-*` helpers return explicit monomorphic result enums. Host errors
 ;# are reported through status-code primitives and mapped into `IoError`.
@@ -515,24 +517,67 @@
       (byte_buf.bytes-data contents))
     (byte_buf.bytes-length contents)))
 
-;: Format a literal template and write it to stdout without a newline.
-;:
-;: The template and arguments follow `stdlib.format.format`: `{}` consumes one
-;: value and `{{` / `}}` produce literal braces. Formatting creates one final
-;: String and writes that body once.
-(defmacro (print-format [template : comptime.Expr] [args : comptime.Expr ...]) : unit
-  `(let
-    [formatted : String (stdlib.format.format ,template ,@args)]
-    (stdlib.io.stdout-write (stdlib.byte_buf.str-as-bytes (& formatted)))))
+;: Raw Formatter adapter for stdout; the context is intentionally unused.
+(define (format-stdout-write-raw
+  [_context : i64]
+  [data : (Ptr u8)]
+  [count : i64]) : i64
+  (write-all-fd-status 1 data count))
 
-;: Format a literal template, write it to stdout, then write one newline.
-;:
-;: The formatted body is built once and written once; the newline is a second,
-;: explicit stream write.
+;: Raw Formatter adapter for stderr; the context is intentionally unused.
+(define (format-stderr-write-raw
+  [_context : i64]
+  [data : (Ptr u8)]
+  [count : i64]) : i64
+  (write-all-fd-status 2 data count))
+
+;: Format a literal template directly to stdout without a combined String.
+(defmacro (print [template : comptime.Expr] [args : comptime.Expr ...]) : unit
+  `(match (stdlib.format.format-write-literal-callback
+    ,template
+    (__tl_format_arguments ,@args)
+    0
+    stdlib.io.format-stdout-write-raw
+    0)
+    [(stdlib.format.FormatOk) unit]
+    [(stdlib.format.FormatErr _) (stdlib.io.platform-exit 134)]))
+
+;: Format a literal template directly to stdout and append exactly one newline.
 (defmacro (println [template : comptime.Expr] [args : comptime.Expr ...]) : unit
-  `(let
-    [formatted : String (stdlib.format.format ,template ,@args)]
-    (stdlib.io.stdout-write-line (stdlib.byte_buf.str-as-bytes (& formatted)))))
+  `(match (stdlib.format.format-write-literal-callback
+    ,template
+    (__tl_format_arguments ,@args)
+    0
+    stdlib.io.format-stdout-write-raw
+    1)
+    [(stdlib.format.FormatOk) unit]
+    [(stdlib.format.FormatErr _) (stdlib.io.platform-exit 134)]))
+
+;: Format a literal template directly to stderr without a combined String.
+(defmacro (eprint [template : comptime.Expr] [args : comptime.Expr ...]) : unit
+  `(match (stdlib.format.format-write-literal-callback
+    ,template
+    (__tl_format_arguments ,@args)
+    0
+    stdlib.io.format-stderr-write-raw
+    0)
+    [(stdlib.format.FormatOk) unit]
+    [(stdlib.format.FormatErr _) (stdlib.io.platform-exit 134)]))
+
+;: Format a literal template directly to stderr and append exactly one newline.
+(defmacro (eprintln [template : comptime.Expr] [args : comptime.Expr ...]) : unit
+  `(match (stdlib.format.format-write-literal-callback
+    ,template
+    (__tl_format_arguments ,@args)
+    0
+    stdlib.io.format-stderr-write-raw
+    1)
+    [(stdlib.format.FormatOk) unit]
+    [(stdlib.format.FormatErr _) (stdlib.io.platform-exit 134)]))
+
+;: Migration alias for `print`; it does not materialize a combined String.
+(defmacro (print-format [template : comptime.Expr] [args : comptime.Expr ...]) : unit
+  `(stdlib.io.print ,template ,@args))
 
 ;: Fixed-capacity base-2^32 bignum backing the pure-TL f64 formatter.
 (defstruct BigNum
@@ -1524,6 +1569,37 @@
 ;: drop until move-only/drop semantics land.
 (defstruct FileHandle
   (id i64))
+
+;: Place one FileHandle in fixed caller-owned storage for Formatter callbacks.
+;; lint-allow: function-name-case -- exact nominal suffix is the writer key.
+(define (format-writer-cell-FileHandle [handle : FileHandle]) : (Array
+    FileHandle
+    1)
+  (array handle))
+
+;: Raw Formatter destination adapter for a caller-owned FileHandle cell.
+;; lint-allow: function-name-case -- exact nominal suffix is the writer key.
+(define (format-write-raw-FileHandle
+  [context : i64]
+  [data : (Ptr u8)]
+  [count : i64]) : i64
+  (let
+    [slot : (Ptr FileHandle)
+      (unsafe
+        (int->ptr (cast context : u64) : (Ptr FileHandle)))]
+    [handle : FileHandle
+      (unsafe
+        (ptr-read slot))]
+    (cond
+      [(< count 0) 22]
+      [(not (valid-handle? handle.id)) io-status-unsupported]
+      [(= (io_core.io-file-i64-ref (io_core.io-file-modes-ptr) handle.id) 0)
+        io-status-unsupported]
+      [else
+        (write-all-fd-status
+          (io_core.io-file-i64-ref (io_core.io-file-fds-ptr) handle.id)
+          data
+          count)])))
 
 ;: File open mode for v1 streaming handles.
 (defenum OpenMode

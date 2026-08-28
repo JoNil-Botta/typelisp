@@ -141,7 +141,7 @@ vector_invalid_capability_reject|check-fail|tests/safety/vector_invalid_capabili
 unbound_variable_reject|check-fail|tests/safety/unbound_variable_reject.tl|-|unbound name missing
 unbound_near_miss_reject|check-fail|tests/safety/unbound_near_miss_reject.tl|-|help: did you mean render-value?
 unbound_qualified_near_miss_reject|check-fail|tests/safety/unbound_qualified_near_miss_reject.tl|-|help: did you mean string.eq?
-removed_io_print_reject|check-fail|tests/safety/removed_io_print_reject.tl|-|typecheck: unbound name io.print
+io_print_template_literal_reject|check-fail|tests/safety/io_print_template_literal_reject.tl|-|format: template must be a string literal
 removed_io_print_string_reject|check-fail|tests/safety/removed_io_print_string_reject.tl|-|typecheck: unbound name io.print-string
 removed_io_print_str_reject|check-fail|tests/safety/removed_io_print_str_reject.tl|-|typecheck: unbound name io.print-str
 removed_io_print_newline_reject|check-fail|tests/safety/removed_io_print_newline_reject.tl|-|typecheck: unbound name io.print-newline

@@ -102211,7 +102211,72 @@
 
 (defenum OptBgPlanList
   (Nil)
-  (Cons OptBgPlan (Box OptBgPlanList)))
+  ;; Planning prepends while scanning loops and blocks. Physical append keeps
+  ;; that build amortized O(1); logical readers index from the live end toward
+  ;; zero so lookup, relabeling, hoists, and slow blocks retain the former
+  ;; newest-first Cons order. `extent[0]` is the shared high-water length: an
+  ;; append to an older retained prefix copies first instead of overwriting a
+  ;; sibling view.
+  (Dense (__tl_dyn-array OptBgPlan) (__tl_dyn-array i64) i64))
+
+(define (opt-bg-plan-list-count [plans : OptBgPlanList]) : i64
+  (match (compiler-opt-global-shared-view plans)
+    [(OptBgPlanList.Nil) 0]
+    [(OptBgPlanList.Dense _ _ len) len]))
+
+(define (opt-bg-plan-list-ref [plans : OptBgPlanList] [index : i64]) : OptBgPlan
+  (match (compiler-opt-global-shared-view plans)
+    [(OptBgPlanList.Nil)
+      (OptBgPlan
+        (- 0 1)
+        (- 0 1)
+        (- 0 1)
+        (- 0 1)
+        0
+        (- 0 1)
+        (- 0 1)
+        (ir.CompilerIrValue.I64 0)
+        (__tl_make-array bool 0)
+        (ir.compiler-ir-instr-seq-empty)
+        (ir.compiler-ir-instr-seq-empty))]
+    [(OptBgPlanList.Dense items _ len)
+      (compiler-opt-global-array-element-shared-view items (- (- len 1) index))]))
+
+(define (opt-bg-plan-list-prepend [plan : OptBgPlan] [plans : OptBgPlanList]) : OptBgPlanList
+  (match plans
+    [(OptBgPlanList.Nil)
+      (let
+        [items : (__tl_dyn-array OptBgPlan) (__tl_make-array OptBgPlan 4)]
+        [extent : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+        (begin
+          (set! (array-ref items 0) plan)
+          (set! (array-ref extent 0) 1)
+          (OptBgPlanList.Dense items extent 1)))]
+    [(OptBgPlanList.Dense items extent len)
+      (if (and (= len (array-ref extent 0)) (< len (array-length items)))
+        (begin
+          (set! (array-ref items len) plan)
+          (set! (array-ref extent 0) (+ len 1))
+          (OptBgPlanList.Dense items extent (+ len 1)))
+        (let
+          [capacity : i64
+            (if (< len (array-length items))
+              (array-length items)
+              (opt-dense-next-capacity len))]
+          [bigger : (__tl_dyn-array OptBgPlan)
+            (__tl_make-array OptBgPlan capacity)]
+          [next-extent : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+          [cursor : i64 0]
+          (begin
+            (while (< cursor len)
+              (begin
+                (set!
+                  (array-ref bigger cursor)
+                  (compiler-opt-global-array-element-shared-view items cursor))
+                (set! cursor (+ cursor 1))))
+            (set! (array-ref bigger len) plan)
+            (set! (array-ref next-extent 0) (+ len 1))
+            (OptBgPlanList.Dense bigger next-extent (+ len 1)))))]))
 
 ;; Plans so far, the blocks already split, the blocks already carrying a bound
 ;; build, and the next free var.
@@ -103216,7 +103281,7 @@
               [(OptBgPlanResult.No) state]
               [(OptBgPlanResult.Some plan plan-var)
                 (OptBgPlanState.State
-                  (OptBgPlanList.Cons plan (box plans))
+                  (opt-bg-plan-list-prepend plan plans)
                   (opt-label-add taken label)
                   (opt-label-add pre-used pre)
                   plan-var)]))])]))
@@ -103304,20 +103369,44 @@
 
 ;; --- rewrite -----------------------------------------------------------------
 (define (opt-bg-plan-ok-of [plans : OptBgPlanList] [label : i64]) : i64
-  (match plans
-    [(OptBgPlanList.Nil) label]
-    [(OptBgPlanList.Cons plan rest)
-      (if (= plan.block label)
-        plan.ok
-        (opt-bg-plan-ok-of (compiler-opt-box-shared-view rest) label))]))
+  (let
+    [count : i64
+      (opt-bg-plan-list-count (compiler-opt-global-shared-view plans))]
+    [cursor : i64 0]
+    [ok : i64 label]
+    (begin
+      (while (< cursor count)
+        (let
+          [plan : OptBgPlan
+            (opt-bg-plan-list-ref
+              (compiler-opt-global-shared-view plans)
+              cursor)]
+          (if (= plan.block label)
+            (begin
+              (set! ok plan.ok)
+              (set! cursor count))
+            (set! cursor (+ cursor 1)))))
+      ok)))
 
 (define (opt-bg-plan-for [plans : OptBgPlanList] [label : i64]) : OptBgMaybePlan
-  (match plans
-    [(OptBgPlanList.Nil) (OptBgMaybePlan.No)]
-    [(OptBgPlanList.Cons plan rest)
-      (if (= plan.block label)
-        (OptBgMaybePlan.Some plan)
-        (opt-bg-plan-for (compiler-opt-box-shared-view rest) label))]))
+  (let
+    [count : i64
+      (opt-bg-plan-list-count (compiler-opt-global-shared-view plans))]
+    [cursor : i64 0]
+    [found : OptBgMaybePlan (OptBgMaybePlan.No)]
+    (begin
+      (while (< cursor count)
+        (let
+          [plan : OptBgPlan
+            (opt-bg-plan-list-ref
+              (compiler-opt-global-shared-view plans)
+              cursor)]
+          (if (= plan.block label)
+            (begin
+              (set! found (OptBgMaybePlan.Some plan))
+              (set! cursor count))
+            (set! cursor (+ cursor 1)))))
+      found)))
 
 (define (opt-bg-inputs-need-relabel?
   [inputs : ir.CompilerIrPhiInputList]
@@ -103460,21 +103549,24 @@
   [plans : OptBgPlanList]
   [label : i64]
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : unit
-  (match (compiler-opt-global-shared-view plans)
-    [(OptBgPlanList.Nil) unit]
-    [(OptBgPlanList.Cons plan rest)
-      (begin
-        (if (= plan.pre label)
-          (ir.compiler-ir-instr-builder-append-seq-range!
-            (&mut builder)
-            (compiler-opt-global-shared-view plan.pre-instrs)
-            0
-            (ir.compiler-ir-instr-seq-count plan.pre-instrs))
-          unit)
-        (opt-bg-hoisted-into!
-          (compiler-opt-box-shared-view rest)
-          label
-          (&mut builder)))]))
+  (let
+    [count : i64
+      (opt-bg-plan-list-count (compiler-opt-global-shared-view plans))]
+    [cursor : i64 0]
+    (while (< cursor count)
+      (let
+        [plan : OptBgPlan
+          (opt-bg-plan-list-ref (compiler-opt-global-shared-view plans) cursor)]
+        (begin
+          (if (= plan.pre label)
+            (ir.compiler-ir-instr-builder-append-seq-range!
+              (&mut builder)
+              (compiler-opt-global-shared-view plan.pre-instrs)
+              0
+              (ir.compiler-ir-instr-seq-count
+                (compiler-opt-global-shared-view plan.pre-instrs)))
+            unit)
+          (set! cursor (+ cursor 1)))))))
 
 (define (opt-bg-hoisted-for-label [plans : OptBgPlanList] [label : i64]) : ir.CompilerIrInstrSeq
   (let
@@ -103488,12 +103580,249 @@
 (define (opt-bg-slow-blocks
   [plans : OptBgPlanList]
   [tail : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
-  (match (compiler-opt-global-shared-view plans)
-    [(OptBgPlanList.Nil) tail]
-    [(OptBgPlanList.Cons plan rest)
-      (ir.compiler-ir-block-cons
-        (ir.CompilerIrBlock.Block plan.slow plan.slow-instrs)
-        (opt-bg-slow-blocks (compiler-opt-box-shared-view rest) tail))]))
+  (let
+    [cursor : i64
+      (- (opt-bg-plan-list-count (compiler-opt-global-shared-view plans)) 1)]
+    [blocks : ir.CompilerIrBlockList tail]
+    (begin
+      ;; Prepend from the oldest logical plan back toward the newest so the
+      ;; resulting block list traverses in the old newest-first order.
+      (while (>= cursor 0)
+        (let
+          [plan : OptBgPlan
+            (opt-bg-plan-list-ref
+              (compiler-opt-global-shared-view plans)
+              cursor)]
+          (begin
+            (set!
+              blocks
+              (ir.compiler-ir-block-cons
+                (ir.CompilerIrBlock.Block plan.slow plan.slow-instrs)
+                blocks))
+            (set! cursor (- cursor 1)))))
+      blocks)))
+
+(cfg
+  test
+  (define (opt-bg-test-plan
+    [block : i64]
+    [ok : i64]
+    [slow : i64]
+    [pre : i64]
+    [marker : i64]) : OptBgPlan
+    (let
+      [builder : ir.CompilerIrInstrBuilder
+        (ir.compiler-ir-instr-builder-with-capacity 1)]
+      (begin
+        (ir.compiler-ir-instr-builder-push!
+          (&mut builder)
+          (ir.CompilerIrInstr.Mov
+            marker
+            (ir.CompilerIrValue.I64 marker)
+            (ast.AstType.I64)))
+        (OptBgPlan
+          block
+          ok
+          slow
+          pre
+          0
+          marker
+          marker
+          (ir.CompilerIrValue.I64 marker)
+          (__tl_make-array bool 0)
+          (ir.compiler-ir-instr-builder-to-seq builder)
+          (ir.compiler-ir-instr-seq-empty))))))
+
+(cfg
+  test
+  (define (opt-bg-test-slow-label-order?
+    [blocks : ir.CompilerIrBlockList]
+    [expected : i64]
+    [remaining : i64]) : bool
+    (match (ir.compiler-ir-block-list-force-cons blocks)
+      [(ir.CompilerIrBlockList.Nil) (= remaining 0)]
+      [(ir.CompilerIrBlockList.Array _) false]
+      [(ir.CompilerIrBlockList.Cons block rest)
+        (match block
+          [(ir.CompilerIrBlock.Block label _)
+            (and
+              (> remaining 0)
+              (= label expected)
+              (opt-bg-test-slow-label-order?
+                (ir.compiler-ir-block-list-box-shared-view rest)
+                (- expected 1)
+                (- remaining 1)))])])))
+
+(cfg
+  test
+  (define (opt-bg-test-relabel-order? [inputs : ir.CompilerIrPhiInputList]) : bool
+    (match (ir.compiler-ir-phi-input-list-force-cons inputs)
+      [(ir.CompilerIrPhiInputList.Cons _ first rest)
+        (and
+          (= first 200)
+          (match (ir.compiler-ir-phi-input-list-force-cons
+            (ir.compiler-ir-phi-input-list-box-shared-view rest))
+            [(ir.CompilerIrPhiInputList.Cons _ second tail)
+              (and
+                (= second 208)
+                (match (ir.compiler-ir-phi-input-list-force-cons
+                  (ir.compiler-ir-phi-input-list-box-shared-view tail))
+                  [(ir.CompilerIrPhiInputList.Nil) true]
+                  [_ false]))]
+            [_ false]))]
+      [_ false])))
+
+(cfg
+  test
+  (test
+    optimizer-bounds-group-plan-dense-storage-grows-and-preserves-rewrite-order
+    (let
+      [empty : OptBgPlanList (OptBgPlanList.Nil)]
+      [retained : OptBgPlanList
+        (opt-bg-plan-list-prepend
+          (opt-bg-test-plan 44 144 244 77 44)
+          (compiler-opt-global-shared-view empty))]
+      [two : OptBgPlanList
+        (opt-bg-plan-list-prepend
+          (opt-bg-test-plan 45 145 245 77 45)
+          (compiler-opt-global-shared-view retained))]
+      ;; Branch from the retained prefix after `two` extended its shared
+      ;; backing store. The high-water marker must protect both views.
+      [branched : OptBgPlanList
+        (opt-bg-plan-list-prepend
+          (opt-bg-test-plan 46 146 246 77 46)
+          (compiler-opt-global-shared-view retained))]
+      [duplicate : OptBgPlanList
+        (opt-bg-plan-list-prepend
+          (opt-bg-test-plan 44 145 345 77 145)
+          (compiler-opt-global-shared-view retained))]
+      [plans : OptBgPlanList (OptBgPlanList.Nil)]
+      [cursor : i64 0]
+      (begin
+        (test.assert-i64-eq
+          (opt-bg-plan-list-count (compiler-opt-global-shared-view empty))
+          0
+          "bounds-group empty plan storage")
+        (test.assert-i64-eq
+          (opt-bg-plan-ok-of (compiler-opt-global-shared-view empty) 91)
+          91
+          "bounds-group empty lookup keeps the label")
+        (match (opt-bg-plan-for (compiler-opt-global-shared-view empty) 91)
+          [(OptBgMaybePlan.No) unit]
+          [_ (test.assert-true false "bounds-group empty lookup has no plan")])
+        (test.assert-i64-eq
+          (opt-bg-plan-list-count (compiler-opt-global-shared-view retained))
+          1
+          "bounds-group retained singleton length")
+        (test.assert-i64-eq
+          (opt-bg-plan-ok-of (compiler-opt-global-shared-view retained) 44)
+          144
+          "bounds-group retained singleton value")
+        (test.assert-i64-eq
+          (opt-bg-plan-ok-of (compiler-opt-global-shared-view retained) 45)
+          45
+          "bounds-group retained singleton excludes later extension")
+        (test.assert-i64-eq
+          (opt-bg-plan-ok-of (compiler-opt-global-shared-view two) 45)
+          145
+          "bounds-group first retained branch survives")
+        (test.assert-i64-eq
+          (opt-bg-plan-ok-of (compiler-opt-global-shared-view branched) 46)
+          146
+          "bounds-group second retained branch survives")
+        (test.assert-i64-eq
+          (opt-bg-plan-ok-of (compiler-opt-global-shared-view two) 46)
+          46
+          "bounds-group sibling branches stay independent")
+        (test.assert-i64-eq
+          (opt-bg-plan-ok-of (compiler-opt-global-shared-view duplicate) 44)
+          145
+          "bounds-group newest duplicate plan wins")
+        (while (< cursor 9)
+          (begin
+            (set!
+              plans
+              (opt-bg-plan-list-prepend
+                (opt-bg-test-plan
+                  cursor
+                  (+ cursor 200)
+                  (+ cursor 100)
+                  77
+                  cursor)
+                plans))
+            (set! cursor (+ cursor 1))))
+        (match (compiler-opt-global-shared-view plans)
+          [(OptBgPlanList.Nil)
+            (test.assert-true false "bounds-group plan storage is non-empty")]
+          [(OptBgPlanList.Dense items extent len)
+            (begin
+              (test.assert-i64-eq len 9 "bounds-group plan storage length")
+              (test.assert-i64-eq
+                (array-ref extent 0)
+                9
+                "bounds-group plan high-water length")
+              (test.assert-true
+                (>= (array-length items) 9)
+                "bounds-group plan storage grows past eight"))])
+        (test.assert-i64-eq
+          (opt-bg-plan-list-ref (compiler-opt-global-shared-view plans) 0).block
+          8
+          "bounds-group newest plan stays first")
+        (test.assert-i64-eq
+          (opt-bg-plan-list-ref (compiler-opt-global-shared-view plans) 8).block
+          0
+          "bounds-group oldest plan stays last")
+        (let
+          [hoisted : ir.CompilerIrInstrSeq
+            (opt-bg-hoisted-for-label
+              (compiler-opt-global-shared-view plans)
+              77)]
+          [inputs : ir.CompilerIrPhiInputList
+            (ir.compiler-ir-phi-input-cons
+              (ir.CompilerIrValue.I64 10)
+              0
+              (ir.compiler-ir-phi-input-cons
+                (ir.CompilerIrValue.I64 11)
+                8
+                (ir.CompilerIrPhiInputList.Nil)))]
+          (begin
+            (test.assert-i64-eq
+              (ir.compiler-ir-instr-seq-count
+                (compiler-opt-global-shared-view hoisted))
+              9
+              "bounds-group multiple hoists share one preheader")
+            (match (ir.compiler-ir-instr-seq-ref
+              (compiler-opt-global-shared-view hoisted)
+              0)
+              [(ir.CompilerIrInstr.Mov dst _ _)
+                (test.assert-i64-eq
+                  dst
+                  8
+                  "bounds-group newest hoist stays first")]
+              [_ (test.assert-true false "bounds-group first hoist shape")])
+            (match (ir.compiler-ir-instr-seq-ref
+              (compiler-opt-global-shared-view hoisted)
+              8)
+              [(ir.CompilerIrInstr.Mov dst _ _)
+                (test.assert-i64-eq
+                  dst
+                  0
+                  "bounds-group oldest hoist stays last")]
+              [_ (test.assert-true false "bounds-group last hoist shape")])
+            (test.assert-true
+              (opt-bg-test-relabel-order?
+                (opt-bg-relabel-inputs
+                  inputs
+                  (compiler-opt-global-shared-view plans)))
+              "bounds-group lookup relabels multiple split blocks in phi order")
+            (test.assert-true
+              (opt-bg-test-slow-label-order?
+                (opt-bg-slow-blocks
+                  (compiler-opt-global-shared-view plans)
+                  (ir.CompilerIrBlockList.Nil))
+                108
+                9)
+              "bounds-group slow blocks keep deterministic newest-first order")))))))
 
 (define (opt-bg-rewrite-blocks
   [remaining : ir.CompilerIrBlockList]
@@ -103818,7 +104147,7 @@
             (match (compiler-opt-global-shared-view plans)
               [(OptBgPlanList.Nil)
                 (OptBgBlocksResult.Result blocks frame false)]
-              [(OptBgPlanList.Cons _ _)
+              [(OptBgPlanList.Dense _ _ _)
                 ;; An offset Add whose only reader was a member check is dead
                 ;; in the fast block (the slow arm re-forms its own), and the
                 ;; pipeline DCE has already run by the time this pass fires.

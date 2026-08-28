@@ -1,0 +1,9 @@
+{
+  "exit": 0,
+  "stderr_exact": "",
+  "message_checks": [
+    {"jsonpath_id": 1, "raw_contains": "\"positionEncoding\":\"utf-8\"", "raw_contains": "\"semanticTokensProvider\""},
+    {"jsonpath_id": 2, "json_contains": "\"result\":{\"data\":[0,1,6,8,0,0,16,2,11,0,1,0,6,9,0,1,0,16,10,0]}"},
+    {"jsonpath_id": 3, "json_contains": "\"result\":null", "jsonpath_result": null}
+  ]
+}

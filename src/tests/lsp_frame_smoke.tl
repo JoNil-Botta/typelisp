@@ -1173,6 +1173,260 @@
                 (semantic_index.compiler-semantic-source-index-live-owner-count)
                 baseline))))])))
 
+(defstruct LspSemanticTokenDecode
+  (ok bool)
+  (count i64)
+  (type-mask i64)
+  (modifier-mask i64))
+
+(define (lsp-semantic-token-json-i64
+  [items : json.JsonSeq]
+  [index : i64]) : i64
+  (match (json.list-get-index items index)
+    [(json.JsonMissing) -1]
+    [(json.JsonFound value)
+      (match value
+        [(json.JsonNumber text)
+          (match (json.number->i64 (& text))
+            [(json.OkJsonNumberI64 number) number]
+            [(json.ErrJsonNumberI64 _) -1])]
+        [_ -1])]))
+
+;; Decode the relative stream and validate the protocol invariants against the
+;; negotiated source positions, instead of accepting a substring-shaped array.
+(define (lsp-semantic-token-decode
+  [result : json.Json]
+  [source : String]) : LspSemanticTokenDecode
+  (let
+    [data-key : String "data"]
+    (match (json.object-get result (& data-key))
+      [(json.JsonMissing) (LspSemanticTokenDecode false 0 0 0)]
+      [(json.JsonFound data)
+        (match data
+          [(json.JsonArray boxed-items)
+            (let
+              [items : json.JsonSeq (__tl-box-place boxed-items)]
+              [length : i64 (json.list-count items)]
+              [index : i64 0]
+              [line : i64 0]
+              [start : i64 0]
+              [previous-line : i64 0]
+              [previous-end : i64 0]
+              [count : i64 0]
+              [type-mask : i64 0]
+              [modifier-mask : i64 0]
+              [ok : bool (= (% length 5) 0)]
+              (begin
+                (while (<= (+ index 4) (- length 1))
+                  (let
+                    [delta-line : i64
+                      (lsp-semantic-token-json-i64 items index)]
+                    [delta-start : i64
+                      (lsp-semantic-token-json-i64 items (+ index 1))]
+                    [token-length : i64
+                      (lsp-semantic-token-json-i64 items (+ index 2))]
+                    [token-type : i64
+                      (lsp-semantic-token-json-i64 items (+ index 3))]
+                    [modifiers : i64
+                      (lsp-semantic-token-json-i64 items (+ index 4))]
+                    (begin
+                      (if (or
+                        (< delta-line 0)
+                        (< delta-start 0)
+                        (<= token-length 0)
+                        (< token-type 0)
+                        (> token-type 12)
+                        (< modifiers 0)
+                        (> modifiers 15))
+                        (set! ok false)
+                        unit)
+                      (set! line (+ line delta-line))
+                      (set!
+                        start
+                        (if (= delta-line 0)
+                          (+ start delta-start)
+                          delta-start))
+                      (if (and
+                        (= line previous-line)
+                        (< start previous-end))
+                        (set! ok false)
+                        unit)
+                      (match (lsp_frame_core.lsp-offset-at-position-checked
+                        source
+                        line
+                        start)
+                        [(lsp_frame_core.LspOffsetLookup.Missing)
+                          (set! ok false)]
+                        [(lsp_frame_core.LspOffsetLookup.Found _)
+                          unit])
+                      (match (lsp_frame_core.lsp-offset-at-position-checked
+                        source
+                        line
+                        (+ start token-length))
+                        [(lsp_frame_core.LspOffsetLookup.Missing)
+                          (set! ok false)]
+                        [(lsp_frame_core.LspOffsetLookup.Found _)
+                          unit])
+                      (if (and (>= token-type 0) (<= token-type 12))
+                        (set!
+                          type-mask
+                          (bit-or type-mask (shl 1 token-type)))
+                        unit)
+                      (set! modifier-mask (bit-or modifier-mask modifiers))
+                      (set! previous-line line)
+                      (set! previous-end (+ start token-length))
+                      (set! count (+ count 1))
+                      (set! index (+ index 5)))))
+                (LspSemanticTokenDecode
+                  ok
+                  count
+                  type-mask
+                  modifier-mask)))]
+          [_ (LspSemanticTokenDecode false 0 0 0)])])))
+
+(define (lsp-semantic-token-lexical-smoke-ok?) : bool
+  (let
+    [uri : String "file:///semantic-token-lexical.tl"]
+    [path : String "src/tests/semantic_token_lexical.tl"]
+    [source : String "(define λ : i64 42)\r\n; note\r\n\"unterminated λ"]
+    [docs : lsp_document_vec.Vec
+      (lsp_frame_core.lsp-documents-set-versioned
+        (lsp_document_vec.new)
+        uri
+        path
+        source
+        1
+        (lsp_frame_core.lsp-diagnostic-uris-empty))]
+    [doc : lsp_vector_families.LspDocument
+      (lsp_document_vec.get
+        (& docs)
+        0
+        (lsp_frame_core.lsp-document-fallback))]
+    [_utf16 : unit (lsp_frame_core.lsp-position-encoding-use-utf16!)]
+    [utf16-result : json.Json
+      (lsp_frame_core.lsp-semantic-tokens-for-document (& doc))]
+    [utf16-rendered : String (json.stringify utf16-result)]
+    [utf16-decoded : LspSemanticTokenDecode
+      (lsp-semantic-token-decode utf16-result source)]
+    [_utf8 : unit (lsp_frame_core.lsp-position-encoding-use-utf8!)]
+    [utf8-result : json.Json
+      (lsp_frame_core.lsp-semantic-tokens-for-document (& doc))]
+    [utf8-rendered : String (json.stringify utf8-result)]
+    [utf8-decoded : LspSemanticTokenDecode
+      (lsp-semantic-token-decode utf8-result source)]
+    (begin
+      (lsp_frame_core.lsp-position-encoding-use-utf16!)
+      (and
+        utf16-decoded.ok
+        utf8-decoded.ok
+        (= utf16-decoded.count 4)
+        (= utf8-decoded.count 4)
+        (string.eq
+          utf16-rendered
+          "{\"data\":[0,1,6,8,0,0,15,2,11,0,1,0,6,9,0,1,0,15,10,0]}")
+        (string.eq
+          utf8-rendered
+          "{\"data\":[0,1,6,8,0,0,16,2,11,0,1,0,6,9,0,1,0,16,10,0]}")))))
+
+(define (lsp-semantic-token-semantic-smoke-ok?) : bool
+  (let
+    [baseline : i64
+      (semantic_index.compiler-semantic-source-index-live-owner-count)]
+    [uri : String "file:///semantic-token-semantic.tl"]
+    [path : String "src/tests/semantic_token_semantic.tl"]
+    [source : String
+      "(module semantic.tokens)\n; semantic token comment\n(defstruct Pair (field i64))\n(defenum Choice (Empty) (Some i64))\n(defmacro (identity [value : Expr]) : Expr value)\n(define (consume [parameter : i64]) : i64\n  (let [local : i64 parameter] (+ local 1)))\n(define text : String \"hello\")\n(define top : i64 (identity (consume 2)))\n(extern (foreign [x : i64]) : i64)"]
+    [capabilities : String
+      (json.stringify (lsp_frame_core.lsp-initialize-result))]
+    [legend : String
+      "\"tokenTypes\":[\"namespace\",\"type\",\"enumMember\",\"function\",\"macro\",\"parameter\",\"variable\",\"property\",\"keyword\",\"comment\",\"string\",\"number\",\"operator\"]"]
+    [modifiers : String
+      "\"tokenModifiers\":[\"declaration\",\"definition\",\"readonly\",\"defaultLibrary\"]"]
+    [provider : String "\"semanticTokensProvider\""]
+    (match (semantic_index.compiler-check-source-index-with-roots
+      path
+      source
+      (lsp_svec.new))
+      [(semantic_index.ResultCompilerCheckWithSemanticIndex.Err _) false]
+      [(semantic_index.ResultCompilerCheckWithSemanticIndex.Partial _ partial)
+        (begin
+          (semantic_index.compiler-semantic-source-index-release!
+            (&mut partial))
+          false)]
+      [(semantic_index.ResultCompilerCheckWithSemanticIndex.Ok _ index)
+        (let
+          [docs : lsp_document_vec.Vec
+            (lsp_frame_core.lsp-documents-set-semantic-index
+              (lsp_frame_core.lsp-documents-set-versioned
+                (lsp_document_vec.new)
+                uri
+                path
+                source
+                1
+                (lsp_frame_core.lsp-diagnostic-uris-empty))
+              uri
+              1
+              index)]
+          [doc : lsp_vector_families.LspDocument
+            (lsp_document_vec.get
+              (& docs)
+              0
+              (lsp_frame_core.lsp-document-fallback))]
+          [semantic-result : json.Json
+            (lsp_frame_core.lsp-semantic-tokens-for-document (& doc))]
+          [repeated-result : json.Json
+            (lsp_frame_core.lsp-semantic-tokens-for-document (& doc))]
+          [decoded : LspSemanticTokenDecode
+            (lsp-semantic-token-decode semantic-result source)]
+          [changed-source : String "(define changed : i64 7) ; stale Pair"]
+          [changed-docs : lsp_document_vec.Vec
+            (lsp_frame_core.lsp-documents-set-versioned
+              docs
+              uri
+              path
+              changed-source
+              2
+              (lsp_frame_core.lsp-diagnostic-uris-empty))]
+          [changed-doc : lsp_vector_families.LspDocument
+            (lsp_document_vec.get
+              (& changed-docs)
+              0
+              (lsp_frame_core.lsp-document-fallback))]
+          [stale-result : json.Json
+            (lsp_frame_core.lsp-semantic-tokens-for-document (& changed-doc))]
+          [stale-decoded : LspSemanticTokenDecode
+            (lsp-semantic-token-decode stale-result changed-source)]
+          [all-types : i64 (- (shl 1 13) 1)]
+          [semantic-only-types : i64 (- (shl 1 8) 1)]
+          [ok : bool
+            (and
+              (string.contains (& capabilities) (& legend))
+              (string.contains (& capabilities) (& modifiers))
+              (string.contains
+              (& capabilities)
+              (& provider))
+              (string.eq
+                (json.stringify semantic-result)
+                (json.stringify repeated-result))
+              decoded.ok
+              (> decoded.count 20)
+              (= (bit-and decoded.type-mask all-types) all-types)
+              (=
+                (bit-and decoded.modifier-mask 3)
+                3)
+              stale-decoded.ok
+              (= (bit-and stale-decoded.type-mask semantic-only-types) 0)
+              (=
+                (semantic_index.compiler-semantic-source-index-live-owner-count)
+                (+ baseline 1)))]
+          (begin
+            (lsp_frame_core.lsp-documents-release-all! (&mut changed-docs))
+            (and
+              ok
+              (=
+                (semantic_index.compiler-semantic-source-index-live-owner-count)
+                baseline))))])))
+
 (define (lsp-fold-render [source : String]) : String
   (json.stringify
     (lsp_frame_core.lsp-json-array
@@ -1422,6 +1676,49 @@
     ",\"method\":\"textDocument/foldingRange\",\"params\":{\"textDocument\":{\"uri\":\""
     uri
     "\"}}}"))
+
+(define (lsp-transcript-semantic-tokens [uri : String] [id : i64]) : String
+  (lsp_frame_core.lsp-str5
+    "{\"jsonrpc\":\"2.0\",\"id\":"
+    (string.int->string id)
+    ",\"method\":\"textDocument/semanticTokens/full\",\"params\":{\"textDocument\":{\"uri\":\""
+    uri
+    "\"}}}"))
+
+(define (lsp-semantic-token-transcript-smoke-ok?) : bool
+  (let
+    [path : String "target/lsp_semantic_token_doc.tl"]
+    [uri : String (lsp_frame_core.lsp-resolved-path-to-file-uri path)]
+    [missing-uri : String
+      (lsp_frame_core.lsp-resolved-path-to-file-uri
+        "target/lsp_semantic_token_absent.tl")]
+    [source : String
+      "(define (plus-one [value : i64]) : i64 (+ value 1))\\n"]
+    [initialize : String
+      "{\"jsonrpc\":\"2.0\",\"id\":80,\"method\":\"initialize\",\"params\":{\"capabilities\":{}}}"]
+    [missing-params : String
+      "{\"jsonrpc\":\"2.0\",\"id\":84,\"method\":\"textDocument/semanticTokens/full\"}"]
+    [exit : String "{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}"]
+    [input : String
+      (str_cat.str-cat
+        (lsp-transcript-frame initialize)
+        (lsp-transcript-frame (lsp-transcript-did-open uri source))
+        (lsp-transcript-frame (lsp-transcript-semantic-tokens uri 83))
+        (lsp-transcript-frame
+          (lsp-transcript-semantic-tokens missing-uri 85))
+        (lsp-transcript-frame missing-params)
+        (lsp-transcript-frame exit))]
+    [result : lsp_frame_core.LspTranscriptResult (lsp-transcript-run input)]
+    [capability : String "\"semanticTokensProvider\""]
+    [found : String "\"id\":83,\"result\":{\"data\":["]
+    [missing : String "\"id\":85,\"result\":null"]
+    [malformed : String "\"id\":84,\"result\":null"]
+    (and
+      (= result.status 0)
+      (lsp-transcript-result-contains? result capability)
+      (lsp-transcript-result-contains? result found)
+      (lsp-transcript-result-contains? result missing)
+      (lsp-transcript-result-contains? result malformed))))
 
 ;; End-to-end dispatch: an opened document answers foldingRange, an unknown
 ;; document answers with an empty array rather than an error.
@@ -2235,6 +2532,8 @@
         (unless (lsp-scan-decls-cache-local-smoke-ok?) (return 13))
         (unless (lsp-document-symbol-smoke-ok?) (return 17))
         (unless (lsp-document-highlight-smoke-ok?) (return 22))
+        (unless (lsp-semantic-token-lexical-smoke-ok?) (return 46))
+        (unless (lsp-semantic-token-semantic-smoke-ok?) (return 47))
         (unless (lsp-folding-range-forms-smoke-ok?) (return 23))
         (unless (lsp-folding-range-comments-smoke-ok?) (return 24))
         (unless (lsp-folding-range-literals-smoke-ok?) (return 25))
@@ -2244,6 +2543,7 @@
         (unless (lsp-call-context-scale-smoke-ok?) (return 40))
         (unless (lsp-call-context-position-smoke-ok?) (return 41))
         (unless (lsp-folding-range-transcript-smoke-ok?) (return 29))
+        (unless (lsp-semantic-token-transcript-smoke-ok?) (return 48))
         (unless (lsp-position-encoding-negotiation-smoke-ok?) (return 30))
         (unless (lsp-position-encoding-conversion-smoke-ok?) (return 31))
         (unless (lsp-position-encoding-diagnostic-smoke-ok?) (return 32))

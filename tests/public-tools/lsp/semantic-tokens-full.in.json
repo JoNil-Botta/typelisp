@@ -1,0 +1,13 @@
+[
+  {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}},
+  {"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"${{TMP_URI}}/semantic-tokens.tl","languageId":"typelisp","version":1,"text":"(module semantic.tokens)\n; comment\n(defstruct Pair (field i64))\n(defenum Choice (Empty) (Some i64))\n(defmacro (identity [value : Expr]) : Expr value)\n(define (consume [parameter : i64]) : i64\n  (let [local : i64 parameter] (+ local 1)))\n(define text : String \"hello\")\n(define top : i64 (identity (consume 2)))\n(extern (foreign [x : i64]) : i64)\n"}}},
+  {"jsonrpc":"2.0","id":2,"method":"textDocument/semanticTokens/full","params":{"textDocument":{"uri":"${{TMP_URI}}/semantic-tokens.tl"}}},
+  {"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"${{TMP_URI}}/semantic-tokens.tl","version":2},"contentChanges":[{"text":"\"unterminated\n; still lexical"}]}},
+  {"jsonrpc":"2.0","id":3,"method":"textDocument/semanticTokens/full","params":{"textDocument":{"uri":"${{TMP_URI}}/semantic-tokens.tl"}}},
+  {"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"${{TMP_URI}}/semantic-tokens.tl","version":3},"contentChanges":[{"text":"(define restored : i64 7)\n"}]}},
+  {"jsonrpc":"2.0","id":4,"method":"textDocument/semanticTokens/full","params":{"textDocument":{"uri":"${{TMP_URI}}/semantic-tokens.tl"}}},
+  {"jsonrpc":"2.0","id":5,"method":"textDocument/semanticTokens/full","params":{"textDocument":{"uri":"${{TMP_URI}}/missing.tl"}}},
+  {"jsonrpc":"2.0","id":6,"method":"textDocument/semanticTokens/full"},
+  {"jsonrpc":"2.0","id":7,"method":"shutdown","params":null},
+  {"jsonrpc":"2.0","method":"exit"}
+]

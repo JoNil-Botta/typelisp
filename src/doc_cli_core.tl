@@ -25,6 +25,7 @@
 (import compiler_ast_types as ast)
 (import compiler_diagnostic as cdiag)
 (import compiler_typecheck_core as tc)
+(import compiler_intern as ci)
 (import package_source_core)
 (import stdlib.hashmap)
 (import (hashmap.hashmap String i64) as doc_path_map)
@@ -152,6 +153,10 @@
       modules)))
 
 (define (doc-generated-modules-from-source-paths-into
+  [load-state : compiler_load.CompilerLoadSessionState]
+  [job-state : tc.TcJobState]
+  [pools : ast.AstNodePoolContext]
+  [intern-state : ci.InternCompatState]
   [paths : ast.AstDeclPathList]
   [seen : (&mut seen doc_path_map.Map)]
   [stdlib-roots : doc_svec.Vec]) : doc_expand.ResultDocExpandedModules
@@ -169,12 +174,20 @@
             [docs : doc_extract.DocExtraction
               (doc_extract.doc-extract-file
                 (owned_view.compiler-owned-shared-view path))]
-            (match (doc_expand.doc-expanded-generated-modules-from-source-docs
+            (match (doc_expand.doc-expanded-generated-modules-from-source-docs-with-state-and-pools-and-intern-state
+              (owned_view.compiler-owned-shared-view load-state)
+              (owned_view.compiler-owned-shared-view job-state)
               (owned_view.compiler-owned-shared-view path)
               docs
-              (owned_view.compiler-owned-shared-view stdlib-roots))
+              (owned_view.compiler-owned-shared-view stdlib-roots)
+              (owned_view.compiler-owned-shared-view pools)
+              (owned_view.compiler-owned-shared-view intern-state))
               [(doc_expand.ResultDocExpandedModules.Ok head-modules)
                 (match (doc-generated-modules-from-source-paths-into
+                  (owned_view.compiler-owned-shared-view load-state)
+                  (owned_view.compiler-owned-shared-view job-state)
+                  (owned_view.compiler-owned-shared-view pools)
+                  (owned_view.compiler-owned-shared-view intern-state)
                   (owned_view.compiler-owned-shared-view rest)
                   seen
                   (owned_view.compiler-owned-shared-view stdlib-roots))
@@ -187,14 +200,29 @@
                     (doc_expand.ResultDocExpandedModules.Err message)])]
               [(doc_expand.ResultDocExpandedModules.Err message)
                 (doc_expand.ResultDocExpandedModules.Err message)]))
-          (doc-generated-modules-from-source-paths-into rest seen stdlib-roots)))]))
+          (doc-generated-modules-from-source-paths-into
+            load-state
+            job-state
+            pools
+            intern-state
+            rest
+            seen
+            stdlib-roots)))]))
 
 (define (doc-generated-modules-from-source-paths
+  [load-state : compiler_load.CompilerLoadSessionState]
+  [job-state : tc.TcJobState]
+  [pools : ast.AstNodePoolContext]
+  [intern-state : ci.InternCompatState]
   [paths : ast.AstDeclPathList]
   [stdlib-roots : doc_svec.Vec]) : doc_expand.ResultDocExpandedModules
   (let
     [seen : doc_path_map.Map (doc-path-set-new)]
     (doc-generated-modules-from-source-paths-into
+      load-state
+      job-state
+      pools
+      intern-state
       paths
       (&mut seen)
       stdlib-roots)))
@@ -223,71 +251,118 @@
 ;; closure, so temporarily make this loader session eager and restore its prior
 ;; mode before rendering or reporting a diagnostic.
 (define (doc-load-file-with-all-import-paths
+  [load-state : compiler_load.CompilerLoadSessionState]
+  [pools : ast.AstNodePoolContext]
+  [intern-state : ci.InternCompatState]
   [input-path : String]
   [stdlib-roots : doc_svec.Vec]) : compiler_load.ResultCompilerLoadWithPaths
   (let
-    [lazy-mode : bool
-      (compiler_load.compiler-load-session-lazy-import-mode-enabled?)]
-    [_eager : unit
-      (compiler_load.compiler-load-session-lazy-import-mode-set-enabled! false)]
-    [loaded : compiler_load.ResultCompilerLoadWithPaths
-      (compiler_load.compiler-load-file-with-paths-and-roots
-        input-path
-        (sym_i64_env.sym-i64-empty)
-        stdlib-roots)]
-    [_restore : unit
-      (compiler_load.compiler-load-session-lazy-import-mode-set-enabled!
-        lazy-mode)]
-    loaded))
+    [intern-state : ci.InternCompatState
+      (owned_view.compiler-owned-shared-view intern-state)]
+    (begin
+      (compiler_load.compiler-load-session-state-use-with-intern-state!
+        (owned_view.compiler-owned-shared-view load-state)
+        (owned_view.compiler-owned-shared-view intern-state))
+      (ast.ast-node-pool-context-install!
+        (owned_view.compiler-owned-shared-view pools))
+      (ci.intern-compat-state-install!
+        (owned_view.compiler-owned-shared-view intern-state))
+      (let
+        [lazy-mode : bool
+          (compiler_load.compiler-load-session-state-lazy-import-mode-enabled?
+            (owned_view.compiler-owned-shared-view load-state))]
+        [_eager : unit
+          (compiler_load.compiler-load-session-state-lazy-import-mode-set-enabled!
+            (owned_view.compiler-owned-shared-view load-state)
+            false)]
+        [loaded : compiler_load.ResultCompilerLoadWithPaths
+          (compiler_load.compiler-load-file-with-paths-and-roots-cfg-with-pools
+            (owned_view.compiler-owned-shared-view load-state)
+            input-path
+            (sym_i64_env.sym-i64-empty)
+            stdlib-roots
+            (sym_i64_env.sym-i64-empty)
+            (owned_view.compiler-owned-shared-view pools))]
+        [_publish : unit
+          (begin
+            ;; The stateful loader extends the explicit segmented context. Do not
+            ;; overwrite it with the stale compatibility-global view on return;
+            ;; publish the completed owner for the remaining legacy readers.
+            (ast.ast-node-pool-context-install!
+              (owned_view.compiler-owned-shared-view pools))
+            (ci.intern-compat-state-capture-from-globals! (&mut intern-state)))]
+        [_restore : unit
+          (compiler_load.compiler-load-session-state-lazy-import-mode-set-enabled!
+            (owned_view.compiler-owned-shared-view load-state)
+            lazy-mode)]
+        loaded))))
 
 (define (doc-generate-loaded-file
   [input-path : String]
   [output-path : String]
   [stdlib-roots : doc_svec.Vec]) : i64
-  (match (doc-load-file-with-all-import-paths
-    (owned_view.compiler-owned-shared-view input-path)
-    (owned_view.compiler-owned-shared-view stdlib-roots))
-    [(compiler_load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
-      (match (doc-generated-modules-from-source-paths
-        (ast.ast-decl-root-path-cons
-          (owned_view.compiler-owned-shared-view input-path)
-          (owned_view.compiler-owned-shared-view paths))
-        (owned_view.compiler-owned-shared-view stdlib-roots))
-        [(doc_expand.ResultDocExpandedModules.Ok source-generated-modules)
-          (let
-            ;; Expansion from public source docs is authoritative and errors
-            ;; above fail the command. Loaded graph expansion is best-effort:
-            ;; synthetic graph docs can combine helper declarations from many
-            ;; modules in ways normal source builds never do.
-            [generated-modules : doc_module_vec.Vec
-              (match (doc_expand.doc-expanded-generated-modules-from-loaded-decls
-                decls
-                (owned_view.compiler-owned-shared-view paths)
-                (owned_view.compiler-owned-shared-view stdlib-roots))
-                [(doc_expand.ResultDocExpandedModules.Ok modules) modules]
-                [(doc_expand.ResultDocExpandedModules.Err _)
-                  (doc_module_vec.new)])]
+  (let
+    [load-state : compiler_load.CompilerLoadSessionState
+      (compiler_load.compiler-load-serial-test-session-state)]
+    [job-state : tc.TcJobState (tc.tc-serial-job-state)]
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [intern-state : ci.InternCompatState
+      (ci.intern-compat-state-capture-active)]
+    (match (doc-load-file-with-all-import-paths
+      (owned_view.compiler-owned-shared-view load-state)
+      (owned_view.compiler-owned-shared-view pools)
+      (owned_view.compiler-owned-shared-view intern-state)
+      (owned_view.compiler-owned-shared-view input-path)
+      (owned_view.compiler-owned-shared-view stdlib-roots))
+      [(compiler_load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
+        (match (doc-generated-modules-from-source-paths
+          (owned_view.compiler-owned-shared-view load-state)
+          (owned_view.compiler-owned-shared-view job-state)
+          (owned_view.compiler-owned-shared-view pools)
+          (owned_view.compiler-owned-shared-view intern-state)
+          (ast.ast-decl-root-path-cons
+            (owned_view.compiler-owned-shared-view input-path)
+            (owned_view.compiler-owned-shared-view paths))
+          (owned_view.compiler-owned-shared-view stdlib-roots))
+          [(doc_expand.ResultDocExpandedModules.Ok source-generated-modules)
+            (let
+              ;; Expansion from public source docs is authoritative and errors
+              ;; above fail the command. Loaded graph expansion is best-effort:
+              ;; synthetic graph docs can combine helper declarations from many
+              ;; modules in ways normal source builds never do.
+              [generated-modules : doc_module_vec.Vec
+                (match (doc_expand.doc-expanded-generated-modules-from-loaded-decls-with-state-and-pools-and-intern-state
+                  (owned_view.compiler-owned-shared-view load-state)
+                  (owned_view.compiler-owned-shared-view job-state)
+                  decls
+                  (owned_view.compiler-owned-shared-view paths)
+                  (owned_view.compiler-owned-shared-view stdlib-roots)
+                  (owned_view.compiler-owned-shared-view pools)
+                  (owned_view.compiler-owned-shared-view intern-state))
+                  [(doc_expand.ResultDocExpandedModules.Ok modules) modules]
+                  [(doc_expand.ResultDocExpandedModules.Err _)
+                    (doc_module_vec.new)])]
+              (begin
+                (doc-write-text
+                  (owned_view.compiler-owned-shared-view output-path)
+                  (doc-render-loaded-markdown
+                    (owned_view.compiler-owned-shared-view input-path)
+                    (owned_view.compiler-owned-shared-view paths)
+                    (doc_render.doc-module-list-append
+                      generated-modules
+                      source-generated-modules)))
+                (doc-print-wrote output-path)
+                0))]
+          [(doc_expand.ResultDocExpandedModules.Err message)
             (begin
-              (doc-write-text
-                (owned_view.compiler-owned-shared-view output-path)
-                (doc-render-loaded-markdown
-                  input-path
-                  paths
-                  (doc_render.doc-module-list-append
-                    generated-modules
-                    source-generated-modules)))
-              (doc-print-wrote output-path)
-              0))]
-        [(doc_expand.ResultDocExpandedModules.Err message)
-          (begin
-            (io.print-error message)
-            1)])]
-    [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
-      (begin
-        (io.print-error
-          (cdiag.compiler-diagnostic-render
-            (cdiag.compiler-diagnostic-box-shared-view diag)))
-        1)]))
+              (io.print-error message)
+              1)])]
+      [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
+        (begin
+          (io.print-error
+            (cdiag.compiler-diagnostic-render
+              (cdiag.compiler-diagnostic-box-shared-view diag)))
+          1)])))
 
 (define (doc-generate-package
   [manifest-path : String]

@@ -311,72 +311,64 @@
   (Ok ast.AstProgram ast.AstDeclPathList)
   (Err (Box cdiag.CompilerDiagnostic)))
 
-(define (typecheck-compiler-doc-expand-program-with-paths-and-load-state-and-job-state-and-pools
+(define (typecheck-compiler-doc-expand-program-with-paths-and-load-state-and-job-state-and-pools-and-intern-state
   [load-state : load.CompilerLoadSessionState]
   [job-state : tc_core.TcJobState]
   [program : ast.AstProgram]
   [paths : ast.AstDeclPathList]
   [stdlib-roots : svec.Vec]
-  [pools : ast.AstNodePoolContext]) : ResultCompilerDocExpand
-  (begin
-    (tc_core.tc-spmd-inline-helper-stack-reset-for-job! job-state)
-    (tc_core.tc-macro-call-site-state-reset!
-      (tc_core.tc-job-state-macro-call-sites job-state))
-    (let
-      [generated-result : spec.ResultGenProgramWithPaths
-        (spec.gen-normalize-program-with-paths-and-pools
-          program
-          paths
-          ""
-          (owned_view.compiler-owned-shared-view pools))]
-      (begin
-        (ast.ast-node-pool-context-install!
-          (owned_view.compiler-owned-shared-view pools))
-        (match generated-result
-          [(spec.ResultGenProgramWithPaths.Ok generated generated-paths)
-            (match (tc_core.macro-expand-then-build-envs-with-load-state-and-job-state
-              load-state
-              job-state
-              generated
-              generated-paths
-              (owned_view.compiler-owned-shared-view pools)
-              stdlib-roots
-              (typecheck-compiler-source-language-cfgs))
-              [(tc_core.ResultMacroExpand.Ok expanded expanded-paths)
-                (begin
-                  (ast.ast-node-pool-context-capture-active! pools)
-                  (ResultCompilerDocExpand.Ok expanded expanded-paths))]
-              [(tc_core.ResultMacroExpand.Err diag)
-                (ResultCompilerDocExpand.Err diag)])]
-          [(spec.ResultGenProgramWithPaths.Err diag)
-            (ResultCompilerDocExpand.Err diag)])))))
-
-(define (typecheck-compiler-doc-expand-program-with-paths-and-load-state-and-pools
-  [load-state : load.CompilerLoadSessionState]
-  [program : ast.AstProgram]
-  [paths : ast.AstDeclPathList]
-  [stdlib-roots : svec.Vec]
-  [pools : ast.AstNodePoolContext]) : ResultCompilerDocExpand
-  (typecheck-compiler-doc-expand-program-with-paths-and-load-state-and-job-state-and-pools
-    load-state
-    (tc_core.tc-serial-job-state)
-    program
-    paths
-    stdlib-roots
-    pools))
-
-;; Serial/test compatibility adapter.
-(define (typecheck-compiler-doc-expand-program-with-paths-and-pools
-  [program : ast.AstProgram]
-  [paths : ast.AstDeclPathList]
-  [stdlib-roots : svec.Vec]
-  [pools : ast.AstNodePoolContext]) : ResultCompilerDocExpand
-  (typecheck-compiler-doc-expand-program-with-paths-and-load-state-and-pools
-    (load.compiler-load-serial-test-session-state)
-    program
-    paths
-    stdlib-roots
-    pools))
+  [pools : ast.AstNodePoolContext]
+  [intern-state : ci.InternCompatState]) : ResultCompilerDocExpand
+  (let
+    [intern-state : ci.InternCompatState
+      (owned_view.compiler-owned-shared-view intern-state)]
+    (begin
+      (tc_core.tc-spmd-inline-helper-stack-reset-for-job! job-state)
+      (tc_core.tc-macro-call-site-state-reset!
+        (tc_core.tc-job-state-macro-call-sites job-state))
+      (let
+        [owner-context : spec.SpecOwnerContext
+          (spec.spec-owner-context-new
+            (owned_view.compiler-owned-shared-view pools)
+            (owned_view.compiler-owned-shared-view intern-state))]
+        [generated-result : spec.ResultGenProgramWithPaths
+          (spec.gen-normalize-program-with-paths-and-pools-and-intern-state
+            program
+            paths
+            ""
+            owner-context)]
+        (begin
+          (ast.ast-node-pool-context-install!
+            (owned_view.compiler-owned-shared-view pools))
+          (ci.intern-compat-state-install!
+            (owned_view.compiler-owned-shared-view intern-state))
+          (match generated-result
+            [(spec.ResultGenProgramWithPaths.Ok generated generated-paths)
+              (match (tc_core.macro-expand-then-build-envs-with-load-state-and-job-state-and-intern-state
+                (owned_view.compiler-owned-shared-view load-state)
+                job-state
+                generated
+                generated-paths
+                (owned_view.compiler-owned-shared-view pools)
+                (owned_view.compiler-owned-shared-view stdlib-roots)
+                (typecheck-compiler-source-language-cfgs)
+                (owned_view.compiler-owned-shared-view intern-state))
+                [(tc_core.ResultMacroExpand.Ok expanded expanded-paths)
+                  (begin
+                    (ast.ast-node-pool-context-capture-active!
+                      (owned_view.compiler-owned-shared-view pools))
+                    (ci.intern-compat-state-capture-from-globals!
+                      (&mut intern-state))
+                    (ResultCompilerDocExpand.Ok expanded expanded-paths))]
+                [(tc_core.ResultMacroExpand.Err diag)
+                  (begin
+                    (ast.ast-node-pool-context-capture-active!
+                      (owned_view.compiler-owned-shared-view pools))
+                    (ci.intern-compat-state-capture-from-globals!
+                      (&mut intern-state))
+                    (ResultCompilerDocExpand.Err diag))])]
+            [(spec.ResultGenProgramWithPaths.Err diag)
+              (ResultCompilerDocExpand.Err diag)]))))))
 
 (define (typecheck-compiler-program-with-paths-checked-cache-and-load-state-and-prefix-cache-state-and-pools-and-intern-state
   [load-state : load.CompilerLoadSessionState]

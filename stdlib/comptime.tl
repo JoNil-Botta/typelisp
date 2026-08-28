@@ -176,6 +176,18 @@
 (define (expr-tuple-ref [target : Expr] [index : i64]) : Expr
   (expr-tuple-ref target index))
 
+;: Build a one-parameter lambda from a hygienic name, reflected parameter
+;: type, and an already assembled body expression.
+;:
+;: The lambda's result type is inferred from `body`. Passing the same value
+;: returned by `syntax-name-fresh` to `expr-var` and this builder gives the
+;: parameter and every computed projection in `body` one syntax identity.
+(define (expr-lambda1
+  [_parameter-name : String]
+  [_parameter-type : Expr]
+  [body : Expr]) : Expr
+  body)
+
 ;: Build a struct field assignment expression during macro CTFE.
 (define (expr-struct-set [target : Expr] [field : String] [value : Expr]) : Expr
   (expr-struct-set target field value))

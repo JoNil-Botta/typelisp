@@ -802,6 +802,12 @@
 (define tlci-host-callback-name-expr-lambda : String
   "expr-lambda")
 
+;; Public computed one-parameter lambda builder. Unlike the template callback,
+;; its hygienic name, reflected parameter type, and assembled body are all
+;; supplied on the host value stack.
+(define tlci-host-callback-name-expr-lambda1 : String
+  "expr-lambda1")
+
 ;; Typed template bindings (refs #5603): type-var pushes the AstType.Var for
 ;; caller bytes (unmarked, matching the interpreted type quote); let-binding-
 ;; typed pops the type value then the init expression and pushes a binding

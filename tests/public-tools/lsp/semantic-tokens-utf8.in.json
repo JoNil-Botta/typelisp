@@ -1,0 +1,7 @@
+[
+  {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{"general":{"positionEncodings":["utf-8"]}}}},
+  {"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"${{TMP_URI}}/semantic-tokens-utf8.tl","languageId":"typelisp","version":1,"text":"(define λ : i64 42)\r\n; note\r\n\"unterminated λ"}}},
+  {"jsonrpc":"2.0","id":2,"method":"textDocument/semanticTokens/full","params":{"textDocument":{"uri":"${{TMP_URI}}/semantic-tokens-utf8.tl"}}},
+  {"jsonrpc":"2.0","id":3,"method":"shutdown","params":null},
+  {"jsonrpc":"2.0","method":"exit"}
+]

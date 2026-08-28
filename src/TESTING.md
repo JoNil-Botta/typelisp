@@ -572,6 +572,21 @@ Linux hosts with Valgrind can additionally set
 `TYPELISP_LSP_COMPLETION_CACHEGRIND=1` to report deterministic dynamic
 instruction counts for the whole cold-plus-hot server workload.
 
+`scripts/measure-lsp-semantic-tokens-latency.sh` opens
+`src/compiler_typecheck_core.tl`, records cold open/check plus first full-token
+latency, and then verifies at least 100 byte-identical warm full-token
+responses from the retained semantic snapshot:
+
+```sh
+TYPELISP_BIN=target/stage0/typelisp scripts/measure-lsp-semantic-tokens-latency.sh
+```
+
+The row includes source bytes, token and encoded-integer counts, compact result
+bytes, cold and warm latency, and RSS deltas for the retained cold snapshot and
+the request-local warm loop. Override the request count or source with
+`TYPELISP_LSP_SEMANTIC_TOKEN_REQUESTS` and
+`TYPELISP_LSP_SEMANTIC_TOKEN_SOURCE`.
+
 `compile --profile-allocations` emits opt-in arena ownership rows for any input
 program. Rows report the phase, owner, arena root, bump-position bytes,
 committed bytes, reserved bytes, and segment count. Arena roots make overlapping `active` and

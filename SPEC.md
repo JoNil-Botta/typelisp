@@ -7909,6 +7909,16 @@ make cross-entry retention visible without reconstructing interval rows.
 Normal compiler builds emit no such rows and produce byte-identical assembly.
 The measurement harnesses keep the ordinal-to-input mapping separately.
 
+The same build emits a deterministic `compile-profile|intern.*` storage block
+after the existing interning activity rows. It reports source/generated record
+live counts and capacities, source/canonical-map occupancy and capacities,
+total/maximum probe depth, resize counts, and reserved payload bytes for the
+nine record columns and each two-column map. For each logical lookup or insert,
+probe depth counts every inspected bucket, including the terminal hit or empty
+bucket; reset/rebuild maintenance is excluded. Reserved bytes exclude the fixed
+dynamic-array headers. The current fixed tables report zero resizes; the row
+names and order remain stable when independently growable storage replaces them.
+
 `compile --profile-allocations` emits `compile-allocation-profile` owner rows
 without changing generated output. Batch rows name the saved entry scratch
 owner before and after state release, the process entry owner before release,

@@ -964,6 +964,12 @@ its native-result counters require real `Module` and `Decls` results to commit
 through the existing module/declaration validation and splice paths. The
 production-route stress gate additionally crosses five pool-reset and image
 release/remap cycles with more than 25,000 routed calls per host.
+The same gate checks the ordered intern storage schema on a source compile and
+requires two complete copies in the two-entry batch route. It pins equal source
+record/map occupancy, fixed capacities, zero resize observations, non-zero
+reserved payload bytes, and bounded total/maximum probe accounting. The inline
+`compiler-driver-profile-intern-storage-job-isolation` test owns the A/B
+reset/interleaving proof for equal numeric IDs in distinct profile owners.
 
 Package dependency images also carry relocatable checked frontend surfaces.
 `verify-package-surface-tlci.sh` builds a two-parent diamond with a shared

@@ -1671,6 +1671,9 @@
   (begin
     (set! (array-ref state.pool-count 0) 0)
     (set! (array-ref state.generated-next-id 0) (- (intern-capacity) 1))
+    (cfg
+      (any compile-profile test)
+      (intern-profile-note-storage-reset! state.profile-metrics-address 0))
     (intern-compat-state-fill-empty! state 0 (array-length state.map-id-slots))
     (intern-compat-state-generated-map-clear! state)
     (intern-structural-session-reset! (&mut state.structural-table-cell))
@@ -1686,6 +1689,9 @@
   (begin
     (set! (array-ref state.pool-count 0) mark)
     (set! (array-ref state.generated-next-id 0) (- (intern-capacity) 1))
+    (cfg
+      (any compile-profile test)
+      (intern-profile-note-storage-reset! state.profile-metrics-address mark))
     (intern-compat-state-fill-empty! state 0 (array-length state.map-id-slots))
     (intern-compat-state-generated-map-clear! state)
     (intern-structural-session-reset! (&mut state.structural-table-cell))
@@ -1840,6 +1846,11 @@
                       (intern-id-slot-encode id))
                     (set! (array-ref state.map-hash-slots cursor) hash)
                     (set! (array-ref state.pool-count 0) (+ id 1))
+                    (cfg
+                      (any compile-profile test)
+                      (intern-profile-note-source-record-live!
+                        state.profile-metrics-address
+                        (+ id 1)))
                     (intern-compat-state-record-qualified-metadata-ref!
                       state
                       id
@@ -1861,7 +1872,15 @@
                 (begin
                   (set! cursor (intern-bucket (+ cursor 1) capacity))
                   (set! steps (+ steps 1))))))))
-      out)))
+      (begin
+        (cfg
+          (any compile-profile test)
+          (intern-profile-note-source-map-probe!
+            state.profile-metrics-address
+            (if done
+              (+ steps 1)
+              steps)))
+        out))))
 
 (define (intern-compat-state-ensure-ready!
   [state : (&mut state InternCompatState)]) : unit
@@ -1931,6 +1950,11 @@
                         (intern-id-slot-encode id))
                       (set! (array-ref state.map-hash-slots cursor) hash)
                       (set! (array-ref state.pool-count 0) (+ id 1))
+                      (cfg
+                        (any compile-profile test)
+                        (intern-profile-note-source-record-live!
+                          state.profile-metrics-address
+                          (+ id 1)))
                       (intern-compat-state-record-qualified-metadata-ref!
                         state
                         id
@@ -1958,7 +1982,15 @@
                   (begin
                     (set! cursor (intern-bucket (+ cursor 1) capacity))
                     (set! steps (+ steps 1))))))))
-        out))))
+        (begin
+          (cfg
+            (any compile-profile test)
+            (intern-profile-note-source-map-probe!
+              state.profile-metrics-address
+              (if done
+                (+ steps 1)
+                steps)))
+          out)))))
 
 (define (intern-compat-state-source-slice-id-ready-ref
   [state : (& state InternCompatState)]
@@ -2026,7 +2058,15 @@
                   (begin
                     (set! cursor (intern-bucket (+ cursor 1) capacity))
                     (set! steps (+ steps 1))))))))
-        out))
+        (begin
+          (cfg
+            (any compile-profile test)
+            (intern-profile-note-source-map-probe!
+              state.profile-metrics-address
+              (if done
+                (+ steps 1)
+                steps)))
+          out)))
     (InternLookupMissing)))
 
 (defmacro (intern-compat-state-str [state : Expr] [id : Expr]) : String
@@ -2324,6 +2364,94 @@
   (define intern-profile-metric-end : i64
     140))
 
+;; Slots 140-222 belong to the backend and register-allocation census cfgs.
+;; Keep fixed-storage observations after that entire range so one compiler may
+;; enable profiling and a census together without aliasing job-owned metrics.
+(cfg
+  (any compile-profile test)
+  (define intern-profile-storage-metric-start : i64
+    223))
+(cfg
+  (any compile-profile test)
+  (define intern-profile-source-record-live-metric : i64
+    223))
+(cfg
+  (any compile-profile test)
+  (define intern-profile-source-record-capacity-metric : i64
+    224))
+(cfg
+  (any compile-profile test)
+  (define intern-profile-generated-record-live-metric : i64
+    225))
+(cfg
+  (any compile-profile test)
+  (define intern-profile-generated-record-capacity-metric : i64
+    226))
+(cfg
+  (any compile-profile test)
+  (define intern-profile-source-record-resize-metric : i64
+    227))
+(cfg
+  (any compile-profile test)
+  (define intern-profile-generated-record-resize-metric : i64
+    228))
+(cfg
+  (any compile-profile test)
+  (define intern-profile-record-reserved-bytes-metric : i64
+    229))
+(cfg
+  (any compile-profile test)
+  (define intern-profile-source-map-live-metric : i64
+    230))
+(cfg
+  (any compile-profile test)
+  (define intern-profile-source-map-capacity-metric : i64
+    231))
+(cfg
+  (any compile-profile test)
+  (define intern-profile-source-map-probe-total-metric : i64
+    232))
+(cfg
+  (any compile-profile test)
+  (define intern-profile-source-map-probe-max-metric : i64
+    233))
+(cfg
+  (any compile-profile test)
+  (define intern-profile-source-map-resize-metric : i64
+    234))
+(cfg
+  (any compile-profile test)
+  (define intern-profile-source-map-reserved-bytes-metric : i64
+    235))
+(cfg
+  (any compile-profile test)
+  (define intern-profile-canonical-map-live-metric : i64
+    236))
+(cfg
+  (any compile-profile test)
+  (define intern-profile-canonical-map-capacity-metric : i64
+    237))
+(cfg
+  (any compile-profile test)
+  (define intern-profile-canonical-map-probe-total-metric : i64
+    238))
+(cfg
+  (any compile-profile test)
+  (define intern-profile-canonical-map-probe-max-metric : i64
+    239))
+(cfg
+  (any compile-profile test)
+  (define intern-profile-canonical-map-resize-metric : i64
+    240))
+(cfg
+  (any compile-profile test)
+  (define intern-profile-canonical-map-reserved-bytes-metric : i64
+    241))
+(cfg
+  (any compile-profile test)
+  (define intern-profile-storage-metric-end : i64
+    242))
+
 ;; Installed compatibility calls select the metrics belonging to the installed
 ;; intern owner. Counter storage itself is never process-global; explicit-state
 ;; operations use `InternCompatState.profile-metrics-address` directly.
@@ -2364,13 +2492,176 @@
 
 (cfg
   (any compile-profile test)
+  (define (intern-profile-max!
+    [metrics-address : u64]
+    [metric : i64]
+    [value : i64]) : unit
+    (if (> value (intern-profile-value metrics-address metric))
+      (intern-profile-set! metrics-address metric value)
+      unit)))
+
+;; These rows report reserved payload bytes for the nine fixed record columns
+;; and the two fixed map columns. Dynamic-array headers are owner metadata, not
+;; capacity-proportional storage, so they are deliberately excluded.
+(cfg
+  (any compile-profile test)
+  (define (intern-profile-record-reserved-bytes) : i64
+    (*
+      (intern-capacity)
+      (+
+        (comptime (size-of (type String)))
+        (+
+          (comptime (size-of (type bool)))
+          (+
+            (* 2 (comptime (size-of (type i32))))
+            (+
+              (* 4 (comptime (size-of (type InternSlotId))))
+              (comptime (size-of (type u8))))))))))
+
+(cfg
+  (any compile-profile test)
+  (define (intern-profile-map-reserved-bytes [capacity : i64]) : i64
+    (*
+      capacity
+      (+
+        (comptime (size-of (type InternSlotId)))
+        (comptime (size-of (type i64)))))))
+
+(cfg
+  (any compile-profile test)
+  (define (intern-profile-storage-initialize! [metrics-address : u64]) : unit
+    (begin
+      (intern-profile-set!
+        metrics-address
+        intern-profile-source-record-capacity-metric
+        (intern-capacity))
+      (intern-profile-set!
+        metrics-address
+        intern-profile-generated-record-capacity-metric
+        (intern-capacity))
+      (intern-profile-set!
+        metrics-address
+        intern-profile-record-reserved-bytes-metric
+        (intern-profile-record-reserved-bytes))
+      (intern-profile-set!
+        metrics-address
+        intern-profile-source-map-capacity-metric
+        (intern-capacity))
+      (intern-profile-set!
+        metrics-address
+        intern-profile-source-map-reserved-bytes-metric
+        (intern-profile-map-reserved-bytes (intern-capacity)))
+      (intern-profile-set!
+        metrics-address
+        intern-profile-canonical-map-capacity-metric
+        intern-generated-map-capacity)
+      (intern-profile-set!
+        metrics-address
+        intern-profile-canonical-map-reserved-bytes-metric
+        (intern-profile-map-reserved-bytes intern-generated-map-capacity)))))
+
+(cfg
+  (any compile-profile test)
   (define (intern-profile-reset! [metrics-address : u64]) : unit
     (let
       [metric : i64 intern-profile-hash-words-metric]
-      (while (< metric intern-profile-metric-end)
-        (begin
-          (intern-profile-set! metrics-address metric 0)
-          (set! metric (+ metric 1)))))))
+      (begin
+        (while (< metric intern-profile-metric-end)
+          (begin
+            (intern-profile-set! metrics-address metric 0)
+            (set! metric (+ metric 1))))
+        (set! metric intern-profile-storage-metric-start)
+        (while (< metric intern-profile-storage-metric-end)
+          (begin
+            (intern-profile-set! metrics-address metric 0)
+            (set! metric (+ metric 1))))
+        (intern-profile-storage-initialize! metrics-address)))))
+
+(cfg
+  (any compile-profile test)
+  (define (intern-profile-note-storage-reset!
+    [metrics-address : u64]
+    [source-live : i64]) : unit
+    (begin
+      (intern-profile-set!
+        metrics-address
+        intern-profile-source-record-live-metric
+        source-live)
+      (intern-profile-set!
+        metrics-address
+        intern-profile-source-map-live-metric
+        source-live)
+      (intern-profile-set!
+        metrics-address
+        intern-profile-generated-record-live-metric
+        0)
+      (intern-profile-set!
+        metrics-address
+        intern-profile-canonical-map-live-metric
+        0))))
+
+(cfg
+  (any compile-profile test)
+  (define (intern-profile-note-source-record-live!
+    [metrics-address : u64]
+    [live : i64]) : unit
+    (begin
+      (intern-profile-set!
+        metrics-address
+        intern-profile-source-record-live-metric
+        live)
+      (intern-profile-set!
+        metrics-address
+        intern-profile-source-map-live-metric
+        live))))
+
+(cfg
+  (any compile-profile test)
+  (define (intern-profile-note-generated-record-live!
+    [metrics-address : u64]
+    [live : i64]) : unit
+    (intern-profile-set!
+      metrics-address
+      intern-profile-generated-record-live-metric
+      live)))
+
+(cfg
+  (any compile-profile test)
+  (define (intern-profile-note-source-map-probe!
+    [metrics-address : u64]
+    [depth : i64]) : unit
+    (begin
+      (intern-profile-add!
+        metrics-address
+        intern-profile-source-map-probe-total-metric
+        depth)
+      (intern-profile-max!
+        metrics-address
+        intern-profile-source-map-probe-max-metric
+        depth))))
+
+(cfg
+  (any compile-profile test)
+  (define (intern-profile-note-canonical-map-probe!
+    [metrics-address : u64]
+    [depth : i64]) : unit
+    (begin
+      (intern-profile-add!
+        metrics-address
+        intern-profile-canonical-map-probe-total-metric
+        depth)
+      (intern-profile-max!
+        metrics-address
+        intern-profile-canonical-map-probe-max-metric
+        depth))))
+
+(cfg
+  (any compile-profile test)
+  (define (intern-profile-note-canonical-map-insert! [metrics-address : u64]) : unit
+    (intern-profile-add!
+      metrics-address
+      intern-profile-canonical-map-live-metric
+      1)))
 
 (cfg
   compile-profile
@@ -2790,6 +3081,11 @@
       [id : i64 intern-pool-count]
       (begin
         (set! intern-pool-count (+ id 1))
+        (cfg
+          (any compile-profile test)
+          (intern-profile-note-source-record-live!
+            intern-active-profile-metrics-address
+            (+ id 1)))
         id))))
 
 (define (intern-generated-id-allocate!) : i64
@@ -2799,6 +3095,11 @@
       [id : i64 intern-generated-next-id]
       (begin
         (set! intern-generated-next-id (- id 1))
+        (cfg
+          (any compile-profile test)
+          (intern-profile-note-generated-record-live!
+            intern-active-profile-metrics-address
+            (- (intern-capacity) id)))
         id))))
 
 (define (intern-compat-state-generated-scalars-publish-if-active!
@@ -2864,6 +3165,11 @@
                   base-id
                   next-id)))
             (set! (array-ref state.generated-next-id 0) (- next-id 1))
+            (cfg
+              (any compile-profile test)
+              (intern-profile-note-generated-record-live!
+                state.profile-metrics-address
+                (- (intern-capacity) next-id)))
             ;; An installed legacy consumer observes scalar counters through
             ;; the compatibility globals even though the owned arrays are
             ;; already shared. Keep that view coherent without installing an
@@ -2906,6 +3212,14 @@
                 (array-ref state.generated-map-id-slots cursor)
                 (intern-id-slot-encode id))
               (set! (array-ref state.generated-map-hash-slots cursor) hash)
+              (cfg
+                (any compile-profile test)
+                (begin
+                  (intern-profile-note-canonical-map-probe!
+                    state.profile-metrics-address
+                    (+ steps 1))
+                  (intern-profile-note-canonical-map-insert!
+                    state.profile-metrics-address)))
               id))
           (let
             [slot-id : i64 (intern-id-slot-decode stored-id)]
@@ -2929,7 +3243,13 @@
                   (<
                     (cast (array-ref state.pool-first-dot-slots slot-id) : i64)
                     0))))
-              slot-id
+              (begin
+                (cfg
+                  (any compile-profile test)
+                  (intern-profile-note-canonical-map-probe!
+                    state.profile-metrics-address
+                    (+ steps 1)))
+                slot-id)
               (intern-compat-state-generated-canonical-name-at
                 state
                 name
@@ -3029,6 +3349,11 @@
             (array-ref state.pool-base-id-slots next-id)
             (intern-id-slot-encode next-id))
           (set! (array-ref state.generated-next-id 0) (- next-id 1))
+          (cfg
+            (any compile-profile test)
+            (intern-profile-note-generated-record-live!
+              state.profile-metrics-address
+              (- (intern-capacity) next-id)))
           (intern-compat-state-generated-scalars-publish-if-active! state)
           next-id)))))
 
@@ -3832,6 +4157,14 @@
               (array-ref intern-generated-map-id-slots cursor)
               (intern-id-slot-encode id))
             (set! (array-ref intern-generated-map-hash-slots cursor) hash)
+            (cfg
+              (any compile-profile test)
+              (begin
+                (intern-profile-note-canonical-map-probe!
+                  intern-active-profile-metrics-address
+                  (+ steps 1))
+                (intern-profile-note-canonical-map-insert!
+                  intern-active-profile-metrics-address)))
             id))
         (let
           [slot-id : i64 (intern-id-slot-decode stored-id)]
@@ -3854,7 +4187,13 @@
                     (= (intern-dotted-prefix-id slot-id) dotted-prefix-id)
                     (= (intern-dotted-tail-id slot-id) dotted-tail-id))
                   (< (intern-first-dot slot-id) 0)))))
-            slot-id
+            (begin
+              (cfg
+                (any compile-profile test)
+                (intern-profile-note-canonical-map-probe!
+                  intern-active-profile-metrics-address
+                  (+ steps 1)))
+              slot-id)
             (intern-generated-canonical-name-at
               name
               hash
@@ -3896,12 +4235,24 @@
   [cursor : i64]
   [steps : i64]) : i64
   (if (>= steps intern-generated-map-capacity)
-    -1
+    (begin
+      (cfg
+        (any compile-profile test)
+        (intern-profile-note-canonical-map-probe!
+          intern-active-profile-metrics-address
+          steps))
+      -1)
     (let
       [stored-id : InternSlotId
         (array-ref intern-generated-map-id-slots cursor)]
       (if (intern-id-slot-empty? stored-id)
-        -1
+        (begin
+          (cfg
+            (any compile-profile test)
+            (intern-profile-note-canonical-map-probe!
+              intern-active-profile-metrics-address
+              (+ steps 1)))
+          -1)
         (let
           [slot-id : i64 (intern-id-slot-decode stored-id)]
           [slot-hash : i64 (array-ref intern-generated-map-hash-slots cursor)]
@@ -3912,7 +4263,13 @@
               name)
             (not (intern-qualified? slot-id))
             (< (intern-first-dot slot-id) 0))
-            slot-id
+            (begin
+              (cfg
+                (any compile-profile test)
+                (intern-profile-note-canonical-map-probe!
+                  intern-active-profile-metrics-address
+                  (+ steps 1)))
+              slot-id)
             (intern-generated-canonical-name-existing-at
               name
               hash
@@ -4012,12 +4369,24 @@
   [cursor : i64]
   [steps : i64]) : InternLookup
   (if (>= steps intern-generated-map-capacity)
-    (InternLookupMissing)
+    (begin
+      (cfg
+        (any compile-profile test)
+        (intern-profile-note-canonical-map-probe!
+          intern-active-profile-metrics-address
+          steps))
+      (InternLookupMissing))
     (let
       [stored-id : InternSlotId
         (array-ref intern-generated-map-id-slots cursor)]
       (if (intern-id-slot-empty? stored-id)
-        (InternLookupMissing)
+        (begin
+          (cfg
+            (any compile-profile test)
+            (intern-profile-note-canonical-map-probe!
+              intern-active-profile-metrics-address
+              (+ steps 1)))
+          (InternLookupMissing))
         (let
           [slot-id : i64 (intern-id-slot-decode stored-id)]
           (if (and
@@ -4025,7 +4394,13 @@
             (intern-private-string-eq-places
               (array-ref intern-pool-slots slot-id)
               name))
-            (InternLookupFound slot-id)
+            (begin
+              (cfg
+                (any compile-profile test)
+                (intern-profile-note-canonical-map-probe!
+                  intern-active-profile-metrics-address
+                  (+ steps 1)))
+              (InternLookupFound slot-id))
             (intern-generated-canonical-lookup-at
               name
               hash
@@ -4204,6 +4579,11 @@
     (set! intern-pool-count 0)
     (intern-reset-name-cache!)
     (set! intern-generated-next-id (- (intern-capacity) 1))
+    (cfg
+      (any compile-profile test)
+      (intern-profile-note-storage-reset!
+        intern-active-profile-metrics-address
+        0))
     (intern-fill-empty 0 (array-length intern-map-id-slots))
     (intern-generated-map-clear! 0)
     (intern-structural-session-reset! (&mut intern-structural-table-cell))
@@ -4215,6 +4595,11 @@
   (begin
     (set! intern-pool-count mark)
     (set! intern-generated-next-id (- (intern-capacity) 1))
+    (cfg
+      (any compile-profile test)
+      (intern-profile-note-storage-reset!
+        intern-active-profile-metrics-address
+        mark))
     (intern-fill-empty 0 (array-length intern-map-id-slots))
     (intern-generated-map-clear! 0)
     (intern-structural-session-reset! (&mut intern-structural-table-cell))
@@ -4280,7 +4665,15 @@
                   (begin
                     (set! cursor (intern-bucket (+ cursor 1) capacity))
                     (set! steps (+ steps 1))))))))
-        out))))
+        (begin
+          (cfg
+            (any compile-profile test)
+            (intern-profile-note-source-map-probe!
+              intern-active-profile-metrics-address
+              (if done
+                (+ steps 1)
+                steps)))
+          out)))))
 
 ;: Intern a source slice without allocating unless the slice is a new name.
 (define (intern-slice [text : (& text str)] [start : i64] [len : i64]) : i64
@@ -4342,7 +4735,15 @@
                   (begin
                     (set! cursor (intern-bucket (+ cursor 1) capacity))
                     (set! steps (+ steps 1))))))))
-        out))))
+        (begin
+          (cfg
+            (any compile-profile test)
+            (intern-profile-note-source-map-probe!
+              intern-active-profile-metrics-address
+              (if done
+                (+ steps 1)
+                steps)))
+          out)))))
 
 ;: Lexer-only entry point. Keeping source-token volume separate from internal
 ;: metadata slices makes the expected parse-time intern count measurable.
@@ -4397,7 +4798,13 @@
                 (unsafe
                   (ptr-read (ptr-offset ids cursor)))]
               (if (intern-id-slot-empty? stored)
-                (return (InternLookupMissing))
+                (begin
+                  (cfg
+                    (any compile-profile test)
+                    (intern-profile-note-source-map-probe!
+                      intern-active-profile-metrics-address
+                      (+ steps 1)))
+                  (return (InternLookupMissing)))
                 (let
                   [slot-id : i64 (intern-id-slot-decode stored)]
                   (if (and
@@ -4408,11 +4815,23 @@
                     (intern-private-string-eq-places
                       (array-ref intern-pool-slots slot-id)
                       name))
-                    (return (InternLookupFound slot-id))
+                    (begin
+                      (cfg
+                        (any compile-profile test)
+                        (intern-profile-note-source-map-probe!
+                          intern-active-profile-metrics-address
+                          (+ steps 1)))
+                      (return (InternLookupFound slot-id)))
                     (begin
                       (set! cursor (bit-and (+ cursor 1) mask))
                       (set! steps (+ steps 1))))))))
-          (InternLookupMissing)))
+          (begin
+            (cfg
+              (any compile-profile test)
+              (intern-profile-note-source-map-probe!
+                intern-active-profile-metrics-address
+                steps))
+            (InternLookupMissing))))
       (InternLookupMissing))))
 
 (define (intern-lookup [name : String]) : InternLookup

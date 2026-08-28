@@ -8055,7 +8055,8 @@
                             (let
                               [out-index : i64
                                 (compiler-semantic-top-candidate-fill-index
-                                  (owned_view.compiler-owned-shared-view modules)
+                                  (owned_view.compiler-owned-shared-view
+                                    modules)
                                   module-index
                                   (owned_view.compiler-owned-shared-view
                                     counts-or-cursors)
@@ -8738,8 +8739,7 @@
                     (owned_view.compiler-owned-shared-view ctx)
                     (owned_view.compiler-owned-shared-view modules-out)
                     module-count
-                    (owned_view.compiler-owned-shared-view
-                      decl-record-indices))
+                    (owned_view.compiler-owned-shared-view decl-record-indices))
                   0)]
               [top-candidates : (__tl_dyn-array CompilerSemanticTopCandidateRef)
                 (__tl_make-array
@@ -8789,8 +8789,7 @@
                     (owned_view.compiler-owned-shared-view ctx)
                     (owned_view.compiler-owned-shared-view modules-out)
                     module-count
-                    (owned_view.compiler-owned-shared-view
-                      decl-record-indices)
+                    (owned_view.compiler-owned-shared-view decl-record-indices)
                     (owned_view.compiler-owned-shared-view record-items)
                     (owned_view.compiler-owned-shared-view top-candidates)
                     (owned_view.compiler-owned-shared-view top-labels))

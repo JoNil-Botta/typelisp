@@ -1,0 +1,21 @@
+# ci-timing-trend-policy-schema	1
+kind	gate	case_or_chunk	phase	factor	min_delta_ms	min_baseline_ms	change_ref	evidence_url
+trend	CI verification	all	complete-verification	1.15	180000	600000	#6882	https://github.com/JoNil-Botta/typelisp/issues/6881
+trend	CI verification	all	critical-path	1.15	180000	600000	#6882	https://github.com/JoNil-Botta/typelisp/issues/6881
+trend	CI verification	all	summed-runner-time	1.15	300000	1200000	#6882	https://github.com/JoNil-Botta/typelisp/issues/6881
+trend	scratch-vreg + TLCI mutation bootstrap fixpoint	all	gate	1.15	15000	60000	#6882	https://github.com/JoNil-Botta/typelisp/issues/6881
+trend	bootstrap fixpoint	all	gate	1.15	15000	60000	#6882	https://github.com/JoNil-Botta/typelisp/issues/6881
+trend	stage2 opt2-built CLI compile + cross-fixpoint regression	all	gate	1.15	15000	60000	#6882	https://github.com/JoNil-Botta/typelisp/issues/6881
+trend	stage2 compile-profile verifier	all	gate	1.15	15000	60000	#6882	https://github.com/JoNil-Botta/typelisp/issues/6881
+trend	embedded stdlib tlci image	all	gate	1.15	15000	60000	#6882	https://github.com/JoNil-Botta/typelisp/issues/6881
+trend	stage2 inline TypeLisp tests	all	gate	1.15	15000	60000	#6882	https://github.com/JoNil-Botta/typelisp/issues/6881
+trend	stage2 selfhost compile manifest	all	gate	1.15	15000	60000	#6882	https://github.com/JoNil-Botta/typelisp/issues/6881
+trend	stage2 cli build/run and chooser smoke	all	gate	1.15	15000	60000	#6882	https://github.com/JoNil-Botta/typelisp/issues/6881
+trend	embedded stdlib TLCI bounded resource report	all	gate	1.15	15000	60000	#6882	https://github.com/JoNil-Botta/typelisp/issues/6881
+trend	stage2 native integration corpus	all	gate	1.15	15000	60000	#6882	https://github.com/JoNil-Botta/typelisp/issues/6881
+trend	stage2 public tool surface	all	gate	1.15	15000	60000	#6882	https://github.com/JoNil-Botta/typelisp/issues/6881
+trend	stage2 native integration corpus	compiler_frontend_smoke_suite	semantic-*	1.15	500	250	#6886	https://github.com/JoNil-Botta/typelisp/pull/6903
+trend	TLCI native route sustained stress	all	native-compile	1.15	3000	10000	#6884	https://github.com/JoNil-Botta/typelisp/pull/6906
+trend	TLCI native route sustained stress	all	source-compile	1.15	3000	10000	#6884	https://github.com/JoNil-Botta/typelisp/pull/6906
+trend	TLCI native route sustained stress	all	native-main-backend	1.50	25	250	#6884	https://github.com/JoNil-Botta/typelisp/pull/6906
+trend	TLCI native route sustained stress	all	source-main-backend	1.50	25	250	#6884	https://github.com/JoNil-Botta/typelisp/pull/6906

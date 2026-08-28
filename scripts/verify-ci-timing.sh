@@ -88,6 +88,28 @@ ci_timing_summary "$WORKDIR/timing.tsv" 2 > "$WORKDIR/summary.txt"
 grep -F '[ci-timing] slowest 2 rows:' "$WORKDIR/summary.txt" >/dev/null
 grep -F 'rows=2' "$WORKDIR/summary.txt" >/dev/null
 
+ci_timing_init "$WORKDIR/verification.tsv" self-test-host
+ci_timing_set_now_ms
+verification_started=$CI_TIMING_NOW_MS
+ci_timing_record_verification_complete "$verification_started" 0
+set +e
+ci_timing_record_verification_complete "$verification_started" 0 \
+    > "$WORKDIR/verification-duplicate.out" 2>&1
+status=$?
+set -e
+if [ "$status" -ne 2 ]; then
+    echo "duplicate complete-verification row returned $status, expected 2" >&2
+    exit 1
+fi
+grep -F 'duplicate complete-verification row' \
+    "$WORKDIR/verification-duplicate.out" >/dev/null
+awk -F '\t' '
+    $1 == "CI verification" && $2 == "all" &&
+        $3 == "complete-verification" && $4 ~ /^[0-9]+$/ &&
+        $5 == 0 && $6 == "self-test-host" { found++ }
+    END { exit found == 1 ? 0 : 1 }
+' "$WORKDIR/verification.tsv"
+
 if [ -r /proc/uptime ]; then
     ci_timing_init "$WORKDIR/overhead.tsv" self-test-host
     TYPELISP_CI_TIMING_GATE=overhead

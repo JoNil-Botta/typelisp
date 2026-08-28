@@ -58,6 +58,8 @@ fi
 
 if [ "${TYPELISP_CI_TIMING:-0}" = 1 ]; then
     ci_timing_init "$ROOT/target/ci-timing/$HOST_OS.tsv" "$HOST_OS"
+    ci_timing_set_now_ms
+    CI_VERIFY_STARTED_MS=$CI_TIMING_NOW_MS
     trap 'ci_timing_summary "$TYPELISP_CI_TIMING_FILE" 10' EXIT
 fi
 
@@ -221,6 +223,10 @@ run_gate \
 run_gate \
     "CI timing budget self-tests" \
     scripts/check-ci-timing-budgets.sh \
+    --self-test
+run_gate \
+    "TLCI native route size ratchet self-tests" \
+    scripts/check-tlci-native-route-size.sh \
     --self-test
 # A verify-*/check-* script that nothing invokes fails nothing. Two ISPC
 # correctness gates survived that way for months (#5690); this sweep makes the
@@ -634,6 +640,10 @@ else
     echo "[ci-verify]   stdlib documentation (doc target selection), instruction"
     echo "[ci-verify]   counts (valgrind), native link generated programs"
     echo "[ci-verify]   (Linux linker inputs)"
+fi
+
+if ci_timing_enabled; then
+    ci_timing_record_verification_complete "$CI_VERIFY_STARTED_MS" 0
 fi
 
 echo

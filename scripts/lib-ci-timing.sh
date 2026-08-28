@@ -138,6 +138,47 @@ ci_timing_run() {
     return "$_ci_timing_record_status"
 }
 
+ci_timing_record_verification_complete() {
+    _ci_timing_verification_started=$1
+    _ci_timing_verification_status=${2:-0}
+    if ! ci_timing_enabled; then
+        return 0
+    fi
+    case "$_ci_timing_verification_started" in
+        "" | *[!0-9]*) return 2 ;;
+    esac
+    case "$_ci_timing_verification_status" in
+        "" | *[!0-9-]*) return 2 ;;
+    esac
+    if awk -F '\t' -v host="$TYPELISP_CI_TIMING_HOST" '
+            NR > 1 && $1 == "CI verification" && $2 == "all" &&
+                $3 == "complete-verification" && $6 == host { found = 1 }
+            END { exit found ? 0 : 1 }
+        ' "$TYPELISP_CI_TIMING_FILE"; then
+        echo "[ci-timing] duplicate complete-verification row for $TYPELISP_CI_TIMING_HOST" >&2
+        return 2
+    fi
+    ci_timing_set_now_ms
+    if [ "$CI_TIMING_NOW_MS" -lt "$_ci_timing_verification_started" ]; then
+        return 2
+    fi
+    _ci_timing_verification_elapsed=$((
+        CI_TIMING_NOW_MS - _ci_timing_verification_started))
+    _ci_timing_verification_gate=${TYPELISP_CI_TIMING_GATE:-}
+    TYPELISP_CI_TIMING_GATE='CI verification'
+    export TYPELISP_CI_TIMING_GATE
+    if ci_timing_record_elapsed all complete-verification \
+            "$_ci_timing_verification_elapsed" \
+            "$_ci_timing_verification_status"; then
+        _ci_timing_verification_record_status=0
+    else
+        _ci_timing_verification_record_status=$?
+    fi
+    TYPELISP_CI_TIMING_GATE=$_ci_timing_verification_gate
+    export TYPELISP_CI_TIMING_GATE
+    return "$_ci_timing_verification_record_status"
+}
+
 ci_timing_summary() {
     _ci_timing_summary_file=${1:-${TYPELISP_CI_TIMING_FILE:-}}
     _ci_timing_top_n=${2:-10}

@@ -975,7 +975,22 @@ prove missing, duplicate, wrong-arity, and wrong-count rows fail closed.
 compile time, assembly comparison and diagnostic-control time, generated-source
 and native/source assembly bytes, and native/source main-backend time for all
 five rows plus aggregates. `reproduce.txt` records the exact working directories
-and commands for the two successful routes.
+and commands for the two successful routes. The required
+`check-tlci-native-route-size.sh` consumer compares row 0's native assembly with
+the reviewed host baselines in `scripts/tlci-native-route-size-policy.tsv`.
+The #6906 hosted baselines are 59,007 bytes on Linux and 78,114 bytes on Windows;
+the 64,908/85,925-byte maxima give 10% headroom. Policy rows name the 16,000
+dispatch denominator, causal PR, and hosted evidence. The checker reports raw
+and normalized bytes and fails on a missing/duplicate metric, a host-specific
+breach, more than 15% policy headroom, or a policy change without an issue/PR
+and evidence link. Reproduce both evidence and the ratchet with:
+
+```sh
+scripts/verify-tlci-native-route-stress.sh \
+  target/compile-profile-verify/typelisp-compile-profile
+scripts/check-tlci-native-route-size.sh \
+  target/tlci-native-route-stress/<host>/evidence.tsv
+```
 The same gate checks the ordered intern storage schema on a source compile and
 requires two complete copies in the two-entry batch route. It pins equal source
 record/map occupancy, fixed capacities, zero resize observations, non-zero
@@ -1218,7 +1233,35 @@ artifact so semantic stdout/stderr stay empty. The integration runner rejects
 missing or duplicate frontend-smoke rows. Timestamps come from a monotonic
 clock, and labels never include command lines, absolute credentials, or source
 text. Local runs remain uninstrumented unless the same environment variable is
-set.
+set. A successful flow ends with exactly one
+`CI verification / all / complete-verification` row measured from timing
+initialization through the last required gate; duplicate writes fail closed.
+The scheduled collector accepts only successful workflows with both host
+artifacts, then derives one `all-hosts` critical path (the larger host value)
+and one summed verification runner-time value. Pre-#6882 artifacts without the
+new total remain usable for older gate baselines, but cannot be mistaken for a
+fast complete-verification sample.
+
+`verify-tlci-native-route-stress.sh` additionally appends successful or failed
+`native-compile` and `source-compile` rows with their real process statuses, plus
+successful `native-main-backend` and `source-main-backend` aggregates. Together
+with the frontend semantic component rows, these are selected for scheduled
+analysis by `scripts/ci-timing-trend-policy.tsv`; arbitrary detail rows remain
+out of the report.
+
+The scheduled analyzer keeps its conservative 1.5x default for ordinary
+top-level gates. Reviewed policy rows apply a 1.15x factor plus an absolute
+delta and baseline-duration floor to the complete totals, long stable gates,
+and selected detail series. All series still require three recent and 20
+preceding unique successful heads and must exceed the baseline nearest-rank P95.
+Wall-clock findings only create, update, or close the report issue; they never
+fail required pull-request CI. The policy checker rejects malformed, duplicate,
+unknown-kind, overlapping, denylisted, over-1.5x, or unexplained rows. Every
+threshold row must carry an inline issue/PR reference and project evidence URL,
+while the existing hard-cap checker continues to reject a denylisted top-level
+gate without a required-CI cap. Run all offline policy, aggregation, dispersion,
+duplicate-head, incomplete-history, selected-phase, and 15-20% regression
+fixtures with `scripts/analyze-ci-timing-trends.sh --self-test`.
 
 The Linux timing-budget gate requires exactly one successful
 `TypeLisp source lint / all / gate` row and caps it at 60,000 ms. The cap is

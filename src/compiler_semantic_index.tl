@@ -1,7 +1,9 @@
 ;; compiler_semantic_index.tl - Owned semantic source index for compiler tooling.
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.byte_buf)
+(import stdlib.env)
 (import stdlib.io)
+(import stdlib.profile)
 (import stdlib.arena)
 (import stdlib.string)
 (import stdlib.sort)
@@ -21,6 +23,61 @@
 (import compiler_symbols as csym)
 (import compiler_intern as ci)
 (import compiler_intern_state as cis)
+
+;; The frontend smoke suite keeps semantic stdout/stderr empty, so its opt-in
+;; timing evidence goes directly to the inherited CI timing artifact. These
+;; helpers are also used by the suite parent for child-process rows.
+(define (compiler-semantic-index-smoke-timing-enabled?) : bool
+  (and
+    (string.eq (env.var-value "TYPELISP_CI_TIMING") "1")
+    (> (string.string-length (env.var-value "TYPELISP_CI_TIMING_FILE")) 0)))
+
+(define (compiler-semantic-index-smoke-timing-start) : i64
+  (if (compiler-semantic-index-smoke-timing-enabled?)
+    (profile.now-ms)
+    -1))
+
+(define (compiler-semantic-index-smoke-timing-env-or
+  [name : String]
+  [fallback : String]) : String
+  (let
+    [value : String (env.var-value name)]
+    (if (> (string.string-length value) 0)
+      value
+      fallback)))
+
+(define (compiler-semantic-index-smoke-timing-record
+  [phase : String]
+  [started-ms : i64]
+  [status : i64]) : bool
+  (if (< started-ms 0)
+    true
+    (let
+      [path : String (env.var-value "TYPELISP_CI_TIMING_FILE")]
+      [gate : String
+        (compiler-semantic-index-smoke-timing-env-or
+          "TYPELISP_CI_TIMING_GATE"
+          "ungated")]
+      [host : String
+        (compiler-semantic-index-smoke-timing-env-or
+          "TYPELISP_CI_TIMING_HOST"
+          "unknown")]
+      [elapsed-ms : i64 (- (profile.now-ms) started-ms)]
+      [row : String
+        (str_cat.str-cat
+          gate
+          "\tcompiler_frontend_smoke_suite\t"
+          phase
+          "\t"
+          (string.int->string elapsed-ms)
+          "\t"
+          (string.int->string status)
+          "\t"
+          host
+          "\n")]
+      (match (io.try-append-file (& path) (byte_buf.str-as-bytes (& row)))
+        [(io.OkIoUnit) true]
+        [(io.ErrIoUnit _) false]))))
 
 ;; Tool-facing semantic data is copied into an explicitly owned arena. None of
 ;; these records retain TcContext, TcTypeEnv, parser sidecars, or intern-pool
@@ -11411,9 +11468,16 @@
     [OtherEmpty 0]
     [(SemanticFull item) 1]))"]
     [imported-path : String "src/tests/semantic/index/nominal_dep.tl"]
+    [build-start : i64 (compiler-semantic-index-smoke-timing-start)]
     (match (compiler-check-source-index-with-roots path source (svec.new))
       [(ResultCompilerCheckWithSemanticIndex.Ok _ index)
         (let
+          [build-timing-ok : bool
+            (compiler-semantic-index-smoke-timing-record
+              "semantic-nominal-build"
+              build-start
+              0)]
+          [selection-start : i64 (compiler-semantic-index-smoke-timing-start)]
           [left-def-i : i64
             (compiler-semantic-source-index-find-name-occurrence
               (& index)
@@ -11596,6 +11660,11 @@
               "value"
               CompilerSemanticRecordRole.Use
               0)]
+          [selection-timing-ok : bool
+            (compiler-semantic-index-smoke-timing-record
+              "semantic-nominal-select"
+              selection-start
+              0)]
           (if (or
             (< left-def-i 0)
             (< other-left-def-i 0)
@@ -11622,11 +11691,21 @@
             (< imported-none-def-i 0)
             (< imported-none-use-i 0)
             (< imported-field-def-i 0)
-            (< imported-field-use-i 0))
-            (begin
-              (compiler-semantic-source-index-release! (&mut index))
-              false)
+            (< imported-field-use-i 0)
+            (not build-timing-ok)
+            (not selection-timing-ok))
             (let
+              [release-start : i64 (compiler-semantic-index-smoke-timing-start)]
+              (begin
+                (compiler-semantic-source-index-release! (&mut index))
+                (compiler-semantic-index-smoke-timing-record
+                  "semantic-nominal-release"
+                  release-start
+                  1)
+                false))
+            (let
+              [assertion-start : i64
+                (compiler-semantic-index-smoke-timing-start)]
               [left-def : CompilerSemanticRecord
                 (compiler-semantic-source-index-get (& index) left-def-i)]
               [other-left-def : CompilerSemanticRecord
@@ -11823,14 +11902,42 @@
                     (compiler-semantic-symbol-id-eq?
                       full-def.symbol
                       other-full-def.symbol)))]
+              [assertion-timing-ok : bool
+                (compiler-semantic-index-smoke-timing-record
+                  "semantic-nominal-assert"
+                  assertion-start
+                  (if ok
+                    0
+                    1))]
+              [release-start : i64 (compiler-semantic-index-smoke-timing-start)]
               (begin
                 (compiler-semantic-source-index-release! (&mut index))
-                (and ok (= (compiler-semantic-source-index-len (& index)) 0))))))]
+                (let
+                  [release-timing-ok : bool
+                    (compiler-semantic-index-smoke-timing-record
+                      "semantic-nominal-release"
+                      release-start
+                      0)]
+                  (and
+                    ok
+                    assertion-timing-ok
+                    release-timing-ok
+                    (= (compiler-semantic-source-index-len (& index)) 0)))))))]
       [(ResultCompilerCheckWithSemanticIndex.Partial _ partial)
         (begin
+          (compiler-semantic-index-smoke-timing-record
+            "semantic-nominal-build"
+            build-start
+            1)
           (compiler-semantic-source-index-release! (&mut partial))
           false)]
-      [(ResultCompilerCheckWithSemanticIndex.Err _) false])))
+      [(ResultCompilerCheckWithSemanticIndex.Err _)
+        (begin
+          (compiler-semantic-index-smoke-timing-record
+            "semantic-nominal-build"
+            build-start
+            1)
+          false)])))
 
 (define (compiler-check-semantic-index-exact-top-candidate-storage-ok?) : bool
   (let
@@ -11903,13 +12010,106 @@
       [(ResultCompilerCheckWithSemanticIndex.Err _) false])))
 
 (define (compiler-check-semantic-index-ok?) : bool
-  (and
-    (compiler-check-semantic-index-base-ok?)
-    (compiler-check-semantic-index-macro-call-sites-ok?)
-    (compiler-check-semantic-index-inferred-locals-ok?)
-    (compiler-check-semantic-index-retained-transitions-ok?)
-    (compiler-check-semantic-index-dense-scopes-ok?)
-    (compiler-check-semantic-index-partial-ok?)
-    (compiler-check-semantic-index-canonical-ok?)
-    (compiler-check-semantic-index-nominal-members-ok?)
-    (compiler-check-semantic-index-exact-top-candidate-storage-ok?)))
+  (let
+    [base-start : i64 (compiler-semantic-index-smoke-timing-start)]
+    [base-ok : bool (compiler-check-semantic-index-base-ok?)]
+    [base-timing-ok : bool
+      (compiler-semantic-index-smoke-timing-record
+        "semantic-base"
+        base-start
+        (if base-ok
+          0
+          1))]
+    [macro-start : i64 (compiler-semantic-index-smoke-timing-start)]
+    [macro-ok : bool (compiler-check-semantic-index-macro-call-sites-ok?)]
+    [macro-timing-ok : bool
+      (compiler-semantic-index-smoke-timing-record
+        "semantic-macro-call-sites"
+        macro-start
+        (if macro-ok
+          0
+          1))]
+    [locals-start : i64 (compiler-semantic-index-smoke-timing-start)]
+    [locals-ok : bool (compiler-check-semantic-index-inferred-locals-ok?)]
+    [locals-timing-ok : bool
+      (compiler-semantic-index-smoke-timing-record
+        "semantic-inferred-locals"
+        locals-start
+        (if locals-ok
+          0
+          1))]
+    [transitions-start : i64 (compiler-semantic-index-smoke-timing-start)]
+    [transitions-ok : bool
+      (compiler-check-semantic-index-retained-transitions-ok?)]
+    [transitions-timing-ok : bool
+      (compiler-semantic-index-smoke-timing-record
+        "semantic-retained-transitions"
+        transitions-start
+        (if transitions-ok
+          0
+          1))]
+    [scopes-start : i64 (compiler-semantic-index-smoke-timing-start)]
+    [scopes-ok : bool (compiler-check-semantic-index-dense-scopes-ok?)]
+    [scopes-timing-ok : bool
+      (compiler-semantic-index-smoke-timing-record
+        "semantic-dense-scopes"
+        scopes-start
+        (if scopes-ok
+          0
+          1))]
+    [partial-start : i64 (compiler-semantic-index-smoke-timing-start)]
+    [partial-ok : bool (compiler-check-semantic-index-partial-ok?)]
+    [partial-timing-ok : bool
+      (compiler-semantic-index-smoke-timing-record
+        "semantic-partial"
+        partial-start
+        (if partial-ok
+          0
+          1))]
+    [canonical-start : i64 (compiler-semantic-index-smoke-timing-start)]
+    [canonical-ok : bool (compiler-check-semantic-index-canonical-ok?)]
+    [canonical-timing-ok : bool
+      (compiler-semantic-index-smoke-timing-record
+        "semantic-canonical"
+        canonical-start
+        (if canonical-ok
+          0
+          1))]
+    [nominal-start : i64 (compiler-semantic-index-smoke-timing-start)]
+    [nominal-ok : bool (compiler-check-semantic-index-nominal-members-ok?)]
+    [nominal-timing-ok : bool
+      (compiler-semantic-index-smoke-timing-record
+        "semantic-nominal-members"
+        nominal-start
+        (if nominal-ok
+          0
+          1))]
+    [storage-start : i64 (compiler-semantic-index-smoke-timing-start)]
+    [storage-ok : bool
+      (compiler-check-semantic-index-exact-top-candidate-storage-ok?)]
+    [storage-timing-ok : bool
+      (compiler-semantic-index-smoke-timing-record
+        "semantic-exact-top-candidate-storage"
+        storage-start
+        (if storage-ok
+          0
+          1))]
+    (and
+      base-ok
+      base-timing-ok
+      macro-ok
+      macro-timing-ok
+      locals-ok
+      locals-timing-ok
+      transitions-ok
+      transitions-timing-ok
+      scopes-ok
+      scopes-timing-ok
+      partial-ok
+      partial-timing-ok
+      canonical-ok
+      canonical-timing-ok
+      nominal-ok
+      nominal-timing-ok
+      storage-ok
+      storage-timing-ok)))

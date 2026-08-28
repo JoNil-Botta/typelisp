@@ -5,8 +5,10 @@
 # Callers set TYPELISP_CI_TIMING=1 and initialize one artifact with
 # ci_timing_init. Child gates inherit TYPELISP_CI_TIMING_FILE,
 # TYPELISP_CI_TIMING_HOST, and TYPELISP_CI_TIMING_GATE, then append compact
-# rows through ci_timing_run/ci_timing_record_elapsed. Labels are deliberately
-# caller-provided metadata; command lines and source contents are never stored.
+# rows through ci_timing_run/ci_timing_record_elapsed. Native children may append
+# the same six-column schema directly when their output contract must stay empty.
+# Labels are deliberately caller-provided metadata; command lines and source
+# contents are never stored.
 
 ci_timing_enabled() {
     [ "${TYPELISP_CI_TIMING:-0}" = 1 ] && [ -n "${TYPELISP_CI_TIMING_FILE:-}" ]

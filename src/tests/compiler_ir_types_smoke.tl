@@ -252,8 +252,10 @@
       (match func
         [(compiler_ir_types.CompilerIrFunction.Function _ stored _ _ _)
           (and
-            (= (compiler_ir_types.compiler-ir-param-seq-count
-              (compiler_ir_types.compiler-ir-global-shared-view stored)) 2)
+            (=
+              (compiler_ir_types.compiler-ir-param-seq-count
+                (compiler_ir_types.compiler-ir-global-shared-view stored))
+              2)
             (compiler-ir-smoke-param-seq-entry-i64?
               (compiler_ir_types.compiler-ir-global-shared-view stored)
               0
@@ -263,8 +265,10 @@
       (match cloned
         [(compiler_ir_types.CompilerIrFunction.Function _ stored _ _ _)
           (and
-            (= (compiler_ir_types.compiler-ir-param-seq-count
-              (compiler_ir_types.compiler-ir-global-shared-view stored)) 2)
+            (=
+              (compiler_ir_types.compiler-ir-param-seq-count
+                (compiler_ir_types.compiler-ir-global-shared-view stored))
+              2)
             (compiler-ir-smoke-param-seq-entry-i64?
               (compiler_ir_types.compiler-ir-global-shared-view stored)
               0

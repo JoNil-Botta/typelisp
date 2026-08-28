@@ -1375,6 +1375,131 @@
           "right reset clears its generated count")))))
 
 (cfg
+  test
+  (test
+    compiler-driver-profile-intern-storage-job-isolation
+    (let
+      [left : profile_state.CompilerProfileState
+        (profile_state.compiler-profile-state-new)]
+      [right : profile_state.CompilerProfileState
+        (profile_state.compiler-profile-state-new)]
+      [left-address : u64
+        (profile_state.compiler-profile-state-metrics-address left)]
+      [right-address : u64
+        (profile_state.compiler-profile-state-metrics-address right)]
+      [left-intern : ci.InternCompatState
+        (ci.intern-compat-state-new-with-profile-metrics-address left-address)]
+      [right-intern : ci.InternCompatState
+        (ci.intern-compat-state-new-with-profile-metrics-address right-address)]
+      (begin
+        (ci.intern-profile-reset! left-address)
+        (ci.intern-profile-reset! right-address)
+        (ci.intern-compat-state-reset! left-intern)
+        (ci.intern-compat-state-reset! right-intern)
+        (let
+          [left-source : i64
+            (ci.intern-compat-state-intern left-intern "left-profile-source")]
+          [right-source : i64
+            (ci.intern-compat-state-intern right-intern "right-profile-source")]
+          [left-canonical : i64
+            (ci.intern-compat-state-generated-canonical-name
+              left-intern
+              "left-profile-canonical")]
+          [left-canonical-again : i64
+            (ci.intern-compat-state-generated-canonical-name
+              left-intern
+              "left-profile-canonical")]
+          [right-generated : i64
+            (ci.intern-compat-state-generated-name
+              right-intern
+              "right-profile-generated")]
+          (begin
+            ;; A known larger observation proves max and total use the same
+            ;; numeric slots in one owner without touching the other owner.
+            (ci.intern-profile-note-source-map-probe! left-address 4)
+            (test.assert-i64-eq
+              left-source
+              right-source
+              "independent owners may assign the same source record id")
+            (test.assert-i64-eq
+              left-canonical
+              right-generated
+              "independent owners may assign the same generated record id")
+            (test.assert-i64-eq
+              left-canonical
+              left-canonical-again
+              "canonical generated insertion is counted once")
+            (ci.intern-profile-reset! right-address)
+            (ci.intern-compat-state-reset! right-intern)
+            (test.assert-i64-eq
+              (ci.intern-profile-value
+                left-address
+                ci.intern-profile-source-record-live-metric)
+              1
+              "right reset preserves left source record live count")
+            (test.assert-i64-eq
+              (ci.intern-profile-value
+                left-address
+                ci.intern-profile-generated-record-live-metric)
+              1
+              "right reset preserves left generated record live count")
+            (test.assert-i64-eq
+              (ci.intern-profile-value
+                left-address
+                ci.intern-profile-source-map-live-metric)
+              1
+              "left source map owns its occupancy")
+            (test.assert-i64-eq
+              (ci.intern-profile-value
+                left-address
+                ci.intern-profile-canonical-map-live-metric)
+              1
+              "left canonical map counts only the new record")
+            (test.assert-i64-eq
+              (ci.intern-profile-value
+                left-address
+                ci.intern-profile-source-map-probe-total-metric)
+              5
+              "source probe total accumulates per owner")
+            (test.assert-i64-eq
+              (ci.intern-profile-value
+                left-address
+                ci.intern-profile-source-map-probe-max-metric)
+              4
+              "source probe maximum is per owner")
+            (test.assert-i64-eq
+              (ci.intern-profile-value
+                left-address
+                ci.intern-profile-canonical-map-probe-total-metric)
+              2
+              "canonical insert and reuse each record one probe")
+            (test.assert-i64-eq
+              (ci.intern-profile-value
+                right-address
+                ci.intern-profile-source-record-live-metric)
+              0
+              "right reset clears only right live observations")
+            (test.assert-i64-eq
+              (ci.intern-profile-value
+                right-address
+                ci.intern-profile-source-record-capacity-metric)
+              (ci.intern-capacity)
+              "right reset restores fixed source record capacity")
+            (test.assert-i64-eq
+              (ci.intern-profile-value
+                right-address
+                ci.intern-profile-source-map-resize-metric)
+              0
+              "fixed source map reports zero resizes")
+            (test.assert-true
+              (>
+                (ci.intern-profile-value
+                  right-address
+                  ci.intern-profile-record-reserved-bytes-metric)
+                0)
+              "right owner restores fixed record reserved bytes")))))))
+
+(cfg
   compile-profile
   (define (compiler-driver-profile-max [left : i64] [right : i64]) : i64
     (if (> left right)
@@ -1897,6 +2022,101 @@
         (compiler-driver-profile-intern-line
           "slice_misses"
           (ci.intern-profile-slice-miss-value intern-metrics-address))
+        (compiler-driver-profile-intern-line
+          "records.source_live"
+          (ci.intern-profile-value
+            intern-metrics-address
+            ci.intern-profile-source-record-live-metric))
+        (compiler-driver-profile-intern-line
+          "records.source_capacity"
+          (ci.intern-profile-value
+            intern-metrics-address
+            ci.intern-profile-source-record-capacity-metric))
+        (compiler-driver-profile-intern-line
+          "records.generated_live"
+          (ci.intern-profile-value
+            intern-metrics-address
+            ci.intern-profile-generated-record-live-metric))
+        (compiler-driver-profile-intern-line
+          "records.generated_capacity"
+          (ci.intern-profile-value
+            intern-metrics-address
+            ci.intern-profile-generated-record-capacity-metric))
+        (compiler-driver-profile-intern-line
+          "records.source_resizes"
+          (ci.intern-profile-value
+            intern-metrics-address
+            ci.intern-profile-source-record-resize-metric))
+        (compiler-driver-profile-intern-line
+          "records.generated_resizes"
+          (ci.intern-profile-value
+            intern-metrics-address
+            ci.intern-profile-generated-record-resize-metric))
+        (compiler-driver-profile-intern-line
+          "records.reserved_bytes"
+          (ci.intern-profile-value
+            intern-metrics-address
+            ci.intern-profile-record-reserved-bytes-metric))
+        (compiler-driver-profile-intern-line
+          "source_map.live"
+          (ci.intern-profile-value
+            intern-metrics-address
+            ci.intern-profile-source-map-live-metric))
+        (compiler-driver-profile-intern-line
+          "source_map.capacity"
+          (ci.intern-profile-value
+            intern-metrics-address
+            ci.intern-profile-source-map-capacity-metric))
+        (compiler-driver-profile-intern-line
+          "source_map.probes_total"
+          (ci.intern-profile-value
+            intern-metrics-address
+            ci.intern-profile-source-map-probe-total-metric))
+        (compiler-driver-profile-intern-line
+          "source_map.probe_max"
+          (ci.intern-profile-value
+            intern-metrics-address
+            ci.intern-profile-source-map-probe-max-metric))
+        (compiler-driver-profile-intern-line
+          "source_map.resizes"
+          (ci.intern-profile-value
+            intern-metrics-address
+            ci.intern-profile-source-map-resize-metric))
+        (compiler-driver-profile-intern-line
+          "source_map.reserved_bytes"
+          (ci.intern-profile-value
+            intern-metrics-address
+            ci.intern-profile-source-map-reserved-bytes-metric))
+        (compiler-driver-profile-intern-line
+          "canonical_map.live"
+          (ci.intern-profile-value
+            intern-metrics-address
+            ci.intern-profile-canonical-map-live-metric))
+        (compiler-driver-profile-intern-line
+          "canonical_map.capacity"
+          (ci.intern-profile-value
+            intern-metrics-address
+            ci.intern-profile-canonical-map-capacity-metric))
+        (compiler-driver-profile-intern-line
+          "canonical_map.probes_total"
+          (ci.intern-profile-value
+            intern-metrics-address
+            ci.intern-profile-canonical-map-probe-total-metric))
+        (compiler-driver-profile-intern-line
+          "canonical_map.probe_max"
+          (ci.intern-profile-value
+            intern-metrics-address
+            ci.intern-profile-canonical-map-probe-max-metric))
+        (compiler-driver-profile-intern-line
+          "canonical_map.resizes"
+          (ci.intern-profile-value
+            intern-metrics-address
+            ci.intern-profile-canonical-map-resize-metric))
+        (compiler-driver-profile-intern-line
+          "canonical_map.reserved_bytes"
+          (ci.intern-profile-value
+            intern-metrics-address
+            ci.intern-profile-canonical-map-reserved-bytes-metric))
         (compiler-driver-profile-ctfe-env-line
           "binding_appends"
           (compiler_ctfe.ctfe-env-profile-binding-appends-value))

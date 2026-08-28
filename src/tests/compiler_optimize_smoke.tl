@@ -3132,6 +3132,10 @@
       (compiler_optimize_tests.compiler-optimize-licm-profitability-self-test)
       42)
     (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
+      "compiler-optimize-licm-simd-self-test"
+      (compiler_optimize_tests.compiler-optimize-licm-simd-self-test)
+      42)
+    (compiler_optimize_tests.compiler-optimize-self-test-require-i64!
       "compiler-optimize-licm-word-self-test"
       (compiler_optimize_tests.compiler-optimize-licm-word-self-test)
       42)

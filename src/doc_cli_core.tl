@@ -257,9 +257,12 @@
           stdlib-roots
           (sym_i64_env.sym-i64-empty)
           pools)]
-      [_capture : unit
+      [_publish : unit
         (begin
-          (ast.ast-node-pool-context-capture-active! pools)
+          ;; The stateful loader extends the explicit segmented context. Do not
+          ;; overwrite it with the stale compatibility-global view on return;
+          ;; publish the completed owner for the remaining legacy readers.
+          (ast.ast-node-pool-context-install! pools)
           (ci.intern-compat-state-capture-from-globals! intern-state))]
       [_restore : unit
         (compiler_load.compiler-load-session-state-lazy-import-mode-set-enabled!

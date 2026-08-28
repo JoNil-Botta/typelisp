@@ -1292,7 +1292,9 @@
                   (parser.compiler-cfg-empty)
                   pools)]
               (begin
-                (ast.ast-node-pool-context-capture-active! pools)
+                ;; Preserve segments appended through the explicit loader and
+                ;; publish that completed owner for legacy expansion readers.
+                (ast.ast-node-pool-context-install! pools)
                 (ci.intern-compat-state-capture-from-globals! intern-state)
                 (match loaded
                   [(compiler_load.ResultCompilerLoadWithPaths.Ok

@@ -192,8 +192,10 @@ EOF
 echo "[tlci-native-route-stress] native production-route batch"
 capture_now_ms
 NATIVE_STARTED_MS=$CAPTURED_NOW_MS
+NATIVE_STATUS=0
 if [ "$NL_HOST_OS" = windows ]; then
-    if ! (
+    set +e
+    (
         cd "$NATIVE_CWD"
         pwsh -NoProfile -File "$ROOT/scripts/measure-compile-batch-memory.ps1" \
             -Compiler "$COMPILER" \
@@ -202,20 +204,19 @@ if [ "$NL_HOST_OS" = windows ]; then
             -Target "$NL_BOOTSTRAP_TARGET" \
             -NoStdlibRoot \
             -OptLevel 2
-    ) > "$WORKDIR/native-launch.stdout" 2> "$WORKDIR/native-launch.stderr"; then
-        finalize_record
-        fail "native Windows batch failed; see $WINDOWS_MEMORY_DIR/stderr.log"
-    fi
+    ) > "$WORKDIR/native-launch.stdout" 2> "$WORKDIR/native-launch.stderr"
+    NATIVE_STATUS=$?
+    set -e
     NATIVE_STDOUT="$WINDOWS_MEMORY_DIR/stdout.log"
     NATIVE_STDERR="$WINDOWS_MEMORY_DIR/stderr.log"
-    cp "$WINDOWS_MEMORY_DIR/summary.tsv" "$WORKDIR/metrics.tsv"
 else
     [ -x "$TLCI_NATIVE_ROUTE_TIME_BIN" ] ||
         fail "GNU time is required for the native-route RSS report: $TLCI_NATIVE_ROUTE_TIME_BIN"
     if ! "$TLCI_NATIVE_ROUTE_TIME_BIN" -v -o /dev/null true >/dev/null 2>&1; then
         fail "GNU time with -v support is required for the native-route RSS report: $TLCI_NATIVE_ROUTE_TIME_BIN"
     fi
-    if ! (
+    set +e
+    (
         cd "$NATIVE_CWD"
         "$TLCI_NATIVE_ROUTE_TIME_BIN" \
             -f 'wall_seconds=%e\npeak_rss_kb=%M' \
@@ -224,34 +225,49 @@ else
                 --target "$NL_BOOTSTRAP_TARGET" \
                 $(native_target_cfg_args) \
                 --opt-level 2
-    ) > "$NATIVE_STDOUT" 2> "$NATIVE_STDERR"; then
-        finalize_record
-        fail "native Linux batch failed; see $NATIVE_STDERR"
-    fi
+    ) > "$NATIVE_STDOUT" 2> "$NATIVE_STDERR"
+    NATIVE_STATUS=$?
+    set -e
+fi
+capture_now_ms
+NATIVE_COMPILE_MS=$((CAPTURED_NOW_MS - NATIVE_STARTED_MS))
+ci_timing_record_elapsed all native-compile \
+    "$NATIVE_COMPILE_MS" "$NATIVE_STATUS"
+if [ "$NATIVE_STATUS" -ne 0 ]; then
+    finalize_record
+    fail "native $NL_HOST_OS batch failed; see $NATIVE_STDERR"
+fi
+if [ "$NL_HOST_OS" = windows ]; then
+    cp "$WINDOWS_MEMORY_DIR/summary.tsv" "$WORKDIR/metrics.tsv"
+else
     {
         printf 'host\tmetric\tvalue\n'
         sed -n 's/^\([^=]*\)=\(.*\)$/linux\t\1\t\2/p' "$WORKDIR/native.time"
     } > "$WORKDIR/metrics.tsv"
 fi
-capture_now_ms
-NATIVE_COMPILE_MS=$((CAPTURED_NOW_MS - NATIVE_STARTED_MS))
 finalize_record
 
 echo "[tlci-native-route-stress] source-route differential batch"
 capture_now_ms
 SOURCE_STARTED_MS=$CAPTURED_NOW_MS
-if ! (
+set +e
+(
     cd "$SOURCE_ROOT"
     "$COMPILER" compile --batch "$SOURCE_BATCH" \
         --target "$NL_BOOTSTRAP_TARGET" \
         $(native_target_cfg_args) \
         --opt-level 2 \
         --stdlib-root stdlib
-) > "$SOURCE_STDOUT" 2> "$SOURCE_STDERR"; then
-    fail "source differential batch failed; see $SOURCE_STDERR"
-fi
+) > "$SOURCE_STDOUT" 2> "$SOURCE_STDERR"
+SOURCE_STATUS=$?
+set -e
 capture_now_ms
 SOURCE_COMPILE_MS=$((CAPTURED_NOW_MS - SOURCE_STARTED_MS))
+ci_timing_record_elapsed all source-compile \
+    "$SOURCE_COMPILE_MS" "$SOURCE_STATUS"
+if [ "$SOURCE_STATUS" -ne 0 ]; then
+    fail "source differential batch failed; see $SOURCE_STDERR"
+fi
 
 capture_now_ms
 COMPARE_STARTED_MS=$CAPTURED_NOW_MS
@@ -729,6 +745,11 @@ verify_evidence_schema() {
 }
 
 verify_evidence_schema
+scripts/check-tlci-native-route-size.sh "$EVIDENCE"
+ci_timing_record_elapsed all native-main-backend \
+    "$TOTAL_NATIVE_BACKEND_MS" 0
+ci_timing_record_elapsed all source-main-backend \
+    "$TOTAL_SOURCE_BACKEND_MS" 0
 
 echo "[tlci-native-route-stress] producer identity exact: $COMPILER_IDENTITY"
 echo "[tlci-native-route-stress] dispatches one-pass=$HEAVY_ACTUAL total=$TOTAL_ACTUAL rows=$ROW_COUNT identities=$UNIQUE_IDENTITIES"

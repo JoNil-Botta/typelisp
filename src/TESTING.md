@@ -964,6 +964,18 @@ its native-result counters require real `Module` and `Decls` results to commit
 through the existing module/declaration validation and splice paths. The
 production-route stress gate additionally crosses five pool-reset and image
 release/remap cycles with more than 25,000 routed calls per host.
+The 16,000-call heavy row uses the native `__tl-project-field` Expr identity:
+its expanded reads are pure and removed by ordinary optimization, while every
+call still crosses the production macro walk and mapped catalog entry. Small
+required probes retain `__tl-box-place`, `and`, `or`, `unless`, `hash`,
+`owned`, and `append!` coverage. The gate parses compile-profile detail rows
+per batch entry and requires exact identity/arity/call counts; built-in controls
+prove missing, duplicate, wrong-arity, and wrong-count rows fail closed.
+`target/tlci-native-route-stress/<host>/evidence.tsv` records native and source
+compile time, assembly comparison and diagnostic-control time, generated-source
+and native/source assembly bytes, and native/source main-backend time for all
+five rows plus aggregates. `reproduce.txt` records the exact working directories
+and commands for the two successful routes.
 The same gate checks the ordered intern storage schema on a source compile and
 requires two complete copies in the two-entry batch route. It pins equal source
 record/map occupancy, fixed capacities, zero resize observations, non-zero

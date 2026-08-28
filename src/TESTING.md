@@ -1242,6 +1242,29 @@ and one summed verification runner-time value. Pre-#6882 artifacts without the
 new total remain usable for older gate baselines, but cannot be mistaken for a
 fast complete-verification sample.
 
+Compiler-producing gates and same-run consumers are owned by
+[`../scripts/ci-compiler-artifacts.tsv`](../scripts/ci-compiler-artifacts.tsv).
+The ledger records the producer identity class, host/target, cfg and opt/profile
+shape, source set, output kind, and why each near-match must remain an
+independent proof. Reusable groups have exactly one producer and one or more
+consumers. `scripts/verify-ci-compiler-artifacts.sh` rejects malformed or
+orphaned groups and exercises the fail-closed handoff metadata against empty,
+corrupt, stale, cross-host, wrong-target, wrong-cfg, wrong-opt/profile, and
+digest-mismatched artifacts. Required CI additionally uploads a stable
+`ci-compiler-artifacts-<host>` trace with the producer/compiler identity and
+digest, normalized invocation, source-set digest, output kind, and output
+digest for every validated handoff.
+
+The current exact reuse groups are the converged bootstrap compiler, the
+selfhost compile-manifest assembly set, the canonical embedded-stdlib TLCI
+image bundle, Linux build-invariance's opt1 reference assembly, the
+compile-profile compiler, and the single selfhost CLI shared inside the Linux
+native-link gate. Standalone verifier invocations keep their local build
+fallbacks. Any new required-flow command that produces `src/main.tl`, an
+embedded compiler image, or a reusable compiler reference must add a ledger
+row and either publish validated metadata or state the independent assertion
+that makes reuse unsound.
+
 `verify-tlci-native-route-stress.sh` additionally appends successful or failed
 `native-compile` and `source-compile` rows with their real process statuses, plus
 successful `native-main-backend` and `source-main-backend` aggregates. Together

@@ -1,0 +1,359 @@
+#!/usr/bin/env sh
+set -eu
+
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+cd "$ROOT"
+
+. "$ROOT/scripts/lib-ci-compiler-artifact.sh"
+
+if [ "$#" -ne 0 ]; then
+    echo "usage: scripts/verify-ci-compiler-artifacts.sh" >&2
+    exit 2
+fi
+
+INVENTORY="$ROOT/scripts/ci-compiler-artifacts.tsv"
+
+WORKDIR="$ROOT/target/ci-compiler-artifact-self-test"
+FIXTURE="$WORKDIR/fixture"
+SOURCE="$FIXTURE/src"
+STDLIB="$FIXTURE/stdlib"
+PRODUCER="$FIXTURE/producer"
+OUTPUT="$FIXTURE/output.bin"
+PATH_FILE="$FIXTURE/handoff.path"
+METADATA="$FIXTURE/handoff.meta"
+TRACE="$FIXTURE/trace.tsv"
+STDOUT="$FIXTURE/case.stdout"
+STDERR="$FIXTURE/case.stderr"
+rm -rf "$WORKDIR"
+mkdir -p "$SOURCE" "$STDLIB"
+
+cat > "$PRODUCER" <<'EOF'
+#!/usr/bin/env sh
+case "${1:-}" in
+    --producer-identity) printf '%s\n' 0123456789abcdef0123456789abcdef01234567 ;;
+    --version) printf '%s\n' 'typelisp 0123456789abcdef0123456789abcdef01234567 self-test' ;;
+    *) exit 2 ;;
+esac
+EOF
+chmod +x "$PRODUCER"
+printf '%s\n' '(define source-value : i64 1)' > "$SOURCE/input.tl"
+printf '%s\n' '(define stdlib-value : i64 2)' > "$STDLIB/input.tl"
+printf '%s\n' artifact-payload > "$OUTPUT"
+
+HOST=$(ci_compiler_artifact_host)
+TARGET="${HOST}-x86_64"
+LABEL=self-test-compiler
+CFG=cfg-a,cfg-b
+OPT=2
+PROFILE=release
+SOURCE_ROOTS=fixture/src,fixture/stdlib
+STDLIB_ROOTS=fixture/stdlib,fixture/src
+ENVIRONMENT=CODEGEN_MODE=self-test
+KIND=compiler-binary
+ARGV='compile fixture/src/main.tl -o {output} --target {target} --cfg cfg-a --cfg cfg-b --opt-level 2'
+TYPELISP_CI_COMPILER_ARTIFACT_RUN_TOKEN=self-test-run-1
+TYPELISP_CI_COMPILER_ARTIFACT_TRACE=$TRACE
+export TYPELISP_CI_COMPILER_ARTIFACT_RUN_TOKEN
+export TYPELISP_CI_COMPILER_ARTIFACT_TRACE
+
+publish_fixture() {
+    rm -f "$PATH_FILE" "$METADATA"
+    printf '%s\n' artifact-payload > "$OUTPUT"
+    ci_compiler_artifact_publish \
+        "$WORKDIR" "$METADATA" "$PATH_FILE" "$LABEL" "$PRODUCER" \
+        "$TARGET" "$CFG" "$OPT" "$PROFILE" "$SOURCE_ROOTS" \
+        "$STDLIB_ROOTS" "$ENVIRONMENT" "$KIND" "$OUTPUT" "$ARGV"
+}
+
+require_fixture() {
+    ci_compiler_artifact_require \
+        "$WORKDIR" "$METADATA" "$PATH_FILE" "$LABEL" "$PRODUCER" \
+        "$TARGET" "$CFG" "$OPT" "$PROFILE" "$SOURCE_ROOTS" \
+        "$STDLIB_ROOTS" "$ENVIRONMENT" "$KIND" - "$ARGV"
+}
+
+expect_failure() {
+    label=$1
+    needle=$2
+    shift 2
+    set +e
+    "$@" > "$STDOUT" 2> "$STDERR"
+    status=$?
+    set -e
+    if [ "$status" -eq 0 ]; then
+        echo "ci compiler artifact self-test unexpectedly passed: $label" >&2
+        exit 1
+    fi
+    if ! grep -F "$needle" "$STDERR" >/dev/null; then
+        echo "ci compiler artifact self-test had wrong failure: $label" >&2
+        echo "expected: $needle" >&2
+        sed 's/^/  /' "$STDERR" >&2 || true
+        exit 1
+    fi
+}
+
+validate_checked_in_inventory() {
+    rows="$FIXTURE/inventory-rows.tsv"
+    gates="$FIXTURE/inventory-gates.txt"
+    : > "$rows"
+    : > "$gates"
+    awk -F '\t' -v rows="$rows" -v gates="$gates" '
+    function fail(message) {
+        print "CI compiler artifact inventory: " message > "/dev/stderr"
+        failed = 1
+    }
+    BEGIN {
+        header = "schema\trecord_id\tgate\thost\trole\tproducer\ttarget\tcfg\topt_level\tprofile\tsource_set\toutput_kind\treuse_group\ttrace\tdecision\towner\tnotes"
+    }
+    {
+        sub(/\r$/, "", $0)
+        if ($0 == "") next
+        if ($1 == "# ci-compiler-artifacts-schema") {
+            if (NF != 2 || $2 != 1) fail("schema marker must be version 1")
+            schema++
+            next
+        }
+        if ($0 ~ /^#/) next
+        if (!header_seen) {
+            if ($0 != header) fail("header does not match schema 1")
+            header_seen = 1
+            next
+        }
+        if (NF != 17) {
+            fail("row " FNR " has " NF " fields; expected 17")
+            next
+        }
+        for (i = 1; i <= 17; i++) {
+            if ($i == "") fail("row " FNR " has an empty field " i)
+        }
+        if ($1 != 1) fail("row " FNR " has a non-v1 schema")
+        if ($2 !~ /^[a-z0-9][a-z0-9.-]*$/) fail("invalid record id " $2)
+        if ($2 in ids) fail("duplicate record id " $2)
+        ids[$2] = 1
+        if ($4 != "all" && $4 != "linux" && $4 != "windows")
+            fail("invalid host for " $2)
+        if ($5 != "produce" && $5 != "consume") fail("invalid role for " $2)
+        if ($14 != "required" && $14 != "ledger-only")
+            fail("invalid trace policy for " $2)
+        if ($13 == "none") {
+            if ($5 != "produce") fail("ungrouped consumer " $2)
+        } else {
+            group = $13
+            group_rows[group]++
+            group_role[group, $5]++
+            provenance = $6 FS $7 FS $8 FS $9 FS $10 FS $11 FS $12 FS $14
+            if (!(group in group_provenance)) group_provenance[group] = provenance
+            else if (group_provenance[group] != provenance)
+                fail("reuse group " group " has mismatched provenance fields")
+        }
+        print $0 > rows
+        print $3 > gates
+        count++
+    }
+    END {
+        if (schema != 1) fail("expected exactly one schema marker")
+        if (!header_seen) fail("missing header")
+        if (count < 45) fail("inventory unexpectedly shrank below 45 rows")
+        for (group in group_rows) {
+            if (group_role[group, "produce"] != 1)
+                fail("reuse group " group " must have exactly one producer")
+            if (group_role[group, "consume"] < 1)
+                fail("reuse group " group " has no consumer")
+        }
+        if (failed) exit 1
+    }
+    ' "$INVENTORY"
+
+    LC_ALL=C sort -u "$gates" -o "$gates"
+    while IFS= read -r gate; do
+        grep -F "\"$gate\"" "$ROOT/scripts/ci-verify.sh" >/dev/null || {
+            echo "inventory gate is not wired through ci-verify.sh: $gate" >&2
+            exit 1
+        }
+    done < "$gates"
+
+    for group in \
+        bootstrap-converged \
+        manifest-assembly-set \
+        embedded-stdlib-tlci-canonical \
+        build-invariance-opt1 \
+        compile-profile-cli; do
+        grep -F "$group" "$ROOT/scripts/ci-verify.sh" >/dev/null || {
+            echo "required reuse group is absent from ci-verify.sh: $group" >&2
+            exit 1
+        }
+    done
+    grep -F 'TYPELISP_COMPILE_PROFILE_EMBEDDED_TLCI_REUSE=1' \
+        "$ROOT/scripts/ci-verify.sh" >/dev/null
+    grep -F 'TYPELISP_COMPILE_PROFILE_EMBEDDED_TLCI_REUSE:-0' \
+        "$ROOT/scripts/verify-compile-profile.sh" >/dev/null
+    native_builds=$(grep -c \
+        'compile_selfhost_binary compiler-driver src/main.tl' \
+        "$ROOT/scripts/verify-native-link-linux.sh")
+    [ "$native_builds" -eq 1 ] || {
+        echo "native-link gate must build exactly one shared selfhost CLI" >&2
+        exit 1
+    }
+    grep -F 'verify_linux_direct_object_link "$DRIVER"' \
+        "$ROOT/scripts/verify-native-link-linux.sh" >/dev/null
+}
+
+validate_checked_in_inventory
+
+rm -f "$TRACE"
+publish_fixture
+require_fixture
+[ "$CI_COMPILER_ARTIFACT_PATH" = "$OUTPUT" ] || {
+    echo "validated handoff returned the wrong path" >&2
+    exit 1
+}
+awk -F '\t' '
+    NR == 1 { if (NF != 19 || $1 != "schema" || $19 != "output_sha256") exit 1 }
+    NR == 2 { if (NF != 19 || $1 != 1 || $2 != "self-test-compiler") exit 1 }
+    END { if (NR != 2) exit 1 }
+' "$TRACE" || {
+    echo "artifact trace schema is malformed" >&2
+    exit 1
+}
+
+ASSEMBLY_TREE="$FIXTURE/assembly-tree"
+ASSEMBLY_MANIFEST="$FIXTURE/assembly-tree.sha256"
+mkdir -p "$ASSEMBLY_TREE/a" "$ASSEMBLY_TREE/b"
+printf '%s\n' assembly-a > "$ASSEMBLY_TREE/a/a.s"
+printf '%s\n' assembly-b > "$ASSEMBLY_TREE/b/b.s"
+ci_compiler_artifact_write_sha256_manifest \
+    "$WORKDIR" "$ASSEMBLY_TREE" "$ASSEMBLY_MANIFEST"
+ci_compiler_artifact_verify_sha256_manifest "$WORKDIR" "$ASSEMBLY_MANIFEST"
+printf '%s\n' corrupt >> "$ASSEMBLY_TREE/b/b.s"
+expect_failure manifest-corruption 'manifest artifact digest mismatch' \
+    ci_compiler_artifact_verify_sha256_manifest "$WORKDIR" "$ASSEMBLY_MANIFEST"
+
+FILES_MANIFEST="$FIXTURE/files.sha256"
+ci_compiler_artifact_write_files_manifest \
+    "$WORKDIR" "$FILES_MANIFEST" \
+    "$ASSEMBLY_TREE/a/a.s" "$SOURCE/input.tl"
+ci_compiler_artifact_verify_sha256_manifest "$WORKDIR" "$FILES_MANIFEST"
+
+# The output location and label are not provenance inputs.  Identical bytes
+# produced by the same normalized invocation must therefore group together.
+FIRST_KEY=$(ci_compiler_artifact_read_field "$METADATA" provenance_key)
+SECOND_OUTPUT="$FIXTURE/second-output.bin"
+SECOND_PATH="$FIXTURE/second.path"
+SECOND_METADATA="$FIXTURE/second.meta"
+cp "$OUTPUT" "$SECOND_OUTPUT"
+ci_compiler_artifact_publish \
+    "$WORKDIR" "$SECOND_METADATA" "$SECOND_PATH" second-label "$PRODUCER" \
+    "$TARGET" "$CFG" "$OPT" "$PROFILE" "$SOURCE_ROOTS" "$STDLIB_ROOTS" \
+    "$ENVIRONMENT" "$KIND" "$SECOND_OUTPUT" "$ARGV"
+SECOND_KEY=$(ci_compiler_artifact_read_field "$SECOND_METADATA" provenance_key)
+[ "$FIRST_KEY" = "$SECOND_KEY" ] || {
+    echo "equivalent invocations received different provenance keys" >&2
+    exit 1
+}
+
+publish_fixture
+printf '%s\n' corrupt >> "$OUTPUT"
+expect_failure corrupt-artifact 'output_sha256 mismatch' require_fixture
+
+publish_fixture
+: > "$OUTPUT"
+expect_failure empty-artifact 'handoff artifact is missing or empty' require_fixture
+
+publish_fixture
+TYPELISP_CI_COMPILER_ARTIFACT_RUN_TOKEN=self-test-run-2
+export TYPELISP_CI_COMPILER_ARTIFACT_RUN_TOKEN
+expect_failure stale-artifact 'run_token mismatch' require_fixture
+TYPELISP_CI_COMPILER_ARTIFACT_RUN_TOKEN=self-test-run-1
+export TYPELISP_CI_COMPILER_ARTIFACT_RUN_TOKEN
+
+publish_fixture
+cp "$METADATA" "$METADATA.base"
+sed 's/^host=.*/host=other-host/' "$METADATA.base" > "$METADATA"
+expect_failure cross-host 'host mismatch' require_fixture
+
+publish_fixture
+expect_failure wrong-target 'target mismatch' \
+    ci_compiler_artifact_require \
+        "$WORKDIR" "$METADATA" "$PATH_FILE" "$LABEL" "$PRODUCER" \
+        wrong-target "$CFG" "$OPT" "$PROFILE" "$SOURCE_ROOTS" \
+        "$STDLIB_ROOTS" "$ENVIRONMENT" "$KIND" - "$ARGV"
+
+publish_fixture
+expect_failure wrong-cfg 'cfg mismatch' \
+    ci_compiler_artifact_require \
+        "$WORKDIR" "$METADATA" "$PATH_FILE" "$LABEL" "$PRODUCER" \
+        "$TARGET" wrong-cfg "$OPT" "$PROFILE" "$SOURCE_ROOTS" \
+        "$STDLIB_ROOTS" "$ENVIRONMENT" "$KIND" - "$ARGV"
+
+publish_fixture
+expect_failure wrong-opt-level 'opt_level mismatch' \
+    ci_compiler_artifact_require \
+        "$WORKDIR" "$METADATA" "$PATH_FILE" "$LABEL" "$PRODUCER" \
+        "$TARGET" "$CFG" 1 "$PROFILE" "$SOURCE_ROOTS" \
+        "$STDLIB_ROOTS" "$ENVIRONMENT" "$KIND" - "$ARGV"
+
+publish_fixture
+expect_failure wrong-profile 'profile mismatch' \
+    ci_compiler_artifact_require \
+        "$WORKDIR" "$METADATA" "$PATH_FILE" "$LABEL" "$PRODUCER" \
+        "$TARGET" "$CFG" "$OPT" debug "$SOURCE_ROOTS" \
+        "$STDLIB_ROOTS" "$ENVIRONMENT" "$KIND" - "$ARGV"
+
+publish_fixture
+expect_failure wrong-kind 'output_kind mismatch' \
+    ci_compiler_artifact_require \
+        "$WORKDIR" "$METADATA" "$PATH_FILE" "$LABEL" "$PRODUCER" \
+        "$TARGET" "$CFG" "$OPT" "$PROFILE" "$SOURCE_ROOTS" \
+        "$STDLIB_ROOTS" "$ENVIRONMENT" compiler-assembly - "$ARGV"
+
+publish_fixture
+cp "$METADATA" "$METADATA.base"
+sed 's/^provenance_key=.*/provenance_key=bad/' "$METADATA.base" > "$METADATA"
+expect_failure key-mismatch 'provenance_key mismatch' require_fixture
+
+publish_fixture
+printf '%s\n' '# producer-byte-change' >> "$PRODUCER"
+expect_failure producer-digest 'producer_sha256 mismatch' require_fixture
+sed -i '$d' "$PRODUCER"
+
+publish_fixture
+printf '%s\n' "$FIXTURE/missing-output" > "$PATH_FILE"
+expect_failure missing-path-target 'handoff artifact is missing or empty' require_fixture
+
+rm -f "$FIXTURE/failed.path" "$FIXTURE/failed.meta"
+expect_failure producer-failure 'producer output is missing or empty' \
+    ci_compiler_artifact_publish \
+        "$WORKDIR" "$FIXTURE/failed.meta" "$FIXTURE/failed.path" failed \
+        "$PRODUCER" "$TARGET" "$CFG" "$OPT" "$PROFILE" "$SOURCE_ROOTS" \
+        "$STDLIB_ROOTS" "$ENVIRONMENT" "$KIND" "$FIXTURE/missing" "$ARGV"
+[ ! -e "$FIXTURE/failed.path" ] && [ ! -e "$FIXTURE/failed.meta" ] || {
+    echo "failed producer published a handoff" >&2
+    exit 1
+}
+
+# Standalone scripts do not request a handoff; a half-configured CI request is
+# rejected instead of silently using the fallback.
+if ci_compiler_artifact_handoff_requested '' ''; then
+    echo "empty handoff configuration was treated as requested" >&2
+    exit 1
+fi
+expect_failure half-configured-handoff 'must be supplied together' \
+    ci_compiler_artifact_handoff_requested "$PATH_FILE" ''
+
+# A tracked source change must alter the key even when every flag and output
+# byte is unchanged.
+publish_fixture
+SOURCE_KEY_BEFORE=$(ci_compiler_artifact_read_field "$METADATA" provenance_key)
+printf '%s\n' '(define source-value : i64 3)' > "$SOURCE/input.tl"
+ci_compiler_artifact_publish \
+    "$WORKDIR" "$SECOND_METADATA" "$SECOND_PATH" second-label "$PRODUCER" \
+    "$TARGET" "$CFG" "$OPT" "$PROFILE" "$SOURCE_ROOTS" "$STDLIB_ROOTS" \
+    "$ENVIRONMENT" "$KIND" "$OUTPUT" "$ARGV"
+SOURCE_KEY_AFTER=$(ci_compiler_artifact_read_field \
+    "$SECOND_METADATA" provenance_key)
+[ "$SOURCE_KEY_BEFORE" != "$SOURCE_KEY_AFTER" ] || {
+    echo "source mutation did not alter the provenance key" >&2
+    exit 1
+}
+
+echo "CI compiler artifact handoff self-tests passed"

@@ -221,11 +221,9 @@ compile_selfhost_binary() {
 }
 
 verify_linux_direct_object_link() {
+    _tool=$1
     _dir="$WORKDIR/direct-object"
     mkdir -p "$_dir"
-    _tool="$_dir/build-tool"
-
-    compile_selfhost_binary direct-object-build src/main.tl "$_tool"
     _src="$_dir/main.tl"
     _bin="$_dir/main"
     _shim="$_dir/no-assembler-bin"
@@ -932,6 +930,10 @@ verify_compiler_driver_stdlib_json "$DRIVER"
 verify_compiler_driver_arrays_and_traps "$DRIVER"
 verify_compiler_driver_immutable_refs "$DRIVER"
 verify_compiler_driver_recursive_box_list "$DRIVER"
-verify_linux_direct_object_link
+# The compiler-driver fixture above and the direct-object build-tool fixture
+# used to perform the exact same src/main.tl compile/link under different
+# output names.  Reuse the already-exercised artifact explicitly; both suites
+# still run every generated-program assertion.
+verify_linux_direct_object_link "$DRIVER"
 
 echo "selfhost native verification passed"

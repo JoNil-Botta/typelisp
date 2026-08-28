@@ -122,6 +122,8 @@
   0)
 (define sp-node-pool-count : i64
   0)
+(define sp-node-pool-reset-generation : i64
+  0)
 (define sp-builder-slots : (__tl_dyn-array SpannedSexpr)
   (__tl_make-array SpannedSexpr 0))
 (define sp-builder-count : i64
@@ -178,6 +180,9 @@
 
 (define (sp-node-pool-len) : i64
   sp-node-pool-count)
+
+(define (sp-node-pool-reset-generation-value) : i64
+  sp-node-pool-reset-generation)
 
 (define (sexpr-node-pool-len) : i64
   sexpr-node-pool-count)
@@ -373,7 +378,8 @@
 (define (sp-node-pool-reset!) : unit
   (begin
     (sp-node-pool-truncate! 0)
-    (set! sp-builder-count 0)))
+    (set! sp-builder-count 0)
+    (set! sp-node-pool-reset-generation (+ sp-node-pool-reset-generation 1))))
 
 (define (sexpr-node-pool-truncate! [mark : i64]) : unit
   (set! sexpr-node-pool-count mark))

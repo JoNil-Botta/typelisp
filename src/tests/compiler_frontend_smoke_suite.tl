@@ -568,15 +568,22 @@
       [(embedded_stdlib.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource)
         false])))
 
-(define (compiler-smoke-suite-child-ok? [name : String]) : bool
-  (process.result-output-eq?
-    (process.output (process.command (io.arg 0) (process.args-single name)))
-    42
-    ""
-    ""))
-
 (define (compiler-smoke-suite-require-child [name : String] [message : String]) : unit
-  (unless (compiler-smoke-suite-child-ok? name) (io.panic message)))
+  (let
+    [started-ms : i64
+      (compiler_semantic_index.compiler-semantic-index-smoke-timing-start)]
+    [result : process.ResultProcessOutput
+      (process.output
+        (process.command (io.arg 0) (process.args-single (clone name))))]
+    [status : i64 (process.result-status-or (clone result) -1)]
+    [timing-ok : bool
+      (compiler_semantic_index.compiler-semantic-index-smoke-timing-record
+        (str_cat.str-cat "child-" name)
+        started-ms
+        status)]
+    (unless
+      (and timing-ok (process.result-output-eq? result 42 "" ""))
+      (io.panic message))))
 
 (define (compiler-smoke-suite-child [name : String]) : i64
   (cond

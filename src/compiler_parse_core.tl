@@ -81,6 +81,44 @@
   (items (__tl_dyn-array ParseSemanticOriginRecord))
   (len i64))
 
+;; Semantic-origin records live in the retained spanned-node sidecar pool. A
+;; source index asks for one run per declaration, so rescanning that entire
+;; pool for every slot makes a sequence of cached checks quadratic. Incrementally
+;; index appended sidecars instead, and invalidate the table when the reader
+;; resets its pool. Alias entries are expanded by destination slot so lookup
+;; remains constant-time and the existing bounded alias walk is preserved.
+(defstruct CompilerParseSemanticOriginLookupSlot
+  (generation i64)
+  ;; 1 = semantic occurrence run, 2 = declaration span.
+  (domain i64)
+  (key i64)
+  (slot i64)
+  ;; 1 = direct semantic run, 2 = origin alias, 3 = direct declaration span.
+  (kind i64)
+  (run-start i64)
+  (run-count i64)
+  (source-key i64)
+  (source-slot i64))
+
+(define compiler-parse-semantic-origin-lookup-arena : i64
+  (arena.tl_arena_make))
+(define compiler-parse-semantic-origin-lookup-slots : (__tl_dyn-array
+    CompilerParseSemanticOriginLookupSlot)
+  (__tl_make-array CompilerParseSemanticOriginLookupSlot 0))
+(define compiler-parse-semantic-origin-lookup-len : i64
+  0)
+(define compiler-parse-semantic-origin-lookup-generation : i64
+  1)
+(define compiler-parse-semantic-origin-lookup-indexed-len : i64
+  0)
+(define compiler-parse-semantic-origin-lookup-reader-reset-generation : i64
+  0)
+
+(define (compiler-parse-semantic-origin-lookup-slots-shared) : (__tl_dyn-array
+    CompilerParseSemanticOriginLookupSlot)
+  (unsafe
+    (ptr-read (ptr-addr-of compiler-parse-semantic-origin-lookup-slots))))
+
 (define (parse-semantic-origin-vec-with-capacity [capacity : i64]) : ParseSemanticOriginVec
   (let
     [cap : i64
@@ -510,80 +548,331 @@
       [_ (+ cursor 1)])
     (+ cursor 1)))
 
+(define (compiler-parse-semantic-origin-lookup-cache-reset!) : unit
+  (begin
+    (set!
+      compiler-parse-semantic-origin-lookup-generation
+      (+ compiler-parse-semantic-origin-lookup-generation 1))
+    (set! compiler-parse-semantic-origin-lookup-len 0)
+    (set! compiler-parse-semantic-origin-lookup-indexed-len 0)))
+
+(define (compiler-parse-semantic-origin-lookup-prepare!) : unit
+  (let
+    [reader-generation : i64 (reader.sp-node-pool-reset-generation-value)]
+    [pool-len : i64 (reader.sp-node-pool-len)]
+    (begin
+      (if (or
+        (!=
+          reader-generation
+          compiler-parse-semantic-origin-lookup-reader-reset-generation)
+        (< pool-len compiler-parse-semantic-origin-lookup-indexed-len))
+        (begin
+          (compiler-parse-semantic-origin-lookup-cache-reset!)
+          (set!
+            compiler-parse-semantic-origin-lookup-reader-reset-generation
+            reader-generation))
+        unit)
+      (if (< compiler-parse-semantic-origin-lookup-indexed-len pool-len)
+        (compiler-parse-semantic-origin-lookup-build!)
+        unit))))
+
+(define (compiler-parse-semantic-origin-lookup-hash
+  [domain : i64]
+  [key : i64]
+  [slot : i64]
+  [capacity : i64]) : i64
+  (let
+    [mixed : i64
+      (bit-xor
+        (bit-xor (* key 2654435761) (* domain 3266489917))
+        (bit-xor (* (+ slot 1) 2246822519) (shr key 29)))]
+    (bit-and (bit-xor mixed (shr mixed 31)) (- capacity 1))))
+
+(define (compiler-parse-semantic-origin-lookup-insert-no-grow!
+  [domain : i64]
+  [key : i64]
+  [slot : i64]
+  [kind : i64]
+  [run-start : i64]
+  [run-count : i64]
+  [source-key : i64]
+  [source-slot : i64]) : unit
+  (let
+    [capacity : i64 (array-length compiler-parse-semantic-origin-lookup-slots)]
+    [cursor : i64
+      (compiler-parse-semantic-origin-lookup-hash domain key slot capacity)]
+    [done : bool false]
+    (while (not done)
+      (let
+        [entry : CompilerParseSemanticOriginLookupSlot
+          (array-ref compiler-parse-semantic-origin-lookup-slots cursor)]
+        (if (!=
+          entry.generation
+          compiler-parse-semantic-origin-lookup-generation)
+          (begin
+            (set!
+              (array-ref compiler-parse-semantic-origin-lookup-slots cursor)
+              (CompilerParseSemanticOriginLookupSlot
+                compiler-parse-semantic-origin-lookup-generation
+                domain
+                key
+                slot
+                kind
+                run-start
+                run-count
+                source-key
+                source-slot))
+            (set!
+              compiler-parse-semantic-origin-lookup-len
+              (+ compiler-parse-semantic-origin-lookup-len 1))
+            (set! done true))
+          (if (and
+            (= entry.domain domain)
+            (= entry.key key)
+            (= entry.slot slot))
+            (begin
+              ;; Sidecar storage is append-only between resets. Replacing an
+              ;; existing slot therefore preserves the old scan's latest-wins
+              ;; behavior when an address is reused or an alias is superseded.
+              (set!
+                (array-ref compiler-parse-semantic-origin-lookup-slots cursor)
+                (CompilerParseSemanticOriginLookupSlot
+                  compiler-parse-semantic-origin-lookup-generation
+                  domain
+                  key
+                  slot
+                  kind
+                  run-start
+                  run-count
+                  source-key
+                  source-slot))
+              (set! done true))
+            (set! cursor (bit-and (+ cursor 1) (- capacity 1)))))))))
+
+(define (compiler-parse-semantic-origin-lookup-grow!) : unit
+  (let
+    [old : (__tl_dyn-array CompilerParseSemanticOriginLookupSlot)
+      (compiler-parse-semantic-origin-lookup-slots-shared)]
+    [old-capacity : i64 (array-length old)]
+    [next-capacity : i64
+      (if (< old-capacity 1)
+        1024
+        (* old-capacity 2))]
+    [next : (__tl_dyn-array CompilerParseSemanticOriginLookupSlot)
+      (in-arena
+        (arena.Arena compiler-parse-semantic-origin-lookup-arena)
+        (__tl_make-array CompilerParseSemanticOriginLookupSlot next-capacity))]
+    [old-index : i64 0]
+    (begin
+      (set! compiler-parse-semantic-origin-lookup-slots next)
+      (set! compiler-parse-semantic-origin-lookup-len 0)
+      (while (< old-index old-capacity)
+        (let
+          [entry : CompilerParseSemanticOriginLookupSlot
+            (array-ref old old-index)]
+          (begin
+            (if (=
+              entry.generation
+              compiler-parse-semantic-origin-lookup-generation)
+              (compiler-parse-semantic-origin-lookup-insert-no-grow!
+                entry.domain
+                entry.key
+                entry.slot
+                entry.kind
+                entry.run-start
+                entry.run-count
+                entry.source-key
+                entry.source-slot)
+              unit)
+            (set! old-index (+ old-index 1))))))))
+
+(define (compiler-parse-semantic-origin-lookup-insert!
+  [domain : i64]
+  [key : i64]
+  [slot : i64]
+  [kind : i64]
+  [run-start : i64]
+  [run-count : i64]
+  [source-key : i64]
+  [source-slot : i64]) : unit
+  (begin
+    (if (or
+      (< (array-length compiler-parse-semantic-origin-lookup-slots) 1)
+      (>=
+        (* (+ compiler-parse-semantic-origin-lookup-len 1) 10)
+        (* (array-length compiler-parse-semantic-origin-lookup-slots) 7)))
+      (compiler-parse-semantic-origin-lookup-grow!)
+      unit)
+    (compiler-parse-semantic-origin-lookup-insert-no-grow!
+      domain
+      key
+      slot
+      kind
+      run-start
+      run-count
+      source-key
+      source-slot)))
+
+(define (compiler-parse-semantic-origin-lookup-build!) : unit
+  (let
+    [cursor : i64 compiler-parse-semantic-origin-lookup-indexed-len]
+    [limit : i64 (reader.sp-node-pool-len)]
+    (begin
+      (while (< cursor limit)
+        (begin
+          (match (reader.spanned-sexpr-view (reader.sp-node-get cursor))
+            [(reader.SpannedSexprView.Int record-key marker marker-span)
+              (cond
+                [(and
+                    (string.eq marker "__tl_semantic_origin")
+                    (< (+ cursor 1) limit))
+                  (match (reader.spanned-sexpr-view
+                    (reader.sp-node-get (+ cursor 1)))
+                    [(reader.SpannedSexprView.Int run-slot run-marker run-span)
+                      (let
+                        [count : i64 (token.span-start-line run-span)]
+                        (if (and
+                          (string.eq run-marker "__tl_semantic_origin_start")
+                          (>= count 0)
+                          (<= (+ (+ cursor 2) count) limit))
+                          (compiler-parse-semantic-origin-lookup-insert!
+                            1
+                            record-key
+                            run-slot
+                            1
+                            (+ cursor 2)
+                            count
+                            0
+                            0)
+                          unit))]
+                    [_ unit])]
+                [(and
+                    (string.eq marker "__tl_decl_origin")
+                    (< (+ cursor 2) limit))
+                  (match (reader.spanned-sexpr-view
+                    (reader.sp-node-get (+ cursor 1)))
+                    [(reader.SpannedSexprView.Int run-slot run-marker _)
+                      (if (string.eq run-marker "__tl_decl_origin_start")
+                        (match (reader.spanned-sexpr-view
+                          (reader.sp-node-get (+ cursor 2)))
+                          [(reader.SpannedSexprView.Nil span)
+                            (compiler-parse-semantic-origin-lookup-insert!
+                              2
+                              record-key
+                              run-slot
+                              3
+                              (token.span-start-line span)
+                              (token.span-start-col span)
+                              (token.span-end-line span)
+                              (token.span-end-col span))]
+                          [_ unit])
+                        unit)]
+                    [_ unit])]
+                [(or
+                    (string.eq marker "__tl_decl_origin_alias")
+                    (string.eq marker "__tl_decl_origin_alias_repeat"))
+                  (let
+                    [target-start : i64 (token.span-start-line marker-span)]
+                    [count : i64 (token.span-start-col marker-span)]
+                    [source-key : i64 (token.span-end-line marker-span)]
+                    [source-start : i64 (token.span-end-col marker-span)]
+                    [repeat : bool
+                      (string.eq marker "__tl_decl_origin_alias_repeat")]
+                    [offset : i64 0]
+                    (while (< offset count)
+                      (begin
+                        (if repeat
+                          unit
+                          (compiler-parse-semantic-origin-lookup-insert!
+                            1
+                            record-key
+                            (+ target-start offset)
+                            2
+                            0
+                            0
+                            source-key
+                            (+ source-start offset)))
+                        (compiler-parse-semantic-origin-lookup-insert!
+                          2
+                          record-key
+                          (+ target-start offset)
+                          2
+                          0
+                          0
+                          source-key
+                          (if repeat
+                            source-start
+                            (+ source-start offset)))
+                        (set! offset (+ offset 1)))))]
+                [else unit])]
+            [_ unit])
+          (set!
+            cursor
+            (compiler-parse-semantic-origin-next-record cursor limit))))
+      (set! compiler-parse-semantic-origin-lookup-indexed-len limit))))
+
+(define (compiler-parse-semantic-origin-lookup
+  [domain : i64]
+  [key : i64]
+  [slot : i64]) : CompilerParseSemanticOriginLookupSlot
+  (let
+    [capacity : i64 (array-length compiler-parse-semantic-origin-lookup-slots)]
+    [cursor : i64
+      (if (> capacity 0)
+        (compiler-parse-semantic-origin-lookup-hash domain key slot capacity)
+        0)]
+    [probes : i64 0]
+    [fallback : CompilerParseSemanticOriginLookupSlot
+      (CompilerParseSemanticOriginLookupSlot 0 0 0 0 0 0 0 0 0)]
+    (if (< capacity 1)
+      fallback
+      (begin
+        (while (< probes capacity)
+          (let
+            [entry : CompilerParseSemanticOriginLookupSlot
+              (array-ref compiler-parse-semantic-origin-lookup-slots cursor)]
+            (if (!=
+              entry.generation
+              compiler-parse-semantic-origin-lookup-generation)
+              (return fallback)
+              (if (and
+                (= entry.domain domain)
+                (= entry.key key)
+                (= entry.slot slot))
+                (return entry)
+                (begin
+                  (set! cursor (bit-and (+ cursor 1) (- capacity 1)))
+                  (set! probes (+ probes 1)))))))
+        fallback))))
+
 ;; Declaration origins are cold records in the transient spanned-node pool.
 ;; A run is marker(key), marker(start slot), then one Nil(span) per slot.
 (define (compiler-parse-decl-origin-span-key-slot-depth
   [key : i64]
   [target : i64]
   [depth : i64]) : CompilerParseMaybeDeclSpan
-  (let
-    [cursor : i64 0]
-    [limit : i64 (reader.sp-node-pool-len)]
-    [result : CompilerParseMaybeDeclSpan (CompilerParseMaybeDeclSpan.None)]
-    [alias-key : i64 0]
-    [alias-slot : i64 0]
-    [alias-found : bool false]
+  (if (>= depth 64)
+    CompilerParseMaybeDeclSpan.None
     (begin
-      (while (< cursor limit)
-        (begin
-          (match (reader.spanned-sexpr-view (reader.sp-node-get cursor))
-            [(reader.SpannedSexprView.Int record-key marker marker-span)
-              (if (= record-key key)
-                (if (and
-                  (string.eq marker "__tl_decl_origin")
-                  (< (+ cursor 2) limit))
-                  (match (reader.spanned-sexpr-view
-                    (reader.sp-node-get (+ cursor 1)))
-                    [(reader.SpannedSexprView.Int run-start run-marker _)
-                      (if (and
-                        (= run-start target)
-                        (string.eq run-marker "__tl_decl_origin_start"))
-                        (match (reader.spanned-sexpr-view
-                          (reader.sp-node-get (+ cursor 2)))
-                          [(reader.SpannedSexprView.Nil span)
-                            (begin
-                              (set!
-                                result
-                                (CompilerParseMaybeDeclSpan.Some
-                                  (ast-source-span-from-source-span span)))
-                              (set! alias-found false))]
-                          [_ unit])
-                        unit)]
-                    [_ unit])
-                  (if (or
-                    (string.eq marker "__tl_decl_origin_alias")
-                    (string.eq marker "__tl_decl_origin_alias_repeat"))
-                    (let
-                      [alias-start : i64 (token.span-start-line marker-span)]
-                      [alias-count : i64 (token.span-start-col marker-span)]
-                      (if (and
-                        (>= target alias-start)
-                        (< target (+ alias-start alias-count)))
-                        (begin
-                          (set! alias-key (token.span-end-line marker-span))
-                          (set!
-                            alias-slot
-                            (if (string.eq
-                              marker
-                              "__tl_decl_origin_alias_repeat")
-                              (token.span-end-col marker-span)
-                              (+
-                                (token.span-end-col marker-span)
-                                (- target alias-start))))
-                          (set! alias-found true))
-                        unit))
-                    unit))
-                unit)]
-            [_ unit])
-          (set!
-            cursor
-            (compiler-parse-semantic-origin-next-record cursor limit))))
-      (if (and alias-found (< depth 64))
-        (compiler-parse-decl-origin-span-key-slot-depth
-          alias-key
-          alias-slot
-          (+ depth 1))
-        result))))
+      (compiler-parse-semantic-origin-lookup-prepare!)
+      (let
+        [entry : CompilerParseSemanticOriginLookupSlot
+          (compiler-parse-semantic-origin-lookup 2 key target)]
+        (cond
+          [(= entry.kind 3)
+            (CompilerParseMaybeDeclSpan.Some
+              (ast-source-span-from-source-span
+                (token.SourceSpan
+                  entry.run-start
+                  entry.run-count
+                  entry.source-key
+                  entry.source-slot)))]
+          [(= entry.kind 2)
+            (compiler-parse-decl-origin-span-key-slot-depth
+              entry.source-key
+              entry.source-slot
+              (+ depth 1))]
+          [else CompilerParseMaybeDeclSpan.None])))))
 
 (define (compiler-parse-decl-origin-span-key-slot [key : i64] [target : i64]) : CompilerParseMaybeDeclSpan
   (compiler-parse-decl-origin-span-key-slot-depth key target 0))
@@ -894,77 +1183,23 @@
   [key : i64]
   [target : i64]
   [depth : i64]) : CompilerParseMaybeSemanticOriginRun
-  (let
-    [cursor : i64 0]
-    [limit : i64 (reader.sp-node-pool-len)]
-    [result : CompilerParseMaybeSemanticOriginRun
-      (CompilerParseMaybeSemanticOriginRun.None)]
-    [alias-key : i64 0]
-    [alias-slot : i64 0]
-    [alias-found : bool false]
+  (if (>= depth 64)
+    CompilerParseMaybeSemanticOriginRun.None
     (begin
-      (while (< cursor limit)
-        (begin
-          (match (reader.spanned-sexpr-view (reader.sp-node-get cursor))
-            [(reader.SpannedSexprView.Int record-key marker marker-span)
-              (if (= record-key key)
-                (cond
-                  [(and
-                      (string.eq marker "__tl_semantic_origin")
-                      (< (+ cursor 1) limit))
-                    (match (reader.spanned-sexpr-view
-                      (reader.sp-node-get (+ cursor 1)))
-                      [(reader.SpannedSexprView.Int
-                          run-slot
-                          run-marker
-                          run-span)
-                        (if (and
-                          (= run-slot target)
-                          (string.eq run-marker "__tl_semantic_origin_start"))
-                          (let
-                            [count : i64 (token.span-start-line run-span)]
-                            (if (and
-                              (>= count 0)
-                              (<= (+ (+ cursor 2) count) limit))
-                              (begin
-                                (set!
-                                  result
-                                  (CompilerParseMaybeSemanticOriginRun.Some
-                                    (CompilerParseSemanticOriginRun
-                                      (+ cursor 2)
-                                      count)))
-                                (set! alias-found false))
-                              unit))
-                          unit)]
-                      [_ unit])]
-                  [(string.eq marker "__tl_decl_origin_alias")
-                    (let
-                      [alias-start : i64 (token.span-start-line marker-span)]
-                      [alias-count : i64 (token.span-start-col marker-span)]
-                      (if (and
-                        (>= target alias-start)
-                        (< target (+ alias-start alias-count)))
-                        (begin
-                          (set! alias-key (token.span-end-line marker-span))
-                          (set!
-                            alias-slot
-                            (+
-                              (token.span-end-col marker-span)
-                              (- target alias-start)))
-                          (set! alias-found true))
-                        unit))]
-                  [else unit])
-                unit)]
-            [_ unit])
-          (set!
-            cursor
-            (compiler-parse-semantic-origin-next-record cursor limit))))
-      (if (and alias-found (< depth 64))
-        (compiler-parse-semantic-origin-run-key-slot-depth
-          alias-key
-          alias-slot
-          (+ depth 1))
-        result))))
+      (compiler-parse-semantic-origin-lookup-prepare!)
+      (let
+        [entry : CompilerParseSemanticOriginLookupSlot
+          (compiler-parse-semantic-origin-lookup 1 key target)]
+        (cond
+          [(= entry.kind 1)
+            (CompilerParseMaybeSemanticOriginRun.Some
+              (CompilerParseSemanticOriginRun entry.run-start entry.run-count))]
+          [(= entry.kind 2)
+            (compiler-parse-semantic-origin-run-key-slot-depth
+              entry.source-key
+              entry.source-slot
+              (+ depth 1))]
+          [else CompilerParseMaybeSemanticOriginRun.None])))))
 
 (define (compiler-parse-semantic-origin-run-key-slot [key : i64] [slot : i64]) : CompilerParseMaybeSemanticOriginRun
   (compiler-parse-semantic-origin-run-key-slot-depth key slot 0))
@@ -16417,6 +16652,43 @@
       "(define (f [x : i64]) (:spmd-callable (specialization (lanes 8) (lanes 16) (args varying) (result varying) (index-param 0))) : i64 x)"
       "parse: duplicate :spmd-callable lanes field")))
 
+(define (compiler-parse-origin-lookup-cache-tests-ok?) : bool
+  (begin
+    (compiler-parse-semantic-origin-lookup-cache-reset!)
+    (compiler-parse-semantic-origin-lookup-insert! 1 101 7 1 11 2 0 0)
+    ;; Re-registering the same query must replace, rather than duplicate, the
+    ;; earlier value because append-order defines the authoritative sidecar.
+    (compiler-parse-semantic-origin-lookup-insert! 1 101 7 1 29 3 0 0)
+    (compiler-parse-semantic-origin-lookup-insert! 2 101 7 3 4 5 6 7)
+    (compiler-parse-semantic-origin-lookup-insert! 1 202 9 2 0 0 101 7)
+    (let
+      [direct : CompilerParseSemanticOriginLookupSlot
+        (compiler-parse-semantic-origin-lookup 1 101 7)]
+      [separate-domain : CompilerParseSemanticOriginLookupSlot
+        (compiler-parse-semantic-origin-lookup 2 101 7)]
+      [alias : CompilerParseSemanticOriginLookupSlot
+        (compiler-parse-semantic-origin-lookup 1 202 9)]
+      [missing : CompilerParseSemanticOriginLookupSlot
+        (compiler-parse-semantic-origin-lookup 1 303 11)]
+      [ok : bool
+        (and
+          (= compiler-parse-semantic-origin-lookup-len 3)
+          (= direct.kind 1)
+          (= direct.run-start 29)
+          (= direct.run-count 3)
+          (= separate-domain.kind 3)
+          (= separate-domain.run-start 4)
+          (= separate-domain.run-count 5)
+          (= separate-domain.source-key 6)
+          (= separate-domain.source-slot 7)
+          (= alias.kind 2)
+          (= alias.source-key 101)
+          (= alias.source-slot 7)
+          (= missing.kind 0))]
+      (begin
+        (compiler-parse-semantic-origin-lookup-cache-reset!)
+        ok))))
+
 (define (compiler-parse-smoke) : i64
   (match (parse-ast-source (compiler-parse-smoke-source))
     [(ResultAstProgram.Ok program)
@@ -16432,6 +16704,7 @@
         (compiler-parse-module-decl-ok?)
         (compiler-parse-module-body-ok?)
         (compiler-parse-module-body-malformed-ok?)
+        (compiler-parse-origin-lookup-cache-tests-ok?)
         (compiler-parse-import-metadata-ok?)
         (compiler-parse-dotted-import-metadata-ok?)
         (compiler-parse-module-macro-surface-ok?)

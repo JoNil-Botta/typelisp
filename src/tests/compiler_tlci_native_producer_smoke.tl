@@ -1867,7 +1867,7 @@
           ok)))))
 
 (define (producer-test-lambda1-parameter-type-ok?
-  [pools : ast.AstNodePoolContext]
+  [pools : (& pools ast.AstNodePoolContext)]
   [actual : ast.AstType]
   [owner-region : i64]
   [text-region : i64]) : bool
@@ -1901,7 +1901,7 @@
     [_ false]))
 
 (define (producer-test-lambda1-result-ok?
-  [pools : ast.AstNodePoolContext]
+  [pools : (& pools ast.AstNodePoolContext)]
   [owner-region : i64]
   [text-region : i64]) : bool
   (match (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-value)
@@ -1918,7 +1918,7 @@
                     (& params)
                     0
                     (ast.ast-param-fallback))
-                    [(ast.AstParam.Param parameter-name actual false false)
+                    [(ast.AstParam.Param parameter-name actual false)
                       (and
                         (string.eq
                           (ci.intern-str parameter-name)
@@ -1956,17 +1956,22 @@
     [lambda-ty : ast.AstType
       (ast.ast-ty-tuple
         (ast.ast-type-cons-with-pools
-          pools
+          (owned_view.compiler-owned-shared-view pools)
           (ast.ast-ty-ref-with-pools
-            pools
+            (owned_view.compiler-owned-shared-view pools)
             owner-region
             (ast.AstType.Var (ci.intern "package.model/Owner")))
           (ast.ast-type-cons-with-pools
-            pools
-            (ast.ast-ty-ref-with-pools pools text-region (ast.AstType.Str))
+            (owned_view.compiler-owned-shared-view pools)
+            (ast.ast-ty-ref-with-pools
+              (owned_view.compiler-owned-shared-view pools)
+              text-region
+              (ast.AstType.Str))
             (ast.ast-type-list-new))))]
     [operand : i64
-      (producer-test-push-spanned pools (ast.AstExpr.Var (ci.intern "anchors")))]
+      (producer-test-push-spanned
+        (owned_view.compiler-owned-shared-view pools)
+        (ast.AstExpr.Var (ci.intern "anchors")))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
       (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
     (begin
@@ -1974,10 +1979,12 @@
         (array-ref operands 0)
         (compiler_ctfe.CompilerCtfeValue.Expr
           operand
-          (compiler_ctfe.ctfe-captured-expr-type-with-pools pools lambda-ty)))
+          (compiler_ctfe.ctfe-captured-expr-type-with-pools
+            (owned_view.compiler-owned-shared-view pools)
+            lambda-ty)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        pools
-        operands
+        (owned_view.compiler-owned-shared-view pools)
+        (owned_view.compiler-owned-shared-view operands)
         1
         64
         producer-test-cookie

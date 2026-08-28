@@ -6522,19 +6522,16 @@
             tlci.tlci-host-callback-status-bad-request
             (let
               [body-value : ctfe_support.CompilerCtfeValue
-                (array-ref
-                  (compiler-comptime-host-global-shared-view
-                    compiler-comptime-host-stack)
+                (compiler-comptime-host-array-element-shared-view
+                  compiler-comptime-host-stack
                   (- compiler-comptime-host-stack-len 1))]
               [type-value : ctfe_support.CompilerCtfeValue
-                (array-ref
-                  (compiler-comptime-host-global-shared-view
-                    compiler-comptime-host-stack)
+                (compiler-comptime-host-array-element-shared-view
+                  compiler-comptime-host-stack
                   (- compiler-comptime-host-stack-len 2))]
               [name-value : ctfe_support.CompilerCtfeValue
-                (array-ref
-                  (compiler-comptime-host-global-shared-view
-                    compiler-comptime-host-stack)
+                (compiler-comptime-host-array-element-shared-view
+                  compiler-comptime-host-stack
                   (- compiler-comptime-host-stack-len 3))]
               [body-node : i64 (compiler-comptime-host-value-node body-value)]
               (match (compiler-comptime-host-value-name-id name-value)
@@ -6549,20 +6546,15 @@
                           (begin
                             (ast.ast-param-list-push
                               (&mut params)
-                              (ast.AstParam.Param
-                                name-id
-                                parameter-type
-                                false
-                                false))
+                              (ast.AstParam.Param name-id parameter-type false))
                             (set!
                               compiler-comptime-host-stack-len
                               (- compiler-comptime-host-stack-len 3))
                             (compiler-comptime-host-push!
                               (ctfe_support.CompilerCtfeValue.Expr
                                 (ast.ast-expr-lambda-with-pools
-                                  (array-ref
-                                    (compiler-comptime-host-global-shared-view
-                                      compiler-comptime-host-pools)
+                                  (compiler-comptime-host-array-element-shared-view
+                                    compiler-comptime-host-pools
                                     0)
                                   params
                                   (ast.AstMaybeType.No)

@@ -1398,7 +1398,7 @@
           positive)))))
 
 (define (comptime-host-smoke-result-lambda1?
-  [pools : compiler_ast_types.AstNodePoolContext]
+  [pools : (& pools compiler_ast_types.AstNodePoolContext)]
   [parameter-name : i64]
   [parameter-type : compiler_ast_types.AstType]) : bool
   (match (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-value)
@@ -1420,7 +1420,6 @@
                     [(compiler_ast_types.AstParam.Param
                         actual-name
                         actual-type
-                        false
                         false)
                       (and
                         (= actual-name parameter-name)
@@ -1457,24 +1456,27 @@
     [parameter-type : compiler_ast_types.AstType
       (compiler_ast_types.ast-ty-tuple
         (compiler_ast_types.ast-type-cons-with-pools
-          pools
+          (compiler_ast_types.ast-place-shared-view pools)
           (compiler_ast_types.ast-ty-ref-with-pools
-            pools
+            (compiler_ast_types.ast-place-shared-view pools)
             owner-region
             (compiler_ast_types.AstType.Var owner-name))
           (compiler_ast_types.ast-type-cons-with-pools
-            pools
+            (compiler_ast_types.ast-place-shared-view pools)
             (compiler_ast_types.ast-ty-ref-with-pools
-              pools
+              (compiler_ast_types.ast-place-shared-view pools)
               text-region
               (compiler_ast_types.AstType.Str))
             (compiler_ast_types.ast-type-list-new))))]
     [target-node : i64
       (compiler_ast_types.ast-node-pool-context-expr-push
-        pools
+        (compiler_ast_types.ast-place-shared-view pools)
         (compiler_ast_types.AstExpr.Var parameter-name))]
     [body-node : i64
-      (compiler_ast_types.ast-expr-tuple-ref-with-pools pools target-node 1)]
+      (compiler_ast_types.ast-expr-tuple-ref-with-pools
+        (compiler_ast_types.ast-place-shared-view pools)
+        target-node
+        1)]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
       (__tl_make-array compiler_ctfe.CompilerCtfeValue 3)]
     (begin
@@ -1483,15 +1485,15 @@
         (compiler_ctfe.CompilerCtfeValue.Name "lambda1-values" parameter-name))
       (set!
         (array-ref operands 1)
-        (compiler_ctfe.CompilerCtfeValue.Type parameter-type))
+        (compiler_ctfe.CompilerCtfeValue.Type (clone parameter-type)))
       (set!
         (array-ref operands 2)
         (compiler_ctfe.CompilerCtfeValue.Expr
           body-node
           (compiler_ctfe.ctfe-untyped-expr-type)))
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-        pools
-        operands
+        (compiler_ast_types.ast-place-shared-view pools)
+        (compiler_ast_types.ast-place-shared-view operands)
         3
         16
         comptime-host-smoke-cookie

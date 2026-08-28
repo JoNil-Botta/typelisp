@@ -21,13 +21,13 @@ native_link_detect_host
 # from the root build.
 case "$NL_HOST_OS" in
     windows)
-        TRUSTED_PREFIX_SKIPPED=220
-        FAILURE_PREFIX_SKIPPED=208
+        TRUSTED_PREFIX_SKIPPED=221
+        FAILURE_PREFIX_SKIPPED=209
         FORCED_SOURCE_FALLBACKS=3
         ;;
     *)
-        TRUSTED_PREFIX_SKIPPED=215
-        FAILURE_PREFIX_SKIPPED=203
+        TRUSTED_PREFIX_SKIPPED=216
+        FAILURE_PREFIX_SKIPPED=204
         FORCED_SOURCE_FALLBACKS=1
         ;;
 esac

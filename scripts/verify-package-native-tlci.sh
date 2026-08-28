@@ -20,8 +20,8 @@ native_link_detect_host
 # declarations from the consumer prefix on both hosts; the by-value ownership
 # cutover's explicit compiler-owned-view import adds one back.
 case "$NL_HOST_OS" in
-    windows) TRUSTED_PREFIX_SKIPPED=214 ;;
-    *) TRUSTED_PREFIX_SKIPPED=209 ;;
+    windows) TRUSTED_PREFIX_SKIPPED=215 ;;
+    *) TRUSTED_PREFIX_SKIPPED=210 ;;
 esac
 
 COMPILER=${1:-${TYPELISP_BIN:-}}

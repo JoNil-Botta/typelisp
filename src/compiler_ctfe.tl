@@ -7294,7 +7294,8 @@
               (match (compiler-ctfe-eval body-arg env type-fuel)
                 [(ResultCtfe.Ok body-value body-fuel)
                   (let
-                    [body-node : i64 (ctfe-syntax-expr-value-node body-value)]
+                    [body-node : i64
+                      (ctfe-syntax-expr-value-node body-value (& env))]
                     [params : ast.AstParamList
                       (ast.ast-param-list-with-capacity 1)]
                     [pools : ast.AstNodePoolContext
@@ -7308,11 +7309,7 @@
                       (begin
                         (ast.ast-param-list-push
                           (&mut params)
-                          (ast.AstParam.Param
-                            name-id
-                            parameter-type
-                            false
-                            false))
+                          (ast.AstParam.Param name-id parameter-type false))
                         (ResultCtfe.Ok
                           (ctfe-syntax-expr-value
                             env
@@ -19199,14 +19196,17 @@
     [parameter-type : ast.AstType
       (ast.ast-ty-tuple
         (ast.ast-type-cons-with-pools
-          pools
+          (ast.ast-node-pool-context-shared-view (& pools))
           (ast.ast-ty-ref-with-pools
-            pools
+            (ast.ast-node-pool-context-shared-view (& pools))
             owner-region
             (ast.AstType.Var owner-name))
           (ast.ast-type-cons-with-pools
-            pools
-            (ast.ast-ty-ref-with-pools pools text-region (ast.AstType.Str))
+            (ast.ast-node-pool-context-shared-view (& pools))
+            (ast.ast-ty-ref-with-pools
+              (ast.ast-node-pool-context-shared-view (& pools))
+              text-region
+              (ast.AstType.Str))
             (ast.ast-type-list-new))))]
     [env : CtfeEnv
       (ctfe-env-extend-id
@@ -19215,7 +19215,7 @@
           name-binding
           (CompilerCtfeValue.Name "lambda1-values" parameter-name))
         type-binding
-        (CompilerCtfeValue.Type parameter-type))]
+        (CompilerCtfeValue.Type (clone parameter-type)))]
     [name-value : i64 (ctfe-ast-push env (ast.AstExpr.Var name-binding))]
     [type-value : i64 (ctfe-ast-push env (ast.AstExpr.Var type-binding))]
     [target : i64
@@ -19255,11 +19255,7 @@
                             (& params)
                             0
                             (ast.ast-param-fallback))
-                            [(ast.AstParam.Param
-                                actual-name
-                                actual-type
-                                false
-                                false)
+                            [(ast.AstParam.Param actual-name actual-type false)
                               (unless
                                 (and
                                   (= actual-name parameter-name)

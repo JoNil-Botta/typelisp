@@ -31468,6 +31468,509 @@
         10]
       [else 42])))
 
+(define (opt-licm-simd-instr-kind
+  [instr : compiler_ir_types.CompilerIrInstr]
+  [dst : i64]) : i64
+  (match instr
+    [(compiler_ir_types.CompilerIrInstr.Splat actual _ _ _)
+      (if (= actual dst)
+        1
+        0)]
+    [(compiler_ir_types.CompilerIrInstr.VectorBinOp payload-box)
+      (if (= (__tl-project-field (__tl-box-place payload-box) dst) dst)
+        2
+        0)]
+    [(compiler_ir_types.CompilerIrInstr.VectorCompare payload-box)
+      (if (= (__tl-project-field (__tl-box-place payload-box) dst) dst)
+        3
+        0)]
+    ;; A moved vector or mask must remain its original SIMD instruction; a
+    ;; scalar copy cannot faithfully stage either register class.
+    [(compiler_ir_types.CompilerIrInstr.Mov actual _ _)
+      (if (= actual dst)
+        4
+        0)]
+    [_ 0]))
+
+(define (opt-licm-simd-kind-in-seq
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]
+  [dst : i64]) : i64
+  (if (>= index (compiler_ir_types.compiler-ir-instr-seq-count instrs))
+    0
+    (let
+      [kind : i64
+        (opt-licm-simd-instr-kind
+          (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
+          dst)]
+      (if (= kind 0)
+        (opt-licm-simd-kind-in-seq instrs (+ index 1) dst)
+        kind))))
+
+(define (opt-licm-simd-index-in-seq
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [index : i64]
+  [dst : i64]) : i64
+  (if (>= index (compiler_ir_types.compiler-ir-instr-seq-count instrs))
+    (- 0 1)
+    (if (=
+      (opt-licm-simd-instr-kind
+        (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
+        dst)
+      0)
+      (opt-licm-simd-index-in-seq instrs (+ index 1) dst)
+      index)))
+
+(define (opt-licm-simd-kind-at
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : i64]
+  [dst : i64]) : i64
+  (match (compiler_optimize.opt-cfg-find-block blocks label)
+    [(compiler_optimize.OptMaybeBlock.No) (- 0 1)]
+    [(compiler_optimize.OptMaybeBlock.Some block)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (opt-licm-simd-kind-in-seq instrs 0 dst)])]))
+
+(define (opt-licm-simd-index-at
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : i64]
+  [dst : i64]) : i64
+  (match (compiler_optimize.opt-cfg-find-block blocks label)
+    [(compiler_optimize.OptMaybeBlock.No) (- 0 1)]
+    [(compiler_optimize.OptMaybeBlock.Some block)
+      (match block
+        [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+          (opt-licm-simd-index-in-seq instrs 0 dst)])]))
+
+;; One guaranteed self-loop. Every SIMD result has a hot in-loop consumer, and
+;; every operand is either a parameter or an earlier member of the chain.
+(define (opt-licm-simd-chain-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "loop"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "loop")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Splat
+            4
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            4
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.ir-instr-vector-bin-op
+            5
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            (compiler_ir_types.CompilerIrValue.Var 4)
+            (compiler_ir_types.CompilerIrValue.Var 4)
+            4
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.ir-instr-vector-compare
+            6
+            (compiler_ir_types.CompilerIrBinOp.Lt)
+            (compiler_ir_types.CompilerIrValue.Var 5)
+            (compiler_ir_types.CompilerIrValue.Var 4)
+            4
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.MaskReduce
+            7
+            (compiler_ir_types.CompilerIrMaskReduceOp.Any)
+            (compiler_ir_types.CompilerIrValue.Var 6)
+            4)
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ir_types.compiler-ir-label "loop")
+            (compiler_ir_types.compiler-ir-label "exit"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "exit")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Return
+              (compiler_ir_types.CompilerIrMaybeValue.Some
+                (compiler_ir_types.CompilerIrValue.I64 0)))))
+        (compiler_ir_types.CompilerIrBlockList.Nil)))))
+
+;; The first splat is invariant, then the chain meets a splat of a loop-carried
+;; phi. Motion must stop at that operation and leave every dependent SIMD value
+;; in the loop.
+(define (opt-licm-simd-mixed-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "loop"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "loop")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Phi
+            3
+            (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.CompilerIrValue.I64 0)
+              (compiler_ir_types.compiler-ir-label "entry")
+              (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.CompilerIrValue.Var 4)
+                (compiler_ir_types.compiler-ir-label "loop")
+                (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Splat
+            5
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            4
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Splat
+            6
+            (compiler_ir_types.CompilerIrValue.Var 3)
+            4
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.ir-instr-vector-bin-op
+            7
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            (compiler_ir_types.CompilerIrValue.Var 5)
+            (compiler_ir_types.CompilerIrValue.Var 6)
+            4
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.ir-instr-vector-compare
+            8
+            (compiler_ir_types.CompilerIrBinOp.Lt)
+            (compiler_ir_types.CompilerIrValue.Var 7)
+            (compiler_ir_types.CompilerIrValue.Var 5)
+            4
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.MaskReduce
+            9
+            (compiler_ir_types.CompilerIrMaskReduceOp.Any)
+            (compiler_ir_types.CompilerIrValue.Var 8)
+            4)
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            4
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            (compiler_ir_types.CompilerIrValue.Var 3)
+            (compiler_ir_types.CompilerIrValue.I64 1)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ir_types.compiler-ir-label "loop")
+            (compiler_ir_types.compiler-ir-label "exit"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "exit")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Return
+              (compiler_ir_types.CompilerIrMaybeValue.Some
+                (compiler_ir_types.CompilerIrValue.I64 0)))))
+        (compiler_ir_types.CompilerIrBlockList.Nil)))))
+
+;; Independent SIMD values whose only consumers are on a bypassable sibling do
+;; not pay for longer live ranges. The vector operands are already available in
+;; the preheader so only the hot-use gate decides these three candidates.
+(define (opt-licm-simd-cold-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Splat
+          10
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          4
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Splat
+          11
+          (compiler_ir_types.CompilerIrValue.Var 2)
+          4
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "loop"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "loop")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Splat
+            4
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            4
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.ir-instr-vector-bin-op
+            5
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            (compiler_ir_types.CompilerIrValue.Var 10)
+            (compiler_ir_types.CompilerIrValue.Var 11)
+            4
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.ir-instr-vector-compare
+            6
+            (compiler_ir_types.CompilerIrBinOp.Lt)
+            (compiler_ir_types.CompilerIrValue.Var 10)
+            (compiler_ir_types.CompilerIrValue.Var 11)
+            4
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ir_types.compiler-ir-label "cold")
+            (compiler_ir_types.compiler-ir-label "latch"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "cold")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.VectorReduce
+              7
+              (compiler_ir_types.CompilerIrVectorReduceOp.Sum)
+              (compiler_ir_types.CompilerIrValue.Var 4)
+              4
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.VectorReduce
+              8
+              (compiler_ir_types.CompilerIrVectorReduceOp.Sum)
+              (compiler_ir_types.CompilerIrValue.Var 5)
+              4
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.MaskReduce
+              9
+              (compiler_ir_types.CompilerIrMaskReduceOp.Any)
+              (compiler_ir_types.CompilerIrValue.Var 6)
+              4)
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "latch"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "latch")
+            (opt-test-instrs
+              (compiler_ir_types.CompilerIrInstr.Branch
+                (compiler_ir_types.CompilerIrValue.Var 0)
+                (compiler_ir_types.compiler-ir-label "loop")
+                (compiler_ir_types.compiler-ir-label "exit"))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "exit")
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.Return
+                  (compiler_ir_types.CompilerIrMaybeValue.Some
+                    (compiler_ir_types.CompilerIrValue.I64 0)))))
+            (compiler_ir_types.CompilerIrBlockList.Nil)))))))
+
+;; The sibling producer does not dominate the right arm. Its dependent binop
+;; and compare have outside-loop uses (and are therefore hot), but may not move
+;; because their operands remain loop definitions rather than hoisted defs.
+(define (opt-licm-simd-sibling-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Splat
+          10
+          (compiler_ir_types.CompilerIrValue.Var 2)
+          4
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "loop"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "loop")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ir_types.compiler-ir-label "left")
+            (compiler_ir_types.compiler-ir-label "right"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "left")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Splat
+              4
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              4
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "latch"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler_ir_types.CompilerIrBlock.Block
+            (compiler_ir_types.compiler-ir-label "right")
+            (opt-test-instrs
+              (compiler_ir_types.ir-instr-vector-bin-op
+                5
+                (compiler_ir_types.CompilerIrBinOp.Add)
+                (compiler_ir_types.CompilerIrValue.Var 4)
+                (compiler_ir_types.CompilerIrValue.Var 10)
+                4
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.ir-instr-vector-compare
+                6
+                (compiler_ir_types.CompilerIrBinOp.Lt)
+                (compiler_ir_types.CompilerIrValue.Var 5)
+                (compiler_ir_types.CompilerIrValue.Var 10)
+                4
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.CompilerIrInstr.Jump
+                (compiler_ir_types.compiler-ir-label "latch"))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "latch")
+              (opt-test-instrs
+                (compiler_ir_types.CompilerIrInstr.Branch
+                  (compiler_ir_types.CompilerIrValue.Var 0)
+                  (compiler_ir_types.compiler-ir-label "loop")
+                  (compiler_ir_types.compiler-ir-label "exit"))))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler_ir_types.CompilerIrBlock.Block
+                (compiler_ir_types.compiler-ir-label "exit")
+                (opt-test-instrs
+                  (compiler_ir_types.CompilerIrInstr.VectorReduce
+                    7
+                    (compiler_ir_types.CompilerIrVectorReduceOp.Sum)
+                    (compiler_ir_types.CompilerIrValue.Var 5)
+                    4
+                    (compiler_ast_types.AstType.I64))
+                  (compiler_ir_types.CompilerIrInstr.MaskReduce
+                    8
+                    (compiler_ir_types.CompilerIrMaskReduceOp.Any)
+                    (compiler_ir_types.CompilerIrValue.Var 6)
+                    4)
+                  (compiler_ir_types.CompilerIrInstr.Return
+                    (compiler_ir_types.CompilerIrMaybeValue.Some
+                      (compiler_ir_types.CompilerIrValue.I64 0)))))
+              (compiler_ir_types.CompilerIrBlockList.Nil))))))))
+
+;; Vector arithmetic with scalar-style trap semantics is intentionally outside
+;; the pure/speculatable subset even when all operands and uses are invariant.
+(define (opt-licm-simd-trap-blocks) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Splat
+          10
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          4
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Splat
+          11
+          (compiler_ir_types.CompilerIrValue.Var 2)
+          4
+          (compiler_ast_types.AstType.I64))
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "loop"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "loop")
+        (opt-test-instrs
+          (compiler_ir_types.ir-instr-vector-bin-op
+            4
+            (compiler_ir_types.CompilerIrBinOp.Div)
+            (compiler_ir_types.CompilerIrValue.Var 10)
+            (compiler_ir_types.CompilerIrValue.Var 11)
+            4
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.VectorReduce
+            5
+            (compiler_ir_types.CompilerIrVectorReduceOp.Sum)
+            (compiler_ir_types.CompilerIrValue.Var 4)
+            4
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ir_types.compiler-ir-label "loop")
+            (compiler_ir_types.compiler-ir-label "exit"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "exit")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Return
+              (compiler_ir_types.CompilerIrMaybeValue.Some
+                (compiler_ir_types.CompilerIrValue.I64 0)))))
+        (compiler_ir_types.CompilerIrBlockList.Nil)))))
+
+(define (compiler-optimize-licm-simd-self-test) : i64
+  (let
+    [chain-func : compiler_ir_types.CompilerIrFunction
+      (opt-licm-optimized-function (opt-licm-simd-chain-blocks))]
+    [chain : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks chain-func)]
+    [mixed-func : compiler_ir_types.CompilerIrFunction
+      (opt-licm-optimized-function (opt-licm-simd-mixed-blocks))]
+    [mixed : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks mixed-func)]
+    [cold : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (opt-licm-optimized-function (opt-licm-simd-cold-blocks)))]
+    [sibling : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (opt-licm-optimized-function (opt-licm-simd-sibling-blocks)))]
+    [trap : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (opt-licm-optimized-function (opt-licm-simd-trap-blocks)))]
+    [entry : i64 (compiler_ir_types.compiler-ir-label "entry")]
+    [loop : i64 (compiler_ir_types.compiler-ir-label "loop")]
+    (cond
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function chain-func)))
+        1]
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function mixed-func)))
+        2]
+      [(not (= (opt-licm-simd-kind-at chain entry 4) 1)) 3]
+      [(not (= (opt-licm-simd-kind-at chain entry 5) 2)) 4]
+      [(not (= (opt-licm-simd-kind-at chain entry 6) 3)) 5]
+      [(not (= (opt-licm-simd-kind-at chain loop 4) 0)) 6]
+      [(not (= (opt-licm-simd-kind-at chain loop 5) 0)) 7]
+      [(not (= (opt-licm-simd-kind-at chain loop 6) 0)) 8]
+      [(not
+          (<
+            (opt-licm-simd-index-at chain entry 4)
+            (opt-licm-simd-index-at chain entry 5)))
+        9]
+      [(not
+          (<
+            (opt-licm-simd-index-at chain entry 5)
+            (opt-licm-simd-index-at chain entry 6)))
+        10]
+      ;; No scalar Mov was substituted for any SIMD destination.
+      [(= (opt-licm-simd-kind-at chain entry 4) 4) 11]
+      [(= (opt-licm-simd-kind-at chain entry 5) 4) 12]
+      [(= (opt-licm-simd-kind-at chain entry 6) 4) 13]
+      ;; The invariant prefix moves; the loop-carried splat and everything
+      ;; depending on it remain in the loop.
+      [(not (= (opt-licm-simd-kind-at mixed entry 5) 1)) 14]
+      [(not (= (opt-licm-simd-kind-at mixed loop 6) 1)) 15]
+      [(not (= (opt-licm-simd-kind-at mixed loop 7) 2)) 16]
+      [(not (= (opt-licm-simd-kind-at mixed loop 8) 3)) 17]
+      ;; Cold-only values retain their original forms in the header.
+      [(not (= (opt-licm-simd-kind-at cold loop 4) 1)) 18]
+      [(not (= (opt-licm-simd-kind-at cold loop 5) 2)) 19]
+      [(not (= (opt-licm-simd-kind-at cold loop 6) 3)) 20]
+      ;; A producer available only on a sibling cannot seed an invariant chain.
+      [(not
+          (=
+            (opt-licm-simd-kind-at
+              sibling
+              (compiler_ir_types.compiler-ir-label "left")
+              4)
+            1))
+        21]
+      [(not
+          (=
+            (opt-licm-simd-kind-at
+              sibling
+              (compiler_ir_types.compiler-ir-label "right")
+              5)
+            2))
+        22]
+      [(not
+          (=
+            (opt-licm-simd-kind-at
+              sibling
+              (compiler_ir_types.compiler-ir-label "right")
+              6)
+            3))
+        23]
+      [(not (= (opt-licm-simd-kind-at trap loop 4) 2)) 24]
+      [else 42])))
+
 (define (opt-licm-trap-blocks) : compiler_ir_types.CompilerIrBlockList
   (compiler_ir_types.compiler-ir-block-cons
     (compiler_ir_types.CompilerIrBlock.Block

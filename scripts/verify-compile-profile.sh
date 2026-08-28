@@ -267,6 +267,43 @@ profile_counter_value_in() {
     ' "$_file"
 }
 
+assert_intern_storage_schema_in() {
+    _iss_file=$1
+    _iss_stdout=$2
+    _iss_stderr=$3
+    if ! awk -F'|' '
+        BEGIN {
+            count = split("intern.records.source_live intern.records.source_capacity intern.records.generated_live intern.records.generated_capacity intern.records.source_resizes intern.records.generated_resizes intern.records.reserved_bytes intern.source_map.live intern.source_map.capacity intern.source_map.probes_total intern.source_map.probe_max intern.source_map.resizes intern.source_map.reserved_bytes intern.canonical_map.live intern.canonical_map.capacity intern.canonical_map.probes_total intern.canonical_map.probe_max intern.canonical_map.resizes intern.canonical_map.reserved_bytes", expected, " ")
+        }
+        $1 == "compile-profile" &&
+            ($2 ~ /^intern\.records\./ ||
+             $2 ~ /^intern\.source_map\./ ||
+             $2 ~ /^intern\.canonical_map\./) {
+            seen++
+            if (seen > count || $2 != expected[seen] || NF != 6 ||
+                $3 !~ /^[0-9]+$/ || $4 != 0 || $5 != 0 || $6 != 0) {
+                bad = 1
+            }
+            value[$2] = $3 + 0
+        }
+        END {
+            if (seen != count || bad) exit 1
+            source_live = value["intern.records.source_live"]
+            generated_live = value["intern.records.generated_live"]
+            source_map_live = value["intern.source_map.live"]
+            canonical_map_live = value["intern.canonical_map.live"]
+            if (source_live <= 0 || generated_live < canonical_map_live || source_live != source_map_live) exit 1
+            if (value["intern.records.source_capacity"] != 131072 || value["intern.records.generated_capacity"] != 131072 || value["intern.source_map.capacity"] != 131072 || value["intern.canonical_map.capacity"] != 131072) exit 1
+            if (value["intern.records.source_resizes"] != 0 || value["intern.records.generated_resizes"] != 0 || value["intern.source_map.resizes"] != 0 || value["intern.canonical_map.resizes"] != 0) exit 1
+            if (value["intern.records.reserved_bytes"] <= 0 || value["intern.source_map.reserved_bytes"] <= 0 || value["intern.canonical_map.reserved_bytes"] <= 0) exit 1
+            if (value["intern.source_map.probes_total"] < value["intern.source_map.probe_max"] || value["intern.canonical_map.probes_total"] < value["intern.canonical_map.probe_max"]) exit 1
+        }
+    ' "$_iss_file"; then
+        show_failure_logs "$_iss_stdout" "$_iss_stderr"
+        fail "intern storage profile schema/order/accounting mismatch"
+    fi
+}
+
 # Every intermediate segmented-program flatten must name one of the two
 # documented conservative reasons. Successful expansion then publishes the
 # ordinary flat program exactly once at the walk boundary.
@@ -843,6 +880,10 @@ assert_contains_in "$SURFACE_SOURCE_STDERR" \
 assert_contains_in "$SURFACE_SOURCE_STDERR" \
     "compile-profile-detail|prelude.hydrations|0" \
     "$SURFACE_SOURCE_STDOUT" "$SURFACE_SOURCE_STDERR"
+assert_intern_storage_schema_in \
+    "$SURFACE_SOURCE_STDERR" \
+    "$SURFACE_SOURCE_STDOUT" \
+    "$SURFACE_SOURCE_STDERR"
 cmp "$SURFACE_HYDRATED_ASM" "$SURFACE_SOURCE_ASM" >/dev/null ||
     fail "hydrated prelude assembly differs from source prelude output"
 
@@ -1129,6 +1170,18 @@ for ordinal in 0 1; do
             "compile-batch-profile|$ordinal|$marker|" 1 \
             "$BATCH_STDOUT" "$BATCH_STDERR"
     done
+done
+for row in \
+    records.source_live records.source_capacity \
+    records.generated_live records.generated_capacity \
+    records.source_resizes records.generated_resizes records.reserved_bytes \
+    source_map.live source_map.capacity source_map.probes_total \
+    source_map.probe_max source_map.resizes source_map.reserved_bytes \
+    canonical_map.live canonical_map.capacity canonical_map.probes_total \
+    canonical_map.probe_max canonical_map.resizes canonical_map.reserved_bytes; do
+    assert_line_count_in "$BATCH_STDERR" \
+        "compile-profile|intern.$row|" 2 \
+        "$BATCH_STDOUT" "$BATCH_STDERR"
 done
 if ! awk -F'|' '
     $1 == "compile-batch-profile" && $2 != "entry_ordinal" {

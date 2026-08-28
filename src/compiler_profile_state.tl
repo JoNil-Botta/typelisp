@@ -10,12 +10,12 @@
 
 (define compiler-profile-state-metric-capacity : i64
   (cfg
-    (any regalloc-census test)
-    223
+    (any compile-profile test)
+    242
     (cfg
-      regalloc-liveness-census
-      164
-      (cfg scavenge-census 147 (cfg compile-profile 140 0)))))
+      regalloc-census
+      223
+      (cfg regalloc-liveness-census 164 (cfg scavenge-census 147 0)))))
 (define compiler-profile-state-summary-row-capacity : i64
   (cfg (any compile-profile-summary test) 40 0))
 (define compiler-profile-state-summary-scope-capacity : i64

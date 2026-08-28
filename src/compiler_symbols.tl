@@ -103,6 +103,9 @@
     (unsafe
       (ptr-read (int->ptr address : (Ptr CompilerSymbols))))))
 
+(defmacro (compiler-symbols-reference-shared-view [symbols : Expr]) : Expr
+  `(owned_view.compiler-owned-reference-shared-view ,symbols))
+
 (defenum ResultCompilerSymbols
   (Ok CompilerSymbols)
   (Err String))
@@ -139,6 +142,9 @@
         (ptr-read (ptr-cast (ptr-addr-of cell) : (Ptr u64))))]
     (unsafe
       (ptr-read (int->ptr address : (Ptr CompilerRegistries))))))
+
+(defmacro (compiler-registries-reference-shared-view [registries : Expr]) : Expr
+  `(owned_view.compiler-owned-reference-shared-view ,registries))
 
 (defenum ResultCompilerRegistries
   (Ok CompilerRegistries)
@@ -608,13 +614,13 @@
 
 (define (compiler-registries-identity
   [registries : (& registries CompilerRegistries)]) : i64
-  (match (compiler-registries-shared-view registries)
+  (match (compiler-registries-reference-shared-view registries)
     [(CompilerRegistries _ _ identity) identity]))
 
 (define (compiler-symbols-lookup-value-id
   [symbols : (& symbols CompilerSymbols)]
   [name-id : i64]) : option_i64.Option
-  (match (compiler-symbols-shared-view symbols)
+  (match (compiler-symbols-reference-shared-view symbols)
     [(CompilerSymbols values _ _ _ _ _)
       (match (compiler-symbol-map-lookup-id
         (& values)
@@ -629,7 +635,7 @@
 (define (compiler-symbols-lookup-type-id
   [symbols : (& symbols CompilerSymbols)]
   [name-id : i64]) : option_i64.Option
-  (match (compiler-symbols-shared-view symbols)
+  (match (compiler-symbols-reference-shared-view symbols)
     [(CompilerSymbols _ types _ _ _ _)
       (compiler-symbol-map-lookup-id
         (& types)
@@ -638,7 +644,7 @@
 (define (compiler-symbols-lookup-macro-id
   [symbols : (& symbols CompilerSymbols)]
   [name-id : i64]) : option_i64.Option
-  (match (compiler-symbols-shared-view symbols)
+  (match (compiler-symbols-reference-shared-view symbols)
     [(CompilerSymbols _ _ macros _ _ _)
       (compiler-symbol-map-lookup-id
         (& macros)
@@ -661,7 +667,7 @@
   [symbols : (& symbols CompilerSymbols)]
   [name-id : i64]
   [fallback : i64]) : i64
-  (match (compiler-symbols-shared-view symbols)
+  (match (compiler-symbols-reference-shared-view symbols)
     [(CompilerSymbols values _ _ _ _ _)
       (let
         [handle : i64
@@ -684,7 +690,7 @@
   [symbols : (& symbols CompilerSymbols)]
   [name-id : i64]
   [fallback : i64]) : i64
-  (match (compiler-symbols-shared-view symbols)
+  (match (compiler-symbols-reference-shared-view symbols)
     [(CompilerSymbols _ types _ _ _ _)
       (let
         [handle : i64
@@ -697,16 +703,16 @@
 
 (define (compiler-symbols-decls [symbols : (& symbols CompilerSymbols)]) : (__tl_dyn-array
     ast.AstDecl)
-  (match (compiler-symbols-shared-view symbols)
+  (match (compiler-symbols-reference-shared-view symbols)
     [(CompilerSymbols _ _ _ decls _ _) decls]))
 
 (define (compiler-symbols-owner-module-ids
   [symbols : (& symbols CompilerSymbols)]) : (__tl_dyn-array i64)
-  (match (compiler-symbols-shared-view symbols)
+  (match (compiler-symbols-reference-shared-view symbols)
     [(CompilerSymbols _ _ _ _ owner-module-ids _) owner-module-ids]))
 
 (define (compiler-symbols-decl-count [symbols : (& symbols CompilerSymbols)]) : i64
-  (match (compiler-symbols-shared-view symbols)
+  (match (compiler-symbols-reference-shared-view symbols)
     [(CompilerSymbols _ _ _ _ _ decl-count) decl-count]))
 
 (define (compiler-symbols-growth-capacity [capacity : i64] [required : i64]) : i64
@@ -1362,7 +1368,7 @@
   [symbols : (& symbols CompilerSymbols)]
   [module-id : i64]
   [name-id : i64]) : option_i64.Option
-  (match (compiler-symbols-shared-view symbols)
+  (match (compiler-symbols-reference-shared-view symbols)
     [(CompilerSymbols values _ _ _ _ _)
       (compiler-symbol-map-lookup-id
         (& values)
@@ -1372,7 +1378,7 @@
   [symbols : (& symbols CompilerSymbols)]
   [module-id : i64]
   [name-id : i64]) : option_i64.Option
-  (match (compiler-symbols-shared-view symbols)
+  (match (compiler-symbols-reference-shared-view symbols)
     [(CompilerSymbols _ types _ _ _ _)
       (compiler-symbol-map-lookup-id
         (& types)
@@ -1382,7 +1388,7 @@
   [symbols : (& symbols CompilerSymbols)]
   [module-id : i64]
   [name-id : i64]) : option_i64.Option
-  (match (compiler-symbols-shared-view symbols)
+  (match (compiler-symbols-reference-shared-view symbols)
     [(CompilerSymbols _ _ macros _ _ _)
       (compiler-symbol-map-lookup-id
         (& macros)
@@ -1393,7 +1399,7 @@
   [module-id : i64]
   [name-id : i64]
   [fallback : i64]) : i64
-  (match (compiler-symbols-shared-view symbols)
+  (match (compiler-symbols-reference-shared-view symbols)
     [(CompilerSymbols values _ _ _ _ _)
       (let
         [handle : i64
@@ -1409,7 +1415,7 @@
   [module-id : i64]
   [name-id : i64]
   [fallback : i64]) : i64
-  (match (compiler-symbols-shared-view symbols)
+  (match (compiler-symbols-reference-shared-view symbols)
     [(CompilerSymbols _ types _ _ _ _)
       (let
         [handle : i64
@@ -1425,7 +1431,7 @@
   [module-id : i64]
   [name-id : i64]
   [fallback : i64]) : i64
-  (match (compiler-symbols-shared-view symbols)
+  (match (compiler-symbols-reference-shared-view symbols)
     [(CompilerSymbols _ _ macros _ _ _)
       (let
         [handle : i64
@@ -1441,7 +1447,7 @@
   [module-id : i64]
   [type-name-id : i64]
   [field-name-id : i64]) : option_i64.Option
-  (match (compiler-registries-shared-view registries)
+  (match (compiler-registries-reference-shared-view registries)
     [(CompilerRegistries _ fields _)
       (compiler-symbol-map-lookup-id
         (& fields)
@@ -2188,7 +2194,7 @@
 (define (compiler-symbols-module-has-macro-map?
   [symbols : (& symbols CompilerSymbols)]
   [target-module-id : i64]) : bool
-  (match (compiler-symbols-shared-view symbols)
+  (match (compiler-symbols-reference-shared-view symbols)
     [(CompilerSymbols _ _ macros _ _ _)
       (let
         [capacity : i64 (array-length macros.keys)]
@@ -3403,7 +3409,7 @@
 (define (compiler-registries-lookup-variant-id
   [registries : (& registries CompilerRegistries)]
   [name-id : i64]) : option_i64.Option
-  (match (compiler-registries-shared-view registries)
+  (match (compiler-registries-reference-shared-view registries)
     [(CompilerRegistries variants _ _)
       (match (compiler-symbol-map-lookup-id
         (& variants)
@@ -3418,7 +3424,7 @@
 (define (compiler-registries-lookup-variant-key-id
   [registries : (& registries CompilerRegistries)]
   [key-id : i64]) : option_i64.Option
-  (match (compiler-registries-shared-view registries)
+  (match (compiler-registries-reference-shared-view registries)
     [(CompilerRegistries variants _ _)
       (compiler-symbol-map-lookup-id (& variants) key-id)]))
 
@@ -3426,7 +3432,7 @@
   [registries : (& registries CompilerRegistries)]
   [struct-name-id : i64]
   [field-name-id : i64]) : option_i64.Option
-  (match (compiler-registries-shared-view registries)
+  (match (compiler-registries-reference-shared-view registries)
     [(CompilerRegistries _ fields _)
       (compiler-symbol-map-lookup-id
         (& fields)
@@ -3436,7 +3442,7 @@
   [registries : (& registries CompilerRegistries)]
   [name-id : i64]
   [fallback : i64]) : i64
-  (match (compiler-registries-shared-view registries)
+  (match (compiler-registries-reference-shared-view registries)
     [(CompilerRegistries variants _ _)
       (let
         [handle : i64
@@ -3459,7 +3465,7 @@
   [registries : (& registries CompilerRegistries)]
   [key-id : i64]
   [fallback : i64]) : i64
-  (match (compiler-registries-shared-view registries)
+  (match (compiler-registries-reference-shared-view registries)
     [(CompilerRegistries variants _ _)
       (let
         [handle : i64
@@ -3473,7 +3479,7 @@
   [struct-name-id : i64]
   [field-name-id : i64]
   [fallback : i64]) : i64
-  (match (compiler-registries-shared-view registries)
+  (match (compiler-registries-reference-shared-view registries)
     [(CompilerRegistries _ fields _)
       (let
         [handle : i64

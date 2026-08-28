@@ -79110,18 +79110,15 @@
             acc)
           (if (not
             (opt-used-contains (compiler-opt-global-shared-view defs) id))
-            ;; loop-invariant index: exactly its own range check, hoisted.
-            (opt-bce-version-cond
+            ;; loop-invariant index: exactly its own range check, hoisted, as
+            ;; the ONE unsigned conjunct that check performs -- see the
+            ;; multiblock rule at opt-bce-mb-derive-index for why the sign
+            ;; condition the signed pair carried is not needed.
+            (opt-bce-version-mask-cond
               (compiler-opt-global-shared-view cell)
-              (ir.CompilerIrBinOp.Lt)
               (ir.CompilerIrValue.Var id)
               length-value
-              (opt-bce-version-cond
-                cell
-                (ir.CompilerIrBinOp.Ge)
-                (ir.CompilerIrValue.Var id)
-                (ir.CompilerIrValue.I64 0)
-                acc))
+              acc)
             (let
               [slots : (__tl_dyn-array ir.CompilerIrInstr)
                 (compiler-opt-global-shared-view
@@ -81102,7 +81099,8 @@
 ;; this many per call site, so a shape pays for its duplicated pressure with
 ;; removals that repay every iteration rather than with a promise.
 ;;
-;; THREE, and the corpus pins it from both sides rather than taste doing so.
+;; THREE FOR A REGION, and the corpus pins it from both sides rather than taste
+;; doing so.
 ;;
 ;; Above: it is strictly more than the incidental loop that happens to hold a
 ;; call and derives one or two checks. Those are the shapes the retired
@@ -81122,19 +81120,39 @@
 ;; constant is not a threshold that happens to let everything through -- one
 ;; measured shape of this class passes it and the adjacent one does not.
 ;;
-;; Read as a ratio it says a duplicated call must be bought by three checks that
-;; are removed from every iteration, against a call boundary the inliner prices
-;; at 6 + one move per parameter (opt-inline-checked-boundary-cost) -- paid once
-;; in code, where the removals repay per trip.
-(define (opt-bce-mb-call-clone-checks-per-call) : i64
-  3)
+;; TWO FOR A ONE-BLOCK LOOP, which is a different clone and not a softer
+;; verdict on the same one. Everything the region rate is defending against
+;; needs more than one block to happen: in a self-loop the duplicated call site
+;; IS the loop body, so the allocator sees two straight-line intervals rather
+;; than a region's union, and -- the part that actually moves the arithmetic --
+;; there is no conditional arm for a removal to hide on, so every derived check
+;; is removed from EVERY trip instead of from the trips that reach its arm.
+;; Both shapes the region rate is pinned by are multi-block and keep it.
+;;
+;; gvn_table's `gvn-run-block` is the measured one-block shape: a self-loop
+;; whose step-6 derived phi reads `tokens[pos]` .. `tokens[pos+5]` around one
+;; `gvn-dispatch` call. `bounds_group` had already collapsed those six reads
+;; into their extremal pair before this pass ran, so two is all the derivation
+;; is allowed to count, and charging it three would price the earlier pass's
+;; work rather than this clone's. Admitted at two: gvn_table -1,488,494
+;; (-0.177%), every other row of the 17 bit-identical, self-compile +0.0006%.
+;;
+;; Read as a ratio, either rate says a duplicated call must be bought by that
+;; many checks removed from every iteration, against a call boundary the
+;; inliner prices at 6 + one move per parameter
+;; (opt-inline-checked-boundary-cost) -- paid once in code, where the removals
+;; repay per trip.
+(define (opt-bce-mb-call-clone-checks-per-call [body-blocks : i64]) : i64
+  (if (<= body-blocks 1)
+    2
+    3))
 
-;; The derived-check floor for a body holding `calls` duplicated call sites.
-;; `calls = 0` gives the pass's original floor of one.
-(define (opt-bce-mb-call-clone-min-derived [calls : i64]) : i64
+;; The derived-check floor for a body of `body-blocks` blocks holding `calls`
+;; duplicated call sites. `calls = 0` gives the pass's original floor of one.
+(define (opt-bce-mb-call-clone-min-derived [calls : i64] [body-blocks : i64]) : i64
   (if (< calls 1)
     1
-    (* calls (opt-bce-mb-call-clone-checks-per-call))))
+    (* calls (opt-bce-mb-call-clone-checks-per-call body-blocks))))
 
 ;; The one call form this pass's fast clone duplicates: a DIRECT `Call`.
 ;;
@@ -82107,8 +82125,10 @@
                 (- 0 1))))))]))
 
 ;; Direct call sites across the loop: what the fast clone duplicates and what
-;; opt-bce-mb-call-clone-min-derived prices. Only the blocks the shape scan
-;; already admitted reach this, so every call it counts is a direct one.
+;; opt-bce-mb-call-clone-min-derived prices. The predicate is SYNTACTIC (a
+;; direct `Call` instruction), so it also answers ahead of admission, which is
+;; where opt-bce-mb-loop-shape-with-preheader reads it to decide whether a
+;; one-block loop is this scan's business at all.
 (define (opt-bce-mb-block-calls
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]
@@ -82500,7 +82520,16 @@
           (opt-bce-mb-nest-instr-max)
           (opt-bce-mb-instr-max)))]
     (if (or
-      (< (opt-label-count (compiler-opt-global-shared-view body-labels)) 2)
+      (and
+        (< (opt-label-count (compiler-opt-global-shared-view body-labels)) 2)
+        ;; The one-block admission `opt-bce-mb-loop-shape` states: a self-loop
+        ;; reaches this scan only when it holds the direct call the
+        ;; single-block versioner refuses to clone.
+        (<
+          (opt-bce-mb-body-calls
+            (compiler-opt-global-shared-view body-blocks)
+            0)
+          1))
       (>
         (opt-label-count (compiler-opt-global-shared-view body-labels))
         block-max)
@@ -82674,8 +82703,28 @@
                 header
                 (compiler-opt-global-shared-view body.labels))]
             (if (or
-              ;; single-block self-loops belong to the dedicated pass above
-              (= header latch)
+              ;; SINGLE-BLOCK self-loops belong to the dedicated pass above,
+              ;; EXCEPT for the one thing that pass will not clone: a direct
+              ;; call. `opt-bce-version-body-instr-ok?` has no call in it, and
+              ;; the note at `opt-bce-mb-body-instr-ok?` assumed this scan
+              ;; already reached such loops -- it did not, because of this very
+              ;; clause, so a one-block loop holding a call was versioned by
+              ;; neither pass. gvn_table's `gvn-run-block` is the measured
+              ;; shape: a self-loop whose step-6 derived phi reads
+              ;; `tokens[pos]` .. `tokens[pos+5]` around one `gvn-dispatch`
+              ;; call, whose extremal pair derives as one derived family.
+              ;; Everything downstream already prices and classifies the call
+              ;; (opt-bce-mb-call-clone-min-derived, opt-bce-mb-stable-instr?);
+              ;; only admission was missing. The single-block pass still runs
+              ;; FIRST every round, so every call-free self-loop it can take is
+              ;; still its.
+              (and
+                (= header latch)
+                (<
+                  (opt-bce-mb-body-calls
+                    (compiler-opt-global-shared-view body.blocks)
+                    0)
+                  1))
               (= header entry-label)
               (if nested?
                 (not nest?)
@@ -85611,6 +85660,15 @@
 ;; invariant-operand check. Scale 1 keeps the division-free
 ;; opt-bce-version-var-base-guard; larger scales route to the synthesized
 ;; derived-seed guard at the dispatch site.
+;;
+;; EITHER DIRECTION, as in the single-block pass: a decreasing index
+;; (`base - 2*i`, and the `base - i` a reversed copy walks with) is as much a
+;; monotone affine function of the counter as an increasing one, and the guard
+;; builder states the mirrored conditions for it
+;; (opt-bce-version-mirror-guard, reached through
+;; opt-bce-version-scaled-family). What still rejects is a scale that does not
+;; involve the counter at all (0) and one whose magnitude is not representable
+;; (i64-MIN), which is exactly what a magnitude below 1 says.
 (define (opt-bce-mb-var-base-side
   [body-blocks : ir.CompilerIrBlockList]
   [defs : opt_i64_i64_map.Map]
@@ -85624,7 +85682,7 @@
     16)
     [(OptBceCounterAffine.No) (OptBceCounterAffineBase.No)]
     [(OptBceCounterAffine.Some scale offset)
-      (if (< scale 1)
+      (if (< (opt-bce-counter-affine-magnitude scale) 1)
         (OptBceCounterAffineBase.No)
         (match (opt-bce-mb-invariant-operand body-blocks defs base-side)
           [(ir.CompilerIrMaybeValue.No) (OptBceCounterAffineBase.No)]
@@ -85809,6 +85867,19 @@
 ;; This is an INVARIANCE fact only. It licenses reading a descriptor word once
 ;; in the guard instead of once per iteration; it moves no store, no call, and
 ;; no check.
+;;
+;; WHY THE BLANKET STORE REFUSAL STAYS. The one measured check this predicate
+;; was suspected of holding back -- `bounds_check %281, %92` in cfg_domloops'
+;; `cfg-idom-iterate`, kept inside `while_header.27__bce_fast` -- does not fail
+;; on its LENGTH at all. `%92` is loaded in the versioned region's preheader, so
+;; `opt-bce-mb-invariant-operand` accepts it directly and the guard block names
+;; it verbatim (`%251 = le %92, %72`); no descriptor hoist is consulted, so no
+;; relaxation here could reach the check. What fails is the INDEX: `%281` is a
+;; loop-carried phi of the versioned region whose back value is an `idom[...]`
+;; load, so it is neither bounded by the counter, nor a derived induction, nor
+;; masked, and the check is kept. Admitting element-only stores for descriptor
+;; invariance would therefore buy that case nothing, and it is the case the
+;; question was asked about.
 ;; The type-pool segment bases the descriptor context carries, or -1 when
 ;; recognition is disabled (test entries without type-pool access).
 (define (opt-bce-mb-descriptor-type-segment-bases
@@ -86800,25 +86871,52 @@
               length-value
               cell
               acc)]
-          ;; loop-invariant index: exactly its own range check, hoisted. TWO
-          ;; conjuncts, so like the fusion above it stays a counted-shape rule --
-          ;; the counter-free relaxation is scoped to the one-conjunct masked
-          ;; family (see opt-bce-mb-derive-check).
+          ;; loop-invariant index: exactly its own range check, hoisted.
+          ;;
+          ;; ONE UNSIGNED CONJUNCT, not the signed pair this used to state.
+          ;; `BoundsCheck` compares UNSIGNED (opt-bce-version-mask-cond reads
+          ;; the same fact for an invariant mask), so `id <u len` IS the removed
+          ;; check, evaluated once in the guard instead of once per iteration.
+          ;; It needs no companion sign condition: a negative `id` is >=u 2^63
+          ;; and fails the conjunct exactly where the check itself would have
+          ;; trapped, and a length whose own sign bit is set admits the same
+          ;; indexes the check admits. So the guard is EXACT in both directions
+          ;; -- false sends the entry to the original loop, which aborts exactly
+          ;; where it did -- and no ordering question among aborts arises.
+          ;;
+          ;; COUNTED SHAPES ONLY, and the single conjunct does not change that.
+          ;; The rule reads no trip range, so the counter-free economics gate
+          ;; (at most one conjunct per removed check,
+          ;; opt-bce-mb-guard-conds-ranged) now admits it -- which is exactly
+          ;; the shape that must not be admitted. A loop-invariant index sits on
+          ;; whatever arm the body puts it on, so its removals fire only on the
+          ;; iterations that reach that arm while the conjunct is paid on every
+          ;; ENTRY: the cross-array fusion is scoped away from counter-free
+          ;; shapes for the same reason, one paragraph up. Measured by dropping
+          ;; this clause: lex_source's `ls-scan-symbol-end` -- a counter-free
+          ;; scan whose three `buf[start + k]` reads are hoisted into the
+          ;; preheader and checked on one conditional arm -- bought a
+          ;; three-conjunct entry guard per call for three removals that fire
+          ;; only when the arm is taken, +8,804,144 (+1.84%) on that benchmark
+          ;; with every other row bit-identical.
+          ;;
+          ;; So the walk loops this would otherwise reach (`rpo_num[b]` with `b`
+          ;; fixed across cfg_domloops' idom walks) keep their check. Two
+          ;; further gates stand behind this one for that measured case anyway:
+          ;; the counter-free shape is offered only to loops whose preheader is
+          ;; outside every loop (opt-bce-mb-loop-shape-with-preheader), and a
+          ;; loop already inside a fast clone is refused outright
+          ;; (opt-bce-mb-label-in-clone?), which is where `while_header.27`
+          ;; lives once the enclosing region versions.
           [(and
               (>= iphi 0)
               (not
                 (opt-used-contains (compiler-opt-global-shared-view defs) id)))
-            (opt-bce-version-cond
+            (opt-bce-version-mask-cond
               (compiler-opt-global-shared-view cell)
-              (ir.CompilerIrBinOp.Lt)
               (ir.CompilerIrValue.Var id)
               length-value
-              (opt-bce-version-cond
-                cell
-                (ir.CompilerIrBinOp.Ge)
-                (ir.CompilerIrValue.Var id)
-                (ir.CompilerIrValue.I64 0)
-                acc))]
+              acc)]
           [else
             (match (opt-bce-mb-find-def
               (compiler-opt-global-shared-view body-blocks)
@@ -86940,6 +87038,59 @@
                                                           length-value
                                                           cell
                                                           acc))])])]
+                                            ;; `base - strided + k0`: the
+                                            ;; decreasing mirror of the Add
+                                            ;; split, and the shape a reversed
+                                            ;; copy walks with
+                                            ;; (`postorder[post - 1 - i]`, the
+                                            ;; rpo copy loop). The strided side
+                                            ;; enters with every coefficient's
+                                            ;; sign flipped, so the family is
+                                            ;; the one `-scale` names; only THIS
+                                            ;; operand order is a variable-base
+                                            ;; index, because `strided - base`
+                                            ;; would need the base itself
+                                            ;; negated (the single-block pass
+                                            ;; states the same restriction at
+                                            ;; opt-bce-version-var-base-side-descending).
+                                            [(ir.CompilerIrBinOp.Sub)
+                                              (match (opt-bce-mb-var-base-side
+                                                body-blocks
+                                                defs
+                                                iphi
+                                                core-rhs
+                                                core-lhs)
+                                                [(OptBceCounterAffineBase.No)
+                                                  (OptBceVersionGuardAcc.No)]
+                                                [(OptBceCounterAffineBase.Some
+                                                    scale
+                                                    k2
+                                                    base)
+                                                  ;; i64-MIN has no
+                                                  ;; representable negation for
+                                                  ;; the flip below.
+                                                  (if (<
+                                                    (opt-bce-counter-affine-magnitude
+                                                      k2)
+                                                    0)
+                                                    (OptBceVersionGuardAcc.No)
+                                                    (match (opt-bce-version-k-add
+                                                      k0
+                                                      (- 0 k2))
+                                                      [(OptBceVersionKSum.No)
+                                                        (OptBceVersionGuardAcc.No)]
+                                                      [(OptBceVersionKSum.Some
+                                                          offset)
+                                                        (opt-bce-version-scaled-family
+                                                          fan
+                                                          seed
+                                                          bound
+                                                          base
+                                                          offset
+                                                          (- 0 scale)
+                                                          length-value
+                                                          cell
+                                                          acc)]))])]
                                             [_ (OptBceVersionGuardAcc.No)]))]
                                       ;; A BOUNDED PHI plus a literal: the phi's
                                       ;; own range is the counter's, so
@@ -87030,25 +87181,41 @@
                           [(OptBceCounterAffine.Some scale offset)
                             ;; scale 1 is a literal-base fan member (see the
                             ;; counter case above); larger scales keep the
-                            ;; quotient guard.
-                            (if (= scale 1)
-                              (opt-bce-version-fan-admit-unit
-                                fan
-                                seed
-                                bound
-                                (ir.CompilerIrValue.I64 0)
-                                offset
-                                length-value
-                                cell
-                                acc)
-                              (opt-bce-version-affine-guard
-                                seed
-                                bound
-                                length-value
-                                scale
-                                offset
-                                cell
-                                acc))])])]
+                            ;; quotient guard, and a DECREASING one takes the
+                            ;; mirrored conditions with a literal base of 0
+                            ;; (the single-block pass makes the same split).
+                            (cond
+                              [(= scale 1)
+                                (opt-bce-version-fan-admit-unit
+                                  fan
+                                  seed
+                                  bound
+                                  (ir.CompilerIrValue.I64 0)
+                                  offset
+                                  length-value
+                                  cell
+                                  acc)]
+                              [(< scale 0)
+                                (opt-bce-version-mirror-family
+                                  seed
+                                  bound
+                                  (ir.CompilerIrValue.I64 0)
+                                  (ir.CompilerIrValue.I64 0)
+                                  offset
+                                  scale
+                                  (opt-bce-version-fan-kind-scaled)
+                                  length-value
+                                  cell
+                                  acc)]
+                              [else
+                                (opt-bce-version-affine-guard
+                                  seed
+                                  bound
+                                  length-value
+                                  scale
+                                  offset
+                                  cell
+                                  acc)])])])]
                   [(ir.CompilerIrInstr.Phi _ inputs pty)
                     ;; Bounded header phi (only header phis carry latch-edge
                     ;; inputs): same seed as the counter, back-edge value within
@@ -88705,7 +88872,8 @@
         (opt-bce-mb-call-clone-min-derived
           (opt-bce-mb-body-calls
             (compiler-opt-global-shared-view shape.body-blocks)
-            0)))
+            0)
+          (opt-label-count (compiler-opt-global-shared-view shape.body-labels))))
       ;; A region-sized clone additionally needs one of them inside an inner
       ;; loop, where the removal repeats per inner iteration.
       (and

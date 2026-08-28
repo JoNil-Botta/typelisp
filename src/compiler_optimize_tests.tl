@@ -44632,8 +44632,39 @@
 ;; floor of 0. 14 decrements, so the step's sign matches the `>=` latch and the
 ;; loop versions off the mirrored range; 15 keeps the increment, so the counter
 ;; walks AWAY from the limit it is tested against and no trip range exists.
+;;
+;; Variant 19 borrows 15's counter-free shape on purpose -- see the index-form
+;; variants documented at `opt-bce-mb-test-header-block`.
 (define (opt-bce-mb-test-descending-variant? [variant : i64]) : bool
-  (>= variant 14))
+  (or (and (>= variant 14) (<= variant 15)) (= variant 19)))
+
+;; --- index-form variants (16-18) ----------------------------------------------
+;;
+;; 16 checks `base - i` with an invariant VARIABLE base, the reversed-copy shape
+;;    (`postorder[post - 1 - i]`): the index's core is a var+var Sub, so the
+;;    literal-coefficient recovery refuses it and the strided retry has to split
+;;    it into an invariant base and a counter side whose coefficients are
+;;    flipped.
+;; 17 checks `3 - i` with a LITERAL base: the coefficient recovery does resolve
+;;    it, to scale -1, which the quotient guard cannot state and the mirrored
+;;    conditions can.
+;; 18 checks a LOOP-INVARIANT index -- the walk-loop shape whose comparand is
+;;    fixed for the whole loop (`rpo_num[b]`) -- from a counted loop, where the
+;;    rule states the ONE unsigned conjunct the removed check itself performs.
+;; 19 is 18's counter-free twin, on 15's shape (no trip range exists). It must
+;;    NOT version: the removals sit on a conditional arm and fire only on the
+;;    iterations that reach it, while the conjuncts are paid on every entry --
+;;    the same reason the cross-array fusion stays counted-shape-only. Measured
+;;    on lex_source's `ls-scan-symbol-end`, whose three hoisted `buf[start+k]`
+;;    checks bought a three-conjunct entry guard: +8,804,144 (+1.84%).
+(define (opt-bce-mb-test-var-base-descending-variant? [variant : i64]) : bool
+  (= variant 16))
+
+(define (opt-bce-mb-test-literal-descending-variant? [variant : i64]) : bool
+  (= variant 17))
+
+(define (opt-bce-mb-test-invariant-index-variant? [variant : i64]) : bool
+  (or (= variant 18) (= variant 19)))
 
 (define (opt-bce-mb-test-header-block [variant : i64]) : compiler_ir_types.CompilerIrBlock
   (compiler_ir_types.CompilerIrBlock.Block
@@ -44661,20 +44692,31 @@
             (compiler_ir_types.compiler-ir-label "merge")
             (compiler_ir_types.CompilerIrPhiInputList.Nil)))
         (compiler_ast_types.AstType.I64))
-      (if (= variant 13)
-        (compiler_ir_types.CompilerIrInstr.BinOp
-          14
-          (compiler_ir_types.CompilerIrBinOp.Mul)
-          (compiler_ir_types.CompilerIrValue.Var 3)
-          (compiler_ir_types.CompilerIrValue.I64 3)
-          (compiler_ast_types.AstType.I64))
-        (compiler_ir_types.CompilerIrInstr.Mov
-          14
-          (compiler_ir_types.CompilerIrValue.I64 0)
-          (compiler_ast_types.AstType.I64)))
+      (cond
+        [(= variant 13)
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            14
+            (compiler_ir_types.CompilerIrBinOp.Mul)
+            (compiler_ir_types.CompilerIrValue.Var 3)
+            (compiler_ir_types.CompilerIrValue.I64 3)
+            (compiler_ast_types.AstType.I64))]
+        [(opt-bce-mb-test-var-base-descending-variant? variant)
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            14
+            (compiler_ir_types.CompilerIrBinOp.Sub)
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            (compiler_ir_types.CompilerIrValue.Var 3)
+            (compiler_ast_types.AstType.I64))]
+        [else
+          (compiler_ir_types.CompilerIrInstr.Mov
+            14
+            (compiler_ir_types.CompilerIrValue.I64 0)
+            (compiler_ast_types.AstType.I64))])
       (compiler_ir_types.CompilerIrInstr.BoundsCheck
         (compiler_ir_types.CompilerIrValue.Var
-          (if (= variant 13)
+          (if (or
+            (= variant 13)
+            (opt-bce-mb-test-var-base-descending-variant? variant))
             14
             3))
         (compiler_ir_types.CompilerIrValue.Var 1)
@@ -44761,10 +44803,64 @@
         (compiler_ir_types.CompilerIrValue.Var 1)
         (compiler_ir_types.compiler-ir-label "mb_pair_ok1")))))
 
+;; `3 - i` off a LITERAL base: the coefficient recovery reports scale -1, which
+;; the quotient guard refuses and the mirrored conditions state.
+(define (opt-bce-mb-test-literal-descending-then-block) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.CompilerIrBlock.Block
+    (compiler_ir_types.compiler-ir-label "then")
+    (opt-test-instrs
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        11
+        (compiler_ir_types.CompilerIrBinOp.Mul)
+        (compiler_ir_types.CompilerIrValue.Var 3)
+        (compiler_ir_types.CompilerIrValue.I64 -1)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        6
+        (compiler_ir_types.CompilerIrBinOp.Add)
+        (compiler_ir_types.CompilerIrValue.Var 11)
+        (compiler_ir_types.CompilerIrValue.I64 3)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.CompilerIrInstr.BoundsCheck
+        (compiler_ir_types.CompilerIrValue.Var 6)
+        (compiler_ir_types.CompilerIrValue.Var 1)
+        (compiler_ir_types.compiler-ir-label "mb_ok1"))
+      (compiler_ir_types.CompilerIrInstr.Jump
+        (compiler_ir_types.compiler-ir-label "merge")))))
+
+;; A LOOP-INVARIANT index: the walk loop's fixed comparand, on a conditional
+;; arm. Counted (18) it versions under one unsigned conjunct; counter-free (19)
+;; the same shape must stay refused.
+(define (opt-bce-mb-test-invariant-index-then-block) : compiler_ir_types.CompilerIrBlock
+  (compiler_ir_types.CompilerIrBlock.Block
+    (compiler_ir_types.compiler-ir-label "then")
+    (opt-test-instrs
+      (compiler_ir_types.CompilerIrInstr.BoundsCheck
+        (compiler_ir_types.CompilerIrValue.Var 2)
+        (compiler_ir_types.CompilerIrValue.Var 1)
+        (compiler_ir_types.compiler-ir-label "mb_ok1"))
+      (compiler_ir_types.CompilerIrInstr.Mov
+        11
+        (compiler_ir_types.CompilerIrValue.I64 0)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.CompilerIrInstr.BinOp
+        6
+        (compiler_ir_types.CompilerIrBinOp.Add)
+        (compiler_ir_types.CompilerIrValue.Var 4)
+        (compiler_ir_types.CompilerIrValue.I64 1)
+        (compiler_ast_types.AstType.I64))
+      (compiler_ir_types.CompilerIrInstr.Jump
+        (compiler_ir_types.compiler-ir-label "merge")))))
+
 (define (opt-bce-mb-test-then-block [variant : i64]) : compiler_ir_types.CompilerIrBlock
-  (if (opt-bce-mb-test-cast-variant? variant)
-    (opt-bce-mb-test-cast-then-block variant)
-    (opt-bce-mb-test-plain-then-block variant)))
+  (cond
+    [(opt-bce-mb-test-cast-variant? variant)
+      (opt-bce-mb-test-cast-then-block variant)]
+    [(opt-bce-mb-test-literal-descending-variant? variant)
+      (opt-bce-mb-test-literal-descending-then-block)]
+    [(opt-bce-mb-test-invariant-index-variant? variant)
+      (opt-bce-mb-test-invariant-index-then-block)]
+    [else (opt-bce-mb-test-plain-then-block variant)]))
 
 (define (opt-bce-mb-test-plain-then-block [variant : i64]) : compiler_ir_types.CompilerIrBlock
   (if (opt-bce-mb-test-pair-variant? variant)
@@ -83071,3 +83167,401 @@
     (compiler-optimize-t25-thread-sibling-self-test)
     42
     "a merge holding a bool phi, sibling phis and pure Movs threads every literal edge with the sibling's own edge value substituted into the successors' phis, refuses when a definition is read from a join below both successors, admits ten non-phi instructions and refuses twelve, and resolves a three-deep forwarding chain"))
+
+;; --- index-form coverage ------------------------------------------------------
+;;
+;; A ONE-BLOCK loop whose body holds a direct call, around a step-6 derived
+;; induction phi read at offsets 0 and 5 (gvn_table's `gvn-run-block` shape).
+;; The single-block versioner refuses the body outright -- its clonable
+;; whitelist has no call in it -- so the loop is only reachable through the
+;; multiblock scan, which prices the duplicated call site in derived checks.
+(define (opt-bce-mb-call-selfloop-blocks [call? : bool] [pair? : bool]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.compiler-ir-block-cons
+    (compiler_ir_types.CompilerIrBlock.Block
+      (compiler_ir_types.compiler-ir-label "entry")
+      (opt-test-instrs
+        (compiler_ir_types.CompilerIrInstr.Jump
+          (compiler_ir_types.compiler-ir-label "loop"))))
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "loop")
+        (opt-test-instrs
+          (compiler_ir_types.CompilerIrInstr.Phi
+            3
+            (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.CompilerIrValue.I64 0)
+              (compiler_ir_types.compiler-ir-label "entry")
+              (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.CompilerIrValue.Var 8)
+                (compiler_ir_types.compiler-ir-label "loop")
+                (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.Phi
+            4
+            (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.CompilerIrValue.Var 2)
+              (compiler_ir_types.compiler-ir-label "entry")
+              (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.CompilerIrValue.Var 9)
+                (compiler_ir_types.compiler-ir-label "loop")
+                (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            6
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            (compiler_ir_types.CompilerIrValue.Var 4)
+            (compiler_ir_types.CompilerIrValue.I64 5)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.BoundsCheck
+            (compiler_ir_types.CompilerIrValue.Var 4)
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            (compiler_ir_types.compiler-ir-label "call_ok0"))
+          ;; `pair?` false leaves the loop ONE derived check for its one
+          ;; duplicated call site, which the one-block rate of two refuses.
+          (if pair?
+            (compiler_ir_types.CompilerIrInstr.BoundsCheck
+              (compiler_ir_types.CompilerIrValue.Var 6)
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              (compiler_ir_types.compiler-ir-label "call_ok1"))
+            (compiler_ir_types.CompilerIrInstr.Mov
+              5
+              (compiler_ir_types.CompilerIrValue.Var 6)
+              (compiler_ast_types.AstType.I64)))
+          (if call?
+            (compiler_ir_types.CompilerIrInstr.Call
+              7
+              (opt-test-symbol "selfloop_callee")
+              (compiler_ir_types.CompilerIrCallArgs.Nil)
+              (compiler_ast_types.AstType.I64))
+            ;; The same self-loop with the call replaced by an ordinary Mov:
+            ;; the single-block versioner takes THAT one, which is what makes
+            ;; the call the only difference between the two runs.
+            (compiler_ir_types.CompilerIrInstr.Mov
+              7
+              (compiler_ir_types.CompilerIrValue.I64 0)
+              (compiler_ast_types.AstType.I64)))
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            9
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            (compiler_ir_types.CompilerIrValue.Var 4)
+            (compiler_ir_types.CompilerIrValue.I64 6)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            8
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            (compiler_ir_types.CompilerIrValue.Var 3)
+            (compiler_ir_types.CompilerIrValue.I64 1)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            10
+            (compiler_ir_types.CompilerIrBinOp.Lt)
+            (compiler_ir_types.CompilerIrValue.Var 8)
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ast_types.AstType.Bool))
+          (compiler_ir_types.CompilerIrInstr.Branch
+            (compiler_ir_types.CompilerIrValue.Var 10)
+            (compiler_ir_types.compiler-ir-label "loop")
+            (compiler_ir_types.compiler-ir-label "exit"))))
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "exit")
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Return
+              (compiler_ir_types.CompilerIrMaybeValue.Some
+                (compiler_ir_types.CompilerIrValue.I64 0)))))
+        (compiler_ir_types.CompilerIrBlockList.Nil)))))
+
+(define (opt-bce-mb-selfloop-function
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    (opt-test-symbol "bce_version_selfloop_fixture")
+    (opt-bce-version-test-params)
+    (compiler_ast_types.AstType.I64)
+    11
+    blocks))
+
+(define (opt-bce-mb-index-form-rewrite [variant : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_optimize.opt-function-blocks
+    (compiler_optimize.opt-bce-version-function
+      (opt-bce-mb-test-function (opt-bce-mb-test-blocks variant)))))
+
+(define (opt-bce-mb-index-form-verified? [variant : i64]) : bool
+  (compiler_optimize.opt-verify-ok?
+    (compiler_optimize.opt-verify-function
+      (compiler_optimize.opt-bce-version-function
+        (opt-bce-mb-test-function (opt-bce-mb-test-blocks variant))))))
+
+(define (opt-bce-mb-guard-op-count
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [label : String]
+  [op : compiler_ir_types.CompilerIrBinOp]) : i64
+  (opt-bce-version-test-block-binop-count
+    blocks
+    (compiler_ir_types.compiler-ir-label label)
+    op))
+
+(define (compiler-optimize-bce-index-form-self-test) : i64
+  (let
+    [var-base : compiler_ir_types.CompilerIrBlockList
+      (opt-bce-mb-index-form-rewrite 16)]
+    [literal : compiler_ir_types.CompilerIrBlockList
+      (opt-bce-mb-index-form-rewrite 17)]
+    [invariant : compiler_ir_types.CompilerIrBlockList
+      (opt-bce-mb-index-form-rewrite 18)]
+    [free-invariant : compiler_ir_types.CompilerIrBlockList
+      (opt-bce-mb-index-form-rewrite 19)]
+    [ascending : compiler_ir_types.CompilerIrBlockList
+      (opt-bce-mb-index-form-rewrite 0)]
+    [call-loop-func : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-bce-version-function
+        (opt-bce-mb-selfloop-function
+          (opt-bce-mb-call-selfloop-blocks true true)))]
+    [call-loop : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (owned_view.compiler-owned-shared-view call-loop-func))]
+    [callfree-loop : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.opt-bce-version-function
+          (opt-bce-mb-selfloop-function
+            (opt-bce-mb-call-selfloop-blocks false true))))]
+    [lone-check-loop : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.opt-bce-version-function
+          (opt-bce-mb-selfloop-function
+            (opt-bce-mb-call-selfloop-blocks true false))))]
+    (cond
+      ;; --- A. `base - i`, an invariant VARIABLE base -------------------------
+      [(not (opt-bce-mb-index-form-verified? 16)) 1]
+      [(not
+          (opt-bce-mask-has-block?
+            (owned_view.compiler-owned-shared-view var-base)
+            "body__bce_guard"))
+        2]
+      [(not
+          (=
+            (opt-bce-mask-block-checks
+              (owned_view.compiler-owned-shared-view var-base)
+              "body__bce_fast")
+            0))
+        3]
+      [(not
+          (=
+            (opt-bce-mask-block-checks
+              (owned_view.compiler-owned-shared-view var-base)
+              "then__bce_fast")
+            0))
+        4]
+      ;; the slow loop is untouched
+      [(not
+          (=
+            (opt-bce-mask-block-checks
+              (owned_view.compiler-owned-shared-view var-base)
+              "body")
+            1))
+        5]
+      [(not
+          (=
+            (opt-bce-mask-block-checks
+              (owned_view.compiler-owned-shared-view var-base)
+              "then")
+            1))
+        6]
+      ;; The mirrored conditions are the signature: `len > origin` is a Gt the
+      ;; ascending fixture's guard has no reason to emit, and a UNIT magnitude
+      ;; needs no quotient at all.
+      [(<
+          (opt-bce-mb-guard-op-count
+            (owned_view.compiler-owned-shared-view var-base)
+            "body__bce_guard"
+            (compiler_ir_types.CompilerIrBinOp.Gt))
+          1)
+        7]
+      [(>
+          (opt-bce-mb-guard-op-count
+            (owned_view.compiler-owned-shared-view ascending)
+            "body__bce_guard"
+            (compiler_ir_types.CompilerIrBinOp.Gt))
+          0)
+        8]
+      [(>
+          (opt-count-binop-op-blocks
+            (owned_view.compiler-owned-shared-view var-base)
+            (compiler_ir_types.CompilerIrBinOp.Div))
+          0)
+        9]
+      ;; --- A. `3 - i`, a LITERAL base ----------------------------------------
+      [(not (opt-bce-mb-index-form-verified? 17)) 10]
+      [(not
+          (opt-bce-mask-has-block?
+            (owned_view.compiler-owned-shared-view literal)
+            "body__bce_guard"))
+        11]
+      [(not
+          (=
+            (opt-bce-mask-block-checks
+              (owned_view.compiler-owned-shared-view literal)
+              "body__bce_fast")
+            0))
+        12]
+      [(not
+          (=
+            (opt-bce-mask-block-checks
+              (owned_view.compiler-owned-shared-view literal)
+              "then__bce_fast")
+            0))
+        13]
+      [(not
+          (=
+            (opt-bce-mask-block-checks
+              (owned_view.compiler-owned-shared-view literal)
+              "then")
+            1))
+        14]
+      [(<
+          (opt-bce-mb-guard-op-count
+            (owned_view.compiler-owned-shared-view literal)
+            "body__bce_guard"
+            (compiler_ir_types.CompilerIrBinOp.Gt))
+          1)
+        15]
+      [(>
+          (opt-count-binop-op-blocks
+            (owned_view.compiler-owned-shared-view literal)
+            (compiler_ir_types.CompilerIrBinOp.Div))
+          0)
+        16]
+      ;; --- C. a loop-invariant index, stated as ONE unsigned conjunct --------
+      [(not (opt-bce-mb-index-form-verified? 18)) 17]
+      [(not
+          (opt-bce-mask-has-block?
+            (owned_view.compiler-owned-shared-view invariant)
+            "body__bce_guard"))
+        18]
+      [(not
+          (=
+            (opt-bce-mask-block-checks
+              (owned_view.compiler-owned-shared-view invariant)
+              "then__bce_fast")
+            0))
+        19]
+      [(not
+          (=
+            (opt-bce-mask-block-checks
+              (owned_view.compiler-owned-shared-view invariant)
+              "body__bce_fast")
+            0))
+        20]
+      [(not
+          (=
+            (opt-bce-mask-block-checks
+              (owned_view.compiler-owned-shared-view invariant)
+              "then")
+            1))
+        21]
+      ;; The invariant index contributes exactly ONE UNSIGNED compare -- the
+      ;; comparison the removed check itself performs -- and no sign condition
+      ;; beside it. The counter's own `bound <= len` is signed, so a single
+      ;; u64 `Lt` in the guard is this rule's whole cost.
+      [(not
+          (=
+            (opt-bce-version-test-block-binop-typed-count
+              (owned_view.compiler-owned-shared-view invariant)
+              (compiler_ir_types.compiler-ir-label "body__bce_guard")
+              (compiler_ir_types.CompilerIrBinOp.Lt)
+              (compiler_ast_types.AstType.U64))
+            1))
+        22]
+      [(not
+          (=
+            (opt-bce-mb-guard-op-count
+              (owned_view.compiler-owned-shared-view invariant)
+              "body__bce_guard"
+              (compiler_ir_types.CompilerIrBinOp.Ge))
+            0))
+        23]
+      ;; The counter-free twin stays REFUSED: its removals sit on a conditional
+      ;; arm and fire only on the iterations that reach it, while its conjuncts
+      ;; are paid on every entry. Measured +8,804,144 on lex_source when the
+      ;; rule was offered counter-free.
+      [(not (opt-bce-mb-index-form-verified? 19)) 24]
+      [(opt-bce-mask-has-block?
+          (owned_view.compiler-owned-shared-view free-invariant)
+          "body__bce_guard")
+        25]
+      [(not
+          (=
+            (opt-bce-mask-block-checks
+              (owned_view.compiler-owned-shared-view free-invariant)
+              "then")
+            1))
+        26]
+      ;; --- B. a one-block loop whose body holds a direct call ----------------
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function
+              (owned_view.compiler-owned-shared-view call-loop-func))))
+        27]
+      [(not
+          (opt-bce-mask-has-block?
+            (owned_view.compiler-owned-shared-view call-loop)
+            "loop__bce_guard"))
+        28]
+      [(not
+          (=
+            (opt-bce-mask-block-checks
+              (owned_view.compiler-owned-shared-view call-loop)
+              "loop__bce_fast")
+            0))
+        29]
+      [(not
+          (=
+            (opt-bce-mask-block-checks
+              (owned_view.compiler-owned-shared-view call-loop)
+              "loop")
+            2))
+        30]
+      ;; Both offsets of the step-6 phi joined ONE derived family, so the guard
+      ;; carries a single quotient.
+      [(not
+          (=
+            (opt-count-binop-op-blocks
+              (owned_view.compiler-owned-shared-view call-loop)
+              (compiler_ir_types.CompilerIrBinOp.Div))
+            1))
+        31]
+      ;; The call is the only difference: the call-free twin versions too (in
+      ;; the single-block pass), so this pair isolates the admission rather
+      ;; than the derivation.
+      [(not
+          (opt-bce-mask-has-block?
+            (owned_view.compiler-owned-shared-view callfree-loop)
+            "loop__bce_guard"))
+        32]
+      [(not
+          (=
+            (opt-bce-mask-block-checks
+              (owned_view.compiler-owned-shared-view callfree-loop)
+              "loop__bce_fast")
+            0))
+        33]
+      ;; The one-block rate is TWO, not the call-free floor of one: the same
+      ;; self-loop with a single derived check for its one duplicated call site
+      ;; stays refused, untouched.
+      [(opt-bce-mask-has-block?
+          (owned_view.compiler-owned-shared-view lone-check-loop)
+          "loop__bce_guard")
+        34]
+      [(not
+          (=
+            (compiler_ir_types.compiler-ir-block-list-count
+              (owned_view.compiler-owned-shared-view lone-check-loop))
+            3))
+        35]
+      [else 42])))
+
+(test
+  bce-version-index-form-coverage
+  (test.assert-i64-eq
+    (compiler-optimize-bce-index-form-self-test)
+    42
+    "a decreasing index off an invariant variable base and off a literal base both version through the mirrored conditions with no quotient, a loop-invariant index costs the one unsigned compare the removed check itself performs and stays refused in a counter-free shape, and a one-block loop whose body holds a direct call reaches the multiblock scan and drops both offsets of its derived family"))

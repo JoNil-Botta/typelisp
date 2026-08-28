@@ -1197,9 +1197,16 @@ uploads one compact `ci-timing-<host>` TSV artifact with columns `gate`,
 only aggregate phase totals and the ten slowest rows. Detailed rows cover gate
 totals plus integration stage/compile/assemble/link/run/assert phases,
 build-invariance compiles, lint and selfhost-manifest chunks, inline-test batch
-and per-file work, and CLI helper cases. Timestamps come from a monotonic clock,
-and labels never include command lines, absolute credentials, or source text.
-Local runs remain uninstrumented unless the same environment variable is set.
+and per-file work, and CLI helper cases. The native
+`compiler_frontend_smoke_suite` also appends one row for each isolated child,
+each semantic-index aggregate component, and the nominal fixture's build,
+selection, assertion, and release phases. The parent records every child's real
+exit status after capture, while the child writes directly to the inherited
+artifact so semantic stdout/stderr stay empty. The integration runner rejects
+missing or duplicate frontend-smoke rows. Timestamps come from a monotonic
+clock, and labels never include command lines, absolute credentials, or source
+text. Local runs remain uninstrumented unless the same environment variable is
+set.
 
 The Linux timing-budget gate requires exactly one successful
 `TypeLisp source lint / all / gate` row and caps it at 60,000 ms. The cap is

@@ -1397,6 +1397,141 @@
           (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
           positive)))))
 
+(define (comptime-host-smoke-result-lambda1?
+  [pools : compiler_ast_types.AstNodePoolContext]
+  [parameter-name : i64]
+  [parameter-type : compiler_ast_types.AstType]) : bool
+  (match (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-value)
+    [(compiler_ctfe.CompilerCtfeValue.Expr result-node produced)
+      (and
+        (compiler_ctfe.ctfe-untyped-expr-type? produced)
+        (match (compiler_ast_types.ast-node-pool-context-expr-get
+          pools
+          result-node)
+          [(compiler_ast_types.AstExpr.Lambda lambda-box)
+            (match (__tl-box-place lambda-box)
+              [(compiler_ast_types.AstLambda.Lambda params maybe-ret body-node)
+                (and
+                  (= (compiler_ast_types.ast-param-list-len (& params)) 1)
+                  (match (compiler_ast_types.ast-param-list-get
+                    (& params)
+                    0
+                    (compiler_ast_types.ast-param-fallback))
+                    [(compiler_ast_types.AstParam.Param
+                        actual-name
+                        actual-type
+                        false
+                        false)
+                      (and
+                        (= actual-name parameter-name)
+                        (compiler_ctfe.ctfe-type-eq actual-type parameter-type))]
+                    [_ false])
+                  (match maybe-ret
+                    [(compiler_ast_types.AstMaybeType.No) true]
+                    [(compiler_ast_types.AstMaybeType.Some _) false])
+                  (match (compiler_ast_types.ast-node-pool-context-expr-get
+                    pools
+                    body-node)
+                    [(compiler_ast_types.AstExpr.TupleRef target-node 1)
+                      (match (compiler_ast_types.ast-node-pool-context-expr-get
+                        pools
+                        target-node)
+                        [(compiler_ast_types.AstExpr.Var actual-name)
+                          (= actual-name parameter-name)]
+                        [_ false])]
+                    [_ false]))])]
+          [_ false]))]
+    [_ false]))
+
+;; Pin the native computed-lambda callback independently of package generation:
+;; its reflected heterogeneous reference tuple and preassembled projection
+;; become one hygienic parameter/body pair. Refs #6868.
+(define (comptime-host-smoke-expr-lambda1-ok?) : bool
+  (let
+    [pools : compiler_ast_types.AstNodePoolContext
+      (compiler_ast_types.ast-node-pool-context-capture-active)]
+    [parameter-name : i64 (ci.intern "lambda1-values")]
+    [owner-name : i64 (ci.intern "Lambda1Owner")]
+    [owner-region : i64 (ci.intern "lambda1-owner-region")]
+    [text-region : i64 (ci.intern "lambda1-text-region")]
+    [parameter-type : compiler_ast_types.AstType
+      (compiler_ast_types.ast-ty-tuple
+        (compiler_ast_types.ast-type-cons-with-pools
+          pools
+          (compiler_ast_types.ast-ty-ref-with-pools
+            pools
+            owner-region
+            (compiler_ast_types.AstType.Var owner-name))
+          (compiler_ast_types.ast-type-cons-with-pools
+            pools
+            (compiler_ast_types.ast-ty-ref-with-pools
+              pools
+              text-region
+              (compiler_ast_types.AstType.Str))
+            (compiler_ast_types.ast-type-list-new))))]
+    [target-node : i64
+      (compiler_ast_types.ast-node-pool-context-expr-push
+        pools
+        (compiler_ast_types.AstExpr.Var parameter-name))]
+    [body-node : i64
+      (compiler_ast_types.ast-expr-tuple-ref-with-pools pools target-node 1)]
+    [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 3)]
+    (begin
+      (set!
+        (array-ref operands 0)
+        (compiler_ctfe.CompilerCtfeValue.Name "lambda1-values" parameter-name))
+      (set!
+        (array-ref operands 1)
+        (compiler_ctfe.CompilerCtfeValue.Type parameter-type))
+      (set!
+        (array-ref operands 2)
+        (compiler_ctfe.CompilerCtfeValue.Expr
+          body-node
+          (compiler_ctfe.ctfe-untyped-expr-type)))
+      (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
+        pools
+        operands
+        3
+        16
+        comptime-host-smoke-cookie
+        (compiler_ctfe.ctfe-reflect-info-list-empty))
+      (let
+        [positive : bool
+          (and
+            (=
+              (comptime-host-smoke-invoke
+                compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-push-operand
+                0
+                0)
+              tlci_core.tlci-host-callback-status-ok)
+            (=
+              (comptime-host-smoke-invoke
+                compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-push-operand
+                1
+                0)
+              tlci_core.tlci-host-callback-status-ok)
+            (=
+              (comptime-host-smoke-invoke
+                compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-push-operand
+                2
+                0)
+              tlci_core.tlci-host-callback-status-ok)
+            (=
+              (comptime-host-smoke-invoke
+                compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-expr-lambda1
+                0
+                0)
+              tlci_core.tlci-host-callback-status-ok)
+            (comptime-host-smoke-commit-result!)
+            (comptime-host-smoke-result-lambda1?
+              pools
+              parameter-name
+              parameter-type))]
+        (begin
+          (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
+          positive)))))
+
 (define (comptime-host-smoke-result-string-expr?
   [pools : (& pools compiler_ast_types.AstNodePoolContext)]
   [expected : String]) : bool
@@ -2448,6 +2583,8 @@
       (io.panic "comptime host smoke: value stack growth")]
     [(not (comptime-host-smoke-shared-let-scope-ok?))
       (io.panic "comptime host smoke: shared let scope callback")]
+    [(not (comptime-host-smoke-expr-lambda1-ok?))
+      (io.panic "comptime host smoke: computed lambda callback")]
     [(not (comptime-host-smoke-reflection-builders-ok?))
       (io.panic "comptime host smoke: reflection builders")]
     [(not (comptime-host-smoke-struct-set-from-value-ok?))

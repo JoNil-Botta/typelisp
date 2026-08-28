@@ -8,25 +8,28 @@
 (define (read-owner [owner : (& caller Owner)]) : i64
   owner.value)
 
-;; Keep the renderer capture-free: its opaque parameter type is the exact
-;; reflected type of the heterogeneous shared-reference tuple.
-(defmacro (render-anchor-package-twice [anchors : Expr]) : i64
+;; Build a reusable `(renderer, anchors)` package. The renderer body is
+;; assembled before the lambda exists, so this covers the public hygienic
+;; builder path rather than the direct type-unquote template path.
+(defmacro (make-anchor-package [anchors : Expr]) : Expr
   (let
-    ;; lint-allow: unused-variable -- consumed in generated type positions.
     [reflected-type : Expr (comptime.expr-type anchors)]
-    [renderer : Expr
-      `(lambda ([values : ,reflected-type]) : i64
-        (+
-          (read-owner (tuple-ref values 0))
-          (string-length (tuple-ref values 1))))]
-    `(let
-      [renderer : (-> ,reflected-type i64) ,renderer]
-      [anchors : ,reflected-type ,anchors]
-      [arguments : (Tuple (-> ,reflected-type i64) ,reflected-type)
-        (tuple renderer anchors)]
-      (+
-        ((tuple-ref arguments 0) (tuple-ref arguments 1))
-        ((tuple-ref arguments 0) (tuple-ref arguments 1))))))
+    [parameter-name : String (comptime.syntax-name-fresh "renderer-anchors")]
+    [values : Expr (comptime.expr-var parameter-name)]
+    [owner : Expr (comptime.expr-tuple-ref values 0)]
+    [text : Expr (comptime.expr-tuple-ref values 1)]
+    [body : Expr `(+ (read-owner ,owner) (string-length ,text))]
+    [renderer : Expr (comptime.expr-lambda1 parameter-name reflected-type body)]
+    `(tuple ,renderer ,anchors)))
+
+;; The rvalue path keeps the returned package inside the generated shared
+;; scopes, where it may be invoked repeatedly without extending a temporary.
+(defmacro (render-anchor-package-twice [anchors : Expr]) : i64
+  `(let
+    [arguments (make-anchor-package ,anchors)]
+    (+
+      ((tuple-ref arguments 0) (tuple-ref arguments 1))
+      ((tuple-ref arguments 0) (tuple-ref arguments 1)))))
 
 (defmacro (render-values-twice [owner : Expr] [text : Expr]) : i64
   (let
@@ -60,7 +63,14 @@
   (let
     [owner : Owner (Owner "not-moved" 24)]
     [text : String "123456789"]
-    [rendered : i64 (render-values-twice owner text)]
+    ;; This package is returned by the macro to ordinary caller code, bound,
+    ;; and invoked twice. Its anchors are shared references, so neither owner
+    ;; is moved or cloned.
+    [arguments (make-anchor-package (tuple (& owner) (& text)))]
+    [rendered : i64
+      (+
+        ((tuple-ref arguments 0) (tuple-ref arguments 1))
+        ((tuple-ref arguments 0) (tuple-ref arguments 1)))]
     (if (= rendered 66)
       (+ owner.value (string-length (& text)))
       0)))

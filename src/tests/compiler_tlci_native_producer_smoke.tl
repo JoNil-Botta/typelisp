@@ -1866,6 +1866,143 @@
           (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
           ok)))))
 
+(define (producer-test-lambda1-parameter-type-ok?
+  [pools : ast.AstNodePoolContext]
+  [actual : ast.AstType]
+  [owner-region : i64]
+  [text-region : i64]) : bool
+  (match actual
+    [(ast.AstType.Tuple elems-box)
+      (let
+        [elems : ast.AstTypeList (__tl-box-place elems-box)]
+        (and
+          (= (ast.ast-type-list-len (& elems)) 2)
+          (match (ast.ast-node-pool-context-type-get
+            pools
+            (ast.ast-type-list-get (& elems) 0 -1))
+            [(ast.AstType.Ref actual-region inner)
+              (and
+                (= actual-region owner-region)
+                (match (ast.ast-node-pool-context-type-get pools inner)
+                  [(ast.AstType.Var name)
+                    (= name (ci.intern "package.model/Owner"))]
+                  [_ false]))]
+            [_ false])
+          (match (ast.ast-node-pool-context-type-get
+            pools
+            (ast.ast-type-list-get (& elems) 1 -1))
+            [(ast.AstType.Ref actual-region inner)
+              (and
+                (= actual-region text-region)
+                (match (ast.ast-node-pool-context-type-get pools inner)
+                  [(ast.AstType.Str) true]
+                  [_ false]))]
+            [_ false])))]
+    [_ false]))
+
+(define (producer-test-lambda1-result-ok?
+  [pools : ast.AstNodePoolContext]
+  [owner-region : i64]
+  [text-region : i64]) : bool
+  (match (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-value)
+    [(compiler_ctfe.CompilerCtfeValue.Expr node produced)
+      (and
+        (compiler_ctfe.ctfe-untyped-expr-type? produced)
+        (match (producer-test-expr-get pools node)
+          [(ast.AstExpr.Lambda lambda-box)
+            (match (__tl-box-place lambda-box)
+              [(ast.AstLambda.Lambda params maybe-ret body)
+                (and
+                  (= (ast.ast-param-list-len (& params)) 1)
+                  (match (ast.ast-param-list-get
+                    (& params)
+                    0
+                    (ast.ast-param-fallback))
+                    [(ast.AstParam.Param parameter-name actual false false)
+                      (and
+                        (string.eq
+                          (ci.intern-str parameter-name)
+                          "lambda1-values")
+                        (producer-test-lambda1-parameter-type-ok?
+                          pools
+                          actual
+                          owner-region
+                          text-region)
+                        (match (producer-test-expr-get pools body)
+                          [(ast.AstExpr.TupleRef target 1)
+                            (match (producer-test-expr-get pools target)
+                              [(ast.AstExpr.Var target-name)
+                                (= target-name parameter-name)]
+                              [_ false])]
+                          [_ false]))]
+                    [_ false])
+                  (match maybe-ret
+                    [(ast.AstMaybeType.No) true]
+                    [(ast.AstMaybeType.Some _) false]))])]
+          [_ false]))]
+    [_ false]))
+
+;; The public computed builder takes an Expr operand's reflected heterogeneous
+;; type, a fresh parameter identity, and a tuple projection assembled before
+;; the lambda exists. The package-native result must preserve all three.
+(define (producer-test-dispatch-lambda1?
+  [loaded : (& loaded tlci_loader.TlciLoadedImage)]
+  [identity : String]) : bool
+  (let
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 64 64)]
+    [owner-region : i64 (ci.intern "lambda1-owner-region")]
+    [text-region : i64 (ci.intern "lambda1-text-region")]
+    [lambda-ty : ast.AstType
+      (ast.ast-ty-tuple
+        (ast.ast-type-cons-with-pools
+          pools
+          (ast.ast-ty-ref-with-pools
+            pools
+            owner-region
+            (ast.AstType.Var (ci.intern "package.model/Owner")))
+          (ast.ast-type-cons-with-pools
+            pools
+            (ast.ast-ty-ref-with-pools pools text-region (ast.AstType.Str))
+            (ast.ast-type-list-new))))]
+    [operand : i64
+      (producer-test-push-spanned pools (ast.AstExpr.Var (ci.intern "anchors")))]
+    [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
+    (begin
+      (set!
+        (array-ref operands 0)
+        (compiler_ctfe.CompilerCtfeValue.Expr
+          operand
+          (compiler_ctfe.ctfe-captured-expr-type-with-pools pools lambda-ty)))
+      (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
+        pools
+        operands
+        1
+        64
+        producer-test-cookie
+        (compiler_ctfe.ctfe-reflect-info-list-empty))
+      (let
+        [ok : bool
+          (match (tlci_loader.tlci-loader-dispatch-macro
+            loaded
+            identity
+            producer-test-cookie
+            (__tl_make-array i64 0)
+            0)
+            [(tlci_loader.ResultTlciMacroDispatch.Err _) false]
+            [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
+              (and
+                (= dispatch.status tlci.tlci-host-callback-status-ok)
+                (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-ready?)
+                (producer-test-lambda1-result-ok?
+                  pools
+                  owner-region
+                  text-region))])]
+        (begin
+          (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
+          ok)))))
+
 (define (producer-test-dispatch-type-expr-list?
   [loaded : (& loaded tlci_loader.TlciLoadedImage)]
   [identity : String]) : bool
@@ -4318,6 +4455,7 @@
 (defmacro (gen [T : type] [value : Expr]) : Module (let [module-name : Expr (expr-var (comptime.string-append \"test.gen.\" (type-key T)))] `(begin (module ,module-name) (define (id [x : ,T]) : ,T x))))
 (defmacro (localtype [T : type] [value : Expr]) : Expr (let [U : type T] `(cast ,value : ,U)))
 (defmacro (lambdatpl [T : type]) : Expr `(lambda ([value : ,T]) : ,T value))
+(defmacro (lambda1 [anchors : Expr]) : Expr (let [T : Expr (comptime.expr-type anchors)] [name : String (comptime.syntax-name-fresh \"lambda1-values\")] [values : Expr (comptime.expr-var name)] [body : Expr (comptime.expr-tuple-ref values 1)] (comptime.expr-lambda1 name T body)))
 (defmacro (modname [format : Module]) : Expr (comptime.expr-var (comptime.module-name format)))
 (defmacro (modhook [format : Module]) : Expr (comptime.module-hook format \"object-field\"))
 (defmacro (classify [value : Expr]) : Expr `(match value [(Some _) true] [None false]))
@@ -4403,13 +4541,13 @@
                         (let
                           [ok : bool
                             (and
-                              (= (array-length name-array) 44)
-                              (= captures.len 44)
+                              (= (array-length name-array) 45)
+                              (= captures.len 45)
                               (=
                                 (array-ref
                                   compiler_tlci_native_producer.embedded-stdlib-tlci-native-report-count
                                   0)
-                                43)
+                                44)
                               (=
                                 (array-ref
                                   compiler_tlci_native_producer.embedded-stdlib-tlci-native-report-partial-count
@@ -4420,6 +4558,9 @@
                                   compiler_tlci_native_producer.embedded-stdlib-tlci-native-report-interpreted-arms
                                   0)
                                 2)
+                              (producer-test-dispatch-lambda1?
+                                (& loaded)
+                                "package.macros/lambda1")
                               (producer-test-dispatch-shape?
                                 (& loaded)
                                 "package.macros/wrap"

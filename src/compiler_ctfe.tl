@@ -7274,6 +7274,62 @@
       (box
         (ctfe-diagnostic-at-expr expr "expr-tuple-ref expects exactly two args")))))
 
+;; `(expr-lambda1 name parameter-type body)` builds a one-parameter lambda
+;; around a body assembled from syntax builders. The binding name preserves a
+;; `syntax-name-fresh` identity and the reflected type remains opaque.
+(define (ctfe-eval-expr-lambda1-call
+  [args : ast.AstExprList]
+  [expr : ast.AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (if (= (ctfe-expr-arg-count args) 3)
+    (let
+      [name-arg : ast.AstExpr (ctfe-expr-arg args 0 env)]
+      [type-arg : ast.AstExpr (ctfe-expr-arg args 1 env)]
+      [body-arg : ast.AstExpr (ctfe-expr-arg args 2 env)]
+      (match (ctfe-eval-syntax-name-arg name-arg expr env fuel "expr-lambda1")
+        [(ResultCtfeStringArg.Ok _ name-id name-fuel)
+          (match (ctfe-eval-type-arg type-arg expr env name-fuel "expr-lambda1")
+            [(ResultCtfeTypeArg.Ok parameter-type type-fuel)
+              (match (compiler-ctfe-eval body-arg env type-fuel)
+                [(ResultCtfe.Ok body-value body-fuel)
+                  (let
+                    [body-node : i64 (ctfe-syntax-expr-value-node body-value)]
+                    [params : ast.AstParamList
+                      (ast.ast-param-list-with-capacity 1)]
+                    [pools : ast.AstNodePoolContext
+                      (ctfe-env-syntax-pool-context env)]
+                    (if (< body-node 0)
+                      (ResultCtfe.Err
+                        (box
+                          (ctfe-diagnostic-at-expr
+                            expr
+                            "expr-lambda1 body expects Expr")))
+                      (begin
+                        (ast.ast-param-list-push
+                          (&mut params)
+                          (ast.AstParam.Param
+                            name-id
+                            parameter-type
+                            false
+                            false))
+                        (ResultCtfe.Ok
+                          (ctfe-syntax-expr-value
+                            env
+                            (ast.ast-expr-lambda-with-pools
+                              pools
+                              params
+                              (ast.AstMaybeType.No)
+                              body-node)
+                            (ctfe-untyped-expr-type))
+                          body-fuel))))]
+                [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])]
+            [(ResultCtfeTypeArg.Err diag) (ResultCtfe.Err diag)])]
+        [(ResultCtfeStringArg.Err diag) (ResultCtfe.Err diag)]))
+    (ResultCtfe.Err
+      (box
+        (ctfe-diagnostic-at-expr expr "expr-lambda1 expects exactly three args")))))
+
 ;; `(expr-struct-set target field value)` builds a struct field assignment whose
 ;; field name is computed at macro CTFE. The expanded program typechecks the
 ;; assignment target and value.
@@ -10238,6 +10294,8 @@
             (ctfe-eval-expr-type-call args expr env fuel)]
           [(= call-id (ctfe-builtin-ref 289))
             (ctfe-eval-type-expr-call args expr env fuel)]
+          [(= call-id (ctfe-builtin-ref 290))
+            (ctfe-eval-expr-lambda1-call args expr env fuel)]
           [(= call-id (ctfe-builtin-ref 47))
             (ctfe-eval-module-name-call args expr env fuel)]
           [(= call-id (ctfe-builtin-ref 48))
@@ -19121,6 +19179,128 @@
           [_ false])]
       [(ResultCtfe.Err _) false])))
 
+;; A computed body can project the parameter before `expr-lambda1` attaches
+;; its reflected tuple type. The same fresh Name value must bind and refer to
+;; the parameter, including heterogeneous reference lifetimes. Refs #6868.
+(define (compiler-ctfe-expr-lambda1-status) : i64
+  (let
+    [base-env : CtfeEnv (ctfe-env-empty)]
+    [pools : ast.AstNodePoolContext (ctfe-env-pools base-env)]
+    [name-binding : i64
+      (ctfe-materialize-generated-name-id "lambda1-name-value")]
+    [type-binding : i64
+      (ctfe-materialize-generated-name-id "lambda1-type-value")]
+    [parameter-name : i64 (ctfe-materialize-generated-name-id "lambda1-values")]
+    [owner-name : i64 (ctfe-materialize-generated-name-id "Lambda1Owner")]
+    [owner-region : i64
+      (ctfe-materialize-generated-name-id "lambda1-owner-region")]
+    [text-region : i64
+      (ctfe-materialize-generated-name-id "lambda1-text-region")]
+    [parameter-type : ast.AstType
+      (ast.ast-ty-tuple
+        (ast.ast-type-cons-with-pools
+          pools
+          (ast.ast-ty-ref-with-pools
+            pools
+            owner-region
+            (ast.AstType.Var owner-name))
+          (ast.ast-type-cons-with-pools
+            pools
+            (ast.ast-ty-ref-with-pools pools text-region (ast.AstType.Str))
+            (ast.ast-type-list-new))))]
+    [env : CtfeEnv
+      (ctfe-env-extend-id
+        (ctfe-env-extend-id
+          base-env
+          name-binding
+          (CompilerCtfeValue.Name "lambda1-values" parameter-name))
+        type-binding
+        (CompilerCtfeValue.Type parameter-type))]
+    [name-value : i64 (ctfe-ast-push env (ast.AstExpr.Var name-binding))]
+    [type-value : i64 (ctfe-ast-push env (ast.AstExpr.Var type-binding))]
+    [target : i64
+      (compiler-ctfe-call1-in-env env (ctfe-builtin-ref 30) name-value)]
+    [index : i64 (ctfe-ast-push env (ast.AstExpr.Literal (ast.ast-lit-int 1)))]
+    [body : i64
+      (compiler-ctfe-call2-in-env env (ctfe-builtin-ref 32) target index)]
+    [lambda-call : i64
+      (compiler-ctfe-call3-in-env
+        env
+        (ctfe-builtin-ref 290)
+        name-value
+        type-value
+        body)]
+    [unit-expr : i64
+      (ctfe-ast-push env (ast.AstExpr.Literal (ast.AstLiteral.Unit)))]
+    [status : i64 0]
+    (begin
+      (match (compiler-ctfe-eval
+        (ctfe-ast-get env lambda-call)
+        env
+        (ctfe-fuel-limit))
+        [(ResultCtfe.Ok value _)
+          (match value
+            [(CompilerCtfeValue.Expr node produced)
+              (begin
+                (unless (ctfe-untyped-expr-type? produced) (set! status 2))
+                (match (ctfe-ast-get env node)
+                  [(ast.AstExpr.Lambda lambda-box)
+                    (match (__tl-box-place lambda-box)
+                      [(ast.AstLambda.Lambda params maybe-ret body-node)
+                        (begin
+                          (unless
+                            (= (ast.ast-param-list-len (& params)) 1)
+                            (set! status 4))
+                          (match (ast.ast-param-list-get
+                            (& params)
+                            0
+                            (ast.ast-param-fallback))
+                            [(ast.AstParam.Param
+                                actual-name
+                                actual-type
+                                false
+                                false)
+                              (unless
+                                (and
+                                  (= actual-name parameter-name)
+                                  (ctfe-type-eq-in-env
+                                    env
+                                    actual-type
+                                    parameter-type))
+                                (set! status 5))]
+                            [_ (set! status 5)])
+                          (match maybe-ret
+                            [(ast.AstMaybeType.No) unit]
+                            [(ast.AstMaybeType.Some _) (set! status 6)])
+                          (match (ctfe-ast-get env body-node)
+                            [(ast.AstExpr.TupleRef target-node 1)
+                              (match (ctfe-ast-get env target-node)
+                                [(ast.AstExpr.Var actual-name)
+                                  (unless
+                                    (= actual-name parameter-name)
+                                    (set! status 9))]
+                                [_ (set! status 8)])]
+                            [_ (set! status 7)]))])]
+                  [_ (set! status 3)]))]
+            [_ (set! status 2)])]
+        [(ResultCtfe.Err _) (set! status 1)])
+      (if (!= status 0)
+        status
+        (if (compiler-ctfe-eval-error-ok?
+          (compiler-ctfe-call3-in-env
+            env
+            (ctfe-builtin-ref 290)
+            name-value
+            type-value
+            unit-expr)
+          env
+          "expr-lambda1 body expects Expr")
+          0
+          10)))))
+
+(define (compiler-ctfe-expr-lambda1-ok?) : bool
+  (= (compiler-ctfe-expr-lambda1-status) 0))
+
 (define (compiler-ctfe-captured-quote-syntax-ok?) : bool
   (let
     [base-env : CtfeEnv (ctfe-env-empty)]
@@ -19913,6 +20093,7 @@
     (unless (compiler-ctfe-checked-expr-rejects-non-bool-cond-ok?) (return 1))
     (unless (compiler-ctfe-quote-syntax-ok?) (return 1))
     (unless (compiler-ctfe-quote-lambda-type-unquote-ok?) (return 1))
+    (unless (compiler-ctfe-expr-lambda1-ok?) (return 1))
     (unless (compiler-ctfe-captured-quote-syntax-ok?) (return 1))
     (unless (compiler-ctfe-expr-pattern-match-ok?) (return 1))
     (unless (compiler-ctfe-local-while-ok?) (return 1))

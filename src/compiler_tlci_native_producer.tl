@@ -3914,6 +3914,20 @@
                   ops-count)]
               [(and
                   (or
+                    (string.eq head "comptime.expr-lambda1")
+                    (string.eq head "expr-lambda1"))
+                  (= argc 3))
+                (embedded-native-computed-ternary-ops
+                  params
+                  (compiler_ast_types.ast-expr-list-get (& args) 0 0)
+                  (compiler_ast_types.ast-expr-list-get (& args) 1 0)
+                  (compiler_ast_types.ast-expr-list-get (& args) 2 0)
+                  (tlci_core.tlci-host-callback-name-shared-view
+                    tlci_core.tlci-host-callback-name-expr-lambda1)
+                  ops
+                  ops-count)]
+              [(and
+                  (or
                     (string.eq head "comptime.expr-set-var")
                     (string.eq head "expr-set-var"))
                   (= argc 2))
@@ -8711,6 +8725,7 @@
     "(extern comptime-host-let-binding-list-cons (:symbol \"_tl_comptime_host_let-binding-list-cons\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-let (:symbol \"_tl_comptime_host_expr-let\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-expr-lambda (:symbol \"_tl_comptime_host_expr-lambda\") : (-> i64 i64 i64 i64 i64 i64))\n"
+    "(extern comptime-host-expr-lambda1 (:symbol \"_tl_comptime_host_expr-lambda1\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-type-var (:symbol \"_tl_comptime_host_type-var\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-type-var-args (:symbol \"_tl_comptime_host_type-var-args\") : (-> i64 i64 i64 i64 i64 i64))\n"
     "(extern comptime-host-type-scalar (:symbol \"_tl_comptime_host_type-scalar\") : (-> i64 i64 i64 i64 i64 i64))\n"

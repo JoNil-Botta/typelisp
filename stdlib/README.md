@@ -115,7 +115,8 @@ Vec bang place macros as available yet.
   `pattern-binding-typed`, `pattern-list-bindings`, `match-arm`, and
   `expr-match`; scope/loop builders `expr-resource-scope`, `expr-let-scope`,
   `expr-shared-let-scope`, `expr-set-var`, `expr-begin-unit`, `expr-not`, and
-  `expr-while`; and
+  `expr-while`; `expr-lambda1` for a hygienic one-parameter lambda whose exact
+  reflected parameter type and body are assembled during macro CTFE; and
   `syntax-name-fresh` for hygienic computed bindings. Reflection intrinsics
   include `type-cleanup-owning?` and `type-cleanup-function` for generated
   ownership-safe families. `module-value?` and `module-value-type` query public

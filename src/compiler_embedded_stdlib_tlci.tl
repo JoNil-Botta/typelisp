@@ -6500,6 +6500,83 @@
             (set! compiler-comptime-host-session-status result))
           result)))))
 
+;; expr-lambda1: pop a hygienic parameter name, its reflected type, and an
+;; already assembled body, then push one inferred-result lambda expression.
+(define (compiler-comptime-host-callback-expr-lambda1
+  [session : i64]
+  [_arg-a : i64]
+  [_arg-b : i64]
+  [_arg-c : i64]) : i64
+  (if (or
+    (= compiler-comptime-host-session-cookie 0)
+    (not (= session compiler-comptime-host-session-cookie)))
+    tlci.tlci-host-callback-status-bad-request
+    (if (not
+      (=
+        compiler-comptime-host-session-status
+        tlci.tlci-host-callback-status-ok))
+      compiler-comptime-host-session-status
+      (let
+        [result : i64
+          (if (< compiler-comptime-host-stack-len 3)
+            tlci.tlci-host-callback-status-bad-request
+            (let
+              [body-value : ctfe_support.CompilerCtfeValue
+                (array-ref
+                  (compiler-comptime-host-global-shared-view
+                    compiler-comptime-host-stack)
+                  (- compiler-comptime-host-stack-len 1))]
+              [type-value : ctfe_support.CompilerCtfeValue
+                (array-ref
+                  (compiler-comptime-host-global-shared-view
+                    compiler-comptime-host-stack)
+                  (- compiler-comptime-host-stack-len 2))]
+              [name-value : ctfe_support.CompilerCtfeValue
+                (array-ref
+                  (compiler-comptime-host-global-shared-view
+                    compiler-comptime-host-stack)
+                  (- compiler-comptime-host-stack-len 3))]
+              [body-node : i64 (compiler-comptime-host-value-node body-value)]
+              (match (compiler-comptime-host-value-name-id name-value)
+                [(CompilerCtfeMaybeNameId.Some name-id)
+                  (match type-value
+                    [(ctfe_support.CompilerCtfeValue.Type parameter-type)
+                      (if (< body-node 0)
+                        tlci.tlci-host-callback-status-bad-request
+                        (let
+                          [params : ast.AstParamList
+                            (ast.ast-param-list-with-capacity 1)]
+                          (begin
+                            (ast.ast-param-list-push
+                              (&mut params)
+                              (ast.AstParam.Param
+                                name-id
+                                parameter-type
+                                false
+                                false))
+                            (set!
+                              compiler-comptime-host-stack-len
+                              (- compiler-comptime-host-stack-len 3))
+                            (compiler-comptime-host-push!
+                              (ctfe_support.CompilerCtfeValue.Expr
+                                (ast.ast-expr-lambda-with-pools
+                                  (array-ref
+                                    (compiler-comptime-host-global-shared-view
+                                      compiler-comptime-host-pools)
+                                    0)
+                                  params
+                                  (ast.AstMaybeType.No)
+                                  body-node)
+                                (ctfe_support.ctfe-untyped-expr-type))))))]
+                    [_ tlci.tlci-host-callback-status-bad-request])]
+                [(CompilerCtfeMaybeNameId.None)
+                  tlci.tlci-host-callback-status-bad-request])))]
+        (begin
+          (when
+            (not (= result tlci.tlci-host-callback-status-ok))
+            (set! compiler-comptime-host-session-status result))
+          result)))))
+
 ;; type-var: push the AstType.Var for caller bytes (unmarked, matching
 ;; the interpreted type quote for a plain name).
 (define (compiler-comptime-host-callback-type-var
@@ -9825,6 +9902,11 @@
         (tlci.tlci-host-callback-name-shared-view
           tlci.tlci-host-callback-name-expr-lambda)
         compiler-comptime-host-callback-expr-lambda)
+      (compiler-comptime-host-registry-add!
+        (&mut registry)
+        (tlci.tlci-host-callback-name-shared-view
+          tlci.tlci-host-callback-name-expr-lambda1)
+        compiler-comptime-host-callback-expr-lambda1)
       (compiler-comptime-host-registry-add!
         (&mut registry)
         (tlci.tlci-host-callback-name-shared-view

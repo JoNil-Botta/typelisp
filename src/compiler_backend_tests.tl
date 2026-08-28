@@ -6059,7 +6059,9 @@
                   (- (+ av (cast 0x100000000 : u64)) subtrahend))
                 (set! borrow (cast 1 : u64))))
             (set! i (+ i 1)))))
-      (BigNum r (bn-norm-len r a.len)))))
+      (let
+        [norm-len : i64 (bn-norm-len (clone r) a.len)]
+        (BigNum r norm-len)))))
 (define keep2 : (-> BigNum BigNum BigNum) bn-sub)
 (define (main) : i64 0)")
 

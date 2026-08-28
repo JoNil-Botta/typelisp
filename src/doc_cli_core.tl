@@ -24,6 +24,7 @@
 (import compiler_ast_types as ast)
 (import compiler_diagnostic as cdiag)
 (import compiler_typecheck_core as tc)
+(import compiler_intern as ci)
 (import package_source_core)
 (import stdlib.hashmap)
 (import (hashmap.hashmap String i64) as doc_path_map)
@@ -141,6 +142,10 @@
       modules)))
 
 (define (doc-generated-modules-from-source-paths-into
+  [load-state : compiler_load.CompilerLoadSessionState]
+  [job-state : tc.TcJobState]
+  [pools : ast.AstNodePoolContext]
+  [intern-state : ci.InternCompatState]
   [paths : ast.AstDeclPathList]
   [seen : (&mut seen doc_path_map.Map)]
   [stdlib-roots : doc_svec.Vec]) : doc_expand.ResultDocExpandedModules
@@ -154,12 +159,20 @@
           (let
             [docs : doc_extract.DocExtraction
               (doc_extract.doc-extract-file path)]
-            (match (doc_expand.doc-expanded-generated-modules-from-source-docs
+            (match (doc_expand.doc-expanded-generated-modules-from-source-docs-with-state-and-pools-and-intern-state
+              load-state
+              job-state
               path
               docs
-              stdlib-roots)
+              stdlib-roots
+              pools
+              intern-state)
               [(doc_expand.ResultDocExpandedModules.Ok head-modules)
                 (match (doc-generated-modules-from-source-paths-into
+                  load-state
+                  job-state
+                  pools
+                  intern-state
                   rest
                   seen
                   stdlib-roots)
@@ -172,14 +185,29 @@
                     (doc_expand.ResultDocExpandedModules.Err message)])]
               [(doc_expand.ResultDocExpandedModules.Err message)
                 (doc_expand.ResultDocExpandedModules.Err message)]))
-          (doc-generated-modules-from-source-paths-into rest seen stdlib-roots)))]))
+          (doc-generated-modules-from-source-paths-into
+            load-state
+            job-state
+            pools
+            intern-state
+            rest
+            seen
+            stdlib-roots)))]))
 
 (define (doc-generated-modules-from-source-paths
+  [load-state : compiler_load.CompilerLoadSessionState]
+  [job-state : tc.TcJobState]
+  [pools : ast.AstNodePoolContext]
+  [intern-state : ci.InternCompatState]
   [paths : ast.AstDeclPathList]
   [stdlib-roots : doc_svec.Vec]) : doc_expand.ResultDocExpandedModules
   (let
     [seen : doc_path_map.Map (doc-path-set-new)]
     (doc-generated-modules-from-source-paths-into
+      load-state
+      job-state
+      pools
+      intern-state
       paths
       (&mut seen)
       stdlib-roots)))
@@ -202,66 +230,109 @@
 ;; closure, so temporarily make this loader session eager and restore its prior
 ;; mode before rendering or reporting a diagnostic.
 (define (doc-load-file-with-all-import-paths
+  [load-state : compiler_load.CompilerLoadSessionState]
+  [pools : ast.AstNodePoolContext]
+  [intern-state : ci.InternCompatState]
   [input-path : String]
   [stdlib-roots : doc_svec.Vec]) : compiler_load.ResultCompilerLoadWithPaths
-  (let
-    [lazy-mode : bool
-      (compiler_load.compiler-load-session-lazy-import-mode-enabled?)]
-    [_eager : unit
-      (compiler_load.compiler-load-session-lazy-import-mode-set-enabled! false)]
-    [loaded : compiler_load.ResultCompilerLoadWithPaths
-      (compiler_load.compiler-load-file-with-paths-and-roots
-        input-path
-        (sym_i64_env.sym-i64-empty)
-        stdlib-roots)]
-    [_restore : unit
-      (compiler_load.compiler-load-session-lazy-import-mode-set-enabled!
-        lazy-mode)]
-    loaded))
+  (begin
+    (compiler_load.compiler-load-session-state-use-with-intern-state!
+      load-state
+      intern-state)
+    (ast.ast-node-pool-context-install! pools)
+    (ci.intern-compat-state-install! intern-state)
+    (let
+      [lazy-mode : bool
+        (compiler_load.compiler-load-session-state-lazy-import-mode-enabled?
+          load-state)]
+      [_eager : unit
+        (compiler_load.compiler-load-session-state-lazy-import-mode-set-enabled!
+          load-state
+          false)]
+      [loaded : compiler_load.ResultCompilerLoadWithPaths
+        (compiler_load.compiler-load-file-with-paths-and-roots-cfg-with-pools
+          load-state
+          input-path
+          (sym_i64_env.sym-i64-empty)
+          stdlib-roots
+          (sym_i64_env.sym-i64-empty)
+          pools)]
+      [_publish : unit
+        (begin
+          ;; The stateful loader extends the explicit segmented context. Do not
+          ;; overwrite it with the stale compatibility-global view on return;
+          ;; publish the completed owner for the remaining legacy readers.
+          (ast.ast-node-pool-context-install! pools)
+          (ci.intern-compat-state-capture-from-globals! intern-state))]
+      [_restore : unit
+        (compiler_load.compiler-load-session-state-lazy-import-mode-set-enabled!
+          load-state
+          lazy-mode)]
+      loaded)))
 
 (define (doc-generate-loaded-file
   [input-path : String]
   [output-path : String]
   [stdlib-roots : doc_svec.Vec]) : i64
-  (match (doc-load-file-with-all-import-paths input-path stdlib-roots)
-    [(compiler_load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
-      (match (doc-generated-modules-from-source-paths
-        (ast.ast-decl-root-path-cons input-path paths)
-        stdlib-roots)
-        [(doc_expand.ResultDocExpandedModules.Ok source-generated-modules)
-          (let
-            ;; Expansion from public source docs is authoritative and errors
-            ;; above fail the command. Loaded graph expansion is best-effort:
-            ;; synthetic graph docs can combine helper declarations from many
-            ;; modules in ways normal source builds never do.
-            [generated-modules : doc_module_vec.Vec
-              (match (doc_expand.doc-expanded-generated-modules-from-loaded-decls
-                decls
-                paths
-                stdlib-roots)
-                [(doc_expand.ResultDocExpandedModules.Ok modules) modules]
-                [(doc_expand.ResultDocExpandedModules.Err _)
-                  (doc_module_vec.new)])]
-            (begin
-              (doc-write-text
-                output-path
-                (doc-render-loaded-markdown
-                  input-path
+  (let
+    [load-state : compiler_load.CompilerLoadSessionState
+      (compiler_load.compiler-load-serial-test-session-state)]
+    [job-state : tc.TcJobState (tc.tc-serial-job-state)]
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [intern-state : ci.InternCompatState
+      (ci.intern-compat-state-capture-active)]
+    (match (doc-load-file-with-all-import-paths
+      load-state
+      pools
+      intern-state
+      input-path
+      stdlib-roots)
+      [(compiler_load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
+        (match (doc-generated-modules-from-source-paths
+          load-state
+          job-state
+          pools
+          intern-state
+          (ast.ast-decl-root-path-cons input-path paths)
+          stdlib-roots)
+          [(doc_expand.ResultDocExpandedModules.Ok source-generated-modules)
+            (let
+              ;; Expansion from public source docs is authoritative and errors
+              ;; above fail the command. Loaded graph expansion is best-effort:
+              ;; synthetic graph docs can combine helper declarations from many
+              ;; modules in ways normal source builds never do.
+              [generated-modules : doc_module_vec.Vec
+                (match (doc_expand.doc-expanded-generated-modules-from-loaded-decls-with-state-and-pools-and-intern-state
+                  load-state
+                  job-state
+                  decls
                   paths
-                  (doc_render.doc-module-list-append
-                    generated-modules
-                    source-generated-modules)))
-              (doc-print-wrote output-path)
-              0))]
-        [(doc_expand.ResultDocExpandedModules.Err message)
-          (begin
-            (io.print-error message)
-            1)])]
-    [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
-      (begin
-        (io.print-error
-          (cdiag.compiler-diagnostic-render (__tl-box-place diag)))
-        1)]))
+                  stdlib-roots
+                  pools
+                  intern-state)
+                  [(doc_expand.ResultDocExpandedModules.Ok modules) modules]
+                  [(doc_expand.ResultDocExpandedModules.Err _)
+                    (doc_module_vec.new)])]
+              (begin
+                (doc-write-text
+                  output-path
+                  (doc-render-loaded-markdown
+                    input-path
+                    paths
+                    (doc_render.doc-module-list-append
+                      generated-modules
+                      source-generated-modules)))
+                (doc-print-wrote output-path)
+                0))]
+          [(doc_expand.ResultDocExpandedModules.Err message)
+            (begin
+              (io.print-error message)
+              1)])]
+      [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
+        (begin
+          (io.print-error
+            (cdiag.compiler-diagnostic-render (__tl-box-place diag)))
+          1)])))
 
 (define (doc-generate-package
   [manifest-path : String]

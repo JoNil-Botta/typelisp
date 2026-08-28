@@ -276,67 +276,51 @@
   (Ok ast.AstProgram ast.AstDeclPathList)
   (Err (Box cdiag.CompilerDiagnostic)))
 
-(define (typecheck-compiler-doc-expand-program-with-paths-and-load-state-and-job-state-and-pools
+(define (typecheck-compiler-doc-expand-program-with-paths-and-load-state-and-job-state-and-pools-and-intern-state
   [load-state : load.CompilerLoadSessionState]
   [job-state : tc_core.TcJobState]
   [program : ast.AstProgram]
   [paths : ast.AstDeclPathList]
   [stdlib-roots : svec.Vec]
-  [pools : ast.AstNodePoolContext]) : ResultCompilerDocExpand
+  [pools : ast.AstNodePoolContext]
+  [intern-state : ci.InternCompatState]) : ResultCompilerDocExpand
   (begin
     (tc_core.tc-spmd-inline-helper-stack-reset-for-job! job-state)
     (tc_core.tc-macro-call-site-state-reset!
       (tc_core.tc-job-state-macro-call-sites job-state))
     (let
       [generated-result : spec.ResultGenProgramWithPaths
-        (spec.gen-normalize-program-with-paths-and-pools program paths "" pools)]
+        (spec.gen-normalize-program-with-paths-and-pools-and-intern-state
+          program
+          paths
+          ""
+          (spec.spec-owner-context-new pools intern-state))]
       (begin
         (ast.ast-node-pool-context-install! pools)
+        (ci.intern-compat-state-install! intern-state)
         (match generated-result
           [(spec.ResultGenProgramWithPaths.Ok generated generated-paths)
-            (match (tc_core.macro-expand-then-build-envs-with-load-state-and-job-state
+            (match (tc_core.macro-expand-then-build-envs-with-load-state-and-job-state-and-intern-state
               load-state
               job-state
               generated
               generated-paths
               pools
               stdlib-roots
-              (typecheck-compiler-source-language-cfgs))
+              (typecheck-compiler-source-language-cfgs)
+              intern-state)
               [(tc_core.ResultMacroExpand.Ok expanded expanded-paths)
                 (begin
                   (ast.ast-node-pool-context-capture-active! pools)
+                  (ci.intern-compat-state-capture-from-globals! intern-state)
                   (ResultCompilerDocExpand.Ok expanded expanded-paths))]
               [(tc_core.ResultMacroExpand.Err diag)
-                (ResultCompilerDocExpand.Err diag)])]
+                (begin
+                  (ast.ast-node-pool-context-capture-active! pools)
+                  (ci.intern-compat-state-capture-from-globals! intern-state)
+                  (ResultCompilerDocExpand.Err diag))])]
           [(spec.ResultGenProgramWithPaths.Err diag)
             (ResultCompilerDocExpand.Err diag)])))))
-
-(define (typecheck-compiler-doc-expand-program-with-paths-and-load-state-and-pools
-  [load-state : load.CompilerLoadSessionState]
-  [program : ast.AstProgram]
-  [paths : ast.AstDeclPathList]
-  [stdlib-roots : svec.Vec]
-  [pools : ast.AstNodePoolContext]) : ResultCompilerDocExpand
-  (typecheck-compiler-doc-expand-program-with-paths-and-load-state-and-job-state-and-pools
-    load-state
-    (tc_core.tc-serial-job-state)
-    program
-    paths
-    stdlib-roots
-    pools))
-
-;; Serial/test compatibility adapter.
-(define (typecheck-compiler-doc-expand-program-with-paths-and-pools
-  [program : ast.AstProgram]
-  [paths : ast.AstDeclPathList]
-  [stdlib-roots : svec.Vec]
-  [pools : ast.AstNodePoolContext]) : ResultCompilerDocExpand
-  (typecheck-compiler-doc-expand-program-with-paths-and-load-state-and-pools
-    (load.compiler-load-serial-test-session-state)
-    program
-    paths
-    stdlib-roots
-    pools))
 
 (define (typecheck-compiler-program-with-paths-checked-cache-and-load-state-and-prefix-cache-state-and-pools-and-intern-state
   [load-state : load.CompilerLoadSessionState]

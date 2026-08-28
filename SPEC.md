@@ -760,6 +760,12 @@ materializing array-literal syntax. `expr-struct-get` builds a field access whos
 field token is computed during macro CTFE, `expr-tuple-ref` builds a tuple
 element access whose index is computed during macro CTFE, and
 `expr-struct-set` builds the matching field assignment expression.
+`expr-lambda1(name, parameter-type, body)` builds a one-parameter lambda with
+an inferred result type from an already assembled body. `parameter-type` is an
+opaque reflected type value, and passing the same `syntax-name-fresh` result to
+`expr-var` and `expr-lambda1` gives the parameter and computed body projections
+one hygienic identity. The ordinary checker still validates the generated body
+against the exact reflected type, including nominal and lifetime substitutions.
 `expr-borrow` and `expr-mut-borrow` build inferred-lifetime shared and mutable
 borrow expressions, `expr-array-ref` builds a checked element projection, and
 `expr-replace` builds the dedicated `(replace! place replacement)` expression;

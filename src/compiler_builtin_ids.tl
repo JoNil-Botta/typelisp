@@ -790,7 +790,7 @@
 (define compiler-builtin-id-fix-stdlib_dot_clone_dot_synthesize_helpers : i64
   -1)
 (define compiler-builtin-ctfe-ids : (__tl_dyn-array i64)
-  (__tl_make-array i64 290))
+  (__tl_make-array i64 291))
 
 (defstruct CompilerBuiltinIdsState
   ;; generation, table id, pool length, parse-initialized flag
@@ -802,7 +802,7 @@
   (let
     [metadata : (__tl_dyn-array i64) (__tl_make-array i64 4)]
     [ids : (__tl_dyn-array i64) (__tl_make-array i64 319)]
-    [ctfe-ids : (__tl_dyn-array i64) (__tl_make-array i64 290)]
+    [ctfe-ids : (__tl_dyn-array i64) (__tl_make-array i64 291)]
     [i : i64 0]
     (begin
       (set! (array-ref metadata 0) -1)
@@ -814,7 +814,7 @@
           (set! (array-ref ids i) -1)
           (set! i (+ i 1))))
       (set! i 0)
-      (while (< i 290)
+      (while (< i 291)
         (begin
           (set! (array-ref ctfe-ids i) -1)
           (set! i (+ i 1))))
@@ -887,7 +887,7 @@
 (define (state-capture-ctfe-ids! [state : CompilerBuiltinIdsState]) : unit
   (let
     [i : i64 0]
-    (while (< i 290)
+    (while (< i 291)
       (begin
         (set! (array-ref state.ctfe-ids i) (compiler-builtin-ctfe-ref i))
         (set! i (+ i 1))))))
@@ -895,7 +895,7 @@
 (define (state-install-ctfe-ids! [state : CompilerBuiltinIdsState]) : unit
   (let
     [i : i64 0]
-    (while (< i 290)
+    (while (< i 291)
       (begin
         (compiler-builtin-ctfe-set! i (array-ref state.ctfe-ids i))
         (set! i (+ i 1))))))
@@ -1731,7 +1731,7 @@
 (define (compiler-builtin-clear-ctfe-ids!) : unit
   (let
     [index : i64 0]
-    (while (< index 290)
+    (while (< index 291)
       (begin
         (compiler-builtin-ctfe-set! index -1)
         (set! index (+ index 1))))))
@@ -2077,7 +2077,9 @@
     (compiler-builtin-load-ctfe-id! insert-missing 288 "expr-shared-let-scope")
     ;; Reflected type -> opaque type-literal syntax bridge. Append-only: every
     ;; previously shipped CTFE name keeps its stable reset-aware slot.
-    (compiler-builtin-load-ctfe-id! insert-missing 289 "type-expr")))
+    (compiler-builtin-load-ctfe-id! insert-missing 289 "type-expr")
+    ;; Computed one-parameter lambda builder. Append-only for reset-stable IDs.
+    (compiler-builtin-load-ctfe-id! insert-missing 290 "expr-lambda1")))
 
 (define (compiler-builtin-load! [insert-missing : bool]) : unit
   (begin
@@ -3321,6 +3323,9 @@
       (=
         (compiler-builtin-ctfe-ref 289)
         (ci.intern-source-slice "type-expr" 0 9))
+      (=
+        (compiler-builtin-ctfe-ref 290)
+        (ci.intern-source-slice "expr-lambda1" 0 12))
       (not
         (=
           (compiler-builtin-ctfe-ref 219)
@@ -3380,6 +3385,7 @@
           (compiler-builtin-ctfe-set! 287 -1)
           (compiler-builtin-ctfe-set! 288 -1)
           (compiler-builtin-ctfe-set! 289 -1)
+          (compiler-builtin-ctfe-set! 290 -1)
           (state-install! snapshot)
           (unless
             (compiler-builtin-parser-syntax-ids-current-ok?)

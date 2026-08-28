@@ -1179,9 +1179,7 @@
   (type-mask i64)
   (modifier-mask i64))
 
-(define (lsp-semantic-token-json-i64
-  [items : json.JsonSeq]
-  [index : i64]) : i64
+(define (lsp-semantic-token-json-i64 [items : json.JsonSeq] [index : i64]) : i64
   (match (json.list-get-index items index)
     [(json.JsonMissing) -1]
     [(json.JsonFound value)
@@ -1194,9 +1192,7 @@
 
 ;; Decode the relative stream and validate the protocol invariants against the
 ;; negotiated source positions, instead of accepting a substring-shaped array.
-(define (lsp-semantic-token-decode
-  [result : json.Json]
-  [source : String]) : LspSemanticTokenDecode
+(define (lsp-semantic-token-decode [result : json.Json] [source : String]) : LspSemanticTokenDecode
   (let
     [data-key : String "data"]
     (match (json.object-get result (& data-key))
@@ -1219,8 +1215,7 @@
               (begin
                 (while (<= (+ index 4) (- length 1))
                   (let
-                    [delta-line : i64
-                      (lsp-semantic-token-json-i64 items index)]
+                    [delta-line : i64 (lsp-semantic-token-json-i64 items index)]
                     [delta-start : i64
                       (lsp-semantic-token-json-i64 items (+ index 1))]
                     [token-length : i64
@@ -1246,9 +1241,7 @@
                         (if (= delta-line 0)
                           (+ start delta-start)
                           delta-start))
-                      (if (and
-                        (= line previous-line)
-                        (< start previous-end))
+                      (if (and (= line previous-line) (< start previous-end))
                         (set! ok false)
                         unit)
                       (match (lsp_frame_core.lsp-offset-at-position-checked
@@ -1257,31 +1250,23 @@
                         start)
                         [(lsp_frame_core.LspOffsetLookup.Missing)
                           (set! ok false)]
-                        [(lsp_frame_core.LspOffsetLookup.Found _)
-                          unit])
+                        [(lsp_frame_core.LspOffsetLookup.Found _) unit])
                       (match (lsp_frame_core.lsp-offset-at-position-checked
                         source
                         line
                         (+ start token-length))
                         [(lsp_frame_core.LspOffsetLookup.Missing)
                           (set! ok false)]
-                        [(lsp_frame_core.LspOffsetLookup.Found _)
-                          unit])
+                        [(lsp_frame_core.LspOffsetLookup.Found _) unit])
                       (if (and (>= token-type 0) (<= token-type 12))
-                        (set!
-                          type-mask
-                          (bit-or type-mask (shl 1 token-type)))
+                        (set! type-mask (bit-or type-mask (shl 1 token-type)))
                         unit)
                       (set! modifier-mask (bit-or modifier-mask modifiers))
                       (set! previous-line line)
                       (set! previous-end (+ start token-length))
                       (set! count (+ count 1))
                       (set! index (+ index 5)))))
-                (LspSemanticTokenDecode
-                  ok
-                  count
-                  type-mask
-                  modifier-mask)))]
+                (LspSemanticTokenDecode ok count type-mask modifier-mask)))]
           [_ (LspSemanticTokenDecode false 0 0 0)])])))
 
 (define (lsp-semantic-token-lexical-smoke-ok?) : bool
@@ -1298,10 +1283,7 @@
         1
         (lsp_frame_core.lsp-diagnostic-uris-empty))]
     [doc : lsp_vector_families.LspDocument
-      (lsp_document_vec.get
-        (& docs)
-        0
-        (lsp_frame_core.lsp-document-fallback))]
+      (lsp_document_vec.get (& docs) 0 (lsp_frame_core.lsp-document-fallback))]
     [_utf16 : unit (lsp_frame_core.lsp-position-encoding-use-utf16!)]
     [utf16-result : json.Json
       (lsp_frame_core.lsp-semantic-tokens-for-document (& doc))]
@@ -1402,18 +1384,14 @@
             (and
               (string.contains (& capabilities) (& legend))
               (string.contains (& capabilities) (& modifiers))
-              (string.contains
-              (& capabilities)
-              (& provider))
+              (string.contains (& capabilities) (& provider))
               (string.eq
                 (json.stringify semantic-result)
                 (json.stringify repeated-result))
               decoded.ok
               (> decoded.count 20)
               (= (bit-and decoded.type-mask all-types) all-types)
-              (=
-                (bit-and decoded.modifier-mask 3)
-                3)
+              (= (bit-and decoded.modifier-mask 3) 3)
               stale-decoded.ok
               (= (bit-and stale-decoded.type-mask semantic-only-types) 0)
               (=
@@ -1692,8 +1670,7 @@
     [missing-uri : String
       (lsp_frame_core.lsp-resolved-path-to-file-uri
         "target/lsp_semantic_token_absent.tl")]
-    [source : String
-      "(define (plus-one [value : i64]) : i64 (+ value 1))\\n"]
+    [source : String "(define (plus-one [value : i64]) : i64 (+ value 1))\\n"]
     [initialize : String
       "{\"jsonrpc\":\"2.0\",\"id\":80,\"method\":\"initialize\",\"params\":{\"capabilities\":{}}}"]
     [missing-params : String
@@ -1704,8 +1681,7 @@
         (lsp-transcript-frame initialize)
         (lsp-transcript-frame (lsp-transcript-did-open uri source))
         (lsp-transcript-frame (lsp-transcript-semantic-tokens uri 83))
-        (lsp-transcript-frame
-          (lsp-transcript-semantic-tokens missing-uri 85))
+        (lsp-transcript-frame (lsp-transcript-semantic-tokens missing-uri 85))
         (lsp-transcript-frame missing-params)
         (lsp-transcript-frame exit))]
     [result : lsp_frame_core.LspTranscriptResult (lsp-transcript-run input)]

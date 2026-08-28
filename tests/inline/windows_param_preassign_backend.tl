@@ -64,15 +64,15 @@
   [pd : i64]) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
     function-name
-    (ir.compiler-ir-param-cons
+    (ir.compiler-ir-param-seq-prepend
       (ir.CompilerIrParam.Param "a" (ast.AstType.I64) 0)
-      (ir.compiler-ir-param-cons
+      (ir.compiler-ir-param-seq-prepend
         (ir.CompilerIrParam.Param "b" (ast.AstType.I64) 1)
-        (ir.compiler-ir-param-cons
+        (ir.compiler-ir-param-seq-prepend
           (ir.CompilerIrParam.Param "c" (ast.AstType.I64) 2)
-          (ir.compiler-ir-param-cons
+          (ir.compiler-ir-param-seq-prepend
             (ir.CompilerIrParam.Param "d" (ast.AstType.I64) 3)
-            ir.CompilerIrParamList.Nil))))
+            (ir.compiler-ir-param-seq-empty)))))
     (ast.AstType.Unit)
     4
     (ir.compiler-ir-block-cons
@@ -116,11 +116,11 @@
 (define (win-param-preassign-safe-div-function) : ir.CompilerIrFunction
   (ir.CompilerIrFunction.Function
     (win-param-preassign-logical-name "win_param_safe_div")
-    (ir.compiler-ir-param-cons
+    (ir.compiler-ir-param-seq-prepend
       (ir.CompilerIrParam.Param "a" (ast.AstType.I64) 0)
-      (ir.compiler-ir-param-cons
+      (ir.compiler-ir-param-seq-prepend
         (ir.CompilerIrParam.Param "b" (ast.AstType.I64) 1)
-        ir.CompilerIrParamList.Nil))
+        (ir.compiler-ir-param-seq-empty)))
     (ast.AstType.I64)
     3
     (ir.compiler-ir-block-cons

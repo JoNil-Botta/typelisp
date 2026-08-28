@@ -230,7 +230,7 @@
   [type-segment-bases : i64]
   [pass : String]
   [name : i64]
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [ret-ty : ast.AstType]
   [frame : i64]
   [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
@@ -6615,40 +6615,26 @@
             (= aid bid)
             (opt-type-eq type-segment-bases aty bty))])]))
 
-(define (opt-param-list-eq
+(define (opt-param-seq-eq-from
   [type-segment-bases : i64]
-  [a : ir.CompilerIrParamList]
-  [b : ir.CompilerIrParamList]) : bool
-  (match a
-    [(ir.CompilerIrParamList.Nil)
-      (match b
-        [(ir.CompilerIrParamList.Nil) true]
-        [(ir.CompilerIrParamList.Array seq)
-          (opt-param-list-eq
-            type-segment-bases
-            a
-            (ir.compiler-ir-param-seq-to-list seq))]
-        [_ false])]
-    [(ir.CompilerIrParamList.Cons ah at)
-      (match b
-        [(ir.CompilerIrParamList.Cons bh bt)
-          (and
-            (opt-param-eq type-segment-bases ah bh)
-            (opt-param-list-eq
-              type-segment-bases
-              (__tl-box-place at)
-              (__tl-box-place bt)))]
-        [(ir.CompilerIrParamList.Array seq)
-          (opt-param-list-eq
-            type-segment-bases
-            a
-            (ir.compiler-ir-param-seq-to-list seq))]
-        [_ false])]
-    [(ir.CompilerIrParamList.Array seq)
-      (opt-param-list-eq
+  [a : ir.CompilerIrParamSeq]
+  [b : ir.CompilerIrParamSeq]
+  [position : i64]) : bool
+  (if (>= position a.len)
+    (>= position b.len)
+    (and
+      (< position b.len)
+      (opt-param-eq
         type-segment-bases
-        (ir.compiler-ir-param-seq-to-list seq)
-        b)]))
+        (ir.compiler-ir-param-seq-ref a position)
+        (ir.compiler-ir-param-seq-ref b position))
+      (opt-param-seq-eq-from type-segment-bases a b (+ position 1)))))
+
+(define (opt-param-seq-eq
+  [type-segment-bases : i64]
+  [a : ir.CompilerIrParamSeq]
+  [b : ir.CompilerIrParamSeq]) : bool
+  (and (= a.len b.len) (opt-param-seq-eq-from type-segment-bases a b 0)))
 
 (define (opt-function-eq
   [type-segment-bases : i64]
@@ -6661,7 +6647,7 @@
           (and
             (ir.compiler-ir-symbol-eq? aname bname)
             (= aframe bframe)
-            (opt-param-list-eq type-segment-bases aparams bparams)
+            (opt-param-seq-eq type-segment-bases aparams bparams)
             (opt-type-eq type-segment-bases aret bret)
             (opt-block-list-eq type-segment-bases ablocks bblocks))])]))
 
@@ -10599,19 +10585,22 @@
     [(ir.CompilerIrInstr.Phi _ _ _) 0]
     [_ pos]))
 
+(define (opt-verify-param-def-set-from
+  [params : ir.CompilerIrParamSeq]
+  [set : (__tl_dyn-array bool)]
+  [position : i64]) : bool
+  (if (>= position params.len)
+    true
+    (match (ir.compiler-ir-param-seq-ref params position)
+      [(ir.CompilerIrParam.Param _ _ var)
+        (and
+          (opt-var-set-add-unique! set var)
+          (opt-verify-param-def-set-from params set (+ position 1)))])))
+
 (define (opt-verify-param-def-set
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [set : (__tl_dyn-array bool)]) : bool
-  (match (ir.compiler-ir-param-list-force-cons params)
-    [(ir.CompilerIrParamList.Nil) true]
-    [(ir.CompilerIrParamList.Array seq)
-      (opt-verify-param-def-set (ir.compiler-ir-param-seq-to-list seq) set)]
-    [(ir.CompilerIrParamList.Cons param rest)
-      (match param
-        [(ir.CompilerIrParam.Param _ _ var)
-          (and
-            (opt-var-set-add-unique! set var)
-            (opt-verify-param-def-set (__tl-box-place rest) set))])]))
+  (opt-verify-param-def-set-from params set 0))
 
 (define (opt-verify-instr-def-seq-from
   [instrs : ir.CompilerIrInstrSeq]
@@ -10641,7 +10630,7 @@
       (opt-verify-block-def-set (ir.compiler-ir-block-seq-to-list seq) set)]))
 
 (define (opt-verify-single-defs?
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [vars : i64]
   [blocks : ir.CompilerIrBlockList]) : bool
   (if (< vars 0)
@@ -10664,18 +10653,16 @@
     unit))
 
 (define (opt-var-defs-index-params!
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [items : (__tl_dyn-array OptMaybeVarDef)]) : unit
-  (match (ir.compiler-ir-param-list-force-cons params)
-    [(ir.CompilerIrParamList.Nil) unit]
-    [(ir.CompilerIrParamList.Array seq)
-      (opt-var-defs-index-params! (ir.compiler-ir-param-seq-to-list seq) items)]
-    [(ir.CompilerIrParamList.Cons param rest)
-      (match param
-        [(ir.CompilerIrParam.Param _ _ var)
-          (begin
-            (opt-var-defs-index-add! items var 0 0)
-            (opt-var-defs-index-params! (__tl-box-place rest) items))])]))
+  (let
+    [position : i64 0]
+    (while (< position params.len)
+      (begin
+        (match (ir.compiler-ir-param-seq-ref params position)
+          [(ir.CompilerIrParam.Param _ _ var)
+            (opt-var-defs-index-add! items var 0 0)])
+        (set! position (+ position 1))))))
 
 (define (opt-var-defs-index-instr-seq-from!
   [instrs : ir.CompilerIrInstrSeq]
@@ -10729,7 +10716,7 @@
 ;; rescanning an intermediate definition sequence. Parameters belong to dense
 ;; block id 0, matching `opt-cfg-index-build`.
 (define (opt-var-defs-index
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [vars : i64]
   [blocks : ir.CompilerIrBlockList]) : (__tl_dyn-array OptMaybeVarDef)
   (let
@@ -10771,21 +10758,22 @@
             (OptMaybeVarDef.Some (OptVarDef.Def var block-id pos)))
           true)])))
 
+(define (opt-var-defs-checked-params-from!
+  [params : ir.CompilerIrParamSeq]
+  [items : (__tl_dyn-array OptMaybeVarDef)]
+  [position : i64]) : bool
+  (if (>= position params.len)
+    true
+    (match (ir.compiler-ir-param-seq-ref params position)
+      [(ir.CompilerIrParam.Param _ _ var)
+        (and
+          (opt-var-defs-checked-add! items var 0 0)
+          (opt-var-defs-checked-params-from! params items (+ position 1)))])))
+
 (define (opt-var-defs-checked-params!
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [items : (__tl_dyn-array OptMaybeVarDef)]) : bool
-  (match (ir.compiler-ir-param-list-force-cons params)
-    [(ir.CompilerIrParamList.Nil) true]
-    [(ir.CompilerIrParamList.Array seq)
-      (opt-var-defs-checked-params!
-        (ir.compiler-ir-param-seq-to-list seq)
-        items)]
-    [(ir.CompilerIrParamList.Cons param rest)
-      (match param
-        [(ir.CompilerIrParam.Param _ _ var)
-          (and
-            (opt-var-defs-checked-add! items var 0 0)
-            (opt-var-defs-checked-params! (__tl-box-place rest) items))])]))
+  (opt-var-defs-checked-params-from! params items 0))
 
 (define (opt-var-defs-checked-instr-seq-from!
   [instrs : ir.CompilerIrInstrSeq]
@@ -10841,7 +10829,7 @@
         items)]))
 
 (define (opt-var-defs-index-checked
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [vars : i64]
   [blocks : ir.CompilerIrBlockList]) : OptVarDefsIndex
   (if (< vars 0)
@@ -12005,25 +11993,36 @@
     [(ir.CompilerIrParam.Param _ ty var)
       (opt-ssa-facts-add-def-ty type-segment-bases representations facts var ty)]))
 
+(define (opt-ssa-facts-add-params-from
+  [type-segment-bases : i64]
+  [representations : ir.CompilerIrRepresentationIndex]
+  [params : ir.CompilerIrParamSeq]
+  [facts : OptSsaFacts (:consume)]
+  [position : i64]) : OptSsaFacts
+  (if (>= position params.len)
+    facts
+    (opt-ssa-facts-add-params-from
+      type-segment-bases
+      representations
+      params
+      (opt-ssa-facts-add-param
+        type-segment-bases
+        representations
+        facts
+        (ir.compiler-ir-param-seq-ref params position))
+      (+ position 1))))
+
 (define (opt-ssa-facts-add-params
   [type-segment-bases : i64]
   [representations : ir.CompilerIrRepresentationIndex]
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [facts : OptSsaFacts (:consume)]) : OptSsaFacts
-  (match (ir.compiler-ir-param-list-force-cons params)
-    [(ir.CompilerIrParamList.Nil) facts]
-    [(ir.CompilerIrParamList.Array seq)
-      (opt-ssa-facts-add-params
-        type-segment-bases
-        representations
-        (ir.compiler-ir-param-seq-to-list seq)
-        facts)]
-    [(ir.CompilerIrParamList.Cons param rest)
-      (opt-ssa-facts-add-params
-        type-segment-bases
-        representations
-        (__tl-box-place rest)
-        (opt-ssa-facts-add-param type-segment-bases representations facts param))]))
+  (opt-ssa-facts-add-params-from
+    type-segment-bases
+    representations
+    params
+    facts
+    0))
 
 (define (opt-ssa-facts-add-instr
   [type-segment-bases : i64]
@@ -12182,7 +12181,7 @@
 (define (opt-ssa-facts-from-function-with-representations
   [type-segment-bases : i64]
   [representations : ir.CompilerIrRepresentationIndex]
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [blocks : ir.CompilerIrBlockList]) : OptSsaFacts
   (opt-ssa-facts-add-blocks
     type-segment-bases
@@ -12199,7 +12198,7 @@
 
 (define (opt-ssa-facts-from-function
   [type-segment-bases : i64]
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [blocks : ir.CompilerIrBlockList]) : OptSsaFacts
   (opt-ssa-facts-from-function-with-representations
     type-segment-bases
@@ -12344,28 +12343,35 @@
         (opt-ssa-var-blocks-add index defs var label)
         defs)]))
 
+(define (opt-ssa-def-blocks-add-params-from
+  [index : OptCfgIndex]
+  [facts : OptSsaFacts]
+  [label : i64]
+  [defs : OptSsaVarBlocks (:consume)]
+  [params : ir.CompilerIrParamSeq]
+  [position : i64]) : OptSsaVarBlocks
+  (if (>= position params.len)
+    defs
+    (opt-ssa-def-blocks-add-params-from
+      index
+      facts
+      label
+      (opt-ssa-def-blocks-add-param
+        index
+        facts
+        label
+        defs
+        (ir.compiler-ir-param-seq-ref params position))
+      params
+      (+ position 1))))
+
 (define (opt-ssa-def-blocks-add-params
   [index : OptCfgIndex]
   [facts : OptSsaFacts]
   [label : i64]
   [defs : OptSsaVarBlocks (:consume)]
-  [params : ir.CompilerIrParamList]) : OptSsaVarBlocks
-  (match (ir.compiler-ir-param-list-force-cons params)
-    [(ir.CompilerIrParamList.Nil) defs]
-    [(ir.CompilerIrParamList.Array seq)
-      (opt-ssa-def-blocks-add-params
-        index
-        facts
-        label
-        defs
-        (ir.compiler-ir-param-seq-to-list seq))]
-    [(ir.CompilerIrParamList.Cons param rest)
-      (opt-ssa-def-blocks-add-params
-        index
-        facts
-        label
-        (opt-ssa-def-blocks-add-param index facts label defs param)
-        (__tl-box-place rest))]))
+  [params : ir.CompilerIrParamSeq]) : OptSsaVarBlocks
+  (opt-ssa-def-blocks-add-params-from index facts label defs params 0))
 
 (define (opt-ssa-def-blocks-add-instr
   [index : OptCfgIndex]
@@ -12433,7 +12439,7 @@
 (define (opt-ssa-def-blocks-from-function
   [index : OptCfgIndex]
   [facts : OptSsaFacts]
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [blocks : ir.CompilerIrBlockList]
   [var-capacity : i64]
   [entry-capacity : i64]) : OptSsaVarBlocks
@@ -12595,7 +12601,7 @@
 (define (opt-ssa-insert-phis
   [facts : OptSsaFacts]
   [context : OptCfgContext]
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [frame : i64]
   [blocks : ir.CompilerIrBlockList]) : OptSsaPhiInsertState
   (match facts
@@ -12827,23 +12833,28 @@
           (opt-ssa-env-with-capacity frame candidate-count binding-count)
           0))]))
 
+(define (opt-ssa-env-from-params-at
+  [facts : OptSsaFacts]
+  [params : ir.CompilerIrParamSeq]
+  [env : OptSsaRenameEnv]
+  [position : i64]) : OptSsaRenameEnv
+  (if (>= position params.len)
+    env
+    (match (ir.compiler-ir-param-seq-ref params position)
+      [(ir.CompilerIrParam.Param _ _ var)
+        (opt-ssa-env-from-params-at
+          facts
+          params
+          (if (opt-ssa-candidate? facts var)
+            (opt-ssa-env-bind env var var)
+            env)
+          (+ position 1))])))
+
 (define (opt-ssa-env-from-params
   [facts : OptSsaFacts]
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [env : OptSsaRenameEnv]) : OptSsaRenameEnv
-  (match (ir.compiler-ir-param-list-force-cons params)
-    [(ir.CompilerIrParamList.Nil) env]
-    [(ir.CompilerIrParamList.Array seq)
-      (opt-ssa-env-from-params facts (ir.compiler-ir-param-seq-to-list seq) env)]
-    [(ir.CompilerIrParamList.Cons param rest)
-      (match param
-        [(ir.CompilerIrParam.Param _ _ var)
-          (opt-ssa-env-from-params
-            facts
-            (__tl-box-place rest)
-            (if (opt-ssa-candidate? facts var)
-              (opt-ssa-env-bind env var var)
-              env))])]))
+  (opt-ssa-env-from-params-at facts params env 0))
 
 (define (opt-ssa-env-bind-phis-from
   [sites : OptSsaPhiSites]
@@ -13848,7 +13859,7 @@
 
 (define (opt-ssa-rename-function-blocks
   [context : OptCfgContext]
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [facts : OptSsaFacts]
   [sites : OptSsaPhiSites]
   [frame : i64]
@@ -14162,7 +14173,7 @@
 (define (opt-ssa-construct-materialized
   [fallback : ir.CompilerIrFunction]
   [name : i64]
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [ret-ty : ast.AstType]
   [blocks : ir.CompilerIrBlockList]
   [context : OptCfgContext]
@@ -14189,7 +14200,7 @@
 (define (opt-ssa-construct-materialized-with-context-result
   [fallback : ir.CompilerIrFunction]
   [name : i64]
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [ret-ty : ast.AstType]
   [blocks : ir.CompilerIrBlockList]
   [context : OptCfgContext]
@@ -14328,7 +14339,7 @@
 (define (opt-ssa-construct-with-context
   [func : ir.CompilerIrFunction]
   [name : i64]
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [ret-ty : ast.AstType]
   [frame : i64]
   [blocks : ir.CompilerIrBlockList]
@@ -14359,7 +14370,7 @@
 (define (opt-ssa-construct-with-context-result
   [func : ir.CompilerIrFunction]
   [name : i64]
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [ret-ty : ast.AstType]
   [frame : i64]
   [blocks : ir.CompilerIrBlockList]
@@ -20559,19 +20570,23 @@
   (match param
     [(ir.CompilerIrParam.Param _ ty var) (opt-licm-type-env-bind types var ty)]))
 
+(define (opt-licm-type-env-add-params-from
+  [params : ir.CompilerIrParamSeq]
+  [types : OptSsaVarTypes]
+  [position : i64]) : OptSsaVarTypes
+  (if (>= position params.len)
+    types
+    (opt-licm-type-env-add-params-from
+      params
+      (opt-licm-type-env-add-param
+        types
+        (ir.compiler-ir-param-seq-ref params position))
+      (+ position 1))))
+
 (define (opt-licm-type-env-add-params
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [types : OptSsaVarTypes]) : OptSsaVarTypes
-  (match (ir.compiler-ir-param-list-force-cons params)
-    [(ir.CompilerIrParamList.Nil) types]
-    [(ir.CompilerIrParamList.Array seq)
-      (opt-licm-type-env-add-params
-        (ir.compiler-ir-param-seq-to-list seq)
-        types)]
-    [(ir.CompilerIrParamList.Cons param rest)
-      (opt-licm-type-env-add-params
-        (__tl-box-place rest)
-        (opt-licm-type-env-add-param types param))]))
+  (opt-licm-type-env-add-params-from params types 0))
 
 (define (opt-licm-type-env-add-instr
   [types : OptSsaVarTypes]
@@ -20627,7 +20642,7 @@
         types)]))
 
 (define (opt-licm-type-env-from-function
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [blocks : ir.CompilerIrBlockList]) : OptSsaVarTypes
   (opt-licm-type-env-add-blocks
     blocks
@@ -20661,21 +20676,16 @@
 (define (opt-licm-root-env-seed-params!
   [type-segment-bases : i64]
   [env : (&mut env OptLicmRootEnv)]
-  [params : ir.CompilerIrParamList]) : unit
-  (match (ir.compiler-ir-param-list-force-cons params)
-    [(ir.CompilerIrParamList.Nil) unit]
-    [(ir.CompilerIrParamList.Array seq)
-      (opt-licm-root-env-seed-params!
-        type-segment-bases
-        env
-        (ir.compiler-ir-param-seq-to-list seq))]
-    [(ir.CompilerIrParamList.Cons param rest)
+  [params : ir.CompilerIrParamSeq]) : unit
+  (let
+    [position : i64 0]
+    (while (< position params.len)
       (begin
-        (opt-licm-root-env-seed-param! type-segment-bases env param)
-        (opt-licm-root-env-seed-params!
+        (opt-licm-root-env-seed-param!
           type-segment-bases
           env
-          (__tl-box-place rest)))]))
+          (ir.compiler-ir-param-seq-ref params position))
+        (set! position (+ position 1))))))
 
 (define (opt-licm-phi-root
   [env : (& env OptLicmRootEnv)]
@@ -20731,7 +20741,7 @@
 ;; empty at levels that build no summaries, where it costs the older verdict
 ;; and nothing else.
 (define (opt-licm-return-alias-instr
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [found : i64]
   [instr : ir.CompilerIrInstr]) : i64
   (match instr
@@ -20754,7 +20764,7 @@
     [_ found]))
 
 (define (opt-licm-return-alias-instr-seq-from
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]
   [found : i64]) : i64
@@ -20770,7 +20780,7 @@
         (ir.compiler-ir-instr-seq-ref instrs index)))))
 
 (define (opt-licm-return-alias-blocks
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [blocks : ir.CompilerIrBlockList]
   [found : i64]) : i64
   (match blocks
@@ -21889,7 +21899,7 @@
 ;; unresolved/mixed join remains unrooted and therefore conservative.
 (define (opt-licm-provenance-state-from-function
   [type-segment-bases : i64]
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [types : OptSsaVarTypes]
   [return-alias : opt_i64_i64_map.Map]
   [frozen : opt_i64_i64_map.Map]
@@ -24895,37 +24905,29 @@
         all-labels)]))
 
 (define (opt-licm-unswitch-clone-param-moves-into!
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [remap : (__tl_dyn-array ir.CompilerIrValue)]
   [cell : (__tl_dyn-array i64)]
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : unit
-  (match (ir.compiler-ir-param-list-force-cons params)
-    [(ir.CompilerIrParamList.Nil) unit]
-    [(ir.CompilerIrParamList.Array seq)
-      (opt-licm-unswitch-clone-param-moves-into!
-        (ir.compiler-ir-param-seq-to-list seq)
-        remap
-        cell
-        builder)]
-    [(ir.CompilerIrParamList.Cons param rest)
-      (match param
-        [(ir.CompilerIrParam.Param _ ty var)
-          (let
-            [fresh : i64 (array-ref cell 0)]
-            (begin
-              (set! (array-ref cell 0) (+ fresh 1))
-              (set! (array-ref remap var) (ir.CompilerIrValue.Var fresh))
-              (ir.compiler-ir-instr-builder-push!
-                builder
-                (ir.CompilerIrInstr.Mov fresh (ir.CompilerIrValue.Var var) ty))
-              (opt-licm-unswitch-clone-param-moves-into!
-                (__tl-box-place rest)
-                remap
-                cell
-                builder)))])]))
+  (let
+    [position : i64 0]
+    (while (< position params.len)
+      (begin
+        (match (ir.compiler-ir-param-seq-ref params position)
+          [(ir.CompilerIrParam.Param _ ty var)
+            (let
+              [fresh : i64 (array-ref cell 0)]
+              (begin
+                (set! (array-ref cell 0) (+ fresh 1))
+                (set! (array-ref remap var) (ir.CompilerIrValue.Var fresh))
+                (ir.compiler-ir-instr-builder-push!
+                  builder
+                  (ir.CompilerIrInstr.Mov fresh (ir.CompilerIrValue.Var var) ty))
+                unit))])
+        (set! position (+ position 1))))))
 
 (define (opt-licm-unswitch-clone-param-moves!
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [remap : (__tl_dyn-array ir.CompilerIrValue)]
   [cell : (__tl_dyn-array i64)]) : ir.CompilerIrInstrSeq
   (let
@@ -25141,7 +25143,7 @@
 (define (opt-licm-unswitch-apply
   [blocks : ir.CompilerIrBlockList]
   [shape : OptLicmUnswitchShape]
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [frame : i64]) : OptUnrollResult
   (let
     [outside : opt_i64_i64_map.Map
@@ -25196,7 +25198,7 @@
   [context : OptCfgContext]
   [all-loops : OptNaturalLoopList]
   [remaining : OptNaturalLoopList]
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [frame : i64]) : OptUnrollResult
   (match remaining
     [(OptNaturalLoopList.Nil) (OptUnrollResult.Result blocks frame false)]
@@ -40766,19 +40768,20 @@
     [(ir.CompilerIrBlockList.Array seq)
       (opt-sccp-max-var-blocks (ir.compiler-ir-block-seq-to-list seq) acc)]))
 
-(define (opt-sccp-max-var-params [params : ir.CompilerIrParamList] [acc : i64]) : i64
-  (match (ir.compiler-ir-param-list-force-cons params)
-    [(ir.CompilerIrParamList.Nil) acc]
-    [(ir.CompilerIrParamList.Array seq)
-      (opt-sccp-max-var-params (ir.compiler-ir-param-seq-to-list seq) acc)]
-    [(ir.CompilerIrParamList.Cons param rest)
-      (match param
-        [(ir.CompilerIrParam.Param _ _ id)
-          (opt-sccp-max-var-params
-            (__tl-box-place rest)
-            (if (> id acc)
-              id
-              acc))])]))
+(define (opt-sccp-max-var-params [params : ir.CompilerIrParamSeq] [acc : i64]) : i64
+  (let
+    [position : i64 0]
+    [out : i64 acc]
+    (begin
+      (while (< position params.len)
+        (begin
+          (match (ir.compiler-ir-param-seq-ref params position)
+            [(ir.CompilerIrParam.Param _ _ id)
+              (if (> id out)
+                (set! out id)
+                unit)])
+          (set! position (+ position 1))))
+      out)))
 
 (defenum OptSccpState
   ;; The type segment-bases scalar belongs to this analysis instance. Carrying
@@ -41238,24 +41241,28 @@
         (ir.compiler-ir-block-seq-to-list seq)
         block-id)]))
 
+(define (opt-sccp-env-from-params-at
+  [params : ir.CompilerIrParamSeq]
+  [env : OptSccpEnv]
+  [position : i64]) : OptSccpEnv
+  (if (>= position params.len)
+    env
+    (match (ir.compiler-ir-param-seq-ref params position)
+      [(ir.CompilerIrParam.Param _ _ id)
+        (opt-sccp-env-from-params-at
+          params
+          (opt-sccp-env-set env id (OptSccpValue.Overdefined))
+          (+ position 1))])))
+
 (define (opt-sccp-env-from-params
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [env : OptSccpEnv]) : OptSccpEnv
-  (match (ir.compiler-ir-param-list-force-cons params)
-    [(ir.CompilerIrParamList.Nil) env]
-    [(ir.CompilerIrParamList.Array seq)
-      (opt-sccp-env-from-params (ir.compiler-ir-param-seq-to-list seq) env)]
-    [(ir.CompilerIrParamList.Cons param rest)
-      (match param
-        [(ir.CompilerIrParam.Param _ _ id)
-          (opt-sccp-env-from-params
-            (__tl-box-place rest)
-            (opt-sccp-env-set env id (OptSccpValue.Overdefined)))])]))
+  (opt-sccp-env-from-params-at params env 0))
 
 (define (opt-sccp-initial-state
   [type-segment-bases : i64]
   [context : OptCfgContext]
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [blocks : ir.CompilerIrBlockList]) : OptSccpState
   (let
     [max-var : i64
@@ -41286,7 +41293,7 @@
 (define (opt-sccp-initial-state-with-frame
   [type-segment-bases : i64]
   [context : OptCfgContext]
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [frame : i64]) : OptSccpState
   (let
     [executable-count : i64 (opt-cfg-index-block-count context.index)]
@@ -41333,7 +41340,7 @@
 (define (opt-sccp-analyze
   [type-segment-bases : i64]
   [context : OptCfgContext]
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [blocks : ir.CompilerIrBlockList]) : OptSccpState
   (opt-sccp-analyze-fixed
     type-segment-bases
@@ -41346,7 +41353,7 @@
 (define (opt-sccp-analyze-with-frame
   [type-segment-bases : i64]
   [context : OptCfgContext]
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [blocks : ir.CompilerIrBlockList]
   [frame : i64]) : OptSccpState
   (opt-sccp-analyze-fixed
@@ -41971,7 +41978,7 @@
 
 (define (opt-sccp-blocks
   [type-segment-bases : i64]
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
   (let
     [context : OptCfgContext (opt-cfg-context-build blocks)]
@@ -41986,7 +41993,7 @@
 (define (opt-sccp-blocks-with-context-result
   [type-segment-bases : i64]
   [context : OptCfgContext]
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [blocks : ir.CompilerIrBlockList]) : OptBlockCtxResult
   (match (opt-sccp-analyze type-segment-bases context params blocks)
     [(OptSccpState.State _ _ env _ _)
@@ -42026,7 +42033,7 @@
 (define (opt-sccp-blocks-with-context-result-raw
   [type-segment-bases : i64]
   [context : OptCfgContext]
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [blocks : ir.CompilerIrBlockList]
   [frame : i64]) : OptBlockCtxResult
   (match (opt-sccp-analyze-with-frame
@@ -42795,7 +42802,7 @@
           (opt-late-total-switch-mark-params!
             occupied
             0
-            (ir.compiler-ir-param-list-count params))]
+            (ir.compiler-ir-param-seq-count params))]
         [blocks-result : OptLateTotalSwitchBlocks
           (opt-late-total-switch-blocks blocks occupied frame-cell)]
         ;; One trap block is appended per rewritten switch, so an empty trap
@@ -44671,19 +44678,23 @@
     [(ir.CompilerIrInstr.Switch _ _ _ _) (- 0 1)]
     [(ir.CompilerIrInstr.TotalEnumSwitch _ _ _ _ _) (- 0 1)]))
 
+(define (opt-gvn-sources-params-from
+  [params : ir.CompilerIrParamSeq]
+  [acc : opt_i64_i64_map.Map (:consume)]
+  [position : i64]) : opt_i64_i64_map.Map
+  (if (>= position params.len)
+    acc
+    (match (ir.compiler-ir-param-seq-ref params position)
+      [(ir.CompilerIrParam.Param _ _ id)
+        (opt-gvn-sources-params-from
+          params
+          (opt-gvn-defs-add acc id)
+          (+ position 1))])))
+
 (define (opt-gvn-sources-params
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [acc : opt_i64_i64_map.Map (:consume)]) : opt_i64_i64_map.Map
-  (match (ir.compiler-ir-param-list-force-cons params)
-    [(ir.CompilerIrParamList.Nil) acc]
-    [(ir.CompilerIrParamList.Array seq)
-      (opt-gvn-sources-params (ir.compiler-ir-param-seq-to-list seq) acc)]
-    [(ir.CompilerIrParamList.Cons param rest)
-      (match param
-        [(ir.CompilerIrParam.Param _ _ id)
-          (opt-gvn-sources-params
-            (__tl-box-place rest)
-            (opt-gvn-defs-add acc id))])]))
+  (opt-gvn-sources-params-from params acc 0))
 
 (define (opt-gvn-sources-instr-seq-from
   [slots : (__tl_dyn-array ir.CompilerIrInstr)]
@@ -45378,7 +45389,7 @@
   [profile-state : profile_state.CompilerProfileMetrics]
   [type-segment-bases : i64]
   [context : OptCfgContext]
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [call-memory : opt_i64_i64_map.Map]
   [cells : OptGlobalCellSummary]
   [frame : i64]
@@ -45409,7 +45420,7 @@
   [profile-state : profile_state.CompilerProfileMetrics]
   [type-segment-bases : i64]
   [context : OptCfgContext]
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [call-memory : opt_i64_i64_map.Map]
   [cells : OptGlobalCellSummary]
   [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
@@ -45426,7 +45437,7 @@
 
 (define (opt-gvn-blocks
   [type-segment-bases : i64]
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
   (opt-gvn-blocks-with-context-and-call-memory
     (profile_state.compiler-profile-state-metrics
@@ -45644,37 +45655,24 @@
 
 (define (opt-bounds-dom-params-have-slice?
   [type-segment-bases : i64]
-  [params : ir.CompilerIrParamList]) : bool
-  (match params
-    [(ir.CompilerIrParamList.Nil) false]
-    [(ir.CompilerIrParamList.Cons param rest)
-      (match param
-        [(ir.CompilerIrParam.Param _ ty _)
-          (or
-            (opt-load-slice-param-type? type-segment-bases ty)
-            (opt-bounds-dom-params-have-slice?
-              type-segment-bases
-              (__tl-box-place rest)))])]
-    [(ir.CompilerIrParamList.Array seq)
-      (let
-        [index : i64 0]
-        [found : bool false]
+  [params : ir.CompilerIrParamSeq]) : bool
+  (let
+    [index : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (not found) (< index params.len))
         (begin
-          (while (and
-            (not found)
-            (< index (ir.compiler-ir-param-seq-count seq)))
-            (begin
-              (match (ir.compiler-ir-param-seq-ref seq index)
-                [(ir.CompilerIrParam.Param _ ty _)
-                  (if (opt-load-slice-param-type? type-segment-bases ty)
-                    (set! found true)
-                    unit)])
-              (set! index (+ index 1))))
-          found))]))
+          (match (ir.compiler-ir-param-seq-ref params index)
+            [(ir.CompilerIrParam.Param _ ty _)
+              (if (opt-load-slice-param-type? type-segment-bases ty)
+                (set! found true)
+                unit)])
+          (set! index (+ index 1))))
+      found)))
 
 (define (opt-bounds-dom-slice-lengths
   [type-segment-bases : i64]
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [sources : opt_i64_i64_map.Map]
   [copies : opt_i64_i64_map.Map]
   [blocks : ir.CompilerIrBlockList]) : opt_i64_i64_map.Map
@@ -52526,7 +52524,7 @@
 (define (opt-bounds-dom-blocks-with-context
   [type-segment-bases : i64]
   [context : OptCfgContext]
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [frame : i64]
   [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
   (match (opt-bounds-dom-blocks-with-context-result
@@ -52542,7 +52540,7 @@
 (define (opt-bounds-dom-blocks-with-context-result
   [type-segment-bases : i64]
   [context : OptCfgContext]
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [frame : i64]
   [nonneg : opt_i64_i64_map.Map]
   [len-eq : OptLenEqUse]
@@ -54050,7 +54048,7 @@
 (define (opt-lp-state-new
   [type-segment-bases : i64]
   [context : OptCfgContext]
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [frame : i64]) : OptLpState
   (let
     [index : OptCfgIndex context.index]
@@ -54136,24 +54134,19 @@
 (define (opt-lp-params-fill!
   [type-segment-bases : i64]
   [kinds : (__tl_dyn-array i64)]
-  [params : ir.CompilerIrParamList]) : unit
-  (match (ir.compiler-ir-param-list-force-cons params)
-    [(ir.CompilerIrParamList.Nil) unit]
-    [(ir.CompilerIrParamList.Array seq)
-      (opt-lp-params-fill!
-        type-segment-bases
-        kinds
-        (ir.compiler-ir-param-seq-to-list seq))]
-    [(ir.CompilerIrParamList.Cons param rest)
+  [params : ir.CompilerIrParamSeq]) : unit
+  (let
+    [position : i64 0]
+    (while (< position params.len)
       (begin
-        (match param
+        (match (ir.compiler-ir-param-seq-ref params position)
           [(ir.CompilerIrParam.Param _ ty var)
             (if (and (>= var 0) (< var (array-length kinds)))
               (set!
                 (array-ref kinds var)
                 (opt-lp-param-kind-of type-segment-bases ty))
               unit)])
-        (opt-lp-params-fill! type-segment-bases kinds (__tl-box-place rest)))]))
+        (set! position (+ position 1))))))
 
 ;; The memo is TWO words per var: `lp[2v] = len + 1` and `lp[2v + 1] = the
 ;; block the proved check sits in`. The block is part of the key, not a
@@ -54202,7 +54195,7 @@
 (define (opt-lp-memo-build
   [type-segment-bases : i64]
   [context : OptCfgContext]
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [frame : i64]
   [blocks : ir.CompilerIrBlockList]) : (__tl_dyn-array i64)
   (let
@@ -55086,7 +55079,7 @@
   [type-segment-bases : i64]
   [representations : ir.CompilerIrRepresentationIndex]
   [context : OptCfgContext]
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
   (if (not (opt-divrem-blocks-have-divmod? blocks))
     ;; No Div/Mod op anywhere: every rewrite is identity, so the pass output
@@ -55122,7 +55115,7 @@
 
 (define (opt-divrem-safety-blocks
   [type-segment-bases : i64]
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
   (opt-divrem-safety-blocks-with-context
     type-segment-bases
@@ -58110,7 +58103,7 @@
 (define (opt-loop-bce-blocks
   [type-segment-bases : i64]
   [summaries : OptLoopBceSummaries]
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
   (if (or
     (not summaries.enabled)
@@ -59809,7 +59802,7 @@
   [pools : ast.AstNodePoolContext]
   [type-segment-bases : i64]
   [frame : i64]
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [blocks : ir.CompilerIrBlockList]) : OptBlockListPassResult
   (let
     [scan-work : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
@@ -59870,7 +59863,7 @@
   [pools : ast.AstNodePoolContext]
   [type-segment-bases : i64]
   [frame : i64]
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
   (match (optimize-block-list-for-function-pass
     profile-state
@@ -59930,13 +59923,8 @@
 ;; loop phis instead of rejecting duplicate parameter definitions. Re-running
 ;; the old entry block per iteration remains precisely the tail-recursion
 ;; semantics (a real recursive call re-executes the entire body).
-(define (opt-tailrec-param-count [params : ir.CompilerIrParamList]) : i64
-  (match (ir.compiler-ir-param-list-force-cons params)
-    [(ir.CompilerIrParamList.Nil) 0]
-    [(ir.CompilerIrParamList.Array seq)
-      (opt-tailrec-param-count (ir.compiler-ir-param-seq-to-list seq))]
-    [(ir.CompilerIrParamList.Cons _ rest)
-      (+ 1 (opt-tailrec-param-count (__tl-box-place rest)))]))
+(define (opt-tailrec-param-count [params : ir.CompilerIrParamSeq]) : i64
+  params.len)
 
 (define (opt-tailrec-args-to-seq [args : ir.CompilerIrCallArgs]) : ir.CompilerIrValueSeq
   (match args
@@ -59956,34 +59944,23 @@
 ;; argument at this call site; it is independent of enclosing function size and
 ;; layout.
 (define (opt-tailrec-hybrid-identity-args-from?
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [args : ir.CompilerIrValueSeq]
   [index : i64]) : bool
-  (match (ir.compiler-ir-param-list-force-cons params)
-    [(ir.CompilerIrParamList.Nil) false]
-    [(ir.CompilerIrParamList.Array seq)
-      (opt-tailrec-hybrid-identity-args-from?
-        (ir.compiler-ir-param-seq-to-list seq)
-        args
-        index)]
-    [(ir.CompilerIrParamList.Cons param prest)
-      (if (>= index args.len)
-        false
-        (match param
-          [(ir.CompilerIrParam.Param _ ty var-id)
-            (if (and
-              (not (opt-ssa-register-value-type? ty))
-              (match (ir.compiler-ir-value-seq-ref args index)
-                [(ir.CompilerIrValue.Var source) (= source var-id)]
-                [_ false]))
-              true
-              (opt-tailrec-hybrid-identity-args-from?
-                (__tl-box-place prest)
-                args
-                (+ index 1)))]))]))
+  (if (or (>= index params.len) (>= index args.len))
+    false
+    (match (ir.compiler-ir-param-seq-ref params index)
+      [(ir.CompilerIrParam.Param _ ty var-id)
+        (if (and
+          (not (opt-ssa-register-value-type? ty))
+          (match (ir.compiler-ir-value-seq-ref args index)
+            [(ir.CompilerIrValue.Var source) (= source var-id)]
+            [_ false]))
+          true
+          (opt-tailrec-hybrid-identity-args-from? params args (+ index 1)))])))
 
 (define (opt-tailrec-hybrid-identity-args?
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [args : ir.CompilerIrValueSeq]) : bool
   (opt-tailrec-hybrid-identity-args-from? params args 0))
 
@@ -59992,7 +59969,7 @@
   [index : i64]
   [fname : i64]
   [n : i64]
-  [params : ir.CompilerIrParamList]) : bool
+  [params : ir.CompilerIrParamSeq]) : bool
   (if (>= index (ir.compiler-ir-instr-seq-count instrs))
     false
     (match (ir.compiler-ir-instr-seq-ref instrs index)
@@ -60022,7 +59999,7 @@
   [blocks : ir.CompilerIrBlockList]
   [fname : i64]
   [n : i64]
-  [params : ir.CompilerIrParamList]) : bool
+  [params : ir.CompilerIrParamSeq]) : bool
   (match blocks
     [(ir.CompilerIrBlockList.Nil) false]
     [(ir.CompilerIrBlockList.Cons block rest)
@@ -60052,110 +60029,79 @@
 ;; tail-recursion rewrite used to prepend these moves to a linked instruction
 ;; tail; push them into the dense output in program order instead. refs #5726
 (define (opt-tailrec-push-assign-movs!
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [base : i64]
   [index : i64]
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : unit
-  (match (ir.compiler-ir-param-list-force-cons params)
-    [(ir.CompilerIrParamList.Nil) unit]
-    [(ir.CompilerIrParamList.Array seq)
-      (opt-tailrec-push-assign-movs!
-        (ir.compiler-ir-param-seq-to-list seq)
-        base
-        index
-        (&mut builder))]
-    [(ir.CompilerIrParamList.Cons param prest)
-      (match param
-        [(ir.CompilerIrParam.Param _ ty var-id)
-          (begin
-            (ir.compiler-ir-instr-builder-push!
-              (&mut builder)
-              (ir.CompilerIrInstr.Mov
-                var-id
-                (ir.CompilerIrValue.Var (+ base index))
-                ty))
-            (opt-tailrec-push-assign-movs!
-              (__tl-box-place prest)
-              base
-              (+ index 1)
-              (&mut builder)))])]))
+  (if (>= index params.len)
+    unit
+    (match (ir.compiler-ir-param-seq-ref params index)
+      [(ir.CompilerIrParam.Param _ ty var-id)
+        (begin
+          (ir.compiler-ir-instr-builder-push!
+            (&mut builder)
+            (ir.CompilerIrInstr.Mov
+              var-id
+              (ir.CompilerIrValue.Var (+ base index))
+              ty))
+          (opt-tailrec-push-assign-movs! params base (+ index 1) (&mut builder)))])))
 
 (define (opt-tailrec-push-assign-movs-hybrid!
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [args : ir.CompilerIrValueSeq]
   [base : i64]
   [index : i64]
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : unit
-  (match (ir.compiler-ir-param-list-force-cons params)
-    [(ir.CompilerIrParamList.Nil) unit]
-    [(ir.CompilerIrParamList.Array seq)
-      (opt-tailrec-push-assign-movs-hybrid!
-        (ir.compiler-ir-param-seq-to-list seq)
-        args
-        base
-        index
-        (&mut builder))]
-    [(ir.CompilerIrParamList.Cons param prest)
-      (if (>= index args.len)
-        unit
-        (let
-          [arg : ir.CompilerIrValue (ir.compiler-ir-value-seq-ref args index)]
-          (match param
-            [(ir.CompilerIrParam.Param _ ty var-id)
-              (begin
-                (if (match arg
-                  [(ir.CompilerIrValue.Var source) (= source var-id)]
-                  [_ false])
-                  unit
-                  (ir.compiler-ir-instr-builder-push!
-                    (&mut builder)
-                    (ir.CompilerIrInstr.Mov
-                      var-id
-                      (ir.CompilerIrValue.Var (+ base index))
-                      ty)))
-                (opt-tailrec-push-assign-movs-hybrid!
-                  (__tl-box-place prest)
-                  args
-                  base
-                  (+ index 1)
-                  (&mut builder)))])))]))
+  (if (or (>= index params.len) (>= index args.len))
+    unit
+    (let
+      [arg : ir.CompilerIrValue (ir.compiler-ir-value-seq-ref args index)]
+      (match (ir.compiler-ir-param-seq-ref params index)
+        [(ir.CompilerIrParam.Param _ ty var-id)
+          (begin
+            (if (match arg
+              [(ir.CompilerIrValue.Var source) (= source var-id)]
+              [_ false])
+              unit
+              (ir.compiler-ir-instr-builder-push!
+                (&mut builder)
+                (ir.CompilerIrInstr.Mov
+                  var-id
+                  (ir.CompilerIrValue.Var (+ base index))
+                  ty)))
+            (opt-tailrec-push-assign-movs-hybrid!
+              params
+              args
+              base
+              (+ index 1)
+              (&mut builder)))]))))
 
 ;; Evaluate each argument into a fresh temp slot (`base + i`) before any
 ;; parameter slot is overwritten, so argument aliasing on the parameters is
 ;; preserved.
 (define (opt-tailrec-push-stage-movs!
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [args : ir.CompilerIrValueSeq]
   [base : i64]
   [index : i64]
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : unit
-  (match (ir.compiler-ir-param-list-force-cons params)
-    [(ir.CompilerIrParamList.Nil) unit]
-    [(ir.CompilerIrParamList.Array seq)
-      (opt-tailrec-push-stage-movs!
-        (ir.compiler-ir-param-seq-to-list seq)
-        args
-        base
-        index
-        (&mut builder))]
-    [(ir.CompilerIrParamList.Cons param prest)
-      (if (>= index args.len)
-        unit
-        (match param
-          [(ir.CompilerIrParam.Param _ ty _)
-            (begin
-              (ir.compiler-ir-instr-builder-push!
-                (&mut builder)
-                (ir.CompilerIrInstr.Mov
-                  (+ base index)
-                  (ir.compiler-ir-value-seq-ref args index)
-                  ty))
-              (opt-tailrec-push-stage-movs!
-                (__tl-box-place prest)
-                args
-                base
-                (+ index 1)
-                (&mut builder)))]))]))
+  (if (or (>= index params.len) (>= index args.len))
+    unit
+    (match (ir.compiler-ir-param-seq-ref params index)
+      [(ir.CompilerIrParam.Param _ ty _)
+        (begin
+          (ir.compiler-ir-instr-builder-push!
+            (&mut builder)
+            (ir.CompilerIrInstr.Mov
+              (+ base index)
+              (ir.compiler-ir-value-seq-ref args index)
+              ty))
+          (opt-tailrec-push-stage-movs!
+            params
+            args
+            base
+            (+ index 1)
+            (&mut builder)))])))
 
 (define (opt-tailrec-self-call?
   [instr : ir.CompilerIrInstr]
@@ -60173,7 +60119,7 @@
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]
   [fname : i64]
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [n : i64]
   [base : i64]
   [hybrid? : bool]
@@ -60222,7 +60168,7 @@
 (define (opt-tailrec-rewrite-instr-seq
   [instrs : ir.CompilerIrInstrSeq]
   [fname : i64]
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [n : i64]
   [base : i64]
   [hybrid? : bool]
@@ -60247,7 +60193,7 @@
 (define (opt-tailrec-rewrite-blocks
   [blocks : ir.CompilerIrBlockList]
   [fname : i64]
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [n : i64]
   [base : i64]
   [hybrid? : bool]
@@ -86117,18 +86063,16 @@
       (opt-gep-split-defs-blocks! (ir.compiler-ir-block-seq-to-list seq) counts)]))
 
 (define (opt-gep-split-seed-params!
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [counts : (__tl_dyn-array i64)]) : unit
-  (match params
-    [(ir.CompilerIrParamList.Nil) unit]
-    [(ir.CompilerIrParamList.Cons param rest)
-      (match param
-        [(ir.CompilerIrParam.Param _ _ var)
-          (begin
-            (set! (array-ref counts var) (+ (array-ref counts var) 1))
-            (opt-gep-split-seed-params! (__tl-box-place rest) counts))])]
-    [(ir.CompilerIrParamList.Array seq)
-      (opt-gep-split-seed-params! (ir.compiler-ir-param-seq-to-list seq) counts)]))
+  (let
+    [position : i64 0]
+    (while (< position params.len)
+      (begin
+        (match (ir.compiler-ir-param-seq-ref params position)
+          [(ir.CompilerIrParam.Param _ _ var)
+            (set! (array-ref counts var) (+ (array-ref counts var) 1))])
+        (set! position (+ position 1))))))
 
 ;; Memory-address uses only (Load src / StorePtr dst): counted per var so the
 ;; all-uses-are-addresses test can compare against the total use count. A
@@ -92250,7 +92194,7 @@
 
 (define (opt-ubound-apply
   [name : i64]
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [ret-ty : ast.AstType]
   [frame : i64]
   [blocks : ir.CompilerIrBlockList]
@@ -96282,7 +96226,7 @@
                       [escaped : ir.CompilerIrFunction
                         (ir.CompilerIrFunction.Function
                           (ir.compiler-ir-symbol-clone name)
-                          (ir.compiler-ir-clone-param-list pools params)
+                          (ir.compiler-ir-clone-param-seq pools params)
                           (ir.compiler-ir-clone-type pools ret-ty)
                           frame
                           escaped-blocks)]
@@ -98408,12 +98352,8 @@
 (define (opt-inline-tiny-predicate-max-instrs) : i64
   6)
 
-(define (opt-inline-param-count [params : ir.CompilerIrParamList]) : i64
-  (match params
-    [(ir.CompilerIrParamList.Nil) 0]
-    [(ir.CompilerIrParamList.Array seq) (ir.compiler-ir-param-seq-count seq)]
-    [(ir.CompilerIrParamList.Cons _ rest)
-      (+ 1 (opt-inline-param-count (__tl-box-place rest)))]))
+(define (opt-inline-param-count [params : ir.CompilerIrParamSeq]) : i64
+  params.len)
 
 (define (opt-inline-param-seq-sequential-from?
   [params : ir.CompilerIrParamSeq]
@@ -98431,18 +98371,9 @@
             (+ expected 1)))])))
 
 (define (opt-inline-params-sequential?
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [i : i64]) : bool
-  (match params
-    [(ir.CompilerIrParamList.Nil) true]
-    [(ir.CompilerIrParamList.Array seq)
-      (opt-inline-param-seq-sequential-from? seq 0 i)]
-    [(ir.CompilerIrParamList.Cons param rest)
-      (match param
-        [(ir.CompilerIrParam.Param _ _ vid)
-          (if (= vid i)
-            (opt-inline-params-sequential? (__tl-box-place rest) (+ i 1))
-            false)])]))
+  (opt-inline-param-seq-sequential-from? params 0 i))
 
 (define (opt-inline-body-instr-op-ok? [instr : ir.CompilerIrInstr]) : bool
   (match instr
@@ -99169,33 +99100,38 @@
     [_ false]))
 
 (define (opt-inline-params-have-private-memory?
-  [params : ir.CompilerIrParamList]) : bool
-  (match (ir.compiler-ir-param-list-force-cons params)
-    [(ir.CompilerIrParamList.Nil) false]
-    [(ir.CompilerIrParamList.Array seq)
-      (opt-inline-params-have-private-memory?
-        (ir.compiler-ir-param-seq-to-list seq))]
-    [(ir.CompilerIrParamList.Cons param rest)
-      (match param
-        [(ir.CompilerIrParam.Param _ ty _)
-          (or
-            (opt-inline-private-memory-transport-type? ty)
-            (opt-inline-params-have-private-memory? (__tl-box-place rest)))])]))
+  [params : ir.CompilerIrParamSeq]) : bool
+  (let
+    [position : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (not found) (< position params.len))
+        (begin
+          (match (ir.compiler-ir-param-seq-ref params position)
+            [(ir.CompilerIrParam.Param _ ty _)
+              (if (opt-inline-private-memory-transport-type? ty)
+                (set! found true)
+                unit)])
+          (set! position (+ position 1))))
+      found)))
 
-(define (opt-inline-params-have-sret? [params : ir.CompilerIrParamList]) : bool
-  (match (ir.compiler-ir-param-list-force-cons params)
-    [(ir.CompilerIrParamList.Nil) false]
-    [(ir.CompilerIrParamList.Array seq)
-      (opt-inline-params-have-sret? (ir.compiler-ir-param-seq-to-list seq))]
-    [(ir.CompilerIrParamList.Cons param rest)
-      (match param
-        [(ir.CompilerIrParam.Param name _ _)
-          (or
-            (string.eq name "__sret")
-            (opt-inline-params-have-sret? (__tl-box-place rest)))])]))
+(define (opt-inline-params-have-sret? [params : ir.CompilerIrParamSeq]) : bool
+  (let
+    [position : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (not found) (< position params.len))
+        (begin
+          (match (ir.compiler-ir-param-seq-ref params position)
+            [(ir.CompilerIrParam.Param name _ _)
+              (if (string.eq name "__sret")
+                (set! found true)
+                unit)])
+          (set! position (+ position 1))))
+      found)))
 
 (define (opt-inline-multiblock-return-type-ok?
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [ret : ast.AstType]) : bool
   (or
     (opt-inline-params-have-sret? params)
@@ -99205,7 +99141,7 @@
       [_ false])))
 
 (define (opt-inline-multiblock-callee-body-ok?
-  [cparams : ir.CompilerIrParamList]
+  [cparams : ir.CompilerIrParamSeq]
   [ret : ast.AstType]
   [cvars : i64]
   [cblocks : ir.CompilerIrBlockList]) : bool
@@ -99629,36 +99565,27 @@
 (define (opt-inline-stage-arg-var [base : i64] [id : i64]) : ir.CompilerIrValue
   (ir.CompilerIrValue.Var (+ base id)))
 
-(define (opt-inline-param-is-sret-at?
-  [params : ir.CompilerIrParamList]
-  [target : i64]
-  [index : i64]) : bool
-  (match (ir.compiler-ir-param-list-force-cons params)
-    [(ir.CompilerIrParamList.Nil) false]
-    [(ir.CompilerIrParamList.Array seq)
-      (opt-inline-param-is-sret-at?
-        (ir.compiler-ir-param-seq-to-list seq)
-        target
-        index)]
-    [(ir.CompilerIrParamList.Cons param rest)
-      (if (= index target)
-        (match param
-          [(ir.CompilerIrParam.Param name _ _) (string.eq name "__sret")])
-        (opt-inline-param-is-sret-at? (__tl-box-place rest) target (+ index 1)))]))
+(define (opt-inline-param-is-sret?
+  [params : ir.CompilerIrParamSeq]
+  [target : i64]) : bool
+  (if (or (< target 0) (>= target params.len))
+    false
+    (match (ir.compiler-ir-param-seq-ref params target)
+      [(ir.CompilerIrParam.Param name _ _) (string.eq name "__sret")])))
 
 (define (opt-inline-staged-arg
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [args : ir.CompilerIrCallArgs]
   [base : i64]
   [index : i64]
   [stage-all? : bool]) : ir.CompilerIrValue
-  (if (or stage-all? (not (opt-inline-param-is-sret-at? params index 0)))
+  (if (or stage-all? (not (opt-inline-param-is-sret? params index)))
     (opt-inline-stage-arg-var base index)
     (opt-inline-clone-arg-at args index)))
 
 (define (opt-inline-staged-args-array-fill!
   [out : (__tl_dyn-array ir.CompilerIrValue)]
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [args : ir.CompilerIrCallArgs]
   [base : i64]
   [stage-all? : bool]
@@ -99678,7 +99605,7 @@
         (+ index 1)))))
 
 (define (opt-inline-staged-args
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [args : ir.CompilerIrCallArgs]
   [np : i64]
   [base : i64]
@@ -99701,44 +99628,35 @@
           (ir.CompilerIrCallArgs.Array out)))]))
 
 (define (opt-inline-stage-param-instrs-into!
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [args : ir.CompilerIrCallArgs]
   [base : i64]
   [stage-all? : bool]
   [index : i64]
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : unit
-  (match (ir.compiler-ir-param-list-force-cons params)
-    [(ir.CompilerIrParamList.Nil) unit]
-    [(ir.CompilerIrParamList.Array seq)
-      (opt-inline-stage-param-instrs-into!
-        (ir.compiler-ir-param-seq-to-list seq)
-        args
-        base
-        stage-all?
-        index
-        (&mut builder))]
-    [(ir.CompilerIrParamList.Cons param rest)
-      (match param
-        [(ir.CompilerIrParam.Param name ty _)
-          (begin
-            (if (or stage-all? (not (string.eq name "__sret")))
-              (ir.compiler-ir-instr-builder-push!
-                (&mut builder)
-                (ir.CompilerIrInstr.Mov
-                  (+ base index)
-                  (opt-inline-clone-arg-at args index)
-                  (clone ty)))
-              unit)
-            (opt-inline-stage-param-instrs-into!
-              (__tl-box-place rest)
-              args
-              base
-              stage-all?
-              (+ index 1)
-              (&mut builder)))])]))
+  (if (>= index params.len)
+    unit
+    (match (ir.compiler-ir-param-seq-ref params index)
+      [(ir.CompilerIrParam.Param name ty _)
+        (begin
+          (if (or stage-all? (not (string.eq name "__sret")))
+            (ir.compiler-ir-instr-builder-push!
+              (&mut builder)
+              (ir.CompilerIrInstr.Mov
+                (+ base index)
+                (opt-inline-clone-arg-at args index)
+                (clone ty)))
+            unit)
+          (opt-inline-stage-param-instrs-into!
+            params
+            args
+            base
+            stage-all?
+            (+ index 1)
+            (&mut builder)))])))
 
 (define (opt-inline-stage-param-instrs
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [args : ir.CompilerIrCallArgs]
   [base : i64]
   [stage-all? : bool]
@@ -108400,29 +108318,20 @@
 ;; Find the source-level parameter index for a canonical checked-reference root
 ;; var. Fresh allocation roots deliberately have no parameter index.
 (define (opt-call-memory-param-index-from
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [root-var : i64]
   [index : i64]) : i64
-  (match (ir.compiler-ir-param-list-force-cons params)
-    [(ir.CompilerIrParamList.Nil) -1]
-    [(ir.CompilerIrParamList.Array seq)
-      (opt-call-memory-param-index-from
-        (ir.compiler-ir-param-seq-to-list seq)
-        root-var
-        index)]
-    [(ir.CompilerIrParamList.Cons param rest)
-      (match param
-        [(ir.CompilerIrParam.Param _ _ var)
-          (if (= var root-var)
-            index
-            (opt-call-memory-param-index-from
-              (__tl-box-place rest)
-              root-var
-              (+ index 1)))])]))
+  (if (>= index params.len)
+    -1
+    (match (ir.compiler-ir-param-seq-ref params index)
+      [(ir.CompilerIrParam.Param _ _ var)
+        (if (= var root-var)
+          index
+          (opt-call-memory-param-index-from params root-var (+ index 1)))])))
 
 (define (opt-call-memory-summary-add-root-write
   [summary : i64]
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [root : OptLicmRoot]) : i64
   (match root
     [(OptLicmRoot.Fresh _) summary]
@@ -108511,7 +108420,7 @@
         (ir.compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-call-memory-sources
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [blocks : ir.CompilerIrBlockList]) : opt_i64_i64_map.Map
   (opt-gvn-sources-blocks
     blocks
@@ -108520,7 +108429,7 @@
 (define (opt-call-memory-roots-with-sources
   [type-segment-bases : i64]
   [sources : opt_i64_i64_map.Map]
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [blocks : ir.CompilerIrBlockList]) : OptLicmRootEnv
   (let
     [roots : OptLicmRootEnv
@@ -108722,7 +108631,7 @@
 (define (opt-call-memory-element-ptrs
   [type-segment-bases : i64]
   [sources : opt_i64_i64_map.Map]
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [blocks : ir.CompilerIrBlockList]) : opt_i64_i64_map.Map
   (let
     [types : OptSsaVarTypes (opt-licm-type-env-from-function params blocks)]
@@ -108760,7 +108669,7 @@
 (define (opt-call-memory-map-callee-param-writes
   [candidate : OptCallMemoryCandidate]
   [callee-summary : i64]
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [roots : OptLicmRootEnv]
   [args : ir.CompilerIrCallArgs]
   [index : i64]) : OptCallMemoryCandidate
@@ -108798,7 +108707,7 @@
   [candidate : OptCallMemoryCandidate]
   [summaries : opt_i64_i64_map.Map]
   [function-set : opt_i64_i64_map.Map]
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [roots : OptLicmRootEnv]
   [name : i64]
   [args : ir.CompilerIrCallArgs]) : OptCallMemoryCandidate
@@ -108840,7 +108749,7 @@
 ;; never a parameter bit.
 (define (opt-call-memory-summary-add-write
   [summary : i64]
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [roots : OptLicmRootEnv]
   [elements : opt_i64_i64_map.Map]
   [class : i64]
@@ -108859,7 +108768,7 @@
   [candidate : OptCallMemoryCandidate]
   [summaries : opt_i64_i64_map.Map]
   [function-set : opt_i64_i64_map.Map]
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [roots : OptLicmRootEnv]
   [elements : opt_i64_i64_map.Map]
   [instr : ir.CompilerIrInstr]) : OptCallMemoryCandidate
@@ -108925,7 +108834,7 @@
   [candidate : OptCallMemoryCandidate]
   [summaries : opt_i64_i64_map.Map]
   [function-set : opt_i64_i64_map.Map]
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [roots : OptLicmRootEnv]
   [elements : opt_i64_i64_map.Map]
   [instrs : ir.CompilerIrInstrSeq]
@@ -108956,7 +108865,7 @@
   [candidate : OptCallMemoryCandidate]
   [summaries : opt_i64_i64_map.Map]
   [function-set : opt_i64_i64_map.Map]
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [roots : OptLicmRootEnv]
   [elements : opt_i64_i64_map.Map]
   [blocks : ir.CompilerIrBlockList]) : OptCallMemoryCandidate
@@ -112359,31 +112268,23 @@
 (define (opt-global-frozen-seed-params
   [params : (& params opt_i64_i64_map.Map)]
   [name : i64]
-  [list : ir.CompilerIrParamList]
+  [list : ir.CompilerIrParamSeq]
   [index : i64]
   [levels : OptGlobalFrozenLevels (:consume)]) : OptGlobalFrozenLevels
-  (match (ir.compiler-ir-param-list-force-cons list)
-    [(ir.CompilerIrParamList.Nil) levels]
-    [(ir.CompilerIrParamList.Array seq)
-      (opt-global-frozen-seed-params
-        params
-        name
-        (ir.compiler-ir-param-seq-to-list seq)
-        index
-        levels)]
-    [(ir.CompilerIrParamList.Cons param rest)
-      (match param
-        [(ir.CompilerIrParam.Param _ _ var)
-          (let
-            [encoded : i64 (opt-global-frozen-param-level params name index)]
-            (opt-global-frozen-seed-params
-              params
-              name
-              (__tl-box-place rest)
-              (+ index 1)
-              (if (= encoded 0)
-                levels
-                (opt-global-frozen-levels-bind levels var encoded))))])]))
+  (if (>= index list.len)
+    levels
+    (match (ir.compiler-ir-param-seq-ref list index)
+      [(ir.CompilerIrParam.Param _ _ var)
+        (let
+          [encoded : i64 (opt-global-frozen-param-level params name index)]
+          (opt-global-frozen-seed-params
+            params
+            name
+            list
+            (+ index 1)
+            (if (= encoded 0)
+              levels
+              (opt-global-frozen-levels-bind levels var encoded))))])))
 
 ;; One function, one round: seed its parameters from what callers pass, rebuild
 ;; its level map (twice, so a definition listed after a use in block order is
@@ -113975,7 +113876,7 @@
           [tables : OptLenEqDefs
             (opt-len-eq-defs-build type-segment-bases frame blocks)]
           [ret : i64 (opt-len-eq-ctor-return-var blocks)]
-          [count : i64 (ir.compiler-ir-param-list-count params)]
+          [count : i64 (ir.compiler-ir-param-seq-count params)]
           (match (opt-len-eq-length-of
             tables
             (opt_i64_i64_map.with-capacity 1)
@@ -115285,13 +115186,13 @@
 
 (define (opt-nonneg-param-header-fill!
   [type-segment-bases : i64]
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [header : (__tl_dyn-array bool)]) : unit
-  (match params
-    [(ir.CompilerIrParamList.Nil) unit]
-    [(ir.CompilerIrParamList.Cons param rest)
+  (let
+    [position : i64 0]
+    (while (< position params.len)
       (begin
-        (match param
+        (match (ir.compiler-ir-param-seq-ref params position)
           [(ir.CompilerIrParam.Param _ ty var)
             (if (and
               (>= var 0)
@@ -115299,15 +115200,7 @@
               (opt-load-header-param-type? type-segment-bases ty))
               (set! (array-ref header var) true)
               unit)])
-        (opt-nonneg-param-header-fill!
-          type-segment-bases
-          (__tl-box-place rest)
-          header))]
-    [(ir.CompilerIrParamList.Array seq)
-      (opt-nonneg-param-header-fill!
-        type-segment-bases
-        (ir.compiler-ir-param-seq-to-list seq)
-        header)]))
+        (set! position (+ position 1))))))
 
 ;; One block sequence's stores into candidate globals, classified.
 (define (opt-nonneg-scan-instrs!
@@ -118074,21 +117967,13 @@
 
 (define (opt-alias-seed-params-from
   [type-segment-bases : i64]
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [facts : OptAliasFacts (:consume)]) : OptAliasFacts
-  (match params
-    [(ir.CompilerIrParamList.Nil) facts]
-    [(ir.CompilerIrParamList.Array seq)
-      (opt-alias-seed-param-seq type-segment-bases seq 0 facts)]
-    [(ir.CompilerIrParamList.Cons param rest)
-      (opt-alias-seed-params-from
-        type-segment-bases
-        (__tl-box-place rest)
-        (opt-alias-seed-param type-segment-bases facts param))]))
+  (opt-alias-seed-param-seq type-segment-bases params 0 facts))
 
 (define (opt-alias-seed-params
   [type-segment-bases : i64]
-  [params : ir.CompilerIrParamList]) : OptAliasFacts
+  [params : ir.CompilerIrParamSeq]) : OptAliasFacts
   (opt-alias-seed-params-from type-segment-bases params (opt-alias-empty)))
 
 ;; Conservative control-flow join: keep only facts that appear with an
@@ -120693,17 +120578,9 @@
 
 (define (opt-load-header-set-add-params
   [type-segment-bases : i64]
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [set : OptLoadHeaderSet]) : OptLoadHeaderSet
-  (match params
-    [(ir.CompilerIrParamList.Nil) set]
-    [(ir.CompilerIrParamList.Array seq)
-      (opt-load-header-set-add-param-seq type-segment-bases seq set)]
-    [(ir.CompilerIrParamList.Cons param rest)
-      (opt-load-header-set-add-params
-        type-segment-bases
-        (__tl-box-place rest)
-        (opt-load-header-set-add-param type-segment-bases param set))]))
+  (opt-load-header-set-add-param-seq type-segment-bases params set))
 
 ;; Defs with a declared result type mark it; every OTHER defining instruction
 ;; poisons its dst (its handle-ness is unknown).
@@ -120834,7 +120711,7 @@
 
 (define (opt-load-header-set-from-function
   [type-segment-bases : i64]
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [blocks : ir.CompilerIrBlockList]) : OptLoadHeaderSet
   (opt-load-header-set-add-blocks
     type-segment-bases
@@ -120846,7 +120723,7 @@
 
 (define (opt-load-header-set-from-function-with-size
   [type-segment-bases : i64]
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [blocks : ir.CompilerIrBlockList]
   [frame : i64]) : OptLoadHeaderSet
   (opt-load-header-set-add-blocks
@@ -127503,7 +127380,7 @@
   [context : OptCfgContext]
   [sources : opt_i64_i64_map.Map]
   [hs : OptLoadHeaderSet]
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [call-memory : opt_i64_i64_map.Map]
   [cells : OptGlobalCellSummary]
   [frame-in : i64]
@@ -127527,7 +127404,7 @@
   [context : OptCfgContext]
   [sources : opt_i64_i64_map.Map]
   [hs : OptLoadHeaderSet]
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [call-memory : opt_i64_i64_map.Map]
   [cells : OptGlobalCellSummary]
   [candidates : opt_i64_i64_map.Map]
@@ -127696,7 +127573,7 @@
   [context : OptCfgContext]
   [sources : opt_i64_i64_map.Map]
   [hs : OptLoadHeaderSet]
-  [params : ir.CompilerIrParamList]
+  [params : ir.CompilerIrParamSeq]
   [call-memory : opt_i64_i64_map.Map]
   [cells : OptGlobalCellSummary]
   [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList

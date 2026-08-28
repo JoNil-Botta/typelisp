@@ -15511,88 +15511,77 @@
 (define (compiler-backend-shrinkwrap-incoming-fill!
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
-  [params : compiler_ir_types.CompilerIrParamList]
+  [params : compiler_ir_types.CompilerIrParamSeq]
   [int-index : i64]
   [float-index : i64]
   [position : i64]
   [program-index : CompilerBackendProgramIndex]
   [table : compiler_regalloc.CompilerRegAssignmentTable]) : bool
-  (match (compiler_ir_types.compiler-ir-param-list-force-cons params)
-    [(compiler_ir_types.CompilerIrParamList.Nil) true]
-    [(compiler_ir_types.CompilerIrParamList.Array seq)
-      (compiler-backend-shrinkwrap-incoming-fill!
-        type-segment-bases
-        target
-        (compiler_ir_types.compiler-ir-param-seq-to-list seq)
-        int-index
-        float-index
-        position
-        program-index
-        table)]
-    [(compiler_ir_types.CompilerIrParamList.Cons param rest)
-      (match param
-        [(compiler_ir_types.CompilerIrParam.Param _ ty var)
-          (if (compiler-backend-group-type? type-segment-bases program-index ty)
-            false
-            (let
-              [is-float : bool (compiler-backend-float-type? ty)]
-              [on-stack : bool
-                (compiler-backend-stack-call-arg-for-banks?
+  (if (>= position params.len)
+    true
+    (match (compiler_ir_types.compiler-ir-param-seq-ref params position)
+      [(compiler_ir_types.CompilerIrParam.Param _ ty var)
+        (if (compiler-backend-group-type? type-segment-bases program-index ty)
+          false
+          (let
+            [is-float : bool (compiler-backend-float-type? ty)]
+            [on-stack : bool
+              (compiler-backend-stack-call-arg-for-banks?
+                target
+                is-float
+                int-index
+                float-index
+                position)]
+            [next-int : i64
+              (if is-float
+                int-index
+                (+ int-index 1))]
+            [next-float : i64
+              (if is-float
+                (+ float-index 1)
+                float-index)]
+            (if on-stack
+              (compiler-backend-shrinkwrap-incoming-fill!
+                type-segment-bases
+                target
+                params
+                next-int
+                next-float
+                (+ position 1)
+                program-index
+                table)
+              (match (if is-float
+                (compiler-backend-target-float-arg-reg-for-banks
                   target
-                  is-float
-                  int-index
                   float-index
-                  position)]
-              [next-int : i64
-                (if is-float
-                  int-index
-                  (+ int-index 1))]
-              [next-float : i64
-                (if is-float
-                  (+ float-index 1)
-                  float-index)]
-              (if on-stack
-                (compiler-backend-shrinkwrap-incoming-fill!
-                  type-segment-bases
+                  position)
+                (compiler-backend-target-arg-reg-for-banks
                   target
-                  (__tl-box-place rest)
-                  next-int
-                  next-float
-                  (+ position 1)
-                  program-index
-                  table)
-                (match (if is-float
-                  (compiler-backend-target-float-arg-reg-for-banks
-                    target
-                    float-index
-                    position)
-                  (compiler-backend-target-arg-reg-for-banks
-                    target
-                    int-index
-                    position))
-                  [(ResultBackendReg.Ok reg)
-                    (begin
-                      (compiler_regalloc.compiler-reg-assignment-table-insert
-                        table
-                        var
-                        (compiler_regalloc.CompilerRegLocation.Register
-                          (compiler_abi.compiler-abi-register-id-from-spelling
-                            reg)))
-                      (compiler-backend-shrinkwrap-incoming-fill!
-                        type-segment-bases
-                        target
-                        (__tl-box-place rest)
-                        next-int
-                        next-float
-                        (+ position 1)
-                        program-index
-                        table))]
-                  [(ResultBackendReg.Err _) false]))))])]))
+                  int-index
+                  position))
+                [(ResultBackendReg.Ok reg)
+                  (begin
+                    (compiler_regalloc.compiler-reg-assignment-table-insert
+                      table
+                      var
+                      (compiler_regalloc.CompilerRegLocation.Register
+                        (compiler_abi.compiler-abi-register-id-from-spelling
+                          reg)))
+                    (compiler-backend-shrinkwrap-incoming-fill!
+                      type-segment-bases
+                      target
+                      params
+                      next-int
+                      next-float
+                      (+ position 1)
+                      program-index
+                      table))]
+                [(ResultBackendReg.Err _) false]))))])))
 
 (define (compiler-backend-shrinkwrap-incoming-assignments
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
-  [params : compiler_ir_types.CompilerIrParamList]
+  [params : compiler_ir_types.CompilerIrParamSeq]
   [vars : i64]
   [program-index : CompilerBackendProgramIndex]) : compiler_regalloc.CompilerRegAssignmentTable
   (let
@@ -15666,7 +15655,7 @@
 (define (compiler-backend-shrinkwrap-prefix-asm
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
-  [params : compiler_ir_types.CompilerIrParamList]
+  [params : compiler_ir_types.CompilerIrParamSeq]
   [vars : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [function : String]
@@ -15696,7 +15685,7 @@
         (or
           (not incoming?)
           (if (= (compiler_regalloc.compiler-reg-assignment-count selected) 0)
-            (= (compiler_ir_types.compiler-ir-param-list-count params) 0)
+            (= (compiler_ir_types.compiler-ir-param-seq-count params) 0)
             true)))]
     [function-state : CompilerBackendFunctionState
       (compiler-backend-state-function-state program-index.backend-state)]
@@ -33295,33 +33284,38 @@
     [(compiler_regalloc.CompilerRegLocation.RegisterPair _ _) 2]
     [_ 0]))
 
+(define (compiler-backend-param-register-exclude-count-from
+  [backend-state : CompilerBackendState]
+  [params : compiler_ir_types.CompilerIrParamSeq]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [position : i64]) : i64
+  (if (>= position params.len)
+    0
+    (match (compiler_ir_types.compiler-ir-param-seq-ref params position)
+      [(compiler_ir_types.CompilerIrParam.Param _ _ var-id)
+        (+
+          (match (compiler-backend-emit-assignment-lookup
+            backend-state
+            assignments
+            var-id)
+            [(compiler_regalloc.CompilerRegMaybeLocation.Some location)
+              (compiler-backend-param-register-exclude-location-count location)]
+            [(compiler_regalloc.CompilerRegMaybeLocation.No) 0])
+          (compiler-backend-param-register-exclude-count-from
+            backend-state
+            params
+            assignments
+            (+ position 1)))])))
+
 (define (compiler-backend-param-register-exclude-count
   [backend-state : CompilerBackendState]
-  [params : compiler_ir_types.CompilerIrParamList]
+  [params : compiler_ir_types.CompilerIrParamSeq]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]) : i64
-  (match (compiler_ir_types.compiler-ir-param-list-force-cons params)
-    [(compiler_ir_types.CompilerIrParamList.Nil) 0]
-    [(compiler_ir_types.CompilerIrParamList.Array seq)
-      (compiler-backend-param-register-exclude-count
-        backend-state
-        (compiler_ir_types.compiler-ir-param-seq-to-list seq)
-        assignments)]
-    [(compiler_ir_types.CompilerIrParamList.Cons param rest)
-      (match param
-        [(compiler_ir_types.CompilerIrParam.Param _ _ var-id)
-          (+
-            (match (compiler-backend-emit-assignment-lookup
-              backend-state
-              assignments
-              var-id)
-              [(compiler_regalloc.CompilerRegMaybeLocation.Some location)
-                (compiler-backend-param-register-exclude-location-count
-                  location)]
-              [(compiler_regalloc.CompilerRegMaybeLocation.No) 0])
-            (compiler-backend-param-register-exclude-count
-              backend-state
-              (__tl-box-place rest)
-              assignments))])]))
+  (compiler-backend-param-register-exclude-count-from
+    backend-state
+    params
+    assignments
+    0))
 
 (define (compiler-backend-param-register-exclude-fill-location
   [location : compiler_regalloc.CompilerRegLocation]
@@ -33345,43 +33339,51 @@
         (+ index 2))]
     [_ index]))
 
+(define (compiler-backend-param-register-exclude-fill-from
+  [backend-state : CompilerBackendState]
+  [params : compiler_ir_types.CompilerIrParamSeq]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [out : (__tl_dyn-array String)]
+  [index : i64]
+  [position : i64]) : i64
+  (if (>= position params.len)
+    index
+    (match (compiler_ir_types.compiler-ir-param-seq-ref params position)
+      [(compiler_ir_types.CompilerIrParam.Param _ _ var-id)
+        (compiler-backend-param-register-exclude-fill-from
+          backend-state
+          params
+          assignments
+          out
+          (match (compiler-backend-emit-assignment-lookup
+            backend-state
+            assignments
+            var-id)
+            [(compiler_regalloc.CompilerRegMaybeLocation.Some location)
+              (compiler-backend-param-register-exclude-fill-location
+                location
+                out
+                index)]
+            [(compiler_regalloc.CompilerRegMaybeLocation.No) index])
+          (+ position 1))])))
+
 (define (compiler-backend-param-register-exclude-fill
   [backend-state : CompilerBackendState]
-  [params : compiler_ir_types.CompilerIrParamList]
+  [params : compiler_ir_types.CompilerIrParamSeq]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [out : (__tl_dyn-array String)]
   [index : i64]) : i64
-  (match (compiler_ir_types.compiler-ir-param-list-force-cons params)
-    [(compiler_ir_types.CompilerIrParamList.Nil) index]
-    [(compiler_ir_types.CompilerIrParamList.Array seq)
-      (compiler-backend-param-register-exclude-fill
-        backend-state
-        (compiler_ir_types.compiler-ir-param-seq-to-list seq)
-        assignments
-        out
-        index)]
-    [(compiler_ir_types.CompilerIrParamList.Cons param rest)
-      (match param
-        [(compiler_ir_types.CompilerIrParam.Param _ _ var-id)
-          (compiler-backend-param-register-exclude-fill
-            backend-state
-            (__tl-box-place rest)
-            assignments
-            out
-            (match (compiler-backend-emit-assignment-lookup
-              backend-state
-              assignments
-              var-id)
-              [(compiler_regalloc.CompilerRegMaybeLocation.Some location)
-                (compiler-backend-param-register-exclude-fill-location
-                  location
-                  out
-                  index)]
-              [(compiler_regalloc.CompilerRegMaybeLocation.No) index]))])]))
+  (compiler-backend-param-register-exclude-fill-from
+    backend-state
+    params
+    assignments
+    out
+    index
+    0))
 
 (define (compiler-backend-param-register-exclude
   [backend-state : CompilerBackendState]
-  [params : compiler_ir_types.CompilerIrParamList]
+  [params : compiler_ir_types.CompilerIrParamSeq]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]) : (__tl_dyn-array
     String)
   (let
@@ -36948,20 +36950,20 @@
     float-idx
     position))
 
+(define (compiler-backend-param-type-list-from
+  [params : compiler_ir_types.CompilerIrParamSeq]
+  [position : i64]) : compiler_ast_types.AstTypeList
+  (if (>= position params.len)
+    (compiler_ast_types.ast-type-list-new)
+    (match (compiler_ir_types.compiler-ir-param-seq-ref params position)
+      [(compiler_ir_types.CompilerIrParam.Param _ ty _)
+        (compiler_ast_types.ast-type-cons
+          ty
+          (compiler-backend-param-type-list-from params (+ position 1)))])))
+
 (define (compiler-backend-param-type-list
-  [params : compiler_ir_types.CompilerIrParamList]) : compiler_ast_types.AstTypeList
-  (match (compiler_ir_types.compiler-ir-param-list-force-cons params)
-    [(compiler_ir_types.CompilerIrParamList.Nil)
-      (compiler_ast_types.ast-type-list-new)]
-    [(compiler_ir_types.CompilerIrParamList.Array seq)
-      (compiler-backend-param-type-list
-        (compiler_ir_types.compiler-ir-param-seq-to-list seq))]
-    [(compiler_ir_types.CompilerIrParamList.Cons param rest)
-      (match param
-        [(compiler_ir_types.CompilerIrParam.Param _ ty _)
-          (compiler_ast_types.ast-type-cons
-            ty
-            (compiler-backend-param-type-list (__tl-box-place rest)))])]))
+  [params : compiler_ir_types.CompilerIrParamSeq]) : compiler_ast_types.AstTypeList
+  (compiler-backend-param-type-list-from params 0))
 
 (define (compiler-backend-type-list-count
   [types : compiler_ast_types.AstTypeList]) : i64
@@ -36970,29 +36972,43 @@
 (define (compiler-backend-param-list-from-types
   [type-segment-bases : i64]
   [types : compiler_ast_types.AstTypeList]
-  [idx : i64]) : compiler_ir_types.CompilerIrParamList
-  (compiler-backend-param-list-from-types-at type-segment-bases (& types) idx))
+  [idx : i64]) : compiler_ir_types.CompilerIrParamSeq
+  (let
+    [builder : compiler_ir_types.CompilerIrParamBuilder
+      (compiler_ir_types.compiler-ir-param-builder-with-capacity
+        (- (compiler_ast_types.ast-type-list-len (& types)) idx))]
+    (begin
+      (compiler-backend-param-list-from-types-into!
+        type-segment-bases
+        (& types)
+        idx
+        (&mut builder))
+      (compiler_ir_types.compiler-ir-param-builder-to-seq builder))))
 
-(define (compiler-backend-param-list-from-types-at
+(define (compiler-backend-param-list-from-types-into!
   [type-segment-bases : i64]
   [types : (& types compiler_ast_types.AstTypeList)]
-  [idx : i64]) : compiler_ir_types.CompilerIrParamList
+  [idx : i64]
+  [builder : (&mut builder compiler_ir_types.CompilerIrParamBuilder)]) : unit
   (if (>= idx (compiler_ast_types.ast-type-list-len types))
-    compiler_ir_types.CompilerIrParamList.Nil
-    (compiler_ir_types.compiler-ir-param-cons
-      (compiler_ir_types.CompilerIrParam.Param
-        (str_cat.str-cat "arg" (string.int->string idx))
-        (compiler_ast_types.ast-type-segment-bases-get
-          type-segment-bases
-          (compiler_ast_types.ast-type-list-get
-            types
-            idx
-            (compiler_ast_types.ast-type-id-fallback)))
-        idx)
-      (compiler-backend-param-list-from-types-at
+    unit
+    (begin
+      (compiler_ir_types.compiler-ir-param-builder-push!
+        builder
+        (compiler_ir_types.CompilerIrParam.Param
+          (str_cat.str-cat "arg" (string.int->string idx))
+          (compiler_ast_types.ast-type-segment-bases-get
+            type-segment-bases
+            (compiler_ast_types.ast-type-list-get
+              types
+              idx
+              (compiler_ast_types.ast-type-id-fallback)))
+          idx))
+      (compiler-backend-param-list-from-types-into!
         type-segment-bases
         types
-        (+ idx 1)))))
+        (+ idx 1)
+        builder))))
 
 (define (compiler-backend-var-value-seq [count : i64] [idx : i64]) : compiler_ir_types.CompilerIrValueSeq
   (let
@@ -37487,23 +37503,28 @@
   [functions : compiler_ir_types.CompilerIrFunctionSeq]) : CompilerBackendCollectState
   (compiler-backend-collect-function-seq-shared state functions 0))
 
-(define (compiler-backend-param-list-has-private-memory?
+(define (compiler-backend-param-seq-has-private-memory-from?
   [type-segment-bases : i64]
-  [params : compiler_ir_types.CompilerIrParamList]) : bool
-  (match (compiler_ir_types.compiler-ir-param-list-force-cons params)
-    [(compiler_ir_types.CompilerIrParamList.Nil) false]
-    [(compiler_ir_types.CompilerIrParamList.Array seq)
-      (compiler-backend-param-list-has-private-memory?
-        type-segment-bases
-        (compiler_ir_types.compiler-ir-param-seq-to-list seq))]
-    [(compiler_ir_types.CompilerIrParamList.Cons param rest)
-      (match param
-        [(compiler_ir_types.CompilerIrParam.Param _ ty _)
-          (or
-            (> (compiler-backend-abi-memory-size type-segment-bases ty) 0)
-            (compiler-backend-param-list-has-private-memory?
-              type-segment-bases
-              (__tl-box-place rest)))])]))
+  [params : compiler_ir_types.CompilerIrParamSeq]
+  [position : i64]) : bool
+  (if (>= position params.len)
+    false
+    (match (compiler_ir_types.compiler-ir-param-seq-ref params position)
+      [(compiler_ir_types.CompilerIrParam.Param _ ty _)
+        (or
+          (> (compiler-backend-abi-memory-size type-segment-bases ty) 0)
+          (compiler-backend-param-seq-has-private-memory-from?
+            type-segment-bases
+            params
+            (+ position 1)))])))
+
+(define (compiler-backend-param-seq-has-private-memory?
+  [type-segment-bases : i64]
+  [params : compiler_ir_types.CompilerIrParamSeq]) : bool
+  (compiler-backend-param-seq-has-private-memory-from?
+    type-segment-bases
+    params
+    0))
 
 (define (compiler-backend-seed-private-memory-call-names
   [type-segment-bases : i64]
@@ -37522,7 +37543,7 @@
     (begin
       (match (array-ref functions.slots index)
         [(compiler_ir_types.CompilerIrFunction.Function name params _ _ _)
-          (if (compiler-backend-param-list-has-private-memory?
+          (if (compiler-backend-param-seq-has-private-memory?
             type-segment-bases
             params)
             (compiler_regalloc.compiler-reg-add-c-memory-call-name! name)
@@ -39488,7 +39509,7 @@
 (define (compiler-backend-identity-tail-forwarder-args?
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
-  [params : compiler_ir_types.CompilerIrParamList]
+  [params : compiler_ir_types.CompilerIrParamSeq]
   [args : compiler_ir_types.CompilerIrCallArgs]
   [target-types : compiler_ast_types.AstTypeList]
   [arg-index : i64]
@@ -39497,88 +39518,62 @@
   [position : i64]
   [program-index : CompilerBackendProgramIndex]) : bool
   (if (>= arg-index (compiler-backend-call-args-count args))
-    (match (compiler_ir_types.compiler-ir-param-list-force-cons params)
-      [(compiler_ir_types.CompilerIrParamList.Nil)
-        (>= arg-index (compiler_ast_types.ast-type-list-len (& target-types)))]
-      [(compiler_ir_types.CompilerIrParamList.Array seq)
-        (compiler-backend-identity-tail-forwarder-args?
-          type-segment-bases
-          target
-          (compiler_ir_types.compiler-ir-param-seq-to-list seq)
-          args
-          target-types
-          arg-index
-          int-idx
-          float-idx
-          position
-          program-index)]
-      [_ false])
-    (match (compiler_ir_types.compiler-ir-param-list-force-cons params)
-      [(compiler_ir_types.CompilerIrParamList.Nil) false]
-      [(compiler_ir_types.CompilerIrParamList.Array seq)
-        (compiler-backend-identity-tail-forwarder-args?
-          type-segment-bases
-          target
-          (compiler_ir_types.compiler-ir-param-seq-to-list seq)
-          args
-          target-types
-          arg-index
-          int-idx
-          float-idx
-          position
-          program-index)]
-      [(compiler_ir_types.CompilerIrParamList.Cons param rest)
-        (if (>=
-          arg-index
-          (compiler_ast_types.ast-type-list-len (& target-types)))
-          false
-          (match param
-            [(compiler_ir_types.CompilerIrParam.Param _ source-ty var-id)
-              (let
-                [callee-ty : compiler_ast_types.AstType
-                  (compiler_ast_types.ast-type-segment-bases-get
-                    type-segment-bases
-                    (compiler_ast_types.ast-type-list-get
-                      (& target-types)
-                      arg-index
-                      (compiler_ast_types.ast-type-id-fallback)))]
-                (match (compiler-backend-call-arg-at args arg-index)
-                  [(compiler_ir_types.CompilerIrValue.Var arg-var)
-                    (and
-                      (= arg-var var-id)
-                      (compiler-backend-identity-tail-forwarder-type-ok?
-                        type-segment-bases
-                        program-index
-                        source-ty)
-                      (compiler-backend-identity-tail-forwarder-type-ok?
-                        type-segment-bases
-                        program-index
-                        callee-ty)
-                      (not
-                        (compiler-backend-stack-call-arg-for-banks?
-                          target
-                          false
-                          int-idx
-                          float-idx
-                          position))
-                      (compiler-backend-identity-tail-forwarder-args?
-                        type-segment-bases
+    (and
+      (>= arg-index params.len)
+      (>= arg-index (compiler_ast_types.ast-type-list-len (& target-types))))
+    (if (>= arg-index params.len)
+      false
+      (match (compiler_ir_types.compiler-ir-param-seq-ref params arg-index)
+        [(compiler_ir_types.CompilerIrParam.Param _ source-ty var-id)
+          (if (>=
+            arg-index
+            (compiler_ast_types.ast-type-list-len (& target-types)))
+            false
+            (let
+              [callee-ty : compiler_ast_types.AstType
+                (compiler_ast_types.ast-type-segment-bases-get
+                  type-segment-bases
+                  (compiler_ast_types.ast-type-list-get
+                    (& target-types)
+                    arg-index
+                    (compiler_ast_types.ast-type-id-fallback)))]
+              (match (compiler-backend-call-arg-at args arg-index)
+                [(compiler_ir_types.CompilerIrValue.Var arg-var)
+                  (and
+                    (= arg-var var-id)
+                    (compiler-backend-identity-tail-forwarder-type-ok?
+                      type-segment-bases
+                      program-index
+                      source-ty)
+                    (compiler-backend-identity-tail-forwarder-type-ok?
+                      type-segment-bases
+                      program-index
+                      callee-ty)
+                    (not
+                      (compiler-backend-stack-call-arg-for-banks?
                         target
-                        (__tl-box-place rest)
-                        args
-                        target-types
-                        (+ arg-index 1)
-                        (+ int-idx 1)
+                        false
+                        int-idx
                         float-idx
-                        (+ position 1)
-                        program-index))]
-                  [_ false]))]))])))
+                        position))
+                    (compiler-backend-identity-tail-forwarder-args?
+                      type-segment-bases
+                      target
+                      params
+                      args
+                      target-types
+                      (+ arg-index 1)
+                      (+ int-idx 1)
+                      float-idx
+                      (+ position 1)
+                      program-index))]
+                [_ false])))]))))
 
 (define (compiler-backend-identity-tail-forwarder-call?
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [_source-function : i64]
-  [params : compiler_ir_types.CompilerIrParamList]
+  [params : compiler_ir_types.CompilerIrParamSeq]
   [name : i64]
   [args : compiler_ir_types.CompilerIrCallArgs]
   [program-index : CompilerBackendProgramIndex]) : bool
@@ -39603,7 +39598,7 @@
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [source-function : i64]
-  [params : compiler_ir_types.CompilerIrParamList]
+  [params : compiler_ir_types.CompilerIrParamSeq]
   [block : compiler_ir_types.CompilerIrBlock]
   [program-index : CompilerBackendProgramIndex]) : bool
   (match block
@@ -39626,7 +39621,7 @@
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [source-function : i64]
-  [params : compiler_ir_types.CompilerIrParamList]
+  [params : compiler_ir_types.CompilerIrParamSeq]
   [blocks : compiler_ir_types.CompilerIrBlockList]
   [program-index : CompilerBackendProgramIndex]) : bool
   (match blocks
@@ -63256,7 +63251,8 @@
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [params : compiler_ir_types.CompilerIrParamList]
+  [params : compiler_ir_types.CompilerIrParamSeq]
+  [param-index : i64]
   [int-idx : i64]
   [float-idx : i64]
   [position : i64]
@@ -63266,142 +63262,127 @@
   [special-index : i64]
   [vars : i64]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (match (compiler_ir_types.compiler-ir-param-list-force-cons params)
-    [(compiler_ir_types.CompilerIrParamList.Nil) (ResultCompilerBackend.Ok "")]
-    [(compiler_ir_types.CompilerIrParamList.Array seq)
-      (compiler-backend-emit-spmd-private-param-spills-from
-        type-segment-bases
-        target
-        assignments
-        (compiler_ir_types.compiler-ir-param-seq-to-list seq)
-        int-idx
-        float-idx
-        position
-        stack-idx
-        vector-index
-        mask-index
-        special-index
-        vars
-        backend-state)]
-    [(compiler_ir_types.CompilerIrParamList.Cons param rest)
-      (match param
-        [(compiler_ir_types.CompilerIrParam.Param name ty var-id)
-          (let
-            [active? : bool (compiler-backend-spmd-active-mask-param? name)]
-            [varying? : bool (compiler-backend-spmd-varying-param? name)]
-            [mask? : bool (compiler-backend-spmd-mask-param? name)]
-            [special? : bool (or active? varying? mask?)]
-            [is-float : bool (compiler-backend-float-type? ty)]
-            [on-stack : bool
-              (if special?
-                false
-                (compiler-backend-stack-call-arg-for-banks?
+  (if (>= param-index params.len)
+    (ResultCompilerBackend.Ok "")
+    (match (compiler_ir_types.compiler-ir-param-seq-ref params param-index)
+      [(compiler_ir_types.CompilerIrParam.Param name ty var-id)
+        (let
+          [active? : bool (compiler-backend-spmd-active-mask-param? name)]
+          [varying? : bool (compiler-backend-spmd-varying-param? name)]
+          [mask? : bool (compiler-backend-spmd-mask-param? name)]
+          [special? : bool (or active? varying? mask?)]
+          [is-float : bool (compiler-backend-float-type? ty)]
+          [on-stack : bool
+            (if special?
+              false
+              (compiler-backend-stack-call-arg-for-banks?
+                target
+                is-float
+                int-idx
+                float-idx
+                position))]
+          (match (if special?
+            (compiler-backend-emit-spmd-private-special-param
+              assignments
+              name
+              ty
+              var-id
+              vector-index
+              mask-index
+              special-index
+              backend-state)
+            (if on-stack
+              (ResultCompilerBackend.Ok
+                (let
+                  [addr : String
+                    (compiler-backend-frame-offset-with-backend-state
+                      backend-state
+                      (compiler-backend-incoming-stack-arg-offset
+                        target
+                        stack-idx))]
+                  (if is-float
+                    (compiler-backend-emit-load-float-address-to-var
+                      assignments
+                      var-id
+                      addr
+                      ty
+                      ""
+                      backend-state)
+                    (compiler-backend-emit-load-scalar-address-to-var
+                      type-segment-bases
+                      assignments
+                      var-id
+                      addr
+                      ty
+                      (__tl_make-array String 0)
+                      0
+                      ""
+                      backend-state))))
+              (match (if is-float
+                (compiler-backend-target-float-arg-reg-for-banks
                   target
-                  is-float
-                  int-idx
                   float-idx
-                  position))]
-            (match (if special?
-              (compiler-backend-emit-spmd-private-special-param
-                assignments
-                name
-                ty
-                var-id
-                vector-index
-                mask-index
-                special-index
-                backend-state)
-              (if on-stack
-                (ResultCompilerBackend.Ok
-                  (let
-                    [addr : String
-                      (compiler-backend-frame-offset-with-backend-state
-                        backend-state
-                        (compiler-backend-incoming-stack-arg-offset
-                          target
-                          stack-idx))]
-                    (if is-float
-                      (compiler-backend-emit-load-float-address-to-var
-                        assignments
-                        var-id
-                        addr
-                        ty
-                        ""
-                        backend-state)
-                      (compiler-backend-emit-load-scalar-address-to-var
-                        type-segment-bases
-                        assignments
-                        var-id
-                        addr
-                        ty
-                        (__tl_make-array String 0)
-                        0
-                        ""
-                        backend-state))))
-                (match (if is-float
-                  (compiler-backend-target-float-arg-reg-for-banks
-                    target
-                    float-idx
-                    position)
-                  (compiler-backend-target-arg-reg-for-banks
-                    target
-                    int-idx
-                    position))
-                  [(ResultBackendReg.Ok reg)
-                    (ResultCompilerBackend.Ok
-                      (compiler-backend-emit-store-typed-var-with-plan
-                        assignments
-                        var-id
-                        reg
-                        ty
-                        backend-state))]
-                  [(ResultBackendReg.Err message)
-                    (ResultCompilerBackend.Err
-                      (box
-                        (compiler_diagnostic.compiler-diagnostic-at-start
-                          ""
-                          message)))])))
-              [(ResultCompilerBackend.Ok head)
-                (match (compiler-backend-emit-spmd-private-param-spills-from
-                  type-segment-bases
+                  position)
+                (compiler-backend-target-arg-reg-for-banks
                   target
-                  assignments
-                  (__tl-box-place rest)
-                  (if (or special? is-float)
-                    int-idx
-                    (+ int-idx 1))
-                  (if (or special? (not is-float))
-                    float-idx
-                    (+ float-idx 1))
-                  (if special?
-                    position
-                    (+ position 1))
-                  (if on-stack
-                    (+ stack-idx 1)
-                    stack-idx)
-                  (if varying?
-                    (+ vector-index 1)
-                    vector-index)
-                  (if mask?
-                    (+ mask-index 1)
-                    mask-index)
-                  (if special?
-                    (+ special-index 1)
-                    special-index)
-                  vars
-                  backend-state)
-                  [(ResultCompilerBackend.Ok tail)
-                    (ResultCompilerBackend.Ok (str_cat.str-cat head tail))]
-                  [(ResultCompilerBackend.Err message)
-                    (ResultCompilerBackend.Err message)])]
-              [(ResultCompilerBackend.Err message)
-                (ResultCompilerBackend.Err message)]))])]))
+                  int-idx
+                  position))
+                [(ResultBackendReg.Ok reg)
+                  (ResultCompilerBackend.Ok
+                    (compiler-backend-emit-store-typed-var-with-plan
+                      assignments
+                      var-id
+                      reg
+                      ty
+                      backend-state))]
+                [(ResultBackendReg.Err message)
+                  (ResultCompilerBackend.Err
+                    (box
+                      (compiler_diagnostic.compiler-diagnostic-at-start
+                        ""
+                        message)))])))
+            [(ResultCompilerBackend.Ok head)
+              (match (compiler-backend-emit-spmd-private-param-spills-from
+                type-segment-bases
+                target
+                assignments
+                params
+                (+ param-index 1)
+                (if (or special? is-float)
+                  int-idx
+                  (+ int-idx 1))
+                (if (or special? (not is-float))
+                  float-idx
+                  (+ float-idx 1))
+                (if special?
+                  position
+                  (+ position 1))
+                (if on-stack
+                  (+ stack-idx 1)
+                  stack-idx)
+                (if varying?
+                  (+ vector-index 1)
+                  vector-index)
+                (if mask?
+                  (+ mask-index 1)
+                  mask-index)
+                (if special?
+                  (+ special-index 1)
+                  special-index)
+                vars
+                backend-state)
+                [(ResultCompilerBackend.Ok tail)
+                  (ResultCompilerBackend.Ok (str_cat.str-cat head tail))]
+                [(ResultCompilerBackend.Err message)
+                  (ResultCompilerBackend.Err message)])]
+            [(ResultCompilerBackend.Err message)
+              (ResultCompilerBackend.Err message)]))])))
 
 (define (compiler-backend-emit-spmd-private-param-spills
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [params : compiler_ir_types.CompilerIrParamList]
+  [params : compiler_ir_types.CompilerIrParamSeq]
   [vars : i64]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (compiler-backend-emit-spmd-private-param-spills-from
@@ -63416,12 +63397,13 @@
     0
     0
     0
+    0
     vars
     backend-state))
 
 (define (compiler-backend-emit-private-memory-param-address
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [all-params : compiler_ir_types.CompilerIrParamList]
+  [all-params : compiler_ir_types.CompilerIrParamSeq]
   [var-id : i64]
   [addr : String]
   [backend-state : CompilerBackendState]) : String
@@ -63466,8 +63448,9 @@
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [all-params : compiler_ir_types.CompilerIrParamList]
-  [params : compiler_ir_types.CompilerIrParamList]
+  [all-params : compiler_ir_types.CompilerIrParamSeq]
+  [params : compiler_ir_types.CompilerIrParamSeq]
+  [param-index : i64]
   [int-idx : i64]
   [float-idx : i64]
   [position : i64]
@@ -63475,369 +63458,356 @@
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (match (compiler_ir_types.compiler-ir-param-list-force-cons params)
-    [(compiler_ir_types.CompilerIrParamList.Nil) (ResultCompilerBackend.Ok "")]
-    [(compiler_ir_types.CompilerIrParamList.Array seq)
-      (compiler-backend-emit-param-spills-from
-        type-segment-bases
-        target
-        assignments
-        all-params
-        (compiler_ir_types.compiler-ir-param-seq-to-list seq)
-        int-idx
-        float-idx
-        position
-        stack-idx
-        program-index
-        vars
-        backend-state)]
-    [(compiler_ir_types.CompilerIrParamList.Cons param rest)
-      (match param
-        [(compiler_ir_types.CompilerIrParam.Param _ ty var-id)
-          (let
-            [is-float : bool (compiler-backend-float-type? ty)]
-            [next-int : i64
-              (if is-float
+  (if (>= param-index params.len)
+    (ResultCompilerBackend.Ok "")
+    (match (compiler_ir_types.compiler-ir-param-seq-ref params param-index)
+      [(compiler_ir_types.CompilerIrParam.Param _ ty var-id)
+        (let
+          [is-float : bool (compiler-backend-float-type? ty)]
+          [next-int : i64
+            (if is-float
+              int-idx
+              (+ int-idx 1))]
+          [next-float : i64
+            (if is-float
+              (+ float-idx 1)
+              float-idx)]
+          [private-memory-size : i64
+            (compiler-backend-abi-memory-size type-segment-bases ty)]
+          ;; A register-group parameter occupies two eightbytes.
+          ;; INTEGER words advance the integer bank; SSE words advance the float
+          ;; bank. This mirrors emit-call-args so self-calls agree on register vs
+          ;; stack placement for mixed-bank aggregate words.
+          (cond
+            [(and
+                (compiler-backend-target-linux? target)
+                (> private-memory-size 0))
+              (match (compiler-backend-emit-param-spills-from
+                type-segment-bases
+                target
+                assignments
+                all-params
+                params
+                (+ param-index 1)
                 int-idx
-                (+ int-idx 1))]
-            [next-float : i64
-              (if is-float
-                (+ float-idx 1)
-                float-idx)]
-            [private-memory-size : i64
-              (compiler-backend-abi-memory-size type-segment-bases ty)]
-            ;; A register-group parameter occupies two eightbytes.
-            ;; INTEGER words advance the integer bank; SSE words advance the float
-            ;; bank. This mirrors emit-call-args so self-calls agree on register vs
-            ;; stack placement for mixed-bank aggregate words.
-            (cond
-              [(and
+                float-idx
+                (+ position 1)
+                (+
+                  stack-idx
+                  (compiler-backend-stack-slots-for-size private-memory-size))
+                program-index
+                vars
+                backend-state)
+                [(ResultCompilerBackend.Ok tail)
+                  (ResultCompilerBackend.Ok
+                    (str_cat.str-cat
+                      tail
+                      (compiler-backend-emit-private-memory-param-address
+                        assignments
+                        all-params
+                        var-id
+                        (compiler-backend-frame-offset-with-backend-state
+                          backend-state
+                          (compiler-backend-incoming-stack-arg-offset
+                            target
+                            stack-idx))
+                        backend-state)))]
+                [(ResultCompilerBackend.Err message)
+                  (ResultCompilerBackend.Err message)])]
+            [(compiler-backend-group-type? type-segment-bases program-index ty)
+              (let
+                [linux-group-fits : bool
+                  (compiler-backend-linux-group-register-banks-fit?
+                    type-segment-bases
+                    target
+                    program-index
+                    ty
+                    int-idx
+                    float-idx
+                    position)]
+                [param-exclude : (__tl_dyn-array String)
+                  (compiler-backend-param-register-exclude
+                    backend-state
+                    all-params
+                    assignments)]
+                [param-exclude-n : i64
+                  (compiler-backend-param-register-exclude-count
+                    backend-state
+                    all-params
+                    assignments)]
+                [w0-sse : bool
+                  (compiler-backend-group-word-sse?
+                    type-segment-bases
+                    program-index
+                    ty
+                    0)]
+                [w0-stack : bool
+                  (compiler-backend-stack-call-arg-for-banks?
+                    target
+                    w0-sse
+                    int-idx
+                    float-idx
+                    position)]
+                [int1 : i64
+                  (if w0-sse
+                    int-idx
+                    (+ int-idx 1))]
+                [float1 : i64
+                  (if w0-sse
+                    (+ float-idx 1)
+                    float-idx)]
+                [stack1 : i64
+                  (if w0-stack
+                    (+ stack-idx 1)
+                    stack-idx)]
+                [w1-sse : bool
+                  (compiler-backend-group-word-sse?
+                    type-segment-bases
+                    program-index
+                    ty
+                    1)]
+                [w1-stack : bool
+                  (compiler-backend-stack-call-arg-for-banks?
+                    target
+                    w1-sse
+                    int1
+                    float1
+                    (+ position 1))]
+                (if (and
                   (compiler-backend-target-linux? target)
-                  (> private-memory-size 0))
+                  (not linux-group-fits))
+                  (match (compiler-backend-emit-group-word-stack-param
+                    type-segment-bases
+                    target
+                    assignments
+                    var-id
+                    0
+                    stack-idx
+                    vars
+                    ty
+                    program-index
+                    param-exclude
+                    param-exclude-n
+                    backend-state)
+                    [(ResultCompilerBackend.Ok head0)
+                      (match (compiler-backend-emit-group-word-stack-param
+                        type-segment-bases
+                        target
+                        assignments
+                        var-id
+                        1
+                        (+ stack-idx 1)
+                        vars
+                        ty
+                        program-index
+                        param-exclude
+                        param-exclude-n
+                        backend-state)
+                        [(ResultCompilerBackend.Ok head1)
+                          (match (compiler-backend-emit-param-spills-from
+                            type-segment-bases
+                            target
+                            assignments
+                            all-params
+                            params
+                            (+ param-index 1)
+                            int-idx
+                            float-idx
+                            (+ position 2)
+                            (+ stack-idx 2)
+                            program-index
+                            vars
+                            backend-state)
+                            [(ResultCompilerBackend.Ok tail)
+                              (ResultCompilerBackend.Ok
+                                (str_cat.str-cat tail head0 head1))]
+                            [(ResultCompilerBackend.Err message)
+                              (ResultCompilerBackend.Err message)])]
+                        [(ResultCompilerBackend.Err message)
+                          (ResultCompilerBackend.Err message)])]
+                    [(ResultCompilerBackend.Err message)
+                      (ResultCompilerBackend.Err message)])
+                  (match (compiler-backend-emit-group-word-param
+                    type-segment-bases
+                    target
+                    assignments
+                    var-id
+                    0
+                    int-idx
+                    float-idx
+                    position
+                    stack-idx
+                    vars
+                    ty
+                    program-index
+                    param-exclude
+                    param-exclude-n
+                    backend-state)
+                    [(ResultCompilerBackend.Ok head0)
+                      (match (compiler-backend-emit-group-word-param
+                        type-segment-bases
+                        target
+                        assignments
+                        var-id
+                        1
+                        int1
+                        float1
+                        (+ position 1)
+                        stack1
+                        vars
+                        ty
+                        program-index
+                        param-exclude
+                        param-exclude-n
+                        backend-state)
+                        [(ResultCompilerBackend.Ok head1)
+                          (match (compiler-backend-emit-param-spills-from
+                            type-segment-bases
+                            target
+                            assignments
+                            all-params
+                            params
+                            (+ param-index 1)
+                            (if w1-sse
+                              int1
+                              (+ int1 1))
+                            (if w1-sse
+                              (+ float1 1)
+                              float1)
+                            (+ position 2)
+                            (if w1-stack
+                              (+ stack1 1)
+                              stack1)
+                            program-index
+                            vars
+                            backend-state)
+                            [(ResultCompilerBackend.Ok tail)
+                              (ResultCompilerBackend.Ok
+                                (str_cat.str-cat head0 head1 tail))]
+                            [(ResultCompilerBackend.Err message)
+                              (ResultCompilerBackend.Err message)])]
+                        [(ResultCompilerBackend.Err message)
+                          (ResultCompilerBackend.Err message)])]
+                    [(ResultCompilerBackend.Err message)
+                      (ResultCompilerBackend.Err message)])))]
+            [else
+              (if (compiler-backend-stack-call-arg-for-banks?
+                target
+                is-float
+                int-idx
+                float-idx
+                position)
                 (match (compiler-backend-emit-param-spills-from
                   type-segment-bases
                   target
                   assignments
                   all-params
-                  (__tl-box-place rest)
-                  int-idx
-                  float-idx
+                  params
+                  (+ param-index 1)
+                  next-int
+                  next-float
                   (+ position 1)
-                  (+
-                    stack-idx
-                    (compiler-backend-stack-slots-for-size private-memory-size))
+                  (+ stack-idx 1)
                   program-index
                   vars
                   backend-state)
                   [(ResultCompilerBackend.Ok tail)
                     (ResultCompilerBackend.Ok
-                      (str_cat.str-cat
-                        tail
-                        (compiler-backend-emit-private-memory-param-address
-                          assignments
-                          all-params
-                          var-id
+                      (let
+                        [addr : String
                           (compiler-backend-frame-offset-with-backend-state
                             backend-state
                             (compiler-backend-incoming-stack-arg-offset
                               target
-                              stack-idx))
-                          backend-state)))]
-                  [(ResultCompilerBackend.Err message)
-                    (ResultCompilerBackend.Err message)])]
-              [(compiler-backend-group-type?
-                  type-segment-bases
-                  program-index
-                  ty)
-                (let
-                  [linux-group-fits : bool
-                    (compiler-backend-linux-group-register-banks-fit?
-                      type-segment-bases
-                      target
-                      program-index
-                      ty
-                      int-idx
-                      float-idx
-                      position)]
-                  [param-exclude : (__tl_dyn-array String)
-                    (compiler-backend-param-register-exclude
-                      backend-state
-                      all-params
-                      assignments)]
-                  [param-exclude-n : i64
-                    (compiler-backend-param-register-exclude-count
-                      backend-state
-                      all-params
-                      assignments)]
-                  [w0-sse : bool
-                    (compiler-backend-group-word-sse?
-                      type-segment-bases
-                      program-index
-                      ty
-                      0)]
-                  [w0-stack : bool
-                    (compiler-backend-stack-call-arg-for-banks?
-                      target
-                      w0-sse
-                      int-idx
-                      float-idx
-                      position)]
-                  [int1 : i64
-                    (if w0-sse
-                      int-idx
-                      (+ int-idx 1))]
-                  [float1 : i64
-                    (if w0-sse
-                      (+ float-idx 1)
-                      float-idx)]
-                  [stack1 : i64
-                    (if w0-stack
-                      (+ stack-idx 1)
-                      stack-idx)]
-                  [w1-sse : bool
-                    (compiler-backend-group-word-sse?
-                      type-segment-bases
-                      program-index
-                      ty
-                      1)]
-                  [w1-stack : bool
-                    (compiler-backend-stack-call-arg-for-banks?
-                      target
-                      w1-sse
-                      int1
-                      float1
-                      (+ position 1))]
-                  (if (and
-                    (compiler-backend-target-linux? target)
-                    (not linux-group-fits))
-                    (match (compiler-backend-emit-group-word-stack-param
-                      type-segment-bases
-                      target
-                      assignments
-                      var-id
-                      0
-                      stack-idx
-                      vars
-                      ty
-                      program-index
-                      param-exclude
-                      param-exclude-n
-                      backend-state)
-                      [(ResultCompilerBackend.Ok head0)
-                        (match (compiler-backend-emit-group-word-stack-param
-                          type-segment-bases
-                          target
-                          assignments
-                          var-id
-                          1
-                          (+ stack-idx 1)
-                          vars
-                          ty
-                          program-index
-                          param-exclude
-                          param-exclude-n
-                          backend-state)
-                          [(ResultCompilerBackend.Ok head1)
-                            (match (compiler-backend-emit-param-spills-from
-                              type-segment-bases
-                              target
+                              stack-idx))]
+                        [exclude-n : i64
+                          (compiler-backend-param-register-exclude-count
+                            backend-state
+                            all-params
+                            assignments)]
+                        [exclude : (__tl_dyn-array String)
+                          (compiler-backend-param-register-exclude
+                            backend-state
+                            all-params
+                            assignments)]
+                        (str_cat.str-cat
+                          (if is-float
+                            (compiler-backend-emit-load-float-address-to-var
                               assignments
-                              all-params
-                              (__tl-box-place rest)
-                              int-idx
-                              float-idx
-                              (+ position 2)
-                              (+ stack-idx 2)
-                              program-index
-                              vars
+                              var-id
+                              addr
+                              ty
+                              ""
                               backend-state)
-                              [(ResultCompilerBackend.Ok tail)
-                                (ResultCompilerBackend.Ok
-                                  (str_cat.str-cat tail head0 head1))]
-                              [(ResultCompilerBackend.Err message)
-                                (ResultCompilerBackend.Err message)])]
-                          [(ResultCompilerBackend.Err message)
-                            (ResultCompilerBackend.Err message)])]
-                      [(ResultCompilerBackend.Err message)
-                        (ResultCompilerBackend.Err message)])
-                    (match (compiler-backend-emit-group-word-param
-                      type-segment-bases
-                      target
-                      assignments
-                      var-id
-                      0
-                      int-idx
-                      float-idx
-                      position
-                      stack-idx
-                      vars
-                      ty
-                      program-index
-                      param-exclude
-                      param-exclude-n
-                      backend-state)
-                      [(ResultCompilerBackend.Ok head0)
-                        (match (compiler-backend-emit-group-word-param
-                          type-segment-bases
-                          target
-                          assignments
-                          var-id
-                          1
-                          int1
-                          float1
-                          (+ position 1)
-                          stack1
-                          vars
-                          ty
-                          program-index
-                          param-exclude
-                          param-exclude-n
-                          backend-state)
-                          [(ResultCompilerBackend.Ok head1)
-                            (match (compiler-backend-emit-param-spills-from
+                            (compiler-backend-emit-load-scalar-address-to-var
                               type-segment-bases
-                              target
                               assignments
-                              all-params
-                              (__tl-box-place rest)
-                              (if w1-sse
-                                int1
-                                (+ int1 1))
-                              (if w1-sse
-                                (+ float1 1)
-                                float1)
-                              (+ position 2)
-                              (if w1-stack
-                                (+ stack1 1)
-                                stack1)
-                              program-index
-                              vars
-                              backend-state)
-                              [(ResultCompilerBackend.Ok tail)
-                                (ResultCompilerBackend.Ok
-                                  (str_cat.str-cat head0 head1 tail))]
-                              [(ResultCompilerBackend.Err message)
-                                (ResultCompilerBackend.Err message)])]
-                          [(ResultCompilerBackend.Err message)
-                            (ResultCompilerBackend.Err message)])]
-                      [(ResultCompilerBackend.Err message)
-                        (ResultCompilerBackend.Err message)])))]
-              [else
-                (if (compiler-backend-stack-call-arg-for-banks?
-                  target
-                  is-float
-                  int-idx
-                  float-idx
-                  position)
-                  (match (compiler-backend-emit-param-spills-from
-                    type-segment-bases
-                    target
-                    assignments
-                    all-params
-                    (__tl-box-place rest)
-                    next-int
-                    next-float
-                    (+ position 1)
-                    (+ stack-idx 1)
-                    program-index
-                    vars
-                    backend-state)
-                    [(ResultCompilerBackend.Ok tail)
-                      (ResultCompilerBackend.Ok
-                        (let
-                          [addr : String
-                            (compiler-backend-frame-offset-with-backend-state
-                              backend-state
-                              (compiler-backend-incoming-stack-arg-offset
-                                target
-                                stack-idx))]
-                          [exclude-n : i64
-                            (compiler-backend-param-register-exclude-count
-                              backend-state
-                              all-params
-                              assignments)]
-                          [exclude : (__tl_dyn-array String)
-                            (compiler-backend-param-register-exclude
-                              backend-state
-                              all-params
-                              assignments)]
-                          (str_cat.str-cat
-                            (if is-float
-                              (compiler-backend-emit-load-float-address-to-var
-                                assignments
-                                var-id
-                                addr
-                                ty
-                                ""
-                                backend-state)
-                              (compiler-backend-emit-load-scalar-address-to-var
-                                type-segment-bases
-                                assignments
-                                var-id
-                                addr
-                                ty
+                              var-id
+                              addr
+                              ty
+                              exclude
+                              exclude-n
+                              (compiler-backend-scavenge-pick-with-mask
+                                backend-state
+                                (compiler-backend-state-function-state
+                                  backend-state)
+                                0
+                                0
                                 exclude
                                 exclude-n
-                                (compiler-backend-scavenge-pick-with-mask
-                                  backend-state
-                                  (compiler-backend-state-function-state
-                                    backend-state)
-                                  0
-                                  0
-                                  exclude
-                                  exclude-n
-                                  "%r8")
-                                backend-state))
-                            tail)))]
-                    [(ResultCompilerBackend.Err message)
-                      (ResultCompilerBackend.Err message)])
-                  (match (if is-float
-                    (compiler-backend-target-float-arg-reg-for-banks
+                                "%r8")
+                              backend-state))
+                          tail)))]
+                  [(ResultCompilerBackend.Err message)
+                    (ResultCompilerBackend.Err message)])
+                (match (if is-float
+                  (compiler-backend-target-float-arg-reg-for-banks
+                    target
+                    float-idx
+                    position)
+                  (compiler-backend-target-arg-reg-for-banks
+                    target
+                    int-idx
+                    position))
+                  [(ResultBackendReg.Ok reg)
+                    (match (compiler-backend-emit-param-spills-from
+                      type-segment-bases
                       target
-                      float-idx
-                      position)
-                    (compiler-backend-target-arg-reg-for-banks
-                      target
-                      int-idx
-                      position))
-                    [(ResultBackendReg.Ok reg)
-                      (match (compiler-backend-emit-param-spills-from
-                        type-segment-bases
-                        target
-                        assignments
-                        all-params
-                        (__tl-box-place rest)
-                        next-int
-                        next-float
-                        (+ position 1)
-                        stack-idx
-                        program-index
-                        vars
-                        backend-state)
-                        [(ResultCompilerBackend.Ok tail)
-                          (ResultCompilerBackend.Ok
-                            (str_cat.str-cat
-                              (compiler-backend-emit-store-typed-var-with-plan
-                                assignments
-                                var-id
-                                reg
-                                ty
-                                backend-state)
-                              tail))]
-                        [(ResultCompilerBackend.Err message)
-                          (ResultCompilerBackend.Err message)])]
-                    [(ResultBackendReg.Err _)
-                      (ResultCompilerBackend.Err
-                        (box
-                          (compiler_diagnostic.compiler-diagnostic-at-start
-                            ""
-                            "backend: too many params")))]))]))])]))
+                      assignments
+                      all-params
+                      params
+                      (+ param-index 1)
+                      next-int
+                      next-float
+                      (+ position 1)
+                      stack-idx
+                      program-index
+                      vars
+                      backend-state)
+                      [(ResultCompilerBackend.Ok tail)
+                        (ResultCompilerBackend.Ok
+                          (str_cat.str-cat
+                            (compiler-backend-emit-store-typed-var-with-plan
+                              assignments
+                              var-id
+                              reg
+                              ty
+                              backend-state)
+                            tail))]
+                      [(ResultCompilerBackend.Err message)
+                        (ResultCompilerBackend.Err message)])]
+                  [(ResultBackendReg.Err _)
+                    (ResultCompilerBackend.Err
+                      (box
+                        (compiler_diagnostic.compiler-diagnostic-at-start
+                          ""
+                          "backend: too many params")))]))]))])))
 
 (define (compiler-backend-emit-param-spills
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [params : compiler_ir_types.CompilerIrParamList]
+  [params : compiler_ir_types.CompilerIrParamSeq]
   [int-idx : i64]
   [float-idx : i64]
   [position : i64]
@@ -63851,6 +63821,7 @@
     assignments
     params
     params
+    0
     int-idx
     float-idx
     position
@@ -66162,7 +66133,7 @@
   (define (compiler-backend-scavenge-self-check
     [name : i64]
     [name-text : String]
-    [params : compiler_ir_types.CompilerIrParamList]
+    [params : compiler_ir_types.CompilerIrParamSeq]
     [ret-ty : compiler_ast_types.AstType]
     [slot-vars : i64]
     [emit-blocks : compiler_ir_types.CompilerIrBlockList]
@@ -72609,7 +72580,7 @@
         ;; text that comes out.
         [emit-blocks-list : compiler_ir_types.CompilerIrBlockList
           (compiler-backend-placement-blocks function-state colored-blocks)]
-        [emit-params : compiler_ir_types.CompilerIrParamList
+        [emit-params : compiler_ir_types.CompilerIrParamSeq
           (match coloring
             [(compiler_regalloc.CompilerRegColoring.None) params]
             [(compiler_regalloc.CompilerRegColoring.Remap remap _)
@@ -73916,7 +73887,7 @@
 (define (compiler-backend-implicit-main-function) : compiler_ir_types.CompilerIrFunction
   (compiler_ir_types.CompilerIrFunction.Function
     cbi.compiler-builtin-id-fix-main
-    compiler_ir_types.CompilerIrParamList.Nil
+    (compiler_ir_types.compiler-ir-param-seq-empty)
     (compiler_ast_types.AstType.I64)
     1
     (compiler_ir_types.compiler-ir-block-list-compact
@@ -74363,7 +74334,7 @@
   [_externs : compiler_ir_types.CompilerIrExternSeq]
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
   (let
-    [params : compiler_ir_types.CompilerIrParamList
+    [params : compiler_ir_types.CompilerIrParamSeq
       (compiler-backend-param-list-from-types type-segment-bases param-types 0)]
     [vars : i64 (compiler-backend-type-list-count param-types)]
     [args : compiler_ir_types.CompilerIrCallArgs
@@ -78890,56 +78861,60 @@
         (cobj.CompilerObjectX64Instr.Call symbol))
       (compiler-backend-object-add-rsp-bytes space))))
 
+(define (compiler-backend-object-param-spills-from
+  [parts : object_target.CompilerBackendObjectTargetParts]
+  [target : CompilerBackendTarget]
+  [params : compiler_ir_types.CompilerIrParamSeq]
+  [int-index : i64]
+  [param-index : i64]) : object_target.CompilerBackendObjectTargetParts
+  (if (>= param-index params.len)
+    parts
+    (match (compiler_ir_types.compiler-ir-param-seq-ref params param-index)
+      [(compiler_ir_types.CompilerIrParam.Param _ ty var-id)
+        (if (compiler-backend-float-type? ty)
+          (compiler-backend-object-param-spills-from
+            parts
+            target
+            params
+            int-index
+            (+ param-index 1))
+          (if (>= int-index (compiler-backend-object-call-reg-count target))
+            (compiler-backend-object-param-spills-from
+              (match target
+                [(CompilerBackendTarget.Linux) parts]
+                [(CompilerBackendTarget.Windows)
+                  (compiler-backend-object-store-reg-to-var
+                    (compiler-backend-object-add-nonempty-bytes
+                      parts
+                      (compiler-backend-object-load-rbp-disp-bytes
+                        (compiler-backend-incoming-stack-arg-offset
+                          target
+                          (-
+                            int-index
+                            (compiler-backend-object-call-reg-count target)))
+                        "%rax"))
+                    var-id
+                    "%rax")])
+              target
+              params
+              (+ int-index 1)
+              (+ param-index 1))
+            (compiler-backend-object-param-spills-from
+              (compiler-backend-object-store-reg-to-var
+                parts
+                var-id
+                (compiler-backend-object-call-arg-reg target int-index))
+              target
+              params
+              (+ int-index 1)
+              (+ param-index 1))))])))
+
 (define (compiler-backend-object-param-spills
   [parts : object_target.CompilerBackendObjectTargetParts]
   [target : CompilerBackendTarget]
-  [params : compiler_ir_types.CompilerIrParamList]
+  [params : compiler_ir_types.CompilerIrParamSeq]
   [int-index : i64]) : object_target.CompilerBackendObjectTargetParts
-  (match (compiler_ir_types.compiler-ir-param-list-force-cons params)
-    [(compiler_ir_types.CompilerIrParamList.Nil) parts]
-    [(compiler_ir_types.CompilerIrParamList.Array seq)
-      (compiler-backend-object-param-spills
-        parts
-        target
-        (compiler_ir_types.compiler-ir-param-seq-to-list seq)
-        int-index)]
-    [(compiler_ir_types.CompilerIrParamList.Cons param rest)
-      (match param
-        [(compiler_ir_types.CompilerIrParam.Param _ ty var-id)
-          (if (compiler-backend-float-type? ty)
-            (compiler-backend-object-param-spills
-              parts
-              target
-              (__tl-box-place rest)
-              int-index)
-            (if (>= int-index (compiler-backend-object-call-reg-count target))
-              (compiler-backend-object-param-spills
-                (match target
-                  [(CompilerBackendTarget.Linux) parts]
-                  [(CompilerBackendTarget.Windows)
-                    (compiler-backend-object-store-reg-to-var
-                      (compiler-backend-object-add-nonempty-bytes
-                        parts
-                        (compiler-backend-object-load-rbp-disp-bytes
-                          (compiler-backend-incoming-stack-arg-offset
-                            target
-                            (-
-                              int-index
-                              (compiler-backend-object-call-reg-count target)))
-                          "%rax"))
-                      var-id
-                      "%rax")])
-                target
-                (__tl-box-place rest)
-                (+ int-index 1))
-              (compiler-backend-object-param-spills
-                (compiler-backend-object-store-reg-to-var
-                  parts
-                  var-id
-                  (compiler-backend-object-call-arg-reg target int-index))
-                target
-                (__tl-box-place rest)
-                (+ int-index 1))))])]))
+  (compiler-backend-object-param-spills-from parts target params int-index 0))
 
 ;; --- object-image phi edge copies --------------------------------------------
 ;;
@@ -89738,7 +89713,7 @@
     (compiler_ir_types.compiler-ir-function-seq-prepend
       (compiler_ir_types.CompilerIrFunction.Function
         cbi.compiler-builtin-id-fix-main
-        compiler_ir_types.CompilerIrParamList.Nil
+        (compiler_ir_types.compiler-ir-param-seq-empty)
         (compiler_ast_types.AstType.I64)
         4
         (compiler_ir_types.compiler-ir-block-cons
@@ -90010,7 +89985,7 @@
     (compiler_ir_types.compiler-ir-function-seq-prepend
       (compiler_ir_types.CompilerIrFunction.Function
         (compiler-backend-test-symbol "stdlib/runtime.tl::str-view")
-        compiler_ir_types.CompilerIrParamList.Nil
+        (compiler_ir_types.compiler-ir-param-seq-empty)
         (compiler_ast_types.AstType.I64)
         0
         (compiler_ir_types.compiler-ir-block-cons
@@ -90024,7 +89999,7 @@
       (compiler_ir_types.compiler-ir-function-seq-prepend
         (compiler_ir_types.CompilerIrFunction.Function
           cbi.compiler-builtin-id-fix-main
-          compiler_ir_types.CompilerIrParamList.Nil
+          (compiler_ir_types.compiler-ir-param-seq-empty)
           (compiler_ast_types.AstType.I64)
           0
           (compiler_ir_types.compiler-ir-block-cons
@@ -90062,7 +90037,7 @@
       (compiler_ir_types.compiler-ir-function-seq-prepend
         (compiler_ir_types.CompilerIrFunction.Function
           cbi.compiler-builtin-id-fix-main
-          compiler_ir_types.CompilerIrParamList.Nil
+          (compiler_ir_types.compiler-ir-param-seq-empty)
           (compiler_ast_types.AstType.I64)
           0
           (compiler_ir_types.compiler-ir-block-cons
@@ -90115,7 +90090,7 @@
         (compiler_ir_types.compiler-ir-function-seq-prepend
           (compiler_ir_types.CompilerIrFunction.Function
             cbi.compiler-builtin-id-fix-main
-            compiler_ir_types.CompilerIrParamList.Nil
+            (compiler_ir_types.compiler-ir-param-seq-empty)
             (compiler_ast_types.AstType.I64)
             0
             (compiler_ir_types.compiler-ir-block-cons
@@ -90300,7 +90275,7 @@
     (compiler_ir_types.compiler-ir-function-seq-prepend
       (compiler_ir_types.CompilerIrFunction.Function
         (compiler-backend-test-symbol "tl_alloc")
-        compiler_ir_types.CompilerIrParamList.Nil
+        (compiler_ir_types.compiler-ir-param-seq-empty)
         (compiler_ast_types.AstType.I64)
         0
         (compiler_ir_types.compiler-ir-block-cons
@@ -90314,7 +90289,7 @@
       (compiler_ir_types.compiler-ir-function-seq-prepend
         (compiler_ir_types.CompilerIrFunction.Function
           cbi.compiler-builtin-id-fix-main
-          compiler_ir_types.CompilerIrParamList.Nil
+          (compiler_ir_types.compiler-ir-param-seq-empty)
           (compiler_ast_types.AstType.I64)
           1
           (compiler_ir_types.compiler-ir-block-cons
@@ -90353,7 +90328,7 @@
     (compiler_ir_types.compiler-ir-function-seq-prepend
       (compiler_ir_types.CompilerIrFunction.Function
         (compiler-backend-test-symbol "tl_alloc")
-        compiler_ir_types.CompilerIrParamList.Nil
+        (compiler_ir_types.compiler-ir-param-seq-empty)
         (compiler_ast_types.AstType.I64)
         0
         (compiler_ir_types.compiler-ir-block-cons
@@ -90367,7 +90342,7 @@
       (compiler_ir_types.compiler-ir-function-seq-prepend
         (compiler_ir_types.CompilerIrFunction.Function
           cbi.compiler-builtin-id-fix-main
-          compiler_ir_types.CompilerIrParamList.Nil
+          (compiler_ir_types.compiler-ir-param-seq-empty)
           (compiler_ast_types.AstType.I64)
           2
           (compiler_ir_types.compiler-ir-block-cons
@@ -90423,7 +90398,7 @@
     (compiler_ir_types.compiler-ir-function-seq-prepend
       (compiler_ir_types.CompilerIrFunction.Function
         (compiler-backend-test-symbol "lib.tl::helper")
-        compiler_ir_types.CompilerIrParamList.Nil
+        (compiler_ir_types.compiler-ir-param-seq-empty)
         (compiler_ast_types.AstType.I64)
         0
         (compiler_ir_types.compiler-ir-block-cons
@@ -90437,7 +90412,7 @@
       (compiler_ir_types.compiler-ir-function-seq-prepend
         (compiler_ir_types.CompilerIrFunction.Function
           cbi.compiler-builtin-id-fix-main
-          compiler_ir_types.CompilerIrParamList.Nil
+          (compiler_ir_types.compiler-ir-param-seq-empty)
           (compiler_ast_types.AstType.I64)
           1
           (compiler_ir_types.compiler-ir-block-cons

@@ -8319,13 +8319,25 @@
           "__tl_internal_abi_group_m3__sig3"))]
     [params : compiler_ir_types.CompilerIrParamSeq
       (compiler_ir_types.compiler-ir-param-seq-prepend
-        (compiler_ir_types.CompilerIrParam.Param "p0" type0 0)
+        (compiler_ir_types.CompilerIrParam.Param
+          "p0"
+          (owned_view.compiler-owned-shared-view type0)
+          0)
         (compiler_ir_types.compiler-ir-param-seq-prepend
-          (compiler_ir_types.CompilerIrParam.Param "p1" type1 1)
+          (compiler_ir_types.CompilerIrParam.Param
+            "p1"
+            (owned_view.compiler-owned-shared-view type1)
+            1)
           (compiler_ir_types.compiler-ir-param-seq-prepend
-            (compiler_ir_types.CompilerIrParam.Param "p2" type2 2)
+            (compiler_ir_types.CompilerIrParam.Param
+              "p2"
+              (owned_view.compiler-owned-shared-view type2)
+              2)
             (compiler_ir_types.compiler-ir-param-seq-prepend
-              (compiler_ir_types.CompilerIrParam.Param "p3" type3 3)
+              (compiler_ir_types.CompilerIrParam.Param
+                "p3"
+                (owned_view.compiler-owned-shared-view type3)
+                3)
               (compiler_ir_types.compiler-ir-param-seq-empty)))))]
     [functions : compiler_ir_types.CompilerIrFunctionSeq
       (compiler_ir_types.compiler-ir-function-seq-prepend
@@ -39062,9 +39074,12 @@ g:
       (compiler_backend.compiler-backend-emit-param-spills
         bases
         target
-        mixed-assignments
+        (owned_view.compiler-owned-shared-view mixed-assignments)
         (compiler_ir_types.compiler-ir-param-seq-prepend
-          (compiler_ir_types.CompilerIrParam.Param "mixed" mixed-group 0)
+          (compiler_ir_types.CompilerIrParam.Param
+            "mixed"
+            (owned_view.compiler-owned-shared-view mixed-group)
+            0)
           (compiler_ir_types.compiler-ir-param-seq-empty))
         0
         0
@@ -39129,9 +39144,12 @@ g:
       (compiler_backend.compiler-backend-emit-param-spills
         bases
         target
-        exhausted-assignments
+        (owned_view.compiler-owned-shared-view exhausted-assignments)
         (compiler_ir_types.compiler-ir-param-seq-prepend
-          (compiler_ir_types.CompilerIrParam.Param "mixed" mixed-group 0)
+          (compiler_ir_types.CompilerIrParam.Param
+            "mixed"
+            (owned_view.compiler-owned-shared-view mixed-group)
+            0)
           (compiler_ir_types.compiler-ir-param-seq-prepend
             (compiler_ir_types.CompilerIrParam.Param
               "tail"

@@ -7862,6 +7862,33 @@
                   (set! copy-index (+ copy-index 1)))))
             (set! width (* width 2))))))))
 
+(define (compiler-semantic-top-candidate-count-increment!
+  [counts : (__tl_dyn-array i64)]
+  [module-index : i64]) : unit
+  (let
+    [count : i64 (array-ref counts module-index)]
+    (if (= count 9223372036854775807)
+      (io.panic "semantic index: top candidate count overflow")
+      (set! (array-ref counts module-index) (+ count 1)))))
+
+(define (compiler-semantic-top-candidate-fill-index
+  [modules : (__tl_dyn-array CompilerSemanticModuleInfo)]
+  [module-index : i64]
+  [cursors : (__tl_dyn-array i64)]
+  [out : (__tl_dyn-array CompilerSemanticTopCandidateRef)]
+  [labels : (__tl_dyn-array String)]) : i64
+  (let
+    [info : CompilerSemanticModuleInfo (array-ref modules module-index)]
+    [out-index : i64 (array-ref cursors module-index)]
+    [segment-end : i64 (+ info.candidate-offset info.candidate-len)]
+    (if (or
+      (< out-index info.candidate-offset)
+      (>= out-index segment-end)
+      (>= out-index (array-length out))
+      (>= out-index (array-length labels)))
+      (io.panic "semantic index: top candidate count/fill mismatch")
+      out-index)))
+
 (define (compiler-semantic-top-map-walk!
   [session : cis.InternStructuralSessionHandle]
   [symbols : (& symbols csym.CompilerSymbols)]
@@ -7918,11 +7945,18 @@
                 (< decl-index (array-length decl-record-indices))
                 (> (array-ref decl-record-indices decl-index) 0))
                 (if count-only
-                  (set!
-                    (array-ref counts-or-cursors module-index)
-                    (+ (array-ref counts-or-cursors module-index) 1))
+                  (compiler-semantic-top-candidate-count-increment!
+                    (owned_view.compiler-owned-shared-view counts-or-cursors)
+                    module-index)
                   (let
-                    [out-index : i64 (array-ref counts-or-cursors module-index)]
+                    [out-index : i64
+                      (compiler-semantic-top-candidate-fill-index
+                        (owned_view.compiler-owned-shared-view modules)
+                        module-index
+                        (owned_view.compiler-owned-shared-view
+                          counts-or-cursors)
+                        (owned_view.compiler-owned-shared-view out)
+                        (owned_view.compiler-owned-shared-view labels))]
                     [label : String
                       (tc.tc-env-key-name-text-for-session session name-id)]
                     (begin
@@ -8014,12 +8048,19 @@
                           name-id)
                           unit
                           (if count-only
-                            (set!
-                              (array-ref counts-or-cursors module-index)
-                              (+ (array-ref counts-or-cursors module-index) 1))
+                            (compiler-semantic-top-candidate-count-increment!
+                              (owned_view.compiler-owned-shared-view
+                                counts-or-cursors)
+                              module-index)
                             (let
                               [out-index : i64
-                                (array-ref counts-or-cursors module-index)]
+                                (compiler-semantic-top-candidate-fill-index
+                                  (owned_view.compiler-owned-shared-view modules)
+                                  module-index
+                                  (owned_view.compiler-owned-shared-view
+                                    counts-or-cursors)
+                                  (owned_view.compiler-owned-shared-view out)
+                                  (owned_view.compiler-owned-shared-view labels))]
                               (begin
                                 (set!
                                   (array-ref out out-index)
@@ -8041,14 +8082,14 @@
             unit)
           (set! slot (+ slot 1)))))))
 
-(define (compiler-semantic-build-top-candidates!
+;; Counting and filling deliberately share the two walkers and their visibility
+;; predicates. Install exact per-module segments first, then allocate once; the
+;; fill pass treats any map drift or predicate mismatch as an internal error.
+(define (compiler-semantic-count-top-candidates!
   [ctx : tc.TcContext]
   [modules : (__tl_dyn-array CompilerSemanticModuleInfo)]
   [module-len : i64]
-  [decl-record-indices : (__tl_dyn-array i64)]
-  [records : (__tl_dyn-array CompilerSemanticRecord)]
-  [out : (__tl_dyn-array CompilerSemanticTopCandidateRef)]
-  [labels : (__tl_dyn-array String)]) : i64
+  [decl-record-indices : (__tl_dyn-array i64)]) : i64
   (match (tc.tc-context-symbols ctx)
     [(csym.CompilerSymbols values types macros _ _ _)
       (let
@@ -8060,7 +8101,9 @@
             cbi.compiler-builtin-id-core-macros-module
             cbi.compiler-builtin-id-core-macros-legacy-module)]
         [counts : (__tl_dyn-array i64) (__tl_make-array i64 module-len)]
-        [cursors : (__tl_dyn-array i64) (__tl_make-array i64 module-len)]
+        [unused-candidates : (__tl_dyn-array CompilerSemanticTopCandidateRef)
+          (__tl_make-array CompilerSemanticTopCandidateRef 0)]
+        [unused-labels : (__tl_dyn-array String) (__tl_make-array String 0)]
         [module-index : i64 0]
         [cursor : i64 0]
         (begin
@@ -8073,8 +8116,8 @@
             module-len
             (owned_view.compiler-owned-shared-view decl-record-indices)
             (owned_view.compiler-owned-shared-view counts)
-            (owned_view.compiler-owned-shared-view out)
-            (owned_view.compiler-owned-shared-view labels)
+            (owned_view.compiler-owned-shared-view unused-candidates)
+            (owned_view.compiler-owned-shared-view unused-labels)
             true)
           (compiler-semantic-top-map-walk!
             (tc.tc-context-structural-session ctx)
@@ -8085,8 +8128,8 @@
             module-len
             (owned_view.compiler-owned-shared-view decl-record-indices)
             (owned_view.compiler-owned-shared-view counts)
-            (owned_view.compiler-owned-shared-view out)
-            (owned_view.compiler-owned-shared-view labels)
+            (owned_view.compiler-owned-shared-view unused-candidates)
+            (owned_view.compiler-owned-shared-view unused-labels)
             true)
           (compiler-semantic-top-map-walk!
             (tc.tc-context-structural-session ctx)
@@ -8097,8 +8140,8 @@
             module-len
             (owned_view.compiler-owned-shared-view decl-record-indices)
             (owned_view.compiler-owned-shared-view counts)
-            (owned_view.compiler-owned-shared-view out)
-            (owned_view.compiler-owned-shared-view labels)
+            (owned_view.compiler-owned-shared-view unused-candidates)
+            (owned_view.compiler-owned-shared-view unused-labels)
             true)
           (compiler-semantic-core-macro-walk!
             (tc.tc-context-structural-session ctx)
@@ -8109,20 +8152,69 @@
             module-len
             (owned_view.compiler-owned-shared-view decl-record-indices)
             (owned_view.compiler-owned-shared-view counts)
-            (owned_view.compiler-owned-shared-view out)
-            (owned_view.compiler-owned-shared-view labels)
+            (owned_view.compiler-owned-shared-view unused-candidates)
+            (owned_view.compiler-owned-shared-view unused-labels)
             true)
           (while (< module-index module-len)
             (let
               [info : CompilerSemanticModuleInfo
                 (array-ref modules module-index)]
               (begin
+                (if (>
+                  (array-ref counts module-index)
+                  (- 9223372036854775807 cursor))
+                  (io.panic "semantic index: top candidate total overflow")
+                  unit)
                 (set! info.candidate-offset cursor)
                 (set! info.candidate-len (array-ref counts module-index))
                 (set! (array-ref modules module-index) info)
-                (set! (array-ref cursors module-index) cursor)
                 (set! cursor (+ cursor info.candidate-len))
                 (set! module-index (+ module-index 1)))))
+          cursor))]))
+
+(define (compiler-semantic-fill-top-candidates!
+  [ctx : tc.TcContext]
+  [modules : (__tl_dyn-array CompilerSemanticModuleInfo)]
+  [module-len : i64]
+  [decl-record-indices : (__tl_dyn-array i64)]
+  [records : (__tl_dyn-array CompilerSemanticRecord)]
+  [out : (__tl_dyn-array CompilerSemanticTopCandidateRef)]
+  [labels : (__tl_dyn-array String)]) : unit
+  (match (tc.tc-context-symbols ctx)
+    [(csym.CompilerSymbols values types macros _ _ _)
+      (let
+        [symbols : (& ctx csym.CompilerSymbols) (tc.tc-context-symbols ctx)]
+        [core-module-id : i64
+          (if (compiler-semantic-map-has-module-macro?
+            macros
+            cbi.compiler-builtin-id-core-macros-module)
+            cbi.compiler-builtin-id-core-macros-module
+            cbi.compiler-builtin-id-core-macros-legacy-module)]
+        [cursors : (__tl_dyn-array i64) (__tl_make-array i64 module-len)]
+        [module-index : i64 0]
+        [expected-offset : i64 0]
+        (begin
+          (if (!= (array-length out) (array-length labels))
+            (io.panic "semantic index: top candidate storage length mismatch")
+            unit)
+          (while (< module-index module-len)
+            (let
+              [info : CompilerSemanticModuleInfo
+                (array-ref modules module-index)]
+              (begin
+                (if (or
+                  (< info.candidate-len 0)
+                  (!= info.candidate-offset expected-offset)
+                  (> info.candidate-len (- 9223372036854775807 expected-offset)))
+                  (io.panic "semantic index: invalid top candidate segment")
+                  unit)
+                (set! (array-ref cursors module-index) info.candidate-offset)
+                (set! expected-offset (+ expected-offset info.candidate-len))
+                (set! module-index (+ module-index 1)))))
+          (if (!= expected-offset (array-length out))
+            (io.panic
+              "semantic index: top candidate storage is not exact-sized")
+            unit)
           (compiler-semantic-top-map-walk!
             (tc.tc-context-structural-session ctx)
             symbols
@@ -8177,6 +8269,11 @@
               [info : CompilerSemanticModuleInfo
                 (array-ref modules module-index)]
               (begin
+                (if (!=
+                  (array-ref cursors module-index)
+                  (+ info.candidate-offset info.candidate-len))
+                  (io.panic "semantic index: top candidate count/fill mismatch")
+                  unit)
                 (compiler-semantic-top-candidates-sort-segment!
                   (owned_view.compiler-owned-shared-view out)
                   (owned_view.compiler-owned-shared-view labels)
@@ -8184,21 +8281,7 @@
                   info.candidate-offset
                   info.candidate-len)
                 (set! module-index (+ module-index 1)))))
-          cursor))]))
-
-(define (compiler-semantic-top-candidate-capacity
-  [ctx : tc.TcContext]
-  [module-capacity : i64]) : i64
-  (match (tc.tc-context-symbols ctx)
-    [(csym.CompilerSymbols values types macros _ _ _)
-      (let
-        [capacity : i64
-          (+
-            (+ values.len types.len)
-            (+ macros.len (* macros.len module-capacity)))]
-        (if (< capacity 1)
-          1
-          capacity))]))
+          unit))]))
 
 (define (compiler-semantic-index-build-owned
   [ctx : tc.TcContext]
@@ -8649,16 +8732,21 @@
               [path-count : i64 (__tl-box-place visibility-storage.path-len)]
               [module-count : i64
                 (__tl-box-place visibility-storage.module-len)]
-              [top-capacity : i64
+              [top-candidate-count : i64
                 (if complete
-                  (compiler-semantic-top-candidate-capacity
+                  (compiler-semantic-count-top-candidates!
                     (owned_view.compiler-owned-shared-view ctx)
-                    module-count)
+                    (owned_view.compiler-owned-shared-view modules-out)
+                    module-count
+                    (owned_view.compiler-owned-shared-view
+                      decl-record-indices))
                   0)]
               [top-candidates : (__tl_dyn-array CompilerSemanticTopCandidateRef)
-                (__tl_make-array CompilerSemanticTopCandidateRef top-capacity)]
+                (__tl_make-array
+                  CompilerSemanticTopCandidateRef
+                  top-candidate-count)]
               [top-labels : (__tl_dyn-array String)
-                (__tl_make-array String top-capacity)]
+                (__tl_make-array String top-candidate-count)]
               [raw-scope-events : CompilerSemanticScopeEventVec
                 (owned_view.compiler-owned-box-shared-view
                   visibility-storage.scope-events)]
@@ -8683,7 +8771,6 @@
               [binding-items : (__tl_dyn-array CompilerSemanticBinding)
                 (owned_view.compiler-owned-shared-view bindings.items)]
               [binding-count : i64 bindings.len]
-              [top-candidate-count : i64 0]
               (begin
                 (compiler-semantic-bucket-scope-events!
                   (owned_view.compiler-owned-shared-view paths-out)
@@ -8698,16 +8785,15 @@
                   module-event-count
                   (owned_view.compiler-owned-shared-view module-events))
                 (if complete
-                  (set!
-                    top-candidate-count
-                    (compiler-semantic-build-top-candidates!
-                      ctx
-                      (owned_view.compiler-owned-shared-view modules-out)
-                      module-count
-                      decl-record-indices
-                      (owned_view.compiler-owned-shared-view record-items)
-                      (owned_view.compiler-owned-shared-view top-candidates)
-                      (owned_view.compiler-owned-shared-view top-labels)))
+                  (compiler-semantic-fill-top-candidates!
+                    (owned_view.compiler-owned-shared-view ctx)
+                    (owned_view.compiler-owned-shared-view modules-out)
+                    module-count
+                    (owned_view.compiler-owned-shared-view
+                      decl-record-indices)
+                    (owned_view.compiler-owned-shared-view record-items)
+                    (owned_view.compiler-owned-shared-view top-candidates)
+                    (owned_view.compiler-owned-shared-view top-labels))
                   unit)
                 (let
                   [top-visible-bindings : (__tl_dyn-array
@@ -13232,6 +13318,76 @@
           false)]
       [(ResultCompilerCheckWithSemanticIndex.Err _) false])))
 
+(define (compiler-check-semantic-index-exact-top-candidate-storage-ok?) : bool
+  (let
+    [owners-before : i64 (compiler-semantic-source-index-live-owner-count)]
+    [path : String "src/tests/semantic_index_sparse_candidates.tl"]
+    [source : String
+      "(module semantic.index.sparse.entry)
+(import semantic.index.sparse.m00)
+(import semantic.index.sparse.m01)
+(import semantic.index.sparse.m02)
+(import semantic.index.sparse.m03)
+(import semantic.index.sparse.m04)
+(import semantic.index.sparse.m05)
+(import semantic.index.sparse.m06)
+(import semantic.index.sparse.m07)
+(import semantic.index.sparse.m08)
+(import semantic.index.sparse.m09)
+(import semantic.index.sparse.m10)
+(import semantic.index.sparse.m11)
+(define sparse-value-00 : i64 (m00.sparse-candidate 0))
+(define sparse-value-01 : i64 (m01.sparse-candidate 1))
+(define sparse-value-02 : i64 (m02.sparse-candidate 2))
+(define sparse-value-03 : i64 (m03.sparse-candidate 3))
+(define sparse-value-04 : i64 (m04.sparse-candidate 4))
+(define sparse-value-05 : i64 (m05.sparse-candidate 5))
+(define sparse-value-06 : i64 (m06.sparse-candidate 6))
+(define sparse-value-07 : i64 (m07.sparse-candidate 7))
+(define sparse-value-08 : i64 (m08.sparse-candidate 8))
+(define sparse-value-09 : i64 (m09.sparse-candidate 9))
+(define sparse-value-10 : i64 (m10.sparse-candidate 10))
+(define sparse-value-11 : i64 (m11.sparse-candidate 11))"]
+    (match (compiler-check-source-index-with-roots path source (svec.new))
+      [(ResultCompilerCheckWithSemanticIndex.Ok _ index)
+        (let
+          [candidate-index : i64 0]
+          [sparse-macro-count : i64 0]
+          (begin
+            (while (< candidate-index index.top-candidate-len)
+              (begin
+                (if (string.eq
+                  (array-ref index.top-labels candidate-index)
+                  "sparse-candidate")
+                  (set! sparse-macro-count (+ sparse-macro-count 1))
+                  unit)
+                (set! candidate-index (+ candidate-index 1))))
+            (let
+              [ok : bool
+                (and
+                  (>= index.module-len 12)
+                  (= sparse-macro-count 12)
+                  (< sparse-macro-count (* 12 index.module-len))
+                  (=
+                    (array-length index.top-candidates)
+                    index.top-candidate-len)
+                  (= (array-length index.top-labels) index.top-candidate-len)
+                  (=
+                    (array-length index.top-visible-bindings)
+                    index.top-candidate-len))]
+              (begin
+                (compiler-semantic-source-index-release! (&mut index))
+                (and
+                  ok
+                  (=
+                    (compiler-semantic-source-index-live-owner-count)
+                    owners-before))))))]
+      [(ResultCompilerCheckWithSemanticIndex.Partial _ partial)
+        (begin
+          (compiler-semantic-source-index-release! (&mut partial))
+          false)]
+      [(ResultCompilerCheckWithSemanticIndex.Err _) false])))
+
 (define (compiler-check-semantic-index-ok?) : bool
   (and
     (compiler-check-semantic-index-base-ok?)
@@ -13241,4 +13397,5 @@
     (compiler-check-semantic-index-dense-scopes-ok?)
     (compiler-check-semantic-index-partial-ok?)
     (compiler-check-semantic-index-canonical-ok?)
-    (compiler-check-semantic-index-nominal-members-ok?)))
+    (compiler-check-semantic-index-nominal-members-ok?)
+    (compiler-check-semantic-index-exact-top-candidate-storage-ok?)))

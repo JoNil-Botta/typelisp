@@ -5010,32 +5010,8 @@
 ;; report zeros, which the profile harness does not assert on.
 (cfg
   compile-profile
-  (define compiler-tc-walk-clock-scratch : (__tl_dyn-array i64)
-    (__tl_make-array i64 2)))
-
-(cfg
-  compile-profile
   (define (compiler-tc-walk-now-ns) : i64
-    (cfg
-      windows
-      0
-      (let
-        [addr : i64
-          (unsafe
-            (cast
-              (ptr->int
-                (ptr-cast
-                  (__tl_array-data compiler-tc-walk-clock-scratch)
-                  : (Ptr u8)))
-              : i64))]
-        [status : i64
-          (unsafe
-            (syscall 228 1 addr))]
-        (if (< status 0)
-          0
-          (+
-            (* (array-ref compiler-tc-walk-clock-scratch 0) 1000000000)
-            (array-ref compiler-tc-walk-clock-scratch 1)))))))
+    (cfg windows 0 (profile.now-ticks))))
 
 (cfg
   compile-profile

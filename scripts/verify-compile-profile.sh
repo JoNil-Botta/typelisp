@@ -1640,9 +1640,29 @@ if [ "$NL_HOST_OS" = windows ]; then
     # #6877's loop-postcondition bounds-check memo crossed the pre-ownership
     # graph from 47 to 48 segments (3,083,453 used nodes), but the combined
     # ownership graph remains within this exact 73-segment boundary.
+    # On the pre-ownership graph, composing #6840's semantic workspace rename
+    # provider with #6827 measured 3,029,193 used nodes and retained the same
+    # boundary.
+    # #6855's optimizer/backend/regalloc packets (guard algebra, if-convert casts,
+    # load-CSE precision and join phis, lea/cmov emission, sibling-phi threading,
+    # length-equality families, local splits, invariant-load rematerialisation)
+    # rebased onto #6867's core fixed-array operations stay at 47 segments: the
+    # authoritative Windows probe measured 3,074,738 used nodes, 3,080,192
+    # capacity, and 98,566,144 physical payload bytes.
+    # #6650's direct format sink plan and stdio macro family independently stay
+    # at that boundary on the same base. Composing #6650 with #6873's unsafe
+    # raw-pointer formatter crossed to 48 segments: the authoritative Windows
+    # CI probe measured 3,091,775 used nodes, 3,145,728 capacity, and 100,663,296
+    # physical payload bytes.
+    # #6877's loop-postcondition bounds-check memo (~1,800 compiler-source lines)
+    # independently crossed ast_expr_pool.macro_expand from 47 to 48 segments:
+    # the authoritative Windows probe measured 3,083,453 used nodes, 3,145,728
+    # 100,663,296 physical payload bytes.
     # On the pre-#6877 tree, #6783's integer and float exponent formatting
     # independently crossed the same boundary: the authoritative Windows CI
     # probe measured 3,080,997 used nodes with the same capacity and payload.
+    # The direct-format additions are composed with the ownership tree here;
+    # the ownership pin remains exact pending the required Windows profile.
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_expr_pool macro_expand 73 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
@@ -1700,6 +1720,13 @@ if [ "$NL_HOST_OS" = windows ]; then
     # Merging #6877's loop-postcondition memo into the ownership tree crosses
     # the next boundary: the authoritative Windows CI probe measured 3,687,354
     # used nodes, 3,735,552 capacity, and 119,537,664 physical payload bytes.
+    # On the pre-ownership graph,
+    # #6855's allocator packets (local splits, invariant-load rematerialisation)
+    # on top of its optimizer packets crossed ast_expr_pool.typecheck from 38 to
+    # 39 segments. #6650's direct format sink plan and stdio macro family
+    # independently cross the same boundary on the #6867 base. The last
+    # authoritative Windows probes measured 2,507,253 and 2,491,282 used nodes
+    # respectively, with 2,555,904 capacity and 81,788,928 physical bytes.
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_expr_pool typecheck 57 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"

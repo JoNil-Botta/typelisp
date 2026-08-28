@@ -2626,7 +2626,7 @@ and owned `String` results for allocation sites.
 | Category | Members | Ownership contract |
 |----------|---------|--------------------|
 | Non-consuming text inspection | Imported `stdlib/string.tl` helpers `string-length`, `string-ref`/`char-at`, `string-eq`/`string=?`, `string.>int`, and predicates such as `string-contains`, `string-contains-char`, and `is-string-prefix-at` | Accept borrowed `(& r str)` inputs and return scalars. They do not move or allocate text. |
-| Text output and diagnostics | `format.format`, `io.print-format`/`io.println`, `io.print-error`, `io.stdout-write`/`io.stderr-write`, `panic`/`error`, process stdin strings | Format macros accept supported values and materialize one active-arena `String`; diagnostic text accepts borrowed `(& r str)`, and raw output accepts borrowed `(& r bytes)`. Text-to-binary I/O conversion is explicit. |
+| Text output and diagnostics | `format.format`, `format.write!`/`format.writeln!`, `io.print`/`io.println`, `io.eprint`/`io.eprintln`, `io.print-error`, `io.stdout-write`/`io.stderr-write`, `panic`/`error`, process stdin strings | `format.format` materializes one active-arena `String`. Writer and stdio format macros stream the same literal plan without a combined String; individual scalar conversions and nominal `to-string` hooks may still allocate. Diagnostic text accepts borrowed `(& r str)`, and raw output accepts borrowed `(& r bytes)`. Text-to-binary I/O conversion is explicit. |
 | Active-arena owned string results | `arg`, `int->string`, `str-cat`/low-level concat primitives, `substring`/`string-slice`, stdlib trim/replacement helpers when they build text, env/path split/join helpers | Return owned `String` storage allocated in the active arena. Results created inside a scoped arena cannot escape that arena. |
 | Borrowed string views | `substring-view`/`string-slice-view`, stdlib trim `*-view` helpers | Return `(& r str)` views tied to the input lifetime. Bounds traps match the owned-copy APIs. They do not copy bytes; a runtime helper may allocate fixed metadata for the view record, but it does not take ownership of or extend the backing bytes. |
 | Caller-provided fallback/result values | `stdlib/string.tl` `string-replace` when no match is found, `stdlib/io.tl` `read-file-or` `ByteBuf` fallback paths; companion modules `stdlib/string_caller_result.tl` and `stdlib/io_caller_result.tl` | Preserve the caller-owned value instead of allocating. The I/O companion is an explicit binary-to-text materialization boundary for callers that need a borrowed textual fallback. |
@@ -6150,10 +6150,12 @@ names are unbound source names. The backend may emit private runtime symbols
 used by the stdlib extern wrappers; user code must not call private names
 directly.
 
-**Printing and failure.** `print-format` and `println` are the `stdlib.io`
-value-output macros; `format.format` returns the same formatted text as a
-`String`. `stdout-write` and `stderr-write` provide lower-level borrowed-byte
-output, while `print-error`, `panic`, and `error` accept borrowed text. These
+**Printing and failure.** `print`/`println` and `eprint`/`eprintln` are the
+`stdlib.io` value-output macro pairs; `print-format` is a migration alias for
+`print`. `format.format` returns the same formatted text as a `String`, while
+`format.write!`/`format.writeln!` stream it into a mutable writer and return
+`FormatResult`. `stdout-write` and `stderr-write` provide lower-level
+borrowed-byte output, while `print-error`, `panic`, and `error` accept borrowed text. These
 are ordinary standard-library definitions; unimported uses are unbound source
 names. `panic` and `error`
 report a failure and terminate the process; `error` is an alias for `panic`,
@@ -6315,10 +6317,12 @@ The deprecated `string-append` and
 `tl_string_concat*` remains a runtime-plan compatibility ABI documented below.
 
 **Literal formatting and nominal display.** `stdlib.format` owns the literal
-`format` macro, its template scanner, all placeholder dispatch, and scalar
-conversion. `stdlib.io` depends on that module: `io.print-format` writes the
-result of the same formatter unchanged and `io.println` writes that result plus
-one newline. `stdlib.format` must not import `stdlib.io`.
+`format`, `write!`, and `writeln!` macros, their template scanner, all
+placeholder dispatch, scalar conversion, and the shared `Formatter` /
+`FormatResult` writer ABI. `stdlib.io` depends on that module: `io.print` and
+`io.eprint` stream the same plan to stdout and stderr, while the `*ln` siblings
+append exactly one newline. `io.print-format` is a migration alias for
+`io.print`. `stdlib.format` must not import `stdlib.io`.
 
 Templates accept implicit `{}`, zero-based indexed `{0}`, and named `{name}`
 placeholders plus `{{` / `}}` escapes. Each `{}` selects and advances an
@@ -6470,6 +6474,21 @@ If neither spelling exists, if an existing spelling has the wrong signature,
 or if both spellings match the same nominal type, macro expansion fails with a
 diagnostic naming the owner and expected contract. The last case is ambiguous
 and programs must retain exactly one applicable spelling.
+
+`format.write! writer template ...` and `format.writeln!` accept a mutable
+nominal writer place. The writer's canonical owner module defines exactly one
+of `format-write-raw` or `format-write-raw-<NominalName>` with signature
+`(i64, (Ptr u8), i64) -> i64`, plus the corresponding `format-writer-cell` or
+`format-writer-cell-<NominalName>` helper with signature `T -> (Array T 1)`.
+The fixed cell gives the synchronous callback stable caller-owned storage; the
+opaque context denotes its address, and the byte pointer is valid only for that
+call. Status zero means success and a nonzero value is a destination failure.
+`FormatResult` is `FormatOk` or `FormatErr status`; the formatter retains the
+first failure and skips every later plan piece and newline. `ByteBuf`, `TextBuf`,
+and `FileHandle` provide both adapter functions. Stdout and stderr use the same
+raw callback contract without a writer cell. Direct sinks do not allocate the
+final combined String, although scalar conversion, option rendering, TextBuf's
+retained chunk copies, and nominal `to-string` hooks may allocate.
 
 **Byte buffers.** `ByteBuf` and `bytes` are specified in section 3.11 as
 stdlib/language surface, not implicit compiler builtins. There is no
@@ -7122,7 +7141,7 @@ from escaping.
 | Returns active-arena owned data | private `__tl_make-array`, `box`, `arg`, `read-file`, `file-read-chunk`, `read-stdin-line`, `read-stdin-bytes`, `str-cat`/low-level concat primitives, `substring`/`string-slice`, `int->string`, `ByteBuf` construction/growth/copy-result helpers, stdlib trimming/replacement helpers when they build a new string | Fresh storage is allocated in the active arena and cannot escape a scoped arena. |
 | Returns caller-provided data | `stdlib.string` `string-replace` when no match is found; `stdlib.io` `read-file-or` when the path is missing | Returns the caller-provided aggregate unchanged. Reference-typed signatures express the caller-owned result; without lifetime information in the signature, the conservative arena-tagging rule above applies inside a scoped arena. |
 | Mutates caller-provided storage | `(set! (array-ref place index) value)`, `byte-buf-set!`/`bytes-set!` mutation helpers | Mutates storage named by the caller; it does not allocate unless an owned-buffer growth operation is explicitly requested. Region checks reject storing shorter-lived aggregate handles into longer-lived containers, and borrowed `bytes` mutation requires an exclusive mutable view. |
-| Host/runtime IO | `print-format`/`println`, `stdout-write`/`stderr-write`, `panic`/`error`, `flush-stdout`, `write-file`, `file-exists?`, stdlib IO helpers | Performs target IO. Format macros allocate one active-arena result string; binary writes borrow `bytes` directly. |
+| Host/runtime IO | `format.write!`/`format.writeln!`, `print`/`println`, `eprint`/`eprintln`, `stdout-write`/`stderr-write`, `panic`/`error`, `flush-stdout`, `write-file`, `file-exists?`, stdlib IO helpers | Performs target IO. Direct format sinks stream plan pieces without a combined result String; conversions and owner `to-string` hooks retain their documented allocation behavior. Binary writes borrow `bytes` directly. |
 
 The owned `String` / borrowed `str` source contract, together with the
 `ByteBuf` / borrowed `bytes` binary-storage contract, is specified in section
@@ -8184,20 +8203,22 @@ the compile-time length.
 
 (define (main) : i64
   (begin
-    (io.print-format "{}" "hello\n")
+    (io.println "{}" "hello")
     0))  ; prints hello + newline, returns 0
 ```
 
-`format.format`, `io.print-format`, and `io.println` are the public
-value-formatting conveniences. The output macros' first argument is the same
+`format.format`, `format.write!`/`format.writeln!`, and the `io.print` /
+`io.println` / `io.eprint` / `io.eprintln` family are the public
+value-formatting conveniences. Their template argument is the same
 Rust-style literal template accepted by `format.format`, including implicit,
 indexed, named, and call-site-captured selections plus `{{` / `}}` escapes;
-`print-format` writes exactly the formatted text and `println` performs one
-additional newline write. `print-error` remains the direct borrowed-text
+`print`/`eprint` write exactly the formatted text and the `*ln` forms perform
+one additional newline write. `print-format` remains a migration alias for
+`print`. `print-error` remains the direct borrowed-text
 diagnostic helper, and `stdout-write` / `stderr-write` remain the low-level
 borrowed-byte output surface. All placeholder conversion, including the canonical
 owner-module nominal display protocol specified in section 6.1, is therefore
-identical between `format.format`, `io.print-format`, and `io.println`.
+identical between String, writer, stdout, and stderr targets.
 
 ### Extern call
 

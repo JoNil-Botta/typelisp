@@ -15,7 +15,10 @@
 (import (vector.vector String) as lint_svec)
 (import compiler_ast_types as ast)
 (import compiler_load)
+(import compiler_parse_core as parser)
+(import compiler_target_cfg_core as target_cfg)
 (import package_source_core)
+(import sym_i64_env)
 
 (define (selfhost-lint-write-text [path : String] [contents : String]) : unit
   (io.write-file path (byte_buf.str-as-bytes (& contents))))
@@ -366,6 +369,15 @@ end
   (define (experimental-helper) : i64 9))
 (define (ordinary-mode-helper) : i64 1)
 (define (ordinary-unused) : i64 0)")
+
+(define (selfhost-lint-package-dead-platform-cfg-source) : String
+  "(define (main) : i64
+  (cfg compile-profile (profile-clock) 42))
+(cfg compile-profile
+  (define profile-clock-storage : i64 0))
+(cfg compile-profile
+  (define (profile-clock) : i64
+    (cfg windows 0 profile-clock-storage)))")
 
 (define (selfhost-lint-package-dead-qualified-left-source) : String
   "(module left)
@@ -1081,6 +1093,33 @@ end
       scan.roots
       0)))
 
+(define (selfhost-lint-package-dead-code-platform-cfg-fixture-decls
+  [target : target_cfg.CompilerTargetCfg]) : lint_driver_core.SelfhostLintDeadDecls
+  (let
+    [source : String (selfhost-lint-package-dead-platform-cfg-source)]
+    [cfgs : sym_i64_env.SymI64Env
+      (parser.compiler-cfg-union
+        (target_cfg.compiler-target-cfgs target (parser.compiler-cfg-empty))
+        "compile-profile")]
+    [scan-source : lint_driver_core.SelfhostLintDeadScan
+      (lint_driver_core.selfhost-lint-dead-scan-source-with-cfgs
+        (lint_driver_core.SelfhostLintDeadScan
+          (lint_driver_core.selfhost-lint-dead-decls-empty)
+          (lint_svec.new))
+        "pkg/platform_cfg.tl"
+        source
+        false
+        true
+        cfgs)]
+    [scan : lint_driver_core.SelfhostLintDeadScan
+      (lint_driver_core.selfhost-lint-package-dead-add-kind-roots
+        scan-source
+        CompilerPkgKindBin)]
+    (lint_driver_core.selfhost-lint-dead-mark-roots-from
+      scan.decls
+      scan.roots
+      0)))
+
 (define (selfhost-lint-package-dead-qualified-import-fixture-decls) : lint_driver_core.SelfhostLintDeadDecls
   (let
     [left-source : String (selfhost-lint-package-dead-qualified-left-source)]
@@ -1310,6 +1349,28 @@ end
       (lint_driver_core.selfhost-lint-dead-decls-index-of
         cfg-bin-decls
         "ordinary-mode-helper")]
+    [platform-cfg-source : String
+      (selfhost-lint-package-dead-platform-cfg-source)]
+    [platform-linux-decls : lint_driver_core.SelfhostLintDeadDecls
+      (selfhost-lint-package-dead-code-platform-cfg-fixture-decls
+        target_cfg.CompilerTargetCfg.Linux)]
+    [platform-windows-decls : lint_driver_core.SelfhostLintDeadDecls
+      (selfhost-lint-package-dead-code-platform-cfg-fixture-decls
+        target_cfg.CompilerTargetCfg.Windows)]
+    [platform-linux-count : i64
+      (lint_driver_core.selfhost-lint-package-dead-count-for-source
+        "pkg/platform_cfg.tl"
+        platform-cfg-source
+        platform-linux-decls)]
+    [platform-windows-count : i64
+      (lint_driver_core.selfhost-lint-package-dead-count-for-source
+        "pkg/platform_cfg.tl"
+        platform-cfg-source
+        platform-windows-decls)]
+    [platform-windows-storage-index : i64
+      (lint_driver_core.selfhost-lint-dead-decls-index-of
+        platform-windows-decls
+        "profile-clock-storage")]
     [qualified-import-decls : lint_driver_core.SelfhostLintDeadDecls
       (selfhost-lint-package-dead-qualified-import-fixture-decls)]
     [qualified-left-count : i64
@@ -1365,6 +1426,19 @@ end
                 ordinary-mode-index)
               root)))
         66]
+      ;; Target cfgs remain exact inside the supported compile-profile union.
+      ;; Linux retains the profile clock's storage edge; Windows selects the
+      ;; zero-valued clock arm and reports that profile-only storage as dead.
+      [(not (= platform-linux-count 0)) 67]
+      [(or
+          (not (= platform-windows-count 1))
+          (< platform-windows-storage-index 0)
+          (__tl-project-field
+            (lint_driver_core.selfhost-lint-dead-decls-ref
+              platform-windows-decls
+              platform-windows-storage-index)
+            root))
+        68]
       [(not (selfhost-lint-package-dead-import-closure-fixture-ok?)) 58]
       [(not (= qualified-left-count 1)) 59]
       [(not (= qualified-right-count 0)) 60]

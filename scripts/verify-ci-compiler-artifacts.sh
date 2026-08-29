@@ -218,6 +218,27 @@ validate_checked_in_inventory() {
         "$ROOT/scripts/verify-native-link-linux.sh" >/dev/null
 }
 
+validate_required_record_wiring() {
+    _wiring_inventory=$1
+    shift
+    _wiring_records="$FIXTURE/required-record-ids.txt"
+    awk -F '\t' '$14 == "required" { print $2 }' \
+        "$_wiring_inventory" > "$_wiring_records"
+    while IFS= read -r _wiring_record; do
+        _wiring_found=0
+        for _wiring_source do
+            if grep -F "$_wiring_record" "$_wiring_source" >/dev/null; then
+                _wiring_found=1
+                break
+            fi
+        done
+        [ "$_wiring_found" -eq 1 ] || {
+            echo "required record is not wired: $_wiring_record" >&2
+            return 1
+        }
+    done < "$_wiring_records"
+}
+
 validate_ci_artifact_call_arities() {
     awk '
     function fail(message) {
@@ -376,6 +397,10 @@ validate_hosted_trace() {
 }
 
 validate_checked_in_inventory
+validate_required_record_wiring \
+    "$INVENTORY" \
+    "$ROOT/scripts/ci-verify.sh" \
+    "$ROOT/scripts/verify-native-link-linux.sh"
 validate_ci_artifact_call_arities \
     "$ROOT/scripts/ci-verify.sh" \
     "$ROOT/scripts/verify-native-link-linux.sh" \
@@ -399,6 +424,16 @@ EOF
 sed 's/^@//' "$ARITY_BAD_TEMPLATE" > "$ARITY_BAD"
 expect_failure call-site-arity 'publish expects 15 arguments, got 16' \
     validate_ci_artifact_call_arities "$ARITY_BAD"
+
+WIRING_INVENTORY="$FIXTURE/wiring-inventory.tsv"
+WIRING_SOURCE="$FIXTURE/wiring-source.sh"
+cat > "$WIRING_INVENTORY" <<'EOF'
+1	wired-producer	gate	all	produce	producer	target	cfg	opt	profile	sources	kind	group	required	decision	owner	notes
+1	missing-consumer	gate	all	consume	producer	target	cfg	opt	profile	sources	kind	group	required	decision	owner	notes
+EOF
+printf '%s\n' 'wired-producer' > "$WIRING_SOURCE"
+expect_failure record-wiring 'required record is not wired: missing-consumer' \
+    validate_required_record_wiring "$WIRING_INVENTORY" "$WIRING_SOURCE"
 
 if [ -n "$TRACE_VALIDATION_FILE" ]; then
     validate_hosted_trace "$TRACE_VALIDATION_FILE" "$TRACE_VALIDATION_HOST"

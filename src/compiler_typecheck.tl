@@ -414,6 +414,24 @@
   "(define (main [flag : bool]) : i64
   (if flag 1 false))")
 
+(define (compiler-typecheck-unop-diagnostic-tests-ok?) : bool
+  (and
+    (compiler-typecheck-error-ok?
+      "(define (main) : i64 (neg true))"
+      "typecheck: neg expects integer or float")
+    (compiler-typecheck-error-ok?
+      "(define (main) : i64 (neg (tuple 1 2)))"
+      "typecheck: neg expects integer or float")
+    (compiler-typecheck-ok? "(define (main) : i64 (neg 3))")
+    (compiler-typecheck-ok? "(define (main) : f32 (neg 1.0))")
+    (compiler-typecheck-ok? "(define (main) : f64 (neg 2.0))")
+    (compiler-typecheck-error-ok?
+      "(define (main) : i64 (not 3))"
+      "typecheck: not expects bool")
+    (compiler-typecheck-error-ok?
+      "(define (main) : i64 (bit-not true))"
+      "typecheck: bit-not expects integer")))
+
 (define (compiler-typecheck-escape-return-diagnostic-source) : String
   "(define (main [n : i64]) : (& n i64)
   (let [x : i64 1] (& x)))")
@@ -4937,6 +4955,13 @@
     [items : (Array (& n i64) 1) (array (& n))]
     (let [value : (& n i64) (array-ref items 0)] 0)))")
 
+(define (compiler-typecheck-reference-tuple-borrow-source) : String
+  "(define (take [pair : (& pair (Tuple (& n i64) i64))]) : i64 42)
+(define (main [n : i64]) : i64
+  (let
+    [pair : (Tuple (& n i64) i64) (tuple (& n) 7)]
+    (take (& pair))))")
+
 (define (compiler-typecheck-reference-struct-return-source) : String
   "(defstruct RefBox (value (& n i64)))
 (define (main [n : i64]) : RefBox
@@ -5377,6 +5402,9 @@
     [array-stored-ok : bool
       (compiler-typecheck-ok?
         (compiler-typecheck-reference-array-stored-source))]
+    [tuple-borrow-ok : bool
+      (compiler-typecheck-ok?
+        (compiler-typecheck-reference-tuple-borrow-source))]
     [struct-return-error-ok : bool
       (compiler-typecheck-error-ok?
         (compiler-typecheck-reference-struct-return-source)
@@ -5541,6 +5569,9 @@
         unit
         (set! ok false))
       (if array-stored-ok
+        unit
+        (set! ok false))
+      (if tuple-borrow-ok
         unit
         (set! ok false))
       (if struct-return-error-ok
@@ -12858,6 +12889,9 @@
     (if (compiler-typecheck-mismatch-detail-tests-ok?)
       unit
       (io.panic "typecheck: mismatch detail tests failed"))
+    (if (compiler-typecheck-unop-diagnostic-tests-ok?)
+      unit
+      (io.panic "typecheck: unop diagnostic tests failed"))
     (if (compiler-typecheck-escape-diagnostic-tests-ok?)
       unit
       (io.panic "typecheck: escape diagnostic tests failed"))

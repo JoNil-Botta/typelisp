@@ -742,9 +742,28 @@ assert_lower_row() {
 # Linux, and a broken checker there would land silently.
 selfhost_pool_family_self_test
 
-echo "[compile-profile] build embedded stdlib tlci input"
-scripts/build-embedded-stdlib-tlci.sh \
-    "$COMPILER" target/embedded-stdlib-tlci/stdlib.tlci "$NL_HOST_OS"
+case "${TYPELISP_COMPILE_PROFILE_EMBEDDED_TLCI_REUSE:-0}" in
+    0)
+        echo "[compile-profile] build embedded stdlib tlci input"
+        scripts/build-embedded-stdlib-tlci.sh \
+            "$COMPILER" target/embedded-stdlib-tlci/stdlib.tlci "$NL_HOST_OS"
+        ;;
+    1)
+        echo "[compile-profile] reuse validated embedded stdlib tlci input"
+        for reuse_file in \
+            target/embedded-stdlib-tlci/stdlib.tlci \
+            target/embedded-stdlib-tlci/stdlib.tlci.tlch \
+            target/embedded-stdlib-tlci/modules.txt \
+            "target/embedded-stdlib-tlci/prelude-surface-$NL_HOST_OS.rodata" \
+            target/embedded-stdlib-tlci/source-hash.txt; do
+            [ -s "$reuse_file" ] || \
+                fail "validated embedded tlci handoff is missing: $reuse_file"
+        done
+        ;;
+    *)
+        fail "TYPELISP_COMPILE_PROFILE_EMBEDDED_TLCI_REUSE must be 0 or 1"
+        ;;
+esac
 if PRODUCER_IDENTITY=$($COMPILER --producer-identity 2>/dev/null); then
     :
 else
@@ -1714,10 +1733,12 @@ if [ "$NL_HOST_OS" = windows ]; then
     # On the pre-#6877 tree, #6783's integer and float exponent formatting
     # independently crossed the same boundary: the authoritative Windows CI
     # probe measured 3,080,997 used nodes with the same capacity and payload.
-    # The direct-format additions are composed with the ownership tree here;
-    # the ownership pin remains exact pending the required Windows profile.
+    # #6650's retained Arguments renderer and unified writer/stdio macro family
+    # cross the ownership-composed macro-expand boundary from 73 to 74 segments:
+    # the authoritative Windows CI probe measured 4,802,959 used nodes,
+    # 4,849,664 capacity, and 155,189,248 physical payload bytes.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool macro_expand 73 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool macro_expand 74 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # The three dense optimizer plan containers crossed the checked expression
     # graph into its 33rd segment; the accessor-admission/absorption/fold/sinking

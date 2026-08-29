@@ -123,6 +123,7 @@ slice_split_at_shadow_check_ok|check-ok|tests/safety/slice_split_at_shadow_check
 compiler_intern_structural_to_name_reject|check-fail|tests/safety/compiler_intern_structural_to_name_reject.tl|-|expected compiler_intern/InternId, found i64
 compiler_intern_raw_to_syntax_reject|check-fail|tests/safety/compiler_intern_raw_to_syntax_reject.tl|-|expected compiler_intern/InternSyntaxId, found i64
 compiler_intern_syntax_to_name_reject|check-fail|tests/safety/compiler_intern_syntax_to_name_reject.tl|-|expected compiler_intern/InternId, found compiler_intern/InternSyntaxId
+compiler_lower_private_to_name_reject|check-fail|tests/safety/compiler_lower_private_to_name_reject.tl|-|expected compiler_intern/InternId, found compiler_intern_state/InternLowerPrivateIdentity
 compiler_ast_structural_export_reject|check-fail|tests/safety/compiler_ast_structural_export_reject.tl|-|expected compiler_intern/InternId, found compiler_intern/InternSyntaxId
 compiler_ast_raw_extern_symbol_reject|check-fail|tests/safety/compiler_ast_raw_extern_symbol_reject.tl|-|expected compiler_intern/InternId, found i64
 compiler_ast_raw_cleanup_name_reject|check-fail|tests/safety/compiler_ast_raw_cleanup_name_reject.tl|-|expected compiler_intern/InternSyntaxId, found i64
@@ -245,6 +246,8 @@ format_pointer_mut_ref_reject|check-fail|tests/safety/format_pointer_mut_ref_rej
 format_pointer_nominal_reject|check-fail|tests/safety/format_pointer_nominal_reject.tl|-|format: 'p' selector requires (Ptr T), (MutPtr T), or a shared borrow of a raw-pointer value
 format_pointer_slice_reject|check-fail|tests/safety/format_pointer_slice_reject.tl|-|format: 'p' selector requires (Ptr T), (MutPtr T), or a shared borrow of a raw-pointer value
 format_pointer_string_reject|check-fail|tests/safety/format_pointer_string_reject.tl|-|format: 'p' selector requires (Ptr T), (MutPtr T), or a shared borrow of a raw-pointer value
+format_arguments_lifetime_escape_reject|check-fail|tests/safety/format_arguments_lifetime_escape_reject.tl|-|reference value would escape lexical scope
+format_direct_hook_wrong_signature_reject|check-fail|tests/safety/format_direct_hook_wrong_signature_reject.tl|-|call `format-write` argument 1
 safe_syscall_reject|check-fail|tests/safety/safe_syscall_reject.tl|-|syscall requires unsafe context
 manual_arena_reset_unsafe_reject|check-fail|tests/safety/manual_arena_reset_unsafe_reject.tl|-|arena/rewind requires unsafe context
 with_scratch_function_reject|check-fail|tests/safety/with_scratch_function_reject.tl|-|with-scratch result type is not clone-supported

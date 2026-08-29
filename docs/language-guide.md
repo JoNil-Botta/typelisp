@@ -224,7 +224,10 @@ the server host and accepts `target` plus a string-array `cfg` in
 struct patterns, `_`), `ann`, `cast`, `return`, `try`, `foreach`,
 `spmd-reduce`, `spmd-scan`; arithmetic (`+ - * / %`), comparison
 (`= != < <= > >=`), boolean (`and` `or`), and bitwise/shift (`bit-and`
-`bit-or` `bit-xor` `shl` `shr`) operators. Dotted syntax `place.field` reads a
+`bit-or` `bit-xor` `shl` `shr`) operators. Unary operators are prefix forms
+too: `(neg x)` negates a numeric operand (negation is not spelled with a unary
+`-`), `(not x)` negates a `bool`, and `(bit-not x)` complements an integer.
+Dotted syntax `place.field` reads a
 struct field, and `(set! place.field value)` writes in place. Tuple slots and
 array elements use `tuple-ref` and `array-ref`; every direct write still uses
 `set!`.

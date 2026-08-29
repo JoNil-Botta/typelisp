@@ -341,6 +341,38 @@ run_expect_failure compile-missing-source "$COMPILER" compile
 assert_empty "$WORKDIR/compile-missing-source.stdout"
 assert_contains "$WORKDIR/compile-missing-source.stderr" "compile: expected source path"
 
+# #6759: an unresolved qualified name reached through an imported module graph
+# must produce the normal typecheck diagnostic and exit cleanly. The failure
+# has to be exit status 1 exactly: a segmentation fault or any other signal
+# exit (>= 128) is the bug this case exists to catch.
+UNRESOLVED_HELPER="$WORKDIR/unresolved-qualified-helper.tl"
+UNRESOLVED_SUITE="$WORKDIR/unresolved-qualified-suite.tl"
+cat > "$UNRESOLVED_HELPER" <<'EOF'
+(define (helper-use) : i64
+  (owned_view.compiler-owned-shared-view 0))
+EOF
+cat > "$UNRESOLVED_SUITE" <<'EOF'
+(import unresolved-qualified-helper)
+(define (main) : i64 0)
+EOF
+set +e
+# cli-gate-case stage1-wrapper-compile-unresolved-qualified-name direct "$COMPILER"
+"$COMPILER" compile "$UNRESOLVED_SUITE" -o "$WORKDIR/unresolved-qualified.s" \
+  > "$WORKDIR/compile-unresolved-qualified-name.stdout" \
+  2> "$WORKDIR/compile-unresolved-qualified-name.stderr"
+unresolved_status=$?
+set -e
+if [ "$unresolved_status" -ne 1 ]; then
+    echo "unresolved qualified name in imported graph must exit 1, got $unresolved_status" >&2
+    cat "$WORKDIR/compile-unresolved-qualified-name.stderr" >&2 || true
+    exit 1
+fi
+assert_empty "$WORKDIR/compile-unresolved-qualified-name.stdout"
+assert_contains "$WORKDIR/compile-unresolved-qualified-name.stderr" \
+  "error[E0200]: typecheck: unknown qualified name owned_view.compiler-owned-shared-view"
+assert_contains "$WORKDIR/compile-unresolved-qualified-name.stderr" \
+  "unresolved-qualified-helper.tl"
+
 # cli-gate-case stage1-wrapper-help wrapper run_capture
 run_capture help "$COMPILER" help
 assert_empty "$WORKDIR/help.stdout"

@@ -130,6 +130,44 @@
   (No)
   (Some InternArenaPhaseRecord))
 
+;; Lowering-only names are semantic keys, not source names. Keep the complete
+;; role family nominal and structural so adding a role cannot alias an existing
+;; one through a hand-maintained arithmetic lane width. Component-bearing
+;; variants retain the resource owner or loop-label ordinal that makes the key
+;; unique within one lowering session.
+(defenum InternLowerPrivateRecord
+  (SretParameter)
+  (CleanupStack)
+  (RegionReset)
+  (CleanupHidden i64)
+  (CleanupLiveness i64)
+  (RegionHidden i64)
+  (ArenaRestoreHidden i64)
+  (SpmdReduceAccumulator)
+  (SpmdReduceEnd)
+  (SpmdReduceValue)
+  (SpmdReduceCurrent)
+  (SpmdReduceStart)
+  (SpmdReduceUniform)
+  (SpmdScanAccumulator)
+  (SpmdScanEnd)
+  (SpmdScanValue)
+  (WhileExit i64)
+  (WhileHeader i64))
+
+(defstruct InternLowerPrivateIdentity
+  (value i64))
+
+(define (intern-lower-private-identity-size) : i64
+  (comptime (size-of (type InternLowerPrivateIdentity))))
+
+(defmacro (intern-lower-private-identity-raw [identity : Expr]) : i64
+  `(__tl-project-field-name ,identity "value"))
+
+(defenum InternMaybeLowerPrivateRecord
+  (No)
+  (Some InternLowerPrivateRecord))
+
 ;; Nominal one-word structural view of the compile-intern session. Its address
 ;; points at compiler_intern's combined source-name/structural owner record.
 (defstruct InternStructuralSessionHandle
@@ -1031,6 +1069,229 @@
     (intern-structural-session-macro-local-record
       handle
       (InternMacroLocalIdentity raw))))
+
+(define (intern-structural-session-lower-private-identity-for-components
+  [handle : InternStructuralSessionHandle]
+  [role : i64]
+  [component : i64]) : InternLowerPrivateIdentity
+  (InternLowerPrivateIdentity
+    (intern-structural-key-raw
+      (intern-structural-session-key
+        handle
+        (ci.intern-structural-kind-lower-private)
+        role
+        component
+        0))))
+
+(define (intern-structural-session-lower-private-component-identity
+  [handle : InternStructuralSessionHandle]
+  [role : i64]
+  [component : i64]) : InternLowerPrivateIdentity
+  (if (< component 0)
+    (ci.tl_oob_abort)
+    (intern-structural-session-lower-private-identity-for-components
+      handle
+      role
+      component)))
+
+(define (intern-structural-session-lower-private-identity
+  [handle : InternStructuralSessionHandle]
+  [record : InternLowerPrivateRecord]) : InternLowerPrivateIdentity
+  (match record
+    [(InternLowerPrivateRecord.SretParameter)
+      (intern-structural-session-lower-private-identity-for-components
+        handle
+        0
+        0)]
+    [(InternLowerPrivateRecord.CleanupStack)
+      (intern-structural-session-lower-private-identity-for-components
+        handle
+        1
+        0)]
+    [(InternLowerPrivateRecord.RegionReset)
+      (intern-structural-session-lower-private-identity-for-components
+        handle
+        2
+        0)]
+    [(InternLowerPrivateRecord.CleanupHidden owner-id)
+      (intern-structural-session-lower-private-component-identity
+        handle
+        3
+        owner-id)]
+    [(InternLowerPrivateRecord.CleanupLiveness owner-id)
+      (intern-structural-session-lower-private-component-identity
+        handle
+        4
+        owner-id)]
+    [(InternLowerPrivateRecord.RegionHidden owner-id)
+      (intern-structural-session-lower-private-component-identity
+        handle
+        5
+        owner-id)]
+    [(InternLowerPrivateRecord.ArenaRestoreHidden owner-id)
+      (intern-structural-session-lower-private-component-identity
+        handle
+        6
+        owner-id)]
+    [(InternLowerPrivateRecord.SpmdReduceAccumulator)
+      (intern-structural-session-lower-private-identity-for-components
+        handle
+        7
+        0)]
+    [(InternLowerPrivateRecord.SpmdReduceEnd)
+      (intern-structural-session-lower-private-identity-for-components
+        handle
+        8
+        0)]
+    [(InternLowerPrivateRecord.SpmdReduceValue)
+      (intern-structural-session-lower-private-identity-for-components
+        handle
+        9
+        0)]
+    [(InternLowerPrivateRecord.SpmdReduceCurrent)
+      (intern-structural-session-lower-private-identity-for-components
+        handle
+        10
+        0)]
+    [(InternLowerPrivateRecord.SpmdReduceStart)
+      (intern-structural-session-lower-private-identity-for-components
+        handle
+        11
+        0)]
+    [(InternLowerPrivateRecord.SpmdReduceUniform)
+      (intern-structural-session-lower-private-identity-for-components
+        handle
+        12
+        0)]
+    [(InternLowerPrivateRecord.SpmdScanAccumulator)
+      (intern-structural-session-lower-private-identity-for-components
+        handle
+        13
+        0)]
+    [(InternLowerPrivateRecord.SpmdScanEnd)
+      (intern-structural-session-lower-private-identity-for-components
+        handle
+        14
+        0)]
+    [(InternLowerPrivateRecord.SpmdScanValue)
+      (intern-structural-session-lower-private-identity-for-components
+        handle
+        15
+        0)]
+    [(InternLowerPrivateRecord.WhileExit ordinal)
+      (intern-structural-session-lower-private-component-identity
+        handle
+        16
+        ordinal)]
+    [(InternLowerPrivateRecord.WhileHeader ordinal)
+      (intern-structural-session-lower-private-component-identity
+        handle
+        17
+        ordinal)]))
+
+(define (intern-structural-session-lower-private-record
+  [handle : InternStructuralSessionHandle]
+  [identity : InternLowerPrivateIdentity]) : InternMaybeLowerPrivateRecord
+  (match (intern-structural-session-record-for-raw
+    handle
+    (intern-lower-private-identity-raw identity))
+    [(InternMaybeStructuralRecord.No) InternMaybeLowerPrivateRecord.No]
+    [(InternMaybeStructuralRecord.Some record)
+      (if (or
+        (not (= record.kind (ci.intern-structural-kind-lower-private)))
+        (not (= record.right-id 0))
+        (< record.middle-id 0))
+        InternMaybeLowerPrivateRecord.No
+        (let
+          [role : i64 record.left-id]
+          [component : i64 record.middle-id]
+          (cond
+            [(= role 0)
+              (if (= component 0)
+                (InternMaybeLowerPrivateRecord.Some
+                  InternLowerPrivateRecord.SretParameter)
+                InternMaybeLowerPrivateRecord.No)]
+            [(= role 1)
+              (if (= component 0)
+                (InternMaybeLowerPrivateRecord.Some
+                  InternLowerPrivateRecord.CleanupStack)
+                InternMaybeLowerPrivateRecord.No)]
+            [(= role 2)
+              (if (= component 0)
+                (InternMaybeLowerPrivateRecord.Some
+                  InternLowerPrivateRecord.RegionReset)
+                InternMaybeLowerPrivateRecord.No)]
+            [(= role 3)
+              (InternMaybeLowerPrivateRecord.Some
+                (InternLowerPrivateRecord.CleanupHidden component))]
+            [(= role 4)
+              (InternMaybeLowerPrivateRecord.Some
+                (InternLowerPrivateRecord.CleanupLiveness component))]
+            [(= role 5)
+              (InternMaybeLowerPrivateRecord.Some
+                (InternLowerPrivateRecord.RegionHidden component))]
+            [(= role 6)
+              (InternMaybeLowerPrivateRecord.Some
+                (InternLowerPrivateRecord.ArenaRestoreHidden component))]
+            [(= role 7)
+              (if (= component 0)
+                (InternMaybeLowerPrivateRecord.Some
+                  InternLowerPrivateRecord.SpmdReduceAccumulator)
+                InternMaybeLowerPrivateRecord.No)]
+            [(= role 8)
+              (if (= component 0)
+                (InternMaybeLowerPrivateRecord.Some
+                  InternLowerPrivateRecord.SpmdReduceEnd)
+                InternMaybeLowerPrivateRecord.No)]
+            [(= role 9)
+              (if (= component 0)
+                (InternMaybeLowerPrivateRecord.Some
+                  InternLowerPrivateRecord.SpmdReduceValue)
+                InternMaybeLowerPrivateRecord.No)]
+            [(= role 10)
+              (if (= component 0)
+                (InternMaybeLowerPrivateRecord.Some
+                  InternLowerPrivateRecord.SpmdReduceCurrent)
+                InternMaybeLowerPrivateRecord.No)]
+            [(= role 11)
+              (if (= component 0)
+                (InternMaybeLowerPrivateRecord.Some
+                  InternLowerPrivateRecord.SpmdReduceStart)
+                InternMaybeLowerPrivateRecord.No)]
+            [(= role 12)
+              (if (= component 0)
+                (InternMaybeLowerPrivateRecord.Some
+                  InternLowerPrivateRecord.SpmdReduceUniform)
+                InternMaybeLowerPrivateRecord.No)]
+            [(= role 13)
+              (if (= component 0)
+                (InternMaybeLowerPrivateRecord.Some
+                  InternLowerPrivateRecord.SpmdScanAccumulator)
+                InternMaybeLowerPrivateRecord.No)]
+            [(= role 14)
+              (if (= component 0)
+                (InternMaybeLowerPrivateRecord.Some
+                  InternLowerPrivateRecord.SpmdScanEnd)
+                InternMaybeLowerPrivateRecord.No)]
+            [(= role 15)
+              (if (= component 0)
+                (InternMaybeLowerPrivateRecord.Some
+                  InternLowerPrivateRecord.SpmdScanValue)
+                InternMaybeLowerPrivateRecord.No)]
+            [(= role 16)
+              (InternMaybeLowerPrivateRecord.Some
+                (InternLowerPrivateRecord.WhileExit component))]
+            [(= role 17)
+              (InternMaybeLowerPrivateRecord.Some
+                (InternLowerPrivateRecord.WhileHeader component))]
+            [else InternMaybeLowerPrivateRecord.No])))]))
+
+(define (intern-structural-session-lower-private-record-for-raw
+  [handle : InternStructuralSessionHandle]
+  [raw : i64]) : InternMaybeLowerPrivateRecord
+  (intern-structural-session-lower-private-record
+    handle
+    (InternLowerPrivateIdentity raw)))
 
 ;; Render boundary for mixed source/syntax ids. Nonzero handles prove ownership
 ;; and record kind in their explicit session before exposing a source spelling;

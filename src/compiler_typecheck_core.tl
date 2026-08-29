@@ -22660,22 +22660,25 @@
     (let
       [source-name-id : i64
         (macro-hygiene-global-source-name-id-or session name-id name-id)]
-      [slash : i64 (ci.intern-qualified-last-slash source-name-id)]
-      [n : i64 (string.string-length name)]
-      (and
-        (not (tc-hygiene-local-name-id? session name-id))
-        (not (tc-hygiene-global-name-id? session name-id))
-        (> slash 0)
-        (< slash (- n 1))))))
+      (if (not (tc-env-key-has-name-id? source-name-id))
+        false
+        (let
+          [slash : i64 (ci.intern-qualified-last-slash source-name-id)]
+          [n : i64 (string.string-length name)]
+          (and
+            (not (tc-hygiene-local-name-id? session name-id))
+            (not (tc-hygiene-global-name-id? session name-id))
+            (> slash 0)
+            (< slash (- n 1))))))))
 
 (test
-  tc-source-slash-qualified-private-name
+  tc-source-slash-qualified-negative-name
   (test.assert-false
     (tc-source-slash-qualified-id?
       (cis.InternStructuralSessionHandle 0)
-      "__lower_private"
-      (- 0 (+ (* (ci.intern-capacity) 4) 5)))
-    "lowerer-private names stay outside intern metadata"))
+      "__internal"
+      -1)
+    "negative internal names stay outside intern metadata"))
 
 (define (tc-name-slashes-to-dots [name : String]) : String
   (let
@@ -39364,7 +39367,7 @@
         (tc-integer-type? (tc-global-shared-view ty))
         (tc-float-type? (tc-global-shared-view ty)))
         (ResultTcType.Ok ty)
-        (ResultTcType.Err "typecheck: neg expects integer"))]
+        (ResultTcType.Err "typecheck: neg expects integer or float"))]
     [(ast.AstUnOp.BitNot)
       (if (tc-integer-type? (tc-global-shared-view ty))
         (ResultTcType.Ok ty)
@@ -61896,6 +61899,11 @@
 
 (define (tc-reference-containing-place-borrow-ok? [ty : ast.AstType]) : bool
   (match (tc-type-strip-region (tc-global-shared-view ty))
+    ;; Structural tuples preserve the lifetimes of their reference-bearing
+    ;; elements in the borrowed referent type. Lowering already walks the same
+    ;; tuple shape recursively, so borrowing the tuple's storage is no less
+    ;; representable than borrowing a lifetime-parameterized nominal below.
+    [(ast.AstType.Tuple _) true]
     [(ast.AstType.EnumArgs _ lifetimes)
       (>
         (tc-lifetime-list-count

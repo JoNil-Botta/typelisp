@@ -15,6 +15,7 @@
 (import compiler_specialize as spec)
 (import compiler_parse_core as parser)
 (import compiler_diagnostic as cdiag)
+(import compiler_owned_view as owned_view)
 (import stdlib.io)
 (import stdlib.string)
 
@@ -36,13 +37,20 @@
           ;; Grow the installed table without refreshing: a global-path floor
           ;; refresh for session B would move the global mark past mark-a.
           (ci.intern "driver-state-a/name.one.five")
-          (load.compiler-load-session-state-use-with-intern-state! session-b b)
+          (load.compiler-load-session-state-use-with-intern-state!
+            (owned_view.compiler-owned-shared-view session-b)
+            (owned_view.compiler-owned-shared-view b))
           ;; Full module/dotted metadata leaves B at 14 entries. Its owner-local
           ;; floor must observe that value without reading the installed table.
-          (ci.intern-compat-state-intern b "driver-state-b/name.two")
-          (ci.intern-compat-state-intern b "driver-state-b/name.two.five")
-          (ci.intern-compat-state-intern b "driver-state-b/name.two.nine")
-          (load.compiler-load-session-state-note-persistent-interns! session-b)
+          (ci.intern-compat-state-intern (&mut b) "driver-state-b/name.two")
+          (ci.intern-compat-state-intern
+            (&mut b)
+            "driver-state-b/name.two.five")
+          (ci.intern-compat-state-intern
+            (&mut b)
+            "driver-state-b/name.two.nine")
+          (load.compiler-load-session-state-note-persistent-interns!
+            (owned_view.compiler-owned-shared-view session-b))
           (and
             (= (driver-state-smoke-global-floor-mark) mark-a)
             (= (ci.intern-compat-state-table-id a) (ci.intern-active-table-id))
@@ -57,9 +65,12 @@
     [session-a : load.CompilerLoadSessionState
       (load.compiler-load-session-state-new)]
     (begin
-      (load.compiler-load-session-state-use-with-intern-state! session-a a)
+      (load.compiler-load-session-state-use-with-intern-state!
+        (owned_view.compiler-owned-shared-view session-a)
+        (owned_view.compiler-owned-shared-view a))
       (ci.intern "driver-state-a/name.three")
-      (load.compiler-load-session-state-note-persistent-interns! session-a)
+      (load.compiler-load-session-state-note-persistent-interns!
+        (owned_view.compiler-owned-shared-view session-a))
       (=
         (load.compiler-load-session-state-intern-floor-value session-a)
         (ci.intern-pool-len)))))
@@ -76,16 +87,17 @@
     [other-id : i64 (ci.intern "driver-state/other")]
     [source-leaf : i64
       (ast.ast-node-pool-context-expr-push
-        source-pools
+        (owned_view.compiler-owned-shared-view source-pools)
         (ast.AstExpr.Var wanted-id))]
     [source-root : ast.AstExpr
       (ast.AstExpr.Unary (ast.AstUnOp.Not) source-leaf)]
     [_installed-leaf : i64
       (ast.ast-node-pool-context-expr-push
-        installed-pools
+        (owned_view.compiler-owned-shared-view installed-pools)
         (ast.AstExpr.Var other-id))]
     (begin
-      (ast.ast-node-pool-context-install! installed-pools)
+      (ast.ast-node-pool-context-install!
+        (owned_view.compiler-owned-shared-view installed-pools))
       (let
         [installed-bases : i64
           (ast.ast-node-pool-context-expr-segment-bases installed-pools)]
@@ -110,18 +122,25 @@
     [installed-pools : ast.AstNodePoolContext
       (ast.ast-node-pool-context-new-with-capacities 1 4)]
     [source-leaf-id : i64
-      (ast.ast-node-pool-context-type-push source-pools (ast.AstType.I64))]
+      (ast.ast-node-pool-context-type-push
+        (owned_view.compiler-owned-shared-view source-pools)
+        (ast.AstType.I64))]
     [installed-leaf-id : i64
-      (ast.ast-node-pool-context-type-push installed-pools (ast.AstType.Bytes))]
+      (ast.ast-node-pool-context-type-push
+        (owned_view.compiler-owned-shared-view installed-pools)
+        (ast.AstType.Bytes))]
     [nested-lifetime : i64 (ci.intern "driver-state/source-lifetime")]
     [source-nested-id : i64
       (ast.ast-node-pool-context-type-push
-        source-pools
+        (owned_view.compiler-owned-shared-view source-pools)
         (ast.AstType.Ref nested-lifetime source-leaf-id))]
     [installed-nested-id : i64
-      (ast.ast-node-pool-context-type-push installed-pools (ast.AstType.Bool))]
+      (ast.ast-node-pool-context-type-push
+        (owned_view.compiler-owned-shared-view installed-pools)
+        (ast.AstType.Bool))]
     (begin
-      (ast.ast-node-pool-context-install! installed-pools)
+      (ast.ast-node-pool-context-install!
+        (owned_view.compiler-owned-shared-view installed-pools))
       (let
         [installed-bases : i64
           (ast.ast-node-pool-context-type-segment-bases installed-pools)]
@@ -137,10 +156,11 @@
             (and
               (= (tc_core.tc-name-id-list-len lifetimes) 1)
               (= (tc_core.tc-name-id-list-head lifetimes) nested-lifetime)))]
+        [installed-active : ast.AstNodePoolContext
+          (ast.ast-node-pool-context-capture-active)]
         [installed-unchanged : bool
           (=
-            (ast.ast-node-pool-context-type-segment-bases
-              (ast.ast-node-pool-context-capture-active))
+            (ast.ast-node-pool-context-type-segment-bases installed-active)
             installed-bases)]
         (begin
           (ast.ast-node-pool-context-install! active-before)
@@ -202,54 +222,67 @@
     (begin
       ;; Force the same numeric source id in A and B, but with different text.
       (let
-        [a-seed : i64 (ci.intern-compat-state-intern state-a "source/seed")]
-        [b-seed : i64 (ci.intern-compat-state-intern state-b "decoy/seed")]
+        [a-seed : i64
+          (ci.intern-compat-state-intern (&mut state-a) "source/seed")]
+        [b-seed : i64
+          (ci.intern-compat-state-intern (&mut state-b) "decoy/seed")]
         [b-generated : i64
-          (ci.intern-compat-state-generated-name state-b "decoy/generated")]
+          (ci.intern-compat-state-generated-name
+            (&mut state-b)
+            "decoy/generated")]
         [b-structural-left : i64
-          (ci.intern-compat-state-intern state-b "decoy/structural-left")]
+          (ci.intern-compat-state-intern (&mut state-b) "decoy/structural-left")]
         [b-structural-right : i64
-          (ci.intern-compat-state-intern state-b "decoy/structural-right")]
+          (ci.intern-compat-state-intern
+            (&mut state-b)
+            "decoy/structural-right")]
         [b-structural-id : i64
           (ci.intern-compat-state-composite-pair-id
-            state-b
+            (&mut state-b)
             b-structural-left
             b-structural-right)]
         [b-structural-rendered : String
           (ci.intern-compat-state-composite-rendered-name-record!
-            state-b
+            (&mut state-b)
             b-structural-id
             "decoy/structural-sentinel")]
         (begin
-          (ci.intern-compat-state-install! state-a)
-          (ast.ast-node-pool-context-install! serial-pools)
+          (ci.intern-compat-state-install!
+            (owned_view.compiler-owned-shared-view state-a))
+          (ast.ast-node-pool-context-install!
+            (owned_view.compiler-owned-shared-view serial-pools))
           (match (driver-state-specialize-parse-program incompatible?)
             [(parser.ResultAstProgram.Ok serial-program)
               (let
                 [serial-result : spec.ResultSpecProgramWithPaths
                   (spec.compiler-specialize-program-with-paths-and-pools
                     serial-program
-                    paths
+                    (owned_view.compiler-owned-shared-view paths)
                     "specialize-smoke.tl"
-                    serial-pools)]
+                    (owned_view.compiler-owned-shared-view serial-pools))]
                 (begin
-                  (ast.ast-node-pool-context-install! owned-pools)
+                  (ast.ast-node-pool-context-install!
+                    (owned_view.compiler-owned-shared-view owned-pools))
                   (match (driver-state-specialize-parse-program incompatible?)
                     [(parser.ResultAstProgram.Ok owned-program)
                       (let
                         [decoy-source-id : i64
-                          (ci.intern-compat-state-intern state-b "decoy/active")]
+                          (ci.intern-compat-state-intern
+                            (&mut state-b)
+                            "decoy/active")]
                         [decoy-expr-id : i64
                           (ast.ast-node-pool-context-expr-push
-                            decoy-pools
+                            (owned_view.compiler-owned-shared-view decoy-pools)
                             (ast.AstExpr.Var decoy-source-id))]
                         [decoy-type-id : i64
                           (ast.ast-node-pool-context-type-push
-                            decoy-pools
+                            (owned_view.compiler-owned-shared-view decoy-pools)
                             (ast.AstType.I64))]
                         (begin
-                          (ci.intern-compat-state-install! state-b)
-                          (ast.ast-node-pool-context-install! decoy-pools)
+                          (ci.intern-compat-state-install!
+                            (owned_view.compiler-owned-shared-view state-b))
+                          (ast.ast-node-pool-context-install!
+                            (owned_view.compiler-owned-shared-view decoy-pools))
                           (let
                             [before-expr-len : i64
                               (ast.ast-node-pool-context-expr-len decoy-pools)]
@@ -274,7 +307,7 @@
                               (ci.intern-compat-state-structural-count state-b)]
                             [before-decoy-structural-id : i64
                               (ci.intern-compat-state-composite-pair-id
-                                state-b
+                                (&mut state-b)
                                 b-structural-left
                                 b-structural-right)]
                             [before-decoy-structural-rendered : String
@@ -288,20 +321,25 @@
                             [before-decoy-generated-text : String
                               (ci.intern-compat-state-str state-b b-generated)]
                             [baseline-ok : bool
-                              (driver-state-specialize-result-ok? serial-result)]
+                              (driver-state-specialize-result-ok?
+                                (owned_view.compiler-owned-shared-view
+                                  serial-result))]
                             [baseline-count : i64
                               (driver-state-specialize-result-decl-count
-                                serial-result)]
+                                (owned_view.compiler-owned-shared-view
+                                  serial-result))]
                             [baseline-diagnostic : String
                               (driver-state-specialize-result-diagnostic
-                                serial-result)]
+                                (owned_view.compiler-owned-shared-view
+                                  serial-result))]
                             [owned-result : spec.ResultSpecProgramWithPaths
                               (spec.compiler-specialize-program-with-paths-and-pools-and-intern-state
                                 owned-program
-                                paths
+                                (owned_view.compiler-owned-shared-view paths)
                                 "specialize-smoke.tl"
-                                owned-pools
-                                state-a)]
+                                (owned_view.compiler-owned-shared-view
+                                  owned-pools)
+                                (owned_view.compiler-owned-shared-view state-a))]
                             [after-expr-len : i64
                               (ast.ast-node-pool-context-expr-len decoy-pools)]
                             [after-type-len : i64
@@ -325,7 +363,7 @@
                               (ci.intern-compat-state-structural-count state-b)]
                             [after-decoy-structural-id : i64
                               (ci.intern-compat-state-composite-pair-id
-                                state-b
+                                (&mut state-b)
                                 b-structural-left
                                 b-structural-right)]
                             [after-decoy-structural-rendered : String
@@ -339,13 +377,17 @@
                             [after-decoy-generated-text : String
                               (ci.intern-compat-state-str state-b b-generated)]
                             [owned-ok : bool
-                              (driver-state-specialize-result-ok? owned-result)]
+                              (driver-state-specialize-result-ok?
+                                (owned_view.compiler-owned-shared-view
+                                  owned-result))]
                             [owned-count : i64
                               (driver-state-specialize-result-decl-count
-                                owned-result)]
+                                (owned_view.compiler-owned-shared-view
+                                  owned-result))]
                             [owned-diagnostic : String
                               (driver-state-specialize-result-diagnostic
-                                owned-result)]
+                                (owned_view.compiler-owned-shared-view
+                                  owned-result))]
                             [decoy-node-ok : bool
                               (and
                                 (match (ast.ast-node-pool-context-expr-get
@@ -417,10 +459,14 @@
       [a : ci.InternCompatState (ci.intern-compat-state-new)]
       [b : ci.InternCompatState (ci.intern-compat-state-new)]
       (begin
-        (ci.intern-compat-state-install! a)
+        (ci.intern-compat-state-install!
+          (owned_view.compiler-owned-shared-view a))
         (if (and
-          (driver-state-smoke-non-installed-ok? a b)
-          (driver-state-smoke-installed-ok? a)
+          (driver-state-smoke-non-installed-ok?
+            (owned_view.compiler-owned-shared-view a)
+            (owned_view.compiler-owned-shared-view b))
+          (driver-state-smoke-installed-ok?
+            (owned_view.compiler-owned-shared-view a))
           (driver-state-smoke-expr-token-ok?)
           (driver-state-smoke-type-elision-token-ok?)
           (tc_core.tc-body-state-isolation-self-test)

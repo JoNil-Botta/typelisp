@@ -4094,15 +4094,18 @@
             ;; the embedded provenance that loader would have attached. Macro
             ;; routing must not depend on an unrelated later import happening
             ;; to resolve core_macros.tl from the embedded payload.
-            (compiler_load.compiler-load-note-embedded-module!
+            (compiler_load.compiler-load-session-state-note-embedded-module!
+              (owned_view.compiler-owned-shared-view load-state)
               (compiler_load.compiler-load-core-macro-prelude-path-shared-view))
             ;; core_macros imports stdlib.clone for the late typed helper
             ;; splice. Hydration bypasses that import's ordinary source
             ;; provenance hook too, and the late splice runs after the primary
             ;; macro walk, so name the transitive macro owner explicitly.
-            (compiler_load.compiler-load-note-embedded-module!
+            (compiler_load.compiler-load-session-state-note-embedded-module!
+              (owned_view.compiler-owned-shared-view load-state)
               (compiler_load.compiler-load-clone-prelude-path-shared-view))
-            (compiler_load.compiler-load-note-embedded-module!
+            (compiler_load.compiler-load-session-state-note-embedded-module!
+              (owned_view.compiler-owned-shared-view load-state)
               (compiler_load.compiler-load-runtime-prelude-path-shared-view))
             (compiler_load.compiler-load-session-state-note-embedded-stdlib-source!
               load-state)

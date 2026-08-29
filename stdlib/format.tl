@@ -298,14 +298,14 @@
   (context i64)
   (status i64))
 
-;; Private growable destination used only when retained Arguments are
-;; materialized as a String. The public Arguments package itself contains only
-;; a capture-free renderer and a tuple of shared anchors.
+;: Private growable destination used only when retained Arguments are
+;: materialized as a String. The public Arguments package itself contains only
+;: a capture-free renderer and a tuple of shared anchors.
 (defstruct ArgumentsStringSink
   (slots (__tl_dyn-array u8))
   (len i64))
 
-;; Copy bytes into the growable String sink addressed by `context`.
+;: Copy bytes into the growable String sink addressed by `context`.
 (define (arguments-string-write-raw
   [context : i64]
   [data : (Ptr u8)]
@@ -1576,10 +1576,10 @@
             "format: internal alignment option is malformed")])]
     [_ (comptime.comptime-error "format: internal fill option is malformed")]))
 
-;; Finish a classified value/count triplet by invoking one central terminal.
-;; `prefix` is empty for String materialization and carries the formatter
-;; address for streaming. All three source types are preserved by retained
-;; renderer markers instead of being re-reflected from generated syntax.
+;: Finish a classified value/count triplet by invoking one central terminal.
+;: `prefix` is empty for String materialization and carries the formatter
+;: address for streaming. All three source types are preserved by retained
+;: renderer markers instead of being re-reflected from generated syntax.
 (defmacro (format-classified-call
   [terminal : comptime.Expr]
   [prefix : comptime.Expr]
@@ -1618,6 +1618,7 @@
     [_
       (comptime.comptime-error "format: internal terminal prefix is malformed")]))
 
+;: Preserve the reflected type of a dynamic precision argument for dispatch.
 (defmacro (format-classify-precision
   [terminal : comptime.Expr]
   [prefix : comptime.Expr]
@@ -1728,6 +1729,7 @@
         ,precision-kind-expr
         ,selector-expr)]))
 
+;: Preserve the reflected type of a dynamic width argument for dispatch.
 (defmacro (format-classify-width
   [terminal : comptime.Expr]
   [prefix : comptime.Expr]
@@ -1832,6 +1834,7 @@
         ,precision-kind-expr
         ,selector-expr)]))
 
+;: Classify a formatting value and its dynamic count operands once.
 (defmacro (format-classify-value
   [terminal : comptime.Expr]
   [prefix : comptime.Expr]
@@ -1930,8 +1933,8 @@
         ,precision-kind-expr
         ,selector-expr)]))
 
-;; Unwrap retained-renderer type witnesses before entering the one central
-;; formatting dispatcher. Ordinary callers pass through unchanged.
+;: Unwrap retained-renderer type witnesses before entering the central
+;: formatting dispatcher. Ordinary callers pass through unchanged.
 (defmacro (format-value
   [value : comptime.Expr]
   [fill-expr : comptime.Expr]
@@ -1959,9 +1962,9 @@
     ,precision-value
     ,selector-expr))
 
-;; Invoke one validated owner-module direct hook against the formatter stored
-;; at an opaque stack-cell address, then persist its updated status. Owned
-;; values receive a generated shared scope so the hook never consumes them.
+;: Invoke one validated owner-module direct hook against the formatter stored
+;: at an opaque stack-cell address, then persist its updated status. Owned
+;: values receive a generated shared scope so the hook never consumes them.
 (defmacro (format-direct-hook-call-at!
   [source-type : type]
   [address : comptime.Expr]
@@ -2006,8 +2009,8 @@
       scoped
       (comptime.expr-shared-let-scope value-name runtime-value scoped))))
 
-;; Materialize one direct owner hook through the same growable String
-;; destination used when retained Arguments are converted to a String.
+;: Materialize one direct owner hook through the same growable String
+;: destination used when retained Arguments are converted to a String.
 (defmacro (format-direct-hook-materialize
   [source-type : type]
   [runtime-value : comptime.Expr]
@@ -2157,6 +2160,7 @@
           fallback)]
       [_ fallback])))
 
+;: Resolve and invoke a nominal owner's direct formatter hook when available.
 (defmacro (format-stream-direct-owner-at-resolved!
   [source-type : type]
   [address : comptime.Expr]
@@ -2228,6 +2232,7 @@
           ,(comptime.module-value-expr owner qualified-name))]
       [_ fallback])))
 
+;: Stream one default-display value, preferring its canonical direct hook.
 (defmacro (format-stream-value-at-default-resolved!
   [source-type : type]
   [address : comptime.Expr]
@@ -2325,6 +2330,7 @@
           ,runtime-value)]
       [_ fallback])))
 
+;: Classify and stream one value into the formatter at an opaque address.
 (defmacro (format-stream-value-at!
   [address : comptime.Expr]
   [value : comptime.Expr]
@@ -3935,6 +3941,7 @@
           immediate)]
       [_ immediate])))
 
+;: Advance the shared immediate, streaming, or retained format expansion.
 (defmacro (format-expand-mode
   [plan : comptime.Expr]
   [argument-carrier : comptime.Expr]
@@ -6269,14 +6276,14 @@
     (__tl_format_named_vars)
     (__tl_format_bindings)))
 
-;; The capture-free renderer is the first package field, so its fixed function
-;; width is also the byte offset of the following anchors tuple.
+;: The capture-free renderer is the first package field, so its fixed function
+;: width is also the byte offset of the following anchors tuple.
 (define arguments-renderer-byte-size : i64
   (comptime (size-of (type (-> (Tuple i64 i64) i64)))))
 
-;; Invoke the fixed scalar renderer ABI after a macro has located the package's
-;; first word. Keeping the function-pointer type in ordinary runtime code lets
-;; the embedded macro image carry only scalar builder operations.
+;: Invoke the fixed scalar renderer ABI after a macro has located the package's
+;: first word. Keeping the function-pointer type in ordinary runtime code lets
+;: the embedded macro image carry only scalar builder operations.
 (define (arguments-renderer-call-at
   [renderer-address : i64]
   [formatter-address : i64]
@@ -6288,11 +6295,11 @@
           : (Ptr (-> (Tuple i64 i64) i64)))))
     (tuple formatter-address anchors-address)))
 
-;; Finish a retained Arguments package after every supplied value and lexical
-;; capture has been converted to a shared anchor. The renderer receives only
-;; `(formatter-address, anchors-address)` machine words; the package's checked
-;; anchor tuple retains all lifetimes while this scalar control ABI avoids
-;; passing heterogeneous reference-bearing aggregates through an indirect call.
+;: Finish a retained Arguments package after every supplied value and lexical
+;: capture has been converted to a shared anchor. The renderer receives only
+;: `(formatter-address, anchors-address)` machine words; the package's checked
+;: anchor tuple retains all lifetimes while this scalar control ABI avoids
+;: passing heterogeneous reference-bearing aggregates through an indirect call.
 (defmacro (format-arguments-package
   [plan : comptime.Expr]
   [anchors : comptime.Expr]
@@ -6451,10 +6458,10 @@
       (comptime.comptime-error
         "format: internal retained argument kinds are malformed")]))
 
-;; Finish an Arguments package after the standard streaming binder has
-;; classified every supplied operand. Reusing that binder is important: each
-;; operand is typechecked before reflection, so nested Arguments can be copied
-;; while ordinary owned values remain shared anchors.
+;: Finish an Arguments package after the standard streaming binder has
+;: classified every supplied operand. Reusing that binder is important: each
+;: operand is typechecked before reflection, so nested Arguments can be copied
+;: while ordinary owned values remain shared anchors.
 (defmacro (format-expand-arguments-finish
   [plan : comptime.Expr]
   [positional-vars : comptime.Expr]
@@ -6852,7 +6859,7 @@
             "format: internal retained positional carrier is malformed")])]
     [_ (comptime.comptime-error "format: internal retained plan is malformed")]))
 
-;; Start retained binding from the same parsed plan used by all other sinks.
+;: Start retained binding from the same parsed plan used by all other sinks.
 (defmacro (format-expand-arguments-start
   [plan : comptime.Expr]
   [argument-carrier : comptime.Expr]
@@ -6868,7 +6875,7 @@
     (__tl_format_named_vars)
     (__tl_format_bindings)))
 
-;; Replay retained Arguments into an existing formatter stack-cell address.
+;: Replay retained Arguments into an existing formatter stack-cell address.
 (defmacro (format-arguments-render-at-resolved!
   [arguments-type : type]
   [borrowed-expr : comptime.Expr]
@@ -6906,6 +6913,7 @@
       (comptime.comptime-error
         "format: internal Arguments borrow marker is malformed")]))
 
+;: Resolve an Arguments package shape and replay it into an existing formatter.
 (defmacro (format-arguments-render-at!
   [arguments : comptime.Expr]
   [stream-address : comptime.Expr]) : i64
@@ -6929,7 +6937,7 @@
         ,arguments
         ,stream-address)]))
 
-;; Materialize retained Arguments into one fresh active-arena String.
+;: Materialize retained Arguments into one fresh active-arena String.
 (defmacro (format-arguments-materialize [arguments : comptime.Expr]) : String
   (let
     [name : String (comptime.syntax-name-fresh "__tl_format_arguments_value")]
@@ -6980,8 +6988,8 @@
                 __tl_format_arguments_finished.len)))))]
     (comptime.expr-shared-let-scope name arguments body)))
 
-;; Stream either retained Arguments or a literal template into one raw
-;; formatter callback. This is the common entry used by writers and stdio.
+;: Stream either retained Arguments or a literal template into one raw
+;: formatter callback. This is the common entry used by writers and stdio.
 (defmacro (format-write-callback-dispatch
   [template : comptime.Expr]
   [argument-carrier : comptime.Expr]

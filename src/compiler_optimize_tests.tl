@@ -41976,9 +41976,16 @@
 ;; 32-33 are the once-only pair, whose two signed compares merge into one
 ;; unsigned `seed <u bound` exactly when the bound is a container length --
 ;; 32 loads its bound from a length slot, 33 takes the same shape's bound from
-;; a plain parameter and keeps both compares.
+;; a plain parameter and keeps both compares. Variants 34-35 are the word-loader
+;; extremal family `base+i` and `base+i+7` on a step-8 counter: 34 checks
+;; against a container length, whose guard implies the counter's no-wrap cap;
+;; 35 uses an arbitrary signed length and must keep the explicit cap.
 (define (opt-bce-version-test-check-tail [variant : i64]) : compiler_ir_types.CompilerIrInstrSeq
   (let
+    [check-length : compiler_ir_types.CompilerIrValue
+      (if (= variant 34)
+        (compiler_ir_types.CompilerIrValue.Var 15)
+        (compiler_ir_types.CompilerIrValue.Var 1))]
     [after-check : compiler_ir_types.CompilerIrInstrSeq
       (opt-test-instrs
         (compiler_ir_types.CompilerIrInstr.BinOp
@@ -41991,7 +41998,10 @@
           (cond
             [(= variant 23) (compiler_ir_types.CompilerIrValue.Var 0)]
             [(= variant 22) (compiler_ir_types.CompilerIrValue.I64 0)]
-            [(and (>= variant 17) (<= variant 25))
+            [(or
+                (and (>= variant 17) (<= variant 25))
+                (= variant 34)
+                (= variant 35))
               (compiler_ir_types.CompilerIrValue.I64 8)]
             [else (compiler_ir_types.CompilerIrValue.I64 1)])
           (compiler_ast_types.AstType.I64))
@@ -42035,7 +42045,7 @@
               after-check
               (compiler_ir_types.CompilerIrInstr.BoundsCheck
                 (compiler_ir_types.CompilerIrValue.Var 15)
-                (compiler_ir_types.CompilerIrValue.Var 1)
+                (compiler_ir_types.compiler-ir-global-shared-view check-length)
                 (compiler_ir_types.compiler-ir-label "bce_version_ok_data")))]
           ;; 16's second check is `base + i + 1`: a SECOND eliminable
           ;; scale-1 variable-base index, which is what clears the gate.
@@ -42045,7 +42055,7 @@
               after-check
               (compiler_ir_types.CompilerIrInstr.BoundsCheck
                 (compiler_ir_types.CompilerIrValue.Var 11)
-                (compiler_ir_types.CompilerIrValue.Var 1)
+                (compiler_ir_types.compiler-ir-global-shared-view check-length)
                 (compiler_ir_types.compiler-ir-label "bce_version_ok_second")))]
           ;; 28's second check reads the SAME derived phi two slots along, and
           ;; 29's reads the scale-2 family's upper offset: both are members of
@@ -42055,7 +42065,7 @@
               after-check
               (compiler_ir_types.CompilerIrInstr.BoundsCheck
                 (compiler_ir_types.CompilerIrValue.Var 12)
-                (compiler_ir_types.CompilerIrValue.Var 1)
+                (compiler_ir_types.compiler-ir-global-shared-view check-length)
                 (compiler_ir_types.compiler-ir-label "bce_version_ok_second")))]
           ;; 21's three-member fan (base+i, +1, +2 on a step-8 counter):
           ;; the subsumed middle check needs no condition of its own.
@@ -42068,8 +42078,18 @@
                 (compiler_ir_types.compiler-ir-label "bce_version_ok_second"))
               (compiler_ir_types.CompilerIrInstr.BoundsCheck
                 (compiler_ir_types.CompilerIrValue.Var 12)
-                (compiler_ir_types.CompilerIrValue.Var 1)
+                (compiler_ir_types.compiler-ir-global-shared-view check-length)
                 (compiler_ir_types.compiler-ir-label "bce_version_ok_third")))]
+          ;; 34-35 model the endpoints of the eight-byte loader fan. Only the
+          ;; length provenance differs: 34's entry loads a container length,
+          ;; while 35 keeps the ordinary unconstrained parameter.
+          [(or (= variant 34) (= variant 35))
+            (opt-test-instrs-with-tail
+              after-check
+              (compiler_ir_types.CompilerIrInstr.BoundsCheck
+                (compiler_ir_types.CompilerIrValue.Var 11)
+                check-length
+                (compiler_ir_types.compiler-ir-label "bce_version_ok_7")))]
           [else after-check])
         (compiler_ir_types.CompilerIrInstr.BoundsCheck
           (cond
@@ -42089,7 +42109,8 @@
             [(= variant 30) (compiler_ir_types.CompilerIrValue.Var 0)]
             ;; 31 makes it the same literal the bound is.
             [(= variant 31) (compiler_ir_types.CompilerIrValue.I64 100)]
-            [else (compiler_ir_types.CompilerIrValue.Var 1)])
+            [else
+              (compiler_ir_types.compiler-ir-global-shared-view check-length)])
           (compiler_ir_types.compiler-ir-label "bce_version_ok")))]
     (cond
       [(= variant 2)
@@ -42307,6 +42328,22 @@
             (compiler_ir_types.CompilerIrValue.Var 9)
             (compiler_ir_types.CompilerIrValue.I64 2)
             (compiler_ast_types.AstType.I64)))]
+      ;; The eight-byte fan's endpoints prove a step-8 counter's cap.
+      [(or (= variant 34) (= variant 35))
+        (opt-test-instrs-with-tail
+          check
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            9
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            (compiler_ir_types.CompilerIrValue.Var 3)
+            (compiler_ast_types.AstType.I64))
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            11
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            (compiler_ir_types.CompilerIrValue.Var 9)
+            (compiler_ir_types.CompilerIrValue.I64 7)
+            (compiler_ast_types.AstType.I64)))]
       [(or (= variant 12) (= variant 13))
         (opt-test-instrs-with-tail
           check
@@ -42416,22 +42453,37 @@
       ;; emitted, and 32 additionally derives its bound from a container's
       ;; length slot -- the provenance that makes the pair mergeable into one
       ;; unsigned compare.
-      (if (or (= variant 32) (= variant 33))
-        (opt-test-instrs
-          (compiler_ir_types.CompilerIrInstr.Gep
-            14
-            (compiler_ir_types.CompilerIrValue.Var 2)
-            (compiler_ir_types.CompilerIrValue.I64 1)
-            (compiler_ast_types.AstType.I64))
-          (compiler_ir_types.CompilerIrInstr.Load
-            15
-            (compiler_ir_types.CompilerIrValue.Var 14)
-            (compiler_ast_types.AstType.I64))
-          (compiler_ir_types.CompilerIrInstr.Jump
-            (compiler_ir_types.compiler-ir-label "loop")))
-        (opt-test-instrs
-          (compiler_ir_types.CompilerIrInstr.Jump
-            (compiler_ir_types.compiler-ir-label "loop")))))
+      (cond
+        [(or (= variant 32) (= variant 33))
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Gep
+              14
+              (compiler_ir_types.CompilerIrValue.Var 2)
+              (compiler_ir_types.CompilerIrValue.I64 1)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Load
+              15
+              (compiler_ir_types.CompilerIrValue.Var 14)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "loop")))]
+        [(= variant 34)
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Gep
+              14
+              (compiler_ir_types.CompilerIrValue.Var 2)
+              (compiler_ir_types.CompilerIrValue.I64 1)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Load
+              15
+              (compiler_ir_types.CompilerIrValue.Var 14)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "loop")))]
+        [else
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "loop")))]))
     (compiler_ir_types.compiler-ir-block-cons
       (compiler_ir_types.CompilerIrBlock.Block
         (compiler_ir_types.compiler-ir-label "loop")
@@ -43768,6 +43820,18 @@
     [fan3-out : compiler_ir_types.CompilerIrBlockList
       (compiler_optimize.opt-function-blocks
         (compiler_optimize.compiler-opt-global-shared-view fan3))]
+    [wide-step8 : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-bce-version-function
+        (opt-bce-version-test-function (opt-bce-version-test-blocks 34)))]
+    [wide-step8-out : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view wide-step8))]
+    [wide-step8-signed : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-bce-version-function
+        (opt-bce-version-test-function (opt-bce-version-test-blocks 35)))]
+    [wide-step8-signed-out : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view wide-step8-signed))]
     [guard-label : i64 (compiler_ir_types.compiler-ir-label "loop__bce_guard")]
     (cond
       ;; scale-2 Mul-form variable-base load: versions through the
@@ -44201,6 +44265,39 @@
             (compiler_ir_types.CompilerIrBinOp.Add)
             7))
         52]
+      ;; A complete 0..7 family against a real container length already caps
+      ;; the step-8 counter through its extremal range conditions, so its guard
+      ;; does not re-test `bound + 7 >= bound`.
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function
+              (compiler_optimize.compiler-opt-global-shared-view wide-step8))))
+        57]
+      [(not
+          (=
+            (opt-bce-version-test-block-binop-count
+              (compiler_ir_types.compiler-ir-global-shared-view wide-step8-out)
+              guard-label
+              (compiler_ir_types.CompilerIrBinOp.Add))
+            1))
+        58]
+      ;; The same offset span against an arbitrary signed length cannot make
+      ;; that implication: retain the explicit no-wrap add/compare.
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function
+              (compiler_optimize.compiler-opt-global-shared-view
+                wide-step8-signed))))
+        59]
+      [(not
+          (=
+            (opt-bce-version-test-block-binop-count
+              (compiler_ir_types.compiler-ir-global-shared-view
+                wide-step8-signed-out)
+              guard-label
+              (compiler_ir_types.CompilerIrBinOp.Add))
+            2))
+        60]
       [else 42])))
 
 (test

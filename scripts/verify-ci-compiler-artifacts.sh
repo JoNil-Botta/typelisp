@@ -467,6 +467,23 @@ awk -F '\t' '
     exit 1
 }
 
+# The fast source-tree path must preserve the portable per-file manifest
+# exactly; otherwise switching hosts would change provenance keys.
+SOURCE_DIGEST_ACTUAL=$(ci_compiler_artifact_source_set_digest \
+    "$WORKDIR" "$SOURCE_ROOTS")
+SOURCE_DIGEST_REFERENCE=$(
+    for source_file in "$SOURCE/input.tl" "$STDLIB/input.tl"; do
+        source_hash=$(ci_compiler_artifact_sha256_file "$source_file")
+        source_name=$(ci_compiler_artifact_normalized_path \
+            "$WORKDIR" "$source_file")
+        printf '%s  %s\n' "$source_hash" "$source_name"
+    done | ci_compiler_artifact_sha256_stdin
+)
+[ "$SOURCE_DIGEST_ACTUAL" = "$SOURCE_DIGEST_REFERENCE" ] || {
+    echo "batched and portable source-set digests differ" >&2
+    exit 1
+}
+
 ASSEMBLY_TREE="$FIXTURE/assembly-tree"
 ASSEMBLY_MANIFEST="$FIXTURE/assembly-tree.sha256"
 mkdir -p "$ASSEMBLY_TREE/a" "$ASSEMBLY_TREE/b"

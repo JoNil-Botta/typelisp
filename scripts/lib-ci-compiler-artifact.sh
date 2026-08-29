@@ -101,8 +101,21 @@ ci_compiler_artifact_source_set_digest() {
     _cica_source_tmp=$(mktemp -d "${TMPDIR:-/tmp}/typelisp-ci-artifact.XXXXXX") ||
         return 1
     _cica_source_list="$_cica_source_tmp/files"
+    _cica_source_hashes="$_cica_source_tmp/hashes"
     _cica_source_manifest="$_cica_source_tmp/manifest"
     : > "$_cica_source_list"
+
+    # GitHub's Windows runner pays tens of milliseconds for every Git Bash
+    # process launch.  Hashing a compiler source tree one file at a time can
+    # therefore take more than a minute.  GNU/Git coreutils can hash the same
+    # sorted NUL-delimited list in a bounded number of processes while keeping
+    # the byte-for-byte manifest shape used by the portable fallback below.
+    _cica_source_batch=0
+    if command -v sha256sum >/dev/null 2>&1 &&
+        sort -z </dev/null >/dev/null 2>&1 &&
+        xargs -0 printf '' </dev/null >/dev/null 2>&1; then
+        _cica_source_batch=1
+    fi
 
     _cica_source_old_ifs=$IFS
     IFS=,
@@ -119,9 +132,19 @@ ci_compiler_artifact_source_set_digest() {
             return 1
         }
         if [ -d "$_cica_source_abs" ]; then
-            find "$_cica_source_abs" -type f -print >> "$_cica_source_list"
+            if [ "$_cica_source_batch" -eq 1 ]; then
+                find "$_cica_source_abs" -type f -print0 \
+                    >> "$_cica_source_list"
+            else
+                find "$_cica_source_abs" -type f -print \
+                    >> "$_cica_source_list"
+            fi
         elif [ -f "$_cica_source_abs" ]; then
-            printf '%s\n' "$_cica_source_abs" >> "$_cica_source_list"
+            if [ "$_cica_source_batch" -eq 1 ]; then
+                printf '%s\0' "$_cica_source_abs" >> "$_cica_source_list"
+            else
+                printf '%s\n' "$_cica_source_abs" >> "$_cica_source_list"
+            fi
         else
             rm -rf "$_cica_source_tmp"
             ci_compiler_artifact_error \
@@ -132,22 +155,51 @@ ci_compiler_artifact_source_set_digest() {
     done
     IFS=$_cica_source_old_ifs
 
-    LC_ALL=C sort -u "$_cica_source_list" -o "$_cica_source_list"
     : > "$_cica_source_manifest"
-    while IFS= read -r _cica_source_file; do
-        _cica_source_name=$(ci_compiler_artifact_normalized_path \
-            "$_cica_source_root" "$_cica_source_file") || {
+    if [ "$_cica_source_batch" -eq 1 ]; then
+        LC_ALL=C sort -zu "$_cica_source_list" -o "$_cica_source_list"
+        if [ -s "$_cica_source_list" ]; then
+            xargs -0 sha256sum < "$_cica_source_list" \
+                > "$_cica_source_hashes" || {
+                rm -rf "$_cica_source_tmp"
+                return 1
+            }
+        else
+            : > "$_cica_source_hashes"
+        fi
+        _cica_source_normalized_root=$(printf '%s' "$_cica_source_root" | \
+            tr '\\' '/')
+        awk -v root="$_cica_source_normalized_root" '
+        {
+            hash = substr($0, 1, 64)
+            path = substr($0, 67)
+            gsub(/\\/, "/", path)
+            if (path == root) path = "{root}"
+            else if (index(path, root "/") == 1)
+                path = "{root}/" substr(path, length(root) + 2)
+            print hash "  " path
+        }
+        ' "$_cica_source_hashes" > "$_cica_source_manifest" || {
             rm -rf "$_cica_source_tmp"
             return 1
         }
-        _cica_source_hash=$(ci_compiler_artifact_sha256_file \
-            "$_cica_source_file") || {
-            rm -rf "$_cica_source_tmp"
-            return 1
-        }
-        printf '%s  %s\n' "$_cica_source_hash" "$_cica_source_name" \
-            >> "$_cica_source_manifest"
-    done < "$_cica_source_list"
+    else
+        LC_ALL=C sort -u "$_cica_source_list" -o "$_cica_source_list"
+        while IFS= read -r _cica_source_file; do
+            _cica_source_name=$(ci_compiler_artifact_normalized_path \
+                "$_cica_source_root" "$_cica_source_file") || {
+                rm -rf "$_cica_source_tmp"
+                return 1
+            }
+            _cica_source_hash=$(ci_compiler_artifact_sha256_file \
+                "$_cica_source_file") || {
+                rm -rf "$_cica_source_tmp"
+                return 1
+            }
+            printf '%s  %s\n' "$_cica_source_hash" "$_cica_source_name" \
+                >> "$_cica_source_manifest"
+        done < "$_cica_source_list"
+    fi
 
     _cica_source_digest=$(ci_compiler_artifact_sha256_file \
         "$_cica_source_manifest") || {

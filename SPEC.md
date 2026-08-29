@@ -2634,7 +2634,7 @@ and owned `String` results for allocation sites.
 | Category | Members | Ownership contract |
 |----------|---------|--------------------|
 | Non-consuming text inspection | Imported `stdlib/string.tl` helpers `string-length`, `string-ref`/`char-at`, `string-eq`/`string=?`, `string.>int`, and predicates such as `string-contains`, `string-contains-char`, and `is-string-prefix-at` | Accept borrowed `(& r str)` inputs and return scalars. They do not move or allocate text. |
-| Text output and diagnostics | `format.format`, `format.write!`/`format.writeln!`, `io.print`/`io.println`, `io.eprint`/`io.eprintln`, `io.print-error`, `io.stdout-write`/`io.stderr-write`, `panic`/`error`, process stdin strings | `format.format` materializes one active-arena `String`. Writer and stdio format macros stream the same literal plan without a combined String; individual scalar conversions and nominal `to-string` hooks may still allocate. Diagnostic text accepts borrowed `(& r str)`, and raw output accepts borrowed `(& r bytes)`. Text-to-binary I/O conversion is explicit. |
+| Text output and diagnostics | `format.args`, `format.format`, `format.write!`/`format.writeln!`, `io.print`/`io.println`, `io.eprint`/`io.eprintln`, `io.print-error`, `io.stdout-write`/`io.stderr-write`, `panic`/`error`, process stdin strings | `format.args` retains a borrow-checked plan without the combined text; `format.format` materializes one active-arena `String`. Writer and stdio format macros stream either the literal plan or retained Arguments without a combined String. Individual scalar conversions and fallback nominal `to-string` hooks may still allocate; direct `format-write` owner hooks need not. Diagnostic text accepts borrowed `(& r str)`, and raw output accepts borrowed `(& r bytes)`. Text-to-binary I/O conversion is explicit. |
 | Active-arena owned string results | `arg`, `int->string`, `str-cat`/low-level concat primitives, `substring`/`string-slice`, stdlib trim/replacement helpers when they build text, env/path split/join helpers | Return owned `String` storage allocated in the active arena. Results created inside a scoped arena cannot escape that arena. |
 | Borrowed string views | `substring-view`/`string-slice-view`, stdlib trim `*-view` helpers | Return `(& r str)` views tied to the input lifetime. Bounds traps match the owned-copy APIs. They do not copy bytes; a runtime helper may allocate fixed metadata for the view record, but it does not take ownership of or extend the backing bytes. |
 | Caller-provided fallback/result values | `stdlib/string.tl` `string-replace` when no match is found, `stdlib/io.tl` `read-file-or` `ByteBuf` fallback paths; companion modules `stdlib/string_caller_result.tl` and `stdlib/io_caller_result.tl` | Preserve the caller-owned value instead of allocating. The I/O companion is an explicit binary-to-text materialization boundary for callers that need a borrowed textual fallback. |
@@ -4120,7 +4120,7 @@ All operators are prefix functions (or special forms):
 | `+` | integer integer [integer ...] → integer | Addition |
 | `-` | integer integer → integer | Subtraction |
 | `*` | integer integer [integer ...] → integer | Multiplication |
-| `neg` | integer → integer | Unary negation |
+| `neg` | integer, f32, f64 → same type | Unary negation |
 | `/` | integer integer → integer | Signed division |
 | `%` | integer integer → integer | Remainder |
 | `bit-and` | integer integer [integer ...] → integer | Bitwise AND |
@@ -4143,6 +4143,10 @@ All operators are prefix functions (or special forms):
 - `+`, `-`, `*`, `/` also operate on `f64` and `f32`; floating-point `+` and
   `*` accept two or more matching operands and are left-associated. `%` is not
   defined on floating-point values and is rejected.
+- `neg` accepts integer, `f32`, and `f64` operands and returns the operand
+  type unchanged. Integer `neg` follows the wrapping rule above; floating-point
+  negation flips the sign bit. Applying `neg` to a nonnumeric operand is a
+  type error.
 - Integer `/` and `%` trap at runtime when the divisor is zero, or when a
   signed dividend is the minimum value for its width and the divisor is `-1`
   (since the mathematical result is not representable). Both cases abort the
@@ -6165,9 +6169,12 @@ directly.
 
 **Printing and failure.** `print`/`println` and `eprint`/`eprintln` are the
 `stdlib.io` value-output macro pairs; `print-format` is a migration alias for
-`print`. `format.format` returns the same formatted text as a `String`, while
-`format.write!`/`format.writeln!` stream it into a mutable writer and return
-`FormatResult`. `stdout-write` and `stderr-write` provide lower-level
+`print`. `format.args` retains a literal format plan and its borrow-checked
+arguments without rendering the final text. `format.format` accepts either a
+literal template plus values or one retained Arguments package and returns the
+formatted text as a `String`; `format.write!`/`format.writeln!` accept the same
+two forms, stream into a mutable writer, and return `FormatResult`.
+`stdout-write` and `stderr-write` provide lower-level
 borrowed-byte output, while `print-error`, `panic`, and `error` accept borrowed text. These
 are ordinary standard-library definitions; unimported uses are unbound source
 names. `panic` and `error`
@@ -6330,12 +6337,25 @@ The deprecated `string-append` and
 `tl_string_concat*` remains a runtime-plan compatibility ABI documented below.
 
 **Literal formatting and nominal display.** `stdlib.format` owns the literal
-`format`, `write!`, and `writeln!` macros, their template scanner, all
+`args`, `format`, `write!`, and `writeln!` macros, their template scanner, all
 placeholder dispatch, scalar conversion, and the shared `Formatter` /
 `FormatResult` writer ABI. `stdlib.io` depends on that module: `io.print` and
 `io.eprint` stream the same plan to stdout and stderr, while the `*ln` siblings
 append exactly one newline. `io.print-format` is a migration alias for
 `io.print`. `stdlib.format` must not import `stdlib.io`.
+
+`format.args literal ...` parses the same immutable plan at macro expansion
+and returns a structural Arguments package containing a capture-free renderer
+and its anchors. Construction evaluates each supplied or captured expression
+once in source order and allocates aggregate package storage, but never the
+final combined text. Non-Copy caller values are retained through shared
+anchors, so replay does not move them; the package may be replayed repeatedly,
+nested as a default-display argument, materialized with `format.format`, or
+passed as the sole formatting operand to any writer or stdio macro. Its
+inferred structural type preserves every anchor lifetime. Consequently an
+Arguments value cannot outlive a referenced local or source arena. A temporary
+created for the package remains hidden in the generated lexical scope for no
+longer than the Arguments value. No public nominal type erases these lifetimes.
 
 Templates accept implicit `{}`, zero-based indexed `{0}`, and named `{name}`
 placeholders plus `{{` / `}}` escapes. Each `{}` selects and advances an
@@ -6490,16 +6510,37 @@ canonical owner module. The owner may define either:
 - `to-string-<NominalName> : (& T) -> String`, for another nominal type owned
   by the same module.
 
-The signature must be exact: one shared-borrow argument of the nominal type and
-an owned `String` result. Formatting a place does not move it; formatting an
+For allocation-free default Display, the same owner may additionally define
+exactly one direct hook:
+
+- `format-write : (& T, &mut stdlib.format.Formatter) -> unit`; or
+- `format-write-<NominalName> : (& T, &mut stdlib.format.Formatter) -> unit`.
+
+Every String, retained-Arguments, writer, stdout, and stderr target uses the
+direct hook for a default-options placeholder. The hook writes with
+`formatter-write-string!` or `formatter-write-raw!`; those operations preserve
+the first destination failure and skip later writes. A placeholder with width,
+precision, fill, alignment, sign, alternate, zero, or a selector instead uses
+the canonical `to-string` hook so the common option engine can inspect and
+transform the complete rendered value. This fallback rule is destination-
+independent.
+
+Each hook signature must be exact. The `to-string` family takes one shared
+borrow and returns an owned `String`; the direct family takes the same shared
+borrow plus one mutable `Formatter` and returns `unit`. Formatting a place does
+not move it; formatting an
 rvalue evaluates the expression once and borrows a generated temporary. A hook
 may recursively call `format` for nested values. Hook lookup uses the canonical
 owner identity rather than the caller's imports or aliases, so unrelated
 modules may use the same nominal name and import order cannot select a hook.
-If neither spelling exists, if an existing spelling has the wrong signature,
-or if both spellings match the same nominal type, macro expansion fails with a
-diagnostic naming the owner and expected contract. The last case is ambiguous
-and programs must retain exactly one applicable spelling.
+The `to-string` family retains its required-protocol diagnostics: if neither
+spelling exists, an existing spelling has the wrong signature, or both
+spellings match the same nominal type, expansion fails with a diagnostic naming
+the owner and expected contract. The direct family is optional: no spelling
+selects the `to-string` fallback, exactly one spelling emits an ordinary typed
+call whose argument and result checks enforce the contract, and both spellings
+fail as ambiguous. Programs must retain exactly one applicable spelling in
+each family they implement.
 
 `format.write! writer template ...` and `format.writeln!` accept a mutable
 nominal writer place. The writer's canonical owner module defines exactly one
@@ -6512,9 +6553,11 @@ call. Status zero means success and a nonzero value is a destination failure.
 `FormatResult` is `FormatOk` or `FormatErr status`; the formatter retains the
 first failure and skips every later plan piece and newline. `ByteBuf`, `TextBuf`,
 and `FileHandle` provide both adapter functions. Stdout and stderr use the same
-raw callback contract without a writer cell. Direct sinks do not allocate the
-final combined String, although scalar conversion, option rendering, TextBuf's
-retained chunk copies, and nominal `to-string` hooks may allocate.
+raw callback contract without a writer cell. Direct sinks and retained
+Arguments construction do not allocate the final combined String, although
+Arguments aggregate storage, scalar conversion, option rendering, TextBuf's
+retained chunk copies, and fallback nominal `to-string` hooks may allocate. A
+direct owner `format-write` hook need not allocate.
 
 **Byte buffers.** `ByteBuf` and `bytes` are specified in section 3.11 as
 stdlib/language surface, not implicit compiler builtins. There is no
@@ -8254,13 +8297,15 @@ the compile-time length.
     0))  ; prints hello + newline, returns 0
 ```
 
-`format.format`, `format.write!`/`format.writeln!`, and the `io.print` /
+`format.args`, `format.format`, `format.write!`/`format.writeln!`, and the `io.print` /
 `io.println` / `io.eprint` / `io.eprintln` family are the public
 value-formatting conveniences. Their template argument is the same
 Rust-style literal template accepted by `format.format`, including implicit,
 indexed, named, and call-site-captured selections plus `{{` / `}}` escapes;
 `print`/`eprint` write exactly the formatted text and the `*ln` forms perform
-one additional newline write. `print-format` remains a migration alias for
+one additional newline write. A retained Arguments package may replace the
+template-plus-values sequence for any String, writer, or stdio destination.
+`print-format` remains a migration alias for
 `print`. `print-error` remains the direct borrowed-text
 diagnostic helper, and `stdout-write` / `stderr-write` remain the low-level
 borrowed-byte output surface. All placeholder conversion, including the canonical

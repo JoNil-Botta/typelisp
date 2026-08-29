@@ -33568,6 +33568,111 @@ g:
     (compiler-backend-f64-neg-sign-mask-asm-ok?)
     (compiler-backend-f64-neg-sign-mask-object-ok?)))
 
+(define (compiler-backend-f32-neg-source) : String
+  "(define (negf [x : f32]) : f32
+  (neg x))
+(define (main) : i64
+  (if (< (negf 1.5) 0.0) 0 1))")
+
+(define (compiler-backend-f32-neg-object-source) : String
+  "(define (negf [x : f32]) : f32
+  (neg x))
+(define (main) : i64 0)")
+
+(define (compiler-backend-f32-neg-sign-mask-asm-ok?) : bool
+  (match (compiler_backend.compiler-backend-emit-source
+    (compiler-backend-f32-neg-source))
+    [(compiler_backend.ResultCompilerBackend.Ok asm)
+      (and
+        (compiler_backend.backend-and8
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view asm)
+            (cfg
+              scratch-vreg
+              "    xorpd .L_tl_f32_sign_bit(%rip), %xmm0\n"
+              "    xorpd .L_tl_f32_sign_bit(%rip), %xmm2\n"))
+          (=
+            (compiler_backend.compiler-backend-string-count
+              (owned_view.compiler-owned-shared-view asm)
+              ".L_tl_f32_sign_bit:\n")
+            1)
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view asm)
+            "    .balign 16\n")
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view asm)
+            "    .quad 0x80000000\n")
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view asm)
+            "    .quad 0\n")
+          (not
+            (compiler_backend.compiler-backend-string-contains?
+              (owned_view.compiler-owned-shared-view asm)
+              "    negq "))
+          true
+          true)
+        (not
+          (compiler_backend.compiler-backend-string-contains?
+            (owned_view.compiler-owned-shared-view asm)
+            ".L_tl_f64_sign_bit")))]
+    [(compiler_backend.ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-f32-neg-sign-mask-object-target-ok?
+  [target : compiler_backend.CompilerBackendTarget]) : bool
+  (match (compiler_backend.compiler-backend-emit-source-object-image-for-target
+    (compiler-backend-f32-neg-object-source)
+    target)
+    [(compiler_backend.ResultCompilerBackendObject.Ok image)
+      (let
+        [sections : cobj.CompilerObjectSectionList
+          (owned_view.compiler-owned-shared-view image.sections)]
+        [symbols : cobj.CompilerObjectSymbolList
+          (owned_view.compiler-owned-shared-view image.symbols)]
+        [relocs : cobj.CompilerObjectRelocationList
+          (owned_view.compiler-owned-shared-view image.relocations)]
+        [label : String (compiler_backend.compiler-backend-f32-sign-bit-label)]
+        (and
+          (cobj.compiler-object-symbol-list-contains?
+            symbols
+            (owned_view.compiler-owned-shared-view label)
+            (cobj.CompilerObjectSymbolBinding.Local)
+            (cobj.CompilerObjectSymbolKind.Data))
+          (cobj.compiler-object-section-contains-label?
+            (owned_view.compiler-owned-shared-view sections)
+            (cobj.CompilerObjectSectionKind.Rodata)
+            (owned_view.compiler-owned-shared-view label))
+          (cobj.compiler-object-section-contains-align?
+            (owned_view.compiler-owned-shared-view sections)
+            (cobj.CompilerObjectSectionKind.Rodata)
+            16)
+          (cobj.compiler-object-section-label-has-i64-pair?
+            (owned_view.compiler-owned-shared-view sections)
+            (cobj.CompilerObjectSectionKind.Rodata)
+            (owned_view.compiler-owned-shared-view label)
+            2147483648
+            0)
+          (cobj.compiler-object-section-contains-xorpd-rip?
+            sections
+            (owned_view.compiler-owned-shared-view label))
+          (cobj.compiler-object-relocation-list-contains?
+            relocs
+            (cobj.CompilerObjectRelocationKind.RipValue)
+            label)
+          (compiler-backend-f64-neg-sign-mask-object-render-ok? image target)))]
+    [(compiler_backend.ResultCompilerBackendObject.Err _) false]))
+
+(define (compiler-backend-f32-neg-sign-mask-object-ok?) : bool
+  (and
+    (compiler-backend-f32-neg-sign-mask-object-target-ok?
+      (compiler_backend.CompilerBackendTarget.Linux))
+    (compiler-backend-f32-neg-sign-mask-object-target-ok?
+      (compiler_backend.CompilerBackendTarget.Windows))))
+
+(define (compiler-backend-f32-neg-sign-mask-ok?) : bool
+  (and
+    (compiler-backend-f32-neg-sign-mask-asm-ok?)
+    (compiler-backend-f32-neg-sign-mask-object-ok?)))
+
 (define (compiler-backend-direct-f64-neg-home-ok?) : bool
   (match (compiler_backend.compiler-backend-emit-unop
     (compiler_regalloc.compiler-reg-assignments-prepend
@@ -54275,6 +54380,7 @@ b_keep:
       (and
         (compiler-backend-f64-ok?)
         (compiler-backend-f64-neg-sign-mask-ok?)
+        (compiler-backend-f32-neg-sign-mask-ok?)
         (compiler-backend-direct-f64-neg-home-ok?)
         (compiler-backend-spill-f64-neg-home-ok?)
         (compiler-backend-float-sqrt-home-ok?)

@@ -165,6 +165,7 @@ rbp_sixth_csr|tests/integration/rbp_sixth_csr.tl|42|-|-|stdlib/io.tl
 win64_rbp_eighth_csr|tests/integration/win64_rbp_eighth_csr.tl|42|-|-|stdlib/io.tl
 arithmetic|tests/integration/arithmetic.tl|47|-|-|-
 constant_divisor_strength|tests/integration/constant_divisor_strength.tl|42|-|-|-
+constructor_alias_two_phase|tests/integration/constructor_alias_two_phase.tl|42|-|-|stdlib/string.tl
 arena_poison_clone_survives|tests/integration/arena_poison_clone_survives.tl|42|-|-|stdlib/arena.tl stdlib/string.tl
 arena_poison_stale_array_trap|tests/integration/arena_poison_stale_array_trap.tl|139|-|-|stdlib/arena.tl stdlib/string.tl
 calc|tests/integration/calc.tl|14|-|-|token.tl

@@ -46,7 +46,14 @@
 ;; Var ids produced by host templates carry the interpreted quote's
 ;; template-source mark over the lexer's source-name id for the spelling.
 (define (producer-test-name-id [name : String]) : i64
-  (ci.intern-template-source-id (ci.intern name)))
+  (let
+    [session : cis.InternStructuralSessionHandle
+      (cis.intern-structural-session-handle-from-source-names
+        (ci.intern-source-name-session-capture-active-handle))]
+    (cis.intern-template-source-identity-raw
+      (cis.intern-structural-session-template-source-identity
+        session
+        (ci.intern name)))))
 
 ;; A native expansion rebuilds the parser's `Spanned` wrapper around every
 ;; template node, exactly as the interpreted quote does, so every shape probe
@@ -2385,10 +2392,7 @@
           (and
             (match (producer-test-expr-get (& pools) callee)
               [(ast.AstExpr.Var name)
-                (=
-                  name
-                  (ci.intern-template-source-id
-                    (ci.intern "stdlib.eq.struct-eq-fields")))]
+                (= name (producer-test-name-id "stdlib.eq.struct-eq-fields"))]
               [_ false])
             (= (ast.ast-expr-list-len (& args)) 3)
             (match (producer-test-expr-get

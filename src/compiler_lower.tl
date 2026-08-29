@@ -9977,13 +9977,18 @@
     (begin
       (set! data.inline-next-temp (+ next 1))
       (compiler-lower-function-state-data-set! state data)
-      (ci.intern-structural-local-id
-        next
-        (tc_core.macro-hygiene-global-source-name-id-or
+      (let
+        [session : cis.InternStructuralSessionHandle
           (compiler-lower-state-structural-session
-            (compiler-lower-state-from-address owner-address))
-          source-name-id
-          source-name-id)))))
+            (compiler-lower-state-from-address owner-address))]
+        (cis.intern-fresh-local-identity-raw
+          (cis.intern-structural-session-fresh-local-identity
+            session
+            next
+            (tc_core.macro-hygiene-global-source-name-id-or
+              session
+              source-name-id
+              source-name-id)))))))
 
 (define (compiler-lower-function-state-scalar-call-context
   [state : CompilerLowerFunctionState]) : LowerSpmdScalarCallContext
@@ -29551,29 +29556,39 @@
     [(tc_core.ResultTcInlineAggregateLayout.Err message)
       (ResultLowerExpr.Err (box (lower-diagnostic message)))]))
 
-;; TWO-PHASE CONSTRUCTOR LOWERING -- THE ORDER IS LOAD-BEARING (issue #5971).
+;; TWO-PHASE CONSTRUCTOR LOWERING -- THE ORDER IS LOAD-BEARING (issue #6930).
 ;;
 ;; Every `-into` path in this family materializes ALL constructor arguments to
 ;; values first (`lower-args-as` / `lower-args-as-at` runs to completion) and
 ;; only then writes the tag and payload bytes of `dst`. That order is what makes
-;; writing straight into an sret slot or a `set!` place correct WITHOUT any
-;; alias analysis, because of three properties of by-value aggregates:
+;; writing straight into an sret slot or a `set!` place correct WITHOUT alias
+;; analysis. The proof follows the ordinary by-value rules in SPEC sections
+;; 3.3 and 4.7.2:
 ;;
-;;   1. a by-value aggregate argument is passed as a bare POINTER, with no
-;;      caller-side copy (the call site moves the address, never the bytes);
-;;   2. passing an aggregate by value does not move it out of the caller: the
-;;      move checker accepts the caller's continued use of it afterwards, and
-;;      only the local binding form is a hard move error;
-;;   3. the type checker rejects writes through storage derived from a
-;;      memory-class by-value parameter, so it is read-only through that path.
+;;   1. each constructor operand is an ordinary by-value position. Copy values
+;;      are copied and non-Copy values move exactly once, left to right. Moving
+;;      a source invalidates its ownership; it does NOT prove that an IR value
+;;      already materialized from that source cannot name `dst` storage;
+;;   2. every runtime by-value parameter is owned callee storage. Memory-class
+;;      arguments may travel across the ABI by pointer, but call lowering
+;;      snapshots them into a private callee representation before body code
+;;      can write its hidden sret slot. That disjointness starts only AFTER
+;;      argument materialization; it cannot justify writes while lowering the
+;;      argument expressions themselves;
+;;   3. a hidden sret is caller-owned and may be forwarded unchanged through a
+;;      tail-call chain. `set!` may reinitialize the place its RHS just moved
+;;      from, so an earlier result slot may become the next consumed accumulator
+;;      argument. If one backing place supplies an argument and receives the
+;;      new result, rule (2)'s snapshot must complete before any result write.
 ;;
-;; The hidden sret slot still carries NO `noalias` guarantee against arguments
-;; of the same call: accumulator threading (`acc = (f acc x)`, tail recursion)
-;; can make a call site's result slot the next iteration's argument pointer.
+;; Consequently `dst` carries NO general `noalias` guarantee against operand
+;; places at this point in lowering. Accumulator threading such as
+;; `(set! acc (f acc x))` and tail-sret forwarding are the canonical cross-call
+;; cases; direct `set!` constructors expose the same ordering within one frame.
 ;; Interleaving destination writes with argument evaluation MISCOMPILES whenever
-;; `dst` aliases an argument. A prior full destination-forwarding version here
-;; (-282 `tl_memcpy` call sites) broke stage1 in `tc-name-id-list-add`; keep the
-;; source order explicit.
+;; `dst` aliases an operand place. A prior full destination-forwarding version
+;; here (-282 `tl_memcpy` call sites) broke stage1 in `tc-name-id-list-add`; keep
+;; the source order explicit.
 ;;
 ;; Destination forwarding belongs in `compiler_optimize.tl`, where the whole
 ;; window is visible and the alias side condition can actually be discharged --

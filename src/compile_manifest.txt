@@ -491,7 +491,8 @@ contains|_tl_compiler_intern_intern_str:
 contains|_tl_compiler_intern_intern_slice:
 end
 
-decision|src/compiler_intern_state.tl|nominal structural-session adapter over explicitly owned compiler_intern source-name sessions; kept out of the production selfhost import graph and covered by the registered compiler-typecheck-structural-intern-session-isolation test (#6545)
+decision|src/compiler_intern_state.tl|production nominal structural-session API over explicitly owned compiler_intern source-name sessions; typed template-source, fresh-local, macro, arena, and composite identities are exercised through compiler/typecheck/lower/surface/native-route gates (#6469/#6545)
+decision|src/compiler_intern_state_tests.tl|focused one-word template-source/fresh-local canonicalization, malformed-kind/component, cross-owner, stale-reset, deliberate hash-collision, and growth-past-131072 coverage discovered by typelisp test (#6469)
 
 decision|src/compiler_builtin_ids.tl|reset-aware interned builtin/runtime id predicates (#2380/#2464): imports only src/compiler_intern.tl; used by src/compiler_lower.tl dispatch, src/compiler_typecheck_core.tl dispatch, backend runtime-plan id dispatch, and backend target-lowering cache resets
 

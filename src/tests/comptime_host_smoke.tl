@@ -12,6 +12,7 @@
 (import compiler_ast_types)
 (import compiler_ctfe)
 (import compiler_intern as ci)
+(import compiler_intern_state as cis)
 (import stdlib.io)
 (import stdlib.string)
 
@@ -29,6 +30,18 @@
   [a : i64]
   [b : i64]) : i64
   (callback comptime-host-smoke-cookie a b 0))
+
+(define (comptime-host-smoke-syntax-name-text [name-id : i64]) : String
+  (let
+    [source-id : i64
+      (cis.intern-structural-session-syntax-source-name-id-or
+        (cis.intern-structural-session-handle-from-source-names
+          (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-source-names-value))
+        name-id
+        -1)]
+    (if (ci.intern-renderable-id? source-id)
+      (ci.intern-str source-id)
+      "<structural-name>")))
 
 ;; Build `(f ,x)` through named callbacks: callee var, empty list, operand
 ;; push, append, call, commit.
@@ -116,7 +129,8 @@
               [(compiler_ast_types.AstExpr.Var name-id)
                 (=
                   name-id
-                  (ci.intern-template-source-id (ci.intern "__tl_array-length")))]
+                  (compiler_embedded_stdlib_tlci.compiler-comptime-host-template-source-id
+                    (ci.intern "__tl_array-length")))]
               [_ false])
             (= (compiler_ast_types.ast-expr-list-len (& args)) 1)
             (=
@@ -421,7 +435,7 @@
               1
               (compiler_ast_types.ast-type-id-fallback)))
             [(compiler_ast_types.AstType.Var name-id)
-              (string.eq (ci.intern-str name-id) "T")]
+              (string.eq (comptime-host-smoke-syntax-name-text name-id) "T")]
             [_ false])))]
     [_ false]))
 
@@ -748,12 +762,12 @@
     [(compiler_ctfe.CompilerCtfeValue.LetBinding
         (compiler_ast_types.AstLetBinding.Binding name maybe-ty init))
       (and
-        (string.eq (ci.intern-str name) "out")
+        (string.eq (comptime-host-smoke-syntax-name-text name) "out")
         (= init expected-init)
         (match maybe-ty
           [(compiler_ast_types.AstMaybeType.Some
               (compiler_ast_types.AstType.Var type-name))
-            (string.eq (ci.intern-str type-name) "Vec")]
+            (string.eq (comptime-host-smoke-syntax-name-text type-name) "Vec")]
           [_ false]))]
     [_ false]))
 
@@ -1553,7 +1567,9 @@
     [(compiler_ctfe.CompilerCtfeValue.Expr node _)
       (match (compiler_ast_types.ast-node-pool-context-expr-get pools node)
         [(compiler_ast_types.AstExpr.StructGet actual field)
-          (and (= actual target) (string.eq (ci.intern-str field) "alpha"))]
+          (and
+            (= actual target)
+            (string.eq (comptime-host-smoke-syntax-name-text field) "alpha"))]
         [_ false])]
     [_ false]))
 
@@ -1781,15 +1797,22 @@
                               (compiler_ast_types.ast-pattern-list-box-shared-view
                                 args-box)]
                             (and
-                              (string.eq (ci.intern-str name) "Some")
+                              (string.eq
+                                (comptime-host-smoke-syntax-name-text name)
+                                "Some")
                               (= args.len 2)
                               (match (array-ref args.slots 0)
                                 [(compiler_ast_types.AstPattern.Binding first)
-                                  (string.eq (ci.intern-str first) "p0")]
+                                  (string.eq
+                                    (comptime-host-smoke-syntax-name-text first)
+                                    "p0")]
                                 [_ false])
                               (match (array-ref args.slots 1)
                                 [(compiler_ast_types.AstPattern.Binding second)
-                                  (string.eq (ci.intern-str second) "p1")]
+                                  (string.eq
+                                    (comptime-host-smoke-syntax-name-text
+                                      second)
+                                    "p1")]
                                 [_ false])))]
                         [_ false]))]
                   [_ false]))]

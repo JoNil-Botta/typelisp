@@ -37,6 +37,7 @@
 (import stdlib.io)
 (import stdlib.string)
 (import compiler_intern as ci)
+(import compiler_intern_state as cis)
 (import lex as lexer)
 (import token)
 
@@ -1611,16 +1612,32 @@
   (let
     [source : ci.InternId (ci.intern-source-slice-id "reader-view-name" 0 16)]
     [text : ci.InternId (ci.intern-source-slice-id "reader-view-string" 0 18)]
+    [intern-state : ci.InternCompatState
+      (ci.intern-compat-state-capture-active)]
+    [session : cis.InternStructuralSessionHandle
+      (cis.intern-structural-session-handle-from-source-names
+        (ci.intern-source-name-session-handle-from-state intern-state))]
     [structural : ci.InternSyntaxId
       (ci.intern-syntax-id-from-raw
-        (ci.intern-structural-local-id 7 (ci.intern-id-value source)))]
+        (cis.intern-fresh-local-identity-raw
+          (cis.intern-structural-session-fresh-local-identity
+            session
+            7
+            (ci.intern-id-value source))))]
     [span : token.SourceSpan (token.source-span-new 2 3 2 7)]
     (and
       (match (sexpr-view (Sexpr.Sym structural))
         [(SexprView.Sym found)
           (and
             (ci.intern-syntax-id-eq? found structural)
-            (string.eq (symbol-text-for-syntax-id found) "reader-view-name"))]
+            (string.eq
+              (ci.intern-source-name-session-handle-str
+                (cis.intern-structural-session-handle-source-names session)
+                (cis.intern-structural-session-syntax-source-name-id-or
+                  session
+                  (ci.intern-syntax-id-value found)
+                  -1))
+              "reader-view-name"))]
         [_ false])
       (match (sexpr-view (Sexpr.Str text))
         [(SexprView.Str found) (ci.intern-id-eq? found text)]

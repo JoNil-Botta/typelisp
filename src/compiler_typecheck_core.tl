@@ -61420,6 +61420,11 @@
 
 (define (tc-reference-containing-place-borrow-ok? [ty : ast.AstType]) : bool
   (match (tc-type-strip-region (tc-global-shared-view ty))
+    ;; Structural tuples preserve the lifetimes of their reference-bearing
+    ;; elements in the borrowed referent type. Lowering already walks the same
+    ;; tuple shape recursively, so borrowing the tuple's storage is no less
+    ;; representable than borrowing a lifetime-parameterized nominal below.
+    [(ast.AstType.Tuple _) true]
     [(ast.AstType.EnumArgs _ lifetimes)
       (>
         (tc-lifetime-list-count

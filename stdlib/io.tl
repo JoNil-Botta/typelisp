@@ -535,7 +535,7 @@
 
 ;: Format a literal template directly to stdout without a combined String.
 (defmacro (print [template : comptime.Expr] [args : comptime.Expr ...]) : unit
-  `(match (stdlib.format.format-write-literal-callback
+  `(match (stdlib.format.format-write-callback-dispatch
     ,template
     (__tl_format_arguments ,@args)
     0
@@ -546,7 +546,7 @@
 
 ;: Format a literal template directly to stdout and append exactly one newline.
 (defmacro (println [template : comptime.Expr] [args : comptime.Expr ...]) : unit
-  `(match (stdlib.format.format-write-literal-callback
+  `(match (stdlib.format.format-write-callback-dispatch
     ,template
     (__tl_format_arguments ,@args)
     0
@@ -557,7 +557,7 @@
 
 ;: Format a literal template directly to stderr without a combined String.
 (defmacro (eprint [template : comptime.Expr] [args : comptime.Expr ...]) : unit
-  `(match (stdlib.format.format-write-literal-callback
+  `(match (stdlib.format.format-write-callback-dispatch
     ,template
     (__tl_format_arguments ,@args)
     0
@@ -568,7 +568,7 @@
 
 ;: Format a literal template directly to stderr and append exactly one newline.
 (defmacro (eprintln [template : comptime.Expr] [args : comptime.Expr ...]) : unit
-  `(match (stdlib.format.format-write-literal-callback
+  `(match (stdlib.format.format-write-callback-dispatch
     ,template
     (__tl_format_arguments ,@args)
     0

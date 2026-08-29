@@ -10046,16 +10046,20 @@
               "this argument carries an arena region that the parameter does not accept")]
           [(TcMaybeAstSourceSpan.No) message])])))
 
-;; Ordinary lifetime names stay on the old direct intern lookup. Structural
-;; syntax identities and malformed internal ids take the total display path.
+;; Ordinary lifetime names stay on the direct intern lookup. Legacy diagnostics
+;; without a TcContext may render fresh/template identities only from the
+;; validated active owner; malformed and foreign ids take the total fallback.
 (defmacro (tc-lifetime-name-render [name : comptime.Expr]) : comptime.Expr
   `(let
     [lifetime-name-id : i64 ,name]
     (if (ci.intern-renderable-id? lifetime-name-id)
       (ci.intern-str lifetime-name-id)
-      (ci.intern-syntax-name-text-or
-        lifetime-name-id
-        (str_cat.str-cat "<id:" (string.int->string lifetime-name-id) ">")))))
+      (let
+        [source-name-id : i64
+          (ci.intern-active-syntax-source-name-id-or lifetime-name-id -1)]
+        (if (>= source-name-id 0)
+          (ci.intern-str source-name-id)
+          (str_cat.str-cat "<id:" (string.int->string lifetime-name-id) ">"))))))
 
 (define (tc-spanned-escape-error
   [session : cis.InternStructuralSessionHandle]

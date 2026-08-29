@@ -757,6 +757,25 @@
         : i64)
       ,fallback)))
 
+;; Compatibility renderers that do not retain a compile-owned session may
+;; still display the two syntax identities minted by the currently installed
+;; interner. The encoded owner prefix and live table length validate `raw`
+;; before the component lane is read, so a foreign or stale identity never
+;; aliases the active table. Semantic compiler paths use an explicit
+;; InternStructuralSessionHandle instead.
+(define (intern-active-syntax-source-name-id-or [raw : i64] [fallback : i64]) : i64
+  (let
+    [kind : i64 (intern-active-structural-record-kind-or raw -1)]
+    (if (or
+      (= kind (intern-structural-kind-template-source))
+      (= kind (intern-structural-kind-fresh-local)))
+      (let
+        [source-name-id : i64 (intern-composite-right-id-unchecked raw)]
+        (if (intern-renderable-id? source-name-id)
+          source-name-id
+          fallback))
+      fallback)))
+
 (define (intern-active-structural-sync!
   [cell : (& cell (__tl_dyn-array InternStructuralTable))]) : unit
   (let

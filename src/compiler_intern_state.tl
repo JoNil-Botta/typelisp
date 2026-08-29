@@ -1019,9 +1019,10 @@
       handle
       (InternMacroLocalIdentity raw))))
 
-;; Render boundary for mixed source/syntax ids. Every structural family proves
-;; ownership and record kind in the explicit session before exposing its source
-;; spelling. Unknown, stale, and wrong-owner handles remain total.
+;; Render boundary for mixed source/syntax ids. Nonzero handles prove ownership
+;; and record kind in their explicit session before exposing a source spelling;
+;; the zero handle is the deliberate legacy-renderer adapter for the installed
+;; compatibility owner. Unknown, stale, and wrong-owner handles remain total.
 (define (intern-structural-session-syntax-source-name-id-or
   [handle : InternStructuralSessionHandle]
   [raw : i64]
@@ -1030,28 +1031,30 @@
     [direct : i64 (ci.intern-syntax-source-name-id-or raw -1)]
     (if (>= direct 0)
       direct
-      (match (intern-structural-session-template-source-record-for-raw
-        handle
-        raw)
-        [(InternMaybeTemplateSourceRecord.Some record) record.source-name-id]
-        [(InternMaybeTemplateSourceRecord.No)
-          (match (intern-structural-session-fresh-local-record-for-raw
-            handle
-            raw)
-            [(InternMaybeFreshLocalRecord.Some record) record.source-name-id]
-            [(InternMaybeFreshLocalRecord.No)
-              (match (intern-structural-session-macro-global-record-for-raw
-                handle
-                raw)
-                [(InternMaybeMacroGlobalRecord.Some record)
-                  record.source-name-id]
-                [(InternMaybeMacroGlobalRecord.No)
-                  (match (intern-structural-session-macro-local-record-for-raw
-                    handle
-                    raw)
-                    [(InternMaybeMacroLocalRecord.Some record)
-                      record.source-name-id]
-                    [(InternMaybeMacroLocalRecord.No) fallback])])])]))))
+      (if (<= handle.address 0)
+        (ci.intern-active-syntax-source-name-id-or raw fallback)
+        (match (intern-structural-session-template-source-record-for-raw
+          handle
+          raw)
+          [(InternMaybeTemplateSourceRecord.Some record) record.source-name-id]
+          [(InternMaybeTemplateSourceRecord.No)
+            (match (intern-structural-session-fresh-local-record-for-raw
+              handle
+              raw)
+              [(InternMaybeFreshLocalRecord.Some record) record.source-name-id]
+              [(InternMaybeFreshLocalRecord.No)
+                (match (intern-structural-session-macro-global-record-for-raw
+                  handle
+                  raw)
+                  [(InternMaybeMacroGlobalRecord.Some record)
+                    record.source-name-id]
+                  [(InternMaybeMacroGlobalRecord.No)
+                    (match (intern-structural-session-macro-local-record-for-raw
+                      handle
+                      raw)
+                      [(InternMaybeMacroLocalRecord.Some record)
+                        record.source-name-id]
+                      [(InternMaybeMacroLocalRecord.No) fallback])])])])))))
 
 (define (intern-structural-session-arena-phase-identity-for-components
   [handle : InternStructuralSessionHandle]

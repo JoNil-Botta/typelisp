@@ -14895,13 +14895,20 @@
 (define (tc-structural-local-name-id?
   [session : cis.InternStructuralSessionHandle]
   [name-id : i64]) : bool
-  (cond
-    [(< name-id (ci.intern-capacity)) false]
-    [(cis.intern-structural-session-fresh-local-id? session name-id) true]
-    ;; Template-source and the other structural families cannot be macro
-    ;; locals. Reject non-table ids before crossing the session API.
-    [(< name-id (ci.intern-structural-key-base)) false]
-    [else (macro-hygiene-local-id? session name-id)]))
+  ;; Fresh and hygienic macro locals are both table-backed. One owner-checked
+  ;; kind read classifies the two local families without probing fresh first
+  ;; and reopening the same record as a macro local on every miss.
+  (if (< name-id (ci.intern-structural-key-base))
+    false
+    (let
+      [kind : i64
+        (cis.intern-structural-session-record-kind-for-structural-or
+          session
+          name-id
+          -1)]
+      (or
+        (= kind (ci.intern-structural-kind-fresh-local))
+        (= kind (ci.intern-structural-kind-macro-local))))))
 
 (define (tc-hygiene-local-name-id?
   [session : cis.InternStructuralSessionHandle]
@@ -22569,7 +22576,6 @@
       (ci.intern-qualified? name-id))
     (cond
       [(< name-id 0) false]
-      [(cis.intern-structural-session-fresh-local-id? session name-id) false]
       [(< name-id (ci.intern-structural-key-base)) false]
       [else
         ;; Qualified checks only need a table record's tag in the common
@@ -22582,7 +22588,10 @@
               name-id
               -1)]
           (cond
-            [(= kind (ci.intern-structural-kind-macro-local)) false]
+            [(or
+                (= kind (ci.intern-structural-kind-fresh-local))
+                (= kind (ci.intern-structural-kind-macro-local)))
+              false]
             [(= kind (ci.intern-structural-kind-macro-global))
               (match (cis.intern-structural-session-macro-global-record-for-raw
                 session

@@ -2062,9 +2062,6 @@
     [count : i64 pool.canonical-span-count]
     [i : i64 0]
     (begin
-      ;; Records contain only scalar ids/spans. The exclusive pool borrow keeps
-      ;; both arena-backed arrays alive for this copy, and no element pointer is
-      ;; retained when the new backing array is installed.
       (while (< i count)
         (begin
           (set! (array-ref next i) (array-ref old i))
@@ -2289,6 +2286,9 @@
     [count : i64 pool.canonical-span-count]
     [i : i64 0]
     (begin
+      ;; Records contain only scalar ids/spans. The exclusive pool borrow keeps
+      ;; both arena-backed arrays alive for this copy, and no element pointer is
+      ;; retained when the new backing array is installed.
       (while (< i count)
         (begin
           (unsafe

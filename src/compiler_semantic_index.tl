@@ -5511,7 +5511,7 @@
                   (compiler-semantic-match-body-source-expr-id body)
                   (string.string-length state.source))]
               [saved : tc.TcTypeEnvScopedRuntimeSave
-                (tc.tc-type-env-scoped-runtime-save)]
+                (tc.tc-type-env-scoped-runtime-save env)]
               (begin
                 (match (owned_view.compiler-owned-shared-view scrutinee-ty)
                   [(ast.AstMaybeType.Some ty)

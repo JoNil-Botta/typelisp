@@ -26,10 +26,10 @@
 ;; it; scripts/verify-asm-shape-gates.sh asserts the shape over the bounds-check-
 ;; eliminated fast body. The two call sites keep `fold-words` out of line.
 (define (fold-words
-  [a : (__tl_dyn-array i64)]
-  [b : (__tl_dyn-array i64)]
-  [c : (__tl_dyn-array i64)]
-  [d : (__tl_dyn-array i64)]
+  [a : (& a (__tl_dyn-array i64))]
+  [b : (& b (__tl_dyn-array i64))]
+  [c : (& c (__tl_dyn-array i64))]
+  [d : (& d (__tl_dyn-array i64))]
   [seed : i64]) : i64
   (let
     [i : i64 0]
@@ -56,10 +56,10 @@
 ;; `bit-and` over a `bit-xor`, each with a fresh element read on one side and
 ;; the running value on the other), one op wider.
 (define (fold-nested
-  [a : (__tl_dyn-array i64)]
-  [b : (__tl_dyn-array i64)]
-  [c : (__tl_dyn-array i64)]
-  [d : (__tl_dyn-array i64)]
+  [a : (& a (__tl_dyn-array i64))]
+  [b : (& b (__tl_dyn-array i64))]
+  [c : (& c (__tl_dyn-array i64))]
+  [d : (& d (__tl_dyn-array i64))]
   [seed : i64]) : i64
   (let
     [i : i64 0]
@@ -89,8 +89,8 @@
         (begin
           (set! (array-ref a i) -1)
           (set! i (+ i 1))))
-      (unless (= (fold-words a b c d -1) -1) (return 1))
-      (unless (= (fold-words a b c d 0) 0) (return 1))
-      (unless (= (fold-nested a b c d -1) 0) (return 1))
-      (unless (= (fold-nested a b c d 0) 0) (return 1))
+      (unless (= (fold-words (& a) (& b) (& c) (& d) -1) -1) (return 1))
+      (unless (= (fold-words (& a) (& b) (& c) (& d) 0) 0) (return 1))
+      (unless (= (fold-nested (& a) (& b) (& c) (& d) -1) 0) (return 1))
+      (unless (= (fold-nested (& a) (& b) (& c) (& d) 0) 0) (return 1))
       42)))

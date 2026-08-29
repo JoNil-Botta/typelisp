@@ -138,7 +138,7 @@
 (define (cfg-mix [hash : i64] [value : i64]) : i64
   (* (bit-xor hash value) cfg-hash-prime))
 
-(define (cfg-byte-at [text : String] [n : i64] [i : i64]) : i64
+(define (cfg-byte-at [text : (& text str)] [n : i64] [i : i64]) : i64
   (if (< i n)
     (cast (string.string-ref text i) : i64)
     -1))
@@ -148,7 +148,7 @@
 
 ;; Whitespace-separated decimal integers, with `#` starting a comment that runs
 ;; to the end of its line.
-(define (cfg-scan-ints [text : String] [out : (&mut out i64vec.Vec)]) : i64
+(define (cfg-scan-ints [text : (& text str)] [out : (&mut out i64vec.Vec)]) : i64
   (let
     [n : i64 (string.string-length text)]
     [i : i64 0]

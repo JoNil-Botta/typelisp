@@ -790,7 +790,7 @@
 (define compiler-builtin-id-fix-stdlib_dot_clone_dot_synthesize_helpers : i64
   -1)
 (define compiler-builtin-ctfe-ids : (__tl_dyn-array i64)
-  (__tl_make-array i64 290))
+  (__tl_make-array i64 291))
 
 (defstruct CompilerBuiltinIdsState
   ;; generation, table id, pool length, parse-initialized flag
@@ -802,7 +802,7 @@
   (let
     [metadata : (__tl_dyn-array i64) (__tl_make-array i64 4)]
     [ids : (__tl_dyn-array i64) (__tl_make-array i64 319)]
-    [ctfe-ids : (__tl_dyn-array i64) (__tl_make-array i64 290)]
+    [ctfe-ids : (__tl_dyn-array i64) (__tl_make-array i64 291)]
     [i : i64 0]
     (begin
       (set! (array-ref metadata 0) -1)
@@ -814,31 +814,31 @@
           (set! (array-ref ids i) -1)
           (set! i (+ i 1))))
       (set! i 0)
-      (while (< i 290)
+      (while (< i 291)
         (begin
           (set! (array-ref ctfe-ids i) -1)
           (set! i (+ i 1))))
       (CompilerBuiltinIdsState metadata ids ctfe-ids))))
 
-(define (state-generation [state : CompilerBuiltinIdsState]) : i64
+(define (state-generation [state : (& state CompilerBuiltinIdsState)]) : i64
   (array-ref state.metadata 0))
 
 (define (state-set-generation!
-  [state : CompilerBuiltinIdsState]
+  [state : (&mut state CompilerBuiltinIdsState)]
   [generation : i64]) : unit
   (set! (array-ref state.metadata 0) generation))
 
-(define (state-table-id [state : CompilerBuiltinIdsState]) : i64
+(define (state-table-id [state : (& state CompilerBuiltinIdsState)]) : i64
   (array-ref state.metadata 1))
 
-(define (state-pool-len [state : CompilerBuiltinIdsState]) : i64
+(define (state-pool-len [state : (& state CompilerBuiltinIdsState)]) : i64
   (array-ref state.metadata 2))
 
-(define (state-parse-initialized? [state : CompilerBuiltinIdsState]) : bool
+(define (state-parse-initialized? [state : (& state CompilerBuiltinIdsState)]) : bool
   (= (array-ref state.metadata 3) 1))
 
 (define (state-set-metadata!
-  [state : CompilerBuiltinIdsState]
+  [state : (&mut state CompilerBuiltinIdsState)]
   [table-id : i64]
   [pool-len : i64]
   [parse-initialized : bool]) : unit
@@ -851,13 +851,15 @@
         1
         0))))
 
-(define (state-ref [state : CompilerBuiltinIdsState] [index : i64]) : i64
+(define (state-ref [state : (& state CompilerBuiltinIdsState)] [index : i64]) : i64
   (array-ref state.ids index))
 
 ;; State-owned CTFE builtin lookup: reads the state's own snapshot instead of
 ;; the compatibility-global CTFE id array, so an uninstalled state's table can
 ;; be queried without installing it.
-(define (state-ctfe-ref [state : CompilerBuiltinIdsState] [index : i64]) : i64
+(define (state-ctfe-ref
+  [state : (& state CompilerBuiltinIdsState)]
+  [index : i64]) : i64
   (array-ref state.ctfe-ids index))
 
 ;; State-owned table validation: does this state's builtin table belong to the
@@ -865,7 +867,7 @@
 ;; `compiler-builtin-table-current?` for a state that may not be installed in
 ;; the compatibility globals; the caller passes its owning intern identity.
 (define (state-table-current-with?
-  [state : CompilerBuiltinIdsState]
+  [state : (& state CompilerBuiltinIdsState)]
   [generation : i64]
   [table-id : i64]) : bool
   (and
@@ -873,7 +875,7 @@
     (= (state-table-id state) table-id)))
 
 (define (state-set!
-  [state : CompilerBuiltinIdsState]
+  [state : (&mut state CompilerBuiltinIdsState)]
   [index : i64]
   [value : i64]) : unit
   (set! (array-ref state.ids index) value))
@@ -884,18 +886,18 @@
 (define (compiler-builtin-ctfe-set! [index : i64] [value : i64]) : unit
   (set! (array-ref compiler-builtin-ctfe-ids index) value))
 
-(define (state-capture-ctfe-ids! [state : CompilerBuiltinIdsState]) : unit
+(define (state-capture-ctfe-ids! [state : (&mut state CompilerBuiltinIdsState)]) : unit
   (let
     [i : i64 0]
-    (while (< i 290)
+    (while (< i 291)
       (begin
         (set! (array-ref state.ctfe-ids i) (compiler-builtin-ctfe-ref i))
         (set! i (+ i 1))))))
 
-(define (state-install-ctfe-ids! [state : CompilerBuiltinIdsState]) : unit
+(define (state-install-ctfe-ids! [state : (& state CompilerBuiltinIdsState)]) : unit
   (let
     [i : i64 0]
-    (while (< i 290)
+    (while (< i 291)
       (begin
         (compiler-builtin-ctfe-set! i (array-ref state.ctfe-ids i))
         (set! i (+ i 1))))))
@@ -905,7 +907,7 @@
 ;; when this state's table is the installed one -- resetting an uninstalled
 ;; state must not disturb whichever table the serial/legacy paths (or another
 ;; job state) currently have installed.
-(define (state-reset! [state : CompilerBuiltinIdsState]) : unit
+(define (state-reset! [state : (&mut state CompilerBuiltinIdsState)]) : unit
   (let
     [installed? : bool
       (and
@@ -918,7 +920,8 @@
         (compiler-builtin-reset!)
         unit))))
 
-(define (state-capture-from-globals! [state : CompilerBuiltinIdsState]) : unit
+(define (state-capture-from-globals!
+  [state : (&mut state CompilerBuiltinIdsState)]) : unit
   (begin
     (state-set-generation! state compiler-builtin-generation)
     (state-set-metadata!
@@ -1300,10 +1303,10 @@
   (let
     [state : CompilerBuiltinIdsState (state-new)]
     (begin
-      (state-capture-from-globals! state)
+      (state-capture-from-globals! (&mut state))
       state)))
 
-(define (state-install! [state : CompilerBuiltinIdsState]) : unit
+(define (state-install! [state : (& state CompilerBuiltinIdsState)]) : unit
   (begin
     (state-install-ctfe-ids! state)
     (set! compiler-builtin-generation (state-generation state))
@@ -1731,7 +1734,7 @@
 (define (compiler-builtin-clear-ctfe-ids!) : unit
   (let
     [index : i64 0]
-    (while (< index 290)
+    (while (< index 291)
       (begin
         (compiler-builtin-ctfe-set! index -1)
         (set! index (+ index 1))))))
@@ -2077,7 +2080,9 @@
     (compiler-builtin-load-ctfe-id! insert-missing 288 "expr-shared-let-scope")
     ;; Reflected type -> opaque type-literal syntax bridge. Append-only: every
     ;; previously shipped CTFE name keeps its stable reset-aware slot.
-    (compiler-builtin-load-ctfe-id! insert-missing 289 "type-expr")))
+    (compiler-builtin-load-ctfe-id! insert-missing 289 "type-expr")
+    ;; Computed one-parameter lambda builder. Append-only for reset-stable IDs.
+    (compiler-builtin-load-ctfe-id! insert-missing 290 "expr-lambda1")))
 
 (define (compiler-builtin-load! [insert-missing : bool]) : unit
   (begin
@@ -3321,6 +3326,9 @@
       (=
         (compiler-builtin-ctfe-ref 289)
         (ci.intern-source-slice "type-expr" 0 9))
+      (=
+        (compiler-builtin-ctfe-ref 290)
+        (ci.intern-source-slice "expr-lambda1" 0 12))
       (not
         (=
           (compiler-builtin-ctfe-ref 219)
@@ -3380,6 +3388,7 @@
           (compiler-builtin-ctfe-set! 287 -1)
           (compiler-builtin-ctfe-set! 288 -1)
           (compiler-builtin-ctfe-set! 289 -1)
+          (compiler-builtin-ctfe-set! 290 -1)
           (state-install! snapshot)
           (unless
             (compiler-builtin-parser-syntax-ids-current-ok?)
@@ -3454,36 +3463,42 @@
     (let
       [intern-a : ci.InternCompatState (ci.intern-compat-state-new)]
       [intern-b : ci.InternCompatState (ci.intern-compat-state-new)]
-      [_a-prefix : i64 (ci.intern-compat-state-intern intern-a "a-only")]
-      [_b-prefix-1 : i64 (ci.intern-compat-state-intern intern-b "b-only-1")]
-      [_b-prefix-2 : i64 (ci.intern-compat-state-intern intern-b "b-only-2")]
+      [_a-prefix : i64 (ci.intern-compat-state-intern (&mut intern-a) "a-only")]
+      [_b-prefix-1 : i64
+        (ci.intern-compat-state-intern (&mut intern-b) "b-only-1")]
+      [_b-prefix-2 : i64
+        (ci.intern-compat-state-intern (&mut intern-b) "b-only-2")]
       [builtins-a : CompilerBuiltinIdsState (state-new)]
       [builtins-b : CompilerBuiltinIdsState (state-new)]
       [arena-a : i64 -1]
       [arena-b : i64 -1]
       (begin
-        (ci.intern-compat-state-install! intern-a)
+        (ci.intern-compat-state-install!
+          (ci.intern-global-shared-view intern-a))
         (compiler-builtin-reset!)
         (compiler-builtin-initialize-for-parse!)
         (set! arena-a compiler-builtin-id-arena-module)
-        (state-capture-from-globals! builtins-a)
-        (ci.intern-compat-state-capture-from-globals! intern-a)
-        (ci.intern-compat-state-install! intern-b)
+        (state-capture-from-globals! (&mut builtins-a))
+        (ci.intern-compat-state-capture-from-globals! (&mut intern-a))
+        (ci.intern-compat-state-install!
+          (ci.intern-global-shared-view intern-b))
         (compiler-builtin-reset!)
         (compiler-builtin-initialize-for-parse!)
         (set! arena-b compiler-builtin-id-arena-module)
-        (state-capture-from-globals! builtins-b)
-        (ci.intern-compat-state-capture-from-globals! intern-b)
+        (state-capture-from-globals! (&mut builtins-b))
+        (ci.intern-compat-state-capture-from-globals! (&mut intern-b))
         (unless (not (= arena-a arena-b)) (return false))
-        (ci.intern-compat-state-install! intern-a)
-        (state-install! builtins-a)
+        (ci.intern-compat-state-install!
+          (ci.intern-global-shared-view intern-a))
+        (state-install! (& builtins-a))
         (unless
           (and
             (= compiler-builtin-id-arena-module arena-a)
             (compiler-builtin-arena-identities-current-ok?))
           (return false))
-        (ci.intern-compat-state-install! intern-b)
-        (state-install! builtins-b)
+        (ci.intern-compat-state-install!
+          (ci.intern-global-shared-view intern-b))
+        (state-install! (& builtins-b))
         (and
           (= compiler-builtin-id-arena-module arena-b)
           (compiler-builtin-arena-identities-current-ok?))))))

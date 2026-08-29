@@ -64,45 +64,45 @@
           (and
             (=
               (compiler_lower_tests.lower-test-function-vector-load-count
-                functions
+                (ir.compiler-ir-global-shared-view functions)
                 "fill")
               2)
             (=
               (compiler_lower_tests.lower-test-function-vector-binop-count
-                functions
+                (ir.compiler-ir-global-shared-view functions)
                 "fill")
               (if predicated?
                 6
                 3))
             (=
               (compiler_lower_tests.lower-test-function-vector-store-count
-                functions
+                (ir.compiler-ir-global-shared-view functions)
                 "fill")
               2)
             (=
               (compiler_lower_tests.lower-test-function-predicated-load-count
-                functions
+                (ir.compiler-ir-global-shared-view functions)
                 "fill")
               (if predicated?
                 2
                 0))
             (=
               (compiler_lower_tests.lower-test-function-predicated-store-count
-                functions
+                (ir.compiler-ir-global-shared-view functions)
                 "fill")
               (if predicated?
                 2
                 0))
             (=
               (compiler_lower_tests.lower-test-function-tail-mask-count
-                functions
+                (ir.compiler-ir-global-shared-view functions)
                 "fill")
               (if predicated?
                 1
                 0))
             (>
               (compiler_lower_tests.lower-test-function-store-ptr-count
-                functions
+                (ir.compiler-ir-global-shared-view functions)
                 "fill")
               0))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
@@ -151,29 +151,29 @@
           (and
             (=
               (compiler_lower_tests.lower-test-function-tail-mask-count
-                functions
+                (ir.compiler-ir-global-shared-view functions)
                 "fill")
               1)
             (=
               (compiler_lower_tests.lower-test-function-vector-load-count
-                functions
+                (ir.compiler-ir-global-shared-view functions)
                 "fill")
               1)
             (=
               (compiler_lower_tests.lower-test-function-vector-store-count
-                functions
+                (ir.compiler-ir-global-shared-view functions)
                 "fill")
               1)
             (=
               (compiler_lower_tests.lower-test-function-predicated-load-count
-                functions
+                (ir.compiler-ir-global-shared-view functions)
                 "fill")
               1)
             ;; One parent tail store plus two divergent stores in each of the
             ;; full and tail bodies. Child masks must remain predicated.
             (=
               (compiler_lower_tests.lower-test-function-predicated-store-count
-                functions
+                (ir.compiler-ir-global-shared-view functions)
                 "fill")
               5))])]
     [(compiler_lower.ResultCompilerLower.Err _) false]))
@@ -211,31 +211,31 @@
           (and
             (=
               (compiler_lower_tests.lower-test-function-binop-op-count
-                functions
+                (ir.compiler-ir-global-shared-view functions)
                 "reduce_split_pos"
                 ir.CompilerIrBinOp.Mul)
               1)
             (=
               (compiler_lower_tests.lower-test-function-binop-op-count
-                functions
+                (ir.compiler-ir-global-shared-view functions)
                 "reduce_split_pos_swapped"
                 ir.CompilerIrBinOp.Mul)
               1)
             (=
               (compiler_lower_tests.lower-test-function-binop-op-count
-                functions
+                (ir.compiler-ir-global-shared-view functions)
                 "reduce_split_neg_i32"
                 ir.CompilerIrBinOp.Mul)
               0)
             (=
               (compiler_lower_tests.lower-test-function-binop-op-count
-                functions
+                (ir.compiler-ir-global-shared-view functions)
                 "reduce_split_neg_index"
                 ir.CompilerIrBinOp.Mul)
               0)
             (=
               (compiler_lower_tests.lower-test-function-binop-op-count
-                functions
+                (ir.compiler-ir-global-shared-view functions)
                 "reduce_split_neg_rebind"
                 ir.CompilerIrBinOp.Mul)
               0))])]
@@ -264,7 +264,7 @@
       (let
         [items : svec.Vec (svec.new)]
         (begin
-          (svec.push-ref! (&mut items) root)
+          (svec.push-ref! (&mut items) (clone root))
           items))]
     (begin
       (load.compiler-load-test-mkdir root)
@@ -275,7 +275,7 @@
 (define (maybe-string-single [value : String]) : MaybeString
   (MaybeString.Some value))")
       (compiler-lower-smoke-write-text
-        entry
+        (clone entry)
         "(import stdlib.maybe_string)
 (define (main) : i64
   (__tl_string_length
@@ -283,7 +283,7 @@
       [(maybe_string.MaybeString.No) \"\"]
       [(maybe_string.MaybeString.Some head) head])))")
       (match (load.compiler-load-file-with-paths-and-roots
-        entry
+        (clone entry)
         (sym_i64_env.sym-i64-empty)
         roots)
         [(load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
@@ -323,8 +323,10 @@
 (define (compiler-lower-smoke-macro-prepass-diagnostic-path-ok?) : bool
   (let
     [dir : String "target/lower_macro_prepass_diagnostic"]
-    [leaf : String (load.compiler-load-join-root-path dir "issue6339_leaf.tl")]
-    [entry : String (load.compiler-load-join-root-path dir "issue6339_root.tl")]
+    [leaf : String
+      (load.compiler-load-join-root-path (clone dir) "issue6339_leaf.tl")]
+    [entry : String
+      (load.compiler-load-join-root-path (clone dir) "issue6339_root.tl")]
     [roots : svec.Vec
       (let
         [items : svec.Vec (svec.new)]
@@ -334,14 +336,14 @@
     (begin
       (load.compiler-load-test-mkdir dir)
       (compiler-lower-smoke-write-text
-        leaf
+        (clone leaf)
         "(module issue6339_leaf)
 (import stdlib.core_macros)
 (import stdlib.fs as fs)
 (define bad-path : String
   (fs.path-join-many missing))")
       (compiler-lower-smoke-write-text
-        entry
+        (clone entry)
         "(import issue6339_leaf as leaf)
 (define (main) : i64
   (__tl_string_length leaf.bad-path))")
@@ -349,7 +351,7 @@
       (let
         [ok : bool
           (match (compiler_driver_core.compiler-driver-load-and-lower-escaping
-            entry
+            (clone entry)
             (backend.CompilerBackendTarget.Linux)
             roots
             (backend.CompilerBackendMode.Scalar)
@@ -360,10 +362,13 @@
               false]
             [(compiler_driver_core.ResultCompilerDriverLowered.Err diag-box)
               (let
-                [diag : diagnostic.CompilerDiagnostic (__tl-box-place diag-box)]
+                [diag : diagnostic.CompilerDiagnostic
+                  (diagnostic.compiler-diagnostic-box-shared-view diag-box)]
                 [labels : diagnostic.CompilerDiagnosticLabelList
                   (diagnostic.compiler-diagnostic-secondary-spans diag)]
-                [rendered : String (diagnostic.compiler-diagnostic-render diag)]
+                [rendered : String
+                  (diagnostic.compiler-diagnostic-render
+                    (diagnostic.compiler-diagnostic-place-shared-view diag))]
                 (and
                   (string.eq (diagnostic.compiler-diagnostic-path diag) leaf)
                   (= (diagnostic.compiler-diagnostic-line diag) 5)
@@ -424,7 +429,7 @@
           items))]
     (begin
       (compiler-lower-smoke-write-text
-        path
+        (clone path)
         (compiler-lower-smoke-module-macro-stdlib-vector-import-no-main-source))
       (match (compiler_driver_core.compiler-driver-emit-ir-summary-file-with-target-roots-level-mode-and-cfg
         path
@@ -449,7 +454,7 @@
           items))]
     (begin
       (compiler-lower-smoke-write-text
-        path
+        (clone path)
         "(define (no-main-direct-helper) : i64 7)")
       (compiler_driver_core.compiler-driver-reset-file-state!)
       (match (compiler_driver_core.compiler-driver-emit-file-buffer-with-target-roots-level-mode-and-cfg
@@ -591,28 +596,28 @@
               (begin
                 (unless
                   (compiler_lower_tests.lower-test-function-defined?
-                    functions
+                    (ir.compiler-ir-global-shared-view functions)
                     "main")
                   (io.panic "lower: module entry main function missing"))
                 (unless
                   (compiler_lower_tests.lower-test-function-defined?
-                    functions
+                    (ir.compiler-ir-global-shared-view functions)
                     "arena.tl::stdlib.arena/helper")
                   (io.panic "lower: module entry helper function missing"))
                 (let
                   [path-count : i64
                     (compiler_lower_tests.lower-test-function-direct-call-count
-                      functions
+                      (ir.compiler-ir-global-shared-view functions)
                       "main"
                       "arena.tl::stdlib.arena/helper")]
                   [module-count : i64
                     (compiler_lower_tests.lower-test-function-direct-call-count
-                      functions
+                      (ir.compiler-ir-global-shared-view functions)
                       "main"
                       "stdlib.arena/helper")]
                   [bare-count : i64
                     (compiler_lower_tests.lower-test-function-direct-call-count
-                      functions
+                      (ir.compiler-ir-global-shared-view functions)
                       "main"
                       "helper")]
                   (unless
@@ -656,29 +661,29 @@
   [functions : ir.CompilerIrFunctionSeq]) : bool
   (or
     (compiler_lower_tests.lower-test-function-defined?
-      functions
+      (ir.compiler-ir-global-shared-view functions)
       "stdlib/runtime.tl::substring")
     (compiler_lower_tests.lower-test-function-defined?
-      functions
+      (ir.compiler-ir-global-shared-view functions)
       "runtime.tl::substring")
     (compiler_lower_tests.lower-test-function-defined?
-      functions
+      (ir.compiler-ir-global-shared-view functions)
       "stdlib/runtime.tl::stdlib.runtime/substring")
     (compiler_lower_tests.lower-test-function-defined?
-      functions
+      (ir.compiler-ir-global-shared-view functions)
       "runtime.tl::stdlib.runtime/substring")
     (compiler_lower_tests.lower-test-function-defined?
-      functions
+      (ir.compiler-ir-global-shared-view functions)
       "stdlib.runtime/substring")))
 
 (define (compiler-lower-smoke-stdlib-string-public-substring-defined?
   [functions : ir.CompilerIrFunctionSeq]) : bool
   (or
     (compiler_lower_tests.lower-test-function-defined?
-      functions
+      (ir.compiler-ir-global-shared-view functions)
       "stdlib/string.tl::stdlib.string/substring")
     (compiler_lower_tests.lower-test-function-defined?
-      functions
+      (ir.compiler-ir-global-shared-view functions)
       "string.tl::stdlib.string/substring")))
 
 (define (compiler-lower-smoke-stdlib-string-public-substring-reachable-ok?) : bool
@@ -695,9 +700,9 @@
               (and
                 (not
                   (compiler-lower-smoke-stdlib-runtime-substring-defined?
-                    functions))
+                    (ir.compiler-ir-global-shared-view functions)))
                 (compiler-lower-smoke-stdlib-string-public-substring-defined?
-                  functions))])]
+                  (ir.compiler-ir-global-shared-view functions)))])]
         [(compiler_lower.ResultCompilerLower.Err _) false])]
     [(parser.ResultAstProgram.Err _) false]))
 

@@ -34,22 +34,53 @@
 ;; are appended last so the existing variants/tags keep their stable ordering
 ;; for every importer.
 (import compiler_intern as ci)
+(import stdlib.string)
 
-(defenum Token
-  (LParen)
-  (RParen)
-  (Int i64 String)
-  (Sym ci.InternId)
-  (End)
-  (Str ci.InternId)
-  (Char char)
-  (Float String)
-  (LBracket)
-  (RBracket)
-  (Quote)
-  (Backtick)
-  (Comma)
-  (CommaAt))
+(cfg
+  stage0-token-scalar-bootstrap
+  (defenum Token
+    (LParen)
+    (RParen)
+    (Int i64 String)
+    (Sym i64)
+    (End)
+    (Str i64)
+    (Char char)
+    (Float String)
+    (LBracket)
+    (RBracket)
+    (Quote)
+    (Backtick)
+    (Comma)
+    (CommaAt)))
+
+(cfg
+  (not stage0-token-scalar-bootstrap)
+  (defenum Token
+    (LParen)
+    (RParen)
+    (Int i64 String)
+    (Sym ci.InternId)
+    (End)
+    (Str ci.InternId)
+    (Char char)
+    (Float String)
+    (LBracket)
+    (RBracket)
+    (Quote)
+    (Backtick)
+    (Comma)
+    (CommaAt)))
+
+(cfg
+  stage0-token-scalar-bootstrap
+  (define (token-intern-payload [id : ci.InternId]) : i64
+    (ci.intern-id-value id)))
+
+(cfg
+  (not stage0-token-scalar-bootstrap)
+  (define (token-intern-payload [id : ci.InternId]) : ci.InternId
+    id))
 
 ;; Source locations are 1-based line/column pairs. The end position is
 ;; exclusive, so a one-character token at line 1 column 1 spans 1:1 -> 1:2.
@@ -171,7 +202,8 @@
 ;; a non-symbol is not represented by a raw negative name sentinel.
 (define (sym-id [t : Token]) : ci.InternId
   (match t
-    [(Token.Sym id) id]
+    [(Token.Sym id)
+      (cfg stage0-token-scalar-bootstrap (ci.intern-id-from-renderable id) id)]
     [_ (ci.tl_oob_abort)]))
 
 ;; Symbol text of `Token.Sym` (the empty string for any other kind): resolves
@@ -181,7 +213,11 @@
     [(Token.LParen) ""]
     [(Token.RParen) ""]
     [(Token.Int _ _) ""]
-    [(Token.Sym id) (ci.intern-id-str id)]
+    [(Token.Sym id)
+      (cfg
+        stage0-token-scalar-bootstrap
+        (ci.intern-str id)
+        (ci.intern-id-str id))]
     [(Token.End) ""]
     [(Token.Str _) ""]
     [(Token.Char _) ""]
@@ -204,7 +240,11 @@
     [(Token.Int _ _) ""]
     [(Token.Sym _) ""]
     [(Token.End) ""]
-    [(Token.Str id) (ci.intern-id-str id)]
+    [(Token.Str id)
+      (cfg
+        stage0-token-scalar-bootstrap
+        (ci.intern-str id)
+        (ci.intern-id-str id))]
     [(Token.Char _) ""]
     [(Token.Float _) ""]
     [(Token.LBracket) ""]
@@ -218,7 +258,8 @@
 ;; tag before projecting, so missing remains outside the name-id type.
 (define (str-id [t : Token]) : ci.InternId
   (match t
-    [(Token.Str id) id]
+    [(Token.Str id)
+      (cfg stage0-token-scalar-bootstrap (ci.intern-id-from-renderable id) id)]
     [_ (ci.tl_oob_abort)]))
 
 ;; Float literal text of `Token.Float` (the empty string for any other kind):
@@ -281,6 +322,48 @@
 (define (spanned-token-new [tok : Token] [line : i64] [col : i64]) : SpannedToken
   (SpannedToken tok (cast line : i32) (cast col : i32)))
 
+(define (tag-ref [t : (& t Token)]) : i64
+  (match t
+    [(Token.LParen) 1]
+    [(Token.RParen) 2]
+    [(Token.Int _ _) 3]
+    [(Token.Sym _) 4]
+    [(Token.End) 5]
+    [(Token.Str _) 6]
+    [(Token.Char _) 7]
+    [(Token.Float _) 8]
+    [(Token.LBracket) 9]
+    [(Token.RBracket) 10]
+    [(Token.Quote) 11]
+    [(Token.Backtick) 12]
+    [(Token.Comma) 13]
+    [(Token.CommaAt) 14]))
+
+(define (token-copy [t : (& t Token)]) : Token
+  (match t
+    [(Token.LParen) (Token.LParen)]
+    [(Token.RParen) (Token.RParen)]
+    [(Token.Int value text) (Token.Int (deref value) (string.copy text))]
+    [(Token.Sym id)
+      (cfg
+        stage0-token-scalar-bootstrap
+        (Token.Sym (deref id))
+        (Token.Sym (ci.intern-id-from-renderable (ci.intern-id-value id))))]
+    [(Token.End) (Token.End)]
+    [(Token.Str id)
+      (cfg
+        stage0-token-scalar-bootstrap
+        (Token.Str (deref id))
+        (Token.Str (ci.intern-id-from-renderable (ci.intern-id-value id))))]
+    [(Token.Char value) (Token.Char (deref value))]
+    [(Token.Float text) (Token.Float (string.copy text))]
+    [(Token.LBracket) (Token.LBracket)]
+    [(Token.RBracket) (Token.RBracket)]
+    [(Token.Quote) (Token.Quote)]
+    [(Token.Backtick) (Token.Backtick)]
+    [(Token.Comma) (Token.Comma)]
+    [(Token.CommaAt) (Token.CommaAt)]))
+
 (define (spanned-token-tok [s : SpannedToken]) : Token
   s.tok)
 
@@ -292,6 +375,12 @@
 
 (define (spanned-token-token [s : SpannedToken]) : Token
   (spanned-token-tok s))
+
+(define (spanned-token-token-ref [s : (& s SpannedToken)]) : Token
+  (token-copy (& s.tok)))
+
+(define (spanned-token-copy [s : (& s SpannedToken)]) : SpannedToken
+  (SpannedToken (token-copy (& s.tok)) s.line s.col))
 
 (define (spanned-token-span [s : (& s SpannedToken)]) : SourceSpan
   (SourceSpan

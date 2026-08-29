@@ -4,8 +4,8 @@
 (defstruct HelperPayload
   (value i64))
 
-(define (consume-length [text : String (:consume)]) : i64
+(define (consume-length [text : String]) : i64
   (string-length text))
 
-(define (consume-payload [payload : HelperPayload (:consume)]) : i64
+(define (consume-payload [payload : HelperPayload]) : i64
   payload.value)

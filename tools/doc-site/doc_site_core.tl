@@ -47,39 +47,41 @@
 (define doc-site-repo-tree-root : String
   "https://github.com/JoNil-Botta/typelisp/tree/main/")
 
-(define (doc-site-module-source [module : DocSiteModule]) : String
+(define (doc-site-module-source [module : (& module DocSiteModule)]) : String
   (match module
-    [(DocSiteModule.Module source _) source]))
+    [(DocSiteModule.Module source _) (string.copy source)]))
 
-(define (doc-site-module-output [module : DocSiteModule]) : String
+(define (doc-site-module-output [module : (& module DocSiteModule)]) : String
   (match module
-    [(DocSiteModule.Module _ output) output]))
+    [(DocSiteModule.Module _ output) (string.copy output)]))
 
-(define (doc-site-guide-title [guide : DocSiteGuidePage]) : String
+(define (doc-site-guide-title [guide : (& guide DocSiteGuidePage)]) : String
   (match guide
-    [(DocSiteGuidePage.GuidePage title _ _ _) title]))
+    [(DocSiteGuidePage.GuidePage title _ _ _) (string.copy title)]))
 
-(define (doc-site-guide-source [guide : DocSiteGuidePage]) : String
+(define (doc-site-guide-source [guide : (& guide DocSiteGuidePage)]) : String
   (match guide
-    [(DocSiteGuidePage.GuidePage _ source _ _) source]))
+    [(DocSiteGuidePage.GuidePage _ source _ _) (string.copy source)]))
 
-(define (doc-site-guide-output [guide : DocSiteGuidePage]) : String
+(define (doc-site-guide-output [guide : (& guide DocSiteGuidePage)]) : String
   (match guide
-    [(DocSiteGuidePage.GuidePage _ _ output _) output]))
+    [(DocSiteGuidePage.GuidePage _ _ output _) (string.copy output)]))
 
-(define (doc-site-guide-label [guide : DocSiteGuidePage]) : String
+(define (doc-site-guide-label [guide : (& guide DocSiteGuidePage)]) : String
   (match guide
-    [(DocSiteGuidePage.GuidePage _ _ _ label) label]))
+    [(DocSiteGuidePage.GuidePage _ _ _ label) (string.copy label)]))
 
-(define (doc-site-api-tree-root [tree : DocSiteApiTree]) : String
+(define (doc-site-api-tree-root [tree : (& tree DocSiteApiTree)]) : String
   (match tree
-    [(DocSiteApiTree.ApiTree root _ _) root]))
+    [(DocSiteApiTree.ApiTree root _ _) (string.copy root)]))
 
-(define (doc-site-api-tree-output [tree : DocSiteApiTree]) : String
+(define (doc-site-api-tree-output [tree : (& tree DocSiteApiTree)]) : String
   (match tree
-    [(DocSiteApiTree.ApiTree _ output _) output]))
+    [(DocSiteApiTree.ApiTree _ output _) (string.copy output)]))
 
-(define (doc-site-api-tree-modules [tree : DocSiteApiTree]) : doc_site_modules.Vec
+(define (doc-site-api-tree-modules [tree : (& tree DocSiteApiTree)]) : (&
+    tree
+    doc_site_modules.Vec)
   (match tree
     [(DocSiteApiTree.ApiTree _ _ modules) modules]))
 
@@ -87,35 +89,34 @@
   (doc_site_modules.new))
 
 (define (doc-site-module-list-ref
-  [modules : doc_site_modules.Vec]
+  [modules : (& modules doc_site_modules.Vec)]
   [index : i64]) : DocSiteModule
-  (doc_site_modules.get (& modules) index (DocSiteModule.Module "" "")))
+  (doc_site_modules.get modules index (DocSiteModule.Module "" "")))
 
 (define (doc-site-guide-page-list-empty) : doc_site_guides.Vec
   (doc_site_guides.new))
 
-(define (doc-site-guide-page-list-count [guides : doc_site_guides.Vec]) : i64
-  (doc_site_guides.len (& guides)))
+(define (doc-site-guide-page-list-count
+  [guides : (& guides doc_site_guides.Vec)]) : i64
+  (doc_site_guides.len guides))
 
 (define (doc-site-guide-page-list-ref
-  [guides : doc_site_guides.Vec]
+  [guides : (& guides doc_site_guides.Vec)]
   [index : i64]) : DocSiteGuidePage
-  (doc_site_guides.get
-    (& guides)
-    index
-    (DocSiteGuidePage.GuidePage "" "" "" "")))
+  (doc_site_guides.get guides index (DocSiteGuidePage.GuidePage "" "" "" "")))
 
 (define (doc-site-section-list-empty) : doc_site_sections.Vec
   (doc_site_sections.new))
 
-(define (doc-site-section-list-count [sections : doc_site_sections.Vec]) : i64
-  (doc_site_sections.len (& sections)))
+(define (doc-site-section-list-count
+  [sections : (& sections doc_site_sections.Vec)]) : i64
+  (doc_site_sections.len sections))
 
 (define (doc-site-section-list-ref
-  [sections : doc_site_sections.Vec]
+  [sections : (& sections doc_site_sections.Vec)]
   [index : i64]) : DocSiteSection
   (doc_site_sections.get
-    (& sections)
+    sections
     index
     (DocSiteSection.Guide "" (doc-site-guide-page-list-empty))))
 
@@ -159,31 +160,28 @@
       (doc_site_sections.push-ref!
         (&mut sections)
         (DocSiteSection.Guide "Third" (doc-site-guide-page-list-empty)))
-      (and
-        (= (doc_site_modules.len (& modules)) 3)
-        (= (doc_site_modules.capacity (& modules)) 4)
-        (string.eq
-          (doc-site-module-source (doc-site-module-list-ref modules 0))
-          "first.tl")
-        (string.eq
-          (doc-site-module-output (doc-site-module-list-ref modules 2))
-          "third.html")
-        (= (doc_site_guides.len (& guides)) 3)
-        (= (doc_site_guides.capacity (& guides)) 4)
-        (string.eq
-          (doc-site-guide-title (doc-site-guide-page-list-ref guides 0))
-          "First")
-        (string.eq
-          (doc-site-guide-label (doc-site-guide-page-list-ref guides 2))
-          "Three")
-        (= (doc_site_sections.len (& sections)) 3)
-        (= (doc_site_sections.capacity (& sections)) 4)
-        (doc-site-section-guide-title-eq?
-          (doc-site-section-list-ref sections 0)
-          "First")
-        (doc-site-section-guide-title-eq?
-          (doc-site-section-list-ref sections 2)
-          "Third")))))
+      (let
+        [first-module : DocSiteModule (doc-site-module-list-ref modules 0)]
+        [third-module : DocSiteModule (doc-site-module-list-ref modules 2)]
+        [first-guide : DocSiteGuidePage (doc-site-guide-page-list-ref guides 0)]
+        [third-guide : DocSiteGuidePage (doc-site-guide-page-list-ref guides 2)]
+        (and
+          (= (doc_site_modules.len (& modules)) 3)
+          (= (doc_site_modules.capacity (& modules)) 4)
+          (string.eq (doc-site-module-source first-module) "first.tl")
+          (string.eq (doc-site-module-output third-module) "third.html")
+          (= (doc_site_guides.len (& guides)) 3)
+          (= (doc_site_guides.capacity (& guides)) 4)
+          (string.eq (doc-site-guide-title first-guide) "First")
+          (string.eq (doc-site-guide-label third-guide) "Three")
+          (= (doc_site_sections.len (& sections)) 3)
+          (= (doc_site_sections.capacity (& sections)) 4)
+          (doc-site-section-guide-title-eq?
+            (doc-site-section-list-ref sections 0)
+            "First")
+          (doc-site-section-guide-title-eq?
+            (doc-site-section-list-ref sections 2)
+            "Third"))))))
 
 (define (doc-site-stdlib-modules) : doc_site_modules.Vec
   (let
@@ -301,12 +299,13 @@
         (DocSiteSection.ApiTree (doc-site-stdlib-api-tree)))
       sections)))
 
-(define (doc-site-module-list-count [modules : doc_site_modules.Vec]) : i64
-  (doc_site_modules.len (& modules)))
+(define (doc-site-module-list-count
+  [modules : (& modules doc_site_modules.Vec)]) : i64
+  (doc_site_modules.len modules))
 
 (define (doc-site-output-in-list-from?
-  [output : String]
-  [modules : doc_site_modules.Vec]
+  [output : (& output str)]
+  [modules : (& modules doc_site_modules.Vec)]
   [start : i64]) : bool
   (let
     [i : i64 start]
@@ -314,16 +313,16 @@
     [found : bool false]
     (begin
       (while (and (< i n) (not found))
-        (begin
-          (if (string.eq
-            output
-            (doc-site-module-output (doc-site-module-list-ref modules i)))
-            (set! found true)
-            unit)
-          (set! i (+ i 1))))
+        (let
+          [module : DocSiteModule (doc-site-module-list-ref modules i)]
+          (begin
+            (if (string.eq output (doc-site-module-output module))
+              (set! found true)
+              unit)
+            (set! i (+ i 1)))))
       found)))
 
-(define (doc-site-output-reserved? [output : String]) : bool
+(define (doc-site-output-reserved? [output : (& output str)]) : bool
   (or
     (string.eq output "index.html")
     (string.eq output "readme.html")
@@ -331,7 +330,8 @@
     (string.eq output "stdlib.html")
     (string.eq output "typelisp-docs.css")))
 
-(define (doc-site-output-list-has-duplicate? [modules : doc_site_modules.Vec]) : bool
+(define (doc-site-output-list-has-duplicate?
+  [modules : (& modules doc_site_modules.Vec)]) : bool
   (let
     [i : i64 0]
     [n : i64 (doc-site-module-list-count modules)]
@@ -339,8 +339,8 @@
     (begin
       (while (and (< i n) (not duplicate))
         (let
-          [output : String
-            (doc-site-module-output (doc-site-module-list-ref modules i))]
+          [module : DocSiteModule (doc-site-module-list-ref modules i)]
+          [output : String (doc-site-module-output module)]
           (begin
             (if (or
               (doc-site-output-reserved? output)
@@ -354,23 +354,30 @@
 ;; scripts/verify-doc-site.sh answers it by comparing the generated pages with
 ;; stdlib/*.tl. What the builder can still catch on its own is an empty manifest,
 ;; which would publish an API tree with no modules under it.
-(define (doc-site-manifest-populated? [modules : doc_site_modules.Vec]) : bool
+(define (doc-site-manifest-populated?
+  [modules : (& modules doc_site_modules.Vec)]) : bool
   (> (doc-site-module-list-count modules) 0))
 
 (define (doc-site-panic-unit [message : String]) : unit
   (io.panic message))
 
-(define (doc-site-validate-stdlib-manifest [modules : doc_site_modules.Vec]) : unit
+(define (doc-site-validate-stdlib-manifest
+  [modules : (& modules doc_site_modules.Vec)]) : unit
   (if (not (doc-site-manifest-populated? modules))
     (doc-site-panic-unit "doc-site: empty stdlib manifest")
     (if (doc-site-output-list-has-duplicate? modules)
       (doc-site-panic-unit "doc-site: duplicate output path in stdlib manifest")
       unit)))
 
-(define (doc-site-string-prefix? [text : String] [prefix : String]) : bool
+(define (doc-site-string-prefix?
+  [text : (& text str)]
+  [prefix : (& prefix str)]) : bool
   (doc_bridge.bridge-doc-string-prefix-at? text prefix 0))
 
-(define (doc-site-find-prefix [text : String] [prefix : String] [from : i64]) : i64
+(define (doc-site-find-prefix
+  [text : (& text str)]
+  [prefix : (& prefix str)]
+  [from : i64]) : i64
   (let
     [i : i64 from]
     [n : i64 (string.string-length text)]
@@ -384,15 +391,15 @@
           (set! i (+ i 1))))
       found)))
 
-(define (doc-site-href-anchor? [target : String]) : bool
+(define (doc-site-href-anchor? [target : (& target str)]) : bool
   (and (> (string.string-length target) 0) (= (string.string-ref target 0) '#')))
 
-(define (doc-site-href-external? [target : String]) : bool
+(define (doc-site-href-external? [target : (& target str)]) : bool
   (or
     (doc_bridge.bridge-doc-string-contains? target "://")
     (doc-site-string-prefix? target "mailto:")))
 
-(define (doc-site-href-file-like? [target : String]) : bool
+(define (doc-site-href-file-like? [target : (& target str)]) : bool
   (doc_bridge.bridge-doc-string-contains? target "."))
 
 (define (doc-site-repo-source-url [target : String]) : String
@@ -404,7 +411,7 @@
     ""))
 
 (define (doc-site-guide-output-for-source
-  [target : String]
+  [target : (& target str)]
   [guides : doc_site_guides.Vec]) : String
   (let
     [i : i64 0]
@@ -422,8 +429,8 @@
       output)))
 
 (define (doc-site-module-output-for-source
-  [target : String]
-  [modules : doc_site_modules.Vec]) : String
+  [target : (& target str)]
+  [modules : (& modules doc_site_modules.Vec)]) : String
   (let
     [i : i64 0]
     [n : i64 (doc-site-module-list-count modules)]
@@ -440,7 +447,7 @@
       output)))
 
 (define (doc-site-section-output-for-source
-  [target : String]
+  [target : (& target str)]
   [section : DocSiteSection]) : String
   (match section
     [(DocSiteSection.Guide _ guides)
@@ -451,8 +458,8 @@
         (doc-site-api-tree-modules tree))]))
 
 (define (doc-site-sections-output-for-source
-  [target : String]
-  [sections : doc_site_sections.Vec]) : String
+  [target : (& target str)]
+  [sections : (& sections doc_site_sections.Vec)]) : String
   (let
     [i : i64 0]
     [n : i64 (doc-site-section-list-count sections)]
@@ -469,7 +476,7 @@
       output)))
 
 (define (doc-site-rewrite-language-link-target
-  [sections : doc_site_sections.Vec]
+  [sections : (& sections doc_site_sections.Vec)]
   [target : String]) : String
   (if (doc-site-href-anchor? target)
     target
@@ -487,7 +494,7 @@
           (doc-site-repo-source-url normalized-target))))))
 
 (define (doc-site-rewrite-language-links
-  [sections : doc_site_sections.Vec]
+  [sections : (& sections doc_site_sections.Vec)]
   [html : String]) : String
   (let
     [cursor : i64 0]
@@ -766,7 +773,8 @@ pre {
     (doc_bridge.bridge-doc-html-escape (doc-site-module-source module))
     "</code></a></li>\n"))
 
-(define (doc-site-index-module-entries [modules : doc_site_modules.Vec]) : String
+(define (doc-site-index-module-entries
+  [modules : (& modules doc_site_modules.Vec)]) : String
   (let
     [i : i64 0]
     [n : i64 (doc-site-module-list-count modules)]
@@ -821,7 +829,7 @@ pre {
     (doc-site-index-guide-entries guides)
     "</ul>\n</nav>\n"))
 
-(define (doc-site-render-api-index-section [tree : DocSiteApiTree]) : String
+(define (doc-site-render-api-index-section [tree : (& tree DocSiteApiTree)]) : String
   (let
     [root : String (doc-site-api-tree-root tree)]
     (str_cat.str-cat
@@ -839,7 +847,8 @@ pre {
       (doc-site-render-guide-index-section title guides)]
     [(DocSiteSection.ApiTree tree) (doc-site-render-api-index-section tree)]))
 
-(define (doc-site-render-index-sections [sections : doc_site_sections.Vec]) : String
+(define (doc-site-render-index-sections
+  [sections : (& sections doc_site_sections.Vec)]) : String
   (let
     [i : i64 0]
     [n : i64 (doc-site-section-list-count sections)]
@@ -857,7 +866,7 @@ pre {
           (set! i (+ i 1))))
       out)))
 
-(define (doc-site-module-label [module : DocSiteModule]) : String
+(define (doc-site-module-label [module : (& module DocSiteModule)]) : String
   (let
     [source : String (doc-site-module-source module)]
     [i : i64 0]
@@ -878,7 +887,7 @@ pre {
           (set! i (+ i 1))))
       (string.substring source start (- end start)))))
 
-(define (doc-site-sidebar-link-open [href : String] [current : String]) : String
+(define (doc-site-sidebar-link-open [href : String] [current : (& current str)]) : String
   (if (string.eq href current)
     (str_cat.str-cat
       "<a class=\"tl-doc-tree-link is-current\" aria-current=\"page\" href=\""
@@ -892,7 +901,7 @@ pre {
 (define (doc-site-sidebar-root-link
   [href : String]
   [label : String]
-  [current : String]) : String
+  [current : (& current str)]) : String
   (if (string.eq href current)
     (str_cat.str-cat
       "<a class=\"tl-doc-tree-root is-current\" aria-current=\"page\" href=\""
@@ -909,7 +918,7 @@ pre {
 
 (define (doc-site-sidebar-guide-entry
   [guide : DocSiteGuidePage]
-  [current : String]) : String
+  [current : (& current str)]) : String
   (str_cat.str-cat
     "<li>"
     (doc-site-sidebar-link-open (doc-site-guide-output guide) current)
@@ -919,7 +928,7 @@ pre {
 
 (define (doc-site-sidebar-guide-entries
   [guides : doc_site_guides.Vec]
-  [current : String]) : String
+  [current : (& current str)]) : String
   (let
     [i : i64 0]
     [n : i64 (doc-site-guide-page-list-count guides)]
@@ -940,7 +949,7 @@ pre {
 
 (define (doc-site-sidebar-module-entry
   [module : DocSiteModule]
-  [current : String]) : String
+  [current : (& current str)]) : String
   (str_cat.str-cat
     "<li>"
     (doc-site-sidebar-link-open (doc-site-module-output module) current)
@@ -949,8 +958,8 @@ pre {
     "</code></a></li>\n"))
 
 (define (doc-site-sidebar-module-entries
-  [modules : doc_site_modules.Vec]
-  [current : String]) : String
+  [modules : (& modules doc_site_modules.Vec)]
+  [current : (& current str)]) : String
   (let
     [i : i64 0]
     [n : i64 (doc-site-module-list-count modules)]
@@ -972,7 +981,7 @@ pre {
 (define (doc-site-sidebar-guide-section
   [title : String]
   [guides : doc_site_guides.Vec]
-  [current : String]) : String
+  [current : (& current str)]) : String
   (str_cat.str-cat
     "<li><span class=\"tl-doc-tree-root\">"
     (doc_bridge.bridge-doc-html-escape title)
@@ -980,7 +989,9 @@ pre {
     (doc-site-sidebar-guide-entries guides current)
     "</ul>\n</li>\n"))
 
-(define (doc-site-sidebar-api-tree [tree : DocSiteApiTree] [current : String]) : String
+(define (doc-site-sidebar-api-tree
+  [tree : DocSiteApiTree]
+  [current : (& current str)]) : String
   (str_cat.str-cat
     "<li>"
     (doc-site-sidebar-root-link
@@ -991,14 +1002,16 @@ pre {
     (doc-site-sidebar-module-entries (doc-site-api-tree-modules tree) current)
     "</ul>\n</li>\n"))
 
-(define (doc-site-sidebar-section [section : DocSiteSection] [current : String]) : String
+(define (doc-site-sidebar-section
+  [section : DocSiteSection]
+  [current : (& current str)]) : String
   (match section
     [(DocSiteSection.Guide title guides)
       (doc-site-sidebar-guide-section title guides current)]
     [(DocSiteSection.ApiTree tree) (doc-site-sidebar-api-tree tree current)]))
 
 (define (doc-site-sidebar-sections
-  [sections : doc_site_sections.Vec]
+  [sections : (& sections doc_site_sections.Vec)]
   [current : String]) : String
   (let
     [i : i64 0]
@@ -1018,7 +1031,9 @@ pre {
           (set! i (+ i 1))))
       out)))
 
-(define (doc-site-sidebar [sections : doc_site_sections.Vec] [current : String]) : String
+(define (doc-site-sidebar
+  [sections : (& sections doc_site_sections.Vec)]
+  [current : String]) : String
   (str_cat.str-cat
     "<nav class=\"tl-doc-stdlib-sidebar\" aria-label=\"Documentation tree\">\n<ul class=\"tl-doc-stdlib-tree\">\n"
     (doc-site-sidebar-sections sections current)
@@ -1029,7 +1044,7 @@ pre {
 (define (doc-site-render-page
   [title : String]
   [subtitle : String]
-  [sections : doc_site_sections.Vec]
+  [sections : (& sections doc_site_sections.Vec)]
   [current : String]
   [body : String]) : String
   (str_cat.str-cat
@@ -1043,7 +1058,7 @@ pre {
     (doc_bridge.bridge-doc-html-page-close)))
 
 (define (doc-site-render-index
-  [sections : doc_site_sections.Vec]
+  [sections : (& sections doc_site_sections.Vec)]
   [current : String]) : String
   (doc-site-render-page
     "TypeLisp Docs"
@@ -1053,7 +1068,7 @@ pre {
     (doc-site-render-index-sections sections)))
 
 (define (doc-site-render-guide-page
-  [sections : doc_site_sections.Vec]
+  [sections : (& sections doc_site_sections.Vec)]
   [guide : DocSiteGuidePage]
   [markdown : String]) : String
   (doc-site-render-page
@@ -1069,8 +1084,8 @@ pre {
       "</article>\n")))
 
 (define (doc-site-render-api-tree-index
-  [sections : doc_site_sections.Vec]
-  [tree : DocSiteApiTree]) : String
+  [sections : (& sections doc_site_sections.Vec)]
+  [tree : (& tree DocSiteApiTree)]) : String
   (doc-site-render-page
     (str_cat.str-cat "TypeLisp API: " (doc-site-api-tree-root tree) "")
     (doc-site-api-tree-root tree)
@@ -1079,15 +1094,16 @@ pre {
     (doc-site-render-api-index-section tree)))
 
 (define (doc-site-render-module-page
-  [sections : doc_site_sections.Vec]
+  [sections : (& sections doc_site_sections.Vec)]
   [module : DocSiteModule]
   [source-text : String]) : String
   (let
     [source : String (doc-site-module-source module)]
-    [title : String (str_cat.str-cat "TypeLisp API: " source "")]
+    [title : String
+      (str_cat.str-cat "TypeLisp API: " (string.copy (& source)) "")]
     (doc-site-render-page
       title
-      source
+      (string.copy (& source))
       sections
       (doc-site-module-output module)
       (doc_bridge.bridge-doc-html-module-section-source source source-text))))
@@ -1114,21 +1130,23 @@ pre {
       unit
       (doc-site-panic-unit (string.append "doc-site: could not write: " path)))))
 
-(define (doc-site-ensure-dir [path : String]) : unit
+(define (doc-site-ensure-dir [path : (& path str)]) : unit
   (if (= (string.string-length path) 0)
     (doc-site-panic-unit "doc-site: empty output directory")
-    (match (fs.try-mkdir-if-missing (& path))
+    (match (fs.try-mkdir-if-missing path)
       [(io.OkIoUnit) unit]
       [(io.ErrIoUnit _)
         (doc-site-panic-unit
-          (string.append "doc-site: could not create output directory: " path))])))
+          (string.append
+            "doc-site: could not create output directory: "
+            (string.copy path)))])))
 
-(define (doc-site-path-join [left : String] [right : String]) : String
+(define (doc-site-path-join [left : (& left str)] [right : (& right str)]) : String
   (fs.path-join (& left) (& right)))
 
 (define (doc-site-write-module-page
-  [output-dir : String]
-  [sections : doc_site_sections.Vec]
+  [output-dir : (& output-dir str)]
+  [sections : (& sections doc_site_sections.Vec)]
   [module : DocSiteModule]) : unit
   (let
     [source : String (doc-site-module-source module)]
@@ -1140,9 +1158,9 @@ pre {
       (doc-site-render-module-page sections module source-text))))
 
 (define (doc-site-write-module-pages
-  [output-dir : String]
-  [sections : doc_site_sections.Vec]
-  [remaining : doc_site_modules.Vec]) : unit
+  [output-dir : (& output-dir str)]
+  [sections : (& sections doc_site_sections.Vec)]
+  [remaining : (& remaining doc_site_modules.Vec)]) : unit
   (let
     [i : i64 0]
     [n : i64 (doc-site-module-list-count remaining)]
@@ -1156,19 +1174,18 @@ pre {
           (set! i (+ i 1)))))))
 
 (define (doc-site-write-guide-page
-  [output-dir : String]
-  [sections : doc_site_sections.Vec]
+  [output-dir : (& output-dir str)]
+  [sections : (& sections doc_site_sections.Vec)]
   [guide : DocSiteGuidePage]) : unit
-  (doc-site-write-file
-    (doc-site-path-join output-dir (doc-site-guide-output guide))
-    (doc-site-render-guide-page
-      sections
-      guide
-      (doc-site-read-markdown (doc-site-guide-source guide)))))
+  (let
+    [markdown : String (doc-site-read-markdown (doc-site-guide-source guide))]
+    (doc-site-write-file
+      (doc-site-path-join output-dir (doc-site-guide-output guide))
+      (doc-site-render-guide-page sections guide markdown))))
 
 (define (doc-site-write-guide-pages
-  [output-dir : String]
-  [sections : doc_site_sections.Vec]
+  [output-dir : (& output-dir str)]
+  [sections : (& sections doc_site_sections.Vec)]
   [guides : doc_site_guides.Vec]) : unit
   (let
     [i : i64 0]
@@ -1183,8 +1200,8 @@ pre {
           (set! i (+ i 1)))))))
 
 (define (doc-site-write-api-tree
-  [output-dir : String]
-  [sections : doc_site_sections.Vec]
+  [output-dir : (& output-dir str)]
+  [sections : (& sections doc_site_sections.Vec)]
   [tree : DocSiteApiTree]) : unit
   (begin
     (doc-site-write-file
@@ -1196,8 +1213,8 @@ pre {
       (doc-site-api-tree-modules tree))))
 
 (define (doc-site-write-section
-  [output-dir : String]
-  [sections : doc_site_sections.Vec]
+  [output-dir : (& output-dir str)]
+  [sections : (& sections doc_site_sections.Vec)]
   [section : DocSiteSection]) : unit
   (match section
     [(DocSiteSection.Guide _ guides)
@@ -1206,9 +1223,9 @@ pre {
       (doc-site-write-api-tree output-dir sections tree)]))
 
 (define (doc-site-write-sections
-  [output-dir : String]
-  [sections : doc_site_sections.Vec]
-  [remaining : doc_site_sections.Vec]) : unit
+  [output-dir : (& output-dir str)]
+  [sections : (& sections doc_site_sections.Vec)]
+  [remaining : (& remaining doc_site_sections.Vec)]) : unit
   (let
     [i : i64 0]
     [n : i64 (doc-site-section-list-count remaining)]
@@ -1303,6 +1320,18 @@ See [the spec](SPEC.md), [the second module](stdlib/second.tl), and [the builder
         (DocSiteSection.ApiTree (doc-site-smoke-api-tree)))
       sections)))
 
+(define (doc-site-smoke-duplicate-modules) : doc_site_modules.Vec
+  (let
+    [modules : doc_site_modules.Vec (doc_site_modules.with-capacity 2)]
+    (begin
+      (doc_site_modules.push-ref!
+        (&mut modules)
+        (DocSiteModule.Module "a.tl" "same.html"))
+      (doc_site_modules.push-ref!
+        (&mut modules)
+        (DocSiteModule.Module "b.tl" "same.html"))
+      modules)))
+
 (define (doc-site-require [ok : bool] [message : String]) : bool
   (if ok
     true
@@ -1311,6 +1340,11 @@ See [the spec](SPEC.md), [the second module](stdlib/second.tl), and [the builder
 (define (doc-site-smoke) : i64
   (let
     [sections : doc_site_sections.Vec (doc-site-smoke-sections)]
+    [language-guides : doc_site_guides.Vec (doc-site-language-guides)]
+    [duplicate-modules : doc_site_modules.Vec
+      (doc-site-smoke-duplicate-modules)]
+    [empty-modules : doc_site_modules.Vec (doc-site-module-list-empty)]
+    [stdlib-modules : doc_site_modules.Vec (doc-site-stdlib-modules)]
     [index : String (doc-site-render-index sections "index.html")]
     [page : String
       (doc-site-render-module-page
@@ -1336,7 +1370,7 @@ See [the spec](SPEC.md), [the second module](stdlib/second.tl), and [the builder
         (doc-site-vector-core-growth-order?)
         "doc-site: canonical vector core growth/order mismatch")
       (doc-site-require
-        (= (doc-site-guide-page-list-count (doc-site-language-guides)) 8)
+        (= (doc-site-guide-page-list-count language-guides) 8)
         "doc-site: language guide inventory mismatch")
       (doc-site-require
         (string.eq
@@ -1463,25 +1497,15 @@ See [the spec](SPEC.md), [the second module](stdlib/second.tl), and [the builder
         "background: #164e63;"
         "doc-site: dark current-nav background missing")
       (doc-site-require
-        (doc-site-output-list-has-duplicate?
-          (let
-            [modules : doc_site_modules.Vec (doc_site_modules.with-capacity 2)]
-            (begin
-              (doc_site_modules.push-ref!
-                (&mut modules)
-                (DocSiteModule.Module "a.tl" "same.html"))
-              (doc_site_modules.push-ref!
-                (&mut modules)
-                (DocSiteModule.Module "b.tl" "same.html"))
-              modules)))
+        (doc-site-output-list-has-duplicate? duplicate-modules)
         "doc-site: duplicate output detection missing")
       (doc-site-require
-        (not (doc-site-manifest-populated? (doc-site-module-list-empty)))
+        (not (doc-site-manifest-populated? empty-modules))
         "doc-site: empty manifest detection missing")
       (doc-site-require
-        (doc-site-manifest-populated? (doc-site-stdlib-modules))
+        (doc-site-manifest-populated? stdlib-modules)
         "doc-site: stdlib manifest is empty")
       (doc-site-require
-        (not (doc-site-output-list-has-duplicate? (doc-site-stdlib-modules)))
+        (not (doc-site-output-list-has-duplicate? stdlib-modules))
         "doc-site: stdlib manifest has a duplicate or reserved output")
       42)))

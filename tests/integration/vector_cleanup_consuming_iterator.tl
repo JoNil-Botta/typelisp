@@ -21,7 +21,7 @@
 
 (import (vector.vector CleanupToken) as tokens)
 
-(define (append-token [items : tokens.Vec (:consume)] [value : i64]) : tokens.Vec
+(define (append-token [items : tokens.Vec] [value : i64]) : tokens.Vec
   (tokens.push-owned items (CleanupToken value)))
 
 (define (cleanup-step [iter : (&mut iter tokens.IntoIter)]) : unit

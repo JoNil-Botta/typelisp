@@ -440,6 +440,7 @@ arena_cookbook_double_buffer_stale_reject|check-fail|tests/safety/arena_cookbook
 arena_cookbook_longer_lived_store_reject|check-fail|tests/safety/arena_cookbook_longer_lived_store_reject.tl|-|cannot store region-tagged value into struct field
 arena_cookbook_closure_capture_reject|check-fail|tests/safety/arena_cookbook_closure_capture_reject.tl|-|lambda cannot capture region-tagged value
 lambda_mut_capture_alias_reject|check-fail|tests/safety/lambda_mut_capture_alias_reject.tl|-|reference-capturing closure value would escape lexical scope
+comptime_lambda_package_temporary_escape_reject|check-fail|tests/safety/comptime_lambda_package_temporary_escape_reject.tl|-|reference value would escape lexical scope
 comptime_lambda_reference_escape_reject|check-fail|tests/safety/comptime_lambda_reference_escape_reject.tl|-|lambda cannot capture immutable reference; reference value would escape lexical scope
 lambda_mut_capture_moved_reference_reject|check-fail|tests/safety/lambda_mut_capture_moved_reference_reject.tl|-|use of moved value `exclusive`
 lambda_mut_capture_owner_read_live_reject|check-fail|tests/safety/lambda_mut_capture_owner_read_live_reject.tl|-|cannot read mutably borrowed place
@@ -478,13 +479,13 @@ vector_aggregate_ref_rvalue_call_reject|check-fail|tests/safety/vector_aggregate
 vector_aggregate_ref_rvalue_workarounds_ok|check-ok|tests/safety/vector_aggregate_ref_rvalue_workarounds_ok.tl|-|-
 consume_parameter_use_after_move_reject|check-fail|tests/safety/consume_parameter_use_after_move_reject.tl|-|use of moved value `text`
 consume_parameter_borrow_live_reject|check-fail|tests/safety/consume_parameter_borrow_live_reject.tl|-|cannot move borrowed place `text`
-consume_parameter_function_type_mismatch_reject|check-fail|tests/safety/consume_parameter_function_type_mismatch_reject.tl|-|typecheck: let binding `_consumer` type mismatch
-consume_parameter_reference_reject|check-fail|tests/safety/consume_parameter_reference_reject.tl|-|parse: :consume requires a non-reference parameter type
-consume_parameter_extern_reject|check-fail|tests/safety/consume_parameter_extern_reject.tl|-|parse: extern parameters cannot be consuming
-consume_parameter_comptime_reject|check-fail|tests/safety/consume_parameter_comptime_reject.tl|-|parse: comptime parameters cannot be consuming
+consume_parameter_function_type_mismatch_reject|check-fail|tests/safety/consume_parameter_function_type_mismatch_reject.tl|-|parse: :consume has been removed; by-value parameters move non-Copy values
+consume_parameter_reference_reject|check-fail|tests/safety/consume_parameter_reference_reject.tl|-|parse: :consume has been removed; by-value parameters move non-Copy values
+consume_parameter_extern_reject|check-fail|tests/safety/consume_parameter_extern_reject.tl|-|parse: :consume has been removed; by-value parameters move non-Copy values
+consume_parameter_comptime_reject|check-fail|tests/safety/consume_parameter_comptime_reject.tl|-|parse: :consume has been removed; by-value parameters move non-Copy values
 consume_parameter_projection_use_after_move_reject|check-fail|tests/safety/consume_parameter_projection_use_after_move_reject.tl|-|use of moved value `pair.text`
-consume_parameter_mut_reference_reject|check-fail|tests/safety/consume_parameter_mut_reference_reject.tl|-|parse: :consume requires a non-reference parameter type
-consume_parameter_function_reference_reject|check-fail|tests/safety/consume_parameter_function_reference_reject.tl|-|parse: :consume requires a non-reference parameter type
+consume_parameter_mut_reference_reject|check-fail|tests/safety/consume_parameter_mut_reference_reject.tl|-|parse: :consume has been removed; by-value parameters move non-Copy values
+consume_parameter_function_reference_reject|check-fail|tests/safety/consume_parameter_function_reference_reject.tl|-|parse: :consume has been removed; by-value parameters move non-Copy values
 consume_parameter_plain_struct_read_ok|check-ok|tests/safety/consume_parameter_plain_struct_read_ok.tl|-|-
 consume_parameter_plain_struct_mutation_ok|check-ok|tests/safety/consume_parameter_plain_struct_mutation_ok.tl|-|-
 consume_parameter_plain_struct_twice_ok|check-ok|tests/safety/consume_parameter_plain_struct_twice_ok.tl|-|-
@@ -492,8 +493,8 @@ consume_parameter_mut_borrow_copy_ok|check-ok|tests/safety/consume_parameter_mut
 consume_parameter_qualified_struct_ok|check-ok|tests/safety/consume_parameter_qualified_struct_ok.tl|tests/safety/consume_parameter_qualified_struct_ok_helper.tl|-
 consume_parameter_generated_struct_ok|check-ok|tests/safety/consume_parameter_generated_struct_ok.tl|-|-
 consume_parameter_unknown_metadata_reject|check-fail|tests/safety/consume_parameter_unknown_metadata_reject.tl|-|parse: unknown parameter metadata :unknown
-consume_parameter_duplicate_metadata_reject|check-fail|tests/safety/consume_parameter_duplicate_metadata_reject.tl|-|parse: duplicate parameter metadata
-consume_parameter_function_metadata_arity_reject|check-fail|tests/safety/consume_parameter_function_metadata_arity_reject.tl|-|parse: (:consume T) expects exactly one type
+consume_parameter_duplicate_metadata_reject|check-fail|tests/safety/consume_parameter_duplicate_metadata_reject.tl|-|parse: :consume has been removed; by-value parameters move non-Copy values
+consume_parameter_function_metadata_arity_reject|check-fail|tests/safety/consume_parameter_function_metadata_arity_reject.tl|-|parse: :consume has been removed; by-value parameters move non-Copy values
 vector_into_iterator_source_reuse_reject|check-fail|tests/safety/vector_into_iterator_source_reuse_reject.tl|-|use of moved value `values`
 for_owned_source_reuse_reject|check-fail|tests/safety/for_owned_source_reuse_reject.tl|-|use of moved value `items`
 for_native_mut_item_capture_reject|check-fail|tests/safety/for_native_mut_item_capture_reject.tl|-|lambda cannot capture mutable reference

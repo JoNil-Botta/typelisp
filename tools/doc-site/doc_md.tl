@@ -49,30 +49,32 @@
 (define (md-table-row-list-empty) : md_table_rows.Vec
   (md_table_rows.new))
 
-(define (md-table-row-list-count [items : md_table_rows.Vec]) : i64
-  (md_table_rows.len (& items)))
+(define (md-table-row-list-count [items : (& items md_table_rows.Vec)]) : i64
+  (md_table_rows.len items))
 
-(define (md-table-row-list-ref [items : md_table_rows.Vec] [index : i64]) : MdTableRow
-  (md_table_rows.get (& items) index (MdTableRow.Row (svec.new))))
+(define (md-table-row-list-ref
+  [items : (& items md_table_rows.Vec)]
+  [index : i64]) : MdTableRow
+  (md_table_rows.get items index (MdTableRow.Row (svec.new))))
 
 (define (md-block-list-empty) : md_blocks.Vec
   (md_blocks.new))
 
-(define (md-block-list-count [items : md_blocks.Vec]) : i64
-  (md_blocks.len (& items)))
+(define (md-block-list-count [items : (& items md_blocks.Vec)]) : i64
+  (md_blocks.len items))
 
-(define (md-string-list-count [items : svec.Vec]) : i64
-  (svec.len (& items)))
+(define (md-string-list-count [items : (& items svec.Vec)]) : i64
+  (svec.len items))
 
-(define (md-string-list-ref [items : svec.Vec] [index : i64]) : MdMaybeString
+(define (md-string-list-ref [items : (& items svec.Vec)] [index : i64]) : MdMaybeString
   (if (if (>= index 0)
-    (< index (svec.len (& items)))
+    (< index (svec.len items))
     false)
-    (MdMaybeString.Some (svec.get (& items) index ""))
+    (MdMaybeString.Some (svec.get items index ""))
     MdMaybeString.No))
 
 (define (md-string-list-ref-eq?
-  [items : svec.Vec]
+  [items : (& items svec.Vec)]
   [index : i64]
   [expected : String]) : bool
   (match (md-string-list-ref items index)
@@ -103,15 +105,15 @@
     (md-table-row-eq2? (md-table-row-list-ref rows 0) first second)
     false))
 
-(define (md-block-list-ref [items : md_blocks.Vec] [index : i64]) : MdMaybeBlock
+(define (md-block-list-ref [items : (& items md_blocks.Vec)] [index : i64]) : MdMaybeBlock
   (if (if (>= index 0)
     (< index (md-block-list-count items))
     false)
-    (MdMaybeBlock.Some (md_blocks.get (& items) index MdBlock.Blank))
+    (MdMaybeBlock.Some (md_blocks.get items index MdBlock.Blank))
     MdMaybeBlock.No))
 
 (define (md-check-heading?
-  [blocks : md_blocks.Vec]
+  [blocks : (& blocks md_blocks.Vec)]
   [index : i64]
   [level : i64]
   [text : String]) : bool
@@ -123,7 +125,7 @@
         [_ false])]
     [(MdMaybeBlock.No) false]))
 
-(define (md-check-blank? [blocks : md_blocks.Vec] [index : i64]) : bool
+(define (md-check-blank? [blocks : (& blocks md_blocks.Vec)] [index : i64]) : bool
   (match (md-block-list-ref blocks index)
     [(MdMaybeBlock.Some block)
       (match block
@@ -132,7 +134,7 @@
     [(MdMaybeBlock.No) false]))
 
 (define (md-check-paragraph?
-  [blocks : md_blocks.Vec]
+  [blocks : (& blocks md_blocks.Vec)]
   [index : i64]
   [text : String]) : bool
   (match (md-block-list-ref blocks index)
@@ -143,7 +145,7 @@
     [(MdMaybeBlock.No) false]))
 
 (define (md-check-blockquote2?
-  [blocks : md_blocks.Vec]
+  [blocks : (& blocks md_blocks.Vec)]
   [index : i64]
   [first : String]
   [second : String]) : bool
@@ -155,7 +157,7 @@
     [(MdMaybeBlock.No) false]))
 
 (define (md-check-bullet-list2?
-  [blocks : md_blocks.Vec]
+  [blocks : (& blocks md_blocks.Vec)]
   [index : i64]
   [first : String]
   [second : String]) : bool
@@ -167,7 +169,7 @@
     [(MdMaybeBlock.No) false]))
 
 (define (md-check-numbered-list2?
-  [blocks : md_blocks.Vec]
+  [blocks : (& blocks md_blocks.Vec)]
   [index : i64]
   [first : String]
   [second : String]) : bool
@@ -179,7 +181,7 @@
     [(MdMaybeBlock.No) false]))
 
 (define (md-check-code-fence?
-  [blocks : md_blocks.Vec]
+  [blocks : (& blocks md_blocks.Vec)]
   [index : i64]
   [lang : String]
   [meta : String]
@@ -196,7 +198,7 @@
     [(MdMaybeBlock.No) false]))
 
 (define (md-check-table1?
-  [blocks : md_blocks.Vec]
+  [blocks : (& blocks md_blocks.Vec)]
   [index : i64]
   [header-first : String]
   [header-second : String]
@@ -251,17 +253,17 @@
 (define (md-decimal-digit? [c : char]) : bool
   (and (>= c '0') (<= c '9')))
 
-(define (md-trim-left [text : String]) : String
+(define (md-trim-left [text : (& text str)]) : String
   (let
-    [n : i64 (string.string-length (& text))]
+    [n : i64 (string.string-length text)]
     [i : i64 0]
     [done : bool false]
     (begin
       (while (and (not done) (< i n))
-        (if (md-inline-space? (string.string-ref (& text) i))
+        (if (md-inline-space? (string.string-ref text i))
           (set! i (+ i 1))
           (set! done true)))
-      (string.substring (& text) i (- n i)))))
+      (string.substring text i (- n i)))))
 
 (define (md-trim-right [text : String]) : String
   (let
@@ -274,7 +276,7 @@
           (set! done true)))
       (string.substring (& text) 0 end))))
 
-(define (md-trim [text : String]) : String
+(define (md-trim [text : (& text str)]) : String
   (md-trim-right (md-trim-left text)))
 
 (define (md-string-prefix-at? [text : String] [prefix : String] [start : i64]) : bool
@@ -300,38 +302,38 @@
 (define (md-string-prefix? [text : String] [prefix : String]) : bool
   (md-string-prefix-at? text prefix 0))
 
-(define (md-line-end [src : String] [start : i64] [n : i64]) : i64
+(define (md-line-end [src : (& src str)] [start : i64] [n : i64]) : i64
   (let
     [i : i64 start]
     [done : bool false]
     (begin
       (while (and (not done) (< i n))
-        (if (md-newline? (string.string-ref (& src) i))
+        (if (md-newline? (string.string-ref src i))
           (set! done true)
           (set! i (+ i 1))))
       i)))
 
-(define (md-next-line-start [src : String] [line-end : i64] [n : i64]) : i64
+(define (md-next-line-start [src : (& src str)] [line-end : i64] [n : i64]) : i64
   (begin
     (unless (< line-end n) (return line-end))
     (let
-      [c : char (string.string-ref (& src) line-end)]
+      [c : char (string.string-ref src line-end)]
       (begin
         (unless (= c '\r') (return (+ line-end 1)))
         (unless (< (+ line-end 1) n) (return (+ line-end 1)))
-        (if (= (string.string-ref (& src) (+ line-end 1)) '\n')
+        (if (= (string.string-ref src (+ line-end 1)) '\n')
           (+ line-end 2)
           (+ line-end 1))))))
 
-(define (md-line-at [src : String] [pos : i64] [n : i64]) : String
+(define (md-line-at [src : (& src str)] [pos : i64] [n : i64]) : String
   (let
     [line-end : i64 (md-line-end src pos n)]
-    (string.substring (& src) pos (- line-end pos))))
+    (string.substring src pos (- line-end pos))))
 
-(define (md-blank-line? [line : String]) : bool
+(define (md-blank-line? [line : (& line str)]) : bool
   (= (string.string-length (md-trim line)) 0))
 
-(define (md-heading-level [line : String]) : i64
+(define (md-heading-level [line : (& line str)]) : i64
   (let
     [trimmed : String (md-trim-left line)]
     [n : i64 (string.string-length (& trimmed))]
@@ -354,7 +356,7 @@
         (+ level 1)
         (- (string.string-length (& trimmed)) (+ level 1))))))
 
-(define (md-blockquote-start? [line : String]) : bool
+(define (md-blockquote-start? [line : (& line str)]) : bool
   (let
     [trimmed : String (md-trim-left line)]
     (and
@@ -376,7 +378,7 @@
             body)))
       "")))
 
-(define (md-bullet-start? [line : String]) : bool
+(define (md-bullet-start? [line : (& line str)]) : bool
   (let
     [trimmed : String (md-trim-left line)]
     [n : i64 (string.string-length (& trimmed))]
@@ -394,7 +396,7 @@
     (md-trim
       (string.substring (& trimmed) 2 (- (string.string-length (& trimmed)) 2)))))
 
-(define (md-numbered-marker-end [line : String]) : i64
+(define (md-numbered-marker-end [line : (& line str)]) : i64
   (let
     [trimmed : String (md-trim-left line)]
     [n : i64 (string.string-length (& trimmed))]
@@ -410,7 +412,7 @@
         (+ i 2)
         (- 0 1)))))
 
-(define (md-numbered-start? [line : String]) : bool
+(define (md-numbered-start? [line : (& line str)]) : bool
   (>= (md-numbered-marker-end line) 0))
 
 (define (md-numbered-text [line : String]) : String
@@ -423,7 +425,7 @@
         marker-end
         (- (string.string-length (& trimmed)) marker-end)))))
 
-(define (md-code-fence-start? [line : String]) : bool
+(define (md-code-fence-start? [line : (& line str)]) : bool
   (md-string-prefix? (md-trim-left line) "```"))
 
 (define (md-code-fence-info [line : String]) : String
@@ -444,13 +446,13 @@
           (set! i (+ i 1))))
       i)))
 
-(define (md-code-info-lang [info : String]) : String
+(define (md-code-info-lang [info : (& info str)]) : String
   (let
     [trimmed : String (md-trim info)]
     [end : i64 (md-code-info-word-end (md-trim info))]
     (string.substring (& trimmed) 0 end)))
 
-(define (md-code-info-meta [info : String]) : String
+(define (md-code-info-meta [info : (& info str)]) : String
   (let
     [trimmed : String (md-trim info)]
     [n : i64 (string.string-length (md-trim info))]
@@ -459,7 +461,7 @@
       (md-trim (string.substring (& trimmed) end (- n end)))
       "")))
 
-(define (md-pipe-row-line? [line : String]) : bool
+(define (md-pipe-row-line? [line : (& line str)]) : bool
   (let
     [trimmed : String (md-trim line)]
     [n : i64 (string.string-length (md-trim line))]
@@ -498,19 +500,19 @@
               (set! ok false)))))
       (and ok has-dash))))
 
-(define (md-table-start-at? [src : String] [pos : i64] [n : i64]) : bool
+(define (md-table-start-at? [src : (& src str)] [pos : i64] [n : i64]) : bool
   (let
     [line-end : i64 (md-line-end src pos n)]
-    [line : String (string.substring (& src) pos (- line-end pos))]
+    [line : String (string.substring src pos (- line-end pos))]
     [next : i64 (md-next-line-start src line-end n)]
     (if (and (md-pipe-row-line? line) (< next n))
       (let
         [next-end : i64 (md-line-end src next n)]
-        [next-line : String (string.substring (& src) next (- next-end next))]
+        [next-line : String (string.substring src next (- next-end next))]
         (md-table-delimiter? next-line))
       false)))
 
-(define (md-strip-pipe-edges [line : String]) : String
+(define (md-strip-pipe-edges [line : (& line str)]) : String
   (let
     [trimmed : String (md-trim line)]
     [start : i64 0]
@@ -547,7 +549,7 @@
         (md-trim (string.substring (& body) segment-start (- n segment-start))))
       items)))
 
-(define (md-block-start-at? [src : String] [pos : i64] [n : i64]) : bool
+(define (md-block-start-at? [src : (& src str)] [pos : i64] [n : i64]) : bool
   (let
     [line : String (md-line-at src pos n)]
     (or
@@ -559,10 +561,10 @@
       (md-bullet-start? line)
       (md-numbered-start? line))))
 
-(define (md-scan-code-fence [src : String] [pos : i64] [n : i64]) : MdScanBlock
+(define (md-scan-code-fence [src : (& src str)] [pos : i64] [n : i64]) : MdScanBlock
   (let
     [line-end : i64 (md-line-end src pos n)]
-    [line : String (string.substring (& src) pos (- line-end pos))]
+    [line : String (string.substring src pos (- line-end pos))]
     [info : String (md-code-fence-info line)]
     [scan-pos : i64 (md-next-line-start src line-end n)]
     [body : String ""]
@@ -572,7 +574,7 @@
         (let
           [body-end : i64 (md-line-end src scan-pos n)]
           [body-line : String
-            (string.substring (& src) scan-pos (- body-end scan-pos))]
+            (string.substring src scan-pos (- body-end scan-pos))]
           [body-next : i64 (md-next-line-start src body-end n)]
           (if (md-code-fence-start? body-line)
             (begin
@@ -588,7 +590,7 @@
           (md-code-info-meta info)
           body)))))
 
-(define (md-scan-blockquote [src : String] [pos : i64] [n : i64]) : MdScanBlock
+(define (md-scan-blockquote [src : (& src str)] [pos : i64] [n : i64]) : MdScanBlock
   (let
     [scan-pos : i64 pos]
     [items : svec.Vec (svec.new)]
@@ -597,8 +599,7 @@
       (while (and (not done) (< scan-pos n))
         (let
           [line-end : i64 (md-line-end src scan-pos n)]
-          [line : String
-            (string.substring (& src) scan-pos (- line-end scan-pos))]
+          [line : String (string.substring src scan-pos (- line-end scan-pos))]
           [next : i64 (md-next-line-start src line-end n)]
           (if (md-blockquote-start? line)
             (begin
@@ -607,7 +608,7 @@
             (set! done true))))
       (MdScanBlock.Block scan-pos (MdBlock.Blockquote items)))))
 
-(define (md-scan-bullet-list [src : String] [pos : i64] [n : i64]) : MdScanBlock
+(define (md-scan-bullet-list [src : (& src str)] [pos : i64] [n : i64]) : MdScanBlock
   (let
     [scan-pos : i64 pos]
     [items : svec.Vec (svec.new)]
@@ -616,8 +617,7 @@
       (while (and (not done) (< scan-pos n))
         (let
           [line-end : i64 (md-line-end src scan-pos n)]
-          [line : String
-            (string.substring (& src) scan-pos (- line-end scan-pos))]
+          [line : String (string.substring src scan-pos (- line-end scan-pos))]
           [next : i64 (md-next-line-start src line-end n)]
           (if (md-bullet-start? line)
             (begin
@@ -626,7 +626,7 @@
             (set! done true))))
       (MdScanBlock.Block scan-pos (MdBlock.BulletList items)))))
 
-(define (md-scan-numbered-list [src : String] [pos : i64] [n : i64]) : MdScanBlock
+(define (md-scan-numbered-list [src : (& src str)] [pos : i64] [n : i64]) : MdScanBlock
   (let
     [scan-pos : i64 pos]
     [items : svec.Vec (svec.new)]
@@ -635,8 +635,7 @@
       (while (and (not done) (< scan-pos n))
         (let
           [line-end : i64 (md-line-end src scan-pos n)]
-          [line : String
-            (string.substring (& src) scan-pos (- line-end scan-pos))]
+          [line : String (string.substring src scan-pos (- line-end scan-pos))]
           [next : i64 (md-next-line-start src line-end n)]
           (if (md-numbered-start? line)
             (begin
@@ -645,7 +644,7 @@
             (set! done true))))
       (MdScanBlock.Block scan-pos (MdBlock.NumberedList items)))))
 
-(define (md-scan-table-rows [src : String] [pos : i64] [n : i64]) : MdScanRows
+(define (md-scan-table-rows [src : (& src str)] [pos : i64] [n : i64]) : MdScanRows
   (let
     [scan-pos : i64 pos]
     [rows : md_table_rows.Vec (md-table-row-list-empty)]
@@ -654,8 +653,7 @@
       (while (and (not done) (< scan-pos n))
         (let
           [line-end : i64 (md-line-end src scan-pos n)]
-          [line : String
-            (string.substring (& src) scan-pos (- line-end scan-pos))]
+          [line : String (string.substring src scan-pos (- line-end scan-pos))]
           [next : i64 (md-next-line-start src line-end n)]
           (if (md-pipe-row-line? line)
             (begin
@@ -666,10 +664,10 @@
             (set! done true))))
       (MdScanRows.Rows scan-pos rows))))
 
-(define (md-scan-table [src : String] [pos : i64] [n : i64]) : MdScanBlock
+(define (md-scan-table [src : (& src str)] [pos : i64] [n : i64]) : MdScanBlock
   (let
     [header-end : i64 (md-line-end src pos n)]
-    [header-line : String (string.substring (& src) pos (- header-end pos))]
+    [header-line : String (string.substring src pos (- header-end pos))]
     [delimiter-pos : i64 (md-next-line-start src header-end n)]
     [delimiter-end : i64 (md-line-end src delimiter-pos n)]
     [body-pos : i64 (md-next-line-start src delimiter-end n)]
@@ -679,7 +677,7 @@
           next
           (MdBlock.Table (md-split-pipe-row header-line) rows))])))
 
-(define (md-scan-paragraph [src : String] [pos : i64] [n : i64]) : MdScanBlock
+(define (md-scan-paragraph [src : (& src str)] [pos : i64] [n : i64]) : MdScanBlock
   (let
     [scan-pos : i64 pos]
     [text : String ""]
@@ -688,8 +686,7 @@
       (while (and (not done) (< scan-pos n))
         (let
           [line-end : i64 (md-line-end src scan-pos n)]
-          [line : String
-            (string.substring (& src) scan-pos (- line-end scan-pos))]
+          [line : String (string.substring src scan-pos (- line-end scan-pos))]
           [next : i64 (md-next-line-start src line-end n)]
           (if (md-block-start-at? src scan-pos n)
             (set! done true)
@@ -702,10 +699,10 @@
               (set! scan-pos next)))))
       (MdScanBlock.Block scan-pos (MdBlock.Paragraph text)))))
 
-(define (md-scan-block-at [src : String] [pos : i64] [n : i64]) : MdScanBlock
+(define (md-scan-block-at [src : (& src str)] [pos : i64] [n : i64]) : MdScanBlock
   (let
     [line-end : i64 (md-line-end src pos n)]
-    [line : String (string.substring (& src) pos (- line-end pos))]
+    [line : String (string.substring src pos (- line-end pos))]
     [next : i64 (md-next-line-start src line-end n)]
     [level : i64 (md-heading-level line)]
     (cond
@@ -721,9 +718,9 @@
       [(md-numbered-start? line) (md-scan-numbered-list src pos n)]
       [else (md-scan-paragraph src pos n)])))
 
-(define (md-scan-blocks [src : String]) : md_blocks.Vec
+(define (md-scan-blocks [src : (& src str)]) : md_blocks.Vec
   (let
-    [n : i64 (string.string-length (& src))]
+    [n : i64 (string.string-length src)]
     [pos : i64 0]
     [blocks : md_blocks.Vec (md-block-list-empty)]
     (begin
@@ -737,40 +734,40 @@
 
 ;: Index of the first `target` char at or after `from`; returns the string
 ;: length (a never-an-index sentinel) when there is no such character.
-(define (md-find-char [text : String] [from : i64] [target : char]) : i64
+(define (md-find-char [text : (& text str)] [from : i64] [target : char]) : i64
   (let
     [i : i64 from]
-    [n : i64 (string.string-length (& text))]
-    [found : i64 (string.string-length (& text))]
+    [n : i64 (string.string-length text)]
+    [found : i64 (string.string-length text)]
     (begin
       (while (and (< i n) (= found n))
         (begin
           (set!
             found
-            (if (= (string.string-ref (& text) i) target)
+            (if (= (string.string-ref text i) target)
               i
               found))
           (set! i (+ i 1))))
       found)))
 
 ;: HTML-escape the single character at `idx` (reuses the doc_html entity escaper).
-(define (md-escape-char [text : String] [idx : i64]) : String
-  (doc_bridge.bridge-doc-html-escape (string.substring (& text) idx 1)))
+(define (md-escape-char [text : (& text str)] [idx : i64]) : String
+  (doc_bridge.bridge-doc-html-escape (string.substring text idx 1)))
 
 ;: Render a well-formed `[label](url)` link given the `[` at `lbracket`, the `]`
 ;: at `jclose`, and the `)` at `kclose`. Label and URL are HTML-escaped.
 (define (md-render-link
-  [text : String]
+  [text : (& text str)]
   [lbracket : i64]
   [jclose : i64]
   [kclose : i64]) : String
   (let
     [label : String
       (doc_bridge.bridge-doc-html-escape
-        (string.substring (& text) (+ lbracket 1) (- jclose (+ lbracket 1))))]
+        (string.substring text (+ lbracket 1) (- jclose (+ lbracket 1))))]
     [url : String
       (doc_bridge.bridge-doc-html-escape
-        (string.substring (& text) (+ jclose 2) (- kclose (+ jclose 2))))]
+        (string.substring text (+ jclose 2) (- kclose (+ jclose 2))))]
     (str_cat.str-cat "<a href=\"" url "\">" label "</a>")))
 
 ;: Inline-render `text` to HTML: `code`, *em*/_em_, [t](u), everything else
@@ -865,7 +862,7 @@
     [anchor : String (doc_bridge.bridge-doc-render-anchor text)]
     (str_cat.str-cat
       "<h"
-      level-text
+      (string.copy (& level-text))
       " id=\""
       (doc_bridge.bridge-doc-html-escape anchor)
       "\">"
@@ -993,12 +990,12 @@
   (md-render-blocks (md-scan-blocks src)))
 
 (define (md-string-contains-at?
-  [haystack : String]
-  [needle : String]
+  [haystack : (& haystack str)]
+  [needle : (& needle str)]
   [start : i64]) : bool
   (let
-    [h : i64 (string.string-length (& haystack))]
-    [n : i64 (string.string-length (& needle))]
+    [h : i64 (string.string-length haystack)]
+    [n : i64 (string.string-length needle)]
     [i : i64 0]
     [ok : bool true]
     (if (> (+ start n) h)
@@ -1006,16 +1003,18 @@
       (begin
         (while (and ok (< i n))
           (if (=
-            (string.string-ref (& haystack) (+ start i))
-            (string.string-ref (& needle) i))
+            (string.string-ref haystack (+ start i))
+            (string.string-ref needle i))
             (set! i (+ i 1))
             (set! ok false)))
         ok))))
 
-(define (md-string-contains? [haystack : String] [needle : String]) : bool
+(define (md-string-contains?
+  [haystack : (& haystack str)]
+  [needle : (& needle str)]) : bool
   (let
-    [h : i64 (string.string-length (& haystack))]
-    [n : i64 (string.string-length (& needle))]
+    [h : i64 (string.string-length haystack)]
+    [n : i64 (string.string-length needle)]
     [i : i64 0]
     [found : bool false]
     (if (= n 0)

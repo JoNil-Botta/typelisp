@@ -17,8 +17,8 @@
 ;; index but after the wrong number of stores, which the completed first call's
 ;; checksum print pins.
 (define (merge!
-  [dst : (__tl_dyn-array i64)]
-  [src : (__tl_dyn-array i64)]
+  [dst : (&mut dst (__tl_dyn-array i64))]
+  [src : (& src (__tl_dyn-array i64))]
   [n : i64]) : unit
   (let
     [i : i64 0]
@@ -42,7 +42,7 @@
           (set! i (+ i 1))))
       (set! (array-ref src len) 7)
       ;; In bounds: the merge runs to completion.
-      (merge! dst src len)
+      (merge! (&mut dst) (& src) len)
       (set! i 0)
       (while (< i len)
         (begin
@@ -50,5 +50,5 @@
           (set! i (+ i 1))))
       (io.println "{}" acc)
       ;; One element past the destination: the abort must name index `len`.
-      (merge! dst src (+ len 1))
+      (merge! (&mut dst) (& src) (+ len 1))
       0)))

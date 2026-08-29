@@ -5,9 +5,9 @@
 (define sync-mutex-integration-count : i64
   512)
 
-(define (sync-mutex-integration-array-i64-addr [items : (__tl_dyn-array i64)]) : i64
-  (unsafe
-    (cast (ptr->int (ptr-cast (__tl_array-data items) : (Ptr u8))) : i64)))
+(defmacro (sync-mutex-integration-array-i64-addr [items : Expr]) : i64
+  `(unsafe
+    (cast (ptr->int (ptr-cast (__tl_array-data ,items) : (Ptr u8))) : i64)))
 
 (define (sync-mutex-integration-addr->mut-i64 [addr : i64]) : (MutPtr i64)
   (unsafe
@@ -49,7 +49,7 @@
     [(ThreadJoinErr _) -1]))
 
 (define (sync-mutex-integration-pack-context!
-  [ctx : (__tl_dyn-array i64)]
+  [ctx : (&mut ctx (__tl_dyn-array i64))]
   [mutex : mutex_i64.Mutex]) : unit
   (begin
     (mutex_i64.store-raw! mutex ctx 0)
@@ -83,8 +83,8 @@
     [ctx-b : (__tl_dyn-array i64)
       (__tl_make-array i64 (+ (mutex_i64.raw-field-count) 1))]
     (begin
-      (sync-mutex-integration-pack-context! ctx-a mutex)
-      (sync-mutex-integration-pack-context! ctx-b mutex)
+      (sync-mutex-integration-pack-context! (&mut ctx-a) mutex)
+      (sync-mutex-integration-pack-context! (&mut ctx-b) mutex)
       (match (thread.spawn
         sync-mutex-integration-worker
         (sync-mutex-integration-array-i64-addr ctx-a))

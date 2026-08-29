@@ -3461,6 +3461,48 @@ if [ "$failed" -gt 0 ]; then
     exit 1
 fi
 
+assert_frontend_smoke_timing_rows() {
+    if ! ci_timing_enabled; then
+        return 0
+    fi
+    if ! awk -F '\t' -v gate="${TYPELISP_CI_TIMING_GATE:-ungated}" '
+        BEGIN {
+            expected["child-symbols"] = 42
+            expected["child-check"] = 42
+            expected["child-ctfe"] = 42
+            expected["child-reflection"] = 42
+            expected["child-doc-test"] = 42
+            expected["semantic-base"] = 0
+            expected["semantic-macro-call-sites"] = 0
+            expected["semantic-inferred-locals"] = 0
+            expected["semantic-retained-transitions"] = 0
+            expected["semantic-dense-scopes"] = 0
+            expected["semantic-partial"] = 0
+            expected["semantic-canonical"] = 0
+            expected["semantic-nominal-members"] = 0
+            expected["semantic-exact-top-candidate-storage"] = 0
+            expected["semantic-nominal-build"] = 0
+            expected["semantic-nominal-select"] = 0
+            expected["semantic-nominal-assert"] = 0
+            expected["semantic-nominal-release"] = 0
+        }
+        NR == 1 { next }
+        $1 == gate && $2 == "compiler_frontend_smoke_suite" && ($3 in expected) {
+            count[$3] += 1
+            if ($4 !~ /^[0-9]+$/ || $5 !~ /^[0-9]+$/ || $5 != expected[$3]) bad = 1
+        }
+        END {
+            for (phase in expected) if (count[phase] != 1) bad = 1
+            if (bad) exit 1
+        }
+    ' "$TYPELISP_CI_TIMING_FILE"; then
+        echo "FAIL: compiler_frontend_smoke_suite timing rows are missing, duplicated, or malformed" >&2
+        exit 1
+    fi
+}
+
+assert_frontend_smoke_timing_rows
+
 run_backend_cmp_mem_fold_parity_fixtures
 
 if [ "$HOST_OS" = linux ]; then

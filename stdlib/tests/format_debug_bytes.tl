@@ -42,7 +42,10 @@
       (if (= delimiter 34)
         "\""
         "'")]
-    (str_cat.str-cat quote (debug-expected-byte-body code delimiter) quote)))
+    (str_cat.str-cat
+      (clone quote)
+      (debug-expected-byte-body code delimiter)
+      quote)))
 
 (define (debug-ascii-only? [rendered : (& rendered str)]) : bool
   (let

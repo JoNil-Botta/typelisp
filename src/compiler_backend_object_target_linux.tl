@@ -1,4 +1,5 @@
 ;; compiler_backend_object_target_linux.tl - Linux direct-object policy leaf.
+(import compiler_owned_view as owned_view)
 (import compiler_backend_object_target as object_target)
 (import compiler_object as cobj)
 
@@ -21,13 +22,14 @@
     [with-symbol : object_target.CompilerBackendObjectTargetParts
       (object_target.compiler-backend-object-symbol-export-section
         parts
-        entry
+        (owned_view.compiler-owned-shared-view entry)
         (cobj.CompilerObjectSectionKind.Text)
         (cobj.CompilerObjectSymbolKind.Function))]
     [with-label : object_target.CompilerBackendObjectTargetParts
       (object_target.compiler-backend-object-add-text
         with-symbol
-        (cobj.CompilerObjectX64Instr.Label entry))]
+        (cobj.CompilerObjectX64Instr.Label
+          (owned_view.compiler-owned-shared-view entry)))]
     [with-main-call : object_target.CompilerBackendObjectTargetParts
       (object_target.compiler-backend-object-add-call-instr
         with-label
@@ -59,6 +61,9 @@
         (cobj.CompilerObjectDataRecord.Zero 0))]
     (cobj.CompilerObjectImage
       (cobj.compiler-object-section-builder-finish
-        (object_target.compiler-backend-object-base-sections final-parts 4))
-      (object_target.compiler-backend-object-base-symbols final-parts)
+        (object_target.compiler-backend-object-base-sections
+          (owned_view.compiler-owned-shared-view final-parts)
+          4))
+      (object_target.compiler-backend-object-base-symbols
+        (owned_view.compiler-owned-shared-view final-parts))
       (object_target.compiler-backend-object-base-relocations final-parts))))

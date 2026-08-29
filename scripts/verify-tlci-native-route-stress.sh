@@ -13,6 +13,7 @@ cd "$ROOT"
 
 . "$ROOT/scripts/lib-native-link.sh"
 native_link_detect_host
+. "$ROOT/scripts/lib-ci-timing.sh"
 
 COMPILER=${1:-${TYPELISP_BIN:-}}
 if [ -z "$COMPILER" ]; then
@@ -40,6 +41,7 @@ NATIVE_STDOUT="$WORKDIR/native.stdout"
 NATIVE_STDERR="$WORKDIR/native.stderr"
 SOURCE_STDOUT="$WORKDIR/source.stdout"
 SOURCE_STDERR="$WORKDIR/source.stderr"
+EVIDENCE="$WORKDIR/evidence.tsv"
 RAW_IMAGE="$ROOT/target/embedded-stdlib-tlci/stdlib.tlci"
 HEAVY_DISPATCHES=16000
 LIGHT_DISPATCHES=2501
@@ -79,6 +81,11 @@ batch_path() {
 
 read_u64_le() {
     od -An -tu8 -j "$2" -N 8 "$1" | tr -d ' \r\n'
+}
+
+capture_now_ms() {
+    ci_timing_set_now_ms
+    CAPTURED_NOW_MS=$CI_TIMING_NOW_MS
 }
 
 [ -s "$RAW_IMAGE" ] ||
@@ -132,15 +139,19 @@ generate_success_source() {
     (begin
       (set! (array-ref items 0) 7)
       (text_buf.append! buf "x")
+      (__tl-box-place (box 7))
+      (and true true)
+      (or false true)
+      (unless false unit)
 FIXTURE
     index=0
     while [ "$index" -lt "$dispatches" ]; do
-        case $((index % 4)) in
-            0) printf '%s\n' '      (__tl-box-place (box 7))' >> "$output" ;;
-            1) printf '%s\n' '      (and true true)' >> "$output" ;;
-            2) printf '%s\n' '      (or false true)' >> "$output" ;;
-            3) printf '%s\n' '      (unless false unit)' >> "$output" ;;
-        esac
+        # This private projection bridge is the cheapest stable native Expr
+        # identity in the measured fixture set. The result is pure and unused,
+        # so ordinary optimization removes the expanded field reads while the
+        # production macro walk still performs every native dispatch. Keep the
+        # formerly sustained identities as explicit probes above.
+        printf '%s\n' '      (__tl-project-field buf len)' >> "$output"
         index=$((index + 1))
     done
     cat >> "$output" <<'FIXTURE'
@@ -172,14 +183,19 @@ while [ "$row" -lt "$ROW_COUNT" ]; do
     row=$((row + 1))
 done
 
+TARGET_CFG_ARGS=$(native_target_cfg_args | tr '\n' ' ')
 cat > "$WORKDIR/reproduce.txt" <<EOF
-native: TYPELISP_TLCI_NATIVE_ROUTE_STRESS=1 $COMPILER compile --batch $NATIVE_BATCH --target $NL_BOOTSTRAP_TARGET --opt-level 2
-source: TYPELISP_TLCI_NATIVE_ROUTE_STRESS=1 $COMPILER compile --batch $SOURCE_BATCH --target $NL_BOOTSTRAP_TARGET --opt-level 2 --stdlib-root $SOURCE_ROOT/stdlib
+native: cd $NATIVE_CWD && TYPELISP_TLCI_NATIVE_ROUTE_STRESS=1 $COMPILER compile --batch $NATIVE_BATCH --target $NL_BOOTSTRAP_TARGET $TARGET_CFG_ARGS--opt-level 2
+source: cd $SOURCE_ROOT && TYPELISP_TLCI_NATIVE_ROUTE_STRESS=1 $COMPILER compile --batch $SOURCE_BATCH --target $NL_BOOTSTRAP_TARGET $TARGET_CFG_ARGS--opt-level 2 --stdlib-root stdlib
 EOF
 
 echo "[tlci-native-route-stress] native production-route batch"
+capture_now_ms
+NATIVE_STARTED_MS=$CAPTURED_NOW_MS
+NATIVE_STATUS=0
 if [ "$NL_HOST_OS" = windows ]; then
-    if ! (
+    set +e
+    (
         cd "$NATIVE_CWD"
         pwsh -NoProfile -File "$ROOT/scripts/measure-compile-batch-memory.ps1" \
             -Compiler "$COMPILER" \
@@ -188,20 +204,19 @@ if [ "$NL_HOST_OS" = windows ]; then
             -Target "$NL_BOOTSTRAP_TARGET" \
             -NoStdlibRoot \
             -OptLevel 2
-    ) > "$WORKDIR/native-launch.stdout" 2> "$WORKDIR/native-launch.stderr"; then
-        finalize_record
-        fail "native Windows batch failed; see $WINDOWS_MEMORY_DIR/stderr.log"
-    fi
+    ) > "$WORKDIR/native-launch.stdout" 2> "$WORKDIR/native-launch.stderr"
+    NATIVE_STATUS=$?
+    set -e
     NATIVE_STDOUT="$WINDOWS_MEMORY_DIR/stdout.log"
     NATIVE_STDERR="$WINDOWS_MEMORY_DIR/stderr.log"
-    cp "$WINDOWS_MEMORY_DIR/summary.tsv" "$WORKDIR/metrics.tsv"
 else
     [ -x "$TLCI_NATIVE_ROUTE_TIME_BIN" ] ||
         fail "GNU time is required for the native-route RSS report: $TLCI_NATIVE_ROUTE_TIME_BIN"
     if ! "$TLCI_NATIVE_ROUTE_TIME_BIN" -v -o /dev/null true >/dev/null 2>&1; then
         fail "GNU time with -v support is required for the native-route RSS report: $TLCI_NATIVE_ROUTE_TIME_BIN"
     fi
-    if ! (
+    set +e
+    (
         cd "$NATIVE_CWD"
         "$TLCI_NATIVE_ROUTE_TIME_BIN" \
             -f 'wall_seconds=%e\npeak_rss_kb=%M' \
@@ -210,10 +225,21 @@ else
                 --target "$NL_BOOTSTRAP_TARGET" \
                 $(native_target_cfg_args) \
                 --opt-level 2
-    ) > "$NATIVE_STDOUT" 2> "$NATIVE_STDERR"; then
-        finalize_record
-        fail "native Linux batch failed; see $NATIVE_STDERR"
-    fi
+    ) > "$NATIVE_STDOUT" 2> "$NATIVE_STDERR"
+    NATIVE_STATUS=$?
+    set -e
+fi
+capture_now_ms
+NATIVE_COMPILE_MS=$((CAPTURED_NOW_MS - NATIVE_STARTED_MS))
+ci_timing_record_elapsed all native-compile \
+    "$NATIVE_COMPILE_MS" "$NATIVE_STATUS"
+if [ "$NATIVE_STATUS" -ne 0 ]; then
+    finalize_record
+    fail "native $NL_HOST_OS batch failed; see $NATIVE_STDERR"
+fi
+if [ "$NL_HOST_OS" = windows ]; then
+    cp "$WINDOWS_MEMORY_DIR/summary.tsv" "$WORKDIR/metrics.tsv"
+else
     {
         printf 'host\tmetric\tvalue\n'
         sed -n 's/^\([^=]*\)=\(.*\)$/linux\t\1\t\2/p' "$WORKDIR/native.time"
@@ -222,26 +248,45 @@ fi
 finalize_record
 
 echo "[tlci-native-route-stress] source-route differential batch"
-if ! (
+capture_now_ms
+SOURCE_STARTED_MS=$CAPTURED_NOW_MS
+set +e
+(
     cd "$SOURCE_ROOT"
     "$COMPILER" compile --batch "$SOURCE_BATCH" \
         --target "$NL_BOOTSTRAP_TARGET" \
         $(native_target_cfg_args) \
         --opt-level 2 \
         --stdlib-root stdlib
-) > "$SOURCE_STDOUT" 2> "$SOURCE_STDERR"; then
+) > "$SOURCE_STDOUT" 2> "$SOURCE_STDERR"
+SOURCE_STATUS=$?
+set -e
+capture_now_ms
+SOURCE_COMPILE_MS=$((CAPTURED_NOW_MS - SOURCE_STARTED_MS))
+ci_timing_record_elapsed all source-compile \
+    "$SOURCE_COMPILE_MS" "$SOURCE_STATUS"
+if [ "$SOURCE_STATUS" -ne 0 ]; then
     fail "source differential batch failed; see $SOURCE_STDERR"
 fi
 
+capture_now_ms
+COMPARE_STARTED_MS=$CAPTURED_NOW_MS
 row=0
 while [ "$row" -lt "$ROW_COUNT" ]; do
     cmp "$NATIVE_DIR/row-$row.s" "$SOURCE_DIR/row-$row.s" >/dev/null ||
         fail "native/source assembly differs for successful batch row $row"
     row=$((row + 1))
 done
+capture_now_ms
+ASSEMBLY_COMPARE_MS=$((CAPTURED_NOW_MS - COMPARE_STARTED_MS))
 
 profile_values() {
     awk -F '|' -v phase="typecheck.macro.$1" \
+        '$1 == "compile-profile" && $2 == phase { print $3 }' "$2"
+}
+
+profile_phase_values() {
+    awk -F '|' -v phase="$1" \
         '$1 == "compile-profile" && $2 == phase { print $3 }' "$2"
 }
 
@@ -289,6 +334,108 @@ SOURCE_HITS=$(profile_values stdlib_tlci_catalog_hits "$SOURCE_STDERR" |
     awk '{ total += $1 } END { print total + 0 }')
 [ "$SOURCE_HITS" -eq 0 ] ||
     fail "source differential unexpectedly used the native catalog $SOURCE_HITS time(s)"
+
+# Compile-profile detail rows already carry a machine-readable identity, arity,
+# and call count. Validate exactly one expected pair in every batch entry rather
+# than accepting a substring from any row. The compile-profile total row is the
+# per-entry boundary; this makes missing and duplicate detail rows fail closed.
+macro_profile_counts_valid() {
+    profile_file=$1
+    macro_identity=$2
+    macro_arity=$3
+    heavy_calls=$4
+    light_calls=$5
+    expected_rows=$6
+    awk -F '|' \
+        -v identity="$macro_identity" \
+        -v arity="$macro_arity" \
+        -v heavy="$heavy_calls" \
+        -v light="$light_calls" \
+        -v rows="$expected_rows" '
+        BEGIN { program = 0 }
+        $1 == "compile-profile-detail" && $2 == "typecheck.macro_expand" {
+            prefix = identity " arity=" arity " calls="
+            if (index($4, prefix) == 1) {
+                seen[program]++
+                wanted = program == 0 ? heavy : light
+                if ($4 != prefix wanted) bad = 1
+            }
+        }
+        $1 == "compile-profile" && $2 == "total" { program++ }
+        END {
+            if (program != rows) bad = 1
+            for (row = 0; row < rows; row++) {
+                if (seen[row] != 1) bad = 1
+            }
+            exit bad ? 1 : 0
+        }
+    ' "$profile_file"
+}
+
+assert_macro_profile_counts() {
+    if ! macro_profile_counts_valid "$@"; then
+        fail "profile identity/arity counts changed for $2 arity=$3"
+    fi
+}
+
+verify_macro_profile_counter() {
+    good="$WORKDIR/profile-counter-good.txt"
+    missing="$WORKDIR/profile-counter-missing.txt"
+    duplicate="$WORKDIR/profile-counter-duplicate.txt"
+    wrong="$WORKDIR/profile-counter-wrong.txt"
+    cat > "$good" <<'EOF'
+compile-profile-detail|typecheck.macro_expand|0|stdlib.test/probe arity=2 calls=9
+compile-profile|total|1|0|0|0
+compile-profile-detail|typecheck.macro_expand|0|stdlib.test/probe arity=2 calls=3
+compile-profile|total|1|0|0|0
+EOF
+    cat > "$missing" <<'EOF'
+compile-profile-detail|typecheck.macro_expand|0|stdlib.test/probe arity=2 calls=9
+compile-profile|total|1|0|0|0
+compile-profile|total|1|0|0|0
+EOF
+    cat > "$duplicate" <<'EOF'
+compile-profile-detail|typecheck.macro_expand|0|stdlib.test/probe arity=2 calls=9
+compile-profile|total|1|0|0|0
+compile-profile-detail|typecheck.macro_expand|0|stdlib.test/probe arity=2 calls=3
+compile-profile-detail|typecheck.macro_expand|0|stdlib.test/probe arity=2 calls=3
+compile-profile|total|1|0|0|0
+EOF
+    cat > "$wrong" <<'EOF'
+compile-profile-detail|typecheck.macro_expand|0|stdlib.test/probe arity=1 calls=9
+compile-profile|total|1|0|0|0
+compile-profile-detail|typecheck.macro_expand|0|stdlib.test/probe arity=2 calls=4
+compile-profile|total|1|0|0|0
+EOF
+    macro_profile_counts_valid \
+        "$good" stdlib.test/probe 2 9 3 2 ||
+        fail "exact profile counter rejected its valid control"
+    for malformed in "$missing" "$duplicate" "$wrong"; do
+        if macro_profile_counts_valid \
+            "$malformed" stdlib.test/probe 2 9 3 2; then
+            fail "exact profile counter accepted malformed input: $malformed"
+        fi
+    done
+}
+
+verify_macro_profile_counter
+assert_macro_profile_counts \
+    "$NATIVE_STDERR" stdlib.core_macros/__tl-project-field 2 \
+    "$HEAVY_DISPATCHES" "$LIGHT_DISPATCHES" "$ROW_COUNT"
+assert_macro_profile_counts \
+    "$NATIVE_STDERR" stdlib.core_macros/__tl-box-place 1 1 1 "$ROW_COUNT"
+assert_macro_profile_counts \
+    "$NATIVE_STDERR" stdlib.core_macros/and 2 69 69 "$ROW_COUNT"
+assert_macro_profile_counts \
+    "$NATIVE_STDERR" stdlib.core_macros/or 2 12 12 "$ROW_COUNT"
+assert_macro_profile_counts \
+    "$NATIVE_STDERR" stdlib.core_macros/unless 2 1 1 "$ROW_COUNT"
+assert_macro_profile_counts \
+    "$NATIVE_STDERR" stdlib.hash/hash 1 1 1 "$ROW_COUNT"
+assert_macro_profile_counts \
+    "$NATIVE_STDERR" stdlib.text_buf_family/owned 0 1 1 "$ROW_COUNT"
+assert_macro_profile_counts \
+    "$NATIVE_STDERR" stdlib.text_buf/append! 2 1 1 "$ROW_COUNT"
 
 RECORDS="$WORKDIR/progress-records.txt"
 grep '^tlci-native-stress|' "$NATIVE_STDERR" > "$RECORDS" ||
@@ -385,18 +532,6 @@ if ! awk -F '|' -v rows="$ROW_COUNT" '
     fail "pass/reset/map/session lifecycle totals did not cross required bounds"
 fi
 
-for identity in \
-    'stdlib.core_macros/__tl-box-place arity=1' \
-    'stdlib.core_macros/and arity=' \
-    'stdlib.core_macros/or arity=' \
-    'stdlib.core_macros/unless arity=' \
-    'stdlib.hash/hash arity=1' \
-    'stdlib.text_buf_family/owned arity=0' \
-    'stdlib.text_buf/append! arity=2'; do
-    grep -F "$identity" "$NATIVE_STDERR" >/dev/null ||
-        fail "profile output did not prove intended identity/arity: $identity"
-done
-
 generate_failure_source() {
     case_name=$1
     output=$2
@@ -428,6 +563,8 @@ filter_diagnostic() {
         sed '/^[[:space:]]*$/d' > "$2"
 }
 
+capture_now_ms
+DIAGNOSTIC_STARTED_MS=$CAPTURED_NOW_MS
 for case_name in unmatched-open too-many-arguments; do
     failure_source="$WORKDIR/failure-$case_name.tl"
     generate_failure_source "$case_name" "$failure_source"
@@ -469,9 +606,155 @@ for case_name in unmatched-open too-many-arguments; do
         "$WORKDIR/failure-$case_name-source.diag" >/dev/null ||
         fail "$case_name native/source diagnostics differ"
 done
+capture_now_ms
+DIAGNOSTIC_MS=$((CAPTURED_NOW_MS - DIAGNOSTIC_STARTED_MS))
+
+NATIVE_BACKEND_VALUES=$(profile_phase_values backend "$NATIVE_STDERR")
+SOURCE_BACKEND_VALUES=$(profile_phase_values backend "$SOURCE_STDERR")
+NATIVE_BACKEND_ROWS=$(printf '%s\n' "$NATIVE_BACKEND_VALUES" |
+    awk 'NF { rows++ } END { print rows + 0 }')
+SOURCE_BACKEND_ROWS=$(printf '%s\n' "$SOURCE_BACKEND_VALUES" |
+    awk 'NF { rows++ } END { print rows + 0 }')
+[ "$NATIVE_BACKEND_ROWS" -eq "$ROW_COUNT" ] ||
+    fail "native batch emitted $NATIVE_BACKEND_ROWS backend rows, expected $ROW_COUNT"
+[ "$SOURCE_BACKEND_ROWS" -eq "$ROW_COUNT" ] ||
+    fail "source batch emitted $SOURCE_BACKEND_ROWS backend rows, expected $ROW_COUNT"
+
+TOTAL_SOURCE_BYTES=0
+TOTAL_NATIVE_ASSEMBLY_BYTES=0
+TOTAL_SOURCE_ASSEMBLY_BYTES=0
+TOTAL_NATIVE_BACKEND_MS=0
+TOTAL_SOURCE_BACKEND_MS=0
+{
+    printf 'scope\trow\tmetric\tvalue\tunit\thost\n'
+    printf 'phase\tall\tnative_compile_elapsed\t%s\tms\t%s\n' \
+        "$NATIVE_COMPILE_MS" "$NL_HOST_OS"
+    printf 'phase\tall\tsource_compile_elapsed\t%s\tms\t%s\n' \
+        "$SOURCE_COMPILE_MS" "$NL_HOST_OS"
+    printf 'phase\tall\tassembly_compare_elapsed\t%s\tms\t%s\n' \
+        "$ASSEMBLY_COMPARE_MS" "$NL_HOST_OS"
+    printf 'phase\tall\tdiagnostic_controls_elapsed\t%s\tms\t%s\n' \
+        "$DIAGNOSTIC_MS" "$NL_HOST_OS"
+    row=0
+    while [ "$row" -lt "$ROW_COUNT" ]; do
+        source_bytes=$(wc -c < "$WORKDIR/row-$row.tl" | tr -d ' ')
+        native_assembly_bytes=$(wc -c < "$NATIVE_DIR/row-$row.s" | tr -d ' ')
+        source_assembly_bytes=$(wc -c < "$SOURCE_DIR/row-$row.s" | tr -d ' ')
+        profile_row=$((row + 1))
+        native_backend_ms=$(printf '%s\n' "$NATIVE_BACKEND_VALUES" |
+            sed -n "${profile_row}p")
+        source_backend_ms=$(printf '%s\n' "$SOURCE_BACKEND_VALUES" |
+            sed -n "${profile_row}p")
+        printf 'row\t%s\tgenerated_source_bytes\t%s\tbytes\t%s\n' \
+            "$row" "$source_bytes" "$NL_HOST_OS"
+        printf 'row\t%s\tnative_assembly_bytes\t%s\tbytes\t%s\n' \
+            "$row" "$native_assembly_bytes" "$NL_HOST_OS"
+        printf 'row\t%s\tsource_assembly_bytes\t%s\tbytes\t%s\n' \
+            "$row" "$source_assembly_bytes" "$NL_HOST_OS"
+        printf 'row\t%s\tnative_main_backend_elapsed\t%s\tms\t%s\n' \
+            "$row" "$native_backend_ms" "$NL_HOST_OS"
+        printf 'row\t%s\tsource_main_backend_elapsed\t%s\tms\t%s\n' \
+            "$row" "$source_backend_ms" "$NL_HOST_OS"
+        TOTAL_SOURCE_BYTES=$((TOTAL_SOURCE_BYTES + source_bytes))
+        TOTAL_NATIVE_ASSEMBLY_BYTES=$((
+            TOTAL_NATIVE_ASSEMBLY_BYTES + native_assembly_bytes))
+        TOTAL_SOURCE_ASSEMBLY_BYTES=$((
+            TOTAL_SOURCE_ASSEMBLY_BYTES + source_assembly_bytes))
+        TOTAL_NATIVE_BACKEND_MS=$((TOTAL_NATIVE_BACKEND_MS + native_backend_ms))
+        TOTAL_SOURCE_BACKEND_MS=$((TOTAL_SOURCE_BACKEND_MS + source_backend_ms))
+        row=$((row + 1))
+    done
+    printf 'aggregate\tall\tgenerated_source_bytes\t%s\tbytes\t%s\n' \
+        "$TOTAL_SOURCE_BYTES" "$NL_HOST_OS"
+    printf 'aggregate\tall\tnative_assembly_bytes\t%s\tbytes\t%s\n' \
+        "$TOTAL_NATIVE_ASSEMBLY_BYTES" "$NL_HOST_OS"
+    printf 'aggregate\tall\tsource_assembly_bytes\t%s\tbytes\t%s\n' \
+        "$TOTAL_SOURCE_ASSEMBLY_BYTES" "$NL_HOST_OS"
+    printf 'aggregate\tall\tnative_main_backend_elapsed\t%s\tms\t%s\n' \
+        "$TOTAL_NATIVE_BACKEND_MS" "$NL_HOST_OS"
+    printf 'aggregate\tall\tsource_main_backend_elapsed\t%s\tms\t%s\n' \
+        "$TOTAL_SOURCE_BACKEND_MS" "$NL_HOST_OS"
+} > "$EVIDENCE"
+
+evidence_valid() {
+    evidence_file=$1
+    awk -F '\t' -v rows="$ROW_COUNT" -v host="$NL_HOST_OS" '
+    BEGIN {
+        phase["native_compile_elapsed"] = "ms"
+        phase["source_compile_elapsed"] = "ms"
+        phase["assembly_compare_elapsed"] = "ms"
+        phase["diagnostic_controls_elapsed"] = "ms"
+        metric["generated_source_bytes"] = "bytes"
+        metric["native_assembly_bytes"] = "bytes"
+        metric["source_assembly_bytes"] = "bytes"
+        metric["native_main_backend_elapsed"] = "ms"
+        metric["source_main_backend_elapsed"] = "ms"
+    }
+    NR == 1 {
+        if ($0 != "scope\trow\tmetric\tvalue\tunit\thost") bad = 1
+        next
+    }
+    {
+        if (NF != 6 || $4 !~ /^[0-9]+$/ || $6 != host) bad = 1
+        if ($1 == "phase") {
+            if ($2 != "all" || !($3 in phase) || $5 != phase[$3]) bad = 1
+            phase_seen[$3]++
+        } else if ($1 == "row") {
+            if ($2 !~ /^[0-9]+$/ || ($2 + 0) >= rows ||
+                !($3 in metric) || $5 != metric[$3]) bad = 1
+            row_seen[$2, $3]++
+        } else if ($1 == "aggregate") {
+            if ($2 != "all" || !($3 in metric) || $5 != metric[$3]) bad = 1
+            aggregate_seen[$3]++
+        } else {
+            bad = 1
+        }
+    }
+    END {
+        for (name in phase) if (phase_seen[name] != 1) bad = 1
+        for (name in metric) {
+            if (aggregate_seen[name] != 1) bad = 1
+            for (row = 0; row < rows; row++) {
+                if (row_seen[row, name] != 1) bad = 1
+            }
+        }
+        exit bad ? 1 : 0
+    }
+' "$evidence_file"
+}
+
+if ! evidence_valid "$EVIDENCE"; then
+    fail "evidence artifact violates its required phase/row schema"
+fi
+
+verify_evidence_schema() {
+    duplicate="$WORKDIR/evidence-duplicate.tsv"
+    missing="$WORKDIR/evidence-missing.tsv"
+    malformed="$WORKDIR/evidence-malformed.tsv"
+    awk 'NR == 2 { print } { print }' "$EVIDENCE" > "$duplicate"
+    awk -F '\t' \
+        '$1 != "aggregate" || $3 != "native_assembly_bytes"' \
+        "$EVIDENCE" > "$missing"
+    awk -F '\t' 'BEGIN { OFS = "\t" } NR == 2 { $4 = "bad" } { print }' \
+        "$EVIDENCE" > "$malformed"
+    for invalid_evidence in "$duplicate" "$missing" "$malformed"; do
+        if evidence_valid "$invalid_evidence"; then
+            fail "evidence checker accepted malformed input: $invalid_evidence"
+        fi
+    done
+}
+
+verify_evidence_schema
+scripts/check-tlci-native-route-size.sh "$EVIDENCE"
+ci_timing_record_elapsed all native-main-backend \
+    "$TOTAL_NATIVE_BACKEND_MS" 0
+ci_timing_record_elapsed all source-main-backend \
+    "$TOTAL_SOURCE_BACKEND_MS" 0
 
 echo "[tlci-native-route-stress] producer identity exact: $COMPILER_IDENTITY"
 echo "[tlci-native-route-stress] dispatches one-pass=$HEAVY_ACTUAL total=$TOTAL_ACTUAL rows=$ROW_COUNT identities=$UNIQUE_IDENTITIES"
+echo "[tlci-native-route-stress] native assembly bytes=$TOTAL_NATIVE_ASSEMBLY_BYTES backend-ms=$TOTAL_NATIVE_BACKEND_MS"
 echo "[tlci-native-route-stress] assembly and failure-diagnostic parity passed"
 echo "[tlci-native-route-stress] metrics: $WORKDIR/metrics.tsv"
+echo "[tlci-native-route-stress] evidence: $EVIDENCE"
 echo "[tlci-native-route-stress] final record: $WORKDIR/final-record.txt"

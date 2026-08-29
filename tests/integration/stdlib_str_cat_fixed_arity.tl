@@ -5,14 +5,14 @@
 (import stdlib.str_cat)
 
 (define (fixture-copy-chunk-into
-  [chunk : String]
+  [chunk : (& chunk str)]
   [dst : (MutPtr u8)]
   [start : i64]) : unit
   (let
     [clen : i64 (string.string-length chunk)]
     [src : (Ptr u8)
       (unsafe
-        (string-data (& chunk)))]
+        (string-data chunk))]
     [words : i64 (/ clen 8)]
     [src64 : (Ptr i64)
       (unsafe
@@ -38,11 +38,11 @@
       unit)))
 
 (define (fixture-backend-cat5
-  [a : String]
-  [b : String]
-  [c : String]
-  [d : String]
-  [e : String]) : String
+  [a : (& a str)]
+  [b : (& b str)]
+  [c : (& c str)]
+  [d : (& d str)]
+  [e : (& e str)]) : String
   (let
     [la : i64 (string.string-length a)]
     [lb : i64 (string.string-length b)]
@@ -73,8 +73,14 @@
     [c : String "%rax"]
     [d : String "\n"]
     [e : String "tail"]
-    [backend : String (fixture-backend-cat5 a b c d e)]
-    [public : String (string.concat5 a b c d e)]
+    [backend : String (fixture-backend-cat5 (& a) (& b) (& c) (& d) (& e))]
+    [public : String
+      (string.concat5
+        (string.copy (& a))
+        (string.copy (& b))
+        (string.copy (& c))
+        (string.copy (& d))
+        (string.copy (& e)))]
     [macro : String (str_cat.str-cat a b c d e)]
     [short-public : String (string.concat3 "leaq " "%rax" "\n")]
     [short-macro : String (str_cat.str-cat "leaq " "%rax")]

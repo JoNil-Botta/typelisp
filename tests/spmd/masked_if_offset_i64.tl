@@ -1,6 +1,6 @@
 ;; SPMD masked-if corpus (#2205): shifted contiguous AVX-512 masked branches
 ;; over i64 lanes, including a non-multiple-of-8 tail.
-(define (init-xs [xs : (__tl_dyn-array i64)]) : unit
+(define (init-xs [xs : (&mut xs (__tl_dyn-array i64))]) : unit
   (begin
     (set! (array-ref xs 0) 99)
     (set! (array-ref xs 1) -3)
@@ -16,7 +16,7 @@
     (set! (array-ref xs 11) 6)
     (set! (array-ref xs 12) -2)))
 
-(define (init-out [out : (__tl_dyn-array i64)] [len : i64]) : unit
+(define (init-out [out : (&mut out (__tl_dyn-array i64))] [len : i64]) : unit
   (let
     [i : i64 0]
     (while (< i len)
@@ -25,8 +25,8 @@
         (set! i (+ i 1))))))
 
 (define (fill-masked
-  [xs : (__tl_dyn-array i64)]
-  [out : (__tl_dyn-array i64)]
+  [xs : (& xs (__tl_dyn-array i64))]
+  [out : (&mut out (__tl_dyn-array i64))]
   [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
@@ -35,8 +35,8 @@
       (set! (array-ref out (+ i 1)) (+ (array-ref xs (+ i 1)) 1)))))
 
 (define (fill-scalar
-  [xs : (__tl_dyn-array i64)]
-  [out : (__tl_dyn-array i64)]
+  [xs : (& xs (__tl_dyn-array i64))]
+  [out : (&mut out (__tl_dyn-array i64))]
   [n : i64]) : unit
   (let
     [i : i64 0]
@@ -48,8 +48,8 @@
         (set! i (+ i 1))))))
 
 (define (arrays-eq
-  [a : (__tl_dyn-array i64)]
-  [b : (__tl_dyn-array i64)]
+  [a : (& a (__tl_dyn-array i64))]
+  [b : (& b (__tl_dyn-array i64))]
   [n : i64]) : bool
   (let
     [i : i64 0]
@@ -71,11 +71,11 @@
     [got : (__tl_dyn-array i64) (__tl_make-array i64 len)]
     [want : (__tl_dyn-array i64) (__tl_make-array i64 len)]
     (begin
-      (init-xs xs)
-      (init-out got len)
-      (init-out want len)
-      (fill-masked xs got n)
-      (fill-scalar xs want n)
-      (if (arrays-eq got want len)
+      (init-xs (&mut xs))
+      (init-out (&mut got) len)
+      (init-out (&mut want) len)
+      (fill-masked (& xs) (&mut got) n)
+      (fill-scalar (& xs) (&mut want) n)
+      (if (arrays-eq (& got) (& want) len)
         42
         1))))

@@ -5,6 +5,7 @@
 (import compiler_surface_facts as surface_facts)
 (import compiler_intern_state as cis)
 (import compiler_ast_types as ast)
+(import compiler_owned_view as owned_view)
 (import tlci_core as tlci)
 (cfg compiler-surface-selftest (import compiler_intern as ci))
 (cfg compiler-surface-selftest (import sym_i64_env as sym_env))
@@ -79,7 +80,7 @@
       (match (surface_ast.surface-ast-decode
         ast-bytes
         structural-session
-        identity.remap
+        (owned_view.compiler-owned-place-shared-view identity.remap)
         pools)
         [(surface_ast.ResultSurfaceAstHydration.Err message)
           (ResultCompilerSurfaceHydration.Err message)]
@@ -99,7 +100,8 @@
   [expected-key : surface_identity.SurfaceIdentityKey]
   [structural-session : cis.InternStructuralSessionHandle]
   [pools : ast.AstNodePoolContext]) : ResultCompilerSurfaceHydration
-  (match (compiler-surface-identity-bytes rodata)
+  (match (compiler-surface-identity-bytes
+    (owned_view.compiler-owned-shared-view rodata))
     [(tlci.ResultTlciAuxLookup.Missing) ResultCompilerSurfaceHydration.Missing]
     [(tlci.ResultTlciAuxLookup.Err message)
       (ResultCompilerSurfaceHydration.Err message)]
@@ -108,7 +110,8 @@
         (= identity-schema surface_identity.surface-identity-schema-version))
         (ResultCompilerSurfaceHydration.Err
           "compiler surface: unsupported identity schema")
-        (match (compiler-surface-ast-bytes rodata)
+        (match (compiler-surface-ast-bytes
+          (owned_view.compiler-owned-shared-view rodata))
           [(tlci.ResultTlciAuxLookup.Missing)
             ResultCompilerSurfaceHydration.Missing]
           [(tlci.ResultTlciAuxLookup.Err message)
@@ -117,7 +120,8 @@
             (if (not (= ast-schema surface_ast.surface-ast-schema-version))
               (ResultCompilerSurfaceHydration.Err
                 "compiler surface: unsupported AST schema")
-              (match (compiler-surface-fact-bytes rodata)
+              (match (compiler-surface-fact-bytes
+                (owned_view.compiler-owned-shared-view rodata))
                 [(tlci.ResultTlciAuxLookup.Missing)
                   ResultCompilerSurfaceHydration.Missing]
                 [(tlci.ResultTlciAuxLookup.Err message)
@@ -164,7 +168,7 @@
             "host"))]
       [identity-payload : surface_identity.SurfaceIdentityPayload
         (surface_identity.SurfaceIdentityPayload
-          key
+          (owned_view.compiler-owned-shared-view key)
           source-names
           (__tl_make-array surface_identity.SurfaceGeneratedIdentity 0))]
       [source-pools : ast.AstNodePoolContext
@@ -257,16 +261,17 @@
           [ok : bool true]
           (begin
             (surface_facts.surface-typecheck-facts-clear!)
-            (if (surface_facts.surface-typecheck-facts-publish! prior)
+            (if (surface_facts.surface-typecheck-facts-publish!
+              (owned_view.compiler-owned-shared-view prior))
               unit
               (set! ok false))
             (match (compiler-surface-hydrate-payloads
-              payloads.identity-bytes
-              payloads.ast-bytes
-              payloads.fact-one-bytes
-              payloads.key
-              structural-session
-              pools)
+              (owned_view.compiler-owned-shared-view payloads.identity-bytes)
+              (owned_view.compiler-owned-shared-view payloads.ast-bytes)
+              (owned_view.compiler-owned-shared-view payloads.fact-one-bytes)
+              (owned_view.compiler-owned-shared-view payloads.key)
+              (owned_view.compiler-owned-shared-view structural-session)
+              (owned_view.compiler-owned-shared-view pools))
               [(ResultCompilerSurfaceHydration.Ok hydration)
                 (set! first-hydrated hydration.facts)]
               [_ (set! ok false)])
@@ -279,18 +284,19 @@
                 prior))
               unit
               (set! ok false))
-            (if (surface_facts.surface-typecheck-facts-publish! first-hydrated)
+            (if (surface_facts.surface-typecheck-facts-publish!
+              (owned_view.compiler-owned-shared-view first-hydrated))
               unit
               (set! ok false))
             ;; Decode a malformed second fact payload after a valid first one.
             ;; The explicitly published first hydration must remain unchanged.
             (match (compiler-surface-hydrate-payloads
-              payloads.identity-bytes
-              payloads.ast-bytes
+              (owned_view.compiler-owned-shared-view payloads.identity-bytes)
+              (owned_view.compiler-owned-shared-view payloads.ast-bytes)
               (__tl_make-array u8 0)
-              payloads.key
-              structural-session
-              pools)
+              (owned_view.compiler-owned-shared-view payloads.key)
+              (owned_view.compiler-owned-shared-view structural-session)
+              (owned_view.compiler-owned-shared-view pools))
               [(ResultCompilerSurfaceHydration.Err _) unit]
               [_ (set! ok false)])
             (if (and
@@ -301,25 +307,25 @@
               unit
               (set! ok false))
             (match (compiler-surface-hydrate-payloads
-              payloads.identity-bytes
-              payloads.ast-bytes
-              payloads.fact-two-bytes
-              payloads.key
-              structural-session
-              pools)
+              (owned_view.compiler-owned-shared-view payloads.identity-bytes)
+              (owned_view.compiler-owned-shared-view payloads.ast-bytes)
+              (owned_view.compiler-owned-shared-view payloads.fact-two-bytes)
+              (owned_view.compiler-owned-shared-view payloads.key)
+              (owned_view.compiler-owned-shared-view structural-session)
+              (owned_view.compiler-owned-shared-view pools))
               [(ResultCompilerSurfaceHydration.Ok hydration)
                 (begin
                   (set! second-hydrated hydration.facts)
                   (if (surface_facts.surface-typecheck-facts-publish!
-                    second-hydrated)
+                    (owned_view.compiler-owned-shared-view second-hydrated))
                     unit
                     (set! ok false)))]
               [_ (set! ok false)])
             (match (compiler-surface-hydrate
               (__tl_make-array u8 0)
-              payloads.key
-              structural-session
-              pools)
+              (owned_view.compiler-owned-shared-view payloads.key)
+              (owned_view.compiler-owned-shared-view structural-session)
+              (owned_view.compiler-owned-shared-view pools))
               [(ResultCompilerSurfaceHydration.Missing) unit]
               [_ (set! ok false)])
             (if (and

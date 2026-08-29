@@ -7,16 +7,16 @@
 (define (byte-copy-u8 [value : i64]) : u8
   (cast value : u8))
 
-(define (byte-copy-base [items : (__tl_dyn-array u8)]) : (MutPtr u8)
-  (unsafe
-    (__tl_array-data items)))
+(defmacro (byte-copy-base [items : Expr]) : (MutPtr u8)
+  `(unsafe
+    (__tl_array-data ,items)))
 
 (define (byte-copy-source-at [base : (MutPtr u8)] [offset : i64]) : (Ptr u8)
   (unsafe
     (ptr-cast (ptr-offset base offset) : (Ptr u8))))
 
 (define (byte-copy-fill!
-  [items : (__tl_dyn-array u8)]
+  [items : (&mut items (__tl_dyn-array u8))]
   [count : i64]
   [base : i64]) : unit
   (let
@@ -27,7 +27,7 @@
         (set! i (+ i 1))))))
 
 (define (byte-copy-fill-constant!
-  [items : (__tl_dyn-array u8)]
+  [items : (&mut items (__tl_dyn-array u8))]
   [count : i64]
   [value : i64]) : unit
   (let
@@ -38,18 +38,21 @@
         (set! i (+ i 1))))))
 
 (define (byte-copy-assert-at
-  [items : (__tl_dyn-array u8)]
+  [items : (& items (__tl_dyn-array u8))]
   [index : i64]
   [expected : i64]
-  [message : String]) : unit
-  (test.assert-i64-eq (cast (array-ref items index) : i64) expected message))
+  [message : (& message str)]) : unit
+  (test.assert-i64-eq
+    (cast (array-ref items index) : i64)
+    expected
+    (string.copy message)))
 
 (define (byte-copy-assert-range
-  [items : (__tl_dyn-array u8)]
+  [items : (& items (__tl_dyn-array u8))]
   [start : i64]
   [count : i64]
   [base : i64]
-  [message : String]) : unit
+  [message : (& message str)]) : unit
   (let
     [i : i64 0]
     (while (< i count)
@@ -58,11 +61,11 @@
         (set! i (+ i 1))))))
 
 (define (byte-copy-assert-constant-range
-  [items : (__tl_dyn-array u8)]
+  [items : (& items (__tl_dyn-array u8))]
   [start : i64]
   [count : i64]
   [expected : i64]
-  [message : String]) : unit
+  [message : (& message str)]) : unit
   (let
     [i : i64 0]
     (while (< i count)
@@ -74,11 +77,15 @@
   (let
     [src : (__tl_dyn-array u8) (__tl_make-array u8 4)]
     [dst : (__tl_dyn-array u8) (__tl_make-array u8 4)]
-    [src-base : (MutPtr u8) (byte-copy-base src)]
-    [dst-base : (MutPtr u8) (byte-copy-base dst)]
+    [src-base : (MutPtr u8)
+      (unsafe
+        (__tl_array-data src))]
+    [dst-base : (MutPtr u8)
+      (unsafe
+        (__tl_array-data dst))]
     (begin
-      (byte-copy-fill! src 4 10)
-      (byte-copy-fill-constant! dst 4 77)
+      (byte-copy-fill! (&mut src) 4 10)
+      (byte-copy-fill-constant! (&mut dst) 4 77)
       (string.str-copy-bytes-into (byte-copy-source-at src-base 0) dst-base 2 0)
       (byte-copy-assert-constant-range
         dst
@@ -91,12 +98,16 @@
   (let
     [src : (__tl_dyn-array u8) (__tl_make-array u8 20)]
     [dst : (__tl_dyn-array u8) (__tl_make-array u8 20)]
-    [src-base : (MutPtr u8) (byte-copy-base src)]
-    [dst-base : (MutPtr u8) (byte-copy-base dst)]
+    [src-base : (MutPtr u8)
+      (unsafe
+        (__tl_array-data src))]
+    [dst-base : (MutPtr u8)
+      (unsafe
+        (__tl_array-data dst))]
     [n : i64 11]
     (begin
-      (byte-copy-fill! src 20 20)
-      (byte-copy-fill-constant! dst 20 99)
+      (byte-copy-fill! (&mut src) 20 20)
+      (byte-copy-fill-constant! (&mut dst) 20 99)
       (string.str-copy-bytes-into (byte-copy-source-at src-base 1) dst-base 3 n)
       (byte-copy-assert-at dst 2 99 "unaligned prefix remains")
       (byte-copy-assert-range dst 3 n 21 "unaligned copy payload")
@@ -106,11 +117,15 @@
   (let
     [src : (__tl_dyn-array u8) (__tl_make-array u8 12)]
     [dst : (__tl_dyn-array u8) (__tl_make-array u8 12)]
-    [src-base : (MutPtr u8) (byte-copy-base src)]
-    [dst-base : (MutPtr u8) (byte-copy-base dst)]
+    [src-base : (MutPtr u8)
+      (unsafe
+        (__tl_array-data src))]
+    [dst-base : (MutPtr u8)
+      (unsafe
+        (__tl_array-data dst))]
     (begin
-      (byte-copy-fill! src 12 40)
-      (byte-copy-fill-constant! dst 12 88)
+      (byte-copy-fill! (&mut src) 12 40)
+      (byte-copy-fill-constant! (&mut dst) 12 88)
       (string.str-copy-bytes-into (byte-copy-source-at src-base 0) dst-base 1 n)
       (byte-copy-assert-at dst 0 88 "tail prefix remains")
       (byte-copy-assert-range dst 1 n 40 "tail copy payload")
@@ -128,12 +143,16 @@
   (let
     [src : (__tl_dyn-array u8) (__tl_make-array u8 96)]
     [dst : (__tl_dyn-array u8) (__tl_make-array u8 96)]
-    [src-base : (MutPtr u8) (byte-copy-base src)]
-    [dst-base : (MutPtr u8) (byte-copy-base dst)]
+    [src-base : (MutPtr u8)
+      (unsafe
+        (__tl_array-data src))]
+    [dst-base : (MutPtr u8)
+      (unsafe
+        (__tl_array-data dst))]
     [n : i64 (+ 64 9)]
     (begin
-      (byte-copy-fill! src 96 3)
-      (byte-copy-fill-constant! dst 96 55)
+      (byte-copy-fill! (&mut src) 96 3)
+      (byte-copy-fill-constant! (&mut dst) 96 55)
       (string.str-copy-bytes-into (byte-copy-source-at src-base 0) dst-base 5 n)
       (byte-copy-assert-at dst 4 55 "medium prefix remains")
       (byte-copy-assert-range dst 5 n 3 "medium dynamic copy payload")
@@ -142,9 +161,11 @@
 (define (byte-copy-overlap-dst-after-src-case) : unit
   (let
     [buf : (__tl_dyn-array u8) (__tl_make-array u8 20)]
-    [base : (MutPtr u8) (byte-copy-base buf)]
+    [base : (MutPtr u8)
+      (unsafe
+        (__tl_array-data buf))]
     (begin
-      (byte-copy-fill! buf 20 0)
+      (byte-copy-fill! (&mut buf) 20 0)
       (string.str-copy-bytes-into (byte-copy-source-at base 0) base 3 10)
       (byte-copy-assert-range buf 0 3 0 "overlap prefix remains")
       (byte-copy-assert-range buf 3 10 0 "overlap copied payload")
@@ -153,9 +174,11 @@
 (define (byte-copy-medium-overlap-dst-after-src-case) : unit
   (let
     [buf : (__tl_dyn-array u8) (__tl_make-array u8 160)]
-    [base : (MutPtr u8) (byte-copy-base buf)]
+    [base : (MutPtr u8)
+      (unsafe
+        (__tl_array-data buf))]
     (begin
-      (byte-copy-fill! buf 160 0)
+      (byte-copy-fill! (&mut buf) 160 0)
       (string.str-copy-bytes-into (byte-copy-source-at base 0) base 17 120)
       (byte-copy-assert-range buf 0 17 0 "medium overlap prefix remains")
       (byte-copy-assert-range buf 17 120 0 "medium overlap copied payload")
@@ -164,9 +187,11 @@
 (define (byte-copy-medium-overlap-dst-before-src-case) : unit
   (let
     [buf : (__tl_dyn-array u8) (__tl_make-array u8 160)]
-    [base : (MutPtr u8) (byte-copy-base buf)]
+    [base : (MutPtr u8)
+      (unsafe
+        (__tl_array-data buf))]
     (begin
-      (byte-copy-fill! buf 160 0)
+      (byte-copy-fill! (&mut buf) 160 0)
       (string.str-copy-bytes-into (byte-copy-source-at base 17) base 0 120)
       (byte-copy-assert-range buf 0 120 17 "medium forward overlap payload")
       (byte-copy-assert-at buf 120 120 "medium forward overlap suffix remains"))))

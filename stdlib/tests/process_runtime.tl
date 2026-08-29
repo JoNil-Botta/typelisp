@@ -51,7 +51,7 @@
   [result : process.ResultProcessChild]
   [message : String]) : process.ProcessChild
   (let
-    [info : process.ProcessChildInfo (process.child-result-info result)]
+    [info : process.ProcessChildInfo (process.child-result-info (clone result))]
     (if (process.child-info-ok? info)
       (process.ProcessChild
         (process.child-info-pid info)
@@ -75,7 +75,7 @@
   [message : String]) : unit
   (assert-owned-string-eq
     (process.result-error-message-or result "<process-ok>")
-    message
+    (clone message)
     message))
 
 (define (assert-process-child-unsupported
@@ -83,7 +83,7 @@
   [message : String]) : unit
   (assert-owned-string-eq
     (process.child-result-error-message-or result "<process-ok>")
-    message
+    (clone message)
     message))
 
 (define (process-runtime-simple-command) : process.ProcessCommand

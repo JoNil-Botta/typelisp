@@ -160,14 +160,14 @@
       (compiler_ast_types.ast-expr-spanned-with-pools
         pools
         (compiler_ast_types.ast-node-pool-context-expr-push
-          pools
+          (compiler_ast_types.ast-node-pool-context-shared-view (& pools))
           (compiler_ast_types.AstExpr.Var (ci.intern "buf")))
         (compiler_ast_types.ast-source-span 900 7 900 10))]
     [chunk-node : i64
       (compiler_ast_types.ast-expr-spanned-with-pools
         pools
         (compiler_ast_types.ast-node-pool-context-expr-push
-          pools
+          (compiler_ast_types.ast-node-pool-context-shared-view (& pools))
           (compiler_ast_types.AstExpr.Literal
             (compiler_ast_types.AstLiteral.String (ci.intern "x"))))
         (compiler_ast_types.ast-source-span 900 12 900 15))]
@@ -192,7 +192,8 @@
     [pools : compiler_ast_types.AstNodePoolContext
       (compiler_ast_types.ast-node-pool-context-capture-active)]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
-      (stress-tier1-operands pools)]
+      (stress-tier1-operands
+        (compiler_ast_types.ast-node-pool-context-shared-view (& pools)))]
     [i : i64 0]
     [outcome : i64 stress-status-ok]
     (begin
@@ -205,15 +206,15 @@
           (when
             (= (% i 1000) 0)
             (stress-progress-write!
-              progress-path
+              (stress-global-shared-view progress-path)
               1
               i
               0
               (array-ref canaries 0)
               (array-ref canaries 1)))
           (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-            pools
-            operands
+            (compiler_ast_types.ast-node-pool-context-shared-view (& pools))
+            (stress-global-shared-view operands)
             2
             64
             stress-cookie
@@ -233,7 +234,7 @@
                   [(not (= status tlci_core.tlci-host-callback-status-ok))
                     (begin
                       (stress-progress-write!
-                        progress-path
+                        (stress-global-shared-view progress-path)
                         1
                         i
                         status
@@ -257,7 +258,8 @@
                           compiler_embedded_stdlib_tlci.compiler-comptime-host-stack-len
                           0)))
                     (set! outcome stress-status-tier1-session)]
-                  [(not (stress-canaries-ok? canaries))
+                  [(not
+                      (stress-canaries-ok? (stress-global-shared-view canaries)))
                     (set! outcome stress-status-canary-clobbered)]
                   [else unit]))])
           (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
@@ -266,7 +268,7 @@
             (set! (array-ref failed-at 0) i))
           (set! i (+ i 1))))
       (stress-progress-write!
-        progress-path
+        (stress-global-shared-view progress-path)
         1
         i
         outcome
@@ -282,9 +284,11 @@
   (let
     [expr : compiler_ast_types.AstExpr
       (compiler_ast_types.ast-node-pool-context-expr-get pools node)]
-    (match expr
+    (match (clone expr)
       [(compiler_ast_types.AstExpr.Spanned inner _)
-        (stress-expr-get pools inner)]
+        (stress-expr-get
+          (compiler_ast_types.ast-node-pool-context-shared-view (& pools))
+          inner)]
       [_ expr])))
 
 ;; The operand is the node a parsed call site would hand over, so it carries
@@ -294,7 +298,7 @@
   (compiler_ast_types.ast-expr-spanned-with-pools
     pools
     (compiler_ast_types.ast-node-pool-context-expr-push
-      pools
+      (compiler_ast_types.ast-node-pool-context-shared-view (& pools))
       (compiler_ast_types.AstExpr.Var (ci.intern "xs")))
     (compiler_ast_types.ast-source-span 900 7 900 9)))
 
@@ -305,7 +309,9 @@
   [operand-node : i64]) : bool
   (match (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-value)
     [(compiler_ctfe.CompilerCtfeValue.Expr node _)
-      (match (stress-expr-get pools node)
+      (match (stress-expr-get
+        (compiler_ast_types.ast-node-pool-context-shared-view (& pools))
+        node)
         [(compiler_ast_types.AstExpr.BoxGet inner) (= inner operand-node)]
         [_ false])]
     [_ false]))
@@ -380,7 +386,9 @@
     [canaries : (__tl_dyn-array i64) (__tl_make-array i64 2)]
     [pools : compiler_ast_types.AstNodePoolContext
       (compiler_ast_types.ast-node-pool-context-capture-active)]
-    [operand-node : i64 (stress-operand-node pools)]
+    [operand-node : i64
+      (stress-operand-node
+        (compiler_ast_types.ast-node-pool-context-shared-view (& pools)))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
       (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
     [detail : (__tl_dyn-array i64) (__tl_make-array stress-status-ok)]
@@ -399,7 +407,7 @@
           (when
             (= (% i 1000) 0)
             (stress-progress-write!
-              progress-path
+              (stress-global-shared-view progress-path)
               2
               i
               0
@@ -408,8 +416,8 @@
           ;; Keep the mapped image, pools, and operand storage alive across the
           ;; run, but give each entry invocation its transactional result slot.
           (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-            pools
-            operands
+            (compiler_ast_types.ast-node-pool-context-shared-view (& pools))
+            (stress-global-shared-view operands)
             1
             64
             stress-cookie
@@ -428,7 +436,7 @@
                     (= dispatch.status tlci_core.tlci-host-callback-status-ok))
                   (begin
                     (stress-progress-write!
-                      progress-path
+                      (stress-global-shared-view progress-path)
                       2
                       i
                       dispatch.status
@@ -438,11 +446,19 @@
                 [(not
                     (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-ready?))
                   (set! outcome stress-status-tier2-no-result)]
-                [(not (stress-tier3-result-ok? pools operand-node))
+                [(not
+                    (stress-tier3-result-ok?
+                      (compiler_ast_types.ast-node-pool-context-shared-view
+                        (& pools))
+                      operand-node))
                   (set! outcome stress-status-tier2-shape)]
-                [(not (stress-tier2-session-ok? operand-node detail))
+                [(not
+                    (stress-tier2-session-ok?
+                      operand-node
+                      (stress-global-shared-view detail)))
                   (set! outcome (array-ref detail 0))]
-                [(not (stress-canaries-ok? canaries))
+                [(not
+                    (stress-canaries-ok? (stress-global-shared-view canaries)))
                   (set! outcome stress-status-canary-clobbered)]
                 [else unit])])
           (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
@@ -451,7 +467,7 @@
             (set! (array-ref failed-at 0) i))
           (set! i (+ i 1))))
       (stress-progress-write!
-        progress-path
+        (stress-global-shared-view progress-path)
         2
         i
         outcome
@@ -479,14 +495,16 @@
         (let
           [pools : compiler_ast_types.AstNodePoolContext
             (compiler_ast_types.ast-node-pool-context-capture-active)]
-          [operand-node : i64 (stress-operand-node pools)]
+          [operand-node : i64
+            (stress-operand-node
+              (compiler_ast_types.ast-node-pool-context-shared-view (& pools)))]
           [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
             (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
           (begin
             (when
               (= (% i 1000) 0)
               (stress-progress-write!
-                progress-path
+                (stress-global-shared-view progress-path)
                 3
                 i
                 0
@@ -498,8 +516,8 @@
                 operand-node
                 (compiler_ast_types.AstType.Expr)))
             (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-              pools
-              operands
+              (compiler_ast_types.ast-node-pool-context-shared-view (& pools))
+              (stress-global-shared-view operands)
               1
               64
               stress-cookie
@@ -518,7 +536,7 @@
                       (= dispatch.status tlci_core.tlci-host-callback-status-ok))
                     (begin
                       (stress-progress-write!
-                        progress-path
+                        (stress-global-shared-view progress-path)
                         3
                         i
                         dispatch.status
@@ -528,9 +546,14 @@
                   [(not
                       (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-ready?))
                     (set! outcome stress-status-tier3-no-result)]
-                  [(not (stress-tier3-result-ok? pools operand-node))
+                  [(not
+                      (stress-tier3-result-ok?
+                        (compiler_ast_types.ast-node-pool-context-shared-view
+                          (& pools))
+                        operand-node))
                     (set! outcome stress-status-tier3-shape)]
-                  [(not (stress-canaries-ok? canaries))
+                  [(not
+                      (stress-canaries-ok? (stress-global-shared-view canaries)))
                     (set! outcome stress-status-canary-clobbered)]
                   [else unit])])
             (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
@@ -539,7 +562,7 @@
               (set! (array-ref failed-at 0) i))
             (set! i (+ i 1)))))
       (stress-progress-write!
-        progress-path
+        (stress-global-shared-view progress-path)
         3
         i
         outcome
@@ -570,11 +593,23 @@
             [outcome : i64
               (cond
                 [(= tier 3)
-                  (stress-tier3 (& loaded) iterations progress-path failed-at)]
+                  (stress-tier3
+                    (& loaded)
+                    iterations
+                    (stress-global-shared-view progress-path)
+                    (stress-global-shared-view failed-at))]
                 [(= tier 2)
-                  (stress-tier2 (& loaded) iterations progress-path failed-at)]
+                  (stress-tier2
+                    (& loaded)
+                    iterations
+                    (stress-global-shared-view progress-path)
+                    (stress-global-shared-view failed-at))]
                 [else
-                  (stress-tier1 (& loaded) iterations progress-path failed-at)])]
+                  (stress-tier1
+                    (& loaded)
+                    iterations
+                    (stress-global-shared-view progress-path)
+                    (stress-global-shared-view failed-at))])]
             (begin
               (io.print-format
                 "{}"

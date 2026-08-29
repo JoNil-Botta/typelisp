@@ -5,6 +5,7 @@
 (import doc_extract)
 (import (vector.vector doc_render.DocModule core) as doc_module_vec)
 (import stdlib.str_cat_runtime as str_cat)
+(import compiler_owned_view as owned_view)
 
 (define (doc-html-smoke-source) : String
   ";# Module docs with `code`, [links], <tag>, & amp.
@@ -42,7 +43,10 @@
       (doc_extract.doc-extract-source (doc-html-smoke-source))]
     [second-docs : doc_extract.DocExtraction
       (doc_extract.doc-extract-source (doc-html-second-smoke-source))]
-    [page : String (doc_html.doc-html-render-module-page "smoke<&>.tl" docs)]
+    [page : String
+      (doc_html.doc-html-render-module-page
+        "smoke<&>.tl"
+        (owned_view.compiler-owned-shared-view docs))]
     [graph : String
       (doc_html.doc-html-render-module-graph
         (doc-html-smoke-modules docs second-docs))]

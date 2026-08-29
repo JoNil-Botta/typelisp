@@ -33,11 +33,11 @@
 ;; Copy `n` bytes of `src` into `dst` at byte offset `off`, INLINE: one word
 ;; loop plus a byte tail loop, both bounded by `n` and both addressing through
 ;; the loop-invariant `off`.
-(defmacro (copy-part! [dst : (MutPtr u8)] [off : i64] [src : String] [n : i64]) : unit
+(defmacro (copy-part! [dst : (MutPtr u8)] [off : i64] [src : Expr] [n : i64]) : unit
   `(let
     [cp-src : (Ptr u8)
       (unsafe
-        (string-data (& ,src)))]
+        (string-data ,src))]
     [cp-words : i64 (/ ,n 8)]
     [cp-src64 : (Ptr i64)
       (unsafe
@@ -76,11 +76,11 @@
 
 (define (buf-append5
   [buf : (&mut buf Buf)]
-  [a : String]
-  [b : String]
-  [c : String]
-  [d : String]
-  [e : String]) : unit
+  [a : (& a str)]
+  [b : (& b str)]
+  [c : (& c str)]
+  [d : (& d str)]
+  [e : (& e str)]) : unit
   (let
     [na : i64 (string.string-length a)]
     [nb : i64 (string.string-length b)]
@@ -111,13 +111,13 @@
       (ptr-read (ptr-offset p i)))
     : i64))
 
-(define (str-byte-at [s : String] [i : i64]) : i64
+(define (str-byte-at [s : (& s str)] [i : i64]) : i64
   (cast
     (unsafe
-      (ptr-read (ptr-offset (string-data (& s)) i)))
+      (ptr-read (ptr-offset (string-data s) i)))
     : i64))
 
-(define (check-part [p : (MutPtr u8)] [off : i64] [s : String]) : i64
+(define (check-part [p : (MutPtr u8)] [off : i64] [s : (& s str)]) : i64
   (let
     [n : i64 (string.string-length s)]
     [i : i64 0]
@@ -177,8 +177,8 @@
             (ptr-write! (ptr-offset p i) (cast 170 : u8)))
           (set! i (+ i 1))))
       ;; Two appends: the first runs with off == 0, the second with off > 0.
-      (buf-append5 (&mut buf) a b c d e)
-      (buf-append5 (&mut buf) a b c d e)
+      (buf-append5 (&mut buf) (& a) (& b) (& c) (& d) (& e))
+      (buf-append5 (&mut buf) (& a) (& b) (& c) (& d) (& e))
       (set!
         total
         (*

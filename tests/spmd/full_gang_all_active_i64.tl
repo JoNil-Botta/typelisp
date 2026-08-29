@@ -12,9 +12,9 @@
     [else 3]))
 
 (define (fill
-  [xs : (__tl_dyn-array i64)]
-  [copy : (__tl_dyn-array i64)]
-  [out : (__tl_dyn-array i64)]
+  [xs : (& xs (__tl_dyn-array i64))]
+  [copy : (&mut copy (__tl_dyn-array i64))]
+  [out : (&mut out (__tl_dyn-array i64))]
   [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
@@ -44,7 +44,7 @@
           (set! (array-ref copy i) 777)
           (set! (array-ref out i) 888)
           (set! i (+ i 1))))
-      (fill xs copy out n)
+      (fill (& xs) (&mut copy) (&mut out) n)
       (set! i 0)
       (while (< i capacity)
         (let

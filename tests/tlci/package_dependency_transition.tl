@@ -5,6 +5,7 @@
 ;; invalidated before the rebuilt image is admitted.
 (import compiler_dependency_tlci as dependency_tlci)
 (import compiler_load as load)
+(import compiler_owned_view as owned_view)
 (import package_source_core as package_source)
 (import stdlib.byte_buf)
 (import stdlib.io)
@@ -117,28 +118,37 @@
       (load.compiler-load-session-state-new)]
     [old-slot : i64
       (dependency_tlci.compiler-dependency-tlci-prepare-source-set!
-        state
-        (package-dependency-transition-source-set manifest-path))]
+        (owned_view.compiler-owned-shared-view state)
+        (package-dependency-transition-source-set (clone manifest-path)))]
     [old-observed : load.CompilerLoadDependencyCatalogObservation
-      (load.compiler-load-dependency-catalog-observe state)]
+      (load.compiler-load-dependency-catalog-observe
+        (owned_view.compiler-owned-shared-view state))]
     [old-capability : load.CompilerLoadDependencyCatalogCapability
-      (package-dependency-transition-capability state old-slot identity)]
+      (package-dependency-transition-capability
+        (owned_view.compiler-owned-shared-view state)
+        old-slot
+        (clone identity))]
     (begin
       (package-dependency-transition-require
         (and
           (= old-slot 0)
           (package-dependency-transition-trusted-observation? old-observed 1))
         "package tlci transition: old image was not admitted once")
-      (package-dependency-transition-copy-file new-source-path source-path)
+      (package-dependency-transition-copy-file
+        new-source-path
+        (clone source-path))
       (let
         [stale-slot : i64
           (dependency_tlci.compiler-dependency-tlci-prepare-source-set!
-            state
-            (package-dependency-transition-source-set manifest-path))]
+            (owned_view.compiler-owned-shared-view state)
+            (package-dependency-transition-source-set (clone manifest-path)))]
         [stale-observed : load.CompilerLoadDependencyCatalogObservation
-          (load.compiler-load-dependency-catalog-observe state)]
+          (load.compiler-load-dependency-catalog-observe
+            (owned_view.compiler-owned-shared-view state))]
         [stale : PackageDependencyTransitionStale
-          (package-dependency-transition-stale state stale-slot)]
+          (package-dependency-transition-stale
+            (owned_view.compiler-owned-shared-view state)
+            stale-slot)]
         (begin
           (package-dependency-transition-require
             (and
@@ -146,21 +156,24 @@
               (package-dependency-transition-stale-observation? stale-observed)
               (not
                 (load.compiler-load-dependency-catalog-capability-current?
-                  old-capability)))
+                  (owned_view.compiler-owned-shared-view old-capability))))
             "package tlci transition: stale image retained its mapped capability")
-          (package-dependency-transition-copy-file new-image-path artifact-path)
+          (package-dependency-transition-copy-file
+            new-image-path
+            (clone artifact-path))
           (let
             [rebuilt-slot : i64
               (dependency_tlci.compiler-dependency-tlci-prepare-source-set!
-                state
-                (package-dependency-transition-source-set manifest-path))]
+                (owned_view.compiler-owned-shared-view state)
+                (package-dependency-transition-source-set (clone manifest-path)))]
             [rebuilt-observed : load.CompilerLoadDependencyCatalogObservation
-              (load.compiler-load-dependency-catalog-observe state)]
+              (load.compiler-load-dependency-catalog-observe
+                (owned_view.compiler-owned-shared-view state))]
             [rebuilt-capability : load.CompilerLoadDependencyCatalogCapability
               (package-dependency-transition-capability
-                state
+                (owned_view.compiler-owned-shared-view state)
                 rebuilt-slot
-                identity)]
+                (clone identity))]
             (begin
               (package-dependency-transition-require
                 (and
@@ -169,34 +182,38 @@
                     rebuilt-observed
                     3)
                   (package-dependency-transition-rebuilt-key?
-                    old-capability.key
-                    rebuilt-capability.key
-                    stale))
+                    (owned_view.compiler-owned-shared-view old-capability.key)
+                    (owned_view.compiler-owned-shared-view
+                      rebuilt-capability.key)
+                    (owned_view.compiler-owned-shared-view stale)))
                 "package tlci transition: rebuilt image key was not admitted")
               (package-dependency-transition-copy-file
                 old-source-path
-                source-path)
+                (clone source-path))
               (package-dependency-transition-copy-file
                 old-image-path
-                artifact-path)
+                (clone artifact-path))
               (let
                 [restored-slot : i64
                   (dependency_tlci.compiler-dependency-tlci-prepare-source-set!
-                    state
-                    (package-dependency-transition-source-set manifest-path))]
+                    (owned_view.compiler-owned-shared-view state)
+                    (package-dependency-transition-source-set
+                      (clone manifest-path)))]
                 [restored-observed : load.CompilerLoadDependencyCatalogObservation
-                  (load.compiler-load-dependency-catalog-observe state)]
+                  (load.compiler-load-dependency-catalog-observe
+                    (owned_view.compiler-owned-shared-view state))]
                 [restored-capability : load.CompilerLoadDependencyCatalogCapability
                   (package-dependency-transition-capability
-                    state
+                    (owned_view.compiler-owned-shared-view state)
                     restored-slot
-                    identity)]
+                    (clone identity))]
                 [reused-slot : i64
                   (dependency_tlci.compiler-dependency-tlci-prepare-source-set!
-                    state
+                    (owned_view.compiler-owned-shared-view state)
                     (package-dependency-transition-source-set manifest-path))]
                 [reused-observed : load.CompilerLoadDependencyCatalogObservation
-                  (load.compiler-load-dependency-catalog-observe state)]
+                  (load.compiler-load-dependency-catalog-observe
+                    (owned_view.compiler-owned-shared-view state))]
                 (begin
                   (package-dependency-transition-require
                     (and
@@ -209,8 +226,10 @@
                         reused-observed
                         4)
                       (load.compiler-load-dependency-catalog-key-eq?
-                        old-capability.key
-                        restored-capability.key))
+                        (owned_view.compiler-owned-shared-view
+                          old-capability.key)
+                        (owned_view.compiler-owned-shared-view
+                          restored-capability.key)))
                     "package tlci transition: exact restored key was not reused")
                   (io.print-format
                     "{}"
@@ -232,21 +251,23 @@
                         rebuilt-capability.key.image-content-hash)
                       "\n"))
                   (match (load.compiler-load-session-state-dependency-catalog-release!
-                    state)
+                    (owned_view.compiler-owned-shared-view state))
                     [(load.ResultCompilerLoadDependencyCatalogUnit.Ok) 0]
                     [(load.ResultCompilerLoadDependencyCatalogUnit.Err message)
                       (io.panic message)]))))))))))
 
 (define (main) : i64
-  (if (not (= (io.arg-count) 9))
-    (io.panic
-      "usage: package_dependency_transition <manifest> <source> <old-source> <new-source> <artifact> <old-image> <new-image> <identity>")
-    (package-dependency-transition-run
-      (io.arg 1)
-      (io.arg 2)
-      (io.arg 3)
-      (io.arg 4)
-      (io.arg 5)
-      (io.arg 6)
-      (io.arg 7)
-      (io.arg 8))))
+  (if (= (io.arg-count) 1)
+    0
+    (if (not (= (io.arg-count) 9))
+      (io.panic
+        "usage: package_dependency_transition <manifest> <source> <old-source> <new-source> <artifact> <old-image> <new-image> <identity>")
+      (package-dependency-transition-run
+        (io.arg 1)
+        (io.arg 2)
+        (io.arg 3)
+        (io.arg 4)
+        (io.arg 5)
+        (io.arg 6)
+        (io.arg 7)
+        (io.arg 8)))))

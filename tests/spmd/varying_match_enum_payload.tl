@@ -14,7 +14,7 @@
     [2 (Scale (+ i 3))]
     [_ (Flip (- i 1))]))
 
-(define (init-choices [items : (__tl_dyn-array Choice)] [n : i64]) : unit
+(define (init-choices [items : (&mut items (__tl_dyn-array Choice))] [n : i64]) : unit
   (let
     [i : i64 0]
     (while (< i n)
@@ -23,8 +23,8 @@
         (set! i (+ i 1))))))
 
 (define (fill-match
-  [items : (__tl_dyn-array Choice)]
-  [out : (__tl_dyn-array i64)]
+  [items : (& items (__tl_dyn-array Choice))]
+  [out : (&mut out (__tl_dyn-array i64))]
   [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
@@ -46,8 +46,8 @@
               (+ 100 value))])))))
 
 (define (fill-scalar
-  [items : (__tl_dyn-array Choice)]
-  [out : (__tl_dyn-array i64)]
+  [items : (& items (__tl_dyn-array Choice))]
+  [out : (&mut out (__tl_dyn-array i64))]
   [n : i64]) : unit
   (let
     [i : i64 0]
@@ -72,8 +72,8 @@
         (set! i (+ i 1))))))
 
 (define (arrays-eq
-  [a : (__tl_dyn-array i64)]
-  [b : (__tl_dyn-array i64)]
+  [a : (& a (__tl_dyn-array i64))]
+  [b : (& b (__tl_dyn-array i64))]
   [n : i64]) : bool
   (let
     [i : i64 0]
@@ -94,9 +94,9 @@
     [got : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     [want : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     (begin
-      (init-choices items n)
-      (fill-match items got n)
-      (fill-scalar items want n)
-      (if (arrays-eq got want n)
+      (init-choices (&mut items) n)
+      (fill-match (& items) (&mut got) n)
+      (fill-scalar (& items) (&mut want) n)
+      (if (arrays-eq (& got) (& want) n)
         42
         1))))

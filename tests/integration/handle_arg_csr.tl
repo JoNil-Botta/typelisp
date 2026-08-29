@@ -12,12 +12,12 @@
 ;; target/handle-arg-gate.sh additionally asserts the asm shape.
 ;; Recursive on purpose: a trivial leaf would be inlined at opt2, deleting the
 ;; call (and the handle arg) with it. probe(xs, i) = i + xs[0].
-(define (probe [xs : (__tl_dyn-array i64)] [i : i64]) : i64
+(define (probe [xs : (& xs (__tl_dyn-array i64))] [i : i64]) : i64
   (if (<= i 0)
     (array-ref xs 0)
     (+ 1 (probe xs (- i 1)))))
 
-(define (sum-args [xs : (__tl_dyn-array i64)] [n : i64]) : i64
+(define (sum-args [xs : (& xs (__tl_dyn-array i64))] [n : i64]) : i64
   (let
     [i : i64 0]
     [acc : i64 0]
@@ -42,7 +42,7 @@
           (set! (array-ref xs i) (* i 3))
           (set! i (+ i 1))))
       (let
-        [r : i64 (sum-args xs n)]
+        [r : i64 (sum-args (& xs) n)]
         ;; n=4 (no args): xs[0]=0 so probe(xs,i)=i; xs[i]=3i; acc adds 4i per
         ;; iteration -> 4*(0+1+2+3) = 24.
         (if (= r 24)

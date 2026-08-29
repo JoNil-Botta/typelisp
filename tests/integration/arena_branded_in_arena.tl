@@ -18,14 +18,17 @@
     [local-owner (memory.make)]
     [local-text (in-arena local-owner (string.append "local" "-owned"))]
     [local-length : i64 (string.string-length local-text)]
+    [helper-owner (memory.make)]
+    [helper-text (allocate helper-owner)]
+    [helper-length : i64 (string.string-length helper-text)]
     [state-owner (memory.make)]
-    [state-text (allocate state-owner)]
+    [state-text (in-arena state-owner (string.append "state" "-owned"))]
     [state (ArenaState state-owner state-text)]
     [state-length : i64 (string.string-length state.text)]
     [field-owner (memory.make)]
     [holder (ArenaHolder field-owner)]
     [field-text (in-arena holder.arena (string.append "field" "-owned"))]
     [field-length : i64 (string.string-length field-text)]
-    (if (= (+ local-length (+ state-length field-length)) 37)
+    (if (= (+ local-length (+ helper-length (+ state-length field-length))) 48)
       42
       1)))

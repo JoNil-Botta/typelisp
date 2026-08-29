@@ -23,6 +23,23 @@
 ;# ```
 (import stdlib.comptime)
 
+;; Internal migration bridge for compiler/stdlib code that deliberately makes
+;; a representation-level shallow copy while converting old sharing APIs to
+;; explicit references. Dynamic arrays are indirect handles, so reinterpret
+;; the reference cell itself for that case. Other values are loaded through
+;; the address carried by the reference. Keeping type reflection on the simple
+;; local reference also preserves nested dotted places across macro expansion.
+;; The published seed keeps its pre-cutover sharing behavior.
+;: Internal bootstrap bridge that copies a value through its dynamic reference.
+;; lint-allow: function-name-case -- private one-epoch bootstrap ABI
+(defmacro (__tl-compiler-owned-shared-view-dyn-ref-as
+  [value : Expr]
+  ;; Spliced into the generated pointer element type.
+  ;; lint-allow: unused-variable
+  [value-ty : Expr]) : Expr
+  `(unsafe
+    (ptr-read (ptr-cast (__tl_array-data (array ,value)) : (Ptr ,value-ty)))))
+
 ;; Private AST-level bridge for the checked-in seed's pre-dotted global and
 ;; macro-hygiene resolver. Ordinary source uses direct `value.field` places.
 ;: Internal bootstrap bridge that projects the named field from `target`.
@@ -604,11 +621,14 @@
                                     binding-name
                                     item-init
                                     out)))
-                              `(if (< ,native-index-var ,native-length-var)
-                                ,out
-                                ,(comptime.expr-set-var
-                                  done-name
-                                  (comptime.expr-bool true))))
+                              (let
+                                [finish : comptime.Expr
+                                  (comptime.expr-set-var
+                                    done-name
+                                    (comptime.expr-bool true))]
+                                `(if (< ,native-index-var ,native-length-var)
+                                  ,out
+                                  ,finish)))
                             (if (comptime.expr-binding-clause-has-type? binding)
                               (comptime.expr-for-owned-step-typed
                                 owned-source-var
@@ -635,12 +655,16 @@
                                 (comptime.match-arm item-pattern item-body)
                                 (comptime.match-arm-list-empty))))))
                       (set! index (- index 1)))))))
-            (set!
-              out
-              (comptime.expr-let-scope
-                done-name
-                (comptime.expr-bool false)
-                (comptime.expr-while (comptime.expr-not done-var) out)))
+            (let
+              [loop-condition : comptime.Expr (comptime.expr-not done-var)]
+              (begin
+                (set! out (comptime.expr-while loop-condition out))
+                (set!
+                  out
+                  (comptime.expr-let-scope
+                    done-name
+                    (comptime.expr-bool false)
+                    out))))
             ;; Wrap iterator construction and cleanup scopes. Re-reflection
             ;; here keeps the implementation in ordinary source values; it
             ;; is measured by the macro-walk gates below.
@@ -772,19 +796,37 @@
                       (if (if (string-eq source-kind "ref")
                         true
                         (string-eq source-kind "mut-ref"))
-                        (comptime.expr-let-scope
-                          native-source-name
-                          source
-                          (comptime.expr-let-scope
-                            native-length-name
-                            native-length-init
+                        ;; Build each scope through its own captured `out`
+                        ;; update. A single deeply nested builder expression
+                        ;; can mix the evaluator's owning pool with the caller
+                        ;; syntax pool before the outer call observes the
+                        ;; intermediate cursor.
+                        (begin
+                          (set!
+                            out
+                            (comptime.expr-let-scope
+                              native-index-name
+                              `(ann 0 : i64)
+                              out))
+                          (set!
+                            out
                             (comptime.expr-let-scope
                               native-view-name
                               native-source-var
-                              (comptime.expr-let-scope
-                                native-index-name
-                                `(ann 0 : i64)
-                                out))))
+                              out))
+                          (set!
+                            out
+                            (comptime.expr-let-scope
+                              native-length-name
+                              native-length-init
+                              out))
+                          (set!
+                            out
+                            (comptime.expr-let-scope
+                              native-source-name
+                              source
+                              out))
+                          out)
                         (comptime.expr-for-owned-state
                           owned-source-var
                           owned-index-var
@@ -844,7 +886,8 @@
                         (comptime.expr-let-scope source-name source out)))
                     unit)
                   (set! index (- index 1)))))
-            out))))))
+            (comptime.expr-begin-unit
+              (comptime.expr-list-cons out (comptime.expr-list-empty)))))))))
 
 (cfg
   test

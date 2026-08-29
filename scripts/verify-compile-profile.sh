@@ -267,6 +267,43 @@ profile_counter_value_in() {
     ' "$_file"
 }
 
+assert_intern_storage_schema_in() {
+    _iss_file=$1
+    _iss_stdout=$2
+    _iss_stderr=$3
+    if ! awk -F'|' '
+        BEGIN {
+            count = split("intern.records.source_live intern.records.source_capacity intern.records.generated_live intern.records.generated_capacity intern.records.source_resizes intern.records.generated_resizes intern.records.reserved_bytes intern.source_map.live intern.source_map.capacity intern.source_map.probes_total intern.source_map.probe_max intern.source_map.resizes intern.source_map.reserved_bytes intern.canonical_map.live intern.canonical_map.capacity intern.canonical_map.probes_total intern.canonical_map.probe_max intern.canonical_map.resizes intern.canonical_map.reserved_bytes", expected, " ")
+        }
+        $1 == "compile-profile" &&
+            ($2 ~ /^intern\.records\./ ||
+             $2 ~ /^intern\.source_map\./ ||
+             $2 ~ /^intern\.canonical_map\./) {
+            seen++
+            if (seen > count || $2 != expected[seen] || NF != 6 ||
+                $3 !~ /^[0-9]+$/ || $4 != 0 || $5 != 0 || $6 != 0) {
+                bad = 1
+            }
+            value[$2] = $3 + 0
+        }
+        END {
+            if (seen != count || bad) exit 1
+            source_live = value["intern.records.source_live"]
+            generated_live = value["intern.records.generated_live"]
+            source_map_live = value["intern.source_map.live"]
+            canonical_map_live = value["intern.canonical_map.live"]
+            if (source_live <= 0 || generated_live < canonical_map_live || source_live != source_map_live) exit 1
+            if (value["intern.records.source_capacity"] != 131072 || value["intern.records.generated_capacity"] != 131072 || value["intern.source_map.capacity"] != 131072 || value["intern.canonical_map.capacity"] != 131072) exit 1
+            if (value["intern.records.source_resizes"] != 0 || value["intern.records.generated_resizes"] != 0 || value["intern.source_map.resizes"] != 0 || value["intern.canonical_map.resizes"] != 0) exit 1
+            if (value["intern.records.reserved_bytes"] <= 0 || value["intern.source_map.reserved_bytes"] <= 0 || value["intern.canonical_map.reserved_bytes"] <= 0) exit 1
+            if (value["intern.source_map.probes_total"] < value["intern.source_map.probe_max"] || value["intern.canonical_map.probes_total"] < value["intern.canonical_map.probe_max"]) exit 1
+        }
+    ' "$_iss_file"; then
+        show_failure_logs "$_iss_stdout" "$_iss_stderr"
+        fail "intern storage profile schema/order/accounting mismatch"
+    fi
+}
+
 # Every intermediate segmented-program flatten must name one of the two
 # documented conservative reasons. Successful expansion then publishes the
 # ordinary flat program exactly once at the walk boundary.
@@ -416,13 +453,14 @@ assert_fired_decl_attribution_in() {
     # The unattributed remainder tracks the size of the compiler's own source
     # (the selfhost compile is the probe): the authoritative Windows probe
     # measured 4,148,928 bytes on the #6701 tree and 4,194,720 bytes with the
-    # instruction-count campaign series (#6702), which crossed the original
-    # 4 MiB bound by 416 bytes. 6 MiB keeps the reconciliation exact above
-    # while leaving ordinary source growth room; the pool-family pins remain
-    # the exact boundaries.
-    [ "$_fda_unattributed" -le 6291456 ] || {
+    # instruction-count campaign series (#6702). #6215's source-wide ownership
+    # cutover grows the checked compiler graph by 3,687,018 source bytes and
+    # measures 10,103,968 residual bytes. 12 MiB retains about 2.5 MiB of
+    # ordinary source-growth room; the pool-family pins remain the exact
+    # boundaries.
+    [ "$_fda_unattributed" -le 12582912 ] || {
         show_failure_logs "$_fda_stdout" "$_fda_stderr"
-        fail "fired-declaration unattributed residual exceeds 6 MiB: $_fda_unattributed"
+        fail "fired-declaration unattributed residual exceeds 12 MiB: $_fda_unattributed"
     }
 
     # #5893's batch-8 cadence measured non-output retention at 18.9% of
@@ -843,6 +881,10 @@ assert_contains_in "$SURFACE_SOURCE_STDERR" \
 assert_contains_in "$SURFACE_SOURCE_STDERR" \
     "compile-profile-detail|prelude.hydrations|0" \
     "$SURFACE_SOURCE_STDOUT" "$SURFACE_SOURCE_STDERR"
+assert_intern_storage_schema_in \
+    "$SURFACE_SOURCE_STDERR" \
+    "$SURFACE_SOURCE_STDOUT" \
+    "$SURFACE_SOURCE_STDERR"
 cmp "$SURFACE_HYDRATED_ASM" "$SURFACE_SOURCE_ASM" >/dev/null ||
     fail "hydrated prelude assembly differs from source prelude output"
 
@@ -1129,6 +1171,18 @@ for ordinal in 0 1; do
             "compile-batch-profile|$ordinal|$marker|" 1 \
             "$BATCH_STDOUT" "$BATCH_STDERR"
     done
+done
+for row in \
+    records.source_live records.source_capacity \
+    records.generated_live records.generated_capacity \
+    records.source_resizes records.generated_resizes records.reserved_bytes \
+    source_map.live source_map.capacity source_map.probes_total \
+    source_map.probe_max source_map.resizes source_map.reserved_bytes \
+    canonical_map.live canonical_map.capacity canonical_map.probes_total \
+    canonical_map.probe_max canonical_map.resizes canonical_map.reserved_bytes; do
+    assert_line_count_in "$BATCH_STDERR" \
+        "compile-profile|intern.$row|" 2 \
+        "$BATCH_STDOUT" "$BATCH_STDERR"
 done
 if ! awk -F'|' '
     $1 == "compile-batch-profile" && $2 != "entry_ordinal" {
@@ -1619,9 +1673,29 @@ if [ "$NL_HOST_OS" = windows ]; then
     # #6827's range-merge, branch-threading, carrier-dataflow, loop-placement,
     # and rematerialisation helpers cross the next boundary: the authoritative
     # Windows CI probe measured 3,021,008 used nodes, 3,080,192 capacity, and
-    # 98,566,144 physical payload bytes. Composing #6840's semantic workspace
-    # rename provider with #6827 measured 3,029,193 used nodes on the
-    # authoritative Windows CI probe and retains the same boundary.
+    # 98,566,144 physical payload bytes.
+    # #6840's semantic workspace rename provider raises the pre-ownership graph
+    # to 3,029,193 used nodes while retaining that same segment boundary.
+    # #6215's source-wide by-value ownership cutover replaces compatibility
+    # moves throughout the compiler. Its pre-#6840 authoritative Windows probe
+    # measured 4,624,578 used nodes, 4,653,056 capacity, and 148,897,792
+    # physical payload bytes; #6840's separately measured 8,185-node increase
+    # remains within the same exact 71-segment boundary. Rebasing the ownership
+    # cutover over #6857/#6861/#6862 crosses the next boundary: the authoritative
+    # Windows CI probe measured 4,653,508 used nodes, 4,718,592 capacity, and
+    # 150,994,944 physical payload bytes. Reconciliation through #6870/#6871
+    # brings the combined graph back below that boundary: the authoritative
+    # Windows CI probe measured 4,643,724 used nodes, 4,653,056 capacity, and
+    # 148,897,792 physical payload bytes. Merging #6873's raw-pointer format
+    # selector and the final ownership reconciliation crosses two boundaries:
+    # the authoritative Windows CI probe measured 4,728,044 used nodes,
+    # 4,784,128 capacity, and 153,092,096 physical payload bytes.
+    # #6877's loop-postcondition bounds-check memo crossed the pre-ownership
+    # graph from 47 to 48 segments (3,083,453 used nodes), but the combined
+    # ownership graph remains within this exact 73-segment boundary.
+    # On the pre-ownership graph, composing #6840's semantic workspace rename
+    # provider with #6827 measured 3,029,193 used nodes and retained the same
+    # boundary.
     # #6855's optimizer/backend/regalloc packets (guard algebra, if-convert casts,
     # load-CSE precision and join phis, lea/cmov emission, sibling-phi threading,
     # length-equality families, local splits, invariant-load rematerialisation)
@@ -1640,10 +1714,10 @@ if [ "$NL_HOST_OS" = windows ]; then
     # On the pre-#6877 tree, #6783's integer and float exponent formatting
     # independently crossed the same boundary: the authoritative Windows CI
     # probe measured 3,080,997 used nodes with the same capacity and payload.
-    # The composed tree keeps the exact 48-segment pin pending its required
-    # Windows profile probe.
+    # The direct-format additions are composed with the ownership tree here;
+    # the ownership pin remains exact pending the required Windows profile.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool macro_expand 48 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool macro_expand 73 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # The three dense optimizer plan containers crossed the checked expression
     # graph into its 33rd segment; the accessor-admission/absorption/fold/sinking
@@ -1691,6 +1765,15 @@ if [ "$NL_HOST_OS" = windows ]; then
     # crosses the next boundary: the direct Windows selfhost probe measured
     # 2,425,185 used nodes, 2,490,368 capacity, and 79,691,776 physical payload
     # bytes.
+    # #6215's ownership cutover moves this boundary to 3,574,471 used nodes,
+    # 3,604,480 capacity, and 115,343,360 physical payload bytes on the
+    # authoritative Windows probe. Rebasing over #6857/#6861/#6862 crosses the
+    # next boundary: the authoritative Windows CI probe measured 3,606,568 used
+    # nodes, 3,670,016 capacity, and 117,440,512 physical payload bytes.
+    # Merging #6877's loop-postcondition memo into the ownership tree crosses
+    # the next boundary: the authoritative Windows CI probe measured 3,687,354
+    # used nodes, 3,735,552 capacity, and 119,537,664 physical payload bytes.
+    # On the pre-ownership graph,
     # #6855's allocator packets (local splits, invariant-load rematerialisation)
     # on top of its optimizer packets crossed ast_expr_pool.typecheck from 38 to
     # 39 segments. #6650's direct format sink plan and stdio macro family
@@ -1698,7 +1781,7 @@ if [ "$NL_HOST_OS" = windows ]; then
     # authoritative Windows probes measured 2,507,253 and 2,491,282 used nodes
     # respectively, with 2,555,904 capacity and 81,788,928 physical bytes.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool typecheck 39 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool typecheck 57 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # This is the tightest of the four and the one to check first when a series
     # adds compiler source: the copy-call / unsigned-bound-narrowing / chain
@@ -1727,18 +1810,23 @@ if [ "$NL_HOST_OS" = windows ]; then
     # The instruction-gap bank's optimizer, regalloc, and backend test surface
     # crosses that line: its authoritative Windows probe measured 25,643 used
     # nodes, 26 segments, 26,624 capacity, and 638,976 physical payload bytes.
-    # #5407's semantic completion provider adds enough macro-expanded type
-    # structure to cross the next line: the authoritative Windows probe
-    # measured 26,662 used nodes, 27 segments, 27,648 capacity, and 663,552
-    # physical payload bytes.
+    # #6215's ownership annotations and view types cross one further boundary:
+    # 27,582 used nodes, 27,648 capacity, and 663,552 physical payload bytes.
+    # Rebasing that cutover over #6843's dense-only instruction sequence surface
+    # measures 27,698 used nodes and crosses to 28 segments, 28,672 capacity,
+    # and 688,128 physical payload bytes on the authoritative Windows probe.
+    # #5407's semantic completion provider measured 26,662 used nodes and 27
+    # segments on the pre-ownership mainline tree.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_type_pool macro_expand 27 1024 24 \
+        "$SELFHOST_STDERR" ast_type_pool macro_expand 28 1024 24 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
-    # #6870's reflected-lambda type metadata crosses this type-pool boundary
-    # from 9 to 10 segments: the authoritative Windows target probe measured
-    # 9,221 used nodes, 10,240 capacity, and 245,760 physical payload bytes.
+    # #6828's dense flag-exit/BCE storage declarations cross the next type-pool
+    # typecheck boundary: the authoritative Windows probe measured 9,221 used
+    # nodes, 10 segments, 10,240 capacity, and 245,760 physical payload bytes.
+    # #6215's checked ownership surface measures 10,378 used nodes and crosses
+    # to 11 segments, 11,264 capacity, and 270,336 physical payload bytes.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_type_pool typecheck 10 1024 24 \
+        "$SELFHOST_STDERR" ast_type_pool typecheck 11 1024 24 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # Each ownership boundary must expose used nodes, logical capacity, and
     # physical segmentation for both pools. Values vary with the source graph;

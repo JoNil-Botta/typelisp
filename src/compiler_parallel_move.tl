@@ -3,6 +3,13 @@
 ;; side may occupy up to two resources so register-pair/group moves can block on
 ;; either half without teaching this helper about registers, stack slots, or IR
 ;; values. Resource id 0 means "no resource".
+(defmacro (compiler-parallel-move-shared-view [place : Expr]) : Expr
+  (cfg
+    stage0-seed-bootstrap
+    place
+    `(unsafe
+      (ptr-read (ptr-addr-of ,place)))))
+
 (defenum CompilerParallelMoveEdge
   (ParallelMoveEdge i64 i64 i64 i64 i64))
 
@@ -106,7 +113,7 @@
     [(ParallelMoveEdge id dest0 dest1 _ _)
       (or
         (compiler-parallel-move-edge-seq-source-uses-resource?
-          blockers
+          (compiler-parallel-move-shared-view blockers)
           dest0
           id)
         (compiler-parallel-move-edge-seq-source-uses-resource?
@@ -127,7 +134,7 @@
           (when
             (compiler-parallel-move-edge-blocked?
               (array-ref slots index)
-              blockers)
+              (compiler-parallel-move-shared-view blockers))
             (return true))
           (set! index (+ index 1))))
       false)))
@@ -145,7 +152,10 @@
           [edge : CompilerParallelMoveEdge (array-ref slots index)]
           (begin
             (when
-              (not (compiler-parallel-move-edge-blocked? edge blockers))
+              (not
+                (compiler-parallel-move-edge-blocked?
+                  edge
+                  (compiler-parallel-move-shared-view blockers)))
               (return
                 (CompilerParallelMoveUnblocked
                   (compiler-parallel-move-edge-id edge))))
@@ -157,7 +167,9 @@
   [blockers : CompilerParallelMoveEdgeSeq]) : CompilerParallelMoveDecision
   (if (= remaining.len 0)
     CompilerParallelMoveDone
-    (match (compiler-parallel-move-find-unblocked remaining blockers)
+    (match (compiler-parallel-move-find-unblocked
+      (compiler-parallel-move-shared-view remaining)
+      blockers)
       [(CompilerParallelMoveUnblocked id) (CompilerParallelMoveUnblocked id)]
       [(CompilerParallelMoveCycle id) (CompilerParallelMoveCycle id)]
       [(CompilerParallelMoveDone)
@@ -206,20 +218,34 @@
         (ParallelMoveEdge 5 8 0 12 13)
         (compiler-parallel-move-test-edge 6 12 20))]
     (and
-      (match (compiler-parallel-move-decision empty empty)
+      (match (compiler-parallel-move-decision
+        (compiler-parallel-move-shared-view empty)
+        empty)
         [(CompilerParallelMoveDone) true]
         [_ false])
-      (match (compiler-parallel-move-decision chain chain)
+      (match (compiler-parallel-move-decision
+        (compiler-parallel-move-shared-view chain)
+        chain)
         [(CompilerParallelMoveUnblocked id) (= id 1)]
         [_ false])
-      (match (compiler-parallel-move-decision cycle cycle)
+      (match (compiler-parallel-move-decision
+        (compiler-parallel-move-shared-view cycle)
+        cycle)
         [(CompilerParallelMoveCycle id) (= id 1)]
         [_ false])
-      (match (compiler-parallel-move-decision pair pair)
+      (match (compiler-parallel-move-decision
+        (compiler-parallel-move-shared-view pair)
+        (compiler-parallel-move-shared-view pair))
         [(CompilerParallelMoveUnblocked id) (= id 4)]
         [_ false])
-      (compiler-parallel-move-seq-has-blocked? pair pair)
-      (match (compiler-parallel-move-decision pair-source pair-source)
+      (compiler-parallel-move-seq-has-blocked?
+        (compiler-parallel-move-shared-view pair)
+        pair)
+      (match (compiler-parallel-move-decision
+        (compiler-parallel-move-shared-view pair-source)
+        (compiler-parallel-move-shared-view pair-source))
         [(CompilerParallelMoveUnblocked id) (= id 5)]
         [_ false])
-      (compiler-parallel-move-seq-has-blocked? pair-source pair-source))))
+      (compiler-parallel-move-seq-has-blocked?
+        (compiler-parallel-move-shared-view pair-source)
+        pair-source))))

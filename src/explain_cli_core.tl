@@ -162,7 +162,7 @@ Fix:
       1)
     (let
       [code : String (io.arg idx)]
-      (match (diagnostic-explain-lookup code)
+      (match (diagnostic-explain-lookup (string.copy (& code)))
         [(DiagnosticExplainDetailed text)
           (begin
             (io.print-format "{}" text)

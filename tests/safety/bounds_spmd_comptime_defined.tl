@@ -8,7 +8,7 @@
   (x i64)
   (y i64))
 
-(define (fill [out : (__tl_dyn-array i64)] [n : i64]) : unit
+(define (fill [out : (&mut out (__tl_dyn-array i64))] [n : i64]) : unit
   (foreach ([i : i64 0 n]) (set! (array-ref out i) (+ i 1))))
 
 (define (main) : i64
@@ -17,7 +17,7 @@
     [p : Point (Point 20 22)]
     [m : option_i64.Option (option_i64.Some 7)]
     (begin
-      (fill items 3)
+      (fill (&mut items) 3)
       (cond
         [(!= (array-ref items 2) 3) 1]
         [(!= (string-length (string.substring "abcdef" 1 3)) 3) 2]

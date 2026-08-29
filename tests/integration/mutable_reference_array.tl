@@ -19,10 +19,12 @@
     bag)
   (ArrayBagHandle (&mut bag.items) index))
 
-(define (array-bag-handle-write [handle : (ArrayBagHandle bag)] [value : i64]) : unit
+(define (array-bag-handle-write
+  [handle : (&mut handle (ArrayBagHandle bag))]
+  [value : i64]) : unit
   (set! (array-ref handle.items handle.index) value))
 
-(define (array-bag-handle-read [handle : (ArrayBagHandle bag)]) : i64
+(define (array-bag-handle-read [handle : (& handle (ArrayBagHandle bag))]) : i64
   (+ (array-length handle.items) (array-ref handle.items handle.index)))
 
 (define (array-bag-handle-score) : i64
@@ -35,8 +37,8 @@
         [bag : ArrayBag (ArrayBag items)]
         [handle : (ArrayBagHandle bag) (array-bag-handle (&mut bag) 1)]
         (begin
-          (array-bag-handle-write handle 40)
-          (array-bag-handle-read handle))))))
+          (array-bag-handle-write (&mut handle) 40)
+          (array-bag-handle-read (& handle)))))))
 
 (define (main) : i64
   (let

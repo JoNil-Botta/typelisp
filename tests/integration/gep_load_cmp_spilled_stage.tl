@@ -45,10 +45,10 @@
 ;; reordered or mis-addressed a load fails the runtime test as well as the
 ;; assembly-shape gate in scripts/verify-asm-shape-gates.sh.
 (define (changed?
-  [a : (__tl_dyn-array i64)]
-  [b : (__tl_dyn-array i64)]
-  [c : (__tl_dyn-array i64)]
-  [d : (__tl_dyn-array i64)]
+  [a : (& a (__tl_dyn-array i64))]
+  [b : (&mut b (__tl_dyn-array i64))]
+  [c : (& c (__tl_dyn-array i64))]
+  [d : (&mut d (__tl_dyn-array i64))]
   [base : i64]
   [n : i64]
   [poke : i64]) : i64
@@ -80,10 +80,10 @@
 ;; Nearest refused neighbour: the loaded element is read twice, so it is not
 ;; single-use, the fold cannot retire it, and it keeps a home of its own.
 (define (refused
-  [a : (__tl_dyn-array i64)]
-  [b : (__tl_dyn-array i64)]
-  [c : (__tl_dyn-array i64)]
-  [d : (__tl_dyn-array i64)]
+  [a : (& a (__tl_dyn-array i64))]
+  [b : (&mut b (__tl_dyn-array i64))]
+  [c : (& c (__tl_dyn-array i64))]
+  [d : (&mut d (__tl_dyn-array i64))]
   [base : i64]
   [n : i64]
   [poke : i64]) : i64
@@ -152,7 +152,7 @@
                     (set! (array-ref b (+ 8 k)) (array-ref a k))
                     (set! (array-ref d (+ 8 k)) (array-ref c k))
                     (set! k (+ k 1))))))
-            (set! left (changed? a b c d 8 (* trial 2) 0))
+            (set! left (changed? (& a) (&mut b) (& c) (&mut d) 8 (* trial 2) 0))
             (set! i 0)
             (while (< i 16)
               (begin
@@ -168,7 +168,7 @@
                     (set! (array-ref b (+ 8 k)) (array-ref a k))
                     (set! (array-ref d (+ 8 k)) (array-ref c k))
                     (set! k (+ k 1))))))
-            (set! right (refused a b c d 8 (* trial 2) 0))
+            (set! right (refused (& a) (&mut b) (& c) (&mut d) 8 (* trial 2) 0))
             (when (= left right) (set! ok (+ ok 1)))
             (set! trial (+ trial 1)))))
       (if (= ok 4)

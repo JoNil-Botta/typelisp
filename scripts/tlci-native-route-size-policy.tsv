@@ -1,0 +1,4 @@
+# tlci-native-route-size-policy-schema	1
+kind	host	scope	row	metric	dispatches	baseline_bytes	max_bytes	change_ref	evidence_url
+ratchet	linux	row	0	native_assembly_bytes	16000	59007	64908	#6906	https://github.com/JoNil-Botta/typelisp/actions/runs/33183348057
+ratchet	windows	row	0	native_assembly_bytes	16000	78114	85925	#6906	https://github.com/JoNil-Botta/typelisp/actions/runs/33183348057

@@ -3,6 +3,7 @@
 ;; The renderer stays in TypeLisp and consumes the same extracted documentation
 ;; model as the Markdown renderer. Anchors intentionally reuse `doc-render-anchor`
 ;; so standalone item links remain compatible with existing Markdown anchors.
+(import compiler_owned_view as owned_view)
 (import stdlib.io)
 (import stdlib.vector)
 (import doc_render)
@@ -13,7 +14,7 @@
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 
-(define (doc-html-escape-one [text : String] [idx : i64]) : String
+(define (doc-html-escape-one [text : (& text str)] [idx : i64]) : String
   (let
     [c : char (string.string-ref text idx)]
     (cond
@@ -23,7 +24,7 @@
       [(= c '"') "&quot;"]
       [else (string.substring text idx 1)])))
 
-(define (doc-html-escape [text : String]) : String
+(define (doc-html-escape [text : (& text str)]) : String
   (let
     [i : i64 0]
     [n : i64 (string.string-length text)]
@@ -37,7 +38,7 @@
           (set! i (+ i 1))))
       (byte_buf.byte-buf-builder-finish-string (& out)))))
 
-(define (doc-html-escape-text-one [text : String] [idx : i64]) : String
+(define (doc-html-escape-text-one [text : (& text str)] [idx : i64]) : String
   (let
     [c : char (string.string-ref text idx)]
     (if (= c '\n')
@@ -46,7 +47,7 @@
         ""
         (doc-html-escape-one text idx)))))
 
-(define (doc-html-escape-text [text : String]) : String
+(define (doc-html-escape-text [text : (& text str)]) : String
   (let
     [i : i64 0]
     [n : i64 (string.string-length text)]
@@ -266,7 +267,11 @@
       (while (< i end)
         (if (= (string.string-ref source i) '\\')
           (let
-            [escape-end : i64 (doc-html-syntax-valid-escape-end source i end)]
+            [escape-end : i64
+              (doc-html-syntax-valid-escape-end
+                (owned_view.compiler-owned-shared-view source)
+                i
+                end)]
             (if (> escape-end i)
               (begin
                 (byte_buf.byte-buf-builder-append-string
@@ -280,12 +285,16 @@
               (begin
                 (byte_buf.byte-buf-builder-append-string
                   (&mut out)
-                  (doc-html-escape-one source i))
+                  (doc-html-escape-one
+                    (owned_view.compiler-owned-shared-view source)
+                    i))
                 (set! i (+ i 1)))))
           (begin
             (byte_buf.byte-buf-builder-append-string
               (&mut out)
-              (doc-html-escape-one source i))
+              (doc-html-escape-one
+                (owned_view.compiler-owned-shared-view source)
+                i))
             (set! i (+ i 1)))))
       (byte_buf.byte-buf-builder-append-string (&mut out) "</span>")
       (byte_buf.byte-buf-builder-finish-string (& out)))))
@@ -386,15 +395,25 @@
 
 (define (doc-html-syntax-preceding-form [source : String] [start : i64]) : String
   (let
-    [before : i64 (doc-html-syntax-skip-back-spaces source (- start 1))]
+    [before : i64
+      (doc-html-syntax-skip-back-spaces
+        (owned_view.compiler-owned-shared-view source)
+        (- start 1))]
     (begin
       (if (and (>= before 0) (= (string.string-ref source before) '('))
-        (set! before (doc-html-syntax-skip-back-spaces source (- before 1)))
+        (set!
+          before
+          (doc-html-syntax-skip-back-spaces
+            (owned_view.compiler-owned-shared-view source)
+            (- before 1)))
         unit)
       (if (< before 0)
         ""
         (let
-          [word-start : i64 (doc-html-syntax-word-start-back source before)]
+          [word-start : i64
+            (doc-html-syntax-word-start-back
+              (owned_view.compiler-owned-shared-view source)
+              before)]
           (if (and
             (> word-start 0)
             (= (string.string-ref source (- word-start 1)) '('))
@@ -416,17 +435,40 @@
   [start : i64]
   [token : String]) : String
   (let
-    [head : bool (doc-html-syntax-head-position? source start)]
-    [before : i64 (doc-html-syntax-skip-back-spaces source (- start 1))]
+    [head : bool
+      (doc-html-syntax-head-position?
+        (owned_view.compiler-owned-shared-view source)
+        start)]
+    [before : i64
+      (doc-html-syntax-skip-back-spaces
+        (owned_view.compiler-owned-shared-view source)
+        (- start 1))]
     (cond
-      [(and head (doc-html-syntax-keyword? token)) "tl-syn-keyword"]
-      [(and head (doc-html-syntax-builtin? token)) "tl-syn-builtin"]
-      [(and head (doc-html-syntax-operator? token)) "tl-syn-operator"]
-      [(doc-html-syntax-definition-name? source start) "tl-syn-definition"]
+      [(and
+          head
+          (doc-html-syntax-keyword?
+            (owned_view.compiler-owned-shared-view token)))
+        "tl-syn-keyword"]
+      [(and
+          head
+          (doc-html-syntax-builtin?
+            (owned_view.compiler-owned-shared-view token)))
+        "tl-syn-builtin"]
+      [(and
+          head
+          (doc-html-syntax-operator?
+            (owned_view.compiler-owned-shared-view token)))
+        "tl-syn-operator"]
+      [(doc-html-syntax-definition-name?
+          (owned_view.compiler-owned-shared-view source)
+          start)
+        "tl-syn-definition"]
       [(and (>= before 0) (= (string.string-ref source before) '['))
         "tl-syn-binding"]
-      [(doc-html-syntax-boolean? token) "tl-syn-boolean"]
-      [(doc-html-syntax-type? token) "tl-syn-type"]
+      [(doc-html-syntax-boolean? (owned_view.compiler-owned-shared-view token))
+        "tl-syn-boolean"]
+      [(doc-html-syntax-type? (owned_view.compiler-owned-shared-view token))
+        "tl-syn-type"]
       [(doc-html-syntax-upper? (string.string-ref token 0)) "tl-syn-type"]
       [(and head (doc-html-syntax-ident-start? (string.string-ref token 0)))
         "tl-syn-call"]
@@ -438,23 +480,40 @@
 (define (doc-html-highlight-typelisp [source : String]) : String
   (let
     [i : i64 0]
-    [n : i64 (string.string-length source)]
+    [n : i64
+      (string.string-length (owned_view.compiler-owned-shared-view source))]
     [out : byte_buf.ByteBufBuilder (byte_buf.byte-buf-builder-with-capacity n)]
     (begin
       (while (< i n)
         (let
-          [c : char (string.string-ref source i)]
+          [c : char
+            (string.string-ref (owned_view.compiler-owned-shared-view source) i)]
           (cond
             [(= c ';')
               (let
-                [end : i64 (doc-html-syntax-line-end source i)]
-                [line : String (string.substring source i (- end i))]
+                [end : i64
+                  (doc-html-syntax-line-end
+                    (owned_view.compiler-owned-shared-view source)
+                    i)]
+                [line : String
+                  (string.substring
+                    (owned_view.compiler-owned-shared-view source)
+                    i
+                    (- end i))]
                 [class-name : String
                   (if (and
                     (< (+ i 1) n)
                     (or
-                      (= (string.string-ref source (+ i 1)) '#')
-                      (= (string.string-ref source (+ i 1)) ':')))
+                      (=
+                        (string.string-ref
+                          (owned_view.compiler-owned-shared-view source)
+                          (+ i 1))
+                        '#')
+                      (=
+                        (string.string-ref
+                          (owned_view.compiler-owned-shared-view source)
+                          (+ i 1))
+                        ':')))
                     "tl-syn-doc-comment"
                     "tl-syn-comment")]
                 (begin
@@ -464,44 +523,76 @@
                   (set! i end)))]
             [(= c '"')
               (let
-                [end : i64 (doc-html-syntax-string-end source i)]
+                [end : i64
+                  (doc-html-syntax-string-end
+                    (owned_view.compiler-owned-shared-view source)
+                    i)]
                 (begin
                   (byte_buf.byte-buf-builder-append-string
                     (&mut out)
-                    (doc-html-syntax-render-string source i end))
+                    (doc-html-syntax-render-string
+                      (owned_view.compiler-owned-shared-view source)
+                      i
+                      end))
                   (set! i end)))]
             [(= c '\'')
               (let
-                [end : i64 (doc-html-syntax-char-literal-end source i)]
+                [end : i64
+                  (doc-html-syntax-char-literal-end
+                    (owned_view.compiler-owned-shared-view source)
+                    i)]
                 (if (> end i)
                   (begin
                     (byte_buf.byte-buf-builder-append-string
                       (&mut out)
                       (doc-html-syntax-span
                         "tl-syn-string"
-                        (string.substring source i (- end i))))
+                        (string.substring
+                          (owned_view.compiler-owned-shared-view source)
+                          i
+                          (- end i))))
                     (set! i end))
                   (begin
                     (byte_buf.byte-buf-builder-append-string
                       (&mut out)
-                      (doc-html-escape-one source i))
+                      (doc-html-escape-one
+                        (owned_view.compiler-owned-shared-view source)
+                        i))
                     (set! i (+ i 1)))))]
-            [(doc-html-syntax-number-start? source i)
+            [(doc-html-syntax-number-start?
+                (owned_view.compiler-owned-shared-view source)
+                i)
               (let
-                [end : i64 (doc-html-syntax-token-end source i)]
+                [end : i64
+                  (doc-html-syntax-token-end
+                    (owned_view.compiler-owned-shared-view source)
+                    i)]
                 (begin
                   (byte_buf.byte-buf-builder-append-string
                     (&mut out)
                     (doc-html-syntax-span
                       "tl-syn-number"
-                      (string.substring source i (- end i))))
+                      (string.substring
+                        (owned_view.compiler-owned-shared-view source)
+                        i
+                        (- end i))))
                   (set! i end)))]
             [(doc-html-syntax-token-start? c)
               (let
-                [end : i64 (doc-html-syntax-token-end source i)]
-                [token : String (string.substring source i (- end i))]
+                [end : i64
+                  (doc-html-syntax-token-end
+                    (owned_view.compiler-owned-shared-view source)
+                    i)]
+                [token : String
+                  (string.substring
+                    (owned_view.compiler-owned-shared-view source)
+                    i
+                    (- end i))]
                 [class-name : String
-                  (doc-html-syntax-token-class source i token)]
+                  (doc-html-syntax-token-class
+                    (owned_view.compiler-owned-shared-view source)
+                    i
+                    (owned_view.compiler-owned-shared-view token))]
                 (begin
                   (byte_buf.byte-buf-builder-append-string
                     (&mut out)
@@ -513,7 +604,9 @@
               (begin
                 (byte_buf.byte-buf-builder-append-string
                   (&mut out)
-                  (doc-html-escape-one source i))
+                  (doc-html-escape-one
+                    (owned_view.compiler-owned-shared-view source)
+                    i))
                 (set! i (+ i 1)))])))
       (byte_buf.byte-buf-builder-finish-string (& out)))))
 
@@ -523,7 +616,7 @@
   [source : String]) : String
   (str_cat.str-cat
     "<pre><code class=\"language-"
-    (doc-html-escape language)
+    (doc-html-escape (owned_view.compiler-owned-shared-view language))
     "\""
     (doc-html-code-block-meta-attr meta)
     ">"
@@ -537,12 +630,13 @@
 
 (define (doc-html-item-nav-entry [item : doc_extract.DocItem]) : String
   (let
-    [name : String (doc_extract.doc-item-name item)]
+    [name : String
+      (doc_extract.doc-item-name (owned_view.compiler-owned-shared-view item))]
     [anchor : String
       (doc_render.doc-render-anchor (doc_extract.doc-item-name item))]
     (str_cat.str-cat
       "<li><a href=\"#"
-      anchor
+      (owned_view.compiler-owned-shared-view anchor)
       "\"><code>"
       (doc-html-escape name)
       "</code></a></li>\n")))
@@ -554,17 +648,23 @@
   (if (>= index count)
     ""
     (str_cat.str-cat
-      (doc-html-item-nav-entry (doc_extract.doc-item-list-ref items index))
+      (doc-html-item-nav-entry
+        (doc_extract.doc-item-list-ref
+          (owned_view.compiler-owned-shared-view items)
+          index))
       (doc-html-item-nav-entries-from items (+ index 1) count))))
 
 (define (doc-html-item-nav-entries [items : doc_item_vec.Vec]) : String
   (doc-html-item-nav-entries-from
-    items
+    (owned_view.compiler-owned-shared-view items)
     0
     (doc_extract.doc-item-list-count items)))
 
 (define (doc-html-item-nav [items : doc_item_vec.Vec]) : String
-  (if (= (doc_extract.doc-item-list-count items) 0)
+  (if (=
+    (doc_extract.doc-item-list-count
+      (owned_view.compiler-owned-shared-view items))
+    0)
     ""
     (str_cat.str-cat
       "<nav class=\"tl-doc-item-nav\" aria-label=\"Declarations\">\n<h3>Declarations</h3>\n<ul>\n"
@@ -573,21 +673,27 @@
 
 (define (doc-html-item [item : doc_extract.DocItem]) : String
   (let
-    [name : String (doc_extract.doc-item-name item)]
+    [name : String
+      (doc_extract.doc-item-name (owned_view.compiler-owned-shared-view item))]
     [anchor : String
-      (doc_render.doc-render-anchor (doc_extract.doc-item-name item))]
-    [kind : String (doc_extract.doc-kind-name (doc_extract.doc-item-kind item))]
+      (doc_render.doc-render-anchor
+        (doc_extract.doc-item-name (owned_view.compiler-owned-shared-view item)))]
+    [kind : String
+      (doc_extract.doc-kind-name
+        (doc_extract.doc-item-kind (owned_view.compiler-owned-shared-view item)))]
     (str_cat.str-cat
       "<a id=\""
-      anchor
+      (owned_view.compiler-owned-shared-view anchor)
       "\"></a>\n<section class=\"tl-doc-item\">\n<h3><a href=\"#"
-      anchor
+      (owned_view.compiler-owned-shared-view anchor)
       "\">"
       (doc-html-escape name)
       "</a></h3>\n<dl class=\"tl-doc-meta\"><dt>Kind</dt><dd>"
       (doc-html-escape kind)
       "</dd></dl>\n"
-      (doc-html-code-block (doc_extract.doc-item-signature item))
+      (doc-html-code-block
+        (doc_extract.doc-item-signature
+          (owned_view.compiler-owned-shared-view item)))
       (doc-html-doc-block
         "tl-doc-item-text"
         (doc_extract.doc-item-doc item)
@@ -601,27 +707,38 @@
   (if (>= index count)
     ""
     (str_cat.str-cat
-      (doc-html-item (doc_extract.doc-item-list-ref items index))
+      (doc-html-item
+        (doc_extract.doc-item-list-ref
+          (owned_view.compiler-owned-shared-view items)
+          index))
       (doc-html-item-list-from items (+ index 1) count))))
 
 (define (doc-html-item-list [items : doc_item_vec.Vec]) : String
-  (doc-html-item-list-from items 0 (doc_extract.doc-item-list-count items)))
+  (doc-html-item-list-from
+    (owned_view.compiler-owned-shared-view items)
+    0
+    (doc_extract.doc-item-list-count items)))
 
 (define (doc-html-items [items : doc_item_vec.Vec]) : String
-  (if (= (doc_extract.doc-item-list-count items) 0)
+  (if (=
+    (doc_extract.doc-item-list-count
+      (owned_view.compiler-owned-shared-view items))
+    0)
     "<p class=\"tl-doc-empty\">No documented declarations.</p>\n"
-    (doc-html-item-list items)))
+    (doc-html-item-list (owned_view.compiler-owned-shared-view items))))
 
 (define (doc-html-module-nav-entry [module : doc_render.DocModule]) : String
   (let
-    [path : String (doc_render.doc-module-path module)]
+    [path : String
+      (doc_render.doc-module-path
+        (owned_view.compiler-owned-shared-view module))]
     [anchor : String
       (doc_render.doc-render-anchor (doc_render.doc-module-path module))]
     (str_cat.str-cat
       "<li><a href=\"#"
       anchor
       "\">"
-      (doc-html-escape path)
+      (doc-html-escape (owned_view.compiler-owned-shared-view path))
       "</a></li>\n")))
 
 (define (doc-html-module-nav-entries-from
@@ -631,17 +748,23 @@
   (if (>= index count)
     ""
     (str_cat.str-cat
-      (doc-html-module-nav-entry (doc_render.doc-module-list-ref modules index))
+      (doc-html-module-nav-entry
+        (doc_render.doc-module-list-ref
+          (owned_view.compiler-owned-shared-view modules)
+          index))
       (doc-html-module-nav-entries-from modules (+ index 1) count))))
 
 (define (doc-html-module-nav-entries [modules : doc_module_vec.Vec]) : String
   (doc-html-module-nav-entries-from
-    modules
+    (owned_view.compiler-owned-shared-view modules)
     0
     (doc_render.doc-module-list-count modules)))
 
 (define (doc-html-module-nav [modules : doc_module_vec.Vec]) : String
-  (if (= (doc_render.doc-module-list-count modules) 0)
+  (if (=
+    (doc_render.doc-module-list-count
+      (owned_view.compiler-owned-shared-view modules))
+    0)
     "<p class=\"tl-doc-empty\">No modules.</p>\n"
     (str_cat.str-cat
       "<nav class=\"tl-doc-module-nav\" aria-label=\"Modules\">\n<h2>Modules</h2>\n<ul>\n"
@@ -650,26 +773,37 @@
 
 (define (doc-html-module-section [module : doc_render.DocModule]) : String
   (let
-    [path : String (doc_render.doc-module-path module)]
-    [docs : doc_extract.DocExtraction (doc_render.doc-module-docs module)]
+    [path : String
+      (doc_render.doc-module-path
+        (owned_view.compiler-owned-shared-view module))]
+    [docs : doc_extract.DocExtraction
+      (doc_render.doc-module-docs
+        (owned_view.compiler-owned-shared-view module))]
     [anchor : String
-      (doc_render.doc-render-anchor (doc_render.doc-module-path module))]
+      (doc_render.doc-render-anchor
+        (doc_render.doc-module-path
+          (owned_view.compiler-owned-shared-view module)))]
     (str_cat.str-cat
       "<section class=\"tl-doc-module\" id=\""
-      anchor
+      (owned_view.compiler-owned-shared-view anchor)
       "\">\n<h2><a href=\"#"
-      anchor
+      (owned_view.compiler-owned-shared-view anchor)
       "\">"
-      (doc-html-escape path)
+      (doc-html-escape (owned_view.compiler-owned-shared-view path))
       "</a></h2>\n<p class=\"tl-doc-source\"><code>"
       (doc-html-escape path)
       "</code></p>\n"
       (doc-html-doc-block
         "tl-doc-module-text"
-        (doc_extract.doc-extraction-module-doc docs)
+        (doc_extract.doc-extraction-module-doc
+          (owned_view.compiler-owned-shared-view docs))
         "No module docs.")
-      (doc-html-item-nav (doc_extract.doc-extraction-items docs))
-      (doc-html-items (doc_extract.doc-extraction-items docs))
+      (doc-html-item-nav
+        (doc_extract.doc-extraction-items
+          (owned_view.compiler-owned-shared-view docs)))
+      (doc-html-items
+        (doc_extract.doc-extraction-items
+          (owned_view.compiler-owned-shared-view docs)))
       "</section>\n")))
 
 (define (doc-html-module-sections-from
@@ -679,23 +813,36 @@
   (if (>= index count)
     ""
     (str_cat.str-cat
-      (doc-html-module-section (doc_render.doc-module-list-ref modules index))
-      (doc-html-module-sections-from modules (+ index 1) count))))
+      (doc-html-module-section
+        (doc_render.doc-module-list-ref
+          (owned_view.compiler-owned-shared-view modules)
+          index))
+      (doc-html-module-sections-from
+        (owned_view.compiler-owned-shared-view modules)
+        (+ index 1)
+        count))))
 
 (define (doc-html-module-sections [modules : doc_module_vec.Vec]) : String
   (doc-html-module-sections-from
-    modules
+    (owned_view.compiler-owned-shared-view modules)
     0
-    (doc_render.doc-module-list-count modules)))
+    (doc_render.doc-module-list-count
+      (owned_view.compiler-owned-shared-view modules))))
 
 (define (doc-html-render-module-page
   [path : String]
   [docs : doc_extract.DocExtraction]) : String
   (let
-    [title : String (str_cat.str-cat "TypeLisp API: " path "")]
+    [title : String
+      (str_cat.str-cat
+        "TypeLisp API: "
+        (owned_view.compiler-owned-shared-view path)
+        "")]
     (str_cat.str-cat
       (doc-html-page-open title)
-      (doc-html-header "TypeLisp API" path)
+      (doc-html-header
+        "TypeLisp API"
+        (owned_view.compiler-owned-shared-view path))
       "<main>\n"
       (doc-html-module-section (doc_render.DocModule.Module path docs))
       "</main>\n"
@@ -708,16 +855,16 @@
   (str_cat.str-cat
     (doc-html-page-open "TypeLisp API")
     (doc-html-header "TypeLisp API" "module index")
-    (doc-html-module-nav modules)
+    (doc-html-module-nav (owned_view.compiler-owned-shared-view modules))
     "<main>\n"
     (doc-html-module-sections modules)
     "</main>\n"
     (doc-html-page-close)))
 
-(define (doc-html-require-contains
-  [rendered : String]
-  [needle : String]
-  [message : String]) : bool
-  (if (doc_extract.doc-string-contains? rendered needle)
+(defmacro (doc-html-require-contains
+  [rendered : Expr]
+  [needle : Expr]
+  [message : Expr]) : Expr
+  `(if (doc_extract.doc-string-contains? ,rendered ,needle)
     true
-    (io.panic message)))
+    (io.panic ,message)))

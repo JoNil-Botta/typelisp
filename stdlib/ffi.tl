@@ -116,34 +116,40 @@
   (c-bytes-alloc view))
 
 ;: Return the byte count needed for a NUL-terminated copy of `text`.
-(define (c-string-required-bytes [text : String]) : i64
-  (c-bytes-required-bytes (byte_buf.str-as-bytes (& text))))
+(define (c-string-required-bytes [text : (& text str)]) : i64
+  (c-bytes-required-bytes (byte_buf.str-as-bytes text)))
 
 ;: Return true when `text` contains an interior NUL byte.
-(define (c-string-interior-nul? [text : String]) : bool
-  (c-bytes-interior-nul? (byte_buf.str-as-bytes (& text))))
+(define (c-string-interior-nul? [text : (& text str)]) : bool
+  (c-bytes-interior-nul? (byte_buf.str-as-bytes text)))
 
 ;: Copy exactly `n` bytes from `text` into `dst`.
 ;:
 ;: The caller must ensure `n` is at most `(string-length text)` and that `dst`
 ;: points to writable storage for at least `n` bytes.
-(define (c-string-copy-bytes! [text : String] [dst : (MutPtr u8)] [n : i64]) : unit
-  (c-bytes-copy-bytes! (byte_buf.str-as-bytes (& text)) dst n))
+(define (c-string-copy-bytes!
+  [text : (& text str)]
+  [dst : (MutPtr u8)]
+  [n : i64]) : unit
+  (c-bytes-copy-bytes! (byte_buf.str-as-bytes text) dst n))
 
 ;: Copy `text` to caller-owned mutable storage and append the trailing NUL byte.
 ;:
 ;: Compatibility wrapper over `c-bytes-copy!`.
-(define (c-string-copy! [text : String] [dst : (MutPtr u8)] [capacity : i64]) : FfiCStringCopyResult
-  (c-bytes-copy! (byte_buf.str-as-bytes (& text)) dst capacity))
+(define (c-string-copy!
+  [text : (& text str)]
+  [dst : (MutPtr u8)]
+  [capacity : i64]) : FfiCStringCopyResult
+  (c-bytes-copy! (byte_buf.str-as-bytes text) dst capacity))
 
 ;: Allocate a NUL-terminated C string copy in the active arena.
 ;:
 ;: Compatibility wrapper over `c-bytes-alloc`.
-(define (c-string-alloc [text : String]) : (Ptr u8)
-  (c-bytes-alloc (byte_buf.str-as-bytes (& text))))
+(define (c-string-alloc [text : (& text str)]) : (Ptr u8)
+  (c-bytes-alloc (byte_buf.str-as-bytes text)))
 
 ;: Short alias for `c-string-alloc`.
-(define (cstr [text : String]) : (Ptr u8)
+(define (cstr [text : (& text str)]) : (Ptr u8)
   (c-string-alloc text))
 
 ;: Inline test helper that reads a mutable byte pointer at `index`.

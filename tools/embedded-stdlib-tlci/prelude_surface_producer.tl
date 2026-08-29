@@ -13,6 +13,7 @@
 (import compiler_builtin_ids as cbi)
 (import compiler_intern as ci)
 (import compiler_intern_state as cis)
+(import compiler_owned_view as owned_view)
 (import compiler_surface_facts as surface_facts)
 (import compiler_surface_identity as surface_identity)
 (import stdlib.arena)
@@ -58,23 +59,23 @@
   [cfgs : cfg_env.SymI64Env]
   [pools : ast.AstNodePoolContext]) : load.ResultCompilerLoadWithPaths
   (match (load.compiler-load-stdlib-prelude-file-with-roots-cfg-with-pools
-    load-state
+    (load.compiler-load-session-state-shared-view (& load-state))
     (load.compiler-load-runtime-prelude-path-shared-view)
     (cfg_env.sym-i64-empty)
-    roots
-    cfgs
-    pools)
+    (owned_view.compiler-owned-shared-view roots)
+    (cfg_env.sym-i64-shared-view (& cfgs))
+    (ast.ast-place-shared-view pools))
     [(load.ResultCompilerLoadWithPaths.Ok
         runtime-decls
         runtime-paths
         runtime-modules
         runtime-seen)
       (match (load.compiler-load-core-macro-prelude-with-roots-cfg-with-pools
-        load-state
+        (load.compiler-load-session-state-shared-view (& load-state))
         runtime-seen
-        roots
-        cfgs
-        pools)
+        (owned_view.compiler-owned-shared-view roots)
+        (cfg_env.sym-i64-shared-view (& cfgs))
+        (ast.ast-place-shared-view pools))
         [(load.ResultCompilerLoadWithPaths.Ok
             macro-decls
             macro-paths
@@ -98,7 +99,8 @@
   (ResultPreludeSurfaceFacts.Err
     (str_cat.str-cat
       prefix
-      (cdiag.compiler-diagnostic-render (__tl-box-place diag)))))
+      (cdiag.compiler-diagnostic-render
+        (cdiag.compiler-diagnostic-box-shared-view diag)))))
 
 (define (prelude-surface-typecheck-facts-specialized
   [load-state : load.CompilerLoadSessionState]
@@ -114,10 +116,14 @@
   [pools : ast.AstNodePoolContext]) : ResultPreludeSurfaceFacts
   (let
     [decl-count : i64
-      (match program
+      (match (ast.ast-place-shared-view program)
         [(ast.AstProgram.Program decls-box)
-          (ast.ast-decl-list-len (& (__tl-box-place decls-box)))])]
-    [_select-all-clone-roots : unit (tc.tc-clone-root-collection-use! program)]
+          (let
+            [decls : ast.AstDeclList
+              (ast.ast-decl-list-box-shared-view decls-box)]
+            (ast.ast-decl-list-len (& decls)))])]
+    [_select-all-clone-roots : unit
+      (tc.tc-clone-root-collection-use! (ast.ast-place-shared-view program))]
     [_start-fact-recording : unit
       (surface_facts.surface-typecheck-facts-recording-start!
         (arena.tl_arena_current))]
@@ -147,7 +153,9 @@
           (surface_facts.surface-typecheck-facts-recording-abort!)
           (prelude-surface-facts-error
             "prelude surface typecheck failed: "
-            (box (cdiag.compiler-diagnostic-list-first (__tl-box-place diag)))))]
+            (box
+              (cdiag.compiler-diagnostic-list-first
+                (cdiag.compiler-diagnostic-list-box-shared-view diag)))))]
       [(tc.ResultCompilerTypecheckChecked.Ok summary ctx _ _)
         (let
           [_finish-clone-roots : clone.CloneRootEntries
@@ -176,15 +184,20 @@
   [pools : ast.AstNodePoolContext]) : ResultPreludeSurfaceFacts
   (let
     [macro-decl-count : i64
-      (match expanded
+      (match (ast.ast-place-shared-view expanded)
         [(ast.AstProgram.Program decls-box)
-          (ast.ast-decl-list-len (& (__tl-box-place decls-box)))])]
-    (if (spec.compiler-specialize-needed-with-pools expanded pools)
+          (let
+            [decls : ast.AstDeclList
+              (ast.ast-decl-list-box-shared-view decls-box)]
+            (ast.ast-decl-list-len (& decls)))])]
+    (if (spec.compiler-specialize-needed-with-pools
+      (ast.ast-place-shared-view expanded)
+      (ast.ast-place-shared-view pools))
       (match (spec.compiler-specialize-program-with-paths-and-pools
-        expanded
-        expanded-paths
+        (ast.ast-place-shared-view expanded)
+        (ast.ast-place-shared-view expanded-paths)
         ""
-        pools)
+        (ast.ast-place-shared-view pools))
         [(spec.ResultSpecProgramWithPaths.Err diag)
           (prelude-surface-facts-error
             "prelude surface specialization failed: "
@@ -197,8 +210,8 @@
             source-names
             specialized
             specialized-paths
-            expanded
-            expanded-paths
+            (ast.ast-place-shared-view expanded)
+            (ast.ast-place-shared-view expanded-paths)
             macro-decl-count
             roots
             pools)])
@@ -207,8 +220,8 @@
         prefix-cache
         job-state
         source-names
-        expanded
-        expanded-paths
+        (ast.ast-place-shared-view expanded)
+        (ast.ast-place-shared-view expanded-paths)
         expanded
         expanded-paths
         macro-decl-count
@@ -232,21 +245,21 @@
       (ast.ast-program decls)
       paths
       ""
-      pools)
+      (ast.ast-place-shared-view pools))
       [(spec.ResultGenProgramWithPaths.Err diag)
         (prelude-surface-facts-error
           "prelude surface normalization failed: "
           diag)]
       [(spec.ResultGenProgramWithPaths.Ok generated generated-paths)
         (match (tc.macro-expand-program-with-paths-and-pools-roots-cfg-and-source-names-and-job-state
-          load-state
+          (load.compiler-load-session-state-shared-view (& load-state))
           generated
           generated-paths
-          pools
-          source-names
-          job-state
-          roots
-          cfgs)
+          (ast.ast-place-shared-view pools)
+          (owned_view.compiler-owned-shared-view source-names)
+          (owned_view.compiler-owned-shared-view job-state)
+          (owned_view.compiler-owned-shared-view roots)
+          (cfg_env.sym-i64-shared-view (& cfgs)))
           [(tc.ResultMacroExpand.Err diag)
             (prelude-surface-facts-error
               "prelude surface expansion failed: "
@@ -365,10 +378,10 @@
     (begin
       (surface_svec.push-ref! (&mut roots) root)
       (match (prelude-surface-load-cold
-        load-state
-        roots
+        (load.compiler-load-session-state-shared-view (& load-state))
+        (owned_view.compiler-owned-shared-view roots)
         (prelude-surface-target-cfgs windows-target)
-        pools)
+        (ast.ast-place-shared-view pools))
         [(load.ResultCompilerLoadWithPaths.Err diag)
           (begin
             (unsafe
@@ -376,15 +389,16 @@
             (ResultPreludeSurface.Err
               (str_cat.str-cat
                 "prelude surface load failed: "
-                (cdiag.compiler-diagnostic-render (__tl-box-place diag)))))]
+                (cdiag.compiler-diagnostic-render
+                  (cdiag.compiler-diagnostic-box-shared-view diag)))))]
         [(load.ResultCompilerLoadWithPaths.Ok decls paths modules seen)
           (match (prelude-surface-typecheck-facts
             load-state
             decls
-            paths
+            (ast.ast-place-shared-view paths)
             roots
             (prelude-surface-target-cfgs windows-target)
-            pools)
+            (ast.ast-place-shared-view pools))
             [(ResultPreludeSurfaceFacts.Err message)
               (begin
                 (unsafe
@@ -401,7 +415,7 @@
                 [surface-decls : ast.AstDeclList
                   (match surface-program
                     [(ast.AstProgram.Program decls-box)
-                      (__tl-box-place decls-box)])]
+                      (ast.ast-decl-list-box-shared-view decls-box)])]
                 [key : surface_identity.SurfaceIdentityKey
                   (surface_identity.SurfaceIdentityKey
                     "stdlib.prelude"

@@ -3,6 +3,7 @@
 (import compiler_ast_types as ast)
 (import compiler_builtin_ids as cbi)
 (import compiler_intern as ci)
+(import compiler_owned_view as owned_view)
 (import stdlib.arena)
 (import stdlib.string)
 
@@ -34,7 +35,7 @@
       (= (ast.ast-int-literal-value-or-payload 73 "") 73))))
 
 (define (compiler-ast-state-expr-int-lit?
-  [pool : ast.AstExprNodePoolState]
+  [pool : (& pool ast.AstExprNodePoolState)]
   [id : i64]
   [expected : i64]) : bool
   (match (ast.ast-expr-node-pool-state-get pool id)
@@ -123,20 +124,30 @@
 (define (compiler-ast-state-owned-type-pool-smoke?) : bool
   (let
     [a0 : ast.AstTypeNodePoolState (ast.ast-type-node-pool-state-create 1)]
-    [aid0 : i64 (ast.ast-type-node-pool-state-mark a0)]
+    [aid0 : i64
+      (ast.ast-type-node-pool-state-mark
+        (owned_view.compiler-owned-shared-view a0))]
     [a1 : ast.AstTypeNodePoolState
       (compiler-ast-state-type-push-pool a0 (ast.AstType.I64))]
-    [aid1 : i64 (ast.ast-type-node-pool-state-mark a1)]
+    [aid1 : i64
+      (ast.ast-type-node-pool-state-mark
+        (owned_view.compiler-owned-shared-view a1))]
     [a2 : ast.AstTypeNodePoolState
       (compiler-ast-state-type-push-pool a1 (ast.AstType.String))]
     [b0 : ast.AstTypeNodePoolState (ast.ast-type-node-pool-state-create 1)]
-    [bmark : i64 (ast.ast-type-node-pool-state-mark b0)]
-    [bid0 : i64 (ast.ast-type-node-pool-state-mark b0)]
+    [bmark : i64
+      (ast.ast-type-node-pool-state-mark
+        (owned_view.compiler-owned-shared-view b0))]
+    [bid0 : i64
+      (ast.ast-type-node-pool-state-mark
+        (owned_view.compiler-owned-shared-view b0))]
     [b1 : ast.AstTypeNodePoolState
       (compiler-ast-state-type-push-pool b0 (ast.AstType.Bool))]
     [breset : ast.AstTypeNodePoolState
       (ast.ast-type-node-pool-state-reset-to-mark b1 bmark)]
-    [bid1 : i64 (ast.ast-type-node-pool-state-mark breset)]
+    [bid1 : i64
+      (ast.ast-type-node-pool-state-mark
+        (owned_view.compiler-owned-shared-view breset))]
     [b2 : ast.AstTypeNodePoolState
       (compiler-ast-state-type-push-pool breset (ast.AstType.I64))]
     [b3 : ast.AstTypeNodePoolState
@@ -149,7 +160,9 @@
       (= (ast.ast-type-node-pool-state-len a2) 2)
       (= (ast.ast-type-node-pool-state-len b3) 1)
       (not (ast.ast-type-node-pool-state-exhausted? a2))
-      (compiler-ast-state-type-i64? a2 aid0)
+      (compiler-ast-state-type-i64?
+        (owned_view.compiler-owned-shared-view a2)
+        aid0)
       (compiler-ast-state-type-string? a2 aid1)
       (compiler-ast-state-type-char? b3 bid1))))
 
@@ -208,7 +221,9 @@
                   (= string-id 1)
                   (= string-id2 1)
                   (= (ast.ast-type-node-pool-state-len p3) 2)
-                  (compiler-ast-state-type-i64? p3 i64-id)
+                  (compiler-ast-state-type-i64?
+                    (owned_view.compiler-owned-shared-view p3)
+                    i64-id)
                   (compiler-ast-state-type-string? p3 string-id2))]))])]))
 
 (define (compiler-ast-state-owned-type-dedup-budget-smoke?) : bool
@@ -229,21 +244,21 @@
     (compiler-ast-state-owned-type-dedup-budget-smoke?)))
 
 (define (compiler-ast-context-type-i64?
-  [pools : ast.AstNodePoolContext]
+  [pools : (& pools ast.AstNodePoolContext)]
   [id : i64]) : bool
   (match (ast.ast-node-pool-context-type-get pools id)
     [(ast.AstType.I64) true]
     [_ false]))
 
 (define (compiler-ast-context-type-char?
-  [pools : ast.AstNodePoolContext]
+  [pools : (& pools ast.AstNodePoolContext)]
   [id : i64]) : bool
   (match (ast.ast-node-pool-context-type-get pools id)
     [(ast.AstType.Char) true]
     [_ false]))
 
 (define (compiler-ast-context-expr-int-lit?
-  [pools : ast.AstNodePoolContext]
+  [pools : (& pools ast.AstNodePoolContext)]
   [id : i64]
   [expected : i64]) : bool
   (match (ast.ast-node-pool-context-expr-get pools id)
@@ -254,10 +269,10 @@
     [_ false]))
 
 (define (compiler-ast-context-base-arenas-match?
-  [pools : ast.AstNodePoolContext]) : bool
+  [pools : (& pools ast.AstNodePoolContext)]) : bool
   (let
-    [expr-pool : ast.AstExprNodePoolState (array-ref pools.expr-pool 0)]
-    [type-pool : ast.AstTypeNodePoolState (array-ref pools.type-pool 0)]
+    [expr-pool : ast.AstExprNodePoolState (clone (array-ref pools.expr-pool 0))]
+    [type-pool : ast.AstTypeNodePoolState (clone (array-ref pools.type-pool 0))]
     (= expr-pool.base-arena type-pool.base-arena)))
 
 (define (compiler-ast-context-clone-types-only-smoke?) : bool
@@ -266,18 +281,27 @@
       (ast.ast-node-pool-context-new-with-capacities 1 1)]
     [expr-id : i64
       (ast.ast-node-pool-context-expr-push
-        source
+        (owned_view.compiler-owned-shared-view source)
         (ast.AstExpr.Literal (ast.ast-lit-int 17)))]
     [i64-id : i64
-      (ast.ast-node-pool-context-type-push source (ast.AstType.I64))]
+      (ast.ast-node-pool-context-type-push
+        (owned_view.compiler-owned-shared-view source)
+        (ast.AstType.I64))]
     [ptr-id : i64
-      (ast.ast-node-pool-context-type-push source (ast.AstType.Ptr i64-id))]
+      (ast.ast-node-pool-context-type-push
+        (owned_view.compiler-owned-shared-view source)
+        (ast.AstType.Ptr i64-id))]
     [ptr-dupe-id : i64
-      (ast.ast-node-pool-context-type-push source (ast.AstType.Ptr i64-id))]
+      (ast.ast-node-pool-context-type-push
+        (owned_view.compiler-owned-shared-view source)
+        (ast.AstType.Ptr i64-id))]
     [cloned : ast.AstNodePoolContext
-      (ast.ast-node-pool-context-clone-types-only source)]
+      (ast.ast-node-pool-context-clone-types-only
+        (owned_view.compiler-owned-shared-view source))]
     [cloned-ptr-id : i64
-      (ast.ast-node-pool-context-type-push cloned (ast.AstType.Ptr i64-id))]
+      (ast.ast-node-pool-context-type-push
+        (owned_view.compiler-owned-shared-view cloned)
+        (ast.AstType.Ptr i64-id))]
     (and
       (= expr-id 0)
       (= i64-id 0)
@@ -299,7 +323,8 @@
       (ast.ast-node-pool-context-new-with-capacities 1 1)]
     [ok : bool true]
     (begin
-      (ast.ast-node-pool-context-install! pools)
+      (ast.ast-node-pool-context-install!
+        (owned_view.compiler-owned-shared-view pools))
       (let
         [expr-a : i64
           (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 31)))]
@@ -358,21 +383,28 @@
     (begin
       ;; Context snapshots keep the pool's stable root identity. Physical arena
       ;; growth does not require publishing a replacement head into either cell.
-      (ast.ast-node-pool-context-install! copied)
+      (ast.ast-node-pool-context-install!
+        (ast.ast-node-pool-context-shared-view (& copied)))
       (let
         [ok : bool
           (and
             (= owner base)
-            (= (ast.ast-node-pool-context-owner-arena copied) owner)
+            (=
+              (ast.ast-node-pool-context-owner-arena
+                (ast.ast-node-pool-context-shared-view (& copied)))
+              owner)
             (= (ast.ast-node-pool-owner-arena-handle) owner)
-            (= (ast.ast-node-pool-context-base-arena copied) base)
+            (=
+              (ast.ast-node-pool-context-base-arena
+                (ast.ast-node-pool-context-shared-view (& copied)))
+              base)
             (= (ast.ast-node-pool-base-arena-handle) base))]
         (begin
           (ast.ast-node-pool-context-install! active-before)
           ok)))))
 
 (define (compiler-ast-context-shared-binary?
-  [pools : ast.AstNodePoolContext]
+  [pools : (& pools ast.AstNodePoolContext)]
   [id : i64]
   [old-lit : i64]
   [old-span : i64]) : bool
@@ -424,7 +456,7 @@
       [_ false])))
 
 (define (compiler-ast-compaction-program-shape-ok?
-  [pools : ast.AstNodePoolContext]
+  [pools : (& pools ast.AstNodePoolContext)]
   [program : ast.AstProgram]
   [source-body : i64]
   [source-lit : i64]
@@ -432,7 +464,8 @@
   [source-make : i64]) : bool
   (match program
     [(ast.AstProgram.Program decls-box)
-      (match (ast.ast-decl-list-step (__tl-box-place decls-box))
+      (match (ast.ast-decl-list-step
+        (ast.ast-decl-list-box-shared-view decls-box))
         [(ast.AstDeclListStep.Cons first rest-box)
           (match first
             [(ast.AstDecl.Def _ _ maybe-ty first-body)
@@ -508,35 +541,39 @@
       (ast.ast-node-pool-context-capture-active)]
     [source-decoy-expr : i64
       (ast.ast-node-pool-context-expr-push
-        source-pools
+        (owned_view.compiler-owned-shared-view source-pools)
         (ast.AstExpr.Literal (ast.ast-lit-int 999)))]
     [source-decoy-ty : i64
-      (ast.ast-node-pool-context-type-push source-pools (ast.AstType.Char))]
+      (ast.ast-node-pool-context-type-push
+        (owned_view.compiler-owned-shared-view source-pools)
+        (ast.AstType.Char))]
     [source-i64-ty : i64
-      (ast.ast-node-pool-context-type-push source-pools (ast.AstType.I64))]
+      (ast.ast-node-pool-context-type-push
+        (owned_view.compiler-owned-shared-view source-pools)
+        (ast.AstType.I64))]
     [source-ptr-ty : i64
       (ast.ast-node-pool-context-type-push
-        source-pools
+        (owned_view.compiler-owned-shared-view source-pools)
         (ast.AstType.Ptr source-i64-ty))]
     [array-ty : ast.AstType (ast.AstType.Array source-ptr-ty 4)]
     [source-lit : i64
       (ast.ast-node-pool-context-expr-push
-        source-pools
+        (owned_view.compiler-owned-shared-view source-pools)
         (ast.AstExpr.Literal (ast.ast-lit-int 7)))]
     [source-span : i64
       (ast.ast-node-pool-context-expr-push
-        source-pools
+        (owned_view.compiler-owned-shared-view source-pools)
         (ast.AstExpr.Spanned source-lit (ast.ast-source-span 1 2 3 4)))]
     [source-body : i64
       (ast.ast-node-pool-context-expr-push
-        source-pools
+        (owned_view.compiler-owned-shared-view source-pools)
         (ast.AstExpr.Binary (ast.AstBinOp.Add) source-span source-span))]
     [source-make : i64
       (ast.ast-node-pool-context-expr-push
-        source-pools
+        (owned_view.compiler-owned-shared-view source-pools)
         (ast.AstExpr.FixedMakeArray
           (ast.ast-node-pool-context-type-push
-            source-pools
+            (owned_view.compiler-owned-shared-view source-pools)
             (ast.AstType.Ptr source-i64-ty))
           source-body))]
     [value-name-id : i64 (ci.intern-generated-name "value")]
@@ -562,10 +599,12 @@
               (ast.ast-decl-list-new)))))]
     [dest-decoy-expr : i64
       (ast.ast-node-pool-context-expr-push
-        dest-pools
+        (owned_view.compiler-owned-shared-view dest-pools)
         (ast.AstExpr.Literal (ast.ast-lit-int 1234)))]
     [dest-decoy-ty : i64
-      (ast.ast-node-pool-context-type-push dest-pools (ast.AstType.Bool))]
+      (ast.ast-node-pool-context-type-push
+        (owned_view.compiler-owned-shared-view dest-pools)
+        (ast.AstType.Bool))]
     [compacted : ast.AstProgramCompaction
       (ast.ast-program-compact-with-pools source-pools dest-pools program)]
     (match compacted
@@ -579,7 +618,7 @@
               (= dest-decoy-ty 0)
               (compiler-ast-compaction-program-shape-ok?
                 out-pools
-                out-program
+                (owned_view.compiler-owned-shared-view out-program)
                 source-body
                 source-lit
                 source-span
@@ -587,7 +626,8 @@
           [installed-ok : bool
             (match out-program
               [(ast.AstProgram.Program decls-box)
-                (match (ast.ast-decl-list-step (__tl-box-place decls-box))
+                (match (ast.ast-decl-list-step
+                  (ast.ast-decl-list-box-shared-view decls-box))
                   [(ast.AstDeclListStep.Cons first _)
                     (match first
                       [(ast.AstDecl.Def _ _ maybe-ty body)
@@ -638,20 +678,24 @@
       (ast.ast-node-pool-context-new-with-capacities 4 4)]
     [_dest-expr : i64
       (ast.ast-node-pool-context-expr-push
-        dest-pools
+        (owned_view.compiler-owned-shared-view dest-pools)
         (ast.AstExpr.Literal (ast.ast-lit-int 111)))]
     [_dest-type : i64
-      (ast.ast-node-pool-context-type-push dest-pools (ast.AstType.Bool))]
+      (ast.ast-node-pool-context-type-push
+        (owned_view.compiler-owned-shared-view dest-pools)
+        (ast.AstType.Bool))]
     [_source-decoy : i64
       (ast.ast-node-pool-context-expr-push
-        source-pools
+        (owned_view.compiler-owned-shared-view source-pools)
         (ast.AstExpr.Literal (ast.ast-lit-int 999)))]
     [source-expr : i64
       (ast.ast-node-pool-context-expr-push
-        source-pools
+        (owned_view.compiler-owned-shared-view source-pools)
         (ast.AstExpr.Literal (ast.ast-lit-int 222)))]
     [source-type : i64
-      (ast.ast-node-pool-context-type-push source-pools (ast.AstType.I64))]
+      (ast.ast-node-pool-context-type-push
+        (owned_view.compiler-owned-shared-view source-pools)
+        (ast.AstType.I64))]
     [appended-name-id : i64 (ci.intern-generated-name "appended")]
     [program : ast.AstProgram
       (ast.ast-program
@@ -671,7 +715,8 @@
           (compiler-ast-context-expr-int-lit? out-pools 0 111)
           (match out-program
             [(ast.AstProgram.Program decls-box)
-              (match (ast.ast-decl-list-step (__tl-box-place decls-box))
+              (match (ast.ast-decl-list-step
+                (ast.ast-decl-list-box-shared-view decls-box))
                 [(ast.AstDeclListStep.Cons decl rest)
                   (match decl
                     [(ast.AstDecl.Def _ _ maybe-type body)
@@ -695,14 +740,16 @@
       (ast.ast-node-pool-context-new-with-capacities 4 1)]
     [name : i64 (ci.intern-generated-name "borrow-child")]
     [var-id : i64
-      (ast.ast-node-pool-context-expr-push source-pools (ast.AstExpr.Var name))]
+      (ast.ast-node-pool-context-expr-push
+        (owned_view.compiler-owned-shared-view source-pools)
+        (ast.AstExpr.Var name))]
     [spanned-id : i64
       (ast.ast-node-pool-context-expr-push
-        source-pools
+        (owned_view.compiler-owned-shared-view source-pools)
         (ast.AstExpr.Spanned var-id (ast.ast-source-span 1 1 1 2)))]
     [borrow-id : i64
       (ast.ast-node-pool-context-expr-push
-        source-pools
+        (owned_view.compiler-owned-shared-view source-pools)
         (ast.AstExpr.Borrow
           false
           (ast.ast-borrow-lifetime-to-id ast.AstBorrowLifetime.Inferred)
@@ -718,7 +765,8 @@
       [(ast.AstProgramCompaction out-program out-pools)
         (match out-program
           [(ast.AstProgram.Program decls-box)
-            (match (ast.ast-decl-list-step (__tl-box-place decls-box))
+            (match (ast.ast-decl-list-step
+              (ast.ast-decl-list-box-shared-view decls-box))
               [(ast.AstDeclListStep.Cons decl _)
                 (match decl
                   [(ast.AstDecl.Def _ _ _ body)
@@ -744,7 +792,7 @@
               [_ false])])])))
 
 (define (compiler-ast-compaction-string-def-ok?
-  [pools : ast.AstNodePoolContext]
+  [pools : (& pools ast.AstNodePoolContext)]
   [decl : ast.AstDecl]) : bool
   (match decl
     [(ast.AstDecl.Def _ _ maybe-ty value)
@@ -767,7 +815,7 @@
     [_ false]))
 
 (define (compiler-ast-compaction-binary-def-ok?
-  [pools : ast.AstNodePoolContext]
+  [pools : (& pools ast.AstNodePoolContext)]
   [decl : ast.AstDecl]) : bool
   (match decl
     [(ast.AstDecl.Def _ _ ast.AstMaybeType.No value)
@@ -799,7 +847,7 @@
     [_ false]))
 
 (define (compiler-ast-compaction-macro-call-ok?
-  [pools : ast.AstNodePoolContext]
+  [pools : (& pools ast.AstNodePoolContext)]
   [call : i64]) : bool
   (match (ast.ast-node-pool-context-expr-get pools call)
     [(ast.AstExpr.Call func args)
@@ -811,7 +859,7 @@
     [_ false]))
 
 (define (compiler-ast-compaction-macro-import-ok?
-  [pools : ast.AstNodePoolContext]
+  [pools : (& pools ast.AstNodePoolContext)]
   [decl : ast.AstDecl]
   [decls-kind? : bool]) : bool
   (match decl
@@ -892,26 +940,28 @@
         ;; Smoke-local scratch pool: never installed, caller-arena owned.
         (arena.tl_arena_current))]
     [source-i64-ty : i64
-      (ast.ast-node-pool-context-type-push source-pools (ast.AstType.I64))]
+      (ast.ast-node-pool-context-type-push
+        (owned_view.compiler-owned-shared-view source-pools)
+        (ast.AstType.I64))]
     [_source-decoy : i64
       (ast.ast-node-pool-context-expr-push
-        source-pools
+        (owned_view.compiler-owned-shared-view source-pools)
         (ast.AstExpr.Literal (ast.ast-lit-int 999)))]
     [text-expr : i64
       (ast.ast-node-pool-context-expr-push
-        source-pools
+        (owned_view.compiler-owned-shared-view source-pools)
         (ast.AstExpr.Literal (ast.ast-lit-generated-string "hello")))]
     [binary-expr : i64
       (ast.ast-node-pool-context-expr-push
-        source-pools
+        (owned_view.compiler-owned-shared-view source-pools)
         (ast.AstExpr.BinaryData "bytes"))]
     [macro-func : i64
       (ast.ast-node-pool-context-expr-push
-        source-pools
+        (owned_view.compiler-owned-shared-view source-pools)
         (ast.AstExpr.Var macro-func-name-id))]
     [macro-call : i64
       (ast.ast-node-pool-context-expr-push
-        source-pools
+        (owned_view.compiler-owned-shared-view source-pools)
         (ast.AstExpr.Call
           macro-func
           (ast.ast-expr-cons text-expr (ast.ast-expr-list-new))))]
@@ -1021,7 +1071,8 @@
         (match out-program
           [(ast.AstProgram.Program decls-box)
             (let
-              [decls : ast.AstDeclList (__tl-box-place decls-box)]
+              [decls : ast.AstDeclList
+                (ast.ast-decl-list-box-shared-view decls-box)]
               (and
                 (compiler-ast-compaction-string-def-ok?
                   out-pools
@@ -1049,10 +1100,10 @@
                   (ast.ast-decl-list-get (& decls) 8 (ast.ast-decl-fallback)))))])])))
 
 (define (compiler-ast-decl-list-module-name?
-  [decls : ast.AstDeclList]
+  [decls : (& decls ast.AstDeclList)]
   [index : i64]
   [expected : String]) : bool
-  (match (ast.ast-decl-list-get (& decls) index (ast.ast-decl-fallback))
+  (match (ast.ast-decl-list-get decls index (ast.ast-decl-fallback))
     [(ast.AstDecl.Module name) (string.eq (ci.intern-str name) expected)]
     [_ false]))
 
@@ -1066,7 +1117,8 @@
       (while (>= i 0)
         (let
           [suffix : String (string.int->string i)]
-          [module : String (str_cat.str-cat "m" suffix)]
+          [module : String
+            (str_cat.str-cat "m" (owned_view.compiler-owned-shared-view suffix))]
           [module-id : i64 (ci.intern-generated-name module)]
           [path : String (str_cat.str-cat "p" suffix)]
           (begin
@@ -1079,7 +1131,8 @@
               (ast.ast-decl-module-list-prepend-builder-id module-id modules))
             (set! i (- i 1)))))
       (let
-        [tail : ast.AstDeclList (ast.ast-decl-list-tail decls)]
+        [tail : ast.AstDeclList
+          (ast.ast-decl-list-tail (owned_view.compiler-owned-shared-view decls))]
         (and
           (= (ast.ast-decl-list-len (& decls)) 16)
           (= (ast.ast-decl-path-list-len (& paths)) 16)
@@ -1103,7 +1156,9 @@
         (ast.ast-decl-module-id tail-id)
         (ast.ast-decl-list-new))]
     [left : ast.AstDeclList
-      (ast.ast-decl-cons (ast.ast-decl-module-id left-id) tail)]
+      (ast.ast-decl-cons
+        (ast.ast-decl-module-id left-id)
+        (owned_view.compiler-owned-shared-view tail))]
     [right : ast.AstDeclList
       (ast.ast-decl-cons (ast.ast-decl-module-id right-id) tail)]
     (and
@@ -1174,7 +1229,9 @@
 (define (compiler-ast-generated-path-owner-smoke?) : bool
   (let
     [path : String "<generated ast smoke path>"]
-    [path-id : i64 (ci.intern-generated-canonical-name path)]
+    [path-id : i64
+      (ci.intern-generated-canonical-name
+        (owned_view.compiler-owned-shared-view path))]
     [paths : ast.AstDeclPathList
       (ast.ast-decl-path-list-prepend-builder-with-owner-id
         path
@@ -1192,7 +1249,8 @@
     [pools : ast.AstNodePoolContext
       (ast.ast-node-pool-context-new-with-capacities 1 1)]
     (begin
-      (ast.ast-node-pool-compat-context-use! pools)
+      (ast.ast-node-pool-compat-context-use!
+        (owned_view.compiler-owned-shared-view pools))
       (let
         [id : i64 (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 7)))]
         (begin
@@ -1221,12 +1279,14 @@
         (arena.set! dest))]
     [child : i64
       (ast.ast-node-pool-context-expr-push
-        pools
+        (owned_view.compiler-owned-shared-view pools)
         (ast.AstExpr.Literal (ast.ast-lit-int 73)))]
     [body : ast.AstExprList (ast.ast-expr-list-new)]
     [_push-child : unit (ast.ast-expr-list-push (&mut body) child)]
     [unsafe-id : i64
-      (ast.ast-node-pool-context-expr-push pools (ast.AstExpr.Unsafe body))]
+      (ast.ast-node-pool-context-expr-push
+        (owned_view.compiler-owned-shared-view pools)
+        (ast.AstExpr.Unsafe body))]
     [_restore-home : unit
       (unsafe
         (arena.set! home))]
@@ -1256,6 +1316,33 @@
       (= (ast.ast-source-span-start-line span) line)]
     [(ast.AstMaybeSourceSpan.No) false]))
 
+;; Shallow pool snapshots share the dense span-slot table but retain their own
+;; canonical record generation. A slot from a newer generation must be treated
+;; as missing rather than indexing beyond the restored record array.
+(define (compiler-ast-stale-canonical-span-slot-recovery-smoke?) : bool
+  (match (ast.ast-expr-node-pool-state-push
+    (ast.ast-expr-node-pool-state-create 1)
+    (ast.AstExpr.Literal (ast.ast-lit-int 17)))
+    [(ast.AstExprNodePoolPushOk literal-pool literal)
+      (begin
+        (ast.ast-expr-span-slot-set-in-bases!
+          literal-pool.span-slot-segment-bases
+          literal
+          65)
+        (match (ast.ast-expr-node-pool-state-push
+          literal-pool
+          (ast.AstExpr.Spanned literal (ast.ast-source-span 7 1 7 3)))
+          [(ast.AstExprNodePoolPushOk recovered view)
+            (and
+              (= view 1)
+              (=
+                (ast.ast-expr-node-pool-state-canonical-span-count
+                  (owned_view.compiler-owned-shared-view recovered))
+                1)
+              (match (ast.ast-expr-node-pool-state-span-oracle recovered view)
+                [(ast.AstExprSpanOracleResult.CanonicalMatch) true]
+                [_ false]))]))]))
+
 ;; Canonical provenance is first-write/innermost.  A later wrapper with a
 ;; different source location gets a sparse per-use ReSpan, while an identical
 ;; wrapper shares the canonical record.  Truncation retires only suffix-owned
@@ -1266,7 +1353,7 @@
       (ast.ast-node-pool-context-new-with-capacities 1 1)]
     [literal : i64
       (ast.ast-node-pool-context-expr-push
-        pools
+        (owned_view.compiler-owned-shared-view pools)
         (ast.AstExpr.Literal (ast.ast-lit-int 7)))]
     [inner-span : ast.AstSourceSpan (ast.ast-source-span 2 3 2 8)]
     [outer-span : ast.AstSourceSpan (ast.ast-source-span 9 1 9 6)]
@@ -1282,10 +1369,13 @@
         pools
         outer-view
         (ast.ast-source-span 12 1 12 2))]
-    [_reset-suffix : unit (ast.ast-node-pool-context-expr-truncate! pools mark)]
+    [_reset-suffix : unit
+      (ast.ast-node-pool-context-expr-truncate!
+        (owned_view.compiler-owned-shared-view pools)
+        mark)]
     [reused : i64
       (ast.ast-node-pool-context-expr-push
-        pools
+        (owned_view.compiler-owned-shared-view pools)
         (ast.AstExpr.Literal (ast.ast-lit-int 11)))]
     [prefix-ok : bool
       (and
@@ -1324,7 +1414,7 @@
       ;; its view becomes the new identity's original provenance.  Keeping the
       ;; negative ReSpan slot would make canonical reads fail after the rewrite.
       (ast.ast-node-pool-context-expr-set!
-        pools
+        (owned_view.compiler-owned-shared-view pools)
         outer-view
         (ast.AstExpr.Literal (ast.ast-lit-int 99)))
       (let
@@ -1337,11 +1427,13 @@
             (compiler-ast-maybe-span-start-line?
               (ast.ast-node-pool-context-expr-view-span pools outer-view)
               9))]
-        (ast.ast-node-pool-context-expr-truncate! pools 0)
+        (ast.ast-node-pool-context-expr-truncate!
+          (owned_view.compiler-owned-shared-view pools)
+          0)
         (let
           [new-literal : i64
             (ast.ast-node-pool-context-expr-push
-              pools
+              (owned_view.compiler-owned-shared-view pools)
               (ast.AstExpr.Literal (ast.ast-lit-int 13)))]
           [new-view : i64
             (ast.ast-expr-spanned-with-pools
@@ -1391,13 +1483,13 @@
           (set!
             a-last-expr
             (ast.ast-node-pool-context-expr-push
-              a
+              (owned_view.compiler-owned-shared-view a)
               (ast.AstExpr.Literal (ast.ast-lit-int expr-index))))
           (if (<= expr-index 65536)
             (set!
               b-last-expr
               (ast.ast-node-pool-context-expr-push
-                b
+                (owned_view.compiler-owned-shared-view b)
                 (ast.AstExpr.Literal (ast.ast-lit-int (- 0 expr-index)))))
             unit)
           (set! expr-index (+ expr-index 1))))
@@ -1405,12 +1497,14 @@
         (begin
           (set!
             a-last-type
-            (ast.ast-node-pool-context-type-push a (ast.AstType.Var type-index)))
+            (ast.ast-node-pool-context-type-push
+              (owned_view.compiler-owned-shared-view a)
+              (ast.AstType.Var type-index)))
           (if (<= type-index 1024)
             (set!
               b-last-type
               (ast.ast-node-pool-context-type-push
-                b
+                (owned_view.compiler-owned-shared-view b)
                 (ast.AstType.Var (+ type-index 10000))))
             unit)
           (set! type-index (+ type-index 1))))
@@ -1421,7 +1515,9 @@
             a-last-expr
             (ast.ast-source-span 31 1 31 4))]
         [a-dupe-type : i64
-          (ast.ast-node-pool-context-type-push a (ast.AstType.Var 1024))]
+          (ast.ast-node-pool-context-type-push
+            (owned_view.compiler-owned-shared-view a)
+            (ast.AstType.Var 1024))]
         [a-base : i64 (ast.ast-node-pool-context-base-arena a)]
         [b-base : i64 (ast.ast-node-pool-context-base-arena b)]
         [ok : bool
@@ -1572,6 +1668,9 @@
     (unless (compiler-ast-generated-path-owner-smoke?) (return 12))
     (unless (compiler-ast-context-owned-arena-smoke?) (return 13))
     (unless (compiler-ast-compaction-borrow-child-smoke?) (return 14))
+    (unless
+      (compiler-ast-stale-canonical-span-slot-recovery-smoke?)
+      (return 20))
     (unless (compiler-ast-expression-span-sidecar-smoke?) (return 19))
     (unless (compiler-ast-segmented-growth-isolation-smoke?) (return 15))
     (unless (compiler-ast-macro-type-kind-dense-compaction-smoke?) (return 16))

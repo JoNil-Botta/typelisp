@@ -3,14 +3,14 @@
   (+ (+ (+ (+ (+ (+ (+ x 1.0) 2.0) 3.0) 4.0) 5.0) 6.0) 7.0))
 
 (define (fill
-  [xs : (__tl_dyn-array f64)]
-  [out : (__tl_dyn-array f64)]
+  [xs : (& xs (__tl_dyn-array f64))]
+  [out : (&mut out (__tl_dyn-array f64))]
   [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (set! (array-ref out i) (heavy-f64 (array-ref xs i)))))
 
-(define (sum-array [xs : (__tl_dyn-array f64)] [n : i64]) : f64
+(define (sum-array [xs : (& xs (__tl_dyn-array f64))] [n : i64]) : f64
   (let
     [i : i64 0]
     [sum : f64 0.0]
@@ -32,7 +32,7 @@
         (begin
           (set! (array-ref xs i) (cast i : f64))
           (set! i (+ i 1))))
-      (fill xs out n)
-      (if (= (sum-array out n) 442.0)
+      (fill (& xs) (&mut out) n)
+      (if (= (sum-array (& out) n) 442.0)
         42
         1))))

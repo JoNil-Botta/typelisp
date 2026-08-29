@@ -50,7 +50,7 @@
 (define (compiler-cfg-enable-with-intern-state
   [cfgs : sym_i64_env.SymI64Env]
   [name : String]
-  [intern-state : ci.InternCompatState]) : sym_i64_env.SymI64Env
+  [intern-state : (&mut intern-state ci.InternCompatState)]) : sym_i64_env.SymI64Env
   (compiler-cfg-enable-id
     cfgs
     (ci.intern-compat-state-intern intern-state name)))

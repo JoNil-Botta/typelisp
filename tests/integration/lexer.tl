@@ -100,7 +100,7 @@
 
 ;; Return the end index (exclusive) of the identifier that starts at `start`
 ;; in `src`: scan forward over identifier characters. `n` is the source length.
-(define (ident-end [src : String] [start : i64] [n : i64]) : i64
+(define (ident-end [src : (& src str)] [start : i64] [n : i64]) : i64
   (let
     [j : i64 start]
     (begin
@@ -110,7 +110,7 @@
 
 ;; Slice the identifier lexeme [start, end) out of `src` and wrap it in a real
 ;; `(Token.Ident text)` token.
-(define (ident-token [src : String] [start : i64] [end : i64]) : Token
+(define (ident-token [src : (& src str)] [start : i64] [end : i64]) : Token
   (Token.Ident (string.substring src start (- end start))))
 
 ;; Length of the String payload of a `Token.Ident` token (0 for any other token):
@@ -132,7 +132,7 @@
 ;; token count. The loop is exactly the shape of a real lexer: a cursor over the
 ;; input, a whitespace skip, multi-char accumulation for integers, an identifier
 ;; run sliced out with `substring`, and single-char tokens.
-(define (lex [src : String] [toks : (&mut toks token_vec.Vec)]) : i64
+(define (lex [src : (& src str)] [toks : (&mut toks token_vec.Vec)]) : i64
   (let
     [i : i64 0]
     [n : i64 (string-length src)]

@@ -12,14 +12,17 @@
   (Push4)
   (Add))
 
-(define (push-value [stack : (__tl_dyn-array i64)] [sp : i64] [value : i64]) : i64
+(define (push-value
+  [stack : (&mut stack (__tl_dyn-array i64))]
+  [sp : i64]
+  [value : i64]) : i64
   (begin
     (set! (array-ref stack sp) value)
     (+ sp 1)))
 
 (define (run-underflow
-  [program : (__tl_dyn-array UnderflowInst)]
-  [stack : (__tl_dyn-array i64)]
+  [program : (& program (__tl_dyn-array UnderflowInst))]
+  [stack : (&mut stack (__tl_dyn-array i64))]
   [initial-sp : i64]) : i64
   (let
     [pc : i64 0]
@@ -48,4 +51,4 @@
     [initial-sp : i64 (string.>int (io.arg 1))]
     [program : (__tl_dyn-array UnderflowInst) (__tl_make-array (Add))]
     [stack : (__tl_dyn-array i64) (__tl_make-array i64 4)]
-    (run-underflow program stack initial-sp)))
+    (run-underflow (& program) (&mut stack) initial-sp)))

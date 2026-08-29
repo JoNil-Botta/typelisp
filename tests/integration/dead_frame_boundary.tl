@@ -51,7 +51,7 @@
 ;; 8-byte alignment pad goes. Five values stay live across the whole loop so
 ;; the plan reaches for callee-saved homes; the trailing dynamic index plants
 ;; the bounds check whose cold arm is the only `call` in the body.
-(define (dfb-abort-only [xs : (__tl_dyn-array i64)] [n : i64] [k : i64])
+(define (dfb-abort-only [xs : (& xs (__tl_dyn-array i64))] [n : i64] [k : i64])
   ;; Exported so the standalone body survives even when the inliner absorbs it
   ;; at every call site: the shape gate reads this emitted function.
   (:export-symbol "tl_dfb_abort_only")

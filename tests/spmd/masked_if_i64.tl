@@ -1,6 +1,6 @@
 ;; SPMD masked-if corpus (#2205): direct-index AVX-512 masked branches over
 ;; i64 lanes, including a non-multiple-of-8 tail.
-(define (init-xs [xs : (__tl_dyn-array i64)]) : unit
+(define (init-xs [xs : (&mut xs (__tl_dyn-array i64))]) : unit
   (begin
     (set! (array-ref xs 0) -3)
     (set! (array-ref xs 1) 4)
@@ -17,8 +17,8 @@
     (set! (array-ref xs 12) 3)))
 
 (define (fill-masked
-  [xs : (__tl_dyn-array i64)]
-  [out : (__tl_dyn-array i64)]
+  [xs : (& xs (__tl_dyn-array i64))]
+  [out : (&mut out (__tl_dyn-array i64))]
   [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
@@ -27,8 +27,8 @@
       (set! (array-ref out i) (+ (array-ref xs i) 1)))))
 
 (define (fill-scalar
-  [xs : (__tl_dyn-array i64)]
-  [out : (__tl_dyn-array i64)]
+  [xs : (& xs (__tl_dyn-array i64))]
+  [out : (&mut out (__tl_dyn-array i64))]
   [n : i64]) : unit
   (let
     [i : i64 0]
@@ -40,8 +40,8 @@
         (set! i (+ i 1))))))
 
 (define (arrays-eq
-  [a : (__tl_dyn-array i64)]
-  [b : (__tl_dyn-array i64)]
+  [a : (& a (__tl_dyn-array i64))]
+  [b : (& b (__tl_dyn-array i64))]
   [n : i64]) : bool
   (let
     [i : i64 0]
@@ -62,9 +62,9 @@
     [got : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     [want : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     (begin
-      (init-xs xs)
-      (fill-masked xs got n)
-      (fill-scalar xs want n)
-      (if (arrays-eq got want n)
+      (init-xs (&mut xs))
+      (fill-masked (& xs) (&mut got) n)
+      (fill-scalar (& xs) (&mut want) n)
+      (if (arrays-eq (& got) (& want) n)
         42
         1))))

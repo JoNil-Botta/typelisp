@@ -5,6 +5,7 @@
 ;; in `<name>/`;
 ;; `init [--lib] <name>` creates the skeleton in the current directory. Both
 ;; refuse to clobber an existing manifest or entry source.
+(import compiler_owned_view as owned_view)
 (import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.fs)
@@ -74,16 +75,16 @@
 ;; Create a directory, treating an already-existing one as success. A genuine
 ;; create failure is an error.
 (define (scaffold-ensure-dir [path : String]) : io.ResultIoUnit
-  (match (scaffold-try-mkdir path)
+  (match (scaffold-try-mkdir (owned_view.compiler-owned-shared-view path))
     [(io.OkIoUnit) io.OkIoUnit]
     [(io.ErrIoUnit _)
-      (if (io.file-exists? path)
+      (if (io.file-exists? (owned_view.compiler-owned-shared-view path))
         io.OkIoUnit
         (scaffold-try-mkdir path))]))
 
 ;; Write `contents` to `path`, refusing to overwrite an existing file.
 (define (scaffold-write-new [path : String] [contents : String]) : i64
-  (if (io.file-exists? path)
+  (if (io.file-exists? (owned_view.compiler-owned-shared-view path))
     (begin
       (io.print-error
         (str_cat.str-cat
@@ -91,7 +92,9 @@
           path
           "\n"))
       1)
-    (match (scaffold-try-write-file path contents)
+    (match (scaffold-try-write-file
+      (owned_view.compiler-owned-shared-view path)
+      contents)
       [(io.OkIoUnit) 0]
       [(io.ErrIoUnit _)
         (begin
@@ -102,7 +105,7 @@
 ;; Create the package-local build-output ignore without changing an existing
 ;; repository policy during `typelisp init`.
 (define (scaffold-write-gitignore [path : String]) : i64
-  (if (io.file-exists? path)
+  (if (io.file-exists? (owned_view.compiler-owned-shared-view path))
     0
     (scaffold-write-new path "/target/\n")))
 
@@ -126,7 +129,7 @@
       (if is-lib
         (scaffold-lib-source)
         (scaffold-bin-source))]
-    (match (scaffold-ensure-dir src-dir)
+    (match (scaffold-ensure-dir (owned_view.compiler-owned-shared-view src-dir))
       [(io.ErrIoUnit _)
         (begin
           (io.print-error
@@ -138,7 +141,12 @@
       [(io.OkIoUnit)
         (let
           [pkg-code : i64
-            (scaffold-write-new pkg-path (scaffold-manifest name kind entry))]
+            (scaffold-write-new
+              pkg-path
+              (scaffold-manifest
+                (owned_view.compiler-owned-shared-view name)
+                (owned_view.compiler-owned-shared-view kind)
+                entry))]
           (if (= pkg-code 0)
             (let
               [src-code : i64 (scaffold-write-new src-path source)]
@@ -162,21 +170,22 @@
             pkg-code))])))
 
 (define (scaffold-new [name : String] [is-lib : bool]) : i64
-  (if (not (scaffold-name-ok? name))
+  (if (not (scaffold-name-ok? (owned_view.compiler-owned-shared-view name)))
     (begin
       (io.print-error
         (str_cat.str-cat "scaffold: invalid package name: " name "\n"))
       2)
-    (match (scaffold-ensure-dir name)
+    (match (scaffold-ensure-dir (owned_view.compiler-owned-shared-view name))
       [(io.ErrIoUnit _)
         (begin
           (io.print-error
             (str_cat.str-cat "scaffold: could not create directory " name "\n"))
           1)]
-      [(io.OkIoUnit) (scaffold-emit name name is-lib)])))
+      [(io.OkIoUnit)
+        (scaffold-emit (owned_view.compiler-owned-shared-view name) name is-lib)])))
 
 (define (scaffold-init [name : String] [is-lib : bool]) : i64
-  (if (not (scaffold-name-ok? name))
+  (if (not (scaffold-name-ok? (owned_view.compiler-owned-shared-view name)))
     (begin
       (io.print-error
         (str_cat.str-cat "scaffold: invalid package name: " name "\n"))

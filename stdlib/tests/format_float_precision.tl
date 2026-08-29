@@ -9,9 +9,9 @@
   (format.format "{0:.1$}" (math.f32-from-bits bits) precision))
 
 (define (fill-f64-fixed-cases
-  [bits : (__tl_dyn-array u64)]
-  [precision : (__tl_dyn-array i64)]
-  [expected : (__tl_dyn-array String)]) : unit
+  [bits : (&mut bits (__tl_dyn-array u64))]
+  [precision : (&mut precision (__tl_dyn-array i64))]
+  [expected : (&mut expected (__tl_dyn-array String))]) : unit
   (begin
     (set! (array-ref bits 0) 0x0000000000000000)
     (set! (array-ref precision 0) 0)
@@ -75,7 +75,7 @@
     [i : i64 0]
     [ok : bool true]
     (begin
-      (fill-f64-fixed-cases bits precision expected)
+      (fill-f64-fixed-cases (&mut bits) (&mut precision) (&mut expected))
       (while (and ok (< i count))
         (begin
           (set!
@@ -140,9 +140,9 @@
       (= (cast (string.string-ref (& f32-text) 150) : i64) 53))))
 
 (define (fill-f32-fixed-cases
-  [bits : (__tl_dyn-array u32)]
-  [precision : (__tl_dyn-array i64)]
-  [expected : (__tl_dyn-array String)]) : unit
+  [bits : (&mut bits (__tl_dyn-array u32))]
+  [precision : (&mut precision (__tl_dyn-array i64))]
+  [expected : (&mut expected (__tl_dyn-array String))]) : unit
   (begin
     (set! (array-ref bits 0) (cast 0x80000000 : u32))
     (set! (array-ref precision 0) 3)
@@ -183,7 +183,7 @@
     [i : i64 0]
     [ok : bool true]
     (begin
-      (fill-f32-fixed-cases bits precision expected)
+      (fill-f32-fixed-cases (&mut bits) (&mut precision) (&mut expected))
       (while (and ok (< i count))
         (begin
           (set!

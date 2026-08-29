@@ -1,4 +1,4 @@
-;; Opt-in consuming parameters are a static callable effect with unchanged ABI.
+;; Ordinary by-value parameters use structural Copy/move ownership.
 ;; lint-allow: unused-import
 (import stdlib.string)
 (import consume.parameters.helper)
@@ -9,9 +9,9 @@
     (import stdlib.string)
     (defstruct GeneratedPayload
       (value i64))
-    (define (consume-length [text : String (:consume)]) : i64
+    (define (consume-length [text : String]) : i64
       (string-length text))
-    (define (consume-payload [payload : GeneratedPayload (:consume)]) : i64
+    (define (consume-payload [payload : GeneratedPayload]) : i64
       payload.value)))
 
 (import (generated-consumer-module) as generated)
@@ -19,24 +19,22 @@
 (defstruct LocalPayload
   (value i64))
 
-(define (consume-length [text : String (:consume)]) : i64
+(define (consume-length [text : String]) : i64
   (string-length text))
 
-(define (ordinary-length [text : String]) : i64
+(define (ordinary-length [text : (& text str)]) : i64
   (string-length text))
 
-(define (consume-copy [value : i64 (:consume)]) : i64
+(define (consume-copy [value : i64]) : i64
   (+ value 1))
 
-(define (consume-payload [payload : LocalPayload (:consume)]) : i64
+(define (consume-payload [payload : LocalPayload]) : i64
   payload.value)
 
 (define (ordinary-payload [payload : LocalPayload]) : i64
   payload.value)
 
-(define (call-consumer
-  [f : (-> (:consume String) i64)]
-  [text : String (:consume)]) : i64
+(define (call-consumer [f : (-> String i64)] [text : String]) : i64
   (f text))
 
 (define (main) : i64
@@ -53,9 +51,9 @@
     [qualified-payload : helper.HelperPayload (helper.HelperPayload 11)]
     [generated-payload : generated.GeneratedPayload
       (generated.GeneratedPayload 12)]
-    [consumer : (-> (:consume String) i64) consume-length]
-    [lambda-consumer : (-> (:consume String) i64)
-      (lambda ([text : String (:consume)]) : i64
+    [consumer : (-> String i64) consume-length]
+    [lambda-consumer : (-> String i64)
+      (lambda ([text : String]) : i64
         (string-length text))]
     [score : i64
       (+

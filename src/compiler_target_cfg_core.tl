@@ -2,6 +2,7 @@
 ;;
 ;; Keep target predicate aliases in one place so compiler emission and
 ;; non-emitting tooling parse exactly the same source configuration.
+(import compiler_owned_view as owned_view)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.string)
 (import stdlib.vector)
@@ -72,7 +73,7 @@
     (compiler-target-cfgs target cfgs)
     (compiler-target-cfgs-with-names-from
       target
-      names
+      (owned_view.compiler-owned-shared-view names)
       (+ index 1)
       (cfg_core.compiler-cfg-enable
         cfgs
@@ -91,7 +92,7 @@
 
 (define (compiler-target-enable-linux-cfgs-with-intern-state
   [cfgs : sym_i64_env.SymI64Env]
-  [intern-state : ci.InternCompatState]) : sym_i64_env.SymI64Env
+  [intern-state : (&mut intern-state ci.InternCompatState)]) : sym_i64_env.SymI64Env
   (cfg_core.compiler-cfg-enable-with-intern-state
     (cfg_core.compiler-cfg-enable-with-intern-state
       (cfg_core.compiler-cfg-enable-with-intern-state
@@ -108,7 +109,7 @@
 
 (define (compiler-target-enable-windows-cfgs-with-intern-state
   [cfgs : sym_i64_env.SymI64Env]
-  [intern-state : ci.InternCompatState]) : sym_i64_env.SymI64Env
+  [intern-state : (&mut intern-state ci.InternCompatState)]) : sym_i64_env.SymI64Env
   (cfg_core.compiler-cfg-enable-with-intern-state
     (cfg_core.compiler-cfg-enable-with-intern-state
       (cfg_core.compiler-cfg-enable-with-intern-state

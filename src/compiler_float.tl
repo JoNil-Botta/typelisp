@@ -74,7 +74,7 @@
     [_ false]))
 
 (define (compiler-finite-cast-int-or-char-type? [ty : ast.AstType]) : bool
-  (if (compiler-finite-cast-integer-type? ty)
+  (if (compiler-finite-cast-integer-type? (clone ty))
     true
     (match ty
       [(ast.AstType.Char) true]
@@ -102,7 +102,7 @@
 (define (compiler-finite-cast-input-to-i64
   [input : CompilerFiniteCastInput]
   [from-ty : ast.AstType]) : option_i64.Option
-  (if (compiler-finite-cast-int-or-char-type? from-ty)
+  (if (compiler-finite-cast-int-or-char-type? (clone from-ty))
     (match input
       [(CompilerFiniteCastInputI64 value)
         (option_i64.Some (compiler-finite-cast-normalize-i64 value from-ty))]
@@ -211,11 +211,11 @@
   [to-ty : ast.AstType]) : bool
   (cond
     [(not (compiler-float-f64-finite? value)) false]
-    [(compiler-finite-cast-signed-target? to-ty)
+    [(compiler-finite-cast-signed-target? (clone to-ty))
       (and
-        (>= value (compiler-finite-cast-signed-min to-ty))
+        (>= value (compiler-finite-cast-signed-min (clone to-ty)))
         (< value (compiler-finite-cast-signed-max-exclusive to-ty)))]
-    [(compiler-finite-cast-unsigned-target? to-ty)
+    [(compiler-finite-cast-unsigned-target? (clone to-ty))
       (and
         (>= value 0.0)
         (< value (compiler-finite-cast-unsigned-max-exclusive to-ty)))]
@@ -224,7 +224,7 @@
 (define (compiler-finite-cast-float-to-int-result
   [value : f64]
   [to-ty : ast.AstType]) : CompilerFiniteCastResult
-  (if (not (compiler-finite-cast-float-in-target-range? value to-ty))
+  (if (not (compiler-finite-cast-float-in-target-range? value (clone to-ty)))
     (CompilerFiniteCastNoResult)
     (match to-ty
       [(ast.AstType.I64)
@@ -250,7 +250,7 @@
 (define (compiler-finite-cast-float-to-float-result
   [value : f64]
   [to-ty : ast.AstType]) : CompilerFiniteCastResult
-  (match to-ty
+  (match (clone to-ty)
     [(ast.AstType.F64)
       (if (compiler-float-f64-finite? value)
         (CompilerFiniteCastResultF64 value)
@@ -266,12 +266,12 @@
 (define (compiler-finite-cast-int-to-int-result
   [value : i64]
   [to-ty : ast.AstType]) : CompilerFiniteCastResult
-  (match to-ty
+  (match (clone to-ty)
     [(ast.AstType.Char)
       (CompilerFiniteCastResultChar
         (cast (compiler-finite-cast-normalize-i64 value to-ty) : char))]
     [_
-      (if (compiler-finite-cast-integer-type? to-ty)
+      (if (compiler-finite-cast-integer-type? (clone to-ty))
         (CompilerFiniteCastResultI64
           (compiler-finite-cast-normalize-i64 value to-ty))
         (CompilerFiniteCastNoResult))]))
@@ -280,21 +280,21 @@
   [input : CompilerFiniteCastInput]
   [from-ty : ast.AstType]
   [to-ty : ast.AstType]) : CompilerFiniteCastResult
-  (if (compiler-finite-cast-int-or-char-type? from-ty)
-    (match (compiler-finite-cast-input-to-i64 input from-ty)
+  (if (compiler-finite-cast-int-or-char-type? (clone from-ty))
+    (match (compiler-finite-cast-input-to-i64 input (clone from-ty))
       [(option_i64.Some n)
-        (if (compiler-finite-cast-int-or-char-type? to-ty)
+        (if (compiler-finite-cast-int-or-char-type? (clone to-ty))
           (compiler-finite-cast-int-to-int-result n to-ty)
-          (if (compiler-finite-cast-float-type? to-ty)
+          (if (compiler-finite-cast-float-type? (clone to-ty))
             (compiler-finite-cast-int-to-float-result n from-ty to-ty)
             (CompilerFiniteCastNoResult)))]
       [(option_i64.None) (CompilerFiniteCastNoResult)])
-    (if (compiler-finite-cast-float-type? from-ty)
-      (match (compiler-finite-cast-input-to-f64 input from-ty)
+    (if (compiler-finite-cast-float-type? (clone from-ty))
+      (match (compiler-finite-cast-input-to-f64 input (clone from-ty))
         [(CompilerFloatSomeF64 n)
-          (if (compiler-finite-cast-int-or-char-type? to-ty)
+          (if (compiler-finite-cast-int-or-char-type? (clone to-ty))
             (compiler-finite-cast-float-to-int-result n to-ty)
-            (if (compiler-finite-cast-float-type? to-ty)
+            (if (compiler-finite-cast-float-type? (clone to-ty))
               (compiler-finite-cast-float-to-float-result n to-ty)
               (CompilerFiniteCastNoResult)))]
         [(CompilerFloatNoF64) (CompilerFiniteCastNoResult)])

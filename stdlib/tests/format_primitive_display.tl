@@ -50,8 +50,8 @@
       "18446744073709551615")))
 
 (define (fill-f64-cases
-  [bits : (__tl_dyn-array u64)]
-  [expected : (__tl_dyn-array String)]) : unit
+  [bits : (&mut bits (__tl_dyn-array u64))]
+  [expected : (&mut expected (__tl_dyn-array String))]) : unit
   (begin
     (set! (array-ref bits 0) 0x0000000000000000)
     (set! (array-ref expected 0) "0")
@@ -104,20 +104,20 @@
     [i : i64 0]
     [ok : bool true]
     (begin
-      (fill-f64-cases bits expected)
+      (fill-f64-cases (&mut bits) (&mut expected))
       (while (and ok (< i 17))
         (begin
           (set!
             ok
             (display-eq
               (format.format "{}" (math.f64-from-bits (array-ref bits i)))
-              (array-ref expected i)))
+              (clone (array-ref expected i))))
           (set! i (+ i 1))))
       ok)))
 
 (define (fill-f32-cases
-  [bits : (__tl_dyn-array u32)]
-  [expected : (__tl_dyn-array String)]) : unit
+  [bits : (&mut bits (__tl_dyn-array u32))]
+  [expected : (&mut expected (__tl_dyn-array String))]) : unit
   (begin
     (set! (array-ref bits 0) (cast 0x00000000 : u32))
     (set! (array-ref expected 0) "0")
@@ -168,14 +168,14 @@
     [i : i64 0]
     [ok : bool true]
     (begin
-      (fill-f32-cases bits expected)
+      (fill-f32-cases (&mut bits) (&mut expected))
       (while (and ok (< i 16))
         (begin
           (set!
             ok
             (display-eq
               (format.format "{}" (math.f32-from-bits (array-ref bits i)))
-              (array-ref expected i)))
+              (clone (array-ref expected i))))
           (set! i (+ i 1))))
       ok)))
 

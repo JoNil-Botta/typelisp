@@ -5509,7 +5509,7 @@
     [(option_i64.None) fallback]))
 
 (define (compiler-symbols-add-value-alias-key-id
-  [symbols : CompilerSymbols (:consume)]
+  [symbols : CompilerSymbols]
   [key-id : i64]
   [handle : i64]) : CompilerSymbols
   (match symbols
@@ -5521,7 +5521,7 @@
           (CompilerSymbols values types macros decls owner-names decl-count)))]))
 
 (define (compiler-symbols-add-type-alias-key-id
-  [symbols : CompilerSymbols (:consume)]
+  [symbols : CompilerSymbols]
   [key-id : i64]
   [handle : i64]) : CompilerSymbols
   (match symbols
@@ -5533,7 +5533,7 @@
           (CompilerSymbols values types macros decls owner-names decl-count)))]))
 
 (define (compiler-symbols-add-macro-alias-key-id
-  [symbols : CompilerSymbols (:consume)]
+  [symbols : CompilerSymbols]
   [key-id : i64]
   [handle : i64]) : CompilerSymbols
   (match symbols
@@ -5545,7 +5545,7 @@
           (CompilerSymbols values types macros decls owner-names decl-count)))]))
 
 (define (compiler-symbols-remove-macro-alias-if-handle
-  [symbols : CompilerSymbols (:consume)]
+  [symbols : CompilerSymbols]
   [name-id : i64]
   [handle : i64]) : CompilerSymbols
   (match symbols
@@ -5564,7 +5564,7 @@
         [(option_i64.None) symbols])]))
 
 (define (compiler-registries-add-variant-alias-key-id
-  [registries : CompilerRegistries (:consume)]
+  [registries : CompilerRegistries]
   [key-id : i64]
   [handle : i64]) : CompilerRegistries
   (match registries
@@ -5576,7 +5576,7 @@
           (CompilerRegistries variants fields identity)))]))
 
 (define (compiler-symbols-add-value-id
-  [symbols : CompilerSymbols (:consume)]
+  [symbols : CompilerSymbols]
   [name-id : i64]
   [display-name : String]
   [handle : i64]) : ResultCompilerSymbols
@@ -5594,7 +5594,7 @@
               (CompilerSymbols values types macros decls owner-names decl-count)))))]))
 
 (define (compiler-symbols-add-type-id
-  [symbols : CompilerSymbols (:consume)]
+  [symbols : CompilerSymbols]
   [name-id : i64]
   [display-name : String]
   [handle : i64]) : ResultCompilerSymbols
@@ -5609,7 +5609,7 @@
             (CompilerSymbols values types macros decls owner-names decl-count))))]))
 
 (define (compiler-symbols-add-macro-id
-  [symbols : CompilerSymbols (:consume)]
+  [symbols : CompilerSymbols]
   [name-id : i64]
   [display-name : String]
   [handle : i64]) : ResultCompilerSymbols
@@ -5637,7 +5637,7 @@
         (compiler-symbol-root-module-id)))))
 
 (define (compiler-symbols-add-root-macro-id
-  [symbols : CompilerSymbols (:consume)]
+  [symbols : CompilerSymbols]
   [name-id : i64]
   [display-name : String]
   [handle : i64]) : ResultCompilerSymbols
@@ -5677,7 +5677,7 @@
                   decl-count))))])]))
 
 (define (compiler-symbols-add-root-value-id
-  [symbols : CompilerSymbols (:consume)]
+  [symbols : CompilerSymbols]
   [name-id : i64]
   [display-name : String]
   [handle : i64]) : ResultCompilerSymbols
@@ -5762,7 +5762,7 @@
       [(ResultCompilerSymbols.Err message) (ResultCompilerSymbols.Err message)])))
 
 (define (compiler-symbols-add-variant-value-key-in-module-id
-  [symbols : CompilerSymbols (:consume)]
+  [symbols : CompilerSymbols]
   [key-id : i64]
   [module-id : i64]
   [display-name-id : i64]
@@ -5797,7 +5797,7 @@
                   decl-count))))])]))
 
 (define (compiler-symbols-add-variant-flat-value-alias-key-in-module-id
-  [symbols : CompilerSymbols (:consume)]
+  [symbols : CompilerSymbols]
   [key-id : i64]
   [module-id : i64]
   [display-name-id : i64]
@@ -7871,7 +7871,7 @@
           fallback))]))
 
 (define (compiler-registries-add-variant-in-module-id
-  [registries : CompilerRegistries (:consume)]
+  [registries : CompilerRegistries]
   [module-id : i64]
   [enum-name-id : i64]
   [name-id : i64]
@@ -7923,7 +7923,7 @@
               (ResultCompilerRegistries.Ok aliases2))))])))
 
 (define (compiler-registries-add-field-in-module-id
-  [registries : CompilerRegistries (:consume)]
+  [registries : CompilerRegistries]
   [module-id : i64]
   [struct-name-id : i64]
   [field-name-id : i64]
@@ -7954,7 +7954,7 @@
               (CompilerRegistries variants fields identity)))))]))
 
 (define (compiler-registries-add-field-alias
-  [registries : CompilerRegistries (:consume)]
+  [registries : CompilerRegistries]
   [module-id : i64]
   [struct-name-id : i64]
   [field-name-id : i64]
@@ -8502,7 +8502,7 @@
           (set! index (+ index 1)))))))
 
 (define (compiler-registries-shift-owner-indices
-  [registries : CompilerRegistries (:consume)]
+  [registries : CompilerRegistries]
   [insertion-index : i64]
   [delta : i64]) : CompilerRegistries
   (match registries
@@ -10603,7 +10603,6 @@
 ;; The lowerer accepts the checked program and builds a deterministic
 ;; CompilerIrProgram.
 (import stdlib.arena)
-
 (import stdlib.vector)
 (import (vector.vector String) as svec)
 (import compiler_typecheck_core as tc_core)
@@ -13551,7 +13550,7 @@
 
 (define (lower-name-cache-from-env-into
   [names : LowerNameEnv]
-  [cache : LowerNameCache (:consume)]) : LowerNameCache
+  [cache : LowerNameCache]) : LowerNameCache
   (let
     [cur : LowerNameEnv names]
     [out : LowerNameCache cache]
@@ -14014,7 +14013,7 @@
     (* count 2)))
 
 (define (lower-type-cache-add
-  [cache : LowerTypeCache (:consume)]
+  [cache : LowerTypeCache]
   [name-id : i64]
   [ty : ast.AstType]) : LowerTypeCache
   (match cache
@@ -14030,7 +14029,7 @@
 
 (define (lower-type-cache-from-env-into
   [env : tc_core.TcTypeEnv]
-  [cache : LowerTypeCache (:consume)]) : LowerTypeCache
+  [cache : LowerTypeCache]) : LowerTypeCache
   (match (tc_core.tc-type-env-spine-step env)
     [(tc_core.TcTypeEnvSpineStep.Done) cache]
     [(tc_core.TcTypeEnvSpineStep.Cache rest-env)
@@ -18909,7 +18908,7 @@
   [entry-path : String]
   [_module : String]
   [module-id : i64]
-  [out : lower_i64_i64_map.Map (:consume)]) : lower_i64_i64_map.Map
+  [out : lower_i64_i64_map.Map]) : lower_i64_i64_map.Map
   (let
     [count : i64 (ast.ast-decl-list-len (& decls))]
     [index : i64 0]
@@ -18974,7 +18973,7 @@
 
 (define (lower-reach-add-logical
   [all-functions : lower_i64_i64_map.Map]
-  [state : LowerReachState (:consume)]
+  [state : LowerReachState]
   [logical-id : i64]) : LowerReachState
   (match (lower_i64_i64_map.get (& all-functions) logical-id)
     [(lower_i64_i64_map.LookupMissing) state]
@@ -19079,7 +19078,7 @@
 
 (define (lower-reach-add-runtime-prelude-string-helper-id
   [all-functions : lower_i64_i64_map.Map]
-  [state : LowerReachState (:consume)]
+  [state : LowerReachState]
   [source-id : i64]) : LowerReachState
   (let
     [helper-id : i64 (lower-runtime-prelude-string-helper-id source-id)]
@@ -19095,7 +19094,7 @@
 (define (lower-reach-add-string-snapshot-runtime
   [all-functions : lower_i64_i64_map.Map]
   [names : LowerNameCache]
-  [state : LowerReachState (:consume)]) : LowerReachState
+  [state : LowerReachState]) : LowerReachState
   ;; Clone-out/capture snapshot lowering copies owned String buffers through
   ;; the fixed `tl_substring` ABI helper, so keep its TypeLisp runtime body
   ;; when a reachable source form can synthesize that call after this prune
@@ -19111,7 +19110,7 @@
 (define (lower-reach-add-runtime-prelude-string-helper-resolved-id
   [all-functions : lower_i64_i64_map.Map]
   [names : LowerNameCache]
-  [state : LowerReachState (:consume)]
+  [state : LowerReachState]
   [source-id : i64]) : LowerReachState
   (let
     [helper-id : i64 (lower-runtime-prelude-string-helper-id source-id)]
@@ -19146,7 +19145,7 @@
 (define (lower-reach-add-string-concat-runtime
   [all-functions : lower_i64_i64_map.Map]
   [names : LowerNameCache]
-  [state : LowerReachState (:consume)]) : LowerReachState
+  [state : LowerReachState]) : LowerReachState
   (lower-reach-add-runtime-prelude-string-helper-resolved-id
     all-functions
     names
@@ -19322,7 +19321,7 @@
 (define (lower-reach-add-source-id
   [all-functions : lower_i64_i64_map.Map]
   [names : LowerNameCache]
-  [state : LowerReachState (:consume)]
+  [state : LowerReachState]
   [source-id : i64]) : LowerReachState
   (let
     [mapped-source-id : i64
@@ -19352,7 +19351,7 @@
 (define (lower-reach-add-stdlib-string-public-helper-id
   [all-functions : lower_i64_i64_map.Map]
   [names : LowerNameCache]
-  [state : LowerReachState (:consume)]
+  [state : LowerReachState]
   [source-id : i64]) : LowerReachState
   (let
     [raw-id : i64
@@ -19449,7 +19448,7 @@
   [pools : ast.AstNodePoolContext]
   [all-functions : lower_i64_i64_map.Map]
   [names : LowerNameCache]
-  [state : LowerReachState (:consume)]
+  [state : LowerReachState]
   [exprs : ast.AstExprList]) : LowerReachState
   (lower-reach-expr-list-at pools all-functions names state (& exprs) 0))
 
@@ -19457,7 +19456,7 @@
   [pools : ast.AstNodePoolContext]
   [all-functions : lower_i64_i64_map.Map]
   [names : LowerNameCache]
-  [state : LowerReachState (:consume)]
+  [state : LowerReachState]
   [exprs : (& exprs ast.AstExprList)]
   [index : i64]) : LowerReachState
   (if (>= index exprs.len)
@@ -19477,7 +19476,7 @@
   [pools : ast.AstNodePoolContext]
   [all-functions : lower_i64_i64_map.Map]
   [names : LowerNameCache]
-  [state : LowerReachState (:consume)]
+  [state : LowerReachState]
   [bindings : ast.AstLetBindingList]) : LowerReachState
   (lower-reach-let-bindings-at pools all-functions names state (& bindings) 0))
 
@@ -19485,7 +19484,7 @@
   [pools : ast.AstNodePoolContext]
   [all-functions : lower_i64_i64_map.Map]
   [names : LowerNameCache]
-  [state : LowerReachState (:consume)]
+  [state : LowerReachState]
   [bindings : (& bindings ast.AstLetBindingList)]
   [index : i64]) : LowerReachState
   (if (>= index (ast.ast-let-binding-list-len bindings))
@@ -19510,7 +19509,7 @@
   [pools : ast.AstNodePoolContext]
   [all-functions : lower_i64_i64_map.Map]
   [names : LowerNameCache]
-  [state : LowerReachState (:consume)]
+  [state : LowerReachState]
   [arms : ast.AstMatchArmList]) : LowerReachState
   (lower-reach-match-arms-at pools all-functions names state (& arms) 0))
 
@@ -19518,7 +19517,7 @@
   [pools : ast.AstNodePoolContext]
   [all-functions : lower_i64_i64_map.Map]
   [names : LowerNameCache]
-  [state : LowerReachState (:consume)]
+  [state : LowerReachState]
   [arms : (& arms ast.AstMatchArmList)]
   [index : i64]) : LowerReachState
   (if (>= index arms.len)
@@ -19544,7 +19543,7 @@
   [pools : ast.AstNodePoolContext]
   [all-functions : lower_i64_i64_map.Map]
   [names : LowerNameCache]
-  [state : LowerReachState (:consume)]
+  [state : LowerReachState]
   [bindings : ast.AstResourceBindingList]) : LowerReachState
   (lower-reach-resource-bindings-at
     pools
@@ -19558,7 +19557,7 @@
   [pools : ast.AstNodePoolContext]
   [all-functions : lower_i64_i64_map.Map]
   [names : LowerNameCache]
-  [state : LowerReachState (:consume)]
+  [state : LowerReachState]
   [bindings : (& bindings ast.AstResourceBindingList)]
   [index : i64]) : LowerReachState
   (if (>= index (ast.ast-resource-binding-list-len bindings))
@@ -20043,7 +20042,7 @@
   [pools : ast.AstNodePoolContext]
   [all-functions : lower_i64_i64_map.Map]
   [names : LowerNameCache]
-  [state : LowerReachState (:consume)]
+  [state : LowerReachState]
   [callee : ast.AstExpr]
   [args : ast.AstExprList]) : LowerReachState
   (match (ast.ast-expr-unspan-with-pools pools callee)
@@ -20066,7 +20065,7 @@
   [pools : ast.AstNodePoolContext]
   [all-functions : lower_i64_i64_map.Map]
   [names : LowerNameCache]
-  [state : LowerReachState (:consume)]
+  [state : LowerReachState]
   [expr : ast.AstExpr]) : LowerReachState
   (match expr
     [(ast.AstExpr.Spanned inner-box _)
@@ -20730,7 +20729,7 @@
   [pools : ast.AstNodePoolContext]
   [all-functions : lower_i64_i64_map.Map]
   [names : LowerNameCache]
-  [state : LowerReachState (:consume)]
+  [state : LowerReachState]
   [decl : ast.AstDecl]) : LowerReachState
   (match decl
     [(ast.AstDecl.Def decl-meta _ _ expr-box)
@@ -20748,7 +20747,7 @@
   [pools : ast.AstNodePoolContext]
   [all-functions : lower_i64_i64_map.Map]
   [names : LowerNameCache]
-  [state : LowerReachState (:consume)]
+  [state : LowerReachState]
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]
   [entry-path : String]
@@ -20845,7 +20844,7 @@
   [module : String]
   [module-id : i64]
   [names : LowerNameCache]
-  [state : LowerReachState (:consume)]
+  [state : LowerReachState]
   [fields : ast.AstFieldDefList]) : LowerReachState
   (lower-reach-struct-field-cleanup-roots-at
     all-functions
@@ -20865,7 +20864,7 @@
   [module : String]
   [module-id : i64]
   [names : LowerNameCache]
-  [state : LowerReachState (:consume)]
+  [state : LowerReachState]
   [fields : (& fields ast.AstFieldDefList)]
   [index : i64]) : LowerReachState
   (if (>= index fields.len)
@@ -20909,7 +20908,7 @@
   [module : String]
   [module-id : i64]
   [names : LowerNameCache]
-  [state : LowerReachState (:consume)]
+  [state : LowerReachState]
   [variants : ast.AstVariantDefList]) : LowerReachState
   (lower-reach-enum-payload-cleanup-roots-at
     all-functions
@@ -20930,7 +20929,7 @@
   [module : String]
   [module-id : i64]
   [names : LowerNameCache]
-  [state : LowerReachState (:consume)]
+  [state : LowerReachState]
   [variants : (& variants ast.AstVariantDefList)]
   [variant-index : i64]
   [payload-index : i64]) : LowerReachState
@@ -20994,7 +20993,7 @@
   [module : String]
   [module-id : i64]
   [names : LowerNameCache]
-  [state : LowerReachState (:consume)]) : LowerReachState
+  [state : LowerReachState]) : LowerReachState
   (match (ast.ast-decl-list-step decls)
     [(ast.AstDeclListStep.Nil) state]
     [(ast.AstDeclListStep.Cons decl rest)
@@ -21160,7 +21159,7 @@
       out)))
 
 (define (lower-function-body-index-add
-  [index : LowerFunctionBodyIndex (:consume)]
+  [index : LowerFunctionBodyIndex]
   [logical-id : i64]
   [names : LowerNameCache]
   [body : ast.AstExpr]
@@ -21197,7 +21196,7 @@
   [base-names : LowerNameEnv]
   [base-name-cache : LowerNameCache]
   [module-name-cache : LowerNameCache]
-  [index : LowerFunctionBodyIndex (:consume)]) : LowerFunctionBodyIndex
+  [index : LowerFunctionBodyIndex]) : LowerFunctionBodyIndex
   (match (ast.ast-decl-list-step decls)
     [(ast.AstDeclListStep.Nil) index]
     [(ast.AstDeclListStep.Cons decl rest)
@@ -21420,7 +21419,7 @@
   [index : i64]
   [module-id : i64]
   [names : LowerNameCache]
-  [out : lower_i64_i64_map.Map (:consume)]) : lower_i64_i64_map.Map
+  [out : lower_i64_i64_map.Map]) : lower_i64_i64_map.Map
   (if (>= index variants.len)
     out
     (match (ast.ast-dispatch-variant-list-get
@@ -21446,7 +21445,7 @@
   [variants : ast.AstDispatchVariantList]
   [module-id : i64]
   [names : LowerNameCache]
-  [out : lower_i64_i64_map.Map (:consume)]) : lower_i64_i64_map.Map
+  [out : lower_i64_i64_map.Map]) : lower_i64_i64_map.Map
   (lower-dispatch-variant-set-add-list-from (& variants) 0 module-id names out))
 
 (define (lower-dispatch-variant-set-add-decl
@@ -21468,7 +21467,7 @@
   [paths : ast.AstDeclPathList]
   [entry-path : String]
   [names : LowerNameCache]
-  [out : lower_i64_i64_map.Map (:consume)]) : lower_i64_i64_map.Map
+  [out : lower_i64_i64_map.Map]) : lower_i64_i64_map.Map
   (let
     [count : i64 (ast.ast-decl-list-len (& decls))]
     [index : i64 0]
@@ -21521,7 +21520,7 @@
   [names : LowerNameCache]
   [variants : (& variants ast.AstDispatchVariantList)]
   [index : i64]
-  [state : LowerReachState (:consume)]) : LowerReachState
+  [state : LowerReachState]) : LowerReachState
   (if (>= index variants.len)
     state
     (match (ast.ast-dispatch-variant-list-get
@@ -21545,7 +21544,7 @@
   [module-id : i64]
   [names : LowerNameCache]
   [variants : ast.AstDispatchVariantList]
-  [state : LowerReachState (:consume)]) : LowerReachState
+  [state : LowerReachState]) : LowerReachState
   (lower-reach-add-dispatch-variant-list-from
     all-functions
     module-id
@@ -21559,7 +21558,7 @@
   [module-id : i64]
   [names : LowerNameCache]
   [decl : ast.AstDecl]
-  [state : LowerReachState (:consume)]) : LowerReachState
+  [state : LowerReachState]) : LowerReachState
   (match decl
     [(ast.AstDecl.DefDispatch decl-meta _ variants)
       (lower-reach-add-dispatch-variant-list
@@ -21584,7 +21583,7 @@
   [decls : ast.AstDeclList]
   [module-id : i64]
   [names : LowerNameCache]
-  [state : LowerReachState (:consume)]) : LowerReachState
+  [state : LowerReachState]) : LowerReachState
   (match (ast.ast-decl-list-step decls)
     [(ast.AstDeclListStep.Nil) state]
     [(ast.AstDeclListStep.Cons decl rest)
@@ -21615,7 +21614,7 @@
   [all-functions : lower_i64_i64_map.Map]
   [decls : ast.AstDeclList]
   [names : LowerNameCache]
-  [state : LowerReachState (:consume)]) : LowerReachState
+  [state : LowerReachState]) : LowerReachState
   (lower-reach-add-dispatch-variant-roots-in-module
     all-functions
     decls
@@ -21658,7 +21657,7 @@
       base-id)))
 
 (define (lower-used-type-name-add
-  [used : lower_i64_i64_map.Map (:consume)]
+  [used : lower_i64_i64_map.Map]
   [_module : String]
   [name : i64]) : lower_i64_i64_map.Map
   (let
@@ -21703,7 +21702,7 @@
 
 (define (lower-used-types-add-type-id
   [pools : ast.AstNodePoolContext]
-  [used : lower_i64_i64_map.Map (:consume)]
+  [used : lower_i64_i64_map.Map]
   [module : String]
   [ty-id : i64]) : lower_i64_i64_map.Map
   (lower-used-types-add-type
@@ -21714,14 +21713,14 @@
 
 (define (lower-used-types-add-type-list
   [pools : ast.AstNodePoolContext]
-  [used : lower_i64_i64_map.Map (:consume)]
+  [used : lower_i64_i64_map.Map]
   [module : String]
   [types : ast.AstTypeList]) : lower_i64_i64_map.Map
   (lower-used-types-add-type-list-at pools used module (& types) 0))
 
 (define (lower-used-types-add-type-list-at
   [pools : ast.AstNodePoolContext]
-  [used : lower_i64_i64_map.Map (:consume)]
+  [used : lower_i64_i64_map.Map]
   [module : String]
   [types : (& types ast.AstTypeList)]
   [index : i64]) : lower_i64_i64_map.Map
@@ -21740,7 +21739,7 @@
 
 (define (lower-used-types-add-type
   [pools : ast.AstNodePoolContext]
-  [used : lower_i64_i64_map.Map (:consume)]
+  [used : lower_i64_i64_map.Map]
   [module : String]
   [ty : ast.AstType]) : lower_i64_i64_map.Map
   (match ty
@@ -21781,7 +21780,7 @@
 
 (define (lower-used-types-add-maybe-type
   [pools : ast.AstNodePoolContext]
-  [used : lower_i64_i64_map.Map (:consume)]
+  [used : lower_i64_i64_map.Map]
   [module : String]
   [maybe-ty : ast.AstMaybeType]) : lower_i64_i64_map.Map
   (match maybe-ty
@@ -21791,14 +21790,14 @@
 
 (define (lower-used-types-add-param-list
   [pools : ast.AstNodePoolContext]
-  [used : lower_i64_i64_map.Map (:consume)]
+  [used : lower_i64_i64_map.Map]
   [module : String]
   [params : ast.AstParamList]) : lower_i64_i64_map.Map
   (lower-used-types-add-param-list-at pools used module (& params) 0))
 
 (define (lower-used-types-add-param-list-at
   [pools : ast.AstNodePoolContext]
-  [used : lower_i64_i64_map.Map (:consume)]
+  [used : lower_i64_i64_map.Map]
   [module : String]
   [params : (& params ast.AstParamList)]
   [index : i64]) : lower_i64_i64_map.Map
@@ -21815,14 +21814,14 @@
 
 (define (lower-used-types-add-macro-param-list
   [pools : ast.AstNodePoolContext]
-  [used : lower_i64_i64_map.Map (:consume)]
+  [used : lower_i64_i64_map.Map]
   [module : String]
   [params : ast.AstMacroParamList]) : lower_i64_i64_map.Map
   (lower-used-types-add-macro-param-list-at pools used module (& params) 0))
 
 (define (lower-used-types-add-macro-param-list-at
   [pools : ast.AstNodePoolContext]
-  [used : lower_i64_i64_map.Map (:consume)]
+  [used : lower_i64_i64_map.Map]
   [module : String]
   [params : (& params ast.AstMacroParamList)]
   [index : i64]) : lower_i64_i64_map.Map
@@ -21842,7 +21841,7 @@
 
 (define (lower-used-types-add-expr-id
   [pools : ast.AstNodePoolContext]
-  [used : lower_i64_i64_map.Map (:consume)]
+  [used : lower_i64_i64_map.Map]
   [module : String]
   [expr-id : i64]) : lower_i64_i64_map.Map
   (lower-used-types-add-expr
@@ -21853,14 +21852,14 @@
 
 (define (lower-used-types-add-expr-list
   [pools : ast.AstNodePoolContext]
-  [used : lower_i64_i64_map.Map (:consume)]
+  [used : lower_i64_i64_map.Map]
   [module : String]
   [exprs : ast.AstExprList]) : lower_i64_i64_map.Map
   (lower-used-types-add-expr-list-at pools used module (& exprs) 0))
 
 (define (lower-used-types-add-expr-list-at
   [pools : ast.AstNodePoolContext]
-  [used : lower_i64_i64_map.Map (:consume)]
+  [used : lower_i64_i64_map.Map]
   [module : String]
   [exprs : (& exprs ast.AstExprList)]
   [index : i64]) : lower_i64_i64_map.Map
@@ -21879,7 +21878,7 @@
 
 (define (lower-used-types-add-pattern
   [pools : ast.AstNodePoolContext]
-  [used : lower_i64_i64_map.Map (:consume)]
+  [used : lower_i64_i64_map.Map]
   [module : String]
   [pattern : ast.AstPattern]) : lower_i64_i64_map.Map
   (match pattern
@@ -21918,14 +21917,14 @@
 
 (define (lower-used-types-add-pattern-list
   [pools : ast.AstNodePoolContext]
-  [used : lower_i64_i64_map.Map (:consume)]
+  [used : lower_i64_i64_map.Map]
   [module : String]
   [patterns : ast.AstPatternList]) : lower_i64_i64_map.Map
   (lower-used-types-add-pattern-list-at pools used module (& patterns) 0))
 
 (define (lower-used-types-add-pattern-list-at
   [pools : ast.AstNodePoolContext]
-  [used : lower_i64_i64_map.Map (:consume)]
+  [used : lower_i64_i64_map.Map]
   [module : String]
   [patterns : (& patterns ast.AstPatternList)]
   [index : i64]) : lower_i64_i64_map.Map
@@ -21944,14 +21943,14 @@
 
 (define (lower-used-types-add-let-bindings
   [pools : ast.AstNodePoolContext]
-  [used : lower_i64_i64_map.Map (:consume)]
+  [used : lower_i64_i64_map.Map]
   [module : String]
   [bindings : ast.AstLetBindingList]) : lower_i64_i64_map.Map
   (lower-used-types-add-let-bindings-at pools used module (& bindings) 0))
 
 (define (lower-used-types-add-let-bindings-at
   [pools : ast.AstNodePoolContext]
-  [used : lower_i64_i64_map.Map (:consume)]
+  [used : lower_i64_i64_map.Map]
   [module : String]
   [bindings : (& bindings ast.AstLetBindingList)]
   [index : i64]) : lower_i64_i64_map.Map
@@ -21975,14 +21974,14 @@
 
 (define (lower-used-types-add-match-arms
   [pools : ast.AstNodePoolContext]
-  [used : lower_i64_i64_map.Map (:consume)]
+  [used : lower_i64_i64_map.Map]
   [module : String]
   [arms : ast.AstMatchArmList]) : lower_i64_i64_map.Map
   (lower-used-types-add-match-arms-at pools used module (& arms) 0))
 
 (define (lower-used-types-add-match-arms-at
   [pools : ast.AstNodePoolContext]
-  [used : lower_i64_i64_map.Map (:consume)]
+  [used : lower_i64_i64_map.Map]
   [module : String]
   [arms : (& arms ast.AstMatchArmList)]
   [index : i64]) : lower_i64_i64_map.Map
@@ -22003,14 +22002,14 @@
 
 (define (lower-used-types-add-resource-bindings
   [pools : ast.AstNodePoolContext]
-  [used : lower_i64_i64_map.Map (:consume)]
+  [used : lower_i64_i64_map.Map]
   [module : String]
   [bindings : ast.AstResourceBindingList]) : lower_i64_i64_map.Map
   (lower-used-types-add-resource-bindings-at pools used module (& bindings) 0))
 
 (define (lower-used-types-add-resource-bindings-at
   [pools : ast.AstNodePoolContext]
-  [used : lower_i64_i64_map.Map (:consume)]
+  [used : lower_i64_i64_map.Map]
   [module : String]
   [bindings : (& bindings ast.AstResourceBindingList)]
   [index : i64]) : lower_i64_i64_map.Map
@@ -22034,7 +22033,7 @@
 
 (define (lower-used-types-add-expr
   [pools : ast.AstNodePoolContext]
-  [used : lower_i64_i64_map.Map (:consume)]
+  [used : lower_i64_i64_map.Map]
   [module : String]
   [expr : ast.AstExpr]) : lower_i64_i64_map.Map
   (match expr
@@ -22468,14 +22467,14 @@
 
 (define (lower-used-types-add-field-list
   [pools : ast.AstNodePoolContext]
-  [used : lower_i64_i64_map.Map (:consume)]
+  [used : lower_i64_i64_map.Map]
   [module : String]
   [fields : ast.AstFieldDefList]) : lower_i64_i64_map.Map
   (lower-used-types-add-field-list-at pools used module (& fields) 0))
 
 (define (lower-used-types-add-field-list-at
   [pools : ast.AstNodePoolContext]
-  [used : lower_i64_i64_map.Map (:consume)]
+  [used : lower_i64_i64_map.Map]
   [module : String]
   [fields : (& fields ast.AstFieldDefList)]
   [index : i64]) : lower_i64_i64_map.Map
@@ -22495,14 +22494,14 @@
 
 (define (lower-used-types-add-variant-list
   [pools : ast.AstNodePoolContext]
-  [used : lower_i64_i64_map.Map (:consume)]
+  [used : lower_i64_i64_map.Map]
   [module : String]
   [variants : ast.AstVariantDefList]) : lower_i64_i64_map.Map
   (lower-used-types-add-variant-list-at pools used module (& variants) 0))
 
 (define (lower-used-types-add-variant-list-at
   [pools : ast.AstNodePoolContext]
-  [used : lower_i64_i64_map.Map (:consume)]
+  [used : lower_i64_i64_map.Map]
   [module : String]
   [variants : (& variants ast.AstVariantDefList)]
   [index : i64]) : lower_i64_i64_map.Map
@@ -22553,7 +22552,7 @@
 
 (define (lower-used-types-add-kept-runtime-decl
   [pools : ast.AstNodePoolContext]
-  [used : lower_i64_i64_map.Map (:consume)]
+  [used : lower_i64_i64_map.Map]
   [module : String]
   [decl : ast.AstDecl]) : lower_i64_i64_map.Map
   (match decl
@@ -22639,7 +22638,7 @@
 
 (define (lower-used-types-add-type-decl-name
   [pools : ast.AstNodePoolContext]
-  [used : lower_i64_i64_map.Map (:consume)]
+  [used : lower_i64_i64_map.Map]
   [module : String]
   [decl : ast.AstDecl]) : lower_i64_i64_map.Map
   (match decl
@@ -22666,7 +22665,7 @@
   [entry-path : String]
   [module : String]
   [reachable-paths : (& reachable-paths lower_i64_i64_map.Map)]
-  [used : lower_i64_i64_map.Map (:consume)]
+  [used : lower_i64_i64_map.Map]
   [covered : bool]) : LowerUsedTypePathSeed
   (match (ast.ast-decl-list-step decls)
     [(ast.AstDeclListStep.Nil) (LowerUsedTypePathSeed.Seed used covered)]
@@ -22721,7 +22720,7 @@
   [all-functions : lower_i64_i64_map.Map]
   [reachable : lower_i64_i64_map.Map]
   [dispatch-variants : lower_i64_i64_map.Map]
-  [used : lower_i64_i64_map.Map (:consume)]) : lower_i64_i64_map.Map
+  [used : lower_i64_i64_map.Map]) : lower_i64_i64_map.Map
   (match (ast.ast-decl-list-step decls)
     [(ast.AstDeclListStep.Nil) used]
     [(ast.AstDeclListStep.Cons decl rest)
@@ -22776,7 +22775,7 @@
 
 (define (lower-used-types-add-stdlib-arena-support-deps
   [_pools : ast.AstNodePoolContext]
-  [used : lower_i64_i64_map.Map (:consume)]
+  [used : lower_i64_i64_map.Map]
   [module : String]
   [name : i64]) : lower_i64_i64_map.Map
   ;; `in-arena` and allocation lowering use the arena mark support type even
@@ -23255,7 +23254,7 @@
   [all-functions : lower_i64_i64_map.Map]
   [names : LowerNameCache]
   [roots : clone_support.CloneRootEntries]
-  [state : LowerReachState (:consume)]) : LowerReachState
+  [state : LowerReachState]) : LowerReachState
   (let
     [cell : LowerReachStateCell (LowerReachStateCell.Occupied state)]
     [index : i64 0]
@@ -23290,7 +23289,7 @@
   [module : String]
   [module-id : i64]
   [all-functions : lower_i64_i64_map.Map]
-  [state : LowerReachState (:consume)]
+  [state : LowerReachState]
   [decl : ast.AstDecl]) : LowerReachState
   (match decl
     [(ast.AstDecl.DefFn decl-meta name _ _ _ metadata)
@@ -23335,7 +23334,7 @@
   [module : String]
   [module-id : i64]
   [all-functions : lower_i64_i64_map.Map]
-  [state : LowerReachState (:consume)]) : LowerReachState
+  [state : LowerReachState]) : LowerReachState
   (match (ast.ast-decl-list-step decls)
     [(ast.AstDeclListStep.Nil) state]
     [(ast.AstDeclListStep.Cons decl rest)
@@ -23673,7 +23672,7 @@
         var-id)]))
 
 (define (lower-state-register-address-taken-mark
-  [state : LowerState (:consume)]
+  [state : LowerState]
   [var-id : i64]) : LowerState
   (match state
     [(LowerState.State data)
@@ -23736,7 +23735,7 @@
     -1))
 
 (define (lower-state-inline-result-alias-set
-  [state : LowerState (:consume)]
+  [state : LowerState]
   [var-id : i64]
   [origin-var : i64]) : LowerState
   (if (lower-state-inline-result-alias-tracking-active? state)
@@ -23753,7 +23752,7 @@
     state))
 
 (define (lower-state-inline-result-alias-mark-value
-  [state : LowerState (:consume)]
+  [state : LowerState]
   [value : ir.CompilerIrValue]) : LowerState
   (match value
     [(ir.CompilerIrValue.Var var-id)
@@ -23762,7 +23761,7 @@
 
 (define (lower-state-inline-result-alias-mark-call-result
   [ctx : tc_core.TcContext]
-  [state : LowerState (:consume)]
+  [state : LowerState]
   [value : ir.CompilerIrValue]
   [result-ty : ast.AstType]) : LowerState
   (if (and
@@ -23849,7 +23848,7 @@
           (LowerLambdaName.Name state lambda-id)))]))
 
 (define (lower-state-emit
-  [state : LowerState (:consume)]
+  [state : LowerState]
   [instr : ir.CompilerIrInstr]) : LowerState
   (match state
     [(LowerState.State data)
@@ -23878,7 +23877,7 @@
     [_ false]))
 
 (define (lower-state-emit-at-expr
-  [state : LowerState (:consume)]
+  [state : LowerState]
   [instr : ir.CompilerIrInstr]
   [expr : ast.AstExpr]) : LowerState
   (if (or
@@ -23962,7 +23961,7 @@
   (lower-state-record-latest-bounds-check-named-at-expr state "bounds_ok" expr))
 
 (define (lower-state-finish-block
-  [state : LowerState (:consume)]
+  [state : LowerState]
   [next-label : i64]) : LowerState
   (match state
     [(LowerState.State data)
@@ -24022,7 +24021,7 @@
           (ir.compiler-ir-function-builder-to-list out)))]))
 
 (define (lower-state-add-functions
-  [state : LowerState (:consume)]
+  [state : LowerState]
   [new-functions : ir.CompilerIrFunctionList]
   [new-spans : ir.CompilerSourceSpans]) : LowerState
   (match state
@@ -25756,7 +25755,7 @@
     [else (lower-load-at-offset state base offset ty)]))
 
 (define (lower-copy-bytes-compact
-  [state : LowerState (:consume)]
+  [state : LowerState]
   [dst : ir.CompilerIrValue]
   [dst-offset : i64]
   [src : ir.CompilerIrValue]
@@ -29812,7 +29811,7 @@
           ty)))))
 
 (define (lower-disarm-move-aware-resource-name
-  [state : LowerState (:consume)]
+  [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [name-id : i64]) : LowerState
   (let
@@ -29839,7 +29838,7 @@
           state)))))
 
 (define (lower-disarm-move-aware-resource-expr
-  [state : LowerState (:consume)]
+  [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [expr : ast.AstExpr]) : LowerState
   (match (ast.ast-expr-unspan expr)
@@ -30682,7 +30681,7 @@
 
 (define (lower-capture-snapshot-enum-variants
   [ctx : tc_core.TcContext]
-  [state : LowerState (:consume)]
+  [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [src : ir.CompilerIrValue]
@@ -32299,7 +32298,7 @@
 
 (define (lower-try-finish
   [ctx : tc_core.TcContext]
-  [state : LowerState (:consume)]
+  [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [result-value : ir.CompilerIrValue]
@@ -33690,7 +33689,7 @@
 
 (define (lower-call-arg-normal-as
   [ctx : tc_core.TcContext]
-  [state : LowerState (:consume)]
+  [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [arg : ast.AstExpr]
@@ -33751,7 +33750,7 @@
 
 (define (lower-call-arg-mut-borrow-var-as
   [ctx : tc_core.TcContext]
-  [state : LowerState (:consume)]
+  [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [arg : ast.AstExpr]
@@ -33813,7 +33812,7 @@
 
 (define (lower-call-arg-as
   [ctx : tc_core.TcContext]
-  [state : LowerState (:consume)]
+  [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [arg : ast.AstExpr]
@@ -33867,7 +33866,7 @@
 
 (define (lower-call-args-as
   [ctx : tc_core.TcContext]
-  [state : LowerState (:consume)]
+  [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [args : ast.AstExprList]
@@ -33884,13 +33883,13 @@
 
 (define (lower-call-args-as-at
   [ctx : tc_core.TcContext]
-  [state : LowerState (:consume)]
+  [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [args : (& args ast.AstExprList)]
   [types : (& types ast.AstTypeList)]
   [index : i64]
-  [writebacks : lower_arg_writeback_vec.Vec (:consume)]) : ResultLowerCallArgs
+  [writebacks : lower_arg_writeback_vec.Vec]) : ResultLowerCallArgs
   (if (>= index args.len)
     (if (>= index (ast.ast-type-list-len types))
       (ResultLowerCallArgs.Ok
@@ -34000,7 +33999,7 @@
 
 (define (lower-args-as
   [ctx : tc_core.TcContext]
-  [state : LowerState (:consume)]
+  [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [args : ast.AstExprList]
@@ -34009,7 +34008,7 @@
 
 (define (lower-args-as-at
   [ctx : tc_core.TcContext]
-  [state : LowerState (:consume)]
+  [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [args : (& args ast.AstExprList)]
@@ -34096,7 +34095,7 @@
 
 (define (lower-call-args-as-needed
   [ctx : tc_core.TcContext]
-  [state : LowerState (:consume)]
+  [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [args : ast.AstExprList]
@@ -34403,7 +34402,7 @@
 
 (define (lower-construct-enum-with-name
   [ctx : tc_core.TcContext]
-  [state : LowerState (:consume)]
+  [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [variant-name : String]
@@ -34492,7 +34491,7 @@
 
 (define (lower-construct-enum-with-handle
   [ctx : tc_core.TcContext]
-  [state : LowerState (:consume)]
+  [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [variant-name : String]
@@ -34537,7 +34536,7 @@
 ;; here too -- see the #5971 note at `lower-construct-struct-inline-into-from-values`.
 (define (lower-construct-enum-with-name-into
   [ctx : tc_core.TcContext]
-  [state : LowerState (:consume)]
+  [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [dst : ir.CompilerIrValue]
@@ -34586,7 +34585,7 @@
 ;; here too -- see the #5971 note at `lower-construct-struct-inline-into-from-values`.
 (define (lower-construct-enum-with-handle-into
   [ctx : tc_core.TcContext]
-  [state : LowerState (:consume)]
+  [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [dst : ir.CompilerIrValue]
@@ -34691,7 +34690,7 @@
 
 (define (lower-construct-struct
   [ctx : tc_core.TcContext]
-  [state : LowerState (:consume)]
+  [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [struct-name : String]
@@ -34788,7 +34787,7 @@
 ;; here too -- see the #5971 note at `lower-construct-struct-inline-into-from-values`.
 (define (lower-construct-struct-into
   [ctx : tc_core.TcContext]
-  [state : LowerState (:consume)]
+  [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [dst : ir.CompilerIrValue]
@@ -34876,7 +34875,7 @@
 
 (define (lower-init-struct
   [ctx : tc_core.TcContext]
-  [state : LowerState (:consume)]
+  [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [struct-name : String]
@@ -34922,7 +34921,7 @@
 
 (define (lower-init-enum
   [ctx : tc_core.TcContext]
-  [state : LowerState (:consume)]
+  [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [enum-name : String]
@@ -34992,7 +34991,7 @@
 
 (define (lower-init-struct-into
   [ctx : tc_core.TcContext]
-  [state : LowerState (:consume)]
+  [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [dst : ir.CompilerIrValue]
@@ -35040,7 +35039,7 @@
 
 (define (lower-init-enum-into
   [ctx : tc_core.TcContext]
-  [state : LowerState (:consume)]
+  [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [dst : ir.CompilerIrValue]
@@ -35112,7 +35111,7 @@
 
 (define (lower-init-expr-into
   [ctx : tc_core.TcContext]
-  [state : LowerState (:consume)]
+  [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [dst : ir.CompilerIrValue]
@@ -35169,7 +35168,7 @@
 
 (define (lower-init-expr
   [ctx : tc_core.TcContext]
-  [state : LowerState (:consume)]
+  [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [ty : ast.AstType]
@@ -35325,7 +35324,7 @@
 
 (define (lower-nullary-variant-or-function-value
   [ctx : tc_core.TcContext]
-  [state : LowerState (:consume)]
+  [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [name : String]
@@ -35401,7 +35400,7 @@
 
 (define (lower-var-or-nullary-variant-id
   [ctx : tc_core.TcContext]
-  [state : LowerState (:consume)]
+  [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [name-id : i64]
@@ -39500,7 +39499,7 @@
 
 (define (lower-slice-view-finish-after-len-check
   [ctx : tc_core.TcContext]
-  [state : LowerState (:consume)]
+  [state : LowerState]
   [src-ptr : ir.CompilerIrValue]
   [start-value : ir.CompilerIrValue]
   [len-value : ir.CompilerIrValue]
@@ -39775,7 +39774,7 @@
           (ast.AstType.String)))]))
 
 (define (lower-substring-finish-after-len-check
-  [state : LowerState (:consume)]
+  [state : LowerState]
   [src-ptr : ir.CompilerIrValue]
   [start-value : ir.CompilerIrValue]
   [len-value : ir.CompilerIrValue]
@@ -42919,7 +42918,7 @@
 
 (define (lower-indirect-call-args
   [ctx : tc_core.TcContext]
-  [state : LowerState (:consume)]
+  [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [args : ast.AstExprList]
@@ -42937,7 +42936,7 @@
 
 (define (lower-indirect-call-args-with-writebacks
   [ctx : tc_core.TcContext]
-  [state : LowerState (:consume)]
+  [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [args : ast.AstExprList]
@@ -42959,7 +42958,7 @@
 
 (define (lower-indirect-call
   [ctx : tc_core.TcContext]
-  [state : LowerState (:consume)]
+  [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [func-ty : ast.AstType]
@@ -43016,7 +43015,7 @@
 
 (define (lower-indirect-c-abi-call
   [ctx : tc_core.TcContext]
-  [state : LowerState (:consume)]
+  [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [func-ty : ast.AstType]
@@ -43168,7 +43167,7 @@
           result-ty))]))
 
 (define (lower-inline-string-eq-finish
-  [state : LowerState (:consume)]
+  [state : LowerState]
   [_true-label : i64]
   [false-label : i64]
   [done-label : i64]
@@ -43347,7 +43346,7 @@
                                           result-ty)]))])])])])])])])]))
 
 (define (lower-inline-string-to-int-negate
-  [state : LowerState (:consume)]
+  [state : LowerState]
   [negate-label : i64]
   [done-label : i64]
   [value-var : i64]
@@ -44125,7 +44124,7 @@
 
 (define (lower-direct-constructor-call-into
   [ctx : tc_core.TcContext]
-  [state : LowerState (:consume)]
+  [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [dst : ir.CompilerIrValue]
@@ -44226,7 +44225,7 @@
 
 (define (lower-direct-nullary-variant-into
   [ctx : tc_core.TcContext]
-  [state : LowerState (:consume)]
+  [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [dst : ir.CompilerIrValue]
@@ -44279,7 +44278,7 @@
 
 (define (lower-direct-init-into
   [ctx : tc_core.TcContext]
-  [state : LowerState (:consume)]
+  [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [dst : ir.CompilerIrValue]
@@ -44510,7 +44509,7 @@
 
 (define (lower-imported-spmd-scalar-call
   [ctx : tc_core.TcContext]
-  [state : LowerState (:consume)]
+  [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [index : String]
@@ -46894,7 +46893,7 @@
 
 (define (lower-make-array-init-body
   [ctx : tc_core.TcContext]
-  [state : LowerState (:consume)]
+  [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [buf-value : ir.CompilerIrValue]
@@ -47262,7 +47261,7 @@
 
 (define (lower-make-array-init-loop-nonzero
   [ctx : tc_core.TcContext]
-  [state : LowerState (:consume)]
+  [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [buf-value : ir.CompilerIrValue]
@@ -47305,7 +47304,7 @@
 
 (define (lower-make-array-init-loop
   [ctx : tc_core.TcContext]
-  [state : LowerState (:consume)]
+  [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [buf-value : ir.CompilerIrValue]
@@ -47392,7 +47391,7 @@
 
 (define (lower-make-array-after-max-check
   [ctx : tc_core.TcContext]
-  [state : LowerState (:consume)]
+  [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [fail-label : i64]
@@ -49551,7 +49550,7 @@
 
 (define (lower-array-push-after-max-check
   [ctx : tc_core.TcContext]
-  [state : LowerState (:consume)]
+  [state : LowerState]
   [fail-label : i64]
   [alloc-label : i64]
   [arr-value : ir.CompilerIrValue]
@@ -50718,7 +50717,7 @@
 
 (define (lower-if-merge
   [ctx : tc_core.TcContext]
-  [else-state : LowerState (:consume)]
+  [else-state : LowerState]
   [then-value : ir.CompilerIrValue]
   [then-end-label : i64]
   [else-value : ir.CompilerIrValue]
@@ -50752,7 +50751,7 @@
             expr-ty))])))
 
 (define (lower-if-single-merge
-  [state : LowerState (:consume)]
+  [state : LowerState]
   [value : ir.CompilerIrValue]
   [merge-label : i64]
   [expr-ty : ast.AstType]) : ResultLowerExpr
@@ -50768,7 +50767,7 @@
   [then-value : ir.CompilerIrValue]
   [then-ty : ast.AstType]
   [then-end-label : i64]
-  [else-state : LowerState (:consume)]
+  [else-state : LowerState]
   [else-value : ir.CompilerIrValue]
   [else-ty : ast.AstType]
   [merge-label : i64]
@@ -52517,7 +52516,7 @@
       out)))
 
 (define (lower-masked-vector-lane-locals-bind-if-varying
-  [lane-locals : lower_i64_i64_map.Map (:consume)]
+  [lane-locals : lower_i64_i64_map.Map]
   [name : i64]
   [lanes : i64]) : lower_i64_i64_map.Map
   (if (> lanes 0)
@@ -52899,7 +52898,7 @@
   [params : (& params ast.AstParamList)]
   [args : (& args ast.AstExprList)]
   [arg-index : i64]
-  [out : lower_i64_i64_map.Map (:consume)]) : lower_i64_i64_map.Map
+  [out : lower_i64_i64_map.Map]) : lower_i64_i64_map.Map
   (if (or
     (>= arg-index (ast.ast-param-list-len params))
     (>= arg-index args.len))
@@ -57967,7 +57966,7 @@
     [_ false]))
 
 (define (lower-emit-checked-vector-shift
-  [state : LowerState (:consume)]
+  [state : LowerState]
   [active-mask : ir.CompilerIrMaybeValue]
   [lanes : i64]
   [op : ir.CompilerIrBinOp]
@@ -58092,7 +58091,7 @@
       (lower-emit-vector-binop s op left-value right-value lanes lane-ty))))
 
 (define (lower-emit-vector-map-binop
-  [state : LowerState (:consume)]
+  [state : LowerState]
   [op : ir.CompilerIrBinOp]
   [lhs : ir.CompilerIrValue]
   [rhs : ir.CompilerIrValue]
@@ -58473,7 +58472,7 @@
     [_ (ir.CompilerIrValue.Var acc-var)]))
 
 (define (lower-spmd-reduce-vector-accumulate
-  [state : LowerState (:consume)]
+  [state : LowerState]
   [vector-op : ir.CompilerIrVectorReduceOp]
   [vector-acc-var : i64]
   [value : ir.CompilerIrValue]
@@ -59994,7 +59993,7 @@
         elem-ty)]))
 
 (define (lower-emit-predicated-store-data
-  [state : LowerState (:consume)]
+  [state : LowerState]
   [data-ptr : ir.CompilerIrValue]
   [index : ir.CompilerIrValue]
   [value : ir.CompilerIrValue]
@@ -61655,7 +61654,7 @@
 
 (define (lower-avx2-vector-map-body
   [ctx : tc_core.TcContext]
-  [state : LowerState (:consume)]
+  [state : LowerState]
   [index-var : i64]
   [next-index : ir.CompilerIrValue]
   [plan : LowerMaybeVectorMap]
@@ -62972,7 +62971,7 @@
       " backend mode; supported lane types are i32, u32, i64, and u64")))
 
 (define (lower-avx512-masked-shift-guard-and-emit
-  [state : LowerState (:consume)]
+  [state : LowerState]
   [active-mask : ir.CompilerIrMaybeValue]
   [lanes : i64]
   [op : ir.CompilerIrBinOp]
@@ -66302,7 +66301,7 @@
   [spans : ir.CompilerSourceSpans]
   [names : LowerNameCache]
   [mode : CompilerLowerMode]
-  [functions : ir.CompilerIrFunctionBuilder (:consume)]) : ResultLowerFunction
+  [functions : ir.CompilerIrFunctionBuilder]) : ResultLowerFunction
   (if (or
     (>= index limit)
     (>= index (ast.ast-spmd-specialization-list-len specializations)))
@@ -66409,7 +66408,7 @@
               (ir.compiler-ir-function-builder-with-capacity count)))))]))
 
 (define (lower-avx512-emit-spmd-call
-  [state : LowerState (:consume)]
+  [state : LowerState]
   [hidden-name : i64]
   [backend : ir.CompilerIrSpmdBackend]
   [active-mask : ir.CompilerIrValue]
@@ -66469,7 +66468,7 @@
                 result-ty))))])))
 
 (define (lower-avx512-emit-spmd-call-active
-  [state : LowerState (:consume)]
+  [state : LowerState]
   [hidden-name : i64]
   [backend : ir.CompilerIrSpmdBackend]
   [active-mask : ir.CompilerIrMaybeValue]
@@ -70567,7 +70566,7 @@
 
 (define (lower-match-finish
   [ctx : tc_core.TcContext]
-  [state : LowerState (:consume)]
+  [state : LowerState]
   [merge-label : i64]
   [expr-ty : ast.AstType]
   [phi-inputs : ir.CompilerIrPhiInputList]) : ResultLowerExpr
@@ -70888,7 +70887,7 @@
     [(ResultLowerExpr.Err message) (ResultLowerState.Err message)]))
 
 (define (lower-return-sret
-  [state : LowerState (:consume)]
+  [state : LowerState]
   [ret-ty : ast.AstType]
   [sret-var : i64]) : ResultLowerState
   (ResultLowerState.Ok
@@ -74203,7 +74202,7 @@
 (define (lower-enum-cleanup-payload-patterns-at
   [count : i64]
   [index : i64]
-  [out : ast.AstPatternList (:consume)]) : ast.AstPatternList
+  [out : ast.AstPatternList]) : ast.AstPatternList
   (if (>= index count)
     out
     (let
@@ -74309,7 +74308,7 @@
   [ctx : tc_core.TcContext]
   [variants : (& variants ast.AstVariantDefList)]
   [index : i64]
-  [out : ast.AstMatchArmList (:consume)]) : parser.ResultAstMatchArmList
+  [out : ast.AstMatchArmList]) : parser.ResultAstMatchArmList
   (if (>= index (ast.ast-variant-def-list-len variants))
     (parser.ResultAstMatchArmList.Ok out)
     (match (lower-enum-cleanup-arm
@@ -75087,7 +75086,7 @@
   [spans : ir.CompilerSourceSpans]
   [names : LowerNameCache]
   [mode : CompilerLowerMode]
-  [functions : ir.CompilerIrFunctionBuilder (:consume)]) : ResultLowerFunction
+  [functions : ir.CompilerIrFunctionBuilder]) : ResultLowerFunction
   (if (>= index variants.len)
     (ResultLowerFunction.Ok
       (ir.compiler-ir-function-builder-to-list functions)
@@ -75251,7 +75250,7 @@
   [names : LowerNameEnv]
   [_ : String]
   [module-id : i64]
-  [out : lower_i64_i64_map.Map (:consume)]) : lower_i64_i64_map.Map
+  [out : lower_i64_i64_map.Map]) : lower_i64_i64_map.Map
   (let
     [count : i64 (ast.ast-decl-list-len (& decls))]
     [index : i64 0]

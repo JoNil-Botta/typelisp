@@ -1,7 +1,7 @@
 ;; SPMD varying-match corpus (#3753): scalar integer literal patterns inside a
 ;; foreach body. The n = 13 length also exercises tail handling in scalar-vs-SIMD
 ;; comparison runs.
-(define (fill-match [out : (__tl_dyn-array i64)] [n : i64]) : unit
+(define (fill-match [out : (&mut out (__tl_dyn-array i64))] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (set!
@@ -12,7 +12,7 @@
         [2 30]
         [x (+ x 40)]))))
 
-(define (fill-scalar [out : (__tl_dyn-array i64)] [n : i64]) : unit
+(define (fill-scalar [out : (&mut out (__tl_dyn-array i64))] [n : i64]) : unit
   (let
     [i : i64 0]
     (while (< i n)
@@ -27,8 +27,8 @@
         (set! i (+ i 1))))))
 
 (define (arrays-eq
-  [a : (__tl_dyn-array i64)]
-  [b : (__tl_dyn-array i64)]
+  [a : (& a (__tl_dyn-array i64))]
+  [b : (& b (__tl_dyn-array i64))]
   [n : i64]) : bool
   (let
     [i : i64 0]
@@ -48,8 +48,8 @@
     [got : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     [want : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     (begin
-      (fill-match got n)
-      (fill-scalar want n)
-      (if (arrays-eq got want n)
+      (fill-match (&mut got) n)
+      (fill-scalar (&mut want) n)
+      (if (arrays-eq (& got) (& want) n)
         42
         1))))

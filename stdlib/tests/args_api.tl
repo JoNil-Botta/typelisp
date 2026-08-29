@@ -87,9 +87,7 @@
       (svec.push-ref! (&mut items) f)
       items)))
 
-(define (args-api-parse-vec
-  [specs : args.ArgsOptionSpecList]
-  [argv : svec.Vec (:consume)]) : args.ResultArgsParsed
+(define (args-api-parse-vec [specs : args.ArgsOptionSpecList] [argv : svec.Vec]) : args.ResultArgsParsed
   (args.parse-vec specs (& argv)))
 
 (define (args-api-expect-ok [result : args.ResultArgsParsed] [message : String]) : args.ArgsParsed
@@ -115,8 +113,8 @@
   [second : String]
   [message : String]) : unit
   (begin
-    (args-api-assert-i64-eq (svec.len items) 2 message)
-    (args-api-assert-string-eq (svec.get items 0 "") first message)
+    (args-api-assert-i64-eq (svec.len items) 2 (clone message))
+    (args-api-assert-string-eq (svec.get items 0 "") first (clone message))
     (args-api-assert-string-eq (svec.get items 1 "") second message)))
 
 (define (args-api-assert-vec3
@@ -126,9 +124,9 @@
   [third : String]
   [message : String]) : unit
   (begin
-    (args-api-assert-i64-eq (svec.len items) 3 message)
-    (args-api-assert-string-eq (svec.get items 0 "") first message)
-    (args-api-assert-string-eq (svec.get items 1 "") second message)
+    (args-api-assert-i64-eq (svec.len items) 3 (clone message))
+    (args-api-assert-string-eq (svec.get items 0 "") first (clone message))
+    (args-api-assert-string-eq (svec.get items 1 "") second (clone message))
     (args-api-assert-string-eq (svec.get items 2 "") third message)))
 
 (test

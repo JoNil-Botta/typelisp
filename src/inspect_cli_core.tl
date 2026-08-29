@@ -1,4 +1,5 @@
 ;; inspect_cli_core.tl - Public tlci inspection command.
+(import compiler_owned_view as owned_view)
 (import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.string)
@@ -155,7 +156,13 @@ Summary:
     [(tlci_core.ResultTlciAuxLookup.Missing)
       (str_cat.str-cat name ": missing\n")]
     [(tlci_core.ResultTlciAuxLookup.Err message)
-      (str_cat.str-cat name ": malformed\n" name "-error: " message "\n")]
+      (str_cat.str-cat
+        (owned_view.compiler-owned-shared-view name)
+        ": malformed\n"
+        name
+        "-error: "
+        message
+        "\n")]
     [(tlci_core.ResultTlciAuxLookup.Ok schema payload)
       (str_cat.str-cat
         name
@@ -171,11 +178,11 @@ Summary:
   (str_cat.str-cat
     (tlci-inspect-surface-section
       "surface-package-identity"
-      rodata
+      (owned_view.compiler-owned-shared-view rodata)
       tlci_core.tlci-aux-kind-package-identity)
     (tlci-inspect-surface-section
       "surface-frontend-ast"
-      rodata
+      (owned_view.compiler-owned-shared-view rodata)
       tlci_core.tlci-aux-kind-frontend-ast)
     (tlci-inspect-surface-section
       "surface-frontend-facts"
@@ -206,15 +213,17 @@ Summary:
       (string.int->string host-platform)
       ")\n"
       "image-classification: "
-      (tlci-inspect-classification-name image)
+      (tlci-inspect-classification-name
+        (owned_view.compiler-owned-shared-view image))
       "\n"
       "callback-abi-version: "
       (string.int->string image.callback-abi-version)
       "\n"
       "producer-compiler-identity: "
-      image.compiler-build-hash
+      (owned_view.compiler-owned-shared-view image.compiler-build-hash)
       "\n"
-      (tlci-inspect-source-binding image.rodata)
+      (tlci-inspect-source-binding
+        (owned_view.compiler-owned-shared-view image.rodata))
       (tlci-inspect-surface image.rodata image.compiler-build-hash)
       "content-hash: "
       (string.int->string
@@ -231,9 +240,10 @@ Summary:
       metadata.package-name
       "\n"
       "package-version: "
-      metadata.package-version
+      (owned_view.compiler-owned-shared-view metadata.package-version)
       "\n"
-      (tlci-inspect-spmd-section metadata)
+      (tlci-inspect-spmd-section
+        (owned_view.compiler-owned-shared-view metadata))
       "sections:\n"
       (tlci-inspect-section-line
         "compiler-build-hash"
@@ -279,7 +289,8 @@ Summary:
 (define (tlci-inspect-render-bytes
   [path : String]
   [bytes : (__tl_dyn-array u8)]) : i64
-  (match (tlci_core.tlci-parse-image bytes)
+  (match (tlci_core.tlci-parse-image
+    (owned_view.compiler-owned-shared-view bytes))
     [(tlci_core.ResultTlciImage.Err message)
       (begin
         (io.print-error (tlci-inspect-error path message))
@@ -457,7 +468,8 @@ Summary:
         (match (tlci_core.tlci-emit-image (tlci_core.tlci-test-imports-image))
           [(tlci_core.ResultTlciBytes.Err _) false]
           [(tlci_core.ResultTlciBytes.Ok bytes)
-            (match (tlci_core.tlci-parse-image bytes)
+            (match (tlci_core.tlci-parse-image
+              (owned_view.compiler-owned-shared-view bytes))
               [(tlci_core.ResultTlciImage.Err _) false]
               [(tlci_core.ResultTlciImage.Ok parsed)
                 (let
@@ -504,7 +516,8 @@ Summary:
         (match (tlci_core.tlci-emit-image image)
           [(tlci_core.ResultTlciBytes.Err _) false]
           [(tlci_core.ResultTlciBytes.Ok bytes)
-            (match (tlci_core.tlci-parse-image bytes)
+            (match (tlci_core.tlci-parse-image
+              (owned_view.compiler-owned-shared-view bytes))
               [(tlci_core.ResultTlciImage.Err _) false]
               [(tlci_core.ResultTlciImage.Ok parsed)
                 (let

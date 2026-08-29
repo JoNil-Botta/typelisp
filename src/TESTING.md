@@ -1264,13 +1264,14 @@ duplicate-head, incomplete-history, selected-phase, and 15-20% regression
 fixtures with `scripts/analyze-ci-timing-trends.sh --self-test`.
 
 The Linux timing-budget gate requires exactly one successful
-`TypeLisp source lint / all / gate` row and caps it at 60,000 ms. The cap is
-deliberately well above the post-#5548 hosted Linux runtime so ordinary runner
-noise does not fail healthy changes, while still catching a multi-fold
-regression toward the former minute-scale quadratic source scans. The budget
-consumes the row already recorded by `ci-verify.sh`; it does not run the
-compiler or change the lint corpus and its 32-file batches. To diagnose a lint
-regression locally with the same gate and a chosen compiler, time:
+`TypeLisp source lint / all / gate` row and caps it at 85,000 ms. The cap keeps
+roughly 18% headroom above the larger of two hosted by-value ownership
+migration measurements accepted by #6215 while #6891 tracks throughput
+recovery. This avoids ordinary runner noise without allowing another material
+regression. The budget consumes the row already recorded by `ci-verify.sh`; it
+does not run the compiler or change the lint corpus and its 32-file batches. To
+diagnose a lint regression locally with the same gate and a chosen compiler,
+time:
 
 ```sh
 time env TYPELISP_BIN="$tl" scripts/check-tl-lint.sh

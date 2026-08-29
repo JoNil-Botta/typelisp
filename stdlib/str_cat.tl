@@ -85,18 +85,36 @@
         (set! score (+ score (str-cat-api-eq (str_cat_runtime.str-cat) "")))
         (set!
           score
-          (+ score (str-cat-api-eq (str_cat_runtime.str-cat a) "foo")))
-        (set!
-          score
-          (+ score (str-cat-api-eq (str_cat_runtime.str-cat a b) "foobar")))
-        (set!
-          score
-          (+ score (str-cat-api-eq (str_cat_runtime.str-cat b "!" b) "bar!bar")))
+          (+
+            score
+            (str-cat-api-eq (str_cat_runtime.str-cat (string.copy (& a))) "foo")))
         (set!
           score
           (+
             score
-            (str-cat-api-eq (str_cat_runtime.str-cat empty a empty) "foo")))
+            (str-cat-api-eq
+              (str_cat_runtime.str-cat (string.copy (& a)) (string.copy (& b)))
+              "foobar")))
+        (set!
+          score
+          (+
+            score
+            (str-cat-api-eq
+              (str_cat_runtime.str-cat
+                (string.copy (& b))
+                "!"
+                (string.copy (& b)))
+              "bar!bar")))
+        (set!
+          score
+          (+
+            score
+            (str-cat-api-eq
+              (str_cat_runtime.str-cat
+                (string.copy (& empty))
+                (string.copy (& a))
+                empty)
+              "foo")))
         (set!
           score
           (+
@@ -113,7 +131,10 @@
             (+
               score
               (str-cat-api-eq
-                (str_cat_runtime.str-cat a middle a)
+                (str_cat_runtime.str-cat
+                  (string.copy (& a))
+                  middle
+                  (string.copy (& a)))
                 "foo-bar-foo"))))
         (let
           [__tl_str_cat_parts : String "baz"]
@@ -123,9 +144,9 @@
               score
               (str-cat-api-eq
                 (str_cat_runtime.str-cat
-                  __tl_str_cat_parts
+                  (string.copy (& __tl_str_cat_parts))
                   "!"
-                  __tl_str_cat_parts
+                  (string.copy (& __tl_str_cat_parts))
                   "!"
                   "q"
                   "!"

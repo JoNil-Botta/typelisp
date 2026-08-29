@@ -31,6 +31,13 @@
 (import stdlib.string)
 (import stdlib.test)
 
+(defmacro (chooser-shared-view [place : Expr]) : Expr
+  `(unsafe
+    (ptr-read (ptr-addr-of ,place))))
+
+(define (chooser-string-shared-view [value : (& value str)]) : String
+  (__tl-compiler-owned-shared-view-dyn-ref-as value String))
+
 ;: Kind tags: 0 = PR (review), 1 = ready-for-implementation issue (implement),
 ;: 2 = research/triage issue.
 (define kind-pr : i64
@@ -151,10 +158,10 @@
 ;: GitHub titles may include UTF-8 punctuation that the current byte-oriented
 ;: JSON parser cannot decode. The chooser only needs display text, so normalize
 ;: the queue snapshot to parser-safe ASCII while preserving JSON syntax.
-(define (chooser-char-code-at [text : String] [idx : i64]) : i64
+(define (chooser-char-code-at [text : (& text str)] [idx : i64]) : i64
   (cast (string.string-ref text idx) : i64))
 
-(define (chooser-has-utf8-bom? [text : String]) : bool
+(define (chooser-has-utf8-bom? [text : (& text str)]) : bool
   (and
     (>= (string.string-length text) 3)
     (= (chooser-char-code-at text 0) 239)
@@ -230,13 +237,13 @@
 ;: True when any object in `labels` has a `name` equal to `needle`.
 (define (label-list-has? [labels : json.JsonSeq] [needle : String]) : bool
   (let
-    [n : i64 (json.list-count labels)]
+    [n : i64 (json.list-count (chooser-shared-view labels))]
     [i : i64 0]
     [found : bool false]
     (begin
       (while (and (not found) (< i n))
         (begin
-          (match (json.list-get-index labels i)
+          (match (json.list-get-index (chooser-shared-view labels) i)
             [(json.JsonFound head)
               (if (string.eq (json-field-string head "name") needle)
                 (set! found true)
@@ -259,7 +266,7 @@
 ;: Return the lane-specific priority bonus for a label list. p0 takes
 ;: precedence over p1.
 (define (label-list-priority-bonus [labels : json.JsonSeq] [ready : bool]) : i64
-  (if (label-list-has? labels "p0")
+  (if (label-list-has? (chooser-shared-view labels) "p0")
     (if ready
       ready-p0-priority-bonus
       triage-p0-priority-bonus)
@@ -273,7 +280,7 @@
 (define (pr-candidate [item : json.Json]) : Candidate
   (Candidate
     kind-pr
-    (json-field-number item "number")
+    (json-field-number (chooser-shared-view item) "number")
     (json-field-string item "title")
     review-weight))
 
@@ -304,7 +311,7 @@
 ;: a missing check shape is treated like no checks rather than a pending check.
 (define (pr-check-entry-complete? [entry : json.Json]) : bool
   (let
-    [status : String (json-field-string entry "status")]
+    [status : String (json-field-string (chooser-shared-view entry) "status")]
     (if (> (string.string-length status) 0)
       (pr-check-status-complete? status)
       (let
@@ -316,13 +323,13 @@
 ;: Return true when every check rollup entry has reached a terminal state.
 (define (pr-check-list-complete? [checks : json.JsonSeq]) : bool
   (let
-    [n : i64 (json.list-count checks)]
+    [n : i64 (json.list-count (chooser-shared-view checks))]
     [i : i64 0]
     [ok : bool true]
     (begin
       (while (and ok (< i n))
         (begin
-          (match (json.list-get-index checks i)
+          (match (json.list-get-index (chooser-shared-view checks) i)
             [(json.JsonFound head)
               (if (pr-check-entry-complete? head)
                 unit
@@ -340,7 +347,7 @@
       [(json.JsonFound found)
         (match found
           [(json.JsonArray entries)
-            (pr-check-list-complete? (__tl-box-place entries))]
+            (pr-check-list-complete? (json.json-box-shared-view entries))]
           [_ true])]
       [(json.JsonMissing) true])))
 
@@ -348,18 +355,19 @@
 ;: adding the priority bonus.
 (define (issue-candidate [item : json.Json]) : Candidate
   (let
-    [labels : json.JsonSeq (issue-label-list item)]
-    [ready : bool (label-list-has? labels "ready-for-implementation")]
+    [labels : json.JsonSeq (issue-label-list (chooser-shared-view item))]
+    [ready : bool
+      (label-list-has? (chooser-shared-view labels) "ready-for-implementation")]
     [bonus : i64 (label-list-priority-bonus labels ready)]
     (if ready
       (Candidate
         kind-ready
-        (json-field-number item "number")
+        (json-field-number (chooser-shared-view item) "number")
         (json-field-string item "title")
         (+ implement-weight bonus))
       (Candidate
         kind-triage
-        (json-field-number item "number")
+        (json-field-number (chooser-shared-view item) "number")
         (json-field-string item "title")
         (+ research-weight bonus)))))
 
@@ -375,16 +383,16 @@
   [items : json.JsonSeq]
   [out : (&mut out CandBuilder)]) : unit
   (let
-    [n : i64 (json.list-count items)]
+    [n : i64 (json.list-count (chooser-shared-view items))]
     [i : i64 0]
     (while (< i n)
       (begin
-        (match (json.list-get-index items i)
+        (match (json.list-get-index (chooser-shared-view items) i)
           [(json.JsonFound head)
             (if (and
-              (not (pr-draft? head))
-              (pr-targets-main? head)
-              (pr-checks-complete? head))
+              (not (pr-draft? (chooser-shared-view head)))
+              (pr-targets-main? (chooser-shared-view head))
+              (pr-checks-complete? (chooser-shared-view head)))
               (cand-builder-push! out (pr-candidate head))
               unit)]
           [(json.JsonMissing) unit])
@@ -473,17 +481,17 @@
 ;: agent, so it leaves the pool entirely rather than merely changing lane.
 (define (issue-claimed-by-pr? [prs : json.JsonSeq] [number : i64]) : bool
   (let
-    [n : i64 (json.list-count prs)]
+    [n : i64 (json.list-count (chooser-shared-view prs))]
     [i : i64 0]
     [found : bool false]
     (begin
       (while (and (not found) (< i n))
         (begin
-          (match (json.list-get-index prs i)
+          (match (json.list-get-index (chooser-shared-view prs) i)
             [(json.JsonFound head)
               (if (or
                 (text-claims-number?
-                  (json-field-string head "headRefName")
+                  (json-field-string (chooser-shared-view head) "headRefName")
                   number)
                 (text-claims-number? (json-field-string head "title") number))
                 (set! found true)
@@ -503,15 +511,19 @@
   [implement-allowed? : bool]
   [out : (&mut out CandBuilder)]) : unit
   (let
-    [n : i64 (json.list-count items)]
+    [n : i64 (json.list-count (chooser-shared-view items))]
     [i : i64 0]
     (while (< i n)
       (begin
-        (match (json.list-get-index items i)
+        (match (json.list-get-index (chooser-shared-view items) i)
           [(json.JsonFound head)
             (if (or
-              (issue-claimed-by-pr? prs (json-field-number head "number"))
-              (and (not implement-allowed?) (issue-ready? head)))
+              (issue-claimed-by-pr?
+                (chooser-shared-view prs)
+                (json-field-number (chooser-shared-view head) "number"))
+              (and
+                (not implement-allowed?)
+                (issue-ready? (chooser-shared-view head))))
               unit
               (cand-builder-push! out (issue-candidate head)))]
           [(json.JsonMissing) unit])
@@ -542,19 +554,21 @@
       [(json.JsonMissing) false])))
 
 (define (queue-shape-valid? [root : json.Json]) : bool
-  (and (json-field-array? root "prs") (json-field-array? root "issues")))
+  (and
+    (json-field-array? (chooser-shared-view root) "prs")
+    (json-field-array? root "issues")))
 
 ;: Count open non-draft PRs in the raw `prs` array. Draft PRs and a missing
 ;: `isDraft` field are handled by `json-field-bool` (missing => non-draft).
 (define (count-open-nondraft-prs [items : json.JsonSeq]) : i64
   (let
-    [n : i64 (json.list-count items)]
+    [n : i64 (json.list-count (chooser-shared-view items))]
     [i : i64 0]
     [open : i64 0]
     (begin
       (while (< i n)
         (begin
-          (match (json.list-get-index items i)
+          (match (json.list-get-index (chooser-shared-view items) i)
             [(json.JsonFound head)
               (if (json-field-bool head "isDraft")
                 unit
@@ -568,19 +582,21 @@
 ;: issues report claimed exclusions.
 (define (saturation-counts [items : json.JsonSeq] [prs : json.JsonSeq]) : SaturationCounts
   (let
-    [n : i64 (json.list-count items)]
+    [n : i64 (json.list-count (chooser-shared-view items))]
     [i : i64 0]
     [ready-held-back : i64 0]
     [research-claimed : i64 0]
     (begin
       (while (< i n)
         (begin
-          (match (json.list-get-index items i)
+          (match (json.list-get-index (chooser-shared-view items) i)
             [(json.JsonFound head)
               (let
                 [claimed : bool
-                  (issue-claimed-by-pr? prs (json-field-number head "number"))]
-                [ready : bool (issue-ready? head)]
+                  (issue-claimed-by-pr?
+                    (chooser-shared-view prs)
+                    (json-field-number (chooser-shared-view head) "number"))]
+                [ready : bool (issue-ready? (chooser-shared-view head))]
                 (cond
                   [(and ready (not claimed))
                     (set! ready-held-back (+ ready-held-back 1))]
@@ -619,41 +635,47 @@
 ;: research/triage work.
 (define (build-candidates [root : json.Json]) : CandSeq
   (let
-    [prs : json.JsonSeq (json-field-array root "prs")]
+    [prs : json.JsonSeq (json-field-array (chooser-shared-view root) "prs")]
     [issues : json.JsonSeq (json-field-array root "issues")]
     [implement-allowed? : bool
-      (<= (count-open-nondraft-prs prs) implement-pr-cap)]
+      (<= (count-open-nondraft-prs (chooser-shared-view prs)) implement-pr-cap)]
     [out : CandBuilder (cand-builder-new)]
     (begin
-      (pr-candidates-into prs (&mut out))
+      (pr-candidates-into (chooser-shared-view prs) (&mut out))
       (issue-candidates-into issues prs implement-allowed? (&mut out))
       (cand-builder-to-seq out))))
 
 ;: Number of candidates in a sequence.
-(define (cand-count [cands : CandSeq]) : i64
+(define (cand-count [cands : (& cands CandSeq)]) : i64
   cands.len)
 
 ;: Return the candidate at zero-based `index`, or a sentinel triage candidate
 ;: when out of range (should not happen for a valid weighted index).
-(define (cand-nth [cands : CandSeq] [index : i64]) : Candidate
+(define (cand-nth [cands : (& cands CandSeq)] [index : i64]) : Candidate
   (if (or (< index 0) (>= index cands.len))
     (Candidate kind-triage 0 "" research-weight)
-    (array-ref cands.slots index)))
+    (let
+      [candidate : (& cands Candidate) (& (array-ref cands.slots index))]
+      (Candidate
+        candidate.kind
+        candidate.number
+        (chooser-string-shared-view candidate.title)
+        candidate.weight))))
 
 ;: Build the weight list from candidates, preserving order so a chosen weight
 ;: index maps back to the candidate at the same position.
-(define (cand-weights-from [cands : CandSeq] [index : i64]) : random.RandomWeightList
+(define (cand-weights-from [cands : (& cands CandSeq)] [index : i64]) : random.RandomWeightList
   (if (>= index (cand-count cands))
     (random.weight-list-empty)
     (random.weight-list-cons
       (__tl-project-field (cand-nth cands index) weight)
       (cand-weights-from cands (+ index 1)))))
 
-(define (cand-weights [cands : CandSeq]) : random.RandomWeightList
+(define (cand-weights [cands : (& cands CandSeq)]) : random.RandomWeightList
   (cand-weights-from cands 0))
 
 ;: True when any candidate in the sequence has the given kind tag.
-(define (cand-list-has-kind? [cands : CandSeq] [target-kind : i64]) : bool
+(define (cand-list-has-kind? [cands : (& cands CandSeq)] [target-kind : i64]) : bool
   (let
     [n : i64 (cand-count cands)]
     [i : i64 0]
@@ -1007,11 +1029,13 @@
       [(json.ErrJson message)
         (ChooserResult.Err (string.append "Error: invalid JSON: " message))]
       [(json.OkJson root)
-        (if (queue-shape-valid? root)
+        (if (queue-shape-valid? (chooser-shared-view root))
           (let
-            [prs : json.JsonSeq (json-field-array root "prs")]
-            [issues : json.JsonSeq (json-field-array root "issues")]
-            [open-prs : i64 (count-open-nondraft-prs prs)]
+            [prs : json.JsonSeq
+              (json-field-array (chooser-shared-view root) "prs")]
+            [issues : json.JsonSeq
+              (json-field-array (chooser-shared-view root) "issues")]
+            [open-prs : i64 (count-open-nondraft-prs (chooser-shared-view prs))]
             [cands : CandSeq (build-candidates root)]
             (if (= (cand-count cands) 0)
               (if (> open-prs implement-pr-cap)

@@ -498,7 +498,10 @@
                     (set! done true))
                   (if (= read-count 0)
                     (set! done true)
-                    (linux-read-dir-append-page! buf read-count (&mut out))))))
+                    (linux-read-dir-append-page!
+                      (clone buf)
+                      read-count
+                      (&mut out))))))
             (io.linux-syscall-close fd)
             (if ok
               (read-dir-bytes-string (&mut out))
@@ -545,11 +548,9 @@
 ;: Return a pointer to `WIN32_FIND_DATAA.cFileName`.
 (cfg
   windows
-  (define (fs-windows-find-data-name [data : (__tl_dyn-array u8)]) : (Ptr u8)
+  (define (fs-windows-find-data-name [data : (MutPtr u8)]) : (Ptr u8)
     (unsafe
-      (ptr-cast
-        (ptr-offset (io.array-ptr data) fs-windows-find-data-name-offset)
-        : (Ptr u8)))))
+      (ptr-cast (ptr-offset data fs-windows-find-data-name-offset) : (Ptr u8)))))
 
 ;: Return the Windows host status code for opening and closing a directory scan.
 (cfg
@@ -594,7 +595,7 @@
               (begin
                 (read-dir-append-entry!
                   (&mut out)
-                  (fs-windows-find-data-name data))
+                  (fs-windows-find-data-name (io.array-ptr data)))
                 (if (=
                   (fs-win-find-next-file handle (io.array-ptr data))
                   (cast 0 : i32))
@@ -813,7 +814,9 @@
               0)))))))
 
 ;: Probe path metadata and return status, kind sentinel, and regular-file size.
-(define (file-metadata-probe-with-links [path : String] [no-follow : bool]) : FsFileMetadataProbe
+(define (file-metadata-probe-with-links
+  [path : (& path str)]
+  [no-follow : bool]) : FsFileMetadataProbe
   (let
     [path-bytes : (__tl_dyn-array u8) (io.c-string path)]
     [path-ptr : (Ptr u8) (io.array-const-ptr path-bytes)]
@@ -823,25 +826,25 @@
       (linux-file-metadata-probe path-ptr no-follow))))
 
 ;: Probe path metadata while following symbolic links.
-(define (file-metadata-probe [path : String]) : FsFileMetadataProbe
+(define (file-metadata-probe [path : (& path str)]) : FsFileMetadataProbe
   (file-metadata-probe-with-links path false))
 
 ;: Return the host status code or sentinel for a filesystem node kind.
-(define (file-kind-status [path : String]) : i64
+(define (file-kind-status [path : (& path str)]) : i64
   (__tl-project-field (file-metadata-probe path) kind))
 
 ;: Return the host status code or kind without following symbolic links.
 ;:
 ;: Symbolic links and Windows reparse points are reported as "other".
-(define (file-kind-status-no-follow [path : String]) : i64
+(define (file-kind-status-no-follow [path : (& path str)]) : i64
   (__tl-project-field (file-metadata-probe-with-links path true) kind))
 
 ;: Return the host status code for retrieving a regular-file size.
-(define (file-size-status [path : String]) : i64
+(define (file-size-status [path : (& path str)]) : i64
   (__tl-project-field (file-metadata-probe path) status))
 
 ;: Return the host-reported byte size for a regular file.
-(define (file-size [path : String]) : i64
+(define (file-size [path : (& path str)]) : i64
   (__tl-project-field (file-metadata-probe path) size))
 
 ;: Linux `ERANGE` status returned when the current-dir buffer is too small.
@@ -1060,20 +1063,20 @@
   (cond
     [(string.eq segment "") unit]
     [(string.eq segment ".") unit]
-    [(not (string.eq segment "..")) (svec.push-ref! (&mut segments) segment)]
-    [(<= (svec.len (& segments)) 0)
+    [(not (string.eq segment "..")) (svec.push-ref! segments segment)]
+    [(<= (svec.len segments) 0)
       (if rooted
         unit
-        (svec.push-ref! (&mut segments) segment))]
+        (svec.push-ref! segments segment))]
     [else
       (let
-        [top : String (svec.last (& segments) "")]
+        [top : String (svec.last segments "")]
         (if (string.eq top "..")
           (begin
-            (svec.push-ref! (&mut segments) segment)
+            (svec.push-ref! segments segment)
             unit)
           (begin
-            (match (svec.pop-ref! (&mut segments))
+            (match (svec.pop-ref! segments)
               [(svec.Pop.Ok _) unit]
               [svec.Pop.Empty unit])
             unit)))]))
@@ -1463,7 +1466,7 @@
         [(OkFsFileKind kind)
           (if (stdlib.fs.file-kind-regular? kind)
             (let
-              [status : i64 (stdlib.fs.file-size-status path-text)]
+              [status : i64 (stdlib.fs.file-size-status (clone path-text))]
               (if (= status io.io-status-ok)
                 (OkFsMetadata (FsMetadata kind (stdlib.fs.file-size path-text)))
                 (ErrFsMetadata (io.error-from-status path status))))
@@ -1507,7 +1510,7 @@
     (if (io.empty-path? path)
       (ErrIoStringVector (io.invalid-path-error path))
       (let
-        [status : i64 (stdlib.fs.read-dir-status path-text)]
+        [status : i64 (stdlib.fs.read-dir-status (clone path-text))]
         (if (= status io.io-status-ok)
           (OkIoStringVector
             (stdlib.fs.read-dir-split-vec (stdlib.fs.read-dir path-text)))
@@ -1616,7 +1619,7 @@
               [separator : String (stdlib.fs.path-separator)]
               [root-with-separator : String (str_cat.str-cat root separator)]
               (str_cat.str-cat root-with-separator name))])]
-      [status : i64 (stdlib.fs.mkdir-status-owned path)]
+      [status : i64 (stdlib.fs.mkdir-status-owned (clone path))]
       (if (= status io.io-status-ok)
         (io.OkIoString path)
         (if (= status stdlib.fs.fs-status-already-exists)
@@ -1639,19 +1642,19 @@
 ;; Inline test coverage.
 (cfg
   test
-  (define (fs-test-fail [message : String]) : unit
+  (define (fs-test-fail [message : (& message str)]) : unit
     (io.panic message)))
 
 (cfg
   test
-  (define (fs-test-assert-true [condition : bool] [message : String]) : unit
+  (define (fs-test-assert-true [condition : bool] [message : (& message str)]) : unit
     (if condition
       unit
       (fs-test-fail message))))
 
 (cfg
   test
-  (define (fs-test-assert-false [condition : bool] [message : String]) : unit
+  (define (fs-test-assert-false [condition : bool] [message : (& message str)]) : unit
     (fs-test-assert-true (not condition) message)))
 
 (cfg
@@ -1659,7 +1662,7 @@
   (define (fs-test-assert-bool-eq
     [actual : bool]
     [expected : bool]
-    [message : String]) : unit
+    [message : (& message str)]) : unit
     (fs-test-assert-true (= actual expected) message)))
 
 (cfg
@@ -1667,7 +1670,7 @@
   (define (fs-test-assert-i64-eq
     [actual : i64]
     [expected : i64]
-    [message : String]) : unit
+    [message : (& message str)]) : unit
     (fs-test-assert-true (= actual expected) message)))
 
 (cfg
@@ -1675,7 +1678,7 @@
   (define (fs-test-assert-string-eq
     [actual : (& actual str)]
     [expected : (& expected str)]
-    [message : String]) : unit
+    [message : (& message str)]) : unit
     (fs-test-assert-true (string.eq actual expected) message)))
 
 (cfg
@@ -1683,7 +1686,7 @@
   (define (fs-path-join-many-api-assert
     [got : String]
     [want : String]
-    [message : String]) : unit
+    [message : (& message str)]) : unit
     (fs-test-assert-string-eq (& got) (& want) message)))
 
 (cfg
@@ -1751,12 +1754,14 @@
   (define (fs-test-assert-owned-string-eq
     [actual : String]
     [expected : String]
-    [message : String]) : unit
+    [message : (& message str)]) : unit
     (fs-test-assert-string-eq (& actual) (& expected) message)))
 
 (cfg
   test
-  (define (fs-test-assert-ok-unit [result : io.ResultIoUnit] [message : String]) : unit
+  (define (fs-test-assert-ok-unit
+    [result : io.ResultIoUnit]
+    [message : (& message str)]) : unit
     (match result
       [(io.OkIoUnit) unit]
       [(io.ErrIoUnit error) (io.panic message)])))
@@ -1765,7 +1770,7 @@
   test
   (define (fs-test-assert-not-found-unit
     [result : io.ResultIoUnit]
-    [message : String]) : unit
+    [message : (& message str)]) : unit
     (match result
       [(io.OkIoUnit) (io.panic message)]
       [(io.ErrIoUnit error) unit])))
@@ -1774,7 +1779,7 @@
   test
   (define (fs-test-assert-invalid-unit
     [result : io.ResultIoUnit]
-    [message : String]) : unit
+    [message : (& message str)]) : unit
     (match result
       [(io.OkIoUnit) (io.panic message)]
       [(io.ErrIoUnit error) unit])))
@@ -1783,7 +1788,7 @@
   test
   (define (fs-test-assert-unsupported-unit
     [result : io.ResultIoUnit]
-    [message : String]) : unit
+    [message : (& message str)]) : unit
     (match result
       [(io.OkIoUnit) (io.panic message)]
       [(io.ErrIoUnit error) unit])))
@@ -1792,7 +1797,7 @@
   test
   (define (fs-test-expect-ok-string
     [result : io.ResultIoString]
-    [message : String]) : String
+    [message : (& message str)]) : String
     (match result
       [(io.OkIoString value) value]
       [(io.ErrIoString error) (io.panic message)])))
@@ -1801,7 +1806,7 @@
   test
   (define (fs-test-expect-ok-string-vector
     [result : ResultIoStringVector]
-    [message : String]) : FsStringVector
+    [message : (& message str)]) : FsStringVector
     (match result
       [(OkIoStringVector value) value]
       [(ErrIoStringVector error) (io.panic message)])))
@@ -1810,7 +1815,7 @@
   test
   (define (fs-test-assert-not-found-string-vector
     [result : ResultIoStringVector]
-    [message : String]) : unit
+    [message : (& message str)]) : unit
     (match result
       [(OkIoStringVector _) (io.panic message)]
       [(ErrIoStringVector error) unit])))
@@ -1819,7 +1824,7 @@
   test
   (define (fs-test-assert-invalid-string-vector
     [result : ResultIoStringVector]
-    [message : String]) : unit
+    [message : (& message str)]) : unit
     (match result
       [(OkIoStringVector _) (io.panic message)]
       [(ErrIoStringVector error) unit])))
@@ -1828,30 +1833,34 @@
   test
   (define (fs-test-assert-error-string-vector
     [result : ResultIoStringVector]
-    [message : String]) : unit
+    [message : (& message str)]) : unit
     (match result
       [(OkIoStringVector _) (io.panic message)]
       [(ErrIoStringVector _) unit])))
 
 (cfg
   test
-  (define (fs-api-test-try-file-exists? [path : String]) : io.ResultIoBool
-    (io.try-file-exists? (& path))))
+  (define (fs-api-test-try-file-exists? [path : (& path str)]) : io.ResultIoBool
+    (io.try-file-exists? path)))
 
 (cfg
   test
-  (define (fs-api-test-try-read-file [path : String]) : io.ResultIoBytes
-    (io.try-read-file (& path))))
+  (define (fs-api-test-try-read-file [path : (& path str)]) : io.ResultIoBytes
+    (io.try-read-file path)))
 
 (cfg
   test
-  (define (fs-api-test-try-write-file [path : String] [contents : String]) : io.ResultIoUnit
-    (io.try-write-file (& path) (byte_buf.str-as-bytes (& contents)))))
+  (define (fs-api-test-try-write-file
+    [path : (& path str)]
+    [contents : (& contents str)]) : io.ResultIoUnit
+    (io.try-write-file path (byte_buf.str-as-bytes contents))))
 
 (cfg
   test
-  (define (fs-api-test-fs-path-join [left : String] [right : String]) : String
-    (stdlib.fs.path-join (& left) (& right))))
+  (define (fs-api-test-fs-path-join
+    [left : (& left str)]
+    [right : (& right str)]) : String
+    (stdlib.fs.path-join left right)))
 
 (cfg
   test
@@ -1887,118 +1896,120 @@
 
 (cfg
   test
-  (define (fs-api-test-fs-path-starts-separator? [path : String]) : bool
-    (stdlib.fs.path-starts-separator? (& path))))
+  (define (fs-api-test-fs-path-starts-separator? [path : (& path str)]) : bool
+    (stdlib.fs.path-starts-separator? path)))
 
 (cfg
   test
-  (define (fs-api-test-fs-dirname [path : String]) : String
-    (stdlib.fs.dirname (& path))))
+  (define (fs-api-test-fs-dirname [path : (& path str)]) : String
+    (stdlib.fs.dirname path)))
 
 (cfg
   test
-  (define (fs-api-test-fs-basename [path : String]) : String
-    (stdlib.fs.basename (& path))))
+  (define (fs-api-test-fs-basename [path : (& path str)]) : String
+    (stdlib.fs.basename path)))
 
 (cfg
   test
-  (define (fs-api-test-fs-extension [path : String]) : String
-    (stdlib.fs.extension (& path))))
+  (define (fs-api-test-fs-extension [path : (& path str)]) : String
+    (stdlib.fs.extension path)))
 
 (cfg
   test
-  (define (fs-api-test-fs-path-normalize [path : String]) : String
-    (stdlib.fs.path-normalize (& path))))
+  (define (fs-api-test-fs-path-normalize [path : (& path str)]) : String
+    (stdlib.fs.path-normalize path)))
 
 (cfg
   test
-  (define (fs-api-test-fs-path-absolute? [path : String]) : bool
-    (stdlib.fs.path-absolute? (& path))))
+  (define (fs-api-test-fs-path-absolute? [path : (& path str)]) : bool
+    (stdlib.fs.path-absolute? path)))
 
 (cfg
   test
-  (define (fs-api-test-fs-path-safe-relative? [path : String]) : bool
-    (stdlib.fs.path-safe-relative? (& path))))
+  (define (fs-api-test-fs-path-safe-relative? [path : (& path str)]) : bool
+    (stdlib.fs.path-safe-relative? path)))
 
 (cfg
   test
-  (define (fs-api-test-try-mkdir [path : String]) : io.ResultIoUnit
-    (stdlib.fs.try-mkdir (& path))))
+  (define (fs-api-test-try-mkdir [path : (& path str)]) : io.ResultIoUnit
+    (stdlib.fs.try-mkdir path)))
 
 (cfg
   test
-  (define (fs-api-test-try-mkdir-if-missing [path : String]) : io.ResultIoUnit
-    (stdlib.fs.try-mkdir-if-missing (& path))))
+  (define (fs-api-test-try-mkdir-if-missing [path : (& path str)]) : io.ResultIoUnit
+    (stdlib.fs.try-mkdir-if-missing path)))
 
 (cfg
   test
-  (define (fs-api-test-try-remove-file [path : String]) : io.ResultIoUnit
-    (stdlib.fs.try-remove-file (& path))))
+  (define (fs-api-test-try-remove-file [path : (& path str)]) : io.ResultIoUnit
+    (stdlib.fs.try-remove-file path)))
 
 (cfg
   test
-  (define (fs-api-test-try-remove-dir [path : String]) : io.ResultIoUnit
-    (stdlib.fs.try-remove-dir (& path))))
+  (define (fs-api-test-try-remove-dir [path : (& path str)]) : io.ResultIoUnit
+    (stdlib.fs.try-remove-dir path)))
 
 (cfg
   test
-  (define (fs-api-test-try-rename [source : String] [destination : String]) : io.ResultIoUnit
-    (stdlib.fs.try-rename (& source) (& destination))))
+  (define (fs-api-test-try-rename
+    [source : (& source str)]
+    [destination : (& destination str)]) : io.ResultIoUnit
+    (stdlib.fs.try-rename source destination)))
 
 (cfg
   test
-  (define (fs-api-test-try-read-dir [path : String]) : ResultIoStringVector
-    (stdlib.fs.try-read-dir (& path))))
+  (define (fs-api-test-try-read-dir [path : (& path str)]) : ResultIoStringVector
+    (stdlib.fs.try-read-dir path)))
 
 (cfg
   test
-  (define (fs-api-test-try-read-dir-vec [path : String]) : ResultIoStringVector
-    (stdlib.fs.try-read-dir-vec (& path))))
+  (define (fs-api-test-try-read-dir-vec [path : (& path str)]) : ResultIoStringVector
+    (stdlib.fs.try-read-dir-vec path)))
 
 (cfg
   test
-  (define (fs-api-test-try-file-kind [path : String]) : ResultFsFileKind
-    (stdlib.fs.try-file-kind (& path))))
+  (define (fs-api-test-try-file-kind [path : (& path str)]) : ResultFsFileKind
+    (stdlib.fs.try-file-kind path)))
 
 (cfg
   test
-  (define (fs-api-test-try-file-metadata [path : String]) : ResultFsMetadata
-    (stdlib.fs.try-file-metadata (& path))))
+  (define (fs-api-test-try-file-metadata [path : (& path str)]) : ResultFsMetadata
+    (stdlib.fs.try-file-metadata path)))
 
 (cfg
   test
-  (define (fs-api-test-fs-file-kind-status [path : String]) : i64
+  (define (fs-api-test-fs-file-kind-status [path : (& path str)]) : i64
     (stdlib.fs.file-kind-status path)))
 
 (cfg
   test
-  (define (fs-api-test-fs-file-size-status [path : String]) : i64
+  (define (fs-api-test-fs-file-size-status [path : (& path str)]) : i64
     (stdlib.fs.file-size-status path)))
 
 (cfg
   test
-  (define (fs-api-test-fs-file-size [path : String]) : i64
+  (define (fs-api-test-fs-file-size [path : (& path str)]) : i64
     (stdlib.fs.file-size path)))
 
 (cfg
   test
-  (define (fs-api-test-try-remove-file-if-exists [path : String]) : io.ResultIoUnit
-    (stdlib.fs.try-remove-file-if-exists (& path))))
+  (define (fs-api-test-try-remove-file-if-exists [path : (& path str)]) : io.ResultIoUnit
+    (stdlib.fs.try-remove-file-if-exists path)))
 
 (cfg
   test
-  (define (fs-api-test-try-remove-dir-if-exists [path : String]) : io.ResultIoUnit
-    (stdlib.fs.try-remove-dir-if-exists (& path))))
+  (define (fs-api-test-try-remove-dir-if-exists [path : (& path str)]) : io.ResultIoUnit
+    (stdlib.fs.try-remove-dir-if-exists path)))
 
 (cfg
   test
-  (define (fs-api-test-try-create-temp-dir [prefix : String]) : io.ResultIoString
-    (stdlib.fs.try-create-temp-dir (& prefix))))
+  (define (fs-api-test-try-create-temp-dir [prefix : (& prefix str)]) : io.ResultIoString
+    (stdlib.fs.try-create-temp-dir prefix)))
 
 (cfg
   test
   (define (fs-test-assert-exists
-    [path : String]
+    [path : (& path str)]
     [expected : bool]
     [message : String]) : unit
     (match (fs-api-test-try-file-exists? path)
@@ -2009,7 +2020,7 @@
   test
   (define (fs-test-expect-file-kind
     [result : ResultFsFileKind]
-    [message : String]) : FsFileKind
+    [message : (& message str)]) : FsFileKind
     (match result
       [(OkFsFileKind kind) kind]
       [(ErrFsFileKind error) (io.panic message)])))
@@ -2018,14 +2029,16 @@
   test
   (define (fs-test-expect-file-metadata
     [result : ResultFsMetadata]
-    [message : String]) : FsMetadata
+    [message : (& message str)]) : FsMetadata
     (match result
       [(OkFsMetadata metadata) metadata]
       [(ErrFsMetadata error) (io.panic message)])))
 
 (cfg
   test
-  (define (fs-test-assert-file-kind-regular [path : String] [message : String]) : unit
+  (define (fs-test-assert-file-kind-regular
+    [path : (& path str)]
+    [message : String]) : unit
     (match (fs-test-expect-file-kind (fs-api-test-try-file-kind path) message)
       [(FsFileRegular) unit]
       [_ (io.panic message)])))
@@ -2033,7 +2046,7 @@
 (cfg
   test
   (define (fs-test-assert-file-kind-directory
-    [path : String]
+    [path : (& path str)]
     [message : String]) : unit
     (match (fs-test-expect-file-kind (fs-api-test-try-file-kind path) message)
       [(FsFileDirectory) unit]
@@ -2042,7 +2055,7 @@
 (cfg
   test
   (define (fs-test-assert-file-kind-not-found
-    [path : String]
+    [path : (& path str)]
     [message : String]) : unit
     (match (fs-api-test-try-file-kind path)
       [(ErrFsFileKind error) unit]
@@ -2050,7 +2063,9 @@
 
 (cfg
   test
-  (define (fs-test-assert-file-kind-invalid [path : String] [message : String]) : unit
+  (define (fs-test-assert-file-kind-invalid
+    [path : (& path str)]
+    [message : String]) : unit
     (match (fs-api-test-try-file-kind path)
       [(ErrFsFileKind error) unit]
       [(OkFsFileKind _) (io.panic message)])))
@@ -2058,7 +2073,7 @@
 (cfg
   test
   (define (fs-test-assert-file-kind-unsupported
-    [path : String]
+    [path : (& path str)]
     [message : String]) : unit
     (match (fs-api-test-try-file-kind path)
       [(ErrFsFileKind error) unit]
@@ -2067,7 +2082,7 @@
 (cfg
   test
   (define (fs-test-assert-file-metadata-regular-size
-    [path : String]
+    [path : (& path str)]
     [expected-size : i64]
     [message : String]) : unit
     (let
@@ -2084,7 +2099,7 @@
 (cfg
   test
   (define (fs-test-assert-file-metadata-directory
-    [path : String]
+    [path : (& path str)]
     [message : String]) : unit
     (match (metadata-kind
       (fs-test-expect-file-metadata
@@ -2096,7 +2111,7 @@
 (cfg
   test
   (define (fs-test-assert-file-metadata-not-found
-    [path : String]
+    [path : (& path str)]
     [message : String]) : unit
     (match (fs-api-test-try-file-metadata path)
       [(ErrFsMetadata error) unit]
@@ -2105,7 +2120,7 @@
 (cfg
   test
   (define (fs-test-assert-file-metadata-invalid
-    [path : String]
+    [path : (& path str)]
     [message : String]) : unit
     (match (fs-api-test-try-file-metadata path)
       [(ErrFsMetadata error) unit]
@@ -2114,7 +2129,7 @@
 (cfg
   test
   (define (fs-test-assert-file-metadata-unsupported
-    [path : String]
+    [path : (& path str)]
     [message : String]) : unit
     (match (fs-api-test-try-file-metadata path)
       [(ErrFsMetadata error) unit]
@@ -2123,7 +2138,7 @@
 (cfg
   test
   (define (fs-test-assert-runtime-metadata-regular
-    [path : String]
+    [path : (& path str)]
     [expected-size : i64]
     [message : String]) : unit
     (begin
@@ -2143,7 +2158,7 @@
 (cfg
   test
   (define (fs-test-assert-runtime-metadata-directory
-    [path : String]
+    [path : (& path str)]
     [message : String]) : unit
     (begin
       (fs-test-assert-i64-eq
@@ -2159,7 +2174,7 @@
 (cfg
   test
   (define (fs-test-assert-runtime-metadata-not-found
-    [path : String]
+    [path : (& path str)]
     [message : String]) : unit
     (begin
       (fs-test-assert-i64-eq
@@ -2198,7 +2213,7 @@
 (cfg
   test
   (define (fs-test-assert-file-contents
-    [path : String]
+    [path : (& path str)]
     [expected : String]
     [message : String]) : unit
     (match (fs-api-test-try-read-file path)
@@ -2237,7 +2252,9 @@
 
 (cfg
   test
-  (define (fs-test-assert-mkdir-if-missing [parent : String] [cleanup : bool]) : unit
+  (define (fs-test-assert-mkdir-if-missing
+    [parent : (& parent str)]
+    [cleanup : bool]) : unit
     (let
       [dir : String (fs-api-test-fs-path-join parent "mkdir-if-missing")]
       (begin
@@ -2256,7 +2273,7 @@
 
 (cfg
   test
-  (define (fs-test-assert-linux-rename-api [root : String]) : unit
+  (define (fs-test-assert-linux-rename-api [root : (& root str)]) : unit
     (let
       [file-source : String
         (fs-api-test-fs-path-join root "rename source with space.txt")]
@@ -2356,7 +2373,7 @@
 
 (cfg
   test
-  (define (fs-test-assert-read-dir-api [root : String]) : unit
+  (define (fs-test-assert-read-dir-api [root : (& root str)]) : unit
     (let
       [file-a : String (fs-api-test-fs-path-join root "alpha.txt")]
       [file-b : String (fs-api-test-fs-path-join root "beta data.txt")]
@@ -2480,7 +2497,7 @@
       (begin
         (fs-test-assert-owned-string-eq
           joined
-          expected-join
+          (clone expected-join)
           "path join inserts separator")
         (fs-test-assert-owned-string-eq
           (fs-api-test-fs-path-join "left/" "/right")

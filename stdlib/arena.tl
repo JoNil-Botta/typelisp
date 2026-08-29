@@ -59,11 +59,18 @@
 ;# (import stdlib.arena)
 ;# (import stdlib.string)
 ;#
-;# (define (build-in-level [level : arena.Arena] [n : i64]) : String
+;# (define (build-in-level
+;#   [level : (arena.Arena owner)]
+;#   [n : i64]) : (in owner String)
 ;#   (in-arena
 ;#     level
 ;#     (string.append "level:" (string.int->string n))))
 ;# ```
+;#
+;# For a branded `(Arena owner)`, `in-arena` derives allocation provenance from
+;# the resolved type. Locals, parameters, and aggregate fields therefore produce
+;# `(in owner T)` values that calls and matching lifetime-parameterized
+;# aggregates can preserve. Bare `Arena` keeps the legacy direct-local behavior.
 ;#
 ;# Arena handles identify the stable first segment of an arena. Growth appends
 ;# physical segments behind that root, so `current` and stored handles retain

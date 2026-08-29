@@ -668,6 +668,16 @@
                                     ["region" true]
                                     [_ false])]
                                 [value-key : String (type-key value-type)]
+                                ;; Ownership-safe macro capture presents a
+                                ;; non-place string expression as a shared
+                                ;; borrow of its temporary `str` payload. Keep
+                                ;; selector diagnostics at the source-level
+                                ;; value type rather than exposing that
+                                ;; generated capture owner.
+                                [diagnostic-value-key : String
+                                  (if (string.eq value-kind "str")
+                                    "String"
+                                    value-key)]
                                 [owner : String
                                   (if nominal?
                                     (type-nominal-module value-type)
@@ -1031,7 +1041,7 @@
                                             selector)
                                           (comptime.string-append
                                             "' selector requires an integer or float argument; got "
-                                            (type-key argument-type)))))
+                                            diagnostic-value-key))))
                                     unit)
                                   (if (string.eq selector "")
                                     unit
@@ -1547,6 +1557,7 @@
                                           (comptime.expr-type argument-value))]
                                       [borrow-mode : i64
                                         (match value-kind
+                                          ["string" 1]
                                           ["struct" 1]
                                           ["enum" 1]
                                           ["region" 1]
@@ -1594,6 +1605,7 @@
                                     (type-kind (comptime.expr-type argument))]
                                   [borrow-mode : i64
                                     (match value-kind
+                                      ["string" 1]
                                       ["struct" 1]
                                       ["enum" 1]
                                       ["region" 1]
@@ -5876,7 +5888,7 @@
   (bn-from-u64-cap x stdlib.format.ftoa-cap))
 
 ;: Compare BigNums a and b; -1 if a<b, 0 if equal, 1 if a>b.
-(define (bn-cmp [a : BigNum] [b : BigNum]) : i64
+(define (bn-cmp [a : (& a BigNum)] [b : (& b BigNum)]) : i64
   (let
     [la : i64 a.len]
     [lb : i64 b.len]
@@ -5907,7 +5919,7 @@
             res))))))
 
 ;: Limb count of arr with high zero limbs trimmed, starting from hint.
-(define (bn-norm-len [arr : (__tl_dyn-array u64)] [hint : i64]) : i64
+(define (bn-norm-len [arr : (& arr (__tl_dyn-array u64))] [hint : i64]) : i64
   (let
     [i : i64 hint]
     (begin
@@ -5916,7 +5928,7 @@
       i)))
 
 ;: Sum of BigNums a and b.
-(define (bn-add [a : BigNum] [b : BigNum]) : BigNum
+(define (bn-add [a : (& a BigNum)] [b : (& b BigNum)]) : BigNum
   (let
     [a-cap : i64 (array-length a.limbs)]
     [b-cap : i64 (array-length b.limbs)]
@@ -5954,10 +5966,12 @@
         (begin
           (set! (array-ref r i) carry)
           (set! n (+ n 1))))
-      (BigNum r (bn-norm-len r n)))))
+      (let
+        [norm : i64 (bn-norm-len (& r) n)]
+        (BigNum r norm)))))
 
 ;: Product of BigNum a and a value m that fits in 32 bits.
-(define (bn-mul-u32 [a : BigNum] [m : u64]) : BigNum
+(define (bn-mul-u32 [a : (& a BigNum)] [m : u64]) : BigNum
   (let
     [r : (__tl_dyn-array u64) (__tl_make-array u64 (array-length a.limbs))]
     [la : i64 a.len]
@@ -5976,7 +5990,15 @@
           (set! (array-ref r i) (bit-and carry stdlib.format.ftoa-mask32))
           (set! carry (shr carry 32))
           (set! i (+ i 1))))
-      (BigNum r (bn-norm-len r i)))))
+      (let
+        [norm : i64 (bn-norm-len (& r) i)]
+        (BigNum r norm)))))
+
+;: Compare a with b multiplied by a 32-bit value without borrowing a temporary.
+(define (bn-cmp-mul-u32 [a : (& a BigNum)] [b : (& b BigNum)] [m : u64]) : i64
+  (let
+    [product : BigNum (bn-mul-u32 b m)]
+    (bn-cmp a (& product))))
 
 ;: BigNum a shifted left by n bits.
 (define (bn-shl-bits [a : BigNum] [n : i64]) : BigNum
@@ -6009,7 +6031,9 @@
         (when
           (and (not (= bit-shift 0)) (> carry (cast 0 : u64)))
           (set! (array-ref r (+ la limb-shift)) carry))
-        (BigNum r (bn-norm-len r (+ la (+ limb-shift 1))))))))
+        (let
+          [norm : i64 (bn-norm-len (& r) (+ la (+ limb-shift 1)))]
+          (BigNum r norm))))))
 
 ;: BigNum a multiplied by ten raised to p.
 (define (bn-mul-pow10 [a : BigNum] [p : i64]) : BigNum
@@ -6019,11 +6043,11 @@
     (begin
       (while (>= remaining 9)
         (begin
-          (set! r (bn-mul-u32 r (cast 1000000000 : u64)))
+          (set! r (bn-mul-u32 (& r) (cast 1000000000 : u64)))
           (set! remaining (- remaining 9))))
       (while (> remaining 0)
         (begin
-          (set! r (bn-mul-u32 r (cast 10 : u64)))
+          (set! r (bn-mul-u32 (& r) (cast 10 : u64)))
           (set! remaining (- remaining 1))))
       r)))
 
@@ -6044,7 +6068,7 @@
       r)))
 
 ;: Difference of BigNums a and b, assuming a >= b.
-(define (bn-sub [a : BigNum] [b : BigNum]) : BigNum
+(define (bn-sub [a : (& a BigNum)] [b : (& b BigNum)]) : BigNum
   (let
     [r : (__tl_dyn-array u64) (__tl_make-array u64 (array-length a.limbs))]
     [borrow : u64 (cast 0 : u64)]
@@ -6070,12 +6094,14 @@
               (set! borrow (cast 0 : u64))
               (set! borrow (cast 1 : u64)))
             (set! i (+ i 1)))))
-      (BigNum r (bn-norm-len r a.len)))))
+      (let
+        [norm : i64 (bn-norm-len (& r) a.len)]
+        (BigNum r norm)))))
 
 ;: BigNum a shifted right by n bits.
-(define (bn-shr-bits [a : BigNum] [n : i64]) : BigNum
+(define (bn-shr-bits [a : (& a BigNum)] [n : i64]) : BigNum
   (if (or (= a.len 0) (<= n 0))
-    a
+    (BigNum (clone a.limbs) a.len)
     (let
       [limb-shift : i64 (/ n 32)]
       [bit-shift : i64 (% n 32)]
@@ -6104,10 +6130,12 @@
                 (array-ref r i)
                 (bit-and (bit-or low high) stdlib.format.ftoa-mask32))
               (set! i (+ i 1)))))
-        (BigNum r (bn-norm-len r out-len))))))
+        (let
+          [norm : i64 (bn-norm-len (& r) out-len)]
+          (BigNum r norm))))))
 
 ;: Whether one zero-based bit is set in a BigNum.
-(define (bn-bit-set? [a : BigNum] [index : i64]) : bool
+(define (bn-bit-set? [a : (& a BigNum)] [index : i64]) : bool
   (if (< index 0)
     false
     (let
@@ -6122,7 +6150,7 @@
           (cast 0 : u64))))))
 
 ;: Whether any of the lowest `count` bits are nonzero.
-(define (bn-low-bits-nonzero? [a : BigNum] [count : i64]) : bool
+(define (bn-low-bits-nonzero? [a : (& a BigNum)] [count : i64]) : bool
   (if (<= count 0)
     false
     (let
@@ -6150,9 +6178,9 @@
   (if (<= shift 0)
     a
     (let
-      [quotient : BigNum (bn-shr-bits a shift)]
-      [half? : bool (bn-bit-set? a (- shift 1))]
-      [lower? : bool (bn-low-bits-nonzero? a (- shift 1))]
+      [quotient : BigNum (bn-shr-bits (& a) shift)]
+      [half? : bool (bn-bit-set? (& a) (- shift 1))]
+      [lower? : bool (bn-low-bits-nonzero? (& a) (- shift 1))]
       [odd? : bool
         (if (= quotient.len 0)
           false
@@ -6160,9 +6188,9 @@
             (bit-and (array-ref quotient.limbs 0) (cast 1 : u64))
             (cast 0 : u64)))]
       (if (and half? (or lower? odd?))
-        (bn-add
-          quotient
-          (bn-from-u64-cap (cast 1 : u64) (array-length a.limbs)))
+        (let
+          [one : BigNum (bn-from-u64-cap (cast 1 : u64) (array-length a.limbs))]
+          (bn-add quotient one))
         quotient))))
 
 ;: One base-2^32 long-division step by a u32-sized divisor.
@@ -6171,7 +6199,7 @@
   (remainder u64))
 
 ;: Divide a BigNum by one nonzero value that fits in 32 bits.
-(define (bn-div-u32 [a : BigNum] [divisor : u64]) : BigDivU32Step
+(define (bn-div-u32 [a : (& a BigNum)] [divisor : u64]) : BigDivU32Step
   (let
     [r : (__tl_dyn-array u64) (__tl_make-array u64 (array-length a.limbs))]
     [remainder : u64 (cast 0 : u64)]
@@ -6185,7 +6213,9 @@
             (set! (array-ref r i) digit)
             (set! remainder (- current (* digit divisor)))
             (set! i (- i 1)))))
-      (BigDivU32Step (BigNum r (bn-norm-len r a.len)) remainder))))
+      (let
+        [norm : i64 (bn-norm-len (& r) a.len)]
+        (BigDivU32Step (BigNum r norm) remainder)))))
 
 ;: One base-10 long-division digit and its exact remainder.
 (defstruct BigDigitStep
@@ -6193,16 +6223,16 @@
   (remainder BigNum))
 
 ;: Divide num by den when the quotient is one decimal digit.
-(define (bn-div-digit [num : BigNum] [den : BigNum]) : BigDigitStep
+(define (bn-div-digit [num : (& num BigNum)] [den : (& den BigNum)]) : BigDigitStep
   (let
     [digit : i64 0]
-    [remainder : BigNum num]
     (begin
-      (while (>= (bn-cmp remainder den) 0)
-        (begin
-          (set! remainder (bn-sub remainder den))
-          (set! digit (+ digit 1))))
-      (BigDigitStep digit remainder))))
+      (while (>= (bn-cmp-mul-u32 num den (cast (+ digit 1) : u64)) 0)
+        (set! digit (+ digit 1)))
+      (let
+        [product : BigNum (bn-mul-u32 den (cast digit : u64))]
+        [remainder : BigNum (bn-sub num (& product))]
+        (BigDigitStep digit remainder)))))
 
 ;: floor(a / b) for b > 0 (TL `/` truncates toward zero).
 (define (ftoa-floor-div [a : i64] [b : i64]) : i64
@@ -6529,7 +6559,7 @@
           (set! r (bn-mul-pow10 r (- 0 k)))
           (set! mminus (bn-mul-pow10 mminus (- 0 k)))
           (set! mplus (bn-mul-pow10 mplus (- 0 k)))))
-      (while (>= (bn-cmp r (bn-mul-u32 s (cast 10 : u64))) 0)
+      (while (>= (bn-cmp-mul-u32 (& r) (& s) (cast 10 : u64)) 0)
         (begin
           (set! s (bn-mul-u32 s (cast 10 : u64)))
           (set! k (+ k 1))))
@@ -6541,10 +6571,11 @@
           (set! k (- k 1))))
       (while (not done)
         (let
-          [step : BigDigitStep (bn-div-digit r s)]
+          [step : BigDigitStep (bn-div-digit (& r) (& s))]
           [remainder : BigNum step.remainder]
-          [low-cmp : i64 (bn-cmp remainder mminus)]
-          [high-cmp : i64 (bn-cmp (bn-add remainder mplus) s)]
+          [low-cmp : i64 (bn-cmp (& remainder) (& mminus))]
+          [high-sum : BigNum (bn-add (& remainder) (& mplus))]
+          [high-cmp : i64 (bn-cmp (& high-sum) (& s))]
           [low : bool (or (< low-cmp 0) (and accept-bounds (= low-cmp 0)))]
           [high : bool (or (> high-cmp 0) (and accept-bounds (= high-cmp 0)))]
           (begin
@@ -6559,7 +6590,8 @@
                     [(and low (not high)) unit]
                     [else
                       (let
-                        [half-cmp : i64 (bn-cmp (bn-shl-bits remainder 1) s)]
+                        [twice-remainder : BigNum (bn-shl-bits remainder 1)]
+                        [half-cmp : i64 (bn-cmp (& twice-remainder) (& s))]
                         (if (> half-cmp 0)
                           (set! round-up true)
                           (if (= half-cmp 0)
@@ -6571,9 +6603,9 @@
                   (when (>= prefix (ftoa-pow10-u64 digits)) (set! k (+ k 1)))
                   (set! done true)))
               (begin
-                (set! r (bn-mul-u32 remainder (cast 10 : u64)))
-                (set! mminus (bn-mul-u32 mminus (cast 10 : u64)))
-                (set! mplus (bn-mul-u32 mplus (cast 10 : u64))))))))
+                (set! r (bn-mul-u32 (& remainder) (cast 10 : u64)))
+                (set! mminus (bn-mul-u32 (& mminus) (cast 10 : u64)))
+                (set! mplus (bn-mul-u32 (& mplus) (cast 10 : u64))))))))
       (ftoa-render neg (ftoa-strip-zeros (cast prefix : i64)) k))))
 
 ;: Shared IEEE-754 Display implementation for f64 and f32 bit layouts.

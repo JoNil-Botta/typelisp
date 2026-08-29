@@ -31,7 +31,10 @@
 ;; Never-taken self-recursions keep these out of the inliner, so the loops are
 ;; rotated in the shape SSA construction hands them over rather than in some
 ;; merged body.
-(define (scan-limit [xs : (__tl_dyn-array i64)] [n : i64] [sentinel : i64]) : i64
+(define (scan-limit
+  [xs : (& xs (__tl_dyn-array i64))]
+  [n : i64]
+  [sentinel : i64]) : i64
   (if (< n (- 0 1))
     (scan-limit xs (+ n 1) sentinel)
     (let
@@ -46,7 +49,10 @@
         ;; sentinel's index on the escape door.
         i))))
 
-(define (scan-pair [xs : (__tl_dyn-array i64)] [n : i64] [sentinel : i64]) : i64
+(define (scan-pair
+  [xs : (& xs (__tl_dyn-array i64))]
+  [n : i64]
+  [sentinel : i64]) : i64
   (if (< n (- 0 1))
     (scan-pair xs (+ n 1) sentinel)
     (let
@@ -64,7 +70,10 @@
         ;; reports the last element scanned, or the seed for an empty range.
         (+ (* i 100) last)))))
 
-(define (scan-nested [xs : (__tl_dyn-array i64)] [n : i64] [rounds : i64]) : i64
+(define (scan-nested
+  [xs : (& xs (__tl_dyn-array i64))]
+  [n : i64]
+  [rounds : i64]) : i64
   (if (< rounds (- 0 1))
     (scan-nested xs n (+ rounds 1))
     (let
@@ -97,20 +106,20 @@
           (set! i (+ i 1))))
       (let
         ;; escape door: xs[2] = 6, so i stops at 2.
-        [a : i64 (scan-limit xs n 6)]
+        [a : i64 (scan-limit (& xs) n 6)]
         ;; counter door: 7 is absent, so i runs to n = 6.
-        [b : i64 (scan-limit xs n 7)]
+        [b : i64 (scan-limit (& xs) n 7)]
         ;; empty range: neither door runs a trip, i stays 0.
-        [c : i64 (scan-limit xs 0 6)]
+        [c : i64 (scan-limit (& xs) 0 6)]
         ;; escape door: stops at index 1 with last = 3 -> 1*100 + 3 = 103.
-        [d : i64 (scan-pair xs n 3)]
+        [d : i64 (scan-pair (& xs) n 3)]
         ;; counter door: last is xs[5] = 15 -> 6*100 + 15 = 615.
-        [e : i64 (scan-pair xs n 7)]
+        [e : i64 (scan-pair (& xs) n 7)]
         ;; empty range: the seed survives -> 0*100 + -7 = -7.
-        [f : i64 (scan-pair xs 0 3)]
+        [f : i64 (scan-pair (& xs) 0 3)]
         ;; rounds 0,1,2: r=0 hits at index 0, r=1 misses (i=6),
         ;; r=2 misses (i=6) -> 0 + 6 + 6 = 12.
-        [g : i64 (scan-nested xs n 3)]
+        [g : i64 (scan-nested (& xs) n 3)]
         (if (and
           (= a 2)
           (= b 6)

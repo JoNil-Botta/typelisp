@@ -32,7 +32,7 @@
   (unsafe
     (ptr-read (ptr-addr-of doc-site-stdlib-dir))))
 
-(define (doc-site-stdlib-module-file? [name : String]) : bool
+(define (doc-site-stdlib-module-file? [name : (& name str)]) : bool
   (let
     [n : i64 (string.string-length name)]
     (if (< n 4)
@@ -41,7 +41,7 @@
         (string.substring name (- n 3) 3)
         doc-site-stdlib-module-suffix))))
 
-(define (doc-site-stdlib-module-stem [name : String]) : String
+(define (doc-site-stdlib-module-stem [name : (& name str)]) : String
   (string.substring name 0 (- (string.string-length name) 3)))
 
 (define (doc-site-stdlib-module-names) : doc_site_manifest_names.Vec

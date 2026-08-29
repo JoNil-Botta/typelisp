@@ -86,9 +86,13 @@
   (unsafe
     (int->ptr (cast addr : u64) : (Ptr u8))))
 
-(define (tlci-pages-array-ptr [bytes : (__tl_dyn-array u8)]) : (Ptr u8)
+(define (tlci-pages-array-ptr [bytes : (& bytes (__tl_dyn-array u8))]) : (Ptr
+    u8)
   (unsafe
-    (ptr-cast (__tl_array-data bytes) : (Ptr u8))))
+    (ptr-cast
+      (__tl_array-data
+        (__tl-compiler-owned-shared-view-dyn-ref-as bytes (__tl_dyn-array u8)))
+      : (Ptr u8))))
 
 (define (tlci-pages-copy-bytes!
   [dst : (MutPtr u8)]
@@ -212,7 +216,7 @@
 
 (define (tlci-pages-copy-from-array!
   [region : TlciPageRegion]
-  [bytes : (__tl_dyn-array u8)]) : ResultTlciPageUnit
+  [bytes : (& bytes (__tl_dyn-array u8))]) : ResultTlciPageUnit
   (let
     [count : i64 (array-length bytes)]
     (if (not region.writable)
@@ -251,7 +255,7 @@
     (ResultTlciPageUnit.Ok)
     (ResultTlciPageUnit.Err "tlci pages: page release failed")))
 
-(define (tlci-pages-map-code [bytes : (__tl_dyn-array u8)]) : ResultTlciPageRegion
+(define (tlci-pages-map-code [bytes : (& bytes (__tl_dyn-array u8))]) : ResultTlciPageRegion
   (match (tlci-pages-allocate-code (array-length bytes))
     [(ResultTlciPageRegion.Err message) (ResultTlciPageRegion.Err message)]
     [(ResultTlciPageRegion.Ok region)
@@ -262,7 +266,7 @@
             (ResultTlciPageRegion.Err message))]
         [(ResultTlciPageUnit.Ok) (tlci-pages-protect-code-executable region)])]))
 
-(define (tlci-pages-map-data [bytes : (__tl_dyn-array u8)]) : ResultTlciPageRegion
+(define (tlci-pages-map-data [bytes : (& bytes (__tl_dyn-array u8))]) : ResultTlciPageRegion
   (match (tlci-pages-allocate-data (array-length bytes))
     [(ResultTlciPageRegion.Err message) (ResultTlciPageRegion.Err message)]
     [(ResultTlciPageRegion.Ok region)

@@ -46,7 +46,7 @@
           (if (= (% i 2) 0)
             (set! (array-ref xss 0) a)
             (set! (array-ref xss 0) b))
-          (set! acc (+ acc (__tl_array-length (array-ref xss 0))))
+          (set! acc (+ acc (array-length (array-ref xss 0))))
           (set! i (+ i 1))))
       acc)))
 

@@ -28,6 +28,13 @@
 (define (text-buf-family-string-stride) : i64
   (comptime (size-of (type String))))
 
+;: Read an owner representation for generated borrowed-buffer code that must
+;: inspect the value and then keep using the original owner. This is a shallow
+;: representation view; it does not clone the referenced chunks.
+(defmacro (text-buf-family-shared-view [place : Expr]) : Expr
+  `(unsafe
+    (ptr-read (ptr-addr-of ,place))))
+
 ;; The remaining `box-get` spellings in this file occur only inside checked-in
 ;; quasiquoted AST templates. The published seed must be able to parse those
 ;; templates during the one-epoch bootstrap; rebuilt public source uses `deref`.
@@ -227,9 +234,9 @@
       (TextBufChunkNil))
     (define (empty) : TextBuf
       (TextBuf (stdlib.text_buf.text-buf-empty-chunks) 0))
-    (define (empty? [buf : TextBuf]) : bool
+    (define (empty? [buf : (& buf TextBuf)]) : bool
       (= buf.len 0))
-    (define (length [buf : TextBuf]) : i64
+    (define (length [buf : (& buf TextBuf)]) : i64
       buf.len)
     (define (chunk-cons [chunk : String] [rest : TextBufChunkList]) : TextBufChunkList
       (match rest
@@ -281,17 +288,27 @@
       [front : TextBufChunkList]
       [back : TextBufChunkList]) : TextBufChunkList
       (let
-        [front-count : i64 (stdlib.text_buf.chunk-count front 0)]
+        [front-count : i64
+          (stdlib.text_buf.chunk-count
+            (unsafe
+              (ptr-read (ptr-addr-of front)))
+            0)]
         [items : (__tl_dyn-array String) (__tl_make-array String front-count)]
         [result : TextBufChunkList back]
         [index : i64 0]
         (begin
-          (stdlib.text_buf.chunks-fill-array-rev front items (- front-count 1))
+          (stdlib.text_buf.chunks-fill-array-rev
+            front
+            (&mut items)
+            (- front-count 1))
           (while (< index front-count)
             (begin
               (set!
                 result
-                (stdlib.text_buf.chunk-cons (array-ref items index) result))
+                (stdlib.text_buf.chunk-cons
+                  (unsafe
+                    (ptr-read (ptr-offset (__tl_array-data items) index)))
+                  result))
               (set! index (+ index 1))))
           result)))
     (define (append-buffer [left : TextBuf] [right : TextBuf]) : TextBuf
@@ -312,7 +329,7 @@
         [(TextBufChunkDense _ visible-count) (+ count visible-count)]))
     (define (chunks-fill-array-rev
       [chunks : TextBufChunkList]
-      [items : (__tl_dyn-array String)]
+      [items : (&mut items (__tl_dyn-array String))]
       [index : i64]) : unit
       (match chunks
         [(TextBufChunkNil) unit]
@@ -369,7 +386,7 @@
               (set! b (+ b 1))))
           unit)))
     (define (chunks-render-array-range
-      [items : (__tl_dyn-array String)]
+      [items : (& items (__tl_dyn-array String))]
       [lo : i64]
       [hi : i64]) : String
       (if (>= lo hi)
@@ -379,9 +396,11 @@
           [total : i64 0]
           (begin
             (while (< index hi)
-              (begin
-                (set! total (+ total (string-length (array-ref items index))))
-                (set! index (+ index 1))))
+              (let
+                [chunk : (& items str) (& (array-ref items index))]
+                (begin
+                  (set! total (+ total (string-length chunk)))
+                  (set! index (+ index 1)))))
             (if (= total 0)
               ""
               (let
@@ -394,10 +413,10 @@
                 (begin
                   (while (< cursor hi)
                     (let
-                      [chunk : String (array-ref items cursor)]
-                      [chunk-len : i64 (string-length (& chunk))]
+                      [chunk : (& items str) (& (array-ref items cursor))]
+                      [chunk-len : i64 (string-length chunk)]
                       (begin
-                        (stdlib.text_buf.copy-chunk-into (& chunk) dst pos)
+                        (stdlib.text_buf.copy-chunk-into chunk dst pos)
                         (set! pos (+ pos chunk-len))
                         (set! cursor (+ cursor 1)))))
                   (unsafe
@@ -484,18 +503,24 @@
       [raw : i64]
       [write-chunks-list : TextBufChunkList]) : i64
       (let
-        [count : i64 (stdlib.text_buf.chunk-count write-chunks-list 0)]
+        [count : i64
+          (stdlib.text_buf.chunk-count
+            (unsafe
+              (ptr-read (ptr-addr-of write-chunks-list)))
+            0)]
         [items : (__tl_dyn-array String) (__tl_make-array String count)]
         [index : i64 0]
         [status : i64 io.io-status-ok]
         (begin
           (stdlib.text_buf.chunks-fill-array-rev
             write-chunks-list
-            items
+            (&mut items)
             (- count 1))
           (while (and (< index count) (= status io.io-status-ok))
             (let
-              [chunk : String (array-ref items index)]
+              [chunk : String
+                (unsafe
+                  (ptr-read (ptr-offset (__tl_array-data items) index)))]
               (begin
                 (set!
                   status
@@ -506,7 +531,7 @@
       1048576)
     (define (write-array-batches
       [raw : i64]
-      [items : (__tl_dyn-array String)]
+      [items : (& items (__tl_dyn-array String))]
       [count : i64]
       [batch-limit : i64]) : i64
       (let
@@ -521,50 +546,62 @@
               (begin
                 (while (and (not done) (< index count))
                   (let
-                    [chunk : String (array-ref items index)]
+                    [chunk : (& items str) (& (array-ref items index))]
                     [chunk-len : i64 (string-length chunk)]
                     (if (and (> bytes 0) (> (+ bytes chunk-len) batch-limit))
                       (set! done true)
                       (begin
                         (set! bytes (+ bytes chunk-len))
                         (set! index (+ index 1))))))
-                (let
-                  [rendered : String
-                    (stdlib.text_buf.chunks-render-array-range
-                      items
-                      start
-                      index)]
-                  (set!
-                    status
-                    (io.file-write-status
-                      raw
-                      (byte_buf.str-as-bytes (& rendered))))))))
+                (if (and (= (- index start) 1) (> bytes batch-limit))
+                  (let
+                    [chunk : (& items str) (& (array-ref items start))]
+                    (set!
+                      status
+                      (io.file-write-status raw (byte_buf.str-as-bytes chunk))))
+                  (let
+                    [rendered : String
+                      (stdlib.text_buf.chunks-render-array-range
+                        items
+                        start
+                        index)]
+                    (set!
+                      status
+                      (io.file-write-status
+                        raw
+                        (byte_buf.str-as-bytes (& rendered)))))))))
           status)))
     (define (write-chunks-batched
       [raw : i64]
       [write-chunks-list : TextBufChunkList]) : i64
       (let
-        [count : i64 (stdlib.text_buf.chunk-count write-chunks-list 0)]
+        [count : i64
+          (stdlib.text_buf.chunk-count
+            (unsafe
+              (ptr-read (ptr-addr-of write-chunks-list)))
+            0)]
         [items : (__tl_dyn-array String) (__tl_make-array String count)]
         (begin
           (stdlib.text_buf.chunks-fill-array-rev
             write-chunks-list
-            items
+            (&mut items)
             (- count 1))
           (stdlib.text_buf.write-array-batches
             raw
-            items
+            (& items)
             count
             (stdlib.text_buf.batched-write-threshold)))))
-    (define (write-file [path : String] [buf : TextBuf]) : i64
+    (define (write-file [path : (& path str)] [buf : (& buf TextBuf)]) : i64
       (let
         [open-result : io.ResultIoFile
-          (io.file-open (& path) (io.OpenWriteTruncate))]
-        (if (io.result-file-ok? open-result)
+          (io.file-open path (io.OpenWriteTruncate))]
+        (if (io.result-file-ok?
+          (unsafe
+            (ptr-read (ptr-addr-of open-result))))
           (let
             [handle : io.FileHandle
               (io.result-file-value-or open-result (io.FileHandle -1))]
-            [chunks : TextBufChunkList buf.chunks]
+            [chunks : TextBufChunkList (clone buf.chunks)]
             [status : i64
               (if (> buf.len (stdlib.text_buf.batched-write-threshold))
                 (stdlib.text_buf.write-chunks-batched
@@ -636,17 +673,17 @@
         0))
     (define (single [text : (& text str)]) : (TextBufBorrowed text)
       (append (empty-like text) text))
-    (define (empty? [buf : (TextBufBorrowed text)]) : bool
+    (define (empty? [buf : (& buf (TextBufBorrowed text))]) : bool
       (match buf
-        [(TextBufBorrowed _ len) (= len 0)]))
-    (define (length [buf : (TextBufBorrowed text)]) : i64
+        [(TextBufBorrowed _ len) (= (deref len) 0)]))
+    (define (length [buf : (& buf (TextBufBorrowed text))]) : i64
       (match buf
-        [(TextBufBorrowed _ len) len]))
+        [(TextBufBorrowed _ len) (deref len)]))
     (define (slice-valid? [source : (& text str)] [start : i64] [len : i64]) : bool
       (let
         [n : i64 (string-length source)]
         (and (>= start 0) (>= len 0) (<= start n) (<= len (- n start)))))
-    ;: Rare scalar-tail paths share this helper.  The dense-prefix case uses
+    ;: Rare scalar-tail paths share this helper. The dense-prefix case uses
     ;: the same direct owned-store commit as the hot paths below; Nil/Inline
     ;: and non-dense prefixes retain the general chunk-cons fallback.
     (define (text-buf-borrowed-append-tail
@@ -661,7 +698,7 @@
             anchor
             (text_buf.chunk-cons
               old-tail-text
-              ,(comptime.expr-struct-get `(text_buf.empty) "chunks"))
+              (stdlib.text_buf_borrowed.text-buf-borrowed-empty-owned-chunks))
             1
             new-tail-text
             new-tail-borrowed?)]
@@ -673,15 +710,19 @@
             _old-tail-borrowed?)
           (let
             [next-prefix : text_buf.TextBufChunkList
-              (match prefix
+              (match (text_buf_family.text-buf-family-shared-view prefix)
                 [(text_buf.TextBufChunkDense store visible-count)
                   (text_buf.TextBufChunkDense
                     (text_buf_family.text-buf-owned-store-commit!
                       store
                       visible-count
-                      old-tail-text)
+                      (text_buf_family.text-buf-family-shared-view
+                        old-tail-text))
                     (+ visible-count 1))]
-                [_ (text_buf.chunk-cons old-tail-text prefix)])]
+                [_
+                  (text_buf.chunk-cons
+                    (text_buf_family.text-buf-family-shared-view old-tail-text)
+                    (text_buf_family.text-buf-family-shared-view prefix))])]
             (TextBufBorrowedChunkDense
               anchor
               next-prefix
@@ -726,7 +767,7 @@
               (TextBufBorrowedChunkDense
                 anchor
                 (text_buf.chunk-cons
-                  old-tail
+                  (text_buf_family.text-buf-family-shared-view old-tail)
                   (stdlib.text_buf_borrowed.text-buf-borrowed-empty-owned-chunks))
                 1
                 (stdlib.text_buf_borrowed.text-buf-borrowed-view text start len)
@@ -758,15 +799,18 @@
                 true)
               (let
                 [next-prefix : text_buf.TextBufChunkList
-                  (match prefix
+                  (match (text_buf_family.text-buf-family-shared-view prefix)
                     [(text_buf.TextBufChunkDense store visible-count)
                       (text_buf.TextBufChunkDense
                         (text_buf_family.text-buf-owned-store-commit!
                           store
                           visible-count
-                          old-tail)
+                          (text_buf_family.text-buf-family-shared-view old-tail))
                         (+ visible-count 1))]
-                    [_ (text_buf.chunk-cons old-tail prefix)])]
+                    [_
+                      (text_buf.chunk-cons
+                        (text_buf_family.text-buf-family-shared-view old-tail)
+                        (text_buf_family.text-buf-family-shared-view prefix))])]
                 (TextBufBorrowedChunkDense
                   anchor
                   next-prefix
@@ -863,7 +907,8 @@
                       _old-tail-borrowed?)
                     (let
                       [next-prefix : text_buf.TextBufChunkList
-                        (match prefix
+                        (match (text_buf_family.text-buf-family-shared-view
+                          prefix)
                           [(text_buf.TextBufChunkDense store visible-count)
                             (text_buf.TextBufChunkDense
                               (text_buf_family.text-buf-owned-store-commit!
@@ -892,19 +937,26 @@
       [tail-text : String]
       [tail-borrowed? : bool]) : (TextBufBorrowedChunkList text)
       (let
-        [count : i64 (text_buf.chunk-count prefix 0)]
+        [count : i64
+          (text_buf.chunk-count
+            (text_buf_family.text-buf-family-shared-view prefix)
+            0)]
         [items : (__tl_dyn-array String) (__tl_make-array String count)]
         [result : (TextBufBorrowedChunkList text) left]
         [index : i64 0]
         (begin
-          (text_buf.chunks-fill-array-rev prefix items (- count 1))
+          (text_buf.chunks-fill-array-rev
+            (text_buf_family.text-buf-family-shared-view prefix)
+            (&mut items)
+            (- count 1))
           (while (< index count)
             (begin
               (set!
                 result
                 (stdlib.text_buf_borrowed.text-buf-borrowed-append-tail
                   result
-                  (array-ref items index)
+                  (unsafe
+                    (ptr-read (ptr-offset (__tl_array-data items) index)))
                   false))
               (set! index (+ index 1))))
           (stdlib.text_buf_borrowed.text-buf-borrowed-append-tail
@@ -993,16 +1045,24 @@
       (string.substring (& text) 0 (string-length text)))
     (define (text-buf-borrowed-copy-prefix [prefix : text_buf.TextBufChunkList]) : text_buf.TextBufChunkList
       (let
-        [count : i64 (text_buf.chunk-count prefix 0)]
+        [count : i64
+          (text_buf.chunk-count
+            (text_buf_family.text-buf-family-shared-view prefix)
+            0)]
         [items : (__tl_dyn-array String) (__tl_make-array String count)]
         [owned : text_buf.TextBufChunkList
           (stdlib.text_buf_borrowed.text-buf-borrowed-empty-owned-chunks)]
         [index : i64 0]
         (begin
-          (text_buf.chunks-fill-array-rev prefix items (- count 1))
+          (text_buf.chunks-fill-array-rev
+            (text_buf_family.text-buf-family-shared-view prefix)
+            (&mut items)
+            (- count 1))
           (while (< index count)
             (let
-              [entry : String (array-ref items index)]
+              [entry : String
+                (unsafe
+                  (ptr-read (ptr-offset (__tl_array-data items) index)))]
               (begin
                 (set!
                   owned
@@ -1038,14 +1098,14 @@
             (stdlib.text_buf_borrowed.text-buf-borrowed-copy-string tail-text)
             (stdlib.text_buf_borrowed.text-buf-borrowed-copy-prefix prefix))]))
     (define (chunks-count
-      [chunks : (TextBufBorrowedChunkList text)]
+      [chunks : (& chunks (TextBufBorrowedChunkList text))]
       [count : i64]) : i64
       (match chunks
         [(TextBufBorrowedChunkNil _) count]
         [(TextBufBorrowedChunkInline _ _ _) (+ count 1)]
         [(TextBufBorrowedChunkDense _ _ prefix-count _ _)
-          (+ count (+ prefix-count 1))]))
-    (define (chunk-count [buf : (TextBufBorrowed text)]) : i64
+          (+ count (+ (deref prefix-count) 1))]))
+    (define (chunk-count [buf : (& buf (TextBufBorrowed text))]) : i64
       (match buf
         [(TextBufBorrowed chunks _)
           (stdlib.text_buf_borrowed.chunks-count chunks 0)]))

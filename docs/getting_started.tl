@@ -59,15 +59,14 @@
 ;# else -- `String`, arrays, tuples, structs, enums, capturing closures --
 ;# **moves**.
 ;#
-;# The part that surprises people is when a move actually happens. Writing an
-;# aggregate parameter by value is *not* enough: at a typed call site the
-;# compiler auto-borrows a borrowable place, so the caller keeps its value. A
-;# function that genuinely takes ownership says so with `(:consume)`:
+;# An aggregate parameter written by value owns its argument. Passing a
+;# non-`Copy` value therefore moves it into the callee; passing a `Copy` value
+;# leaves the source usable:
 ;#
 ;# ```tl expect-error
 ;# (import stdlib.string)
 ;#
-;# (define (consume-length [text : String (:consume)]) : i64
+;# (define (consume-length [text : String]) : i64
 ;#   (string.string-length text))
 ;#
 ;# (define (main) : i64
@@ -82,8 +81,8 @@
 ;#
 ;# ## 4. Borrowing
 ;#
-;# Dropping `(:consume)` is the fix, and writing `(& T)` says the intent
-;# explicitly. Both callers keep their value:
+;# Writing `(& T)` says non-owning intent explicitly. Both callers keep their
+;# value:
 ;#
 ;# ```typelisp
 ;# (import stdlib.string)

@@ -29,7 +29,7 @@
 (define (pattern [i : i64]) : u8
   (cast (bit-and (+ (* i 37) 11) 255) : u8))
 
-(define (fill-pattern! [items : (__tl_dyn-array u8)] [n : i64]) : unit
+(define (fill-pattern! [items : (&mut items (__tl_dyn-array u8))] [n : i64]) : unit
   (let
     [i : i64 0]
     (while (< i n)
@@ -39,7 +39,7 @@
 
 ;; The admitted shape: one byte load, one byte store, counter step 1.
 (define (copy-fast
-  [items : (__tl_dyn-array u8)]
+  [items : (&mut items (__tl_dyn-array u8))]
   [dst : i64]
   [src : i64]
   [n : i64]) : unit
@@ -53,8 +53,8 @@
 ;; The oracle: the same copy, but the second store keeps `copy_call` off it, so
 ;; this stays a genuine byte-at-a-time forward loop at every optimization level.
 (define (copy-ref
-  [items : (__tl_dyn-array u8)]
-  [witness : (__tl_dyn-array u8)]
+  [items : (&mut items (__tl_dyn-array u8))]
+  [witness : (&mut witness (__tl_dyn-array u8))]
   [dst : i64]
   [src : i64]
   [n : i64]) : unit
@@ -67,8 +67,8 @@
         (set! i (+ i 1))))))
 
 (define (buffers-eq?
-  [a : (__tl_dyn-array u8)]
-  [b : (__tl_dyn-array u8)]
+  [a : (& a (__tl_dyn-array u8))]
+  [b : (& b (__tl_dyn-array u8))]
   [n : i64]) : bool
   (let
     [i : i64 0]
@@ -102,11 +102,11 @@
               (begin
                 (while (< len 34)
                   (begin
-                    (fill-pattern! fast n)
-                    (fill-pattern! ref n)
-                    (copy-fast fast dst src len)
-                    (copy-ref ref witness dst src len)
-                    (if (buffers-eq? fast ref n)
+                    (fill-pattern! (&mut fast) n)
+                    (fill-pattern! (&mut ref) n)
+                    (copy-fast (&mut fast) dst src len)
+                    (copy-ref (&mut ref) (&mut witness) dst src len)
+                    (if (buffers-eq? (& fast) (& ref) n)
                       unit
                       (set! bad (+ bad 1)))
                     (set! len (+ len 1))))
@@ -122,7 +122,7 @@
     [bad : i64 0]
     (begin
       ;; (1) copies exactly [1, n-1) and leaves the two edge bytes alone.
-      (fill-pattern! items n)
+      (fill-pattern! (&mut items) n)
       (unsafe
         (runtime.mem-copy-fwd
           (ptr-offset (__tl_array-data items) 1)
@@ -136,11 +136,11 @@
         (set! bad (bit-or bad 2)))
       ;; That call is the propagating overlap (dst = src + 1): every byte in
       ;; the window must be the FIRST source byte, not a shifted pattern.
-      (if (= (count-eq items 1 (- n 1) (pattern 0)) (- n 2))
+      (if (= (count-eq (& items) 1 (- n 1) (pattern 0)) (- n 2))
         unit
         (set! bad (bit-or bad 4)))
       ;; (2) a zero or negative count copies nothing.
-      (fill-pattern! items n)
+      (fill-pattern! (&mut items) n)
       (unsafe
         (runtime.mem-copy-fwd
           (ptr-offset (__tl_array-data items) 0)
@@ -151,13 +151,13 @@
           (ptr-offset (__tl_array-data items) 0)
           (ptr-cast (ptr-offset (__tl_array-data items) 8) : (Ptr u8))
           (- 0 5)))
-      (if (= (count-pattern items 0 n) n)
+      (if (= (count-pattern (& items) 0 n) n)
         unit
         (set! bad (bit-or bad 8)))
       bad)))
 
 (define (count-eq
-  [items : (__tl_dyn-array u8)]
+  [items : (& items (__tl_dyn-array u8))]
   [lo : i64]
   [hi : i64]
   [want : u8]) : i64
@@ -173,7 +173,10 @@
           (set! i (+ i 1))))
       seen)))
 
-(define (count-pattern [items : (__tl_dyn-array u8)] [lo : i64] [hi : i64]) : i64
+(define (count-pattern
+  [items : (& items (__tl_dyn-array u8))]
+  [lo : i64]
+  [hi : i64]) : i64
   (let
     [i : i64 lo]
     [seen : i64 0]

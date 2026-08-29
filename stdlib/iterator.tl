@@ -7,8 +7,8 @@
 ;# returning an option-like result. Generated `Vec<T>` modules implement that
 ;# canonical pair with `IterNext.Item (& source T)` for shared traversal and
 ;# `into-iterator` / `into-next` with owned `IntoNext.Item T` results for
-;# consuming traversal. Consuming construction uses a `(:consume)` parameter,
-;# so the source moves exactly once and cannot be reused. Scalar ranges
+;# consuming traversal. Consuming construction uses an ordinary by-value
+;# parameter, so the non-`Copy` source moves exactly once and cannot be reused. Scalar ranges
 ;# implement the same canonical consuming protocol through `into-iterator` /
 ;# `into-next`, which is the pair the scalar `for` macro selects.
 ;#
@@ -62,7 +62,7 @@
   (I64Range start end true))
 
 ;: Consume a scalar range into its canonical iterator state.
-(define (into-iterator [items : I64Range (:consume)]) : IntoIter
+(define (into-iterator [items : I64Range]) : IntoIter
   (let
     [start : i64 items.start]
     [end : i64 items.end]

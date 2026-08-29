@@ -15,18 +15,16 @@ set -eu
 # scripts/analyze-ci-timing-trends.sh). The two mechanisms are meant to be
 # exclusive -- an expectation lives in exactly one of them.
 #
-# The 26000ms cap comes from three Linux CI artifacts: 12730, 12750, 14170ms.
-# It is just under 2x the ~13.1s accepted median, so a doubling fails, and 1.8x
-# the highest observed sample, so ordinary variance does not.
+# The by-value ownership migration accepted by #6215 raises the measured lint,
+# host-action, and opt1-built selfhost costs until #6891 recovers that
+# throughput. Two Linux CI artifacts measured those rows at 72120/70620ms,
+# 29980/28660ms, and 37900/35060ms respectively. Their caps retain roughly
+# 18-20% headroom above the larger sample so ordinary variance does not flake
+# while a further material regression still fails closed.
 #
-# What a cap does not do, stated plainly because the caps below look more
-# protective than they are: it catches a doubling, not the step change that
-# started #5660. That was +6.1s on a ~7s gate, and a repeat of it lands near
-# 20s, under this cap. Catching that class would need a cap below 20s, and the
-# spread above cannot support one without flaking. Doubling is what is
-# enforceable here; a step change is a matter for review of the gate's case
-# list, which is why the note at scripts/check-stage1-wrapper.sh asks for the
-# cap to move in the same commit that adds a case of that weight.
+# A step change remains a matter for review of the gate's case list, which is
+# why the note at scripts/check-stage1-wrapper.sh asks for the cap to move in
+# the same commit that adds a case of that weight.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -115,11 +113,11 @@ check_budget() {
         -v required_gate="$BUILD_INVARIANCE_GATE" \
         -v host_action_gate="$HOST_ACTION_GATE" \
         -v opt2_opt1_cap=25000 \
-        -v opt1_opt1_cap=35000 \
+        -v opt1_opt1_cap=45000 \
         -v opt2_opt2_cap=55000 \
         -v opt1_opt2_cap=90000 \
-        -v lint_cap=60000 \
-        -v host_action_cap=26000 \
+        -v lint_cap=85000 \
+        -v host_action_cap=36000 \
         -v ratio_limit=2.5 '
         function is_required(key) {
             return key == "opt2-built:selfhost_main_opt1" ||
@@ -405,7 +403,10 @@ self-test denylisted gate without cap"
         'default trend denylist gate has no hard cap: self-test denylisted gate without cap' \
         "$workdir/denylist-cap.out" >/dev/null
 
-    write_fixture "$workdir/pass.tsv" 12800 18700 30300 50500
+    # Preserve the larger measurements from the two accepted ownership-branch
+    # artifacts as an executable lower bound on every adjusted cap.
+    write_fixture \
+        "$workdir/pass.tsv" 21040 37900 49100 85500 72120 29980
     expect_fixture pass pass "$workdir/pass.tsv" "$workdir/pass.out"
 
     write_fixture "$workdir/ratio.tsv" 12000 18000 48000 50000
@@ -418,16 +419,22 @@ self-test denylisted gate without cap"
         "$workdir/absolute.tsv" "$workdir/absolute.out"
     grep -F 'exceeds its 25000ms cap' "$workdir/absolute.out" >/dev/null
 
-    write_fixture "$workdir/lint-absolute.tsv" 12800 18700 30300 50500 60001
+    write_fixture "$workdir/opt1-absolute.tsv" 12800 45001 30300 50500
+    expect_fixture opt1-absolute-breach fail \
+        "$workdir/opt1-absolute.tsv" "$workdir/opt1-absolute.out"
+    grep -F 'opt1-built:selfhost_main_opt1 exceeds its 45000ms cap' \
+        "$workdir/opt1-absolute.out" >/dev/null
+
+    write_fixture "$workdir/lint-absolute.tsv" 12800 18700 30300 50500 85001
     expect_fixture lint-absolute-breach fail \
         "$workdir/lint-absolute.tsv" "$workdir/lint-absolute.out"
-    grep -F 'lint-gate exceeds its 60000ms cap' \
+    grep -F 'lint-gate exceeds its 85000ms cap' \
         "$workdir/lint-absolute.out" >/dev/null
 
     write_fixture "$workdir/lint-missing.tsv" 12800 18700 30300 50500 ''
     expect_fixture lint-missing fail \
         "$workdir/lint-missing.tsv" "$workdir/lint-missing.out"
-    grep -F 'lint-gate=<missing> cap=60000ms' \
+    grep -F 'lint-gate=<missing> cap=85000ms' \
         "$workdir/lint-missing.out" >/dev/null
 
     write_fixture "$workdir/lint-duplicate.tsv" 12800 18700 30300 50500
@@ -458,26 +465,27 @@ self-test denylisted gate without cap"
     grep -F 'row lint-gate has host windows; expected linux' \
         "$workdir/lint-wrong-host.out" >/dev/null
 
-    # The accepted cost measures 12-14s on Linux CI. Prove the cap tolerates
-    # that spread, fires at a doubling, and fails closed the same way the lint
-    # gate does -- the row is the executable record of #5660's accepted cost, so
-    # a silently missing row would restore exactly the gap #5778 was filed for.
-    write_fixture "$workdir/host-action-high.tsv" 12800 18700 30300 50500 30000 14000
+    # Prove the cap tolerates the accepted ownership-migration measurement,
+    # fires immediately above the cap, and fails closed the same way the lint
+    # gate does -- a silently missing row would restore the gap #5778 tracks.
+    write_fixture \
+        "$workdir/host-action-high.tsv" 12800 18700 30300 50500 30000 29980
     expect_fixture host-action-observed-high pass \
         "$workdir/host-action-high.tsv" "$workdir/host-action-high.out"
-    grep -F 'host-action-smoke=14000ms cap=26000ms' \
+    grep -F 'host-action-smoke=29980ms cap=36000ms' \
         "$workdir/host-action-high.out" >/dev/null
 
-    write_fixture "$workdir/host-action-double.tsv" 12800 18700 30300 50500 30000 26200
-    expect_fixture host-action-doubled fail \
-        "$workdir/host-action-double.tsv" "$workdir/host-action-double.out"
-    grep -F 'host-action-smoke exceeds its 26000ms cap' \
-        "$workdir/host-action-double.out" >/dev/null
+    write_fixture \
+        "$workdir/host-action-over-cap.tsv" 12800 18700 30300 50500 30000 36001
+    expect_fixture host-action-over-cap fail \
+        "$workdir/host-action-over-cap.tsv" "$workdir/host-action-over-cap.out"
+    grep -F 'host-action-smoke exceeds its 36000ms cap' \
+        "$workdir/host-action-over-cap.out" >/dev/null
 
     write_fixture "$workdir/host-action-missing.tsv" 12800 18700 30300 50500 30000 ''
     expect_fixture host-action-missing fail \
         "$workdir/host-action-missing.tsv" "$workdir/host-action-missing.out"
-    grep -F 'host-action-smoke=<missing> cap=26000ms' \
+    grep -F 'host-action-smoke=<missing> cap=36000ms' \
         "$workdir/host-action-missing.out" >/dev/null
 
     write_fixture "$workdir/host-action-duplicate.tsv" 12800 18700 30300 50500

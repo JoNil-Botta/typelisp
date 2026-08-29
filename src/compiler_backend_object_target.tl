@@ -3,6 +3,7 @@
 ;; This module deliberately depends only on the structured object model. The
 ;; compiler backend builds these parts, then a platform leaf adds its entry
 ;; fragments and finishes the image.
+(import compiler_owned_view as owned_view)
 (import stdlib.byte_buf_core)
 (import stdlib.string)
 (import compiler_object as cobj)
@@ -183,11 +184,14 @@
   [kind : cobj.CompilerObjectSymbolKind]) : CompilerBackendObjectTargetParts
   (if (cobj.compiler-object-symbol-builder-contains?
     parts.symbols
-    name
+    (owned_view.compiler-owned-shared-view name)
     (cobj.CompilerObjectSymbolBinding.Extern)
     kind)
     parts
-    (compiler-backend-object-symbol-extern parts name kind)))
+    (compiler-backend-object-symbol-extern
+      (owned_view.compiler-owned-shared-view parts)
+      name
+      kind)))
 
 (define (compiler-backend-object-add-text-relocation
   [parts : CompilerBackendObjectTargetParts]
@@ -279,7 +283,7 @@
       parts
       site
       (cobj.CompilerObjectRelocationKind.Call)
-      target)
+      (owned_view.compiler-owned-shared-view target))
     (cobj.CompilerObjectX64Instr.Call target)))
 
 (define (compiler-backend-object-add-rip-instr
@@ -343,14 +347,14 @@
         (cobj.CompilerObjectSection.Section
           (cobj.CompilerObjectSectionKind.Data)
           (cobj.compiler-object-data-record-builder-finish parts.data)
-          empty-instrs))]
+          (owned_view.compiler-owned-shared-view empty-instrs)))]
     [sections3 : cobj.CompilerObjectSectionBuilder
       (cobj.compiler-object-section-builder-push
         sections2
         (cobj.CompilerObjectSection.Section
           (cobj.CompilerObjectSectionKind.Rodata)
           (cobj.compiler-object-data-record-builder-finish parts.rodata)
-          empty-instrs))]
+          (owned_view.compiler-owned-shared-view empty-instrs)))]
     (cobj.compiler-object-section-builder-push
       sections3
       (cobj.CompilerObjectSection.Section

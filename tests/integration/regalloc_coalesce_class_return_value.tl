@@ -36,7 +36,7 @@
 ;; Eight bytes composed little-endian, so the value is host-endianness
 ;; independent, and the composition keeps a second multi-def accumulator (`word`)
 ;; alive across the loop.
-(define (rccrv-load-word [src : (__tl_dyn-array u8)] [at : i64]) : i64
+(define (rccrv-load-word [src : (& src (__tl_dyn-array u8))] [at : i64]) : i64
   (let
     [word : i64 0]
     [b : i64 7]
@@ -49,7 +49,10 @@
           (set! b (- b 1))))
       word)))
 
-(define (rccrv-mix [src : (__tl_dyn-array u8)] [start : i64] [len : i64]) : i64
+(define (rccrv-mix
+  [src : (& src (__tl_dyn-array u8))]
+  [start : i64]
+  [len : i64]) : i64
   (let
     [h : i64 (+ 5381 len)]
     [i : i64 0]
@@ -86,7 +89,7 @@
       (set! i 1)
       (while (< i 30)
         (begin
-          (set! acc (+ (* acc 31) (rccrv-mix src 0 i)))
+          (set! acc (+ (* acc 31) (rccrv-mix (& src) 0 i)))
           (set! i (+ i 1))))
       (if (= acc 4218076827798351321)
         42

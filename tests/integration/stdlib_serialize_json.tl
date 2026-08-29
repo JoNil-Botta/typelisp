@@ -279,7 +279,8 @@
         (serialize-json-make-samples)
         (serialize-json-combo))]
     [json : json.Json (person_json.to-json person)]
-    [encoded : String (stdlib.json.stringify json)]
+    [encoded : String
+      (stdlib.json.stringify (stdlib.json.json-shared-view json))]
     (and
       (string.eq
         encoded
@@ -299,7 +300,8 @@
 (define (serialize-json-i64-root-roundtrip-ok?) : bool
   (let
     [json : json.Json (i64_json.to-json 42)]
-    [encoded : String (stdlib.json.stringify json)]
+    [encoded : String
+      (stdlib.json.stringify (stdlib.json.json-shared-view json))]
     (and
       (string.eq encoded "42")
       (match (i64_json.from-json json)
@@ -310,7 +312,8 @@
   (let
     [scores : (Array i64 3) (array 4 5 6)]
     [json : json.Json (fixed_i64_json.to-json scores)]
-    [encoded : String (stdlib.json.stringify json)]
+    [encoded : String
+      (stdlib.json.stringify (stdlib.json.json-shared-view json))]
     (and
       (string.eq encoded "[4,5,6]")
       (match (fixed_i64_json.from-json json)
@@ -321,7 +324,8 @@
   (let
     [samples : (__tl_dyn-array i64) (serialize-json-make-samples)]
     [json : json.Json (dyn_i64_json.to-json samples)]
-    [encoded : String (stdlib.json.stringify json)]
+    [encoded : String
+      (stdlib.json.stringify (stdlib.json.json-shared-view json))]
     (and
       (string.eq encoded "[7,8]")
       (match (dyn_i64_json.from-json json)
@@ -332,7 +336,8 @@
   (let
     [previous : (Array Address 2) (serialize-json-previous-addresses)]
     [json : json.Json (address_array_json.to-json previous)]
-    [encoded : String (stdlib.json.stringify json)]
+    [encoded : String
+      (stdlib.json.stringify (stdlib.json.json-shared-view json))]
     (and
       (string.eq
         encoded
@@ -355,7 +360,8 @@
   (let
     [status : enum_fixture.Status (enum_fixture.moved)]
     [json : json.Json (status_json.to-json status)]
-    [encoded : String (stdlib.json.stringify json)]
+    [encoded : String
+      (stdlib.json.stringify (stdlib.json.json-shared-view json))]
     (and
       (string.eq encoded "{\"tag\":\"Moved\",\"payload\":[123,[9,10]]}")
       (match (status_json.from-json json)
@@ -366,7 +372,8 @@
   (let
     [status : enum_fixture.Status (enum_fixture.wide)]
     [json : json.Json (status_json.to-json status)]
-    [encoded : String (stdlib.json.stringify json)]
+    [encoded : String
+      (stdlib.json.stringify (stdlib.json.json-shared-view json))]
     (and
       (string.eq encoded "{\"tag\":\"Wide\",\"payload\":[1,2,3,4,5,6,7,8,9]}")
       (match (status_json.from-json json)
@@ -376,7 +383,8 @@
 (define (serialize-json-status-struct-payload-roundtrip-ok?) : bool
   (let
     [json : json.Json (status_json.to-json (enum_fixture.detailed))]
-    [encoded : String (stdlib.json.stringify json)]
+    [encoded : String
+      (stdlib.json.stringify (stdlib.json.json-shared-view json))]
     (and
       (string.eq
         encoded

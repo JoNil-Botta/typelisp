@@ -65,7 +65,7 @@
     [owned : String "abc"]
     (if (and
       (= (capture-enum-borrowed (& s)) 5)
-      (= (capture-enum-owned (& s) owned) 3)
+      (= (capture-enum-owned (& s) (string.copy (& owned))) 3)
       (= (capture-struct-borrowed (& s) owned) 5))
       42
       1)))

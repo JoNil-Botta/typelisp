@@ -39368,7 +39368,7 @@
         (tc-integer-type? (tc-global-shared-view ty))
         (tc-float-type? (tc-global-shared-view ty)))
         (ResultTcType.Ok ty)
-        (ResultTcType.Err "typecheck: neg expects integer"))]
+        (ResultTcType.Err "typecheck: neg expects integer or float"))]
     [(ast.AstUnOp.BitNot)
       (if (tc-integer-type? (tc-global-shared-view ty))
         (ResultTcType.Ok ty)

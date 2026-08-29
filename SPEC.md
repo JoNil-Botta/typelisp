@@ -4120,7 +4120,7 @@ All operators are prefix functions (or special forms):
 | `+` | integer integer [integer ...] → integer | Addition |
 | `-` | integer integer → integer | Subtraction |
 | `*` | integer integer [integer ...] → integer | Multiplication |
-| `neg` | integer → integer | Unary negation |
+| `neg` | integer, f32, f64 → same type | Unary negation |
 | `/` | integer integer → integer | Signed division |
 | `%` | integer integer → integer | Remainder |
 | `bit-and` | integer integer [integer ...] → integer | Bitwise AND |
@@ -4143,6 +4143,10 @@ All operators are prefix functions (or special forms):
 - `+`, `-`, `*`, `/` also operate on `f64` and `f32`; floating-point `+` and
   `*` accept two or more matching operands and are left-associated. `%` is not
   defined on floating-point values and is rejected.
+- `neg` accepts integer, `f32`, and `f64` operands and returns the operand
+  type unchanged. Integer `neg` follows the wrapping rule above; floating-point
+  negation flips the sign bit. Applying `neg` to a nonnumeric operand is a
+  type error.
 - Integer `/` and `%` trap at runtime when the divisor is zero, or when a
   signed dividend is the minimum value for its width and the divisor is `-1`
   (since the mathematical result is not representable). Both cases abort the

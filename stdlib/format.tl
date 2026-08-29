@@ -12,15 +12,20 @@
 ;# selectors with width-correct signed bit patterns. The `e` and `E` selectors
 ;# normalize every integer and source-width float to Rust exponent notation;
 ;# their precision counts digits after the leading digit.
-;# `write!` and `writeln!` reuse that plan and conversion path while sending
-;# pieces through a canonical destination adapter. They return `FormatResult`
-;# and do not construct the final combined String.
+;# `args` retains that plan with borrow-checked anchors for later replay without
+;# constructing the final combined String. `format` materializes retained
+;# Arguments, while `write!` and `writeln!` replay them through the same
+;# canonical destination adapters and return `FormatResult`.
 ;#
 ;# Nominal structs and enums participate through their canonical owner module.
 ;# A module's common primary type defines `to-string`; additional nominal types
 ;# use `to-string-<NominalName>`. A hook must have the exact shared-borrow
-;# signature `(& T) -> String`. Defining both applicable spellings is rejected
-;# as ambiguous.
+;# signature `(& T) -> String`. For allocation-free default Display output it
+;# may instead define `format-write` (or `format-write-<NominalName>`) with
+;# signature `(& T, &mut Formatter) -> unit`. Every String/writer/stdio target
+;# uses that direct hook; option-bearing placeholders fall back to `to-string`
+;# so the shared option engine can transform the complete rendered value.
+;# Defining both applicable spellings in either hook family is ambiguous.
 ;#
 ;# ```lisp test=run name=format-basic exit=42 stdout=""
 ;# (import stdlib.format)
@@ -29,6 +34,17 @@
 ;# (define (main) : i64
 ;#   (let [name : String "Ada"]
 ;#     (if (string.eq (format.format "hello, {}" name) "hello, Ada") 42 1)))
+;# ```
+;#
+;# ```lisp test=run name=format-retained-arguments exit=42 stdout=""
+;# (import stdlib.format)
+;# (import stdlib.string)
+;#
+;# (define (main) : i64
+;#   (let
+;#     [name : String "Ada"]
+;#     [arguments (format.args "hello, {}" name)]
+;#     (if (string.eq (format.format arguments) "hello, Ada") 42 1)))
 ;# ```
 ;#
 ;# Builtin placeholder values are `String`, all eight fixed-width integer
@@ -281,6 +297,70 @@
   (write-raw (-> i64 (Ptr u8) i64 i64))
   (context i64)
   (status i64))
+
+;: Private growable destination used only when retained Arguments are
+;: materialized as a String. The public Arguments package itself contains only
+;: a capture-free renderer and a tuple of shared anchors.
+(defstruct ArgumentsStringSink
+  (slots (__tl_dyn-array u8))
+  (len i64))
+
+;: Copy bytes into the growable String sink addressed by `context`.
+(define (arguments-string-write-raw
+  [context : i64]
+  [data : (Ptr u8)]
+  [count : i64]) : i64
+  (if (<= count 0)
+    0
+    (let
+      [slot : (MutPtr ArgumentsStringSink)
+        (unsafe
+          (int->ptr (cast context : u64) : (MutPtr ArgumentsStringSink)))]
+      [sink : ArgumentsStringSink
+        (unsafe
+          (ptr-read (ptr-cast slot : (Ptr ArgumentsStringSink))))]
+      [required : i64
+        (if (> sink.len (- 9223372036854775807 count))
+          (format-runtime-abort-string
+            "format: Arguments output length overflow")
+          (+ sink.len count))]
+      (begin
+        (if (> required (array-length sink.slots))
+          (let
+            [old-capacity : i64 (array-length sink.slots)]
+            [new-capacity : i64
+              (if (< old-capacity 1)
+                64
+                old-capacity)]
+            (begin
+              (while (< new-capacity required)
+                (if (> new-capacity (/ 9223372036854775807 2))
+                  (set! new-capacity required)
+                  (set! new-capacity (* new-capacity 2))))
+              (let
+                [larger : (__tl_dyn-array u8) (__tl_make-array u8 new-capacity)]
+                (begin
+                  (if (> sink.len 0)
+                    (string.str-copy-bytes-into
+                      (unsafe
+                        (ptr-cast (__tl_array-data sink.slots) : (Ptr u8)))
+                      (unsafe
+                        (__tl_array-data larger))
+                      0
+                      sink.len)
+                    unit)
+                  (set! sink.slots larger)))))
+          unit)
+        (string.str-copy-bytes-into
+          data
+          (unsafe
+            (__tl_array-data sink.slots))
+          sink.len
+          count)
+        (set! sink.len required)
+        (unsafe
+          (ptr-write! slot sink))
+        0))))
 
 ;: Construct a formatter backed by one concrete destination adapter.
 (define (formatter-writer
@@ -585,7 +665,8 @@
 ;; The deterministic pure-TypeLisp f64 renderer is defined below the template
 ;; parser. Keeping it in this module makes `stdlib.format` independent of I/O.
 ;: Render one supported format placeholder through the shared dispatch path.
-(defmacro (format-value
+(defmacro (format-value-resolved
+  [value-type-expr : type]
   [value : comptime.Expr]
   [fill-expr : comptime.Expr]
   [alignment-expr : comptime.Expr]
@@ -593,8 +674,10 @@
   [alternate-expr : comptime.Expr]
   [zero-expr : comptime.Expr]
   [width-kind-expr : comptime.Expr]
+  [width-type-source : type]
   [width-value : comptime.Expr]
   [precision-kind-expr : comptime.Expr]
+  [precision-type-source : type]
   [precision-value : comptime.Expr]
   [selector-expr : comptime.Expr]) : String
   (match fill-expr
@@ -614,8 +697,7 @@
                               (let
                                 [selector : String
                                   (comptime.expr-string-value selector-expr)]
-                                [argument-type : comptime.Expr
-                                  (comptime.expr-type value)]
+                                [argument-type : comptime.Expr value-type-expr]
                                 [argument-kind : String
                                   (type-kind argument-type)]
                                 [borrowed? : bool
@@ -627,7 +709,25 @@
                                     (comptime.reference-element-type
                                       argument-type)
                                     argument-type)]
-                                [value-kind : String (type-kind value-type)]
+                                [raw-value-kind : String (type-kind value-type)]
+                                [arguments? : bool
+                                  (if (string.eq raw-value-kind "tuple")
+                                    (if (= (tuple-element-count value-type) 2)
+                                      (if (string.eq
+                                        (type-kind
+                                          (tuple-element-type value-type 0))
+                                        "function")
+                                        (string.eq
+                                          (type-kind
+                                            (tuple-element-type value-type 1))
+                                          "tuple")
+                                        false)
+                                      false)
+                                    false)]
+                                [value-kind : String
+                                  (if arguments?
+                                    "arguments"
+                                    raw-value-kind)]
                                 [radix-selector? : bool
                                   (match selector
                                     ["b" true]
@@ -700,6 +800,51 @@
                                     (comptime.module-value?
                                       owner
                                       qualified-name)
+                                    false)]
+                                [direct-plain-name : String "format-write"]
+                                [direct-qualified-name : String
+                                  (comptime.string-append
+                                    "format-write-"
+                                    nominal-name)]
+                                [direct-plain-present? : bool
+                                  (if nominal?
+                                    (comptime.module-value?
+                                      owner
+                                      direct-plain-name)
+                                    false)]
+                                [direct-qualified-present? : bool
+                                  (if nominal?
+                                    (comptime.module-value?
+                                      owner
+                                      direct-qualified-name)
+                                    false)]
+                                [direct-hook-dispatch : i64
+                                  (+
+                                    (if direct-plain-present?
+                                      1
+                                      0)
+                                    (if direct-qualified-present?
+                                      2
+                                      0))]
+                                [direct-hook-present? : bool
+                                  (if direct-plain-present?
+                                    true
+                                    direct-qualified-present?)]
+                                [default-options? : bool
+                                  (if (= fill-code 32)
+                                    (if (= alignment 0)
+                                      (if (= sign 0)
+                                        (if (= alternate 0)
+                                          (if (= zero 0)
+                                            (if (= width-kind 0)
+                                              (if (= precision-kind 0)
+                                                (string.eq selector "")
+                                                false)
+                                              false)
+                                            false)
+                                          false)
+                                        false)
+                                      false)
                                     false)]
                                 [plain-contract : String
                                   (comptime.string-append
@@ -779,50 +924,48 @@
                                     (if float?
                                       true
                                       pointer-selector?))]
+                                [use-direct-hook? : bool
+                                  (if nominal?
+                                    (if default-options?
+                                      direct-hook-present?
+                                      false)
+                                    false)]
+                                [direct-rendered : comptime.Expr
+                                  (match direct-hook-dispatch
+                                    [1
+                                      `(stdlib.format.format-direct-hook-materialize
+                                        ,(comptime.type-expr argument-type)
+                                        ,value
+                                        ,(comptime.module-value-expr
+                                          owner
+                                          direct-plain-name))]
+                                    [2
+                                      `(stdlib.format.format-direct-hook-materialize
+                                        ,(comptime.type-expr argument-type)
+                                        ,value
+                                        ,(comptime.module-value-expr
+                                          owner
+                                          direct-qualified-name))]
+                                    [3
+                                      (comptime.comptime-error
+                                        (comptime.string-append
+                                          "format: ambiguous direct Formatter hooks for "
+                                          (comptime.string-append
+                                            value-key
+                                            (comptime.string-append
+                                              " in canonical module "
+                                              owner))))]
+                                    [_ (comptime.expr-string "")])]
                                 [display-rendered : comptime.Expr
                                   (if nominal?
-                                    (match hook-dispatch
-                                      [4 (comptime.expr-string "")]
-                                      [3
-                                        (comptime.comptime-error
-                                          (comptime.string-append
-                                            "format: ambiguous owner hooks for "
-                                            (comptime.string-append
-                                              value-key
-                                              (comptime.string-append
-                                                " in canonical module "
-                                                (comptime.string-append
-                                                  owner
-                                                  (comptime.string-append
-                                                    "; define only one of "
-                                                    expected-contract))))))]
-                                      [1
-                                        (if borrowed?
-                                          `(,(comptime.module-value-expr
-                                              owner
-                                              plain-name)
-                                            ,value)
-                                          (comptime.expr-shared-call1
-                                            (comptime.module-value-expr
-                                              owner
-                                              plain-name)
-                                            value))]
-                                      [2
-                                        (if borrowed?
-                                          `(,(comptime.module-value-expr
-                                              owner
-                                              qualified-name)
-                                            ,value)
-                                          (comptime.expr-shared-call1
-                                            (comptime.module-value-expr
-                                              owner
-                                              qualified-name)
-                                            value))]
-                                      [_
-                                        (if hook-present?
+                                    (if use-direct-hook?
+                                      direct-rendered
+                                      (match hook-dispatch
+                                        [4 (comptime.expr-string "")]
+                                        [3
                                           (comptime.comptime-error
                                             (comptime.string-append
-                                              "format: owner hook has wrong signature for "
+                                              "format: ambiguous owner hooks for "
                                               (comptime.string-append
                                                 value-key
                                                 (comptime.string-append
@@ -830,20 +973,56 @@
                                                   (comptime.string-append
                                                     owner
                                                     (comptime.string-append
-                                                      "; expected "
-                                                      expected-contract))))))
-                                          (comptime.comptime-error
-                                            (comptime.string-append
-                                              "format: unsupported nominal type "
+                                                      "; define only one of "
+                                                      expected-contract))))))]
+                                        [1
+                                          (if borrowed?
+                                            `(,(comptime.module-value-expr
+                                                owner
+                                                plain-name)
+                                              ,value)
+                                            (comptime.expr-shared-call1
+                                              (comptime.module-value-expr
+                                                owner
+                                                plain-name)
+                                              value))]
+                                        [2
+                                          (if borrowed?
+                                            `(,(comptime.module-value-expr
+                                                owner
+                                                qualified-name)
+                                              ,value)
+                                            (comptime.expr-shared-call1
+                                              (comptime.module-value-expr
+                                                owner
+                                                qualified-name)
+                                              value))]
+                                        [_
+                                          (if hook-present?
+                                            (comptime.comptime-error
                                               (comptime.string-append
-                                                value-key
+                                                "format: owner hook has wrong signature for "
                                                 (comptime.string-append
-                                                  " from canonical owner module "
+                                                  value-key
                                                   (comptime.string-append
-                                                    owner
+                                                    " in canonical module "
                                                     (comptime.string-append
-                                                      "; expected "
-                                                      expected-contract)))))))])
+                                                      owner
+                                                      (comptime.string-append
+                                                        "; expected "
+                                                        expected-contract))))))
+                                            (comptime.comptime-error
+                                              (comptime.string-append
+                                                "format: unsupported nominal type "
+                                                (comptime.string-append
+                                                  value-key
+                                                  (comptime.string-append
+                                                    " from canonical owner module "
+                                                    (comptime.string-append
+                                                      owner
+                                                      (comptime.string-append
+                                                        "; expected "
+                                                        expected-contract)))))))]))
                                     (match value-kind
                                       ["string"
                                         (if borrowed?
@@ -922,6 +1101,12 @@
                                           `(stdlib.format.format-f32-core
                                             (deref ,value))
                                           `(stdlib.format.format-f32-core
+                                            ,value))]
+                                      ["arguments"
+                                        (if borrowed?
+                                          `(stdlib.format.format-arguments-materialize
+                                            (deref ,value))
+                                          `(stdlib.format.format-arguments-materialize
                                             ,value))]
                                       ["ptr"
                                         (if special-selector?
@@ -1065,7 +1250,7 @@
                                           width-value
                                           (let
                                             [count-type : comptime.Expr
-                                              (comptime.expr-type width-value)]
+                                              width-type-source]
                                             [count-kind : String
                                               (type-kind count-type)]
                                             (if (string.eq count-kind "i64")
@@ -1099,8 +1284,7 @@
                                           precision-value
                                           (let
                                             [count-type : comptime.Expr
-                                              (comptime.expr-type
-                                                precision-value)]
+                                              precision-type-source]
                                             [count-kind : String
                                               (type-kind count-type)]
                                             (if (string.eq count-kind "i64")
@@ -1392,10 +1576,761 @@
             "format: internal alignment option is malformed")])]
     [_ (comptime.comptime-error "format: internal fill option is malformed")]))
 
+;: Finish a classified value/count triplet by invoking one central terminal.
+;: `prefix` is empty for String materialization and carries the formatter
+;: address for streaming. All three source types are preserved by retained
+;: renderer markers instead of being re-reflected from generated syntax.
+(defmacro (format-classified-call
+  [terminal : comptime.Expr]
+  [prefix : comptime.Expr]
+  [value-source : type]
+  [value-runtime : comptime.Expr]
+  [width-source : type]
+  [width-runtime : comptime.Expr]
+  [precision-source : type]
+  [precision-runtime : comptime.Expr]
+  [fill-expr : comptime.Expr]
+  [alignment-expr : comptime.Expr]
+  [sign-expr : comptime.Expr]
+  [alternate-expr : comptime.Expr]
+  [zero-expr : comptime.Expr]
+  [width-kind-expr : comptime.Expr]
+  [precision-kind-expr : comptime.Expr]
+  [selector-expr : comptime.Expr]) : String
+  (match prefix
+    [(comptime.Expr.Call _ prefix-items)
+      `(,terminal
+        ,(comptime.type-expr value-source)
+        ,@prefix-items
+        ,value-runtime
+        ,fill-expr
+        ,alignment-expr
+        ,sign-expr
+        ,alternate-expr
+        ,zero-expr
+        ,width-kind-expr
+        ,(comptime.type-expr width-source)
+        ,width-runtime
+        ,precision-kind-expr
+        ,(comptime.type-expr precision-source)
+        ,precision-runtime
+        ,selector-expr)]
+    [_
+      (comptime.comptime-error "format: internal terminal prefix is malformed")]))
+
+;: Preserve the reflected type of a dynamic precision argument for dispatch.
+(defmacro (format-classify-precision
+  [terminal : comptime.Expr]
+  [prefix : comptime.Expr]
+  [value-source : type]
+  [value-runtime : comptime.Expr]
+  [width-source : type]
+  [width-runtime : comptime.Expr]
+  [precision-value : comptime.Expr]
+  [fill-expr : comptime.Expr]
+  [alignment-expr : comptime.Expr]
+  [sign-expr : comptime.Expr]
+  [alternate-expr : comptime.Expr]
+  [zero-expr : comptime.Expr]
+  [width-kind-expr : comptime.Expr]
+  [precision-kind-expr : comptime.Expr]
+  [selector-expr : comptime.Expr]) : String
+  (match precision-value
+    [(comptime.Expr.Call callee items)
+      (if (= (comptime.expr-list-length items) 3)
+        (match callee
+          [(comptime.Expr.Var name)
+            (if (string.eq name "__tl_format_typed_argument")
+              `(stdlib.format.format-classified-call
+                ,terminal
+                ,prefix
+                ,(comptime.type-expr value-source)
+                ,value-runtime
+                ,(comptime.type-expr width-source)
+                ,width-runtime
+                ,(comptime.expr-list-nth items 0)
+                ,(comptime.expr-list-nth items 2)
+                ,fill-expr
+                ,alignment-expr
+                ,sign-expr
+                ,alternate-expr
+                ,zero-expr
+                ,width-kind-expr
+                ,precision-kind-expr
+                ,selector-expr)
+              `(stdlib.format.format-classified-call
+                ,terminal
+                ,prefix
+                ,(comptime.type-expr value-source)
+                ,value-runtime
+                ,(comptime.type-expr width-source)
+                ,width-runtime
+                ,(comptime.type-expr (comptime.expr-type precision-value))
+                ,precision-value
+                ,fill-expr
+                ,alignment-expr
+                ,sign-expr
+                ,alternate-expr
+                ,zero-expr
+                ,width-kind-expr
+                ,precision-kind-expr
+                ,selector-expr))]
+          [_
+            `(stdlib.format.format-classified-call
+              ,terminal
+              ,prefix
+              ,(comptime.type-expr value-source)
+              ,value-runtime
+              ,(comptime.type-expr width-source)
+              ,width-runtime
+              ,(comptime.type-expr (comptime.expr-type precision-value))
+              ,precision-value
+              ,fill-expr
+              ,alignment-expr
+              ,sign-expr
+              ,alternate-expr
+              ,zero-expr
+              ,width-kind-expr
+              ,precision-kind-expr
+              ,selector-expr)])
+        `(stdlib.format.format-classified-call
+          ,terminal
+          ,prefix
+          ,(comptime.type-expr value-source)
+          ,value-runtime
+          ,(comptime.type-expr width-source)
+          ,width-runtime
+          ,(comptime.type-expr (comptime.expr-type precision-value))
+          ,precision-value
+          ,fill-expr
+          ,alignment-expr
+          ,sign-expr
+          ,alternate-expr
+          ,zero-expr
+          ,width-kind-expr
+          ,precision-kind-expr
+          ,selector-expr))]
+    [_
+      `(stdlib.format.format-classified-call
+        ,terminal
+        ,prefix
+        ,(comptime.type-expr value-source)
+        ,value-runtime
+        ,(comptime.type-expr width-source)
+        ,width-runtime
+        ,(comptime.type-expr (comptime.expr-type precision-value))
+        ,precision-value
+        ,fill-expr
+        ,alignment-expr
+        ,sign-expr
+        ,alternate-expr
+        ,zero-expr
+        ,width-kind-expr
+        ,precision-kind-expr
+        ,selector-expr)]))
+
+;: Preserve the reflected type of a dynamic width argument for dispatch.
+(defmacro (format-classify-width
+  [terminal : comptime.Expr]
+  [prefix : comptime.Expr]
+  [value-source : type]
+  [value-runtime : comptime.Expr]
+  [width-value : comptime.Expr]
+  [precision-value : comptime.Expr]
+  [fill-expr : comptime.Expr]
+  [alignment-expr : comptime.Expr]
+  [sign-expr : comptime.Expr]
+  [alternate-expr : comptime.Expr]
+  [zero-expr : comptime.Expr]
+  [width-kind-expr : comptime.Expr]
+  [precision-kind-expr : comptime.Expr]
+  [selector-expr : comptime.Expr]) : String
+  (match width-value
+    [(comptime.Expr.Call callee items)
+      (if (= (comptime.expr-list-length items) 3)
+        (match callee
+          [(comptime.Expr.Var name)
+            (if (string.eq name "__tl_format_typed_argument")
+              `(stdlib.format.format-classify-precision
+                ,terminal
+                ,prefix
+                ,(comptime.type-expr value-source)
+                ,value-runtime
+                ,(comptime.expr-list-nth items 0)
+                ,(comptime.expr-list-nth items 2)
+                ,precision-value
+                ,fill-expr
+                ,alignment-expr
+                ,sign-expr
+                ,alternate-expr
+                ,zero-expr
+                ,width-kind-expr
+                ,precision-kind-expr
+                ,selector-expr)
+              `(stdlib.format.format-classify-precision
+                ,terminal
+                ,prefix
+                ,(comptime.type-expr value-source)
+                ,value-runtime
+                ,(comptime.type-expr (comptime.expr-type width-value))
+                ,width-value
+                ,precision-value
+                ,fill-expr
+                ,alignment-expr
+                ,sign-expr
+                ,alternate-expr
+                ,zero-expr
+                ,width-kind-expr
+                ,precision-kind-expr
+                ,selector-expr))]
+          [_
+            `(stdlib.format.format-classify-precision
+              ,terminal
+              ,prefix
+              ,(comptime.type-expr value-source)
+              ,value-runtime
+              ,(comptime.type-expr (comptime.expr-type width-value))
+              ,width-value
+              ,precision-value
+              ,fill-expr
+              ,alignment-expr
+              ,sign-expr
+              ,alternate-expr
+              ,zero-expr
+              ,width-kind-expr
+              ,precision-kind-expr
+              ,selector-expr)])
+        `(stdlib.format.format-classify-precision
+          ,terminal
+          ,prefix
+          ,(comptime.type-expr value-source)
+          ,value-runtime
+          ,(comptime.type-expr (comptime.expr-type width-value))
+          ,width-value
+          ,precision-value
+          ,fill-expr
+          ,alignment-expr
+          ,sign-expr
+          ,alternate-expr
+          ,zero-expr
+          ,width-kind-expr
+          ,precision-kind-expr
+          ,selector-expr))]
+    [_
+      `(stdlib.format.format-classify-precision
+        ,terminal
+        ,prefix
+        ,(comptime.type-expr value-source)
+        ,value-runtime
+        ,(comptime.type-expr (comptime.expr-type width-value))
+        ,width-value
+        ,precision-value
+        ,fill-expr
+        ,alignment-expr
+        ,sign-expr
+        ,alternate-expr
+        ,zero-expr
+        ,width-kind-expr
+        ,precision-kind-expr
+        ,selector-expr)]))
+
+;: Classify a formatting value and its dynamic count operands once.
+(defmacro (format-classify-value
+  [terminal : comptime.Expr]
+  [prefix : comptime.Expr]
+  [value : comptime.Expr]
+  [fill-expr : comptime.Expr]
+  [alignment-expr : comptime.Expr]
+  [sign-expr : comptime.Expr]
+  [alternate-expr : comptime.Expr]
+  [zero-expr : comptime.Expr]
+  [width-kind-expr : comptime.Expr]
+  [width-value : comptime.Expr]
+  [precision-kind-expr : comptime.Expr]
+  [precision-value : comptime.Expr]
+  [selector-expr : comptime.Expr]) : String
+  (match value
+    [(comptime.Expr.Call callee items)
+      (if (= (comptime.expr-list-length items) 3)
+        (match callee
+          [(comptime.Expr.Var name)
+            (if (string.eq name "__tl_format_typed_argument")
+              `(stdlib.format.format-classify-width
+                ,terminal
+                ,prefix
+                ,(comptime.expr-list-nth items 0)
+                ,(comptime.expr-list-nth items 2)
+                ,width-value
+                ,precision-value
+                ,fill-expr
+                ,alignment-expr
+                ,sign-expr
+                ,alternate-expr
+                ,zero-expr
+                ,width-kind-expr
+                ,precision-kind-expr
+                ,selector-expr)
+              `(stdlib.format.format-classify-width
+                ,terminal
+                ,prefix
+                ,(comptime.type-expr (comptime.expr-type value))
+                ,value
+                ,width-value
+                ,precision-value
+                ,fill-expr
+                ,alignment-expr
+                ,sign-expr
+                ,alternate-expr
+                ,zero-expr
+                ,width-kind-expr
+                ,precision-kind-expr
+                ,selector-expr))]
+          [_
+            `(stdlib.format.format-classify-width
+              ,terminal
+              ,prefix
+              ,(comptime.type-expr (comptime.expr-type value))
+              ,value
+              ,width-value
+              ,precision-value
+              ,fill-expr
+              ,alignment-expr
+              ,sign-expr
+              ,alternate-expr
+              ,zero-expr
+              ,width-kind-expr
+              ,precision-kind-expr
+              ,selector-expr)])
+        `(stdlib.format.format-classify-width
+          ,terminal
+          ,prefix
+          ,(comptime.type-expr (comptime.expr-type value))
+          ,value
+          ,width-value
+          ,precision-value
+          ,fill-expr
+          ,alignment-expr
+          ,sign-expr
+          ,alternate-expr
+          ,zero-expr
+          ,width-kind-expr
+          ,precision-kind-expr
+          ,selector-expr))]
+    [_
+      `(stdlib.format.format-classify-width
+        ,terminal
+        ,prefix
+        ,(comptime.type-expr (comptime.expr-type value))
+        ,value
+        ,width-value
+        ,precision-value
+        ,fill-expr
+        ,alignment-expr
+        ,sign-expr
+        ,alternate-expr
+        ,zero-expr
+        ,width-kind-expr
+        ,precision-kind-expr
+        ,selector-expr)]))
+
+;: Unwrap retained-renderer type witnesses before entering the central
+;: formatting dispatcher. Ordinary callers pass through unchanged.
+(defmacro (format-value
+  [value : comptime.Expr]
+  [fill-expr : comptime.Expr]
+  [alignment-expr : comptime.Expr]
+  [sign-expr : comptime.Expr]
+  [alternate-expr : comptime.Expr]
+  [zero-expr : comptime.Expr]
+  [width-kind-expr : comptime.Expr]
+  [width-value : comptime.Expr]
+  [precision-kind-expr : comptime.Expr]
+  [precision-value : comptime.Expr]
+  [selector-expr : comptime.Expr]) : String
+  `(stdlib.format.format-classify-value
+    stdlib.format.format-value-resolved
+    (__tl_format_terminal_prefix)
+    ,value
+    ,fill-expr
+    ,alignment-expr
+    ,sign-expr
+    ,alternate-expr
+    ,zero-expr
+    ,width-kind-expr
+    ,width-value
+    ,precision-kind-expr
+    ,precision-value
+    ,selector-expr))
+
+;: Invoke one validated owner-module direct hook against the formatter stored
+;: at an opaque stack-cell address, then persist its updated status. Owned
+;: values receive a generated shared scope so the hook never consumes them.
+(defmacro (format-direct-hook-call-at!
+  [source-type : type]
+  [address : comptime.Expr]
+  [runtime-value : comptime.Expr]
+  [hook : comptime.Expr]) : String
+  (let
+    [source-kind : String (type-kind source-type)]
+    [borrowed? : bool
+      (if (string.eq source-kind "ref")
+        true
+        (string.eq source-kind "mut-ref"))]
+    [slot-name : String (comptime.syntax-name-fresh "__tl_format_direct_slot")]
+    [formatter-name : String
+      (comptime.syntax-name-fresh "__tl_format_direct_formatter")]
+    [value-name : String
+      (comptime.syntax-name-fresh "__tl_format_direct_value")]
+    [value-ref : comptime.Expr (comptime.expr-var value-name)]
+    [slot : comptime.Expr (comptime.expr-var slot-name)]
+    [formatter : comptime.Expr (comptime.expr-var formatter-name)]
+    [slot-init : comptime.Expr
+      `(unsafe
+        (int->ptr (cast ,address : u64) : (MutPtr stdlib.format.Formatter)))]
+    [formatter-init : comptime.Expr
+      `(unsafe
+        (ptr-read (ptr-cast ,slot : (Ptr stdlib.format.Formatter))))]
+    [body : comptime.Expr
+      `(begin
+        (,hook
+          ,(if borrowed?
+            runtime-value
+            value-ref)
+          (&mut ,formatter))
+        (unsafe
+          (ptr-write! ,slot ,formatter))
+        "")]
+    [scoped : comptime.Expr
+      (comptime.expr-let-scope
+        slot-name
+        slot-init
+        (comptime.expr-let-scope formatter-name formatter-init body))]
+    (if borrowed?
+      scoped
+      (comptime.expr-shared-let-scope value-name runtime-value scoped))))
+
+;: Materialize one direct owner hook through the same growable String
+;: destination used when retained Arguments are converted to a String.
+(defmacro (format-direct-hook-materialize
+  [source-type : type]
+  [runtime-value : comptime.Expr]
+  [hook : comptime.Expr]) : String
+  `(let
+    [__tl_format_direct_sink
+      (stdlib.format.ArgumentsStringSink (__tl_make-array u8 64) 0)]
+    [__tl_format_direct_sink_cell (array __tl_format_direct_sink)]
+    [__tl_format_direct_sink_address : i64
+      (unsafe
+        (cast
+          (ptr->int
+            (ptr-cast (__tl_array-data __tl_format_direct_sink_cell) : (Ptr u8)))
+          : i64))]
+    [__tl_format_direct_formatter
+      (stdlib.format.formatter-writer
+        __tl_format_direct_sink_address
+        stdlib.format.arguments-string-write-raw)]
+    [__tl_format_direct_formatter_cell
+      (stdlib.format.formatter-cell __tl_format_direct_formatter)]
+    [__tl_format_direct_formatter_address : i64
+      (unsafe
+        (cast
+          (ptr->int
+            (ptr-cast
+              (__tl_array-data __tl_format_direct_formatter_cell)
+              : (Ptr u8)))
+          : i64))]
+    [__tl_format_direct_ignored : String
+      (stdlib.format.format-direct-hook-call-at!
+        ,(comptime.type-expr source-type)
+        __tl_format_direct_formatter_address
+        ,runtime-value
+        ,hook)]
+    [__tl_format_direct_status : i64
+      (stdlib.format.formatter-status-at __tl_format_direct_formatter_address)]
+    [__tl_format_direct_finished (array-ref __tl_format_direct_sink_cell 0)]
+    (if (!= __tl_format_direct_status 0)
+      (stdlib.format.format-runtime-abort-string
+        "format: internal direct-hook String sink failed")
+      (if (= __tl_format_direct_finished.len 0)
+        ""
+        (unsafe
+          (string-from-bytes
+            (ptr-cast
+              (__tl_array-data __tl_format_direct_finished.slots)
+              : (Ptr u8))
+            __tl_format_direct_finished.len))))))
+
 ;: Stream one value through the same conversion path used by `format`.
 ;:
 ;: The conversion may allocate its scalar or owner `to-string` result, but it
 ;: never constructs a combined String for the complete format plan.
+(defmacro (format-stream-value-at-resolved!
+  [source-type : type]
+  [address : comptime.Expr]
+  [runtime-value : comptime.Expr]
+  [fill-expr : comptime.Expr]
+  [alignment-expr : comptime.Expr]
+  [sign-expr : comptime.Expr]
+  [alternate-expr : comptime.Expr]
+  [zero-expr : comptime.Expr]
+  [width-kind-expr : comptime.Expr]
+  [width-source : type]
+  [width-value : comptime.Expr]
+  [precision-kind-expr : comptime.Expr]
+  [precision-source : type]
+  [precision-value : comptime.Expr]
+  [selector-expr : comptime.Expr]) : String
+  (let
+    [fallback : comptime.Expr
+      `(begin
+        (stdlib.format.formatter-write-string-at!
+          ,address
+          (stdlib.format.format-value-resolved
+            ,(comptime.type-expr source-type)
+            ,runtime-value
+            ,fill-expr
+            ,alignment-expr
+            ,sign-expr
+            ,alternate-expr
+            ,zero-expr
+            ,width-kind-expr
+            ,(comptime.type-expr width-source)
+            ,width-value
+            ,precision-kind-expr
+            ,(comptime.type-expr precision-source)
+            ,precision-value
+            ,selector-expr))
+        "")]
+    [direct : comptime.Expr
+      `(stdlib.format.format-stream-value-at-default-resolved!
+        ,(comptime.type-expr source-type)
+        ,address
+        ,runtime-value
+        ,fill-expr
+        ,alignment-expr
+        ,sign-expr
+        ,alternate-expr
+        ,zero-expr
+        ,width-kind-expr
+        ,(comptime.type-expr width-source)
+        ,width-value
+        ,precision-kind-expr
+        ,(comptime.type-expr precision-source)
+        ,precision-value
+        ,selector-expr)]
+    (match fill-expr
+      [(comptime.Expr.Int fill)
+        (if (= fill 32)
+          (match alignment-expr
+            [(comptime.Expr.Int alignment)
+              (if (= alignment 0)
+                (match sign-expr
+                  [(comptime.Expr.Int sign)
+                    (if (= sign 0)
+                      (match alternate-expr
+                        [(comptime.Expr.Int alternate)
+                          (if (= alternate 0)
+                            (match zero-expr
+                              [(comptime.Expr.Int zero)
+                                (if (= zero 0)
+                                  (match width-kind-expr
+                                    [(comptime.Expr.Int width-kind)
+                                      (if (= width-kind 0)
+                                        (match precision-kind-expr
+                                          [(comptime.Expr.Int precision-kind)
+                                            (if (= precision-kind 0)
+                                              (if (string.eq
+                                                (comptime.expr-string-value
+                                                  selector-expr)
+                                                "")
+                                                direct
+                                                fallback)
+                                              fallback)]
+                                          [_ fallback])
+                                        fallback)]
+                                    [_ fallback])
+                                  fallback)]
+                              [_ fallback])
+                            fallback)]
+                        [_ fallback])
+                      fallback)]
+                  [_ fallback])
+                fallback)]
+            [_ fallback])
+          fallback)]
+      [_ fallback])))
+
+;: Resolve and invoke a nominal owner's direct formatter hook when available.
+(defmacro (format-stream-direct-owner-at-resolved!
+  [source-type : type]
+  [address : comptime.Expr]
+  [runtime-value : comptime.Expr]) : String
+  (let
+    [source-kind : String (type-kind source-type)]
+    [borrowed? : bool
+      (if (string.eq source-kind "ref")
+        true
+        (string.eq source-kind "mut-ref"))]
+    [value-type : comptime.Expr
+      (if borrowed?
+        (comptime.reference-element-type source-type)
+        source-type)]
+    [owner : String (type-nominal-module value-type)]
+    [nominal-name : String (type-nominal-name value-type)]
+    [plain-name : String "format-write"]
+    [qualified-name : String
+      (comptime.string-append "format-write-" nominal-name)]
+    [plain-present? : bool (comptime.module-value? owner plain-name)]
+    [qualified-present? : bool (comptime.module-value? owner qualified-name)]
+    [dispatch : i64
+      (+
+        (if plain-present?
+          1
+          0)
+        (if qualified-present?
+          2
+          0))]
+    [fallback : comptime.Expr
+      `(begin
+        (stdlib.format.formatter-write-string-at!
+          ,address
+          (stdlib.format.format-value-resolved
+            ,(comptime.type-expr source-type)
+            ,runtime-value
+            32
+            0
+            0
+            0
+            0
+            0
+            ,(comptime.type-expr source-type)
+            0
+            0
+            ,(comptime.type-expr source-type)
+            0
+            ""))
+        "")]
+    (match dispatch
+      [3
+        (comptime.comptime-error
+          (comptime.string-append
+            "format: ambiguous direct Formatter hooks for "
+            (comptime.string-append
+              (type-key value-type)
+              (comptime.string-append " in canonical module " owner))))]
+      [1
+        `(stdlib.format.format-direct-hook-call-at!
+          ,(comptime.type-expr source-type)
+          ,address
+          ,runtime-value
+          ,(comptime.module-value-expr owner plain-name))]
+      [2
+        `(stdlib.format.format-direct-hook-call-at!
+          ,(comptime.type-expr source-type)
+          ,address
+          ,runtime-value
+          ,(comptime.module-value-expr owner qualified-name))]
+      [_ fallback])))
+
+;: Stream one default-display value, preferring its canonical direct hook.
+(defmacro (format-stream-value-at-default-resolved!
+  [source-type : type]
+  [address : comptime.Expr]
+  [runtime-value : comptime.Expr]
+  [fill-expr : comptime.Expr]
+  [alignment-expr : comptime.Expr]
+  [sign-expr : comptime.Expr]
+  [alternate-expr : comptime.Expr]
+  [zero-expr : comptime.Expr]
+  [width-kind-expr : comptime.Expr]
+  [width-source : type]
+  [width-value : comptime.Expr]
+  [precision-kind-expr : comptime.Expr]
+  [precision-source : type]
+  [precision-value : comptime.Expr]
+  [selector-expr : comptime.Expr]) : String
+  (let
+    [source-kind : String (type-kind source-type)]
+    [borrowed? : bool
+      (if (string.eq source-kind "ref")
+        true
+        (string.eq source-kind "mut-ref"))]
+    [value-type : comptime.Expr
+      (if borrowed?
+        (comptime.reference-element-type source-type)
+        source-type)]
+    [raw-value-kind : String (type-kind value-type)]
+    [arguments? : bool
+      (if (string.eq raw-value-kind "tuple")
+        (if (= (tuple-element-count value-type) 2)
+          (if (string.eq
+            (type-kind (tuple-element-type value-type 0))
+            "function")
+            (string.eq (type-kind (tuple-element-type value-type 1)) "tuple")
+            false)
+          false)
+        false)]
+    [value-kind : String
+      (if arguments?
+        (if borrowed?
+          "arguments-borrowed"
+          "arguments")
+        raw-value-kind)]
+    [fallback : comptime.Expr
+      `(begin
+        (stdlib.format.formatter-write-string-at!
+          ,address
+          (stdlib.format.format-value-resolved
+            ,(comptime.type-expr source-type)
+            ,runtime-value
+            ,fill-expr
+            ,alignment-expr
+            ,sign-expr
+            ,alternate-expr
+            ,zero-expr
+            ,width-kind-expr
+            ,(comptime.type-expr width-source)
+            ,width-value
+            ,precision-kind-expr
+            ,(comptime.type-expr precision-source)
+            ,precision-value
+            ,selector-expr))
+        "")]
+    (match value-kind
+      ["arguments"
+        `(begin
+          (stdlib.format.format-arguments-render-at-resolved!
+            ,(comptime.type-expr value-type)
+            0
+            ,runtime-value
+            ,address)
+          "")]
+      ["arguments-borrowed"
+        `(begin
+          (stdlib.format.format-arguments-render-at-resolved!
+            ,(comptime.type-expr value-type)
+            1
+            ,runtime-value
+            ,address)
+          "")]
+      ["struct"
+        `(stdlib.format.format-stream-direct-owner-at-resolved!
+          ,(comptime.type-expr source-type)
+          ,address
+          ,runtime-value)]
+      ["enum"
+        `(stdlib.format.format-stream-direct-owner-at-resolved!
+          ,(comptime.type-expr source-type)
+          ,address
+          ,runtime-value)]
+      ["region"
+        `(stdlib.format.format-stream-direct-owner-at-resolved!
+          ,(comptime.type-expr source-type)
+          ,address
+          ,runtime-value)]
+      [_ fallback])))
+
+;: Classify and stream one value into the formatter at an opaque address.
 (defmacro (format-stream-value-at!
   [address : comptime.Expr]
   [value : comptime.Expr]
@@ -1409,22 +2344,20 @@
   [precision-kind-expr : comptime.Expr]
   [precision-value : comptime.Expr]
   [selector-expr : comptime.Expr]) : String
-  `(begin
-    (stdlib.format.formatter-write-string-at!
-      ,address
-      (stdlib.format.format-value
-        ,value
-        ,fill-expr
-        ,alignment-expr
-        ,sign-expr
-        ,alternate-expr
-        ,zero-expr
-        ,width-kind-expr
-        ,width-value
-        ,precision-kind-expr
-        ,precision-value
-        ,selector-expr))
-    ""))
+  `(stdlib.format.format-classify-value
+    stdlib.format.format-stream-value-at-resolved!
+    (__tl_format_terminal_prefix ,address)
+    ,value
+    ,fill-expr
+    ,alignment-expr
+    ,sign-expr
+    ,alternate-expr
+    ,zero-expr
+    ,width-kind-expr
+    ,width-value
+    ,precision-kind-expr
+    ,precision-value
+    ,selector-expr))
 
 ;: Mark one explicit named argument for `format`.
 ;:
@@ -1783,12 +2716,12 @@
                                     (let
                                       [argument-value : comptime.Expr
                                         `(,callee ,@call-items)]
-                                      [value-type : comptime.Expr
-                                        (comptime.expr-type argument-value)]
                                       [value-kind : String
-                                        (type-kind value-type)]
+                                        (type-kind
+                                          (comptime.expr-type argument-value))]
                                       [borrow-mode : i64
                                         (match value-kind
+                                          ["string" 1]
                                           ["struct" 1]
                                           ["enum" 1]
                                           ["region" 1]
@@ -1838,6 +2771,10 @@
                                   [value-kind : String (type-kind value-type)]
                                   [borrow-mode : i64
                                     (match value-kind
+                                      ["string"
+                                        (if (comptime.expr-string? argument)
+                                          0
+                                          1)]
                                       ["struct" 1]
                                       ["enum" 1]
                                       ["region" 1]
@@ -2966,6 +3903,45 @@
         "format: internal argument index is not an integer")]))
 
 ;: Bind supplied arguments, validate a completed plan, and select its sink.
+(defmacro (format-expand-mode-complete
+  [plan : comptime.Expr]
+  [argument-carrier : comptime.Expr]
+  [stream-address : comptime.Expr]
+  [named-seen : comptime.Expr]
+  [positional-vars : comptime.Expr]
+  [named-names : comptime.Expr]
+  [named-vars : comptime.Expr]
+  [bindings : comptime.Expr]) : comptime.Expr
+  (let
+    [immediate : comptime.Expr
+      `(stdlib.format.format-expand-mode
+        ,plan
+        ,argument-carrier
+        ,stream-address
+        9223372036854775807
+        ,named-seen
+        ,positional-vars
+        ,named-names
+        ,named-vars
+        ,bindings)]
+    (match stream-address
+      [(comptime.Expr.Call retained-callee retained-items)
+        (if (= (comptime.expr-list-length retained-items) 0)
+          (match retained-callee
+            [(comptime.Expr.Var retained-name)
+              (if (string.eq retained-name "__tl_format_retained_sink")
+                `(stdlib.format.format-expand-arguments-finish
+                  ,plan
+                  ,positional-vars
+                  ,named-names
+                  ,named-vars
+                  ,bindings)
+                immediate)]
+            [_ immediate])
+          immediate)]
+      [_ immediate])))
+
+;: Advance the shared immediate, streaming, or retained format expansion.
 (defmacro (format-expand-mode
   [plan : comptime.Expr]
   [argument-carrier : comptime.Expr]
@@ -2995,667 +3971,70 @@
                 ,named-vars
                 ,bindings
                 ,argument))
-            (match plan
-              [(comptime.Expr.Call _ plan-pieces)
-                (match positional-vars
-                  [(comptime.Expr.Call _ positional-items)
-                    (match named-names
-                      [(comptime.Expr.Call _ named-name-items)
-                        (match named-vars
-                          [(comptime.Expr.Call _ named-var-items)
-                            (match bindings
-                              [(comptime.Expr.Call _ binding-items)
-                                (let
-                                  [plan-len : i64
-                                    (comptime.expr-list-length plan-pieces)]
-                                  [positional-count : i64
-                                    (comptime.expr-list-length positional-items)]
-                                  [capture-names : comptime.ExprList
-                                    (comptime.expr-list-empty)]
-                                  [capture-vars : comptime.ExprList
-                                    (comptime.expr-list-empty)]
-                                  [capture-bindings : comptime.ExprList
-                                    (comptime.expr-list-empty)]
-                                  [capture-count : i64 0]
-                                  [plan-index : i64 (- plan-len 1)]
-                                  (begin
-                                    ;; Validate every placeholder carrier and
-                                    ;; every positional value/count reference.
-                                    (while (>= plan-index 0)
-                                      (let
-                                        [piece : comptime.Expr
-                                          (comptime.expr-list-nth
-                                            plan-pieces
-                                            plan-index)]
-                                        [fields : comptime.ExprList
-                                          (comptime.expr-list-empty)]
-                                        (begin
-                                          (match piece
-                                            [(comptime.Expr.Begin found-fields)
-                                              (set! fields found-fields)]
-                                            [_ unit])
-                                          (if (comptime.expr-string? piece)
-                                            unit
-                                            (if (!=
-                                              (comptime.expr-list-length fields)
-                                              14)
-                                              (comptime.comptime-error
-                                                "format: internal placeholder plan is malformed")
-                                              (let
-                                                [selector-kind : i64 -1]
-                                                [implicit-state : i64 -1]
-                                                [width-kind : i64 -1]
-                                                [precision-kind : i64 -1]
-                                                (begin
-                                                  (match (comptime.expr-list-nth
-                                                    fields
-                                                    0)
-                                                    [(comptime.Expr.Int found)
-                                                      (set! selector-kind found)]
-                                                    [_ unit])
-                                                  (match (comptime.expr-list-nth
-                                                    fields
-                                                    2)
-                                                    [(comptime.Expr.Int found)
-                                                      (set!
-                                                        implicit-state
-                                                        found)]
-                                                    [_ unit])
-                                                  (match (comptime.expr-list-nth
-                                                    fields
-                                                    8)
-                                                    [(comptime.Expr.Int found)
-                                                      (set! width-kind found)]
-                                                    [_ unit])
-                                                  (match (comptime.expr-list-nth
-                                                    fields
-                                                    10)
-                                                    [(comptime.Expr.Int found)
-                                                      (set!
-                                                        precision-kind
-                                                        found)]
-                                                    [_ unit])
-                                                  (if (= selector-kind 0)
-                                                    (match (comptime.expr-list-nth
-                                                      fields
-                                                      1)
-                                                      [(comptime.Expr.Int
-                                                          selected)
-                                                        (if (>=
-                                                          selected
-                                                          positional-count)
-                                                          (if (!=
-                                                            implicit-state
-                                                            0)
-                                                            (comptime.comptime-error
-                                                              "format: not enough arguments for placeholders")
-                                                            (comptime.comptime-error
-                                                              (comptime.string-append
-                                                                "format: positional argument index is out of range: "
-                                                                (comptime.int->string
-                                                                  selected))))
-                                                          unit)]
-                                                      [_
-                                                        (comptime.comptime-error
-                                                          "format: internal positional selector is malformed")])
-                                                    (if (= selector-kind 1)
-                                                      (let
-                                                        [selector-value : comptime.Expr
-                                                          (comptime.expr-list-nth
-                                                            fields
-                                                            1)]
-                                                        (if (not
-                                                          (comptime.expr-string?
-                                                            selector-value))
-                                                          (comptime.comptime-error
-                                                            "format: internal named selector is malformed")
-                                                          unit))
-                                                      (comptime.comptime-error
-                                                        "format: internal selector kind is malformed")))
-                                                  ;; Macro CTFE cannot invoke `cond`.
-                                                  ;; lint-allow: nested-if-ladder
-                                                  (if (= width-kind 2)
-                                                    (match (comptime.expr-list-nth
-                                                      fields
-                                                      9)
-                                                      [(comptime.Expr.Int
-                                                          selected)
-                                                        (if (>=
-                                                          selected
-                                                          positional-count)
-                                                          (comptime.comptime-error
-                                                            (comptime.string-append
-                                                              "format: dynamic width argument index is out of range: "
-                                                              (comptime.int->string
-                                                                selected)))
-                                                          unit)]
-                                                      [_
-                                                        (comptime.comptime-error
-                                                          "format: internal width reference is malformed")])
-                                                    (if (< width-kind 0)
-                                                      (comptime.comptime-error
-                                                        "format: internal width kind is malformed")
-                                                      (if (> width-kind 3)
-                                                        (comptime.comptime-error
-                                                          "format: internal width kind is malformed")
-                                                        unit)))
-                                                  ;; Macro CTFE cannot invoke `cond`.
-                                                  ;; lint-allow: nested-if-ladder
-                                                  (if (if (= precision-kind 2)
-                                                    true
-                                                    (= precision-kind 4))
-                                                    (match (comptime.expr-list-nth
-                                                      fields
-                                                      11)
-                                                      [(comptime.Expr.Int
-                                                          selected)
-                                                        (if (>=
-                                                          selected
-                                                          positional-count)
-                                                          (comptime.comptime-error
-                                                            (comptime.string-append
-                                                              "format: dynamic precision argument index is out of range: "
-                                                              (comptime.int->string
-                                                                selected)))
-                                                          unit)]
-                                                      [_
-                                                        (comptime.comptime-error
-                                                          "format: internal precision reference is malformed")])
-                                                    (if (< precision-kind 0)
-                                                      (comptime.comptime-error
-                                                        "format: internal precision kind is malformed")
-                                                      (if (> precision-kind 4)
-                                                        (comptime.comptime-error
-                                                          "format: internal precision kind is malformed")
-                                                        unit)))))))
-                                          (set! plan-index (- plan-index 1)))))
-                                    ;; Every positional value/count reference
-                                    ;; counts as a use. Scanner-resolved star
-                                    ;; counts have already advanced the implicit
-                                    ;; iterator; dollar references have not.
-                                    (let
-                                      [positional-index : i64 0]
-                                      (while (<
-                                        positional-index
-                                        positional-count)
+            (if (!= index 9223372036854775807)
+              `(stdlib.format.format-expand-mode-complete
+                ,plan
+                ,argument-carrier
+                ,stream-address
+                ,named-seen
+                ,positional-vars
+                ,named-names
+                ,named-vars
+                ,bindings)
+              (match plan
+                [(comptime.Expr.Call _ plan-pieces)
+                  (match positional-vars
+                    [(comptime.Expr.Call _ positional-items)
+                      (match named-names
+                        [(comptime.Expr.Call _ named-name-items)
+                          (match named-vars
+                            [(comptime.Expr.Call _ named-var-items)
+                              (match bindings
+                                [(comptime.Expr.Call _ binding-items)
+                                  (let
+                                    [plan-len : i64
+                                      (comptime.expr-list-length plan-pieces)]
+                                    [positional-count : i64
+                                      (comptime.expr-list-length
+                                        positional-items)]
+                                    [capture-names : comptime.ExprList
+                                      (comptime.expr-list-empty)]
+                                    [capture-vars : comptime.ExprList
+                                      (comptime.expr-list-empty)]
+                                    [capture-bindings : comptime.ExprList
+                                      (comptime.expr-list-empty)]
+                                    [capture-count : i64 0]
+                                    [plan-index : i64 (- plan-len 1)]
+                                    (begin
+                                      ;; Validate every placeholder carrier and
+                                      ;; every positional value/count reference.
+                                      (while (>= plan-index 0)
                                         (let
-                                          [used? : bool false]
-                                          [piece-index : i64 0]
+                                          [piece : comptime.Expr
+                                            (comptime.expr-list-nth
+                                              plan-pieces
+                                              plan-index)]
+                                          [fields : comptime.ExprList
+                                            (comptime.expr-list-empty)]
                                           (begin
-                                            (while (< piece-index plan-len)
-                                              (let
-                                                [piece : comptime.Expr
-                                                  (comptime.expr-list-nth
-                                                    plan-pieces
-                                                    piece-index)]
-                                                [fields : comptime.ExprList
-                                                  (comptime.expr-list-empty)]
-                                                [slot : i64 0]
-                                                (begin
-                                                  (match piece
-                                                    [(comptime.Expr.Begin
-                                                        found-fields)
-                                                      (set! fields found-fields)]
-                                                    [_ unit])
-                                                  (if (=
-                                                    (comptime.expr-list-length
-                                                      fields)
-                                                    14)
-                                                    (while (< slot 3)
-                                                      (let
-                                                        [reference-kind : i64
-                                                          -1]
-                                                        [reference-value : comptime.Expr
-                                                          (comptime.expr-int 0)]
-                                                        (begin
-                                                          (if (= slot 0)
-                                                            (begin
-                                                              (match (comptime.expr-list-nth
-                                                                fields
-                                                                0)
-                                                                [(comptime.Expr.Int
-                                                                    found)
-                                                                  (set!
-                                                                    reference-kind
-                                                                    found)]
-                                                                [_ unit])
-                                                              (set!
-                                                                reference-value
-                                                                (comptime.expr-list-nth
-                                                                  fields
-                                                                  1)))
-                                                            (if (= slot 1)
-                                                              (begin
-                                                                (match (comptime.expr-list-nth
-                                                                  fields
-                                                                  8)
-                                                                  [(comptime.Expr.Int
-                                                                      found)
-                                                                    (set!
-                                                                      reference-kind
-                                                                      found)]
-                                                                  [_ unit])
-                                                                (set!
-                                                                  reference-value
-                                                                  (comptime.expr-list-nth
-                                                                    fields
-                                                                    9)))
-                                                              (begin
-                                                                (match (comptime.expr-list-nth
-                                                                  fields
-                                                                  10)
-                                                                  [(comptime.Expr.Int
-                                                                      found)
-                                                                    (set!
-                                                                      reference-kind
-                                                                      found)]
-                                                                  [_ unit])
-                                                                (set!
-                                                                  reference-value
-                                                                  (comptime.expr-list-nth
-                                                                    fields
-                                                                    11)))))
-                                                          (if (= slot 0)
-                                                            (if (=
-                                                              reference-kind
-                                                              0)
-                                                              (match reference-value
-                                                                [(comptime.Expr.Int
-                                                                    selected)
-                                                                  (if (=
-                                                                    selected
-                                                                    positional-index)
-                                                                    (set!
-                                                                      used?
-                                                                      true)
-                                                                    unit)]
-                                                                [_ unit])
-                                                              unit)
-                                                            (if (if (=
-                                                              reference-kind
-                                                              2)
-                                                              true
-                                                              (if (= slot 2)
-                                                                (=
-                                                                  reference-kind
-                                                                  4)
-                                                                false))
-                                                              (match reference-value
-                                                                [(comptime.Expr.Int
-                                                                    selected)
-                                                                  (if (=
-                                                                    selected
-                                                                    positional-index)
-                                                                    (set!
-                                                                      used?
-                                                                      true)
-                                                                    unit)]
-                                                                [_ unit])
-                                                              unit))
-                                                          (set! slot (+ slot 1)))))
-                                                    unit)
-                                                  (set!
-                                                    piece-index
-                                                    (+ piece-index 1)))))
-                                            (if (not used?)
-                                              (comptime.comptime-error
-                                                (comptime.string-append
-                                                  "format: not enough placeholders for arguments; unused positional argument "
-                                                  (comptime.int->string
-                                                    positional-index)))
-                                              unit)
-                                            (set!
-                                              positional-index
-                                              (+ positional-index 1))))))
-                                    ;; Explicit named values may be selected as
-                                    ;; either the rendered value or a count.
-                                    (let
-                                      [named-index : i64 0]
-                                      (while (<
-                                        named-index
-                                        (comptime.expr-list-length
-                                          named-name-items))
-                                        (let
-                                          [name : String
-                                            (comptime.expr-string-value
-                                              (comptime.expr-list-nth
-                                                named-name-items
-                                                named-index))]
-                                          [used? : bool false]
-                                          [piece-index : i64 0]
-                                          (begin
-                                            (while (< piece-index plan-len)
-                                              (let
-                                                [piece : comptime.Expr
-                                                  (comptime.expr-list-nth
-                                                    plan-pieces
-                                                    piece-index)]
-                                                [fields : comptime.ExprList
-                                                  (comptime.expr-list-empty)]
-                                                [slot : i64 0]
-                                                (begin
-                                                  (match piece
-                                                    [(comptime.Expr.Begin
-                                                        found-fields)
-                                                      (set! fields found-fields)]
-                                                    [_ unit])
-                                                  (if (=
-                                                    (comptime.expr-list-length
-                                                      fields)
-                                                    14)
-                                                    (while (< slot 3)
-                                                      (let
-                                                        [reference-kind : i64
-                                                          -1]
-                                                        [reference-value : comptime.Expr
-                                                          (comptime.expr-int 0)]
-                                                        (begin
-                                                          (if (= slot 0)
-                                                            (begin
-                                                              (match (comptime.expr-list-nth
-                                                                fields
-                                                                0)
-                                                                [(comptime.Expr.Int
-                                                                    found)
-                                                                  (set!
-                                                                    reference-kind
-                                                                    found)]
-                                                                [_ unit])
-                                                              (set!
-                                                                reference-value
-                                                                (comptime.expr-list-nth
-                                                                  fields
-                                                                  1)))
-                                                            (if (= slot 1)
-                                                              (begin
-                                                                (match (comptime.expr-list-nth
-                                                                  fields
-                                                                  8)
-                                                                  [(comptime.Expr.Int
-                                                                      found)
-                                                                    (set!
-                                                                      reference-kind
-                                                                      found)]
-                                                                  [_ unit])
-                                                                (set!
-                                                                  reference-value
-                                                                  (comptime.expr-list-nth
-                                                                    fields
-                                                                    9)))
-                                                              (begin
-                                                                (match (comptime.expr-list-nth
-                                                                  fields
-                                                                  10)
-                                                                  [(comptime.Expr.Int
-                                                                      found)
-                                                                    (set!
-                                                                      reference-kind
-                                                                      found)]
-                                                                  [_ unit])
-                                                                (set!
-                                                                  reference-value
-                                                                  (comptime.expr-list-nth
-                                                                    fields
-                                                                    11)))))
-                                                          (if (= slot 0)
-                                                            (if (=
-                                                              reference-kind
-                                                              1)
-                                                              (if (string.eq
-                                                                (comptime.expr-string-value
-                                                                  reference-value)
-                                                                name)
-                                                                (set!
-                                                                  used?
-                                                                  true)
-                                                                unit)
-                                                              unit)
-                                                            (if (=
-                                                              reference-kind
-                                                              3)
-                                                              (if (string.eq
-                                                                (comptime.expr-string-value
-                                                                  reference-value)
-                                                                name)
-                                                                (set!
-                                                                  used?
-                                                                  true)
-                                                                unit)
-                                                              unit))
-                                                          (set! slot (+ slot 1)))))
-                                                    unit)
-                                                  (set!
-                                                    piece-index
-                                                    (+ piece-index 1)))))
-                                            (if (not used?)
-                                              (comptime.comptime-error
-                                                (comptime.string-append
-                                                  "format: unused named argument "
-                                                  name))
-                                              unit)
-                                            (set! named-index (+ named-index 1))))))
-                                    ;; Discover selector/count captures in
-                                    ;; template order, once per lexical name.
-                                    (set! plan-index (- plan-len 1))
-                                    (while (>= plan-index 0)
-                                      (let
-                                        [piece : comptime.Expr
-                                          (comptime.expr-list-nth
-                                            plan-pieces
-                                            plan-index)]
-                                        [fields : comptime.ExprList
-                                          (comptime.expr-list-empty)]
-                                        [slot : i64 0]
-                                        (begin
-                                          (match piece
-                                            [(comptime.Expr.Begin found-fields)
-                                              (set! fields found-fields)]
-                                            [_ unit])
-                                          (if (=
-                                            (comptime.expr-list-length fields)
-                                            14)
-                                            (while (< slot 3)
-                                              (let
-                                                [reference-kind : i64 -1]
-                                                [reference-value : comptime.Expr
-                                                  (comptime.expr-int 0)]
-                                                [named-reference? : bool false]
-                                                (begin
-                                                  (if (= slot 0)
-                                                    (begin
-                                                      (match (comptime.expr-list-nth
-                                                        fields
-                                                        0)
-                                                        [(comptime.Expr.Int
-                                                            found)
-                                                          (set!
-                                                            reference-kind
-                                                            found)]
-                                                        [_ unit])
-                                                      (set!
-                                                        reference-value
-                                                        (comptime.expr-list-nth
-                                                          fields
-                                                          1)))
-                                                    (if (= slot 1)
-                                                      (begin
-                                                        (match (comptime.expr-list-nth
-                                                          fields
-                                                          8)
-                                                          [(comptime.Expr.Int
-                                                              found)
-                                                            (set!
-                                                              reference-kind
-                                                              found)]
-                                                          [_ unit])
-                                                        (set!
-                                                          reference-value
-                                                          (comptime.expr-list-nth
-                                                            fields
-                                                            9)))
-                                                      (begin
-                                                        (match (comptime.expr-list-nth
-                                                          fields
-                                                          10)
-                                                          [(comptime.Expr.Int
-                                                              found)
-                                                            (set!
-                                                              reference-kind
-                                                              found)]
-                                                          [_ unit])
-                                                        (set!
-                                                          reference-value
-                                                          (comptime.expr-list-nth
-                                                            fields
-                                                            11)))))
-                                                  (if (= slot 0)
-                                                    (if (= reference-kind 1)
-                                                      (set!
-                                                        named-reference?
-                                                        true)
-                                                      unit)
-                                                    (if (= reference-kind 3)
-                                                      (set!
-                                                        named-reference?
-                                                        true)
-                                                      unit))
-                                                  (if named-reference?
-                                                    (let
-                                                      [name : String
-                                                        (comptime.expr-string-value
-                                                          reference-value)]
-                                                      [explicit-index : i64 -1]
-                                                      [capture-index : i64 -1]
-                                                      [explicit-scan : i64 0]
-                                                      [capture-scan : i64 0]
-                                                      (begin
-                                                        (while (<
-                                                          explicit-scan
-                                                          (comptime.expr-list-length
-                                                            named-name-items))
-                                                          (begin
-                                                            (if (string.eq
-                                                              (comptime.expr-string-value
-                                                                (comptime.expr-list-nth
-                                                                  named-name-items
-                                                                  explicit-scan))
-                                                              name)
-                                                              (set!
-                                                                explicit-index
-                                                                explicit-scan)
-                                                              unit)
-                                                            (set!
-                                                              explicit-scan
-                                                              (+
-                                                                explicit-scan
-                                                                1))))
-                                                        (while (<
-                                                          capture-scan
-                                                          (comptime.expr-list-length
-                                                            capture-names))
-                                                          (begin
-                                                            (if (string.eq
-                                                              (comptime.expr-string-value
-                                                                (comptime.expr-list-nth
-                                                                  capture-names
-                                                                  capture-scan))
-                                                              name)
-                                                              (set!
-                                                                capture-index
-                                                                capture-scan)
-                                                              unit)
-                                                            (set!
-                                                              capture-scan
-                                                              (+ capture-scan 1))))
-                                                        (if (< explicit-index 0)
-                                                          (if (<
-                                                            capture-index
-                                                            0)
-                                                            (let
-                                                              [capture-expr : comptime.Expr
-                                                                (comptime.expr-var
-                                                                  name)]
-                                                              [fresh-name : String
-                                                                (comptime.syntax-name-fresh
-                                                                  (comptime.string-append
-                                                                    "__tl_format_shared_capture_"
-                                                                    (comptime.int->string
-                                                                      capture-count)))]
-                                                              [fresh-var : comptime.Expr
-                                                                (comptime.expr-var
-                                                                  fresh-name)]
-                                                              [entry-items : comptime.ExprList
-                                                                (comptime.expr-list-cons
-                                                                  fresh-var
-                                                                  (comptime.expr-list-cons
-                                                                    capture-expr
-                                                                    (comptime.expr-list-empty)))]
-                                                              (begin
-                                                                (set!
-                                                                  capture-names
-                                                                  (comptime.expr-list-cons
-                                                                    (comptime.expr-string
-                                                                      name)
-                                                                    capture-names))
-                                                                (set!
-                                                                  capture-vars
-                                                                  (comptime.expr-list-cons
-                                                                    fresh-var
-                                                                    capture-vars))
-                                                                (set!
-                                                                  capture-bindings
-                                                                  (comptime.expr-list-cons
-                                                                    (comptime.expr-begin-unit
-                                                                      entry-items)
-                                                                    capture-bindings))
-                                                                (set!
-                                                                  capture-count
-                                                                  (+
-                                                                    capture-count
-                                                                    1))))
-                                                            unit)
-                                                          unit)))
-                                                    unit)
-                                                  (set! slot (+ slot 1)))))
-                                            unit)
-                                          (set! plan-index (- plan-index 1)))))
-                                    ;; Render the reverse plan into forward flat
-                                    ;; concat operands while resolving names.
-                                    (let
-                                      [output : comptime.ExprList
-                                        (comptime.expr-list-empty)]
-                                      [piece-index : i64 0]
-                                      (begin
-                                        (while (< piece-index plan-len)
-                                          (let
-                                            [piece : comptime.Expr
-                                              (comptime.expr-list-nth
-                                                plan-pieces
-                                                piece-index)]
-                                            [fields : comptime.ExprList
-                                              (comptime.expr-list-empty)]
-                                            (begin
-                                              (match piece
-                                                [(comptime.Expr.Begin
-                                                    found-fields)
-                                                  (set! fields found-fields)]
-                                                [_ unit])
-                                              (if (comptime.expr-string? piece)
-                                                (set!
-                                                  output
-                                                  (comptime.expr-list-cons
-                                                    piece
-                                                    output))
+                                            (match piece
+                                              [(comptime.Expr.Begin
+                                                  found-fields)
+                                                (set! fields found-fields)]
+                                              [_ unit])
+                                            (if (comptime.expr-string? piece)
+                                              unit
+                                              (if (!=
+                                                (comptime.expr-list-length
+                                                  fields)
+                                                14)
+                                                (comptime.comptime-error
+                                                  "format: internal placeholder plan is malformed")
                                                 (let
                                                   [selector-kind : i64 -1]
-                                                  [selected : comptime.Expr
-                                                    (comptime.expr-int 0)]
+                                                  [implicit-state : i64 -1]
                                                   [width-kind : i64 -1]
-                                                  [resolved-width : comptime.Expr
-                                                    (comptime.expr-int 0)]
                                                   [precision-kind : i64 -1]
-                                                  [resolved-precision : comptime.Expr
-                                                    (comptime.expr-int 0)]
                                                   (begin
                                                     (match (comptime.expr-list-nth
                                                       fields
@@ -3665,140 +4044,20 @@
                                                           selector-kind
                                                           found)]
                                                       [_ unit])
-                                                    (if (= selector-kind 0)
-                                                      (match (comptime.expr-list-nth
-                                                        fields
-                                                        1)
-                                                        [(comptime.Expr.Int
-                                                            selected-index)
-                                                          (set!
-                                                            selected
-                                                            (comptime.expr-list-nth
-                                                              positional-items
-                                                              selected-index))]
-                                                        [_ unit])
-                                                      (let
-                                                        [name : String
-                                                          (comptime.expr-string-value
-                                                            (comptime.expr-list-nth
-                                                              fields
-                                                              1))]
-                                                        [scan : i64 0]
-                                                        (begin
-                                                          (while (<
-                                                            scan
-                                                            (comptime.expr-list-length
-                                                              named-name-items))
-                                                            (begin
-                                                              (if (string.eq
-                                                                (comptime.expr-string-value
-                                                                  (comptime.expr-list-nth
-                                                                    named-name-items
-                                                                    scan))
-                                                                name)
-                                                                (set!
-                                                                  selected
-                                                                  (comptime.expr-list-nth
-                                                                    named-var-items
-                                                                    scan))
-                                                                unit)
-                                                              (set!
-                                                                scan
-                                                                (+ scan 1))))
-                                                          (set! scan 0)
-                                                          (while (<
-                                                            scan
-                                                            (comptime.expr-list-length
-                                                              capture-names))
-                                                            (begin
-                                                              (if (string.eq
-                                                                (comptime.expr-string-value
-                                                                  (comptime.expr-list-nth
-                                                                    capture-names
-                                                                    scan))
-                                                                name)
-                                                                (set!
-                                                                  selected
-                                                                  (comptime.expr-list-nth
-                                                                    capture-vars
-                                                                    scan))
-                                                                unit)
-                                                              (set!
-                                                                scan
-                                                                (+ scan 1)))))))
+                                                    (match (comptime.expr-list-nth
+                                                      fields
+                                                      2)
+                                                      [(comptime.Expr.Int found)
+                                                        (set!
+                                                          implicit-state
+                                                          found)]
+                                                      [_ unit])
                                                     (match (comptime.expr-list-nth
                                                       fields
                                                       8)
                                                       [(comptime.Expr.Int found)
                                                         (set! width-kind found)]
                                                       [_ unit])
-                                                    (if (= width-kind 2)
-                                                      (match (comptime.expr-list-nth
-                                                        fields
-                                                        9)
-                                                        [(comptime.Expr.Int
-                                                            width-index)
-                                                          (set!
-                                                            resolved-width
-                                                            (comptime.expr-list-nth
-                                                              positional-items
-                                                              width-index))]
-                                                        [_ unit])
-                                                      (if (= width-kind 3)
-                                                        (let
-                                                          [name : String
-                                                            (comptime.expr-string-value
-                                                              (comptime.expr-list-nth
-                                                                fields
-                                                                9))]
-                                                          [scan : i64 0]
-                                                          (begin
-                                                            (while (<
-                                                              scan
-                                                              (comptime.expr-list-length
-                                                                named-name-items))
-                                                              (begin
-                                                                (if (string.eq
-                                                                  (comptime.expr-string-value
-                                                                    (comptime.expr-list-nth
-                                                                      named-name-items
-                                                                      scan))
-                                                                  name)
-                                                                  (set!
-                                                                    resolved-width
-                                                                    (comptime.expr-list-nth
-                                                                      named-var-items
-                                                                      scan))
-                                                                  unit)
-                                                                (set!
-                                                                  scan
-                                                                  (+ scan 1))))
-                                                            (set! scan 0)
-                                                            (while (<
-                                                              scan
-                                                              (comptime.expr-list-length
-                                                                capture-names))
-                                                              (begin
-                                                                (if (string.eq
-                                                                  (comptime.expr-string-value
-                                                                    (comptime.expr-list-nth
-                                                                      capture-names
-                                                                      scan))
-                                                                  name)
-                                                                  (set!
-                                                                    resolved-width
-                                                                    (comptime.expr-list-nth
-                                                                      capture-vars
-                                                                      scan))
-                                                                  unit)
-                                                                (set!
-                                                                  scan
-                                                                  (+ scan 1))))))
-                                                        (set!
-                                                          resolved-width
-                                                          (comptime.expr-list-nth
-                                                            fields
-                                                            9))))
                                                     (match (comptime.expr-list-nth
                                                       fields
                                                       10)
@@ -3807,6 +4066,72 @@
                                                           precision-kind
                                                           found)]
                                                       [_ unit])
+                                                    (if (= selector-kind 0)
+                                                      (match (comptime.expr-list-nth
+                                                        fields
+                                                        1)
+                                                        [(comptime.Expr.Int
+                                                            selected)
+                                                          (if (>=
+                                                            selected
+                                                            positional-count)
+                                                            (if (!=
+                                                              implicit-state
+                                                              0)
+                                                              (comptime.comptime-error
+                                                                "format: not enough arguments for placeholders")
+                                                              (comptime.comptime-error
+                                                                (comptime.string-append
+                                                                  "format: positional argument index is out of range: "
+                                                                  (comptime.int->string
+                                                                    selected))))
+                                                            unit)]
+                                                        [_
+                                                          (comptime.comptime-error
+                                                            "format: internal positional selector is malformed")])
+                                                      (if (= selector-kind 1)
+                                                        (let
+                                                          [selector-value : comptime.Expr
+                                                            (comptime.expr-list-nth
+                                                              fields
+                                                              1)]
+                                                          (if (not
+                                                            (comptime.expr-string?
+                                                              selector-value))
+                                                            (comptime.comptime-error
+                                                              "format: internal named selector is malformed")
+                                                            unit))
+                                                        (comptime.comptime-error
+                                                          "format: internal selector kind is malformed")))
+                                                    ;; Macro CTFE cannot invoke `cond`.
+                                                    ;; lint-allow: nested-if-ladder
+                                                    (if (= width-kind 2)
+                                                      (match (comptime.expr-list-nth
+                                                        fields
+                                                        9)
+                                                        [(comptime.Expr.Int
+                                                            selected)
+                                                          (if (>=
+                                                            selected
+                                                            positional-count)
+                                                            (comptime.comptime-error
+                                                              (comptime.string-append
+                                                                "format: dynamic width argument index is out of range: "
+                                                                (comptime.int->string
+                                                                  selected)))
+                                                            unit)]
+                                                        [_
+                                                          (comptime.comptime-error
+                                                            "format: internal width reference is malformed")])
+                                                      (if (< width-kind 0)
+                                                        (comptime.comptime-error
+                                                          "format: internal width kind is malformed")
+                                                        (if (> width-kind 3)
+                                                          (comptime.comptime-error
+                                                            "format: internal width kind is malformed")
+                                                          unit)))
+                                                    ;; Macro CTFE cannot invoke `cond`.
+                                                    ;; lint-allow: nested-if-ladder
                                                     (if (if (= precision-kind 2)
                                                       true
                                                       (= precision-kind 4))
@@ -3814,20 +4139,562 @@
                                                         fields
                                                         11)
                                                         [(comptime.Expr.Int
-                                                            precision-index)
+                                                            selected)
+                                                          (if (>=
+                                                            selected
+                                                            positional-count)
+                                                            (comptime.comptime-error
+                                                              (comptime.string-append
+                                                                "format: dynamic precision argument index is out of range: "
+                                                                (comptime.int->string
+                                                                  selected)))
+                                                            unit)]
+                                                        [_
+                                                          (comptime.comptime-error
+                                                            "format: internal precision reference is malformed")])
+                                                      (if (< precision-kind 0)
+                                                        (comptime.comptime-error
+                                                          "format: internal precision kind is malformed")
+                                                        (if (> precision-kind 4)
+                                                          (comptime.comptime-error
+                                                            "format: internal precision kind is malformed")
+                                                          unit)))))))
+                                            (set! plan-index (- plan-index 1)))))
+                                      ;; Every positional value/count reference
+                                      ;; counts as a use. Scanner-resolved star
+                                      ;; counts have already advanced the implicit
+                                      ;; iterator; dollar references have not.
+                                      (let
+                                        [positional-index : i64 0]
+                                        (while (<
+                                          positional-index
+                                          positional-count)
+                                          (let
+                                            [used? : bool false]
+                                            [piece-index : i64 0]
+                                            (begin
+                                              (while (< piece-index plan-len)
+                                                (let
+                                                  [piece : comptime.Expr
+                                                    (comptime.expr-list-nth
+                                                      plan-pieces
+                                                      piece-index)]
+                                                  [fields : comptime.ExprList
+                                                    (comptime.expr-list-empty)]
+                                                  [slot : i64 0]
+                                                  (begin
+                                                    (match piece
+                                                      [(comptime.Expr.Begin
+                                                          found-fields)
+                                                        (set!
+                                                          fields
+                                                          found-fields)]
+                                                      [_ unit])
+                                                    (if (=
+                                                      (comptime.expr-list-length
+                                                        fields)
+                                                      14)
+                                                      (while (< slot 3)
+                                                        (let
+                                                          [reference-kind : i64
+                                                            -1]
+                                                          [reference-value : comptime.Expr
+                                                            (comptime.expr-int
+                                                              0)]
+                                                          (begin
+                                                            (if (= slot 0)
+                                                              (begin
+                                                                (match (comptime.expr-list-nth
+                                                                  fields
+                                                                  0)
+                                                                  [(comptime.Expr.Int
+                                                                      found)
+                                                                    (set!
+                                                                      reference-kind
+                                                                      found)]
+                                                                  [_ unit])
+                                                                (set!
+                                                                  reference-value
+                                                                  (comptime.expr-list-nth
+                                                                    fields
+                                                                    1)))
+                                                              (if (= slot 1)
+                                                                (begin
+                                                                  (match (comptime.expr-list-nth
+                                                                    fields
+                                                                    8)
+                                                                    [(comptime.Expr.Int
+                                                                        found)
+                                                                      (set!
+                                                                        reference-kind
+                                                                        found)]
+                                                                    [_ unit])
+                                                                  (set!
+                                                                    reference-value
+                                                                    (comptime.expr-list-nth
+                                                                      fields
+                                                                      9)))
+                                                                (begin
+                                                                  (match (comptime.expr-list-nth
+                                                                    fields
+                                                                    10)
+                                                                    [(comptime.Expr.Int
+                                                                        found)
+                                                                      (set!
+                                                                        reference-kind
+                                                                        found)]
+                                                                    [_ unit])
+                                                                  (set!
+                                                                    reference-value
+                                                                    (comptime.expr-list-nth
+                                                                      fields
+                                                                      11)))))
+                                                            (if (= slot 0)
+                                                              (if (=
+                                                                reference-kind
+                                                                0)
+                                                                (match reference-value
+                                                                  [(comptime.Expr.Int
+                                                                      selected)
+                                                                    (if (=
+                                                                      selected
+                                                                      positional-index)
+                                                                      (set!
+                                                                        used?
+                                                                        true)
+                                                                      unit)]
+                                                                  [_ unit])
+                                                                unit)
+                                                              (if (if (=
+                                                                reference-kind
+                                                                2)
+                                                                true
+                                                                (if (= slot 2)
+                                                                  (=
+                                                                    reference-kind
+                                                                    4)
+                                                                  false))
+                                                                (match reference-value
+                                                                  [(comptime.Expr.Int
+                                                                      selected)
+                                                                    (if (=
+                                                                      selected
+                                                                      positional-index)
+                                                                      (set!
+                                                                        used?
+                                                                        true)
+                                                                      unit)]
+                                                                  [_ unit])
+                                                                unit))
+                                                            (set!
+                                                              slot
+                                                              (+ slot 1)))))
+                                                      unit)
+                                                    (set!
+                                                      piece-index
+                                                      (+ piece-index 1)))))
+                                              (if (not used?)
+                                                (comptime.comptime-error
+                                                  (comptime.string-append
+                                                    "format: not enough placeholders for arguments; unused positional argument "
+                                                    (comptime.int->string
+                                                      positional-index)))
+                                                unit)
+                                              (set!
+                                                positional-index
+                                                (+ positional-index 1))))))
+                                      ;; Explicit named values may be selected as
+                                      ;; either the rendered value or a count.
+                                      (let
+                                        [named-index : i64 0]
+                                        (while (<
+                                          named-index
+                                          (comptime.expr-list-length
+                                            named-name-items))
+                                          (let
+                                            [name : String
+                                              (comptime.expr-string-value
+                                                (comptime.expr-list-nth
+                                                  named-name-items
+                                                  named-index))]
+                                            [used? : bool false]
+                                            [piece-index : i64 0]
+                                            (begin
+                                              (while (< piece-index plan-len)
+                                                (let
+                                                  [piece : comptime.Expr
+                                                    (comptime.expr-list-nth
+                                                      plan-pieces
+                                                      piece-index)]
+                                                  [fields : comptime.ExprList
+                                                    (comptime.expr-list-empty)]
+                                                  [slot : i64 0]
+                                                  (begin
+                                                    (match piece
+                                                      [(comptime.Expr.Begin
+                                                          found-fields)
+                                                        (set!
+                                                          fields
+                                                          found-fields)]
+                                                      [_ unit])
+                                                    (if (=
+                                                      (comptime.expr-list-length
+                                                        fields)
+                                                      14)
+                                                      (while (< slot 3)
+                                                        (let
+                                                          [reference-kind : i64
+                                                            -1]
+                                                          [reference-value : comptime.Expr
+                                                            (comptime.expr-int
+                                                              0)]
+                                                          (begin
+                                                            (if (= slot 0)
+                                                              (begin
+                                                                (match (comptime.expr-list-nth
+                                                                  fields
+                                                                  0)
+                                                                  [(comptime.Expr.Int
+                                                                      found)
+                                                                    (set!
+                                                                      reference-kind
+                                                                      found)]
+                                                                  [_ unit])
+                                                                (set!
+                                                                  reference-value
+                                                                  (comptime.expr-list-nth
+                                                                    fields
+                                                                    1)))
+                                                              (if (= slot 1)
+                                                                (begin
+                                                                  (match (comptime.expr-list-nth
+                                                                    fields
+                                                                    8)
+                                                                    [(comptime.Expr.Int
+                                                                        found)
+                                                                      (set!
+                                                                        reference-kind
+                                                                        found)]
+                                                                    [_ unit])
+                                                                  (set!
+                                                                    reference-value
+                                                                    (comptime.expr-list-nth
+                                                                      fields
+                                                                      9)))
+                                                                (begin
+                                                                  (match (comptime.expr-list-nth
+                                                                    fields
+                                                                    10)
+                                                                    [(comptime.Expr.Int
+                                                                        found)
+                                                                      (set!
+                                                                        reference-kind
+                                                                        found)]
+                                                                    [_ unit])
+                                                                  (set!
+                                                                    reference-value
+                                                                    (comptime.expr-list-nth
+                                                                      fields
+                                                                      11)))))
+                                                            (if (= slot 0)
+                                                              (if (=
+                                                                reference-kind
+                                                                1)
+                                                                (if (string.eq
+                                                                  (comptime.expr-string-value
+                                                                    reference-value)
+                                                                  name)
+                                                                  (set!
+                                                                    used?
+                                                                    true)
+                                                                  unit)
+                                                                unit)
+                                                              (if (=
+                                                                reference-kind
+                                                                3)
+                                                                (if (string.eq
+                                                                  (comptime.expr-string-value
+                                                                    reference-value)
+                                                                  name)
+                                                                  (set!
+                                                                    used?
+                                                                    true)
+                                                                  unit)
+                                                                unit))
+                                                            (set!
+                                                              slot
+                                                              (+ slot 1)))))
+                                                      unit)
+                                                    (set!
+                                                      piece-index
+                                                      (+ piece-index 1)))))
+                                              (if (not used?)
+                                                (comptime.comptime-error
+                                                  (comptime.string-append
+                                                    "format: unused named argument "
+                                                    name))
+                                                unit)
+                                              (set!
+                                                named-index
+                                                (+ named-index 1))))))
+                                      ;; Discover selector/count captures in
+                                      ;; template order, once per lexical name.
+                                      (set! plan-index (- plan-len 1))
+                                      (while (>= plan-index 0)
+                                        (let
+                                          [piece : comptime.Expr
+                                            (comptime.expr-list-nth
+                                              plan-pieces
+                                              plan-index)]
+                                          [fields : comptime.ExprList
+                                            (comptime.expr-list-empty)]
+                                          [slot : i64 0]
+                                          (begin
+                                            (match piece
+                                              [(comptime.Expr.Begin
+                                                  found-fields)
+                                                (set! fields found-fields)]
+                                              [_ unit])
+                                            (if (=
+                                              (comptime.expr-list-length fields)
+                                              14)
+                                              (while (< slot 3)
+                                                (let
+                                                  [reference-kind : i64 -1]
+                                                  [reference-value : comptime.Expr
+                                                    (comptime.expr-int 0)]
+                                                  [named-reference? : bool
+                                                    false]
+                                                  (begin
+                                                    (if (= slot 0)
+                                                      (begin
+                                                        (match (comptime.expr-list-nth
+                                                          fields
+                                                          0)
+                                                          [(comptime.Expr.Int
+                                                              found)
+                                                            (set!
+                                                              reference-kind
+                                                              found)]
+                                                          [_ unit])
+                                                        (set!
+                                                          reference-value
+                                                          (comptime.expr-list-nth
+                                                            fields
+                                                            1)))
+                                                      (if (= slot 1)
+                                                        (begin
+                                                          (match (comptime.expr-list-nth
+                                                            fields
+                                                            8)
+                                                            [(comptime.Expr.Int
+                                                                found)
+                                                              (set!
+                                                                reference-kind
+                                                                found)]
+                                                            [_ unit])
                                                           (set!
-                                                            resolved-precision
+                                                            reference-value
                                                             (comptime.expr-list-nth
-                                                              positional-items
-                                                              precision-index))]
+                                                              fields
+                                                              9)))
+                                                        (begin
+                                                          (match (comptime.expr-list-nth
+                                                            fields
+                                                            10)
+                                                            [(comptime.Expr.Int
+                                                                found)
+                                                              (set!
+                                                                reference-kind
+                                                                found)]
+                                                            [_ unit])
+                                                          (set!
+                                                            reference-value
+                                                            (comptime.expr-list-nth
+                                                              fields
+                                                              11)))))
+                                                    (if (= slot 0)
+                                                      (if (= reference-kind 1)
+                                                        (set!
+                                                          named-reference?
+                                                          true)
+                                                        unit)
+                                                      (if (= reference-kind 3)
+                                                        (set!
+                                                          named-reference?
+                                                          true)
+                                                        unit))
+                                                    (if named-reference?
+                                                      (let
+                                                        [name : String
+                                                          (comptime.expr-string-value
+                                                            reference-value)]
+                                                        [explicit-index : i64
+                                                          -1]
+                                                        [capture-index : i64 -1]
+                                                        [explicit-scan : i64 0]
+                                                        [capture-scan : i64 0]
+                                                        (begin
+                                                          (while (<
+                                                            explicit-scan
+                                                            (comptime.expr-list-length
+                                                              named-name-items))
+                                                            (begin
+                                                              (if (string.eq
+                                                                (comptime.expr-string-value
+                                                                  (comptime.expr-list-nth
+                                                                    named-name-items
+                                                                    explicit-scan))
+                                                                name)
+                                                                (set!
+                                                                  explicit-index
+                                                                  explicit-scan)
+                                                                unit)
+                                                              (set!
+                                                                explicit-scan
+                                                                (+
+                                                                  explicit-scan
+                                                                  1))))
+                                                          (while (<
+                                                            capture-scan
+                                                            (comptime.expr-list-length
+                                                              capture-names))
+                                                            (begin
+                                                              (if (string.eq
+                                                                (comptime.expr-string-value
+                                                                  (comptime.expr-list-nth
+                                                                    capture-names
+                                                                    capture-scan))
+                                                                name)
+                                                                (set!
+                                                                  capture-index
+                                                                  capture-scan)
+                                                                unit)
+                                                              (set!
+                                                                capture-scan
+                                                                (+
+                                                                  capture-scan
+                                                                  1))))
+                                                          (if (<
+                                                            explicit-index
+                                                            0)
+                                                            (if (<
+                                                              capture-index
+                                                              0)
+                                                              (let
+                                                                [capture-expr : comptime.Expr
+                                                                  (comptime.expr-var
+                                                                    name)]
+                                                                [fresh-name : String
+                                                                  (comptime.syntax-name-fresh
+                                                                    (comptime.string-append
+                                                                      "__tl_format_shared_capture_"
+                                                                      (comptime.int->string
+                                                                        capture-count)))]
+                                                                [fresh-var : comptime.Expr
+                                                                  (comptime.expr-var
+                                                                    fresh-name)]
+                                                                [entry-items : comptime.ExprList
+                                                                  (comptime.expr-list-cons
+                                                                    fresh-var
+                                                                    (comptime.expr-list-cons
+                                                                      capture-expr
+                                                                      (comptime.expr-list-empty)))]
+                                                                (begin
+                                                                  (set!
+                                                                    capture-names
+                                                                    (comptime.expr-list-cons
+                                                                      (comptime.expr-string
+                                                                        name)
+                                                                      capture-names))
+                                                                  (set!
+                                                                    capture-vars
+                                                                    (comptime.expr-list-cons
+                                                                      fresh-var
+                                                                      capture-vars))
+                                                                  (set!
+                                                                    capture-bindings
+                                                                    (comptime.expr-list-cons
+                                                                      (comptime.expr-begin-unit
+                                                                        entry-items)
+                                                                      capture-bindings))
+                                                                  (set!
+                                                                    capture-count
+                                                                    (+
+                                                                      capture-count
+                                                                      1))))
+                                                              unit)
+                                                            unit)))
+                                                      unit)
+                                                    (set! slot (+ slot 1)))))
+                                              unit)
+                                            (set! plan-index (- plan-index 1)))))
+                                      ;; Render the reverse plan into forward flat
+                                      ;; concat operands while resolving names.
+                                      (let
+                                        [output : comptime.ExprList
+                                          (comptime.expr-list-empty)]
+                                        [piece-index : i64 0]
+                                        (begin
+                                          (while (< piece-index plan-len)
+                                            (let
+                                              [piece : comptime.Expr
+                                                (comptime.expr-list-nth
+                                                  plan-pieces
+                                                  piece-index)]
+                                              [fields : comptime.ExprList
+                                                (comptime.expr-list-empty)]
+                                              (begin
+                                                (match piece
+                                                  [(comptime.Expr.Begin
+                                                      found-fields)
+                                                    (set! fields found-fields)]
+                                                  [_ unit])
+                                                (if (comptime.expr-string?
+                                                  piece)
+                                                  (set!
+                                                    output
+                                                    (comptime.expr-list-cons
+                                                      piece
+                                                      output))
+                                                  (let
+                                                    [selector-kind : i64 -1]
+                                                    [selected : comptime.Expr
+                                                      (comptime.expr-int 0)]
+                                                    [width-kind : i64 -1]
+                                                    [resolved-width : comptime.Expr
+                                                      (comptime.expr-int 0)]
+                                                    [precision-kind : i64 -1]
+                                                    [resolved-precision : comptime.Expr
+                                                      (comptime.expr-int 0)]
+                                                    (begin
+                                                      (match (comptime.expr-list-nth
+                                                        fields
+                                                        0)
+                                                        [(comptime.Expr.Int
+                                                            found)
+                                                          (set!
+                                                            selector-kind
+                                                            found)]
                                                         [_ unit])
-                                                      (if (= precision-kind 3)
+                                                      (if (= selector-kind 0)
+                                                        (match (comptime.expr-list-nth
+                                                          fields
+                                                          1)
+                                                          [(comptime.Expr.Int
+                                                              selected-index)
+                                                            (set!
+                                                              selected
+                                                              (comptime.expr-list-nth
+                                                                positional-items
+                                                                selected-index))]
+                                                          [_ unit])
                                                         (let
                                                           [name : String
                                                             (comptime.expr-string-value
                                                               (comptime.expr-list-nth
                                                                 fields
-                                                                11))]
+                                                                1))]
                                                           [scan : i64 0]
                                                           (begin
                                                             (while (<
@@ -3842,7 +4709,7 @@
                                                                       scan))
                                                                   name)
                                                                   (set!
-                                                                    resolved-precision
+                                                                    selected
                                                                     (comptime.expr-list-nth
                                                                       named-var-items
                                                                       scan))
@@ -3863,201 +4730,353 @@
                                                                       scan))
                                                                   name)
                                                                   (set!
-                                                                    resolved-precision
+                                                                    selected
                                                                     (comptime.expr-list-nth
                                                                       capture-vars
                                                                       scan))
                                                                   unit)
                                                                 (set!
                                                                   scan
-                                                                  (+ scan 1))))))
-                                                        (set!
-                                                          resolved-precision
-                                                          (comptime.expr-list-nth
-                                                            fields
-                                                            11))))
-                                                    (set!
-                                                      output
-                                                      (comptime.expr-list-cons
-                                                        `(stdlib.format.format-stream-value-at!
-                                                          ,stream-address
-                                                          ,selected
-                                                          ,(comptime.expr-list-nth
-                                                            fields
-                                                            3)
-                                                          ,(comptime.expr-list-nth
-                                                            fields
-                                                            4)
-                                                          ,(comptime.expr-list-nth
-                                                            fields
-                                                            5)
-                                                          ,(comptime.expr-list-nth
-                                                            fields
-                                                            6)
-                                                          ,(comptime.expr-list-nth
-                                                            fields
-                                                            7)
-                                                          ,(comptime.expr-list-nth
-                                                            fields
-                                                            8)
-                                                          ,resolved-width
-                                                          ,(comptime.expr-list-nth
-                                                            fields
-                                                            10)
-                                                          ,resolved-precision
-                                                          ,(comptime.expr-list-nth
-                                                            fields
-                                                            12))
-                                                        output)))))
-                                              (set!
-                                                piece-index
-                                                (+ piece-index 1)))))
-                                        (let
-                                          [result : comptime.Expr
-                                            `(stdlib.str_cat.str-cat ,@output)]
-                                          [write-items : comptime.ExprList
-                                            (comptime.expr-list-empty)]
-                                          [write-index : i64
-                                            (-
-                                              (comptime.expr-list-length output)
-                                              1)]
-                                          [capture-index : i64 0]
-                                          [binding-index : i64
-                                            (-
-                                              (comptime.expr-list-length
-                                                binding-items)
-                                              1)]
-                                          (begin
-                                            (while (>= write-index 0)
-                                              (begin
-                                                (set!
-                                                  write-items
-                                                  (comptime.expr-list-cons
-                                                    `(stdlib.format.formatter-write-string-at!
-                                                      ,stream-address
-                                                      ,(comptime.expr-list-nth
+                                                                  (+ scan 1)))))))
+                                                      (match (comptime.expr-list-nth
+                                                        fields
+                                                        8)
+                                                        [(comptime.Expr.Int
+                                                            found)
+                                                          (set!
+                                                            width-kind
+                                                            found)]
+                                                        [_ unit])
+                                                      (if (= width-kind 2)
+                                                        (match (comptime.expr-list-nth
+                                                          fields
+                                                          9)
+                                                          [(comptime.Expr.Int
+                                                              width-index)
+                                                            (set!
+                                                              resolved-width
+                                                              (comptime.expr-list-nth
+                                                                positional-items
+                                                                width-index))]
+                                                          [_ unit])
+                                                        (if (= width-kind 3)
+                                                          (let
+                                                            [name : String
+                                                              (comptime.expr-string-value
+                                                                (comptime.expr-list-nth
+                                                                  fields
+                                                                  9))]
+                                                            [scan : i64 0]
+                                                            (begin
+                                                              (while (<
+                                                                scan
+                                                                (comptime.expr-list-length
+                                                                  named-name-items))
+                                                                (begin
+                                                                  (if (string.eq
+                                                                    (comptime.expr-string-value
+                                                                      (comptime.expr-list-nth
+                                                                        named-name-items
+                                                                        scan))
+                                                                    name)
+                                                                    (set!
+                                                                      resolved-width
+                                                                      (comptime.expr-list-nth
+                                                                        named-var-items
+                                                                        scan))
+                                                                    unit)
+                                                                  (set!
+                                                                    scan
+                                                                    (+ scan 1))))
+                                                              (set! scan 0)
+                                                              (while (<
+                                                                scan
+                                                                (comptime.expr-list-length
+                                                                  capture-names))
+                                                                (begin
+                                                                  (if (string.eq
+                                                                    (comptime.expr-string-value
+                                                                      (comptime.expr-list-nth
+                                                                        capture-names
+                                                                        scan))
+                                                                    name)
+                                                                    (set!
+                                                                      resolved-width
+                                                                      (comptime.expr-list-nth
+                                                                        capture-vars
+                                                                        scan))
+                                                                    unit)
+                                                                  (set!
+                                                                    scan
+                                                                    (+ scan 1))))))
+                                                          (set!
+                                                            resolved-width
+                                                            (comptime.expr-list-nth
+                                                              fields
+                                                              9))))
+                                                      (match (comptime.expr-list-nth
+                                                        fields
+                                                        10)
+                                                        [(comptime.Expr.Int
+                                                            found)
+                                                          (set!
+                                                            precision-kind
+                                                            found)]
+                                                        [_ unit])
+                                                      (if (if (=
+                                                        precision-kind
+                                                        2)
+                                                        true
+                                                        (= precision-kind 4))
+                                                        (match (comptime.expr-list-nth
+                                                          fields
+                                                          11)
+                                                          [(comptime.Expr.Int
+                                                              precision-index)
+                                                            (set!
+                                                              resolved-precision
+                                                              (comptime.expr-list-nth
+                                                                positional-items
+                                                                precision-index))]
+                                                          [_ unit])
+                                                        (if (= precision-kind 3)
+                                                          (let
+                                                            [name : String
+                                                              (comptime.expr-string-value
+                                                                (comptime.expr-list-nth
+                                                                  fields
+                                                                  11))]
+                                                            [scan : i64 0]
+                                                            (begin
+                                                              (while (<
+                                                                scan
+                                                                (comptime.expr-list-length
+                                                                  named-name-items))
+                                                                (begin
+                                                                  (if (string.eq
+                                                                    (comptime.expr-string-value
+                                                                      (comptime.expr-list-nth
+                                                                        named-name-items
+                                                                        scan))
+                                                                    name)
+                                                                    (set!
+                                                                      resolved-precision
+                                                                      (comptime.expr-list-nth
+                                                                        named-var-items
+                                                                        scan))
+                                                                    unit)
+                                                                  (set!
+                                                                    scan
+                                                                    (+ scan 1))))
+                                                              (set! scan 0)
+                                                              (while (<
+                                                                scan
+                                                                (comptime.expr-list-length
+                                                                  capture-names))
+                                                                (begin
+                                                                  (if (string.eq
+                                                                    (comptime.expr-string-value
+                                                                      (comptime.expr-list-nth
+                                                                        capture-names
+                                                                        scan))
+                                                                    name)
+                                                                    (set!
+                                                                      resolved-precision
+                                                                      (comptime.expr-list-nth
+                                                                        capture-vars
+                                                                        scan))
+                                                                    unit)
+                                                                  (set!
+                                                                    scan
+                                                                    (+ scan 1))))))
+                                                          (set!
+                                                            resolved-precision
+                                                            (comptime.expr-list-nth
+                                                              fields
+                                                              11))))
+                                                      (set!
                                                         output
-                                                        write-index))
-                                                    write-items))
+                                                        (comptime.expr-list-cons
+                                                          `(stdlib.format.format-stream-value-at!
+                                                            ,stream-address
+                                                            ,selected
+                                                            ,(comptime.expr-list-nth
+                                                              fields
+                                                              3)
+                                                            ,(comptime.expr-list-nth
+                                                              fields
+                                                              4)
+                                                            ,(comptime.expr-list-nth
+                                                              fields
+                                                              5)
+                                                            ,(comptime.expr-list-nth
+                                                              fields
+                                                              6)
+                                                            ,(comptime.expr-list-nth
+                                                              fields
+                                                              7)
+                                                            ,(comptime.expr-list-nth
+                                                              fields
+                                                              8)
+                                                            ,resolved-width
+                                                            ,(comptime.expr-list-nth
+                                                              fields
+                                                              10)
+                                                            ,resolved-precision
+                                                            ,(comptime.expr-list-nth
+                                                              fields
+                                                              12))
+                                                          output)))))
                                                 (set!
-                                                  write-index
-                                                  (- write-index 1))))
-                                            (set!
-                                              result
-                                              `(begin
-                                                ,@write-items
-                                                (stdlib.format.formatter-status-at
-                                                  ,stream-address)))
-                                            ;; Captures are reverse template
-                                            ;; order; supplied bindings are
-                                            ;; forward source order. The letter
-                                            ;; s at generated-name offset 12
-                                            ;; marks a shared binding.
-                                            (while (<
-                                              capture-index
-                                              (comptime.expr-list-length
-                                                capture-bindings))
-                                              (match (comptime.expr-list-nth
-                                                capture-bindings
-                                                capture-index)
-                                                [(comptime.Expr.Begin entry)
-                                                  (match (comptime.expr-list-nth
-                                                    entry
-                                                    0)
-                                                    [(comptime.Expr.Var
-                                                        binding-name)
-                                                      (let
-                                                        [init : comptime.Expr
-                                                          (comptime.expr-list-nth
-                                                            entry
-                                                            1)]
-                                                        (if (=
-                                                          (cast
-                                                            (string.string-ref
-                                                              binding-name
-                                                              12)
-                                                            : i64)
-                                                          115)
-                                                          (set!
-                                                            result
-                                                            (comptime.expr-shared-let-scope
-                                                              binding-name
-                                                              init
-                                                              result))
-                                                          (set!
-                                                            result
-                                                            (comptime.expr-let-scope
-                                                              binding-name
-                                                              init
-                                                              result))))]
-                                                    [_
-                                                      (comptime.comptime-error
-                                                        "format: internal capture binding is malformed")])]
-                                                [_
-                                                  (comptime.comptime-error
-                                                    "format: internal capture binding is malformed")])
+                                                  piece-index
+                                                  (+ piece-index 1)))))
+                                          (let
+                                            [result : comptime.Expr
+                                              `(stdlib.str_cat.str-cat ,@output)]
+                                            [write-items : comptime.ExprList
+                                              (comptime.expr-list-empty)]
+                                            [write-index : i64
+                                              (-
+                                                (comptime.expr-list-length
+                                                  output)
+                                                1)]
+                                            [capture-index : i64 0]
+                                            [binding-index : i64
+                                              (-
+                                                (comptime.expr-list-length
+                                                  binding-items)
+                                                1)]
+                                            (begin
+                                              (while (>= write-index 0)
+                                                (begin
+                                                  (set!
+                                                    write-items
+                                                    (comptime.expr-list-cons
+                                                      `(stdlib.format.formatter-write-string-at!
+                                                        ,stream-address
+                                                        ,(comptime.expr-list-nth
+                                                          output
+                                                          write-index))
+                                                      write-items))
+                                                  (set!
+                                                    write-index
+                                                    (- write-index 1))))
                                               (set!
+                                                result
+                                                `(begin
+                                                  ,@write-items
+                                                  (stdlib.format.formatter-status-at
+                                                    ,stream-address)))
+                                              ;; Captures are reverse template
+                                              ;; order; supplied bindings are
+                                              ;; forward source order. The letter
+                                              ;; s at generated-name offset 12
+                                              ;; marks a shared binding.
+                                              (while (<
                                                 capture-index
-                                                (+ capture-index 1)))
-                                            (while (>= binding-index 0)
-                                              (match (comptime.expr-list-nth
-                                                binding-items
-                                                binding-index)
-                                                [(comptime.Expr.Begin entry)
-                                                  (match (comptime.expr-list-nth
-                                                    entry
-                                                    0)
-                                                    [(comptime.Expr.Var
-                                                        binding-name)
-                                                      (let
-                                                        [init : comptime.Expr
-                                                          (comptime.expr-list-nth
-                                                            entry
-                                                            1)]
-                                                        (if (=
-                                                          (cast
-                                                            (string.string-ref
-                                                              binding-name
-                                                              12)
-                                                            : i64)
-                                                          115)
-                                                          (set!
-                                                            result
-                                                            (comptime.expr-shared-let-scope
-                                                              binding-name
-                                                              init
-                                                              result))
-                                                          (set!
-                                                            result
-                                                            (comptime.expr-let-scope
-                                                              binding-name
-                                                              init
-                                                              result))))]
-                                                    [_
-                                                      (comptime.comptime-error
-                                                        "format: internal supplied binding is malformed")])]
-                                                [_
-                                                  (comptime.comptime-error
-                                                    "format: internal supplied binding is malformed")])
-                                              (set!
-                                                binding-index
-                                                (- binding-index 1)))
-                                            result))))))]
-                              [_
-                                (comptime.comptime-error
-                                  "format: internal binding carrier is malformed")])]
-                          [_
-                            (comptime.comptime-error
-                              "format: internal named variable carrier is malformed")])]
-                      [_
-                        (comptime.comptime-error
-                          "format: internal named argument carrier is malformed")])]
-                  [_
-                    (comptime.comptime-error
-                      "format: internal positional carrier is malformed")])]
-              [_
-                (comptime.comptime-error
-                  "format: internal plan carrier is malformed")]))]
+                                                (comptime.expr-list-length
+                                                  capture-bindings))
+                                                (match (comptime.expr-list-nth
+                                                  capture-bindings
+                                                  capture-index)
+                                                  [(comptime.Expr.Begin entry)
+                                                    (match (comptime.expr-list-nth
+                                                      entry
+                                                      0)
+                                                      [(comptime.Expr.Var
+                                                          binding-name)
+                                                        (let
+                                                          [init : comptime.Expr
+                                                            (comptime.expr-list-nth
+                                                              entry
+                                                              1)]
+                                                          (if (=
+                                                            (cast
+                                                              (string.string-ref
+                                                                binding-name
+                                                                12)
+                                                              : i64)
+                                                            115)
+                                                            (set!
+                                                              result
+                                                              (comptime.expr-shared-let-scope
+                                                                binding-name
+                                                                init
+                                                                result))
+                                                            (set!
+                                                              result
+                                                              (comptime.expr-let-scope
+                                                                binding-name
+                                                                init
+                                                                result))))]
+                                                      [_
+                                                        (comptime.comptime-error
+                                                          "format: internal capture binding is malformed")])]
+                                                  [_
+                                                    (comptime.comptime-error
+                                                      "format: internal capture binding is malformed")])
+                                                (set!
+                                                  capture-index
+                                                  (+ capture-index 1)))
+                                              (while (>= binding-index 0)
+                                                (match (comptime.expr-list-nth
+                                                  binding-items
+                                                  binding-index)
+                                                  [(comptime.Expr.Begin entry)
+                                                    (match (comptime.expr-list-nth
+                                                      entry
+                                                      0)
+                                                      [(comptime.Expr.Var
+                                                          binding-name)
+                                                        (let
+                                                          [init : comptime.Expr
+                                                            (comptime.expr-list-nth
+                                                              entry
+                                                              1)]
+                                                          (if (=
+                                                            (cast
+                                                              (string.string-ref
+                                                                binding-name
+                                                                12)
+                                                              : i64)
+                                                            115)
+                                                            (set!
+                                                              result
+                                                              (comptime.expr-shared-let-scope
+                                                                binding-name
+                                                                init
+                                                                result))
+                                                            (set!
+                                                              result
+                                                              (comptime.expr-let-scope
+                                                                binding-name
+                                                                init
+                                                                result))))]
+                                                      [_
+                                                        (comptime.comptime-error
+                                                          "format: internal supplied binding is malformed")])]
+                                                  [_
+                                                    (comptime.comptime-error
+                                                      "format: internal supplied binding is malformed")])
+                                                (set!
+                                                  binding-index
+                                                  (- binding-index 1)))
+                                              result))))))]
+                                [_
+                                  (comptime.comptime-error
+                                    "format: internal binding carrier is malformed")])]
+                            [_
+                              (comptime.comptime-error
+                                "format: internal named variable carrier is malformed")])]
+                        [_
+                          (comptime.comptime-error
+                            "format: internal named argument carrier is malformed")])]
+                    [_
+                      (comptime.comptime-error
+                        "format: internal positional carrier is malformed")])]
+                [_
+                  (comptime.comptime-error
+                    "format: internal plan carrier is malformed")])))]
         [_
           (comptime.comptime-error
             "format: internal argument carrier is malformed")])]
@@ -5257,13 +6276,835 @@
     (__tl_format_named_vars)
     (__tl_format_bindings)))
 
-;: Format a literal template and values into one freshly allocated String.
-(defmacro (format [template : comptime.Expr] [values : comptime.Expr ...]) : String
+;: The capture-free renderer is the first package field, so its fixed function
+;: width is also the byte offset of the following anchors tuple.
+(define arguments-renderer-byte-size : i64
+  (comptime (size-of (type (-> (Ptr i64) i64)))))
+
+;: Invoke the fixed scalar renderer ABI after a macro has located the package's
+;: first word. Keeping the function-pointer type in ordinary runtime code lets
+;: the embedded macro image carry only scalar builder operations.
+(define (arguments-renderer-call-at
+  [renderer-address : i64]
+  [formatter-address : i64]
+  [anchors-address : i64]) : i64
+  (let
+    [call-addresses : (Array i64 2) (array formatter-address anchors-address)]
+    [status : i64
+      ((unsafe
+          (ptr-read
+            (int->ptr (cast renderer-address : u64) : (Ptr (-> (Ptr i64) i64)))))
+        (unsafe
+          (ptr-cast (__tl_array-data call-addresses) : (Ptr i64))))]
+    ;; The post-call reload keeps this caller-owned cell live across the
+    ;; indirect call instead of allowing a tail call to discard its frame.
+    ;; Renderers preserve the first word, so the added delta is always zero.
+    (+ status (- (array-ref call-addresses 0) formatter-address))))
+
+;: Finish a retained Arguments package after every supplied value and lexical
+;: capture has been converted to a shared anchor. The renderer receives only
+;: a pointer to caller-owned `(formatter-address, anchors-address)` machine
+;: words; the package's checked anchor tuple retains all lifetimes while this
+;: scalar control ABI avoids passing aggregates through an indirect call.
+(defmacro (format-arguments-package
+  [plan : comptime.Expr]
+  [anchors : comptime.Expr]
+  [renderer-values : comptime.Expr]
+  [argument-kinds : comptime.Expr]
+  [argument-names : comptime.Expr]) : comptime.Expr
+  (match argument-kinds
+    [(comptime.Expr.Call _ kind-items)
+      (match argument-names
+        [(comptime.Expr.Call _ name-items)
+          (if (!=
+            (comptime.expr-list-length kind-items)
+            (comptime.expr-list-length name-items))
+            (comptime.comptime-error
+              "format: internal retained argument metadata is malformed")
+            (let
+              [parameter-name : String
+                (comptime.syntax-name-fresh "__tl_format_arguments_values")]
+              [parameter : comptime.Expr (comptime.expr-var parameter-name)]
+              ;; Type-position unquotes consume reflected Type values directly;
+              ;; `type-expr` would instead package them as value-level syntax.
+              [anchors-type : comptime.Expr (comptime.expr-type anchors)]
+              [stream-address : comptime.Expr
+                `(unsafe
+                  (ptr-read ,parameter))]
+              [anchors-address : comptime.Expr
+                `(unsafe
+                  (ptr-read (ptr-offset ,parameter 1)))]
+              [anchors-source : comptime.Expr
+                `(unsafe
+                  (ptr-read
+                    (int->ptr
+                      (cast ,anchors-address : u64)
+                      : (Ptr ,anchors-type))))]
+              [anchors-name : String
+                (comptime.syntax-name-fresh "__tl_format_renderer_anchors")]
+              [anchors-value : comptime.Expr (comptime.expr-var anchors-name)]
+              [render-arguments : comptime.ExprList (comptime.expr-list-empty)]
+              [renderer-bindings : comptime.ExprList (comptime.expr-list-empty)]
+              [index : i64 (- (comptime.expr-list-length kind-items) 1)]
+              (begin
+                (if (!=
+                  (tuple-element-count anchors-type)
+                  (comptime.expr-list-length kind-items))
+                  (comptime.comptime-error
+                    "format: internal retained anchor count is malformed")
+                  unit)
+                (while (>= index 0)
+                  (let
+                    [projection : comptime.Expr
+                      (comptime.expr-tuple-ref anchors-value index)]
+                    [source-projection : comptime.Expr
+                      (tuple-element-type anchors-type index)]
+                    [runtime-source : comptime.Expr
+                      (if (string.eq (type-kind source-projection) "string")
+                        `(unsafe
+                          (ptr-read (ptr-addr-of ,projection)))
+                        projection)]
+                    [runtime-name : String
+                      (comptime.syntax-name-fresh
+                        (comptime.string-append
+                          "__tl_format_renderer_anchor_"
+                          (comptime.int->string index)))]
+                    [runtime-var : comptime.Expr
+                      (comptime.expr-var runtime-name)]
+                    [runtime-binding : comptime.Expr
+                      (comptime.expr-begin-unit
+                        (comptime.expr-list-cons
+                          runtime-var
+                          (comptime.expr-list-cons
+                            runtime-source
+                            (comptime.expr-list-empty))))]
+                    [typed-projection : comptime.Expr
+                      `(ann ,runtime-var : ,source-projection)]
+                    (begin
+                      (set!
+                        renderer-bindings
+                        (comptime.expr-list-cons
+                          runtime-binding
+                          renderer-bindings))
+                      (match (comptime.expr-list-nth kind-items index)
+                        [(comptime.Expr.Int kind)
+                          (if (= kind 0)
+                            (set!
+                              render-arguments
+                              (comptime.expr-list-cons
+                                typed-projection
+                                render-arguments))
+                            (if (= kind 1)
+                              (set!
+                                render-arguments
+                                (comptime.expr-list-cons
+                                  `(__tl_format_named_argument
+                                    ,(comptime.expr-list-nth name-items index)
+                                    ,typed-projection)
+                                  render-arguments))
+                              (comptime.comptime-error
+                                "format: internal retained argument kind is malformed")))]
+                        [_
+                          (comptime.comptime-error
+                            "format: internal retained argument kind is malformed")])
+                      (set! index (- index 1)))))
+                (let
+                  [parameter-type : comptime.Expr
+                    (comptime.expr-type renderer-values)]
+                  [body : comptime.Expr
+                    `(stdlib.format.format-expand-mode
+                      ,plan
+                      (__tl_format_arguments ,@render-arguments)
+                      ,stream-address
+                      0
+                      0
+                      (__tl_format_positional_vars)
+                      (__tl_format_named_names)
+                      (__tl_format_named_vars)
+                      (__tl_format_bindings))]
+                  [renderer-body : comptime.Expr body]
+                  [binding-index : i64
+                    (- (comptime.expr-list-length renderer-bindings) 1)]
+                  (begin
+                    (while (>= binding-index 0)
+                      (match (comptime.expr-list-nth
+                        renderer-bindings
+                        binding-index)
+                        [(comptime.Expr.Begin entry)
+                          (match (comptime.expr-list-nth entry 0)
+                            [(comptime.Expr.Var binding-name)
+                              (set!
+                                renderer-body
+                                (comptime.expr-let-scope
+                                  binding-name
+                                  (comptime.expr-list-nth entry 1)
+                                  renderer-body))]
+                            [_
+                              (comptime.comptime-error
+                                "format: internal renderer binding is malformed")])]
+                        [_
+                          (comptime.comptime-error
+                            "format: internal renderer binding is malformed")])
+                      (set! binding-index (- binding-index 1)))
+                    (set!
+                      renderer-body
+                      (comptime.expr-let-scope
+                        anchors-name
+                        anchors-source
+                        renderer-body))
+                    (let
+                      [renderer : comptime.Expr
+                        (comptime.expr-lambda1
+                          parameter-name
+                          parameter-type
+                          renderer-body)]
+                      `(tuple ,renderer ,anchors)))))))]
+        [_
+          (comptime.comptime-error
+            "format: internal retained argument names are malformed")])]
+    [_
+      (comptime.comptime-error
+        "format: internal retained argument kinds are malformed")]))
+
+;: Finish an Arguments package after the standard streaming binder has
+;: classified every supplied operand. Reusing that binder is important: each
+;: operand is typechecked before reflection, so nested Arguments can be copied
+;: while ordinary owned values remain shared anchors.
+(defmacro (format-expand-arguments-finish
+  [plan : comptime.Expr]
+  [positional-vars : comptime.Expr]
+  [named-names : comptime.Expr]
+  [named-vars : comptime.Expr]
+  [bindings : comptime.Expr]) : comptime.Expr
+  (match plan
+    [(comptime.Expr.Call _ plan-pieces)
+      (match positional-vars
+        [(comptime.Expr.Call _ positional-items)
+          (match named-names
+            [(comptime.Expr.Call _ named-name-items)
+              (match named-vars
+                [(comptime.Expr.Call _ named-var-items)
+                  (match bindings
+                    [(comptime.Expr.Call _ supplied-bindings)
+                      (let
+                        [supplied-vars : comptime.ExprList
+                          (comptime.expr-list-empty)]
+                        [supplied-kinds : comptime.ExprList
+                          (comptime.expr-list-empty)]
+                        [supplied-names : comptime.ExprList
+                          (comptime.expr-list-empty)]
+                        [ordered-vars : comptime.ExprList
+                          (comptime.expr-list-empty)]
+                        [ordered-kinds : comptime.ExprList
+                          (comptime.expr-list-empty)]
+                        [ordered-names : comptime.ExprList
+                          (comptime.expr-list-empty)]
+                        [explicit-names : comptime.ExprList named-name-items]
+                        [capture-bindings : comptime.ExprList
+                          (comptime.expr-list-empty)]
+                        [capture-vars : comptime.ExprList
+                          (comptime.expr-list-empty)]
+                        [capture-kinds : comptime.ExprList
+                          (comptime.expr-list-empty)]
+                        [capture-argument-names : comptime.ExprList
+                          (comptime.expr-list-empty)]
+                        [capture-names : comptime.ExprList
+                          (comptime.expr-list-empty)]
+                        [capture-count : i64 0]
+                        [supplied-index : i64 0]
+                        (begin
+                          ;; Build each group in reverse with constant-start
+                          ;; forward loops, then reverse the combined metadata
+                          ;; once. This keeps positional values before named
+                          ;; values without requiring a reflected length in a
+                          ;; let initializer.
+                          (while (<
+                            supplied-index
+                            (comptime.expr-list-length positional-items))
+                            (begin
+                              (set!
+                                supplied-vars
+                                (comptime.expr-list-cons
+                                  (comptime.expr-list-nth
+                                    positional-items
+                                    supplied-index)
+                                  supplied-vars))
+                              (set!
+                                supplied-kinds
+                                (comptime.expr-list-cons
+                                  (comptime.expr-int 0)
+                                  supplied-kinds))
+                              (set!
+                                supplied-names
+                                (comptime.expr-list-cons
+                                  (comptime.expr-int 0)
+                                  supplied-names))
+                              (set! supplied-index (+ supplied-index 1))))
+                          (set! supplied-index 0)
+                          (while (<
+                            supplied-index
+                            (comptime.expr-list-length named-var-items))
+                            (begin
+                              (set!
+                                supplied-vars
+                                (comptime.expr-list-cons
+                                  (comptime.expr-list-nth
+                                    named-var-items
+                                    supplied-index)
+                                  supplied-vars))
+                              (set!
+                                supplied-kinds
+                                (comptime.expr-list-cons
+                                  (comptime.expr-int 1)
+                                  supplied-kinds))
+                              (set!
+                                supplied-names
+                                (comptime.expr-list-cons
+                                  (comptime.expr-var
+                                    (comptime.expr-string-value
+                                      (comptime.expr-list-nth
+                                        named-name-items
+                                        supplied-index)))
+                                  supplied-names))
+                              (set! supplied-index (+ supplied-index 1))))
+                          (set! supplied-index 0)
+                          (while (<
+                            supplied-index
+                            (comptime.expr-list-length supplied-vars))
+                            (begin
+                              (set!
+                                ordered-vars
+                                (comptime.expr-list-cons
+                                  (comptime.expr-list-nth
+                                    supplied-vars
+                                    supplied-index)
+                                  ordered-vars))
+                              (set!
+                                ordered-kinds
+                                (comptime.expr-list-cons
+                                  (comptime.expr-list-nth
+                                    supplied-kinds
+                                    supplied-index)
+                                  ordered-kinds))
+                              (set!
+                                ordered-names
+                                (comptime.expr-list-cons
+                                  (comptime.expr-list-nth
+                                    supplied-names
+                                    supplied-index)
+                                  ordered-names))
+                              (set! supplied-index (+ supplied-index 1))))
+                          (set! supplied-vars ordered-vars)
+                          (set! supplied-kinds ordered-kinds)
+                          (set! supplied-names ordered-names)
+                          ;; Find all implicit named selector, width, and precision
+                          ;; captures. `plan-pieces` is reverse-template order, so this
+                          ;; matches the established formatter capture traversal.
+                          (let
+                            [plan-index : i64 0]
+                            (while (<
+                              plan-index
+                              (comptime.expr-list-length plan-pieces))
+                              (let
+                                [piece : comptime.Expr
+                                  (comptime.expr-list-nth
+                                    plan-pieces
+                                    plan-index)]
+                                [fields : comptime.ExprList
+                                  (comptime.expr-list-empty)]
+                                [slot : i64 0]
+                                (begin
+                                  (match piece
+                                    [(comptime.Expr.Begin found-fields)
+                                      (set! fields found-fields)]
+                                    [_ unit])
+                                  (if (= (comptime.expr-list-length fields) 14)
+                                    (while (< slot 3)
+                                      (let
+                                        [reference-kind : i64 -1]
+                                        [reference-value : comptime.Expr
+                                          (comptime.expr-int 0)]
+                                        [named-reference? : bool false]
+                                        (begin
+                                          (if (= slot 0)
+                                            (begin
+                                              (match (comptime.expr-list-nth
+                                                fields
+                                                0)
+                                                [(comptime.Expr.Int found)
+                                                  (set! reference-kind found)]
+                                                [_ unit])
+                                              (set!
+                                                reference-value
+                                                (comptime.expr-list-nth
+                                                  fields
+                                                  1)))
+                                            (if (= slot 1)
+                                              (begin
+                                                (match (comptime.expr-list-nth
+                                                  fields
+                                                  8)
+                                                  [(comptime.Expr.Int found)
+                                                    (set! reference-kind found)]
+                                                  [_ unit])
+                                                (set!
+                                                  reference-value
+                                                  (comptime.expr-list-nth
+                                                    fields
+                                                    9)))
+                                              (begin
+                                                (match (comptime.expr-list-nth
+                                                  fields
+                                                  10)
+                                                  [(comptime.Expr.Int found)
+                                                    (set! reference-kind found)]
+                                                  [_ unit])
+                                                (set!
+                                                  reference-value
+                                                  (comptime.expr-list-nth
+                                                    fields
+                                                    11)))))
+                                          (if (= slot 0)
+                                            (if (= reference-kind 1)
+                                              (set! named-reference? true)
+                                              unit)
+                                            (if (= reference-kind 3)
+                                              (set! named-reference? true)
+                                              unit))
+                                          (if named-reference?
+                                            (let
+                                              [name : String
+                                                (comptime.expr-string-value
+                                                  reference-value)]
+                                              [explicit? : bool false]
+                                              [captured? : bool false]
+                                              [scan : i64 0]
+                                              (begin
+                                                (while (<
+                                                  scan
+                                                  (comptime.expr-list-length
+                                                    explicit-names))
+                                                  (begin
+                                                    (if (string.eq
+                                                      (comptime.expr-string-value
+                                                        (comptime.expr-list-nth
+                                                          explicit-names
+                                                          scan))
+                                                      name)
+                                                      (set! explicit? true)
+                                                      unit)
+                                                    (set! scan (+ scan 1))))
+                                                (set! scan 0)
+                                                (while (<
+                                                  scan
+                                                  (comptime.expr-list-length
+                                                    capture-names))
+                                                  (begin
+                                                    (if (string.eq
+                                                      (comptime.expr-string-value
+                                                        (comptime.expr-list-nth
+                                                          capture-names
+                                                          scan))
+                                                      name)
+                                                      (set! captured? true)
+                                                      unit)
+                                                    (set! scan (+ scan 1))))
+                                                (if (if explicit?
+                                                  true
+                                                  captured?)
+                                                  unit
+                                                  (let
+                                                    [capture-source : comptime.Expr
+                                                      (comptime.expr-var name)]
+                                                    [capture-name : String
+                                                      (comptime.syntax-name-fresh
+                                                        (comptime.string-append
+                                                          "__tl_format_shared_capture_"
+                                                          (comptime.int->string
+                                                            capture-count)))]
+                                                    [capture-var : comptime.Expr
+                                                      (comptime.expr-var
+                                                        capture-name)]
+                                                    [entry : comptime.Expr
+                                                      (comptime.expr-begin-unit
+                                                        (comptime.expr-list-cons
+                                                          capture-var
+                                                          (comptime.expr-list-cons
+                                                            capture-source
+                                                            (comptime.expr-list-empty))))]
+                                                    (begin
+                                                      (set!
+                                                        capture-names
+                                                        (comptime.expr-list-cons
+                                                          (comptime.expr-string
+                                                            name)
+                                                          capture-names))
+                                                      (set!
+                                                        capture-bindings
+                                                        (comptime.expr-list-cons
+                                                          entry
+                                                          capture-bindings))
+                                                      (set!
+                                                        capture-vars
+                                                        (comptime.expr-list-cons
+                                                          capture-var
+                                                          capture-vars))
+                                                      (set!
+                                                        capture-kinds
+                                                        (comptime.expr-list-cons
+                                                          (comptime.expr-int 1)
+                                                          capture-kinds))
+                                                      (set!
+                                                        capture-argument-names
+                                                        (comptime.expr-list-cons
+                                                          (comptime.expr-var
+                                                            name)
+                                                          capture-argument-names))
+                                                      (set!
+                                                        capture-count
+                                                        (+ capture-count 1)))))))
+                                            unit)
+                                          (set! slot (+ slot 1)))))
+                                    unit)
+                                  (set! plan-index (+ plan-index 1))))))
+                          (let
+                            [result : comptime.Expr
+                              `(stdlib.format.format-arguments-package
+                                ,plan
+                                (tuple ,@supplied-vars ,@capture-vars)
+                                (unsafe
+                                  (int->ptr (cast 0 : u64) : (Ptr i64)))
+                                (__tl_format_retained_kinds
+                                  ,@supplied-kinds
+                                  ,@capture-kinds)
+                                (__tl_format_retained_names
+                                  ,@supplied-names
+                                  ,@capture-argument-names))]
+                            [capture-index : i64 0]
+                            [ordered-bindings : comptime.ExprList
+                              (comptime.expr-list-empty)]
+                            [binding-index : i64 0]
+                            (begin
+                              (while (<
+                                binding-index
+                                (comptime.expr-list-length supplied-bindings))
+                                (begin
+                                  (set!
+                                    ordered-bindings
+                                    (comptime.expr-list-cons
+                                      (comptime.expr-list-nth
+                                        supplied-bindings
+                                        binding-index)
+                                      ordered-bindings))
+                                  (set! binding-index (+ binding-index 1))))
+                              (set! binding-index 0)
+                              (while (<
+                                capture-index
+                                (comptime.expr-list-length capture-bindings))
+                                (match (comptime.expr-list-nth
+                                  capture-bindings
+                                  capture-index)
+                                  [(comptime.Expr.Begin entry)
+                                    (match (comptime.expr-list-nth entry 0)
+                                      [(comptime.Expr.Var binding-name)
+                                        (set!
+                                          result
+                                          (comptime.expr-shared-let-scope
+                                            binding-name
+                                            (comptime.expr-list-nth entry 1)
+                                            result))]
+                                      [_
+                                        (comptime.comptime-error
+                                          "format: internal retained capture is malformed")])]
+                                  [_
+                                    (comptime.comptime-error
+                                      "format: internal retained capture is malformed")])
+                                (set! capture-index (+ capture-index 1)))
+                              (while (<
+                                binding-index
+                                (comptime.expr-list-length ordered-bindings))
+                                (match (comptime.expr-list-nth
+                                  ordered-bindings
+                                  binding-index)
+                                  [(comptime.Expr.Begin entry)
+                                    (match (comptime.expr-list-nth entry 0)
+                                      [(comptime.Expr.Var binding-name)
+                                        (if (=
+                                          (cast
+                                            (string.string-ref binding-name 12)
+                                            : i64)
+                                          115)
+                                          (set!
+                                            result
+                                            (comptime.expr-shared-let-scope
+                                              binding-name
+                                              (comptime.expr-list-nth entry 1)
+                                              result))
+                                          (set!
+                                            result
+                                            (comptime.expr-let-scope
+                                              binding-name
+                                              (comptime.expr-list-nth entry 1)
+                                              result)))]
+                                      [_
+                                        (comptime.comptime-error
+                                          "format: internal retained binding is malformed")])]
+                                  [_
+                                    (comptime.comptime-error
+                                      "format: internal retained binding is malformed")])
+                                (set! binding-index (+ binding-index 1)))
+                              result))))]
+                    [_
+                      (comptime.comptime-error
+                        "format: internal retained binding carrier is malformed")])]
+                [_
+                  (comptime.comptime-error
+                    "format: internal retained named variable carrier is malformed")])]
+            [_
+              (comptime.comptime-error
+                "format: internal retained named argument carrier is malformed")])]
+        [_
+          (comptime.comptime-error
+            "format: internal retained positional carrier is malformed")])]
+    [_ (comptime.comptime-error "format: internal retained plan is malformed")]))
+
+;: Start retained binding from the same parsed plan used by all other sinks.
+(defmacro (format-expand-arguments-start
+  [plan : comptime.Expr]
+  [argument-carrier : comptime.Expr]
+  [_stream-address : comptime.Expr]) : comptime.Expr
+  `(stdlib.format.format-expand-mode
+    ,plan
+    ,argument-carrier
+    (__tl_format_retained_sink)
+    0
+    0
+    (__tl_format_positional_vars)
+    (__tl_format_named_names)
+    (__tl_format_named_vars)
+    (__tl_format_bindings)))
+
+;: Replay retained Arguments into an existing formatter stack-cell address.
+(defmacro (format-arguments-render-at-resolved!
+  [arguments-type : type]
+  [borrowed-expr : comptime.Expr]
+  [arguments : comptime.Expr]
+  [stream-address : comptime.Expr]) : i64
+  (match borrowed-expr
+    [(comptime.Expr.Int borrowed)
+      (let
+        [address-name : String
+          (comptime.syntax-name-fresh "__tl_format_anchors_address")]
+        [address-var : comptime.Expr (comptime.expr-var address-name)]
+        [address-value : comptime.Expr
+          (if (= borrowed 1)
+            `(unsafe
+              (cast
+                (ptr-read (ptr-cast (ptr-addr-of ,arguments) : (Ptr u64)))
+                : i64))
+            `(unsafe
+              (cast
+                (ptr->int (ptr-cast (ptr-addr-of ,arguments) : (Ptr u8)))
+                : i64)))]
+        [call : comptime.Expr
+          `(stdlib.format.arguments-renderer-call-at
+            ,address-var
+            ,stream-address
+            (+ ,address-var stdlib.format.arguments-renderer-byte-size))]
+        (begin
+          ;; Force validation of the package shape at the resolved boundary.
+          (if (= (tuple-element-count arguments-type) 2)
+            unit
+            (comptime.comptime-error
+              "format: malformed retained Arguments package"))
+          (comptime.expr-let-scope address-name address-value call)))]
+    [_
+      (comptime.comptime-error
+        "format: internal Arguments borrow marker is malformed")]))
+
+;: Resolve an Arguments package shape and replay it into an existing formatter.
+(defmacro (format-arguments-render-at!
+  [arguments : comptime.Expr]
+  [stream-address : comptime.Expr]) : i64
+  (match (type-kind (comptime.expr-type arguments))
+    ["ref"
+      `(stdlib.format.format-arguments-render-at-resolved!
+        ,(comptime.reference-element-type (comptime.expr-type arguments))
+        1
+        ,arguments
+        ,stream-address)]
+    ["mut-ref"
+      `(stdlib.format.format-arguments-render-at-resolved!
+        ,(comptime.reference-element-type (comptime.expr-type arguments))
+        1
+        ,arguments
+        ,stream-address)]
+    [_
+      `(stdlib.format.format-arguments-render-at-resolved!
+        ,(comptime.expr-type arguments)
+        0
+        ,arguments
+        ,stream-address)]))
+
+;: Materialize retained Arguments into one fresh active-arena String.
+(defmacro (format-arguments-materialize [arguments : comptime.Expr]) : String
+  (let
+    [name : String (comptime.syntax-name-fresh "__tl_format_arguments_value")]
+    [value : comptime.Expr (comptime.expr-var name)]
+    [body : comptime.Expr
+      `(let
+        [__tl_format_arguments_sink
+          (stdlib.format.ArgumentsStringSink (__tl_make-array u8 64) 0)]
+        [__tl_format_arguments_sink_cell (array __tl_format_arguments_sink)]
+        [__tl_format_arguments_sink_address : i64
+          (unsafe
+            (cast
+              (ptr->int
+                (ptr-cast
+                  (__tl_array-data __tl_format_arguments_sink_cell)
+                  : (Ptr u8)))
+              : i64))]
+        [__tl_format_arguments_formatter
+          (stdlib.format.formatter-writer
+            __tl_format_arguments_sink_address
+            stdlib.format.arguments-string-write-raw)]
+        [__tl_format_arguments_formatter_cell
+          (stdlib.format.formatter-cell __tl_format_arguments_formatter)]
+        [__tl_format_arguments_formatter_address : i64
+          (unsafe
+            (cast
+              (ptr->int
+                (ptr-cast
+                  (__tl_array-data __tl_format_arguments_formatter_cell)
+                  : (Ptr u8)))
+              : i64))]
+        [__tl_format_arguments_status : i64
+          (stdlib.format.format-arguments-render-at!
+            ,value
+            __tl_format_arguments_formatter_address)]
+        [__tl_format_arguments_finished
+          (array-ref __tl_format_arguments_sink_cell 0)]
+        (if (!= __tl_format_arguments_status 0)
+          (stdlib.format.format-runtime-abort-string
+            "format: internal Arguments String sink failed")
+          (if (= __tl_format_arguments_finished.len 0)
+            ""
+            (unsafe
+              (string-from-bytes
+                (ptr-cast
+                  (__tl_array-data __tl_format_arguments_finished.slots)
+                  : (Ptr u8))
+                __tl_format_arguments_finished.len)))))]
+    (comptime.expr-shared-let-scope name arguments body)))
+
+;: Stream either retained Arguments or a literal template into one raw
+;: formatter callback. This is the common entry used by writers and stdio.
+(defmacro (format-write-callback-dispatch
+  [template : comptime.Expr]
+  [argument-carrier : comptime.Expr]
+  [context : comptime.Expr]
+  [write-raw : comptime.Expr]
+  [newline : comptime.Expr]) : FormatResult
+  (match argument-carrier
+    [(comptime.Expr.Call _ values)
+      (let
+        [template-type : comptime.Expr (comptime.expr-type template)]
+        [retained? : bool
+          (if (= (comptime.expr-list-length values) 0)
+            (if (string.eq (type-kind template-type) "tuple")
+              (if (= (tuple-element-count template-type) 2)
+                (if (string.eq
+                  (type-kind (tuple-element-type template-type 0))
+                  "function")
+                  (string.eq
+                    (type-kind (tuple-element-type template-type 1))
+                    "tuple")
+                  false)
+                false)
+              false)
+            false)]
+        (if retained?
+          (let
+            [name : String
+              (comptime.syntax-name-fresh "__tl_format_stream_arguments")]
+            [arguments : comptime.Expr (comptime.expr-var name)]
+            [body : comptime.Expr
+              `(let
+                [__tl_format_stream_formatter
+                  (stdlib.format.formatter-writer ,context ,write-raw)]
+                [__tl_format_stream_cell
+                  (stdlib.format.formatter-cell __tl_format_stream_formatter)]
+                [__tl_format_stream_formatter_address : i64
+                  (unsafe
+                    (cast
+                      (ptr->int
+                        (ptr-cast
+                          (__tl_array-data __tl_format_stream_cell)
+                          : (Ptr u8)))
+                      : i64))]
+                [__tl_format_stream_status : i64
+                  (stdlib.format.format-arguments-render-at!
+                    ,arguments
+                    __tl_format_stream_formatter_address)]
+                (begin
+                  (if (!= ,newline 0)
+                    (if (= __tl_format_stream_status 0)
+                      (stdlib.format.formatter-write-string-at!
+                        __tl_format_stream_formatter_address
+                        "\n")
+                      unit)
+                    unit)
+                  (stdlib.format.formatter-result-at
+                    __tl_format_stream_formatter_address)))]
+            (comptime.expr-shared-let-scope name template body))
+          `(stdlib.format.format-write-literal-callback
+            ,template
+            ,argument-carrier
+            ,context
+            ,write-raw
+            ,newline)))]
+    [_
+      (comptime.comptime-error
+        "format: internal writer argument carrier is malformed")]))
+
+;: Retain one literal plan and shared borrows of its values without building
+;: the final String. The concrete structural package type is inferred.
+(defmacro (args [template : comptime.Expr] [values : comptime.Expr ...]) : comptime.Expr
   `(stdlib.format.format-parse
     ,template
     (__tl_format_arguments ,@values)
-    stdlib.format.format-expand-materialized-start
+    stdlib.format.format-expand-arguments-start
     0))
+
+;: Format a literal template and values into one freshly allocated String.
+(defmacro (format [template : comptime.Expr] [values : comptime.Expr ...]) : String
+  (if (= (comptime.expr-list-length values) 0)
+    (let
+      [template-type : comptime.Expr (comptime.expr-type template)]
+      [retained? : bool
+        (if (string.eq (type-kind template-type) "tuple")
+          (if (= (tuple-element-count template-type) 2)
+            (if (string.eq
+              (type-kind (tuple-element-type template-type 0))
+              "function")
+              (string.eq
+                (type-kind (tuple-element-type template-type 1))
+                "tuple")
+              false)
+            false)
+          false)]
+      (if retained?
+        `(stdlib.format.format-arguments-materialize ,template)
+        `(stdlib.format.format-parse
+          ,template
+          (__tl_format_arguments)
+          stdlib.format.format-expand-materialized-start
+          0)))
+    `(stdlib.format.format-parse
+      ,template
+      (__tl_format_arguments ,@values)
+      stdlib.format.format-expand-materialized-start
+      0)))
 
 ;: Stream a literal plan immediately while its generated shared borrows live.
 ;:
@@ -5397,7 +7238,7 @@
                     : (Ptr u8)))
                 : i64))]
           [__tl_format_writer_result
-            (stdlib.format.format-write-literal-callback
+            (stdlib.format.format-write-callback-dispatch
               ,template
               ,argument-carrier
               __tl_format_writer_address

@@ -1714,10 +1714,12 @@ if [ "$NL_HOST_OS" = windows ]; then
     # On the pre-#6877 tree, #6783's integer and float exponent formatting
     # independently crossed the same boundary: the authoritative Windows CI
     # probe measured 3,080,997 used nodes with the same capacity and payload.
-    # The direct-format additions are composed with the ownership tree here;
-    # the ownership pin remains exact pending the required Windows profile.
+    # #6650's retained Arguments renderer and unified writer/stdio macro family
+    # cross the ownership-composed macro-expand boundary from 73 to 74 segments:
+    # the authoritative Windows CI probe measured 4,802,959 used nodes,
+    # 4,849,664 capacity, and 155,189,248 physical payload bytes.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool macro_expand 73 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool macro_expand 74 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # The three dense optimizer plan containers crossed the checked expression
     # graph into its 33rd segment; the accessor-admission/absorption/fold/sinking

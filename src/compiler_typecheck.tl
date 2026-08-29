@@ -4936,6 +4936,13 @@
     [items : (Array (& n i64) 1) (array (& n))]
     (let [value : (& n i64) (array-ref items 0)] 0)))")
 
+(define (compiler-typecheck-reference-tuple-borrow-source) : String
+  "(define (take [pair : (& pair (Tuple (& n i64) i64))]) : i64 42)
+(define (main [n : i64]) : i64
+  (let
+    [pair : (Tuple (& n i64) i64) (tuple (& n) 7)]
+    (take (& pair))))")
+
 (define (compiler-typecheck-reference-struct-return-source) : String
   "(defstruct RefBox (value (& n i64)))
 (define (main [n : i64]) : RefBox
@@ -5367,6 +5374,9 @@
     [array-stored-ok : bool
       (compiler-typecheck-ok?
         (compiler-typecheck-reference-array-stored-source))]
+    [tuple-borrow-ok : bool
+      (compiler-typecheck-ok?
+        (compiler-typecheck-reference-tuple-borrow-source))]
     [struct-return-error-ok : bool
       (compiler-typecheck-error-ok?
         (compiler-typecheck-reference-struct-return-source)
@@ -5531,6 +5541,9 @@
         unit
         (set! ok false))
       (if array-stored-ok
+        unit
+        (set! ok false))
+      (if tuple-borrow-ok
         unit
         (set! ok false))
       (if struct-return-error-ok

@@ -264,6 +264,11 @@ Inline stdlib coverage:
   Formatter ABI across ByteBuf, TextBuf, FileHandle, stdout, and stderr;
   exactly-once/lvalue/rvalue/repeated formatting; zero final-String allocation
   for a preallocated literal sink; first-error retention; and newline behavior.
+  `tests/integration/format_arguments.tl` and `format_arguments_stdio.tl`
+  additionally cover retained plan reuse, nesting, explicit named and lexical
+  captures, hidden temporary owners, package lifetime rejection, allocation
+  measurements, direct owner `Formatter` hooks, fallback options, and byte
+  identity across String, ByteBuf, TextBuf, stdout, and stderr.
 - `text_buf.tl` owns inline tests for scoped arena rendering of a program-owned
   text buffer from an inner active arena, empty buffers, repeated appends,
   char/int append helpers, buffer concatenation, clear/reset behavior, and

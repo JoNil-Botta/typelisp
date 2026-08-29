@@ -11437,25 +11437,26 @@
   [mark-capacity : i64]) : TcTypeEnvScopedStack
   (let
     [lookup-epoch : i64 (tc-type-env-scoped-state-next-lookup-epoch! state)]
-    [owner : i64 (tc-type-env-scoped-state-field state owner-arena i64)]
-    (in-arena
-      (arena.Arena owner)
-      (TcTypeEnvScopedStack
-        state.address
-        (__tl_make-array
-          TcTypeEnvScopedSlot
-          (tc-type-env-scoped-capacity slot-capacity))
-        0
-        (box
-          (tc_i64_i64_map.with-capacity
-            (tc-type-env-scoped-capacity slot-capacity)))
-        lookup-epoch
-        (__tl_make-array
-          TcTypeEnvScopedMark
-          (tc-type-env-scoped-capacity mark-capacity))
-        0
-        0
-        0))))
+    ;; The state owns only the fixed carrier, dense lanes, and memo cells.
+    ;; Scoped stacks are transient pass data and must follow the caller's
+    ;; current scratch arena; retaining every function's stack in the state
+    ;; arena makes a self-compile consume hundreds of megabytes unnecessarily.
+    (TcTypeEnvScopedStack
+      state.address
+      (__tl_make-array
+        TcTypeEnvScopedSlot
+        (tc-type-env-scoped-capacity slot-capacity))
+      0
+      (box
+        (tc_i64_i64_map.with-capacity
+          (tc-type-env-scoped-capacity slot-capacity)))
+      lookup-epoch
+      (__tl_make-array
+        TcTypeEnvScopedMark
+        (tc-type-env-scoped-capacity mark-capacity))
+      0
+      0
+      0)))
 
 (define (tc-type-env-scoped-stack-with-capacity
   [slot-capacity : i64]
@@ -11495,45 +11496,17 @@
 (define (tc-type-env-scoped-stack-reserve-slots!
   [stack : (&mut stack TcTypeEnvScopedStack)]
   [min-capacity : i64]) : unit
-  (if (< (array-length stack.slots) min-capacity)
-    (in-arena
-      (arena.Arena
-        (tc-type-env-scoped-state-field
-          (TcTypeEnvScopedState stack.state-address)
-          owner-arena
-          i64))
-      (begin
-        (while (< (array-length stack.slots) min-capacity)
-          (__tl_array-push! stack.slots (tc-type-env-scoped-empty-slot)))
-        unit))
+  (begin
+    (while (< (array-length stack.slots) min-capacity)
+      (__tl_array-push! stack.slots (tc-type-env-scoped-empty-slot)))
     unit))
 
 (define (tc-type-env-scoped-stack-reserve-marks!
   [stack : (&mut stack TcTypeEnvScopedStack)]
   [min-capacity : i64]) : unit
-  (if (< (array-length stack.marks) min-capacity)
-    (in-arena
-      (arena.Arena
-        (tc-type-env-scoped-state-field
-          (TcTypeEnvScopedState stack.state-address)
-          owner-arena
-          i64))
-      (begin
-        (while (< (array-length stack.marks) min-capacity)
-          (__tl_array-push! stack.marks (tc-type-env-scoped-empty-mark)))
-        unit))
-    unit))
-
-(define (tc-type-env-scoped-stack-map-prepare-insert!
-  [stack : (&mut stack TcTypeEnvScopedStack)]) : unit
-  (if (tc_i64_i64_map.needs-grow? (&mut (__tl-box-place stack.lookup-cache)))
-    (in-arena
-      (arena.Arena
-        (tc-type-env-scoped-state-field
-          (TcTypeEnvScopedState stack.state-address)
-          owner-arena
-          i64))
-      (tc_i64_i64_map.grow! (&mut (__tl-box-place stack.lookup-cache))))
+  (begin
+    (while (< (array-length stack.marks) min-capacity)
+      (__tl_array-push! stack.marks (tc-type-env-scoped-empty-mark)))
     unit))
 
 (define (tc-type-env-scoped-stack-push-slot!
@@ -11568,12 +11541,10 @@
             old-name-id)
             [(tc_i64_i64_map.LookupFound old-index)
               (if (= old-index index)
-                (begin
-                  (tc-type-env-scoped-stack-map-prepare-insert! stack)
-                  (tc_i64_i64_map.insert-ref!
-                    (&mut (__tl-box-place stack.lookup-cache))
-                    old-name-id
-                    -1))
+                (tc_i64_i64_map.insert-ref!
+                  (&mut (__tl-box-place stack.lookup-cache))
+                  old-name-id
+                  -1)
                 unit)]
             [(tc_i64_i64_map.LookupMissing) unit])))
       (set!
@@ -11591,12 +11562,10 @@
         (begin
           (set! (array-ref dense-indices name-id) index)
           (set! (array-ref dense-epochs name-id) stack.lookup-epoch))
-        (begin
-          (tc-type-env-scoped-stack-map-prepare-insert! stack)
-          (tc_i64_i64_map.insert-ref!
-            (&mut (__tl-box-place stack.lookup-cache))
-            name-id
-            index)))
+        (tc_i64_i64_map.insert-ref!
+          (&mut (__tl-box-place stack.lookup-cache))
+          name-id
+          index))
       (cfg compile-profile (compiler-tc-env-profile-note-scoped-bind))
       (set! stack.slot-count (+ index 1)))))
 

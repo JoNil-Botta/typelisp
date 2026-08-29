@@ -2447,6 +2447,33 @@
     (set! (array-ref state.intern-state-ready 0) true)
     (set! compiler-load-active-session-state state)))
 
+;; Intern into the table that gives this load session's id-keyed caches their
+;; meaning. Explicit driver sessions never intern through a compatibility
+;; table another job installed; standalone adapters retain the historical
+;; active-table fallback until they bind an owner.
+(define (compiler-load-session-state-intern
+  [state : CompilerLoadSessionState]
+  [name : String]) : i64
+  (if (array-ref state.intern-state-ready 0)
+    (let
+      [interns : (&mut state ci.InternCompatState)
+        (&mut (array-ref state.intern-state 0))]
+      ;; The compatibility bridge keeps its active scalar cursor outside the
+      ;; state record. While this session owns the installed table, that live
+      ;; cursor is authoritative; recapture it after the insertion. A session
+      ;; whose owner is not installed stays entirely explicit and cannot touch
+      ;; an unrelated job's table.
+      (if (=
+        (ci.intern-active-table-id)
+        (ci.intern-compat-state-table-id interns))
+        (let
+          [id : i64 (ci.intern name)]
+          (begin
+            (ci.intern-compat-state-capture-from-globals! interns)
+            id))
+        (ci.intern-compat-state-intern interns name)))
+    (ci.intern name)))
+
 (define (compiler-load-session-cache-enable!) : unit
   (set!
     (array-ref
@@ -2617,7 +2644,10 @@
   [state : CompilerLoadSessionState]
   [path : String]) : unit
   (let
-    [id : i64 (ci.intern (compiler-load-canonical-module-id-from-path path))]
+    [id : i64
+      (compiler-load-session-state-intern
+        (compiler-load-session-state-shared-view (& state))
+        (compiler-load-canonical-module-id-from-path path))]
     ;; The map head belongs to this session. Its nodes outlive load-scoped
     ;; scratch arenas and remain valid until the next session intern reset.
     (in-arena
@@ -2671,7 +2701,10 @@
   [suffix : String]
   [disk-path : String]) : unit
   (let
-    [key : i64 (ci.intern (clone suffix))]
+    [key : i64
+      (compiler-load-session-state-intern
+        (compiler-load-session-state-shared-view (& state))
+        (clone suffix))]
     [cache : sym_i64_env.SymI64Env
       (compiler-load-session-state-embedded-equivalence-cache-shared-view
         (compiler-load-session-state-shared-view (& state)))]
@@ -2726,8 +2759,17 @@
   [module : String]) : bool
   (let
     [ids : sym_i64_env.SymI64Env
-      (compiler-load-session-state-embedded-module-ids-shared-view state)]
-    (sym_i64_env.sym-i64-contains-id ids (ci.intern module))))
+      (compiler-load-session-state-embedded-module-ids-shared-view
+        (compiler-load-session-state-shared-view (& state)))]
+    (if (array-ref state.intern-state-ready 0)
+      (match (ci.intern-compat-state-lookup
+        (& (array-ref state.intern-state 0))
+        (& module))
+        [(ci.InternLookupFound id) (sym_i64_env.sym-i64-contains-id ids id)]
+        [(ci.InternLookupMissing) false])
+      (match (ci.intern-lookup-content module)
+        [(ci.InternLookupFound id) (sym_i64_env.sym-i64-contains-id ids id)]
+        [(ci.InternLookupMissing) false]))))
 
 (define (compiler-load-embedded-stdlib-module-id? [module : String]) : bool
   (compiler-load-session-state-embedded-stdlib-module-id?
@@ -19441,59 +19483,127 @@
 
 (define (compiler-load-session-embedded-provenance-isolation-ok?) : bool
   (let
+    [previous-state : CompilerLoadSessionState
+      (compiler-load-global-shared-view compiler-load-active-session-state)]
+    [active-intern-before : ci.InternCompatState
+      (ci.intern-compat-state-capture-active)]
     [state-a : CompilerLoadSessionState (compiler-load-session-state-new)]
     [state-b : CompilerLoadSessionState (compiler-load-session-state-new)]
+    [intern-a : ci.InternCompatState (ci.intern-compat-state-new)]
+    [intern-b : ci.InternCompatState (ci.intern-compat-state-new)]
+    [intern-decoy : ci.InternCompatState (ci.intern-compat-state-new)]
     [module-a : String "stdlib.state_a"]
     [module-b : String "stdlib.state_b"]
-    [_note-a : unit
+    [id-a : i64
+      (ci.intern-compat-state-intern (&mut intern-a) (clone module-a))]
+    [id-b : i64
+      (ci.intern-compat-state-intern (&mut intern-b) (clone module-b))]
+    [id-decoy : i64
+      (ci.intern-compat-state-intern (&mut intern-decoy) "stdlib.decoy")]
+    [_bind-a : unit
+      (compiler-load-session-state-use-with-intern-state!
+        (compiler-load-session-state-shared-view (& state-a))
+        (owned_view.compiler-owned-shared-view intern-a))]
+    [_bind-b : unit
+      (compiler-load-session-state-use-with-intern-state!
+        (compiler-load-session-state-shared-view (& state-b))
+        (owned_view.compiler-owned-shared-view intern-b))]
+    [decoy-pool-before : i64 (ci.intern-compat-state-pool-len (& intern-decoy))]
+    [ok : bool false]
+    (begin
+      ;; Keep an unrelated same-shaped table installed while every explicit
+      ;; operation below targets A or B. Any ambient interning would mutate the
+      ;; decoy and make the colliding ids appear to belong to the wrong job.
+      (ci.intern-compat-state-install!
+        (owned_view.compiler-owned-shared-view intern-decoy))
       (compiler-load-session-state-note-embedded-module!
         (compiler-load-session-state-shared-view (& state-a))
-        "stdlib/state_a.tl")]
-    [_note-b : unit
+        "stdlib/state_a.tl")
       (compiler-load-session-state-note-embedded-module!
         (compiler-load-session-state-shared-view (& state-b))
-        "stdlib/state_b.tl")]
-    [_mark-a : unit
-      (set! (array-ref state-a.embedded-stdlib-provenance.noted 0) true)]
-    [_mark-b : unit
-      (set! (array-ref state-b.embedded-stdlib-provenance.noted 0) true)]
-    [before : bool
-      (and
-        (compiler-load-session-state-embedded-stdlib-module-id?
-          (compiler-load-session-state-shared-view (& state-a))
-          (clone module-a))
-        (not
-          (compiler-load-session-state-embedded-stdlib-module-id?
+        "stdlib/state_b.tl")
+      (set! (array-ref state-a.embedded-stdlib-provenance.noted 0) true)
+      (set! (array-ref state-b.embedded-stdlib-provenance.noted 0) true)
+      (let
+        [before : bool
+          (and
+            (= id-a id-b)
+            (= id-b id-decoy)
+            (compiler-load-session-state-embedded-stdlib-module-id?
+              (compiler-load-session-state-shared-view (& state-a))
+              (clone module-a))
+            (not
+              (compiler-load-session-state-embedded-stdlib-module-id?
+                (compiler-load-session-state-shared-view (& state-a))
+                (clone module-b)))
+            (compiler-load-session-state-embedded-stdlib-module-id?
+              (compiler-load-session-state-shared-view (& state-b))
+              (clone module-b))
+            (not
+              (compiler-load-session-state-embedded-stdlib-module-id?
+                (compiler-load-session-state-shared-view (& state-b))
+                (clone module-a)))
+            (compiler-load-session-state-embedded-provenance-noted?
+              (compiler-load-session-state-shared-view (& state-a)))
+            (compiler-load-session-state-embedded-provenance-noted?
+              (compiler-load-session-state-shared-view (& state-b)))
+            (=
+              (ci.intern-compat-state-pool-len (& intern-decoy))
+              decoy-pool-before))]
+        (begin
+          (compiler-load-session-state-embedded-provenance-reset!
+            (compiler-load-session-state-shared-view (& state-b)))
+          (let
+            [active-after : ci.InternCompatState
+              (ci.intern-compat-state-capture-active)]
+            (set!
+              ok
+              (and
+                before
+                (compiler-load-session-state-embedded-stdlib-module-id?
+                  (compiler-load-session-state-shared-view (& state-a))
+                  (clone module-a))
+                (compiler-load-session-state-embedded-provenance-noted?
+                  (compiler-load-session-state-shared-view (& state-a)))
+                (not
+                  (compiler-load-session-state-embedded-stdlib-module-id?
+                    (compiler-load-session-state-shared-view (& state-b))
+                    (clone module-b)))
+                (not
+                  (compiler-load-session-state-embedded-provenance-noted?
+                    (compiler-load-session-state-shared-view (& state-b))))
+                (=
+                  (ci.intern-compat-state-pool-len (& intern-decoy))
+                  decoy-pool-before)
+                (=
+                  (ci.intern-compat-state-table-id (& active-after))
+                  (ci.intern-compat-state-table-id (& intern-decoy))))))
+          ;; The inverse transition matters during today's compatibility
+          ;; migration: when A is installed, inserting through A must publish
+          ;; and then recapture the active scalar count for later explicit use.
+          (ci.intern-compat-state-install!
+            (owned_view.compiler-owned-shared-view intern-a))
+          (compiler-load-session-state-use-with-intern-state!
             (compiler-load-session-state-shared-view (& state-a))
-            (clone module-b)))
-        (compiler-load-session-state-embedded-stdlib-module-id?
-          (compiler-load-session-state-shared-view (& state-b))
-          (clone module-b))
-        (not
-          (compiler-load-session-state-embedded-stdlib-module-id?
-            (compiler-load-session-state-shared-view (& state-b))
-            (clone module-a)))
-        (compiler-load-session-state-embedded-provenance-noted?
-          (compiler-load-session-state-shared-view (& state-a)))
-        (compiler-load-session-state-embedded-provenance-noted?
-          (compiler-load-session-state-shared-view (& state-b))))]
-    [_reset-b : unit
-      (compiler-load-session-state-embedded-provenance-reset!
-        (compiler-load-session-state-shared-view (& state-b)))]
-    (and
-      before
-      (compiler-load-session-state-embedded-stdlib-module-id?
-        (compiler-load-session-state-shared-view (& state-a))
-        (clone module-a))
-      (compiler-load-session-state-embedded-provenance-noted?
-        (compiler-load-session-state-shared-view (& state-a)))
-      (not
-        (compiler-load-session-state-embedded-stdlib-module-id?
-          (compiler-load-session-state-shared-view (& state-b))
-          (clone module-b)))
-      (not
-        (compiler-load-session-state-embedded-provenance-noted?
-          (compiler-load-session-state-shared-view (& state-b)))))))
+            (owned_view.compiler-owned-shared-view intern-a))
+          (compiler-load-session-state-note-embedded-module!
+            (compiler-load-session-state-shared-view (& state-a))
+            "stdlib/state_active.tl")
+          (set!
+            ok
+            (and
+              ok
+              (=
+                (ci.intern-pool-len)
+                (ci.intern-compat-state-pool-len
+                  (& (array-ref state-a.intern-state 0))))
+              (compiler-load-session-state-embedded-stdlib-module-id?
+                (compiler-load-session-state-shared-view (& state-a))
+                "stdlib.state_active")))
+          (set! compiler-load-active-session-state previous-state)
+          (ci.intern-compat-state-install!
+            (owned_view.compiler-owned-shared-view active-intern-before))
+          ok)))))
 
 (define (compiler-load-session-explicit-parse-isolation-ok?) : bool
   (let

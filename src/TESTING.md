@@ -71,7 +71,12 @@ dedicated arena until its complete required lifetime ends.
 [`compiler_load.tl`](compiler_load.tl) is the process-lifetime positive example:
 the embedded-module provenance set and equivalence/catalog caches allocate and
 regrow there, while resets clear their logical bindings without resetting the
-arena. A dedicated arena is not automatically never-reset;
+arena. Its integer keys must be interned through the owning
+`CompilerLoadSessionState`; an explicitly targeted load operation must not use
+an unrelated compatibility table that another job installed. The load
+self-test proves this with colliding A/B IDs and an installed decoy whose pool
+length and table identity remain unchanged. A dedicated arena is not
+automatically never-reset;
 `tc-hygiene-module-env-cache-arena` in
 [`compiler_typecheck_core.tl`](compiler_typecheck_core.tl) only needs to cross
 scratch rewinds and therefore has an explicit phase reset/teardown.

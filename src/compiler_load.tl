@@ -2447,6 +2447,15 @@
     (set! (array-ref state.intern-state-ready 0) true)
     (set! compiler-load-active-session-state state)))
 
+;; Read the interner that defines this session's id domain. Production driver
+;; sessions bind an explicit owner before load starts; the active-table capture
+;; is retained only for standalone/test sessions created through the legacy
+;; `compiler-load-session-state-use!` adapter.
+(define (compiler-load-session-state-interns [state : CompilerLoadSessionState]) : ci.InternCompatState
+  (if (array-ref state.intern-state-ready 0)
+    (owned_view.compiler-owned-array-element-shared-view state.intern-state 0)
+    (ci.intern-compat-state-capture-active)))
+
 ;; Intern into the table that gives this load session's id-keyed caches their
 ;; meaning. Explicit driver sessions never intern through a compatibility
 ;; table another job installed; standalone adapters retain the historical
@@ -6740,32 +6749,58 @@
     (or left.unknown right.unknown)
     (compiler-load-structural-member-set-union left.members right.members)))
 
-(define (compiler-load-lazy-dotted-tail-after-prefix-id
+(define (compiler-load-lazy-dotted-tail-after-prefix-id-with-intern-state
+  [interns : (& interns ci.InternCompatState)]
   [name : i64]
   [prefix : i64]) : i64
-  (if (ci.intern-dotted? prefix)
+  (if (ci.intern-compat-state-dotted? interns prefix)
     (if (and
-      (ci.intern-dotted? name)
-      (= (ci.intern-leading-dot-id name) (ci.intern-leading-dot-id prefix)))
-      (compiler-load-lazy-dotted-tail-after-prefix-id
-        (ci.intern-dotted-tail-id name)
-        (ci.intern-dotted-tail-id prefix))
+      (ci.intern-compat-state-dotted? interns name)
+      (=
+        (ci.intern-compat-state-leading-dot-id interns name)
+        (ci.intern-compat-state-leading-dot-id interns prefix)))
+      (compiler-load-lazy-dotted-tail-after-prefix-id-with-intern-state
+        interns
+        (ci.intern-compat-state-dotted-tail-id interns name)
+        (ci.intern-compat-state-dotted-tail-id interns prefix))
       -1)
     (if (and
-      (ci.intern-dotted? name)
-      (= (ci.intern-leading-dot-id name) prefix))
-      (ci.intern-dotted-tail-id name)
+      (ci.intern-compat-state-dotted? interns name)
+      (= (ci.intern-compat-state-leading-dot-id interns name) prefix))
+      (ci.intern-compat-state-dotted-tail-id interns name)
       -1)))
 
-(define (compiler-load-lazy-tail-after-prefix-id [name : i64] [alias : i64]) : i64
-  (unless
-    (and (ci.intern-renderable-id? name) (ci.intern-renderable-id? alias))
-    (return -1))
-  (if (ci.intern-qualified? name)
-    (if (= (ci.intern-qualified-module-id name) alias)
-      (ci.intern-qualified-base-id name)
-      -1)
-    (compiler-load-lazy-dotted-tail-after-prefix-id name alias)))
+(define (compiler-load-session-intern-renderable-id-active?
+  [interns : (& interns ci.InternCompatState)]
+  [id : i64]) : bool
+  (and
+    (ci.intern-renderable-id? id)
+    (or
+      (< id (ci.intern-compat-state-pool-len interns))
+      (ci.intern-compat-state-generated-id-active? interns id))))
+
+(define (compiler-load-session-state-lazy-tail-after-prefix-id
+  [state : CompilerLoadSessionState]
+  [name : i64]
+  [alias : i64]) : i64
+  (let
+    [interns : ci.InternCompatState (compiler-load-session-state-interns state)]
+    (begin
+      (unless
+        (and
+          (compiler-load-session-intern-renderable-id-active? (& interns) name)
+          (compiler-load-session-intern-renderable-id-active? (& interns) alias))
+        (return -1))
+      (if (ci.intern-compat-state-qualified? (& interns) name)
+        (if (=
+          (ci.intern-compat-state-qualified-module-id (& interns) name)
+          alias)
+          (ci.intern-compat-state-qualified-base-id (& interns) name)
+          -1)
+        (compiler-load-lazy-dotted-tail-after-prefix-id-with-intern-state
+          (& interns)
+          name
+          alias)))))
 
 ;; A catalog selector can ask one existing structural demand walk to retain the
 ;; first member below an alias root for every qualified use it sees. This keeps
@@ -6931,11 +6966,13 @@
       (compiler-load-lazy-qualified-observer-flag-set! observer 3 false))))
 
 (define (compiler-load-lazy-qualified-observer-members-with-note
+  [state : CompilerLoadSessionState]
   [name : i64]
   [root-id : i64]
   [members : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (let
-    [member-id : i64 (compiler-load-lazy-qualified-member-id name root-id)]
+    [member-id : i64
+      (compiler-load-session-state-lazy-qualified-member-id state name root-id)]
     (if (< member-id 0)
       members
       (compiler-load-structural-member-set-add-id members member-id))))
@@ -6950,6 +6987,7 @@
       observer
       0
       (compiler-load-lazy-qualified-observer-members-with-note
+        (compiler-load-session-state-shared-view (& state))
         name
         (compiler-load-lazy-qualified-observer-root-id observer 0)
         (compiler-load-lazy-qualified-observer-members observer 0)))))
@@ -6964,13 +7002,17 @@
     [secondary-root-id : i64
       (compiler-load-lazy-qualified-observer-root-id observer 1)]
     (begin
-      (if (compiler-load-lazy-name-qualified-by-id? name secondary-root-id)
+      (if (compiler-load-session-state-lazy-name-qualified-by-id?
+        (compiler-load-session-state-shared-view (& state))
+        name
+        secondary-root-id)
         (begin
           (compiler-load-lazy-qualified-observer-flag-set! observer 2 true)
           (compiler-load-lazy-qualified-observer-members-set!
             observer
             1
             (compiler-load-lazy-qualified-observer-members-with-note
+              (compiler-load-session-state-shared-view (& state))
               name
               secondary-root-id
               (compiler-load-lazy-qualified-observer-members observer 1))))
@@ -7041,14 +7083,29 @@
               frame.secondary-direct))))
       out)))
 
-(define (compiler-load-lazy-name-qualified-by-id? [name : i64] [alias : i64]) : bool
-  (>= (compiler-load-lazy-tail-after-prefix-id name alias) 0))
+(define (compiler-load-session-state-lazy-name-qualified-by-id?
+  [state : CompilerLoadSessionState]
+  [name : i64]
+  [alias : i64]) : bool
+  (>=
+    (compiler-load-session-state-lazy-tail-after-prefix-id state name alias)
+    0))
 
-(define (compiler-load-lazy-qualified-member-id [name : i64] [alias : i64]) : i64
+(define (compiler-load-session-state-lazy-qualified-member-id
+  [state : CompilerLoadSessionState]
+  [name : i64]
+  [alias : i64]) : i64
   (let
-    [base : i64 (compiler-load-lazy-tail-after-prefix-id name alias)]
-    (if (ci.intern-dotted? base)
-      (ci.intern-leading-dot-id base)
+    [base : i64
+      (compiler-load-session-state-lazy-tail-after-prefix-id
+        (compiler-load-session-state-shared-view (& state))
+        name
+        alias)]
+    [interns : ci.InternCompatState (compiler-load-session-state-interns state)]
+    (if (and
+      (ci.intern-renderable-id? base)
+      (ci.intern-compat-state-dotted? (& interns) base))
+      (ci.intern-compat-state-leading-dot-id (& interns) base)
       base)))
 
 (define (compiler-load-lazy-surface-variant-direct-name?
@@ -7105,23 +7162,30 @@
   [summary : CompilerLoadSurfaceSummary]
   [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
   (begin
-    (if (compiler-load-session-state-lazy-qualified-observer-active? state)
+    (if (compiler-load-session-state-lazy-qualified-observer-active? (& state))
       (compiler-load-session-state-lazy-qualified-observer-note-secondary!
-        state
+        (& state)
         name
         (sym_i64_env.sym-i64-shared-view (& locals)))
       unit)
     (cond
-      [(compiler-load-lazy-name-qualified-by-id? name alias)
+      [(compiler-load-session-state-lazy-name-qualified-by-id?
+          (compiler-load-session-state-shared-view (& state))
+          name
+          alias)
         (let
-          [member-id : i64 (compiler-load-lazy-qualified-member-id name alias)]
+          [member-id : i64
+            (compiler-load-session-state-lazy-qualified-member-id
+              (compiler-load-session-state-shared-view (& state))
+              name
+              alias)]
           (if (< member-id 0)
             (compiler-load-lazy-alias-demand-unknown)
             (begin
               (if (compiler-load-session-state-lazy-qualified-observer-active?
-                state)
+                (& state))
                 (compiler-load-session-state-lazy-qualified-observer-note!
-                  state
+                  (& state)
                   name)
                 unit)
               (compiler-load-lazy-alias-demand-qualified member-id))))]
@@ -8692,19 +8756,23 @@
       (let
         [name-demand : CompilerLoadLazyAliasDemand
           (compiler-load-session-state-lazy-name-demand
-            state
+            (compiler-load-session-state-shared-view (& state))
             name
             alias
             (ast.ast-place-shared-view summary)
             (sym_i64_env.sym-i64-shared-view (& locals)))]
         (if (or
           name-demand.direct
-          (compiler-load-lazy-name-qualified-by-id? name summary.module-id))
+          (compiler-load-session-state-lazy-name-qualified-by-id?
+            state
+            name
+            summary.module-id))
           (compiler-load-lazy-alias-demand-unknown)
           name-demand))]
     [_ (compiler-load-lazy-alias-demand-unknown)]))
 
 (define (compiler-load-lazy-module-macro-qualified-by?
+  [state : CompilerLoadSessionState]
   [call-expr : ast.AstExpr]
   [module-id : i64]) : bool
   ;; A moduleless source file has a path-derived summary ID, but a caller can
@@ -8713,45 +8781,61 @@
   (match call-expr
     [(ast.AstExpr.Spanned inner _)
       (compiler-load-lazy-module-macro-qualified-by?
+        state
         (ast.ast-node-get inner)
         module-id)]
     [(ast.AstExpr.Call func _)
       (compiler-load-lazy-module-macro-qualified-by?
+        state
         (ast.ast-node-get func)
         module-id)]
     [(ast.AstExpr.Var name)
-      (compiler-load-lazy-name-qualified-by-id? name module-id)]
+      (compiler-load-session-state-lazy-name-qualified-by-id?
+        state
+        name
+        module-id)]
     [_ false]))
 
 (define (compiler-load-lazy-decl-module-macro-qualified-by?
+  [state : CompilerLoadSessionState]
   [decl : ast.AstDecl]
   [module-id : i64]) : bool
   (match decl
     [(ast.AstDecl.ModuleBody _ body)
       (compiler-load-lazy-decl-list-module-macro-qualified-by?
+        state
         (ast.ast-decl-list-box-shared-view body)
         module-id)]
     [(ast.AstDecl.Import
         decl-meta
         (ast.AstImportSpec.Spec (ast.AstImportKind.Macro call-expr _) _ _ _ _))
       (compiler-load-lazy-module-macro-qualified-by?
+        state
         (ast.ast-node-get call-expr)
         module-id)]
     [(ast.AstDecl.Unsafe inner)
       (compiler-load-lazy-decl-module-macro-qualified-by?
+        state
         (ast.ast-decl-box-shared-view inner)
         module-id)]
     [_ false]))
 
 (define (compiler-load-lazy-decl-list-module-macro-qualified-by?
+  [state : CompilerLoadSessionState]
   [decls : ast.AstDeclList]
   [module-id : i64]) : bool
   (match (ast.ast-decl-list-step decls)
     [(ast.AstDeclListStep.Nil) false]
     [(ast.AstDeclListStep.Cons decl rest)
       (or
-        (compiler-load-lazy-decl-module-macro-qualified-by? decl module-id)
-        (compiler-load-lazy-decl-list-module-macro-qualified-by? rest module-id))]))
+        (compiler-load-lazy-decl-module-macro-qualified-by?
+          (compiler-load-session-state-shared-view (& state))
+          decl
+          module-id)
+        (compiler-load-lazy-decl-list-module-macro-qualified-by?
+          state
+          rest
+          module-id))]))
 
 (define (compiler-load-session-state-lazy-generated-meta-demand
   [state : CompilerLoadSessionState]
@@ -9239,6 +9323,7 @@
               (match kind
                 [(ast.AstImportKind.Module)
                   (if (compiler-load-lazy-decl-list-module-macro-qualified-by?
+                    (compiler-load-session-state-shared-view (& load-state))
                     (ast.ast-place-shared-view rest)
                     (match expected-module
                       [(ast.AstMaybeModuleName.Some module-id) module-id]
@@ -19694,11 +19779,17 @@
     [alias-a-member-id : i64 cbi.compiler-builtin-id-fix-arena_dot_Arena]
     [alias-a-id : i64 (ci.intern-leading-dot-id alias-a-member-id)]
     [member-a-id : i64
-      (compiler-load-lazy-qualified-member-id alias-a-member-id alias-a-id)]
+      (compiler-load-session-state-lazy-qualified-member-id
+        (compiler-load-session-state-shared-view (& state-a))
+        alias-a-member-id
+        alias-a-id)]
     [alias-b-member-id : i64 cbi.compiler-builtin-id-fix-stdlib_dot_string]
     [alias-b-id : i64 (ci.intern-leading-dot-id alias-b-member-id)]
     [member-b-id : i64
-      (compiler-load-lazy-qualified-member-id alias-b-member-id alias-b-id)]
+      (compiler-load-session-state-lazy-qualified-member-id
+        (compiler-load-session-state-shared-view (& state-b))
+        alias-b-member-id
+        alias-b-id)]
     [secondary-root-id : i64 cbi.compiler-builtin-id-fix-empty]
     [summary : CompilerLoadSurfaceSummary
       (CompilerLoadSurfaceSummary
@@ -19840,6 +19931,95 @@
             [_ false]))
         (io.panic "compiler-load: traversal peer summary mismatch")]
       [else true])))
+
+;; The raw IDs deliberately collide between A and B. A third same-capacity
+;; table containing only plain names stays installed while the demand helpers
+;; interpret each ID through its load-session owner. Resetting B then makes its
+;; old IDs fail closed without affecting A or the installed decoy.
+(define (compiler-load-session-lazy-intern-isolation-ok?) : bool
+  (let
+    [previous-load-state : CompilerLoadSessionState
+      (compiler-load-global-shared-view compiler-load-active-session-state)]
+    [previous-interns : ci.InternCompatState
+      (ci.intern-compat-state-capture-active)]
+    [state-a : CompilerLoadSessionState (compiler-load-session-state-new)]
+    [state-b : CompilerLoadSessionState (compiler-load-session-state-new)]
+    [intern-a : ci.InternCompatState (ci.intern-compat-state-new)]
+    [intern-b : ci.InternCompatState (ci.intern-compat-state-new)]
+    [decoy : ci.InternCompatState (ci.intern-compat-state-new)]
+    [alias-a : i64 (ci.intern-compat-state-intern (&mut intern-a) "alpha")]
+    [name-a : i64 (ci.intern-compat-state-intern (&mut intern-a) "alpha.left")]
+    [alias-b : i64 (ci.intern-compat-state-intern (&mut intern-b) "beta")]
+    [name-b : i64 (ci.intern-compat-state-intern (&mut intern-b) "beta.right")]
+    [_bind-a : unit
+      (compiler-load-session-state-use-with-intern-state!
+        (compiler-load-session-state-shared-view (& state-a))
+        (owned_view.compiler-owned-shared-view intern-a))]
+    [_bind-b : unit
+      (compiler-load-session-state-use-with-intern-state!
+        (compiler-load-session-state-shared-view (& state-b))
+        (owned_view.compiler-owned-shared-view intern-b))]
+    [decoy-index : i64 0]
+    [ok : bool false]
+    (begin
+      (while (<= (ci.intern-compat-state-pool-len (& decoy)) name-a)
+        (begin
+          (ci.intern-compat-state-intern
+            (&mut decoy)
+            (str_cat.str-cat "plain" (string.int->string decoy-index)))
+          (set! decoy-index (+ decoy-index 1))))
+      (let
+        [decoy-len : i64 (ci.intern-compat-state-pool-len (& decoy))]
+        (begin
+          (ci.intern-compat-state-install!
+            (owned_view.compiler-owned-shared-view decoy))
+          (let
+            [member-a : i64
+              (compiler-load-session-state-lazy-qualified-member-id
+                (compiler-load-session-state-shared-view (& state-a))
+                name-a
+                alias-a)]
+            [member-b : i64
+              (compiler-load-session-state-lazy-qualified-member-id
+                (compiler-load-session-state-shared-view (& state-b))
+                name-b
+                alias-b)]
+            [before-reset : bool
+              (and
+                (= alias-a alias-b)
+                (= name-a name-b)
+                (= member-a member-b)
+                (>= member-a 0)
+                (string.eq
+                  (ci.intern-compat-state-str (& intern-a) member-a)
+                  "left")
+                (string.eq
+                  (ci.intern-compat-state-str (& intern-b) member-b)
+                  "right")
+                (not (ci.intern-compat-state-dotted? (& decoy) name-a))
+                (= (ci.intern-compat-state-pool-len (& decoy)) decoy-len))]
+            (begin
+              (ci.intern-compat-state-reset! (&mut intern-b))
+              (set!
+                ok
+                (and
+                  before-reset
+                  (<
+                    (compiler-load-session-state-lazy-qualified-member-id
+                      (compiler-load-session-state-shared-view (& state-b))
+                      name-b
+                      alias-b)
+                    0)
+                  (=
+                    (compiler-load-session-state-lazy-qualified-member-id
+                      (compiler-load-session-state-shared-view (& state-a))
+                      name-a
+                      alias-a)
+                    member-a)
+                  (= (ci.intern-compat-state-pool-len (& decoy)) decoy-len)))))))
+      (ci.intern-compat-state-install! previous-interns)
+      (compiler-load-session-state-use! previous-load-state)
+      ok)))
 
 (define (compiler-load-lazy-qualified-observer-test-root
   [offset : i64]
@@ -20657,6 +20837,9 @@
       (compiler-load-session-owned-traversal-isolation-ok?)
       (return
         (io.panic "compiler-load: owned traversal isolation smoke mismatch")))
+    (unless
+      (compiler-load-session-lazy-intern-isolation-ok?)
+      (return (io.panic "compiler-load: lazy intern isolation smoke mismatch")))
     (unless
       (compiler-load-surface-summary-dense-session-ok?)
       (return

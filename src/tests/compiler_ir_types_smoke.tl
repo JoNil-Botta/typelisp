@@ -885,7 +885,8 @@
     [arithmetic-borrowed : ast.AstType
       (ast.ast-ty-ref-with-pools
         (compiler_ir_types.compiler-ir-global-shared-view pools)
-        (ci.intern-structural-local-id 8 source)
+        (cis.intern-fresh-local-identity-raw
+          (cis.intern-structural-session-fresh-local-identity session 8 source))
         ast.AstType.I64)]
     [other-intern : ci.InternCompatState (ci.intern-compat-state-new)]
     [other-session : cis.InternStructuralSessionHandle

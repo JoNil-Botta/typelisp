@@ -15686,7 +15686,9 @@
         hygiene-ctx
         1
         x-id)]
-    [struct-when-id : i64 (ci.intern-structural-local-id 1 when-id)]
+    [struct-when-id : i64
+      (cis.intern-fresh-local-identity-raw
+        (cis.intern-structural-session-fresh-local-identity session 1 when-id))]
     [composite-id : i64
       (compiler_typecheck_core.tc-module-name-id-by-id
         (ci.intern "stdlib.io")

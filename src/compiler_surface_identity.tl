@@ -75,7 +75,10 @@
 (define surface-identity-magic : i64
   3550889639320046676)
 (define surface-identity-schema-version : i64
-  1)
+  ;; 2: template-source and fresh-local identities use explicit portable
+  ;; component records. Their process-local structural handles never cross the
+  ;; wire, and the ordinal range no longer derives from intern capacity.
+  2)
 (define surface-identity-generated-canonical : i64
   1)
 (define surface-identity-generated-qualified : i64
@@ -212,19 +215,19 @@
 
 (define (surface-identity-portable-macro-local-offset [identity-count : i64]) : i64
   (+
-    (surface-identity-portable-structural-local-offset identity-count)
-    (* (surface-identity-structural-local-ordinal-count) identity-count)))
+    (surface-identity-portable-fresh-local-offset identity-count)
+    (* (surface-identity-fresh-local-ordinal-count) identity-count)))
 
-(define (surface-identity-portable-structural-local-offset
-  [identity-count : i64]) : i64
+(define (surface-identity-portable-fresh-local-offset [identity-count : i64]) : i64
   (+
     (surface-identity-portable-macro-global-offset identity-count)
     (* 2 (* identity-count identity-count))))
 
-(define (surface-identity-structural-local-ordinal-count) : i64
-  (/
-    (- (ci.intern-template-source-base) (ci.intern-structural-local-base))
-    (ci.intern-capacity)))
+(define (surface-identity-fresh-local-ordinal-count) : i64
+  ;; The prior arithmetic identity family admitted ordinals [0, 2^43). Keep
+  ;; that portable contract explicitly; it is a wire limit, not an intern-table
+  ;; capacity calculation.
+  8796093022208)
 
 (cfg
   (any
@@ -332,17 +335,26 @@
             (if (or (< module-ref 0) (< name-ref 0))
               -2
               (+ identity-count (+ (* module-ref identity-count) name-ref))))]
-        [(ci.intern-template-source-id? id)
-          (let
-            [source-ref : i64
-              (surface-identity-local-ref
-                (ci.intern-template-source-name-id id)
-                source-count)]
-            (if (< source-ref 0)
-              -2
-              (+
-                (surface-identity-portable-template-offset identity-count)
-                source-ref)))]
+        [(match (cis.intern-structural-session-template-source-record-for-raw
+            session
+            id)
+            [(cis.InternMaybeTemplateSourceRecord.Some _) true]
+            [(cis.InternMaybeTemplateSourceRecord.No) false])
+          (match (cis.intern-structural-session-template-source-record-for-raw
+            session
+            id)
+            [(cis.InternMaybeTemplateSourceRecord.No) -2]
+            [(cis.InternMaybeTemplateSourceRecord.Some record)
+              (let
+                [source-ref : i64
+                  (surface-identity-local-ref
+                    record.source-name-id
+                    source-count)]
+                (if (< source-ref 0)
+                  -2
+                  (+
+                    (surface-identity-portable-template-offset identity-count)
+                    source-ref)))])]
         [(match (cis.intern-structural-session-macro-global-record-for-raw
             session
             id)
@@ -418,18 +430,32 @@
                               macro-ref)
                             identity-count)
                           source-ref))))])])]
-        [(ci.intern-structural-local-id? id)
-          (let
-            [raw : i64 (- id (ci.intern-structural-local-base))]
-            [ordinal : i64 (/ raw session-stride)]
-            [source-ref : i64
-              (surface-identity-local-ref (% raw session-stride) source-count)]
-            (if (< source-ref 0)
-              -2
-              (+
-                (surface-identity-portable-structural-local-offset
-                  identity-count)
-                (+ (* ordinal identity-count) source-ref))))]
+        [(match (cis.intern-structural-session-fresh-local-record-for-raw
+            session
+            id)
+            [(cis.InternMaybeFreshLocalRecord.Some _) true]
+            [(cis.InternMaybeFreshLocalRecord.No) false])
+          (match (cis.intern-structural-session-fresh-local-record-for-raw
+            session
+            id)
+            [(cis.InternMaybeFreshLocalRecord.No) -2]
+            [(cis.InternMaybeFreshLocalRecord.Some record)
+              (let
+                [source-ref : i64
+                  (surface-identity-local-ref
+                    record.source-name-id
+                    source-count)]
+                (if (or
+                  (< source-ref 0)
+                  (< record.ordinal 0)
+                  (>=
+                    record.ordinal
+                    (surface-identity-fresh-local-ordinal-count)))
+                  -2
+                  (+
+                    (surface-identity-portable-fresh-local-offset
+                      identity-count)
+                    (+ (* record.ordinal identity-count) source-ref))))])]
         [else (surface-identity-local-ref id source-count)]))))
 
 (define (surface-identity-resolve-portable-id
@@ -447,12 +473,12 @@
       (surface-identity-portable-macro-global-offset image-stride)]
     [macro-local-offset : i64
       (surface-identity-portable-macro-local-offset image-stride)]
-    [structural-local-offset : i64
-      (surface-identity-portable-structural-local-offset image-stride)]
-    [structural-local-end : i64
+    [fresh-local-offset : i64
+      (surface-identity-portable-fresh-local-offset image-stride)]
+    [fresh-local-end : i64
       (+
-        structural-local-offset
-        (* (surface-identity-structural-local-ordinal-count) image-stride))]
+        fresh-local-offset
+        (* (surface-identity-fresh-local-ordinal-count) image-stride))]
     (cond
       [(and (>= id image-triple-offset) (< id image-triple-end))
         (let
@@ -472,8 +498,11 @@
             (array-ref remap (% raw image-stride))))]
       [(and (>= id 0) (< id image-stride)) (array-ref remap id)]
       [(and (>= id template-offset) (< id macro-global-offset))
-        (ci.intern-template-source-id (array-ref remap (- id template-offset)))]
-      [(and (>= id macro-global-offset) (< id structural-local-offset))
+        (cis.intern-template-source-identity-raw
+          (cis.intern-structural-session-template-source-identity
+            session
+            (array-ref remap (- id template-offset))))]
+      [(and (>= id macro-global-offset) (< id fresh-local-offset))
         (let
           [raw : i64 (- id macro-global-offset)]
           [source-ref : i64 (% raw image-stride)]
@@ -492,12 +521,14 @@
                 role
                 (array-ref remap module-ref)
                 (array-ref remap source-ref)))))]
-      [(and (>= id structural-local-offset) (< id structural-local-end))
+      [(and (>= id fresh-local-offset) (< id fresh-local-end))
         (let
-          [raw : i64 (- id structural-local-offset)]
-          (ci.intern-structural-local-id
-            (/ raw image-stride)
-            (array-ref remap (% raw image-stride))))]
+          [raw : i64 (- id fresh-local-offset)]
+          (cis.intern-fresh-local-identity-raw
+            (cis.intern-structural-session-fresh-local-identity
+              session
+              (/ raw image-stride)
+              (array-ref remap (% raw image-stride)))))]
       [(>= id macro-local-offset)
         (let
           [raw : i64 (- id macro-local-offset)]
@@ -1084,8 +1115,12 @@
           (ci.intern-source-name-session-handle-from-state intern-state))]
       [pair-id : i64 (ci.intern-composite-pair-id module-id base-id)]
       [triple-id : i64 (ci.intern-composite-triple-id module-id base-id alpha)]
-      [template-id : i64 (ci.intern-template-source-id alpha)]
-      [structural-local-id : i64 (ci.intern-structural-local-id 7 alpha)]
+      [template-id : i64
+        (cis.intern-template-source-identity-raw
+          (cis.intern-structural-session-template-source-identity session alpha))]
+      [fresh-local-id : i64
+        (cis.intern-fresh-local-identity-raw
+          (cis.intern-structural-session-fresh-local-identity session 7 alpha))]
       [macro-global-id : i64
         (surface-identity-test-macro-global-id session module-id alpha false)]
       [macro-global-root-id : i64
@@ -1119,10 +1154,10 @@
           template-id
           source-count
           identity-count)]
-      [portable-structural-local : i64
+      [portable-fresh-local : i64
         (surface-identity-portable-id
           session
-          structural-local-id
+          fresh-local-id
           source-count
           identity-count)]
       [portable-macro-global : i64
@@ -1203,13 +1238,20 @@
                               hydrated-session
                               portable-template
                               remap)
-                            (ci.intern-template-source-id mapped-alpha))
+                            (cis.intern-template-source-identity-raw
+                              (cis.intern-structural-session-template-source-identity
+                                hydrated-session
+                                mapped-alpha)))
                           (=
                             (surface-identity-resolve-portable-id
                               hydrated-session
-                              portable-structural-local
+                              portable-fresh-local
                               remap)
-                            (ci.intern-structural-local-id 7 mapped-alpha))
+                            (cis.intern-fresh-local-identity-raw
+                              (cis.intern-structural-session-fresh-local-identity
+                                hydrated-session
+                                7
+                                mapped-alpha)))
                           (=
                             (surface-identity-resolve-portable-id
                               hydrated-session

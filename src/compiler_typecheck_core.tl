@@ -27063,13 +27063,23 @@
     [(ast.AstType.StructArgs name lifetimes)
       (ast.AstType.StructArgs name lifetimes)]
     [(ast.AstType.VarArgs name lifetimes)
-      (tc-resolve-type-name-with-args
-        ctx
-        (tc-hygiene-name-text-id name)
-        name
-        (ast.ast-lifetime-list-box-shared-view lifetimes))]
+      (let
+        [name-text : String
+          (tc-hygiene-name-text-id-for-session
+            (tc-context-structural-session ctx)
+            name)]
+        (tc-resolve-type-name-with-args
+          ctx
+          name-text
+          name
+          (ast.ast-lifetime-list-box-shared-view lifetimes)))]
     [(ast.AstType.Var name)
-      (tc-resolve-type-name ctx (tc-hygiene-name-text-id name) name)]))
+      (let
+        [name-text : String
+          (tc-hygiene-name-text-id-for-session
+            (tc-context-structural-session ctx)
+            name)]
+        (tc-resolve-type-name ctx name-text name))]))
 
 (define (tc-resolve-type-with-pools
   [ctx : TcContext]

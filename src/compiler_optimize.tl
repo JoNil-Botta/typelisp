@@ -100150,15 +100150,18 @@
 ;; writes the destination BEFORE the instructions that used to sit between it
 ;; and the copy.
 ;;
-;; SOUNDNESS. Issue #5971 gives internal memory-class by-value parameters a
-;; private callee-entry snapshot, so their body-visible storage cannot alias the
-;; hidden sret slot even though the ABI transports the incoming value by
-;; pointer. That property is deliberately narrower than general `noalias`:
-;; explicit references, dereferences, fields, indexes, and arbitrary destination
-;; places may still alias storage read inside this rewrite window. A
-;; lowering-level version of this transform miscompiled the compiler (it broke
+;; SOUNDNESS. Under the by-value rules in SPEC sections 3.3 and 4.7.2, moving a
+;; non-Copy source invalidates its ownership but supplies no physical `noalias`
+;; fact. Runtime by-value parameters do have private callee-entry
+;; representations (including snapshots of memory-class ABI pointer inputs),
+;; so body-visible parameter storage cannot alias the hidden sret slot. That
+;; property is deliberately narrower than general `noalias`: explicit
+;; references, dereferences, fields, indexes, and arbitrary destination places
+;; may still alias storage read inside this rewrite window. A lowering-level
+;; version of this transform miscompiled the compiler (it broke
 ;; `tc-name-id-list-add`) before the necessary proof was explicit. The guard
-;; below remains the conservative local alias proof:
+;; below therefore makes no inference from ownership or ABI transport and
+;; remains the conservative local alias proof:
 ;;
 ;;   (1) `%t` is a FRESH FRAME ALLOCATION whose address never escapes: the
 ;;       ALLOC var `%t` is used exactly once in the whole function (by the

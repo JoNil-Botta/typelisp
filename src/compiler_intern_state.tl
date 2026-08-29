@@ -754,9 +754,14 @@
 (define (intern-structural-session-template-source-record-for-raw
   [handle : InternStructuralSessionHandle]
   [raw : i64]) : InternMaybeTemplateSourceRecord
-  (intern-structural-session-template-source-record
-    handle
-    (InternTemplateSourceIdentity raw)))
+  (if (not
+    (=
+      (intern-structural-session-record-kind-for-structural-or handle raw -1)
+      (ci.intern-structural-kind-template-source)))
+    InternMaybeTemplateSourceRecord.No
+    (intern-structural-session-template-source-record
+      handle
+      (InternTemplateSourceIdentity raw))))
 
 (define (intern-structural-session-template-source-id?
   [handle : InternStructuralSessionHandle]
@@ -815,9 +820,14 @@
 (define (intern-structural-session-fresh-local-record-for-raw
   [handle : InternStructuralSessionHandle]
   [raw : i64]) : InternMaybeFreshLocalRecord
-  (intern-structural-session-fresh-local-record
-    handle
-    (InternFreshLocalIdentity raw)))
+  (if (not
+    (=
+      (intern-structural-session-record-kind-for-structural-or handle raw -1)
+      (ci.intern-structural-kind-fresh-local)))
+    InternMaybeFreshLocalRecord.No
+    (intern-structural-session-fresh-local-record
+      handle
+      (InternFreshLocalIdentity raw))))
 
 (define (intern-structural-session-fresh-local-id?
   [handle : InternStructuralSessionHandle]
@@ -1013,7 +1023,10 @@
 (define (intern-structural-session-macro-local-record-for-raw
   [handle : InternStructuralSessionHandle]
   [raw : i64]) : InternMaybeMacroLocalRecord
-  (if (< raw (ci.intern-structural-key-base))
+  (if (not
+    (=
+      (intern-structural-session-record-kind-for-structural-or handle raw -1)
+      (ci.intern-structural-kind-macro-local)))
     InternMaybeMacroLocalRecord.No
     (intern-structural-session-macro-local-record
       handle
@@ -1033,28 +1046,48 @@
       direct
       (if (<= handle.address 0)
         (ci.intern-active-syntax-source-name-id-or raw fallback)
-        (match (intern-structural-session-template-source-record-for-raw
-          handle
-          raw)
-          [(InternMaybeTemplateSourceRecord.Some record) record.source-name-id]
-          [(InternMaybeTemplateSourceRecord.No)
-            (match (intern-structural-session-fresh-local-record-for-raw
-              handle
-              raw)
-              [(InternMaybeFreshLocalRecord.Some record) record.source-name-id]
-              [(InternMaybeFreshLocalRecord.No)
-                (match (intern-structural-session-macro-global-record-for-raw
+        ;; Decode the mixed structural id once. Trying each typed decoder in
+        ;; sequence repeated the same owner/table proof up to four times on this
+        ;; compiler-wide render path. Family-specific validation stays here;
+        ;; macro locals alone need one additional lookup to prove their nested
+        ;; definition identity.
+        (match (intern-structural-session-record-for-raw handle raw)
+          [(InternMaybeStructuralRecord.No) fallback]
+          [(InternMaybeStructuralRecord.Some record)
+            (cond
+              [(= record.kind (ci.intern-structural-kind-template-source))
+                (if (and
+                  (= record.left-id 0)
+                  (= record.middle-id 0)
+                  (>= record.right-id 0)
+                  (<
+                    record.right-id
+                    (ci.intern-source-name-session-handle-capacity
+                      (intern-structural-session-handle-source-names handle))))
+                  record.right-id
+                  fallback)]
+              [(= record.kind (ci.intern-structural-kind-fresh-local))
+                (if (and
+                  (>= record.left-id 0)
+                  (= record.middle-id 0)
+                  (>= record.right-id 0)
+                  (<
+                    record.right-id
+                    (ci.intern-source-name-session-handle-capacity
+                      (intern-structural-session-handle-source-names handle))))
+                  record.right-id
+                  fallback)]
+              [(= record.kind (ci.intern-structural-kind-macro-global))
+                (if (or (= record.left-id 0) (= record.left-id 1))
+                  record.right-id
+                  fallback)]
+              [(= record.kind (ci.intern-structural-kind-macro-local))
+                (match (intern-structural-session-macro-definition-record
                   handle
-                  raw)
-                  [(InternMaybeMacroGlobalRecord.Some record)
-                    record.source-name-id]
-                  [(InternMaybeMacroGlobalRecord.No)
-                    (match (intern-structural-session-macro-local-record-for-raw
-                      handle
-                      raw)
-                      [(InternMaybeMacroLocalRecord.Some record)
-                        record.source-name-id]
-                      [(InternMaybeMacroLocalRecord.No) fallback])])])])))))
+                  (InternMacroDefinitionIdentity record.left-id))
+                  [(InternMaybeMacroDefinitionRecord.Some _) record.right-id]
+                  [(InternMaybeMacroDefinitionRecord.No) fallback])]
+              [else fallback])])))))
 
 (define (intern-structural-session-arena-phase-identity-for-components
   [handle : InternStructuralSessionHandle]

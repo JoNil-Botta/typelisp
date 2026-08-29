@@ -52,6 +52,23 @@
         left-session
         17
         left-source)]
+    [macro-definition : cis.InternMacroDefinitionIdentity
+      (cis.intern-structural-session-macro-definition-identity
+        left-session
+        9
+        left-source)]
+    [macro-global : cis.InternMacroGlobalIdentity
+      (cis.intern-structural-session-macro-global-identity
+        left-session
+        cis.InternMacroGlobalRole.Legacy
+        9
+        left-source)]
+    [macro-local : cis.InternMacroLocalIdentity
+      (cis.intern-structural-session-macro-local-identity
+        left-session
+        macro-definition
+        3
+        left-source)]
     [right-template : cis.InternTemplateSourceIdentity
       (cis.intern-structural-session-template-source-identity
         right-session
@@ -99,6 +116,34 @@
           17
           left-source)
         "fresh-local record round-trips ordinal and source")
+      (test.assert-i64-eq
+        (cis.intern-structural-session-syntax-source-name-id-or
+          left-session
+          (cis.intern-template-source-identity-raw template)
+          -1)
+        left-source
+        "mixed renderer decodes a template source")
+      (test.assert-i64-eq
+        (cis.intern-structural-session-syntax-source-name-id-or
+          left-session
+          (cis.intern-fresh-local-identity-raw fresh)
+          -1)
+        left-source
+        "mixed renderer decodes a fresh local")
+      (test.assert-i64-eq
+        (cis.intern-structural-session-syntax-source-name-id-or
+          left-session
+          (cis.intern-macro-global-identity-raw macro-global)
+          -1)
+        left-source
+        "mixed renderer decodes a macro global")
+      (test.assert-i64-eq
+        (cis.intern-structural-session-syntax-source-name-id-or
+          left-session
+          (cis.intern-macro-local-identity-raw macro-local)
+          -1)
+        left-source
+        "mixed renderer decodes a macro local")
       (test.assert-false
         (cis.intern-structural-session-template-source-id?
           right-session
@@ -114,11 +159,25 @@
           left-session
           malformed-template)
         "template decoder rejects a populated reserved lane")
+      (test.assert-i64-eq
+        (cis.intern-structural-session-syntax-source-name-id-or
+          left-session
+          malformed-template
+          -1)
+        -1
+        "mixed renderer rejects a malformed template")
       (test.assert-false
         (cis.intern-structural-session-fresh-local-id?
           left-session
           malformed-fresh)
         "fresh-local decoder rejects a populated reserved lane")
+      (test.assert-i64-eq
+        (cis.intern-structural-session-syntax-source-name-id-or
+          right-session
+          (cis.intern-template-source-identity-raw template)
+          -1)
+        -1
+        "mixed renderer rejects a wrong owner")
       (test.assert-false
         (=
           (cis.intern-template-source-identity-raw template)

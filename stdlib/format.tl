@@ -6312,9 +6312,9 @@
               [parameter-name : String
                 (comptime.syntax-name-fresh "__tl_format_arguments_values")]
               [parameter : comptime.Expr (comptime.expr-var parameter-name)]
+              ;; Type-position unquotes consume reflected Type values directly;
+              ;; `type-expr` would instead package them as value-level syntax.
               [anchors-type : comptime.Expr (comptime.expr-type anchors)]
-              [_anchors-type-expr : comptime.Expr
-                (comptime.type-expr anchors-type)]
               [stream-address : comptime.Expr
                 (comptime.expr-tuple-ref parameter 0)]
               [anchors-address : comptime.Expr
@@ -6324,7 +6324,7 @@
                   (ptr-read
                     (int->ptr
                       (cast ,anchors-address : u64)
-                      : (Ptr ,_anchors-type-expr))))]
+                      : (Ptr ,anchors-type))))]
               [anchors-name : String
                 (comptime.syntax-name-fresh "__tl_format_renderer_anchors")]
               [anchors-value : comptime.Expr (comptime.expr-var anchors-name)]
@@ -6344,8 +6344,6 @@
                       (comptime.expr-tuple-ref anchors-value index)]
                     [source-projection : comptime.Expr
                       (tuple-element-type anchors-type index)]
-                    [_source-type-expr : comptime.Expr
-                      (comptime.type-expr source-projection)]
                     [runtime-source : comptime.Expr
                       (if (string.eq (type-kind source-projection) "string")
                         `(unsafe
@@ -6366,7 +6364,7 @@
                             runtime-source
                             (comptime.expr-list-empty))))]
                     [typed-projection : comptime.Expr
-                      `(ann ,runtime-var : ,_source-type-expr)]
+                      `(ann ,runtime-var : ,source-projection)]
                     (begin
                       (set!
                         renderer-bindings

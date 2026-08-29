@@ -14,15 +14,15 @@
   [expected-text : String]
   [expected-eof : bool]
   [message : String]) : unit
-  (begin
-    (assert-owned-string-eq
-      (byte_buf.to-string (io.stdin-read-buffer read))
-      expected-text
-      (str_cat.str-cat message " text"))
-    (test.assert-bool-eq
-      (io.stdin-read-eof? read)
-      expected-eof
-      (str_cat.str-cat message " eof"))))
+  (let
+    [eof : bool (io.stdin-read-eof? (& read))]
+    [text : String (byte_buf.to-string (io.stdin-read-buffer read))]
+    (begin
+      (assert-owned-string-eq
+        text
+        expected-text
+        (str_cat.str-cat message " text"))
+      (test.assert-bool-eq eof expected-eof (str_cat.str-cat message " eof")))))
 
 (define (main) : i64
   (begin

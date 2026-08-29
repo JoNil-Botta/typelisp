@@ -3,6 +3,7 @@
 ;; Source-file runs build and execute in-process through stdlib fs/process
 ;; helpers. Package runs reuse the package build path, then execute the emitted
 ;; binary artifact. `--direct` remains accepted as a compatibility no-op.
+(import compiler_owned_view as owned_view)
 (import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.process)
@@ -54,7 +55,7 @@
   (let
     [prefix : String "build: "]
     [prefix-len : i64 (string.string-length prefix)]
-    (if (run-cli-string-prefix? message prefix)
+    (if (run-cli-string-prefix? (string.copy (& message)) prefix)
       (str_cat.str-cat
         "run: "
         (string.substring
@@ -85,8 +86,31 @@
         (ResultRunCliConfig.Err (run-cli-rewrite-build-error message))]
       [(build_cli_core.ResultBuildConfig.Ok config)
         (match config
-          [(build_cli_core.BuildConfig.Package _ _ _ _ _ _ _ _ _ _)
-            (ResultRunCliConfig.Ok (RunCliConfig.Package config runtime-args))]
+          [(build_cli_core.BuildConfig.Package
+              manifest-path
+              has-manifest
+              target-text
+              has-target
+              mode
+              profile
+              release
+              opt-level
+              lock-policy
+              stdlib-roots)
+            (ResultRunCliConfig.Ok
+              (RunCliConfig.Package
+                (build_cli_core.BuildConfig.Package
+                  manifest-path
+                  has-manifest
+                  target-text
+                  has-target
+                  mode
+                  profile
+                  release
+                  opt-level
+                  lock-policy
+                  stdlib-roots)
+                runtime-args))]
           [(build_cli_core.BuildConfig.Source _ _ _ _ _ _ _ _)
             (ResultRunCliConfig.Err
               "run: source file arguments must appear before run options; use -- before package runtime args")])])))
@@ -97,7 +121,7 @@
   [source : String]
   [target : backend.CompilerBackendTarget]
   [mode : backend.CompilerBackendMode]
-  [stdlib-roots : cli_svec.Vec (:consume)]
+  [stdlib-roots : cli_svec.Vec]
   [cfgs : build_run_core.SourceToolCfgNames]
   [runtime-args : process.ProcessStringList]
   [opt-level : i64]
@@ -116,61 +140,35 @@
     (let
       [current : String (io.arg idx)]
       (match (cli_option.cli-common-option-parse
-        current
+        (string.copy (& current))
         idx
         count
         cli_option.cli-common-option-all)
         [(cli_option.CliCommonOption.Missing kind)
           (ResultRunCliConfig.Err
             (cli_option.cli-common-option-missing-message "run" kind))]
-        [(cli_option.CliCommonOption.Value kind value next-idx)
-          (match kind
-            [(cli_option.CliCommonOptionKind.StdlibRoot)
-              (run-cli-parse-options
-                next-idx
-                count
-                source
-                target
-                mode
-                (let
-                  [next-roots : cli_svec.Vec stdlib-roots]
-                  (begin
-                    (cli_svec.push-ref! (&mut next-roots) value)
-                    next-roots))
-                cfgs
-                runtime-args
-                opt-level
-                link-inputs)]
-            [(cli_option.CliCommonOptionKind.Cfg)
-              (run-cli-parse-options
-                next-idx
-                count
-                source
-                target
-                mode
-                stdlib-roots
-                (build_run_core.source-tool-cfg-names-add cfgs value)
-                runtime-args
-                opt-level
-                link-inputs)]
-            [(cli_option.CliCommonOptionKind.Target)
-              (match (build_run_core.source-tool-target value)
-                [(build_run_core.ResultSourceToolTarget.Ok parsed-target)
-                  (run-cli-parse-options
-                    next-idx
-                    count
-                    source
-                    parsed-target
-                    mode
-                    stdlib-roots
-                    cfgs
-                    runtime-args
-                    opt-level
-                    link-inputs)]
-                [(build_run_core.ResultSourceToolTarget.Err _)
-                  (ResultRunCliConfig.Err (run-cli-unknown-target value))])]
-            [(cli_option.CliCommonOptionKind.OptLevel)
-              (if (build_run_core.source-tool-opt-level-valid? value)
+        [(cli_option.CliCommonOption.Value kind parsed-value next-idx)
+          (let
+            [value : String (string.copy (& parsed-value))]
+            (match kind
+              [(cli_option.CliCommonOptionKind.StdlibRoot)
+                (run-cli-parse-options
+                  next-idx
+                  count
+                  source
+                  target
+                  mode
+                  (let
+                    [next-roots : cli_svec.Vec
+                      (owned_view.compiler-owned-shared-view stdlib-roots)]
+                    (begin
+                      (cli_svec.push-ref! (&mut next-roots) value)
+                      next-roots))
+                  cfgs
+                  runtime-args
+                  opt-level
+                  link-inputs)]
+              [(cli_option.CliCommonOptionKind.Cfg)
                 (run-cli-parse-options
                   next-idx
                   count
@@ -178,11 +176,42 @@
                   target
                   mode
                   stdlib-roots
-                  cfgs
+                  (build_run_core.source-tool-cfg-names-add cfgs value)
                   runtime-args
-                  (string.>int value)
-                  link-inputs)
-                (ResultRunCliConfig.Err (run-cli-unknown-opt-level value)))])]
+                  opt-level
+                  link-inputs)]
+              [(cli_option.CliCommonOptionKind.Target)
+                (match (build_run_core.source-tool-target
+                  (string.copy (& value)))
+                  [(build_run_core.ResultSourceToolTarget.Ok parsed-target)
+                    (run-cli-parse-options
+                      next-idx
+                      count
+                      source
+                      parsed-target
+                      mode
+                      stdlib-roots
+                      cfgs
+                      runtime-args
+                      opt-level
+                      link-inputs)]
+                  [(build_run_core.ResultSourceToolTarget.Err _)
+                    (ResultRunCliConfig.Err (run-cli-unknown-target value))])]
+              [(cli_option.CliCommonOptionKind.OptLevel)
+                (if (build_run_core.source-tool-opt-level-valid?
+                  (string.copy (& value)))
+                  (run-cli-parse-options
+                    next-idx
+                    count
+                    source
+                    target
+                    mode
+                    stdlib-roots
+                    cfgs
+                    runtime-args
+                    (string.>int value)
+                    link-inputs)
+                  (ResultRunCliConfig.Err (run-cli-unknown-opt-level value)))]))]
         [(cli_option.CliCommonOption.NotCommon)
           (cond
             [(or (string.eq current "--debug") (string.eq current "-g"))
@@ -321,15 +350,19 @@
     [(io.OkIoBytes contents)
       (let
         [text : String (byte_buf.to-string contents)]
-        [report : doc_test.DocTestRunReport
-          (doc_test.doc-test-typecheck-source-with-roots
-            source
-            text
-            stdlib-roots)]
-        (if (doc_test.doc-test-run-report-ok? report)
+        [reports : (__tl_dyn-array doc_test.DocTestRunReport)
+          (__tl_make-array
+            (doc_test.doc-test-typecheck-source-with-roots
+              source
+              text
+              stdlib-roots))]
+        (if (doc_test.doc-test-run-report-ok?
+          (owned_view.compiler-owned-array-element-shared-view reports 0))
           0
           (begin
-            (io.print-error (doc_test.doc-test-run-report-render report))
+            (io.print-error
+              (doc_test.doc-test-run-report-render
+                (owned_view.compiler-owned-array-element-shared-view reports 0)))
             1)))]))
 
 (define (run-cli-run-source-with-doctests
@@ -342,16 +375,30 @@
   [mode : backend.CompilerBackendMode]
   [link-inputs : build_run_core.SourceToolLinkInputs]) : i64
   (let
-    [doctest-status : i64 (run-cli-typecheck-doctests source stdlib-roots)]
+    [stdlib-roots-cell : (__tl_dyn-array cli_svec.Vec)
+      (__tl_make-array stdlib-roots)]
+    [cfgs-cell : (__tl_dyn-array build_run_core.SourceToolCfgNames)
+      (__tl_make-array cfgs)]
+    [doctest-status : i64
+      (run-cli-typecheck-doctests
+        (string.copy (& source))
+        (owned_view.compiler-owned-array-element-shared-view
+          stdlib-roots-cell
+          0))]
     (if (= doctest-status 0)
       (let
         [inline-test-status : i64
           (test_cli_core.tltest-inline-typecheck-file-with-cfg
-            source
-            stdlib-roots
+            (string.copy (& source))
+            (owned_view.compiler-owned-array-element-shared-view
+              stdlib-roots-cell
+              0)
             (driver.compiler-driver-target-cfgs
               target
-              (build_run_core.source-tool-cfg-names-to-env cfgs))
+              (build_run_core.source-tool-cfg-names-to-env
+                (owned_view.compiler-owned-array-element-shared-view
+                  cfgs-cell
+                  0)))
             "typecheck-prefix-inline-run")]
         (if (= inline-test-status 0)
           (begin
@@ -359,8 +406,10 @@
             (build_run_core.source-tool-run-source
               source
               target
-              stdlib-roots
-              cfgs
+              (owned_view.compiler-owned-array-element-shared-view
+                stdlib-roots-cell
+                0)
+              (owned_view.compiler-owned-array-element-shared-view cfgs-cell 0)
               runtime-args
               opt-level
               mode
@@ -374,7 +423,7 @@
   [target : backend.CompilerBackendTarget]
   [runtime-args : process.ProcessStringList]) : i64
   (match (build_run_core.source-tool-run-executable-inherit
-    bin-path
+    (string.copy (& bin-path))
     target
     runtime-args)
     [(process.OkProcessOutput output)
@@ -422,13 +471,14 @@
   [stdlib-roots : cli_svec.Vec]
   [producer-identity : String]
   [runtime-args : process.ProcessStringList]) : i64
-  (match (build_cli_core.build-parse-target target-text)
+  (match (build_cli_core.build-parse-target (string.copy (& target-text)))
     [(build_cli_core.ResultBuildTarget.Err message)
       (begin
         (io.print-error (run-cli-rewrite-build-error message))
         1)]
     [(build_cli_core.ResultBuildTarget.Ok target)
-      (match (build_cli_core.build-load-manifest manifest-path)
+      (match (build_cli_core.build-load-manifest
+        (string.copy (& manifest-path)))
         [(build_cli_core.ResultBuildManifest.Err message)
           (begin
             (io.print-error (str_cat.str-cat "Error: " message))
@@ -440,17 +490,21 @@
                 "run: package manifest kind must be bin to execute")
               1)
             (let
+              [stdlib-roots-cell : (__tl_dyn-array cli_svec.Vec)
+                (__tl_make-array stdlib-roots)]
               [build-status : i64
                 (build_cli_core.build-package-from-path-announce
-                  manifest-path
-                  target-text
+                  (string.copy (& manifest-path))
+                  (string.copy (& target-text))
                   has-target
                   mode
                   opt-level
                   profile
                   lock-policy
-                  stdlib-roots
-                  producer-identity
+                  (owned_view.compiler-owned-array-element-shared-view
+                    stdlib-roots-cell
+                    0)
+                  (string.copy (& producer-identity))
                   false)]
               (if (= build-status 0)
                 (run-cli-run-package-artifact

@@ -5,7 +5,10 @@
 ;; the result. The comparison harness builds this at scalar/avx2/avx512 and
 ;; asserts identical exit codes. a[i]=i+1, b[i]=2i, out[i]=3i+1; the n=13
 ;; checksum is 247, so every mode must exit 247.
-(define (init [a : (__tl_dyn-array i64)] [b : (__tl_dyn-array i64)] [n : i64]) : unit
+(define (init
+  [a : (&mut a (__tl_dyn-array i64))]
+  [b : (&mut b (__tl_dyn-array i64))]
+  [n : i64]) : unit
   (let
     [i : i64 0]
     (while (< i n)
@@ -15,15 +18,15 @@
         (set! i (+ i 1))))))
 
 (define (fill
-  [a : (__tl_dyn-array i64)]
-  [b : (__tl_dyn-array i64)]
-  [out : (__tl_dyn-array i64)]
+  [a : (& a (__tl_dyn-array i64))]
+  [b : (& b (__tl_dyn-array i64))]
+  [out : (&mut out (__tl_dyn-array i64))]
   [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (set! (array-ref out i) (+ (array-ref a i) (array-ref b i)))))
 
-(define (checksum [out : (__tl_dyn-array i64)] [n : i64]) : i64
+(define (checksum [out : (& out (__tl_dyn-array i64))] [n : i64]) : i64
   (let
     [i : i64 0]
     [acc : i64 0]
@@ -41,6 +44,6 @@
     [b : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     [out : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     (begin
-      (init a b n)
-      (fill a b out n)
-      (bit-and (checksum out n) 0xff))))
+      (init (&mut a) (&mut b) n)
+      (fill (& a) (& b) (&mut out) n)
+      (bit-and (checksum (& out) n) 0xff))))

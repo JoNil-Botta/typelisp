@@ -1,5 +1,5 @@
 ;; SPMD nested masked-if/varying-while corpus (#3752).
-(define (init-counts [xs : (__tl_dyn-array i64)]) : unit
+(define (init-counts [xs : (&mut xs (__tl_dyn-array i64))]) : unit
   (begin
     (set! (array-ref xs 0) -1)
     (set! (array-ref xs 1) 4)
@@ -16,8 +16,8 @@
     (set! (array-ref xs 12) 7)))
 
 (define (fill-masked
-  [work : (__tl_dyn-array i64)]
-  [out : (__tl_dyn-array i64)]
+  [work : (&mut work (__tl_dyn-array i64))]
+  [out : (&mut out (__tl_dyn-array i64))]
   [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
@@ -29,8 +29,8 @@
       (set! (array-ref out i) -1))))
 
 (define (fill-scalar
-  [work : (__tl_dyn-array i64)]
-  [out : (__tl_dyn-array i64)]
+  [work : (&mut work (__tl_dyn-array i64))]
+  [out : (&mut out (__tl_dyn-array i64))]
   [n : i64]) : unit
   (let
     [i : i64 0]
@@ -45,8 +45,8 @@
         (set! i (+ i 1))))))
 
 (define (arrays-eq
-  [a : (__tl_dyn-array i64)]
-  [b : (__tl_dyn-array i64)]
+  [a : (& a (__tl_dyn-array i64))]
+  [b : (& b (__tl_dyn-array i64))]
   [n : i64]) : bool
   (let
     [i : i64 0]
@@ -68,10 +68,10 @@
     [got : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     [want : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     (begin
-      (init-counts work)
-      (init-counts work-ref)
-      (fill-masked work got n)
-      (fill-scalar work-ref want n)
-      (if (arrays-eq got want n)
+      (init-counts (&mut work))
+      (init-counts (&mut work-ref))
+      (fill-masked (&mut work) (&mut got) n)
+      (fill-scalar (&mut work-ref) (&mut want) n)
+      (if (arrays-eq (& got) (& want) n)
         42
         1))))

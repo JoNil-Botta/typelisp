@@ -17,10 +17,11 @@ native_link_detect_host
 
 # Target-conditioned prefix declarations change how much source work the
 # hydrated dependency surface bypasses. Removing stdlib.array removes ten
-# declarations from the consumer prefix on both hosts.
+# declarations from the consumer prefix on both hosts; the by-value ownership
+# cutover's explicit compiler-owned-view import adds one back.
 case "$NL_HOST_OS" in
-    windows) TRUSTED_PREFIX_SKIPPED=214 ;;
-    *) TRUSTED_PREFIX_SKIPPED=209 ;;
+    windows) TRUSTED_PREFIX_SKIPPED=215 ;;
+    *) TRUSTED_PREFIX_SKIPPED=210 ;;
 esac
 
 COMPILER=${1:-${TYPELISP_BIN:-}}
@@ -74,19 +75,24 @@ fail() {
     exit 1
 }
 
-profile_sum() {
+# Windows package emission may profile package lowering and side-assembly
+# regeneration as separate jobs. Validate the first job that exercised a route;
+# an expected-zero metric still fails if any job records a nonzero value.
+profile_first_nonzero() {
     phase=$1
     file=$2
     awk -F '|' -v wanted="typecheck.macro.$phase" \
-        '$1 == "compile-profile" && $2 == wanted { total += $3 } \
-         END { print total + 0 }' "$file"
+        '$1 == "compile-profile" && $2 == wanted && $3 != 0 && !found { \
+            value = $3; found = 1 \
+         } \
+         END { print value + 0 }' "$file"
 }
 
 assert_profile_eq() {
     phase=$1
     wanted=$2
     file=$3
-    actual=$(profile_sum "$phase" "$file")
+    actual=$(profile_first_nonzero "$phase" "$file")
     [ "$actual" -eq "$wanted" ] ||
         fail "$phase is $actual, expected $wanted"
 }

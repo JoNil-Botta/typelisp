@@ -18,6 +18,7 @@
 (import compiler_parse_core as parser)
 (import compiler_target_cfg_core as target_cfg)
 (import package_source_core)
+(import compiler_owned_view as owned_view)
 (import sym_i64_env)
 
 (define (selfhost-lint-write-text [path : String] [contents : String]) : unit
@@ -772,20 +773,27 @@ end
   [rule-id : String]
   [index : i64]
   [count : i64]) : i64
-  (if (>= index (lint_core.lint-findings-count findings))
+  (if (>=
+    index
+    (lint_core.lint-findings-count
+      (owned_view.compiler-owned-shared-view findings)))
     count
-    (match (lint_core.lint-findings-get findings index)
+    (match (lint_core.lint-findings-get
+      (owned_view.compiler-owned-shared-view findings)
+      index)
       [(lint_core.LintMaybeFinding.Some finding)
         (selfhost-lint-findings-rule-count-from
-          findings
-          rule-id
+          (owned_view.compiler-owned-shared-view findings)
+          (owned_view.compiler-owned-shared-view rule-id)
           (+ index 1)
-          (if (string.eq finding.rule-id rule-id)
+          (if (string.eq
+            finding.rule-id
+            (owned_view.compiler-owned-shared-view rule-id))
             (+ count 1)
             count))]
       [(lint_core.LintMaybeFinding.No)
         (selfhost-lint-findings-rule-count-from
-          findings
+          (owned_view.compiler-owned-shared-view findings)
           rule-id
           (+ index 1)
           count)])))
@@ -810,12 +818,17 @@ end
 
 (define (selfhost-lint-unused-import-finding-ok?
   [findings : lint_core.LintFindings]) : bool
-  (match (lint_core.lint-findings-get findings 0)
+  (match (lint_core.lint-findings-get
+    (owned_view.compiler-owned-shared-view findings)
+    0)
     [(lint_core.LintMaybeFinding.Some finding)
       (let
         [fspan : ast.AstSourceSpan finding.span]
         (and
-          (= (lint_core.lint-findings-count findings) 1)
+          (=
+            (lint_core.lint-findings-count
+              (owned_view.compiler-owned-shared-view findings))
+            1)
           (> (ast.ast-source-span-start-line fspan) 0)
           (string.eq finding.rule-id (lint_core.lint-rule-unused-import-id))))]
     [(lint_core.LintMaybeFinding.No) false]))
@@ -1028,7 +1041,7 @@ end
     [path : String
       (compiler_load.compiler-load-normalize-path
         (compiler_load.compiler-load-join-root-path
-          manifest-dir
+          (owned_view.compiler-owned-shared-view manifest-dir)
           "src/manifest_api.tl"))]
     [source : String (selfhost-lint-package-dead-manifest-root-source)]
     [roots : lint_svec.Vec
@@ -1197,27 +1210,43 @@ end
 (define (selfhost-lint-package-dead-import-closure-fixture-ok?) : bool
   (let
     [root : String "target/lint_dead_root_import_closure"]
-    [src-dir : String (compiler_load.compiler-load-join-root-path root "src")]
+    [src-dir : String
+      (compiler_load.compiler-load-join-root-path
+        (owned_view.compiler-owned-shared-view root)
+        "src")]
     [test-dir : String
-      (compiler_load.compiler-load-join-root-path src-dir "tests")]
+      (compiler_load.compiler-load-join-root-path
+        (owned_view.compiler-owned-shared-view src-dir)
+        "tests")]
     [manifest-path : String
-      (compiler_load.compiler-load-join-root-path root "typelisp.pkg")]
+      (compiler_load.compiler-load-join-root-path
+        (owned_view.compiler-owned-shared-view root)
+        "typelisp.pkg")]
     [main-path : String
-      (compiler_load.compiler-load-join-root-path src-dir "main.tl")]
+      (compiler_load.compiler-load-join-root-path
+        (owned_view.compiler-owned-shared-view src-dir)
+        "main.tl")]
     [core-path : String
-      (compiler_load.compiler-load-join-root-path src-dir "core.tl")]
+      (compiler_load.compiler-load-join-root-path
+        (owned_view.compiler-owned-shared-view src-dir)
+        "core.tl")]
     [test-path : String
-      (compiler_load.compiler-load-join-root-path test-dir "imported_smoke.tl")]
+      (compiler_load.compiler-load-join-root-path
+        (owned_view.compiler-owned-shared-view test-dir)
+        "imported_smoke.tl")]
     [second-test-path : String
       (compiler_load.compiler-load-join-root-path
-        test-dir
+        (owned_view.compiler-owned-shared-view test-dir)
         "second_imported_smoke.tl")]
     (begin
-      (compiler_load.compiler-load-test-mkdir root)
-      (compiler_load.compiler-load-test-mkdir src-dir)
-      (compiler_load.compiler-load-test-mkdir test-dir)
+      (compiler_load.compiler-load-test-mkdir
+        (owned_view.compiler-owned-shared-view root))
+      (compiler_load.compiler-load-test-mkdir
+        (owned_view.compiler-owned-shared-view src-dir))
+      (compiler_load.compiler-load-test-mkdir
+        (owned_view.compiler-owned-shared-view test-dir))
       (selfhost-lint-write-text
-        manifest-path
+        (owned_view.compiler-owned-shared-view manifest-path)
         "(package
   (name \"lint-dead-root-import-closure\")
   (version \"1\")
@@ -1228,7 +1257,7 @@ end
 (define (main) : i64
   (core.core-entry))")
       (selfhost-lint-write-text
-        core-path
+        (owned_view.compiler-owned-shared-view core-path)
         "(define (core-entry) : i64 7)
 (define (core-test-helper) : i64 42)
 (define (core-second-test-helper) : i64 43)
@@ -1250,23 +1279,24 @@ end
         [(package_source_core.ResultPackageSourceSet.Err _) false]
         [(package_source_core.ResultPackageSourceSet.Ok source-set)
           (match (lint_driver_core.selfhost-lint-package-dead-sources
-            source-set
+            (owned_view.compiler-owned-shared-view source-set)
             (lint_svec.new))
             [(lint_driver_core.ResultSelfhostLintDeadSources.Err _) false]
             [(lint_driver_core.ResultSelfhostLintDeadSources.Ok dead-source-set)
               (let
                 [roots : lint_svec.Vec
                   (lint_driver_core.selfhost-lint-package-import-roots
-                    source-set
+                    (owned_view.compiler-owned-shared-view source-set)
                     (lint_svec.new))]
                 [dead-decls : lint_driver_core.SelfhostLintDeadDecls
                   (lint_driver_core.selfhost-lint-package-dead-code
                     dead-source-set
-                    roots
+                    (owned_view.compiler-owned-shared-view roots)
                     source-set.manifest.kind)]
                 [core-count : i64
                   (lint_driver_core.selfhost-lint-package-dead-count-for-source
-                    (compiler_load.compiler-load-normalize-path core-path)
+                    (compiler_load.compiler-load-normalize-path
+                      (owned_view.compiler-owned-shared-view core-path))
                     (byte_buf.to-string (io.read-file core-path))
                     dead-decls)]
                 (and
@@ -1282,29 +1312,29 @@ end
     [cfg-source : String (selfhost-lint-package-dead-cfg-source)]
     [bin-decls : lint_driver_core.SelfhostLintDeadDecls
       (selfhost-lint-package-dead-code-fixture-decls
-        source-a
-        source-b
+        (owned_view.compiler-owned-shared-view source-a)
+        (owned_view.compiler-owned-shared-view source-b)
         CompilerPkgKindBin)]
     [lib-decls : lint_driver_core.SelfhostLintDeadDecls
       (selfhost-lint-package-dead-code-fixture-decls
-        source-a
-        source-b
+        (owned_view.compiler-owned-shared-view source-a)
+        (owned_view.compiler-owned-shared-view source-b)
         CompilerPkgKindLib)]
     [bin-count-a : i64
       (lint_driver_core.selfhost-lint-package-dead-count-for-source
         "pkg/a.tl"
-        source-a
-        bin-decls)]
+        (owned_view.compiler-owned-shared-view source-a)
+        (owned_view.compiler-owned-shared-view bin-decls))]
     [bin-count-b : i64
       (lint_driver_core.selfhost-lint-package-dead-count-for-source
         "pkg/b.tl"
-        source-b
+        (owned_view.compiler-owned-shared-view source-b)
         bin-decls)]
     [lib-count-a : i64
       (lint_driver_core.selfhost-lint-package-dead-count-for-source
         "pkg/a.tl"
-        source-a
-        lib-decls)]
+        (owned_view.compiler-owned-shared-view source-a)
+        (owned_view.compiler-owned-shared-view lib-decls))]
     [lib-count-b : i64
       (lint_driver_core.selfhost-lint-package-dead-count-for-source
         "pkg/b.tl"
@@ -1344,10 +1374,10 @@ end
       (lint_driver_core.selfhost-lint-package-dead-count-for-source
         "pkg/cfg.tl"
         cfg-source
-        cfg-bin-decls)]
+        (owned_view.compiler-owned-shared-view cfg-bin-decls))]
     [ordinary-mode-index : i64
       (lint_driver_core.selfhost-lint-dead-decls-index-of
-        cfg-bin-decls
+        (owned_view.compiler-owned-shared-view cfg-bin-decls)
         "ordinary-mode-helper")]
     [platform-cfg-source : String
       (selfhost-lint-package-dead-platform-cfg-source)]
@@ -1360,16 +1390,16 @@ end
     [platform-linux-count : i64
       (lint_driver_core.selfhost-lint-package-dead-count-for-source
         "pkg/platform_cfg.tl"
-        platform-cfg-source
+        (owned_view.compiler-owned-string-place-shared-view platform-cfg-source)
         platform-linux-decls)]
     [platform-windows-count : i64
       (lint_driver_core.selfhost-lint-package-dead-count-for-source
         "pkg/platform_cfg.tl"
         platform-cfg-source
-        platform-windows-decls)]
+        (owned_view.compiler-owned-shared-view platform-windows-decls))]
     [platform-windows-storage-index : i64
       (lint_driver_core.selfhost-lint-dead-decls-index-of
-        platform-windows-decls
+        (owned_view.compiler-owned-shared-view platform-windows-decls)
         "profile-clock-storage")]
     [qualified-import-decls : lint_driver_core.SelfhostLintDeadDecls
       (selfhost-lint-package-dead-qualified-import-fixture-decls)]
@@ -1377,7 +1407,7 @@ end
       (lint_driver_core.selfhost-lint-package-dead-count-for-source
         "pkg/left.tl"
         (selfhost-lint-package-dead-qualified-left-source)
-        qualified-import-decls)]
+        (owned_view.compiler-owned-shared-view qualified-import-decls))]
     [qualified-right-count : i64
       (lint_driver_core.selfhost-lint-package-dead-count-for-source
         "pkg/right.tl"
@@ -1389,7 +1419,7 @@ end
       (lint_driver_core.selfhost-lint-package-dead-count-for-source
         "pkg/left.tl"
         (selfhost-lint-package-dead-moduleless-left-source)
-        moduleless-import-decls)]
+        (owned_view.compiler-owned-shared-view moduleless-import-decls))]
     [moduleless-right-count : i64
       (lint_driver_core.selfhost-lint-package-dead-count-for-source
         "pkg/right.tl"
@@ -1464,42 +1494,42 @@ end
           (=
             (selfhost-lint-source-rule-count
               (selfhost-lint-unused-assignment-init-source)
-              rule)
+              (owned_view.compiler-owned-shared-view rule))
             1))
         50]
       [(not
           (=
             (selfhost-lint-source-rule-count
               (selfhost-lint-unused-assignment-set-source)
-              rule)
+              (owned_view.compiler-owned-shared-view rule))
             1))
         51]
       [(not
           (=
             (selfhost-lint-source-rule-count
               (selfhost-lint-used-before-overwrite-source)
-              rule)
+              (owned_view.compiler-owned-shared-view rule))
             0))
         52]
       [(not
           (=
             (selfhost-lint-source-rule-count
               (selfhost-lint-branch-conservative-assignment-source)
-              rule)
+              (owned_view.compiler-owned-shared-view rule))
             0))
         53]
       [(not
           (=
             (selfhost-lint-source-rule-count
               (selfhost-lint-underscore-assignment-source)
-              rule)
+              (owned_view.compiler-owned-shared-view rule))
             0))
         54]
       [(not
           (=
             (selfhost-lint-source-rule-count
               (selfhost-lint-suppressed-unused-assignment-source)
-              rule)
+              (owned_view.compiler-owned-shared-view rule))
             0))
         55]
       [(not
@@ -1517,63 +1547,63 @@ end
           (=
             (selfhost-lint-source-rule-count
               (selfhost-lint-single-element-array-fixed-source)
-              rule)
+              (owned_view.compiler-owned-shared-view rule))
             1))
         60]
       [(not
           (=
             (selfhost-lint-source-rule-count
               (selfhost-lint-single-element-array-param-source)
-              rule)
+              (owned_view.compiler-owned-shared-view rule))
             1))
         61]
       [(not
           (=
             (selfhost-lint-source-rule-count
               (selfhost-lint-single-element-array-dynamic-source)
-              rule)
+              (owned_view.compiler-owned-shared-view rule))
             1))
         62]
       [(not
           (=
             (selfhost-lint-source-rule-count
               (selfhost-lint-single-element-array-dotted-source)
-              rule)
+              (owned_view.compiler-owned-shared-view rule))
             1))
         63]
       [(not
           (=
             (selfhost-lint-source-rule-count
               (selfhost-lint-single-element-array-nonzero-source)
-              rule)
+              (owned_view.compiler-owned-shared-view rule))
             0))
         64]
       [(not
           (=
             (selfhost-lint-source-rule-count
               (selfhost-lint-single-element-array-dynamic-index-source)
-              rule)
+              (owned_view.compiler-owned-shared-view rule))
             0))
         65]
       [(not
           (=
             (selfhost-lint-source-rule-count
               (selfhost-lint-single-element-array-escape-source)
-              rule)
+              (owned_view.compiler-owned-shared-view rule))
             0))
         66]
       [(not
           (=
             (selfhost-lint-source-rule-count
               (selfhost-lint-single-element-array-aggregate-source)
-              rule)
+              (owned_view.compiler-owned-shared-view rule))
             0))
         67]
       [(not
           (=
             (selfhost-lint-source-rule-count
               (selfhost-lint-single-element-array-suppressed-source)
-              rule)
+              (owned_view.compiler-owned-shared-view rule))
             0))
         68]
       [(not
@@ -1591,89 +1621,90 @@ end
           (=
             (selfhost-lint-source-rule-count
               (selfhost-lint-dynamic-array-literal-dotted-source)
-              rule)
+              (owned_view.compiler-owned-shared-view rule))
             1))
         140]
       [(not
           (=
             (selfhost-lint-source-rule-count
               (selfhost-lint-dynamic-array-literal-private-source)
-              rule)
+              (owned_view.compiler-owned-shared-view rule))
             1))
         141]
       [(not
           (=
             (selfhost-lint-source-rule-count
               (selfhost-lint-dynamic-array-literal-return-source)
-              rule)
+              (owned_view.compiler-owned-shared-view rule))
             1))
         152]
       [(not
           (=
             (selfhost-lint-source-rule-count
               (selfhost-lint-dynamic-array-literal-assignment-source)
-              rule)
+              (owned_view.compiler-owned-shared-view rule))
             1))
         153]
       [(not
           (=
             (selfhost-lint-source-rule-count
               (selfhost-lint-dynamic-array-literal-ambiguous-two-var-source)
-              rule)
+              (owned_view.compiler-owned-shared-view rule))
             0))
         149]
       [(not
           (=
             (selfhost-lint-source-rule-count
               (selfhost-lint-dynamic-array-literal-read-before-complete-source)
-              rule)
+              (owned_view.compiler-owned-shared-view rule))
             0))
         142]
       [(not
           (=
             (selfhost-lint-source-rule-count
               (selfhost-lint-dynamic-array-literal-computed-index-source)
-              rule)
+              (owned_view.compiler-owned-shared-view rule))
             0))
         143]
       [(not
           (=
             (selfhost-lint-source-rule-count
               (selfhost-lint-dynamic-array-literal-duplicate-index-source)
-              rule)
+              (owned_view.compiler-owned-shared-view rule))
             0))
         150]
       [(not
           (=
             (selfhost-lint-source-rule-count
               (selfhost-lint-dynamic-array-literal-gapped-index-source)
-              rule)
+              (owned_view.compiler-owned-shared-view rule))
             0))
         151]
       [(not
           (=
             (selfhost-lint-source-rule-count
               (selfhost-lint-dynamic-array-literal-partial-source)
-              rule)
+              (owned_view.compiler-owned-shared-view rule))
             0))
         144]
       [(not
           (=
             (selfhost-lint-source-rule-count
               (selfhost-lint-dynamic-array-literal-escape-source)
-              rule)
+              (owned_view.compiler-owned-shared-view rule))
             0))
         145]
       [(not
           (=
             (selfhost-lint-source-rule-count
               (selfhost-lint-dynamic-array-literal-suppressed-source)
-              rule)
+              (owned_view.compiler-owned-shared-view rule))
             0))
         146]
       [(not
           (string.eq
-            (lint_core.lint-rule-message rule)
+            (lint_core.lint-rule-message
+              (owned_view.compiler-owned-shared-view rule))
             (lint_core.lint-rule-prefer-dynamic-array-literal-message)))
         147]
       [(not
@@ -1688,7 +1719,9 @@ end
   [findings : lint_core.LintFindings]
   [depth : i64]
   [message : String]) : bool
-  (match (lint_core.lint-findings-get findings 0)
+  (match (lint_core.lint-findings-get
+    (owned_view.compiler-owned-shared-view findings)
+    0)
     [(lint_core.LintMaybeFinding.Some finding)
       (let
         [fspan : ast.AstSourceSpan finding.span]
@@ -1701,7 +1734,9 @@ end
 
 (define (selfhost-lint-nested-let-finding-ok?
   [findings : lint_core.LintFindings]) : bool
-  (match (lint_core.lint-findings-get findings 0)
+  (match (lint_core.lint-findings-get
+    (owned_view.compiler-owned-shared-view findings)
+    0)
     [(lint_core.LintMaybeFinding.Some finding)
       (let
         [fspan : ast.AstSourceSpan finding.span]
@@ -1712,7 +1747,9 @@ end
 
 (define (selfhost-lint-return-path-finding-ok?
   [findings : lint_core.LintFindings]) : bool
-  (match (lint_core.lint-findings-get findings 0)
+  (match (lint_core.lint-findings-get
+    (owned_view.compiler-owned-shared-view findings)
+    0)
     [(lint_core.LintMaybeFinding.Some finding)
       (let
         [fspan : ast.AstSourceSpan finding.span]
@@ -1723,7 +1760,9 @@ end
     [(lint_core.LintMaybeFinding.No) false]))
 
 (define (selfhost-lint-unit-if-finding-ok? [findings : lint_core.LintFindings]) : bool
-  (match (lint_core.lint-findings-get findings 0)
+  (match (lint_core.lint-findings-get
+    (owned_view.compiler-owned-shared-view findings)
+    0)
     [(lint_core.LintMaybeFinding.Some finding)
       (let
         [fspan : ast.AstSourceSpan finding.span]
@@ -1736,7 +1775,9 @@ end
 (define (selfhost-lint-cascading-and-or-finding-ok?
   [findings : lint_core.LintFindings]
   [message : String]) : bool
-  (match (lint_core.lint-findings-get findings 0)
+  (match (lint_core.lint-findings-get
+    (owned_view.compiler-owned-shared-view findings)
+    0)
     [(lint_core.LintMaybeFinding.Some finding)
       (let
         [fspan : ast.AstSourceSpan finding.span]
@@ -1749,10 +1790,15 @@ end
 
 (define (selfhost-lint-transitional-core-macro-finding-ok?
   [findings : lint_core.LintFindings]) : bool
-  (match (lint_core.lint-findings-get findings 0)
+  (match (lint_core.lint-findings-get
+    (owned_view.compiler-owned-shared-view findings)
+    0)
     [(lint_core.LintMaybeFinding.Some finding)
       (and
-        (= (lint_core.lint-findings-count findings) 5)
+        (=
+          (lint_core.lint-findings-count
+            (owned_view.compiler-owned-shared-view findings))
+          5)
         (string.eq
           finding.rule-id
           (lint_core.lint-rule-transitional-core-macro-qualifier-id))
@@ -1820,7 +1866,11 @@ end
         (lint_svec.new))]
     (cond
       [(or
-          (not (= (lint_core.lint-findings-count reported) 1))
+          (not
+            (=
+              (lint_core.lint-findings-count
+                (owned_view.compiler-owned-shared-view reported))
+              1))
           (not
             (selfhost-lint-reported-finding-ok?
               reported
@@ -1828,14 +1878,23 @@ end
               (lint_core.lint-rule-nested-if-ladder-value-message))))
         1]
       [(or
-          (not (= (lint_core.lint-findings-count guard-reported) 1))
+          (not
+            (=
+              (lint_core.lint-findings-count
+                (owned_view.compiler-owned-shared-view guard-reported))
+              1))
           (not
             (selfhost-lint-reported-finding-ok?
               guard-reported
               3
               (lint_core.lint-rule-nested-if-ladder-guard-message))))
         70]
-      [(not (= (lint_core.lint-findings-count return-reported) 1)) 9]
+      [(not
+          (=
+            (lint_core.lint-findings-count
+              (owned_view.compiler-owned-shared-view return-reported))
+            1))
+        9]
       [(not (selfhost-lint-return-path-finding-ok? return-reported)) 10]
       [(not
           (=
@@ -1844,31 +1903,65 @@ end
               (lint_core.lint-rule-nested-if-ladder-id))
             0))
         41]
-      [(not (= (lint_core.lint-findings-count unit-reported) 1)) 12]
+      [(not
+          (=
+            (lint_core.lint-findings-count
+              (owned_view.compiler-owned-shared-view unit-reported))
+            1))
+        12]
       [(not (selfhost-lint-unit-if-finding-ok? unit-reported)) 13]
-      [(not (= (lint_core.lint-findings-count unit-set-reported) 1)) 16]
+      [(not
+          (=
+            (lint_core.lint-findings-count
+              (owned_view.compiler-owned-shared-view unit-set-reported))
+            1))
+        16]
       [(not (selfhost-lint-unit-if-finding-ok? unit-set-reported)) 17]
-      [(not (= (lint_core.lint-findings-count two-reported) 2)) 18]
-      [(not (= (lint_core.lint-findings-count cascading-and-reported) 1)) 20]
+      [(not
+          (=
+            (lint_core.lint-findings-count
+              (owned_view.compiler-owned-shared-view two-reported))
+            2))
+        18]
+      [(not
+          (=
+            (lint_core.lint-findings-count
+              (owned_view.compiler-owned-shared-view cascading-and-reported))
+            1))
+        20]
       [(not
           (selfhost-lint-cascading-and-or-finding-ok?
             cascading-and-reported
             "cascading and: prefer flat n-ary form (and a b c)"))
         21]
-      [(not (= (lint_core.lint-findings-count cascading-or-reported) 1)) 22]
+      [(not
+          (=
+            (lint_core.lint-findings-count
+              (owned_view.compiler-owned-shared-view cascading-or-reported))
+            1))
+        22]
       [(not
           (selfhost-lint-cascading-and-or-finding-ok?
             cascading-or-reported
             "cascading or: prefer flat n-ary form (or a b c)"))
         23]
-      [(not (= (lint_core.lint-findings-count cascading-core-and-reported) 1))
+      [(not
+          (=
+            (lint_core.lint-findings-count
+              (owned_view.compiler-owned-shared-view
+                cascading-core-and-reported))
+            1))
         24]
       [(not
           (selfhost-lint-cascading-and-or-finding-ok?
             cascading-core-and-reported
             "cascading and: prefer flat n-ary form (and a b c)"))
         25]
-      [(not (= (lint_core.lint-findings-count transitional-core-reported) 5))
+      [(not
+          (=
+            (lint_core.lint-findings-count
+              (owned_view.compiler-owned-shared-view transitional-core-reported))
+            5))
         37]
       [(not
           (selfhost-lint-transitional-core-macro-finding-ok?

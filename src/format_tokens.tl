@@ -3,6 +3,7 @@
 ;; This lexer is separate from lex.tl because a formatter must keep source
 ;; spelling and comments. Whitespace is skipped; comments are retained
 ;; as trivia tokens so later layout rules can place them deliberately.
+(import compiler_owned_view as owned_view)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.io)
 (import stdlib.string)
@@ -215,7 +216,9 @@
 (define (format-token-span [stream : FormatTokenStream] [idx : i64]) : FormatSourceSpan
   (let
     [pos : FormatPosition
-      (fmt-source-position-at stream.source (format-token-start stream idx))]
+      (fmt-source-position-at
+        stream.source
+        (format-token-start (owned_view.compiler-owned-shared-view stream) idx))]
     (FormatSourceSpan
       (fmt-position-line pos)
       (fmt-position-col pos)
@@ -229,7 +232,10 @@
     (begin
       (while (< i stream.count)
         (begin
-          (if (= (format-token-tag (format-token-at stream i)) wanted)
+          (if (=
+            (format-token-tag
+              (format-token-at (owned_view.compiler-owned-shared-view stream) i))
+            wanted)
             (set! hits (+ hits 1))
             (set! hits hits))
           (set! i (+ i 1))))
@@ -722,7 +728,12 @@
             (let
               [newcap : i64 (* cap 2)]
               (begin
-                (set! tokens (fmt-grow-token-array tokens count newcap))
+                (set!
+                  tokens
+                  (fmt-grow-token-array
+                    (owned_view.compiler-owned-shared-view tokens)
+                    count
+                    newcap))
                 (set! starts (fmt-grow-i64-array starts count newcap))
                 (set! cap newcap)))
             unit)
@@ -735,8 +746,8 @@
                   [end : i64 (fmt-scan-comment-end data i n)]
                   (begin
                     (fmt-store-token
-                      tokens
-                      starts
+                      (owned_view.compiler-owned-shared-view tokens)
+                      (owned_view.compiler-owned-shared-view starts)
                       count
                       i
                       (FormatToken.Comment (string.substring src i (- end i))))
@@ -744,36 +755,65 @@
                     (set! i end)))]
               [(= c '(')
                 (begin
-                  (fmt-store-token tokens starts count i (FormatToken.LParen))
+                  (fmt-store-token
+                    (owned_view.compiler-owned-shared-view tokens)
+                    (owned_view.compiler-owned-shared-view starts)
+                    count
+                    i
+                    (FormatToken.LParen))
                   (set! count (+ count 1))
                   (set! i (+ i 1)))]
               [(= c ')')
                 (begin
-                  (fmt-store-token tokens starts count i (FormatToken.RParen))
+                  (fmt-store-token
+                    (owned_view.compiler-owned-shared-view tokens)
+                    (owned_view.compiler-owned-shared-view starts)
+                    count
+                    i
+                    (FormatToken.RParen))
                   (set! count (+ count 1))
                   (set! i (+ i 1)))]
               [(= c '[')
                 (begin
-                  (fmt-store-token tokens starts count i (FormatToken.LBracket))
+                  (fmt-store-token
+                    (owned_view.compiler-owned-shared-view tokens)
+                    (owned_view.compiler-owned-shared-view starts)
+                    count
+                    i
+                    (FormatToken.LBracket))
                   (set! count (+ count 1))
                   (set! i (+ i 1)))]
               [(= c ']')
                 (begin
-                  (fmt-store-token tokens starts count i (FormatToken.RBracket))
+                  (fmt-store-token
+                    (owned_view.compiler-owned-shared-view tokens)
+                    (owned_view.compiler-owned-shared-view starts)
+                    count
+                    i
+                    (FormatToken.RBracket))
                   (set! count (+ count 1))
                   (set! i (+ i 1)))]
               [(= c ':')
                 (begin
-                  (fmt-store-token tokens starts count i (FormatToken.Colon))
+                  (fmt-store-token
+                    (owned_view.compiler-owned-shared-view tokens)
+                    (owned_view.compiler-owned-shared-view starts)
+                    count
+                    i
+                    (FormatToken.Colon))
                   (set! count (+ count 1))
                   (set! i (+ i 1)))]
               [(= c '\'')
-                (match (fmt-scan-apostrophe-char-end-result src data i n)
+                (match (fmt-scan-apostrophe-char-end-result
+                  (owned_view.compiler-owned-shared-view src)
+                  data
+                  i
+                  n)
                   [(ResultFmtMaybeCharEnd.Ok end)
                     (begin
                       (fmt-store-token
-                        tokens
-                        starts
+                        (owned_view.compiler-owned-shared-view tokens)
+                        (owned_view.compiler-owned-shared-view starts)
                         count
                         i
                         (FormatToken.Char (string.substring src i (- end i))))
@@ -783,8 +823,8 @@
                     (if recover
                       (begin
                         (fmt-store-token
-                          tokens
-                          starts
+                          (owned_view.compiler-owned-shared-view tokens)
+                          (owned_view.compiler-owned-shared-view starts)
                           count
                           i
                           (FormatToken.Quote))
@@ -794,8 +834,8 @@
                   [(ResultFmtMaybeCharEnd.No)
                     (begin
                       (fmt-store-token
-                        tokens
-                        starts
+                        (owned_view.compiler-owned-shared-view tokens)
+                        (owned_view.compiler-owned-shared-view starts)
                         count
                         i
                         (FormatToken.Quote))
@@ -803,14 +843,19 @@
                       (set! i (+ i 1)))])]
               [(= c '`')
                 (begin
-                  (fmt-store-token tokens starts count i (FormatToken.Backtick))
+                  (fmt-store-token
+                    (owned_view.compiler-owned-shared-view tokens)
+                    (owned_view.compiler-owned-shared-view starts)
+                    count
+                    i
+                    (FormatToken.Backtick))
                   (set! count (+ count 1))
                   (set! i (+ i 1)))]
               [(fmt-starts-ellipsis data i n)
                 (begin
                   (fmt-store-token
-                    tokens
-                    starts
+                    (owned_view.compiler-owned-shared-view tokens)
+                    (owned_view.compiler-owned-shared-view starts)
                     count
                     i
                     (FormatToken.Symbol "..."))
@@ -818,7 +863,12 @@
                   (set! i (+ i 3)))]
               [(= c '.')
                 (begin
-                  (fmt-store-token tokens starts count i (FormatToken.Dot))
+                  (fmt-store-token
+                    (owned_view.compiler-owned-shared-view tokens)
+                    (owned_view.compiler-owned-shared-view starts)
+                    count
+                    i
+                    (FormatToken.Dot))
                   (set! count (+ count 1))
                   (set! i (+ i 1)))]
               [(= c ',')
@@ -826,8 +876,8 @@
                   (if (= (fmt-source-byte-bounds-proven data (+ i 1)) '@')
                     (begin
                       (fmt-store-token
-                        tokens
-                        starts
+                        (owned_view.compiler-owned-shared-view tokens)
+                        (owned_view.compiler-owned-shared-view starts)
                         count
                         i
                         (FormatToken.CommaAt))
@@ -835,24 +885,33 @@
                       (set! i (+ i 2)))
                     (begin
                       (fmt-store-token
-                        tokens
-                        starts
+                        (owned_view.compiler-owned-shared-view tokens)
+                        (owned_view.compiler-owned-shared-view starts)
                         count
                         i
                         (FormatToken.Comma))
                       (set! count (+ count 1))
                       (set! i (+ i 1))))
                   (begin
-                    (fmt-store-token tokens starts count i (FormatToken.Comma))
+                    (fmt-store-token
+                      (owned_view.compiler-owned-shared-view tokens)
+                      (owned_view.compiler-owned-shared-view starts)
+                      count
+                      i
+                      (FormatToken.Comma))
                     (set! count (+ count 1))
                     (set! i (+ i 1))))]
               [(= c '"')
-                (match (fmt-scan-string-end-result src data (+ i 1) n)
+                (match (fmt-scan-string-end-result
+                  (owned_view.compiler-owned-shared-view src)
+                  data
+                  (+ i 1)
+                  n)
                   [(result_fmt_i64.Ok end)
                     (begin
                       (fmt-store-token
-                        tokens
-                        starts
+                        (owned_view.compiler-owned-shared-view tokens)
+                        (owned_view.compiler-owned-shared-view starts)
                         count
                         i
                         (FormatToken.String (string.substring src i (- end i))))
@@ -862,8 +921,8 @@
                     (if recover
                       (begin
                         (fmt-store-token
-                          tokens
-                          starts
+                          (owned_view.compiler-owned-shared-view tokens)
+                          (owned_view.compiler-owned-shared-view starts)
                           count
                           i
                           (FormatToken.String (string.substring src i (- n i))))
@@ -871,15 +930,23 @@
                         (set! i n))
                       (return (ResultFormatTokenStream.Err err)))])]
               [(fmt-starts-number data i n)
-                (match (fmt-scan-number-end-result src data i n)
+                (match (fmt-scan-number-end-result
+                  (owned_view.compiler-owned-shared-view src)
+                  data
+                  i
+                  n)
                   [(result_fmt_i64.Ok end)
                     (begin
                       (fmt-store-token
-                        tokens
-                        starts
+                        (owned_view.compiler-owned-shared-view tokens)
+                        (owned_view.compiler-owned-shared-view starts)
                         count
                         i
-                        (FormatToken.Int (string.substring src i (- end i))))
+                        (FormatToken.Int
+                          (string.substring
+                            (owned_view.compiler-owned-shared-view src)
+                            i
+                            (- end i))))
                       (set! count (+ count 1))
                       (set! i end))]
                   [(result_fmt_i64.Err err)
@@ -888,8 +955,8 @@
                         [end : i64 (fmt-scan-recovery-token-end data i n)]
                         (begin
                           (fmt-store-token
-                            tokens
-                            starts
+                            (owned_view.compiler-owned-shared-view tokens)
+                            (owned_view.compiler-owned-shared-view starts)
                             count
                             i
                             (FormatToken.Int (string.substring src i (- end i))))
@@ -901,11 +968,15 @@
                   [end : i64 (fmt-scan-symbol-end data i n)]
                   (begin
                     (fmt-store-token
-                      tokens
-                      starts
+                      (owned_view.compiler-owned-shared-view tokens)
+                      (owned_view.compiler-owned-shared-view starts)
                       count
                       i
-                      (FormatToken.Symbol (string.substring src i (- end i))))
+                      (FormatToken.Symbol
+                        (string.substring
+                          (owned_view.compiler-owned-shared-view src)
+                          i
+                          (- end i))))
                     (set! count (+ count 1))
                     (set! i end)))]
               [else
@@ -914,26 +985,47 @@
                   (return
                     (ResultFormatTokenStream.Err
                       (fmt-source-error-at
-                        src
+                        (owned_view.compiler-owned-shared-view src)
                         i
                         "format lexer: unexpected character"))))]))))
       (if (>= count cap)
         (let
           [newcap : i64 (* cap 2)]
           (begin
-            (set! tokens (fmt-grow-token-array tokens count newcap))
-            (set! starts (fmt-grow-i64-array starts count newcap))
+            (set!
+              tokens
+              (fmt-grow-token-array
+                (owned_view.compiler-owned-shared-view tokens)
+                count
+                newcap))
+            (set!
+              starts
+              (fmt-grow-i64-array
+                (owned_view.compiler-owned-shared-view starts)
+                count
+                newcap))
             (set! cap newcap)))
         unit)
-      (fmt-store-token tokens starts count n (FormatToken.End))
+      (fmt-store-token
+        (owned_view.compiler-owned-shared-view tokens)
+        (owned_view.compiler-owned-shared-view starts)
+        count
+        n
+        (FormatToken.End))
       (ResultFormatTokenStream.Ok
-        (FormatTokenStream src tokens starts (+ count 1))))))
+        (FormatTokenStream
+          src
+          (owned_view.compiler-owned-shared-view tokens)
+          starts
+          (+ count 1))))))
 
 (define (format-lex-result [src : String]) : ResultFormatTokenStream
   (format-lex-mode-result src false))
 
 (define (format-lex-recover [src : String]) : FormatTokenStream
-  (match (format-lex-mode-result src true)
+  (match (format-lex-mode-result
+    (owned_view.compiler-owned-shared-view src)
+    true)
     [(ResultFormatTokenStream.Ok stream) stream]
     ;; Recovering mode consumes every error path above. Keep this arm total so
     ;; callers do not need a second fallback grammar if that invariant changes.

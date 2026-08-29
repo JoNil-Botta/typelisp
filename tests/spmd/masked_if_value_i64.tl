@@ -1,6 +1,6 @@
 ;; SPMD masked-if corpus (#2205): AVX-512 value-producing masked `if`
 ;; feeding a predicated store. The n = 13 length exercises a masked tail.
-(define (init-xs [xs : (__tl_dyn-array i64)] [n : i64]) : unit
+(define (init-xs [xs : (&mut xs (__tl_dyn-array i64))] [n : i64]) : unit
   (let
     [i : i64 0]
     (while (< i n)
@@ -8,7 +8,7 @@
         (set! (array-ref xs i) (- (* i 3) 17))
         (set! i (+ i 1))))))
 
-(define (init-out [out : (__tl_dyn-array i64)] [n : i64]) : unit
+(define (init-out [out : (&mut out (__tl_dyn-array i64))] [n : i64]) : unit
   (let
     [i : i64 0]
     (while (< i n)
@@ -17,20 +17,20 @@
         (set! i (+ i 1))))))
 
 (define (fill-masked
-  [xs : (__tl_dyn-array i64)]
-  [out : (__tl_dyn-array i64)]
+  [xs : (& xs (__tl_dyn-array i64))]
+  [out : (&mut out (__tl_dyn-array i64))]
   [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (set!
       (array-ref out i)
       (if (< (array-ref xs i) 0)
-        0
+        (cast 0 : i64)
         (+ (array-ref xs i) 1)))))
 
 (define (fill-scalar
-  [xs : (__tl_dyn-array i64)]
-  [out : (__tl_dyn-array i64)]
+  [xs : (& xs (__tl_dyn-array i64))]
+  [out : (&mut out (__tl_dyn-array i64))]
   [n : i64]) : unit
   (let
     [i : i64 0]
@@ -39,13 +39,13 @@
         (set!
           (array-ref out i)
           (if (< (array-ref xs i) 0)
-            0
+            (cast 0 : i64)
             (+ (array-ref xs i) 1)))
         (set! i (+ i 1))))))
 
 (define (arrays-eq
-  [a : (__tl_dyn-array i64)]
-  [b : (__tl_dyn-array i64)]
+  [a : (& a (__tl_dyn-array i64))]
+  [b : (& b (__tl_dyn-array i64))]
   [n : i64]) : bool
   (let
     [i : i64 0]
@@ -66,11 +66,11 @@
     [got : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     [want : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     (begin
-      (init-xs xs n)
-      (init-out got n)
-      (init-out want n)
-      (fill-masked xs got n)
-      (fill-scalar xs want n)
-      (if (arrays-eq got want n)
+      (init-xs (&mut xs) n)
+      (init-out (&mut got) n)
+      (init-out (&mut want) n)
+      (fill-masked (& xs) (&mut got) n)
+      (fill-scalar (& xs) (&mut want) n)
+      (if (arrays-eq (& got) (& want) n)
         42
         1))))

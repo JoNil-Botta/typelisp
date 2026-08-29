@@ -8,7 +8,7 @@
 (define (make-u8 [value : i64]) : u8
   (cast value : u8))
 
-(define (string-byte [text : String] [index : i64]) : u8
+(define (string-byte [text : (& text str)] [index : i64]) : u8
   (unsafe
     (ptr-read (ptr-offset (string-data (& text)) index))))
 
@@ -25,10 +25,9 @@
           (byte_buf.get empty 0 (make-u8 77))
           77
           "empty get fallback")))
-    (test.assert-i64-eq
-      (byte_buf.capacity (byte_buf.with-capacity 0))
-      1
-      "zero capacity clamps")
+    (let
+      [zero : byte_buf.ByteBuf (byte_buf.with-capacity 0)]
+      (test.assert-i64-eq (byte_buf.capacity zero) 1 "zero capacity clamps"))
     (let
       [buf : byte_buf.ByteBuf (byte_buf.with-capacity 2)]
       (begin
@@ -85,7 +84,7 @@
         2)]
     (begin
       (let
-        [actual : String (byte_buf.to-string buf)]
+        [actual : String (byte_buf.to-string (clone buf))]
         [expected : String "xyBC"]
         (test.assert-string-eq
           (& actual)
@@ -108,7 +107,7 @@
   (begin
     (let
       [buf : byte_buf.ByteBuf (byte_buf.from-string "owner")]
-      [copy : String (byte_buf.to-string buf)]
+      [copy : String (byte_buf.to-string (clone buf))]
       [expected : String "owner"]
       (begin
         (set! buf (byte_buf.set! buf 0 (make-u8 88)))
@@ -235,13 +234,12 @@
       (assert-u8-eq (byte_buf.ref buf 5) 107 "string k")
       (let
         [text-buf : byte_buf.ByteBuf (byte_buf.from-string "text")]
-        [text : String (byte_buf.to-string text-buf)]
+        [text : String (byte_buf.to-string (clone text-buf))]
         [expected : String "text"]
         (begin
           (test.assert-string-eq (& text) (& expected) "string round trip")
-          (test.assert-true
-            (byte_buf.empty? (byte_buf.clear! text-buf))
-            "clear empties buffer"))))))
+          (set! text-buf (byte_buf.clear! text-buf))
+          (test.assert-true (byte_buf.empty? text-buf) "clear empties buffer"))))))
 
 (define (assert-array-ownership-api) : unit
   (let
@@ -249,7 +247,7 @@
       (byte_buf.from-array-prefix
         (__tl_make-array (make-u8 65) (make-u8 0) (make-u8 255))
         2)]
-    [copied : (__tl_dyn-array u8) (byte_buf.to-array prefix)]
+    [copied : (__tl_dyn-array u8) (byte_buf.to-array (clone prefix))]
     [full : byte_buf.ByteBuf
       (byte_buf.from-array
         (__tl_make-array (make-u8 7) (make-u8 8) (make-u8 9)))]

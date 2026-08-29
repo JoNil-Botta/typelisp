@@ -7,8 +7,8 @@
 ;;
 ;;     [(Sexpr.Call (SexprAtom.Sym name) args) ...]
 ;;
-;; binding `name : String` (the operator symbol, projected out of the nested
-;; `SexprAtom.Sym`) and `args : (Array SexprAtom 2)` in one `match`. Before
+;; binding borrowed views of the operator symbol and argument array in one
+;; `match`. Before
 ;; nested patterns this required a separate single-level projection helper
 ;; (`sexpr-sym`, a `match` that pulled the symbol text out of the head and
 ;; panicked on the wrong shape); the nested pattern folds that projection into
@@ -31,22 +31,22 @@
 (defenum Sexpr
   (Call SexprAtom (Array SexprAtom 2)))
 
-(define (eval-atom [a : SexprAtom]) : i64
+(define (eval-atom [a : (& a SexprAtom)]) : i64
   (match a
-    [(SexprAtom.Int n) n]
-    [(SexprAtom.List nested) (eval-sexpr (__tl-box-place nested))]
+    [(SexprAtom.Int n) (deref n)]
+    [(SexprAtom.List nested) (eval-sexpr (& (deref (deref nested))))]
     [_ (io.panic "eval: not an evaluable atom")]))
 
 ;; eval-sexpr: the tree-walking interpreter. The `Call` arm uses the nested
 ;; pattern to bind the operator symbol `name` directly from the head's `Sym`.
-(define (eval-sexpr [s : Sexpr]) : i64
+(define (eval-sexpr [s : (& s Sexpr)]) : i64
   (match s
     ;; Nested pattern: the operator must itself be `(SexprAtom.Sym name)`.
-    ;; Binds `name : String` and the dense argument sequence together.
+    ;; Binds the borrowed `name` and dense argument sequence together.
     [(Sexpr.Call (SexprAtom.Sym name) args)
       (let
-        [arg1 : SexprAtom (array-ref args 0)]
-        [arg2 : SexprAtom (array-ref args 1)]
+        [arg1 : (& s SexprAtom) (& (array-ref args 0))]
+        [arg2 : (& s SexprAtom) (& (array-ref args 1))]
         [a : i64 (eval-atom arg1)]
         [b : i64 (eval-atom arg2)]
         (cond
@@ -72,7 +72,7 @@
       (Sexpr.Call
         (SexprAtom.Sym "+")
         (array (SexprAtom.Int 1) (SexprAtom.List (box inner))))]
-    [result : i64 (eval-sexpr prog)]
+    [result : i64 (eval-sexpr (& prog))]
     (begin
       (io.print-format "{}" "nested evaluator result: ")
       (io.println "{}" result)

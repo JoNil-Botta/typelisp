@@ -1,19 +1,21 @@
 (import stdlib.arena)
 (import stdlib.thread)
 (import (thread.handle i64) as thread_i64)
+(import stdlib.string)
 
 (defstruct AtomicArenaState
   (:lifetimes owner)
   (arena (arena.Arena owner))
-  (answer i64))
+  (text (in owner String)))
 
 (define (main) : i64
   (let
     [owner (arena.make-atomic)]
-    [state (AtomicArenaState owner 42)]
+    [text (in-arena owner (string.append "atomic branded arena " "allocation"))]
+    [state (AtomicArenaState owner text)]
     (match (thread_i64.spawn
       (lambda () : i64
-        state.answer))
+        (+ (string.string-length state.text) 11)))
       [(thread_i64.I64SpawnErr _) 1]
       [(thread_i64.I64SpawnOk worker)
         (match (thread_i64.join worker)

@@ -18,13 +18,14 @@
       (ir.compiler-ir-instr-builder-push! (&mut builder) instr)
       (ir.compiler-ir-instr-builder-append-seq-range!
         (&mut builder)
-        rest
+        (ir.compiler-ir-global-shared-view rest)
         0
         rest.len)
       (ir.compiler-ir-instr-builder-to-seq builder))))
 
 (import compiler_ast_types as ast)
 (import compiler_builtin_ids as cbi)
+(import compiler_owned_view as owned_view)
 
 (define (bounds-check-smoke-program) : ir.CompilerIrProgram
   (ir.CompilerIrProgram.Program
@@ -70,7 +71,9 @@
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (let
           [symbol-count : i64
-            (compiler_backend.compiler-backend-string-count asm "tl_oob_abort")]
+            (compiler_backend.compiler-backend-string-count
+              (owned_view.compiler-owned-shared-view asm)
+              "tl_oob_abort")]
           [defines-abort : bool
             (compiler_backend.compiler-backend-string-contains?
               asm

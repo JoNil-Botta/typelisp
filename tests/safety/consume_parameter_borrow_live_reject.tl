@@ -1,6 +1,6 @@
 (import stdlib.string)
 
-(define (consume-length [text : String (:consume)]) : i64
+(define (consume-length [text : String]) : i64
   (string-length text))
 
 (define (borrowed-length [text : (& text str)]) : i64

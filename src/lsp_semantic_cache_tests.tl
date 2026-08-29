@@ -5,6 +5,7 @@
 (cfg test (import stdlib.vector))
 (cfg test (import (vector.vector String) as lsp_svec))
 (cfg test (import compiler_semantic_index))
+(cfg test (import compiler_owned_view as owned_view))
 (cfg test (import lsp_frame_core as lsp))
 (cfg test (import lsp_vector_families))
 (cfg
@@ -30,7 +31,8 @@
         (unsafe
           (arena.tl_arena_set owner))]
       [draft : lsp_vector_families.LspServerState
-        (lsp.lsp-server-state-copy-in-current state)]
+        (lsp.lsp-server-state-copy-in-current
+          (lsp.lsp-global-shared-view state))]
       (begin
         (lsp.lsp-workspace-index-add-text-source!
           (&mut draft.workspace)
@@ -70,7 +72,8 @@
         (unsafe
           (arena.tl_arena_set owner))]
       [draft : lsp_vector_families.LspServerState
-        (lsp.lsp-server-state-copy-in-current state)]
+        (lsp.lsp-server-state-copy-in-current
+          (lsp.lsp-global-shared-view state))]
       (begin
         (lsp.lsp-workspace-semantic-cache-invalidate-path!
           (&mut draft.semantic-cache)
@@ -91,7 +94,8 @@
         (unsafe
           (arena.tl_arena_set owner))]
       [draft : lsp_vector_families.LspServerState
-        (lsp.lsp-server-state-copy-in-current state)]
+        (lsp.lsp-server-state-copy-in-current
+          (lsp.lsp-global-shared-view state))]
       (begin
         (lsp.lsp-workspace-index-add-text-source!
           (&mut draft.workspace)
@@ -143,13 +147,13 @@
       (begin
         (while (< index (lsp_document_vec.len (& state.documents)))
           (let
+            [doc : lsp_vector_families.LspDocument
+              (lsp_document_vec.get
+                (& state.documents)
+                index
+                (lsp.lsp-document-fallback))]
             [snapshot : lsp_vector_families.LspSemanticSnapshot
-              (__tl-project-field
-                (lsp_document_vec.get
-                  (& state.documents)
-                  index
-                  (lsp.lsp-document-fallback))
-                semantic)]
+              (lsp.lsp-global-shared-view doc.semantic)]
             (begin
               (if snapshot.present
                 (set!
@@ -164,7 +168,9 @@
         (while (< index state.semantic-cache.len)
           (let
             [entry : lsp_vector_families.LspWorkspaceSemanticCacheEntry
-              (array-ref state.semantic-cache.slots index)]
+              (owned_view.compiler-owned-array-element-shared-view
+                state.semantic-cache.slots
+                index)]
             (begin
               (if (> entry.index.owner-arena 0)
                 (set!
@@ -236,27 +242,25 @@
     [closed-text : String]
     [noise-path : String]
     [noise-text : String]
-    [shared-index
-      : compiler_semantic_index.CompilerSemanticSourceIndex
-      (:consume)]
-    [open-index
-      : compiler_semantic_index.CompilerSemanticSourceIndex
-      (:consume)]) : bool
+    [shared-index : compiler_semantic_index.CompilerSemanticSourceIndex]
+    [open-index : compiler_semantic_index.CompilerSemanticSourceIndex]) : bool
     (let
-      [shared-uri : String (lsp.lsp-path-to-file-uri shared-path)]
-      [open-uri : String (lsp.lsp-path-to-file-uri open-path)]
+      [shared-uri : String
+        (lsp.lsp-path-to-file-uri (lsp.lsp-global-shared-view shared-path))]
+      [open-uri : String
+        (lsp.lsp-path-to-file-uri (lsp.lsp-global-shared-view open-path))]
       [docs : lsp_document_vec.Vec
         (lsp.lsp-semantic-smoke-install
           (lsp.lsp-semantic-smoke-install
             (lsp_document_vec.new)
-            shared-uri
-            shared-path
-            shared-text
+            (lsp.lsp-global-shared-view shared-uri)
+            (lsp.lsp-global-shared-view shared-path)
+            (lsp.lsp-global-shared-view shared-text)
             1
             shared-index)
           open-uri
-          open-path
-          open-text
+          (lsp.lsp-global-shared-view open-path)
+          (lsp.lsp-global-shared-view open-text)
           1
           open-index)]
       [empty-state : lsp_vector_families.LspServerState
@@ -271,19 +275,21 @@
       [workspace-state : lsp_vector_families.LspServerState
         (lsp-workspace-semantic-smoke-workspace-state
           document-state
-          shared-path
+          (lsp.lsp-global-shared-view shared-path)
           shared-text
-          open-path
+          (lsp.lsp-global-shared-view open-path)
           open-text
-          closed-path
+          (lsp.lsp-global-shared-view closed-path)
           closed-text
-          noise-path
+          (lsp.lsp-global-shared-view noise-path)
           noise-text)]
       [roots : lsp_svec.Vec (lsp_svec.new)]
       [cold-state : lsp_vector_families.LspServerState
-        (lsp.lsp-server-state-refresh-semantic-cache workspace-state roots)]
+        (lsp.lsp-server-state-refresh-semantic-cache
+          workspace-state
+          (lsp.lsp-global-shared-view roots))]
       [shared-doc-index : i64
-        (lsp.lsp-documents-find-index cold-state.documents shared-uri)]
+        (lsp.lsp-documents-find-index (& cold-state.documents) (& shared-uri))]
       [shared-doc : lsp_vector_families.LspDocument
         (lsp_document_vec.get
           (& cold-state.documents)
@@ -292,7 +298,7 @@
       [definition-index : i64
         (compiler_semantic_index.compiler-semantic-source-index-find-definition
           (& shared-doc.semantic.index)
-          shared-path
+          (lsp.lsp-global-shared-view shared-path)
           "target-value")]
       [definition : compiler_semantic_index.CompilerSemanticRecord
         (compiler_semantic_index.compiler-semantic-source-index-get
@@ -303,21 +309,34 @@
           (& shared-doc.semantic.index)
           (& definition))]
       [cold-query : lsp.LspWorkspaceSemanticQuery
-        (lsp.lsp-workspace-semantic-query (& cold-state) roots canonical-key)]
+        (lsp.lsp-workspace-semantic-query
+          (& cold-state)
+          (lsp.lsp-global-shared-view roots)
+          (lsp.lsp-global-shared-view canonical-key))]
       [cold-records : i64
         (lsp-workspace-semantic-test-retained-records (& cold-state))]
       [cold-owners : i64
         (lsp-workspace-semantic-test-retained-owners (& cold-state))]
+      [cold-source-checks : i64 cold-state.semantic-cache.source-checks]
+      [cold-cache-len : i64 cold-state.semantic-cache.len]
       [warm-state : lsp_vector_families.LspServerState
-        (lsp.lsp-server-state-refresh-semantic-cache cold-state roots)]
+        (lsp.lsp-server-state-refresh-semantic-cache
+          cold-state
+          (lsp.lsp-global-shared-view roots))]
       [warm-query : lsp.LspWorkspaceSemanticQuery
-        (lsp.lsp-workspace-semantic-query (& warm-state) roots canonical-key)]
+        (lsp.lsp-workspace-semantic-query
+          (& warm-state)
+          (lsp.lsp-global-shared-view roots)
+          (lsp.lsp-global-shared-view canonical-key))]
       [warm-records : i64
         (lsp-workspace-semantic-test-retained-records (& warm-state))]
       [warm-owners : i64
         (lsp-workspace-semantic-test-retained-owners (& warm-state))]
+      [warm-source-checks : i64 warm-state.semantic-cache.source-checks]
       [invalidated-state : lsp_vector_families.LspServerState
-        (lsp-workspace-semantic-smoke-invalidate-state warm-state shared-path)]
+        (lsp-workspace-semantic-smoke-invalidate-state
+          warm-state
+          (lsp.lsp-global-shared-view shared-path))]
       [affected-only : bool (= invalidated-state.semantic-cache.len 1)]
       [final-state : lsp_vector_families.LspServerState
         (lsp.lsp-server-state-refresh-semantic-cache invalidated-state roots)]
@@ -325,30 +344,30 @@
         (and
           (>= definition-index 0)
           (> (string.string-length canonical-key) 0)
-          (= cold-state.semantic-cache.source-checks 2)
-          (= cold-state.semantic-cache.len 2)
+          (= cold-source-checks 2)
+          (= cold-cache-len 2)
           (= cold-owners 4)
           (> cold-records 0)
           (lsp-workspace-semantic-smoke-query-complete? (& cold-query))
           (= cold-query.len 3)
           (lsp-workspace-semantic-smoke-fact-at?
             (& cold-query)
-            shared-path
+            (lsp.lsp-global-shared-view shared-path)
             compiler_semantic_index.CompilerSemanticRecordRole.Definition)
           (lsp-workspace-semantic-smoke-fact-at?
             (& cold-query)
-            open-path
+            (lsp.lsp-global-shared-view open-path)
             compiler_semantic_index.CompilerSemanticRecordRole.Use)
           (lsp-workspace-semantic-smoke-fact-at?
             (& cold-query)
-            closed-path
+            (lsp.lsp-global-shared-view closed-path)
             compiler_semantic_index.CompilerSemanticRecordRole.Use)
           (not
             (lsp-workspace-semantic-smoke-fact-at?
               (& cold-query)
-              noise-path
+              (lsp.lsp-global-shared-view noise-path)
               compiler_semantic_index.CompilerSemanticRecordRole.Definition))
-          (= warm-state.semantic-cache.source-checks 0)
+          (= warm-source-checks 0)
           (= warm-owners 4)
           (= warm-records cold-records)
           (lsp-workspace-semantic-smoke-query-complete? (& warm-query))
@@ -380,16 +399,16 @@
       [owners-before : i64
         (compiler_semantic_index.compiler-semantic-source-index-live-owner-count)]
       (match (compiler_semantic_index.compiler-check-source-index-with-roots-and-cfg
-        shared-path
-        shared-text
+        (lsp.lsp-global-shared-view shared-path)
+        (lsp.lsp-global-shared-view shared-text)
         (lsp_svec.new)
         (lsp.lsp-language-cfgs))
         [(compiler_semantic_index.ResultCompilerCheckWithSemanticIndex.Ok
             _
             shared-index)
           (match (compiler_semantic_index.compiler-check-source-index-with-roots-and-cfg
-            open-path
-            open-text
+            (lsp.lsp-global-shared-view open-path)
+            (lsp.lsp-global-shared-view open-text)
             (lsp_svec.new)
             (lsp.lsp-language-cfgs))
             [(compiler_semantic_index.ResultCompilerCheckWithSemanticIndex.Ok
@@ -448,22 +467,26 @@
           text
           false)]
       [cold-state : lsp_vector_families.LspServerState
-        (lsp.lsp-server-state-refresh-semantic-cache state roots)]
+        (lsp.lsp-server-state-refresh-semantic-cache
+          state
+          (lsp.lsp-global-shared-view roots))]
       [query : lsp.LspWorkspaceSemanticQuery
         (lsp.lsp-workspace-semantic-query
           (& cold-state)
-          roots
+          (lsp.lsp-global-shared-view roots)
           "missing-canonical-key")]
       [cold-owners : i64
         (lsp-workspace-semantic-test-retained-owners (& cold-state))]
       [cold-records : i64
         (lsp-workspace-semantic-test-retained-records (& cold-state))]
+      [cold-source-checks : i64 cold-state.semantic-cache.source-checks]
+      [cold-cache-len : i64 cold-state.semantic-cache.len]
       [final-state : lsp_vector_families.LspServerState
         (lsp.lsp-server-state-refresh-semantic-cache cold-state roots)]
       [ok : bool
         (and
-          (= cold-state.semantic-cache.source-checks 1)
-          (= cold-state.semantic-cache.len 1)
+          (= cold-source-checks 1)
+          (= cold-cache-len 1)
           (lsp-workspace-semantic-smoke-query-incomplete? (& query))
           (= query.len 0)
           (= final-state.semantic-cache.source-checks 0)
@@ -490,17 +513,16 @@
     [shared-text : String]
     [closed-path : String]
     [closed-text : String]
-    [shared-index
-      : compiler_semantic_index.CompilerSemanticSourceIndex
-      (:consume)]) : bool
+    [shared-index : compiler_semantic_index.CompilerSemanticSourceIndex]) : bool
     (let
-      [shared-uri : String (lsp.lsp-path-to-file-uri shared-path)]
+      [shared-uri : String
+        (lsp.lsp-path-to-file-uri (lsp.lsp-global-shared-view shared-path))]
       [docs : lsp_document_vec.Vec
         (lsp.lsp-semantic-smoke-install
           (lsp_document_vec.new)
           shared-uri
-          shared-path
-          shared-text
+          (lsp.lsp-global-shared-view shared-path)
+          (lsp.lsp-global-shared-view shared-text)
           7
           shared-index)]
       [empty-state : lsp_vector_families.LspServerState
@@ -515,18 +537,20 @@
       [overlay-state : lsp_vector_families.LspServerState
         (lsp-workspace-semantic-smoke-add-source-state
           document-state
-          shared-path
+          (lsp.lsp-global-shared-view shared-path)
           shared-text
           true)]
       [workspace-state : lsp_vector_families.LspServerState
         (lsp-workspace-semantic-smoke-add-source-state
           overlay-state
-          closed-path
+          (lsp.lsp-global-shared-view closed-path)
           closed-text
           false)]
       [roots : lsp_svec.Vec (lsp_svec.new)]
       [cold-state : lsp_vector_families.LspServerState
-        (lsp.lsp-server-state-refresh-semantic-cache workspace-state roots)]
+        (lsp.lsp-server-state-refresh-semantic-cache
+          workspace-state
+          (lsp.lsp-global-shared-view roots))]
       [doc : lsp_vector_families.LspDocument
         (lsp_document_vec.get
           (& cold-state.documents)
@@ -535,7 +559,7 @@
       [definition-index : i64
         (compiler_semantic_index.compiler-semantic-source-index-find-definition
           (& doc.semantic.index)
-          shared-path
+          (lsp.lsp-global-shared-view shared-path)
           "target-value")]
       [definition : compiler_semantic_index.CompilerSemanticRecord
         (compiler_semantic_index.compiler-semantic-source-index-get
@@ -546,7 +570,10 @@
           (& doc.semantic.index)
           (& definition))]
       [query : lsp.LspWorkspaceSemanticQuery
-        (lsp.lsp-workspace-semantic-query (& cold-state) roots canonical-key)]
+        (lsp.lsp-workspace-semantic-query
+          (& cold-state)
+          (lsp.lsp-global-shared-view roots)
+          canonical-key)]
       [negative : bool
         (if (= cold-state.semantic-cache.len 1)
           (not
@@ -556,13 +583,15 @@
           false)]
       [cold-owners : i64
         (lsp-workspace-semantic-test-retained-owners (& cold-state))]
+      [cold-source-checks : i64 cold-state.semantic-cache.source-checks]
+      [cold-cache-len : i64 cold-state.semantic-cache.len]
       [final-state : lsp_vector_families.LspServerState
         (lsp.lsp-server-state-refresh-semantic-cache cold-state roots)]
       [ok : bool
         (and
           (>= definition-index 0)
-          (= cold-state.semantic-cache.source-checks 1)
-          (= cold-state.semantic-cache.len 1)
+          (= cold-source-checks 1)
+          (= cold-cache-len 1)
           (= cold-owners 1)
           negative
           (lsp-workspace-semantic-smoke-query-incomplete? (& query))
@@ -599,8 +628,8 @@
       [owners-before : i64
         (compiler_semantic_index.compiler-semantic-source-index-live-owner-count)]
       (match (compiler_semantic_index.compiler-check-source-index-with-roots-and-cfg
-        shared-path
-        shared-text
+        (lsp.lsp-global-shared-view shared-path)
+        (lsp.lsp-global-shared-view shared-text)
         (lsp_svec.new)
         (lsp.lsp-language-cfgs))
         [(compiler_semantic_index.ResultCompilerCheckWithSemanticIndex.Ok

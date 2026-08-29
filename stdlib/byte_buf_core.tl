@@ -185,7 +185,9 @@
 (define (byte-buf-builder-append-string
   [buf : (&mut buf ByteBufBuilder)]
   [src : String]) : unit
-  (byte-buf-builder-append-string-range buf src 0 (string.string-length src)))
+  (let
+    [src-len : i64 (string.string-length (& src))]
+    (byte-buf-builder-append-string-range buf src 0 src-len)))
 
 ;: Copy a live byte range into private compatibility storage.
 (define (byte-buf-builder-copy-range

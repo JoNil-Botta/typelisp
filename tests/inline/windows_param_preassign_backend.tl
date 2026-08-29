@@ -187,34 +187,36 @@
       [(compiler_backend.ResultCompilerBackend.Ok asm)
         (and
           (compiler_backend.compiler-backend-string-contains?
-            asm
+            (compiler_backend.compiler-backend-global-shared-view asm)
             "#t _tl_f0 _tl_win_param_preassign\n")
-          (compiler_backend.compiler-backend-string-contains? asm "_tl_f0:\n")
+          (compiler_backend.compiler-backend-string-contains?
+            (compiler_backend.compiler-backend-global-shared-view asm)
+            "_tl_f0:\n")
           ;; Params a/b/d keep their incoming Win64 arg-register homes
           ;; (%rcx/%rdx/%r9) and are stored to their globals directly --
           ;; no stack spill.
           (compiler_backend.compiler-backend-string-contains?
-            asm
+            (compiler_backend.compiler-backend-global-shared-view asm)
             "    movq %rcx, _tl_win_pa(%rip)\n")
           (compiler_backend.compiler-backend-string-contains?
-            asm
+            (compiler_backend.compiler-backend-global-shared-view asm)
             "    movq %rdx, _tl_win_pb(%rip)\n")
           (compiler_backend.compiler-backend-string-contains?
-            asm
+            (compiler_backend.compiler-backend-global-shared-view asm)
             "    movq %r9, _tl_win_pd(%rip)\n")
           ;; Param c arrives in %r8, which doubles as the backend's fixed
           ;; emit scratch register, so it cannot stay there: it is
           ;; relocated to a callee-saved register (%r12) and stored from
           ;; there -- NOT stacked, and never stored directly out of %r8.
           (compiler_backend.compiler-backend-string-contains?
-            asm
+            (compiler_backend.compiler-backend-global-shared-view asm)
             "    movq %r8, %r12\n")
           (compiler_backend.compiler-backend-string-contains?
-            asm
+            (compiler_backend.compiler-backend-global-shared-view asm)
             "    movq %r12, _tl_win_pc(%rip)\n")
           (not
             (compiler_backend.compiler-backend-string-contains?
-              asm
+              (compiler_backend.compiler-backend-global-shared-view asm)
               "    movq %r8, _tl_win_pc(%rip)\n")))]
       [(compiler_backend.ResultCompilerBackend.Err _) false])))
 

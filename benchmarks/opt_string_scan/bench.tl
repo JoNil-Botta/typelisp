@@ -1,7 +1,7 @@
 (import stdlib.io)
 (import stdlib.string)
 
-(define (scan-once [text : String]) : i64
+(define (scan-once [text : (& text str)]) : i64
   (let
     [i : i64 0]
     [n : i64 (string.string-length text)]

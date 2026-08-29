@@ -298,7 +298,7 @@
     (begin
       (while (< len-index count)
         (let
-          [part : String (array-ref parts len-index)]
+          [part : (& parts str) (& (array-ref parts len-index))]
           (begin
             (set! total-len (+ total-len (__tl_string_length part)))
             (set! len-index (+ len-index 1)))))
@@ -309,12 +309,12 @@
         (begin
           (while (< copy-index count)
             (let
-              [part : String (array-ref parts copy-index)]
+              [part : (& parts str) (& (array-ref parts copy-index))]
               [len : i64 (__tl_string_length part)]
               (begin
                 (str-copy-bytes-into
                   (unsafe
-                    (string-data (& part)))
+                    (string-data part))
                   dst
                   off
                   len)

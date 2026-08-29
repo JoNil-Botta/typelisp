@@ -1,4 +1,5 @@
 (import stdlib.io)
+(import compiler_owned_view as owned_view)
 
 ;; FORCING TEST for T2-4 (SS-P5 / VG-P-B), pinned by
 ;; scripts/verify-asm-shape-gates.sh:check_select_flags_lea. Two rules:
@@ -138,16 +139,24 @@
     [_u2 : unit (set! (array-ref us 2) (cast 3 : u64))]
     [_u3 : unit (set! (array-ref us 3) (cast 7 : u64))]
     ;; min(1,5) + min(9,5) + min(3,5) + min(7,5) = 1 + 5 + 3 + 5 = 14
-    [mn : i64 (sfl-min-scan xs (+ v 3) 5)]
+    [mn : i64
+      (sfl-min-scan (owned_view.compiler-owned-shared-view xs) (+ v 3) 5)]
     ;; max(1,5) + max(9,5) + max(3,5) + max(7,5) = 5 + 9 + 5 + 7 = 26
-    [mx : i64 (sfl-max-scan xs (+ v 3) 5)]
+    [mx : i64
+      (sfl-max-scan (owned_view.compiler-owned-shared-view xs) (+ v 3) 5)]
     [umn : u64 (sfl-umin-scan us (+ v 3) (cast 5 : u64))]
     [src : (__tl_dyn-array u8) (__tl_make-array u8 8)]
     [dst : (__tl_dyn-array u8) (__tl_make-array u8 8)]
     [_s0 : unit (set! (array-ref src 2) (cast 11 : u8))]
     [_s1 : unit (set! (array-ref src 3) (cast 22 : u8))]
     [_s2 : unit (set! (array-ref src 4) (cast 33 : u8))]
-    [_copy : unit (sfl-copy dst (+ v 0) src (+ v 1) (+ v 2))]
+    [_copy : unit
+      (sfl-copy
+        (owned_view.compiler-owned-shared-view dst)
+        (+ v 0)
+        src
+        (+ v 1)
+        (+ v 2))]
     ;; dst[1] = src[2] = 11, dst[2] = src[3] = 22, dst[3] = src[4] = 33
     [copied : i64
       (+

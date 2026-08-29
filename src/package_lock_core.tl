@@ -3,6 +3,7 @@
 ;; This module models the lockfile data needed after remote package pins are
 ;; resolved. It parses and emits `typelisp.lock` S-expressions only; build-time
 ;; fetch/replay behavior remains owned by the package build pipeline.
+(import compiler_owned_view as owned_view)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.io)
 (import stdlib.string)
@@ -90,8 +91,14 @@
     (begin
       (while (and (not done) (< idx limit))
         (let
-          [lc : i64 (package-lock-char-code-at left idx)]
-          [rc : i64 (package-lock-char-code-at right idx)]
+          [lc : i64
+            (package-lock-char-code-at
+              (owned_view.compiler-owned-shared-view left)
+              idx)]
+          [rc : i64
+            (package-lock-char-code-at
+              (owned_view.compiler-owned-shared-view right)
+              idx)]
           (if (= lc rc)
             (set! idx (+ idx 1))
             (begin
@@ -163,7 +170,9 @@
           (package-lock-entry-list-fallback))]
       (if (string.eq head.alias alias)
         -1
-        (if (package-lock-string-less? alias head.alias)
+        (if (package-lock-string-less?
+          (owned_view.compiler-owned-shared-view alias)
+          head.alias)
           index
           (package-lock-entry-list-insert-position entries alias (+ index 1)))))))
 
@@ -191,12 +200,16 @@
         (package_lock_entry_vec.set-ref! entries index entry)))))
 
 (define (package-lock-entry-list-insert
-  [entries : package_lock_entry_vec.Vec (:consume)]
+  [entries : package_lock_entry_vec.Vec]
   [entry : PackageLockEntry]) : ResultPackageLockEntryList
   (let
-    [next : package_lock_entry_vec.Vec entries]
+    [next : package_lock_entry_vec.Vec
+      (package-lock-global-shared-view entries)]
     [index : i64
-      (package-lock-entry-list-insert-position (& next) entry.alias 0)]
+      (package-lock-entry-list-insert-position
+        (& next)
+        (owned_view.compiler-owned-shared-view entry.alias)
+        0)]
     (if (< index 0)
       (ResultPackageLockEntryList.Err
         (str_cat.str-cat
@@ -320,7 +333,9 @@
         [(string.eq alias "")
           (ResultPackageLockEntry.Err
             "package-lock: dependency alias must not be empty")]
-        [(not (package-lock-alias-token-valid? alias))
+        [(not
+            (package-lock-alias-token-valid?
+              (owned_view.compiler-owned-shared-view alias)))
           (ResultPackageLockEntry.Err
             "package-lock: dependency alias may only contain ASCII letters, digits, '-' and '_'")]
         [(string.eq url "")
@@ -590,13 +605,51 @@
       (while (< i n)
         (begin
           (let
-            [code : i64 (package-lock-char-code-at text i)]
+            [code : i64
+              (package-lock-char-code-at
+                (owned_view.compiler-owned-shared-view text)
+                i)]
             (cond
-              [(= code 34) (set! out (str_cat.str-cat out slash quote ""))]
-              [(= code 92) (set! out (str_cat.str-cat out slash slash ""))]
-              [(= code 10) (set! out (str_cat.str-cat out slash "n" ""))]
-              [(= code 9) (set! out (str_cat.str-cat out slash "t" ""))]
-              [(= code 13) (set! out (str_cat.str-cat out slash "r" ""))]
+              [(= code 34)
+                (set!
+                  out
+                  (str_cat.str-cat
+                    out
+                    (owned_view.compiler-owned-shared-view slash)
+                    (owned_view.compiler-owned-shared-view quote)
+                    ""))]
+              [(= code 92)
+                (set!
+                  out
+                  (str_cat.str-cat
+                    out
+                    (owned_view.compiler-owned-shared-view slash)
+                    (owned_view.compiler-owned-shared-view slash)
+                    ""))]
+              [(= code 10)
+                (set!
+                  out
+                  (str_cat.str-cat
+                    out
+                    (owned_view.compiler-owned-shared-view slash)
+                    "n"
+                    ""))]
+              [(= code 9)
+                (set!
+                  out
+                  (str_cat.str-cat
+                    out
+                    (owned_view.compiler-owned-shared-view slash)
+                    "t"
+                    ""))]
+              [(= code 13)
+                (set!
+                  out
+                  (str_cat.str-cat
+                    out
+                    (owned_view.compiler-owned-shared-view slash)
+                    "r"
+                    ""))]
               [else
                 (set! out (str_cat.str-cat out (string.substring text i 1) ""))]))
           (set! i (+ i 1))))
@@ -695,7 +748,9 @@
   [kind : package_cache_core.PackageCachePinKind]
   [pin-value : String]
   [commit : String]) : bool
-  (match (package-lock-entry-list-lookup entries alias)
+  (match (package-lock-entry-list-lookup
+    entries
+    (owned_view.compiler-owned-shared-view alias))
     [(PackageLockMaybeEntry.No) false]
     [(PackageLockMaybeEntry.Some entry)
       (package-lock-entry-matches? entry alias url kind pin-value commit)]))
@@ -710,7 +765,7 @@
           (string.eq lock.version package-lock-version)
           (= (package_lock_entry_vec.len (& entries)) 2)
           (package-lock-list-has-entry?
-            entries
+            (owned_view.compiler-owned-shared-view entries)
             "alpha"
             "https://github.com/owner/alpha.git"
             (package_cache_core.PackageCachePinKind.Branch)
@@ -742,7 +797,7 @@
             (and
               (= (package_lock_entry_vec.len (& entries)) 2)
               (package-lock-list-has-entry?
-                entries
+                (owned_view.compiler-owned-shared-view entries)
                 "alpha"
                 "https://github.com/owner/alpha.git"
                 (package_cache_core.PackageCachePinKind.Branch)

@@ -59,8 +59,8 @@
 ;; candidates) and a two-word token store, in a body that carries the cloned
 ;; calls.
 (define (gfo-scan
-  [src : (__tl_dyn-array u8)]
-  [out : (__tl_dyn-array GfoTok)]
+  [src : (& src (__tl_dyn-array u8))]
+  [out : (&mut out (__tl_dyn-array GfoTok))]
   [n : i64]
   [seed : i64]) : i64
   (let
@@ -86,8 +86,8 @@
 
 ;; The same arithmetic with no call in it, so nothing is cloned into it.
 (define (gfo-scan-fused
-  [src : (__tl_dyn-array u8)]
-  [out : (__tl_dyn-array GfoTok)]
+  [src : (& src (__tl_dyn-array u8))]
+  [out : (&mut out (__tl_dyn-array GfoTok))]
   [n : i64]
   [seed : i64]) : i64
   (let
@@ -127,7 +127,7 @@
 
 ;; A runtime-filled source: the optimizer does not constant-fold loads out of a
 ;; dynamically allocated array, so both scanners really run.
-(define (gfo-fill [src : (__tl_dyn-array u8)] [n : i64] [step : i64]) : unit
+(define (gfo-fill [src : (&mut src (__tl_dyn-array u8))] [n : i64] [step : i64]) : unit
   (let
     [i : i64 0]
     [x : i64 step]
@@ -138,8 +138,8 @@
         (set! i (+ i 1))))))
 
 (define (gfo-tokens-agree?
-  [a : (__tl_dyn-array GfoTok)]
-  [b : (__tl_dyn-array GfoTok)]
+  [a : (& a (__tl_dyn-array GfoTok))]
+  [b : (& b (__tl_dyn-array GfoTok))]
   [n : i64]) : bool
   (let
     [i : i64 0]
@@ -164,11 +164,11 @@
     [cloned : i64 0]
     [fused : i64 0]
     (begin
-      (gfo-fill src n 3)
-      (set! cloned (gfo-scan src cloned-toks n 1))
-      (set! fused (gfo-scan-fused src fused-toks n 1))
+      (gfo-fill (&mut src) n 3)
+      (set! cloned (gfo-scan (& src) (&mut cloned-toks) n 1))
+      (set! fused (gfo-scan-fused (& src) (&mut fused-toks) n 1))
       (if (and
         (= cloned fused)
-        (gfo-tokens-agree? cloned-toks fused-toks (- n 3)))
+        (gfo-tokens-agree? (& cloned-toks) (& fused-toks) (- n 3)))
         42
         1))))

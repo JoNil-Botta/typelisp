@@ -5,18 +5,20 @@
 (import doc_html)
 
 (define (bridge-doc-string-prefix-at?
-  [text : String]
-  [prefix : String]
+  [text : (& text str)]
+  [prefix : (& prefix str)]
   [offset : i64]) : bool
   (doc_extract.doc-string-prefix-at? text prefix offset))
 
-(define (bridge-doc-string-contains? [text : String] [needle : String]) : bool
+(define (bridge-doc-string-contains?
+  [text : (& text str)]
+  [needle : (& needle str)]) : bool
   (doc_extract.doc-string-contains? text needle))
 
-(define (bridge-doc-render-anchor [text : String]) : String
+(define (bridge-doc-render-anchor [text : (& text str)]) : String
   (doc_render.doc-render-anchor text))
 
-(define (bridge-doc-html-escape [text : String]) : String
+(define (bridge-doc-html-escape [text : (& text str)]) : String
   (doc_html.doc-html-escape text))
 
 (define (bridge-doc-html-page-open [title : String]) : String
@@ -35,7 +37,7 @@
   (doc_html.doc-html-code-block-with-info language meta source))
 
 (define (bridge-doc-html-require-contains
-  [rendered : String]
+  [rendered : (& rendered str)]
   [needle : String]
   [message : String]) : bool
   (doc_html.doc-html-require-contains rendered needle message))

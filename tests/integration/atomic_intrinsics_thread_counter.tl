@@ -5,9 +5,9 @@
 (define atomic-counter-iterations : i64
   128)
 
-(define (atomic-counter-array-i64-addr [items : (__tl_dyn-array i64)]) : i64
-  (unsafe
-    (cast (ptr->int (ptr-cast (__tl_array-data items) : (Ptr u8))) : i64)))
+(defmacro (atomic-counter-array-i64-addr [items : Expr]) : i64
+  `(unsafe
+    (cast (ptr->int (ptr-cast (__tl_array-data ,items) : (Ptr u8))) : i64)))
 
 (define (atomic-counter-addr->mut-i64 [addr : i64]) : (MutPtr i64)
   (unsafe
@@ -21,7 +21,7 @@
         : (Ptr i64)))))
 
 (define (atomic-counter-write-slot!
-  [ctx : (__tl_dyn-array i64)]
+  [ctx : (&mut ctx (__tl_dyn-array i64))]
   [slot : i64]
   [value : i64]) : unit
   (set! (array-ref ctx slot) value))
@@ -71,10 +71,10 @@
     [counter-addr : i64 (atomic-counter-array-i64-addr counter)]
     (begin
       (set! (array-ref counter 0) 0)
-      (atomic-counter-write-slot! ctx-a 0 counter-addr)
-      (atomic-counter-write-slot! ctx-a 1 atomic-counter-iterations)
-      (atomic-counter-write-slot! ctx-b 0 counter-addr)
-      (atomic-counter-write-slot! ctx-b 1 atomic-counter-iterations)
+      (atomic-counter-write-slot! (&mut ctx-a) 0 counter-addr)
+      (atomic-counter-write-slot! (&mut ctx-a) 1 atomic-counter-iterations)
+      (atomic-counter-write-slot! (&mut ctx-b) 0 counter-addr)
+      (atomic-counter-write-slot! (&mut ctx-b) 1 atomic-counter-iterations)
       (match (thread.spawn
         atomic-counter-worker
         (atomic-counter-array-i64-addr ctx-a))

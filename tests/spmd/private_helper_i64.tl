@@ -5,10 +5,10 @@
 (define (heavy [x : i64]) : i64
   (+ (+ (+ (+ (+ (+ (+ (inner-heavy x) 1) 2) 3) 4) 5) 6) 7))
 
-(define (fill [out : (__tl_dyn-array i64)] [n : i64]) : unit
+(define (fill [out : (&mut out (__tl_dyn-array i64))] [n : i64]) : unit
   (foreach ([i : i64 0 n]) (set! (array-ref out i) (heavy i))))
 
-(define (sum-array [xs : (__tl_dyn-array i64)] [n : i64]) : i64
+(define (sum-array [xs : (& xs (__tl_dyn-array i64))] [n : i64]) : i64
   (let
     [i : i64 0]
     [sum : i64 0]
@@ -24,7 +24,7 @@
     [n : i64 13]
     [out : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     (begin
-      (fill out n)
-      (if (= (sum-array out n) 806)
+      (fill (&mut out) n)
+      (if (= (sum-array (& out) n) 806)
         42
         1))))

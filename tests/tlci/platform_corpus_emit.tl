@@ -53,7 +53,7 @@
         1)]
     [(tlci_core.ResultTlciBytes.Ok bytes)
       (let
-        [_unknown-platform : unit (tlci_core.tlci-set-u64! bytes 16 99)]
+        [_unknown-platform : unit (tlci_core.tlci-set-u64! (&mut bytes) 16 99)]
         [contents : byte_buf.ByteBuf (byte_buf.from-array bytes)]
         (begin
           (io.write-file path (byte_buf.as-bytes (& contents)))

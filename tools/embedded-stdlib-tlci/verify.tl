@@ -37,9 +37,11 @@
 
 (define (embedded-verify-payload-exact-and-bounded?) : bool
   (let
+    [raw : (__tl_dyn-array u8)
+      (embedded-verify-global-shared-view embedded-verify-raw-image)]
     [expanded : (__tl_dyn-array u8)
       (compiler_embedded_stdlib_tlci.compiler-embedded-stdlib-tlci-copy)]
-    [raw-len : i64 (array-length embedded-verify-raw-image)]
+    [raw-len : i64 (array-length raw)]
     [compressed-len : i64
       (array-length compressed_payload.embedded-stdlib-tlci-bytes)]
     (begin
@@ -54,9 +56,7 @@
         (> raw-len 0)
         (> compressed-len 0)
         (<= (* compressed-len 100) (* raw-len 40))
-        (tlci_core.tlci-bytes-eq?
-          (embedded-verify-global-shared-view embedded-verify-raw-image)
-          expanded)))))
+        (tlci_core.tlci-bytes-eq? (& raw) (& expanded))))))
 
 ;; The expansion carries the template's `Spanned` wrappers, the way the
 ;; interpreted quote leaves them, so the shape probe reads through them.
@@ -66,7 +66,7 @@
   (let
     [expr : compiler_ast_types.AstExpr
       (compiler_ast_types.ast-node-pool-context-expr-get pools node)]
-    (match expr
+    (match (clone expr)
       [(compiler_ast_types.AstExpr.Spanned inner _)
         (embedded-verify-expr-get pools inner)]
       [_ expr])))
@@ -79,7 +79,7 @@
   (compiler_ast_types.ast-expr-spanned-with-pools
     pools
     (compiler_ast_types.ast-node-pool-context-expr-push
-      pools
+      (compiler_ast_types.ast-node-pool-context-shared-view (& pools))
       (compiler_ast_types.AstExpr.Var (ci.intern "xs")))
     (compiler_ast_types.ast-source-span 900 7 900 9)))
 
@@ -88,7 +88,9 @@
   [operand-node : i64]) : bool
   (match (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-value)
     [(compiler_ctfe.CompilerCtfeValue.Expr node _)
-      (match (embedded-verify-expr-get pools node)
+      (match (embedded-verify-expr-get
+        (compiler_ast_types.ast-node-pool-context-shared-view (& pools))
+        node)
         [(compiler_ast_types.AstExpr.BoxGet inner) (= inner operand-node)]
         [_ false])]
     [_ false]))
@@ -103,7 +105,9 @@
       (let
         [pools : compiler_ast_types.AstNodePoolContext
           (compiler_ast_types.ast-node-pool-context-capture-active)]
-        [operand-node : i64 (embedded-verify-operand-node pools)]
+        [operand-node : i64
+          (embedded-verify-operand-node
+            (compiler_ast_types.ast-node-pool-context-shared-view (& pools)))]
         [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
           (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
         (begin
@@ -113,7 +117,7 @@
               operand-node
               (compiler_ast_types.AstType.Expr)))
           (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
-            pools
+            (compiler_ast_types.ast-node-pool-context-shared-view (& pools))
             operands
             1
             32
@@ -152,7 +156,9 @@
       (let
         [pools : compiler_ast_types.AstNodePoolContext
           (compiler_ast_types.ast-node-pool-context-capture-active)]
-        [operand-node : i64 (embedded-verify-operand-node pools)]
+        [operand-node : i64
+          (embedded-verify-operand-node
+            (compiler_ast_types.ast-node-pool-context-shared-view (& pools)))]
         [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
           (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
         (begin
@@ -198,7 +204,7 @@
         1)]
     [(compiler_embedded_stdlib_tlci.CompilerEmbeddedStdlibTlciValidation.Ok
         count)
-      (if (= count 116)
+      (if (= count 135)
         (if (and
           (embedded-verify-payload-exact-and-bounded?)
           (embedded-verify-native-array-length-ok?)
@@ -218,6 +224,6 @@
         (begin
           (io.print-error
             (str_cat.str-cat
-              "embedded stdlib tlci macro count mismatch: expected 116, got "
+              "embedded stdlib tlci macro count mismatch: expected 135, got "
               (string.int->string count)))
           2))]))

@@ -1,7 +1,10 @@
 (import stdlib.io)
 (import stdlib.string)
 
-(define (string-ops-round [text : String] [suffix : String] [span : i64]) : i64
+(define (string-ops-round
+  [text : (& text str)]
+  [suffix : (& suffix str)]
+  [span : i64]) : i64
   (let
     [n : i64 (string.string-length text)]
     [empty : String (string.substring text 0 0)]

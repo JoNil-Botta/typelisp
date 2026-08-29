@@ -25,11 +25,11 @@
         (IntVec (__tl_make-array i64 c) 0 c)))
     (define (int-vec-new) : IntVec
       (int-vec-with-capacity 4))
-    (define (int-vec-len [v : IntVec]) : i64
+    (define (int-vec-len [v : (& v IntVec)]) : i64
       v.len)
-    (define (int-vec-capacity [v : IntVec]) : i64
+    (define (int-vec-capacity [v : (& v IntVec)]) : i64
       v.cap)
-    (define (int-vec-get [v : IntVec] [index : i64]) : i64
+    (define (int-vec-get [v : (& v IntVec)] [index : i64]) : i64
       (array-ref v.slots index))
     (define (int-vec-set [v : IntVec] [index : i64] [value : i64]) : IntVec
       (begin

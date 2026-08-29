@@ -37,6 +37,8 @@
 ;; the other side of that floor, one trip away. A missed rewrite is still
 ;; correct code, so only the shape gate can see those; `main` checks they all
 ;; still compute the right answers.
+(import compiler_owned_view as owned_view)
+
 (define words : i64
   40)
 
@@ -192,29 +194,35 @@
       ;; Disjoint copy: the plain case, over an element count that is not a
       ;; multiple of four so an unrolled remainder would also have to run.
       (fill (&mut b) 500 words)
-      (copy-words a b words)
+      (copy-words
+        (owned_view.compiler-owned-shared-view a)
+        (owned_view.compiler-owned-shared-view b)
+        words)
       (unless (= (array-ref a 0) 500) (return 1))
       (unless (= (array-ref a 39) 539) (return 2))
       ;; PROPAGATION. `a[1..words]` must all hold the original `a[0]`; a
       ;; backward copy would leave them holding the original `a[k]`.
       (fill (&mut a) 900 (+ words 1))
-      (shift-up a words)
+      (shift-up (owned_view.compiler-owned-shared-view a) words)
       (unless (= (array-ref a 0) 900) (return 3))
       (unless (all-equal? (& a) 1 (+ words 1) 900) (return 4))
       ;; The other direction is the ordinary shift.
       (fill (&mut a) 300 (+ words 1))
-      (shift-down a words)
+      (shift-down (owned_view.compiler-owned-shared-view a) words)
       (unless (shifted-down? (& a) words 300) (return 5))
       (unless (= (array-ref a words) (+ 300 words)) (return 6))
       ;; One trip and zero trips, where the rotated body runs before any compare.
       (fill (&mut a) 700 (+ words 1))
-      (shift-up a 1)
+      (shift-up (owned_view.compiler-owned-shared-view a) 1)
       (unless (= (array-ref a 1) 700) (return 7))
       (unless (= (array-ref a 2) 702) (return 8))
       (fill (&mut a) 700 (+ words 1))
-      (shift-up a 0)
+      (shift-up (owned_view.compiler-owned-shared-view a) 0)
       (unless (= (array-ref a 1) 701) (return 9))
-      (copy-words a b 0)
+      (copy-words
+        (owned_view.compiler-owned-shared-view a)
+        (owned_view.compiler-owned-shared-view b)
+        0)
       (unless (= (array-ref a 0) 700) (return 10))
       ;; Fixed-size copies on both sides of the slot floor.
       (set! i 0)
@@ -252,10 +260,16 @@
           (set! (array-ref hb i) (cast (+ 60 i) : u32))
           (set! (array-ref bb i) (cast (+ 3 i) : u8))
           (set! i (+ i 1))))
-      (copy-halfwords ha hb words)
+      (copy-halfwords
+        (owned_view.compiler-owned-shared-view ha)
+        (owned_view.compiler-owned-shared-view hb)
+        words)
       (unless (= (cast (array-ref ha 0) : i64) 60) (return 17))
       (unless (= (cast (array-ref ha 39) : i64) 99) (return 18))
-      (copy-bytes ba bb words)
+      (copy-bytes
+        (owned_view.compiler-owned-shared-view ba)
+        (owned_view.compiler-owned-shared-view bb)
+        words)
       (unless (= (cast (array-ref ba 0) : i64) 3) (return 19))
       (unless (= (cast (array-ref ba 39) : i64) 42) (return 20))
       42)))

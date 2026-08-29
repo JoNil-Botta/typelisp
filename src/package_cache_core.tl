@@ -5,6 +5,7 @@
 ;; partial/corrupt. It does not fetch, resolve tag/branch pins, or update
 ;; lockfiles itself; build_cli_core.tl consumes these helpers for package build
 ;; cache reuse/refetch and lockfile integration.
+(import compiler_owned_view as owned_view)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.fs)
 (import stdlib.byte_buf)
@@ -105,14 +106,22 @@
 (define (package-cache-parse-normalized-remote [dep : String]) : ResultPackageCacheRemoteSpec
   (let
     [n : i64 (string.string-length dep)]
-    [hash : i64 (package-cache-find-code-from dep 35 0)]
+    [hash : i64
+      (package-cache-find-code-from
+        (owned_view.compiler-owned-shared-view dep)
+        35
+        0)]
     (if (or (<= hash 0) (>= hash (- n 1)))
       (ResultPackageCacheRemoteSpec.Err
         "package-cache: remote dependency must be URL#rev|tag|branch=value")
       (let
         [url : String (string.substring dep 0 hash)]
         [fragment : String (string.substring dep (+ hash 1) (- n (+ hash 1)))]
-        [eq : i64 (package-cache-find-code-from fragment 61 0)]
+        [eq : i64
+          (package-cache-find-code-from
+            (owned_view.compiler-owned-shared-view fragment)
+            61
+            0)]
         [fragment-len : i64 (string.string-length fragment)]
         (if (or (<= eq 0) (>= eq (- fragment-len 1)))
           (ResultPackageCacheRemoteSpec.Err
@@ -496,7 +505,8 @@
     [dep-a : String "https://github.com/owner/repo.git#rev=abc123"]
     [dep-b : String "https://github.com/owner/repo.git#rev=def456"]
     [dep-c : String "https://github.com/owner/other.git#rev=abc123"]
-    [key-a : PackageCacheKey (package-cache-expect-key dep-a)]
+    [key-a : PackageCacheKey
+      (package-cache-expect-key (owned_view.compiler-owned-shared-view dep-a))]
     [key-b : PackageCacheKey (package-cache-expect-key dep-b)]
     [key-c : PackageCacheKey (package-cache-expect-key dep-c)]
     [dot-key : PackageCacheKey
@@ -512,7 +522,7 @@
     [stage-a-again : String (package-cache-staging-path root (& key-a) 7)]
     (and
       (package-cache-parse-ok?
-        dep-a
+        (owned_view.compiler-owned-shared-view dep-a)
         "https://github.com/owner/repo.git"
         (PackageCachePinKind.Rev)
         "abc123")

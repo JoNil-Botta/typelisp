@@ -29,11 +29,14 @@
 # catalog addition to hide one. Issue #6645 removes stdlib.io's duplicate
 # format-with transformer after moving the canonical implementation to
 # stdlib.format, shrinking the catalog to 107 without reintroducing any
-# fallback route. The fixed-array core migration then removes the four
-# compatibility-module macros, leaving 103 fully native entries. Issue #6650
-# adds the direct format sink macro family and its streaming plan helpers,
-# growing the fully native catalog to 116 entries.
-native-entries-min 116
+# fallback route. Issue #6215 grows the catalog to 126 for ordinary by-value
+# ownership. Native array, pointer-address, integer-pointer, computed-if, and
+# captured type-unquote construction keep every new shared-view/iteration
+# transformer off the shell route. The fixed-array core migration removes the
+# four compatibility-module macros, leaving 122 fully native entries. Issue
+# #6650 adds the direct format sink macro family and its streaming plan helpers;
+# composed with the ownership catalog, all 135 entries remain fully native.
+native-entries-min 135
 shell-entries-max 0
 partial-entries-max 0
 interpreted-arms-max 0

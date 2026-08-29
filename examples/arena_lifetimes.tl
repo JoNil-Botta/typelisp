@@ -139,11 +139,6 @@
               (arena.destroy-safe! frame-b)
               total)))))))
 
-(define (arena-lifetimes-join-i64 [worker : thread-i64.Handle]) : i64
-  (match (thread-i64.join worker)
-    [(thread-i64.I64JoinOk value) value]
-    [(thread-i64.I64JoinErr _) -1]))
-
 (define (run-event-driven-unload) : i64
   (let
     [level : arena.Arena (arena.make-atomic)]
@@ -153,9 +148,12 @@
       (lambda () : i64
         (string.string-length (& worker-level-name))))
       [(thread-i64.I64SpawnErr _) 1]
-      [(thread-i64.I64SpawnOk worker)
+      [(thread-i64.I64SpawnOk (thread-i64.Handle worker))
         (let
-          [worker-score : i64 (arena-lifetimes-join-i64 worker)]
+          [worker-score : i64
+            (match (thread.join worker)
+              [(thread.ThreadJoinOk value) value]
+              [(thread.ThreadJoinErr _) -1])]
           [name-score : i64 (string.string-length (& level-name))]
           (begin
             (arena.destroy-safe! level)

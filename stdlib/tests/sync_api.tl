@@ -32,7 +32,7 @@
     [packed : (__tl_dyn-array i64)
       (__tl_make-array i64 (channel_i64.raw-field-count))]
     (begin
-      (channel_i64.store-raw! channel packed 0)
+      (channel_i64.store-raw! channel (&mut packed) 0)
       (let
         [loaded : channel_i64.Channel (channel_i64.load-raw packed 0)]
         [send-a : bool (channel_i64.send-value-ok? loaded 11)]
@@ -63,7 +63,7 @@
     [packed : (__tl_dyn-array i64)
       (__tl_make-array i64 sync.channel-i64-pair-raw-field-count)]
     (begin
-      (sync.channel-i64-pair-store-raw! channel packed 0)
+      (sync.channel-i64-pair-store-raw! channel (&mut packed) 0)
       (let
         [loaded : sync.ChannelI64PairChannel
           (sync.channel-i64-pair-load-raw packed 0)]
@@ -97,7 +97,7 @@
     [packed : (__tl_dyn-array i64)
       (__tl_make-array i64 sync.channel-string-raw-field-count)]
     (begin
-      (sync.channel-string-store-raw! channel packed 0)
+      (sync.channel-string-store-raw! channel (&mut packed) 0)
       (let
         [loaded : sync.ChannelString (sync.channel-string-load-raw packed 0)]
         [send-a : bool
@@ -137,7 +137,7 @@
     [packed : (__tl_dyn-array i64)
       (__tl_make-array i64 (mutex_i64.raw-field-count))]
     (begin
-      (mutex_i64.store-raw! mutex packed 0)
+      (mutex_i64.store-raw! mutex (&mut packed) 0)
       (let
         [loaded : mutex_i64.Mutex (mutex_i64.load-raw packed 0)]
         [first : i64

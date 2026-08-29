@@ -26,8 +26,8 @@
 ;; an ODD element count, so the unrolled fast body AND its remainder both run.
 ;; --- admitted: three ALU ops, each a pure word merge ------------------------
 (define (merge-or
-  [a : (__tl_dyn-array i64)]
-  [b : (__tl_dyn-array i64)]
+  [a : (&mut a (__tl_dyn-array i64))]
+  [b : (& b (__tl_dyn-array i64))]
   [n : i64]) : unit
   (let
     [i : i64 0]
@@ -37,8 +37,8 @@
         (set! i (+ i 1))))))
 
 (define (merge-and
-  [a : (__tl_dyn-array i64)]
-  [b : (__tl_dyn-array i64)]
+  [a : (&mut a (__tl_dyn-array i64))]
+  [b : (& b (__tl_dyn-array i64))]
   [n : i64]) : unit
   (let
     [i : i64 0]
@@ -48,8 +48,8 @@
         (set! i (+ i 1))))))
 
 (define (merge-add
-  [a : (__tl_dyn-array i64)]
-  [b : (__tl_dyn-array i64)]
+  [a : (&mut a (__tl_dyn-array i64))]
+  [b : (& b (__tl_dyn-array i64))]
   [n : i64]) : unit
   (let
     [i : i64 0]
@@ -60,7 +60,7 @@
 
 ;; The one-instruction form: the other operand is a loop-invariant register, so
 ;; no staging load is needed at all.
-(define (merge-reg [a : (__tl_dyn-array i64)] [mask : i64] [n : i64]) : unit
+(define (merge-reg [a : (&mut a (__tl_dyn-array i64))] [mask : i64] [n : i64]) : unit
   (let
     [i : i64 0]
     (while (< i n)
@@ -72,8 +72,8 @@
 ;; The store address is `i + 1`, not `i`: the loaded word and the stored word
 ;; are different memory, so there is no read-modify-write to fold.
 (define (merge-shifted
-  [a : (__tl_dyn-array i64)]
-  [b : (__tl_dyn-array i64)]
+  [a : (&mut a (__tl_dyn-array i64))]
+  [b : (& b (__tl_dyn-array i64))]
   [n : i64]) : unit
   (let
     [i : i64 0]
@@ -85,9 +85,9 @@
 ;; The loaded element is read TWICE -- once by the merge and once by the write
 ;; to `c` -- so the fold may not retire it and its home stays load-bearing.
 (define (merge-reused
-  [a : (__tl_dyn-array i64)]
-  [b : (__tl_dyn-array i64)]
-  [c : (__tl_dyn-array i64)]
+  [a : (&mut a (__tl_dyn-array i64))]
+  [b : (& b (__tl_dyn-array i64))]
+  [c : (&mut c (__tl_dyn-array i64))]
   [n : i64]) : unit
   (let
     [i : i64 0]
@@ -102,9 +102,9 @@
 ;; Another store lands between the load and the store-back, so the window is no
 ;; longer a read-modify-write of one address and the fold must decline.
 (define (merge-interposed
-  [a : (__tl_dyn-array i64)]
-  [b : (__tl_dyn-array i64)]
-  [c : (__tl_dyn-array i64)]
+  [a : (&mut a (__tl_dyn-array i64))]
+  [b : (& b (__tl_dyn-array i64))]
+  [c : (&mut c (__tl_dyn-array i64))]
   [n : i64]) : unit
   (let
     [i : i64 0]
@@ -118,8 +118,8 @@
 
 ;; Byte-wide merge: the same source shape at a width the fold refuses.
 (define (merge-bytes
-  [a : (__tl_dyn-array u8)]
-  [b : (__tl_dyn-array u8)]
+  [a : (&mut a (__tl_dyn-array u8))]
+  [b : (& b (__tl_dyn-array u8))]
   [n : i64]) : unit
   (let
     [i : i64 0]
@@ -135,8 +135,8 @@
 ;; so the unroll tier refuses it and the load-and-store class keeps it at K=2.
 ;; The two mechanisms are independent and this kernel is where that is pinned.
 (define (merge-mixed
-  [a : (__tl_dyn-array i64)]
-  [tags : (__tl_dyn-array u32)]
+  [a : (&mut a (__tl_dyn-array i64))]
+  [tags : (&mut tags (__tl_dyn-array u32))]
   [n : i64]) : unit
   (let
     [i : i64 0]
@@ -227,28 +227,28 @@
       ;; its remainder iteration both execute on every call.
       (fill (&mut a) 100)
       (fill (&mut b) 7)
-      (merge-or a b words)
+      (merge-or (&mut a) (& b) words)
       (unless (= (checksum (& a)) (expect-or)) (return 1))
       (fill (&mut a) 100)
-      (merge-and a b words)
+      (merge-and (&mut a) (& b) words)
       (unless (= (checksum (& a)) (expect-and)) (return 2))
       (fill (&mut a) 100)
-      (merge-add a b words)
+      (merge-add (&mut a) (& b) words)
       (unless (= (checksum (& a)) (expect-add)) (return 3))
       (fill (&mut a) 100)
-      (merge-reg a 48 words)
+      (merge-reg (&mut a) 48 words)
       (unless (= (checksum (& a)) (expect-reg)) (return 4))
       ;; Refused neighbours must still compute the same answers they always did.
       (fill (&mut a) 100)
-      (merge-shifted a b words)
+      (merge-shifted (&mut a) (& b) words)
       (unless (= (array-ref a 1) (bit-or 100 7)) (return 5))
       (unless (= (array-ref a 0) 100) (return 6))
       (fill (&mut a) 100)
-      (merge-reused a b c words)
+      (merge-reused (&mut a) (& b) (&mut c) words)
       (unless (= (checksum (& a)) (expect-or)) (return 7))
       (unless (= (array-ref c 3) 103) (return 8))
       (fill (&mut a) 100)
-      (merge-interposed a b c words)
+      (merge-interposed (&mut a) (& b) (&mut c) words)
       (unless (= (checksum (& a)) (expect-or)) (return 9))
       (unless (= (array-ref c 3) 7) (return 10))
       (set! i 0)
@@ -257,7 +257,7 @@
           (set! (array-ref ba i) (cast (+ 16 i) : u8))
           (set! (array-ref bb i) (cast (+ 3 i) : u8))
           (set! i (+ i 1))))
-      (merge-bytes ba bb words)
+      (merge-bytes (&mut ba) (& bb) words)
       (unless (= (cast (array-ref ba 0) : i64) (bit-or 16 3)) (return 11))
       (unless (= (cast (array-ref ba 8) : i64) (bit-or 24 11)) (return 12))
       (fill (&mut a) 100)
@@ -266,7 +266,7 @@
         (begin
           (set! (array-ref tags i) (cast (* i 8) : u32))
           (set! i (+ i 1))))
-      (merge-mixed a tags words)
+      (merge-mixed (&mut a) (&mut tags) words)
       (unless (= (array-ref a 0) (bit-or 100 1)) (return 16))
       (unless (= (array-ref a 8) (bit-or 108 1)) (return 17))
       (unless (= (cast (array-ref tags 0) : i64) 2) (return 18))
@@ -274,9 +274,9 @@
       ;; Zero and one trip: the unrolled guard must send both straight to the
       ;; remainder loop.
       (fill (&mut a) 100)
-      (merge-or a b 0)
+      (merge-or (&mut a) (& b) 0)
       (unless (= (array-ref a 0) 100) (return 13))
-      (merge-or a b 1)
+      (merge-or (&mut a) (& b) 1)
       (unless (= (array-ref a 0) (bit-or 100 7)) (return 14))
       (unless (= (array-ref a 1) 101) (return 15))
       42)))

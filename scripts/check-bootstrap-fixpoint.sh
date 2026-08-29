@@ -107,7 +107,12 @@ bootstrap_seed_global_view_cfg_args() {
     # The published seed does not yet classify tl_abort_string as an
     # always-linked runtime symbol. Keep that one-shot stage1 bootstrap on the
     # old interner abort path; converged stages compile the explicit diagnostic.
+    # It also predates correct borrowed matching of inline nominal struct
+    # payloads, so keep token name IDs scalar for this one generation. Stage1
+    # contains the fixed lowerer and compiles the nominal representation onward.
     printf '%s\n' --cfg stage0-seed-intern-abort
+    printf '%s\n' --cfg stage0-token-scalar-bootstrap
+    printf '%s\n' --cfg stage0-borrowed-inline-bootstrap
     bootstrap_legacy_global_view_cfg_args
 }
 
@@ -554,7 +559,7 @@ check_stage2_embedded_stdlib() {
         "$STAGE2_BIN" inspect embedded:stdlib.tlci
     assert_contains \
         "$WORKDIR/stage2-inspect-embedded-stdlib-tlci.stdout" \
-        "embedded-loader-macro-count: 116"
+        "embedded-loader-macro-count: 135"
     assert_contains \
         "$WORKDIR/stage2-inspect-embedded-stdlib-tlci.stdout" \
         "package-name: stdlib"

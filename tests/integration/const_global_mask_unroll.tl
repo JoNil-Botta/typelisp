@@ -26,8 +26,8 @@
 
 ;; Masked index from a global mask: the shape that regressed.
 (define (mask-sum
-  [table : (__tl_dyn-array i64)]
-  [buf : (__tl_dyn-array u8)]
+  [table : (& table (__tl_dyn-array i64))]
+  [buf : (& buf (__tl_dyn-array u8))]
   [len : i64]) : i64
   (let
     [acc : i64 0]
@@ -44,8 +44,8 @@
 
 ;; Literal-mask control: identical but for the mask spelling.
 (define (mask-sum-literal
-  [table : (__tl_dyn-array i64)]
-  [buf : (__tl_dyn-array u8)]
+  [table : (& table (__tl_dyn-array i64))]
+  [buf : (& buf (__tl_dyn-array u8))]
   [len : i64]) : i64
   (let
     [acc : i64 0]
@@ -77,6 +77,8 @@
           (set! n (+ n 1))))
       ;; Both spellings must agree; a mis-versioned fast clone that dropped or
       ;; mis-ordered the mask would diverge here rather than only run slower.
-      (if (= (mask-sum table buf 64) (mask-sum-literal table buf 64))
+      (if (=
+        (mask-sum (& table) (& buf) 64)
+        (mask-sum-literal (& table) (& buf) 64))
         0
         1))))

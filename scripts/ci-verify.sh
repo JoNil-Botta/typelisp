@@ -450,7 +450,8 @@ ci_compiler_artifact_publish \
     "$STAGE2_BIN" "$CI_ARTIFACT_BOOTSTRAP_ARGV"
 ci_compiler_artifact_require \
     "$ROOT" "$STAGE2_METADATA_FILE" "$STAGE2_PATH_FILE" \
-    bootstrap-converged "$SEED_TYPELISP_BIN" "$CI_ARTIFACT_TARGET" \
+    bootstrap-converged bootstrap-downstream \
+    "$SEED_TYPELISP_BIN" "$CI_ARTIFACT_TARGET" \
     "$CI_ARTIFACT_BOOTSTRAP_CFG" 2 none "$CI_ARTIFACT_BOOTSTRAP_SOURCES" \
     'stdlib,src' "$CI_ARTIFACT_BOOTSTRAP_ENV" compiler-binary - \
     "$CI_ARTIFACT_BOOTSTRAP_ARGV"
@@ -514,7 +515,8 @@ CI_ARTIFACT_MANIFEST_ARGV='compile --batch {chunks} --target {host}-x86_64 --cfg
 ci_compiler_artifact_publish \
     "$ROOT" "$MANIFEST_ASSEMBLY_METADATA_FILE" \
     "$MANIFEST_ASSEMBLY_PATH_FILE" selfhost-compile-manifest-assembly-set \
-    "$STAGE2_BIN" "$CI_ARTIFACT_TARGET" selfhost-compile-manifest default \
+    manifest-deterministic-consumer "$STAGE2_BIN" "$CI_ARTIFACT_TARGET" \
+    selfhost-compile-manifest default \
     none "$CI_ARTIFACT_MANIFEST_SOURCES" 'stdlib,src' \
     'TYPELISP_COMPILE_MANIFEST_EXPECTATION_MODE=stage1,TYPELISP_COMPILE_MANIFEST_BATCH_SIZE=host-default' \
     assembly-set-manifest "$MANIFEST_ASSEMBLY_DIGESTS" \
@@ -596,7 +598,8 @@ if [ "$HOST_OS" = linux ]; then
         compiler-assembly "$OPT2_REFERENCE_ASM" "$CI_ARTIFACT_INVARIANCE_ARGV"
     ci_compiler_artifact_require \
         "$ROOT" "$OPT2_REFERENCE_METADATA_FILE" "$OPT2_REFERENCE_PATH_FILE" \
-        build-invariance-opt1-reference "$STAGE2_BIN" linux-x86_64 \
+        build-invariance-opt1-reference opt2-reference-consumer \
+        "$STAGE2_BIN" linux-x86_64 \
         host-defaults 1 none "$CI_ARTIFACT_INVARIANCE_SOURCES" \
         'stdlib,src' 'TYPELISP_BUILD_INVARIANCE_BATCH_SIZE=default' \
         compiler-assembly - "$CI_ARTIFACT_INVARIANCE_ARGV"
@@ -632,7 +635,8 @@ TYPELISP_COMPILE_PROFILE_CLI_PATH_FILE=$COMPILE_PROFILE_CLI_PATH_FILE
 export TYPELISP_COMPILE_PROFILE_CLI_PATH_FILE
 ci_compiler_artifact_require \
     "$ROOT" "$EMBEDDED_TLCI_METADATA_FILE" "$EMBEDDED_TLCI_PATH_FILE" \
-    embedded-stdlib-tlci-canonical "$STAGE2_BIN" "$CI_ARTIFACT_TARGET" \
+    embedded-stdlib-tlci-canonical embedded-tlci-profile-consumer \
+    "$STAGE2_BIN" "$CI_ARTIFACT_TARGET" \
     'compiler-surface-producer,host-defaults' default none \
     "$CI_ARTIFACT_TLCI_SOURCES" 'stdlib,src' \
     'TYPELISP_EMBEDDED_STDLIB_SOURCE_ROOT={root},TYPELISP_EMBEDDED_STDLIB_WORKDIR=target/embedded-stdlib-tlci' \
@@ -661,30 +665,38 @@ ci_compiler_artifact_publish \
     "$CI_ARTIFACT_PROFILE_SOURCES" 'stdlib,src' \
     'TYPELISP_STDLIB_ROOT=<unset>' compiler-binary "$COMPILE_PROFILE_BIN" \
     "$CI_ARTIFACT_PROFILE_ARGV"
-ci_compiler_artifact_require \
-    "$ROOT" "$COMPILE_PROFILE_CLI_METADATA_FILE" \
-    "$COMPILE_PROFILE_CLI_PATH_FILE" compile-profile-cli "$STAGE2_BIN" \
-    "$CI_ARTIFACT_TARGET" "$CI_ARTIFACT_PROFILE_CFG" default compile-profile \
-    "$CI_ARTIFACT_PROFILE_SOURCES" 'stdlib,src' \
-    'TYPELISP_STDLIB_ROOT=<unset>' compiler-binary - \
-    "$CI_ARTIFACT_PROFILE_ARGV"
-COMPILE_PROFILE_BIN=$CI_COMPILER_ARTIFACT_PATH
+require_compile_profile_cli() {
+    _ci_profile_consumer=$1
+    ci_compiler_artifact_require \
+        "$ROOT" "$COMPILE_PROFILE_CLI_METADATA_FILE" \
+        "$COMPILE_PROFILE_CLI_PATH_FILE" compile-profile-cli \
+        "$_ci_profile_consumer" "$STAGE2_BIN" "$CI_ARTIFACT_TARGET" \
+        "$CI_ARTIFACT_PROFILE_CFG" default compile-profile \
+        "$CI_ARTIFACT_PROFILE_SOURCES" 'stdlib,src' \
+        'TYPELISP_STDLIB_ROOT=<unset>' compiler-binary - \
+        "$CI_ARTIFACT_PROFILE_ARGV"
+    COMPILE_PROFILE_BIN=$CI_COMPILER_ARTIFACT_PATH
+}
 run_with_compiler \
     "$STAGE2_BIN" \
     "embedded stdlib TLCI bounded resource report" \
     scripts/verify-embedded-stdlib-tlci-resources.sh
+require_compile_profile_cli compile-profile-stress
 run_with_compiler \
     "$COMPILE_PROFILE_BIN" \
     "TLCI native route sustained stress" \
     scripts/verify-tlci-native-route-stress.sh
+require_compile_profile_cli compile-profile-metadata
 run_with_compiler \
     "$COMPILE_PROFILE_BIN" \
     "package metadata-only TLCI dependency catalogs" \
     scripts/verify-package-metadata-tlci.sh
+require_compile_profile_cli compile-profile-native-package
 run_with_compiler \
     "$COMPILE_PROFILE_BIN" \
     "package native TLCI dependency macros" \
     scripts/verify-package-native-tlci.sh
+require_compile_profile_cli compile-profile-surface-package
 run_with_compiler \
     "$COMPILE_PROFILE_BIN" \
     "package dependency TLCI frontend surfaces" \
@@ -774,6 +786,13 @@ else
     echo "[ci-verify]   stdlib documentation (doc target selection), instruction"
     echo "[ci-verify]   counts (valgrind), native link generated programs"
     echo "[ci-verify]   (Linux linker inputs)"
+fi
+
+if [ -n "${TYPELISP_CI_COMPILER_ARTIFACT_TRACE:-}" ]; then
+    run_gate \
+        "CI compiler artifact hosted trace completeness" \
+        scripts/verify-ci-compiler-artifacts.sh \
+        --trace "$TYPELISP_CI_COMPILER_ARTIFACT_TRACE" "$HOST_OS"
 fi
 
 if ci_timing_enabled; then

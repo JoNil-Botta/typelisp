@@ -310,21 +310,37 @@ ci_compiler_artifact_trace_init() {
     _cica_trace_file=$1
     mkdir -p "$(dirname -- "$_cica_trace_file")"
     printf '%s\n' \
-        'schema	label	provenance_key	producer_identity	producer_sha256	host	target	cwd	source_roots	stdlib_roots	cfg	opt_level	profile	environment	argv	source_set_sha256	output_kind	output_path	output_sha256' \
+        'schema	role	record_id	provenance_key	producer_identity	producer_sha256	host	target	cwd	source_roots	stdlib_roots	cfg	opt_level	profile	environment	argv	source_set_sha256	output_kind	output_path	output_sha256' \
         > "$_cica_trace_file"
 }
 
 ci_compiler_artifact_trace_append() {
     _cica_trace_file=$1
-    shift
+    _cica_trace_role=$2
+    _cica_trace_record_id=$3
+    shift 3
     [ -n "$_cica_trace_file" ] || return 0
     if [ ! -f "$_cica_trace_file" ]; then
         ci_compiler_artifact_trace_init "$_cica_trace_file" || return 1
     fi
-    for _cica_trace_value in "$@"; do
+    case "$_cica_trace_role" in
+        produce | consume) ;;
+        *)
+            ci_compiler_artifact_error \
+                "invalid trace role: $_cica_trace_role"
+            return 1
+            ;;
+    esac
+    [ -n "$_cica_trace_record_id" ] || {
+        ci_compiler_artifact_error "trace record ID is empty"
+        return 1
+    }
+    for _cica_trace_value in \
+        "$_cica_trace_role" "$_cica_trace_record_id" "$@"; do
         ci_compiler_artifact_field_safe trace "$_cica_trace_value" || return 1
     done
-    printf '1' >> "$_cica_trace_file"
+    printf '2\t%s\t%s' "$_cica_trace_role" "$_cica_trace_record_id" \
+        >> "$_cica_trace_file"
     for _cica_trace_value in "$@"; do
         printf '\t%s' "$_cica_trace_value" >> "$_cica_trace_file"
     done
@@ -469,7 +485,7 @@ ci_compiler_artifact_publish() {
 
     ci_compiler_artifact_trace_append \
         "${TYPELISP_CI_COMPILER_ARTIFACT_TRACE:-}" \
-        "$_cica_pub_label" "$_cica_pub_key" \
+        produce "$_cica_pub_label" "$_cica_pub_key" \
         "$_cica_pub_producer_identity" "$_cica_pub_producer_sha" \
         "$_cica_pub_host" "$_cica_pub_target" "$_cica_pub_cwd" \
         "$_cica_pub_source_roots" "$_cica_pub_stdlib_roots" \
@@ -507,30 +523,31 @@ ci_compiler_artifact_expect_field() {
     fi
 }
 
-# require has the same 15 arguments as publish. OUTPUT is ignored in favor of
-# the path file and may be written as '-'; keeping the shape identical makes it
-# harder for producer/consumer keys to drift at call sites.
+# require adds a consumer record ID after LABEL to the 15 publish arguments.
+# OUTPUT is ignored in favor of the path file and may be written as '-'. The
+# consumer ID is trace-only; every provenance input retains the publish shape.
 ci_compiler_artifact_require() {
-    if [ "$#" -ne 15 ]; then
-        ci_compiler_artifact_error "require expects 15 arguments, got $#"
+    if [ "$#" -ne 16 ]; then
+        ci_compiler_artifact_error "require expects 16 arguments, got $#"
         return 2
     fi
     _cica_req_root=$1
     _cica_req_metadata=$2
     _cica_req_path_file=$3
     _cica_req_label=$4
-    _cica_req_producer=$5
-    _cica_req_target=$6
-    _cica_req_cfg=$7
-    _cica_req_opt=$8
-    _cica_req_profile=$9
+    _cica_req_consumer_record_id=$5
+    _cica_req_producer=$6
+    _cica_req_target=$7
+    _cica_req_cfg=$8
+    _cica_req_opt=$9
     shift 9
-    _cica_req_source_roots=$1
-    _cica_req_stdlib_roots=$2
-    _cica_req_environment=$3
-    _cica_req_output_kind=$4
-    _cica_req_ignored_output=$5
-    _cica_req_argv=$6
+    _cica_req_profile=$1
+    _cica_req_source_roots=$2
+    _cica_req_stdlib_roots=$3
+    _cica_req_environment=$4
+    _cica_req_output_kind=$5
+    _cica_req_ignored_output=$6
+    _cica_req_argv=$7
     : "$_cica_req_ignored_output"
 
     [ -s "$_cica_req_metadata" ] || {
@@ -638,6 +655,16 @@ ci_compiler_artifact_require() {
             "handoff metadata has $_cica_req_lines lines; expected 21"
         return 1
     fi
+    ci_compiler_artifact_trace_append \
+        "${TYPELISP_CI_COMPILER_ARTIFACT_TRACE:-}" \
+        consume "$_cica_req_consumer_record_id" "$_cica_req_key" \
+        "$_cica_req_producer_identity" "$_cica_req_producer_sha" \
+        "$_cica_req_host" "$_cica_req_target" "$_cica_req_cwd" \
+        "$_cica_req_source_roots" "$_cica_req_stdlib_roots" \
+        "$_cica_req_cfg" "$_cica_req_opt" "$_cica_req_profile" \
+        "$_cica_req_environment" "$_cica_req_argv" \
+        "$_cica_req_source_digest" "$_cica_req_output_kind" \
+        "$_cica_req_output_path" "$_cica_req_output_sha" || return 1
     CI_COMPILER_ARTIFACT_PATH=$_cica_req_output
     export CI_COMPILER_ARTIFACT_PATH
 }

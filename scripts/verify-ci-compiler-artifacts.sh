@@ -6,10 +6,26 @@ cd "$ROOT"
 
 . "$ROOT/scripts/lib-ci-compiler-artifact.sh"
 
-if [ "$#" -ne 0 ]; then
-    echo "usage: scripts/verify-ci-compiler-artifacts.sh" >&2
-    exit 2
-fi
+TRACE_VALIDATION_FILE=
+TRACE_VALIDATION_HOST=
+case "$#:${1:-}" in
+    0:) ;;
+    3:--trace)
+        TRACE_VALIDATION_FILE=$2
+        TRACE_VALIDATION_HOST=$3
+        case "$TRACE_VALIDATION_HOST" in
+            linux | windows) ;;
+            *)
+                echo "trace host must be linux or windows" >&2
+                exit 2
+                ;;
+        esac
+        ;;
+    *)
+        echo "usage: scripts/verify-ci-compiler-artifacts.sh [--trace TRACE HOST]" >&2
+        exit 2
+        ;;
+esac
 
 INVENTORY="$ROOT/scripts/ci-compiler-artifacts.tsv"
 
@@ -43,6 +59,7 @@ printf '%s\n' artifact-payload > "$OUTPUT"
 HOST=$(ci_compiler_artifact_host)
 TARGET="${HOST}-x86_64"
 LABEL=self-test-compiler
+CONSUMER=self-test-consumer
 CFG=cfg-a,cfg-b
 OPT=2
 PROFILE=release
@@ -67,7 +84,8 @@ publish_fixture() {
 
 require_fixture() {
     ci_compiler_artifact_require \
-        "$WORKDIR" "$METADATA" "$PATH_FILE" "$LABEL" "$PRODUCER" \
+        "$WORKDIR" "$METADATA" "$PATH_FILE" "$LABEL" "$CONSUMER" \
+        "$PRODUCER" \
         "$TARGET" "$CFG" "$OPT" "$PROFILE" "$SOURCE_ROOTS" \
         "$STDLIB_ROOTS" "$ENVIRONMENT" "$KIND" - "$ARGV"
 }
@@ -194,11 +212,106 @@ validate_checked_in_inventory() {
         echo "native-link gate must build exactly one shared selfhost CLI" >&2
         exit 1
     }
-    grep -F 'verify_linux_direct_object_link "$DRIVER"' \
+    grep -F 'native-link-selfhost-cli' \
+        "$ROOT/scripts/verify-native-link-linux.sh" >/dev/null
+    grep -F 'verify_linux_direct_object_link "$NATIVE_LINK_DRIVER"' \
         "$ROOT/scripts/verify-native-link-linux.sh" >/dev/null
 }
 
+validate_hosted_trace() {
+    _trace_file=$1
+    _trace_host=$2
+    [ -s "$_trace_file" ] || {
+        echo "CI compiler artifact trace is missing or empty: $_trace_file" >&2
+        return 1
+    }
+    awk -F '\t' \
+        -v inventory="$INVENTORY" \
+        -v trace="$_trace_file" \
+        -v selected_host="$_trace_host" '
+    function fail(message) {
+        print "CI compiler artifact trace: " message > "/dev/stderr"
+        failed = 1
+    }
+    FILENAME == inventory {
+        sub(/\r$/, "", $0)
+        if ($0 == "" || $0 ~ /^#/) next
+        if ($1 == "schema") next
+        if ($14 == "required" && ($4 == "all" || $4 == selected_host)) {
+            required_role[$2] = $5
+            required_group[$2] = $13
+            required_count++
+        }
+        next
+    }
+    FILENAME == trace {
+        sub(/\r$/, "", $0)
+        if (FNR == 1) {
+            expected = "schema\trole\trecord_id\tprovenance_key\tproducer_identity\tproducer_sha256\thost\ttarget\tcwd\tsource_roots\tstdlib_roots\tcfg\topt_level\tprofile\tenvironment\targv\tsource_set_sha256\toutput_kind\toutput_path\toutput_sha256"
+            if ($0 != expected) fail("header does not match schema 2")
+            header_count++
+            next
+        }
+        if (NF != 20) {
+            fail("row " FNR " has " NF " fields; expected 20")
+            next
+        }
+        for (i = 1; i <= 20; i++) {
+            if ($i == "") fail("row " FNR " has an empty field " i)
+        }
+        if ($1 != 2) fail("row " FNR " has a non-v2 schema")
+        if ($2 != "produce" && $2 != "consume")
+            fail("row " FNR " has invalid role " $2)
+        id = $3
+        if (!(id in required_role)) {
+            fail("unexpected or ledger-only record " id)
+            next
+        }
+        if ($2 != required_role[id])
+            fail("role mismatch for " id ": expected " required_role[id] ", got " $2)
+        if ($7 != selected_host)
+            fail("host mismatch for " id ": expected " selected_host ", got " $7)
+        if (length($4) != 64 || $4 ~ /[^0-9a-f]/)
+            fail("malformed provenance key for " id)
+        if (length($20) != 64 || $20 ~ /[^0-9a-f]/)
+            fail("malformed output digest for " id)
+        seen[id]++
+        if (seen[id] > 1) fail("duplicate trace record " id)
+        record_key[id] = $4
+        record_digest[id] = $20
+        trace_count++
+        next
+    }
+    END {
+        if (header_count != 1) fail("expected exactly one schema-2 header")
+        for (id in required_role) {
+            if (seen[id] != 1)
+                fail("required " required_role[id] " record is missing: " id)
+            group = required_group[id]
+            if (!(group in group_key)) {
+                group_key[group] = record_key[id]
+                group_digest[group] = record_digest[id]
+            } else {
+                if (record_key[id] != group_key[group])
+                    fail("reuse group " group " has mismatched provenance keys")
+                if (record_digest[id] != group_digest[group])
+                    fail("reuse group " group " has mismatched output digests")
+            }
+        }
+        if (trace_count != required_count)
+            fail("expected " required_count " records, got " trace_count)
+        if (failed) exit 1
+    }
+    ' "$INVENTORY" "$_trace_file"
+}
+
 validate_checked_in_inventory
+
+if [ -n "$TRACE_VALIDATION_FILE" ]; then
+    validate_hosted_trace "$TRACE_VALIDATION_FILE" "$TRACE_VALIDATION_HOST"
+    echo "CI compiler artifact hosted trace passed ($TRACE_VALIDATION_HOST)"
+    exit 0
+fi
 
 rm -f "$TRACE"
 publish_fixture
@@ -208,9 +321,19 @@ require_fixture
     exit 1
 }
 awk -F '\t' '
-    NR == 1 { if (NF != 19 || $1 != "schema" || $19 != "output_sha256") exit 1 }
-    NR == 2 { if (NF != 19 || $1 != 1 || $2 != "self-test-compiler") exit 1 }
-    END { if (NR != 2) exit 1 }
+    NR == 1 {
+        if (NF != 20 || $1 != "schema" || $2 != "role" ||
+            $3 != "record_id" || $20 != "output_sha256") exit 1
+    }
+    NR == 2 {
+        if (NF != 20 || $1 != 2 || $2 != "produce" ||
+            $3 != "self-test-compiler") exit 1
+    }
+    NR == 3 {
+        if (NF != 20 || $1 != 2 || $2 != "consume" ||
+            $3 != "self-test-consumer") exit 1
+    }
+    END { if (NR != 3) exit 1 }
 ' "$TRACE" || {
     echo "artifact trace schema is malformed" >&2
     exit 1
@@ -253,7 +376,14 @@ SECOND_KEY=$(ci_compiler_artifact_read_field "$SECOND_METADATA" provenance_key)
 
 publish_fixture
 printf '%s\n' corrupt >> "$OUTPUT"
+TRACE_LINES_BEFORE_FAILED_REQUIRE=$(wc -l < "$TRACE" | tr -d ' ')
 expect_failure corrupt-artifact 'output_sha256 mismatch' require_fixture
+TRACE_LINES_AFTER_FAILED_REQUIRE=$(wc -l < "$TRACE" | tr -d ' ')
+[ "$TRACE_LINES_BEFORE_FAILED_REQUIRE" -eq \
+    "$TRACE_LINES_AFTER_FAILED_REQUIRE" ] || {
+    echo "failed consumer validation appended a trace row" >&2
+    exit 1
+}
 
 publish_fixture
 : > "$OUTPUT"
@@ -274,35 +404,40 @@ expect_failure cross-host 'host mismatch' require_fixture
 publish_fixture
 expect_failure wrong-target 'target mismatch' \
     ci_compiler_artifact_require \
-        "$WORKDIR" "$METADATA" "$PATH_FILE" "$LABEL" "$PRODUCER" \
+        "$WORKDIR" "$METADATA" "$PATH_FILE" "$LABEL" "$CONSUMER" \
+        "$PRODUCER" \
         wrong-target "$CFG" "$OPT" "$PROFILE" "$SOURCE_ROOTS" \
         "$STDLIB_ROOTS" "$ENVIRONMENT" "$KIND" - "$ARGV"
 
 publish_fixture
 expect_failure wrong-cfg 'cfg mismatch' \
     ci_compiler_artifact_require \
-        "$WORKDIR" "$METADATA" "$PATH_FILE" "$LABEL" "$PRODUCER" \
+        "$WORKDIR" "$METADATA" "$PATH_FILE" "$LABEL" "$CONSUMER" \
+        "$PRODUCER" \
         "$TARGET" wrong-cfg "$OPT" "$PROFILE" "$SOURCE_ROOTS" \
         "$STDLIB_ROOTS" "$ENVIRONMENT" "$KIND" - "$ARGV"
 
 publish_fixture
 expect_failure wrong-opt-level 'opt_level mismatch' \
     ci_compiler_artifact_require \
-        "$WORKDIR" "$METADATA" "$PATH_FILE" "$LABEL" "$PRODUCER" \
+        "$WORKDIR" "$METADATA" "$PATH_FILE" "$LABEL" "$CONSUMER" \
+        "$PRODUCER" \
         "$TARGET" "$CFG" 1 "$PROFILE" "$SOURCE_ROOTS" \
         "$STDLIB_ROOTS" "$ENVIRONMENT" "$KIND" - "$ARGV"
 
 publish_fixture
 expect_failure wrong-profile 'profile mismatch' \
     ci_compiler_artifact_require \
-        "$WORKDIR" "$METADATA" "$PATH_FILE" "$LABEL" "$PRODUCER" \
+        "$WORKDIR" "$METADATA" "$PATH_FILE" "$LABEL" "$CONSUMER" \
+        "$PRODUCER" \
         "$TARGET" "$CFG" "$OPT" debug "$SOURCE_ROOTS" \
         "$STDLIB_ROOTS" "$ENVIRONMENT" "$KIND" - "$ARGV"
 
 publish_fixture
 expect_failure wrong-kind 'output_kind mismatch' \
     ci_compiler_artifact_require \
-        "$WORKDIR" "$METADATA" "$PATH_FILE" "$LABEL" "$PRODUCER" \
+        "$WORKDIR" "$METADATA" "$PATH_FILE" "$LABEL" "$CONSUMER" \
+        "$PRODUCER" \
         "$TARGET" "$CFG" "$OPT" "$PROFILE" "$SOURCE_ROOTS" \
         "$STDLIB_ROOTS" "$ENVIRONMENT" compiler-assembly - "$ARGV"
 
@@ -355,5 +490,72 @@ SOURCE_KEY_AFTER=$(ci_compiler_artifact_read_field \
     echo "source mutation did not alter the provenance key" >&2
     exit 1
 }
+
+# Build a complete host trace from one real handoff row so the final CI
+# completeness validator is covered without running the full serial flow.
+HOSTED_TRACE="$FIXTURE/hosted-trace.tsv"
+HOSTED_TRACE_MISSING="$FIXTURE/hosted-trace-missing.tsv"
+HOSTED_TRACE_MISMATCH="$FIXTURE/hosted-trace-mismatch.tsv"
+HOSTED_TRACE_DUPLICATE="$FIXTURE/hosted-trace-duplicate.tsv"
+HOSTED_TRACE_WRONG_ROLE="$FIXTURE/hosted-trace-wrong-role.tsv"
+HOSTED_TRACE_WRONG_HOST="$FIXTURE/hosted-trace-wrong-host.tsv"
+HOSTED_TRACE_UNOWNED="$FIXTURE/hosted-trace-unowned.tsv"
+expect_failure hosted-trace-empty 'trace is missing or empty' \
+    validate_hosted_trace "$FIXTURE/no-hosted-trace.tsv" "$HOST"
+sed -n '1p' "$TRACE" > "$HOSTED_TRACE"
+HOSTED_TRACE_TEMPLATE=$(sed -n '2p' "$TRACE")
+awk -F '\t' -v OFS='\t' -v host="$HOST" \
+    -v template="$HOSTED_TRACE_TEMPLATE" '
+    BEGIN { count = split(template, field, FS) }
+    $0 !~ /^#/ && $1 != "schema" && $14 == "required" &&
+        ($4 == "all" || $4 == host) {
+        field[2] = $5
+        field[3] = $2
+        for (i = 1; i <= count; i++)
+            printf "%s%s", (i == 1 ? "" : OFS), field[i]
+        printf "\n"
+    }
+    ' "$INVENTORY" >> "$HOSTED_TRACE"
+validate_hosted_trace "$HOSTED_TRACE" "$HOST"
+
+sed '$d' "$HOSTED_TRACE" > "$HOSTED_TRACE_MISSING"
+expect_failure hosted-trace-missing 'required consume record is missing' \
+    validate_hosted_trace "$HOSTED_TRACE_MISSING" "$HOST"
+
+awk -F '\t' -v OFS='\t' '
+    NR > 1 && !changed && $2 == "consume" {
+        $4 = "0000000000000000000000000000000000000000000000000000000000000000"
+        changed = 1
+    }
+    { print }
+    ' "$HOSTED_TRACE" > "$HOSTED_TRACE_MISMATCH"
+expect_failure hosted-trace-mismatch 'has mismatched provenance keys' \
+    validate_hosted_trace "$HOSTED_TRACE_MISMATCH" "$HOST"
+
+awk 'NR == 2 { print } { print }' \
+    "$HOSTED_TRACE" > "$HOSTED_TRACE_DUPLICATE"
+expect_failure hosted-trace-duplicate 'duplicate trace record' \
+    validate_hosted_trace "$HOSTED_TRACE_DUPLICATE" "$HOST"
+
+awk -F '\t' -v OFS='\t' '
+    NR == 2 { $2 = ($2 == "produce" ? "consume" : "produce") }
+    { print }
+    ' "$HOSTED_TRACE" > "$HOSTED_TRACE_WRONG_ROLE"
+expect_failure hosted-trace-wrong-role 'role mismatch' \
+    validate_hosted_trace "$HOSTED_TRACE_WRONG_ROLE" "$HOST"
+
+awk -F '\t' -v OFS='\t' -v host="$HOST" '
+    NR == 2 { $7 = (host == "linux" ? "windows" : "linux") }
+    { print }
+    ' "$HOSTED_TRACE" > "$HOSTED_TRACE_WRONG_HOST"
+expect_failure hosted-trace-wrong-host 'host mismatch' \
+    validate_hosted_trace "$HOSTED_TRACE_WRONG_HOST" "$HOST"
+
+awk -F '\t' -v OFS='\t' '
+    NR == 2 { $3 = "unowned-record" }
+    { print }
+    ' "$HOSTED_TRACE" > "$HOSTED_TRACE_UNOWNED"
+expect_failure hosted-trace-unowned 'unexpected or ledger-only record' \
+    validate_hosted_trace "$HOSTED_TRACE_UNOWNED" "$HOST"
 
 echo "CI compiler artifact handoff self-tests passed"

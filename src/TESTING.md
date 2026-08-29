@@ -1251,9 +1251,12 @@ consumers. `scripts/verify-ci-compiler-artifacts.sh` rejects malformed or
 orphaned groups and exercises the fail-closed handoff metadata against empty,
 corrupt, stale, cross-host, wrong-target, wrong-cfg, wrong-opt/profile, and
 digest-mismatched artifacts. Required CI additionally uploads a stable
-`ci-compiler-artifacts-<host>` trace with the producer/compiler identity and
+schema-2 `ci-compiler-artifacts-<host>` trace. Its explicit `produce` and
+`consume` records carry the ledger record ID, producer/compiler identity and
 digest, normalized invocation, source-set digest, output kind, and output
-digest for every validated handoff.
+digest for every validated handoff. The final CI gate rejects missing,
+duplicate, wrong-role, wrong-host, or unowned records and requires every member
+of a reuse group to have the same provenance key and output digest.
 
 The current exact reuse groups are the converged bootstrap compiler, the
 selfhost compile-manifest assembly set, the canonical embedded-stdlib TLCI

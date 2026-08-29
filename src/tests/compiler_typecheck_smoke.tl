@@ -5294,7 +5294,8 @@
 
 (define (compiler-typecheck-scoped-marker-queries-ok?) : bool
   (let
-    [was-active : bool (tc_core.tc-type-env-scoped-runtime-active?)]
+    [was-active : bool
+      (tc_core.tc-type-env-scoped-runtime-active? (tc_core.tc-default-env))]
     [runtime-tail-id : i64 (ci.intern "runtime-tail")]
     [tail-resource-id : i64 (ci.intern "tail-resource")]
     [tail-arena-id : i64 (ci.intern "tail-arena")]
@@ -5346,7 +5347,7 @@
         atomic-id
         (ast.AstType.I64))]
     [scope-save : tc_core.TcTypeEnvScopedRuntimeSave
-      (tc_core.tc-type-env-scoped-runtime-save)]
+      (tc_core.tc-type-env-scoped-runtime-save runtime-env)]
     [before-shadow : bool
       (and
         (tc_core.tc-cleanup-owner-active-id? runtime-env resource-id)
@@ -5414,7 +5415,7 @@
           (tc_core.tc-type-env-scoped-runtime-restore! outer-save)
           (and
             (not was-active)
-            (not (tc_core.tc-type-env-scoped-runtime-active?))
+            (not (tc_core.tc-type-env-scoped-runtime-active? runtime-env))
             before-shadow
             shadowed
             restored))))))
@@ -5451,7 +5452,7 @@
             outer-visible-before
             inner-hidden
             outer-visible-after
-            (not (tc_core.tc-type-env-scoped-runtime-active?))))))))
+            (not (tc_core.tc-type-env-scoped-runtime-active? outer-env))))))))
 
 (define (compiler-typecheck-smoke-hygiene-structural-ids-ok?) : bool
   (let

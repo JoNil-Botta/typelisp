@@ -454,6 +454,7 @@ struct_match_pattern|tests/integration/struct_match_pattern.tl|42|-|-|struct_mat
 in_arena|tests/integration/in_arena.tl|42|-|-|-
 arena_phase_rewind_destroy|tests/integration/arena_phase_rewind_destroy.tl|42|-|-|-
 arena_branded_handle|tests/integration/arena_branded_handle.tl|42|-|-|stdlib/arena.tl
+arena_branded_in_arena|tests/integration/arena_branded_in_arena.tl|42|-|-|stdlib/arena.tl stdlib/string.tl
 arena_rewind_make_array_zero|tests/integration/arena_rewind_make_array_zero.tl|42|-|-|-
 make_array_default_reads_zero|tests/integration/make_array_default_reads_zero.tl|42|-|-|stdlib/arena.tl
 mem_fill8_runtime_contract|tests/integration/mem_fill8_runtime_contract.tl|42|-|-|stdlib/arena.tl stdlib/runtime.tl

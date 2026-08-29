@@ -40461,9 +40461,9 @@
           ;; (same distance, alphabetically smaller) wins now.
           (let
             [alph-id : i64 (ci.intern "alph")]
-            [_bind : TcTypeEnv (tc-bind-id env alph-id (ast.AstType.I64))]
+            [env2 : TcTypeEnv (tc-bind-id env alph-id (ast.AstType.I64))]
             [after : String
-              (tc-unbound-near-miss false -1 env "alphi" wanted-id)]
+              (tc-unbound-near-miss false -1 env2 "alphi" wanted-id)]
             (begin
               (unless
                 (string.eq after "alph")
@@ -40473,7 +40473,7 @@
               (unless
                 (string.eq
                   after
-                  (tc-unbound-near-miss false -1 env "alphi" wanted-id))
+                  (tc-unbound-near-miss false -1 env2 "alphi" wanted-id))
                 (io.panic
                   "typecheck: near-miss memo did not serve the updated result"))
               (ci.intern-reset!))))))))

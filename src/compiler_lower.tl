@@ -20503,9 +20503,12 @@
     (lower-copy-inline-aggregate-to-inline ctx state value ty)
     (ResultLowerExpr.Ok (LowerExpr.Expr state value ty))))
 
-(define (lower-current-sret-var [env : sym_i64_env.SymI64Env]) : i64
+(define (lower-current-sret-var
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]) : i64
   (let
-    [marker : i64 (lower-sret-param-marker-id)]
+    [marker : i64
+      (cis.intern-lower-private-identity-raw (lower-sret-param-marker-id state))]
     (if (sym_i64_env.sym-i64-contains-id env marker)
       (sym_i64_env.sym-i64-lookup-id-or
         env
@@ -20565,7 +20568,8 @@
   [value : ir.CompilerIrValue]
   [ret-ty : ast.AstType]) : ResultLowerExpr
   (let
-    [sret-var : i64 (lower-current-sret-var env)]
+    [sret-var : i64
+      (lower-current-sret-var (lower-global-shared-view state) env)]
     (if (and
       (>= sret-var 0)
       (lower-type-inline-struct-or-enum?
@@ -20642,7 +20646,8 @@
               (lower-c-abi-slot-list-ref slots 1)))]
         [(LowerCAbiAggregate.Sret size)
           (let
-            [sret-var : i64 (lower-current-sret-var env)]
+            [sret-var : i64
+              (lower-current-sret-var (lower-global-shared-view state) env)]
             (if (< sret-var 0)
               (ResultLowerExpr.Err
                 (box
@@ -24780,7 +24785,10 @@
         [live-id : i64
           (sym_i64_env.sym-i64-lookup-id-or
             env
-            (lower-cleanup-live-name-id local-id)
+            (cis.intern-lower-private-identity-raw
+              (lower-cleanup-live-name-id
+                (lower-global-shared-view state)
+                local-id))
             (csym.compiler-symbols-missing-handle))]
         (if (csym.compiler-symbols-handle-found? live-id)
           (lower-state-emit
@@ -26268,7 +26276,9 @@
                   (if (>= sret-var 0)
                     (sym_i64_env.sym-i64-bind-id
                       captured-env
-                      (lower-sret-param-marker-id)
+                      (cis.intern-lower-private-identity-raw
+                        (lower-sret-param-marker-id
+                          (lower-global-shared-view captured-state)))
                       sret-var)
                     captured-env)]
                 [type-env : tc_core.TcTypeEnv
@@ -26506,91 +26516,99 @@
     [(ast.AstType.Unit) ir.CompilerIrMaybeValue.No]
     [_ (ir.CompilerIrMaybeValue.Some value)]))
 
-(define (lower-private-name-id [kind : i64] [var-id : i64]) : i64
-  ;; Parser ids and their typechecker marker keys occupy the ranges nearest
-  ;; zero. Lower-only bindings use this disjoint structural namespace.
-  (- 0 (+ (* (ci.intern-capacity) 4) (+ (* var-id 16) kind))))
+(define (lower-private-identity
+  [state : LowerState]
+  [record : cis.InternLowerPrivateRecord]) : cis.InternLowerPrivateIdentity
+  (cis.intern-structural-session-lower-private-identity
+    (compiler-lower-state-structural-session (lower-state-owner state))
+    record))
 
-(define (lower-private-name-kind [name-id : i64]) : i64
-  (% (- (- 0 name-id) (* (ci.intern-capacity) 4)) 16))
+(define (lower-cleanup-marker-id [state : LowerState]) : cis.InternLowerPrivateIdentity
+  (lower-private-identity state cis.InternLowerPrivateRecord.CleanupStack))
 
-(define (lower-private-name-value [name-id : i64]) : i64
-  (/ (- (- 0 name-id) (* (ci.intern-capacity) 4)) 16))
+(define (lower-region-reset-marker-id [state : LowerState]) : cis.InternLowerPrivateIdentity
+  (lower-private-identity state cis.InternLowerPrivateRecord.RegionReset))
 
-(define (lower-cleanup-marker-id) : i64
-  (lower-private-name-id 1 0))
+(define (lower-sret-param-marker-id [state : LowerState]) : cis.InternLowerPrivateIdentity
+  (lower-private-identity state cis.InternLowerPrivateRecord.SretParameter))
 
-(define (lower-region-reset-marker-id) : i64
-  (lower-private-name-id 2 0))
+(define (lower-spmd-reduce-acc-id [state : LowerState]) : cis.InternLowerPrivateIdentity
+  (lower-private-identity
+    state
+    cis.InternLowerPrivateRecord.SpmdReduceAccumulator))
 
-;; Lower-only binding for the caller-owned result slot. Kind zero is reserved
-;; for this marker; the value component is intentionally zero so this remains
-;; disjoint from all source and cleanup names without changing the 16-wide
-;; private-name encoding.
-(define (lower-sret-param-marker-id) : i64
-  (lower-private-name-id 0 0))
+(define (lower-spmd-reduce-end-id [state : LowerState]) : cis.InternLowerPrivateIdentity
+  (lower-private-identity state cis.InternLowerPrivateRecord.SpmdReduceEnd))
 
-(define (lower-spmd-reduce-acc-id) : i64
-  (lower-private-name-id 3 0))
+(define (lower-spmd-reduce-val-id [state : LowerState]) : cis.InternLowerPrivateIdentity
+  (lower-private-identity state cis.InternLowerPrivateRecord.SpmdReduceValue))
 
-(define (lower-spmd-reduce-end-id) : i64
-  (lower-private-name-id 4 0))
+(define (lower-spmd-reduce-current-id [state : LowerState]) : cis.InternLowerPrivateIdentity
+  (lower-private-identity state cis.InternLowerPrivateRecord.SpmdReduceCurrent))
 
-(define (lower-spmd-reduce-val-id) : i64
-  (lower-private-name-id 5 0))
+(define (lower-spmd-reduce-start-id [state : LowerState]) : cis.InternLowerPrivateIdentity
+  (lower-private-identity state cis.InternLowerPrivateRecord.SpmdReduceStart))
 
-(define (lower-spmd-reduce-current-id) : i64
-  (lower-private-name-id 6 0))
+(define (lower-spmd-reduce-uniform-id [state : LowerState]) : cis.InternLowerPrivateIdentity
+  (lower-private-identity state cis.InternLowerPrivateRecord.SpmdReduceUniform))
 
-(define (lower-spmd-reduce-start-id) : i64
-  (lower-private-name-id 15 0))
+(define (lower-spmd-scan-acc-id [state : LowerState]) : cis.InternLowerPrivateIdentity
+  (lower-private-identity
+    state
+    cis.InternLowerPrivateRecord.SpmdScanAccumulator))
 
-(define (lower-spmd-reduce-uniform-id) : i64
-  (lower-private-name-id 16 0))
+(define (lower-spmd-scan-end-id [state : LowerState]) : cis.InternLowerPrivateIdentity
+  (lower-private-identity state cis.InternLowerPrivateRecord.SpmdScanEnd))
 
-(define (lower-spmd-scan-acc-id) : i64
-  (lower-private-name-id 7 0))
+(define (lower-spmd-scan-val-id [state : LowerState]) : cis.InternLowerPrivateIdentity
+  (lower-private-identity state cis.InternLowerPrivateRecord.SpmdScanValue))
 
-(define (lower-spmd-scan-end-id) : i64
-  (lower-private-name-id 8 0))
+(define (lower-cleanup-hidden-name-id [state : LowerState] [var-id : i64]) : cis.InternLowerPrivateIdentity
+  (lower-private-identity
+    state
+    (cis.InternLowerPrivateRecord.CleanupHidden var-id)))
 
-(define (lower-spmd-scan-val-id) : i64
-  (lower-private-name-id 9 0))
+(define (lower-cleanup-live-name-id [state : LowerState] [var-id : i64]) : cis.InternLowerPrivateIdentity
+  (lower-private-identity
+    state
+    (cis.InternLowerPrivateRecord.CleanupLiveness var-id)))
 
-(define (lower-cleanup-hidden-name-id [var-id : i64]) : i64
-  (lower-private-name-id 10 var-id))
+(define (lower-region-hidden-name-id [state : LowerState] [var-id : i64]) : cis.InternLowerPrivateIdentity
+  (lower-private-identity
+    state
+    (cis.InternLowerPrivateRecord.RegionHidden var-id)))
 
-(define (lower-cleanup-live-name-id [var-id : i64]) : i64
-  ;; Kind 1 value 0 is the cleanup-stack marker. Positive values are its
-  ;; per-resource liveness bindings, disjoint from every allocated var id.
-  (lower-private-name-id 1 (+ var-id 1)))
+(define (lower-arena-restore-hidden-name-id [state : LowerState] [var-id : i64]) : cis.InternLowerPrivateIdentity
+  (lower-private-identity
+    state
+    (cis.InternLowerPrivateRecord.ArenaRestoreHidden var-id)))
 
-(define (lower-region-hidden-name-id [var-id : i64]) : i64
-  (lower-private-name-id 11 var-id))
+(define (lower-while-exit-label-id [state : LowerState] [label-number : i64]) : cis.InternLowerPrivateIdentity
+  (lower-private-identity
+    state
+    (cis.InternLowerPrivateRecord.WhileExit label-number)))
 
-(define (lower-arena-restore-hidden-name-id [var-id : i64]) : i64
-  (lower-private-name-id 12 var-id))
+(define (lower-while-header-label-id [state : LowerState] [label-number : i64]) : cis.InternLowerPrivateIdentity
+  (lower-private-identity
+    state
+    (cis.InternLowerPrivateRecord.WhileHeader label-number)))
 
-(define (lower-while-exit-label-id [label-number : i64]) : i64
-  (lower-private-name-id 13 label-number))
-
-(define (lower-while-header-label-id [label-number : i64]) : i64
-  (lower-private-name-id 14 label-number))
-
-(define (lower-loop-label-name [name-id : i64]) : i64
-  (let
-    [kind : i64 (lower-private-name-kind name-id)]
-    [prefix : String
-      (if (= kind 13)
-        "while_exit"
-        (if (= kind 14)
-          "while_header"
-          "invalid_loop_label"))]
-    (ir.compiler-ir-label
-      (str_cat.str-cat
-        prefix
-        "."
-        (string.int->string (lower-private-name-value name-id))))))
+(define (lower-loop-label-name
+  [state : LowerState]
+  [identity : cis.InternLowerPrivateIdentity]) : i64
+  (match (cis.intern-structural-session-lower-private-record
+    (compiler-lower-state-structural-session (lower-state-owner state))
+    identity)
+    [(cis.InternMaybeLowerPrivateRecord.Some record)
+      (match record
+        [(cis.InternLowerPrivateRecord.WhileExit ordinal)
+          (ir.compiler-ir-label
+            (str_cat.str-cat "while_exit." (string.int->string ordinal)))]
+        [(cis.InternLowerPrivateRecord.WhileHeader ordinal)
+          (ir.compiler-ir-label
+            (str_cat.str-cat "while_header." (string.int->string ordinal)))]
+        [_ (ci.tl_oob_abort)])]
+    [(cis.InternMaybeLowerPrivateRecord.No) (ci.tl_oob_abort)]))
 
 (define (lower-cleanup-metadata-type
   [hidden-name-id : i64]
@@ -26610,22 +26628,25 @@
     (ast.ast-type-cons (ast.AstType.Var hidden-name-id) (ast.ast-type-list-new))))
 
 (define (lower-type-env-push-cleanup
+  [state : LowerState]
   [type-env : tc_core.TcTypeEnv]
   [hidden-name-id : i64]
   [cleanup-name-id : i64]) : tc_core.TcTypeEnv
   (tc_core.tc-bind-id
     type-env
-    (lower-cleanup-marker-id)
+    (cis.intern-lower-private-identity-raw
+      (lower-cleanup-marker-id (lower-global-shared-view state)))
     (lower-cleanup-metadata-type hidden-name-id cleanup-name-id)))
 
 (define (lower-type-env-push-move-aware-cleanup
+  [state : LowerState]
   [type-env : tc_core.TcTypeEnv]
   [hidden-name-id : i64]
   [cleanup-name-id : i64]
   [live-name-id : i64]) : tc_core.TcTypeEnv
   (tc_core.tc-bind-id
     type-env
-    (lower-cleanup-marker-id)
+    (cis.intern-lower-private-identity-raw (lower-cleanup-marker-id state))
     (ast.ast-ty-tuple
       (ast.ast-type-cons
         (ast.AstType.Var hidden-name-id)
@@ -26636,19 +26657,22 @@
             (ast.ast-type-list-new)))))))
 
 (define (lower-type-env-push-region-reset
+  [state : LowerState]
   [type-env : tc_core.TcTypeEnv]
   [hidden-name-id : i64]) : tc_core.TcTypeEnv
   (tc_core.tc-bind-id
     type-env
-    (lower-region-reset-marker-id)
+    (cis.intern-lower-private-identity-raw
+      (lower-region-reset-marker-id (lower-global-shared-view state)))
     (lower-region-reset-metadata-type hidden-name-id)))
 
 (define (lower-type-env-push-arena-restore
+  [state : LowerState]
   [type-env : tc_core.TcTypeEnv]
   [hidden-name-id : i64]) : tc_core.TcTypeEnv
   (tc_core.tc-bind-id
     type-env
-    (lower-region-reset-marker-id)
+    (cis.intern-lower-private-identity-raw (lower-region-reset-marker-id state))
     (lower-arena-restore-metadata-type hidden-name-id)))
 
 (define (lower-cleanup-name-id-from-expr [cleanup : ast.AstExpr]) : tc_core.ResultTcExprId
@@ -27025,8 +27049,10 @@
   [type-env : tc_core.TcTypeEnv]) : ResultLowerState
   (lower-emit-active-exits-with
     ctx
-    (lower-cleanup-marker-id)
-    (lower-region-reset-marker-id)
+    (cis.intern-lower-private-identity-raw
+      (lower-cleanup-marker-id (lower-global-shared-view state)))
+    (cis.intern-lower-private-identity-raw
+      (lower-region-reset-marker-id (lower-global-shared-view state)))
     state
     env
     type-env))
@@ -27069,6 +27095,7 @@
     (box (lower-diagnostic-at-expr ctx origin "lower: malformed loop target"))))
 
 (define (lower-current-loop-target-from-types
+  [state : LowerState]
   [ctx : tc_core.TcContext]
   [origin : ast.AstExpr]
   [break-ty : ast.AstType]
@@ -27079,12 +27106,17 @@
         [(ast.AstType.Var continue-name)
           (ResultLowerLoopTarget.Ok
             (LowerLoopTarget.Target
-              (lower-loop-label-name break-name)
-              (lower-loop-label-name continue-name)))]
+              (lower-loop-label-name
+                (lower-global-shared-view state)
+                (cis.InternLowerPrivateIdentity break-name))
+              (lower-loop-label-name
+                (lower-global-shared-view state)
+                (cis.InternLowerPrivateIdentity continue-name))))]
         [_ (lower-loop-target-malformed ctx origin)])]
     [_ (lower-loop-target-malformed ctx origin)]))
 
 (define (lower-current-loop-target
+  [state : LowerState]
   [ctx : tc_core.TcContext]
   [origin : ast.AstExpr]
   [type-env : tc_core.TcTypeEnv]
@@ -27112,6 +27144,7 @@
                       1
                       (ast.ast-type-id-fallback)))]
                 (lower-current-loop-target-from-types
+                  state
                   ctx
                   origin
                   break-ty
@@ -27208,8 +27241,10 @@
   [type-env : tc_core.TcTypeEnv]) : ResultLowerState
   (lower-emit-active-loop-exits-with
     ctx
-    (lower-cleanup-marker-id)
-    (lower-region-reset-marker-id)
+    (cis.intern-lower-private-identity-raw
+      (lower-cleanup-marker-id (lower-global-shared-view state)))
+    (cis.intern-lower-private-identity-raw
+      (lower-region-reset-marker-id (lower-global-shared-view state)))
     (tc_core.tc-loop-target-id)
     state
     env
@@ -27223,6 +27258,7 @@
   [origin : ast.AstExpr]
   [form : String]) : ResultLowerExpr
   (match (lower-current-loop-target
+    (lower-global-shared-view state)
     (lower-global-shared-view ctx)
     (lower-global-shared-view origin)
     type-env
@@ -48677,7 +48713,10 @@
                               [(LowerAlloc.Alloc allocated var-id)
                                 (let
                                   [hidden-name-id : i64
-                                    (lower-cleanup-hidden-name-id var-id)]
+                                    (cis.intern-lower-private-identity-raw
+                                      (lower-cleanup-hidden-name-id
+                                        (lower-global-shared-view allocated)
+                                        var-id))]
                                   [bound-state : LowerState
                                     (lower-state-emit
                                       allocated
@@ -48695,6 +48734,7 @@
                                       var-id)]
                                   [bound-type-env : tc_core.TcTypeEnv
                                     (lower-type-env-push-cleanup
+                                      (lower-global-shared-view bound-state)
                                       (tc_core.tc-bind-id
                                         type-env
                                         name
@@ -48706,7 +48746,22 @@
                                       [(LowerAlloc.Alloc live-state live-var-id)
                                         (let
                                           [live-name-id : i64
-                                            (lower-cleanup-live-name-id var-id)]
+                                            (cis.intern-lower-private-identity-raw
+                                              (lower-cleanup-live-name-id
+                                                (lower-global-shared-view
+                                                  live-state)
+                                                var-id))]
+                                          [move-aware-type-env : tc_core.TcTypeEnv
+                                            (lower-type-env-push-move-aware-cleanup
+                                              (lower-global-shared-view
+                                                live-state)
+                                              (tc_core.tc-bind-id
+                                                type-env
+                                                name
+                                                binding-ty)
+                                              hidden-name-id
+                                              cleanup-name-id
+                                              live-name-id)]
                                           (lower-resource-bindings-at
                                             ctx
                                             (lower-state-emit
@@ -48719,14 +48774,7 @@
                                               bound-env
                                               live-name-id
                                               live-var-id)
-                                            (lower-type-env-push-move-aware-cleanup
-                                              (tc_core.tc-bind-id
-                                                type-env
-                                                name
-                                                binding-ty)
-                                              hidden-name-id
-                                              cleanup-name-id
-                                              live-name-id)
+                                            move-aware-type-env
                                             bindings
                                             (lower-cleanup-stack-push-move-aware
                                               cleanups
@@ -48921,7 +48969,11 @@
   (match (lower-state-alloc-var state)
     [(LowerAlloc.Alloc mark-allocated mark-var)
       (let
-        [hidden-name-id : i64 (lower-region-hidden-name-id mark-var)]
+        [hidden-name-id : i64
+          (cis.intern-lower-private-identity-raw
+            (lower-region-hidden-name-id
+              (lower-global-shared-view mark-allocated)
+              mark-var))]
         [marked-state : LowerState
           (lower-state-emit
             mark-allocated
@@ -48933,7 +48985,10 @@
         [region-env : sym_i64_env.SymI64Env
           (sym_i64_env.sym-i64-bind-id env hidden-name-id mark-var)]
         [region-type-env : tc_core.TcTypeEnv
-          (lower-type-env-push-region-reset type-env hidden-name-id)]
+          (lower-type-env-push-region-reset
+            (lower-global-shared-view marked-state)
+            type-env
+            hidden-name-id)]
         (match (lower-begin ctx marked-state region-env region-type-env body)
           [(ResultLowerExpr.Ok lowered)
             (match lowered
@@ -49028,7 +49083,10 @@
                       [(LowerExpr.Expr set-state _ _)
                         (let
                           [hidden-name-id : i64
-                            (lower-arena-restore-hidden-name-id saved-var)]
+                            (cis.intern-lower-private-identity-raw
+                              (lower-arena-restore-hidden-name-id
+                                (lower-global-shared-view set-state)
+                                saved-var))]
                           [body-env : sym_i64_env.SymI64Env
                             (sym_i64_env.sym-i64-bind-id
                               env
@@ -49036,6 +49094,7 @@
                               saved-var)]
                           [body-type-env : tc_core.TcTypeEnv
                             (lower-type-env-push-arena-restore
+                              (lower-global-shared-view set-state)
                               type-env
                               hidden-name-id)]
                           (match (lower-begin
@@ -49670,10 +49729,15 @@
                             env
                             (lower-enter-loop-target
                               type-env
-                              (lower-while-exit-label-id
-                                (lower-state-next-label-number body-label-state))
-                              (lower-while-header-label-id
-                                (lower-state-next-label-number state)))
+                              (cis.intern-lower-private-identity-raw
+                                (lower-while-exit-label-id
+                                  (lower-global-shared-view body-label-state)
+                                  (lower-state-next-label-number
+                                    body-label-state)))
+                              (cis.intern-lower-private-identity-raw
+                                (lower-while-header-label-id
+                                  (lower-global-shared-view state)
+                                  (lower-state-next-label-number state))))
                             body)
                             [(ResultLowerExpr.Ok body-lowered)
                               (match body-lowered
@@ -49741,72 +49805,79 @@
 ;; (`sum`/`all`/`any`): `(set! acc (<op> acc value))`. `value` appears once so it
 ;; is evaluated exactly once per iteration.
 (define (spmd-reduce-acc-binop-update
+  [state : LowerState]
   [pools : ast.AstNodePoolContext]
   [op : ast.AstBinOp]
   [value : i64]) : i64
-  (ast.ast-expr-set-id-with-pools
-    (lower-global-shared-view pools)
-    (lower-spmd-reduce-acc-id)
-    (ast.ast-expr-binary-with-pools
+  (let
+    [acc-id : i64
+      (cis.intern-lower-private-identity-raw
+        (lower-spmd-reduce-acc-id (lower-global-shared-view state)))]
+    (ast.ast-expr-set-id-with-pools
       (lower-global-shared-view pools)
-      op
-      (ast.ast-node-pool-context-expr-push
-        pools
-        (ast.AstExpr.Var (lower-spmd-reduce-acc-id)))
-      value)))
+      acc-id
+      (ast.ast-expr-binary-with-pools
+        (lower-global-shared-view pools)
+        op
+        (ast.ast-node-pool-context-expr-push pools (ast.AstExpr.Var acc-id))
+        value))))
 
 ;; Per-iteration accumulator update for a select fold (`min`/`max`): bind `value`
 ;; once into a temp, then keep it when `(<cmp> val acc)` holds, else keep `acc`.
 ;; The temp keeps `value` to a single evaluation even though the select names it
 ;; twice.
 (define (spmd-reduce-acc-select-update
+  [state : LowerState]
   [pools : ast.AstNodePoolContext]
   [cmp : ast.AstBinOp]
   [value : i64]) : i64
-  (ast.ast-expr-let-with-pools
-    (lower-global-shared-view pools)
-    (ast.ast-let-binding-cons
-      (ast.ast-let-binding-id
-        (lower-spmd-reduce-val-id)
-        (ast.AstMaybeType.No)
-        value)
-      (ast.ast-let-binding-list-new))
-    (ast.ast-expr-set-id-with-pools
+  (let
+    [acc-id : i64
+      (cis.intern-lower-private-identity-raw
+        (lower-spmd-reduce-acc-id (lower-global-shared-view state)))]
+    [value-id : i64
+      (cis.intern-lower-private-identity-raw
+        (lower-spmd-reduce-val-id (lower-global-shared-view state)))]
+    (ast.ast-expr-let-with-pools
       (lower-global-shared-view pools)
-      (lower-spmd-reduce-acc-id)
-      (ast.ast-expr-if-with-pools
+      (ast.ast-let-binding-cons
+        (ast.ast-let-binding-id value-id (ast.AstMaybeType.No) value)
+        (ast.ast-let-binding-list-new))
+      (ast.ast-expr-set-id-with-pools
         (lower-global-shared-view pools)
-        (ast.ast-expr-binary-with-pools
+        acc-id
+        (ast.ast-expr-if-with-pools
           (lower-global-shared-view pools)
-          cmp
+          (ast.ast-expr-binary-with-pools
+            (lower-global-shared-view pools)
+            cmp
+            (ast.ast-node-pool-context-expr-push
+              (lower-global-shared-view pools)
+              (ast.AstExpr.Var value-id))
+            (ast.ast-node-pool-context-expr-push
+              (lower-global-shared-view pools)
+              (ast.AstExpr.Var acc-id)))
           (ast.ast-node-pool-context-expr-push
             (lower-global-shared-view pools)
-            (ast.AstExpr.Var (lower-spmd-reduce-val-id)))
-          (ast.ast-node-pool-context-expr-push
-            (lower-global-shared-view pools)
-            (ast.AstExpr.Var (lower-spmd-reduce-acc-id))))
-        (ast.ast-node-pool-context-expr-push
-          (lower-global-shared-view pools)
-          (ast.AstExpr.Var (lower-spmd-reduce-val-id)))
-        (ast.ast-node-pool-context-expr-push
-          pools
-          (ast.AstExpr.Var (lower-spmd-reduce-acc-id)))))))
+            (ast.AstExpr.Var value-id))
+          (ast.ast-node-pool-context-expr-push pools (ast.AstExpr.Var acc-id)))))))
 
 (define (spmd-reduce-acc-update-expr
+  [state : LowerState]
   [pools : ast.AstNodePoolContext]
   [op : ast.AstReduceOp]
   [value : i64]) : i64
   (match op
     [(ast.AstReduceOp.Sum)
-      (spmd-reduce-acc-binop-update pools (ast.AstBinOp.Add) value)]
+      (spmd-reduce-acc-binop-update state pools (ast.AstBinOp.Add) value)]
     [(ast.AstReduceOp.All)
-      (spmd-reduce-acc-binop-update pools (ast.AstBinOp.And) value)]
+      (spmd-reduce-acc-binop-update state pools (ast.AstBinOp.And) value)]
     [(ast.AstReduceOp.Any)
-      (spmd-reduce-acc-binop-update pools (ast.AstBinOp.Or) value)]
+      (spmd-reduce-acc-binop-update state pools (ast.AstBinOp.Or) value)]
     [(ast.AstReduceOp.Min)
-      (spmd-reduce-acc-select-update pools (ast.AstBinOp.Lt) value)]
+      (spmd-reduce-acc-select-update state pools (ast.AstBinOp.Lt) value)]
     [(ast.AstReduceOp.Max)
-      (spmd-reduce-acc-select-update pools (ast.AstBinOp.Gt) value)]))
+      (spmd-reduce-acc-select-update state pools (ast.AstBinOp.Gt) value)]))
 
 ;; Conservative scan used by the reduction addend split: does `expr` write
 ;; `name` (`set!`) anywhere, or rebind `name` with a `let` binding? Either one
@@ -50192,6 +50263,18 @@
   (let
     [pools : ast.AstNodePoolContext
       (tc_core.tc-context-pools (lower-global-shared-view ctx))]
+    [acc-name-id : i64
+      (cis.intern-lower-private-identity-raw
+        (lower-spmd-reduce-acc-id (lower-global-shared-view state)))]
+    [end-name-id : i64
+      (cis.intern-lower-private-identity-raw
+        (lower-spmd-reduce-end-id (lower-global-shared-view state)))]
+    [start-name-id : i64
+      (cis.intern-lower-private-identity-raw
+        (lower-spmd-reduce-start-id (lower-global-shared-view state)))]
+    [uniform-name-id : i64
+      (cis.intern-lower-private-identity-raw
+        (lower-spmd-reduce-uniform-id (lower-global-shared-view state)))]
     [loop-id : i64
       (ast.ast-expr-while-with-pools
         (lower-global-shared-view pools)
@@ -50203,7 +50286,7 @@
             (ast.AstExpr.Var index-id))
           (ast.ast-node-pool-context-expr-push
             (lower-global-shared-view pools)
-            (ast.AstExpr.Var (lower-spmd-reduce-end-id))))
+            (ast.AstExpr.Var end-name-id)))
         (ast.ast-node-pool-context-expr-push
           (lower-global-shared-view pools)
           (ast.AstExpr.Begin
@@ -50230,21 +50313,21 @@
             (lower-global-shared-view pools)
             (ast.ast-let-binding-cons
               (ast.ast-let-binding-id
-                (lower-spmd-reduce-acc-id)
+                acc-name-id
                 (ast.AstMaybeType.Some acc-ty)
                 (ast.ast-node-pool-context-expr-push
                   (lower-global-shared-view pools)
                   init))
               (ast.ast-let-binding-cons
                 (ast.ast-let-binding-id
-                  (lower-spmd-reduce-end-id)
+                  end-name-id
                   (ast.AstMaybeType.Some (lower-global-shared-view index-ty))
                   (ast.ast-node-pool-context-expr-push
                     (lower-global-shared-view pools)
                     end))
                 (ast.ast-let-binding-cons
                   (ast.ast-let-binding-id
-                    (lower-spmd-reduce-start-id)
+                    start-name-id
                     (ast.AstMaybeType.Some (lower-global-shared-view index-ty))
                     (ast.ast-node-pool-context-expr-push
                       (lower-global-shared-view pools)
@@ -50255,10 +50338,10 @@
                       (ast.AstMaybeType.Some index-ty)
                       (ast.ast-node-pool-context-expr-push
                         (lower-global-shared-view pools)
-                        (ast.AstExpr.Var (lower-spmd-reduce-start-id))))
+                        (ast.AstExpr.Var start-name-id)))
                     (ast.ast-let-binding-cons
                       (ast.ast-let-binding-id
-                        (lower-spmd-reduce-uniform-id)
+                        uniform-name-id
                         (ast.AstMaybeType.No)
                         (ast.ast-node-pool-context-expr-push
                           (lower-global-shared-view pools)
@@ -50275,7 +50358,7 @@
                       (ast.AstBinOp.Add)
                       (ast.ast-node-pool-context-expr-push
                         (lower-global-shared-view pools)
-                        (ast.AstExpr.Var (lower-spmd-reduce-acc-id)))
+                        (ast.AstExpr.Var acc-name-id))
                       (ast.ast-expr-binary-with-pools
                         (lower-global-shared-view pools)
                         (ast.AstBinOp.Mul)
@@ -50287,24 +50370,24 @@
                             (ast.AstExpr.Var index-id))
                           (ast.ast-node-pool-context-expr-push
                             (lower-global-shared-view pools)
-                            (ast.AstExpr.Var (lower-spmd-reduce-start-id))))
+                            (ast.AstExpr.Var start-name-id)))
                         (ast.ast-node-pool-context-expr-push
                           (lower-global-shared-view pools)
-                          (ast.AstExpr.Var (lower-spmd-reduce-uniform-id)))))
+                          (ast.AstExpr.Var uniform-name-id))))
                     (ast.ast-expr-list-new))))))]
         [_
           (ast.ast-expr-let-with-pools
             (lower-global-shared-view pools)
             (ast.ast-let-binding-cons
               (ast.ast-let-binding-id
-                (lower-spmd-reduce-acc-id)
+                acc-name-id
                 (ast.AstMaybeType.Some acc-ty)
                 (ast.ast-node-pool-context-expr-push
                   (lower-global-shared-view pools)
                   init))
               (ast.ast-let-binding-cons
                 (ast.ast-let-binding-id
-                  (lower-spmd-reduce-end-id)
+                  end-name-id
                   (ast.AstMaybeType.Some (lower-global-shared-view index-ty))
                   (ast.ast-node-pool-context-expr-push
                     (lower-global-shared-view pools)
@@ -50325,7 +50408,7 @@
                   (ast.ast-expr-cons
                     (ast.ast-node-pool-context-expr-push
                       (lower-global-shared-view pools)
-                      (ast.AstExpr.Var (lower-spmd-reduce-acc-id)))
+                      (ast.AstExpr.Var acc-name-id))
                     (ast.ast-expr-list-new))))))])]
     [root : ast.AstExpr
       (lower-context-expr-get (lower-global-shared-view ctx) root-id)]
@@ -50371,11 +50454,13 @@
           (match split
             [(LowerMaybeReduceSplit.Split x-id _)
               (spmd-reduce-acc-binop-update
+                (lower-global-shared-view state)
                 (tc_core.tc-context-pools (lower-global-shared-view ctx))
                 (ast.AstBinOp.Add)
                 x-id)]
             [_
               (spmd-reduce-acc-update-expr
+                (lower-global-shared-view state)
                 (tc_core.tc-context-pools (lower-global-shared-view ctx))
                 op
                 (lower-context-expr-push
@@ -50455,62 +50540,69 @@
       (ResultLowerExpr.Err (box (lower-diagnostic-at-expr ctx value message)))]))
 
 (define (spmd-scan-binop-prefix
+  [state : LowerState]
   [pools : ast.AstNodePoolContext]
   [op : ast.AstBinOp]
   [value : i64]) : i64
-  (ast.ast-expr-binary-with-pools
-    (lower-global-shared-view pools)
-    op
-    (ast.ast-node-pool-context-expr-push
-      pools
-      (ast.AstExpr.Var (lower-spmd-scan-acc-id)))
-    value))
+  (let
+    [acc-id : i64
+      (cis.intern-lower-private-identity-raw
+        (lower-spmd-scan-acc-id (lower-global-shared-view state)))]
+    (ast.ast-expr-binary-with-pools
+      (lower-global-shared-view pools)
+      op
+      (ast.ast-node-pool-context-expr-push pools (ast.AstExpr.Var acc-id))
+      value)))
 
 (define (spmd-scan-select-prefix
+  [state : LowerState]
   [pools : ast.AstNodePoolContext]
   [cmp : ast.AstBinOp]
   [value : i64]) : i64
-  (ast.ast-expr-let-with-pools
-    (lower-global-shared-view pools)
-    (ast.ast-let-binding-cons
-      (ast.ast-let-binding-id
-        (lower-spmd-scan-val-id)
-        (ast.AstMaybeType.No)
-        value)
-      (ast.ast-let-binding-list-new))
-    (ast.ast-expr-if-with-pools
+  (let
+    [acc-id : i64
+      (cis.intern-lower-private-identity-raw
+        (lower-spmd-scan-acc-id (lower-global-shared-view state)))]
+    [value-id : i64
+      (cis.intern-lower-private-identity-raw
+        (lower-spmd-scan-val-id (lower-global-shared-view state)))]
+    (ast.ast-expr-let-with-pools
       (lower-global-shared-view pools)
-      (ast.ast-expr-binary-with-pools
+      (ast.ast-let-binding-cons
+        (ast.ast-let-binding-id value-id (ast.AstMaybeType.No) value)
+        (ast.ast-let-binding-list-new))
+      (ast.ast-expr-if-with-pools
         (lower-global-shared-view pools)
-        cmp
+        (ast.ast-expr-binary-with-pools
+          (lower-global-shared-view pools)
+          cmp
+          (ast.ast-node-pool-context-expr-push
+            (lower-global-shared-view pools)
+            (ast.AstExpr.Var value-id))
+          (ast.ast-node-pool-context-expr-push
+            (lower-global-shared-view pools)
+            (ast.AstExpr.Var acc-id)))
         (ast.ast-node-pool-context-expr-push
           (lower-global-shared-view pools)
-          (ast.AstExpr.Var (lower-spmd-scan-val-id)))
-        (ast.ast-node-pool-context-expr-push
-          (lower-global-shared-view pools)
-          (ast.AstExpr.Var (lower-spmd-scan-acc-id))))
-      (ast.ast-node-pool-context-expr-push
-        (lower-global-shared-view pools)
-        (ast.AstExpr.Var (lower-spmd-scan-val-id)))
-      (ast.ast-node-pool-context-expr-push
-        pools
-        (ast.AstExpr.Var (lower-spmd-scan-acc-id))))))
+          (ast.AstExpr.Var value-id))
+        (ast.ast-node-pool-context-expr-push pools (ast.AstExpr.Var acc-id))))))
 
 (define (spmd-scan-prefix-expr
+  [state : LowerState]
   [pools : ast.AstNodePoolContext]
   [op : ast.AstReduceOp]
   [value : i64]) : i64
   (match op
     [(ast.AstReduceOp.Sum)
-      (spmd-scan-binop-prefix pools (ast.AstBinOp.Add) value)]
+      (spmd-scan-binop-prefix state pools (ast.AstBinOp.Add) value)]
     [(ast.AstReduceOp.All)
-      (spmd-scan-binop-prefix pools (ast.AstBinOp.And) value)]
+      (spmd-scan-binop-prefix state pools (ast.AstBinOp.And) value)]
     [(ast.AstReduceOp.Any)
-      (spmd-scan-binop-prefix pools (ast.AstBinOp.Or) value)]
+      (spmd-scan-binop-prefix state pools (ast.AstBinOp.Or) value)]
     [(ast.AstReduceOp.Min)
-      (spmd-scan-select-prefix pools (ast.AstBinOp.Lt) value)]
+      (spmd-scan-select-prefix state pools (ast.AstBinOp.Lt) value)]
     [(ast.AstReduceOp.Max)
-      (spmd-scan-select-prefix pools (ast.AstBinOp.Gt) value)]))
+      (spmd-scan-select-prefix state pools (ast.AstBinOp.Gt) value)]))
 
 (define (lower-spmd-scan-scaffold
   [ctx : tc_core.TcContext]
@@ -50531,9 +50623,15 @@
   (let
     [pools : ast.AstNodePoolContext
       (tc_core.tc-context-pools (lower-global-shared-view ctx))]
+    [acc-name-id : i64
+      (cis.intern-lower-private-identity-raw
+        (lower-spmd-scan-acc-id (lower-global-shared-view state)))]
+    [end-name-id : i64
+      (cis.intern-lower-private-identity-raw
+        (lower-spmd-scan-end-id (lower-global-shared-view state)))]
     (lower-expr
       (lower-global-shared-view ctx)
-      state
+      (lower-global-shared-view state)
       env
       type-env
       (lower-context-expr-get
@@ -50542,14 +50640,14 @@
           (lower-global-shared-view pools)
           (ast.ast-let-binding-cons
             (ast.ast-let-binding-id
-              (lower-spmd-scan-acc-id)
+              acc-name-id
               (ast.AstMaybeType.Some (lower-global-shared-view prefix-ty))
               (ast.ast-node-pool-context-expr-push
                 (lower-global-shared-view pools)
                 init))
             (ast.ast-let-binding-cons
               (ast.ast-let-binding-id
-                (lower-spmd-scan-end-id)
+                end-name-id
                 (ast.AstMaybeType.Some (lower-global-shared-view index-ty))
                 (ast.ast-node-pool-context-expr-push
                   (lower-global-shared-view pools)
@@ -50576,7 +50674,7 @@
                       (ast.AstExpr.Var index-id))
                     (ast.ast-node-pool-context-expr-push
                       (lower-global-shared-view pools)
-                      (ast.AstExpr.Var (lower-spmd-scan-end-id))))
+                      (ast.AstExpr.Var end-name-id)))
                   (ast.ast-expr-let-with-pools
                     (lower-global-shared-view pools)
                     (ast.ast-let-binding-cons
@@ -50591,7 +50689,7 @@
                         (ast.ast-expr-cons
                           (ast.ast-expr-set-id-with-pools
                             (lower-global-shared-view pools)
-                            (lower-spmd-scan-acc-id)
+                            acc-name-id
                             (ast.ast-node-pool-context-expr-push
                               (lower-global-shared-view pools)
                               (ast.AstExpr.Var prefix-id)))
@@ -50635,6 +50733,7 @@
   (let
     [scalar-prefix : i64
       (spmd-scan-prefix-expr
+        (lower-global-shared-view state)
         (tc_core.tc-context-pools (lower-global-shared-view ctx))
         op
         (lower-context-expr-push
@@ -58111,13 +58210,17 @@
   [elem-ty : ast.AstType]
   [value-var : i64]) : ResultLowerExpr
   (let
-    [acc-name-id : i64 (lower-spmd-reduce-acc-id)]
-    [current-name-id : i64 (lower-spmd-reduce-current-id)]
+    [acc-name-id : i64
+      (cis.intern-lower-private-identity-raw
+        (lower-spmd-reduce-acc-id (lower-global-shared-view state)))]
+    [current-name-id : i64
+      (cis.intern-lower-private-identity-raw
+        (lower-spmd-reduce-current-id (lower-global-shared-view state)))]
     [pools : ast.AstNodePoolContext
       (tc_core.tc-context-pools (lower-global-shared-view ctx))]
     (lower-expr
       (lower-global-shared-view ctx)
-      state
+      (lower-global-shared-view state)
       (sym_i64_env.sym-i64-bind-id
         (sym_i64_env.sym-i64-bind-id env acc-name-id acc-var)
         current-name-id
@@ -58132,6 +58235,7 @@
       (lower-context-expr-get
         ctx
         (spmd-reduce-acc-update-expr
+          (lower-global-shared-view state)
           (lower-global-shared-view pools)
           op
           (ast.ast-node-pool-context-expr-push
@@ -74911,7 +75015,9 @@
                 (if (>= sret-var 0)
                   (sym_i64_env.sym-i64-bind-id
                     (sym_i64_env.sym-i64-empty)
-                    (lower-sret-param-marker-id)
+                    (cis.intern-lower-private-identity-raw
+                      (lower-sret-param-marker-id
+                        (lower-global-shared-view state)))
                     sret-var)
                   (sym_i64_env.sym-i64-empty))]
               (match (if structural-params?

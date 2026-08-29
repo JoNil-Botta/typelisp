@@ -15834,6 +15834,309 @@
     (compiler-lower-macro-structural-growth-ok?)
     "macro structural records grow beyond the first record slab"))
 
+(define (compiler-lower-private-record-missing?
+  [record : cis.InternMaybeLowerPrivateRecord]) : bool
+  (match record
+    [(cis.InternMaybeLowerPrivateRecord.No) true]
+    [_ false]))
+
+(define (compiler-lower-private-identity-raw
+  [session : cis.InternStructuralSessionHandle]
+  [record : cis.InternLowerPrivateRecord]) : i64
+  (cis.intern-lower-private-identity-raw
+    (cis.intern-structural-session-lower-private-identity session record)))
+
+(define (compiler-lower-private-structural-identities-ok?) : bool
+  (let
+    [intern-a : ci.InternCompatState (ci.intern-compat-state-new)]
+    [intern-b : ci.InternCompatState (ci.intern-compat-state-new)]
+    [session-a : cis.InternStructuralSessionHandle
+      (cis.intern-structural-session-handle-from-source-names
+        (ci.intern-source-name-session-handle-from-state intern-a))]
+    [session-b : cis.InternStructuralSessionHandle
+      (cis.intern-structural-session-handle-from-source-names
+        (ci.intern-source-name-session-handle-from-state intern-b))]
+    [identities : (__tl_dyn-array i64) (__tl_make-array i64 18)]
+    [ok : bool true]
+    (begin
+      (set!
+        (array-ref identities 0)
+        (compiler-lower-private-identity-raw
+          session-a
+          cis.InternLowerPrivateRecord.SretParameter))
+      (set!
+        (array-ref identities 1)
+        (compiler-lower-private-identity-raw
+          session-a
+          cis.InternLowerPrivateRecord.CleanupStack))
+      (set!
+        (array-ref identities 2)
+        (compiler-lower-private-identity-raw
+          session-a
+          cis.InternLowerPrivateRecord.RegionReset))
+      (set!
+        (array-ref identities 3)
+        (compiler-lower-private-identity-raw
+          session-a
+          (cis.InternLowerPrivateRecord.CleanupHidden 1)))
+      (set!
+        (array-ref identities 4)
+        (compiler-lower-private-identity-raw
+          session-a
+          (cis.InternLowerPrivateRecord.CleanupLiveness 1)))
+      (set!
+        (array-ref identities 5)
+        (compiler-lower-private-identity-raw
+          session-a
+          (cis.InternLowerPrivateRecord.RegionHidden 1)))
+      (set!
+        (array-ref identities 6)
+        (compiler-lower-private-identity-raw
+          session-a
+          (cis.InternLowerPrivateRecord.ArenaRestoreHidden 1)))
+      (set!
+        (array-ref identities 7)
+        (compiler-lower-private-identity-raw
+          session-a
+          cis.InternLowerPrivateRecord.SpmdReduceAccumulator))
+      (set!
+        (array-ref identities 8)
+        (compiler-lower-private-identity-raw
+          session-a
+          cis.InternLowerPrivateRecord.SpmdReduceEnd))
+      (set!
+        (array-ref identities 9)
+        (compiler-lower-private-identity-raw
+          session-a
+          cis.InternLowerPrivateRecord.SpmdReduceValue))
+      (set!
+        (array-ref identities 10)
+        (compiler-lower-private-identity-raw
+          session-a
+          cis.InternLowerPrivateRecord.SpmdReduceCurrent))
+      (set!
+        (array-ref identities 11)
+        (compiler-lower-private-identity-raw
+          session-a
+          cis.InternLowerPrivateRecord.SpmdReduceStart))
+      (set!
+        (array-ref identities 12)
+        (compiler-lower-private-identity-raw
+          session-a
+          cis.InternLowerPrivateRecord.SpmdReduceUniform))
+      (set!
+        (array-ref identities 13)
+        (compiler-lower-private-identity-raw
+          session-a
+          cis.InternLowerPrivateRecord.SpmdScanAccumulator))
+      (set!
+        (array-ref identities 14)
+        (compiler-lower-private-identity-raw
+          session-a
+          cis.InternLowerPrivateRecord.SpmdScanEnd))
+      (set!
+        (array-ref identities 15)
+        (compiler-lower-private-identity-raw
+          session-a
+          cis.InternLowerPrivateRecord.SpmdScanValue))
+      (set!
+        (array-ref identities 16)
+        (compiler-lower-private-identity-raw
+          session-a
+          (cis.InternLowerPrivateRecord.WhileExit 1)))
+      (set!
+        (array-ref identities 17)
+        (compiler-lower-private-identity-raw
+          session-a
+          (cis.InternLowerPrivateRecord.WhileHeader 1)))
+      (let
+        [left : i64 0]
+        (while (< left 18)
+          (let
+            [right : i64 (+ left 1)]
+            (begin
+              (while (< right 18)
+                (begin
+                  (when
+                    (= (array-ref identities left) (array-ref identities right))
+                    (set! ok false))
+                  (set! right (+ right 1))))
+              (set! left (+ left 1))))))
+      (let
+        [high-owner : i64 (+ (ci.intern-capacity) 100)]
+        [high-owner-a : i64
+          (compiler-lower-private-identity-raw
+            session-a
+            (cis.InternLowerPrivateRecord.CleanupHidden high-owner))]
+        [high-owner-a-again : i64
+          (compiler-lower-private-identity-raw
+            session-a
+            (cis.InternLowerPrivateRecord.CleanupHidden high-owner))]
+        [high-owner-b : i64
+          (compiler-lower-private-identity-raw
+            session-a
+            (cis.InternLowerPrivateRecord.CleanupHidden (+ high-owner 1)))]
+        [collision-a : i64
+          (compiler-lower-private-identity-raw
+            session-a
+            (cis.InternLowerPrivateRecord.CleanupHidden 2048))]
+        [collision-b : i64
+          (compiler-lower-private-identity-raw
+            session-a
+            (cis.InternLowerPrivateRecord.CleanupHidden 2560))]
+        [other-session-uniform : i64
+          (compiler-lower-private-identity-raw
+            session-b
+            cis.InternLowerPrivateRecord.SpmdReduceUniform)]
+        [former-collision-key : cis.InternStructuralKey
+          (cis.intern-structural-session-key
+            session-a
+            (ci.intern-structural-kind-lower-private)
+            0
+            1
+            0)]
+        [former-collision-raw : i64
+          (cis.intern-structural-key-raw former-collision-key)]
+        [unknown-kind-key : cis.InternStructuralKey
+          (cis.intern-structural-session-key session-a 255 0 0 0)]
+        [unknown-kind-raw : i64
+          (cis.intern-structural-key-raw unknown-kind-key)]
+        [index : i64 0]
+        (begin
+          (unless (= high-owner-a high-owner-a-again) (set! ok false))
+          (when (= high-owner-a high-owner-b) (set! ok false))
+          (when (= collision-a collision-b) (set! ok false))
+          (when
+            (= other-session-uniform (array-ref identities 12))
+            (set! ok false))
+          ;; This is the structural counterpart of the old kind-16/value-0
+          ;; versus kind-0/value-1 collision. The malformed marker recipe is a
+          ;; separate record and fails typed decoding.
+          (when
+            (= former-collision-raw (array-ref identities 12))
+            (set! ok false))
+          (unless
+            (compiler-lower-private-record-missing?
+              (cis.intern-structural-session-lower-private-record-for-raw
+                session-a
+                former-collision-raw))
+            (set! ok false))
+          (unless
+            (compiler-lower-private-record-missing?
+              (cis.intern-structural-session-lower-private-record-for-raw
+                session-a
+                unknown-kind-raw))
+            (set! ok false))
+          (unless
+            (compiler-lower-private-record-missing?
+              (cis.intern-structural-session-lower-private-record-for-raw
+                session-b
+                (array-ref identities 12)))
+            (set! ok false))
+          (match (cis.intern-structural-session-lower-private-record-for-raw
+            session-a
+            (array-ref identities 12))
+            [(cis.InternMaybeLowerPrivateRecord.Some
+                (cis.InternLowerPrivateRecord.SpmdReduceUniform))
+              unit]
+            [_ (set! ok false)])
+          (match (cis.intern-structural-session-lower-private-record-for-raw
+            session-a
+            high-owner-a)
+            [(cis.InternMaybeLowerPrivateRecord.Some
+                (cis.InternLowerPrivateRecord.CleanupHidden owner-id))
+              (unless (= owner-id high-owner) (set! ok false))]
+            [_ (set! ok false)])
+          (match (cis.intern-structural-session-lower-private-record-for-raw
+            session-a
+            (array-ref identities 16))
+            [(cis.InternMaybeLowerPrivateRecord.Some
+                (cis.InternLowerPrivateRecord.WhileExit ordinal))
+              (unless (= ordinal 1) (set! ok false))]
+            [_ (set! ok false)])
+          (while (< index 700)
+            (begin
+              (compiler-lower-private-identity-raw
+                session-a
+                (cis.InternLowerPrivateRecord.CleanupHidden (+ 100000 index)))
+              (set! index (+ index 1))))
+          (unless
+            (=
+              (compiler-lower-private-identity-raw
+                session-a
+                (cis.InternLowerPrivateRecord.CleanupHidden 100000))
+              (compiler-lower-private-identity-raw
+                session-a
+                (cis.InternLowerPrivateRecord.CleanupHidden 100000)))
+            (set! ok false))
+          (unless
+            (=
+              (cis.intern-structural-session-kind-count
+                session-a
+                (ci.intern-structural-kind-lower-private))
+              723)
+            (set! ok false))
+          (unless
+            (= (ci.intern-compat-state-structural-count intern-a) 724)
+            (set! ok false))
+          (unless
+            (= (ci.intern-structural-record-slot-bytes) 37)
+            (set! ok false))))
+      (let
+        [reset-to-state : ci.InternCompatState (ci.intern-compat-state-new)]
+        [reset-to-session : cis.InternStructuralSessionHandle
+          (cis.intern-structural-session-handle-from-source-names
+            (ci.intern-source-name-session-handle-from-state reset-to-state))]
+        [reset-to-identity : i64
+          (compiler-lower-private-identity-raw
+            reset-to-session
+            cis.InternLowerPrivateRecord.CleanupStack)]
+        [mark : i64 (ci.intern-compat-state-pool-len reset-to-state)]
+        (begin
+          (ci.intern-compat-state-reset-to! (&mut reset-to-state) mark)
+          (unless
+            (compiler-lower-private-record-missing?
+              (cis.intern-structural-session-lower-private-record-for-raw
+                reset-to-session
+                reset-to-identity))
+            (set! ok false))))
+      (let
+        [reset-state : ci.InternCompatState (ci.intern-compat-state-new)]
+        [reset-session : cis.InternStructuralSessionHandle
+          (cis.intern-structural-session-handle-from-source-names
+            (ci.intern-source-name-session-handle-from-state reset-state))]
+        [reset-identity : i64
+          (compiler-lower-private-identity-raw
+            reset-session
+            cis.InternLowerPrivateRecord.RegionReset)]
+        (begin
+          (ci.intern-compat-state-reset! (&mut reset-state))
+          (unless
+            (compiler-lower-private-record-missing?
+              (cis.intern-structural-session-lower-private-record-for-raw
+                reset-session
+                reset-identity))
+            (set! ok false))))
+      (and
+        ok
+        (=
+          (cis.intern-lower-private-identity-size)
+          (comptime (size-of (type i64))))))))
+
+(test
+  compiler-lower-private-structural-identities
+  (test.assert-true
+    (compiler-lower-private-structural-identities-ok?)
+    "lower-private records are typed, canonical, session-owned, and collision-free"))
+
+(test
+  compiler-lower-private-structural-select-temporary
+  (test.assert-true
+    (compiler-lower-ok?
+      "(define (f [xs : (__tl_dyn-array i64)] [n : i64] [seed : i64]) : i64
+  (spmd-reduce min ([i : i64 0 n]) seed (array-ref xs i)))")
+    "lower-private select temporaries stay outside renderable-name metadata"))
+
 ;; The standalone adapter resets the active intern generation after constructing
 ;; its lower carrier. Cleanup synthesis must use the refreshed post-reset view;
 ;; publishing a pre-reset snapshot would invalidate the active builtin IDs.

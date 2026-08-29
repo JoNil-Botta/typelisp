@@ -413,6 +413,24 @@
   "(define (main [flag : bool]) : i64
   (if flag 1 false))")
 
+(define (compiler-typecheck-unop-diagnostic-tests-ok?) : bool
+  (and
+    (compiler-typecheck-error-ok?
+      "(define (main) : i64 (neg true))"
+      "typecheck: neg expects integer or float")
+    (compiler-typecheck-error-ok?
+      "(define (main) : i64 (neg (tuple 1 2)))"
+      "typecheck: neg expects integer or float")
+    (compiler-typecheck-ok? "(define (main) : i64 (neg 3))")
+    (compiler-typecheck-ok? "(define (main) : f32 (neg 1.0))")
+    (compiler-typecheck-ok? "(define (main) : f64 (neg 2.0))")
+    (compiler-typecheck-error-ok?
+      "(define (main) : i64 (not 3))"
+      "typecheck: not expects bool")
+    (compiler-typecheck-error-ok?
+      "(define (main) : i64 (bit-not true))"
+      "typecheck: bit-not expects integer")))
+
 (define (compiler-typecheck-escape-return-diagnostic-source) : String
   "(define (main [n : i64]) : (& n i64)
   (let [x : i64 1] (& x)))")
@@ -12861,6 +12879,9 @@
     (if (compiler-typecheck-mismatch-detail-tests-ok?)
       unit
       (io.panic "typecheck: mismatch detail tests failed"))
+    (if (compiler-typecheck-unop-diagnostic-tests-ok?)
+      unit
+      (io.panic "typecheck: unop diagnostic tests failed"))
     (if (compiler-typecheck-escape-diagnostic-tests-ok?)
       unit
       (io.panic "typecheck: escape diagnostic tests failed"))

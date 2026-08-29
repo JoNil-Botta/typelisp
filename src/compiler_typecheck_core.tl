@@ -14916,22 +14916,11 @@
   (cond
     [(and (>= name-id 0) (< name-id (ci.intern-capacity)))
       (ci.intern-str name-id)]
-    [(cis.intern-structural-session-fresh-local-id? session name-id)
-      (ci.intern-str
-        (cis.intern-structural-session-fresh-local-source-name-id-or
-          session
-          name-id
-          -1))]
-    [(cis.intern-structural-session-template-source-id? session name-id)
-      (ci.intern-str
-        (cis.intern-structural-session-template-source-name-id-or
-          session
-          name-id
-          -1))]
     [(>= name-id (ci.intern-structural-key-base))
       ;; One authoritative lookup classifies the table record. In particular,
-      ;; do not probe global, local, ownership, and then the generic record in
-      ;; succession: composite environment keys dominate diagnostic display.
+      ;; do not probe template, fresh, global, local, ownership, and then the
+      ;; generic record in succession: composite environment keys dominate
+      ;; diagnostic display.
       (match (cis.intern-structural-session-record-for-raw session name-id)
         [(cis.InternMaybeStructuralRecord.Some record)
           (let
@@ -105775,6 +105764,26 @@
   [record : cis.InternStructuralRecord]
   [fallback : i64]) : i64
   (cond
+    [(and
+        (= record.kind (ci.intern-structural-kind-template-source))
+        (= record.left-id 0)
+        (= record.middle-id 0)
+        (>= record.right-id 0)
+        (<
+          record.right-id
+          (ci.intern-source-name-session-handle-capacity
+            (cis.intern-structural-session-handle-source-names session))))
+      record.right-id]
+    [(and
+        (= record.kind (ci.intern-structural-kind-fresh-local))
+        (>= record.left-id 0)
+        (= record.middle-id 0)
+        (>= record.right-id 0)
+        (<
+          record.right-id
+          (ci.intern-source-name-session-handle-capacity
+            (cis.intern-structural-session-handle-source-names session))))
+      record.right-id]
     [(and
         (= record.kind (ci.intern-structural-kind-macro-global))
         (or (= record.left-id 0) (= record.left-id 1)))

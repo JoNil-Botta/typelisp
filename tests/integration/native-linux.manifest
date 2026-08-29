@@ -223,6 +223,7 @@ mutable_reference_disjoint_read|tests/integration/mutable_reference_disjoint_rea
 enum_string_payload|tests/integration/enum_string_payload.tl|5|-|-|stdlib/string.tl
 f32_scalar|tests/integration/f32_scalar.tl|42|-|-|-
 f64_negation|tests/integration/f64_negation.tl|42|-|-|-
+f32_negation|tests/integration/f32_negation.tl|42|-|6|stdlib/io.tl stdlib/string.tl
 repr_c_f32_fields|tests/integration/repr_c_f32_fields.tl|42|-|-|-
 factorial|tests/integration/factorial.tl|120|-|-|-
 fibonacci|tests/integration/fibonacci.tl|13|-|-|-

@@ -4021,7 +4021,8 @@
   (bytes BackendStringSet)
   (uses-avx2-i64-lane-id bool)
   (uses-avx512-i64-lane-id bool)
-  (uses-f64-neg bool))
+  (uses-f64-neg bool)
+  (uses-f32-neg bool))
 
 (defenum CompilerBackendCollectState
   (Collections CompilerBackendProgramCollections))
@@ -4129,6 +4130,7 @@
     (compiler-backend-string-set-new 64)
     false
     false
+    false
     false))
 
 (define (compiler-backend-program-collections-add-function
@@ -4142,7 +4144,8 @@
     collections.bytes
     collections.uses-avx2-i64-lane-id
     collections.uses-avx512-i64-lane-id
-    collections.uses-f64-neg))
+    collections.uses-f64-neg
+    collections.uses-f32-neg))
 
 (define (compiler-backend-program-collections-add-reference
   [collections : CompilerBackendProgramCollections]
@@ -4155,7 +4158,8 @@
     collections.bytes
     collections.uses-avx2-i64-lane-id
     collections.uses-avx512-i64-lane-id
-    collections.uses-f64-neg))
+    collections.uses-f64-neg
+    collections.uses-f32-neg))
 
 (define (compiler-backend-program-collections-add-string
   [collections : CompilerBackendProgramCollections]
@@ -4168,7 +4172,8 @@
     collections.bytes
     collections.uses-avx2-i64-lane-id
     collections.uses-avx512-i64-lane-id
-    collections.uses-f64-neg))
+    collections.uses-f64-neg
+    collections.uses-f32-neg))
 
 (define (compiler-backend-program-collections-add-float
   [collections : CompilerBackendProgramCollections]
@@ -4182,7 +4187,8 @@
     collections.bytes
     collections.uses-avx2-i64-lane-id
     collections.uses-avx512-i64-lane-id
-    collections.uses-f64-neg))
+    collections.uses-f64-neg
+    collections.uses-f32-neg))
 
 (define (compiler-backend-program-collections-add-bytes
   [collections : CompilerBackendProgramCollections]
@@ -4195,7 +4201,8 @@
     (compiler-backend-string-set-add collections.bytes text)
     collections.uses-avx2-i64-lane-id
     collections.uses-avx512-i64-lane-id
-    collections.uses-f64-neg))
+    collections.uses-f64-neg
+    collections.uses-f32-neg))
 
 (define (compiler-backend-program-collections-mark-avx2-i64-lane-id
   [collections : CompilerBackendProgramCollections]) : CompilerBackendProgramCollections
@@ -4207,7 +4214,8 @@
     collections.bytes
     true
     collections.uses-avx512-i64-lane-id
-    collections.uses-f64-neg))
+    collections.uses-f64-neg
+    collections.uses-f32-neg))
 
 (define (compiler-backend-program-collections-mark-avx512-i64-lane-id
   [collections : CompilerBackendProgramCollections]) : CompilerBackendProgramCollections
@@ -4219,7 +4227,8 @@
     collections.bytes
     collections.uses-avx2-i64-lane-id
     true
-    collections.uses-f64-neg))
+    collections.uses-f64-neg
+    collections.uses-f32-neg))
 
 (define (compiler-backend-program-collections-mark-f64-neg
   [collections : CompilerBackendProgramCollections]) : CompilerBackendProgramCollections
@@ -4231,6 +4240,20 @@
     collections.bytes
     collections.uses-avx2-i64-lane-id
     collections.uses-avx512-i64-lane-id
+    true
+    false))
+
+(define (compiler-backend-program-collections-mark-f32-neg
+  [collections : CompilerBackendProgramCollections]) : CompilerBackendProgramCollections
+  (CompilerBackendProgramCollections
+    collections.functions
+    collections.references
+    collections.strings
+    collections.floats
+    collections.bytes
+    collections.uses-avx2-i64-lane-id
+    collections.uses-avx512-i64-lane-id
+    false
     true))
 
 (define (backend-and4 [a : bool] [b : bool] [c : bool] [d : bool]) : bool
@@ -19895,6 +19918,9 @@
 (define (compiler-backend-f64-sign-bit-label) : String
   ".L_tl_f64_sign_bit")
 
+(define (compiler-backend-f32-sign-bit-label) : String
+  ".L_tl_f32_sign_bit")
+
 (define (compiler-backend-emit-load-float-value-with-plan
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [value : compiler_ir_types.CompilerIrValue]
@@ -29345,7 +29371,9 @@
       (ResultCompilerBackend.Ok
         (str_cat.str-cat
           "    xorpd "
-          (compiler-backend-f64-sign-bit-label)
+          (if (compiler-backend-f64-type? ty)
+            (compiler-backend-f64-sign-bit-label)
+            (compiler-backend-f32-sign-bit-label))
           "(%rip), "
           (compiler-backend-global-shared-view reg)
           "\n"))]
@@ -29376,6 +29404,7 @@
     (and
       (compiler-backend-float-type? ty)
       (match op
+        [(compiler_ir_types.CompilerIrUnOp.Neg) true]
         [(compiler_ir_types.CompilerIrUnOp.Sqrt) true]
         [_ false]))))
 
@@ -80296,6 +80325,10 @@
   [collections : CompilerBackendProgramCollections]) : bool
   collections.uses-f64-neg)
 
+(define (compiler-backend-program-collections-uses-f32-neg?
+  [collections : CompilerBackendProgramCollections]) : bool
+  collections.uses-f32-neg)
+
 (define (compiler-backend-collect-float-both-collections
   [collections : CompilerBackendProgramCollections]
   [bits : u64]) : CompilerBackendProgramCollections
@@ -80471,9 +80504,13 @@
           (compiler-backend-collect-value-collections collections src)]
         (match op
           [(compiler_ir_types.CompilerIrUnOp.Neg)
-            (if (compiler-backend-f64-type? ty)
+            (if (compiler-backend-f64-type?
+              (compiler-backend-global-shared-view ty))
               (compiler-backend-program-collections-mark-f64-neg with-src)
-              with-src)]
+              (if (compiler-backend-float-type?
+                (compiler-backend-global-shared-view ty))
+                (compiler-backend-program-collections-mark-f32-neg with-src)
+                with-src))]
           [_ with-src]))]
     [(compiler_ir_types.CompilerIrInstr.Call _ _ args _)
       (compiler-backend-collect-call-args-collections collections args)]
@@ -81019,6 +81056,17 @@
         (text_buf.append buf "    .section .rodata\n    .balign 16\n")
         (compiler-backend-f64-sign-bit-label))
       ":\n    .quad 0x8000000000000000\n    .quad 0\n")
+    buf))
+
+(define (compiler-backend-emit-f32-sign-bit-rodata-into
+  [enabled : bool]
+  [buf : text_buf.TextBuf]) : text_buf.TextBuf
+  (if enabled
+    (text_buf.append
+      (text_buf.append
+        (text_buf.append buf "    .section .rodata\n    .balign 16\n")
+        (compiler-backend-f32-sign-bit-label))
+      ":\n    .quad 0x80000000\n    .quad 0\n")
     buf))
 
 (define (compiler-backend-global-value-asm
@@ -82545,6 +82593,7 @@
   [uses-avx2-i64-lane-id : bool]
   [uses-avx512-i64-lane-id : bool]
   [uses-f64-neg : bool]
+  [uses-f32-neg : bool]
   [globals-buf : text_buf.TextBuf]
   [emit-entry : bool]
   [crt-entry : bool]) : text_buf.TextBuf
@@ -82585,11 +82634,15 @@
               (compiler-backend-emit-f64-sign-bit-rodata-into
                 uses-f64-neg
                 float-literals-buf)]
+            [f32-buf : text_buf.TextBuf
+              (compiler-backend-emit-f32-sign-bit-rodata-into
+                uses-f32-neg
+                f64-buf)]
             [lane-id-buf : text_buf.TextBuf
               (compiler-backend-emit-lane-id-rodata-into
                 uses-avx2-i64-lane-id
                 uses-avx512-i64-lane-id
-                f64-buf)]
+                f32-buf)]
             (begin
               (cfg
                 compile-profile
@@ -82758,6 +82811,9 @@
     [uses-f64-neg : bool
       (compiler-backend-program-collections-uses-f64-neg?
         (compiler-backend-global-shared-view collections))]
+    [uses-f32-neg : bool
+      (compiler-backend-program-collections-uses-f32-neg?
+        (compiler-backend-global-shared-view collections))]
     [span-index : CompilerBackendSourceSpanIndex
       (compiler-backend-source-span-index-build-with-backend-state
         program-index.backend-state
@@ -82821,6 +82877,7 @@
             uses-avx2-i64-lane-id
             uses-avx512-i64-lane-id
             uses-f64-neg
+            uses-f32-neg
             (compiler-backend-global-shared-view globals-buf)
             emit-entry
             crt-entry)]
@@ -85040,7 +85097,8 @@
             (compiler-backend-global-shared-view ty)
             (compiler-backend-global-shared-view program-index))]
         (if (and
-          (compiler-backend-f64-type? (compiler-backend-global-shared-view ty))
+          (compiler-backend-float-type?
+            (compiler-backend-global-shared-view ty))
           (match (compiler-backend-global-shared-view op)
             [(compiler_ir_types.CompilerIrUnOp.Neg) true]
             [_ false]))
@@ -85049,9 +85107,15 @@
               with-src
               (compiler-backend-global-shared-view function)
               (cobj.CompilerObjectRelocationKind.RipValue)
-              (compiler-backend-f64-sign-bit-label)
+              (if (compiler-backend-f64-type?
+                (compiler-backend-global-shared-view ty))
+                (compiler-backend-f64-sign-bit-label)
+                (compiler-backend-f32-sign-bit-label))
               (cobj.CompilerObjectX64Instr.XorpdRip
-                (compiler-backend-f64-sign-bit-label)))
+                (if (compiler-backend-f64-type?
+                  (compiler-backend-global-shared-view ty))
+                  (compiler-backend-f64-sign-bit-label)
+                  (compiler-backend-f32-sign-bit-label))))
             dst
             "%rax")
           (compiler-backend-object-store-reg-to-var
@@ -86393,6 +86457,27 @@
         (cobj.CompilerObjectDataRecord.I64 0)))
     parts))
 
+(define (compiler-backend-object-f32-sign-bit
+  [parts : object_target.CompilerBackendObjectTargetParts]
+  [enabled : bool]) : object_target.CompilerBackendObjectTargetParts
+  (if enabled
+    (let
+      [symbol : String (compiler-backend-f32-sign-bit-label)]
+      (object_target.compiler-backend-object-add-rodata
+        (object_target.compiler-backend-object-add-rodata
+          (object_target.compiler-backend-object-add-rodata
+            (object_target.compiler-backend-object-add-rodata
+              (object_target.compiler-backend-object-symbol-local-section
+                parts
+                (compiler-backend-global-shared-view symbol)
+                (cobj.CompilerObjectSectionKind.Rodata)
+                (cobj.CompilerObjectSymbolKind.Data))
+              (cobj.CompilerObjectDataRecord.Align 16))
+            (cobj.CompilerObjectDataRecord.Label symbol))
+          (cobj.CompilerObjectDataRecord.I64 2147483648))
+        (cobj.CompilerObjectDataRecord.I64 0)))
+    parts))
+
 (define (compiler-backend-object-closure-descriptors
   [parts : object_target.CompilerBackendObjectTargetParts]
   [names : BackendSymbolSeq]
@@ -86704,6 +86789,9 @@
     [uses-f64-neg : bool
       (compiler-backend-program-collections-uses-f64-neg?
         (compiler-backend-global-shared-view collections))]
+    [uses-f32-neg : bool
+      (compiler-backend-program-collections-uses-f32-neg?
+        (compiler-backend-global-shared-view collections))]
     [runtime-index : CompilerBackendRuntimeIndex
       (compiler-backend-runtime-index
         program-index.backend-state
@@ -86712,31 +86800,33 @@
     [seed : object_target.CompilerBackendObjectTargetParts
       (compiler-backend-object-runtime-symbols
         (compiler-backend-object-externs
-          (compiler-backend-object-f64-sign-bit
-            (compiler-backend-object-floats
-              (compiler-backend-object-bytes
-                (compiler-backend-object-strings
-                  (compiler-backend-object-closure-descriptors
-                    (compiler-backend-object-globals
-                      (compiler-backend-object-functions
-                        type-segment-bases
-                        (object_target.compiler-backend-object-parts-empty)
+          (compiler-backend-object-f32-sign-bit
+            (compiler-backend-object-f64-sign-bit
+              (compiler-backend-object-floats
+                (compiler-backend-object-bytes
+                  (compiler-backend-object-strings
+                    (compiler-backend-object-closure-descriptors
+                      (compiler-backend-object-globals
+                        (compiler-backend-object-functions
+                          type-segment-bases
+                          (object_target.compiler-backend-object-parts-empty)
+                          (compiler-backend-global-shared-view target)
+                          (compiler-backend-global-shared-view entry-functions)
+                          (compiler-backend-global-shared-view plan)
+                          (compiler-backend-global-shared-view program-index))
                         (compiler-backend-global-shared-view target)
-                        (compiler-backend-global-shared-view entry-functions)
-                        (compiler-backend-global-shared-view plan)
+                        globals
                         (compiler-backend-global-shared-view program-index))
-                      (compiler-backend-global-shared-view target)
-                      globals
+                      (compiler-backend-global-shared-view closure-names)
+                      0
                       (compiler-backend-global-shared-view program-index))
-                    (compiler-backend-global-shared-view closure-names)
-                    0
-                    (compiler-backend-global-shared-view program-index))
-                  strings
+                    strings
+                    0)
+                  bytes
                   0)
-                bytes
-                0)
-              floats)
-            uses-f64-neg)
+                floats)
+              uses-f64-neg)
+            uses-f32-neg)
           (compiler-backend-global-shared-view externs)
           (compiler-backend-global-shared-view plan)
           runtime-index

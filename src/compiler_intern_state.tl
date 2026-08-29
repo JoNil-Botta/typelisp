@@ -25,6 +25,28 @@
 ;; Hygienic identities cross raw i64 AST/environment fields only at compatibility
 ;; boundaries. Inside the structural API each family has a nominal one-word key,
 ;; and decoding always proves both session ownership and record kind.
+(defstruct InternTemplateSourceIdentity
+  (value i64))
+
+(defmacro (intern-template-source-identity-raw [identity : Expr]) : i64
+  `(__tl-project-field-name ,identity "value"))
+
+(cfg
+  test
+  (define (intern-template-source-identity-size) : i64
+    (comptime (size-of (type InternTemplateSourceIdentity)))))
+
+(defstruct InternFreshLocalIdentity
+  (value i64))
+
+(defmacro (intern-fresh-local-identity-raw [identity : Expr]) : i64
+  `(__tl-project-field-name ,identity "value"))
+
+(cfg
+  test
+  (define (intern-fresh-local-identity-size) : i64
+    (comptime (size-of (type InternFreshLocalIdentity)))))
+
 (defstruct InternMacroDefinitionIdentity
   (value i64))
 
@@ -47,6 +69,13 @@
   (Legacy)
   (Context))
 
+(defstruct InternTemplateSourceRecord
+  (source-name-id i64))
+
+(defstruct InternFreshLocalRecord
+  (ordinal i64)
+  (source-name-id i64))
+
 (defstruct InternMacroDefinitionRecord
   (definition-module-id i64)
   (macro-name-id i64))
@@ -64,6 +93,14 @@
 (defenum InternMaybeMacroDefinitionRecord
   (No)
   (Some InternMacroDefinitionRecord))
+
+(defenum InternMaybeTemplateSourceRecord
+  (No)
+  (Some InternTemplateSourceRecord))
+
+(defenum InternMaybeFreshLocalRecord
+  (No)
+  (Some InternFreshLocalRecord))
 
 (defenum InternMaybeMacroGlobalRecord
   (No)
@@ -344,8 +381,8 @@
 (define (intern-structural-session-key-owned?
   [handle : InternStructuralSessionHandle]
   [key : InternStructuralKey]) : bool
-  ;; Ordinary renderable, fresh-local, and other pre-table identities dominate
-  ;; mixed AST/name fields. Reject them before dereferencing the session; kind
+  ;; Ordinary renderable and other non-table identities dominate mixed
+  ;; AST/name fields. Reject them before dereferencing the session; kind
   ;; and components for every possible table handle still come from its owned
   ;; record rather than a numeric subrange.
   (if (< (intern-structural-key-raw key) (ci.intern-structural-key-base))
@@ -673,6 +710,186 @@
             (set! index (+ index 1))))
         count))))
 
+(define (intern-structural-session-record-count
+  [handle : InternStructuralSessionHandle]) : i64
+  (if (not (intern-structural-session-valid? handle))
+    0
+    (let
+      [session : ci.InternSourceNameSession
+        (intern-structural-session-handle-session handle)]
+      [table : ci.InternStructuralTable
+        (owned_view.compiler-owned-array-element-shared-view
+          session.structural-table-cell
+          0)]
+      table.len)))
+
+(define (intern-structural-session-record-capacity
+  [handle : InternStructuralSessionHandle]) : i64
+  (if (not (intern-structural-session-valid? handle))
+    0
+    (let
+      [session : ci.InternSourceNameSession
+        (intern-structural-session-handle-session handle)]
+      [table : ci.InternStructuralTable
+        (owned_view.compiler-owned-array-element-shared-view
+          session.structural-table-cell
+          0)]
+      (array-length table.kinds))))
+
+(define (intern-structural-session-record-reserved-bytes
+  [handle : InternStructuralSessionHandle]) : i64
+  (*
+    (intern-structural-session-record-capacity handle)
+    (ci.intern-structural-record-slot-bytes)))
+
+(define (intern-structural-session-source-name-component-valid?
+  [handle : InternStructuralSessionHandle]
+  [source-name-id : i64]) : bool
+  (and
+    (intern-structural-session-valid? handle)
+    (>= source-name-id 0)
+    (<
+      source-name-id
+      (ci.intern-source-name-session-handle-capacity
+        (intern-structural-session-handle-source-names handle)))))
+
+(define (intern-structural-session-template-source-identity
+  [handle : InternStructuralSessionHandle]
+  [source-name-id : i64]) : InternTemplateSourceIdentity
+  (if (not
+    (intern-structural-session-source-name-component-valid?
+      handle
+      source-name-id))
+    (ci.tl_oob_abort)
+    (InternTemplateSourceIdentity
+      (intern-structural-key-raw
+        (intern-structural-session-key
+          handle
+          (ci.intern-structural-kind-template-source)
+          0
+          0
+          source-name-id)))))
+
+(define (intern-structural-session-template-source-record
+  [handle : InternStructuralSessionHandle]
+  [identity : InternTemplateSourceIdentity]) : InternMaybeTemplateSourceRecord
+  (match (intern-structural-session-record-for-raw
+    handle
+    (intern-template-source-identity-raw identity))
+    [(InternMaybeStructuralRecord.No) InternMaybeTemplateSourceRecord.No]
+    [(InternMaybeStructuralRecord.Some record)
+      (if (and
+        (= record.kind (ci.intern-structural-kind-template-source))
+        (= record.left-id 0)
+        (= record.middle-id 0)
+        (intern-structural-session-source-name-component-valid?
+          handle
+          record.right-id))
+        (InternMaybeTemplateSourceRecord.Some
+          (InternTemplateSourceRecord record.right-id))
+        InternMaybeTemplateSourceRecord.No)]))
+
+(define (intern-structural-session-template-source-record-for-raw
+  [handle : InternStructuralSessionHandle]
+  [raw : i64]) : InternMaybeTemplateSourceRecord
+  (if (not
+    (=
+      (intern-structural-session-record-kind-for-structural-or handle raw -1)
+      (ci.intern-structural-kind-template-source)))
+    InternMaybeTemplateSourceRecord.No
+    (intern-structural-session-template-source-record
+      handle
+      (InternTemplateSourceIdentity raw))))
+
+(define (intern-structural-session-template-source-id?
+  [handle : InternStructuralSessionHandle]
+  [raw : i64]) : bool
+  (match (intern-structural-session-template-source-record-for-raw handle raw)
+    [(InternMaybeTemplateSourceRecord.Some _) true]
+    [(InternMaybeTemplateSourceRecord.No) false]))
+
+(define (intern-structural-session-template-source-name-id-or
+  [handle : InternStructuralSessionHandle]
+  [raw : i64]
+  [fallback : i64]) : i64
+  (match (intern-structural-session-template-source-record-for-raw handle raw)
+    [(InternMaybeTemplateSourceRecord.Some record) record.source-name-id]
+    [(InternMaybeTemplateSourceRecord.No) fallback]))
+
+(define (intern-structural-session-fresh-local-identity
+  [handle : InternStructuralSessionHandle]
+  [ordinal : i64]
+  [source-name-id : i64]) : InternFreshLocalIdentity
+  (if (or
+    (< ordinal 0)
+    (not
+      (intern-structural-session-source-name-component-valid?
+        handle
+        source-name-id)))
+    (ci.tl_oob_abort)
+    (InternFreshLocalIdentity
+      (intern-structural-key-raw
+        (intern-structural-session-key
+          handle
+          (ci.intern-structural-kind-fresh-local)
+          ordinal
+          0
+          source-name-id)))))
+
+(define (intern-structural-session-fresh-local-record
+  [handle : InternStructuralSessionHandle]
+  [identity : InternFreshLocalIdentity]) : InternMaybeFreshLocalRecord
+  (match (intern-structural-session-record-for-raw
+    handle
+    (intern-fresh-local-identity-raw identity))
+    [(InternMaybeStructuralRecord.No) InternMaybeFreshLocalRecord.No]
+    [(InternMaybeStructuralRecord.Some record)
+      (if (and
+        (= record.kind (ci.intern-structural-kind-fresh-local))
+        (>= record.left-id 0)
+        (= record.middle-id 0)
+        (intern-structural-session-source-name-component-valid?
+          handle
+          record.right-id))
+        (InternMaybeFreshLocalRecord.Some
+          (InternFreshLocalRecord record.left-id record.right-id))
+        InternMaybeFreshLocalRecord.No)]))
+
+(define (intern-structural-session-fresh-local-record-for-raw
+  [handle : InternStructuralSessionHandle]
+  [raw : i64]) : InternMaybeFreshLocalRecord
+  (if (not
+    (=
+      (intern-structural-session-record-kind-for-structural-or handle raw -1)
+      (ci.intern-structural-kind-fresh-local)))
+    InternMaybeFreshLocalRecord.No
+    (intern-structural-session-fresh-local-record
+      handle
+      (InternFreshLocalIdentity raw))))
+
+(define (intern-structural-session-fresh-local-id?
+  [handle : InternStructuralSessionHandle]
+  [raw : i64]) : bool
+  (match (intern-structural-session-fresh-local-record-for-raw handle raw)
+    [(InternMaybeFreshLocalRecord.Some _) true]
+    [(InternMaybeFreshLocalRecord.No) false]))
+
+(define (intern-structural-session-fresh-local-source-name-id-or
+  [handle : InternStructuralSessionHandle]
+  [raw : i64]
+  [fallback : i64]) : i64
+  (match (intern-structural-session-fresh-local-record-for-raw handle raw)
+    [(InternMaybeFreshLocalRecord.Some record) record.source-name-id]
+    [(InternMaybeFreshLocalRecord.No) fallback]))
+
+(define (intern-structural-session-fresh-local-ordinal-or
+  [handle : InternStructuralSessionHandle]
+  [raw : i64]
+  [fallback : i64]) : i64
+  (match (intern-structural-session-fresh-local-record-for-raw handle raw)
+    [(InternMaybeFreshLocalRecord.Some record) record.ordinal]
+    [(InternMaybeFreshLocalRecord.No) fallback]))
+
 (define (intern-structural-session-macro-definition-identity
   [handle : InternStructuralSessionHandle]
   [definition-module-id : i64]
@@ -844,7 +1061,10 @@
 (define (intern-structural-session-macro-local-record-for-raw
   [handle : InternStructuralSessionHandle]
   [raw : i64]) : InternMaybeMacroLocalRecord
-  (if (< raw (ci.intern-structural-key-base))
+  (if (not
+    (=
+      (intern-structural-session-record-kind-for-structural-or handle raw -1)
+      (ci.intern-structural-kind-macro-local)))
     InternMaybeMacroLocalRecord.No
     (intern-structural-session-macro-local-record
       handle
@@ -1073,10 +1293,10 @@
     handle
     (InternLowerPrivateIdentity raw)))
 
-;; Render boundary for mixed source/syntax ids. Arithmetic structural families
-;; remain self-describing through compiler_intern; table-backed macro identities
-;; must prove ownership in the explicit session before exposing their source
-;; spelling. Unknown, stale, and wrong-owner handles remain total.
+;; Render boundary for mixed source/syntax ids. Nonzero handles prove ownership
+;; and record kind in their explicit session before exposing a source spelling;
+;; the zero handle is the deliberate legacy-renderer adapter for the installed
+;; compatibility owner. Unknown, stale, and wrong-owner handles remain total.
 (define (intern-structural-session-syntax-source-name-id-or
   [handle : InternStructuralSessionHandle]
   [raw : i64]
@@ -1085,14 +1305,50 @@
     [direct : i64 (ci.intern-syntax-source-name-id-or raw -1)]
     (if (>= direct 0)
       direct
-      (match (intern-structural-session-macro-global-record-for-raw handle raw)
-        [(InternMaybeMacroGlobalRecord.Some record) record.source-name-id]
-        [(InternMaybeMacroGlobalRecord.No)
-          (match (intern-structural-session-macro-local-record-for-raw
-            handle
-            raw)
-            [(InternMaybeMacroLocalRecord.Some record) record.source-name-id]
-            [(InternMaybeMacroLocalRecord.No) fallback])]))))
+      (if (<= handle.address 0)
+        (ci.intern-active-syntax-source-name-id-or raw fallback)
+        ;; Decode the mixed structural id once. Trying each typed decoder in
+        ;; sequence repeated the same owner/table proof up to four times on this
+        ;; compiler-wide render path. Family-specific validation stays here;
+        ;; macro locals alone need one additional lookup to prove their nested
+        ;; definition identity.
+        (match (intern-structural-session-record-for-raw handle raw)
+          [(InternMaybeStructuralRecord.No) fallback]
+          [(InternMaybeStructuralRecord.Some record)
+            (cond
+              [(= record.kind (ci.intern-structural-kind-template-source))
+                (if (and
+                  (= record.left-id 0)
+                  (= record.middle-id 0)
+                  (>= record.right-id 0)
+                  (<
+                    record.right-id
+                    (ci.intern-source-name-session-handle-capacity
+                      (intern-structural-session-handle-source-names handle))))
+                  record.right-id
+                  fallback)]
+              [(= record.kind (ci.intern-structural-kind-fresh-local))
+                (if (and
+                  (>= record.left-id 0)
+                  (= record.middle-id 0)
+                  (>= record.right-id 0)
+                  (<
+                    record.right-id
+                    (ci.intern-source-name-session-handle-capacity
+                      (intern-structural-session-handle-source-names handle))))
+                  record.right-id
+                  fallback)]
+              [(= record.kind (ci.intern-structural-kind-macro-global))
+                (if (or (= record.left-id 0) (= record.left-id 1))
+                  record.right-id
+                  fallback)]
+              [(= record.kind (ci.intern-structural-kind-macro-local))
+                (match (intern-structural-session-macro-definition-record
+                  handle
+                  (InternMacroDefinitionIdentity record.left-id))
+                  [(InternMaybeMacroDefinitionRecord.Some _) record.right-id]
+                  [(InternMaybeMacroDefinitionRecord.No) fallback])]
+              [else fallback])])))))
 
 (define (intern-structural-session-arena-phase-identity-for-components
   [handle : InternStructuralSessionHandle]

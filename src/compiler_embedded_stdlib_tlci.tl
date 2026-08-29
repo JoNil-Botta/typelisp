@@ -19,6 +19,7 @@
 (import compiler_ast_types as ast)
 (import compiler_ctfe as ctfe_support)
 (import compiler_intern as ci)
+(import compiler_intern_state as cis)
 (import compiler_owned_view as owned_view)
 (import stdlib.arena)
 (import stdlib.string)
@@ -617,6 +618,13 @@
 
 (define (compiler-comptime-host-session-source-names-value) : ci.InternSourceNameSessionHandle
   (array-ref compiler-comptime-host-session-source-names 0))
+
+(define (compiler-comptime-host-template-source-id [source-name-id : i64]) : i64
+  (cis.intern-template-source-identity-raw
+    (cis.intern-structural-session-template-source-identity
+      (cis.intern-structural-session-handle-from-source-names
+        (compiler-comptime-host-session-source-names-value))
+      source-name-id)))
 
 ;; Rebuild the lightweight CTFE adapter used by native callbacks with the
 ;; source-name capability of the transformer being evaluated. In particular,
@@ -1758,7 +1766,7 @@
                     compiler-comptime-host-pools
                     0)
                   (ast.AstExpr.Var
-                    (ci.intern-template-source-id
+                    (compiler-comptime-host-template-source-id
                       (ci.intern-source-slice
                         name
                         0
@@ -4629,7 +4637,7 @@
               (compiler-comptime-host-push!
                 (ctfe_support.CompilerCtfeValue.Pattern
                   (ast.AstPattern.Binding
-                    (ci.intern-template-source-id
+                    (compiler-comptime-host-template-source-id
                       (ci.intern-source-slice
                         name
                         0
@@ -5329,7 +5337,7 @@
               (compiler-comptime-host-push!
                 (ctfe_support.CompilerCtfeValue.Pattern
                   (ast.AstPattern.Var
-                    (ci.intern-template-source-id
+                    (compiler-comptime-host-template-source-id
                       (ci.intern-source-slice
                         name
                         0
@@ -6225,7 +6233,7 @@
                   (compiler-comptime-host-push!
                     (ctfe_support.CompilerCtfeValue.LetBinding
                       (ast.ast-let-binding-id
-                        (ci.intern-template-source-id
+                        (compiler-comptime-host-template-source-id
                           (ci.intern-source-slice
                             (unsafe
                               (string-from-bytes
@@ -6419,7 +6427,7 @@
                   (ast.ast-param-list-push
                     (&mut params)
                     (ast.AstParam.Param
-                      (ci.intern-template-source-id
+                      (compiler-comptime-host-template-source-id
                         (ci.intern-source-slice
                           payload
                           name-start
@@ -8790,7 +8798,7 @@
                   (- compiler-comptime-host-stack-len 1))]
               (if (and (> arg-a 0) (>= arg-b 0))
                 (compiler-comptime-host-build-expr-set-var!
-                  (ci.intern-template-source-id
+                  (compiler-comptime-host-template-source-id
                     (ci.intern-source-slice
                       (unsafe
                         (string-from-bytes (int->ptr arg-a : (Ptr u8)) arg-b))
@@ -8928,7 +8936,7 @@
                         (compiler-comptime-host-push!
                           (ctfe_support.CompilerCtfeValue.LetBinding
                             (ast.ast-let-binding-id
-                              (ci.intern-template-source-id
+                              (compiler-comptime-host-template-source-id
                                 (ci.intern-source-slice
                                   (unsafe
                                     (string-from-bytes

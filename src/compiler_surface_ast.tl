@@ -53,16 +53,26 @@
     compiler-surface-selftest
     compiler-build-identity
     embedded-stdlib-tlci)
-  (define (surface-ast-invalid-identity-message [name : i64]) : String
+  (define (surface-ast-invalid-identity-message
+    [session : cis.InternStructuralSessionHandle]
+    [name : i64]) : String
     (cond
       [(ci.intern-composite-pair-id? name)
         "surface ast: composite pair contains an identity outside the package table"]
       [(ci.intern-composite-triple-id? name)
         "surface ast: composite triple contains an identity outside the package table"]
-      [(ci.intern-template-source-id? name)
+      [(match (cis.intern-structural-session-template-source-record-for-raw
+          session
+          name)
+          [(cis.InternMaybeTemplateSourceRecord.Some _) true]
+          [(cis.InternMaybeTemplateSourceRecord.No) false])
         "surface ast: template-source identity is not portable"]
-      [(ci.intern-structural-local-id? name)
-        "surface ast: structural-local identity is not portable"]
+      [(match (cis.intern-structural-session-fresh-local-record-for-raw
+          session
+          name)
+          [(cis.InternMaybeFreshLocalRecord.Some _) true]
+          [(cis.InternMaybeFreshLocalRecord.No) false])
+        "surface ast: fresh-local identity is not portable"]
       [(ci.intern-generated-id-active? name)
         "surface ast: generated identity is outside the captured package table"]
       [(ci.intern-renderable-id? name)
@@ -72,6 +82,9 @@
 (define surface-ast-magic : i64
   3544386045472754772)
 (define surface-ast-schema-version : i64
+  ;; 6: identity references use surface-identity schema 2, whose template-source
+  ;; and fresh-local records are capacity-independent portable components.
+  ;;
   ;; Expression-span sidecars do not change schema 5.  The canonical and sparse
   ;; ReSpan records are generation-owned indexes derived deterministically while
   ;; the decoder replays the still-required tag-0 AstExpr.Spanned rows through
@@ -97,7 +110,7 @@
   ;; requires TlciProducerIdentityAdmission.ExactMatch and degrades to re-parse),
   ;; so this is a deployment invariant rather than a format-compatibility one --
   ;; but the version still moves whenever the encoding shape does.
-  5)
+  6)
 
 (cfg
   (any
@@ -1700,6 +1713,7 @@
               (ResultSurfaceAstBytes.Ok bytes)
               (ResultSurfaceAstBytes.Err
                 (surface-ast-invalid-identity-message
+                  structural-session
                   (codec.surface-ast-write-invalid-name context))))))))))
 
 (define (surface-ast-decode-pools!

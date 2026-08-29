@@ -9977,13 +9977,18 @@
     (begin
       (set! data.inline-next-temp (+ next 1))
       (compiler-lower-function-state-data-set! state data)
-      (ci.intern-structural-local-id
-        next
-        (tc_core.macro-hygiene-global-source-name-id-or
+      (let
+        [session : cis.InternStructuralSessionHandle
           (compiler-lower-state-structural-session
-            (compiler-lower-state-from-address owner-address))
-          source-name-id
-          source-name-id)))))
+            (compiler-lower-state-from-address owner-address))]
+        (cis.intern-fresh-local-identity-raw
+          (cis.intern-structural-session-fresh-local-identity
+            session
+            next
+            (tc_core.macro-hygiene-global-source-name-id-or
+              session
+              source-name-id
+              source-name-id)))))))
 
 (define (compiler-lower-function-state-scalar-call-context
   [state : CompilerLowerFunctionState]) : LowerSpmdScalarCallContext

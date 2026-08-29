@@ -10046,16 +10046,20 @@
               "this argument carries an arena region that the parameter does not accept")]
           [(TcMaybeAstSourceSpan.No) message])])))
 
-;; Ordinary lifetime names stay on the old direct intern lookup. Structural
-;; syntax identities and malformed internal ids take the total display path.
+;; Ordinary lifetime names stay on the direct intern lookup. Legacy diagnostics
+;; without a TcContext may render fresh/template identities only from the
+;; validated active owner; malformed and foreign ids take the total fallback.
 (defmacro (tc-lifetime-name-render [name : comptime.Expr]) : comptime.Expr
   `(let
     [lifetime-name-id : i64 ,name]
     (if (ci.intern-renderable-id? lifetime-name-id)
       (ci.intern-str lifetime-name-id)
-      (ci.intern-syntax-name-text-or
-        lifetime-name-id
-        (str_cat.str-cat "<id:" (string.int->string lifetime-name-id) ">")))))
+      (let
+        [source-name-id : i64
+          (ci.intern-active-syntax-source-name-id-or lifetime-name-id -1)]
+        (if (>= source-name-id 0)
+          (ci.intern-str source-name-id)
+          (str_cat.str-cat "<id:" (string.int->string lifetime-name-id) ">"))))))
 
 (define (tc-spanned-escape-error
   [session : cis.InternStructuralSessionHandle]
@@ -14856,14 +14860,20 @@
 ;; never be a template-source id. Testing the pool range first therefore keeps
 ;; the same answer while skipping the structural predicate on the common path,
 ;; and the prefix answer comes from the class the interner already recorded.
-(define (tc-hygiene-template-name-id? [name-id : i64]) : bool
+(define (tc-hygiene-template-name-id?
+  [session : cis.InternStructuralSessionHandle]
+  [name-id : i64]) : bool
   (if (and (>= name-id 0) (< name-id (ci.intern-capacity)))
     (ci.intern-macro-template-name-id? name-id)
-    (ci.intern-template-source-id? name-id)))
+    (cis.intern-structural-session-template-source-id? session name-id)))
 
-(define (tc-hygiene-template-source-id-or [name-id : i64] [fallback : i64]) : i64
-  (if (ci.intern-template-source-id? name-id)
-    (ci.intern-template-source-name-id name-id)
+(define (tc-hygiene-template-source-id-or
+  [session : cis.InternStructuralSessionHandle]
+  [name-id : i64]
+  [fallback : i64]) : i64
+  (cis.intern-structural-session-template-source-name-id-or
+    session
+    name-id
     fallback))
 
 (define (tc-hygiene-template-base [name : String]) : String
@@ -14885,13 +14895,20 @@
 (define (tc-structural-local-name-id?
   [session : cis.InternStructuralSessionHandle]
   [name-id : i64]) : bool
-  (cond
-    [(< name-id (ci.intern-capacity)) false]
-    [(ci.intern-structural-local-id? name-id) true]
-    ;; Template-source and the other arithmetic structural families cannot be
-    ;; table-backed macro locals. Reject them before crossing the session API.
-    [(< name-id (ci.intern-structural-key-base)) false]
-    [else (macro-hygiene-local-id? session name-id)]))
+  ;; Fresh and hygienic macro locals are both table-backed. One owner-checked
+  ;; kind read classifies the two local families without probing fresh first
+  ;; and reopening the same record as a macro local on every miss.
+  (if (< name-id (ci.intern-structural-key-base))
+    false
+    (let
+      [kind : i64
+        (cis.intern-structural-session-record-kind-for-structural-or
+          session
+          name-id
+          -1)]
+      (or
+        (= kind (ci.intern-structural-kind-fresh-local))
+        (= kind (ci.intern-structural-kind-macro-local))))))
 
 (define (tc-hygiene-local-name-id?
   [session : cis.InternStructuralSessionHandle]
@@ -14906,14 +14923,11 @@
   (cond
     [(and (>= name-id 0) (< name-id (ci.intern-capacity)))
       (ci.intern-str name-id)]
-    [(ci.intern-structural-local-id? name-id)
-      (ci.intern-str (ci.intern-structural-local-source-name-id name-id))]
-    [(ci.intern-template-source-id? name-id)
-      (ci.intern-str (ci.intern-template-source-name-id name-id))]
     [(>= name-id (ci.intern-structural-key-base))
       ;; One authoritative lookup classifies the table record. In particular,
-      ;; do not probe global, local, ownership, and then the generic record in
-      ;; succession: composite environment keys dominate diagnostic display.
+      ;; do not probe template, fresh, global, local, ownership, and then the
+      ;; generic record in succession: composite environment keys dominate
+      ;; diagnostic display.
       (match (cis.intern-structural-session-record-for-raw session name-id)
         [(cis.InternMaybeStructuralRecord.Some record)
           (let
@@ -14976,24 +14990,13 @@
         (str_cat.str-cat "<id:" (string.int->string name-id) ">"))]))
 
 (define (tc-hygiene-name-text-id [name-id : i64]) : String
-  (cond
-    [(and (>= name-id 0) (< name-id (ci.intern-capacity)))
-      (ci.intern-str name-id)]
-    [(ci.intern-structural-local-id? name-id)
-      (ci.intern-str (ci.intern-structural-local-source-name-id name-id))]
-    [(ci.intern-template-source-id? name-id)
-      (ci.intern-str (ci.intern-template-source-name-id name-id))]
-    ;; This compatibility helper is used only for non-hygienic compiler keys.
-    ;; Preserve the existing cached composite renderer without letting an
-    ;; active global table stand in for an explicit macro-hygiene session.
-    [(or
-        (csym.compiler-composite-pair-key-id? name-id)
-        (csym.compiler-composite-triple-key-id? name-id))
-      (ast.ast-nominal-name-id-display name-id)]
-    [else
-      (tc-hygiene-name-text-id-for-session
-        (cis.InternStructuralSessionHandle 0)
-        name-id)]))
+  (let
+    [intern-state : ci.InternCompatState
+      (ci.intern-compat-state-capture-active)]
+    [session : cis.InternStructuralSessionHandle
+      (cis.intern-structural-session-handle-from-source-names
+        (ci.intern-source-name-session-handle-from-state intern-state))]
+    (tc-hygiene-name-text-id-for-session session name-id)))
 
 (define (tc-hygiene-global-base [name : String]) : String
   (tc-hygiene-name-base name (tc-hygiene-global-prefix)))
@@ -18102,8 +18105,6 @@
   (if (tc-env-key-has-name-id? name-id)
     (ci.intern-str name-id)
     (if (or
-      (ci.intern-structural-local-id? name-id)
-      (ci.intern-template-source-id? name-id)
       (>= name-id (ci.intern-structural-key-base))
       (csym.compiler-composite-pair-key-id? name-id)
       (csym.compiler-composite-triple-key-id? name-id))
@@ -18123,9 +18124,7 @@
 (define (tc-env-key-name-text [name-id : i64]) : String
   (if (tc-env-key-has-name-id? name-id)
     (ci.intern-str name-id)
-    (tc-env-key-name-text-for-session
-      (cis.InternStructuralSessionHandle 0)
-      name-id)))
+    (tc-hygiene-name-text-id name-id)))
 
 (define (tc-lookup-persistent-key-id
   [env : TcTypeEnv]
@@ -22577,7 +22576,6 @@
       (ci.intern-qualified? name-id))
     (cond
       [(< name-id 0) false]
-      [(ci.intern-structural-local-id? name-id) false]
       [(< name-id (ci.intern-structural-key-base)) false]
       [else
         ;; Qualified checks only need a table record's tag in the common
@@ -22590,7 +22588,10 @@
               name-id
               -1)]
           (cond
-            [(= kind (ci.intern-structural-kind-macro-local)) false]
+            [(or
+                (= kind (ci.intern-structural-kind-fresh-local))
+                (= kind (ci.intern-structural-kind-macro-local)))
+              false]
             [(= kind (ci.intern-structural-kind-macro-global))
               (match (cis.intern-structural-session-macro-global-record-for-raw
                 session
@@ -22955,16 +22956,10 @@
   ;; evaluating their range predicates.
   (if (and (>= name-id 0) (< name-id (ci.intern-capacity)))
     name-id
-    (cond
-      [(ci.intern-structural-local-id? name-id)
-        (ci.intern-structural-local-source-name-id name-id)]
-      [(or
-          (macro-hygiene-global-id? session name-id)
-          (macro-hygiene-local-id? session name-id))
-        (macro-hygiene-structural-source-name-id session name-id)]
-      [(ci.intern-template-source-id? name-id)
-        (ci.intern-template-source-name-id name-id)]
-      [else name-id])))
+    (cis.intern-structural-session-syntax-source-name-id-or
+      session
+      name-id
+      name-id)))
 
 (define (tc-dotted-name-first-dot-id
   [session : cis.InternStructuralSessionHandle]
@@ -27073,13 +27068,23 @@
     [(ast.AstType.StructArgs name lifetimes)
       (ast.AstType.StructArgs name lifetimes)]
     [(ast.AstType.VarArgs name lifetimes)
-      (tc-resolve-type-name-with-args
-        ctx
-        (tc-hygiene-name-text-id name)
-        name
-        (ast.ast-lifetime-list-box-shared-view lifetimes))]
+      (let
+        [name-text : String
+          (tc-hygiene-name-text-id-for-session
+            (tc-context-structural-session ctx)
+            name)]
+        (tc-resolve-type-name-with-args
+          ctx
+          name-text
+          name
+          (ast.ast-lifetime-list-box-shared-view lifetimes)))]
     [(ast.AstType.Var name)
-      (tc-resolve-type-name ctx (tc-hygiene-name-text-id name) name)]))
+      (let
+        [name-text : String
+          (tc-hygiene-name-text-id-for-session
+            (tc-context-structural-session ctx)
+            name)]
+        (tc-resolve-type-name ctx name-text name))]))
 
 (define (tc-resolve-type-with-pools
   [ctx : TcContext]
@@ -55144,10 +55149,11 @@
   [name-id : i64]) : i64
   (cond
     [(and (>= name-id 0) (< name-id (ci.intern-capacity))) name-id]
-    [(ci.intern-structural-local-id? name-id)
-      (ci.intern-structural-local-source-name-id name-id)]
     [(>= name-id (ci.intern-structural-key-base))
-      (macro-hygiene-source-name-id-or session name-id -1)]
+      (cis.intern-structural-session-syntax-source-name-id-or
+        session
+        name-id
+        -1)]
     [else -1]))
 
 ;; Same shadowing rules as `tc-expr-uses-free-name?`, but the target is one or
@@ -98559,10 +98565,16 @@
   [name-id : i64]
   [site : String]) : i64
   (cond
-    [(ci.intern-template-source-id? name-id)
-      (ci.intern-template-source-name-id name-id)]
-    [(ci.intern-structural-local-id? name-id)
-      (ci.intern-structural-local-source-name-id name-id)]
+    [(cis.intern-structural-session-template-source-id? session name-id)
+      (cis.intern-structural-session-template-source-name-id-or
+        session
+        name-id
+        -1)]
+    [(cis.intern-structural-session-fresh-local-id? session name-id)
+      (cis.intern-structural-session-fresh-local-source-name-id-or
+        session
+        name-id
+        -1)]
     [(or
         (macro-hygiene-global-id? session name-id)
         (macro-hygiene-local-id? session name-id))
@@ -98580,7 +98592,8 @@
             (tc-global-shared-view site))]
         (if (tc-hygiene-template-name? name)
           (let
-            [source-id : i64 (tc-hygiene-template-source-id-or name-id -1)]
+            [source-id : i64
+              (tc-hygiene-template-source-id-or session name-id -1)]
             (if (>= source-id 0)
               source-id
               (io.panic
@@ -98602,8 +98615,12 @@
       (tc-hygiene-name-text-id-for-session session name-id)]
     [(macro-hygiene-global-id? session name-id)
       (ci.intern-str (macro-hygiene-structural-source-name-id session name-id))]
-    [(ci.intern-template-source-id? name-id)
-      (ci.intern-str (ci.intern-template-source-name-id name-id))]
+    [(cis.intern-structural-session-template-source-id? session name-id)
+      (ci.intern-str
+        (cis.intern-structural-session-template-source-name-id-or
+          session
+          name-id
+          -1))]
     [(or
         (csym.compiler-composite-pair-key-id? name-id)
         (csym.compiler-composite-triple-key-id? name-id))
@@ -98648,8 +98665,11 @@
         (macro-hygiene-global-id? session name-id)
         (tc-structural-local-name-id? session name-id))
       name-id]
-    [(ci.intern-template-source-id? name-id)
-      (ci.intern-template-source-name-id name-id)]
+    [(cis.intern-structural-session-template-source-id? session name-id)
+      (cis.intern-structural-session-template-source-name-id-or
+        session
+        name-id
+        -1)]
     [(or
         (csym.compiler-composite-pair-key-id? name-id)
         (csym.compiler-composite-triple-key-id? name-id))
@@ -105762,6 +105782,26 @@
   [fallback : i64]) : i64
   (cond
     [(and
+        (= record.kind (ci.intern-structural-kind-template-source))
+        (= record.left-id 0)
+        (= record.middle-id 0)
+        (>= record.right-id 0)
+        (<
+          record.right-id
+          (ci.intern-source-name-session-handle-capacity
+            (cis.intern-structural-session-handle-source-names session))))
+      record.right-id]
+    [(and
+        (= record.kind (ci.intern-structural-kind-fresh-local))
+        (>= record.left-id 0)
+        (= record.middle-id 0)
+        (>= record.right-id 0)
+        (<
+          record.right-id
+          (ci.intern-source-name-session-handle-capacity
+            (cis.intern-structural-session-handle-source-names session))))
+      record.right-id]
+    [(and
         (= record.kind (ci.intern-structural-kind-macro-global))
         (or (= record.left-id 0) (= record.left-id 1)))
       record.right-id]
@@ -105887,10 +105927,11 @@
       (ci.intern-qualified-base-id name-id)
       fallback)
     (cond
-      [(ci.intern-structural-local-id? name-id)
-        (ci.intern-structural-local-source-name-id name-id)]
       [(>= name-id (ci.intern-structural-key-base))
-        (macro-hygiene-source-name-id-or session name-id fallback)]
+        (cis.intern-structural-session-syntax-source-name-id-or
+          session
+          name-id
+          fallback)]
       [else fallback])))
 
 (cfg
@@ -106183,22 +106224,37 @@
 (define (macro-hygiene-env-bind-output-flat-import [env : MacroHygieneEnv]) : MacroHygieneEnv
   (macro-hygiene-env-push (macro-hygiene-env-output-flat-import-kind) env 0 0))
 
+(defmacro (macro-hygiene-env-structural-session [env : Expr]) : cis.InternStructuralSessionHandle
+  `(tc-macro-state-structural-session (__tl-project-field-name ,env "state")))
+
 (define (macro-hygiene-output-bind-id [env : MacroHygieneEnv] [name-id : i64]) : MacroHygieneEnv
-  (if (ci.intern-template-source-id? name-id)
-    (macro-hygiene-env-bind-raw
-      env
-      name-id
-      (ci.intern-template-source-name-id name-id))
+  (if (cis.intern-structural-session-template-source-id?
+    (macro-hygiene-env-structural-session (macro-hygiene-env-shared-view env))
+    name-id)
+    (let
+      [source-name-id : i64
+        (cis.intern-structural-session-template-source-name-id-or
+          (macro-hygiene-env-structural-session
+            (macro-hygiene-env-shared-view env))
+          name-id
+          -1)]
+      (macro-hygiene-env-bind-raw env name-id source-name-id))
     env))
 
 (define (macro-hygiene-output-pattern-name-id
   [env : MacroHygieneEnv]
   [name-id : i64]) : MacroHygieneEnv
-  (if (ci.intern-template-source-id? name-id)
-    (macro-hygiene-env-bind-pattern-name-raw
-      env
-      name-id
-      (ci.intern-template-source-name-id name-id))
+  (if (cis.intern-structural-session-template-source-id?
+    (macro-hygiene-env-structural-session (macro-hygiene-env-shared-view env))
+    name-id)
+    (let
+      [source-name-id : i64
+        (cis.intern-structural-session-template-source-name-id-or
+          (macro-hygiene-env-structural-session
+            (macro-hygiene-env-shared-view env))
+          name-id
+          -1)]
+      (macro-hygiene-env-bind-pattern-name-raw env name-id source-name-id))
     env))
 
 (define (macro-hygiene-output-macro-param-env
@@ -106212,13 +106268,17 @@
       index
       (ast.ast-macro-param-fallback))
       [(ast.AstMacroParam.Param name-id _ _ _)
-        (macro-hygiene-output-macro-param-env
-          params
-          (+ index 1)
-          (macro-hygiene-env-bind-raw
-            env
-            (ci.intern-template-source-id name-id)
-            name-id))])))
+        (let
+          [template-id : i64
+            (cis.intern-template-source-identity-raw
+              (cis.intern-structural-session-template-source-identity
+                (macro-hygiene-env-structural-session
+                  (macro-hygiene-env-shared-view env))
+                name-id))]
+          (macro-hygiene-output-macro-param-env
+            params
+            (+ index 1)
+            (macro-hygiene-env-bind-raw env template-id name-id)))])))
 
 (define (macro-hygiene-output-param-env
   [expr-bases : i64]
@@ -106316,7 +106376,11 @@
       (match (ast.ast-expr-unspan (macro-hygiene-expr-get env func-box))
         [(ast.AstExpr.Var name-id)
           (let
-            [source-id : i64 (tc-hygiene-template-source-id-or name-id name-id)]
+            [source-id : i64
+              (tc-hygiene-template-source-id-or
+                (macro-hygiene-env-structural-session env)
+                name-id
+                name-id)]
             (cond
               [(and
                   (ci.intern-colon-keyword-id? source-id)
@@ -106352,6 +106416,8 @@
   [env : MacroHygieneEnv]) : MacroHygieneEnv
   (let
     [count : i64 items.len]
+    [session : cis.InternStructuralSessionHandle
+      (macro-hygiene-env-structural-session (macro-hygiene-env-shared-view env))]
     [with-target : MacroHygieneEnv
       (if (> count 0)
         (match (ast.ast-expr-unspan
@@ -106377,7 +106443,8 @@
         (match (ast.ast-expr-unspan as-expr)
           [(ast.AstExpr.Var as-id)
             (if (string.eq
-              (ci.intern-str (tc-hygiene-template-source-id-or as-id as-id))
+              (ci.intern-str
+                (tc-hygiene-template-source-id-or session as-id as-id))
               "as")
               (match (ast.ast-expr-unspan alias-expr)
                 [(ast.AstExpr.Var alias-id)
@@ -106393,12 +106460,15 @@
           [(ast.AstExpr.Var target-id)
             (let
               [source-id : i64
-                (tc-hygiene-template-source-id-or target-id target-id)]
+                (tc-hygiene-template-source-id-or session target-id target-id)]
               [tail-id : i64 (ci.intern-dotted-tail-id source-id)]
               (if (>= tail-id 0)
                 (macro-hygiene-output-bind-id
                   with-target
-                  (ci.intern-template-source-id tail-id))
+                  (cis.intern-template-source-identity-raw
+                    (cis.intern-structural-session-template-source-identity
+                      session
+                      tail-id)))
                 with-target))]
           [_ with-target])
         with-target))))
@@ -106431,7 +106501,11 @@
         [(ast.AstExpr.Var head-id)
           (let
             [source-head-id : i64
-              (tc-hygiene-template-source-id-or head-id head-id)]
+              (tc-hygiene-template-source-id-or
+                (macro-hygiene-env-structural-session
+                  (macro-hygiene-env-shared-view env))
+                head-id
+                head-id)]
             [tag : i64
               (parser.compiler-parse-dispatch-tag-id
                 (parser.compiler-parse-dispatch-env)
@@ -106622,13 +106696,18 @@
   [macro-name : MacroHygieneContext]
   [name-id : i64]) : i64
   (let
-    [template-source-id : i64 (tc-hygiene-template-source-id-or name-id -1)]
+    [session : cis.InternStructuralSessionHandle
+      (macro-hygiene-env-structural-session (macro-hygiene-env-shared-view env))]
+    [template-source-id : i64
+      (tc-hygiene-template-source-id-or session name-id -1)]
     [result : i64
-      (if (tc-hygiene-template-name-id? name-id)
+      (if (tc-hygiene-template-name-id? session name-id)
         (let
           [name : String (ci.intern-str template-source-id)]
           [base : String
-            (if (ci.intern-template-source-id? name-id)
+            (if (cis.intern-structural-session-template-source-id?
+              session
+              name-id)
               name
               (tc-hygiene-template-base name))]
           [syntax-tag : i64
@@ -106652,7 +106731,10 @@
                     (if (>= leading-id 0)
                       (match (macro-hygiene-env-lookup
                         (macro-hygiene-env-shared-view env)
-                        (ci.intern-template-source-id leading-id))
+                        (cis.intern-template-source-identity-raw
+                          (cis.intern-structural-session-template-source-identity
+                            session
+                            leading-id)))
                         [(MacroMaybeHygieneName.Some renamed-id) renamed-id]
                         [(MacroMaybeHygieneName.No) -1])
                       -1)]
@@ -106690,8 +106772,10 @@
   [depth : i64]
   [name-id : i64]) : MacroHygieneName
   (let
-    [source-name-id : i64 (tc-hygiene-template-source-id-or name-id -1)]
-    (if (tc-hygiene-template-name-id? name-id)
+    [session : cis.InternStructuralSessionHandle
+      (macro-hygiene-env-structural-session (macro-hygiene-env-shared-view env))]
+    [source-name-id : i64 (tc-hygiene-template-source-id-or session name-id -1)]
+    (if (tc-hygiene-template-name-id? session name-id)
       (let
         [renamed-id : i64
           (macro-hygiene-local-id
@@ -107768,7 +107852,11 @@
     [(ast.AstExpr.Var head-id)
       (let
         [source-head-id : i64
-          (tc-hygiene-template-source-id-or head-id head-id)]
+          (tc-hygiene-template-source-id-or
+            (macro-hygiene-env-structural-session
+              (macro-hygiene-env-shared-view env))
+            head-id
+            head-id)]
         [tag : i64
           (parser.compiler-parse-dispatch-tag-id
             (parser.compiler-parse-dispatch-env)
@@ -107841,7 +107929,11 @@
       (if (and (>= name-id 0) (< name-id (ci.intern-capacity)))
         (match (macro-hygiene-env-lookup
           (macro-hygiene-env-shared-view env)
-          (ci.intern-template-source-id name-id))
+          (cis.intern-template-source-identity-raw
+            (cis.intern-structural-session-template-source-identity
+              (macro-hygiene-env-structural-session
+                (macro-hygiene-env-shared-view env))
+              name-id)))
           [(MacroMaybeHygieneName.Some renamed-id) renamed-id]
           [(MacroMaybeHygieneName.No)
             (macro-hygiene-rename-var-id
@@ -108151,7 +108243,12 @@
       (MacroHygienePattern.Pattern ast.AstPattern.Wildcard env)]
     [(ast.AstPattern.Binding name)
       (let
-        [source-name-id : i64 (tc-hygiene-template-source-id-or name name)]
+        [source-name-id : i64
+          (tc-hygiene-template-source-id-or
+            (macro-hygiene-env-structural-session
+              (macro-hygiene-env-shared-view env))
+            name
+            name)]
         (if (>=
           (tc-name-first-dot-id
             (tc-macro-state-structural-session env.state)
@@ -108579,7 +108676,11 @@
           (match (ast.ast-expr-unspan func)
             [(ast.AstExpr.Var name-id)
               (if (=
-                (tc-hygiene-template-source-id-or name-id name-id)
+                (tc-hygiene-template-source-id-or
+                  (macro-hygiene-env-structural-session
+                    (macro-hygiene-env-shared-view env))
+                  name-id
+                  name-id)
                 cbi.compiler-builtin-id-fix-module)
                 (macro-hygiene-module-call-args
                   expr-bases
@@ -109007,7 +109108,11 @@
             ;; captured body references (including a nested `for` source) and
             ;; generated cleanup references resolve to the same local.
             [nbinding-name : i64
-              (tc-hygiene-template-source-id-or binding-name-id binding-name-id)]
+              (tc-hygiene-template-source-id-or
+                (macro-hygiene-env-structural-session
+                  (macro-hygiene-env-shared-view env))
+                binding-name-id
+                binding-name-id)]
             [body-env : MacroHygieneEnv
               (macro-hygiene-env-bind-raw
                 (macro-hygiene-env-shared-view env)

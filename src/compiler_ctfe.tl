@@ -356,16 +356,10 @@
     [else
       (let
         [source-id : i64
-          (if (ci.intern-template-source-id? name-id)
-            (ci.intern-template-source-name-id name-id)
-            (if (cis.intern-structural-session-valid? session)
-              (match (cis.intern-structural-session-macro-global-record-for-raw
-                session
-                name-id)
-                [(cis.InternMaybeMacroGlobalRecord.Some record)
-                  record.source-name-id]
-                [(cis.InternMaybeMacroGlobalRecord.No) name-id])
-              name-id))]
+          (cis.intern-structural-session-syntax-source-name-id-or
+            session
+            name-id
+            name-id)]
         [base-id : i64
           (if (and
             (ci.intern-renderable-id? source-id)
@@ -894,24 +888,7 @@
 (define (ctfe-name-source-id-for-session
   [session : cis.InternStructuralSessionHandle]
   [name-id : i64]) : i64
-  (if (ci.intern-renderable-id? name-id)
-    name-id
-    (match (cis.intern-structural-session-macro-global-record-for-raw
-      session
-      name-id)
-      [(cis.InternMaybeMacroGlobalRecord.Some record) record.source-name-id]
-      [(cis.InternMaybeMacroGlobalRecord.No)
-        (match (cis.intern-structural-session-macro-local-record-for-raw
-          session
-          name-id)
-          [(cis.InternMaybeMacroLocalRecord.Some record) record.source-name-id]
-          [(cis.InternMaybeMacroLocalRecord.No)
-            (cond
-              [(ci.intern-structural-local-id? name-id)
-                (ci.intern-structural-local-source-name-id name-id)]
-              [(ci.intern-template-source-id? name-id)
-                (ci.intern-template-source-name-id name-id)]
-              [else -1])])])))
+  (cis.intern-structural-session-syntax-source-name-id-or session name-id -1))
 
 (define (ctfe-name-text-for-session
   [session : cis.InternStructuralSessionHandle]
@@ -2369,10 +2346,15 @@
 
 (define (ctfe-quote-name-id [env : (& env CtfeEnv)] [name : i64]) : i64
   (if (ctfe-hygiene-enabled? env)
-    (if (ci.intern-template-source-id? name)
+    (if (cis.intern-structural-session-template-source-id?
+      (ctfe-env-structural-session env)
+      name)
       name
       (if (ci.intern-renderable-id? name)
-        (ci.intern-template-source-id name)
+        (cis.intern-template-source-identity-raw
+          (cis.intern-structural-session-template-source-identity
+            (ctfe-env-structural-session env)
+            name))
         name))
     name))
 
@@ -10530,13 +10512,10 @@
   [fuel : i64]) : ResultCtfe
   (let
     [source-id : i64
-      (if (ci.intern-template-source-id? name-id)
-        (ci.intern-template-source-name-id name-id)
-        (match (cis.intern-structural-session-macro-global-record-for-raw
-          (ctfe-env-structural-session env)
-          name-id)
-          [(cis.InternMaybeMacroGlobalRecord.Some record) record.source-name-id]
-          [(cis.InternMaybeMacroGlobalRecord.No) name-id]))]
+      (cis.intern-structural-session-syntax-source-name-id-or
+        (ctfe-env-structural-session env)
+        name-id
+        name-id)]
     (if (and
       (ci.intern-renderable-id? source-id)
       (not (ci.intern-qualified? source-id))

@@ -3,9 +3,25 @@
 (import compiler_ast_types as ast)
 (import compiler_builtin_ids as cbi)
 (import compiler_intern as ci)
+(import compiler_intern_state as cis)
 (import compiler_owned_view as owned_view)
 (import stdlib.arena)
 (import stdlib.string)
+
+(define (compiler-ast-test-fresh-local-id
+  [ordinal : i64]
+  [source-name-id : i64]) : i64
+  (let
+    [intern-state : ci.InternCompatState
+      (ci.intern-compat-state-capture-active)]
+    [session : cis.InternStructuralSessionHandle
+      (cis.intern-structural-session-handle-from-source-names
+        (ci.intern-source-name-session-handle-from-state intern-state))]
+    (cis.intern-fresh-local-identity-raw
+      (cis.intern-structural-session-fresh-local-identity
+        session
+        ordinal
+        source-name-id))))
 
 (define (compiler-ast-int-literal-source-bits-smoke?) : bool
   (let
@@ -1602,7 +1618,8 @@
     [builtin : ci.InternSyntaxId
       (ci.intern-syntax-id-from-raw cbi.compiler-builtin-id-fix-main)]
     [hygiene : ci.InternSyntaxId
-      (ci.intern-syntax-id-from-raw (ci.intern-structural-local-id 7 source-id))]
+      (ci.intern-syntax-id-from-raw
+        (compiler-ast-test-fresh-local-id 7 source-id))]
     [structural : ci.InternSyntaxId
       (ci.intern-syntax-id-from-raw
         (ci.intern-composite-pair-id module-id base-id))]
@@ -1638,7 +1655,7 @@
       (ci.intern-syntax-id-from-raw cbi.compiler-builtin-id-fix-x)]
     [hygiene : ci.InternSyntaxId
       (ci.intern-syntax-id-from-raw
-        (ci.intern-structural-local-id 11 source-id))]
+        (compiler-ast-test-fresh-local-id 11 source-id))]
     [structural : ci.InternSyntaxId
       (ci.intern-syntax-id-from-raw
         (ci.intern-composite-pair-id module-id base-id))]

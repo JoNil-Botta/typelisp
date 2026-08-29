@@ -148,31 +148,19 @@
       (doc-cat3 "<structural-id:" (string.int->string name-id) ">")]))
 
 (define (doc-expand-name-text [ctx : DocExpandContext] [name-id : i64]) : String
-  (cond
-    [(and
-        (>= name-id 0)
-        (<
-          name-id
-          (ci.intern-source-name-session-handle-capacity ctx.source-names)))
-      (doc-expand-source-name ctx name-id)]
-    [(ci.intern-structural-local-id? name-id)
-      (doc-expand-source-name
-        ctx
-        (ci.intern-structural-local-source-name-id name-id))]
-    [(ci.intern-template-source-id? name-id)
-      (doc-expand-source-name ctx (ci.intern-template-source-name-id name-id))]
-    [(>= name-id (ci.intern-structural-key-base))
-      (doc-expand-structural-name
-        ctx
-        (cis.intern-structural-session-handle-from-source-names
-          ctx.source-names)
-        name-id)]
-    [else
-      (let
-        [source-id : i64 (ci.intern-syntax-source-name-id-or name-id -1)]
-        (if (>= source-id 0)
-          (doc-expand-source-name ctx source-id)
-          (doc-cat3 "<id:" (string.int->string name-id) ">")))]))
+  (let
+    [session : cis.InternStructuralSessionHandle
+      (cis.intern-structural-session-handle-from-source-names ctx.source-names)]
+    [source-id : i64
+      (cis.intern-structural-session-syntax-source-name-id-or
+        session
+        name-id
+        -1)]
+    (cond
+      [(>= source-id 0) (doc-expand-source-name ctx source-id)]
+      [(>= name-id (ci.intern-structural-key-base))
+        (doc-expand-structural-name ctx session name-id)]
+      [else (doc-cat3 "<id:" (string.int->string name-id) ">")])))
 
 (define (doc-import-form-list-mut-contains-from?
   [forms : (&mut forms doc_import_form_vec.Vec)]
@@ -1136,7 +1124,11 @@
                       current-module
                       (let
                         [source-id : i64
-                          (ci.intern-syntax-source-name-id-or next-module -1)]
+                          (cis.intern-structural-session-syntax-source-name-id-or
+                            (cis.intern-structural-session-handle-from-source-names
+                              ctx.source-names)
+                            next-module
+                            -1)]
                         (if (>= source-id 0)
                           (doc-expand-source-name ctx source-id)
                           "<structural-module>")))

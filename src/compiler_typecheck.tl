@@ -16,6 +16,7 @@
 (import sym_i64_env)
 (import compiler_builtin_ids as cbi)
 (import compiler_intern as ci)
+(import compiler_intern_state as cis)
 
 (define (compiler-typecheck-write-text [path : String] [contents : String]) : unit
   (io.write-file path (byte_buf.str-as-bytes (& contents))))
@@ -5156,11 +5157,20 @@
             (ast.ast-ty-dyn-array (ast.AstType.I64))))
         "(&mut value (__tl_dyn-array i64))")]
     [structural-lifetime-source : i64 (ci.intern "macro-lifetime")]
+    [intern-state : ci.InternCompatState
+      (ci.intern-compat-state-capture-active)]
+    [structural-session : cis.InternStructuralSessionHandle
+      (cis.intern-structural-session-handle-from-source-names
+        (ci.intern-source-name-session-handle-from-state intern-state))]
     [structural-lifetime-render-ok : bool
       (string.eq
         (tc_core.tc-type-render
           (ast.ast-ty-ref
-            (ci.intern-structural-local-id 7 structural-lifetime-source)
+            (cis.intern-fresh-local-identity-raw
+              (cis.intern-structural-session-fresh-local-identity
+                structural-session
+                7
+                structural-lifetime-source))
             (ast.AstType.I64)))
         "(& macro-lifetime i64)")]
     [invalid-lifetime-render-ok : bool

@@ -190,10 +190,9 @@
 ;: Capacity must stay a power of two so the bucket index is a mask, not a modulo.
 ;: It also bounds one compile's live ids: source ids grow up from 0 and generated
 ;: ids grow down from capacity-1, so the two lanes together must fit.
-;: It CANNOT simply be raised. The remaining arithmetic structural symbol ranges
-;: are polynomials in this capacity and share one positive-i64 window. See
-;: `intern-id-space-capacity-tests-ok?`, which fails fast before one range can
-;: silently decode as another. Refs #6258.
+;: Structural identities no longer constrain this value: they are canonical
+;: session records. Raising it still requires auditing pool storage, generated
+;: lanes, and the fixed-size lookup maps. Refs #6258, #6469.
 (define (intern-capacity) : i64
   131072)
 
@@ -371,58 +370,6 @@
     [name-id : i64 ,id]
     (and (>= name-id 0) (< name-id (intern-capacity)))))
 
-;; Quasiquoted source symbols keep their parsed identity without allocating a
-;; second intern entry. This range sits above the compiler's other structural
-;; symbol ranges and remains within signed i64 at the fixed intern capacity.
-;; The cube is what pins the capacity: at 2^17 this is exactly 2^62, one owner
-;; stride below the first composite structural key, and it overflows signed i64
-;; the moment the capacity moves up. Refs #6258.
-(define (intern-template-source-base) : i64
-  (let
-    [stride : i64 (intern-capacity)]
-    (* 2048 (* stride (* stride stride)))))
-
-(define (intern-template-source-id [source-id : i64]) : i64
-  (+ (intern-template-source-base) source-id))
-
-(define (intern-template-source-id? [id : i64]) : bool
-  (and
-    (>= id (intern-template-source-base))
-    (< id (+ (intern-template-source-base) (intern-capacity)))))
-
-(define (intern-template-source-name-id [id : i64]) : i64
-  (- id (intern-template-source-base)))
-
-;; Compiler rewrites sometimes need a fresh lexical identity while retaining a
-;; parsed binding's spelling. Encode that identity structurally instead of
-;; allocating another string-pool entry. This range is below the
-;; quasiquoted-source range.
-(define (intern-structural-local-base) : i64
-  (let
-    [stride : i64 (intern-capacity)]
-    (* 1536 (* stride (* stride stride)))))
-
-(define (intern-structural-local-id [ordinal : i64] [source-name-id : i64]) : i64
-  (let
-    [stride : i64 (intern-capacity)]
-    [id : i64
-      (+ (intern-structural-local-base) (+ (* ordinal stride) source-name-id))]
-    (if (or
-      (< ordinal 0)
-      (< source-name-id 0)
-      (>= source-name-id stride)
-      (>= id (intern-template-source-base)))
-      (tl_oob_abort)
-      id)))
-
-(define (intern-structural-local-id? [id : i64]) : bool
-  (and
-    (>= id (intern-structural-local-base))
-    (< id (intern-template-source-base))))
-
-(define (intern-structural-local-source-name-id [id : i64]) : i64
-  (% (- id (intern-structural-local-base)) (intern-capacity)))
-
 (define (intern-colon-keyword-id? [id : i64]) : bool
   (let
     [text : String (intern-str id)]
@@ -430,18 +377,14 @@
       (> (intern-private-string-length text) 1)
       (= (intern-private-string-ref text 0) ':'))))
 
-;; Name-bearing AST fields accept pool ids plus several structural syntax-id
-;; families. Collapse any documented family to its renderable source spelling;
-;; callers retain the original integer wherever identity, rather than display,
-;; matters. Unknown structural values return the supplied fallback instead of
-;; reaching intern-str and aborting on an array index.
+;; Session-free callers may decode only ordinary source-name pool ids. Every
+;; structural syntax family requires compiler_intern_state's explicit owned
+;; session; this boundary must never consult whichever structural table happens
+;; to be installed globally.
 (define (intern-syntax-source-name-id-or [id : i64] [fallback : i64]) : i64
-  (cond
-    [(intern-renderable-id? id) id]
-    [(intern-template-source-id? id) (intern-template-source-name-id id)]
-    [(intern-structural-local-id? id)
-      (intern-structural-local-source-name-id id)]
-    [else fallback]))
+  (if (intern-renderable-id? id)
+    id
+    fallback))
 
 (define (intern-syntax-name-text-or [id : i64] [fallback : String]) : String
   (let
@@ -5262,10 +5205,6 @@
       [generated : InternId
         (intern-id-from-renderable
           (intern-generated-canonical-name "generated-name"))]
-      [template : InternSyntaxId
-        (intern-syntax-id-from-raw (intern-template-source-id source-raw))]
-      [local : InternSyntaxId
-        (intern-syntax-id-from-raw (intern-structural-local-id 7 source-raw))]
       [ok : bool
         (and
           (= (intern-syntax-id-value source-syntax) source-raw)
@@ -5274,28 +5213,18 @@
             "pkg/name")
           (intern-private-string-eq
             (intern-syntax-id-text (intern-syntax-id-from-renderable generated))
-            "generated-name")
-          (intern-private-string-eq (intern-syntax-id-text template) "pkg/name")
-          (intern-private-string-eq (intern-syntax-id-text local) "pkg/name"))]
+            "generated-name"))]
       (begin
         (intern-reset!)
         ok))))
 
-;; The capacity is not just the pool length: every structural symbol range is
-;; keyed off it, so moving it moves those ranges too. A range that overflows or
-;; overlaps fails SILENTLY -- ids decode into the wrong lane rather than abort.
-;; The quasiquoted-source and structural-local bases are capacity^3 multiples,
-;; so both overflow signed i64 the first time the capacity passes 2^17. These
-;; are the relations the capacity is free to move within, checked here so that a
-;; capacity change fails as a named self-test rather than as a bare
-;; `tl: array index out of bounds` in a later bootstrap stage. Refs #6258.
+;; The pool capacity remains a power-of-two storage and lookup-map contract.
+;; Structural identities are session records and deliberately absent here.
 (define (intern-id-space-capacity-tests-ok?) : bool
   (begin
     (intern-reset!)
     (let
       [capacity : i64 (intern-capacity)]
-      [template-base : i64 (intern-template-source-base)]
-      [local-base : i64 (intern-structural-local-base)]
       [ok : bool true]
       (begin
         ;; A power of two, so `intern-bucket` masks instead of dividing.
@@ -5308,83 +5237,16 @@
           (>= (array-length intern-map-id-slots) capacity)
           (set! ok false))
         (unless (>= intern-generated-map-capacity capacity) (set! ok false))
-        ;; No base overflowed into a negative i64 ...
-        (unless (> local-base 0) (set! ok false))
-        (unless (> template-base 0) (set! ok false))
-        ;; ... the arithmetic syntax ranges stay ordered ...
-        (unless (< local-base template-base) (set! ok false))
-        ;; ... the quasiquoted range stays below the first composite structural
-        ;; key, whose owner ids start at one ...
-        (unless
-          (<=
-            (+ template-base capacity)
-            (+
-              (intern-structural-key-base)
-              (intern-structural-key-owner-stride)))
-          (set! ok false))
-        ;; ... and each base stays a multiple of the capacity, which is what lets
-        ;; the remainder-based decoders recover a source name id.
-        (unless (= (% template-base capacity) 0) (set! ok false))
-        (unless (= (% local-base capacity) 0) (set! ok false))
-        ;; The range predicates hold at both edges and reject one past each.
-        (unless (intern-template-source-id? template-base) (set! ok false))
-        (unless
-          (intern-template-source-id? (+ template-base (- capacity 1)))
-          (set! ok false))
-        (unless
-          (not (intern-template-source-id? (- template-base 1)))
-          (set! ok false))
-        (unless
-          (not (intern-template-source-id? (+ template-base capacity)))
-          (set! ok false))
-        ;; A source name id survives every structural encoding round trip.
-        (unless
-          (= (intern-template-source-name-id (intern-template-source-id 0)) 0)
-          (set! ok false))
-        (unless
-          (=
-            (intern-template-source-name-id
-              (intern-template-source-id (- capacity 1)))
-            (- capacity 1))
-          (set! ok false))
-        (unless
-          (=
-            (intern-structural-local-source-name-id
-              (intern-structural-local-id 0 (- capacity 1)))
-            (- capacity 1))
-          (set! ok false))
-        (unless
-          (=
-            (intern-structural-local-source-name-id
-              (intern-structural-local-id 7 3))
-            3)
-          (set! ok false))
-        (unless
-          (intern-structural-local-id? (intern-structural-local-id 7 3))
-          (set! ok false))
         ;; A renderable id is a pool id and nothing else.
         (unless (intern-renderable-id? (- capacity 1)) (set! ok false))
         (unless (not (intern-renderable-id? capacity)) (set! ok false))
-        (unless (not (intern-renderable-id? local-base)) (set! ok false))
-        (unless (not (intern-renderable-id? template-base)) (set! ok false))
         ;; Both lanes address the one pool: source ids grow up from zero and
         ;; generated ids grow down from capacity-1, so the capacity is the sum
         ;; the two lanes must fit in, and they meet only when it is exhausted.
         (unless (= (intern-pool-len) 0) (set! ok false))
         (unless (= (intern-generated-count) 0) (set! ok false))
         (unless (= (intern "id-space-lane-probe") 0) (set! ok false))
-        (unless
-          (=
-            (intern-syntax-source-name-id-or (intern-template-source-id 0) -1)
-            0)
-          (set! ok false))
-        (unless
-          (=
-            (intern-syntax-source-name-id-or
-              (intern-structural-local-id 7 0)
-              -1)
-            0)
-          (set! ok false))
+        (unless (= (intern-syntax-source-name-id-or 0 -1) 0) (set! ok false))
         (unless
           (intern-private-string-eq
             (intern-syntax-name-text-or capacity "missing")
@@ -5411,8 +5273,6 @@
       [dotted-prefix-id : i64 (intern "generated-base.Variant")]
       [dotted-tail-id : i64 (intern "Variant.Item")]
       [source-len : i64 (intern-pool-len)]
-      [structural-local-id : i64 (intern-structural-local-id 7 source-id)]
-      [structural-local-again-id : i64 (intern-structural-local-id 8 source-id)]
       [opaque-id : i64
         (with-scratch
           (let
@@ -5436,23 +5296,6 @@
       [ok : bool true]
       (begin
         (unless (= (intern-pool-len) source-len) (set! ok false))
-        (unless
-          (intern-structural-local-id? structural-local-id)
-          (set! ok false))
-        (unless
-          (not (= structural-local-id structural-local-again-id))
-          (set! ok false))
-        (unless
-          (=
-            (intern-structural-local-source-name-id structural-local-id)
-            source-id)
-          (set! ok false))
-        (unless
-          (intern-private-string-eq
-            (intern-str
-              (intern-structural-local-source-name-id structural-local-id))
-            "generated-source-anchor")
-          (set! ok false))
         (unless (= opaque-id (- (intern-capacity) 1)) (set! ok false))
         (unless (= opaque-again-id (- (intern-capacity) 2)) (set! ok false))
         (unless

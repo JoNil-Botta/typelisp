@@ -515,8 +515,7 @@ CI_ARTIFACT_MANIFEST_ARGV='compile --batch {chunks} --target {host}-x86_64 --cfg
 ci_compiler_artifact_publish \
     "$ROOT" "$MANIFEST_ASSEMBLY_METADATA_FILE" \
     "$MANIFEST_ASSEMBLY_PATH_FILE" selfhost-compile-manifest-assembly-set \
-    manifest-deterministic-consumer "$STAGE2_BIN" "$CI_ARTIFACT_TARGET" \
-    selfhost-compile-manifest default \
+    "$STAGE2_BIN" "$CI_ARTIFACT_TARGET" selfhost-compile-manifest default \
     none "$CI_ARTIFACT_MANIFEST_SOURCES" 'stdlib,src' \
     'TYPELISP_COMPILE_MANIFEST_EXPECTATION_MODE=stage1,TYPELISP_COMPILE_MANIFEST_BATCH_SIZE=host-default' \
     assembly-set-manifest "$MANIFEST_ASSEMBLY_DIGESTS" \
@@ -551,7 +550,8 @@ ci_compiler_artifact_publish \
 ci_compiler_artifact_require \
     "$ROOT" "$MANIFEST_ASSEMBLY_METADATA_FILE" \
     "$MANIFEST_ASSEMBLY_PATH_FILE" selfhost-compile-manifest-assembly-set \
-    "$STAGE2_BIN" "$CI_ARTIFACT_TARGET" selfhost-compile-manifest default \
+    manifest-deterministic-consumer "$STAGE2_BIN" "$CI_ARTIFACT_TARGET" \
+    selfhost-compile-manifest default \
     none "$CI_ARTIFACT_MANIFEST_SOURCES" 'stdlib,src' \
     'TYPELISP_COMPILE_MANIFEST_EXPECTATION_MODE=stage1,TYPELISP_COMPILE_MANIFEST_BATCH_SIZE=host-default' \
     assembly-set-manifest - "$CI_ARTIFACT_MANIFEST_ARGV"

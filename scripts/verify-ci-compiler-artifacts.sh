@@ -218,6 +218,76 @@ validate_checked_in_inventory() {
         "$ROOT/scripts/verify-native-link-linux.sh" >/dev/null
 }
 
+validate_ci_artifact_call_arities() {
+    awk '
+    function fail(message) {
+        print "CI compiler artifact call arity: " message > "/dev/stderr"
+        failed = 1
+    }
+    function word_count(text,    i, c, state, in_word, count) {
+        state = ""
+        in_word = 0
+        count = 0
+        for (i = 1; i <= length(text); i++) {
+            c = substr(text, i, 1)
+            if (state == "single") {
+                if (c == single_quote) state = ""
+                continue
+            }
+            if (state == "double") {
+                if (c == "\"") state = ""
+                continue
+            }
+            if (c == single_quote) {
+                if (!in_word) { count++; in_word = 1 }
+                state = "single"
+            } else if (c == "\"") {
+                if (!in_word) { count++; in_word = 1 }
+                state = "double"
+            } else if (c ~ /[[:space:]]/) {
+                in_word = 0
+            } else if (!in_word) {
+                count++
+                in_word = 1
+            }
+        }
+        if (state != "") fail(FILENAME ":" start_line " has an unterminated quote")
+        return count
+    }
+    function finish_call(    actual, expected) {
+        actual = word_count(call) - 1
+        expected = (kind == "publish" ? 15 : 16)
+        if (actual != expected)
+            fail(FILENAME ":" start_line " " kind " expects " expected \
+                " arguments, got " actual)
+        collecting = 0
+        call = ""
+        kind = ""
+    }
+    BEGIN { single_quote = sprintf("%c", 39) }
+    {
+        line = $0
+        if (!collecting) {
+            if (line ~ /^[[:space:]]*ci_compiler_artifact_publish[[:space:]]*\\[[:space:]]*$/)
+                kind = "publish"
+            else if (line ~ /^[[:space:]]*ci_compiler_artifact_require[[:space:]]*\\[[:space:]]*$/)
+                kind = "require"
+            else
+                next
+            collecting = 1
+            start_line = FNR
+        }
+        continued = sub(/\\[[:space:]]*$/, "", line)
+        call = call " " line
+        if (!continued) finish_call()
+    }
+    END {
+        if (collecting) fail(FILENAME ":" start_line " has an incomplete call")
+        if (failed) exit 1
+    }
+    ' "$@"
+}
+
 validate_hosted_trace() {
     _trace_file=$1
     _trace_host=$2
@@ -306,6 +376,29 @@ validate_hosted_trace() {
 }
 
 validate_checked_in_inventory
+validate_ci_artifact_call_arities \
+    "$ROOT/scripts/ci-verify.sh" \
+    "$ROOT/scripts/verify-native-link-linux.sh" \
+    "$ROOT/scripts/verify-ci-compiler-artifacts.sh" \
+    "$ROOT/scripts/lib-ci-compiler-artifact.sh"
+
+ARITY_GOOD="$FIXTURE/arity-good.sh"
+ARITY_BAD="$FIXTURE/arity-bad.sh"
+ARITY_BAD_TEMPLATE="$FIXTURE/arity-bad.template"
+cat > "$ARITY_GOOD" <<'EOF'
+ci_compiler_artifact_publish \
+    a b c d e f g h i j k l m n o
+ci_compiler_artifact_require \
+    a b c d e f g h i j k l m n o p
+EOF
+validate_ci_artifact_call_arities "$ARITY_GOOD"
+cat > "$ARITY_BAD_TEMPLATE" <<'EOF'
+@ci_compiler_artifact_publish \
+    a b c d e f g h i j k l m n o p
+EOF
+sed 's/^@//' "$ARITY_BAD_TEMPLATE" > "$ARITY_BAD"
+expect_failure call-site-arity 'publish expects 15 arguments, got 16' \
+    validate_ci_artifact_call_arities "$ARITY_BAD"
 
 if [ -n "$TRACE_VALIDATION_FILE" ]; then
     validate_hosted_trace "$TRACE_VALIDATION_FILE" "$TRACE_VALIDATION_HOST"

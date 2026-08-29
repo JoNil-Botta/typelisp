@@ -1556,11 +1556,13 @@ region's scope: as the result of the `with-arena` form, stored into an outer
 `let` or global, captured by an escaping closure, or returned from an enclosing
 function.
 
-**Confinement rule:** Region-tagged values do not cross function boundaries.
-Function parameter and return types are written without region tags; passing a
-region-tagged value to a function or returning one is an escape error. There
-are no region-polymorphic function types; every function type is
-region-agnostic and can neither accept nor produce region-tagged handles.
+**Confinement rule:** A region-tagged value may cross a function boundary only
+when the signature explicitly preserves its input-tied lifetime. For example,
+a function that accepts `(arena.Arena r)` may return `(in r String)`, and a
+constructor for `(State r)` may accept `(in r T)`. Calls substitute `r` in
+region wrappers exactly as they do in references and nominal lifetime
+arguments. Untied region-tagged arguments and returns remain escape errors;
+distinct first-class arena brands cannot be mixed.
 
 ### 3.10 Reference types and borrow expressions
 
@@ -5228,9 +5230,14 @@ expression sequence evaluated with that arena as the active allocation target;
 the previous active arena is restored on normal exit and function-local early
 exit. The form does not mark, rewind, destroy, or clone. Its result type is the
 body result type unchanged, so owned values allocated in the target arena
-remain owned by that arena. When `arena-expr` is a direct local binding
-initialized by `arena.make` or `arena.make-atomic`, owner-carrying aggregate
-results are checker-tagged with that first-class arena owner identity.
+remain owned by that arena. When the resolved target type is branded
+`(arena.Arena r)`, `r` is the active checker region regardless of whether the
+expression is a local, parameter, aggregate field, or another safe value
+expression. Results can therefore flow through input-tied `(in r T)` returns
+and into matching `(State r)` fields. Distinct brands remain invariant. A bare
+legacy `arena.Arena` receives owner provenance only through the existing direct
+local `arena.make` / `arena.make-atomic` tracking; other bare expressions do not
+gain a fabricated brand.
 Ordinary `arena.make` owners do not prove thread-spanning lifetime; only
 `arena.make-atomic` owner tags can satisfy the task-thread transfer/share owner
 proof in section 6.5.
@@ -7232,7 +7239,8 @@ first-class arena rather than being cloned back to the caller's active arena:
 (import stdlib.arena)
 (import stdlib.string)
 
-(define (build-in-level [level : arena.Arena]) : String
+(define (build-in-level
+  [level : (arena.Arena owner)]) : (in owner String)
   (in-arena level (string.int->string 42)))
 ```
 
@@ -7245,6 +7253,14 @@ The body result type is returned unchanged. Nested lexical `with-arena`
 escape rules still apply:
 `(in-arena scratch (with-arena inner (int->string 1)))` is rejected because
 the inner scoped region would escape.
+
+For a branded target `(arena.Arena r)`, the checker tags region-taggable body
+results as `(in r T)` based on the resolved target type. The target may be a
+local, parameter, struct field, or another safe value expression. Input-tied
+calls and nominal lifetime substitution preserve the same `r`, so a matching
+`(State r)` may store both its arena and values allocated through it. A bare
+legacy arena keeps the direct-local compatibility rules and never acquires a
+brand from an arbitrary expression.
 
 #### Ordinary arena phase tokens
 

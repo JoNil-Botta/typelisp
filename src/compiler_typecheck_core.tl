@@ -40384,7 +40384,7 @@
         (tc-lifetime-subst-type subst (ast.ty-node-get inner)))]
     [(ast.AstType.Region region inner)
       (ast.ast-ty-region
-        region
+        (tc-lifetime-subst-apply subst region)
         (tc-lifetime-subst-type subst (ast.ty-node-get inner)))]
     [(ast.AstType.EnumArgs name lifetimes)
       (ast.ast-ty-enum-args
@@ -40405,6 +40405,23 @@
           subst
           (ast.ast-lifetime-list-box-shared-view lifetimes)))]
     [_ ty]))
+
+(cfg
+  test
+  (test
+    tc-lifetime-substitution-rewrites-region-wrapper
+    (match (tc-lifetime-subst-type
+      (TcLifetimeSubst.One 101 202)
+      (ast.ast-ty-region 101 (ast.AstType.String)))
+      [(ast.AstType.Region region inner)
+        (if (and
+          (= region 202)
+          (match (ast.ty-node-get inner)
+            [(ast.AstType.String) true]
+            [_ false]))
+          unit
+          (io.panic "typecheck: region lifetime substitution test failed"))]
+      [_ (io.panic "typecheck: region lifetime substitution test failed")])))
 
 (define (tc-call-lifetime-subst-mismatch-message) : String
   "typecheck: internal call lifetime substitution mismatch")
@@ -41221,14 +41238,14 @@
               (ResultTcType.Ok ty))]
           [(ResultTcType.Err message) (ResultTcType.Err message)])])))
 
-;; A formal that resolves to a type with no reference lifetimes and no
+;; A formal that resolves to a type with no reference/region lifetimes and no
 ;; struct/enum lifetime arguments cannot contribute lifetime bindings to the
 ;; call substitution, so the substitution pass may skip inferring that
 ;; argument's type entirely (tc-check-call-args typechecks every argument right
 ;; after). tc-resolve-type resolves aliases structurally, so lifetimes hidden
 ;; behind an alias are still seen.
 (define (tc-lifetime-subst-formal-inert? [ctx : TcContext] [want : ast.AstType]) : bool
-  (match (tc-type-collect-reference-lifetimes-into
+  (match (tc-type-collect-regions-into
     (tc-resolve-type (tc-global-shared-view ctx) want)
     TcNameIdList.Nil)
     [(TcNameIdList.Nil) true]
@@ -44419,13 +44436,21 @@
                           (tc-global-shared-view ctx)
                           env
                           (tc-global-shared-view effective-arg)
-                          want
+                          (tc-global-shared-view want)
                           c-abi-args)
                           [(ResultTcUnit.Ok)
+                            ;; Outside an active allocation scope, region values
+                            ;; cross a call only through an explicitly
+                            ;; region-bearing formal after lifetime substitution.
+                            ;; Plain constructor fields retain the legacy escape
+                            ;; rejection even when the result has other lifetimes.
                             (if (and
                               (tc-type-contains-any-region
                                 (tc-global-shared-view got))
                               (not allow-region-args)
+                              (not
+                                (tc-type-contains-any-region
+                                  (tc-global-shared-view want)))
                               (not
                                 (tc-type-regions-all-atomic-arena-owners?
                                   env
@@ -67094,20 +67119,55 @@
         (TcMaybeNameId.No))
       (TcMaybeNameId.No))))
 
-(define (tc-in-arena-body-env [env : TcTypeEnv] [arena : ast.AstExpr]) : TcTypeEnv
-  (match (tc-in-arena-owner env arena)
-    [(TcMaybeNameId.Some owner)
-      (tc-push-region env (tc-current-arena-owner-region env owner))]
+(define (tc-arena-branded-region [ctx : TcContext] [arena-ty : ast.AstType]) : TcMaybeNameId
+  (match (tc-type-strip-region
+    (tc-resolve-type (tc-global-shared-view ctx) arena-ty))
+    [(ast.AstType.StructArgs arena-name lifetimes)
+      (let
+        [args : ast.AstLifetimeList
+          (ast.ast-lifetime-list-box-shared-view lifetimes)]
+        (if (and
+          (tc-arena-nominal-name-id? arena-name)
+          (= (tc-lifetime-list-count (tc-global-shared-view args)) 1))
+          (TcMaybeNameId.Some
+            (ast.ast-lifetime-list-get (& args) 0 (ast.ast-lifetime-fallback)))
+          (TcMaybeNameId.No)))]
+    [_ (TcMaybeNameId.No)]))
+
+(define (tc-in-arena-region
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [arena : ast.AstExpr]
+  [arena-ty : ast.AstType]) : TcMaybeNameId
+  (match (tc-arena-branded-region ctx arena-ty)
+    [(TcMaybeNameId.Some region) (TcMaybeNameId.Some region)]
+    [(TcMaybeNameId.No)
+      (match (tc-in-arena-owner env arena)
+        [(TcMaybeNameId.Some owner)
+          (TcMaybeNameId.Some (tc-current-arena-owner-region env owner))]
+        [(TcMaybeNameId.No) (TcMaybeNameId.No)])]))
+
+(define (tc-in-arena-body-env
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [arena : ast.AstExpr]
+  [arena-ty : ast.AstType]) : TcTypeEnv
+  (match (tc-in-arena-region ctx env arena arena-ty)
+    [(TcMaybeNameId.Some region) (tc-push-region env region)]
     [(TcMaybeNameId.No) env]))
 
 (define (tc-in-arena-body-result
+  [ctx : TcContext]
   [env : TcTypeEnv]
   [arena : ast.AstExpr]
+  [arena-ty : ast.AstType]
   [body-ty : ast.AstType]) : ast.AstType
   (match (tc-type-outer-region (tc-global-shared-view body-ty))
     [(TcMaybeNameId.Some _) body-ty]
     [(TcMaybeNameId.No)
-      (tc-tag-active-region (tc-in-arena-body-env env arena) body-ty)]))
+      (tc-tag-active-region
+        (tc-in-arena-body-env ctx env arena arena-ty)
+        body-ty)]))
 
 (define (tc-in-arena-expr
   [ctx : TcContext]
@@ -67116,13 +67176,20 @@
   [body : ast.AstExprList]) : ResultTcType
   (match (tc-expr (tc-global-shared-view ctx) env (tc-global-shared-view arena))
     [(ResultTcType.Ok arena-ty)
-      (if (tc-arena-type? (tc-global-shared-view ctx) arena-ty)
+      (if (tc-arena-type?
+        (tc-global-shared-view ctx)
+        (tc-global-shared-view arena-ty))
         (match (tc-begin-list
-          ctx
-          (tc-in-arena-body-env env (tc-global-shared-view arena))
+          (tc-global-shared-view ctx)
+          (tc-in-arena-body-env
+            (tc-global-shared-view ctx)
+            env
+            (tc-global-shared-view arena)
+            (tc-global-shared-view arena-ty))
           body)
           [(ResultTcType.Ok body-ty)
-            (ResultTcType.Ok (tc-in-arena-body-result env arena body-ty))]
+            (ResultTcType.Ok
+              (tc-in-arena-body-result ctx env arena arena-ty body-ty))]
           [(ResultTcType.Err message) (ResultTcType.Err message)])
         (ResultTcType.Err "typecheck: in-arena arena must be Arena"))]
     [(ResultTcType.Err message) (ResultTcType.Err message)]))
@@ -67135,14 +67202,21 @@
   [expected : ast.AstType]) : ResultTcType
   (match (tc-expr (tc-global-shared-view ctx) env (tc-global-shared-view arena))
     [(ResultTcType.Ok arena-ty)
-      (if (tc-arena-type? (tc-global-shared-view ctx) arena-ty)
+      (if (tc-arena-type?
+        (tc-global-shared-view ctx)
+        (tc-global-shared-view arena-ty))
         (match (tc-begin-list-with-expected
-          ctx
-          (tc-in-arena-body-env env (tc-global-shared-view arena))
+          (tc-global-shared-view ctx)
+          (tc-in-arena-body-env
+            (tc-global-shared-view ctx)
+            env
+            (tc-global-shared-view arena)
+            (tc-global-shared-view arena-ty))
           body
           expected)
           [(ResultTcType.Ok body-ty)
-            (ResultTcType.Ok (tc-in-arena-body-result env arena body-ty))]
+            (ResultTcType.Ok
+              (tc-in-arena-body-result ctx env arena arena-ty body-ty))]
           [(ResultTcType.Err message) (ResultTcType.Err message)])
         (ResultTcType.Err "typecheck: in-arena arena must be Arena"))]
     [(ResultTcType.Err message) (ResultTcType.Err message)]))

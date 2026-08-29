@@ -163,47 +163,29 @@
 
 ;; Integer payload of `Token.Int` (0 for any other kind): projects the literal
 ;; value back out of the enum, the way a parser reads a numeric literal.
-(define (int [t : Token]) : i64
+(define (int [t : (& t Token)]) : i64
   (match t
-    [(Token.LParen) 0]
-    [(Token.RParen) 0]
-    [(Token.Int v _) v]
-    [(Token.Sym _) 0]
-    [(Token.End) 0]
-    [(Token.Str _) 0]
-    [(Token.Char _) 0]
-    [(Token.Float _) 0]
-    [(Token.LBracket) 0]
-    [(Token.RBracket) 0]
-    [(Token.Quote) 0]
-    [(Token.Backtick) 0]
-    [(Token.Comma) 0]
-    [(Token.CommaAt) 0]))
+    [(Token.Int value _) (deref value)]
+    [_ 0]))
 
 ;; Original source spelling of `Token.Int` (empty string for any other kind).
-(define (int-text [t : Token]) : String
+(define (int-text [t : (& t Token)]) : String
   (match t
-    [(Token.LParen) ""]
-    [(Token.RParen) ""]
-    [(Token.Int _ text) text]
-    [(Token.Sym _) ""]
-    [(Token.End) ""]
-    [(Token.Str _) ""]
-    [(Token.Char _) ""]
-    [(Token.Float _) ""]
-    [(Token.LBracket) ""]
-    [(Token.RBracket) ""]
-    [(Token.Quote) ""]
-    [(Token.Backtick) ""]
-    [(Token.Comma) ""]
-    [(Token.CommaAt) ""]))
+    [(Token.Int _ text)
+      (if (= (string.string-length text) 0)
+        ""
+        (string.copy text))]
+    [_ ""]))
 
 ;; Symbol intern id of `Token.Sym`. Callers classify by tag before projecting;
 ;; a non-symbol is not represented by a raw negative name sentinel.
-(define (sym-id [t : Token]) : ci.InternId
+(define (sym-id [t : (& t Token)]) : ci.InternId
   (match t
     [(Token.Sym id)
-      (cfg stage0-token-scalar-bootstrap (ci.intern-id-from-renderable id) id)]
+      (cfg
+        stage0-token-scalar-bootstrap
+        (ci.intern-id-from-renderable (deref id))
+        (deref id))]
     [_ (ci.tl_oob_abort)]))
 
 ;; Symbol text of `Token.Sym` (the empty string for any other kind): resolves
@@ -256,51 +238,30 @@
 
 ;; Parser-assigned renderable identity of a string literal. Callers classify by
 ;; tag before projecting, so missing remains outside the name-id type.
-(define (str-id [t : Token]) : ci.InternId
+(define (str-id [t : (& t Token)]) : ci.InternId
   (match t
     [(Token.Str id)
-      (cfg stage0-token-scalar-bootstrap (ci.intern-id-from-renderable id) id)]
+      (cfg
+        stage0-token-scalar-bootstrap
+        (ci.intern-id-from-renderable (deref id))
+        (deref id))]
     [_ (ci.tl_oob_abort)]))
 
 ;; Float literal text of `Token.Float` (the empty string for any other kind):
 ;; the selfhost frontend carries source spelling until backend emission, so it
 ;; does not need a string->f64 primitive.
-(define (float [t : Token]) : String
+(define (float [t : (& t Token)]) : String
   (match t
-    [(Token.LParen) ""]
-    [(Token.RParen) ""]
-    [(Token.Int _ _) ""]
-    [(Token.Sym _) ""]
-    [(Token.End) ""]
-    [(Token.Str _) ""]
-    [(Token.Char _) ""]
-    [(Token.Float s) s]
-    [(Token.LBracket) ""]
-    [(Token.RBracket) ""]
-    [(Token.Quote) ""]
-    [(Token.Backtick) ""]
-    [(Token.Comma) ""]
-    [(Token.CommaAt) ""]))
+    [(Token.Float text) (string.copy text)]
+    [_ ""]))
 
 ;; Character payload of `Token.Char` (NUL for any other kind): projects the
 ;; read character back out of the enum while keeping char atoms distinct from
 ;; symbols, ints, and strings.
-(define (char [t : Token]) : char
+(define (char [t : (& t Token)]) : char
   (match t
-    [(Token.LParen) '\0']
-    [(Token.RParen) '\0']
-    [(Token.Int _ _) '\0']
-    [(Token.Sym _) '\0']
-    [(Token.End) '\0']
-    [(Token.Str _) '\0']
-    [(Token.Char c) c]
-    [(Token.Float _) '\0']
-    [(Token.LBracket) '\0']
-    [(Token.RBracket) '\0']
-    [(Token.Quote) '\0']
-    [(Token.Backtick) '\0']
-    [(Token.Comma) '\0']
-    [(Token.CommaAt) '\0']))
+    [(Token.Char value) (deref value)]
+    [_ '\0']))
 
 ;; A token paired with the 1-based source line and column where its lexeme
 ;; begins. The reader/parser recover positions from these so later
@@ -339,31 +300,6 @@
     [(Token.Comma) 13]
     [(Token.CommaAt) 14]))
 
-(define (token-copy [t : (& t Token)]) : Token
-  (match t
-    [(Token.LParen) (Token.LParen)]
-    [(Token.RParen) (Token.RParen)]
-    [(Token.Int value text) (Token.Int (deref value) (string.copy text))]
-    [(Token.Sym id)
-      (cfg
-        stage0-token-scalar-bootstrap
-        (Token.Sym (deref id))
-        (Token.Sym (ci.intern-id-from-renderable (ci.intern-id-value id))))]
-    [(Token.End) (Token.End)]
-    [(Token.Str id)
-      (cfg
-        stage0-token-scalar-bootstrap
-        (Token.Str (deref id))
-        (Token.Str (ci.intern-id-from-renderable (ci.intern-id-value id))))]
-    [(Token.Char value) (Token.Char (deref value))]
-    [(Token.Float text) (Token.Float (string.copy text))]
-    [(Token.LBracket) (Token.LBracket)]
-    [(Token.RBracket) (Token.RBracket)]
-    [(Token.Quote) (Token.Quote)]
-    [(Token.Backtick) (Token.Backtick)]
-    [(Token.Comma) (Token.Comma)]
-    [(Token.CommaAt) (Token.CommaAt)]))
-
 (define (spanned-token-tok [s : SpannedToken]) : Token
   s.tok)
 
@@ -376,11 +312,11 @@
 (define (spanned-token-token [s : SpannedToken]) : Token
   (spanned-token-tok s))
 
-(define (spanned-token-token-ref [s : (& s SpannedToken)]) : Token
-  (token-copy (& s.tok)))
-
-(define (spanned-token-copy [s : (& s SpannedToken)]) : SpannedToken
-  (SpannedToken (token-copy (& s.tok)) s.line s.col))
+;; Parser cursors borrow the stream-owned token instead of materializing a
+;; representation copy. Callers match the borrow and copy only literal text
+;; that crosses into the parsed AST.
+(define (spanned-token-token-ref [s : (& s SpannedToken)]) : (& s Token)
+  (& s.tok))
 
 (define (spanned-token-span [s : (& s SpannedToken)]) : SourceSpan
   (SourceSpan

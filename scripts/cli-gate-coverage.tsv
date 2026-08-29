@@ -1,9 +1,9 @@
 # cli-gate-coverage-schema	1
 # cli-gate-coverage-counts	1
-# count	total	all	rows	505
-# count	total	all	annotations	505
+# count	total	all	rows	506
+# count	total	all	annotations	506
 # count	total	all	sources	3
-# count	total	all	source-sites	377
+# count	total	all	source-sites	378
 # count	total	all	expanded-cases	162
 # count	gate	public-tools	rows	321
 # count	gate	public-tools	source-sites	210
@@ -11,18 +11,18 @@
 # count	gate	selfhost-cli	rows	80
 # count	gate	selfhost-cli	source-sites	79
 # count	gate	selfhost-cli	expanded-cases	17
-# count	gate	stage1-wrapper	rows	104
-# count	gate	stage1-wrapper	source-sites	88
+# count	gate	stage1-wrapper	rows	105
+# count	gate	stage1-wrapper	source-sites	89
 # count	gate	stage1-wrapper	expanded-cases	18
 # count	host	all	rows	380
-# count	host	linux	rows	122
+# count	host	linux	rows	123
 # count	host	windows	rows	3
-# count	platform	linux	rows	502
+# count	platform	linux	rows	503
 # count	platform	windows	rows	383
 # count	kind	delegated	rows	9
-# count	kind	direct	rows	53
+# count	kind	direct	rows	54
 # count	kind	wrapper	rows	443
-# count	process	compiler	rows	332
+# count	process	compiler	rows	333
 # count	process	compiler+assembler+archiver	rows	1
 # count	process	compiler+assembler+archiver+linker	rows	4
 # count	process	compiler+assembler+linker	rows	2
@@ -61,6 +61,7 @@ schema	case_id	gate	source	kind	host	compiler	argv	fixture	stdin	cwd	process	env
 1	stage1-wrapper-compile-cfg-batch	stage1-wrapper	scripts/check-stage1-wrapper.sh	wrapper	linux	stage1/host-action	compile --batch <cfg-batch.txt> --cfg feature	two-source-cfg-batch	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	not-asserted	not-asserted	writes:two-assemblies;both-enable-feature;both-exclude-disabled	stage1-wrapper-compile-cfg-batch	-
 1	stage1-wrapper-compile-ir	stage1-wrapper	scripts/check-stage1-wrapper.sh	wrapper	linux	stage1/host-action	compile <smoke.tl> --emit-ir	main-returns-7	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	contains:Wrote-smoke.ir	not-asserted	writes:smoke.ir;ir-summary-v1	stage1-wrapper-compile-ir	-
 1	stage1-wrapper-compile-missing-source	stage1-wrapper	scripts/check-stage1-wrapper.sh	wrapper	linux	stage1/host-action	compile	missing-source-argument	inherited	repository	compiler	none	nonzero	empty	contains:expected-source-path	none	stage1-wrapper-compile-missing-source	-
+1	stage1-wrapper-compile-unresolved-qualified-name	stage1-wrapper	scripts/check-stage1-wrapper.sh	direct	linux	stage1/host-action	compile <unresolved-qualified-suite.tl> -o <unresolved-qualified.s>	unresolved-qualified-name-in-imported-graph	inherited	repository	compiler	none	1	empty	contains:e0200-unknown-qualified-name;contains:helper-module-path	none	stage1-wrapper-compile-unresolved-qualified-name	-
 1	stage1-wrapper-help	stage1-wrapper	scripts/check-stage1-wrapper.sh	wrapper	linux	stage1/host-action	help	top-level-help	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	empty	not-asserted	none	stage1-wrapper-help	-
 1	stage1-wrapper-check	stage1-wrapper	scripts/check-stage1-wrapper.sh	wrapper	linux	stage1/host-action	check <smoke.tl>	main-returns-7	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	contains:Type-checking-passed	empty	none	stage1-wrapper-check	-
 1	stage1-wrapper-check-stdlib-root	stage1-wrapper	scripts/check-stage1-wrapper.sh	wrapper	linux	stage1/host-action	check <app/main.tl> --stdlib-root <repo-stdlib>	custom-stdlib-import	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	contains:Type-checking-passed	empty	copies:stdout-as-expected	stage1-wrapper-check-stdlib-root	-

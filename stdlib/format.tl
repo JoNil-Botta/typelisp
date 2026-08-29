@@ -6279,7 +6279,7 @@
 ;: The capture-free renderer is the first package field, so its fixed function
 ;: width is also the byte offset of the following anchors tuple.
 (define arguments-renderer-byte-size : i64
-  (comptime (size-of (type (-> (Tuple i64 i64) i64)))))
+  (comptime (size-of (type (-> (Ptr i64) i64)))))
 
 ;: Invoke the fixed scalar renderer ABI after a macro has located the package's
 ;: first word. Keeping the function-pointer type in ordinary runtime code lets
@@ -6288,18 +6288,24 @@
   [renderer-address : i64]
   [formatter-address : i64]
   [anchors-address : i64]) : i64
-  ((unsafe
-      (ptr-read
-        (int->ptr
-          (cast renderer-address : u64)
-          : (Ptr (-> (Tuple i64 i64) i64)))))
-    (tuple formatter-address anchors-address)))
+  (let
+    [call-addresses : (Array i64 2) (array formatter-address anchors-address)]
+    [status : i64
+      ((unsafe
+          (ptr-read
+            (int->ptr (cast renderer-address : u64) : (Ptr (-> (Ptr i64) i64)))))
+        (unsafe
+          (ptr-cast (__tl_array-data call-addresses) : (Ptr i64))))]
+    ;; The post-call reload keeps this caller-owned cell live across the
+    ;; indirect call instead of allowing a tail call to discard its frame.
+    ;; Renderers preserve the first word, so the added delta is always zero.
+    (+ status (- (array-ref call-addresses 0) formatter-address))))
 
 ;: Finish a retained Arguments package after every supplied value and lexical
 ;: capture has been converted to a shared anchor. The renderer receives only
-;: `(formatter-address, anchors-address)` machine words; the package's checked
-;: anchor tuple retains all lifetimes while this scalar control ABI avoids
-;: passing heterogeneous reference-bearing aggregates through an indirect call.
+;: a pointer to caller-owned `(formatter-address, anchors-address)` machine
+;: words; the package's checked anchor tuple retains all lifetimes while this
+;: scalar control ABI avoids passing aggregates through an indirect call.
 (defmacro (format-arguments-package
   [plan : comptime.Expr]
   [anchors : comptime.Expr]
@@ -6323,9 +6329,11 @@
               ;; `type-expr` would instead package them as value-level syntax.
               [anchors-type : comptime.Expr (comptime.expr-type anchors)]
               [stream-address : comptime.Expr
-                (comptime.expr-tuple-ref parameter 0)]
+                `(unsafe
+                  (ptr-read ,parameter))]
               [anchors-address : comptime.Expr
-                (comptime.expr-tuple-ref parameter 1)]
+                `(unsafe
+                  (ptr-read (ptr-offset ,parameter 1)))]
               [anchors-source : comptime.Expr
                 `(unsafe
                   (ptr-read
@@ -6764,7 +6772,8 @@
                               `(stdlib.format.format-arguments-package
                                 ,plan
                                 (tuple ,@supplied-vars ,@capture-vars)
-                                (tuple (cast 0 : i64) (cast 0 : i64))
+                                (unsafe
+                                  (int->ptr (cast 0 : u64) : (Ptr i64)))
                                 (__tl_format_retained_kinds
                                   ,@supplied-kinds
                                   ,@capture-kinds)

@@ -123,6 +123,7 @@ slice_split_at_shadow_check_ok|check-ok|tests/safety/slice_split_at_shadow_check
 compiler_intern_structural_to_name_reject|check-fail|tests/safety/compiler_intern_structural_to_name_reject.tl|-|expected compiler_intern/InternId, found i64
 compiler_intern_raw_to_syntax_reject|check-fail|tests/safety/compiler_intern_raw_to_syntax_reject.tl|-|expected compiler_intern/InternSyntaxId, found i64
 compiler_intern_syntax_to_name_reject|check-fail|tests/safety/compiler_intern_syntax_to_name_reject.tl|-|expected compiler_intern/InternId, found compiler_intern/InternSyntaxId
+compiler_lower_private_to_name_reject|check-fail|tests/safety/compiler_lower_private_to_name_reject.tl|-|expected compiler_intern/InternId, found compiler_intern_state/InternLowerPrivateIdentity
 compiler_ast_structural_export_reject|check-fail|tests/safety/compiler_ast_structural_export_reject.tl|-|expected compiler_intern/InternId, found compiler_intern/InternSyntaxId
 compiler_ast_raw_extern_symbol_reject|check-fail|tests/safety/compiler_ast_raw_extern_symbol_reject.tl|-|expected compiler_intern/InternId, found i64
 compiler_ast_raw_cleanup_name_reject|check-fail|tests/safety/compiler_ast_raw_cleanup_name_reject.tl|-|expected compiler_intern/InternSyntaxId, found i64

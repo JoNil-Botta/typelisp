@@ -22668,22 +22668,25 @@
     (let
       [source-name-id : i64
         (macro-hygiene-global-source-name-id-or session name-id name-id)]
-      [slash : i64 (ci.intern-qualified-last-slash source-name-id)]
-      [n : i64 (string.string-length name)]
-      (and
-        (not (tc-hygiene-local-name-id? session name-id))
-        (not (tc-hygiene-global-name-id? session name-id))
-        (> slash 0)
-        (< slash (- n 1))))))
+      (if (not (tc-env-key-has-name-id? source-name-id))
+        false
+        (let
+          [slash : i64 (ci.intern-qualified-last-slash source-name-id)]
+          [n : i64 (string.string-length name)]
+          (and
+            (not (tc-hygiene-local-name-id? session name-id))
+            (not (tc-hygiene-global-name-id? session name-id))
+            (> slash 0)
+            (< slash (- n 1))))))))
 
 (test
-  tc-source-slash-qualified-private-name
+  tc-source-slash-qualified-negative-name
   (test.assert-false
     (tc-source-slash-qualified-id?
       (cis.InternStructuralSessionHandle 0)
-      "__lower_private"
-      (- 0 (+ (* (ci.intern-capacity) 4) 5)))
-    "lowerer-private names stay outside intern metadata"))
+      "__internal"
+      -1)
+    "negative internal names stay outside intern metadata"))
 
 (define (tc-name-slashes-to-dots [name : String]) : String
   (let

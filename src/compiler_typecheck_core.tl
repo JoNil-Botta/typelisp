@@ -40122,10 +40122,7 @@
         tc-unbound-near-miss-memo-next
         (% (+ slot 1) tc-unbound-near-miss-memo-capacity)))))
 
-(define (tc-unbound-near-miss-render
-  [best-id : i64]
-  [wanted : String]
-  [module-id : i64]) : String
+(define (tc-unbound-near-miss-render [best-id : i64] [wanted : String]) : String
   (if (< best-id 0)
     ""
     (let
@@ -40168,7 +40165,7 @@
     (if (>= memo-slot 0)
       (let
         [best-id : i64 (array-ref tc-unbound-near-miss-memo-best-ids memo-slot)]
-        (tc-unbound-near-miss-render best-id wanted module-id))
+        (tc-unbound-near-miss-render best-id wanted))
       (let
         [result : String
           (tc-unbound-near-miss-scan

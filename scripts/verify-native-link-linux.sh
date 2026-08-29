@@ -10,6 +10,8 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
+. "$ROOT/scripts/lib-ci-compiler-artifact.sh"
+
 case "$(uname -s)" in
     Linux*) ;;
     *)
@@ -221,11 +223,9 @@ compile_selfhost_binary() {
 }
 
 verify_linux_direct_object_link() {
+    _tool=$1
     _dir="$WORKDIR/direct-object"
     mkdir -p "$_dir"
-    _tool="$_dir/build-tool"
-
-    compile_selfhost_binary direct-object-build src/main.tl "$_tool"
     _src="$_dir/main.tl"
     _bin="$_dir/main"
     _shim="$_dir/no-assembler-bin"
@@ -922,16 +922,56 @@ EOF
 
 DRIVER="$WORKDIR/compiler-driver/compiler-driver"
 build_selfhost_compiler_driver "$DRIVER"
-verify_compiler_driver_stack_args "$DRIVER"
+NATIVE_LINK_ARTIFACT_PATH_FILE="$WORKDIR/compiler-driver/compiler-driver.path"
+NATIVE_LINK_ARTIFACT_METADATA_FILE="$WORKDIR/compiler-driver/compiler-driver.meta"
+NATIVE_LINK_ARTIFACT_ENABLED=0
+if [ -n "${TYPELISP_CI_COMPILER_ARTIFACT_TRACE:-}" ] || \
+    [ -n "${TYPELISP_CI_COMPILER_ARTIFACT_RUN_TOKEN:-}" ]; then
+    [ -n "${TYPELISP_CI_COMPILER_ARTIFACT_TRACE:-}" ] && \
+        [ -n "${TYPELISP_CI_COMPILER_ARTIFACT_RUN_TOKEN:-}" ] || \
+        fail "CI artifact trace and same-run token must be supplied together"
+    NATIVE_LINK_ARTIFACT_ENABLED=1
+    ci_compiler_artifact_publish \
+        "$ROOT" "$NATIVE_LINK_ARTIFACT_METADATA_FILE" \
+        "$NATIVE_LINK_ARTIFACT_PATH_FILE" native-link-selfhost-cli \
+        "$COMPILER" linux-x86_64 compiler-build-identity default none \
+        'src,stdlib,scripts/verify-native-link-linux.sh' stdlib \
+        'AS=host-default,LD=host-default' compiler-binary "$DRIVER" \
+        'compile src/main.tl --stdlib-root stdlib --cfg compiler-build-identity -o {output}.s; as {output}.s -o {output}.o; ld {output}.o -o {output} -static -e _tl_start'
+fi
+
+require_native_link_driver() {
+    _native_link_consumer=$1
+    NATIVE_LINK_DRIVER=$DRIVER
+    if [ "$NATIVE_LINK_ARTIFACT_ENABLED" -eq 1 ]; then
+        ci_compiler_artifact_require \
+            "$ROOT" "$NATIVE_LINK_ARTIFACT_METADATA_FILE" \
+            "$NATIVE_LINK_ARTIFACT_PATH_FILE" native-link-selfhost-cli \
+            "$_native_link_consumer" "$COMPILER" linux-x86_64 \
+            compiler-build-identity default none \
+            'src,stdlib,scripts/verify-native-link-linux.sh' stdlib \
+            'AS=host-default,LD=host-default' compiler-binary - \
+            'compile src/main.tl --stdlib-root stdlib --cfg compiler-build-identity -o {output}.s; as {output}.s -o {output}.o; ld {output}.o -o {output} -static -e _tl_start'
+        NATIVE_LINK_DRIVER=$CI_COMPILER_ARTIFACT_PATH
+    fi
+}
+
+require_native_link_driver native-link-driver-consumer
+verify_compiler_driver_stack_args "$NATIVE_LINK_DRIVER"
 verify_extern_function_pointer_data
-verify_compiler_driver_import "$DRIVER"
-verify_compiler_driver_pkg_import "$DRIVER"
-verify_compiler_driver_string_runtime "$DRIVER"
-verify_compiler_driver_stdlib_string_runtime "$DRIVER"
-verify_compiler_driver_stdlib_json "$DRIVER"
-verify_compiler_driver_arrays_and_traps "$DRIVER"
-verify_compiler_driver_immutable_refs "$DRIVER"
-verify_compiler_driver_recursive_box_list "$DRIVER"
-verify_linux_direct_object_link
+verify_compiler_driver_import "$NATIVE_LINK_DRIVER"
+verify_compiler_driver_pkg_import "$NATIVE_LINK_DRIVER"
+verify_compiler_driver_string_runtime "$NATIVE_LINK_DRIVER"
+verify_compiler_driver_stdlib_string_runtime "$NATIVE_LINK_DRIVER"
+verify_compiler_driver_stdlib_json "$NATIVE_LINK_DRIVER"
+verify_compiler_driver_arrays_and_traps "$NATIVE_LINK_DRIVER"
+verify_compiler_driver_immutable_refs "$NATIVE_LINK_DRIVER"
+verify_compiler_driver_recursive_box_list "$NATIVE_LINK_DRIVER"
+# The compiler-driver fixture above and the direct-object build-tool fixture
+# used to perform the exact same src/main.tl compile/link under different
+# output names.  Reuse the already-exercised artifact explicitly; both suites
+# still run every generated-program assertion.
+require_native_link_driver native-link-direct-object-consumer
+verify_linux_direct_object_link "$NATIVE_LINK_DRIVER"
 
 echo "selfhost native verification passed"

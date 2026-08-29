@@ -742,9 +742,28 @@ assert_lower_row() {
 # Linux, and a broken checker there would land silently.
 selfhost_pool_family_self_test
 
-echo "[compile-profile] build embedded stdlib tlci input"
-scripts/build-embedded-stdlib-tlci.sh \
-    "$COMPILER" target/embedded-stdlib-tlci/stdlib.tlci "$NL_HOST_OS"
+case "${TYPELISP_COMPILE_PROFILE_EMBEDDED_TLCI_REUSE:-0}" in
+    0)
+        echo "[compile-profile] build embedded stdlib tlci input"
+        scripts/build-embedded-stdlib-tlci.sh \
+            "$COMPILER" target/embedded-stdlib-tlci/stdlib.tlci "$NL_HOST_OS"
+        ;;
+    1)
+        echo "[compile-profile] reuse validated embedded stdlib tlci input"
+        for reuse_file in \
+            target/embedded-stdlib-tlci/stdlib.tlci \
+            target/embedded-stdlib-tlci/stdlib.tlci.tlch \
+            target/embedded-stdlib-tlci/modules.txt \
+            "target/embedded-stdlib-tlci/prelude-surface-$NL_HOST_OS.rodata" \
+            target/embedded-stdlib-tlci/source-hash.txt; do
+            [ -s "$reuse_file" ] || \
+                fail "validated embedded tlci handoff is missing: $reuse_file"
+        done
+        ;;
+    *)
+        fail "TYPELISP_COMPILE_PROFILE_EMBEDDED_TLCI_REUSE must be 0 or 1"
+        ;;
+esac
 if PRODUCER_IDENTITY=$($COMPILER --producer-identity 2>/dev/null); then
     :
 else

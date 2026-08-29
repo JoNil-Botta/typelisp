@@ -104,6 +104,7 @@ jobs:
         shell: bash
         env:
           TYPELISP_CI_TIMING: '1'
+          TYPELISP_CI_COMPILER_ARTIFACT_TRACE: target/ci-compiler-artifacts/trace.tsv
         run: scripts/ci-verify.sh
 
       - name: Enforce Linux CI timing budgets
@@ -117,6 +118,14 @@ jobs:
         with:
           name: ci-timing-${{ runner.os }}
           path: target/ci-timing/*.tsv
+          if-no-files-found: error
+
+      - name: Upload CI compiler artifact inventory
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-compiler-artifacts-${{ runner.os }}
+          path: target/ci-compiler-artifacts/*.tsv
           if-no-files-found: error
 
       - name: Upload TLCI native route stress evidence

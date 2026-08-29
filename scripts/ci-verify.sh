@@ -14,6 +14,7 @@ cd "$ROOT"
 . "$ROOT/scripts/lib-linux-entry.sh"
 . "$ROOT/scripts/lib-ci-timing.sh"
 . "$ROOT/scripts/lib-benchmark-ci-cases.sh"
+. "$ROOT/scripts/lib-ci-compiler-artifact.sh"
 
 usage() {
     cat >&2 <<'EOF'
@@ -46,6 +47,20 @@ case "$(uname -s)" in
         exit 1
         ;;
 esac
+
+# Same-run compiler reuse is fail-closed.  The token prevents a prior run's
+# path/metadata pair from being accepted even when it happens to name an
+# identical file, while the optional trace omits the token and stays diffable.
+TYPELISP_CI_COMPILER_ARTIFACT_RUN_TOKEN="${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-$HOST_OS-$$"
+export TYPELISP_CI_COMPILER_ARTIFACT_RUN_TOKEN
+if [ -n "${TYPELISP_CI_COMPILER_ARTIFACT_TRACE:-}" ]; then
+    case "$TYPELISP_CI_COMPILER_ARTIFACT_TRACE" in
+        /* | [A-Za-z]:[/\\]*) ;;
+        *) TYPELISP_CI_COMPILER_ARTIFACT_TRACE="$ROOT/$TYPELISP_CI_COMPILER_ARTIFACT_TRACE" ;;
+    esac
+    export TYPELISP_CI_COMPILER_ARTIFACT_TRACE
+    ci_compiler_artifact_trace_init "$TYPELISP_CI_COMPILER_ARTIFACT_TRACE"
+fi
 
 BENCHMARK_CORRECTNESS_CASES=
 OPT2_CORRECTNESS_CASES=
@@ -199,6 +214,9 @@ run_gate \
 # their output. CI only ever runs the success path, so the diagnostic for a
 # checkout git cannot resolve has no other coverage.
 run_gate "build provenance helper self-tests" scripts/verify-build-provenance.sh
+run_gate \
+    "CI compiler artifact provenance self-tests" \
+    scripts/verify-ci-compiler-artifacts.sh
 # Keep current-mangling module/clone attribution pinned without making code
 # size itself a CI budget. Linked-object measurement remains an opt-in report.
 run_gate \
@@ -405,7 +423,8 @@ echo "[ci-verify] host=$HOST_OS seed=$SEED_TYPELISP_BIN"
 # not add per-gate compiler rebuilds here.
 STAGE1_PATH_FILE="$ROOT/target/ci-verify-stage1.path"
 STAGE2_PATH_FILE="$ROOT/target/ci-verify-stage2.path"
-rm -f "$STAGE1_PATH_FILE" "$STAGE2_PATH_FILE"
+STAGE2_METADATA_FILE="$ROOT/target/ci-verify-stage2.meta"
+rm -f "$STAGE1_PATH_FILE" "$STAGE2_PATH_FILE" "$STAGE2_METADATA_FILE"
 TYPELISP_BOOTSTRAP_STAGE1_PATH_FILE=$STAGE1_PATH_FILE
 TYPELISP_BOOTSTRAP_STAGE2_PATH_FILE=$STAGE2_PATH_FILE
 export TYPELISP_BOOTSTRAP_STAGE1_PATH_FILE TYPELISP_BOOTSTRAP_STAGE2_PATH_FILE
@@ -418,6 +437,25 @@ if [ ! -s "$STAGE2_PATH_FILE" ]; then
 fi
 STAGE2_BIN=$(sed -n '1p' "$STAGE2_PATH_FILE")
 ensure_executable "bootstrapped compiler" "$STAGE2_BIN"
+CI_ARTIFACT_TARGET="${HOST_OS}-x86_64"
+CI_ARTIFACT_BOOTSTRAP_SOURCES='src,stdlib,typelisp.pkg,tools/embedded-stdlib-tlci,scripts/check-bootstrap-fixpoint.sh,scripts/lib-native-link.sh,scripts/lib-bootstrap-ctfe.sh,scripts/lib-bootstrap-fixpoint-control.sh,scripts/build-embedded-stdlib-tlci.sh'
+CI_ARTIFACT_BOOTSTRAP_CFG='compiler-build-identity,embedded-stdlib-tlci,host-defaults'
+CI_ARTIFACT_BOOTSTRAP_ENV='TYPELISP_BOOTSTRAP_CFG=<unset>,TYPELISP_BOOTSTRAP_TLCI_MUTATION=0,TYPELISP_BOOTSTRAP_SKIP_CLI_SMOKE=0'
+CI_ARTIFACT_BOOTSTRAP_ARGV='scripts/check-bootstrap-fixpoint.sh {producer}'
+ci_compiler_artifact_publish \
+    "$ROOT" "$STAGE2_METADATA_FILE" "$STAGE2_PATH_FILE" \
+    bootstrap-converged "$SEED_TYPELISP_BIN" "$CI_ARTIFACT_TARGET" \
+    "$CI_ARTIFACT_BOOTSTRAP_CFG" 2 none "$CI_ARTIFACT_BOOTSTRAP_SOURCES" \
+    'stdlib,src' "$CI_ARTIFACT_BOOTSTRAP_ENV" compiler-binary \
+    "$STAGE2_BIN" "$CI_ARTIFACT_BOOTSTRAP_ARGV"
+ci_compiler_artifact_require \
+    "$ROOT" "$STAGE2_METADATA_FILE" "$STAGE2_PATH_FILE" \
+    bootstrap-converged bootstrap-downstream \
+    "$SEED_TYPELISP_BIN" "$CI_ARTIFACT_TARGET" \
+    "$CI_ARTIFACT_BOOTSTRAP_CFG" 2 none "$CI_ARTIFACT_BOOTSTRAP_SOURCES" \
+    'stdlib,src' "$CI_ARTIFACT_BOOTSTRAP_ENV" compiler-binary - \
+    "$CI_ARTIFACT_BOOTSTRAP_ARGV"
+STAGE2_BIN=$CI_COMPILER_ARTIFACT_PATH
 echo "[ci-verify] every gate runs the converged bootstrapped compiler: $STAGE2_BIN"
 
 # The default-off scratch planner changes the compiler's own ABI and switch
@@ -464,11 +502,61 @@ fi
 # The current cli.tl emits stage1-qualified symbols, so the manifest uses the
 # stage1 expectation mode on both hosts.
 run_with_compiler "$STAGE2_BIN" "stage2 selfhost compile manifest" env TYPELISP_COMPILE_MANIFEST_EXPECTATION_MODE=stage1 scripts/verify-selfhost-compile-manifest.sh
+MANIFEST_ASSEMBLY_DIGESTS="$ROOT/target/ci-verify-selfhost-manifest.sha256"
+MANIFEST_ASSEMBLY_PATH_FILE="$ROOT/target/ci-verify-selfhost-manifest.path"
+MANIFEST_ASSEMBLY_METADATA_FILE="$ROOT/target/ci-verify-selfhost-manifest.meta"
+rm -f "$MANIFEST_ASSEMBLY_DIGESTS" "$MANIFEST_ASSEMBLY_PATH_FILE" \
+    "$MANIFEST_ASSEMBLY_METADATA_FILE"
+ci_compiler_artifact_write_sha256_manifest \
+    "$ROOT" "$ROOT/target/selfhost-compile-manifest" \
+    "$MANIFEST_ASSEMBLY_DIGESTS"
+CI_ARTIFACT_MANIFEST_SOURCES='src,stdlib,src/compile_manifest.txt,scripts/verify-selfhost-compile-manifest.sh'
+CI_ARTIFACT_MANIFEST_ARGV='compile --batch {chunks} --target {host}-x86_64 --cfg selfhost-compile-manifest --stdlib-root {root}/stdlib --stdlib-root {root}/src'
+ci_compiler_artifact_publish \
+    "$ROOT" "$MANIFEST_ASSEMBLY_METADATA_FILE" \
+    "$MANIFEST_ASSEMBLY_PATH_FILE" selfhost-compile-manifest-assembly-set \
+    "$STAGE2_BIN" "$CI_ARTIFACT_TARGET" selfhost-compile-manifest default \
+    none "$CI_ARTIFACT_MANIFEST_SOURCES" 'stdlib,src' \
+    'TYPELISP_COMPILE_MANIFEST_EXPECTATION_MODE=stage1,TYPELISP_COMPILE_MANIFEST_BATCH_SIZE=host-default' \
+    assembly-set-manifest "$MANIFEST_ASSEMBLY_DIGESTS" \
+    "$CI_ARTIFACT_MANIFEST_ARGV"
 run_with_compiler "$STAGE2_BIN" "stage2 regalloc census compiler build" scripts/verify-regalloc-census.sh
 run_with_compiler "$STAGE2_BIN" "embedded stdlib build payload" scripts/verify-embedded-stdlib-payload.sh
 run_with_compiler "$STAGE2_BIN" "embedded stdlib tlci image" scripts/verify-embedded-stdlib-tlci.sh
+EMBEDDED_TLCI_BUNDLE="$ROOT/target/ci-verify-embedded-stdlib-tlci.sha256"
+EMBEDDED_TLCI_PATH_FILE="$ROOT/target/ci-verify-embedded-stdlib-tlci.path"
+EMBEDDED_TLCI_METADATA_FILE="$ROOT/target/ci-verify-embedded-stdlib-tlci.meta"
+rm -f "$EMBEDDED_TLCI_BUNDLE" "$EMBEDDED_TLCI_PATH_FILE" \
+    "$EMBEDDED_TLCI_METADATA_FILE"
+ci_compiler_artifact_write_files_manifest \
+    "$ROOT" "$EMBEDDED_TLCI_BUNDLE" \
+    "$ROOT/target/embedded-stdlib-tlci/stdlib.tlci" \
+    "$ROOT/target/embedded-stdlib-tlci/stdlib.tlci.tlch" \
+    "$ROOT/target/embedded-stdlib-tlci/modules.txt" \
+    "$ROOT/target/embedded-stdlib-tlci/prelude-surface-$HOST_OS.rodata" \
+    "$ROOT/target/embedded-stdlib-tlci/source-hash.txt"
+CI_ARTIFACT_TLCI_SOURCES='src,stdlib,tools/embedded-stdlib-tlci,scripts/build-embedded-stdlib-tlci.sh'
+CI_ARTIFACT_TLCI_ARGV='scripts/build-embedded-stdlib-tlci.sh {producer} target/embedded-stdlib-tlci/stdlib.tlci {host}'
+ci_compiler_artifact_publish \
+    "$ROOT" "$EMBEDDED_TLCI_METADATA_FILE" "$EMBEDDED_TLCI_PATH_FILE" \
+    embedded-stdlib-tlci-canonical "$STAGE2_BIN" "$CI_ARTIFACT_TARGET" \
+    'compiler-surface-producer,host-defaults' default none \
+    "$CI_ARTIFACT_TLCI_SOURCES" 'stdlib,src' \
+    'TYPELISP_EMBEDDED_STDLIB_SOURCE_ROOT={root},TYPELISP_EMBEDDED_STDLIB_WORKDIR=target/embedded-stdlib-tlci' \
+    embedded-image-set-manifest "$EMBEDDED_TLCI_BUNDLE" \
+    "$CI_ARTIFACT_TLCI_ARGV"
 # The deterministic assembly gate reuses the manifest's emitted .s as its first
 # compile for overlapping sources, so it must run after the manifest gate.
+ci_compiler_artifact_require \
+    "$ROOT" "$MANIFEST_ASSEMBLY_METADATA_FILE" \
+    "$MANIFEST_ASSEMBLY_PATH_FILE" selfhost-compile-manifest-assembly-set \
+    manifest-deterministic-consumer "$STAGE2_BIN" "$CI_ARTIFACT_TARGET" \
+    selfhost-compile-manifest default \
+    none "$CI_ARTIFACT_MANIFEST_SOURCES" 'stdlib,src' \
+    'TYPELISP_COMPILE_MANIFEST_EXPECTATION_MODE=stage1,TYPELISP_COMPILE_MANIFEST_BATCH_SIZE=host-default' \
+    assembly-set-manifest - "$CI_ARTIFACT_MANIFEST_ARGV"
+ci_compiler_artifact_verify_sha256_manifest \
+    "$ROOT" "$CI_COMPILER_ARTIFACT_PATH"
 run_with_compiler "$STAGE2_BIN" "stage2 deterministic assembly" env TYPELISP_DETERMINISTIC_ASM_MANIFEST_DIR="$ROOT/target/selfhost-compile-manifest" scripts/check-deterministic-asm.sh
 run_gate "TypeLisp format compiler selection control" scripts/check-tl-format.sh --self-test-current-compiler-mode
 run_with_compiler "$STAGE2_BIN" "TypeLisp source formatting" env TYPELISP_FORMAT_COMPILER_IS_CURRENT_TREE=1 scripts/check-tl-format.sh
@@ -484,7 +572,8 @@ run_with_compiler "$STAGE2_BIN" "TLCI format corpus" scripts/verify-tlci-corpus.
 run_with_compiler "$STAGE2_BIN" "stage2 result-import harness integrity" scripts/verify-result-import-harness.sh
 if [ "$HOST_OS" = linux ]; then
     OPT2_REFERENCE_PATH_FILE="$ROOT/target/ci-verify-opt2-reference.path"
-    rm -f "$OPT2_REFERENCE_PATH_FILE"
+    OPT2_REFERENCE_METADATA_FILE="$ROOT/target/ci-verify-opt2-reference.meta"
+    rm -f "$OPT2_REFERENCE_PATH_FILE" "$OPT2_REFERENCE_METADATA_FILE"
     run_with_compiler \
         "$STAGE2_BIN" \
         "stage2 opt1/opt2 build-invariance" \
@@ -499,6 +588,22 @@ if [ "$HOST_OS" = linux ]; then
         required_gate_unavailable "build-invariance opt1 reference handoff" \
             "published assembly is missing or empty: $OPT2_REFERENCE_ASM"
     fi
+    CI_ARTIFACT_INVARIANCE_SOURCES='src,stdlib,tests/integration/native-linux.manifest,scripts/check-build-invariance.sh'
+    CI_ARTIFACT_INVARIANCE_ARGV='compile src/main.tl -o {output} --target linux-x86_64 --cfg host-defaults --backend-mode scalar --opt-level 1 --stdlib-root stdlib --stdlib-root src'
+    ci_compiler_artifact_publish \
+        "$ROOT" "$OPT2_REFERENCE_METADATA_FILE" "$OPT2_REFERENCE_PATH_FILE" \
+        build-invariance-opt1-reference "$STAGE2_BIN" linux-x86_64 \
+        host-defaults 1 none "$CI_ARTIFACT_INVARIANCE_SOURCES" \
+        'stdlib,src' 'TYPELISP_BUILD_INVARIANCE_BATCH_SIZE=default' \
+        compiler-assembly "$OPT2_REFERENCE_ASM" "$CI_ARTIFACT_INVARIANCE_ARGV"
+    ci_compiler_artifact_require \
+        "$ROOT" "$OPT2_REFERENCE_METADATA_FILE" "$OPT2_REFERENCE_PATH_FILE" \
+        build-invariance-opt1-reference opt2-reference-consumer \
+        "$STAGE2_BIN" linux-x86_64 \
+        host-defaults 1 none "$CI_ARTIFACT_INVARIANCE_SOURCES" \
+        'stdlib,src' 'TYPELISP_BUILD_INVARIANCE_BATCH_SIZE=default' \
+        compiler-assembly - "$CI_ARTIFACT_INVARIANCE_ARGV"
+    OPT2_REFERENCE_ASM=$CI_COMPILER_ARTIFACT_PATH
     echo "[ci-verify] opt2 gate reuses build-invariance reference: $OPT2_REFERENCE_ASM"
     run_with_compiler \
         "$STAGE2_BIN" \
@@ -524,10 +629,25 @@ run_with_compiler "$STAGE2_BIN" "stage2 repository doctests" scripts/verify-doc-
 run_with_compiler "$STAGE2_BIN" "stage2 inline TypeLisp tests" scripts/verify-inline-tests.sh
 run_with_compiler "$STAGE2_BIN" "stage2 prelude macro mutation guard" scripts/verify-prelude-mutation.sh
 COMPILE_PROFILE_CLI_PATH_FILE="$ROOT/target/ci-verify-compile-profile-cli.path"
-rm -f "$COMPILE_PROFILE_CLI_PATH_FILE"
+COMPILE_PROFILE_CLI_METADATA_FILE="$ROOT/target/ci-verify-compile-profile-cli.meta"
+rm -f "$COMPILE_PROFILE_CLI_PATH_FILE" "$COMPILE_PROFILE_CLI_METADATA_FILE"
 TYPELISP_COMPILE_PROFILE_CLI_PATH_FILE=$COMPILE_PROFILE_CLI_PATH_FILE
 export TYPELISP_COMPILE_PROFILE_CLI_PATH_FILE
-run_with_compiler "$STAGE2_BIN" "stage2 compile-profile verifier" scripts/verify-compile-profile.sh
+ci_compiler_artifact_require \
+    "$ROOT" "$EMBEDDED_TLCI_METADATA_FILE" "$EMBEDDED_TLCI_PATH_FILE" \
+    embedded-stdlib-tlci-canonical embedded-tlci-profile-consumer \
+    "$STAGE2_BIN" "$CI_ARTIFACT_TARGET" \
+    'compiler-surface-producer,host-defaults' default none \
+    "$CI_ARTIFACT_TLCI_SOURCES" 'stdlib,src' \
+    'TYPELISP_EMBEDDED_STDLIB_SOURCE_ROOT={root},TYPELISP_EMBEDDED_STDLIB_WORKDIR=target/embedded-stdlib-tlci' \
+    embedded-image-set-manifest - "$CI_ARTIFACT_TLCI_ARGV"
+ci_compiler_artifact_verify_sha256_manifest \
+    "$ROOT" "$CI_COMPILER_ARTIFACT_PATH"
+run_with_compiler \
+    "$STAGE2_BIN" \
+    "stage2 compile-profile verifier" \
+    env TYPELISP_COMPILE_PROFILE_EMBEDDED_TLCI_REUSE=1 \
+    scripts/verify-compile-profile.sh
 unset TYPELISP_COMPILE_PROFILE_CLI_PATH_FILE
 if [ ! -s "$COMPILE_PROFILE_CLI_PATH_FILE" ]; then
     required_gate_unavailable "TLCI native route sustained stress" \
@@ -535,22 +655,48 @@ if [ ! -s "$COMPILE_PROFILE_CLI_PATH_FILE" ]; then
 fi
 COMPILE_PROFILE_BIN=$(sed -n '1p' "$COMPILE_PROFILE_CLI_PATH_FILE")
 ensure_executable "compile-profile" "$COMPILE_PROFILE_BIN"
+CI_ARTIFACT_PROFILE_SOURCES='src,stdlib,tools/embedded-stdlib-tlci,scripts/verify-compile-profile.sh,scripts/build-embedded-stdlib-tlci.sh,target/embedded-stdlib-tlci/stdlib.tlci,target/embedded-stdlib-tlci/stdlib.tlci.tlch,target/build-stage0/git-hash.txt'
+CI_ARTIFACT_PROFILE_CFG='compiler-build-identity,compile-profile,dependency-tlci-verification,embedded-stdlib-tlci,host-defaults,tlci-native-route-stress'
+CI_ARTIFACT_PROFILE_ARGV='compile src/main.tl -o {output} --target {host}-x86_64 --cfg host-defaults --stdlib-root stdlib --stdlib-root src --cfg compiler-build-identity --cfg compile-profile --cfg embedded-stdlib-tlci --cfg tlci-native-route-stress --cfg dependency-tlci-verification'
+ci_compiler_artifact_publish \
+    "$ROOT" "$COMPILE_PROFILE_CLI_METADATA_FILE" \
+    "$COMPILE_PROFILE_CLI_PATH_FILE" compile-profile-cli "$STAGE2_BIN" \
+    "$CI_ARTIFACT_TARGET" "$CI_ARTIFACT_PROFILE_CFG" default compile-profile \
+    "$CI_ARTIFACT_PROFILE_SOURCES" 'stdlib,src' \
+    'TYPELISP_STDLIB_ROOT=<unset>' compiler-binary "$COMPILE_PROFILE_BIN" \
+    "$CI_ARTIFACT_PROFILE_ARGV"
+require_compile_profile_cli() {
+    _ci_profile_consumer=$1
+    ci_compiler_artifact_require \
+        "$ROOT" "$COMPILE_PROFILE_CLI_METADATA_FILE" \
+        "$COMPILE_PROFILE_CLI_PATH_FILE" compile-profile-cli \
+        "$_ci_profile_consumer" "$STAGE2_BIN" "$CI_ARTIFACT_TARGET" \
+        "$CI_ARTIFACT_PROFILE_CFG" default compile-profile \
+        "$CI_ARTIFACT_PROFILE_SOURCES" 'stdlib,src' \
+        'TYPELISP_STDLIB_ROOT=<unset>' compiler-binary - \
+        "$CI_ARTIFACT_PROFILE_ARGV"
+    COMPILE_PROFILE_BIN=$CI_COMPILER_ARTIFACT_PATH
+}
 run_with_compiler \
     "$STAGE2_BIN" \
     "embedded stdlib TLCI bounded resource report" \
     scripts/verify-embedded-stdlib-tlci-resources.sh
+require_compile_profile_cli compile-profile-stress
 run_with_compiler \
     "$COMPILE_PROFILE_BIN" \
     "TLCI native route sustained stress" \
     scripts/verify-tlci-native-route-stress.sh
+require_compile_profile_cli compile-profile-metadata
 run_with_compiler \
     "$COMPILE_PROFILE_BIN" \
     "package metadata-only TLCI dependency catalogs" \
     scripts/verify-package-metadata-tlci.sh
+require_compile_profile_cli compile-profile-native-package
 run_with_compiler \
     "$COMPILE_PROFILE_BIN" \
     "package native TLCI dependency macros" \
     scripts/verify-package-native-tlci.sh
+require_compile_profile_cli compile-profile-surface-package
 run_with_compiler \
     "$COMPILE_PROFILE_BIN" \
     "package dependency TLCI frontend surfaces" \
@@ -640,6 +786,13 @@ else
     echo "[ci-verify]   stdlib documentation (doc target selection), instruction"
     echo "[ci-verify]   counts (valgrind), native link generated programs"
     echo "[ci-verify]   (Linux linker inputs)"
+fi
+
+if [ -n "${TYPELISP_CI_COMPILER_ARTIFACT_TRACE:-}" ]; then
+    run_gate \
+        "CI compiler artifact hosted trace completeness" \
+        scripts/verify-ci-compiler-artifacts.sh \
+        --trace "$TYPELISP_CI_COMPILER_ARTIFACT_TRACE" "$HOST_OS"
 fi
 
 if ci_timing_enabled; then

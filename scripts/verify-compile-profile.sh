@@ -1626,10 +1626,12 @@ if [ "$NL_HOST_OS" = windows ]; then
     # #6855's guard-algebra, if-convert, load-CSE, lea/cmov and sibling-phi
     # threading packets (~4,900 compiler-source lines) carried it to 26,324 KiB
     # on the Windows CI probe; raised one more step.
+    # #6996's inline aggregate globals (~2,400 backend-source lines) carried
+    # it to 27,064 KiB on the Windows CI probe; raised one more step.
     assert_profile_counter_at_most_in \
         "$SELFHOST_STDERR" \
         "typecheck.macro.walk_sp_reresolve_alloc_kb" \
-        27000 \
+        28000 \
         "$SELFHOST_STDOUT" \
         "$SELFHOST_STDERR"
     # One constant per boundary: the segment count. capacity and segment_bytes
@@ -1737,6 +1739,8 @@ if [ "$NL_HOST_OS" = windows ]; then
     # cross the ownership-composed macro-expand boundary from 73 to 74 segments:
     # the authoritative Windows CI probe measured 4,802,959 used nodes,
     # 4,849,664 capacity, and 155,189,248 physical payload bytes.
+    # #6996 (inline aggregate globals, ~2,400 backend lines): Windows CI probe
+    # 74 macro_expand / 58 typecheck expr-pool segments.
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_expr_pool macro_expand 74 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"

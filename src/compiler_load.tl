@@ -3285,11 +3285,10 @@
   (let
     [normalized : String (compiler-load-normalize-path path)]
     (or
-      (string.eq normalized (compiler-load-normalize-path "stdlib/runtime.tl"))
+      (string.eq normalized "stdlib/runtime.tl")
       (string.eq
         normalized
-        (compiler-load-normalize-path
-          (string.copy (& compiler-load-core-macro-prelude-path)))))))
+        (compiler-load-global-shared-view compiler-load-core-macro-prelude-path)))))
 
 (define (compiler-load-stdlib-import? [path : (& path str)]) : bool
   (or
@@ -3379,11 +3378,13 @@
         count))))
 
 (define (compiler-load-session-file-cacheable?
-  [path : String]
+  [_path : String]
   [_stdlib-roots : svec.Vec]) : bool
   ;; Entry files opt out before this helper. Resolved import files are safe to
-  ;; cache by path + cfg, including local and package-owned modules.
-  (> (string.string-length (compiler-load-normalize-path path)) 0))
+  ;; cache by path + cfg, including local and package-owned modules. Lexical
+  ;; normalization always produces a non-empty spelling (`"."` for empty
+  ;; input), so normalizing only to test the result length was vacuous.
+  true)
 
 (define (compiler-load-session-file-cache-immediate?
   [path : String]
@@ -6467,9 +6468,10 @@
         [(CompilerLoadNoSurfaceSummary)
           (ci.intern-generated-canonical-name resolved)]
         [(CompilerLoadSomeSurfaceSummary summary)
-          (if (string.eq
-            summary.source-path
-            (compiler-load-normalize-path resolved))
+          ;; Package resolution and summary construction both retain normalized
+          ;; spellings. Compare those directly: source-token IDs and generated
+          ;; canonical IDs intentionally occupy different identity domains.
+          (if (string.eq summary.source-path resolved)
             summary.source-path-id
             (ci.intern-generated-canonical-name resolved))])]))
 
@@ -9276,14 +9278,16 @@
 ;; lazy loading may skip while they stay unused.
 (define (compiler-load-lazy-import-include-semantics?
   [summary : CompilerLoadSurfaceSummary]
-  [resolved : String]
+  [_resolved : String]
   [stdlib-roots : svec.Vec]) : bool
   (and
     (not summary.explicit-module)
     (not (compiler-load-stdlib-import? summary.source-path))
     (not
       (compiler-load-path-under-roots-from?
-        (compiler-load-normalize-path resolved)
+        ;; The summary retains the normalized spelling for this resolved ID.
+        ;; Reuse it instead of rebuilding the same owner for every lazy check.
+        summary.source-path
         (ast.ast-place-shared-view stdlib-roots)
         0
         (svec.len (& stdlib-roots))))))
@@ -11604,23 +11608,24 @@
             (compiler-load-program-cache-note-hit!)
             (parser.ResultAstProgramDiagnostic.Ok program))]
         [(CompilerLoadProgramCacheMiss)
-          (begin
-            (compiler-load-program-cache-note-miss!)
-            (if (or
+          (let
+            [immediate : bool
               (compiler-load-session-file-cache-immediate?
                 (clone path)
-                (ast.ast-place-shared-view stdlib-roots))
-              (compiler-load-program-admission-contains?
-                (ast.ast-place-shared-view key)))
-              (if (compiler-load-session-file-cache-immediate?
-                (clone path)
-                (ast.ast-place-shared-view stdlib-roots))
-                (compiler-load-parse-file-diagnostic-cache-miss key path cfgs)
-                (compiler-load-parse-file-diagnostic-cache-miss-local
-                  key
-                  path
-                  cfgs))
-              (compiler-load-parse-file-diagnostic-admit-only key path cfgs)))]))
+                (ast.ast-place-shared-view stdlib-roots))]
+            (begin
+              (compiler-load-program-cache-note-miss!)
+              (if (or
+                immediate
+                (compiler-load-program-admission-contains?
+                  (ast.ast-place-shared-view key)))
+                (if immediate
+                  (compiler-load-parse-file-diagnostic-cache-miss key path cfgs)
+                  (compiler-load-parse-file-diagnostic-cache-miss-local
+                    key
+                    path
+                    cfgs))
+                (compiler-load-parse-file-diagnostic-admit-only key path cfgs))))]))
     (compiler-load-parse-file-diagnostic-escaping path cfgs)))
 
 (define (compiler-load-parse-file-diagnostic-session-id-with-pools
@@ -11652,37 +11657,38 @@
               (compiler-load-session-state-shared-view (& load-state)))
             (parser.ResultAstProgramDiagnostic.Ok program))]
         [(CompilerLoadProgramCacheMiss)
-          (begin
-            (compiler-load-session-state-program-cache-note-miss!
-              (compiler-load-session-state-shared-view (& load-state)))
-            (if (or
+          (let
+            [immediate : bool
               (compiler-load-session-file-cache-immediate?
                 (clone path)
-                (ast.ast-place-shared-view stdlib-roots))
-              (compiler-load-session-state-program-admission-contains?
-                (compiler-load-session-state-shared-view (& load-state))
-                key))
-              (if (compiler-load-session-file-cache-immediate?
-                (clone path)
-                (ast.ast-place-shared-view stdlib-roots))
-                (compiler-load-parse-file-diagnostic-cache-miss-with-pools
+                (ast.ast-place-shared-view stdlib-roots))]
+            (begin
+              (compiler-load-session-state-program-cache-note-miss!
+                (compiler-load-session-state-shared-view (& load-state)))
+              (if (or
+                immediate
+                (compiler-load-session-state-program-admission-contains?
                   (compiler-load-session-state-shared-view (& load-state))
-                  (ast.ast-place-shared-view key)
-                  (clone path)
-                  (sym_i64_env.sym-i64-shared-view (& cfgs))
-                  (ast.ast-place-shared-view pools))
-                (compiler-load-parse-file-diagnostic-cache-miss-local-with-pools
+                  key))
+                (if immediate
+                  (compiler-load-parse-file-diagnostic-cache-miss-with-pools
+                    (compiler-load-session-state-shared-view (& load-state))
+                    (ast.ast-place-shared-view key)
+                    (clone path)
+                    (sym_i64_env.sym-i64-shared-view (& cfgs))
+                    (ast.ast-place-shared-view pools))
+                  (compiler-load-parse-file-diagnostic-cache-miss-local-with-pools
+                    (compiler-load-session-state-shared-view (& load-state))
+                    (ast.ast-place-shared-view key)
+                    (clone path)
+                    (sym_i64_env.sym-i64-shared-view (& cfgs))
+                    (ast.ast-place-shared-view pools)))
+                (compiler-load-parse-file-diagnostic-admit-only-with-pools
                   (compiler-load-session-state-shared-view (& load-state))
-                  (ast.ast-place-shared-view key)
+                  key
                   (clone path)
-                  (sym_i64_env.sym-i64-shared-view (& cfgs))
-                  (ast.ast-place-shared-view pools)))
-              (compiler-load-parse-file-diagnostic-admit-only-with-pools
-                (compiler-load-session-state-shared-view (& load-state))
-                key
-                (clone path)
-                cfgs
-                pools)))]))
+                  cfgs
+                  pools))))]))
     (compiler-load-parse-file-diagnostic-detached-with-pools path cfgs pools)))
 
 (define (compiler-load-parse-embedded-source-diagnostic-cache-miss
@@ -12515,12 +12521,10 @@
     name
     (str_cat.str-cat module "/" name)))
 
-(define (compiler-load-package-module-id
+(define (compiler-load-package-module-id-normalized
   [entry-path : String]
   [decl-path : String]) : String
   (let
-    [entry-path : String (compiler-load-normalize-path entry-path)]
-    [decl-path : String (compiler-load-normalize-path decl-path)]
     [base : String (compiler-load-dirname entry-path)]
     [base-len : i64 (string.string-length base)]
     [decl-len : i64 (string.string-length decl-path)]
@@ -12528,31 +12532,55 @@
       (string.substring decl-path base-len (- decl-len base-len))
       decl-path)))
 
+(define (compiler-load-package-module-id
+  [entry-path : String]
+  [decl-path : String]) : String
+  (let
+    [entry-path : String (compiler-load-normalize-path entry-path)]
+    [decl-path : String (compiler-load-normalize-path decl-path)]
+    (compiler-load-package-module-id-normalized entry-path decl-path)))
+
+(define (compiler-load-package-module-logical-name-normalized
+  [entry-path : String]
+  [decl-path : String]
+  [source-name : String]) : String
+  (if (and (string.eq decl-path entry-path) (string.eq source-name "main"))
+    "main"
+    (str_cat.str-cat
+      (compiler-load-package-module-id-normalized entry-path decl-path)
+      "::"
+      source-name)))
+
 (define (compiler-load-package-module-logical-name
   [entry-path : String]
   [decl-path : String]
   [source-name : String]) : String
-  (if (and
-    (string.eq
-      (compiler-load-normalize-path decl-path)
-      (compiler-load-normalize-path entry-path))
-    (string.eq source-name "main"))
-    "main"
-    (str_cat.str-cat
-      (compiler-load-package-module-id entry-path decl-path)
-      "::"
+  (let
+    [entry-path : String (compiler-load-normalize-path entry-path)]
+    [decl-path : String (compiler-load-normalize-path decl-path)]
+    (compiler-load-package-module-logical-name-normalized
+      entry-path
+      decl-path
       source-name)))
+
+(define (compiler-load-package-entry-main-normalized?
+  [entry-path : String]
+  [decl-path : String]
+  [source-name : String]) : bool
+  (and (string.eq decl-path entry-path) (string.eq source-name "main")))
 
 (define (compiler-load-package-entry-main?
   [entry-path : String]
   [decl-path : String]
   [_module : String]
   [source-name : String]) : bool
-  (and
-    (string.eq
-      (compiler-load-normalize-path decl-path)
-      (compiler-load-normalize-path entry-path))
-    (string.eq source-name "main")))
+  (let
+    [entry-path : String (compiler-load-normalize-path entry-path)]
+    [decl-path : String (compiler-load-normalize-path decl-path)]
+    (compiler-load-package-entry-main-normalized?
+      entry-path
+      decl-path
+      source-name)))
 
 (define (compiler-load-root-prefix [root : (& root str)]) : String
   (compiler-load-join-root-path (string.copy root) ""))
@@ -12660,26 +12688,39 @@
           (load_i64_i64_map.insert-ref! cache path-id owned-id)
           owned-id))]))
 
+(define (compiler-load-package-decl-logical-name-normalized
+  [entry-path : String]
+  [decl-path : String]
+  [module : String]
+  [source-name : String]) : String
+  (if (compiler-load-package-entry-main-normalized?
+    (clone entry-path)
+    (clone decl-path)
+    (clone source-name))
+    "main"
+    (if (string.eq module "")
+      (compiler-load-package-module-logical-name-normalized
+        entry-path
+        decl-path
+        source-name)
+      (compiler-load-package-module-logical-name-normalized
+        entry-path
+        decl-path
+        (compiler-load-package-module-key module source-name)))))
+
 (define (compiler-load-package-decl-logical-name
   [entry-path : String]
   [decl-path : String]
   [module : String]
   [source-name : String]) : String
-  (if (compiler-load-package-entry-main?
-    (clone entry-path)
-    (clone decl-path)
-    (clone module)
-    (clone source-name))
-    "main"
-    (if (string.eq module "")
-      (compiler-load-package-module-logical-name
-        entry-path
-        decl-path
-        source-name)
-      (compiler-load-package-module-logical-name
-        entry-path
-        decl-path
-        (compiler-load-package-module-key module source-name)))))
+  (let
+    [entry-path : String (compiler-load-normalize-path entry-path)]
+    [decl-path : String (compiler-load-normalize-path decl-path)]
+    (compiler-load-package-decl-logical-name-normalized
+      entry-path
+      decl-path
+      module
+      source-name)))
 
 (define (compiler-load-param-type-list [params : ast.AstParamList]) : ast.AstTypeList
   (let
@@ -12861,10 +12902,12 @@
         (clone package-root)
         (ast.ast-place-shared-view stdlib-roots)
         decl-path)]
+    [normalized-logical-path : String
+      (compiler-load-normalize-path logical-path)]
     [logical : String
-      (compiler-load-package-decl-logical-name
-        ""
-        logical-path
+      (compiler-load-package-decl-logical-name-normalized
+        "."
+        normalized-logical-path
         (clone module)
         name-str)]
     [link-name : String (compiler-load-package-user-symbol (clone logical))]
@@ -12948,22 +12991,21 @@
         rest)]
     [(ast.AstDeclPathListStep.Nil) (ast.ast-decl-path-list-new)]))
 
-(define (compiler-load-package-owned-decl-entry-main?
-  [entry-path : String]
-  [module : String]
+(define (compiler-load-package-owned-decl-entry-main-normalized?
+  [normalized-entry-path : String]
+  [_module : String]
   [decl-path : String]
   [decl : ast.AstDecl]) : bool
   (match decl
     [(ast.AstDecl.DefFn decl-meta name _ _ _ _)
-      (compiler-load-package-entry-main?
-        entry-path
-        decl-path
-        module
+      (compiler-load-package-entry-main-normalized?
+        normalized-entry-path
+        (compiler-load-normalize-path decl-path)
         (ci.intern-str name))]
     [(ast.AstDecl.Unsafe inner-box)
-      (compiler-load-package-owned-decl-entry-main?
-        entry-path
-        module
+      (compiler-load-package-owned-decl-entry-main-normalized?
+        normalized-entry-path
+        _module
         decl-path
         (ast.ast-decl-box-shared-view inner-box))]
     [_ false]))
@@ -12982,6 +13024,7 @@
     [path-cursor : ast.AstDeclPathList paths]
     [current-module : String module]
     [out : ast.AstDeclPathList (ast.ast-decl-path-list-with-capacity count)]
+    [normalized-entry-path : String (compiler-load-normalize-path entry-path)]
     [owned-cache : load_i64_i64_map.Map
       (load_i64_i64_map.with-capacity (+ (* count 2) 16))]
     [done : bool false]
@@ -13006,8 +13049,8 @@
                   0
                   cbi.compiler-builtin-id-fix-empty)]
               [owned-path-id : i64
-                (if (compiler-load-package-owned-decl-entry-main?
-                  (clone entry-path)
+                (if (compiler-load-package-owned-decl-entry-main-normalized?
+                  (clone normalized-entry-path)
                   (clone current-module)
                   (clone decl-path)
                   (clone decl))
@@ -15507,7 +15550,11 @@
       "selfhost/compiler_load.tl")
     (string.eq
       (compiler-load-normalize-path "target\\loader\\..\\dep.tl")
-      "target/dep.tl")))
+      "target/dep.tl")
+    (compiler-load-prelude-importer? "stdlib/runtime.tl")
+    (compiler-load-prelude-importer? "stdlib\\runtime.tl")
+    (compiler-load-prelude-importer? "stdlib/./core_macros.tl")
+    (not (compiler-load-prelude-importer? "stdlib/clone.tl"))))
 
 (define (compiler-load-canonical-module-id-ok?) : bool
   (and

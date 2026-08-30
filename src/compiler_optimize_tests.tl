@@ -75632,6 +75632,296 @@
             (* other-bound 1000)
             (+ (* early-exit 100) (+ (* shift-index 10) guarded))))))))
 
+;; --- (CG-1b) the versioned producer's guard arm --------------------------------
+;;
+;; The count-then-fill pair with the producer already VERSIONED: its guard
+;; states `n <= array-length a.slots`, its fast clone runs the domain with no
+;; check at all, and its slow original keeps the check. Both latch into `exit1`,
+;; so the memo's predecessor walk meets an arm that proved the fact by guard
+;; rather than by check -- the guard-diamond merge the entry-only rule dropped.
+;; The zero-trip gate in front of the consumer is a SECOND `lt 0, n`, the way
+;; rotation mints one per sibling loop, so the entry edge into `exit1` is
+;; discharged by value rather than by var id.
+;;
+;;   entry:  branch (lt 0, n) guard1 exit1
+;;   guard1: branch (le n, len(a)) fast1 slow1
+;;   fast1:  %16 = a[%16phi]                      -- no check
+;;   slow1:  bounds_check %20, len(a); %21 = a[%20]
+;;   exit1:  branch (lt 0, n) body2 exit2         -- a fresh var, same compare
+;;   body2:  bounds_check %26, len(a)             <- retires
+;;
+;; `other-length?` points the guard at a different array's length, `other-gate?`
+;; gates the consumer on a different value, and `no-guard?` makes the clone's
+;; entry state nothing about any length: each leaves the consumer's check.
+(defstruct OptVgTestShape
+  (other-length? bool)
+  (other-gate? bool)
+  (no-guard? bool))
+
+(define (opt-vg-shape) : OptVgTestShape
+  (OptVgTestShape false false false))
+
+(define (opt-vg-shape-other-length) : OptVgTestShape
+  (OptVgTestShape true false false))
+
+(define (opt-vg-shape-other-gate) : OptVgTestShape
+  (OptVgTestShape false true false))
+
+(define (opt-vg-shape-no-guard) : OptVgTestShape
+  (OptVgTestShape false false true))
+
+;; `a` and `b` are shared borrows -- the memo's memory model wants every load it
+;; compares rooted at one -- and the function stores nothing at all.
+(define (opt-vg-params) : compiler_ir_types.CompilerIrParamSeq
+  (compiler_ir_types.compiler-ir-param-seq-prepend
+    (compiler_ir_types.CompilerIrParam.Param
+      "a"
+      (compiler_ast_types.AstType.Ref 0 0)
+      0)
+    (compiler_ir_types.compiler-ir-param-seq-prepend
+      (compiler_ir_types.CompilerIrParam.Param
+        "b"
+        (compiler_ast_types.AstType.Ref 0 0)
+        1)
+      (compiler_ir_types.compiler-ir-param-seq-prepend
+        (compiler_ir_types.CompilerIrParam.Param
+          "n"
+          (compiler_ast_types.AstType.I64)
+          2)
+        (compiler_ir_types.compiler-ir-param-seq-prepend
+          (compiler_ir_types.CompilerIrParam.Param
+            "m"
+            (compiler_ast_types.AstType.I64)
+            3)
+          (compiler_ir_types.compiler-ir-param-seq-empty))))))
+
+;; %4..%9 = a's handle, length and payload; %10..%13 = b's handle and length;
+;; %14 = the entry gate.
+(define (opt-vg-entry-instrs) : compiler_ir_types.CompilerIrInstrSeq
+  (opt-pc-gep
+    4
+    (compiler_ir_types.CompilerIrValue.Var 0)
+    (compiler_ir_types.CompilerIrValue.I64 0)
+    (compiler_ast_types.AstType.U8)
+    (opt-pc-load
+      5
+      4
+      (compiler_ast_types.AstType.DynArray 0)
+      (opt-pc-gep
+        6
+        (compiler_ir_types.CompilerIrValue.Var 5)
+        (compiler_ir_types.CompilerIrValue.I64 1)
+        (compiler_ast_types.AstType.I64)
+        (opt-pc-load
+          7
+          6
+          (compiler_ast_types.AstType.I64)
+          (opt-pc-gep
+            8
+            (compiler_ir_types.CompilerIrValue.Var 5)
+            (compiler_ir_types.CompilerIrValue.I64 0)
+            (compiler_ast_types.AstType.I64)
+            (opt-pc-load
+              9
+              8
+              (compiler_ast_types.AstType.I64)
+              (opt-vg-entry-b-instrs))))))))
+
+(define (opt-vg-entry-b-instrs) : compiler_ir_types.CompilerIrInstrSeq
+  (opt-pc-gep
+    10
+    (compiler_ir_types.CompilerIrValue.Var 1)
+    (compiler_ir_types.CompilerIrValue.I64 0)
+    (compiler_ast_types.AstType.U8)
+    (opt-pc-load
+      11
+      10
+      (compiler_ast_types.AstType.DynArray 0)
+      (opt-pc-gep
+        12
+        (compiler_ir_types.CompilerIrValue.Var 11)
+        (compiler_ir_types.CompilerIrValue.I64 1)
+        (compiler_ast_types.AstType.I64)
+        (opt-pc-load
+          13
+          12
+          (compiler_ast_types.AstType.I64)
+          (opt-pc-binop
+            14
+            (compiler_ir_types.CompilerIrBinOp.Lt)
+            (compiler_ir_types.CompilerIrValue.I64 0)
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            (opt-pc-branch
+              14
+              (compiler_ir_types.compiler-ir-label "guard1")
+              (compiler_ir_types.compiler-ir-label "exit1"))))))))
+
+;; The versioning guard: `n <= len(a)` picks the clone, anything else the
+;; original. `no-guard?` branches on the entry gate instead, which states
+;; nothing about a length.
+(define (opt-vg-guard-instrs [shape : OptVgTestShape]) : compiler_ir_types.CompilerIrInstrSeq
+  (if shape.no-guard?
+    (opt-pc-branch
+      14
+      (compiler_ir_types.compiler-ir-label "fast1")
+      (compiler_ir_types.compiler-ir-label "slow1"))
+    (opt-pc-binop
+      15
+      (compiler_ir_types.CompilerIrBinOp.Le)
+      (compiler_ir_types.CompilerIrValue.Var 2)
+      (if shape.other-length?
+        (compiler_ir_types.CompilerIrValue.Var 13)
+        (compiler_ir_types.CompilerIrValue.Var 7))
+      (opt-pc-branch
+        15
+        (compiler_ir_types.compiler-ir-label "fast1")
+        (compiler_ir_types.compiler-ir-label "slow1")))))
+
+;; One counted loop over [0, n) reading `a[i]`, with or without the check.
+(define (opt-vg-loop-instrs
+  [phi-dst : i64]
+  [seed-label : String]
+  [gep-var : i64]
+  [value-var : i64]
+  [next-var : i64]
+  [test-var : i64]
+  [self-label : String]
+  [exit-label : String]
+  [checked? : bool]) : compiler_ir_types.CompilerIrInstrSeq
+  (opt-pc-counter-phi
+    phi-dst
+    (compiler_ir_types.compiler-ir-label seed-label)
+    next-var
+    (compiler_ir_types.compiler-ir-label (string.copy (& self-label)))
+    (opt-vg-loop-body
+      phi-dst
+      gep-var
+      value-var
+      next-var
+      test-var
+      self-label
+      exit-label
+      checked?)))
+
+(define (opt-vg-loop-body
+  [phi-dst : i64]
+  [gep-var : i64]
+  [value-var : i64]
+  [next-var : i64]
+  [test-var : i64]
+  [self-label : String]
+  [exit-label : String]
+  [checked? : bool]) : compiler_ir_types.CompilerIrInstrSeq
+  (let
+    [core : compiler_ir_types.CompilerIrInstrSeq
+      (opt-pc-gep
+        gep-var
+        (compiler_ir_types.CompilerIrValue.Var 9)
+        (compiler_ir_types.CompilerIrValue.Var phi-dst)
+        (compiler_ast_types.AstType.I64)
+        (opt-pc-load
+          value-var
+          gep-var
+          (compiler_ast_types.AstType.I64)
+          (opt-pc-binop
+            next-var
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            (compiler_ir_types.CompilerIrValue.Var phi-dst)
+            (compiler_ir_types.CompilerIrValue.I64 1)
+            (opt-pc-binop
+              test-var
+              (compiler_ir_types.CompilerIrBinOp.Lt)
+              (compiler_ir_types.CompilerIrValue.Var next-var)
+              (compiler_ir_types.CompilerIrValue.Var 2)
+              (opt-pc-branch
+                test-var
+                (compiler_ir_types.compiler-ir-label self-label)
+                (compiler_ir_types.compiler-ir-label exit-label))))))]
+    (if checked?
+      (opt-test-instr-seq-prepend
+        (compiler_ir_types.CompilerIrInstr.BoundsCheck
+          (compiler_ir_types.CompilerIrValue.Var phi-dst)
+          (compiler_ir_types.CompilerIrValue.Var 7)
+          0)
+        core)
+      core)))
+
+(define (opt-vg-exit1-instrs [shape : OptVgTestShape]) : compiler_ir_types.CompilerIrInstrSeq
+  (opt-pc-binop
+    25
+    (compiler_ir_types.CompilerIrBinOp.Lt)
+    (compiler_ir_types.CompilerIrValue.I64 0)
+    (if shape.other-gate?
+      (compiler_ir_types.CompilerIrValue.Var 3)
+      (compiler_ir_types.CompilerIrValue.Var 2))
+    (opt-pc-branch
+      25
+      (compiler_ir_types.compiler-ir-label "body2")
+      (compiler_ir_types.compiler-ir-label "exit2"))))
+
+(define (opt-vg-blocks [shape : OptVgTestShape]) : compiler_ir_types.CompilerIrBlockList
+  (opt-pc-guard-block
+    "entry"
+    (opt-vg-entry-instrs)
+    (opt-pc-guard-block
+      "guard1"
+      (opt-vg-guard-instrs
+        (compiler_ir_types.compiler-ir-global-shared-view shape))
+      (opt-pc-guard-block
+        "fast1"
+        (opt-vg-loop-instrs 16 "guard1" 17 30 18 19 "fast1" "exit1" false)
+        (opt-pc-guard-block
+          "slow1"
+          (opt-vg-loop-instrs 20 "guard1" 21 31 23 24 "slow1" "exit1" true)
+          (opt-vg-blocks-tail shape))))))
+
+(define (opt-vg-blocks-tail [shape : OptVgTestShape]) : compiler_ir_types.CompilerIrBlockList
+  (opt-pc-guard-block
+    "exit1"
+    (opt-vg-exit1-instrs shape)
+    (opt-pc-guard-block
+      "body2"
+      (opt-vg-loop-instrs 26 "exit1" 27 32 28 29 "body2" "exit2" true)
+      (opt-pc-guard-block
+        "exit2"
+        (opt-mr-return-zero)
+        compiler_ir_types.CompilerIrBlockList.Nil))))
+
+(define (opt-vg-swept-checks [shape : OptVgTestShape]) : i64
+  (let
+    [blocks : compiler_ir_types.CompilerIrBlockList (opt-vg-blocks shape)]
+    [func : compiler_ir_types.CompilerIrFunction
+      (compiler_ir_types.CompilerIrFunction.Function
+        (compiler_ir_types.compiler-ir-symbol "vg_test")
+        (opt-vg-params)
+        (compiler_ast_types.AstType.I64)
+        40
+        (compiler_ir_types.compiler-ir-global-shared-view blocks))]
+    (compiler_optimize.opt-count-bounds-blocks
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.opt-len-eq-late-sweep
+          (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+          (opt_i64_i64_map.with-capacity 1)
+          (opt_i64_i64_map.with-capacity 1)
+          (opt_i64_i64_map.with-capacity 1)
+          (opt_i64_i64_map.with-capacity 1)
+          (compiler_optimize.opt-cfg-context-build blocks)
+          func)))))
+
+(define (compiler-optimize-vg-guard-arm-self-test) : i64
+  (let
+    ;; Two checks in: the slow original's and the consumer's. Only the
+    ;; consumer's retires.
+    [retired : i64 (opt-vg-swept-checks (opt-vg-shape))]
+    [other-length : i64 (opt-vg-swept-checks (opt-vg-shape-other-length))]
+    [other-gate : i64 (opt-vg-swept-checks (opt-vg-shape-other-gate))]
+    [no-guard : i64 (opt-vg-swept-checks (opt-vg-shape-no-guard))]
+    (if (and (= retired 1) (= other-length 2) (= other-gate 2) (= no-guard 2))
+      42
+      (+
+        (* retired 1000)
+        (+ (* other-length 100) (+ (* other-gate 10) no-guard))))))
+
 (define (compiler-optimize-pe-exit-only-phi-self-test) : i64
   (let
     ;; the exiting arm's shape: the back edge carries the phi itself
@@ -76667,6 +76957,13 @@
     (compiler-optimize-pc-memo-self-test)
     42
     "a counting loop and a filling loop over one trip domain, both reading `a[i]` and checking it against `array-length b.slots`, let the filling loop's check retire on the counting loop's postcondition; a `&mut` source array written between the two loops, a second loop counting to a different bound, a first loop that can leave its domain early, and a shifted index expression each refuse it; when both loops guard the check behind `a[i] != 0` the matching arm retires and the other arm's check on the same pair stays"))
+
+(test
+  vg-versioned-producer-guard-arm
+  (test.assert-i64-eq
+    (compiler-optimize-vg-guard-arm-self-test)
+    42
+    "a versioned count-then-fill producer covers its exit between the two arms of its guard diamond -- the slow original by the check it ran every trip, the fast clone by the `n <= array-length a.slots` conjunct its guard was entered on -- so a later loop over the same domain retires the same check, with the consumer's zero-trip gate matched to the producer's by value rather than by var id; a guard stating a different array's length, a consumer gated on a different value, and a clone whose entry states no length at all each keep the check"))
 
 (test
   bce-version-exit-only-header-phi

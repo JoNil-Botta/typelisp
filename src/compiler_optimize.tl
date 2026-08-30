@@ -39977,6 +39977,17 @@
                         [(ir.CompilerIrBinOp.Ge) true]
                         [_ false]))]
                   [_ false])]))))]
+    ;; A literal conjunct. Dominating-condition folding routinely decides one
+    ;; of a versioning guard's conjuncts before this pass runs (`lt 0, %n`
+    ;; re-tested inside the region the loop-entry branch already decided), and
+    ;; copy propagation substitutes the literal into the And chain, leaving
+    ;; `and true, %c` at its root. Before this arm every such chain was
+    ;; refused outright and the whole fan was materialised with setcc/movzbq,
+    ;; which is the shape the branch chain exists to avoid. `true` states
+    ;; nothing, so it contributes no conjunct; `false` makes the conjunction
+    ;; constant and is left to the const folder, which retires the branch
+    ;; instead of splitting it.
+    [(ir.CompilerIrValue.Bool literal) literal]
     [_ false]))
 
 (define (opt-bool-branch-chain-uses-ok-from?
@@ -40099,6 +40110,14 @@
                           (ir.compiler-ir-instr-seq1
                             (ir.CompilerIrInstr.BinOp next-dst op lhs rhs ty))))))])]
             [_ (OptBoolBranchConjBuild.No)])])]
+    ;; The literal arm the collector admitted: `true` states nothing, so it
+    ;; contributes no block to the chain. The collector rejected `false`, so
+    ;; only `true` can reach here; treat the other literal as a refusal rather
+    ;; than silently dropping a conjunct that decides the branch.
+    [(ir.CompilerIrValue.Bool literal)
+      (if literal
+        (OptBoolBranchConjBuild.Some (ir.compiler-ir-instr-seq-empty))
+        (OptBoolBranchConjBuild.No))]
     [_ (OptBoolBranchConjBuild.No)]))
 
 (define (opt-bool-branch-chain-conj-count [conjs : ir.CompilerIrInstrSeq]) : i64
@@ -59935,24 +59954,62 @@
             (- 0 1)))))))
 
 ;; --- the memory model the comparison is allowed to read ----------------------
+;; Through a chain of plain `Mov` copies. bce_version reads this memo BEFORE
+;; copy propagation has run, and at that point the copies are everywhere: every
+;; descriptor handle arrives as `%h = mov (load (gep p, 0))`, one per use site,
+;; so the memory model below saw a Mov where it wanted a Load and refused the
+;; whole function; and a rotated latch tests `lt (mov (add i, 1)) bound` rather
+;; than the Add itself, so the loop scan saw no counter and recorded no loop at
+;; all. A copy is the same value, so resolving through it changes nothing
+;; either reasons about -- and every structural comparison in this family
+;; already looks through Movs (opt-lp-instrs-same?).
+(define (opt-lp-resolve-mov
+  [st : OptLpState]
+  [value : ir.CompilerIrValue]
+  [depth : i64]) : ir.CompilerIrValue
+  (if (<= depth 0)
+    value
+    (match (compiler-opt-global-shared-view value)
+      [(ir.CompilerIrValue.Var var)
+        (match (opt-lp-def (compiler-opt-global-shared-view st) var)
+          [(OptBoolBranchDef.No) value]
+          [(OptBoolBranchDef.Some instr _)
+            (match instr
+              [(ir.CompilerIrInstr.Mov dst src _)
+                (if (= dst var)
+                  (opt-lp-resolve-mov st src (- depth 1))
+                  value)]
+              [_ value])])]
+      [_ value])))
+
 (define (opt-lp-desc-word [st : OptLpState] [value : ir.CompilerIrValue]) : OptLpWord
-  (match value
+  (match (opt-lp-resolve-mov
+    (compiler-opt-global-shared-view st)
+    value
+    (opt-lp-same-depth))
     [(ir.CompilerIrValue.Var var)
       (match (opt-lp-def (compiler-opt-global-shared-view st) var)
         [(OptBoolBranchDef.No) (OptLpWord.No)]
         [(OptBoolBranchDef.Some instr _)
           (match instr
             [(ir.CompilerIrInstr.Load _ address _)
-              (match address
+              (match (opt-lp-resolve-mov
+                (compiler-opt-global-shared-view st)
+                address
+                (opt-lp-same-depth))
                 [(ir.CompilerIrValue.Var address-var)
-                  (match (opt-lp-def st address-var)
+                  (match (opt-lp-def
+                    (compiler-opt-global-shared-view st)
+                    address-var)
                     [(OptBoolBranchDef.No) (OptLpWord.No)]
                     [(OptBoolBranchDef.Some gep _)
                       (match gep
                         [(ir.CompilerIrInstr.Gep _ base offset _)
                           (match offset
                             [(ir.CompilerIrValue.I64 word)
-                              (OptLpWord.Some base word)]
+                              (OptLpWord.Some
+                                (opt-lp-resolve-mov st base (opt-lp-same-depth))
+                                word)]
                             [_ (OptLpWord.No)])]
                         [_ (OptLpWord.No)])])]
                 [_ (OptLpWord.No)])]
@@ -59988,14 +60045,22 @@
 ;; an array handle (an admitted function writes none), or a payload word of a
 ;; `&` parameter's Vec (the borrow rule says nothing writes it).
 (define (opt-lp-load-ok? [st : OptLpState] [address : ir.CompilerIrValue]) : bool
-  (match address
+  (match (opt-lp-resolve-mov
+    (compiler-opt-global-shared-view st)
+    address
+    (opt-lp-same-depth))
     [(ir.CompilerIrValue.Var address-var)
       (match (opt-lp-def (compiler-opt-global-shared-view st) address-var)
         [(OptBoolBranchDef.No) false]
         [(OptBoolBranchDef.Some gep _)
           (match gep
-            [(ir.CompilerIrInstr.Gep _ base offset _)
+            [(ir.CompilerIrInstr.Gep _ base-raw offset _)
               (let
+                [base : ir.CompilerIrValue
+                  (opt-lp-resolve-mov
+                    (compiler-opt-global-shared-view st)
+                    base-raw
+                    (opt-lp-same-depth))]
                 [payload : i64
                   (opt-lp-payload-root
                     (compiler-opt-global-shared-view st)
@@ -60033,7 +60098,10 @@
   [var : i64]
   [seed : ir.CompilerIrValue]
   [next : ir.CompilerIrValue]) : OptLpInd
-  (match next
+  (match (opt-lp-resolve-mov
+    (compiler-opt-global-shared-view st)
+    next
+    (opt-lp-same-depth))
     [(ir.CompilerIrValue.Var next-var)
       (match (opt-lp-def st next-var)
         [(OptBoolBranchDef.No) (OptLpInd.No)]
@@ -60530,11 +60598,39 @@
       found?)))
 
 ;; --- discharging the producer's exit block ------------------------------------
+;; The same once-run condition, written twice. Rotation mints the zero-trip
+;; test `lt seed bound` afresh in front of every sibling loop, so the branch
+;; that guards the consumer and the branch that reaches the producer's exit
+;; carry DIFFERENT var ids for the same comparison, and matching by id alone
+;; missed every non-adjacent sibling pair. Two order compares over operands
+;; that each run once compute the same value wherever they sit, which is the
+;; whole content of the "runs once" argument the caller makes.
+(define (opt-lp-cond-value-same?
+  [type-segment-bases : i64]
+  [st : OptLpState]
+  [lb : i64]
+  [var : i64]
+  [cond-var : i64]) : bool
+  (if (= var cond-var)
+    true
+    (and
+      (opt-lp-stable-var? (compiler-opt-global-shared-view st) var)
+      (opt-lp-same?
+        type-segment-bases
+        st
+        lb
+        lb
+        (ir.CompilerIrValue.Var var)
+        (ir.CompilerIrValue.Var cond-var)
+        (opt-lp-same-depth)))))
+
 ;; Is every path to `target` through the `want?` side of some branch on `cond`?
 ;; `cond` runs once, so a branch on it always picks the same side; a block the
 ;; wanted successor dominates therefore witnesses the value.
 (define (opt-lp-cond-forces?
+  [type-segment-bases : i64]
   [st : OptLpState]
+  [lb : i64]
   [cond-var : i64]
   [want? : bool]
   [target : i64]) : bool
@@ -60556,7 +60652,13 @@
                     (if (and
                       (not (= true-label false-label))
                       (match cond
-                        [(ir.CompilerIrValue.Var var) (= var cond-var)]
+                        [(ir.CompilerIrValue.Var var)
+                          (opt-lp-cond-value-same?
+                            type-segment-bases
+                            (compiler-opt-global-shared-view st)
+                            lb
+                            var
+                            cond-var)]
                         [_ false]))
                       (match (opt-cfg-index-id
                         (compiler-opt-global-shared-view index)
@@ -60581,6 +60683,7 @@
 ;; consumer ever running: it is one side of a branch on a once-run condition
 ;; whose OTHER side dominates the consumer's header.
 (define (opt-lp-empty-edge?
+  [type-segment-bases : i64]
   [st : OptLpState]
   [pred : i64]
   [exit : i64]
@@ -60609,12 +60712,305 @@
                       (compiler-opt-global-shared-view st)
                       cond-var)
                     (opt-lp-cond-forces?
+                      type-segment-bases
                       st
+                      lb
                       cond-var
                       (= side 0)
                       (array-ref headers lb))))]
               [_ false])]
           [_ false])])))
+
+;; --- (CG-1b) guard-diamond fact survival at the producer's exit ---------------
+;;
+;; The producer's exit E is the merge of a VERSIONED producer's diamond: the
+;; slow original and its `__bce_fast` clone both latch into E, and the clone
+;; carries none of the checks its guard discharged. The clause above covers the
+;; slow arm (it ran the check every trip) but not the clone, so a versioned
+;; producer covered nothing and the consumer re-checked -- which is why euler's
+;; L2 and L4 both guard `count` against the same two lengths and csr's L2/L4
+;; both guard `cfg-edges` against `tokens.len`.
+;;
+;; The clone's arm carries the fact in a different currency: the conjuncts its
+;; entry guard decided. Reading them back is the join-side half of LLVM's
+;; dominating-condition folding (ConstraintElimination's `addFact` on a branch
+;; edge, consumed at the merge): the fast arm states the guard, the slow arm
+;; states the checks, and the intersection is what survives into E.
+;;
+;; THE PROOF the guard has to supply, for a consumer check `bounds_check c, len`
+;; whose index `c` is the loop's own counter phi over [seed, bound) with a
+;; positive literal step:
+;;   * `seed` is a literal >= 0                                   (counter >= 0)
+;;   * some branch taken on the way into the clone states `seed < bound`
+;;     (so the FIRST trip's counter is below the bound; every later one is,
+;;     because the latch tested `counter + step < bound` before making it)
+;;   * some branch taken on the way into the clone states `bound <= len`
+;; Then every counter value `c` the clone visits satisfies
+;; `0 <= seed <= c < bound <= len`, so `c <u len` -- exactly the check. Signed
+;; i64 comparisons throughout, and the counter cannot wrap: it only grows past
+;; a latch test that put `c + step` below `bound`.
+;;
+;; Nothing here trusts the versioner's own reasoning: the conjuncts are read
+;; off the branches as written, and a clone whose guard does not state them is
+;; simply not covered.
+(define (opt-lp-entry-depth) : i64
+  12)
+
+;; Does `cond`, taken on `side` (1 = true edge, 0 = false edge), state
+;; `lhs < rhs` (when `strict?`) or `lhs <= rhs`? Only signed i64 order compares
+;; count, and the operands are matched across the two loops the way every other
+;; comparison in this family is.
+;;
+;; This slot sits directly after bce_version, where the guard is still ONE
+;; branch on a materialized `and` of its conjuncts (the branch-chain lowering
+;; runs far below, at bool_branch_late). A taken true edge states every leaf of
+;; that tree, so the reader descends it; the false edge states nothing about
+;; any individual leaf and is refused.
+(define (opt-lp-cond-proves?
+  [type-segment-bases : i64]
+  [st : OptLpState]
+  [la : i64]
+  [lb : i64]
+  [cond : ir.CompilerIrValue]
+  [side : i64]
+  [strict? : bool]
+  [lhs : ir.CompilerIrValue]
+  [rhs : ir.CompilerIrValue]
+  [depth : i64]) : bool
+  (if (or (<= depth 0) (not (= side 1)))
+    false
+    (match (compiler-opt-global-shared-view cond)
+      [(ir.CompilerIrValue.Var cond-var)
+        (match (opt-lp-def (compiler-opt-global-shared-view st) cond-var)
+          [(OptBoolBranchDef.No) false]
+          [(OptBoolBranchDef.Some instr _)
+            (match instr
+              [(ir.CompilerIrInstr.BinOp _ op cond-lhs cond-rhs ty)
+                (match (compiler-opt-global-shared-view op)
+                  [(ir.CompilerIrBinOp.And)
+                    (and
+                      (opt-type-eq
+                        type-segment-bases
+                        (compiler-opt-global-shared-view ty)
+                        (ast.AstType.Bool))
+                      (or
+                        (opt-lp-cond-proves?
+                          type-segment-bases
+                          (compiler-opt-global-shared-view st)
+                          la
+                          lb
+                          cond-lhs
+                          side
+                          strict?
+                          (compiler-opt-global-shared-view lhs)
+                          (compiler-opt-global-shared-view rhs)
+                          (- depth 1))
+                        (opt-lp-cond-proves?
+                          type-segment-bases
+                          st
+                          la
+                          lb
+                          cond-rhs
+                          side
+                          strict?
+                          lhs
+                          rhs
+                          (- depth 1))))]
+                  [_
+                    (and
+                      (opt-type-eq type-segment-bases ty (ast.AstType.I64))
+                      (if (opt-binop-eq
+                        (compiler-opt-global-shared-view op)
+                        (ir.CompilerIrBinOp.Lt))
+                        true
+                        (and
+                          (not strict?)
+                          (opt-binop-eq op (ir.CompilerIrBinOp.Le))))
+                      (opt-lp-same?
+                        type-segment-bases
+                        (compiler-opt-global-shared-view st)
+                        la
+                        lb
+                        cond-lhs
+                        (compiler-opt-global-shared-view lhs)
+                        (opt-lp-same-depth))
+                      (opt-lp-same?
+                        type-segment-bases
+                        st
+                        la
+                        lb
+                        cond-rhs
+                        rhs
+                        (opt-lp-same-depth)))])]
+              [_ false])])]
+      [_ false])))
+
+;; Walk up from `block` through blocks with a single reachable predecessor --
+;; reaching `block` means every edge on the way was taken -- and answer whether
+;; one of those taken edges states the wanted relation.
+(define (opt-lp-entry-proves?
+  [type-segment-bases : i64]
+  [st : OptLpState]
+  [la : i64]
+  [lb : i64]
+  [block : i64]
+  [strict? : bool]
+  [lhs : ir.CompilerIrValue]
+  [rhs : ir.CompilerIrValue]
+  [depth : i64]) : bool
+  (if (<= depth 0)
+    false
+    (let
+      [pred : i64 (opt-lp-sole-pred (compiler-opt-global-shared-view st) block)]
+      (if (< pred 0)
+        false
+        (match (opt-lp-terminator (compiler-opt-global-shared-view st) pred)
+          [(OptBoolBranchDef.No) false]
+          [(OptBoolBranchDef.Some term _)
+            (match term
+              [(ir.CompilerIrInstr.Jump _)
+                (opt-lp-entry-proves?
+                  type-segment-bases
+                  st
+                  la
+                  lb
+                  pred
+                  strict?
+                  lhs
+                  rhs
+                  (- depth 1))]
+              [(ir.CompilerIrInstr.Branch cond true-label false-label)
+                (let
+                  [side : i64
+                    (opt-lp-branch-side
+                      (compiler-opt-global-shared-view st)
+                      true-label
+                      false-label
+                      block)]
+                  (if (< side 0)
+                    false
+                    (if (opt-lp-cond-proves?
+                      type-segment-bases
+                      (compiler-opt-global-shared-view st)
+                      la
+                      lb
+                      cond
+                      side
+                      strict?
+                      (compiler-opt-global-shared-view lhs)
+                      (compiler-opt-global-shared-view rhs)
+                      (opt-lp-entry-depth))
+                      true
+                      (opt-lp-entry-proves?
+                        type-segment-bases
+                        st
+                        la
+                        lb
+                        pred
+                        strict?
+                        lhs
+                        rhs
+                        (- depth 1)))))]
+              [_ false])])))))
+
+;; The whole entry of `la`: its preheader's own edge into the header FIRST --
+;; before bce_version's guard block acquires a jump-only preheader of its own,
+;; the guard block IS the preheader and its branch is the only place the
+;; conjuncts are stated -- and then every taken edge above it.
+(define (opt-lp-guard-entry-proves?
+  [type-segment-bases : i64]
+  [st : OptLpState]
+  [la : i64]
+  [lb : i64]
+  [strict? : bool]
+  [lhs : ir.CompilerIrValue]
+  [rhs : ir.CompilerIrValue]) : bool
+  (let
+    [headers : (__tl_dyn-array i64) (compiler-opt-global-shared-view st.header)]
+    [preheaders : (__tl_dyn-array i64)
+      (compiler-opt-global-shared-view st.preheader)]
+    [head : i64 (array-ref headers la)]
+    [pre : i64 (array-ref preheaders la)]
+    (or
+      (match (opt-lp-terminator (compiler-opt-global-shared-view st) pre)
+        [(OptBoolBranchDef.No) false]
+        [(OptBoolBranchDef.Some term _)
+          (match term
+            [(ir.CompilerIrInstr.Branch cond true-label false-label)
+              (opt-lp-cond-proves?
+                type-segment-bases
+                (compiler-opt-global-shared-view st)
+                la
+                lb
+                cond
+                (opt-lp-branch-side
+                  (compiler-opt-global-shared-view st)
+                  true-label
+                  false-label
+                  head)
+                strict?
+                (compiler-opt-global-shared-view lhs)
+                (compiler-opt-global-shared-view rhs)
+                (opt-lp-entry-depth))]
+            [_ false])])
+      (opt-lp-entry-proves?
+        type-segment-bases
+        st
+        la
+        lb
+        pre
+        strict?
+        lhs
+        rhs
+        (opt-lp-entry-depth)))))
+
+;; The clone arm of a versioned producer: `la` runs the consumer's trip domain
+;; but holds no matching check, and its entry guard states the check instead.
+(define (opt-lp-guard-covers?
+  [type-segment-bases : i64]
+  [st : OptLpState]
+  [la : i64]
+  [lb : i64]
+  [idx : ir.CompilerIrValue]
+  [len : ir.CompilerIrValue]) : bool
+  (let
+    [seeds : (__tl_dyn-array ir.CompilerIrValue)
+      (compiler-opt-global-shared-view st.seed)]
+    [bounds : (__tl_dyn-array ir.CompilerIrValue)
+      (compiler-opt-global-shared-view st.bound)]
+    [steps : (__tl_dyn-array i64) (compiler-opt-global-shared-view st.step)]
+    [seed : ir.CompilerIrValue (ir.compiler-ir-array-shared-view seeds lb)]
+    [bound : ir.CompilerIrValue (ir.compiler-ir-array-shared-view bounds lb)]
+    (and
+      ;; The consumer's index is its own counter, over the domain the loop was
+      ;; recorded with.
+      (match (compiler-opt-global-shared-view idx)
+        [(ir.CompilerIrValue.Var idx-var)
+          (match (opt-lp-induction
+            (compiler-opt-global-shared-view st)
+            lb
+            idx-var)
+            [(OptLpInd.No) false]
+            [(OptLpInd.Some idx-seed idx-step)
+              (and
+                (= idx-step (array-ref steps lb))
+                (opt-value-eq
+                  idx-seed
+                  (ir.compiler-ir-array-shared-view seeds lb)))])]
+        [_ false])
+      ;; A literal non-negative seed: the counter never runs below zero.
+      (match (compiler-opt-global-shared-view seed)
+        [(ir.CompilerIrValue.I64 k) (>= k 0)]
+        [_ false])
+      (opt-lp-guard-entry-proves?
+        type-segment-bases
+        (compiler-opt-global-shared-view st)
+        la
+        lb
+        true
+        (compiler-opt-global-shared-view seed)
+        (compiler-opt-global-shared-view bound))
+      (opt-lp-guard-entry-proves? type-segment-bases st la lb false bound len))))
 
 (define (opt-lp-exit-covers?
   [type-segment-bases : i64]
@@ -60667,17 +61063,29 @@
                           (compiler-opt-global-shared-view st)
                           la
                           lb)
-                        (opt-lp-template-in?
-                          type-segment-bases
-                          (compiler-opt-global-shared-view st)
-                          la
-                          lb
-                          block-b
-                          (compiler-opt-global-shared-view idx)
-                          (compiler-opt-global-shared-view len)))
+                        (or
+                          (opt-lp-template-in?
+                            type-segment-bases
+                            (compiler-opt-global-shared-view st)
+                            la
+                            lb
+                            block-b
+                            (compiler-opt-global-shared-view idx)
+                            (compiler-opt-global-shared-view len))
+                          ;; The versioned producer's fast clone: no check of
+                          ;; its own, the fact stated by the guard it was
+                          ;; entered through instead.
+                          (opt-lp-guard-covers?
+                            type-segment-bases
+                            (compiler-opt-global-shared-view st)
+                            la
+                            lb
+                            (compiler-opt-global-shared-view idx)
+                            (compiler-opt-global-shared-view len))))
                         (set! any? true)
                         (set! ok? false))
                       (if (opt-lp-empty-edge?
+                        type-segment-bases
                         (compiler-opt-global-shared-view st)
                         pred
                         exit
@@ -60715,7 +61123,10 @@
                           (opt-binop-eq op (ir.CompilerIrBinOp.Lt))
                           (opt-integer-type? ty)))
                         false
-                        (match next
+                        (match (opt-lp-resolve-mov
+                          (compiler-opt-global-shared-view st)
+                          next
+                          (opt-lp-same-depth))
                           [(ir.CompilerIrValue.Var next-var)
                             (match (opt-lp-def
                               (compiler-opt-global-shared-view st)
@@ -61069,7 +61480,10 @@
 (define (opt-lp-clean-instr? [st : OptLpState] [instr : ir.CompilerIrInstr]) : bool
   (match instr
     [(ir.CompilerIrInstr.StorePtr address _ _)
-      (match address
+      (match (opt-lp-resolve-mov
+        (compiler-opt-global-shared-view st)
+        address
+        (opt-lp-same-depth))
         [(ir.CompilerIrValue.Var address-var)
           (match (opt-lp-def (compiler-opt-global-shared-view st) address-var)
             [(OptBoolBranchDef.No) false]
@@ -61160,37 +61574,49 @@
     [(ir.CompilerIrValue.Var idx-var)
       (match (compiler-opt-global-shared-view len)
         [(ir.CompilerIrValue.Var len-var)
-          (if (or
-            (< idx-var 0)
-            (>= (+ (* idx-var 2) 1) (array-length retire))
-            (not (= (array-ref retire (* idx-var 2)) 0)))
-            unit
-            (let
-              [exits : (__tl_dyn-array i64)
-                (compiler-opt-global-shared-view st.exit)]
-              [loops : i64
-                (array-ref (compiler-opt-global-shared-view st.loops) 0)]
-              [la : i64 0]
-              [done? : bool false]
-              (while (< la loops)
-                (begin
-                  (if (and
-                    (not done?)
-                    (not (= la lb))
-                    (opt-lp-exit-covers?
-                      type-segment-bases
-                      (compiler-opt-global-shared-view st)
-                      (array-ref exits la)
-                      lb
-                      block-b
-                      (compiler-opt-global-shared-view idx)
-                      (compiler-opt-global-shared-view len)))
-                    (begin
-                      (set! (array-ref retire (* idx-var 2)) (+ len-var 1))
-                      (set! (array-ref retire (+ (* idx-var 2) 1)) block-b)
-                      (set! done? true))
-                    unit)
-                  (set! la (+ la 1))))))]
+          (let
+            [base : i64 (* idx-var 4)]
+            ;; The first free slot, or -1 when both already hold a pair (the
+            ;; third length on one index keeps its check).
+            [free : i64
+              (cond
+                [(or
+                    (< idx-var 0)
+                    (>=
+                      (+ base (* (opt-lp-memo-slots) 2))
+                      (array-length retire)))
+                  (- 0 1)]
+                [(= (array-ref retire base) 0) base]
+                [(= (array-ref retire (+ base 2)) 0) (+ base 2)]
+                [else (- 0 1)])]
+            (if (< free 0)
+              unit
+              (let
+                [exits : (__tl_dyn-array i64)
+                  (compiler-opt-global-shared-view st.exit)]
+                [loops : i64
+                  (array-ref (compiler-opt-global-shared-view st.loops) 0)]
+                [la : i64 0]
+                [done? : bool false]
+                (while (< la loops)
+                  (begin
+                    (if (and
+                      (not done?)
+                      (not (= la lb))
+                      (opt-lp-exit-covers?
+                        type-segment-bases
+                        (compiler-opt-global-shared-view st)
+                        (array-ref exits la)
+                        lb
+                        block-b
+                        (compiler-opt-global-shared-view idx)
+                        (compiler-opt-global-shared-view len)))
+                      (begin
+                        (set! (array-ref retire free) (+ len-var 1))
+                        (set! (array-ref retire (+ free 1)) block-b)
+                        (set! done? true))
+                      unit)
+                    (set! la (+ la 1)))))))]
         [_ unit])]
     [_ unit]))
 
@@ -61390,14 +61816,25 @@
               unit)])
         (set! position (+ position 1))))))
 
-;; The memo is TWO words per var: `lp[2v] = len + 1` and `lp[2v + 1] = the
-;; block the proved check sits in`. The block is part of the key, not a
+;; The memo is TWO `(len + 1, block)` slots per var, four words in all:
+;; `lp[4v .. 4v+1]` and `lp[4v+2 .. 4v+3]`. The block is part of the key, not a
 ;; decoration: the fact a guarded producer establishes is conditional on that
 ;; check's own control path, so the same value checked against the same length
 ;; somewhere ELSE in the consumer loop -- an arm the matched path excludes --
 ;; is a different question and keeps its check.
+;;
+;; TWO slots rather than one because one index is routinely checked against
+;; SEVERAL lengths in the same block: euler's L2 and L4 both read `idom[i]` and
+;; `reachable[i]` at the same `i`, so the counter carries two `(index, length)`
+;; facts. With one slot the second check survived, the versioner still built a
+;; guard for it, and that guard's hoisted length load displaced the descriptor
+;; loads the sibling loops were sharing -- a net loss. Retiring both retires the
+;; guard with them.
+(define (opt-lp-memo-slots) : i64
+  2)
+
 (define (opt-lp-memo-empty) : (__tl_dyn-array i64)
-  (__tl_make-array i64 2))
+  (__tl_make-array i64 4))
 
 (define (opt-lp-memo-any? [retire : (__tl_dyn-array i64)]) : bool
   (let
@@ -61425,12 +61862,25 @@
     [(ir.CompilerIrValue.Var idx-var)
       (match len
         [(ir.CompilerIrValue.Var len-var)
-          (and
-            (>= idx-var 0)
-            (>= block-id 0)
-            (< (+ (* idx-var 2) 1) (array-length retire))
-            (= (array-ref retire (* idx-var 2)) (+ len-var 1))
-            (= (array-ref retire (+ (* idx-var 2) 1)) block-id))]
+          (let
+            [base : i64 (* idx-var 4)]
+            [slot : i64 0]
+            [found? : bool false]
+            (if (or
+              (< idx-var 0)
+              (< block-id 0)
+              (>= (+ base (* (opt-lp-memo-slots) 2)) (array-length retire)))
+              false
+              (begin
+                (while (< slot (opt-lp-memo-slots))
+                  (begin
+                    (if (and
+                      (= (array-ref retire (+ base (* slot 2))) (+ len-var 1))
+                      (= (array-ref retire (+ base (+ (* slot 2) 1))) block-id))
+                      (set! found? true)
+                      unit)
+                    (set! slot (+ slot 1))))
+                found?)))]
         [_ false])]
     [_ false]))
 
@@ -61458,7 +61908,7 @@
           (opt-lp-state-new type-segment-bases context params frame)]
         [mark : (__tl_dyn-array i64) (__tl_make-array i64 count)]
         [stack : (__tl_dyn-array i64) (__tl_make-array i64 count)]
-        [retire : (__tl_dyn-array i64) (__tl_make-array i64 (* frame 2))]
+        [retire : (__tl_dyn-array i64) (__tl_make-array i64 (* frame 4))]
         [id : i64 0]
         (begin
           (while (< id count)

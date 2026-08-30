@@ -971,6 +971,58 @@
   (plan CompilerBackendRuntimePlan)
   (index CompilerBackendRuntimeIndex))
 
+;; Immutable target/ABI decisions for one prepared backend emission.  The
+;; backend owner itself remains reusable: each prepared text/object boundary
+;; installs a fresh value before any prefix, function, block, or runtime work.
+;; Keeping the canonical ABI and closed platform selections together prevents
+;; hot shared emission from repeatedly deriving them from a raw target.
+(defenum CompilerBackendTarget
+  (Linux)
+  (Windows))
+
+(defenum CompilerBackendObjectFormatPolicy
+  (Elf)
+  (Coff))
+
+(defstruct CompilerBackendTargetPolicy
+  (target CompilerBackendTarget)
+  (abi compiler_abi.CompilerRegTargetAbi)
+  (linux bool)
+  (windows bool)
+  (seh-unwind bool)
+  (stack-probe bool)
+  (red-zone bool)
+  (linux-syscall bool)
+  (object-format CompilerBackendObjectFormatPolicy)
+  (gp-arg-register-count i64)
+  (float-arg-register-count i64)
+  (outgoing-shadow-space i64))
+
+(define (compiler-backend-target-policy-new [target : CompilerBackendTarget]) : CompilerBackendTargetPolicy
+  (let
+    [abi : compiler_abi.CompilerRegTargetAbi
+      (match target
+        [(CompilerBackendTarget.Linux) compiler_abi.CompilerRegTargetAbi.Linux]
+        [(CompilerBackendTarget.Windows)
+          compiler_abi.CompilerRegTargetAbi.Windows])]
+    [linux : bool (compiler_abi.compiler-abi-linux? abi)]
+    [windows : bool (compiler_abi.compiler-abi-windows? abi)]
+    (CompilerBackendTargetPolicy
+      target
+      abi
+      linux
+      windows
+      windows
+      windows
+      linux
+      linux
+      (if linux
+        CompilerBackendObjectFormatPolicy.Elf
+        CompilerBackendObjectFormatPolicy.Coff)
+      (compiler_abi.compiler-abi-gp-arg-register-count abi)
+      (compiler_abi.compiler-abi-float-arg-register-count abi)
+      (compiler_abi.compiler-abi-outgoing-shadow-space abi))))
+
 ;; A backend job owns one exact intern capability and the small mutable state
 ;; that is safe to share across its emission phases.  Keep the public carrier
 ;; opaque and one machine word; all mutable data lives in the owner arena cell
@@ -1025,7 +1077,10 @@
   (representation-mark i64)
   ;; One-word view into the exact CompilerProfileState owned by this job.
   ;; It is installed at the explicit profile/backend emission boundary.
-  (metrics profile_state.CompilerProfileMetrics))
+  (metrics profile_state.CompilerProfileMetrics)
+  ;; Append-only per-emission capability. Prepared entrypoints replace this
+  ;; value before use, so a long-lived backend owner may emit another target.
+  (emission-target-policy CompilerBackendTargetPolicy))
 
 (defstruct CompilerBackendState
   (address i64))
@@ -1088,7 +1143,8 @@
           false
           0
           0
-          metrics))
+          metrics
+          (compiler-backend-target-policy-new CompilerBackendTarget.Linux)))
       (CompilerBackendState
         (cast
           (unsafe
@@ -1101,6 +1157,19 @@
     intern-state
     (profile_state.compiler-profile-state-metrics
       (profile_state.compiler-profile-state-new))))
+
+(define (compiler-backend-state-emission-target-policy
+  [state : CompilerBackendState]) : CompilerBackendTargetPolicy
+  (compiler-backend-state-data state).emission-target-policy)
+
+(define (compiler-backend-state-set-emission-target-policy!
+  [state : CompilerBackendState]
+  [policy : CompilerBackendTargetPolicy]) : unit
+  (let
+    [data : CompilerBackendStateData (compiler-backend-state-data state)]
+    (begin
+      (set! data.emission-target-policy policy)
+      (compiler-backend-state-data-set! state data))))
 
 (define (compiler-backend-state-set-representations!
   [state : CompilerBackendState]
@@ -1818,19 +1887,10 @@
     [(CompilerBackendRuntimePlan.Plan _ _ _ _ _ _ _ _)
       (compiler-backend-global-shared-view compiler-backend-empty-scratch-plan)]))
 
-;; Backend code-generation target. Linux/System V and Windows x64 are
-;; both modeled here; target-specific runtime helpers are emitted below.
-(defenum CompilerBackendTarget
-  (Linux)
-  (Windows))
-
 (define (compiler-backend-target-abi [target : CompilerBackendTarget]) : compiler_abi.CompilerRegTargetAbi
   (match target
     [(CompilerBackendTarget.Linux) compiler_abi.CompilerRegTargetAbi.Linux]
     [(CompilerBackendTarget.Windows) compiler_abi.CompilerRegTargetAbi.Windows]))
-
-(define (compiler-backend-regalloc-abi [target : CompilerBackendTarget]) : compiler_abi.CompilerRegTargetAbi
-  (compiler-backend-target-abi target))
 
 (defenum CompilerBackendMode
   (Scalar)
@@ -2100,7 +2160,7 @@
 ;; the per-job backend state tracked by #4963.
 (defstruct CompilerBackendEmissionContext
   (type-segment-bases i64)
-  (target CompilerBackendTarget)
+  (target-policy CompilerBackendTargetPolicy)
   (function String)
   (source-function i64)
   (blocks compiler_ir_types.CompilerIrBlockList)
@@ -15743,26 +15803,20 @@
     (compiler_ir_types.compiler-ir-label-text label)))
 
 (define (compiler-backend-emit-stack-sub
-  [target : CompilerBackendTarget]
+  [target-policy : CompilerBackendTargetPolicy]
   [frame : i64]) : String
   (if (= frame 0)
     ""
-    (match target
-      [(CompilerBackendTarget.Windows)
-        (if (>= frame 4096)
-          (str_cat.str-cat
-            "    movl $"
-            (string.int->string frame)
-            ", %eax\n    callq __chkstk\n    subq %rax, %rsp\n"
-            ""
-            "")
-          (str_cat.str-cat
-            "    subq $"
-            (string.int->string frame)
-            ", %rsp\n"
-            ""))]
-      [(CompilerBackendTarget.Linux)
-        (str_cat.str-cat "    subq $" (string.int->string frame) ", %rsp\n" "")])))
+    (if target-policy.stack-probe
+      (if (>= frame 4096)
+        (str_cat.str-cat
+          "    movl $"
+          (string.int->string frame)
+          ", %eax\n    callq __chkstk\n    subq %rax, %rsp\n"
+          ""
+          "")
+        (str_cat.str-cat "    subq $" (string.int->string frame) ", %rsp\n" ""))
+      (str_cat.str-cat "    subq $" (string.int->string frame) ", %rsp\n" ""))))
 
 (define (compiler-backend-emit-windows-seh-proc
   [target : CompilerBackendTarget]
@@ -15990,37 +16044,39 @@
     ""))
 
 (define (compiler-backend-emit-function-entry
-  [target : CompilerBackendTarget]
+  [target-policy : CompilerBackendTargetPolicy]
   [symbol : String]
   [frame : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [vars : i64]
   [backend-state : CompilerBackendState]) : String
-  (str_cat.str-cat
-    (compiler-backend-emit-windows-seh-proc
-      target
-      (compiler-backend-global-shared-view symbol))
-    symbol
-    (if (and
-      (compiler_ir_types.compiler-debug-info-enabled?)
-      (compiler-backend-target-linux? target))
-      ":\n    .cfi_startproc\n    pushq %rbp\n    .cfi_def_cfa_offset 16\n    .cfi_offset %rbp, -16\n"
-      ":\n    pushq %rbp\n")
-    (compiler-backend-emit-windows-seh-push-rbp target)
-    "    movq %rsp, %rbp\n"
-    (if (and
-      (compiler_ir_types.compiler-debug-info-enabled?)
-      (compiler-backend-target-linux? target))
-      "    .cfi_def_cfa_register %rbp\n"
-      "")
-    (compiler-backend-emit-windows-seh-set-rbp target)
-    (compiler-backend-emit-stack-sub target frame)
-    (compiler-backend-emit-windows-seh-prologue-tail
-      target
-      assignments
-      vars
-      frame
-      backend-state)))
+  (let
+    [target : CompilerBackendTarget target-policy.target]
+    (str_cat.str-cat
+      (compiler-backend-emit-windows-seh-proc
+        target
+        (compiler-backend-global-shared-view symbol))
+      symbol
+      (if (and
+        (compiler_ir_types.compiler-debug-info-enabled?)
+        target-policy.linux)
+        ":\n    .cfi_startproc\n    pushq %rbp\n    .cfi_def_cfa_offset 16\n    .cfi_offset %rbp, -16\n"
+        ":\n    pushq %rbp\n")
+      (compiler-backend-emit-windows-seh-push-rbp target)
+      "    movq %rsp, %rbp\n"
+      (if (and
+        (compiler_ir_types.compiler-debug-info-enabled?)
+        target-policy.linux)
+        "    .cfi_def_cfa_register %rbp\n"
+        "")
+      (compiler-backend-emit-windows-seh-set-rbp target)
+      (compiler-backend-emit-stack-sub target-policy frame)
+      (compiler-backend-emit-windows-seh-prologue-tail
+        target
+        assignments
+        vars
+        frame
+        backend-state))))
 
 ;; M-G3 stage 2: frame-pointer-omission prologue (Linux text path only; the
 ;; body was proven rsp-constant and fully rebased by compiler-backend-rsp-
@@ -16098,6 +16154,7 @@
           "")))))
 
 (define (compiler-backend-emit-function-entry-fpo-windows
+  [target-policy : CompilerBackendTargetPolicy]
   [backend-state : CompilerBackendState]
   [symbol : String]
   [frame : i64]
@@ -16146,9 +16203,7 @@
         acc
         (str_cat.str-cat
           acc
-          (compiler-backend-emit-stack-sub
-            (CompilerBackendTarget.Windows)
-            sub-s)))
+          (compiler-backend-emit-stack-sub target-policy sub-s)))
       (set!
         acc
         (str_cat.str-cat
@@ -19500,14 +19555,14 @@
       instr)
       [(compiler_ir_types.CompilerMaybeSourceLocation.Some location)
         (compiler-backend-debug-location-directive
-          ctx.target
+          ctx.target-policy.target
           ctx.program-index
           ctx.span-index
           ctx.source-function
           (compiler_ir_types.CompilerMaybeSourceLocation.Some location))]
       [(compiler_ir_types.CompilerMaybeSourceLocation.No)
         (compiler-backend-debug-function-location
-          ctx.target
+          ctx.target-policy.target
           ctx.program-index
           ctx.span-index
           ctx.spans
@@ -19695,7 +19750,7 @@
                     (compiler_ast_types.ast-source-span-start-col span))
                   (compiler-backend-function-state-set-abort-target!
                     function-state
-                    ctx.target))))])))))
+                    ctx.target-policy.target))))])))))
 
 (define (compiler-backend-abort-arg-reg
   [backend-state : CompilerBackendState]
@@ -52698,12 +52753,12 @@
 ;; emits the moves in a safe order and breaks true cycles
 ;; with a scavenged temp. Conflict-free sites stay byte-identical (see the builder).
 (define (compiler-backend-emit-syscall
-  [target : CompilerBackendTarget]
+  [target-policy : CompilerBackendTargetPolicy]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
   [args : compiler_ir_types.CompilerIrCallArgs]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (if (compiler-backend-target-windows? target)
+  (if (not target-policy.linux-syscall)
     (ResultCompilerBackend.Err
       (box
         (compiler_diagnostic.compiler-diagnostic-at-start
@@ -54237,7 +54292,7 @@
                   instr-diag)))])]
       [(compiler_ir_types.CompilerIrInstr.BoundsCheck index length ok-label)
         (match (compiler-backend-emit-bounds-check
-          ctx.target
+          ctx.target-policy.target
           ctx.function
           ctx.assignments
           planned-scratch0
@@ -54608,7 +54663,7 @@
           [elem-ty (compiler-backend-box-field-shared-view payload-box ty)]
           (compiler-backend-emit-vector-shuffle
             ctx.type-segment-bases
-            ctx.target
+            ctx.target-policy.target
             ctx.function
             ctx.current-label
             ctx.assignments
@@ -54679,7 +54734,7 @@
           ctx.backend-state)]
       [(compiler_ir_types.CompilerIrInstr.Syscall dst args)
         (compiler-backend-emit-syscall
-          ctx.target
+          ctx.target-policy
           ctx.assignments
           dst
           args
@@ -54695,7 +54750,7 @@
           [result (compiler-backend-box-field-shared-view payload-box result)]
           (compiler-backend-emit-spmd-call
             ctx.type-segment-bases
-            ctx.target
+            ctx.target-policy.target
             name
             backend
             lanes
@@ -54711,7 +54766,7 @@
       [(compiler_ir_types.CompilerIrInstr.Call dst name args ty)
         (match (compiler-backend-emit-direct-call-with-arg-assignments
           ctx.type-segment-bases
-          ctx.target
+          ctx.target-policy.target
           ctx.function
           ctx.current-label
           (compiler-backend-function-state-emit-current-site ctx.function-state)
@@ -54749,7 +54804,7 @@
       [(compiler_ir_types.CompilerIrInstr.CallIndirect dst func args ty)
         (compiler-backend-emit-indirect-call
           ctx.type-segment-bases
-          ctx.target
+          ctx.target-policy.target
           dst
           func
           args
@@ -54767,7 +54822,7 @@
       [(compiler_ir_types.CompilerIrInstr.CallIndirectC dst func args ty)
         (compiler-backend-emit-indirect-c-call
           ctx.type-segment-bases
-          ctx.target
+          ctx.target-policy.target
           dst
           func
           args
@@ -54790,7 +54845,7 @@
           [slots (compiler-backend-box-field-shared-view payload-box slots)]
           (compiler-backend-emit-c-abi-store-result-call
             ctx.type-segment-bases
-            ctx.target
+            ctx.target-policy.target
             base
             name
             args
@@ -54815,7 +54870,7 @@
           [slots (compiler-backend-box-field-shared-view payload-box slots)]
           (compiler-backend-emit-indirect-c-abi-store-result-call
             ctx.type-segment-bases
-            ctx.target
+            ctx.target-policy.target
             base
             func
             args
@@ -54833,7 +54888,7 @@
       [(compiler_ir_types.CompilerIrInstr.TailCall name args ty)
         (match (compiler-backend-emit-tail-call
           ctx.type-segment-bases
-          ctx.target
+          ctx.target-policy.target
           ctx.source-function
           ctx.blocks
           name
@@ -55099,7 +55154,7 @@
       [(compiler_ir_types.CompilerIrInstr.TailCallIndirect func args ty)
         (match (compiler-backend-emit-tail-indirect-call
           ctx.type-segment-bases
-          ctx.target
+          ctx.target-policy.target
           ctx.source-function
           (compiler-backend-global-shared-view ctx.blocks)
           func
@@ -56445,7 +56500,7 @@
                   rax-forward-pending)
                 (compiler-backend-emit-direct-call-with-arg-assignments
                   (compiler-backend-global-shared-view ctx.type-segment-bases)
-                  (compiler-backend-global-shared-view ctx.target)
+                  (compiler-backend-global-shared-view ctx.target-policy.target)
                   (compiler-backend-global-shared-view ctx.function)
                   (compiler-backend-global-shared-view ctx.current-label)
                   (compiler-backend-function-state-emit-current-site
@@ -56497,7 +56552,7 @@
                   rax-forward-pending)
                 (compiler-backend-emit-indirect-call-with-arg-assignments
                   (compiler-backend-global-shared-view ctx.type-segment-bases)
-                  (compiler-backend-global-shared-view ctx.target)
+                  (compiler-backend-global-shared-view ctx.target-policy.target)
                   dst
                   func
                   (compiler-backend-global-shared-view args)
@@ -59090,7 +59145,7 @@
       length-operand
       index-operand
       (compiler-backend-call-arg-space
-        (compiler-backend-global-shared-view ctx.target)
+        (compiler-backend-global-shared-view ctx.target-policy.target)
         (compiler_ir_types.CompilerIrCallArgs.Nil)
         (compiler_ast_types.ast-type-list-new)
         false
@@ -65200,7 +65255,8 @@
                     (compiler-backend-emit-call-return
                       (compiler-backend-global-shared-view
                         ctx.type-segment-bases)
-                      (compiler-backend-global-shared-view ctx.target)
+                      (compiler-backend-global-shared-view
+                        ctx.target-policy.target)
                       (compiler-backend-global-shared-view ctx.source-function)
                       (compiler-backend-global-shared-view ctx.blocks)
                       name
@@ -67859,7 +67915,8 @@
         (compiler-backend-emit-instrs
           (CompilerBackendEmissionContext
             type-segment-bases
-            target
+            (compiler-backend-state-emission-target-policy
+              program-index.backend-state)
             (compiler-backend-global-shared-view function)
             source-function
             blocks
@@ -72240,7 +72297,6 @@
 ;; or the dead-frame-store sweep.
 (define (compiler-backend-red-zone-decide!
   [backend-state : CompilerBackendState]
-  [target : CompilerBackendTarget]
   [text : String]
   [fpo-attempt : bool]
   [frame : i64]
@@ -72252,7 +72308,7 @@
     [eligible : bool
       (and
         fpo-attempt
-        (compiler-backend-target-linux? target)
+        (compiler-backend-state-emission-target-policy backend-state).red-zone
         (not (compiler-backend-current-fn-win64? backend-state))
         (not shrinkwrap-active?)
         (> frame 0)
@@ -77445,6 +77501,8 @@
         ;; Every representation-aware register-allocation view below carries the
         ;; same pre-optimization job capability from `program-index`.
         [backend-state : CompilerBackendState program-index.backend-state]
+        [target-policy : CompilerBackendTargetPolicy
+          (compiler-backend-state-emission-target-policy backend-state)]
         [function-state : CompilerBackendFunctionState
           (compiler-backend-state-function-state backend-state)]
         [_current-source-function : unit
@@ -77542,13 +77600,10 @@
           (compiler_regalloc.compiler-reg-set-rbp-pool-enabled!
             (and
               allow-rbp
-              (or
-                (compiler-backend-target-linux? target)
-                (compiler-backend-target-windows? target))
+              (or target-policy.linux target-policy.windows)
               (compiler-backend-mode-scalar? mode)
               scalar-registers-enabled))]
-        [fn-abi : compiler_abi.CompilerRegTargetAbi
-          (compiler-backend-regalloc-abi target)]
+        [fn-abi : compiler_abi.CompilerRegTargetAbi target-policy.abi]
         [_fn-abi : unit
           (compiler-backend-set-current-fn-abi!
             program-index.backend-state
@@ -78392,7 +78447,7 @@
             (not
               (and
                 (compiler_ir_types.compiler-debug-info-enabled?)
-                (compiler-backend-target-linux? target)))
+                target-policy.linux))
             shrinkwrap-state-admissible?
             (not
               (=
@@ -78852,10 +78907,8 @@
                                     (compiler-backend-global-shared-view name))
                                   "main")
                                 (or
-                                  (compiler-backend-target-windows? target)
-                                  (and
-                                    crt-entry
-                                    (compiler-backend-target-linux? target))))
+                                  target-policy.windows
+                                  (and crt-entry target-policy.linux)))
                                 (compiler-backend-global-initializers
                                   type-segment-bases
                                   (compiler-backend-global-shared-view globals)
@@ -78934,9 +78987,7 @@
                           ;; push/stack/XMM SEH unwind codes and the audit rejects
                           ;; any body whose rsp shape cannot stay unwind-stable.
                           [fpo-target : bool
-                            (or
-                              (compiler-backend-target-linux? target)
-                              (compiler-backend-target-windows? target))]
+                            (or target-policy.linux target-policy.windows)]
                           ;; GAP1: push-style CSR saves ride the FPO audit --
                           ;; the plan-saved CSR set is fixed pre-body (the
                           ;; scavenger only hands out plan-saved callee regs;
@@ -78965,12 +79016,12 @@
                               (not
                                 (and
                                   (compiler_ir_types.compiler-debug-info-enabled?)
-                                  (compiler-backend-target-linux? target)))
+                                  target-policy.linux))
                               fpo-target
                               (or
                                 (not
                                   (and
-                                    (compiler-backend-target-windows? target)
+                                    target-policy.windows
                                     (compiler-backend-plan-uses-win64-xmm-callee-regs?
                                       (compiler-backend-global-shared-view
                                         assignments)
@@ -79055,7 +79106,6 @@
                           [_red-zone : unit
                             (compiler-backend-red-zone-decide!
                               program-index.backend-state
-                              target
                               (compiler-backend-global-shared-view
                                 post-prologue)
                               fpo-attempt
@@ -79148,8 +79198,9 @@
                                   (compiler-backend-global-shared-view symbol))]
                               [selected-prologue : String
                                 (if fpo-ok
-                                  (if (compiler-backend-target-windows? target)
+                                  (if target-policy.seh-unwind
                                     (compiler-backend-emit-function-entry-fpo-windows
+                                      target-policy
                                       backend-state
                                       entry-symbol
                                       fpo-frame
@@ -79171,7 +79222,7 @@
                                         entry-symbol
                                         fpo-frame)))
                                   (compiler-backend-emit-function-entry
-                                    target
+                                    target-policy
                                     entry-symbol
                                     frame
                                     (compiler-backend-global-shared-view
@@ -79321,7 +79372,7 @@
                                           name))
                                       (if (and
                                         (compiler_ir_types.compiler-debug-info-enabled?)
-                                        (compiler-backend-target-linux? target))
+                                        target-policy.linux)
                                         "    .cfi_endproc\n"
                                         "")
                                       (compiler-backend-emit-windows-seh-endproc
@@ -80100,7 +80151,8 @@
             (ResultCompilerBackend.Ok
               (str_cat.str-cat
                 (compiler-backend-emit-function-entry
-                  target
+                  (compiler-backend-state-emission-target-policy
+                    program-index.backend-state)
                   (compiler-backend-closure-entry-label
                     (compiler-backend-symbol-text-index
                       (compiler-backend-global-shared-view program-index)
@@ -80181,7 +80233,7 @@
     [_abi : unit
       (compiler-backend-set-current-fn-abi!
         backend-state
-        (compiler-backend-regalloc-abi target))]
+        (compiler-backend-state-emission-target-policy backend-state).abi)]
     [groups : compiler_liveness.CompilerLiveI64Set
       (compiler-backend-type-list-group-vars
         type-segment-bases
@@ -82459,7 +82511,9 @@
 ;; backend-owned `_tl_start`; CRT entry mode links `main` through the C runtime.
 ;; Windows links `main` through the CRT.
 (define (compiler-backend-target-linux? [target : CompilerBackendTarget]) : bool
-  (compiler_abi.compiler-abi-linux? (compiler-backend-target-abi target)))
+  (match target
+    [(CompilerBackendTarget.Linux) true]
+    [(CompilerBackendTarget.Windows) false]))
 
 (define (compiler-backend-target-entry-text-with-crt
   [target : CompilerBackendTarget]
@@ -82621,7 +82675,9 @@
     [(CompilerBackendTarget.Windows) ""]))
 
 (define (compiler-backend-target-windows? [target : CompilerBackendTarget]) : bool
-  (compiler_abi.compiler-abi-windows? (compiler-backend-target-abi target)))
+  (match target
+    [(CompilerBackendTarget.Linux) false]
+    [(CompilerBackendTarget.Windows) true]))
 
 ;; Emit a full program for `target`. Windows x64 has ABI-correct user function
 ;; entry/calls and target-specific runtime helpers.
@@ -82870,7 +82926,7 @@
 (define (compiler-backend-emit-program-buffer-after-index
   [type-segment-bases : i64]
   [program : compiler_ir_types.CompilerIrProgram]
-  [target : CompilerBackendTarget]
+  [target-policy : CompilerBackendTargetPolicy]
   [mode : CompilerBackendMode]
   [entry-functions : compiler_ir_types.CompilerIrFunctionSeq]
   [globals : compiler_ir_types.CompilerIrGlobalSeq]
@@ -82883,6 +82939,7 @@
   [emit-entry : bool]
   [crt-entry : bool]) : ResultCompilerBackendBuffer
   (let
+    [target : CompilerBackendTarget target-policy.target]
     [collections : CompilerBackendProgramCollections
       (compiler-backend-collect-source-path-strings
         (compiler-backend-global-shared-view program-index.backend-state)
@@ -83256,6 +83313,9 @@
   [pic-emit? : bool]
   [profile-state : profile_state.CompilerProfileState]) : ResultCompilerBackendBuffer
   (begin
+    (compiler-backend-state-set-emission-target-policy!
+      backend-state
+      (compiler-backend-target-policy-new target))
     (compiler-backend-state-set-metrics!
       backend-state
       (profile_state.compiler-profile-state-metrics
@@ -83386,7 +83446,8 @@
                               (compiler-backend-emit-program-buffer-after-index
                                 type-segment-bases
                                 (compiler-backend-global-shared-view program)
-                                target
+                                (compiler-backend-state-emission-target-policy
+                                  backend-state)
                                 mode
                                 (compiler-backend-global-shared-view
                                   entry-functions)
@@ -86867,7 +86928,7 @@
 (define (compiler-backend-object-image-after-index
   [type-segment-bases : i64]
   [program : compiler_ir_types.CompilerIrProgram]
-  [target : CompilerBackendTarget]
+  [target-policy : CompilerBackendTargetPolicy]
   [_mode : CompilerBackendMode]
   [entry-functions : compiler_ir_types.CompilerIrFunctionSeq]
   [globals : compiler_ir_types.CompilerIrGlobalSeq]
@@ -86877,6 +86938,7 @@
   [emit-entry : bool]
   [crt-entry : bool]) : cobj.CompilerObjectImage
   (let
+    [target : CompilerBackendTarget target-policy.target]
     [collections : CompilerBackendProgramCollections
       (compiler-backend-collect-program-collections program)]
     [_frozen-globals-known : unit
@@ -87245,6 +87307,9 @@
   [crt-entry : bool]
   [profile-state : profile_state.CompilerProfileState]) : ResultCompilerBackendObject
   (begin
+    (compiler-backend-state-set-emission-target-policy!
+      backend-state
+      (compiler-backend-target-policy-new target))
     (compiler-backend-state-set-metrics!
       backend-state
       (profile_state.compiler-profile-state-metrics
@@ -87287,7 +87352,8 @@
                         (compiler-backend-object-image-after-index
                           type-segment-bases
                           (compiler-backend-global-shared-view program)
-                          target
+                          (compiler-backend-state-emission-target-policy
+                            backend-state)
                           mode
                           (compiler-backend-global-shared-view entry-functions)
                           (compiler-backend-global-shared-view globals)

@@ -7216,6 +7216,8 @@
           backend-state))]
     [prologue : String
       (compiler_backend.compiler-backend-emit-function-entry-fpo-windows
+        (compiler_backend.compiler-backend-target-policy-new
+          compiler_backend.CompilerBackendTarget.Windows)
         backend-state
         "_tl_win64_fpo"
         frame
@@ -7372,7 +7374,8 @@
         backend-state)]
     [entry : String
       (compiler_backend.compiler-backend-emit-function-entry
-        (compiler_backend.CompilerBackendTarget.Windows)
+        (compiler_backend.compiler-backend-target-policy-new
+          compiler_backend.CompilerBackendTarget.Windows)
         "_tl_xmm_sparse"
         frame
         (owned_view.compiler-owned-shared-view sparse)
@@ -7386,7 +7389,8 @@
           backend-state))]
     [large-entry : String
       (compiler_backend.compiler-backend-emit-function-entry
-        (compiler_backend.CompilerBackendTarget.Windows)
+        (compiler_backend.compiler-backend-target-policy-new
+          compiler_backend.CompilerBackendTarget.Windows)
         "_tl_xmm_large"
         large-frame
         xmm15
@@ -7412,7 +7416,8 @@
         backend-state)]
     [empty-entry : String
       (compiler_backend.compiler-backend-emit-function-entry
-        (compiler_backend.CompilerBackendTarget.Windows)
+        (compiler_backend.compiler-backend-target-policy-new
+          compiler_backend.CompilerBackendTarget.Windows)
         "_tl_xmm_empty"
         32
         (compiler_regalloc.compiler-reg-assignment-table-empty)
@@ -12363,7 +12368,8 @@
     (compiler-backend-test-emit-instrs-text
       (compiler_backend.CompilerBackendEmissionContext
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        (compiler_backend.CompilerBackendTarget.Linux)
+        (compiler_backend.compiler-backend-target-policy-new
+          compiler_backend.CompilerBackendTarget.Linux)
         "_tl_test"
         (ci.intern "test")
         blocks
@@ -12556,7 +12562,8 @@
     (match (compiler-backend-test-emit-instrs-text
       (compiler_backend.CompilerBackendEmissionContext
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        (compiler_backend.CompilerBackendTarget.Linux)
+        (compiler_backend.compiler-backend-target-policy-new
+          compiler_backend.CompilerBackendTarget.Linux)
         "_tl_test"
         test-id
         blocks
@@ -15326,7 +15333,8 @@ g:
     (compiler-backend-test-emit-instrs-text
       (compiler_backend.CompilerBackendEmissionContext
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        (compiler_backend.CompilerBackendTarget.Linux)
+        (compiler_backend.compiler-backend-target-policy-new
+          compiler_backend.CompilerBackendTarget.Linux)
         "_tl_test"
         test-id
         blocks
@@ -15688,7 +15696,8 @@ g:
     (match (compiler-backend-test-emit-instrs-text
       (compiler_backend.CompilerBackendEmissionContext
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        (compiler_backend.CompilerBackendTarget.Linux)
+        (compiler_backend.compiler-backend-target-policy-new
+          compiler_backend.CompilerBackendTarget.Linux)
         "_tl_test"
         test-id
         blocks
@@ -16725,11 +16734,13 @@ g:
   (let
     [win : String
       (compiler_backend.compiler-backend-emit-stack-sub
-        (compiler_backend.CompilerBackendTarget.Windows)
+        (compiler_backend.compiler-backend-target-policy-new
+          compiler_backend.CompilerBackendTarget.Windows)
         4800)]
     [linux : String
       (compiler_backend.compiler-backend-emit-stack-sub
-        (compiler_backend.CompilerBackendTarget.Linux)
+        (compiler_backend.compiler-backend-target-policy-new
+          compiler_backend.CompilerBackendTarget.Linux)
         4800)]
     (and
       (compiler_backend.compiler-backend-string-contains?
@@ -18088,7 +18099,7 @@ g:
         0
         (owned_view.compiler-owned-shared-view program)
         (compiler_backend.CompilerBackendTarget.Windows)
-        (compiler_backend.CompilerBackendMode.Scalar)
+        (compiler_backend.CompilerBackendMode.Avx2)
         (owned_view.compiler-owned-shared-view spans)
         false
         false
@@ -18100,12 +18111,26 @@ g:
         0
         program
         (compiler_backend.CompilerBackendTarget.Linux)
-        (compiler_backend.CompilerBackendMode.Scalar)
+        (compiler_backend.CompilerBackendMode.Avx512)
         spans
         false
         false
         (profile_state.compiler-profile-state-new))]
+    [linux-policy : compiler_backend.CompilerBackendTargetPolicy
+      (compiler_backend.compiler-backend-state-emission-target-policy
+        linux-state)]
+    [windows-policy : compiler_backend.CompilerBackendTargetPolicy
+      (compiler_backend.compiler-backend-state-emission-target-policy
+        windows-state)]
+    [pic-policy : compiler_backend.CompilerBackendTargetPolicy
+      (compiler_backend.compiler-backend-state-emission-target-policy pic-state)]
     (and
+      linux-policy.linux
+      (not linux-policy.windows)
+      windows-policy.windows
+      (not windows-policy.linux)
+      pic-policy.linux
+      (not pic-policy.windows)
       (compiler_backend.compiler-backend-state-absolute-switch-ok? linux-state)
       (not
         (compiler_backend.compiler-backend-state-absolute-switch-ok?
@@ -24822,7 +24847,8 @@ g:
     (match (compiler_backend.compiler-backend-emit-instr
       (compiler_backend.CompilerBackendEmissionContext
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        (compiler_backend.CompilerBackendTarget.Linux)
+        (compiler_backend.compiler-backend-target-policy-new
+          compiler_backend.CompilerBackendTarget.Linux)
         "_tl_test"
         test-id
         compiler_ir_types.CompilerIrBlockList.Nil
@@ -25145,7 +25171,7 @@ g:
     (match (compiler-backend-test-emit-instrs-text
       (compiler_backend.CompilerBackendEmissionContext
         (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-        target
+        (compiler_backend.compiler-backend-target-policy-new target)
         "_tl_test"
         test-id
         blocks
@@ -53043,9 +53069,170 @@ b_keep:
             0)]
         (and retired? (string.eq actual expected))))))
 
-;; Function-local traversal state must follow the backend job, even when two
-;; jobs reuse the same numeric ids and are interleaved. Resetting a failed job
-;; must likewise leave the other job's continuation state intact.
+;; A reusable backend owner may be retargeted between emissions, while two
+;; independently prepared owners retain isolated ABI and mode decisions.
+(define (compiler-backend-target-policy-isolation-ok?) : bool
+  (let
+    [intern-state : ci.InternCompatState
+      (ci.intern-compat-state-capture-active)]
+    [state-a : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new
+        (owned_view.compiler-owned-shared-view intern-state))]
+    [state-b : compiler_backend.CompilerBackendState
+      (compiler_backend.compiler-backend-state-new intern-state)]
+    [linux : compiler_backend.CompilerBackendTargetPolicy
+      (compiler_backend.compiler-backend-target-policy-new
+        compiler_backend.CompilerBackendTarget.Linux)]
+    [windows : compiler_backend.CompilerBackendTargetPolicy
+      (compiler_backend.compiler-backend-target-policy-new
+        compiler_backend.CompilerBackendTarget.Windows)]
+    [_install : unit
+      (begin
+        (compiler_backend.compiler-backend-state-set-emission-target-policy!
+          state-a
+          linux)
+        (compiler_backend.compiler-backend-state-set-emission-target-policy!
+          state-b
+          windows)
+        (compiler_backend.compiler-backend-set-current-mode!
+          (compiler_backend.compiler-backend-state-function-state state-a)
+          compiler_backend.CompilerBackendMode.Scalar)
+        (compiler_backend.compiler-backend-set-current-mode!
+          (compiler_backend.compiler-backend-state-function-state state-b)
+          compiler_backend.CompilerBackendMode.Avx2)
+        (compiler_backend.compiler-backend-set-current-fn-abi!
+          state-a
+          linux.abi)
+        (compiler_backend.compiler-backend-set-current-fn-abi!
+          state-b
+          windows.abi))]
+    [a-before : compiler_backend.CompilerBackendTargetPolicy
+      (compiler_backend.compiler-backend-state-emission-target-policy state-a)]
+    [b-before : compiler_backend.CompilerBackendTargetPolicy
+      (compiler_backend.compiler-backend-state-emission-target-policy state-b)]
+    [a-win64-before : bool
+      (compiler_backend.compiler-backend-test-get-compiler-backend-current-fn-win64
+        state-a)]
+    [a-mode-before : compiler_backend.CompilerBackendMode
+      (compiler_backend.compiler-backend-test-get-compiler-backend-current-mode
+        state-a)]
+    [b-mode-before : compiler_backend.CompilerBackendMode
+      (compiler_backend.compiler-backend-test-get-compiler-backend-current-mode
+        state-b)]
+    [a-entry-before : String
+      (compiler_backend.compiler-backend-emit-function-entry
+        a-before
+        "_tl_policy_a"
+        4800
+        (compiler_regalloc.compiler-reg-assignment-table-empty)
+        0
+        state-a)]
+    [b-entry-before : String
+      (compiler_backend.compiler-backend-emit-function-entry
+        b-before
+        "_tl_policy_b"
+        4800
+        (compiler_regalloc.compiler-reg-assignment-table-empty)
+        0
+        state-b)]
+    [_retarget-a : unit
+      (begin
+        (compiler_backend.compiler-backend-state-set-emission-target-policy!
+          state-a
+          windows)
+        (compiler_backend.compiler-backend-set-current-mode!
+          (compiler_backend.compiler-backend-state-function-state state-a)
+          compiler_backend.CompilerBackendMode.Avx512)
+        (compiler_backend.compiler-backend-set-current-fn-abi!
+          state-a
+          windows.abi))]
+    [a-after : compiler_backend.CompilerBackendTargetPolicy
+      (compiler_backend.compiler-backend-state-emission-target-policy state-a)]
+    [b-after : compiler_backend.CompilerBackendTargetPolicy
+      (compiler_backend.compiler-backend-state-emission-target-policy state-b)]
+    [a-entry-after : String
+      (compiler_backend.compiler-backend-emit-function-entry
+        a-after
+        "_tl_policy_a"
+        4800
+        (compiler_regalloc.compiler-reg-assignment-table-empty)
+        0
+        state-a)]
+    [b-entry-after : String
+      (compiler_backend.compiler-backend-emit-function-entry
+        b-after
+        "_tl_policy_b"
+        4800
+        (compiler_regalloc.compiler-reg-assignment-table-empty)
+        0
+        state-b)]
+    (and
+      a-before.linux
+      (not a-before.windows)
+      a-before.red-zone
+      a-before.linux-syscall
+      (not a-before.stack-probe)
+      (not a-win64-before)
+      (compiler_abi.compiler-abi-linux? a-before.abi)
+      (= a-before.gp-arg-register-count 6)
+      (= a-before.float-arg-register-count 8)
+      (= a-before.outgoing-shadow-space 0)
+      (match a-before.object-format
+        [(compiler_backend.CompilerBackendObjectFormatPolicy.Elf) true]
+        [_ false])
+      (match a-mode-before
+        [(compiler_backend.CompilerBackendMode.Scalar) true]
+        [_ false])
+      (not
+        (compiler_backend.compiler-backend-string-contains?
+          (owned_view.compiler-owned-shared-view a-entry-before)
+          ".seh_proc"))
+      (not
+        (compiler_backend.compiler-backend-string-contains?
+          (owned_view.compiler-owned-shared-view a-entry-before)
+          "__chkstk"))
+      b-before.windows
+      (not b-before.linux)
+      b-before.seh-unwind
+      b-before.stack-probe
+      (not b-before.red-zone)
+      (compiler_abi.compiler-abi-windows? b-before.abi)
+      (= b-before.gp-arg-register-count 4)
+      (= b-before.float-arg-register-count 4)
+      (= b-before.outgoing-shadow-space 32)
+      (match b-before.object-format
+        [(compiler_backend.CompilerBackendObjectFormatPolicy.Coff) true]
+        [_ false])
+      (match b-mode-before
+        [(compiler_backend.CompilerBackendMode.Avx2) true]
+        [_ false])
+      (compiler_backend.compiler-backend-string-contains?
+        (owned_view.compiler-owned-shared-view b-entry-before)
+        ".seh_proc _tl_policy_b")
+      (compiler_backend.compiler-backend-string-contains?
+        (owned_view.compiler-owned-shared-view b-entry-before)
+        "callq __chkstk")
+      a-after.windows
+      (compiler_backend.compiler-backend-test-get-compiler-backend-current-fn-win64
+        state-a)
+      b-after.windows
+      (string.eq b-entry-before b-entry-after)
+      (compiler_backend.compiler-backend-string-contains?
+        (owned_view.compiler-owned-shared-view a-entry-after)
+        ".seh_proc _tl_policy_a")
+      (compiler_backend.compiler-backend-string-contains?
+        (owned_view.compiler-owned-shared-view a-entry-after)
+        "callq __chkstk")
+      (compiler_backend.compiler-backend-test-get-compiler-backend-current-fn-win64
+        state-b)
+      (compiler_backend.compiler-backend-mode-avx2?
+        (compiler_backend.compiler-backend-test-get-compiler-backend-current-mode
+          state-b))
+      (not
+        (compiler_backend.compiler-backend-mode-avx2?
+          (compiler_backend.compiler-backend-test-get-compiler-backend-current-mode
+            state-a))))))
+
 (define (compiler-backend-test-register-mask [regs : (__tl_dyn-array i64)]) : i64
   (let
     [index : i64 0]
@@ -53062,6 +53249,9 @@ b_keep:
           (set! index (+ index 1))))
       mask)))
 
+;; Function-local traversal state must follow the backend job, even when two
+;; jobs reuse the same numeric ids and are interleaved. Resetting a failed job
+;; must likewise leave the other job's continuation state intact.
 (define (compiler-backend-function-state-isolation-ok?) : bool
   (let
     [intern-state : ci.InternCompatState
@@ -54327,6 +54517,7 @@ b_keep:
         (compiler-backend-deterministic-ok? (compiler-backend-smoke-source))
         (compiler-backend-explicit-state-routes-serial-parity-ok?)
         (compiler-backend-explicit-state-target-pic-policy-ok?)
+        (compiler-backend-target-policy-isolation-ok?)
         (compiler-backend-function-state-isolation-ok?)
         (compiler-backend-abort-counter-failure-reset-ok?))
       (compiler-backend-string-ok?)

@@ -3228,6 +3228,7 @@ Example:
 (package
   (name "my-app")
   (version "0.1.0")
+  (kind bin)
   (dependencies
     (math "../math")
     (lint (github "JoNil-Botta/typelisp-lint" (rev "abc123")))))
@@ -3245,9 +3246,15 @@ Example:
   `bin`, only `src/lib.tl` present selects `staticlib`, and both or neither
   present is a diagnostic requiring an explicit `kind` or `entry`. A manifest
   parsed without filesystem context defaults to `bin`.
-- `dependencies` is optional. Each entry has an alias symbol and either a
-  string root path, `(alias "relative/or/absolute/path")`, or a GitHub
-  shorthand source, `(alias (github "owner/repo" (rev "commit")))`.
+- `dependencies` is optional for `bin` packages. Each entry has an alias
+  symbol and either a string root path,
+  `(alias "relative/or/absolute/path")`, or a GitHub shorthand source,
+  `(alias (github "owner/repo" (rev "commit")))`. A `staticlib` package must
+  not declare normal TypeLisp package dependencies. Its manifest is rejected
+  at the first dependency alias, before any path or Git source is resolved,
+  fetched, built, or loaded. The diagnostic names the library and alias and
+  directs the author to declare the dependency in the consuming executable,
+  remove or combine the library dependency, or use `link` for native inputs.
 - GitHub shorthand also accepts `github.com/owner/repo` addresses. It requires
   exactly one non-empty `rev`, `tag`, or `branch` string pin and normalizes to
   a git remote URL with a pin fragment such as
@@ -3284,8 +3291,10 @@ Example:
   pin kind, and pin value match the manifest dependency; replay converts the
   dependency to the recorded exact commit before fetching. Missing or stale
   entries are resolved from the manifest pin and included in the next emitted
-  lockfile; a deterministic lockfile is written whenever the package has remote
-  dependencies or a prior lockfile exists.
+  lockfile; a deterministic lockfile is written whenever the executable root
+  has remote dependencies or a prior lockfile exists. A dependency library's
+  own lockfile is never part of resolution: all normal remote pins are visible
+  in and owned by the consuming executable root.
 - The remote package cache is a deterministic v1 root at
   `target/typelisp/cache/packages/v1` below the package root. Entry paths are
   derived from the normalized remote URL and an exact commit; `tag` and
@@ -3295,15 +3304,16 @@ Example:
   entries are reused without invoking `git`, including during locked replay.
   Partial or corrupt entries are never reused and are refetched through a
   staging directory.
-- Local dependency manifests are loaded into a normalized DAG keyed by manifest
-  path before build execution. Transitive dependency packages build once per
-  root build invocation, diamond graphs de-duplicate the common archive, and
-  independent ready nodes are scheduled concurrently when async process handles
-  are available (with a serial fallback preserving the same ordering and
-  diagnostics). Dependency cycles fail before code generation with a diagnostic
-  that includes the manifest path chain.
-- Dependency packages must be `staticlib` packages; a `bin` dependency is
-  rejected as a package-graph diagnostic.
+- An executable's normal package graph is exactly one level deep: every edge is
+  declared directly in its root manifest. Direct manifests are normalized and
+  de-duplicated by manifest path before build execution. Independent dependency
+  libraries are scheduled concurrently when async process handles are available,
+  with a serial fallback preserving the same ordering and diagnostics. A local
+  or fetched dependency manifest that declares a deeper normal edge is invalid
+  input and fails before that nested edge is resolved.
+- Dependency packages must be dependency-free `staticlib` packages; a `bin`
+  dependency is rejected as a package-graph diagnostic. The compiler-owned
+  standard library is not a package dependency.
 - `typelisp build --manifest-path path/to/typelisp.pkg` builds the entry file
   through the same module loader and compiler pipeline as `compile`.
   `typelisp build` without `--manifest-path` searches for `typelisp.pkg` from
@@ -3341,7 +3351,7 @@ Example:
   `lib[.exe]` or `llvm-ar[.exe]`; other basenames are rejected because their
   deterministic invocation contract is unknown. Package builds also produce a
   host comptime image
-  named `<package-name>.tlci` in the same profile directory; dependency DAG
+  named `<package-name>.tlci` in the same profile directory; direct dependency
   builds produce each dependency's tlci next to its static archive without
   changing runtime link behavior. Macro-free packages emit metadata-only
   images with an auxiliary source-set binding in rodata (the code, fixup,
@@ -3357,11 +3367,11 @@ Example:
   bracket-clause, borrow, array, match, and let declarations the same way;
   unsupported bodies retain an explicit registered shell and interpreted
   fallback. Package consumers discover dependency catalogs from the resolved
-  DAG, verify the package identity and exact source-set binding, apply host
-  admission, retain the result in a job-owned registry, and select the owning
-  catalog by physical defining-source provenance. Metadata-only catalogs are
-  admitted without native mapping; code-bearing catalogs are mapped only for
-  the compiler's build host. Selection retains the registry handle, slot,
+  direct dependency set, verify the package identity and exact source-set
+  binding, apply host admission, retain the result in a job-owned registry, and
+  select the owning catalog by physical defining-source provenance.
+  Metadata-only catalogs are admitted without native mapping; code-bearing
+  catalogs are mapped only for the compiler's build host. Selection retains the registry handle, slot,
   package/image key, registry generation, and mapped-entry generation as one
   lifetime-bound capability; dispatch revalidates all of them immediately
   before entering mapped code. Expression transformers consume the already
@@ -3427,11 +3437,13 @@ Example:
     requested libraries and arguments). On Linux, any non-empty link input
     switches the package link from the freestanding `ld` path to the `cc` path
     so the program links against the C runtime and the requested libraries.
-  - The `link` section affects only `bin` artifacts. `staticlib` packages emit
-    an archive, and a dependency package's `link` section is not propagated to
-    a dependent `bin`; declare shared native inputs in the binary package's own
-    manifest. Dynamic/shared library output is out of scope for the package
-    layer.
+  - `link` is native metadata, not a TypeLisp package edge, so a dependency-free
+    `staticlib` may declare it without violating the library dependency rule.
+    The current `link` section affects only `bin` artifacts: a `staticlib` emits
+    an archive, and its `link` section is not yet propagated to a dependent
+    `bin`; until exported native requirements are implemented, repeat required
+    native inputs in the binary package's own manifest. Dynamic/shared library
+    output is out of scope for the package layer.
 - Dependency modules are imported by dotted identity: an import whose leading
   segment is a dependency alias declared in the manifest resolves from that
   dependency's package root, as specified in §4.4.1.
@@ -3445,9 +3457,14 @@ Example:
     version ranges, choose among competing versions, or fetch multiple
     candidates.
   - Workspaces. Package roots have independent manifests, locks, target
-    directories, and dependency DAGs. A future workspace model may group local
-    packages and share orchestration/lock policy, but every package must
+    directories, and direct dependency sets. A future workspace model may group
+    local packages and share orchestration/lock policy, but every package must
     continue to build without a workspace file.
+  - Test/dev-only and target-specific dependency contexts. If added, test
+    dependencies for a library must remain isolated from its normal archive,
+    tlci, lock contract, and consumer graph. Target selection must validate the
+    consuming target: executable and test targets may activate dependencies,
+    while a library target's normal closure remains dependency-free.
   - Implicit preludes and dynamic/shared library output. Namespace isolation
     and qualified symbol access are specified by the module model in section
     4.4, not by package resolution itself.
@@ -5879,10 +5896,11 @@ package metadata. Malformed images surface the tlci parse diagnostic.
 
 ##### 5.17.1.3 Package consumer admission and dispatch
 
-Package consumers discover dependency images from the resolved package DAG and
-own their parsed images, keys, mappings, and status in one registry per compiler
-job. Normal source visibility, alias, and shadowing rules first resolve the
-macro declaration. Its physical defining-source provenance then identifies the
+Package consumers discover dependency images from the executable root's
+resolved direct dependency set and own their parsed images, keys, mappings, and
+status in one registry per compiler job. Normal source visibility, alias, and
+shadowing rules first resolve the macro declaration. Its physical
+defining-source provenance then identifies the
 owning registry slot; a same-named declaration from another package cannot
 select that slot.
 
@@ -7699,7 +7717,8 @@ in documentation passes.
   scalar/AVX2/AVX-512 out-of-line varying helper-call ABIs with active masks.
 - Comptime: declaration-emitting typed macros, type reflection, CTFE with
   deterministic fuel, and per-package `tlci` comptime interface images.
-- Tooling: package builds with lockfiles and dependency DAGs, inline tests,
+- Tooling: package builds with application-owned lockfiles and shallow direct
+  dependency sets, inline tests,
   doctests, `fmt`, `lint`, `doc` generation, the published docs site, a
   stdio LSP server with diagnostics, definition, completion, semantic signature
   help, inlay hints, formatting, hover, document links, flat top-level
@@ -7760,7 +7779,7 @@ scalarized extensions.
 | Dotted module imports everywhere | Implemented: imports accept dotted module identities only. |
 | Fixed-size-only public `Array` | Implemented: unsized `(Array T)` is rejected; private compiler/runtime buffers use `__tl_dyn-array`. |
 | Qualified short stdlib names | Migration in progress: module-name-prefixed helpers remain during the rename. |
-| Compiled comptime execution from embedded/package `tlci` images | Implemented for trusted local/source-built images on Linux and Windows. Published compilers use trusted embedded-stdlib and dependency-package catalogs; exact embedded or byte-identical source provenance admits stdlib entries, while dependency catalogs require exact package/source and host admission plus physical defining-provenance selection. Generation/key-bound capabilities are revalidated immediately before mapped dispatch. Compiled entries commit `Expr`, `Module`, and `Decls` results transactionally; dependency expressions reuse direct checked operands with zero rebinding, and declaration/module results reuse the exact bound environment. Registration shells and uncataloged, metadata-only, unavailable, or untrusted identities retain counted deterministic CTFE fallback. Required two-host differential, sustained reset/remap stress, bootstrap fixpoint, focused stale-source/rebuild, and package native/source gates require route activity plus byte-identical assembly and equivalent diagnostics. The embedded tier additionally derives an inventory-exact 107-entry declaration census and requires reviewed native/forced-source fixture evidence for every identity and result kind with byte-identical assembly. The package differential uses a two-parent dependency diamond to prove package-qualified catalog selection, one canonical mapping per package, native `Expr`/`Module`/`Decls` results, shell reuse, ordered/repeated generated output, zero-map forced-source parity, and authored/fuel diagnostic attribution. The isolated same-commit mutation gate additionally proves an interpreted producer consumes a changed transformer body, its successor executes that package-qualified identity from the newly embedded image, and later compiler/image/envelope/source-hash/provenance outputs converge. Metadata-only catalogs remain zero-entry/no-map and cross-host portable; stale source stands down before mapping, invalidates old capabilities, and resumes changed native execution only after rebuild. Content and exact-source hashes are deterministic integrity/rebuild identities, not publisher signatures; distributed/prebuilt authenticity remains a separate future trust layer. |
+| Compiled comptime execution from embedded/package `tlci` images | Implemented for trusted local/source-built images on Linux and Windows. Published compilers use trusted embedded-stdlib and dependency-package catalogs; exact embedded or byte-identical source provenance admits stdlib entries, while dependency catalogs require exact package/source and host admission plus physical defining-provenance selection. Generation/key-bound capabilities are revalidated immediately before mapped dispatch. Compiled entries commit `Expr`, `Module`, and `Decls` results transactionally; dependency expressions reuse direct checked operands with zero rebinding, and declaration/module results reuse the exact bound environment. Registration shells and uncataloged, metadata-only, unavailable, or untrusted identities retain counted deterministic CTFE fallback. Required two-host differential, sustained reset/remap stress, bootstrap fixpoint, focused stale-source/rebuild, and package native/source gates require route activity plus byte-identical assembly and equivalent diagnostics. The embedded tier additionally derives an inventory-exact 107-entry declaration census and requires reviewed native/forced-source fixture evidence for every identity and result kind with byte-identical assembly. The package differential uses three directly declared dependency-free libraries to prove package-qualified catalog selection, one canonical mapping per package, native `Expr`/`Module`/`Decls` results, shell reuse, ordered/repeated generated output, zero-map forced-source parity, and authored/fuel diagnostic attribution. The isolated same-commit mutation gate additionally proves an interpreted producer consumes a changed transformer body, its successor executes that package-qualified identity from the newly embedded image, and later compiler/image/envelope/source-hash/provenance outputs converge. Metadata-only catalogs remain zero-entry/no-map and cross-host portable; stale source stands down before mapping, invalidates old capabilities, and resumes changed native execution only after rebuild. Content and exact-source hashes are deterministic integrity/rebuild identities, not publisher signatures; distributed/prebuilt authenticity remains a separate future trust layer. |
 | Package registry, semantic-version solving, workspaces | Deferred by design: deterministic git-pinned dependencies with lockfile replay. |
 | Richer LSP/IDE features | The immutable workspace source/declaration index, overlay/event plumbing, standard semantic workspace references, safe workspace-wide `prepareRename`/`rename`, and full-document semantic tokens are implemented. Binding-aware read/write document highlights and hierarchical document symbols (members, variants, locals, and macro-generated declarations) remain pending. Range-scoped and incremental semantic-token requests are optional follow-ups. |
 

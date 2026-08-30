@@ -4,9 +4,9 @@ set -eu
 # Execute package dependency Expr/Module/Decls macros from their admitted TLCI
 # catalog, then force the same compiler job through source CTFE and require
 # identical assembly/runtime behavior. A generated producer/consumer/runner
-# graph then changes one macro result, deliberately rebuilds only the consumer
-# against the stale producer image, and verifies source fallback, native rebuild,
-# registry replacement, and deterministic restoration. The supplied compiler
+# pair then changes one macro result and verifies forced-source parity, native
+# rebuild, same-process stale-image registry replacement, and deterministic
+# restoration. The supplied compiler
 # must carry compile-profile and dependency-tlci-verification.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
@@ -55,19 +55,18 @@ NATIVE_ASM="$WORKDIR/spmd_consumer.native.s"
 TRANSITION="$WORKDIR/transition"
 TRANSITION_PRODUCER="$TRANSITION/producer"
 TRANSITION_CONSUMER="$TRANSITION/consumer"
-TRANSITION_RUNNER="$TRANSITION/runner"
 TRANSITION_SOURCE="$TRANSITION_PRODUCER/src/lib.tl"
 TRANSITION_MANIFEST="$TRANSITION_PRODUCER/typelisp.pkg"
 TRANSITION_TLCI="$TRANSITION_PRODUCER/target/release/rebuild_fixture.tlci"
 TRANSITION_CONSUMER_ASM="$TRANSITION_CONSUMER/target/release/rebuild_consumer.s"
-TRANSITION_RUNNER_MANIFEST="$TRANSITION_RUNNER/typelisp.pkg"
-TRANSITION_BIN="$TRANSITION_RUNNER/target/release/rebuild_runner$NL_BIN_EXT"
+TRANSITION_RUNNER_MANIFEST="$TRANSITION_CONSUMER/typelisp.pkg"
+TRANSITION_BIN="$TRANSITION_CONSUMER/target/release/rebuild_consumer$NL_BIN_EXT"
 TRANSITION_HARNESS="$ROOT/tests/tlci/package_dependency_transition.tl"
 OLD_SOURCE="$TRANSITION/producer.old.tl"
 NEW_SOURCE="$TRANSITION/producer.new.tl"
 OLD_IMAGE="$TRANSITION/rebuild_fixture.old.tlci"
 NEW_IMAGE="$TRANSITION/rebuild_fixture.new.tlci"
-STALE_CONSUMER_ASM="$TRANSITION/rebuild_consumer.stale.s"
+SOURCE_CHANGED_CONSUMER_ASM="$TRANSITION/rebuild_consumer.source-changed.s"
 TRANSITION_EVIDENCE="$TRANSITION/evidence.txt"
 
 fail() {
@@ -140,8 +139,7 @@ mkdir -p "$WORKDIR"
 
 mkdir -p \
     "$TRANSITION_PRODUCER/src" \
-    "$TRANSITION_CONSUMER/src" \
-    "$TRANSITION_RUNNER/src"
+    "$TRANSITION_CONSUMER/src"
 cat > "$TRANSITION_MANIFEST" <<'EOF'
 (package
   (name "rebuild_fixture")
@@ -165,33 +163,17 @@ cat > "$TRANSITION_CONSUMER/typelisp.pkg" <<'EOF'
 (package
   (name "rebuild_consumer")
   (version "1.0.0")
-  (kind "lib")
+  (kind "bin")
   (dependencies
     (fixture "../producer")))
 EOF
-cat > "$TRANSITION_CONSUMER/src/lib.tl" <<'EOF'
-(module consumer.src.lib)
+cat > "$TRANSITION_CONSUMER/src/main.tl" <<'EOF'
+(module consumer.src.main)
 
 (import fixture.src.lib as fixture)
 
-(define (answer) : i64
-  (fixture.package-answer))
-EOF
-cat > "$TRANSITION_RUNNER_MANIFEST" <<'EOF'
-(package
-  (name "rebuild_runner")
-  (version "1.0.0")
-  (kind "bin")
-  (dependencies
-    (consumer "../consumer")))
-EOF
-cat > "$TRANSITION_RUNNER/src/main.tl" <<'EOF'
-(module rebuild_runner)
-
-(import consumer.src.lib as consumer)
-
 (define (main) : i64
-  (consumer.answer))
+  (fixture.package-answer))
 EOF
 
 for target in "$PRODUCER/target" "$CONSUMER/target"; do
@@ -320,29 +302,37 @@ OLD_CONTENT_HASH=$(inspect_field content-hash "$TRANSITION/old.inspect")
 cp "$TRANSITION_TLCI" "$OLD_IMAGE"
 
 cp "$NEW_SOURCE" "$TRANSITION_SOURCE"
-echo "[package-native-tlci] stale transition dependency check"
-if ! "$COMPILER" build --package-worker \
-    --manifest-path "$TRANSITION_CONSUMER/typelisp.pkg" \
+TYPELISP_DEPENDENCY_TLCI_FORCE_SOURCE=1
+export TYPELISP_DEPENDENCY_TLCI_FORCE_SOURCE
+echo "[package-native-tlci] changed-source forced-source transition control"
+if ! "$COMPILER" build \
+    --manifest-path "$TRANSITION_RUNNER_MANIFEST" \
     --target "$NL_BOOTSTRAP_TARGET" \
     --backend-mode scalar \
-    --profile release \
     --opt-level 0 \
-    > "$TRANSITION/stale.out" 2> "$TRANSITION/stale.err"; then
-    cat "$TRANSITION/stale.out" >&2
-    cat "$TRANSITION/stale.err" >&2
-    fail "stale transition dependency check failed"
+    > "$TRANSITION/source-changed.out" 2> "$TRANSITION/source-changed.err"; then
+    cat "$TRANSITION/source-changed.out" >&2
+    cat "$TRANSITION/source-changed.err" >&2
+    fail "changed-source forced-source transition control failed"
 fi
 [ -s "$TRANSITION_CONSUMER_ASM" ] ||
-    fail "stale-source transition consumer assembly is missing"
+    fail "changed-source transition consumer assembly is missing"
 grep -F "dependency-tlci-verification|phase=prepared|requests=1|entries=1" \
-    "$TRANSITION/stale.err" | \
+    "$TRANSITION/source-changed.err" | \
     grep -F "|unavailable=1|metadata=0|code=0|code-bytes=0|fixup-bytes=0|entry-bytes=0|import-bytes=0" \
         >/dev/null ||
-    fail "stale transition dependency retained mapped code"
-assert_profile_eq dependency_tlci_native_dispatches 0 "$TRANSITION/stale.err"
-assert_profile_eq dependency_tlci_load_failures 1 "$TRANSITION/stale.err"
-assert_profile_eq dependency_tlci_interpreted_fallbacks 1 "$TRANSITION/stale.err"
-cp "$TRANSITION_CONSUMER_ASM" "$STALE_CONSUMER_ASM"
+    fail "forced-source transition control retained mapped code"
+assert_profile_eq dependency_tlci_native_dispatches 0 "$TRANSITION/source-changed.err"
+assert_profile_eq dependency_tlci_load_failures 1 "$TRANSITION/source-changed.err"
+assert_profile_eq dependency_tlci_interpreted_fallbacks 1 "$TRANSITION/source-changed.err"
+cp "$TRANSITION_CONSUMER_ASM" "$SOURCE_CHANGED_CONSUMER_ASM"
+unset TYPELISP_DEPENDENCY_TLCI_FORCE_SOURCE || true
+
+case "$TRANSITION_CONSUMER/target" in
+    "$ROOT"/target/package-native-tlci/*/transition/consumer/target) ;;
+    *) fail "refusing unsafe transition consumer target cleanup" ;;
+esac
+rm -rf "$TRANSITION_CONSUMER/target"
 
 echo "[package-native-tlci] rebuilt transition dependency build"
 if ! "$COMPILER" build \
@@ -366,8 +356,8 @@ assert_profile_eq dependency_tlci_interpreted_fallbacks 0 "$TRANSITION/new.err"
 grep -F "|fixture.src.lib/package-answer arity=0 calls=1" \
     "$TRANSITION/new.err" >/dev/null ||
     fail "rebuilt transition profile lacks its package-qualified macro call"
-cmp "$STALE_CONSUMER_ASM" "$TRANSITION_CONSUMER_ASM" >/dev/null ||
-    fail "stale-source and rebuilt-native consumer assembly differ"
+cmp "$SOURCE_CHANGED_CONSUMER_ASM" "$TRANSITION_CONSUMER_ASM" >/dev/null ||
+    fail "forced-source and rebuilt-native consumer assembly differ"
 run_transition_value new 43
 
 if ! "$COMPILER" inspect "$TRANSITION_TLCI" \

@@ -96,26 +96,20 @@ cat > "$LEFT_PKG/typelisp.pkg" <<'EOF'
 (package
   (name "metadata_left")
   (version "1.0.0")
-  (kind staticlib)
-  (dependencies
-    (shared "../shared")))
+  (kind staticlib))
 EOF
 cat > "$LEFT_PKG/src/lib.tl" <<'EOF'
-(import shared.src.lib as shared)
-(define (left-answer) : i64 (shared.shared-answer))
+(define (left-answer) : i64 10)
 EOF
 
 cat > "$RIGHT_PKG/typelisp.pkg" <<'EOF'
 (package
   (name "metadata_right")
   (version "1.0.0")
-  (kind staticlib)
-  (dependencies
-    (shared "../shared")))
+  (kind staticlib))
 EOF
 cat > "$RIGHT_PKG/src/lib.tl" <<'EOF'
-(import shared.src.lib as shared)
-(define (right-answer) : i64 (shared.shared-answer))
+(define (right-answer) : i64 11)
 EOF
 
 cat > "$ROOT_PKG/typelisp.pkg" <<'EOF'
@@ -132,7 +126,9 @@ EOF
 cat > "$ROOT_PKG/src/main.tl" <<'EOF'
 (import left.src.lib as left)
 (import right.src.lib as right)
-(define (main) : i64 (+ (left.left-answer) (right.right-answer)))
+(import shared_a.src.lib as shared)
+(define (main) : i64
+  (+ (left.left-answer) (right.right-answer) (shared.shared-answer)))
 EOF
 
 TYPELISP_DEPENDENCY_TLCI_VERIFY=1

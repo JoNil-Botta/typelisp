@@ -17314,6 +17314,13 @@
   (Ok CompilerPkgDeps)
   (Err String))
 
+;: First normal package dependency carried by a manifest, when present.
+;: The dedicated result keeps package-edge policy separate from native
+;: `(link ...)` metadata.
+(defenum CompilerPkgMaybeDependency
+  (NoDependency)
+  (Dependency CompilerPkgDep))
+
 ;: Count the dependencies in a parsed list.
 (define (compiler-pkg-dep-list-count [deps : (& deps CompilerPkgDepList)]) : i64
   deps.len)
@@ -17375,6 +17382,35 @@
 
 (define (compiler-pkg-deps-count [deps : (& deps CompilerPkgDeps)]) : i64
   deps.ordered.len)
+
+;: Return the first normal dependency of a library package. Binary package
+;: dependencies and dependency-free libraries intentionally return none.
+(define (compiler-pkg-manifest-first-library-dependency
+  [manifest : (& manifest CompilerPkgManifest)]) : CompilerPkgMaybeDependency
+  (match manifest.kind
+    [(CompilerPkgKindBin) (CompilerPkgMaybeDependency.NoDependency)]
+    [(CompilerPkgKindLib)
+      (let
+        [deps : CompilerPkgDepList
+          (compiler-pkg-deps-list (clone manifest.deps))]
+        (if (= (compiler-pkg-dep-list-count (& deps)) 0)
+          (CompilerPkgMaybeDependency.NoDependency)
+          (CompilerPkgMaybeDependency.Dependency
+            (compiler-pkg-dep-list-at (& deps) 0))))]))
+
+;: Explain the dependency-free library invariant and its supported
+;: composition/native-link alternatives.
+(define (compiler-pkg-library-dependency-message
+  [package-name : String]
+  [alias : String]) : String
+  (str_cat.str-cat
+    "library package `"
+    package-name
+    "` cannot declare normal dependency `"
+    (clone alias)
+    "`; declare `"
+    alias
+    "` directly in the consuming application, remove or combine the library dependency, or use `link` for native libraries"))
 
 (define (compiler-pkg-deps-alias-seen?
   [deps : CompilerPkgDeps]
@@ -18330,6 +18366,67 @@
     (reader.spanned-sexpr-span form)
     message))
 
+;: Return the first dependency alias span from a well-formed
+;: `(dependencies ...)` field. The whole manifest span is a fail-closed
+;: fallback for callers validating a structurally constructed form.
+(define (compiler-load-manifest-first-dependency-entry-span
+  [entries : reader.SpannedSexpr]
+  [fallback : token.SourceSpan]) : token.SourceSpan
+  (match (reader.spanned-sexpr-view entries)
+    [(reader.SpannedSexprView.Cons entry _ _)
+      (match (reader.spanned-sexpr-view entry)
+        [(reader.SpannedSexprView.Cons alias _ _)
+          (reader.spanned-sexpr-span alias)]
+        [_ fallback])]
+    [_ fallback]))
+
+(define (compiler-load-manifest-first-dependency-field-span
+  [fields : reader.SpannedSexpr]
+  [fallback : token.SourceSpan]) : token.SourceSpan
+  (match (reader.spanned-sexpr-view fields)
+    [(reader.SpannedSexprView.Cons field rest _)
+      (match (reader.spanned-sexpr-view field)
+        [(reader.SpannedSexprView.Cons field-name entries _)
+          (match (reader.spanned-sexpr-view field-name)
+            [(reader.SpannedSexprView.Sym name _)
+              (if (string.eq (compiler-load-symbol-text name) "dependencies")
+                (compiler-load-manifest-first-dependency-entry-span
+                  entries
+                  fallback)
+                (compiler-load-manifest-first-dependency-field-span
+                  rest
+                  fallback))]
+            [_
+              (compiler-load-manifest-first-dependency-field-span rest fallback)])]
+        [_ (compiler-load-manifest-first-dependency-field-span rest fallback)])]
+    [_ fallback]))
+
+(define (compiler-load-manifest-first-dependency-span
+  [form : reader.SpannedSexpr]) : token.SourceSpan
+  (let
+    [fallback : token.SourceSpan (reader.spanned-sexpr-span (clone form))]
+    (match (reader.spanned-sexpr-view form)
+      [(reader.SpannedSexprView.Cons _ fields _)
+        (compiler-load-manifest-first-dependency-field-span fields fallback)]
+      [_ fallback])))
+
+;: Enforce dependency-free library artifacts after kind inference and attach
+;: the diagnostic to the forbidden alias rather than the whole manifest.
+(define (compiler-load-manifest-validate-library-dependencies
+  [path : String]
+  [form : reader.SpannedSexpr]
+  [manifest : CompilerPkgManifest]) : ResultCompilerPkgManifestDiagnostic
+  (match (compiler-pkg-manifest-first-library-dependency (& manifest))
+    [(CompilerPkgMaybeDependency.NoDependency)
+      (ResultCompilerPkgManifestDiagnostic.Ok manifest)]
+    [(CompilerPkgMaybeDependency.Dependency dep)
+      (ResultCompilerPkgManifestDiagnostic.Err
+        (box
+          (cdiag.compiler-diagnostic-from-span
+            path
+            (compiler-load-manifest-first-dependency-span form)
+            (compiler-pkg-library-dependency-message manifest.name dep.alias))))]))
+
 (define (compiler-load-manifest-apply-kind-inference
   [path : String]
   [form : reader.SpannedSexpr]
@@ -18340,13 +18437,15 @@
     (if (compiler-load-manifest-needs-kind-inference? raw-form)
       (match (compiler-load-manifest-infer-kind-from-files (clone path))
         [(ResultCompilerPkgKind.Ok kind)
-          (ResultCompilerPkgManifestDiagnostic.Ok
+          (compiler-load-manifest-validate-library-dependencies
+            path
+            form
             (compiler-load-manifest-with-kind manifest kind))]
         [(ResultCompilerPkgKind.Err message)
           (ResultCompilerPkgManifestDiagnostic.Err
             (box
               (compiler-load-manifest-validation-diagnostic path form message)))])
-      (ResultCompilerPkgManifestDiagnostic.Ok manifest))))
+      (compiler-load-manifest-validate-library-dependencies path form manifest))))
 
 (define (compiler-load-parse-manifest-form-diagnostic
   [path : String]
@@ -18354,7 +18453,7 @@
   (match (compiler-load-manifest-from-form
     (reader.spanned-sexpr-form (ast.ast-place-shared-view form)))
     [(ResultCompilerPkgManifest.Ok manifest)
-      (ResultCompilerPkgManifestDiagnostic.Ok manifest)]
+      (compiler-load-manifest-validate-library-dependencies path form manifest)]
     [(ResultCompilerPkgManifest.Err message)
       (ResultCompilerPkgManifestDiagnostic.Err
         (box (compiler-load-manifest-validation-diagnostic path form message)))]))
@@ -18581,7 +18680,13 @@
       "(module foo)"
       "expected `package` form, got `module`"
       1
-      1)))
+      1)
+    (compiler-load-manifest-diagnostic-rejects?
+      "pkg/typelisp.pkg"
+      "(package\n  (name \"wrapped\")\n  (version \"1\")\n  (kind \"staticlib\")\n  (dependencies\n    (runtime \"../runtime\")))"
+      "library package `wrapped` cannot declare normal dependency `runtime`; declare `runtime` directly in the consuming application, remove or combine the library dependency, or use `link` for native libraries"
+      6
+      6)))
 
 (define (compiler-load-manifest-test-mkdir [path : String]) : bool
   (match (fs.try-mkdir-if-missing (& path))
@@ -18697,6 +18802,22 @@
         (CompilerPkgKindLib)
         "src/lib.tl"))))
 
+(define (compiler-load-manifest-infer-lib-dependency-rejects?) : bool
+  (let
+    [root : String
+      (compiler-load-manifest-test-root "compiler_load_pkg_lib_dependency")]
+    [manifest-path : String
+      (compiler-load-manifest-test-path (clone root) "typelisp.pkg")]
+    (and
+      (compiler-load-manifest-write-convention-fixture
+        root
+        "(package (name \"inferred_lib\") (version \"1\") (dependencies (runtime \"../runtime\")))"
+        false
+        true)
+      (compiler-load-manifest-path-rejects?
+        manifest-path
+        "library package `inferred_lib` cannot declare normal dependency `runtime`; declare `runtime` directly in the consuming application, remove or combine the library dependency, or use `link` for native libraries"))))
+
 (define (compiler-load-manifest-infer-ambiguous-ok?) : bool
   (let
     [root : String
@@ -18785,6 +18906,7 @@
   (and
     (compiler-load-manifest-infer-bin-only-ok?)
     (compiler-load-manifest-infer-lib-only-ok?)
+    (compiler-load-manifest-infer-lib-dependency-rejects?)
     (compiler-load-manifest-infer-ambiguous-ok?)
     (compiler-load-manifest-infer-missing-ok?)
     (compiler-load-manifest-infer-explicit-ok?)
@@ -18842,7 +18964,13 @@
       "dependency alias may only contain ASCII letters, digits, '-' and '_'")
     (compiler-load-manifest-rejects?
       "(package (name \"x\") (version \"1\") (kind \"bin\") (entry \"e.tl\") (dependencies (math \"\")))"
-      "manifest dependency `math` path must not be empty")))
+      "manifest dependency `math` path must not be empty")
+    (compiler-load-manifest-rejects?
+      "(package (name \"layer\") (version \"1\") (kind \"staticlib\") (dependencies (runtime \"../runtime\")))"
+      "library package `layer` cannot declare normal dependency `runtime`; declare `runtime` directly in the consuming application, remove or combine the library dependency, or use `link` for native libraries")
+    (compiler-load-manifest-rejects?
+      "(package (name \"remote_layer\") (version \"1\") (kind \"staticlib\") (dependencies (runtime (github \"owner/runtime\" (rev \"abc\")))))"
+      "library package `remote_layer` cannot declare normal dependency `runtime`; declare `runtime` directly in the consuming application, remove or combine the library dependency, or use `link` for native libraries")))
 
 ;: True when a package link string vector is empty.
 (define (compiler-load-link-vec-empty? [vec : (& vec fs.FsStringVector)]) : bool
@@ -18869,22 +18997,33 @@
 ;: Self-test: a `(link ...)` section parses into all-target and per-target sets
 ;: with manifest order preserved.
 (define (compiler-load-manifest-link-valid-ok?) : bool
-  (match (compiler-load-parse-manifest
-    "(package (name \"p\") (version \"1\") (kind \"bin\") (entry \"src/main.tl\") (link (libraries \"raylib\") (search-paths \"vendor/lib\") (linux-libraries \"GL\" \"m\") (linux-args \"-Wl,--as-needed\") (windows-libraries \"opengl32\")))")
-    [(ResultCompilerPkgManifest.Ok m)
-      (let
-        [link : CompilerPkgLink m.link]
-        [all : CompilerPkgLinkSet link.all]
-        [lin : CompilerPkgLinkSet link.linux]
-        [win : CompilerPkgLinkSet link.windows]
+  (and
+    (match (compiler-load-parse-manifest
+      "(package (name \"p\") (version \"1\") (kind \"bin\") (entry \"src/main.tl\") (link (libraries \"raylib\") (search-paths \"vendor/lib\") (linux-libraries \"GL\" \"m\") (linux-args \"-Wl,--as-needed\") (windows-libraries \"opengl32\")))")
+      [(ResultCompilerPkgManifest.Ok m)
+        (let
+          [link : CompilerPkgLink m.link]
+          [all : CompilerPkgLinkSet link.all]
+          [lin : CompilerPkgLinkSet link.linux]
+          [win : CompilerPkgLinkSet link.windows]
+          (and
+            (compiler-load-link-vec-single? (& all.libraries) "raylib")
+            (compiler-load-link-vec-single? (& all.search-paths) "vendor/lib")
+            (compiler-load-link-vec-empty? (& all.args))
+            (compiler-load-link-vec-pair? (& lin.libraries) "GL" "m")
+            (compiler-load-link-vec-single? (& lin.args) "-Wl,--as-needed")
+            (compiler-load-link-vec-single? (& win.libraries) "opengl32")))]
+      [(ResultCompilerPkgManifest.Err _) false])
+    (match (compiler-load-parse-manifest
+      "(package (name \"wrapper\") (version \"1\") (kind \"staticlib\") (link (libraries \"sqlite3\") (search-paths \"vendor/sqlite\")))")
+      [(ResultCompilerPkgManifest.Ok m)
         (and
-          (compiler-load-link-vec-single? (& all.libraries) "raylib")
-          (compiler-load-link-vec-single? (& all.search-paths) "vendor/lib")
-          (compiler-load-link-vec-empty? (& all.args))
-          (compiler-load-link-vec-pair? (& lin.libraries) "GL" "m")
-          (compiler-load-link-vec-single? (& lin.args) "-Wl,--as-needed")
-          (compiler-load-link-vec-single? (& win.libraries) "opengl32")))]
-    [(ResultCompilerPkgManifest.Err _) false]))
+          (= (compiler-pkg-deps-count (& m.deps)) 0)
+          (compiler-load-link-vec-single? (& m.link.all.libraries) "sqlite3")
+          (compiler-load-link-vec-single?
+            (& m.link.all.search-paths)
+            "vendor/sqlite"))]
+      [(ResultCompilerPkgManifest.Err _) false])))
 
 ;: Self-test: a manifest with no `link` section parses with empty link sets.
 (define (compiler-load-manifest-link-default-ok?) : bool

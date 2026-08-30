@@ -101006,8 +101006,11 @@
           [(MacroSegmentedProgramStep.Cons item rest)
             (begin
               (set! iter rest)
-              (match (macro-segmented-program-borrow-decl
-                (tc-global-shared-view item))
+              ;; The iterator's declaration storage outlives this immediate
+              ;; tag/payload probe. Keep the row borrowed: neither the segment
+              ;; chain nor its pool context can grow, rotate, or reset inside
+              ;; this match.
+              (match (ast.ast-decl-list-ref-borrowed (& item.decls) item.index)
                 [(ast.AstDecl.Module _)
                   (set!
                     module-id
@@ -101015,22 +101018,19 @@
                       (& item.decls)
                       item.index
                       cbi.compiler-builtin-id-fix-empty))]
-                [(ast.AstDecl.Import _ _)
+                [(ast.AstDecl.Import
+                    _
+                    (ast.AstImportSpec.Spec _ _ expected _ _))
                   (if (= module-id current-module-id)
-                    (match (macro-segmented-program-borrow-decl item)
-                      [(ast.AstDecl.Import
-                          _
-                          (ast.AstImportSpec.Spec _ _ expected _ _))
-                        (match expected
-                          [(ast.AstMaybeModuleName.Some target)
-                            (if (tc-module-identity-id-eq?
-                              session
-                              target
-                              target-id)
-                              (set! found true)
-                              unit)]
-                          [(ast.AstMaybeModuleName.No) unit])]
-                      [_ unit])
+                    (match expected
+                      [(ast.AstMaybeModuleName.Some target)
+                        (if (tc-module-identity-id-eq?
+                          session
+                          (deref target)
+                          target-id)
+                          (set! found true)
+                          unit)]
+                      [(ast.AstMaybeModuleName.No) unit])
                     unit)]
                 [_ unit])
               unit)]))
@@ -101042,7 +101042,10 @@
   [decls : ast.AstDeclList]
   [index : i64]
   [cur-module-id : i64]) : i64
-  (match (ast.ast-decl-list-ref (tc-global-shared-view decls) index)
+  ;; A segment row stays installed for this complete call. The initial branch
+  ;; needs only its tag, so borrow it and materialize the 104-byte declaration
+  ;; only on the root-module arm that actually consumes the full payload.
+  (match (ast.ast-decl-list-ref-borrowed (& decls) index)
     [(ast.AstDecl.Module _)
       (ast.ast-decl-list-module-id-at
         (& decls)
@@ -101054,7 +101057,9 @@
           (tc-module-local-root-shadow-decl-note!
             session
             seen
-            (ast.ast-decl-list-ref decls index))
+            (tc-global-array-element-shared-view
+              decls.slots
+              (+ decls.offset index)))
           unit)
         cur-module-id)]))
 
@@ -103454,8 +103459,10 @@
           [(MacroSegmentedProgramStep.Cons item rest)
             (begin
               (set! iter rest)
-              (match (macro-segmented-program-borrow-decl
-                (tc-global-shared-view item))
+              ;; This first pass is tag-only for almost every declaration. The
+              ;; iterator owns the segment descriptor through the match; a full
+              ;; row is copied below only when it is appended to `out-rev`.
+              (match (ast.ast-decl-list-ref-borrowed (& item.decls) item.index)
                 [(ast.AstDecl.Module _)
                   (begin
                     (set!
@@ -103473,7 +103480,9 @@
                     (set!
                       out-rev
                       (ast.ast-decl-list-prepend-builder
-                        (macro-segmented-program-borrow-decl item)
+                        (tc-global-array-element-shared-view
+                          item.decls.slots
+                          (+ item.decls.offset item.index))
                         out-rev))
                     unit)])
               unit)]))

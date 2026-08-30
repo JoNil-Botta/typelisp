@@ -206,9 +206,10 @@
 ;; existing optimizer analyses that pack a small level or parameter index into
 ;; a temporary i64 derived from a symbol id.
 ;;
-;; Keep these reservations together: #6941 migrates cfg keys into the first
-;; domain, while compiler_ir_types owns the second one. A producer may use the
-;; low 32 bits only as a domain-local payload and must reject the limit itself.
+;; Keep these reservations together: compiler_cfg_core owns the first tagged
+;; domain (refs #6941), while compiler_ir_types owns the second one. A producer
+;; may use the low 32 bits only as a domain-local payload and must reject the
+;; limit itself.
 (define (intern-compiler-identity-domain-width) : i64
   4294967296)
 

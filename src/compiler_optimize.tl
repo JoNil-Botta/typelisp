@@ -25316,6 +25316,78 @@
           (compiler-opt-global-shared-view body)
           label))]))
 
+;; A BRANCH CONDITION is not a consumer that can pay for a hoist, and it is the
+;; one use kind where moving the definition out is never a per-iteration win. A
+;; compare left where its branch is lowers to `cmp; jcc` -- the compare IS the
+;; branch's own flag computation. Hoisted, it has to become a VALUE: `cmp;
+;; setcc; movzx` at the preheader and `test r, r; jcc` at each use, so every
+;; iteration still pays one flag-setting instruction, the preheader pays two
+;; more, and a boolean register stays live across the whole loop.
+;;
+;; The corpus pins it. intern_table's slice-equality guard had one conjunct
+;; hoisted this way (`%659 = sub len, start ; %661 = le count, %659` lifted out
+;; of the versioning guard into the enclosing loop's entry, then consumed by
+;; `test %r10, %r10`): six instructions on EVERY intern call, hit or miss,
+;; 1,719,672 times, for a conjunct that costs two where its branch is
+;; (`target/research/phase3/intern_table.md` S4.1 site 10, 10,318,032 Ir).
+;;
+;; So a var whose every use is a branch condition is not collected here, and
+;; the BinOp/UnOp arms of `opt-licm-candidate?` -- which is where this set is
+;; read -- leave such a compare in place. A boolean with any OTHER use (an
+;; `And` chain, a phi, a store, a call argument) has to be materialized
+;; wherever it is defined, so hoisting it really does remove work per
+;; iteration; those uses are still collected and still pay for the hoist.
+;;
+;; TWO PLACES STILL COUNT A BRANCH CONDITION, and both are cases where the
+;; branch does NOT run once per iteration of the loop being hoisted out of:
+;;
+;;   * a use OUTSIDE the loop -- the value has to exist there whatever this
+;;     pass does, so nothing is materialized that was not materialized already;
+;;   * a use in a NESTED loop, which runs many times per outer iteration, so
+;;     lifting its compare out of the outer loop removes real per-iteration
+;;     work and the one-off `setcc`/`movzx` is repaid. Measured from the losing
+;;     side with the nested-loop case excluded too: spmd_zip +600,003, its inner
+;;     unrolled loop's guard compare left inside the enclosing loop.
+;;
+;; THE MEASURED TRADE. The rule is a per-iteration argument, not a whole-program
+;; one, and two rows pay a SECONDARY cost for it through the allocator rather
+;; than through the guard: keeping a compare's two invariant operands live where
+;; the compare is changes register pressure downstream. Measured against
+;; `tl-itbase`: intern_table -9,285,450 and liveness_scan -566,375, cfg_domloops
+;; -101,280, peephole_lines -6,138, against graph_dijkstra +783,894 (its `/1e9`
+;; magic constant pushed out of the stack slot an `imulq mem` reads into a
+;; per-iteration `movabs $imm64` plus `imul`), spmd_zip +600,003 and phys_nbody
+;; +9,190 -- none of them a baseline row, and none of them a change in what the
+;; guard tests. Self-compile +0.0185%.
+(define (opt-licm-collect-nonbranch-uses-from
+  [set : opt_i64_i64_map.Map]
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [count : i64]) : opt_i64_i64_map.Map
+  (if (>= index count)
+    set
+    (opt-licm-collect-nonbranch-uses-from
+      (let
+        [instr : ir.CompilerIrInstr
+          (ir.compiler-ir-instr-seq-ref
+            (compiler-opt-global-shared-view instrs)
+            index)]
+        (match (compiler-opt-global-shared-view instr)
+          [(ir.CompilerIrInstr.Branch _ _ _) set]
+          [_ (opt-collect-instr-uses set instr)]))
+      (compiler-opt-global-shared-view instrs)
+      (+ index 1)
+      count)))
+
+(define (opt-licm-collect-nonbranch-uses
+  [set : opt_i64_i64_map.Map]
+  [instrs : ir.CompilerIrInstrSeq]) : opt_i64_i64_map.Map
+  (opt-licm-collect-nonbranch-uses-from
+    set
+    (compiler-opt-global-shared-view instrs)
+    0
+    (ir.compiler-ir-instr-seq-count (compiler-opt-global-shared-view instrs))))
+
 ;; Collect consumers whose frequency can pay for an arithmetic value's longer
 ;; live range. Uses outside the loop must remain available, blocks dominating
 ;; the latch execute on every continuing iteration, and nested-loop uses can be
@@ -25344,15 +25416,10 @@
             gate?
             (compiler-opt-box-shared-view rest)
             (if (or
-              (not gate?)
               (not
                 (opt-label-contains
                   (compiler-opt-global-shared-view body)
                   label))
-              (opt-licm-block-guaranteed?
-                (compiler-opt-global-shared-view context)
-                latch-id
-                label)
               (opt-licm-label-in-nested-loop?
                 (compiler-opt-global-shared-view loops)
                 header
@@ -25361,7 +25428,16 @@
               (opt-collect-instr-seq-uses
                 (compiler-opt-global-shared-view set)
                 instrs)
-              set))])]
+              (if (or
+                (not gate?)
+                (opt-licm-block-guaranteed?
+                  (compiler-opt-global-shared-view context)
+                  latch-id
+                  label))
+                (opt-licm-collect-nonbranch-uses
+                  (compiler-opt-global-shared-view set)
+                  instrs)
+                set)))])]
     [(ir.CompilerIrBlockList.Array seq)
       (opt-licm-hot-use-vars
         (compiler-opt-global-shared-view context)
@@ -78647,6 +78723,249 @@
               (ir.CompilerIrValue.I64 0)
               with-arithmetic))))]))
 
+;; --- range normal form: two unsigned compares ---------------------------------
+;;
+;; The guard above states a range in up to THREE signed conjuncts -- `eff >= 0`
+;; at a family's smallest offset, `eff >= 0` at its largest, and
+;; `bound <= length - eff_max`. A checked C programmer states the same range
+;; with TWO UNSIGNED compares, the CKR idiom, and that is also what LLVM's
+;; InstCombine folds a signed range pair into (`foldAndOrOfICmps` /
+;; `simplifyRangeCheck`):
+;;
+;;   start <=u length  &&  count <=u length - start
+;;
+;; The form is not merely shorter. It is CANONICAL: two loops walking the SAME
+;; slice emit the SAME two compares over the SAME values, so ordinary
+;; dominant-compare reuse can delete the second guard outright. The signed chain
+;; cannot, because it names each family's own extremal offsets, which differ
+;; from loop to loop even when the range they cover does not.
+;;
+;; WHAT THE FOLD RESTS ON. `start` is `wrap(base + kmin)` and `count` is
+;; `wrap(bound + width)` with `width = kmax - kmin >= 0`. Neither `base` nor
+;; `bound` is provably non-negative -- in the corpus shapes this targets both
+;; are opaque loads -- so the lattice cannot retype them and the fold has to be
+;; STRUCTURAL on the conjunction. Its single witness is `length >= 0`, the
+;; container invariant `opt-ubound-len-nonneg?` reads off a length-slot load (or
+;; a non-negative literal): the same provenance the once-only pair merge in
+;; `opt-bce-version-guard-finish` and the fan's no-wrap implication already
+;; rest on.
+;;
+;;   * `start <=u length`, with `length` in [0, 2^63), forces `start` into
+;;     [0, length] as a NON-NEGATIVE i64: a negative `start` reads as >= 2^63
+;;     unsigned and exceeds `length`, so this compare rejects exactly the
+;;     `start < 0` the signed conjunct rejected.
+;;   * `room = wrap(length - start)` is then the mathematical difference and
+;;     lies in [0, length] -- no wrap, both ends being in [0, 2^63).
+;;   * `count <=u room` forces `count` into [0, room], which is `count >= 0`
+;;     and `start + count <= length` together: the other two signed conjuncts.
+;;     A `count` whose `bound + width` overflowed lands negative, reads as
+;;     >= 2^63 unsigned and is rejected, so an overflowing count can only
+;;     DESELECT the fast clone, never select it.
+;;
+;; CORNER VALUES, all of them decided the same way as the signed chain:
+;; `start < 0` and `start = INT64_MIN` are rejected by the first compare;
+;; `start > length` likewise; `start = length` gives `room = 0` and admits only
+;; `count = 0`; `count = length - start` is admitted and is the LARGEST admitted
+;; count; `count < 0` and `count = INT64_MIN` are rejected by the second;
+;; `length = 0` admits only `start = 0` with `count = 0`.
+;;
+;; SOUNDNESS OF THE DERIVED INDICES. Every counter-bearing guard also carries
+;; the finisher's once-only primary `0 <= seed < bound`, so `bound >= 1`. Under
+;; the two compares `count = bound + width` is exact and at most `length -
+;; start`. A member offset `k` in [kmin, kmax] on an executed trip `c` in
+;; [0, bound-1] indexes
+;;
+;;   wrap(base + c + k) = wrap(start + ((k - kmin) + c))
+;;
+;; -- two's-complement addition is exact modulo 2^64 and associative, so folding
+;; the offsets into `start` changes no bit pattern -- and the displacement
+;; `(k - kmin) + c` is a mathematical value in [0, width + bound - 1] =
+;; [0, count - 1]. The index is therefore `start + d` with
+;; `start + d <= start + count - 1 <= length - 1`: a value in [0, length),
+;; below 2^63, where wrapping is the identity. That is precisely the range the
+;; removed `bounds_check index, length` (an unsigned `index <u length`) tests,
+;; so every removed check would have passed. A conservatively false guard merely
+;; keeps the checked slow clone, as everywhere else in this pass.
+;;
+;; The two compares are independent total predicates -- no operand can trap and
+;; neither reads the other's verdict -- so the And chain may order them either
+;; way; a wrapped `room` computed under a false first compare is simply never
+;; consulted for anything but a compare that the conjunction already discards.
+;; How far `opt-bce-version-shift-of` walks. The chains it is aimed at are one
+;; or two links (`words = len - 7`, a Mov of it), and the same 8 the literal
+;; recovery above uses is more than enough.
+(define (opt-bce-version-shift-fuel) : i64
+  8)
+
+;; The literal the walk continues with when `value` is itself `x + c` or
+;; `x - c`: `(x + c) + k` is `x + (c + k)` and `(x - c) + k` is `x + (k - c)`,
+;; both exact modulo 2^64 at 64 bits whatever the inner operation did.
+(define (opt-bce-version-shift-step
+  [op : ir.CompilerIrBinOp]
+  [c : i64]
+  [k : i64]) : OptBceVersionKSum
+  (match op
+    [(ir.CompilerIrBinOp.Add) (opt-bce-version-k-add k c)]
+    [(ir.CompilerIrBinOp.Sub)
+      (if (< (opt-bce-counter-affine-magnitude c) 0)
+        (OptBceVersionKSum.No)
+        (opt-bce-version-k-add k (- 0 c)))]
+    [_ (OptBceVersionKSum.No)]))
+
+;; `wrap(value + k)` named by a value that ALREADY EXISTS, or No when the guard
+;; has to synthesize the sum itself. The walk goes through 64-bit Movs and
+;; through Add/Sub of a literal, accumulating the shift: the words loop's bound
+;; is `len - 7` and its family is eight bytes wide, so its count folds back to
+;; `len` -- the very value the byte tail loop's count already is, which is what
+;; lets the two guards value-number equal.
+;;
+;; DOMINANCE. `value` is an operand of the guard being built, so in the
+;; dominance-verified function the versioner runs on (`opt-verify-gate` at
+;; `opt-bce-version-function-verified-with-context-result`) its definition
+;; dominates the guard block, and the operands of that definition dominate the
+;; definition. Everything this walk can return is therefore available where the
+;; guard is placed. Substituting for a value it EQUALS needs nothing else.
+(define (opt-bce-version-shift-of
+  [blocks : ir.CompilerIrBlockList]
+  [value : ir.CompilerIrValue]
+  [k : i64]
+  [fuel : i64]) : ir.CompilerIrMaybeValue
+  (if (= k 0)
+    (ir.CompilerIrMaybeValue.Some value)
+    (if (<= fuel 0)
+      (ir.CompilerIrMaybeValue.No)
+      (match (compiler-opt-global-shared-view value)
+        [(ir.CompilerIrValue.I64 a)
+          (match (opt-bce-version-k-add a k)
+            [(OptBceVersionKSum.No) (ir.CompilerIrMaybeValue.No)]
+            [(OptBceVersionKSum.Some sum)
+              (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.I64 sum))])]
+        [(ir.CompilerIrValue.Var var)
+          (match (opt-bce-mb-find-def
+            (compiler-opt-global-shared-view blocks)
+            var)
+            [(OptBceMbMaybeInstr.No) (ir.CompilerIrMaybeValue.No)]
+            [(OptBceMbMaybeInstr.Some instr)
+              (match instr
+                [(ir.CompilerIrInstr.Mov _ src ty)
+                  (if (opt-affine-64bit-type? ty)
+                    (opt-bce-version-shift-of
+                      (compiler-opt-global-shared-view blocks)
+                      src
+                      k
+                      (- fuel 1))
+                    (ir.CompilerIrMaybeValue.No))]
+                [(ir.CompilerIrInstr.BinOp _ op lhs rhs ty)
+                  (if (not (opt-affine-64bit-type? ty))
+                    (ir.CompilerIrMaybeValue.No)
+                    (match (compiler-opt-global-shared-view rhs)
+                      [(ir.CompilerIrValue.I64 c)
+                        (match (opt-bce-version-shift-step
+                          (compiler-opt-global-shared-view op)
+                          c
+                          k)
+                          [(OptBceVersionKSum.No) (ir.CompilerIrMaybeValue.No)]
+                          [(OptBceVersionKSum.Some next)
+                            (opt-bce-version-shift-of
+                              (compiler-opt-global-shared-view blocks)
+                              lhs
+                              next
+                              (- fuel 1))])]
+                      [_ (ir.CompilerIrMaybeValue.No)]))]
+                [_ (ir.CompilerIrMaybeValue.No)])])]
+        [_ (ir.CompilerIrMaybeValue.No)]))))
+
+;; The whole unit family's range, as the two unsigned compares above:
+;; `start = base + kmin`, `count = bound + width`, `room = length - start`.
+;; `kmin = 0` skips the Add (the family starts at the base itself) and a count
+;; the walk can name skips the other, so the common shape -- an offset-0 family
+;; whose bound already carries the width -- costs one Sub and two compares for
+;; the entire family, whatever its size.
+(define (opt-bce-version-range-normal-guard
+  [blocks : ir.CompilerIrBlockList]
+  [bound : ir.CompilerIrValue]
+  [base : ir.CompilerIrValue]
+  [kmin : i64]
+  [width : i64]
+  [length : ir.CompilerIrValue]
+  [cell : (__tl_dyn-array i64)]
+  [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
+  (match acc
+    [(OptBceVersionGuardAcc.No) (OptBceVersionGuardAcc.No)]
+    [(OptBceVersionGuardAcc.Some instrs values counter-seen)
+      (let
+        [start-var : i64
+          (if (= kmin 0)
+            (- 0 1)
+            (opt-bce-version-alloc-var (compiler-opt-global-shared-view cell)))]
+        [start : ir.CompilerIrValue
+          (if (= kmin 0)
+            base
+            (ir.CompilerIrValue.Var start-var))]
+        [work : ir.CompilerIrInstrBuilder
+          (if (= kmin 0)
+            instrs
+            (opt-bce-version-builder-push
+              instrs
+              (ir.CompilerIrInstr.BinOp
+                start-var
+                (ir.CompilerIrBinOp.Add)
+                base
+                (ir.CompilerIrValue.I64 kmin)
+                (ast.AstType.I64))))]
+        [folded : ir.CompilerIrMaybeValue
+          (opt-bce-version-shift-of
+            (compiler-opt-global-shared-view blocks)
+            (compiler-opt-global-shared-view bound)
+            width
+            (opt-bce-version-shift-fuel))]
+        [count-var : i64
+          (match (compiler-opt-global-shared-view folded)
+            [(ir.CompilerIrMaybeValue.Some _) (- 0 1)]
+            [(ir.CompilerIrMaybeValue.No)
+              (opt-bce-version-alloc-var (compiler-opt-global-shared-view cell))])]
+        [count : ir.CompilerIrValue
+          (match (compiler-opt-global-shared-view folded)
+            [(ir.CompilerIrMaybeValue.Some named) named]
+            [(ir.CompilerIrMaybeValue.No) (ir.CompilerIrValue.Var count-var)])]
+        [_emit-count : unit
+          (match (compiler-opt-global-shared-view folded)
+            [(ir.CompilerIrMaybeValue.Some _) unit]
+            [(ir.CompilerIrMaybeValue.No)
+              (opt-bce-version-builder-push!
+                (&mut work)
+                (ir.CompilerIrInstr.BinOp
+                  count-var
+                  (ir.CompilerIrBinOp.Add)
+                  (compiler-opt-global-shared-view bound)
+                  (ir.CompilerIrValue.I64 width)
+                  (ast.AstType.I64)))])]
+        [room : i64
+          (opt-bce-version-alloc-var (compiler-opt-global-shared-view cell))]
+        [_emit-room : unit
+          (opt-bce-version-builder-push!
+            (&mut work)
+            (ir.CompilerIrInstr.BinOp
+              room
+              (ir.CompilerIrBinOp.Sub)
+              (compiler-opt-global-shared-view length)
+              (compiler-opt-global-shared-view start)
+              (ast.AstType.I64)))]
+        (opt-bce-version-cond-counter-seen
+          (opt-bce-version-cond-typed
+            (compiler-opt-global-shared-view cell)
+            (ir.CompilerIrBinOp.Le)
+            (compiler-opt-global-shared-view count)
+            (ir.CompilerIrValue.Var room)
+            (ast.AstType.U64)
+            (opt-bce-version-cond-typed
+              (compiler-opt-global-shared-view cell)
+              (ir.CompilerIrBinOp.Le)
+              (compiler-opt-global-shared-view start)
+              (compiler-opt-global-shared-view length)
+              (ast.AstType.U64)
+              (OptBceVersionGuardAcc.Some work values counter-seen)))))]))
+
 ;; --- index-family fan subsumption -----------------------------------------------
 ;;
 ;; A strided-access loop (the it-hash-words word loader is the running
@@ -79104,6 +79423,8 @@
 ;; will not form mathematically refuses the guard rather than the check: the
 ;; check was already dropped from the clone when the fan admitted it.
 (define (opt-bce-version-fan-entry-flush
+  [type-segment-bases : i64]
+  [base-shared? : bool]
   [blocks : ir.CompilerIrBlockList]
   [seed : ir.CompilerIrValue]
   [bound : ir.CompilerIrValue]
@@ -79133,7 +79454,11 @@
     (let
       ;; A base that is a COPY of a constant folds into the offsets like a
       ;; literal one, which is one Add and one compare less per family.
-      [base : ir.CompilerIrValue (opt-bce-version-literal-of blocks base-key 8)]
+      [base : ir.CompilerIrValue
+        (opt-bce-version-literal-of
+          (compiler-opt-global-shared-view blocks)
+          base-key
+          8)]
       (match (compiler-opt-global-shared-view base)
         [(ir.CompilerIrValue.I64 b)
           (match (opt-bce-version-k-add b kmin)
@@ -79151,30 +79476,106 @@
                     cell
                     acc)])])]
         [_
-          (if (= kmin kmax)
-            (opt-bce-version-var-base-guard
-              (compiler-opt-global-shared-view seed)
+          ;; The two-compare normal form whenever the container invariant
+          ;; `length >= 0` is there to license it; the signed chain otherwise.
+          ;;
+          ;; The one exception is a SINGLE-POINT family whose base another
+          ;; family in this guard also checks: there the signed chain's `base
+          ;; >= 0` is shared between them where `base <=u length` cannot be, so
+          ;; the normal form would cost a conjunct rather than save one. See
+          ;; `opt-bce-version-fan-base-shared?`. A family spanning a real offset
+          ;; range takes the normal form either way -- its chain states cond A
+          ;; at both ends, and only the smaller end can ever be shared.
+          ;;
+          ;; The second compare is a compare of two loop-invariant VARIABLES
+          ;; where `base >= 0` compares against a literal, which used to make
+          ;; LICM lift it out of an enclosing loop and materialize it as a
+          ;; boolean. That is priced in `opt-licm-hot-use-vars`, which no longer
+          ;; counts a branch condition as a consumer that pays for a hoist.
+          (if (and
+            (or (> kmax kmin) (not base-shared?))
+            (opt-ubound-len-nonneg?
+              type-segment-bases
+              (compiler-opt-global-shared-view blocks)
+              (compiler-opt-global-shared-view length)))
+            (opt-bce-version-range-normal-guard
+              (compiler-opt-global-shared-view blocks)
               (compiler-opt-global-shared-view bound)
               (compiler-opt-global-shared-view base)
-              kmax
+              kmin
+              (- kmax kmin)
               (compiler-opt-global-shared-view length)
               (compiler-opt-global-shared-view cell)
               acc)
-            (opt-bce-version-var-base-guard
-              (compiler-opt-global-shared-view seed)
-              (compiler-opt-global-shared-view bound)
-              (compiler-opt-global-shared-view base)
-              kmax
-              (compiler-opt-global-shared-view length)
-              (compiler-opt-global-shared-view cell)
-              (opt-bce-version-fan-min-cond
+            (if (= kmin kmax)
+              (opt-bce-version-var-base-guard
+                (compiler-opt-global-shared-view seed)
+                (compiler-opt-global-shared-view bound)
                 (compiler-opt-global-shared-view base)
-                kmin
+                kmax
+                (compiler-opt-global-shared-view length)
                 (compiler-opt-global-shared-view cell)
-                acc)))]))))
+                acc)
+              (opt-bce-version-var-base-guard
+                (compiler-opt-global-shared-view seed)
+                (compiler-opt-global-shared-view bound)
+                (compiler-opt-global-shared-view base)
+                kmax
+                (compiler-opt-global-shared-view length)
+                (compiler-opt-global-shared-view cell)
+                (opt-bce-version-fan-min-cond
+                  (compiler-opt-global-shared-view base)
+                  kmin
+                  (compiler-opt-global-shared-view cell)
+                  acc))))]))))
+
+;; Does ANOTHER unit family in this table check the same base against a
+;; different length? Two such families share their `base >= 0` conjunct -- one
+;; compare decides the minimum side for both -- while the normal form has to
+;; state `base <=u length` once per length, because a shared `base >= 0` cannot
+;; replace it: with `base > length` the difference `length - base` is negative,
+;; reads as a huge unsigned value, and `count <=u length - base` would ACCEPT an
+;; out-of-range span. So a shared base is the one shape where the two-compare
+;; form costs a conjunct instead of saving one, and it keeps the signed chain.
+;;
+;; Measured on liveness_scan (`fixpoint!` walks two arrays off one index base):
+;; +1,352,450 with the normal form applied there, the whole of that row's
+;; regression, turned into -566,375 once the shared base keeps the chain.
+;;
+;; A family that spans a REAL offset range still takes the normal form even with
+;; a shared base: its signed chain costs three conjuncts (cond A at each end,
+;; cond B at the top) of which only one is the shared one, so two unsigned
+;; compares are still no worse.
+(define (opt-bce-version-fan-base-shared?
+  [fan : OptBceVersionFan]
+  [self : i64]
+  [index : i64]) : bool
+  (if (>= index (compiler-opt-global-array-element-shared-view fan.slots 0))
+    false
+    (let
+      [keys : (__tl_dyn-array ir.CompilerIrValue)
+        (compiler-opt-global-shared-view fan.keys)]
+      [slots : (__tl_dyn-array i64) (compiler-opt-global-shared-view fan.slots)]
+      [slot-at : i64 (+ (* index (opt-bce-version-fan-slot-words)) 1)]
+      (if (and
+        (not (= index self))
+        (= (array-ref slots (+ slot-at 3)) (opt-bce-version-fan-kind-unit))
+        (opt-bce-version-fan-value-eq?
+          (compiler-opt-global-array-element-shared-view
+            keys
+            (* index (opt-bce-version-fan-key-words)))
+          (compiler-opt-global-array-element-shared-view
+            keys
+            (* self (opt-bce-version-fan-key-words)))))
+        true
+        (opt-bce-version-fan-base-shared?
+          (compiler-opt-global-shared-view fan)
+          self
+          (+ index 1))))))
 
 ;; Walk the dense table once at guard assembly.
 (define (opt-bce-version-fan-flush
+  [type-segment-bases : i64]
   [blocks : ir.CompilerIrBlockList]
   [fan : OptBceVersionFan]
   [index : i64]
@@ -79190,6 +79591,7 @@
       [key-at : i64 (* index (opt-bce-version-fan-key-words))]
       [slot-at : i64 (+ (* index (opt-bce-version-fan-slot-words)) 1)]
       (opt-bce-version-fan-flush
+        type-segment-bases
         (compiler-opt-global-shared-view blocks)
         (compiler-opt-global-shared-view fan)
         (+ index 1)
@@ -79197,6 +79599,11 @@
         (compiler-opt-global-shared-view bound)
         (compiler-opt-global-shared-view cell)
         (opt-bce-version-fan-entry-flush
+          type-segment-bases
+          (opt-bce-version-fan-base-shared?
+            (compiler-opt-global-shared-view fan)
+            index
+            0)
           (compiler-opt-global-shared-view blocks)
           (compiler-opt-global-shared-view seed)
           (compiler-opt-global-shared-view bound)
@@ -81087,7 +81494,15 @@
         (compiler-opt-global-shared-view cell)
         ;; The fan's extremal conditions join the accumulator only here, once
         ;; per loop, instead of twice per fan member.
-        (opt-bce-version-fan-flush blocks fan 0 seed bound cell state.guard))
+        (opt-bce-version-fan-flush
+          type-segment-bases
+          blocks
+          fan
+          0
+          seed
+          bound
+          cell
+          state.guard))
         [(OptBceVersionGuardResult.No) (OptBceVersionGuardOut.No)]
         [(OptBceVersionGuardResult.Some guard-instrs guard-value)
           (OptBceVersionGuardOut.Some guard-instrs guard-value state.keep)]))))
@@ -90319,6 +90734,8 @@
         ;; The fan's extremal conditions join the accumulator only here,
         ;; once per loop, instead of twice per fan member.
         (opt-bce-version-fan-flush
+          (opt-bce-mb-descriptor-type-segment-bases
+            (compiler-opt-global-shared-view descriptor))
           (compiler-opt-global-shared-view all-blocks)
           (compiler-opt-global-shared-view fan)
           0

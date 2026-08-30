@@ -34097,8 +34097,31 @@
       (compiler_ir_types.CompilerIrBlock.Block
         (compiler_ir_types.compiler-ir-label "outer")
         (opt-test-instrs
+          ;; `%24`'s ONLY use is the branch below. A compare left where its
+          ;; branch is costs `cmp; jcc`; hoisted it costs `cmp; setcc; movzx`
+          ;; once plus `test; jcc` every iteration -- never a per-iteration
+          ;; win, so it is not a consumer that can pay for a hoist.
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            24
+            (compiler_ir_types.CompilerIrBinOp.Lt)
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            (compiler_ast_types.AstType.Bool))
+          ;; `%25` has a NON-branch use as well, so it has to be materialized
+          ;; wherever it is defined and hoisting really does remove work: it
+          ;; stays a hot use.
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            25
+            (compiler_ir_types.CompilerIrBinOp.Lt)
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            (compiler_ast_types.AstType.Bool))
+          (compiler_ir_types.CompilerIrInstr.Mov
+            26
+            (compiler_ir_types.CompilerIrValue.Var 25)
+            (compiler_ast_types.AstType.Bool))
           (compiler_ir_types.CompilerIrInstr.Branch
-            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ir_types.CompilerIrValue.Var 24)
             (compiler_ir_types.compiler-ir-label "cold")
             (compiler_ir_types.compiler-ir-label "inner"))))
       (compiler_ir_types.compiler-ir-block-cons
@@ -34233,7 +34256,33 @@
                       (compiler_optimize.compiler-opt-global-shared-view hot)
                       14))
                   7]
-                [(not (compiler_optimize.opt-used-contains ungated 10)) 8]
+                [(not
+                    (compiler_optimize.opt-used-contains
+                      (compiler_optimize.compiler-opt-global-shared-view
+                        ungated)
+                      10))
+                  8]
+                ;; A compare whose every use is a branch condition is not
+                ;; collected, gated or not; one with a non-branch use still is.
+                [(compiler_optimize.opt-used-contains
+                    (compiler_optimize.compiler-opt-global-shared-view hot)
+                    24)
+                  9]
+                [(compiler_optimize.opt-used-contains
+                    (compiler_optimize.compiler-opt-global-shared-view ungated)
+                    24)
+                  10]
+                [(not
+                    (compiler_optimize.opt-used-contains
+                      (compiler_optimize.compiler-opt-global-shared-view hot)
+                      25))
+                  11]
+                [(not
+                    (compiler_optimize.opt-used-contains
+                      (compiler_optimize.compiler-opt-global-shared-view
+                        ungated)
+                      25))
+                  12]
                 [else 42]))])])))
 
 (define (compiler-optimize-licm-profitability-self-test) : i64
@@ -41994,11 +42043,16 @@
 ;; a plain parameter and keeps both compares. Variants 34-35 are the word-loader
 ;; extremal family `base+i` and `base+i+7` on a step-8 counter: 34 checks
 ;; against a container length, whose guard implies the counter's no-wrap cap;
-;; 35 uses an arbitrary signed length and must keep the explicit cap.
+;; 35 uses an arbitrary signed length and must keep the explicit cap. 36 is
+;; 34's single-point twin -- one `base + i` check against the same container
+;; length -- which still takes the normal form because nothing else checks that
+;; base; 37 adds a SECOND single-point family over the SAME base against a
+;; second container length, which shares the signed `base >= 0` and therefore
+;; keeps the signed chain.
 (define (opt-bce-version-test-check-tail [variant : i64]) : compiler_ir_types.CompilerIrInstrSeq
   (let
     [check-length : compiler_ir_types.CompilerIrValue
-      (if (= variant 34)
+      (if (or (= variant 34) (= variant 36) (= variant 37))
         (compiler_ir_types.CompilerIrValue.Var 15)
         (compiler_ir_types.CompilerIrValue.Var 1))]
     [after-check : compiler_ir_types.CompilerIrInstrSeq
@@ -42095,6 +42149,16 @@
                 (compiler_ir_types.CompilerIrValue.Var 12)
                 (compiler_ir_types.compiler-ir-global-shared-view check-length)
                 (compiler_ir_types.compiler-ir-label "bce_version_ok_third")))]
+          ;; 37's second check is the SAME index against a SECOND container
+          ;; length: two single-point families over one base, which share their
+          ;; `base >= 0` conjunct and therefore keep the signed chain.
+          [(= variant 37)
+            (opt-test-instrs-with-tail
+              after-check
+              (compiler_ir_types.CompilerIrInstr.BoundsCheck
+                (compiler_ir_types.CompilerIrValue.Var 9)
+                (compiler_ir_types.CompilerIrValue.Var 13)
+                (compiler_ir_types.compiler-ir-label "bce_version_ok_second")))]
           ;; 34-35 model the endpoints of the eight-byte loader fan. Only the
           ;; length provenance differs: 34's entry loads a container length,
           ;; while 35 keeps the ordinary unconstrained parameter.
@@ -42457,6 +42521,20 @@
             (compiler_ir_types.CompilerIrValue.Var 10)
             (compiler_ir_types.CompilerIrValue.I64 1)
             (compiler_ast_types.AstType.I64)))]
+      ;; 36 is 34's SINGLE-POINT twin: one `base + i` check against the same
+      ;; container length, with no offset range. It is the shape the range
+      ;; normal form deliberately declines, so it must keep the signed chain
+      ;; even though its length carries the same non-negativity witness 34's
+      ;; does.
+      [(or (= variant 36) (= variant 37))
+        (opt-test-instrs-with-tail
+          check
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            9
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            (compiler_ir_types.CompilerIrValue.Var 3)
+            (compiler_ast_types.AstType.I64)))]
       [else check])))
 
 (define (opt-bce-version-test-blocks [variant : i64]) : compiler_ir_types.CompilerIrBlockList
@@ -42482,7 +42560,7 @@
               (compiler_ast_types.AstType.I64))
             (compiler_ir_types.CompilerIrInstr.Jump
               (compiler_ir_types.compiler-ir-label "loop")))]
-        [(= variant 34)
+        [(or (= variant 34) (= variant 36))
           (opt-test-instrs
             (compiler_ir_types.CompilerIrInstr.Gep
               14
@@ -42492,6 +42570,30 @@
             (compiler_ir_types.CompilerIrInstr.Load
               15
               (compiler_ir_types.CompilerIrValue.Var 14)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "loop")))]
+        ;; 37 loads TWO container lengths, so its two single-point families
+        ;; check one base against two different lengths.
+        [(= variant 37)
+          (opt-test-instrs
+            (compiler_ir_types.CompilerIrInstr.Gep
+              14
+              (compiler_ir_types.CompilerIrValue.Var 2)
+              (compiler_ir_types.CompilerIrValue.I64 1)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Load
+              15
+              (compiler_ir_types.CompilerIrValue.Var 14)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Gep
+              12
+              (compiler_ir_types.CompilerIrValue.Var 0)
+              (compiler_ir_types.CompilerIrValue.I64 1)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Load
+              13
+              (compiler_ir_types.CompilerIrValue.Var 12)
               (compiler_ast_types.AstType.I64))
             (compiler_ir_types.CompilerIrInstr.Jump
               (compiler_ir_types.compiler-ir-label "loop")))]
@@ -85008,3 +85110,468 @@
     (compiler-optimize-bce-index-form-self-test)
     42
     "a decreasing index off an invariant variable base and off a literal base both version through the mirrored conditions with no quotient, a loop-invariant index costs the one unsigned compare the removed check itself performs and stays refused in a counter-free shape, and a one-block loop whose body holds a direct call reaches the multiblock scan and drops both offsets of its derived family"))
+
+;; --- IT-1: the range guard's two-unsigned-compare normal form ----------------
+;;
+;; `opt-bce-version-range-normal-guard` states a unit family's whole range as
+;;
+;;   start <=u length  &&  count <=u length - start
+;;
+;; with `start = base + kmin` and `count = bound + width`, in place of the
+;; signed chain `base+kmin >= 0`, `base+kmax >= 0`, `bound <= length -
+;; (base+kmax)`. Two things have to be true of that, and they are checked
+;; separately below: the guard the versioner BUILDS really is the two unsigned
+;; compares (and only for a length whose non-negativity is proved), and the
+;; predicate they compute DECIDES the same loops as the chain it replaces.
+;;
+;; The decision half is stated on the corner values rather than on a fixture,
+;; because that is where the two forms could differ: a negative start, a
+;; negative count, a start past the length, the exact boundary `start = length`
+;; and `count = length - start`, an empty container, and i64-MIN in either
+;; operand -- every case the wrapping arithmetic could turn over.
+;; The signed chain the versioner emitted before the normal form, evaluated
+;; exactly as its guard block evaluated it: cond A `eff >= 0` and cond B
+;; `bound <= length - eff`, both signed, on wrapping i64 arithmetic.
+(define (opt-range-signed-guard? [start : i64] [count : i64] [len : i64]) : bool
+  (and (>= start 0) (<= count (- len start))))
+
+;; The normal form: two unsigned compares over the same three values.
+(define (opt-range-unsigned-guard? [start : i64] [count : i64] [len : i64]) : bool
+  (and
+    (<= (cast start : u64) (cast len : u64))
+    (<= (cast count : u64) (cast (- len start) : u64))))
+
+;; Every index the check-free fast clone would run: `start .. start+count-1`.
+;; A guard that accepts must put all of them in [0, len).
+(define (opt-range-indices-in-bounds? [start : i64] [count : i64] [len : i64]) : bool
+  (or (<= count 0) (and (>= start 0) (< (+ start (- count 1)) len))))
+
+(define (opt-range-corner-count) : i64
+  12)
+
+;; The operand corners, including the two the wrapping arithmetic is most
+;; likely to turn over (i64-MIN, i64-MAX) and the three boundary values the
+;; equivalence is tightest at (`len - 1`, `len`, `len + 1`).
+(define (opt-range-corner-value [index : i64] [len : i64]) : i64
+  (cond
+    [(= index 0) (- (- 0 9223372036854775807) 1)]
+    [(= index 1) (- 0 9223372036854775807)]
+    [(= index 2) (- 0 8)]
+    [(= index 3) (- 0 1)]
+    [(= index 4) 0]
+    [(= index 5) 1]
+    [(= index 6) 7]
+    [(= index 7) 8]
+    [(= index 8) (- len 1)]
+    [(= index 9) len]
+    [(= index 10) (+ len 1)]
+    [else 9223372036854775807]))
+
+(define (opt-range-corner-len-count) : i64
+  6)
+
+(define (opt-range-corner-len [index : i64]) : i64
+  (cond
+    [(= index 0) 0]
+    [(= index 1) 1]
+    [(= index 2) 7]
+    [(= index 3) 8]
+    [(= index 4) 4096]
+    [else 9223372036854775807]))
+
+;; The whole corner table, both directions.
+;;
+;;   1. The normal form never selects a fast clone the signed chain refused --
+;;      the property that makes it SAFE whatever else is true of it, since a
+;;      refused guard just keeps the checked slow clone.
+;;   2. Under the guard's own precondition -- a non-negative container length,
+;;      which is what `opt-ubound-len-nonneg?` proves before the form is used,
+;;      and `count >= 1`, which the finisher's once-only `0 <= seed < bound`
+;;      gives -- the two forms decide IDENTICALLY. That is the equivalence.
+;;   3. Everything the normal form accepts really is in range.
+(define (compiler-optimize-range-normal-corner-self-test) : i64
+  (let
+    [verdict : i64 42]
+    [li : i64 0]
+    [si : i64 0]
+    [ci : i64 0]
+    [len : i64 0]
+    [start : i64 0]
+    [count : i64 0]
+    [signed? : bool false]
+    [unsigned? : bool false]
+    (begin
+      (while (< li (opt-range-corner-len-count))
+        (begin
+          (set! len (opt-range-corner-len li))
+          (set! si 0)
+          (while (< si (opt-range-corner-count))
+            (begin
+              (set! start (opt-range-corner-value si len))
+              (set! ci 0)
+              (while (< ci (opt-range-corner-count))
+                (begin
+                  (set! count (opt-range-corner-value ci len))
+                  (set! signed? (opt-range-signed-guard? start count len))
+                  (set! unsigned? (opt-range-unsigned-guard? start count len))
+                  (if (and unsigned? (not signed?))
+                    (set! verdict 1)
+                    unit)
+                  (if (and (>= count 1) (not (= signed? unsigned?)))
+                    (set! verdict 2)
+                    unit)
+                  (if (and
+                    unsigned?
+                    (not (opt-range-indices-in-bounds? start count len)))
+                    (set! verdict 3)
+                    unit)
+                  (set! ci (+ ci 1))))
+              (set! si (+ si 1))))
+          (set! li (+ li 1))))
+      verdict)))
+
+;; The same predicate as the FAN states it: `start = base + kmin` and
+;; `count = bound + width` for a family spanning offsets [kmin, kmin+width].
+;; What must hold is that every member's every trip lands in [0, len) --
+;; the family's lowest index is its kmin member's first trip and its highest
+;; is its kmax member's last.
+(define (opt-range-fan-guard?
+  [base : i64]
+  [kmin : i64]
+  [width : i64]
+  [bound : i64]
+  [len : i64]) : bool
+  (opt-range-unsigned-guard? (+ base kmin) (+ bound width) len))
+
+(define (opt-range-fan-in-bounds?
+  [base : i64]
+  [kmin : i64]
+  [width : i64]
+  [bound : i64]
+  [len : i64]) : bool
+  (and (>= (+ base kmin) 0) (< (+ (+ base kmin) (+ width (- bound 1))) len)))
+
+(define (compiler-optimize-range-normal-fan-self-test) : i64
+  (let
+    [verdict : i64 42]
+    [li : i64 0]
+    [bi : i64 0]
+    [ni : i64 0]
+    [wi : i64 0]
+    [len : i64 0]
+    [base : i64 0]
+    [bound : i64 0]
+    [kmin : i64 0]
+    [width : i64 0]
+    (begin
+      (while (< li (opt-range-corner-len-count))
+        (begin
+          (set! len (opt-range-corner-len li))
+          (set! bi 0)
+          (while (< bi (opt-range-corner-count))
+            (begin
+              (set! base (opt-range-corner-value bi len))
+              (set! ni 0)
+              (while (< ni (opt-range-corner-count))
+                (begin
+                  (set! bound (opt-range-corner-value ni len))
+                  (set! wi 0)
+                  (while (< wi 4)
+                    (begin
+                      (set!
+                        kmin
+                        (if (< wi 2)
+                          0
+                          3))
+                      (set!
+                        width
+                        (cond [(= wi 0) 0] [(= wi 1) 7] [(= wi 2) 0] [else 7]))
+                      ;; The once-only primary `0 <= seed < bound` is part of
+                      ;; every counter-bearing guard, so only `bound >= 1` is
+                      ;; ever reached with the fast clone selected.
+                      (if (and
+                        (>= bound 1)
+                        (opt-range-fan-guard? base kmin width bound len)
+                        (not
+                          (opt-range-fan-in-bounds? base kmin width bound len)))
+                        (set! verdict 4)
+                        unit)
+                      (set! wi (+ wi 1))))
+                  (set! ni (+ ni 1))))
+              (set! bi (+ bi 1))))
+          (set! li (+ li 1))))
+      verdict)))
+
+;; What the versioner BUILDS, on the two fixtures that differ only in where the
+;; guard's length comes from. Variant 34 is the word-loader family `base+i` and
+;; `base+i+7` on a step-8 counter against a CONTAINER length (a length-slot
+;; load); variant 35 is the same family against an arbitrary signed parameter.
+;; The normal form needs `length >= 0`, so 34 takes it and 35 keeps the signed
+;; chain -- one fixture pair isolating exactly the witness.
+(define (compiler-optimize-range-normal-shape-self-test) : i64
+  (let
+    [guard-label : i64 (compiler_ir_types.compiler-ir-label "loop__bce_guard")]
+    [container : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-bce-version-function
+        (opt-bce-version-test-function (opt-bce-version-test-blocks 34)))]
+    [container-out : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view container))]
+    [signed : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-bce-version-function
+        (opt-bce-version-test-function (opt-bce-version-test-blocks 35)))]
+    [signed-out : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view signed))]
+    [point : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-bce-version-function
+        (opt-bce-version-test-function (opt-bce-version-test-blocks 36)))]
+    [point-out : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view point))]
+    [shared : compiler_ir_types.CompilerIrFunction
+      (compiler_optimize.opt-bce-version-function
+        (opt-bce-version-test-function (opt-bce-version-test-blocks 37)))]
+    [shared-out : compiler_ir_types.CompilerIrBlockList
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.compiler-opt-global-shared-view shared))]
+    (cond
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function
+              (compiler_optimize.compiler-opt-global-shared-view container))))
+        1]
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function
+              (compiler_optimize.compiler-opt-global-shared-view signed))))
+        2]
+      ;; Both checks of the family are gone from the fast clone, and both are
+      ;; still in the slow one: the guard really is buying the same clone.
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              (compiler_ir_types.compiler-ir-global-shared-view container-out)
+              (compiler_ir_types.compiler-ir-label "loop__bce_fast"))
+            0))
+        3]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              (compiler_ir_types.compiler-ir-global-shared-view container-out)
+              (compiler_ir_types.compiler-ir-label "loop"))
+            2))
+        4]
+      ;; THE NORMAL FORM: two unsigned compares, and no signed one.
+      [(not
+          (=
+            (opt-bce-version-test-block-binop-typed-count
+              (compiler_ir_types.compiler-ir-global-shared-view container-out)
+              guard-label
+              (compiler_ir_types.CompilerIrBinOp.Le)
+              (compiler_ast_types.AstType.U64))
+            2))
+        5]
+      [(not
+          (=
+            (opt-bce-version-test-block-binop-typed-count
+              (compiler_ir_types.compiler-ir-global-shared-view container-out)
+              guard-label
+              (compiler_ir_types.CompilerIrBinOp.Le)
+              (compiler_ast_types.AstType.I64))
+            0))
+        6]
+      ;; No sign conjunct survives: `start <=u length` is the whole minimum
+      ;; side, for the family's smallest offset AND its largest.
+      [(not
+          (=
+            (opt-bce-version-test-block-binop-count
+              (compiler_ir_types.compiler-ir-global-shared-view container-out)
+              guard-label
+              (compiler_ir_types.CompilerIrBinOp.Ge))
+            0))
+        7]
+      ;; One Sub (`length - start`) and no divide: the arithmetic is the same
+      ;; single subtraction the signed cond B already paid for.
+      [(not
+          (=
+            (opt-bce-version-test-block-binop-count
+              (compiler_ir_types.compiler-ir-global-shared-view container-out)
+              guard-label
+              (compiler_ir_types.CompilerIrBinOp.Sub))
+            1))
+        8]
+      [(not
+          (=
+            (opt-count-binop-op-blocks
+              (compiler_ir_types.compiler-ir-global-shared-view container-out)
+              (compiler_ir_types.CompilerIrBinOp.Div))
+            0))
+        9]
+      ;; The width rides on the COUNT, not on a second effective base: one Add
+      ;; of the family's span (`bound + 7`), and none for `base + kmax`.
+      [(not
+          (=
+            (opt-bce-version-test-block-binop-count
+              (compiler_ir_types.compiler-ir-global-shared-view container-out)
+              guard-label
+              (compiler_ir_types.CompilerIrBinOp.Add))
+            1))
+        10]
+      [(not
+          (opt-bce-version-test-block-binop-op-lit?
+            (compiler_ir_types.compiler-ir-global-shared-view container-out)
+            guard-label
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            7))
+        11]
+      ;; WITHOUT the witness the signed chain stays, unchanged: no unsigned
+      ;; compare at all, the two cond As and the no-wrap conjunct as `Ge`, and
+      ;; the one signed cond B.
+      [(not
+          (=
+            (opt-bce-version-test-block-binop-typed-count
+              (compiler_ir_types.compiler-ir-global-shared-view signed-out)
+              guard-label
+              (compiler_ir_types.CompilerIrBinOp.Le)
+              (compiler_ast_types.AstType.U64))
+            0))
+        12]
+      [(not
+          (=
+            (opt-bce-version-test-block-binop-count
+              (compiler_ir_types.compiler-ir-global-shared-view signed-out)
+              guard-label
+              (compiler_ir_types.CompilerIrBinOp.Le))
+            1))
+        13]
+      [(not
+          (=
+            (opt-bce-version-test-block-binop-count
+              (compiler_ir_types.compiler-ir-global-shared-view signed-out)
+              guard-label
+              (compiler_ir_types.CompilerIrBinOp.Ge))
+            3))
+        14]
+      [(not
+          (=
+            (opt-bce-version-test-block-binop-count
+              (compiler_ir_types.compiler-ir-global-shared-view signed-out)
+              guard-label
+              (compiler_ir_types.CompilerIrBinOp.Add))
+            2))
+        15]
+      ;; The SINGLE-POINT twin of 34 -- same container length, same variable
+      ;; base, no offset range -- takes the normal form too: with nothing else
+      ;; checking that base there is no shared `base >= 0` to lose, and the two
+      ;; unsigned compares replace the same two signed conjuncts.
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function
+              (compiler_optimize.compiler-opt-global-shared-view point))))
+        16]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              (compiler_ir_types.compiler-ir-global-shared-view point-out)
+              (compiler_ir_types.compiler-ir-label "loop__bce_fast"))
+            0))
+        17]
+      [(not
+          (=
+            (opt-bce-version-test-block-binop-typed-count
+              (compiler_ir_types.compiler-ir-global-shared-view point-out)
+              guard-label
+              (compiler_ir_types.CompilerIrBinOp.Le)
+              (compiler_ast_types.AstType.U64))
+            2))
+        18]
+      [(not
+          (=
+            (opt-bce-version-test-block-binop-count
+              (compiler_ir_types.compiler-ir-global-shared-view point-out)
+              guard-label
+              (compiler_ir_types.CompilerIrBinOp.Ge))
+            0))
+        19]
+      [(not
+          (=
+            (opt-bce-version-test-block-binop-count
+              (compiler_ir_types.compiler-ir-global-shared-view point-out)
+              guard-label
+              (compiler_ir_types.CompilerIrBinOp.Sub))
+            1))
+        20]
+      ;; A SHARED BASE is the one shape that keeps the signed chain: two
+      ;; single-point families over one base against two container lengths
+      ;; state the SAME `base >= 0` twice, and the two are one comparison that
+      ;; later CSE collapses -- where the normal form would owe a genuinely
+      ;; different `base <=u length` per length, which nothing can collapse.
+      ;; So: no unsigned compare, both sign conjuncts of the form `x >= 0`, and
+      ;; one signed `Le` per family.
+      [(not
+          (compiler_optimize.opt-verify-ok?
+            (compiler_optimize.opt-verify-function
+              (compiler_optimize.compiler-opt-global-shared-view shared))))
+        21]
+      [(not
+          (=
+            (opt-bce-version-test-block-checks
+              (compiler_ir_types.compiler-ir-global-shared-view shared-out)
+              (compiler_ir_types.compiler-ir-label "loop__bce_fast"))
+            0))
+        22]
+      [(not
+          (=
+            (opt-bce-version-test-block-binop-typed-count
+              (compiler_ir_types.compiler-ir-global-shared-view shared-out)
+              guard-label
+              (compiler_ir_types.CompilerIrBinOp.Le)
+              (compiler_ast_types.AstType.U64))
+            0))
+        23]
+      [(not
+          (=
+            (opt-bce-version-test-block-binop-count
+              (compiler_ir_types.compiler-ir-global-shared-view shared-out)
+              guard-label
+              (compiler_ir_types.CompilerIrBinOp.Ge))
+            2))
+        24]
+      [(not
+          (opt-bce-version-test-block-binop-op-lit?
+            (compiler_ir_types.compiler-ir-global-shared-view shared-out)
+            guard-label
+            (compiler_ir_types.CompilerIrBinOp.Ge)
+            0))
+        26]
+      [(not
+          (=
+            (opt-bce-version-test-block-binop-count
+              (compiler_ir_types.compiler-ir-global-shared-view shared-out)
+              guard-label
+              (compiler_ir_types.CompilerIrBinOp.Le))
+            2))
+        25]
+      [else 42])))
+
+(test
+  bce-version-range-normal-corner-values
+  (test.assert-i64-eq
+    (compiler-optimize-range-normal-corner-self-test)
+    42
+    "the two-unsigned-compare range guard decides every corner value the signed chain decides, is never more permissive, and admits only in-range spans"))
+
+(test
+  bce-version-range-normal-fan-values
+  (test.assert-i64-eq
+    (compiler-optimize-range-normal-fan-self-test)
+    42
+    "an accepted family range puts every member offset and every trip of the fast clone inside the container"))
+
+(test
+  bce-version-range-normal-shape
+  (test.assert-i64-eq
+    (compiler-optimize-range-normal-shape-self-test)
+    42
+    "a unit family against a container length versions through two unsigned compares and one subtraction whether or not it spans an offset range, and the signed chain is kept when the length's non-negativity is not proved and when two families share one base"))

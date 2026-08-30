@@ -830,21 +830,11 @@
   [cur : (& cur (__tl_dyn-array i64))]) : i64
   (token.tag-ref (& (array-ref toks (cur-pos cur)))))
 
-;; The `token.Token` value under the cursor (for projecting its int/symbol payload).
-(define (peek-tok
-  [toks : (& toks (__tl_dyn-array token.Token))]
-  [cur : (& cur (__tl_dyn-array i64))]) : token.Token
-  (token.token-copy (& (array-ref toks (cur-pos cur)))))
-
-(define (peek-spanned-token
-  [toks : (& toks (__tl_dyn-array token.SpannedToken))]
-  [cur : (& cur (__tl_dyn-array i64))]) : token.SpannedToken
-  (token.spanned-token-copy (& (array-ref toks (cur-pos cur)))))
-
 (define (peek-spanned-tag
   [toks : (& toks (__tl_dyn-array token.SpannedToken))]
   [cur : (& cur (__tl_dyn-array i64))]) : i64
-  (token.tag (token.spanned-token-token (peek-spanned-token toks cur))))
+  (token.tag-ref
+    (token.spanned-token-token-ref (& (array-ref toks (cur-pos cur))))))
 
 ;; Consume the current token: advance the cursor by one.
 (define (advance [cur : (&mut cur (__tl_dyn-array i64))]) : unit
@@ -950,24 +940,24 @@
   [toks : (& toks (__tl_dyn-array token.SpannedToken))]
   [cur : (&mut cur (__tl_dyn-array i64))]) : ResultSpannedSexpr
   (let
-    [st : token.SpannedToken (peek-spanned-token toks cur)]
-    [tok : token.Token (token.spanned-token-token-ref (& st))]
-    [span : token.SourceSpan (token.spanned-token-span (& st))]
-    [t : i64 (token.tag (token.token-copy (& tok)))]
+    [st : (& toks token.SpannedToken) (& (array-ref toks (cur-pos cur)))]
+    [tok : (& toks token.Token) (token.spanned-token-token-ref st)]
+    [span : token.SourceSpan (token.spanned-token-span st)]
+    [t : i64 (token.tag-ref tok)]
     (cond
       [(= t (token.tag-int))
         (let
-          [v : i64 (token.int (token.token-copy (& tok)))]
+          [value : i64 (token.int tok)]
           [text : String (token.int-text tok)]
           (begin
             (advance cur)
-            (ResultSpannedSexpr.Ok (SpannedSexpr.Int v text span))))]
+            (ResultSpannedSexpr.Ok (SpannedSexpr.Int value text span))))]
       [(= t (token.tag-float))
         (let
-          [s : String (token.float tok)]
+          [text : String (token.float tok)]
           (begin
             (advance cur)
-            (ResultSpannedSexpr.Ok (SpannedSexpr.Float s span))))]
+            (ResultSpannedSexpr.Ok (SpannedSexpr.Float text span))))]
       [(= t (token.tag-sym))
         (let
           [name-id : ci.InternId (token.sym-id tok)]
@@ -985,10 +975,10 @@
             (ResultSpannedSexpr.Ok (SpannedSexpr.Str string-id span))))]
       [(= t (token.tag-char))
         (let
-          [c : char (token.char tok)]
+          [value : char (token.char tok)]
           (begin
             (advance cur)
-            (ResultSpannedSexpr.Ok (SpannedSexpr.Char c span))))]
+            (ResultSpannedSexpr.Ok (SpannedSexpr.Char value span))))]
       [(= t (token.tag-lparen))
         (begin
           (advance cur)
@@ -1098,21 +1088,14 @@
   [cur : (&mut cur (__tl_dyn-array i64))]
   [base : SpannedSexpr]) : ResultSpannedSexpr
   (let
-    [st : token.SpannedToken (peek-spanned-token toks cur)]
-    [tok : token.Token
-      (token.spanned-token-token
-        (unsafe
-          (ptr-read (ptr-addr-of st))))]
+    [st : (& toks token.SpannedToken) (& (array-ref toks (cur-pos cur)))]
+    [tok : (& toks token.Token) (token.spanned-token-token-ref st)]
     [span : token.SourceSpan (token.spanned-token-span st)]
     ;; Most forms are followed by whitespace or a delimiter. Reject those
     ;; before materializing the interned symbol text; only lexically adjacent
     ;; symbols can be projection suffixes.
     (if (and
-      (=
-        (token.tag
-          (unsafe
-            (ptr-read (ptr-addr-of tok))))
-        (token.tag-sym))
+      (= (token.tag-ref tok) (token.tag-sym))
       (spanned-sexpr-adjacent?
         (unsafe
           (ptr-read (ptr-addr-of base)))
@@ -1144,9 +1127,9 @@
   [close-tag : i64]
   [builder : SpannedSexprBuilder]) : ResultSpannedSexpr
   (let
-    [st : token.SpannedToken (peek-spanned-token toks cur)]
-    [span : token.SourceSpan (token.spanned-token-span (& st))]
-    [t : i64 (token.tag (token.spanned-token-token-ref (& st)))]
+    [st : (& toks token.SpannedToken) (& (array-ref toks (cur-pos cur)))]
+    [span : token.SourceSpan (token.spanned-token-span st)]
+    [t : i64 (token.tag-ref (token.spanned-token-token-ref st))]
     (cond
       [(= t close-tag)
         (begin
@@ -1221,44 +1204,41 @@
   [toks : (& toks (__tl_dyn-array token.Token))]
   [cur : (&mut cur (__tl_dyn-array i64))]) : ResultSexpr
   (let
+    [tok : (& toks token.Token) (& (array-ref toks (cur-pos cur)))]
     [t : i64 (peek-tag toks cur)]
     (cond
       [(= t (token.tag-int))
         (let
-          [tok : token.Token (peek-tok toks cur)]
-          [v : i64
-            (token.int
-              (unsafe
-                (ptr-read (ptr-addr-of tok))))]
+          [value : i64 (token.int tok)]
           [text : String (token.int-text tok)]
           (begin
             (advance cur)
-            (ResultSexpr.Ok (Sexpr.Int v text))))]
+            (ResultSexpr.Ok (Sexpr.Int value text))))]
       [(= t (token.tag-float))
         (let
-          [s : String (token.float (peek-tok toks cur))]
+          [text : String (token.float tok)]
           (begin
             (advance cur)
-            (ResultSexpr.Ok (Sexpr.Float s))))]
+            (ResultSexpr.Ok (Sexpr.Float text))))]
       [(= t (token.tag-sym))
         (let
-          [name-id : ci.InternId (token.sym-id (peek-tok toks cur))]
+          [name-id : ci.InternId (token.sym-id tok)]
           (begin
             (advance cur)
             (ResultSexpr.Ok
               (Sexpr.Sym (ci.intern-syntax-id-from-renderable name-id)))))]
       [(= t (token.tag-str))
         (let
-          [string-id : ci.InternId (token.str-id (peek-tok toks cur))]
+          [string-id : ci.InternId (token.str-id tok)]
           (begin
             (advance cur)
             (ResultSexpr.Ok (Sexpr.Str string-id))))]
       [(= t (token.tag-char))
         (let
-          [c : char (token.char (peek-tok toks cur))]
+          [value : char (token.char tok)]
           (begin
             (advance cur)
-            (ResultSexpr.Ok (Sexpr.Char c))))]
+            (ResultSexpr.Ok (Sexpr.Char value))))]
       [(= t (token.tag-lparen))
         (begin
           (advance cur)
@@ -1380,15 +1360,9 @@
     [(lexer.ResultSpannedTokens.Ok toks)
       (let
         [first-id : ci.InternId
-          (token.sym-id
-            (token.spanned-token-token
-              (unsafe
-                (ptr-read (ptr-offset (__tl_array-data toks) 1)))))]
+          (token.sym-id (token.spanned-token-token-ref (& (array-ref toks 1))))]
         [second-id : ci.InternId
-          (token.sym-id
-            (token.spanned-token-token
-              (unsafe
-                (ptr-read (ptr-offset (__tl_array-data toks) 2)))))]
+          (token.sym-id (token.spanned-token-token-ref (& (array-ref toks 2))))]
         [pool-len-before : i64 (ci.intern-pool-len)]
         (begin
           (sp-node-pool-reset!)

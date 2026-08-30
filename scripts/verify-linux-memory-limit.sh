@@ -26,6 +26,11 @@ fail() {
 }
 
 LIMIT_BYTES=33554432
+# A fast-exiting transient service can finish before the user manager publishes
+# a positive post-run MemoryPeak even though the cgroup limit was active. Keep
+# the two small accounting fixtures alive for one bounded interval. This is
+# part of each command's single execution, not a retry of the bounded command.
+ACCOUNTING_FIXTURE_SECONDS=1
 ALLOCATE_AWK='BEGIN {
     chunk = sprintf("%1048576s", "x")
     for (i = 0; i < 96; i++) values[i] = chunk i
@@ -41,34 +46,39 @@ exercise_backend() {
     export TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE
 
     assert_peak_evidence() {
+        _memory_fixture=$1
         [ -s "$_memory_metrics" ] ||
             fail "Linux memory-limit backend wrote no peak evidence: $_memory_backend"
         _memory_peak=$(sed -n '1p' "$_memory_metrics")
         case "$_memory_peak" in
             "" | *[!0-9]* | 0) fail "malformed peak evidence from $_memory_backend: $_memory_peak" ;;
         esac
+        echo "[linux-memory-limit] $_memory_backend $_memory_fixture peak $_memory_peak bytes"
     }
 
     TYPELISP_MEMORY_LIMIT_SELF_TEST=present
     export TYPELISP_MEMORY_LIMIT_SELF_TEST
     rm -f "$_memory_metrics"
     if ! linux_memory_limit_run "$LIMIT_BYTES" sh -c \
-        '[ "$TYPELISP_MEMORY_LIMIT_SELF_TEST" = present ] && [ "$PWD" = "$1" ]' \
-        sh "$ROOT" \
+        '[ "$TYPELISP_MEMORY_LIMIT_SELF_TEST" = present ] \
+            && [ "$PWD" = "$1" ] \
+            && sleep "$2"' \
+        sh "$ROOT" "$ACCOUNTING_FIXTURE_SECONDS" \
         > "$_memory_stdout" 2> "$_memory_stderr"; then
         cat "$_memory_stderr" >&2 || true
         fail "Linux memory-limit backend rejected an under-limit command: $_memory_backend"
     fi
-    assert_peak_evidence
+    assert_peak_evidence under-limit
     rm -f "$_memory_metrics"
     _memory_status=0
-    linux_memory_limit_run "$LIMIT_BYTES" sh -c 'exit 23' \
+    linux_memory_limit_run "$LIMIT_BYTES" sh -c 'sleep "$1"; exit 23' \
+        sh "$ACCOUNTING_FIXTURE_SECONDS" \
         > "$_memory_stdout" 2> "$_memory_stderr" || _memory_status=$?
     [ "$_memory_status" -eq 23 ] || {
         cat "$_memory_stderr" >&2 || true
         fail "Linux memory-limit backend did not forward exit 23: $_memory_backend returned $_memory_status"
     }
-    assert_peak_evidence
+    assert_peak_evidence exit-23
 
     _memory_pid_file="$WORKDIR/$_memory_backend-child.pid"
     rm -f "$_memory_pid_file" "$_memory_metrics"
@@ -83,7 +93,7 @@ exercise_backend() {
     if [ "$_memory_status" -eq 0 ]; then
         fail "Linux memory-limit backend accepted an over-limit command: $_memory_backend"
     fi
-    assert_peak_evidence
+    assert_peak_evidence over-limit
     [ -s "$_memory_pid_file" ] ||
         fail "over-limit child did not publish its PID: $_memory_backend"
     _memory_child_pid=$(sed -n '1p' "$_memory_pid_file")

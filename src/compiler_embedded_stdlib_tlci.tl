@@ -2899,10 +2899,6 @@
                 -3
                 (if (string.eq
                   (let
-                    [host-pools : ast.AstNodePoolContext
-                      (compiler-comptime-host-array-element-shared-view
-                        compiler-comptime-host-pools
-                        0)]
                     [host-reflections : ctfe_support.CtfeReflectInfoList
                       (compiler-comptime-host-array-element-shared-view
                         compiler-comptime-host-reflections
@@ -3014,10 +3010,6 @@
                       (compiler-comptime-host-push!
                         (ctfe_support.CompilerCtfeValue.Type
                           (let
-                            [host-pools : ast.AstNodePoolContext
-                              (compiler-comptime-host-array-element-shared-view
-                                compiler-comptime-host-pools
-                                0)]
                             [host-reflections : ctfe_support.CtfeReflectInfoList
                               (compiler-comptime-host-array-element-shared-view
                                 compiler-comptime-host-reflections

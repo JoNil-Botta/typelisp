@@ -49513,13 +49513,13 @@
               allocated
               (ir.CompilerIrInstr.Phi
                 var-id
-                (ir.compiler-ir-phi-input-cons
+                (ir.compiler-ir-phi-input-seq-prepend
                   then-value
                   then-end-label
-                  (ir.compiler-ir-phi-input-cons
+                  (ir.compiler-ir-phi-input-seq-prepend
                     else-value
                     else-end-label
-                    ir.CompilerIrPhiInputList.Nil))
+                    (ir.compiler-ir-phi-input-seq-empty)))
                 expr-ir-ty))
             (ir.CompilerIrValue.Var var-id)
             expr-ty))])))
@@ -69446,7 +69446,7 @@
                               arms
                               merge-label
                               expr-ty
-                              ir.CompilerIrPhiInputList.Nil)]))]
+                              (ir.compiler-ir-phi-input-seq-empty))]))]
                     [(ast.AstType.VarArgs _ _)
                       (lower-match-enum
                         ctx
@@ -69471,7 +69471,7 @@
                         arms
                         merge-label
                         expr-ty
-                        ir.CompilerIrPhiInputList.Nil)])])])])]
+                        (ir.compiler-ir-phi-input-seq-empty))])])])])]
     [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))
 
 (define (lower-match-borrowed-enum
@@ -69671,7 +69671,7 @@
                   merge-label
                   expr-ty
                   borrow-lifetime
-                  ir.CompilerIrPhiInputList.Nil
+                  (ir.compiler-ir-phi-input-seq-empty)
                   true
                   false)]
               [_
@@ -69690,7 +69690,7 @@
           merge-label
           expr-ty
           borrow-lifetime
-          ir.CompilerIrPhiInputList.Nil
+          (ir.compiler-ir-phi-input-seq-empty)
           false
           false))
       (match (lower-load-at-offset
@@ -69713,7 +69713,7 @@
                 merge-label
                 expr-ty
                 borrow-lifetime
-                ir.CompilerIrPhiInputList.Nil
+                (ir.compiler-ir-phi-input-seq-empty)
                 false
                 false)]
             [_
@@ -70905,7 +70905,7 @@
   [arms : ast.AstMatchArmList]
   [merge-label : i64]
   [expr-ty : ast.AstType]
-  [phi-inputs : ir.CompilerIrPhiInputList]) : ResultLowerExpr
+  [phi-inputs : ir.CompilerIrPhiInputSeq]) : ResultLowerExpr
   (if (ast.ast-match-arm-list-empty? (& arms))
     (ResultLowerExpr.Err (box (lower-diagnostic "lower: match with no arms")))
     (let
@@ -71047,7 +71047,7 @@
   [merge-label : i64]
   [expr-ty : ast.AstType]
   [borrow-lifetime : tc_core.TcMaybeNameId]
-  [phi-inputs : ir.CompilerIrPhiInputList]
+  [phi-inputs : ir.CompilerIrPhiInputSeq]
   [scrut-reg-group? : bool]) : ResultLowerExpr
   (match pat
     [(ast.AstPattern.Wildcard)
@@ -71115,7 +71115,7 @@
   [merge-label : i64]
   [expr-ty : ast.AstType]
   [borrow-lifetime : tc_core.TcMaybeNameId]
-  [phi-inputs : ir.CompilerIrPhiInputList]
+  [phi-inputs : ir.CompilerIrPhiInputSeq]
   [scrut-reg-group? : bool]
   [total-enum-switch? : bool]) : ResultLowerExpr
   (match pat
@@ -71187,7 +71187,7 @@
   [merge-label : i64]
   [expr-ty : ast.AstType]
   [borrow-lifetime : tc_core.TcMaybeNameId]
-  [phi-inputs : ir.CompilerIrPhiInputList]
+  [phi-inputs : ir.CompilerIrPhiInputSeq]
   [scrut-reg-group? : bool]
   [total-enum-switch? : bool]) : ResultLowerExpr
   (if (ast.ast-match-arm-list-empty? (& arms))
@@ -71249,7 +71249,7 @@
   [merge-label : i64]
   [expr-ty : ast.AstType]
   [borrow-lifetime : tc_core.TcMaybeNameId]
-  [phi-inputs : ir.CompilerIrPhiInputList]
+  [phi-inputs : ir.CompilerIrPhiInputSeq]
   [scrut-reg-group? : bool]) : ResultLowerExpr
   (match (lower-global-shared-view ctx)
     [(tc_core.TcContext _ symbols registries _ _ _ _ _ _)
@@ -71341,7 +71341,7 @@
                                       (ir.CompilerIrInstr.Jump merge-label))
                                     merge-label
                                     expr-ty
-                                    (ir.compiler-ir-phi-input-cons
+                                    (ir.compiler-ir-phi-input-seq-prepend
                                       body-value
                                       body-end-label
                                       phi-inputs))))])]
@@ -71373,7 +71373,7 @@
   [merge-label : i64]
   [expr-ty : ast.AstType]
   [borrow-lifetime : tc_core.TcMaybeNameId]
-  [phi-inputs : ir.CompilerIrPhiInputList]
+  [phi-inputs : ir.CompilerIrPhiInputSeq]
   [scrut-reg-group? : bool]
   [total-enum-switch? : bool]) : ResultLowerExpr
   (match (lower-bind-match-variant-payloads
@@ -71431,7 +71431,7 @@
                   borrow-lifetime
                   (if (tc_core.tc-never-type? body-ty)
                     phi-inputs
-                    (ir.compiler-ir-phi-input-cons
+                    (ir.compiler-ir-phi-input-seq-prepend
                       body-value
                       body-end-label
                       phi-inputs))
@@ -71501,7 +71501,7 @@
   [merge-label : i64]
   [expr-ty : ast.AstType]
   [borrow-lifetime : tc_core.TcMaybeNameId]
-  [phi-inputs : ir.CompilerIrPhiInputList]
+  [phi-inputs : ir.CompilerIrPhiInputSeq]
   [scrut-reg-group? : bool]
   [total-enum-switch? : bool]) : ResultLowerExpr
   (match (lower-global-shared-view ctx)
@@ -71613,7 +71613,7 @@
   [rest : ast.AstMatchArmList]
   [merge-label : i64]
   [expr-ty : ast.AstType]
-  [phi-inputs : ir.CompilerIrPhiInputList]) : ResultLowerExpr
+  [phi-inputs : ir.CompilerIrPhiInputSeq]) : ResultLowerExpr
   (match (lower-state-alloc-var state)
     [(LowerAlloc.Alloc eq-alloc eq-var)
       (let
@@ -71677,7 +71677,7 @@
                               expr-ty
                               (if (tc_core.tc-never-type? body-ty)
                                 phi-inputs
-                                (ir.compiler-ir-phi-input-cons
+                                (ir.compiler-ir-phi-input-seq-prepend
                                   body-value
                                   body-end-label
                                   phi-inputs))))])]
@@ -71694,7 +71694,7 @@
   [arm : ast.AstMatchArm]
   [merge-label : i64]
   [expr-ty : ast.AstType]
-  [phi-inputs : ir.CompilerIrPhiInputList]) : ResultLowerExpr
+  [phi-inputs : ir.CompilerIrPhiInputSeq]) : ResultLowerExpr
   (match arm
     [(ast.AstMatchArm.Arm pat body-box)
       (let
@@ -71738,31 +71738,33 @@
                             (ir.CompilerIrInstr.Jump merge-label))
                           merge-label
                           expr-ty
-                          (ir.compiler-ir-phi-input-cons
+                          (ir.compiler-ir-phi-input-seq-prepend
                             body-value
                             body-end-label
                             phi-inputs))))])]
               [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])]
           [(ResultLowerEnv.Err message) (ResultLowerExpr.Err message)]))]))
 
-(define (lower-phi-input-list-empty? [phi-inputs : ir.CompilerIrPhiInputList]) : bool
-  (match (ir.compiler-ir-phi-input-list-force-cons phi-inputs)
-    [(ir.CompilerIrPhiInputList.Nil) true]
-    [_ false]))
+(define (lower-phi-input-seq-empty? [phi-inputs : ir.CompilerIrPhiInputSeq]) : bool
+  (let
+    [phi-inputs-at-71745-3 : ir.CompilerIrPhiInputSeq phi-inputs]
+    (if (<= phi-inputs-at-71745-3.len 0)
+      true
+      false)))
 
 (define (lower-match-finish
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [merge-label : i64]
   [expr-ty : ast.AstType]
-  [phi-inputs : ir.CompilerIrPhiInputList]) : ResultLowerExpr
+  [phi-inputs : ir.CompilerIrPhiInputSeq]) : ResultLowerExpr
   (let
     [merge-start : LowerState (lower-state-finish-block state merge-label)]
     [expr-ir-ty : ast.AstType
       (lower-one-word-register-storage-type
         ctx
         (lower-global-shared-view expr-ty))]
-    (if (lower-phi-input-list-empty? (lower-global-shared-view phi-inputs))
+    (if (lower-phi-input-seq-empty? (lower-global-shared-view phi-inputs))
       (ResultLowerExpr.Ok
         (LowerExpr.Expr merge-start ir.CompilerIrValue.Unit (ast.AstType.Never)))
       (match (lower-global-shared-view expr-ty)

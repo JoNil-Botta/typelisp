@@ -45530,24 +45530,34 @@
     backend-state))
 
 (define (compiler-backend-phi-input-value
-  [inputs : compiler_ir_types.CompilerIrPhiInputList]
+  [inputs : compiler_ir_types.CompilerIrPhiInputSeq]
   [from-label : i64]) : ResultBackendValue
-  (match (compiler_ir_types.compiler-ir-phi-input-list-force-cons inputs)
-    [(compiler_ir_types.CompilerIrPhiInputList.Nil)
+  (let
+    [phi-inputs-at-45535-3 : compiler_ir_types.CompilerIrPhiInputSeq inputs]
+    (if (<= phi-inputs-at-45535-3.len 0)
       (ResultBackendValue.Err
         (str_cat.str-cat
           "backend: missing phi input from "
-          (compiler_ir_types.compiler-ir-label-text from-label)))]
-    [(compiler_ir_types.CompilerIrPhiInputList.Array seq)
-      (compiler-backend-phi-input-value
-        (compiler_ir_types.compiler-ir-phi-input-seq-to-list seq)
-        from-label)]
-    [(compiler_ir_types.CompilerIrPhiInputList.Cons value label rest)
-      (if (= label from-label)
-        (ResultBackendValue.Ok value)
-        (compiler-backend-phi-input-value
-          (compiler_ir_types.compiler-ir-box-shared-view rest)
-          from-label))]))
+          (compiler_ir_types.compiler-ir-label-text from-label)))
+      (let
+        [phi-input-at-45535-3 : compiler_ir_types.CompilerIrPhiInput
+          (compiler_ir_types.compiler-ir-phi-input-seq-ref
+            (compiler_ir_types.compiler-ir-global-shared-view
+              phi-inputs-at-45535-3)
+            0)]
+        [value : compiler_ir_types.CompilerIrValue phi-input-at-45535-3.value]
+        [label : i64 phi-input-at-45535-3.label]
+        [rest : compiler_ir_types.CompilerIrPhiInputSeq
+          (compiler_ir_types.CompilerIrPhiInputSeq
+            (compiler_ir_types.compiler-ir-global-shared-view
+              phi-inputs-at-45535-3.slots)
+            (+ phi-inputs-at-45535-3.start 1)
+            (- phi-inputs-at-45535-3.len 1))]
+        (if (= label from-label)
+          (ResultBackendValue.Ok value)
+          (compiler-backend-phi-input-value
+            (compiler-backend-global-shared-view rest)
+            from-label))))))
 
 (define (compiler-backend-vars-same-home?
   [backend-state : CompilerBackendState]
@@ -55279,21 +55289,31 @@
 
 (define (compiler-backend-count-phi-input-uses
   [counts : (__tl_dyn-array i64)]
-  [inputs : compiler_ir_types.CompilerIrPhiInputList]) : unit
-  (match (compiler_ir_types.compiler-ir-phi-input-list-force-cons inputs)
-    [(compiler_ir_types.CompilerIrPhiInputList.Nil) unit]
-    [(compiler_ir_types.CompilerIrPhiInputList.Array seq)
-      (compiler-backend-count-phi-input-uses
-        counts
-        (compiler_ir_types.compiler-ir-phi-input-seq-to-list seq))]
-    [(compiler_ir_types.CompilerIrPhiInputList.Cons value _ rest)
-      (begin
-        (compiler-backend-count-value-use
-          (compiler-backend-global-shared-view counts)
-          value)
-        (compiler-backend-count-phi-input-uses
-          counts
-          (compiler_ir_types.compiler-ir-box-shared-view rest)))]))
+  [inputs : compiler_ir_types.CompilerIrPhiInputSeq]) : unit
+  (let
+    [phi-inputs-at-55279-3 : compiler_ir_types.CompilerIrPhiInputSeq inputs]
+    (if (<= phi-inputs-at-55279-3.len 0)
+      unit
+      (let
+        [phi-input-at-55279-3 : compiler_ir_types.CompilerIrPhiInput
+          (compiler_ir_types.compiler-ir-phi-input-seq-ref
+            (compiler_ir_types.compiler-ir-global-shared-view
+              phi-inputs-at-55279-3)
+            0)]
+        [value : compiler_ir_types.CompilerIrValue phi-input-at-55279-3.value]
+        [rest : compiler_ir_types.CompilerIrPhiInputSeq
+          (compiler_ir_types.CompilerIrPhiInputSeq
+            (compiler_ir_types.compiler-ir-global-shared-view
+              phi-inputs-at-55279-3.slots)
+            (+ phi-inputs-at-55279-3.start 1)
+            (- phi-inputs-at-55279-3.len 1))]
+        (begin
+          (compiler-backend-count-value-use
+            (compiler-backend-global-shared-view counts)
+            value)
+          (compiler-backend-count-phi-input-uses
+            counts
+            (compiler-backend-global-shared-view rest)))))))
 
 (define (compiler-backend-count-instr-uses
   [counts : (__tl_dyn-array i64)]
@@ -80553,17 +80573,27 @@
 
 (define (compiler-backend-collect-phi-collections
   [collections : CompilerBackendProgramCollections]
-  [inputs : compiler_ir_types.CompilerIrPhiInputList]) : CompilerBackendProgramCollections
-  (match (compiler_ir_types.compiler-ir-phi-input-list-force-cons inputs)
-    [(compiler_ir_types.CompilerIrPhiInputList.Nil) collections]
-    [(compiler_ir_types.CompilerIrPhiInputList.Array seq)
-      (compiler-backend-collect-phi-collections
-        collections
-        (compiler_ir_types.compiler-ir-phi-input-seq-to-list seq))]
-    [(compiler_ir_types.CompilerIrPhiInputList.Cons value _ rest)
-      (compiler-backend-collect-phi-collections
-        (compiler-backend-collect-value-collections collections value)
-        (compiler_ir_types.compiler-ir-box-shared-view rest))]))
+  [inputs : compiler_ir_types.CompilerIrPhiInputSeq]) : CompilerBackendProgramCollections
+  (let
+    [phi-inputs-at-80548-3 : compiler_ir_types.CompilerIrPhiInputSeq inputs]
+    (if (<= phi-inputs-at-80548-3.len 0)
+      collections
+      (let
+        [phi-input-at-80548-3 : compiler_ir_types.CompilerIrPhiInput
+          (compiler_ir_types.compiler-ir-phi-input-seq-ref
+            (compiler_ir_types.compiler-ir-global-shared-view
+              phi-inputs-at-80548-3)
+            0)]
+        [value : compiler_ir_types.CompilerIrValue phi-input-at-80548-3.value]
+        [rest : compiler_ir_types.CompilerIrPhiInputSeq
+          (compiler_ir_types.CompilerIrPhiInputSeq
+            (compiler_ir_types.compiler-ir-global-shared-view
+              phi-inputs-at-80548-3.slots)
+            (+ phi-inputs-at-80548-3.start 1)
+            (- phi-inputs-at-80548-3.len 1))]
+        (compiler-backend-collect-phi-collections
+          (compiler-backend-collect-value-collections collections value)
+          (compiler-backend-global-shared-view rest))))))
 
 (define (compiler-backend-collect-instr-collections
   [collections : CompilerBackendProgramCollections]

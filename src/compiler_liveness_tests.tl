@@ -426,13 +426,13 @@
         (&mut builder)
         (ir.CompilerIrInstr.Phi
           6
-          (ir.compiler-ir-phi-input-cons
+          (ir.compiler-ir-phi-input-seq-prepend
             (ir.CompilerIrValue.Var 44)
             (ir.compiler-ir-label "a")
-            (ir.compiler-ir-phi-input-cons
+            (ir.compiler-ir-phi-input-seq-prepend
               (ir.CompilerIrValue.Var 44)
               (ir.compiler-ir-label "b")
-              ir.CompilerIrPhiInputList.Nil))
+              (ir.compiler-ir-phi-input-seq-empty)))
           (compiler-live-i64-ty)))
       (ir.compiler-ir-instr-builder-push!
         (&mut builder)
@@ -719,13 +719,13 @@
               (ir.compiler-ir-instr-seq2
                 (ir.CompilerIrInstr.Phi
                   3
-                  (ir.compiler-ir-phi-input-cons
+                  (ir.compiler-ir-phi-input-seq-prepend
                     (ir.CompilerIrValue.Var 1)
                     (ir.compiler-ir-label "left")
-                    (ir.compiler-ir-phi-input-cons
+                    (ir.compiler-ir-phi-input-seq-prepend
                       (ir.CompilerIrValue.Var 2)
                       (ir.compiler-ir-label "right")
-                      ir.CompilerIrPhiInputList.Nil))
+                      (ir.compiler-ir-phi-input-seq-empty)))
                   (compiler-live-i64-ty))
                 (ir.CompilerIrInstr.Return
                   (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 3)))))
@@ -768,10 +768,10 @@
             (ir.compiler-ir-label "b"))
           (ir.CompilerIrInstr.Phi
             4
-            (ir.compiler-ir-phi-input-cons
+            (ir.compiler-ir-phi-input-seq-prepend
               (ir.CompilerIrValue.Var 16)
               (ir.compiler-ir-label "a")
-              ir.CompilerIrPhiInputList.Nil)
+              (ir.compiler-ir-phi-input-seq-empty))
             (compiler-live-i64-ty))
           (ir.CompilerIrInstr.Return
             (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 4)))))]

@@ -1801,8 +1801,12 @@ if [ "$NL_HOST_OS" = windows ]; then
     # independently cross the same boundary on the #6867 base. The last
     # authoritative Windows probes measured 2,507,253 and 2,491,282 used nodes
     # respectively, with 2,555,904 capacity and 81,788,928 physical bytes.
+    # #6986's direct dense phi-input traversal expands the checked compiler
+    # graph across the next boundary: the authoritative Windows CI probe
+    # measured 3,736,675 used nodes, 3,801,088 capacity, and 121,634,816
+    # physical payload bytes.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool typecheck 57 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool typecheck 58 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # This is the tightest of the four and the one to check first when a series
     # adds compiler source: the copy-call / unsigned-bound-narrowing / chain

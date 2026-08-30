@@ -2098,29 +2098,34 @@
 
 (define (compiler-reg-phi-input-moves
   [dst : i64]
-  [inputs : ir.CompilerIrPhiInputList]
+  [inputs : ir.CompilerIrPhiInputSeq]
   [moves : CompilerRegMoveSeq]
   [strict-pairs : bool]) : CompilerRegMoveSeq
-  (match (ir.compiler-ir-phi-input-list-force-cons inputs)
-    [(ir.CompilerIrPhiInputList.Nil) moves]
-    [(ir.CompilerIrPhiInputList.Array seq)
-      (compiler-reg-phi-input-moves
-        dst
-        (ir.compiler-ir-phi-input-seq-to-list seq)
-        moves
-        strict-pairs)]
-    [(ir.CompilerIrPhiInputList.Cons value _ rest)
+  (let
+    [phi-inputs-at-2104-3 : ir.CompilerIrPhiInputSeq inputs]
+    (if (<= phi-inputs-at-2104-3.len 0)
+      moves
       (let
+        [phi-input-at-2104-3 : ir.CompilerIrPhiInput
+          (ir.compiler-ir-phi-input-seq-ref
+            (ir.compiler-ir-global-shared-view phi-inputs-at-2104-3)
+            0)]
+        [value : ir.CompilerIrValue phi-input-at-2104-3.value]
+        [rest : ir.CompilerIrPhiInputSeq
+          (ir.CompilerIrPhiInputSeq
+            (ir.compiler-ir-global-shared-view phi-inputs-at-2104-3.slots)
+            (+ phi-inputs-at-2104-3.start 1)
+            (- phi-inputs-at-2104-3.len 1))]
         [tail : CompilerRegMoveSeq
           (compiler-reg-phi-input-moves
             dst
-            (compiler-reg-box-shared-view rest)
+            (compiler-reg-global-shared-view rest)
             moves
             strict-pairs)]
         (match value
           [(ir.CompilerIrValue.Var src)
             (compiler-reg-move-list-add tail src dst strict-pairs strict-pairs)]
-          [_ tail]))]))
+          [_ tail])))))
 
 (define (compiler-reg-instr-moves
   [instr : ir.CompilerIrInstr]
@@ -5086,26 +5091,34 @@
 ;; a struct field bound by a match) therefore can never be wrongly coalesced.
 ;; ---------------------------------------------------------------------------
 (define (compiler-reg-phi-touched-add-inputs!
-  [inputs : ir.CompilerIrPhiInputList]
+  [inputs : ir.CompilerIrPhiInputSeq]
   [mask : (__tl_dyn-array i64)]) : unit
-  (match (ir.compiler-ir-phi-input-list-force-cons
-    (compiler-reg-global-shared-view inputs))
-    [(ir.CompilerIrPhiInputList.Nil) unit]
-    [(ir.CompilerIrPhiInputList.Array seq)
-      (compiler-reg-phi-touched-add-inputs!
-        (ir.compiler-ir-phi-input-seq-to-list seq)
-        mask)]
-    [(ir.CompilerIrPhiInputList.Cons value _ rest)
-      (begin
-        (match (compiler-reg-global-shared-view value)
-          [(ir.CompilerIrValue.Var v)
-            (compiler-reg-mark-phi-def!
-              (compiler-reg-global-shared-view mask)
-              v)]
-          [_ unit])
-        (compiler-reg-phi-touched-add-inputs!
-          (compiler-reg-box-shared-view rest)
-          mask))]))
+  (let
+    [phi-inputs-at-5085-3 : ir.CompilerIrPhiInputSeq
+      (compiler-reg-global-shared-view inputs)]
+    (if (<= phi-inputs-at-5085-3.len 0)
+      unit
+      (let
+        [phi-input-at-5085-3 : ir.CompilerIrPhiInput
+          (ir.compiler-ir-phi-input-seq-ref
+            (ir.compiler-ir-global-shared-view phi-inputs-at-5085-3)
+            0)]
+        [value : ir.CompilerIrValue phi-input-at-5085-3.value]
+        [rest : ir.CompilerIrPhiInputSeq
+          (ir.CompilerIrPhiInputSeq
+            (ir.compiler-ir-global-shared-view phi-inputs-at-5085-3.slots)
+            (+ phi-inputs-at-5085-3.start 1)
+            (- phi-inputs-at-5085-3.len 1))]
+        (begin
+          (match (compiler-reg-global-shared-view value)
+            [(ir.CompilerIrValue.Var v)
+              (compiler-reg-mark-phi-def!
+                (compiler-reg-global-shared-view mask)
+                v)]
+            [_ unit])
+          (compiler-reg-phi-touched-add-inputs!
+            (compiler-reg-global-shared-view rest)
+            mask))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Live-out-input phi exclusion (soundness guard on the EP coalescer).
@@ -5159,25 +5172,33 @@
     [(live.CompilerLiveMaybeBlock.No) (live.compiler-live-set-empty)]))
 
 (define (compiler-reg-phi-inputs-any-live-out?
-  [inputs : ir.CompilerIrPhiInputList]
+  [inputs : ir.CompilerIrPhiInputSeq]
   [live-out : live.CompilerLiveI64Set]) : bool
-  (match (ir.compiler-ir-phi-input-list-force-cons inputs)
-    [(ir.CompilerIrPhiInputList.Nil) false]
-    [(ir.CompilerIrPhiInputList.Array seq)
-      (compiler-reg-phi-inputs-any-live-out?
-        (ir.compiler-ir-phi-input-seq-to-list seq)
-        live-out)]
-    [(ir.CompilerIrPhiInputList.Cons value _ rest)
-      (if (match value
-        [(ir.CompilerIrValue.Var v)
-          (live.compiler-live-set-contains?
-            (compiler-reg-global-shared-view live-out)
-            v)]
-        [_ false])
-        true
-        (compiler-reg-phi-inputs-any-live-out?
-          (compiler-reg-box-shared-view rest)
-          live-out))]))
+  (let
+    [phi-inputs-at-5154-3 : ir.CompilerIrPhiInputSeq inputs]
+    (if (<= phi-inputs-at-5154-3.len 0)
+      false
+      (let
+        [phi-input-at-5154-3 : ir.CompilerIrPhiInput
+          (ir.compiler-ir-phi-input-seq-ref
+            (ir.compiler-ir-global-shared-view phi-inputs-at-5154-3)
+            0)]
+        [value : ir.CompilerIrValue phi-input-at-5154-3.value]
+        [rest : ir.CompilerIrPhiInputSeq
+          (ir.CompilerIrPhiInputSeq
+            (ir.compiler-ir-global-shared-view phi-inputs-at-5154-3.slots)
+            (+ phi-inputs-at-5154-3.start 1)
+            (- phi-inputs-at-5154-3.len 1))]
+        (if (match value
+          [(ir.CompilerIrValue.Var v)
+            (live.compiler-live-set-contains?
+              (compiler-reg-global-shared-view live-out)
+              v)]
+          [_ false])
+          true
+          (compiler-reg-phi-inputs-any-live-out?
+            (compiler-reg-global-shared-view rest)
+            live-out))))))
 
 (define (compiler-reg-instr-seq-defines-var?
   [instrs : ir.CompilerIrInstrSeq]
@@ -5305,49 +5326,55 @@
 
 (define (compiler-reg-phi-live-out-inputs-self-loop-safe?
   [dst : i64]
-  [inputs : ir.CompilerIrPhiInputList]
+  [inputs : ir.CompilerIrPhiInputSeq]
   [live-out : live.CompilerLiveI64Set]
   [instrs : ir.CompilerIrInstrSeq]
   [block-label : i64]) : bool
-  (match (ir.compiler-ir-phi-input-list-force-cons inputs)
-    [(ir.CompilerIrPhiInputList.Nil) true]
-    [(ir.CompilerIrPhiInputList.Array seq)
-      (compiler-reg-phi-live-out-inputs-self-loop-safe?
-        dst
-        (ir.compiler-ir-phi-input-seq-to-list seq)
-        live-out
-        instrs
-        block-label)]
-    [(ir.CompilerIrPhiInputList.Cons value predecessor rest)
-      (and
-        (match value
-          [(ir.CompilerIrValue.Var var)
-            (if (live.compiler-live-set-contains?
-              (compiler-reg-global-shared-view live-out)
-              var)
-              (and
-                (= predecessor block-label)
-                (compiler-reg-instr-seq-defines-var?
-                  (compiler-reg-global-shared-view instrs)
-                  var)
-                (or
-                  (not
-                    (compiler-reg-instr-seq-non-phi-uses-var?
-                      (compiler-reg-global-shared-view instrs)
-                      var))
-                  (compiler-reg-phi-result-dead-before-back-edge-def?
+  (let
+    [phi-inputs-at-5298-3 : ir.CompilerIrPhiInputSeq inputs]
+    (if (<= phi-inputs-at-5298-3.len 0)
+      true
+      (let
+        [phi-input-at-5298-3 : ir.CompilerIrPhiInput
+          (ir.compiler-ir-phi-input-seq-ref
+            (ir.compiler-ir-global-shared-view phi-inputs-at-5298-3)
+            0)]
+        [value : ir.CompilerIrValue phi-input-at-5298-3.value]
+        [predecessor : i64 phi-input-at-5298-3.label]
+        [rest : ir.CompilerIrPhiInputSeq
+          (ir.CompilerIrPhiInputSeq
+            (ir.compiler-ir-global-shared-view phi-inputs-at-5298-3.slots)
+            (+ phi-inputs-at-5298-3.start 1)
+            (- phi-inputs-at-5298-3.len 1))]
+        (and
+          (match value
+            [(ir.CompilerIrValue.Var var)
+              (if (live.compiler-live-set-contains?
+                (compiler-reg-global-shared-view live-out)
+                var)
+                (and
+                  (= predecessor block-label)
+                  (compiler-reg-instr-seq-defines-var?
                     (compiler-reg-global-shared-view instrs)
-                    (compiler-reg-global-shared-view live-out)
-                    dst
-                    var)))
-              true)]
-          [_ true])
-        (compiler-reg-phi-live-out-inputs-self-loop-safe?
-          dst
-          (compiler-reg-box-shared-view rest)
-          (compiler-reg-global-shared-view live-out)
-          (compiler-reg-global-shared-view instrs)
-          block-label))]))
+                    var)
+                  (or
+                    (not
+                      (compiler-reg-instr-seq-non-phi-uses-var?
+                        (compiler-reg-global-shared-view instrs)
+                        var))
+                    (compiler-reg-phi-result-dead-before-back-edge-def?
+                      (compiler-reg-global-shared-view instrs)
+                      (compiler-reg-global-shared-view live-out)
+                      dst
+                      var)))
+                true)]
+            [_ true])
+          (compiler-reg-phi-live-out-inputs-self-loop-safe?
+            dst
+            (compiler-reg-global-shared-view rest)
+            (compiler-reg-global-shared-view live-out)
+            (compiler-reg-global-shared-view instrs)
+            block-label))))))
 
 (define (compiler-reg-phi-touched-safe-seq!
   [instrs : ir.CompilerIrInstrSeq]
@@ -15250,29 +15277,36 @@
 ;; conflicts with the INTO copy (order-dependent => silent miscompile), so it is
 ;; rejected.
 (define (compiler-reg-loop-split-phi-inputs-all-in-group?
-  [inputs : ir.CompilerIrPhiInputList]
+  [inputs : ir.CompilerIrPhiInputSeq]
   [parents : (__tl_dyn-array i64)]
   [root : i64]) : bool
-  (match (ir.compiler-ir-phi-input-list-force-cons inputs)
-    [(ir.CompilerIrPhiInputList.Nil) true]
-    [(ir.CompilerIrPhiInputList.Array seq)
-      (compiler-reg-loop-split-phi-inputs-all-in-group?
-        (ir.compiler-ir-phi-input-seq-to-list seq)
-        parents
-        root)]
-    [(ir.CompilerIrPhiInputList.Cons value _ rest)
-      (and
-        (match value
-          [(ir.CompilerIrValue.Var src)
-            (and
-              (>= src 0)
-              (< src (array-length parents))
-              (= (array-ref parents src) root))]
-          [_ false])
-        (compiler-reg-loop-split-phi-inputs-all-in-group?
-          (compiler-reg-box-shared-view rest)
-          parents
-          root))]))
+  (let
+    [phi-inputs-at-15235-3 : ir.CompilerIrPhiInputSeq inputs]
+    (if (<= phi-inputs-at-15235-3.len 0)
+      true
+      (let
+        [phi-input-at-15235-3 : ir.CompilerIrPhiInput
+          (ir.compiler-ir-phi-input-seq-ref
+            (ir.compiler-ir-global-shared-view phi-inputs-at-15235-3)
+            0)]
+        [value : ir.CompilerIrValue phi-input-at-15235-3.value]
+        [rest : ir.CompilerIrPhiInputSeq
+          (ir.CompilerIrPhiInputSeq
+            (ir.compiler-ir-global-shared-view phi-inputs-at-15235-3.slots)
+            (+ phi-inputs-at-15235-3.start 1)
+            (- phi-inputs-at-15235-3.len 1))]
+        (and
+          (match value
+            [(ir.CompilerIrValue.Var src)
+              (and
+                (>= src 0)
+                (< src (array-length parents))
+                (= (array-ref parents src) root))]
+            [_ false])
+          (compiler-reg-loop-split-phi-inputs-all-in-group?
+            (compiler-reg-global-shared-view rest)
+            parents
+            root))))))
 
 ;; The block is a phi-carrier for `root` iff (a) some phi DEFINES a group member
 ;; -- that phi is the loop-carrying one, its result flows around the back-edge --
@@ -16149,26 +16183,34 @@
 ;; Relabel a header's phi inputs that came from `pred-label` to `ph-label`
 ;; (the value is unchanged -- the preheader is a pass-through).
 (define (compiler-reg-preheader-relabel-phi-inputs
-  [inputs : ir.CompilerIrPhiInputList]
+  [inputs : ir.CompilerIrPhiInputSeq]
   [pred-label : i64]
-  [ph-label : i64]) : ir.CompilerIrPhiInputList
-  (match (ir.compiler-ir-phi-input-list-force-cons inputs)
-    [(ir.CompilerIrPhiInputList.Nil) ir.CompilerIrPhiInputList.Nil]
-    [(ir.CompilerIrPhiInputList.Array seq)
-      (compiler-reg-preheader-relabel-phi-inputs
-        (ir.compiler-ir-phi-input-seq-to-list seq)
-        pred-label
-        ph-label)]
-    [(ir.CompilerIrPhiInputList.Cons value label rest)
-      (ir.compiler-ir-phi-input-cons
-        value
-        (if (= label pred-label)
-          ph-label
-          label)
-        (compiler-reg-preheader-relabel-phi-inputs
-          (compiler-reg-box-shared-view rest)
-          pred-label
-          ph-label))]))
+  [ph-label : i64]) : ir.CompilerIrPhiInputSeq
+  (let
+    [phi-inputs-at-16129-3 : ir.CompilerIrPhiInputSeq inputs]
+    (if (<= phi-inputs-at-16129-3.len 0)
+      (ir.compiler-ir-phi-input-seq-empty)
+      (let
+        [phi-input-at-16129-3 : ir.CompilerIrPhiInput
+          (ir.compiler-ir-phi-input-seq-ref
+            (ir.compiler-ir-global-shared-view phi-inputs-at-16129-3)
+            0)]
+        [value : ir.CompilerIrValue phi-input-at-16129-3.value]
+        [label : i64 phi-input-at-16129-3.label]
+        [rest : ir.CompilerIrPhiInputSeq
+          (ir.CompilerIrPhiInputSeq
+            (ir.compiler-ir-global-shared-view phi-inputs-at-16129-3.slots)
+            (+ phi-inputs-at-16129-3.start 1)
+            (- phi-inputs-at-16129-3.len 1))]
+        (ir.compiler-ir-phi-input-seq-prepend
+          value
+          (if (= label pred-label)
+            ph-label
+            label)
+          (compiler-reg-preheader-relabel-phi-inputs
+            (compiler-reg-global-shared-view rest)
+            pred-label
+            ph-label))))))
 
 (define (compiler-reg-preheader-relabel-instr
   [instr : ir.CompilerIrInstr]
@@ -25116,21 +25158,20 @@
 ;; keeps it out of `t` live-in, so the reload placement has to ask for it
 ;; separately.
 (define (compiler-reg-loop-park-phi-input-on-edge?
-  [inputs : ir.CompilerIrPhiInputList]
+  [inputs : ir.CompilerIrPhiInputSeq]
   [from-label : i64]
   [var : i64]) : bool
   (let
-    [seq : ir.CompilerIrPhiInputSeq
-      (ir.compiler-ir-phi-input-seq-from-list inputs)]
-    [slots : (__tl_dyn-array ir.CompilerIrPhiInput) seq.slots]
-    [count : i64 seq.len]
+    [count : i64 inputs.len]
     [index : i64 0]
     (begin
       (while (< index count)
         (begin
           (let
             [input : ir.CompilerIrPhiInput
-              (compiler-reg-global-array-element-shared-view slots index)]
+              (ir.compiler-ir-phi-input-seq-ref
+                (compiler-reg-global-shared-view inputs)
+                index)]
             (when
               (= input.label from-label)
               (match input.value
@@ -26343,10 +26384,7 @@
   (match (compiler-reg-global-shared-view instr)
     [(ir.CompilerIrInstr.Phi dst inputs ty)
       (let
-        [pseq : ir.CompilerIrPhiInputSeq
-          (ir.compiler-ir-phi-input-seq-from-list inputs)]
-        [slots : (__tl_dyn-array ir.CompilerIrPhiInput) pseq.slots]
-        [count : i64 pseq.len]
+        [count : i64 inputs.len]
         [out : (__tl_dyn-array ir.CompilerIrPhiInput)
           (__tl_make-array ir.CompilerIrPhiInput count)]
         [index : i64 0]
@@ -26355,7 +26393,9 @@
             (begin
               (let
                 [input : ir.CompilerIrPhiInput
-                  (compiler-reg-global-array-element-shared-view slots index)]
+                  (ir.compiler-ir-phi-input-seq-ref
+                    (compiler-reg-global-shared-view inputs)
+                    index)]
                 (set!
                   (array-ref out index)
                   (ir.CompilerIrPhiInput
@@ -26366,11 +26406,7 @@
                       t
                       input.label))))
               (set! index (+ index 1))))
-          (ir.CompilerIrInstr.Phi
-            dst
-            (ir.CompilerIrPhiInputList.Array
-              (ir.CompilerIrPhiInputSeq out count))
-            ty)))]
+          (ir.CompilerIrInstr.Phi dst (ir.CompilerIrPhiInputSeq out 0 count) ty)))]
     [_ instr]))
 
 (define (compiler-reg-loop-park-push-reloads!
@@ -31090,46 +31126,61 @@
 ;; copies, so we close the seed set over them to a fixpoint below.
 (define (compiler-reg-phi-inputs-any-in-set?
   [set : live.CompilerLiveI64Set]
-  [inputs : ir.CompilerIrPhiInputList]) : bool
-  (match (ir.compiler-ir-phi-input-list-force-cons inputs)
-    [(ir.CompilerIrPhiInputList.Nil) false]
-    [(ir.CompilerIrPhiInputList.Array seq)
-      (compiler-reg-phi-inputs-any-in-set?
-        set
-        (ir.compiler-ir-phi-input-seq-to-list seq))]
-    [(ir.CompilerIrPhiInputList.Cons value _ rest)
-      (match value
-        [(ir.CompilerIrValue.Var v)
-          (if (live.compiler-live-set-contains?
-            (compiler-reg-global-shared-view set)
-            v)
-            true
+  [inputs : ir.CompilerIrPhiInputSeq]) : bool
+  (let
+    [phi-inputs-at-31057-3 : ir.CompilerIrPhiInputSeq inputs]
+    (if (<= phi-inputs-at-31057-3.len 0)
+      false
+      (let
+        [phi-input-at-31057-3 : ir.CompilerIrPhiInput
+          (ir.compiler-ir-phi-input-seq-ref
+            (ir.compiler-ir-global-shared-view phi-inputs-at-31057-3)
+            0)]
+        [value : ir.CompilerIrValue phi-input-at-31057-3.value]
+        [rest : ir.CompilerIrPhiInputSeq
+          (ir.CompilerIrPhiInputSeq
+            (ir.compiler-ir-global-shared-view phi-inputs-at-31057-3.slots)
+            (+ phi-inputs-at-31057-3.start 1)
+            (- phi-inputs-at-31057-3.len 1))]
+        (match value
+          [(ir.CompilerIrValue.Var v)
+            (if (live.compiler-live-set-contains?
+              (compiler-reg-global-shared-view set)
+              v)
+              true
+              (compiler-reg-phi-inputs-any-in-set?
+                set
+                (compiler-reg-global-shared-view rest)))]
+          [_
             (compiler-reg-phi-inputs-any-in-set?
               set
-              (compiler-reg-box-shared-view rest)))]
-        [_
-          (compiler-reg-phi-inputs-any-in-set?
-            set
-            (compiler-reg-box-shared-view rest))])]))
+              (compiler-reg-global-shared-view rest))])))))
 
 (define (compiler-reg-phi-inputs-insert-all
   [set : live.CompilerLiveI64Set]
-  [inputs : ir.CompilerIrPhiInputList]) : live.CompilerLiveI64Set
-  (match (ir.compiler-ir-phi-input-list-force-cons inputs)
-    [(ir.CompilerIrPhiInputList.Nil) set]
-    [(ir.CompilerIrPhiInputList.Array seq)
-      (compiler-reg-phi-inputs-insert-all
-        set
-        (ir.compiler-ir-phi-input-seq-to-list seq))]
-    [(ir.CompilerIrPhiInputList.Cons value _ rest)
+  [inputs : ir.CompilerIrPhiInputSeq]) : live.CompilerLiveI64Set
+  (let
+    [phi-inputs-at-31077-3 : ir.CompilerIrPhiInputSeq inputs]
+    (if (<= phi-inputs-at-31077-3.len 0)
+      set
       (let
+        [phi-input-at-31077-3 : ir.CompilerIrPhiInput
+          (ir.compiler-ir-phi-input-seq-ref
+            (ir.compiler-ir-global-shared-view phi-inputs-at-31077-3)
+            0)]
+        [value : ir.CompilerIrValue phi-input-at-31077-3.value]
+        [rest : ir.CompilerIrPhiInputSeq
+          (ir.CompilerIrPhiInputSeq
+            (ir.compiler-ir-global-shared-view phi-inputs-at-31077-3.slots)
+            (+ phi-inputs-at-31077-3.start 1)
+            (- phi-inputs-at-31077-3.len 1))]
         [next : live.CompilerLiveI64Set
           (match value
             [(ir.CompilerIrValue.Var v) (live.compiler-live-set-insert set v)]
             [_ set])]
         (compiler-reg-phi-inputs-insert-all
           next
-          (compiler-reg-box-shared-view rest)))]))
+          (compiler-reg-global-shared-view rest))))))
 
 (define (compiler-reg-group-vars-propagate-instr
   [set : live.CompilerLiveI64Set]
@@ -38717,17 +38768,23 @@
 
 (define (compiler-reg-color-phi-root
   [roots : (__tl_dyn-array i64)]
-  [inputs : ir.CompilerIrPhiInputList]
+  [inputs : ir.CompilerIrPhiInputSeq]
   [acc : i64]) : i64
-  (match (ir.compiler-ir-phi-input-list-force-cons inputs)
-    [(ir.CompilerIrPhiInputList.Nil) acc]
-    [(ir.CompilerIrPhiInputList.Array seq)
-      (compiler-reg-color-phi-root
-        roots
-        (ir.compiler-ir-phi-input-seq-to-list seq)
-        acc)]
-    [(ir.CompilerIrPhiInputList.Cons value _ rest)
+  (let
+    [phi-inputs-at-38677-3 : ir.CompilerIrPhiInputSeq inputs]
+    (if (<= phi-inputs-at-38677-3.len 0)
+      acc
       (let
+        [phi-input-at-38677-3 : ir.CompilerIrPhiInput
+          (ir.compiler-ir-phi-input-seq-ref
+            (ir.compiler-ir-global-shared-view phi-inputs-at-38677-3)
+            0)]
+        [value : ir.CompilerIrValue phi-input-at-38677-3.value]
+        [rest : ir.CompilerIrPhiInputSeq
+          (ir.CompilerIrPhiInputSeq
+            (ir.compiler-ir-global-shared-view phi-inputs-at-38677-3.slots)
+            (+ phi-inputs-at-38677-3.start 1)
+            (- phi-inputs-at-38677-3.len 1))]
         [next : i64
           (compiler-reg-color-merge-root
             acc
@@ -38740,8 +38797,8 @@
             (- 0 2)
             (compiler-reg-color-phi-root
               roots
-              (compiler-reg-box-shared-view rest)
-              next))))]))
+              (compiler-reg-global-shared-view rest)
+              next)))))))
 
 (define (compiler-reg-color-set-root!
   [roots : (__tl_dyn-array i64)]
@@ -39226,17 +39283,22 @@
   [roots : (__tl_dyn-array i64)]
   [invalid : (__tl_dyn-array bool)]
   [dst-root : i64]
-  [inputs : ir.CompilerIrPhiInputList]) : unit
-  (match (ir.compiler-ir-phi-input-list-force-cons inputs)
-    [(ir.CompilerIrPhiInputList.Nil) unit]
-    [(ir.CompilerIrPhiInputList.Array seq)
-      (compiler-reg-color-invalidate-phi!
-        roots
-        invalid
-        dst-root
-        (ir.compiler-ir-phi-input-seq-to-list seq))]
-    [(ir.CompilerIrPhiInputList.Cons value _ rest)
+  [inputs : ir.CompilerIrPhiInputSeq]) : unit
+  (let
+    [phi-inputs-at-39180-3 : ir.CompilerIrPhiInputSeq inputs]
+    (if (<= phi-inputs-at-39180-3.len 0)
+      unit
       (let
+        [phi-input-at-39180-3 : ir.CompilerIrPhiInput
+          (ir.compiler-ir-phi-input-seq-ref
+            (ir.compiler-ir-global-shared-view phi-inputs-at-39180-3)
+            0)]
+        [value : ir.CompilerIrValue phi-input-at-39180-3.value]
+        [rest : ir.CompilerIrPhiInputSeq
+          (ir.CompilerIrPhiInputSeq
+            (ir.compiler-ir-global-shared-view phi-inputs-at-39180-3.slots)
+            (+ phi-inputs-at-39180-3.start 1)
+            (- phi-inputs-at-39180-3.len 1))]
         [root : i64
           (compiler-reg-color-value-root
             (compiler-reg-global-shared-view roots)
@@ -39251,7 +39313,7 @@
             roots
             invalid
             dst-root
-            (compiler-reg-box-shared-view rest))))]))
+            (compiler-reg-global-shared-view rest)))))))
 
 (define (compiler-reg-color-invalidate-instr!
   [instr : ir.CompilerIrInstr]
@@ -41007,92 +41069,86 @@
   [phi-def : (__tl_dyn-array bool)]
   [phi-pass : bool]
   [dst : i64]
-  [inputs : ir.CompilerIrPhiInputList]) : unit
-  (match (ir.compiler-ir-phi-input-list-force-cons inputs)
-    [(ir.CompilerIrPhiInputList.Nil) unit]
-    [(ir.CompilerIrPhiInputList.Array seq)
-      (compiler-reg-color-scalar-alias-phi-inputs!
-        type-segment-bases
-        alias
-        web-root
-        web-end
-        web-next
-        web-size
-        eligible
-        var-tys
-        ep-starts
-        ep-ends
-        wit-a
-        wit-b
-        phi-def
-        phi-pass
-        dst
-        (ir.compiler-ir-phi-input-seq-to-list seq))]
-    [(ir.CompilerIrPhiInputList.Cons value _ rest)
-      (begin
-        (match value
-          [(ir.CompilerIrValue.Var src)
-            (let
-              [src-is-phi : bool
-                (and
-                  (>= src 0)
-                  (< src (array-length phi-def))
-                  (array-ref phi-def src))]
-              (when
-                (if phi-pass
-                  src-is-phi
-                  (not src-is-phi))
-                (begin
-                  (compiler-reg-color-scalar-alias-link!
-                    type-segment-bases
-                    (compiler-reg-global-shared-view alias)
-                    (compiler-reg-global-shared-view web-root)
-                    (compiler-reg-global-shared-view web-end)
-                    (compiler-reg-global-shared-view web-next)
-                    (compiler-reg-global-shared-view web-size)
-                    (compiler-reg-global-shared-view eligible)
-                    (compiler-reg-global-shared-view var-tys)
-                    (compiler-reg-global-shared-view ep-starts)
-                    (compiler-reg-global-shared-view ep-ends)
-                    (compiler-reg-global-shared-view wit-a)
-                    (compiler-reg-global-shared-view wit-b)
-                    src
-                    dst
-                    false)
-                  (compiler-reg-color-scalar-alias-link!
-                    type-segment-bases
-                    (compiler-reg-global-shared-view alias)
-                    (compiler-reg-global-shared-view web-root)
-                    (compiler-reg-global-shared-view web-end)
-                    (compiler-reg-global-shared-view web-next)
-                    (compiler-reg-global-shared-view web-size)
-                    (compiler-reg-global-shared-view eligible)
-                    (compiler-reg-global-shared-view var-tys)
-                    (compiler-reg-global-shared-view ep-starts)
-                    (compiler-reg-global-shared-view ep-ends)
-                    (compiler-reg-global-shared-view wit-a)
-                    (compiler-reg-global-shared-view wit-b)
-                    dst
-                    src
-                    false))))]
-          [_ unit])
-        (compiler-reg-color-scalar-alias-phi-inputs!
-          type-segment-bases
-          (compiler-reg-global-shared-view alias)
-          (compiler-reg-global-shared-view web-root)
-          (compiler-reg-global-shared-view web-end)
-          (compiler-reg-global-shared-view web-next)
-          (compiler-reg-global-shared-view web-size)
-          (compiler-reg-global-shared-view eligible)
-          (compiler-reg-global-shared-view var-tys)
-          (compiler-reg-global-shared-view ep-starts)
-          (compiler-reg-global-shared-view ep-ends)
-          (compiler-reg-global-shared-view wit-a)
-          (compiler-reg-global-shared-view wit-b)
-          (compiler-reg-global-shared-view phi-def)
-          phi-pass
-          dst
-          (compiler-reg-box-shared-view rest)))]))
+  [inputs : ir.CompilerIrPhiInputSeq]) : unit
+  (let
+    [phi-inputs-at-40955-3 : ir.CompilerIrPhiInputSeq inputs]
+    (if (<= phi-inputs-at-40955-3.len 0)
+      unit
+      (let
+        [phi-input-at-40955-3 : ir.CompilerIrPhiInput
+          (ir.compiler-ir-phi-input-seq-ref
+            (ir.compiler-ir-global-shared-view phi-inputs-at-40955-3)
+            0)]
+        [value : ir.CompilerIrValue phi-input-at-40955-3.value]
+        [rest : ir.CompilerIrPhiInputSeq
+          (ir.CompilerIrPhiInputSeq
+            (ir.compiler-ir-global-shared-view phi-inputs-at-40955-3.slots)
+            (+ phi-inputs-at-40955-3.start 1)
+            (- phi-inputs-at-40955-3.len 1))]
+        (begin
+          (match value
+            [(ir.CompilerIrValue.Var src)
+              (let
+                [src-is-phi : bool
+                  (and
+                    (>= src 0)
+                    (< src (array-length phi-def))
+                    (array-ref phi-def src))]
+                (when
+                  (if phi-pass
+                    src-is-phi
+                    (not src-is-phi))
+                  (begin
+                    (compiler-reg-color-scalar-alias-link!
+                      type-segment-bases
+                      (compiler-reg-global-shared-view alias)
+                      (compiler-reg-global-shared-view web-root)
+                      (compiler-reg-global-shared-view web-end)
+                      (compiler-reg-global-shared-view web-next)
+                      (compiler-reg-global-shared-view web-size)
+                      (compiler-reg-global-shared-view eligible)
+                      (compiler-reg-global-shared-view var-tys)
+                      (compiler-reg-global-shared-view ep-starts)
+                      (compiler-reg-global-shared-view ep-ends)
+                      (compiler-reg-global-shared-view wit-a)
+                      (compiler-reg-global-shared-view wit-b)
+                      src
+                      dst
+                      false)
+                    (compiler-reg-color-scalar-alias-link!
+                      type-segment-bases
+                      (compiler-reg-global-shared-view alias)
+                      (compiler-reg-global-shared-view web-root)
+                      (compiler-reg-global-shared-view web-end)
+                      (compiler-reg-global-shared-view web-next)
+                      (compiler-reg-global-shared-view web-size)
+                      (compiler-reg-global-shared-view eligible)
+                      (compiler-reg-global-shared-view var-tys)
+                      (compiler-reg-global-shared-view ep-starts)
+                      (compiler-reg-global-shared-view ep-ends)
+                      (compiler-reg-global-shared-view wit-a)
+                      (compiler-reg-global-shared-view wit-b)
+                      dst
+                      src
+                      false))))]
+            [_ unit])
+          (compiler-reg-color-scalar-alias-phi-inputs!
+            type-segment-bases
+            (compiler-reg-global-shared-view alias)
+            (compiler-reg-global-shared-view web-root)
+            (compiler-reg-global-shared-view web-end)
+            (compiler-reg-global-shared-view web-next)
+            (compiler-reg-global-shared-view web-size)
+            (compiler-reg-global-shared-view eligible)
+            (compiler-reg-global-shared-view var-tys)
+            (compiler-reg-global-shared-view ep-starts)
+            (compiler-reg-global-shared-view ep-ends)
+            (compiler-reg-global-shared-view wit-a)
+            (compiler-reg-global-shared-view wit-b)
+            (compiler-reg-global-shared-view phi-def)
+            phi-pass
+            dst
+            (compiler-reg-global-shared-view rest)))))))
 
 ;; --- the induction-step witness -------------------------------------------------
 ;;
@@ -41488,28 +41544,35 @@
 (define (compiler-reg-color-scalar-alias-candidate-inputs?
   [eligible : (__tl_dyn-array bool)]
   [dst : i64]
-  [inputs : ir.CompilerIrPhiInputList]) : bool
-  (match (ir.compiler-ir-phi-input-list-force-cons inputs)
-    [(ir.CompilerIrPhiInputList.Nil) false]
-    [(ir.CompilerIrPhiInputList.Array seq)
-      (compiler-reg-color-scalar-alias-candidate-inputs?
-        eligible
-        dst
-        (ir.compiler-ir-phi-input-seq-to-list seq))]
-    [(ir.CompilerIrPhiInputList.Cons value _ rest)
-      (if (match value
-        [(ir.CompilerIrValue.Var src)
-          (and
-            (not (= src dst))
-            (>= src 0)
-            (< src (array-length eligible))
-            (array-ref eligible src))]
-        [_ false])
-        true
-        (compiler-reg-color-scalar-alias-candidate-inputs?
-          eligible
-          dst
-          (compiler-reg-box-shared-view rest)))]))
+  [inputs : ir.CompilerIrPhiInputSeq]) : bool
+  (let
+    [phi-inputs-at-41418-3 : ir.CompilerIrPhiInputSeq inputs]
+    (if (<= phi-inputs-at-41418-3.len 0)
+      false
+      (let
+        [phi-input-at-41418-3 : ir.CompilerIrPhiInput
+          (ir.compiler-ir-phi-input-seq-ref
+            (ir.compiler-ir-global-shared-view phi-inputs-at-41418-3)
+            0)]
+        [value : ir.CompilerIrValue phi-input-at-41418-3.value]
+        [rest : ir.CompilerIrPhiInputSeq
+          (ir.CompilerIrPhiInputSeq
+            (ir.compiler-ir-global-shared-view phi-inputs-at-41418-3.slots)
+            (+ phi-inputs-at-41418-3.start 1)
+            (- phi-inputs-at-41418-3.len 1))]
+        (if (match value
+          [(ir.CompilerIrValue.Var src)
+            (and
+              (not (= src dst))
+              (>= src 0)
+              (< src (array-length eligible))
+              (array-ref eligible src))]
+          [_ false])
+          true
+          (compiler-reg-color-scalar-alias-candidate-inputs?
+            eligible
+            dst
+            (compiler-reg-global-shared-view rest)))))))
 
 (define (compiler-reg-color-scalar-alias-candidate-instr?
   [instr : ir.CompilerIrInstr]
@@ -42323,20 +42386,31 @@
 
 (define (compiler-reg-remap-phi-inputs
   [remap : (__tl_dyn-array i64)]
-  [inputs : ir.CompilerIrPhiInputList]) : ir.CompilerIrPhiInputList
-  (match (ir.compiler-ir-phi-input-list-force-cons inputs)
-    [(ir.CompilerIrPhiInputList.Nil) ir.CompilerIrPhiInputList.Nil]
-    [(ir.CompilerIrPhiInputList.Array seq)
-      (compiler-reg-remap-phi-inputs
-        remap
-        (ir.compiler-ir-phi-input-seq-to-list seq))]
-    [(ir.CompilerIrPhiInputList.Cons value label rest)
-      (ir.compiler-ir-phi-input-cons
-        (compiler-reg-remap-value (compiler-reg-global-shared-view remap) value)
-        label
-        (compiler-reg-remap-phi-inputs
-          (compiler-reg-global-shared-view remap)
-          (compiler-reg-box-shared-view rest)))]))
+  [inputs : ir.CompilerIrPhiInputSeq]) : ir.CompilerIrPhiInputSeq
+  (let
+    [phi-inputs-at-42248-3 : ir.CompilerIrPhiInputSeq inputs]
+    (if (<= phi-inputs-at-42248-3.len 0)
+      (ir.compiler-ir-phi-input-seq-empty)
+      (let
+        [phi-input-at-42248-3 : ir.CompilerIrPhiInput
+          (ir.compiler-ir-phi-input-seq-ref
+            (ir.compiler-ir-global-shared-view phi-inputs-at-42248-3)
+            0)]
+        [value : ir.CompilerIrValue phi-input-at-42248-3.value]
+        [label : i64 phi-input-at-42248-3.label]
+        [rest : ir.CompilerIrPhiInputSeq
+          (ir.CompilerIrPhiInputSeq
+            (ir.compiler-ir-global-shared-view phi-inputs-at-42248-3.slots)
+            (+ phi-inputs-at-42248-3.start 1)
+            (- phi-inputs-at-42248-3.len 1))]
+        (ir.compiler-ir-phi-input-seq-prepend
+          (compiler-reg-remap-value
+            (compiler-reg-global-shared-view remap)
+            value)
+          label
+          (compiler-reg-remap-phi-inputs
+            (compiler-reg-global-shared-view remap)
+            (compiler-reg-global-shared-view rest)))))))
 
 (define (compiler-reg-remap-maybe-value
   [remap : (__tl_dyn-array i64)]

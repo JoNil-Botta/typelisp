@@ -1468,6 +1468,77 @@
               (ast.ast-node-pool-context-expr-canonical-span pools new-literal)
               20)))))))
 
+;; The in-place expression-pool path grows both sparse provenance tables. Keep
+;; records immediately before and after the initial 64-row boundary readable.
+(define (compiler-ast-span-record-growth-smoke?) : bool
+  (let
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 1 1)]
+    [canonical-index : i64 0]
+    [base-literal : i64 -1]
+    [canonical-63 : i64 -1]
+    [canonical-64 : i64 -1]
+    [respan-index : i64 0]
+    [respan-63 : i64 -1]
+    [respan-64 : i64 -1]
+    (begin
+      (while (< canonical-index 65)
+        (let
+          [literal : i64
+            (ast.ast-node-pool-context-expr-push
+              (owned_view.compiler-owned-shared-view pools)
+              (ast.AstExpr.Literal (ast.ast-lit-int canonical-index)))]
+          [line : i64 (+ canonical-index 1)]
+          [view : i64
+            (ast.ast-expr-spanned-with-pools
+              pools
+              literal
+              (ast.ast-source-span line 1 line 2))]
+          (begin
+            (if (= canonical-index 0)
+              (set! base-literal literal)
+              unit)
+            (if (= canonical-index 63)
+              (set! canonical-63 view)
+              unit)
+            (if (= canonical-index 64)
+              (set! canonical-64 view)
+              unit)
+            (set! canonical-index (+ canonical-index 1)))))
+      (while (< respan-index 65)
+        (let
+          [line : i64 (+ respan-index 100)]
+          [view : i64
+            (ast.ast-expr-spanned-with-pools
+              pools
+              base-literal
+              (ast.ast-source-span line 3 line 4))]
+          (begin
+            (if (= respan-index 63)
+              (set! respan-63 view)
+              unit)
+            (if (= respan-index 64)
+              (set! respan-64 view)
+              unit)
+            (set! respan-index (+ respan-index 1)))))
+      (and
+        (= (ast.ast-node-pool-context-expr-len pools) 195)
+        (= (ast.ast-node-pool-context-expr-canonical-span-count pools) 65)
+        (= (ast.ast-node-pool-context-expr-respan-count pools) 65)
+        (ast.ast-node-pool-context-expr-span-oracle-ok? pools)
+        (compiler-ast-maybe-span-start-line?
+          (ast.ast-node-pool-context-expr-view-span pools canonical-63)
+          64)
+        (compiler-ast-maybe-span-start-line?
+          (ast.ast-node-pool-context-expr-view-span pools canonical-64)
+          65)
+        (compiler-ast-maybe-span-start-line?
+          (ast.ast-node-pool-context-expr-view-span pools respan-63)
+          163)
+        (compiler-ast-maybe-span-start-line?
+          (ast.ast-node-pool-context-expr-view-span pools respan-64)
+          164)))))
+
 ;; Force several fixed-size expression and type segments in two independently
 ;; owned contexts. Boundary ids must continue to address their original nodes,
 ;; hash-consing must survive type-segment growth, and neither context may alias
@@ -1689,6 +1760,7 @@
       (compiler-ast-stale-canonical-span-slot-recovery-smoke?)
       (return 20))
     (unless (compiler-ast-expression-span-sidecar-smoke?) (return 19))
+    (unless (compiler-ast-span-record-growth-smoke?) (return 22))
     (unless (compiler-ast-segmented-growth-isolation-smoke?) (return 15))
     (unless (compiler-ast-macro-type-kind-dense-compaction-smoke?) (return 16))
     (unless (compiler-ast-cleanup-syntax-identity-smoke?) (return 20))

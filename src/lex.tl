@@ -1501,7 +1501,7 @@
     [(ResultTokens.Ok toks)
       (and
         (= (token.tag (array-shared-view toks 1)) (token.tag-float))
-        (string.eq (token.float (array-shared-view toks 1)) "3.14"))]
+        (string.eq (token.float (& (array-ref toks 1))) "3.14"))]
     [(ResultTokens.Err _) false]))
 
 (define (negative-int-token-ok?) : bool
@@ -1509,7 +1509,7 @@
     [(ResultTokens.Ok toks)
       (and
         (= (token.tag (array-shared-view toks 1)) (token.tag-int))
-        (= (token.int (array-shared-view toks 1)) -1)
+        (= (token.int (& (array-ref toks 1))) -1)
         (= (token.tag (array-shared-view toks 2)) (token.tag-sym))
         (string.eq (token.sym (array-shared-view toks 2)) "-"))]
     [(ResultTokens.Err _) false]))
@@ -1519,20 +1519,18 @@
   [idx : i64]
   [value : i64]) : bool
   (let
-    [tok : token.Token (token.token-copy (& (array-ref toks idx)))]
-    (and
-      (= (token.tag (global-shared-view tok)) (token.tag-int))
-      (= (token.int tok) value))))
+    [tok : (& toks token.Token) (& (array-ref toks idx))]
+    (and (= (token.tag-ref tok) (token.tag-int)) (= (token.int tok) value))))
 
 (define (token-sym-eq?
   [toks : (& toks (__tl_dyn-array token.Token))]
   [idx : i64]
   [value : String]) : bool
   (let
-    [tok : token.Token (token.token-copy (& (array-ref toks idx)))]
+    [tok : (& toks token.Token) (& (array-ref toks idx))]
     (and
-      (= (token.tag (global-shared-view tok)) (token.tag-sym))
-      (string.eq (token.sym tok) value))))
+      (= (token.tag-ref tok) (token.tag-sym))
+      (string.eq (ci.intern-id-str (token.sym-id tok)) value))))
 
 (define (prefixed-int-token-ok?) : bool
   (match (result "(0x2a 0x2A -0x2a 0b101010 -0b101010)")
@@ -1587,13 +1585,13 @@
           (if (= (token.tag (array-shared-view toks 6)) (token.tag-rbracket))
             unit
             (set! ok false))
-          (if (= (token.int (array-shared-view toks 7)) -42)
+          (if (= (token.int (& (array-ref toks 7))) -42)
             unit
             (set! ok false))
           (if (string.eq (token.str (array-shared-view toks 8)) "ok")
             unit
             (set! ok false))
-          (if (= (token.char (array-shared-view toks 9)) '\n')
+          (if (= (token.char (& (array-ref toks 9))) '\n')
             unit
             (set! ok false))
           (if (= (token.tag (array-shared-view toks 10)) (token.tag-rparen))
@@ -1628,10 +1626,11 @@
   [idx : i64]
   [value : String]) : bool
   (let
-    [tok : token.Token (token.spanned-token-token-ref (& (array-ref toks idx)))]
+    [tok : (& toks token.Token)
+      (token.spanned-token-token-ref (& (array-ref toks idx)))]
     (and
-      (= (token.tag (global-shared-view tok)) (token.tag-sym))
-      (string.eq (token.sym tok) value))))
+      (= (token.tag-ref tok) (token.tag-sym))
+      (string.eq (ci.intern-id-str (token.sym-id tok)) value))))
 
 (define (spanned-colon-annotation-tokens-ok?) : bool
   (match (spanned-result "[x:i64] (:link \"m\")")
@@ -1672,7 +1671,7 @@
       [(ResultTokens.Ok toks)
         (and
           (= (token.tag (array-shared-view toks 0)) (token.tag-char))
-          (= (token.char (array-shared-view toks 0)) 'a')
+          (= (token.char (& (array-ref toks 0))) 'a')
           (= (token.tag (array-shared-view toks 1)) (token.tag-end)))]
       [(ResultTokens.Err _) false])))
 
@@ -1681,7 +1680,7 @@
     [(ResultTokens.Ok toks)
       (and
         (= (token.tag (array-shared-view toks 0)) (token.tag-char))
-        (= (token.char (array-shared-view toks 0)) want)
+        (= (token.char (& (array-ref toks 0))) want)
         (= (token.tag (array-shared-view toks 1)) (token.tag-end)))]
     [(ResultTokens.Err _) false]))
 
@@ -1788,11 +1787,11 @@
   (let
     [toks : (__tl_dyn-array token.Token) (lex (string-source "literal-id"))]
     [literal : token.Token (array-shared-view toks 0)]
-    [literal-id : ci.InternId (token.str-id (global-shared-view literal))]
+    [literal-id : ci.InternId (token.str-id (& literal))]
     (and
       (>= (ci.intern-id-value literal-id) 0)
       (string.eq (ci.intern-id-str literal-id) "literal-id")
-      (ci.intern-id-eq? (token.str-id literal) literal-id))))
+      (ci.intern-id-eq? (token.str-id (& literal)) literal-id))))
 
 (define (escaped-quote-source-inner) : String
   (str_cat.str-cat
@@ -1874,7 +1873,7 @@
         unit
         (set! ok false))
       (if (=
-        (token.tag (token.spanned-token-token-ref (& (array-ref s 7))))
+        (token.tag-ref (token.spanned-token-token-ref (& (array-ref s 7))))
         (token.tag-end))
         unit
         (set! ok false))
@@ -1909,16 +1908,16 @@
               (return false))
             (set!
               (array-ref ids-a 0)
-              (ci.intern-id-value (token.sym-id (array-shared-view tokens 1))))
+              (ci.intern-id-value (token.sym-id (& (array-ref tokens 1)))))
             (set!
               (array-ref ids-a 1)
-              (ci.intern-id-value (token.sym-id (array-shared-view tokens 2))))
+              (ci.intern-id-value (token.sym-id (& (array-ref tokens 2)))))
             (set!
               (array-ref ids-a 2)
-              (ci.intern-id-value (token.sym-id (array-shared-view tokens 3))))
+              (ci.intern-id-value (token.sym-id (& (array-ref tokens 3)))))
             (set!
               (array-ref ids-a 3)
-              (ci.intern-id-value (token.str-id (array-shared-view tokens 4))))
+              (ci.intern-id-value (token.str-id (& (array-ref tokens 4)))))
             (set! len-a (ci.intern-compat-state-pool-len state-a)))])
       (match (result-with-intern-state source (&mut state-b))
         [(ResultTokens.Err _) (return false)]
@@ -1926,16 +1925,16 @@
           (begin
             (set!
               (array-ref ids-b 0)
-              (ci.intern-id-value (token.sym-id (array-shared-view tokens 1))))
+              (ci.intern-id-value (token.sym-id (& (array-ref tokens 1)))))
             (set!
               (array-ref ids-b 1)
-              (ci.intern-id-value (token.sym-id (array-shared-view tokens 2))))
+              (ci.intern-id-value (token.sym-id (& (array-ref tokens 2)))))
             (set!
               (array-ref ids-b 2)
-              (ci.intern-id-value (token.sym-id (array-shared-view tokens 3))))
+              (ci.intern-id-value (token.sym-id (& (array-ref tokens 3)))))
             (set!
               (array-ref ids-b 3)
-              (ci.intern-id-value (token.str-id (array-shared-view tokens 4))))
+              (ci.intern-id-value (token.str-id (& (array-ref tokens 4)))))
             (set! len-b (ci.intern-compat-state-pool-len state-b)))])
       (unless
         (and
@@ -1973,8 +1972,7 @@
             [spanned-token : token.Token
               (token.spanned-token-tok (array-shared-view spanned 0))]
             [spanned-id : i64
-              (ci.intern-id-value
-                (token.sym-id (global-shared-view spanned-token)))]
+              (ci.intern-id-value (token.sym-id (& spanned-token)))]
             (begin
               (unless
                 (and

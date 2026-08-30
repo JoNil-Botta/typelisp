@@ -12766,7 +12766,8 @@
     (while (not done)
       (let
         [tag : i64
-          (token.tag (token.spanned-token-token-ref (& (array-ref toks scan))))]
+          (token.tag-ref
+            (token.spanned-token-token-ref (& (array-ref toks scan))))]
         (cond
           [(= tag (token.tag-end))
             (begin

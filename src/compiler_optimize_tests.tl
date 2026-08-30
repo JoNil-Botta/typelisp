@@ -73535,6 +73535,565 @@
       (compiler_ir_types.CompilerIrValue.Var 0)
       (compiler_ir_types.CompilerIrValue.Var 6))))
 
+;; --- IAG-2: the per-function global-STORAGE write table ----------------------
+;;
+;; The shapes the table has to tell apart, all in one program: a write through a
+;; `(&mut ...)` parameter every call site hands the SAME global (attributed to
+;; that global), the same write through a `(& ...)` parameter (attributed to
+;; nothing -- the borrow is immutable for the activation), the same write
+;; through a parameter two sites disagree about (attributed to every global),
+;; an indirect call (likewise), and a caller that only reaches a write through
+;; a direct callee (the call-graph closure).
+(defstruct OptOgTestSymbols
+  (a i64)
+  (b i64)
+  (c i64)
+  (mut-writer i64)
+  (shared-writer i64)
+  (mixed-writer i64)
+  (call-mut i64)
+  (call-shared i64)
+  (call-mixed-a i64)
+  (call-mixed-c i64)
+  (indirect i64)
+  (plain i64)
+  (local-writer i64)
+  (escape i64)
+  (addr i64))
+
+(define (opt-og-test-symbols) : OptOgTestSymbols
+  (OptOgTestSymbols
+    (opt-test-symbol "og_a")
+    (opt-test-symbol "og_b")
+    (opt-test-symbol "og_c")
+    (opt-test-symbol "og_mut_writer")
+    (opt-test-symbol "og_shared_writer")
+    (opt-test-symbol "og_mixed_writer")
+    (opt-test-symbol "og_call_mut")
+    (opt-test-symbol "og_call_shared")
+    (opt-test-symbol "og_call_mixed_a")
+    (opt-test-symbol "og_call_mixed_c")
+    (opt-test-symbol "og_indirect")
+    (opt-test-symbol "og_plain")
+    (opt-test-symbol "og_local_writer")
+    (opt-test-symbol "og_escape")
+    (opt-test-symbol "og_addr")))
+
+(define (opt-og-test-globals [symbols : OptOgTestSymbols]) : compiler_ir_types.CompilerIrGlobalSeq
+  (let
+    [builder : compiler_ir_types.CompilerIrGlobalBuilder
+      (compiler_ir_types.compiler-ir-global-builder-with-capacity 3)]
+    (begin
+      (opt-test-global-builder-push!
+        (&mut builder)
+        symbols.a
+        (compiler_ast_types.AstType.DynArray 0)
+        (compiler_ir_types.CompilerIrValue.I64 1))
+      (opt-test-global-builder-push!
+        (&mut builder)
+        symbols.b
+        (compiler_ast_types.AstType.DynArray 0)
+        (compiler_ir_types.CompilerIrValue.I64 2))
+      (opt-test-global-builder-push!
+        (&mut builder)
+        symbols.c
+        (compiler_ast_types.AstType.DynArray 0)
+        (compiler_ir_types.CompilerIrValue.I64 3))
+      (compiler_ir_types.compiler-ir-global-builder-to-seq builder))))
+
+(define (opt-og-ref-param [shared? : bool]) : compiler_ir_types.CompilerIrParamSeq
+  (compiler_ir_types.compiler-ir-param-seq-prepend
+    (compiler_ir_types.CompilerIrParam.Param
+      "p"
+      (if shared?
+        (compiler_ast_types.AstType.Ref 0 0)
+        (compiler_ast_types.AstType.MutRef 0 0))
+      0)
+    (compiler_ir_types.compiler-ir-param-seq-empty)))
+
+;; `store_ptr %0, 1` -- one write through the parameter pointer itself.
+(define (opt-og-param-writer [name : i64] [shared? : bool]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    name
+    (opt-og-ref-param shared?)
+    (compiler_ast_types.AstType.I64)
+    8
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "entry")
+        (opt-test-instr-seq-prepend
+          (compiler_ir_types.CompilerIrInstr.StorePtr
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ir_types.CompilerIrValue.I64 1)
+            (compiler_ast_types.AstType.I64))
+          (opt-mr-return-zero)))
+      compiler_ir_types.CompilerIrBlockList.Nil)))
+
+(define (opt-og-one-arg-call
+  [dst : i64]
+  [callee : i64]
+  [arg : compiler_ir_types.CompilerIrValue]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.Call
+    dst
+    callee
+    (compiler_ir_types.CompilerIrCallArgs.One arg)
+    (compiler_ast_types.AstType.I64)))
+
+(define (opt-og-caller [name : i64] [dst : i64] [callee : i64] [global : i64]) : compiler_ir_types.CompilerIrFunction
+  (opt-mr-one-block-function
+    name
+    (opt-test-instr-seq-prepend
+      (opt-og-one-arg-call
+        dst
+        callee
+        (compiler_ir_types.CompilerIrValue.Global global))
+      (opt-mr-return-zero))))
+
+;; A write through a pointer this walk cannot resolve at all. The packet asked
+;; for such a write to set the "may write anything" flag; the escape check
+;; makes that unnecessary and the row stays empty -- no cell address can reach
+;; an unresolved pointer, because every value that carries one has been checked
+;; to appear only in the positions the analysis follows.
+(define (opt-og-local-writer-function [symbols : OptOgTestSymbols]) : compiler_ir_types.CompilerIrFunction
+  (opt-mr-one-block-function
+    symbols.local-writer
+    (opt-test-instr-seq-prepend
+      (compiler_ir_types.CompilerIrInstr.StorePtr
+        (compiler_ir_types.CompilerIrValue.Var 7)
+        (compiler_ir_types.CompilerIrValue.I64 1)
+        (compiler_ast_types.AstType.I64))
+      (opt-mr-return-zero))))
+
+(define (opt-og-indirect-function [symbols : OptOgTestSymbols]) : compiler_ir_types.CompilerIrFunction
+  (opt-mr-one-block-function
+    symbols.indirect
+    (opt-test-instr-seq-prepend
+      (compiler_ir_types.CompilerIrInstr.CallIndirect
+        40
+        (compiler_ir_types.CompilerIrValue.Var 1)
+        compiler_ir_types.CompilerIrCallArgs.Nil
+        (compiler_ast_types.AstType.I64))
+      (opt-mr-return-zero))))
+
+;; Puts a cell ADDRESS into memory. The analysis cannot follow it from there,
+;; so `og_c` is escaped and every row must claim it.
+(define (opt-og-escape-function [symbols : OptOgTestSymbols]) : compiler_ir_types.CompilerIrFunction
+  (opt-mr-one-block-function
+    symbols.escape
+    (opt-test-instr-seq-prepend
+      (compiler_ir_types.CompilerIrInstr.StorePtr
+        (compiler_ir_types.CompilerIrValue.Var 1)
+        (compiler_ir_types.CompilerIrValue.Global symbols.c)
+        (compiler_ast_types.AstType.U64))
+      (opt-mr-return-zero))))
+
+;; `GlobalAddr` anywhere withdraws the table's precondition.
+(define (opt-og-addr-function [symbols : OptOgTestSymbols]) : compiler_ir_types.CompilerIrFunction
+  (opt-mr-one-block-function
+    symbols.addr
+    (opt-test-instr-seq-prepend
+      (compiler_ir_types.CompilerIrInstr.Mov
+        41
+        (compiler_ir_types.CompilerIrValue.GlobalAddr symbols.c)
+        (compiler_ast_types.AstType.U64))
+      (opt-mr-return-zero))))
+
+(define (opt-og-base-functions [symbols : OptOgTestSymbols]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
+    (opt-og-param-writer symbols.mut-writer false)
+    (compiler_ir_types.compiler-ir-function-seq-prepend
+      (opt-og-param-writer symbols.shared-writer true)
+      (compiler_ir_types.compiler-ir-function-seq-prepend
+        (opt-og-param-writer symbols.mixed-writer false)
+        (compiler_ir_types.compiler-ir-function-seq-prepend
+          (opt-og-caller symbols.call-mut 30 symbols.mut-writer symbols.a)
+          (compiler_ir_types.compiler-ir-function-seq-prepend
+            (opt-og-caller
+              symbols.call-shared
+              31
+              symbols.shared-writer
+              symbols.b)
+            (compiler_ir_types.compiler-ir-function-seq-prepend
+              (opt-og-caller
+                symbols.call-mixed-a
+                32
+                symbols.mixed-writer
+                symbols.a)
+              (compiler_ir_types.compiler-ir-function-seq-prepend
+                (opt-og-caller
+                  symbols.call-mixed-c
+                  33
+                  symbols.mixed-writer
+                  symbols.c)
+                (compiler_ir_types.compiler-ir-function-seq-prepend
+                  (opt-og-indirect-function symbols)
+                  (compiler_ir_types.compiler-ir-function-seq-prepend
+                    (opt-og-local-writer-function symbols)
+                    (compiler_ir_types.compiler-ir-function-seq-prepend
+                      (opt-mr-one-block-function
+                        symbols.plain
+                        (opt-mr-return-zero))
+                      (compiler_ir_types.compiler-ir-function-seq-empty))))))))))))
+
+(define (opt-og-escape-functions [symbols : OptOgTestSymbols]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
+    (opt-og-escape-function symbols)
+    (opt-og-base-functions symbols)))
+
+(define (opt-og-addr-functions [symbols : OptOgTestSymbols]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
+    (opt-og-addr-function symbols)
+    (opt-og-base-functions symbols)))
+
+(define (opt-og-build
+  [symbols : OptOgTestSymbols]
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]) : compiler_optimize.OptGlobalObjModRef
+  (compiler_optimize.opt-global-obj-build
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    (opt-og-test-globals symbols)
+    (compiler_ir_types.compiler-ir-extern-seq-empty)
+    functions
+    (opt_i64_i64_map.with-capacity 1)
+    64))
+
+;; The table with the address-taken precondition applied the way the program
+;; summary applies it: the cell summary's own `addr-taken` set.
+(define (opt-og-build-with-addr-taken
+  [symbols : OptOgTestSymbols]
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]) : compiler_optimize.OptGlobalObjModRef
+  (let
+    [cells : compiler_optimize.OptGlobalCellSummary
+      (compiler_optimize.opt-global-cell-summary-build
+        (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+        (opt-og-test-globals symbols)
+        (compiler_optimize.compiler-opt-global-shared-view functions))]
+    (compiler_optimize.opt-global-obj-build
+      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+      (opt-og-test-globals symbols)
+      (compiler_ir_types.compiler-ir-extern-seq-empty)
+      functions
+      (compiler_optimize.compiler-opt-global-shared-view cells.addr-taken)
+      64)))
+
+(define (opt-og-writes?
+  [obj : compiler_optimize.OptGlobalObjModRef]
+  [name : i64]
+  [global : i64]) : bool
+  (compiler_optimize.opt-global-obj-mask-may-write?
+    (compiler_optimize.compiler-opt-global-shared-view obj.index)
+    (compiler_optimize.opt-global-obj-call-mask
+      (compiler_optimize.compiler-opt-global-shared-view obj)
+      name)
+    global))
+
+(define (opt-og-any? [obj : compiler_optimize.OptGlobalObjModRef] [name : i64]) : bool
+  (compiler_optimize.opt-global-obj-any?
+    (compiler_optimize.opt-global-obj-call-mask obj name)))
+
+;; --- IAG-2: the header hoist itself -------------------------------------------
+;;
+;; One descriptor chain -- `gep @g, 0` / `load` / `gep, 1` / `load` -- in a loop
+;; that calls `callee` every trip, exactly the shape the frozen-chain fixture
+;; uses. The hoist must take the FIRST TWO out and leave the last two in.
+(define (opt-og-loop-blocks [callee : i64] [global : i64]) : compiler_ir_types.CompilerIrBlockList
+  (opt-licm-loop-blocks-with-body
+    (opt-fz-chain-instrs
+      (compiler_ir_types.CompilerIrValue.Global global)
+      6
+      (opt-test-instr-seq-prepend
+        (opt-fz-call-instr 10 callee)
+        (opt-test-instr-seq-prepend
+          (compiler_ir_types.CompilerIrInstr.BinOp
+            11
+            (compiler_ir_types.CompilerIrBinOp.Add)
+            (compiler_ir_types.CompilerIrValue.Var 4)
+            (compiler_ir_types.CompilerIrValue.Var 9)
+            (compiler_ast_types.AstType.I64))
+          (opt-licm-loop-finish-instrs))))
+    11))
+
+;; The cell summary the loop reads, with IAG-2's storage table attached the way
+;; the program-summary builder attaches it.
+(define (opt-og-cells
+  [symbols : OptOgTestSymbols]
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]) : compiler_optimize.OptGlobalCellSummary
+  (compiler_optimize.opt-global-obj-attach
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    (opt-og-test-globals symbols)
+    (compiler_ir_types.compiler-ir-extern-seq-empty)
+    (compiler_optimize.compiler-opt-global-shared-view functions)
+    64
+    (compiler_optimize.opt-global-cell-summary-build
+      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+      (opt-og-test-globals symbols)
+      functions)))
+
+;; A direct-call-clean map that gives `callee` the element-only tier, which is
+;; what opens P16's address exception and the descriptor-header load exception
+;; -- the two proofs that decide whether the length and data words FOLLOW the
+;; handle out. With an unknown callee they refuse and the chain splits by
+;; itself; with this map they admit and the whole chain leaves.
+(define (opt-og-element-clean-map [callee : i64]) : opt_i64_i64_map.Map
+  (let
+    [map : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 4)]
+    (begin
+      (opt_i64_i64_map.insert-ref!
+        (&mut map)
+        (compiler_ir_types.compiler-ir-symbol-id callee)
+        (bit-or
+          (compiler_optimize.opt-direct-call-clean-global-bit)
+          (compiler_optimize.opt-direct-call-clean-unconditional-global-bit)))
+      map)))
+
+(define (opt-og-licm-late
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [clean : opt_i64_i64_map.Map]
+  [cells : compiler_optimize.OptGlobalCellSummary]) : compiler_ir_types.CompilerIrBlockList
+  (let
+    [func : compiler_ir_types.CompilerIrFunction
+      (opt-licm-test-function
+        (compiler_ir_types.compiler-ir-global-shared-view blocks))]
+    (match (compiler_optimize.opt-licm-function-with-context-result-and-direct-call-clean
+      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+      (compiler_optimize.opt-cfg-context-build
+        (compiler_ir_types.compiler-ir-global-shared-view blocks))
+      false
+      clean
+      (opt_i64_i64_map.with-capacity 1)
+      cells
+      true
+      func)
+      [(compiler_optimize.OptFunctionCtxResult.Result next _)
+        (compiler_optimize.opt-function-blocks next)])))
+
+(define (compiler-optimize-global-obj-mod-ref-self-test) : i64
+  (let
+    [symbols : OptOgTestSymbols (opt-og-test-symbols)]
+    [obj : compiler_optimize.OptGlobalObjModRef
+      (opt-og-build
+        (compiler_optimize.compiler-opt-global-shared-view symbols)
+        (opt-og-base-functions
+          (compiler_optimize.compiler-opt-global-shared-view symbols)))]
+    [escaped : compiler_optimize.OptGlobalObjModRef
+      (opt-og-build
+        (compiler_optimize.compiler-opt-global-shared-view symbols)
+        (opt-og-escape-functions
+          (compiler_optimize.compiler-opt-global-shared-view symbols)))]
+    [addr : compiler_optimize.OptGlobalObjModRef
+      (opt-og-build-with-addr-taken
+        (compiler_optimize.compiler-opt-global-shared-view symbols)
+        (opt-og-addr-functions
+          (compiler_optimize.compiler-opt-global-shared-view symbols)))]
+    (cond
+      [(not obj.built?) 1]
+      ;; a `(&mut ...)` parameter every site hands `og_a`: writes og_a and
+      ;; nothing else
+      [(not
+          (opt-og-writes?
+            (compiler_optimize.compiler-opt-global-shared-view obj)
+            symbols.mut-writer
+            symbols.a))
+        2]
+      [(opt-og-writes?
+          (compiler_optimize.compiler-opt-global-shared-view obj)
+          symbols.mut-writer
+          symbols.b)
+        3]
+      ;; the same write through a SHARED parameter writes nothing at all
+      [(opt-og-writes?
+          (compiler_optimize.compiler-opt-global-shared-view obj)
+          symbols.shared-writer
+          symbols.b)
+        4]
+      [(opt-og-any?
+          (compiler_optimize.compiler-opt-global-shared-view obj)
+          symbols.shared-writer)
+        5]
+      ;; the caller picks the callee's row up through the call graph
+      [(not
+          (opt-og-writes?
+            (compiler_optimize.compiler-opt-global-shared-view obj)
+            symbols.call-mut
+            symbols.a))
+        6]
+      [(opt-og-writes?
+          (compiler_optimize.compiler-opt-global-shared-view obj)
+          symbols.call-shared
+          symbols.b)
+        7]
+      ;; two sites disagree about which global the parameter is: the write is
+      ;; attributed to every global
+      [(not
+          (opt-og-any?
+            (compiler_optimize.compiler-opt-global-shared-view obj)
+            symbols.mixed-writer))
+        8]
+      [(not
+          (opt-og-any?
+            (compiler_optimize.compiler-opt-global-shared-view obj)
+            symbols.call-mixed-a))
+        9]
+      ;; an indirect call may land on any function of the program
+      [(not
+          (opt-og-any?
+            (compiler_optimize.compiler-opt-global-shared-view obj)
+            symbols.indirect))
+        10]
+      ;; a function that writes nothing writes nothing
+      [(opt-og-writes?
+          (compiler_optimize.compiler-opt-global-shared-view obj)
+          symbols.plain
+          symbols.a)
+        11]
+      ;; and neither does a write through a pointer the walk cannot resolve:
+      ;; the escape check has already proven no cell address can reach one
+      [(opt-og-any?
+          (compiler_optimize.compiler-opt-global-shared-view obj)
+          symbols.local-writer)
+        15]
+      [(opt-og-writes?
+          (compiler_optimize.compiler-opt-global-shared-view obj)
+          symbols.local-writer
+          symbols.a)
+        16]
+      ;; a cell address put INTO memory escapes: every row claims that global,
+      ;; including a function with no writes at all
+      [(not
+          (opt-og-writes?
+            (compiler_optimize.compiler-opt-global-shared-view escaped)
+            symbols.plain
+            symbols.c))
+        12]
+      [(opt-og-writes?
+          (compiler_optimize.compiler-opt-global-shared-view escaped)
+          symbols.plain
+          symbols.a)
+        13]
+      ;; `GlobalAddr` withdraws the precondition and the table is not built
+      [addr.built? 14]
+      [else 42])))
+
+(define (compiler-optimize-licm-global-header-hoist-self-test) : i64
+  (let
+    [symbols : OptOgTestSymbols (opt-og-test-symbols)]
+    [cells : compiler_optimize.OptGlobalCellSummary
+      (opt-og-cells
+        (compiler_optimize.compiler-opt-global-shared-view symbols)
+        (opt-og-base-functions
+          (compiler_optimize.compiler-opt-global-shared-view symbols)))]
+    ;; the callee writes no global's storage at all
+    [hoisted : compiler_ir_types.CompilerIrBlockList
+      (opt-og-licm-late
+        (opt-og-loop-blocks symbols.plain symbols.a)
+        (opt_i64_i64_map.with-capacity 1)
+        (compiler_optimize.compiler-opt-global-shared-view cells))]
+    ;; ...and the same loop with the element-only tier open, where the
+    ;; established descriptor proofs let the length load follow the handle
+    [followed : compiler_ir_types.CompilerIrBlockList
+      (opt-og-licm-late
+        (opt-og-loop-blocks symbols.plain symbols.a)
+        (opt-og-element-clean-map symbols.plain)
+        (compiler_optimize.compiler-opt-global-shared-view cells))]
+    ;; the callee writes og_a's storage through its `(&mut ...)` parameter
+    [written : compiler_ir_types.CompilerIrBlockList
+      (opt-og-licm-late
+        (opt-og-loop-blocks symbols.call-mut symbols.a)
+        (opt_i64_i64_map.with-capacity 1)
+        (compiler_optimize.compiler-opt-global-shared-view cells))]
+    ;; ...but not og_b's, so the same callee leaves that chain hoistable
+    [other : compiler_ir_types.CompilerIrBlockList
+      (opt-og-licm-late
+        (opt-og-loop-blocks symbols.call-mut symbols.b)
+        (opt_i64_i64_map.with-capacity 1)
+        (compiler_optimize.compiler-opt-global-shared-view cells))]
+    ;; an indirect call below the callee: no per-global answer survives it
+    [indirect : compiler_ir_types.CompilerIrBlockList
+      (opt-og-licm-late
+        (opt-og-loop-blocks symbols.indirect symbols.a)
+        (opt_i64_i64_map.with-capacity 1)
+        (compiler_optimize.compiler-opt-global-shared-view cells))]
+    ;; and the same loop with no storage table at all: the pre-IAG-2 verdict
+    [without : compiler_ir_types.CompilerIrBlockList
+      (opt-og-licm-late
+        (opt-og-loop-blocks symbols.plain symbols.a)
+        (opt_i64_i64_map.with-capacity 1)
+        (compiler_optimize.opt-global-cell-summary-empty))]
+    (cond
+      ;; the HANDLE leaves, the length load stays
+      [(not
+          (=
+            (opt-fz-preheader-loads
+              (compiler_ir_types.compiler-ir-global-shared-view hoisted))
+            1))
+        1]
+      [(not
+          (=
+            (opt-fz-body-loads
+              (compiler_ir_types.compiler-ir-global-shared-view hoisted))
+            1))
+        2]
+      ;; with the element-only tier open the length load follows it out, which
+      ;; is the shape measured as the win (see the IAG-2 PRESSURE GATE note)
+      [(not
+          (=
+            (opt-fz-preheader-loads
+              (compiler_ir_types.compiler-ir-global-shared-view followed))
+            2))
+        3]
+      [(not
+          (=
+            (opt-fz-body-loads
+              (compiler_ir_types.compiler-ir-global-shared-view followed))
+            0))
+        4]
+      ;; a callee that writes the global's storage refuses the whole chain
+      [(not
+          (=
+            (opt-fz-preheader-loads
+              (compiler_ir_types.compiler-ir-global-shared-view written))
+            0))
+        5]
+      [(not
+          (=
+            (opt-fz-body-loads
+              (compiler_ir_types.compiler-ir-global-shared-view written))
+            2))
+        6]
+      ;; the per-global answer: the same callee, a different global
+      [(not
+          (=
+            (opt-fz-preheader-loads
+              (compiler_ir_types.compiler-ir-global-shared-view other))
+            1))
+        7]
+      [(not
+          (=
+            (opt-fz-body-loads
+              (compiler_ir_types.compiler-ir-global-shared-view other))
+            1))
+        8]
+      ;; an indirect call refuses it
+      [(not
+          (=
+            (opt-fz-preheader-loads
+              (compiler_ir_types.compiler-ir-global-shared-view indirect))
+            0))
+        9]
+      ;; and so does a program that carries no table
+      [(not
+          (=
+            (opt-fz-preheader-loads
+              (compiler_ir_types.compiler-ir-global-shared-view without))
+            0))
+        10]
+      [(not
+          (=
+            (opt-fz-body-loads
+              (compiler_ir_types.compiler-ir-global-shared-view without))
+            2))
+        11]
+      [else 42])))
+
 (define (compiler-optimize-len-eq-families-self-test) : i64
   (let
     [symbols : OptLeTestSymbols (opt-le-test-symbols)]
@@ -75971,6 +76530,20 @@
     (compiler-optimize-licm-frozen-global-self-test)
     42
     "a memory-class global whose cell is written once by its startup initializer, whose box and descriptor words no instruction in the program writes, and whose box pointer only ever reaches read-only callees, carries its whole descriptor chain out of a loop that calls an unknown callee every trip; a set! cell, a stored box word, a box pointer handed to an extern or to a parameter-writing callee, an escaping initializer allocation, a global-reading initializer closure, and a loop over budget each refuse"))
+
+(test
+  global-obj-storage-write-table
+  (test.assert-i64-eq
+    (compiler-optimize-global-obj-mod-ref-self-test)
+    42
+    "a write through a mutable reference parameter every direct call site hands the same global is attributed to that global and to no other, the same write through a shared reference parameter is attributed to nothing, a parameter two sites disagree about and an indirect call are attributed to every global, a caller picks its callee's row up through the call graph, and a cell address put into memory escapes into every row while a GlobalAddr anywhere withdraws the table"))
+
+(test
+  licm-global-header-hoist-chain-split
+  (test.assert-i64-eq
+    (compiler-optimize-licm-global-header-hoist-self-test)
+    42
+    "the descriptor HANDLE a global's inline cell holds leaves a loop that calls an unknown callee every trip, and the length load behind it stays inside because the descriptor proofs still refuse that callee -- while an element-only callee lets the length load follow it out; a callee that writes that global's storage through a mutable reference parameter refuses the chain, the same callee leaves a different global's chain hoistable, and an indirect call or an absent storage table refuses it"))
 
 (test
   len-eq-static-length-equality-families
@@ -82949,6 +83522,121 @@
             (compiler_optimize.compiler-opt-global-shared-view symbols)
             callee))))))
 
+;; --- (d) IAG-2: a `(&mut g)` argument at a parameter-write position ---------
+;;
+;; After IAG-1 `(&mut g)` for a module-global aggregate lowers to the VALUE
+;; `Global g`, which the alias facts root as `NoRoot`, so the parameter-write
+;; filter summarized the callee's write as an unknown-rooted store and emptied
+;; the whole table -- including the cached read of a DIFFERENT global's cell
+;; word. The storage row names exactly which global such a write can reach, so
+;; those positions are now filtered by name instead.
+;; The storage row indexes only globals whose cell is not a plain scalar word
+;; (opt-global-obj-scalar-type?), so this fixture declares its two cells
+;; descriptor-shaped -- the shape a `(&mut g)` argument actually has.
+(define (opt-t22-storage-globals [symbols : OptT22CellSymbols]) : compiler_ir_types.CompilerIrGlobalSeq
+  (let
+    [builder : compiler_ir_types.CompilerIrGlobalBuilder
+      (compiler_ir_types.compiler-ir-global-builder-with-capacity 2)]
+    (begin
+      (opt-test-global-builder-push!
+        (&mut builder)
+        symbols.g
+        (compiler_ast_types.AstType.DynArray 0)
+        (compiler_ir_types.CompilerIrValue.I64 1))
+      (opt-test-global-builder-push!
+        (&mut builder)
+        symbols.h
+        (compiler_ast_types.AstType.DynArray 0)
+        (compiler_ir_types.CompilerIrValue.I64 2))
+      (compiler_ir_types.compiler-ir-global-builder-to-seq builder))))
+
+(define (opt-t22-global-arg-instrs
+  [symbols : OptT22CellSymbols]
+  [callee : i64]
+  [arg : i64]) : compiler_ir_types.CompilerIrInstrSeq
+  (opt-test-instrs
+    (compiler_ir_types.CompilerIrInstr.Gep
+      2
+      (compiler_ir_types.CompilerIrValue.Global symbols.g)
+      (compiler_ir_types.CompilerIrValue.I64 0)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.CompilerIrInstr.Load
+      3
+      (compiler_ir_types.CompilerIrValue.Var 2)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.CompilerIrInstr.Call
+      4
+      callee
+      (compiler_ir_types.CompilerIrCallArgs.One
+        (compiler_ir_types.CompilerIrValue.Global arg))
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.CompilerIrInstr.Gep
+      5
+      (compiler_ir_types.CompilerIrValue.Global symbols.g)
+      (compiler_ir_types.CompilerIrValue.I64 0)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.CompilerIrInstr.Load
+      6
+      (compiler_ir_types.CompilerIrValue.Var 5)
+      (compiler_ast_types.AstType.I64))
+    (compiler_ir_types.CompilerIrInstr.Return
+      (compiler_ir_types.CompilerIrMaybeValue.Some
+        (compiler_ir_types.CompilerIrValue.Var 6)))))
+
+(define (opt-t22-global-arg-functions
+  [symbols : OptT22CellSymbols]
+  [callee : i64]
+  [arg : i64]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
+    (opt-call-memory-test-function
+      symbols.caller
+      (compiler_ir_types.compiler-ir-param-seq-empty)
+      (opt-t22-global-arg-instrs symbols callee arg))
+    (compiler_ir_types.compiler-ir-function-seq-prepend
+      (opt-og-param-writer callee false)
+      (compiler_ir_types.compiler-ir-function-seq-empty))))
+
+;; `with-storage?` picks whether the summary carries IAG-2's storage table: the
+;; same program with it absent must keep the pre-IAG-2 verdict exactly.
+(define (opt-t22-global-arg-loads
+  [symbols : OptT22CellSymbols]
+  [callee : i64]
+  [arg : i64]
+  [with-storage? : bool]) : i64
+  (let
+    [functions : compiler_ir_types.CompilerIrFunctionSeq
+      (opt-t22-global-arg-functions symbols callee arg)]
+    [globals : compiler_ir_types.CompilerIrGlobalSeq
+      (opt-t22-storage-globals
+        (compiler_optimize.compiler-opt-global-shared-view symbols))]
+    [cells : compiler_optimize.OptGlobalCellSummary
+      (compiler_optimize.opt-global-cell-summary-build
+        (opt-t22-type-bases)
+        (opt-t22-storage-globals
+          (compiler_optimize.compiler-opt-global-shared-view symbols))
+        (compiler_ir_types.compiler-ir-global-shared-view functions))]
+    (opt-count-load-blocks
+      (opt-t22-run
+        (compiler_ir_types.compiler-ir-param-seq-empty)
+        (compiler_optimize.opt-call-memory-build
+          (opt-t22-type-bases)
+          (compiler_ir_types.compiler-ir-global-shared-view functions)
+          16)
+        (if with-storage?
+          (compiler_optimize.opt-global-obj-attach
+            (opt-t22-type-bases)
+            globals
+            (compiler_ir_types.compiler-ir-extern-seq-empty)
+            (compiler_ir_types.compiler-ir-global-shared-view functions)
+            16
+            cells)
+          cells)
+        (opt-t22-blocks
+          (opt-t22-global-arg-instrs
+            (compiler_optimize.compiler-opt-global-shared-view symbols)
+            callee
+            arg))))))
+
 ;; --- (c) MF-5 (ii): the width rule for constant globals ---------------------
 ;;
 ;; MEASURED and REFUSED, see the note above opt-const-globals-imm32-fits?: this
@@ -83095,6 +83783,39 @@
         15]
       [(opt_i64_i64_map.contains? (& const-table) (opt-test-symbol "t22_wide"))
         16]
+      ;; (d) IAG-2: a `(&mut h)` argument at a parameter-write position no
+      ;; longer empties the table -- the cached word of g survives, because the
+      ;; callee's storage row names h and not g.
+      [(not
+          (=
+            (opt-t22-global-arg-loads
+              (compiler_optimize.compiler-opt-global-shared-view cells)
+              (opt-test-symbol "t22_param_writer")
+              cells.h
+              true)
+            1))
+        17]
+      ;; the same call handed g itself keeps both loads...
+      [(not
+          (=
+            (opt-t22-global-arg-loads
+              (compiler_optimize.compiler-opt-global-shared-view cells)
+              (opt-test-symbol "t22_param_writer_g")
+              cells.g
+              true)
+            2))
+        18]
+      ;; ...and so does the same program with no storage table, which is the
+      ;; pre-IAG-2 verdict for every level below 2.
+      [(not
+          (=
+            (opt-t22-global-arg-loads
+              (compiler_optimize.compiler-opt-global-shared-view cells)
+              (opt-test-symbol "t22_param_writer")
+              cells.h
+              false)
+            2))
+        19]
       [else 42])))
 
 (test
@@ -83102,7 +83823,7 @@
   (test.assert-i64-eq
     (compiler-optimize-t22-load-cse-precision-self-test)
     42
-    "load keys resolve the copies the pass makes and the inliner's parameter copies, a repeated scalar cell read materializes one Mov per write-free region (ended by a Store or by a call whose mod-ref row holds the cell, not by one whose row does not), an element-only callee's stored class keeps a differently classed handle entry, a cell word survives a call whose row excludes it, and the constant-global table still refuses wide literals"))
+    "load keys resolve the copies the pass makes and the inliner's parameter copies, a repeated scalar cell read materializes one Mov per write-free region (ended by a Store or by a call whose mod-ref row holds the cell, not by one whose row does not), an element-only callee's stored class keeps a differently classed handle entry, a cell word survives a call whose row excludes it, a cached cell word also survives a call that writes through a global handed to it as an argument (and does not when that global is the cached one, nor when the program carries no storage table), and the constant-global table still refuses wide literals"))
 
 ;; --- T2-5: sibling phis, merge-body Movs, and deep forwarding chains --------
 ;;

@@ -886,7 +886,7 @@
           : i64)))))
 
 (defmacro (tc-job-state-new-from-profile-metrics-address
-  [profile-metrics-address : Expr]) : Expr
+  [_profile-metrics-address : Expr]) : Expr
   `(let
     [cell : (__tl_dyn-array TcJobStateData) (__tl_make-array TcJobStateData 1)]
     [owner : i64 (arena.tl_arena_current)]
@@ -904,7 +904,7 @@
         (any compile-profile test)
         (set!
           (array-ref macro-state-addresses 17)
-          (cast ,profile-metrics-address : i64)))
+          (cast ,_profile-metrics-address : i64)))
       (set!
         (array-ref cell 0)
         (TcJobStateData

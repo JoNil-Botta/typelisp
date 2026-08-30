@@ -12,6 +12,9 @@
 ;# selectors with width-correct signed bit patterns. The `e` and `E` selectors
 ;# normalize every integer and source-width float to Rust exponent notation;
 ;# their precision counts digits after the leading digit.
+;# Primitive Debug selectors `?`, `x?`, and `X?` cover unit, bool, every fixed
+;# integer, f32/f64, quoted byte Strings/str/chars, checked references, raw
+;# pointers, and retained Arguments. Debug-hex changes integer leaves only.
 ;# `args` retains that plan with borrow-checked anchors for later replay without
 ;# constructing the final combined String. `format` materializes retained
 ;# Arguments, while `write!` and `writeln!` replay them through the same
@@ -47,11 +50,11 @@
 ;#     (if (string.eq (format.format arguments) "hello, Ada") 42 1)))
 ;# ```
 ;#
-;# Builtin placeholder values are `String`, all eight fixed-width integer
-;# types, `bool`, `char`, `f64`, and `f32`. The `e`/`E` selectors accept every
-;# integer and float type. The `p` selector additionally accepts raw pointers
-;# in an unsafe call-site context. Structural formatting is intentionally
-;# separate from this default Display-style protocol.
+;# Default Display placeholder values are `String`, all eight fixed-width
+;# integer types, `bool`, `char`, `f64`, and `f32`. The `e`/`E` selectors accept
+;# every integer and float type. The `p` selector and raw-pointer Debug require
+;# an unsafe call-site context. Nominal/aggregate Debug hooks and builders are a
+;# separate layer over the public `DebugOptions` contract.
 (import stdlib.comptime)
 (import stdlib.str_cat)
 (import stdlib.string)
@@ -276,6 +279,24 @@
   (width i64)
   (precision-present bool)
   (precision i64))
+
+;: Integer-leaf policy carried by primitive and recursive Debug formatting.
+;:
+;: Lower/upper hexadecimal affect only fixed-width integer leaves. Every other
+;: Debug-capable value keeps its ordinary Debug spelling.
+(defenum DebugIntegerMode
+  (DebugDecimal)
+  (DebugLowerHex)
+  (DebugUpperHex))
+
+;: Immutable options shared by primitive Debug and later owner/builders.
+;:
+;: `format-options.alternate` is the pretty/alternate intent. Keeping the
+;: resolved common options intact lets later recursive Debug dispatch propagate
+;: one value without rebuilding dynamic width or precision counts.
+(defstruct DebugOptions
+  (format-options FormatOptions)
+  (integer-mode DebugIntegerMode))
 
 ;: Result of streaming one immutable format plan into a destination.
 ;:
@@ -741,16 +762,38 @@
                                   (if (string.eq selector "e")
                                     true
                                     (string.eq selector "E"))]
+                                ;; Keep Debug selector classification in one
+                                ;; closed representation: 0 is Display, 1 is
+                                ;; ordinary Debug, 2/3 are lower/upper integer
+                                ;; leaves, and 4 is every non-Debug selector.
+                                [selector-mode : i64
+                                  (match selector
+                                    ["" 0]
+                                    ["?" 1]
+                                    ["x?" 2]
+                                    ["X?" 3]
+                                    [_ 4])]
+                                [debug-selector? : bool
+                                  (if (> selector-mode 0)
+                                    (< selector-mode 4)
+                                    false)]
+                                [debug-hex? : bool (> selector-mode 1)]
+                                [debug-uppercase? : bool (= selector-mode 3)]
                                 [uppercase-exponent? : bool
                                   (string.eq selector "E")]
                                 [uppercase-exponent-expr : comptime.Expr
                                   (comptime.expr-bool uppercase-exponent?)]
-                                [special-selector? : bool
+                                [special-selector?
+                                  : bool
+                                  ;; Macro CTFE runs before `cond` is available.
+                                  ;; lint-allow: nested-if-ladder
                                   (if radix-selector?
                                     true
                                     (if pointer-selector?
                                       true
-                                      exponent-selector?))]
+                                      (if exponent-selector?
+                                        true
+                                        debug-selector?)))]
                                 [raw-pointer? : bool
                                   (if (string.eq value-kind "ptr")
                                     true
@@ -758,7 +801,9 @@
                                 [supported-pointer-argument? : bool
                                   (if raw-pointer?
                                     (if borrowed?
-                                      (string.eq argument-kind "ref")
+                                      (if debug-selector?
+                                        true
+                                        (string.eq argument-kind "ref"))
                                       true)
                                     false)]
                                 [nominal? : bool
@@ -918,12 +963,19 @@
                                     ["f64" true]
                                     ["f32" true]
                                     [_ false])]
-                                [numeric? : bool
+                                [numeric?
+                                  : bool
+                                  ;; Macro CTFE runs before `cond` is available.
+                                  ;; lint-allow: nested-if-ladder
                                   (if integral?
                                     true
                                     (if float?
                                       true
-                                      pointer-selector?))]
+                                      (if pointer-selector?
+                                        true
+                                        (if debug-selector?
+                                          raw-pointer?
+                                          false))))]
                                 [use-direct-hook? : bool
                                   (if nominal?
                                     (if default-options?
@@ -1177,42 +1229,134 @@
                                   (if (string.eq selector "X")
                                     1
                                     0)]
+                                [debug-rendered : comptime.Expr
+                                  (if debug-selector?
+                                    (if integral?
+                                      (if debug-hex?
+                                        `(stdlib.format.format-u64-radix-core
+                                          ,radix-value
+                                          4
+                                          ,(comptime.expr-bool debug-uppercase?)
+                                          (!= ,alternate-expr 0))
+                                        display-rendered)
+                                      (match value-kind
+                                        ["bool"
+                                          (if borrowed?
+                                            `(if (deref ,value)
+                                              "true"
+                                              "false")
+                                            `(if ,value
+                                              "true"
+                                              "false"))]
+                                        ["unit" (comptime.expr-string "()")]
+                                        ["string"
+                                          (if borrowed?
+                                            `(stdlib.format.format-debug-string-core
+                                              ,value)
+                                            `(stdlib.format.format-debug-string-core
+                                              (& ,value)))]
+                                        ["str"
+                                          `(stdlib.format.format-debug-string-core
+                                            ,value)]
+                                        ["char"
+                                          (if borrowed?
+                                            `(stdlib.format.format-debug-char-core
+                                              (deref ,value))
+                                            `(stdlib.format.format-debug-char-core
+                                              ,value))]
+                                        ["f64"
+                                          (if borrowed?
+                                            `(stdlib.format.format-float-debug-core
+                                              (deref ,value))
+                                            `(stdlib.format.format-float-debug-core
+                                              ,value))]
+                                        ["f32"
+                                          (if borrowed?
+                                            `(stdlib.format.format-f32-debug-core
+                                              (deref ,value))
+                                            `(stdlib.format.format-f32-debug-core
+                                              ,value))]
+                                        ["ptr"
+                                          (if borrowed?
+                                            `(stdlib.format.format-pointer-core
+                                              (ptr->int (deref ,value)))
+                                            `(stdlib.format.format-pointer-core
+                                              (ptr->int ,value)))]
+                                        ["mut-ptr"
+                                          (if borrowed?
+                                            `(stdlib.format.format-pointer-core
+                                              (ptr->int (deref ,value)))
+                                            `(stdlib.format.format-pointer-core
+                                              (ptr->int ,value)))]
+                                        ["arguments"
+                                          (if borrowed?
+                                            `(stdlib.format.format-arguments-materialize
+                                              (deref ,value))
+                                            `(stdlib.format.format-arguments-materialize
+                                              ,value))]
+                                        ["struct"
+                                          (comptime.comptime-error
+                                            (comptime.string-append
+                                              "format: Debug is not implemented for nominal type "
+                                              diagnostic-value-key))]
+                                        ["enum"
+                                          (comptime.comptime-error
+                                            (comptime.string-append
+                                              "format: Debug is not implemented for nominal type "
+                                              diagnostic-value-key))]
+                                        ["region"
+                                          (comptime.comptime-error
+                                            (comptime.string-append
+                                              "format: Debug is not implemented for nominal type "
+                                              diagnostic-value-key))]
+                                        [_
+                                          (comptime.comptime-error
+                                            (comptime.string-append
+                                              "format: Debug is not implemented for type "
+                                              (comptime.string-append
+                                                diagnostic-value-key
+                                                (comptime.string-append
+                                                  "; type kind "
+                                                  value-kind))))]))
+                                    (comptime.expr-string ""))]
                                 [rendered
                                   : comptime.Expr
                                   ;; CTFE evaluates this selector ladder before
                                   ;; syntax macros such as `cond` are available.
                                   ;; lint-allow: nested-if-ladder
-                                  (if radix-selector?
-                                    (if integral?
-                                      `(stdlib.format.format-u64-radix-core
-                                        ,radix-value
-                                        ,(comptime.expr-int radix-shift)
-                                        (!=
-                                          ,(comptime.expr-int radix-uppercase)
-                                          0)
-                                        (!= ,alternate-expr 0))
-                                      (comptime.comptime-error
-                                        (comptime.string-append
-                                          "format: radix selector '"
-                                          (comptime.string-append
-                                            selector
-                                            (comptime.string-append
-                                              "' requires a fixed-width integer argument; got "
-                                              (type-key argument-type))))))
-                                    (if pointer-selector?
-                                      (if supported-pointer-argument?
-                                        (if borrowed?
-                                          `(stdlib.format.format-pointer-core
-                                            (ptr->int (deref ,value)))
-                                          `(stdlib.format.format-pointer-core
-                                            (ptr->int ,value)))
+                                  (if debug-selector?
+                                    debug-rendered
+                                    (if radix-selector?
+                                      (if integral?
+                                        `(stdlib.format.format-u64-radix-core
+                                          ,radix-value
+                                          ,(comptime.expr-int radix-shift)
+                                          (!=
+                                            ,(comptime.expr-int radix-uppercase)
+                                            0)
+                                          (!= ,alternate-expr 0))
                                         (comptime.comptime-error
                                           (comptime.string-append
-                                            "format: 'p' selector requires (Ptr T), (MutPtr T), or a shared borrow of a raw-pointer value; got "
-                                            (type-key argument-type))))
-                                      (if exponent-selector?
-                                        (comptime.expr-string "")
-                                        display-rendered)))]
+                                            "format: radix selector '"
+                                            (comptime.string-append
+                                              selector
+                                              (comptime.string-append
+                                                "' requires a fixed-width integer argument; got "
+                                                (type-key argument-type))))))
+                                      (if pointer-selector?
+                                        (if supported-pointer-argument?
+                                          (if borrowed?
+                                            `(stdlib.format.format-pointer-core
+                                              (ptr->int (deref ,value)))
+                                            `(stdlib.format.format-pointer-core
+                                              (ptr->int ,value)))
+                                          (comptime.comptime-error
+                                            (comptime.string-append
+                                              "format: 'p' selector requires (Ptr T), (MutPtr T), or a shared borrow of a raw-pointer value; got "
+                                              (type-key argument-type))))
+                                        (if exponent-selector?
+                                          (comptime.expr-string "")
+                                          display-rendered))))]
                                 (begin
                                   (if exponent-selector?
                                     (if (if integral?
@@ -1237,7 +1381,9 @@
                                           "format: type selector is parsed but not supported yet: "
                                           selector))))
                                   (if (= sign 1)
-                                    (if numeric?
+                                    (if (if numeric?
+                                      true
+                                      debug-selector?)
                                       unit
                                       (comptime.comptime-error
                                         "format: '+' sign requires a numeric argument"))
@@ -1311,15 +1457,39 @@
                                                   (deref ,precision-value))
                                                 (comptime.comptime-error
                                                   "format: dynamic precision argument must have exact type i64"))))))]
-                                    [precision-applies? : bool
+                                    [precision-applies?
+                                      : bool
+                                      ;; Macro CTFE runs before `cond` is available.
+                                      ;; lint-allow: nested-if-ladder
                                       (if (= precision-kind 0)
                                         false
-                                        (if exponent-selector?
-                                          true
-                                          (not
-                                            (if integral?
-                                              true
-                                              pointer-selector?))))]
+                                        ;; lint-allow: nested-if-ladder
+                                        (if debug-selector?
+                                          ;; lint-allow: nested-if-ladder
+                                          (if integral?
+                                            false
+                                            (if raw-pointer?
+                                              false
+                                              (if arguments?
+                                                false
+                                                (not
+                                                  (if (string.eq
+                                                    value-kind
+                                                    "string")
+                                                    true
+                                                    (if (string.eq
+                                                      value-kind
+                                                      "str")
+                                                      true
+                                                      (string.eq
+                                                        value-kind
+                                                        "char")))))))
+                                          (if exponent-selector?
+                                            true
+                                            (not
+                                              (if integral?
+                                                true
+                                                pointer-selector?)))))]
                                     [default-options? : bool
                                       (if (= fill-code 32)
                                         (if (= alignment 0)
@@ -1352,7 +1522,11 @@
                                         width-var
                                         resolved-width)]
                                     [pointer-alternate? : bool
-                                      (if pointer-selector?
+                                      (if (if pointer-selector?
+                                        true
+                                        (if debug-selector?
+                                          raw-pointer?
+                                          false))
                                         (= alternate 1)
                                         false)]
                                     [effective-width : comptime.Expr
@@ -1515,34 +1689,48 @@
                                                   ,transported-precision))]
                                             [_ rendered])
                                           rendered))]
-                                    [formatted : comptime.Expr
-                                      (if default-options?
-                                        rendered-with-precision
-                                        (if numeric?
-                                          `(stdlib.format.format-apply-options
-                                            ,rendered-with-precision
+                                    [formatted
+                                      : comptime.Expr
+                                      ;; Macro CTFE runs before `cond` is available.
+                                      ;; lint-allow: nested-if-ladder
+                                      (if (if debug-selector?
+                                        ;; lint-allow: nested-if-ladder
+                                        (if arguments?
+                                          true
+                                          (if (string.eq value-kind "string")
                                             true
-                                            (stdlib.format.FormatOptions
-                                              (cast ,fill-expr : char)
-                                              ,alignment-expr
-                                              ,sign-expr
-                                              (!= ,alternate-expr 0)
-                                              (!= ,effective-zero 0)
-                                              ,effective-width
-                                              (!= ,precision-kind-expr 0)
-                                              ,transported-precision))
-                                          `(stdlib.format.format-apply-options
-                                            ,rendered-with-precision
-                                            false
-                                            (stdlib.format.FormatOptions
-                                              (cast ,fill-expr : char)
-                                              ,alignment-expr
-                                              ,sign-expr
-                                              (!= ,alternate-expr 0)
-                                              (!= ,effective-zero 0)
-                                              ,effective-width
-                                              (!= ,precision-kind-expr 0)
-                                              ,transported-precision))))]
+                                            (if (string.eq value-kind "str")
+                                              true
+                                              (string.eq value-kind "char"))))
+                                        false)
+                                        rendered-with-precision
+                                        (if default-options?
+                                          rendered-with-precision
+                                          (if numeric?
+                                            `(stdlib.format.format-apply-options
+                                              ,rendered-with-precision
+                                              true
+                                              (stdlib.format.FormatOptions
+                                                (cast ,fill-expr : char)
+                                                ,alignment-expr
+                                                ,sign-expr
+                                                (!= ,alternate-expr 0)
+                                                (!= ,effective-zero 0)
+                                                ,effective-width
+                                                (!= ,precision-kind-expr 0)
+                                                ,transported-precision))
+                                            `(stdlib.format.format-apply-options
+                                              ,rendered-with-precision
+                                              false
+                                              (stdlib.format.FormatOptions
+                                                (cast ,fill-expr : char)
+                                                ,alignment-expr
+                                                ,sign-expr
+                                                (!= ,alternate-expr 0)
+                                                (!= ,effective-zero 0)
+                                                ,effective-width
+                                                (!= ,precision-kind-expr 0)
+                                                ,transported-precision)))))]
                                     [precision-checked : comptime.Expr
                                       (if precision-runtime?
                                         (comptime.expr-let-scope
@@ -1599,22 +1787,66 @@
   [selector-expr : comptime.Expr]) : String
   (match prefix
     [(comptime.Expr.Call _ prefix-items)
-      `(,terminal
-        ,(comptime.type-expr value-source)
-        ,@prefix-items
-        ,value-runtime
-        ,fill-expr
-        ,alignment-expr
-        ,sign-expr
-        ,alternate-expr
-        ,zero-expr
-        ,width-kind-expr
-        ,(comptime.type-expr width-source)
-        ,width-runtime
-        ,precision-kind-expr
-        ,(comptime.type-expr precision-source)
-        ,precision-runtime
-        ,selector-expr)]
+      (let
+        [selector : String (comptime.expr-string-value selector-expr)]
+        [debug-selector? : bool
+          (match selector
+            ["?" true]
+            ["x?" true]
+            ["X?" true]
+            [_ false])]
+        [source-kind : String (type-kind value-source)]
+        [source-reference? : bool
+          (if (string.eq source-kind "ref")
+            true
+            (string.eq source-kind "mut-ref"))]
+        [element-type : comptime.Expr
+          (if source-reference?
+            (comptime.reference-element-type value-source)
+            value-source)]
+        [element-kind : String (type-kind element-type)]
+        [nested-debug-reference? : bool
+          (if debug-selector?
+            (if source-reference?
+              (if (string.eq element-kind "ref")
+                true
+                (string.eq element-kind "mut-ref"))
+              false)
+            false)]
+        (if nested-debug-reference?
+          `(stdlib.format.format-classified-call
+            ,terminal
+            ,prefix
+            ,(comptime.type-expr element-type)
+            (deref ,value-runtime)
+            ,(comptime.type-expr width-source)
+            ,width-runtime
+            ,(comptime.type-expr precision-source)
+            ,precision-runtime
+            ,fill-expr
+            ,alignment-expr
+            ,sign-expr
+            ,alternate-expr
+            ,zero-expr
+            ,width-kind-expr
+            ,precision-kind-expr
+            ,selector-expr)
+          `(,terminal
+            ,(comptime.type-expr value-source)
+            ,@prefix-items
+            ,value-runtime
+            ,fill-expr
+            ,alignment-expr
+            ,sign-expr
+            ,alternate-expr
+            ,zero-expr
+            ,width-kind-expr
+            ,(comptime.type-expr width-source)
+            ,width-runtime
+            ,precision-kind-expr
+            ,(comptime.type-expr precision-source)
+            ,precision-runtime
+            ,selector-expr)))]
     [_
       (comptime.comptime-error "format: internal terminal prefix is malformed")]))
 
@@ -2081,6 +2313,33 @@
   [precision-value : comptime.Expr]
   [selector-expr : comptime.Expr]) : String
   (let
+    [selector : String (comptime.expr-string-value selector-expr)]
+    [debug-selector? : bool
+      (match selector
+        ["?" true]
+        ["x?" true]
+        ["X?" true]
+        [_ false])]
+    [source-kind : String (type-kind source-type)]
+    [source-borrowed? : bool
+      (if (string.eq source-kind "ref")
+        true
+        (string.eq source-kind "mut-ref"))]
+    [value-type : comptime.Expr
+      (if source-borrowed?
+        (comptime.reference-element-type source-type)
+        source-type)]
+    [value-kind : String (type-kind value-type)]
+    [arguments? : bool
+      (if (string.eq value-kind "tuple")
+        (if (= (tuple-element-count value-type) 2)
+          (if (string.eq
+            (type-kind (tuple-element-type value-type 0))
+            "function")
+            (string.eq (type-kind (tuple-element-type value-type 1)) "tuple")
+            false)
+          false)
+        false)]
     [fallback : comptime.Expr
       `(begin
         (stdlib.format.formatter-write-string-at!
@@ -2118,47 +2377,51 @@
         ,(comptime.type-expr precision-source)
         ,precision-value
         ,selector-expr)]
-    (match fill-expr
-      [(comptime.Expr.Int fill)
-        (if (= fill 32)
-          (match alignment-expr
-            [(comptime.Expr.Int alignment)
-              (if (= alignment 0)
-                (match sign-expr
-                  [(comptime.Expr.Int sign)
-                    (if (= sign 0)
-                      (match alternate-expr
-                        [(comptime.Expr.Int alternate)
-                          (if (= alternate 0)
-                            (match zero-expr
-                              [(comptime.Expr.Int zero)
-                                (if (= zero 0)
-                                  (match width-kind-expr
-                                    [(comptime.Expr.Int width-kind)
-                                      (if (= width-kind 0)
-                                        (match precision-kind-expr
-                                          [(comptime.Expr.Int precision-kind)
-                                            (if (= precision-kind 0)
-                                              (if (string.eq
-                                                (comptime.expr-string-value
-                                                  selector-expr)
-                                                "")
-                                                direct
-                                                fallback)
-                                              fallback)]
-                                          [_ fallback])
-                                        fallback)]
-                                    [_ fallback])
-                                  fallback)]
-                              [_ fallback])
-                            fallback)]
-                        [_ fallback])
-                      fallback)]
-                  [_ fallback])
-                fallback)]
-            [_ fallback])
-          fallback)]
-      [_ fallback])))
+    (if (if debug-selector?
+      arguments?
+      false)
+      direct
+      (match fill-expr
+        [(comptime.Expr.Int fill)
+          (if (= fill 32)
+            (match alignment-expr
+              [(comptime.Expr.Int alignment)
+                (if (= alignment 0)
+                  (match sign-expr
+                    [(comptime.Expr.Int sign)
+                      (if (= sign 0)
+                        (match alternate-expr
+                          [(comptime.Expr.Int alternate)
+                            (if (= alternate 0)
+                              (match zero-expr
+                                [(comptime.Expr.Int zero)
+                                  (if (= zero 0)
+                                    (match width-kind-expr
+                                      [(comptime.Expr.Int width-kind)
+                                        (if (= width-kind 0)
+                                          (match precision-kind-expr
+                                            [(comptime.Expr.Int precision-kind)
+                                              (if (= precision-kind 0)
+                                                (if (string.eq
+                                                  (comptime.expr-string-value
+                                                    selector-expr)
+                                                  "")
+                                                  direct
+                                                  fallback)
+                                                fallback)]
+                                            [_ fallback])
+                                          fallback)]
+                                      [_ fallback])
+                                    fallback)]
+                                [_ fallback])
+                              fallback)]
+                          [_ fallback])
+                        fallback)]
+                    [_ fallback])
+                  fallback)]
+              [_ fallback])
+            fallback)]
+        [_ fallback]))))
 
 ;: Resolve and invoke a nominal owner's direct formatter hook when available.
 (defmacro (format-stream-direct-owner-at-resolved!
@@ -8596,6 +8859,62 @@
     [expf : u64 (bit-and (shr bits 23) (cast 0xff : u64))]
     [frac : u64 (bit-and bits (cast 0x7fffff : u64))]
     (format-float-parts neg expf frac (cast 0xff : u64) 23 127 9)))
+
+;: Render f64 with Rust-compatible general Debug thresholds.
+;:
+;: Debug keeps shortest source-width digits, switches finite nonzero magnitudes
+;: below 1e-4 or at least 1e16 to lowercase exponent form, and gives integral
+;: fixed-form values one fractional digit. Explicit precision is handled by the
+;: existing exact fixed renderer before this helper is selected.
+(define (format-float-debug-core [value : f64]) : String
+  (let
+    [bits : u64 (__tl_float_to_bits value)]
+    [expf : u64 (bit-and (shr bits 52) (cast 0x7ff : u64))]
+    [frac : u64 (bit-and bits 0xfffffffffffff)]
+    [negative? : bool (= (bit-and (shr bits 63) (cast 1 : u64)) (cast 1 : u64))]
+    [rendered : String (format-float-core value)]
+    (if (= expf (cast 0x7ff : u64))
+      rendered
+      (if (and (= expf (cast 0 : u64)) (= frac (cast 0 : u64)))
+        (if negative?
+          "-0.0"
+          "0.0")
+        (let
+          [magnitude-bits : u64 (bit-and bits 0x7fffffffffffffff)]
+          [magnitude : f64 (__tl_float_from_bits magnitude-bits)]
+          (if (or
+            (< magnitude (cast 0.0001 : f64))
+            (>= magnitude (cast 10000000000000000.0 : f64)))
+            (format-exponent-normalize rendered false)
+            (if (string.contains-char (& rendered) '.')
+              rendered
+              (str_cat.str-cat rendered ".0" ""))))))))
+
+;: Render f32 at source width with the same general Debug policy.
+(define (format-f32-debug-core [value : f32]) : String
+  (let
+    [bits32 : u32 (__tl_float_to_bits value)]
+    [bits : u64 (cast bits32 : u64)]
+    [expf : u64 (bit-and (shr bits 23) (cast 0xff : u64))]
+    [frac : u64 (bit-and bits (cast 0x7fffff : u64))]
+    [negative? : bool (= (bit-and (shr bits 31) (cast 1 : u64)) (cast 1 : u64))]
+    [rendered : String (format-f32-core value)]
+    (if (= expf (cast 0xff : u64))
+      rendered
+      (if (and (= expf (cast 0 : u64)) (= frac (cast 0 : u64)))
+        (if negative?
+          "-0.0"
+          "0.0")
+        (let
+          [magnitude-bits : u32 (bit-and bits32 (cast 0x7fffffff : u32))]
+          [magnitude : f32 (__tl_float_from_bits magnitude-bits)]
+          (if (or
+            (< magnitude (cast 0.0001 : f32))
+            (>= magnitude (cast 10000000000000000.0 : f32)))
+            (format-exponent-normalize rendered false)
+            (if (string.contains-char (& rendered) '.')
+              rendered
+              (str_cat.str-cat rendered ".0" ""))))))))
 
 ;: Render an f64 with exact fixed precision and round-half-to-even.
 (define (format-float-fixed-core [value : f64] [precision : i64]) : String

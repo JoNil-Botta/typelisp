@@ -3066,7 +3066,7 @@ integration_batch_precompile() {
         esac
         _b_stage=0
         case "${_b_extra:-}" in
-            stage-stdlib) _b_stage=1 ;;
+            stage-stdlib | stage-stdlib+expected-stderr:*) _b_stage=1 ;;
         esac
         _b_case_dir="$WORKDIR/$_b_name"
         mkdir -p "$_b_case_dir"
@@ -3193,6 +3193,10 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra suite
     case "${extra:-}" in
         "") ;;
         stage-stdlib) stage_stdlib=1 ;;
+        stage-stdlib+expected-stderr:*)
+            stage_stdlib=1
+            expected_stderr_spec=${extra#stage-stdlib+expected-stderr:}
+            ;;
         expected-stderr:*) expected_stderr_spec=${extra#expected-stderr:} ;;
     esac
 

@@ -6462,12 +6462,34 @@ zero padding follows the sign and prefix while counting both toward width.
 Radix precision is accepted and ignored like ordinary integral Display.
 Nonnumeric values receive a selector/type diagnostic. The `e` and `E`
 selectors use the exponent semantics above. The selectors `?`, `x?`, and `X?`
-are parsed into the same plan but currently produce focused unsupported-
-semantics diagnostics. Malformed, duplicated, or out-of-order options are
-rejected during macro expansion.
+select ordinary Debug, Debug with lowercase hexadecimal integer leaves, and
+Debug with uppercase hexadecimal integer leaves. `#?` is the same ordinary
+Debug mode with alternate/pretty intent. `DebugOptions` retains the resolved
+`FormatOptions` and a closed `DebugIntegerMode`; later aggregate builders and
+owner hooks thread that immutable value rather than reconstructing dynamic
+counts. Malformed, duplicated, or out-of-order options are rejected during
+macro expansion.
 
-The pre-dispatch byte-Debug core used by future `?` formatting is nevertheless
-defined for `String`, borrowed `str`, and `char`. String/str output uses double
+Primitive Debug supports `unit`, `bool`, all eight fixed-width integers,
+`f32`/`f64`, `String`, borrowed `str`, `char`, raw pointers, transparent checked
+references to supported leaves, and retained Arguments. Decimal integer Debug
+matches Display. `x?`/`X?` instead use the same-width two's-complement
+hexadecimal rules as `x`/`X`; `#x?`/`#X?` add the lowercase `0x` prefix.
+Precision is ignored for integer and pointer leaves. Bool and unit use
+`true`/`false` and `()`; precision truncates those bytes before nonnumeric
+width/fill/alignment, while sign, zero, alternate, and the integer mode do not
+change their content.
+
+General float Debug preserves source width and signless canonical `NaN`.
+Without precision, integral fixed-form values retain one fractional digit,
+including `0.0` and `-0.0`; finite nonzero magnitudes below `1e-4` or at least
+`1e16` use the shared lowercase exponent normalization, while both threshold
+endpoints choose the specified side. A present precision selects the same exact
+fixed-decimal, half-even implementation as Display and suppresses exponent
+selection. `x?` and `X?` do not alter float text. Common numeric sign, width,
+fill, alignment, and zero padding apply after float or integer Debug rendering.
+
+String/str Debug uses double
 quotes and char output uses single quotes. Printable ASCII `0x20..0x7e` is
 literal except for backslash and the active delimiter; the inactive quote is
 literal. NUL, tab, LF, CR, backslash, and the active delimiter use `\\0`,
@@ -6476,8 +6498,24 @@ byte uses lowercase fixed-width `\\xNN`. The result is therefore ASCII-only
 even for bytes above `0x7f`; this byte-oriented rule is an approved difference
 from Rust's Unicode-oriented Debug. A checked count pass completes before one
 backing-byte allocation and the write pass, and signed-`i64` length overflow
-traps before deriving or writing a destination. This core does not by itself
-enable `?`, `#?`, `x?`, or `X?` selector dispatch.
+traps before deriving or writing a destination. Width, precision, fill,
+alignment, sign, zero, alternate, and integer mode deliberately do not pad or
+truncate these already-quoted leaves.
+
+Raw-pointer Debug uses the same lowercase `0x` address spelling and unsafe
+call-site gate as `p`; `x?`/`X?` do not change its case. Alternate pointer Debug
+uses the 64-bit full-width spelling. Checked shared and mutable references are
+transparent: they forward the same Debug mode and options and never print a
+checked-reference address. A raw-pointer referent is converted but never
+dereferenced. Retained Arguments replay their stored plan byte-for-byte under
+ordinary, alternate, lower-hex, or upper-hex Debug. Outer Debug options never
+rewrite or enter that plan, and writer/stdout/stderr replay remains direct
+without a final combined String.
+
+Nominal structs/enums and other structural aggregates currently receive a
+focused Debug-specific unsupported-type diagnostic. They never fall through to
+`to-string` or `format-write`; the later owner-Debug/builder and aggregate
+layers extend this central dispatch independently from Display.
 
 The `p` selector accepts direct `(Ptr T)` and `(MutPtr T)` values, plus a shared
 borrow whose referent has either raw-pointer type. It never dereferences the raw
@@ -6502,9 +6540,9 @@ movement; it does not prove identity, uniqueness, liveness, ownership, or
 persistence; and it carries no recoverable provenance. Programs must not parse
 it and use `int->ptr` as a round-trip or validity mechanism.
 
-The default built-in placeholder types are `String`, `i8`, `i16`, `i32`, `i64`,
+The default Display placeholder types are `String`, `i8`, `i16`, `i32`, `i64`,
 `u8`, `u16`, `u32`, `u64`, `bool`, `char`, `f64`, and `f32`; raw pointers are
-available only through `p` as described above. Signed integers render
+available through `p` and primitive Debug as described above. Signed integers render
 their decimal magnitude with a leading minus when negative; unsigned conversion
 preserves the complete `u64` range. The four integral radix selectors use one
 unsigned conversion path after same-width signed-to-unsigned conversion. Float

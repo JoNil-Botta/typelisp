@@ -126,6 +126,9 @@ The following parts are implemented and actively tested:
   inline tests, doctests, formatting, linting, documentation generation, and a
   stdio language server with a deterministic multi-root workspace index and
   open-document overlays.
+- Rust-style primitive Debug selectors with byte-safe quoted text, source-width
+  float behavior, hexadecimal integer leaves, checked-reference forwarding,
+  and shared String/writer/stdout/stderr dispatch.
 - SPMD `foreach`, `spmd-reduce`, `spmd-scan`, `spmd-broadcast`, and
   `spmd-shuffle`, plus `program-index` / `program-count` lane identity, with
   scalar reference lowering and native AVX2/AVX-512 lowering for eligible

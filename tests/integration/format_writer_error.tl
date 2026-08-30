@@ -78,13 +78,20 @@
     [hook-writer : FailingWriter (FailingWriter (byte_buf.new) 2 0)]
     [hook-result : format.FormatResult (format.write! hook-writer arguments)]
     [hook-rendered : String (byte_buf.to-string hook-writer.bytes)]
+    [debug-hook-writer : FailingWriter (FailingWriter (byte_buf.new) 2 0)]
+    [debug-hook-result : format.FormatResult
+      (format.write! debug-hook-writer "{:X?}" arguments)]
+    [debug-hook-rendered : String (byte_buf.to-string debug-hook-writer.bytes)]
     (if (and
       (error-77? result)
       (error-77? hook-result)
+      (error-77? debug-hook-result)
       (string.eq (& rendered) "ab4")
       (string.eq (& hook-rendered) "ah")
+      (string.eq (& debug-hook-rendered) "ah")
       (= writer.calls 2)
       (= hook-writer.calls 2)
+      (= debug-hook-writer.calls 2)
       (= fallback-hook-calls 0)
       (= hook-value.value 7))
       42

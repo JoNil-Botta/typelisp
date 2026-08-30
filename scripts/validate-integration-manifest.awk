@@ -103,10 +103,10 @@ FILENAME == catalog {
     if (want == "" || want !~ /^[0-9]+$/) {
         fail("manifest line " FNR " has invalid exit code for " name ": " want)
     }
-    if (extra == "expected-stderr:") {
+    if (extra == "expected-stderr:" || extra == "stage-stdlib+expected-stderr:") {
         fail("manifest line " FNR " has empty expected stderr for " name)
     }
-    if (extra != "" && extra != "stage-stdlib" && extra !~ /^expected-stderr:.+/) {
+    if (extra != "" && extra != "stage-stdlib" && extra !~ /^expected-stderr:.+/ && extra !~ /^stage-stdlib\+expected-stderr:.+/) {
         fail("manifest line " FNR " has invalid extra field for " name ": " extra)
     }
     if (suite_spec == "suite-members:") {

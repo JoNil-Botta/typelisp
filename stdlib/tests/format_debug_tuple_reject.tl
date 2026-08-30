@@ -2,5 +2,5 @@
 
 (define (main) : i64
   (begin
-    (format.format "{:?}" "value")
+    (format.format "{:?}" (tuple 1 true))
     42))

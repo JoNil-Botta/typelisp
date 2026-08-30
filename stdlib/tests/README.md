@@ -53,13 +53,18 @@ or external runtime orchestration. Pure stdlib API coverage that can run through
   rounding, decimal-only powers, normal/subnormal edges, max finite values,
   infinities, and canonical NaNs; deterministic finite-bit samples additionally
   prove decimal parse round trips.
-- `format_debug_bytes.tl` directly exercises the pre-dispatch byte-Debug core
+- `format_debug_bytes.tl` directly exercises the shared byte-Debug core
   for all 256 bytes in both String and char delimiter modes. It pins focused
   quote/control/high-byte goldens, ASCII-only lowercase fixed-width escapes,
   borrowed input and post-render reuse, and the exact single backing-buffer
   allocation budget. `format_debug_length_overflow.tl` pins failure before
-  allocation, while `format_specifier_reject.tl` proves String `?` dispatch is
-  still unsupported until the remaining Debug work lands.
+  allocation. `format_primitive_debug.tl` covers `?`/`#?`/`x?`/`X?` across
+  primitive categories, Rust 1.98 float thresholds and exact precision,
+  integer width/casing, option composition, checked references, unsafe raw
+  pointers, retained Arguments, exactly-once evaluation, and the public
+  `DebugOptions` ABI. Focused rejection fixtures pin nominal Debug independence
+  from Display, deferred tuple/Box structural Debug, and the pointer unsafe
+  gate.
 - `format_integer_radix.tl` pins Rust 1.98 binary, octal, lowercase hex, and
   uppercase hex for every fixed-width signed and unsigned integer at zero, one,
   signed minus one/min/max, unsigned max, and power-of-two boundaries. It also

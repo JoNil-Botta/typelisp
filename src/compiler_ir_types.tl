@@ -178,9 +178,11 @@
 ;: Render a symbol id. This is the one choke point every emission and
 ;: diagnostic path goes through, so it is where the two symbol id spaces meet:
 ;: ids the IR's own derived-symbol table minted (see `compiler-ir-symbol` below)
-;: render from that table, everything else is a front-end pool id. Ids outside
-;: both -- negative sentinels, and the unallocated tail of the derived window --
-;: render as the empty string rather than aborting, matching
+;: render from that table, while only active renderable ids reach the front-end
+;: pool. Ids outside both -- future compact handles the current pool has not
+;: allocated, other tagged compiler identities, negative sentinels, and the
+;: unallocated tail of the IR domain -- render as the empty string rather than
+;: aborting, matching
 ;: `compiler-ir-label-text`: diagnostics reach this path with whatever the IR
 ;: happens to hold.
 (define (compiler-ir-symbol-text [symbol : i64]) : String
@@ -189,9 +191,9 @@
     [(compiler-ir-symbol-owned? symbol)
       (compiler-ir-array-shared-view
         compiler-ir-symbol-slots
-        (compiler-ir-symbol-slot symbol))]
-    [(>= symbol (compiler-ir-symbol-base)) ""]
-    [else (ci.intern-str symbol)]))
+        (compiler-ir-symbol-slot-unchecked symbol))]
+    [(ci.intern-renderable-id? symbol) (ci.intern-str symbol)]
+    [else ""]))
 
 (define (compiler-ir-symbol-eq? [left : i64] [right : i64]) : bool
   (= left right))
@@ -332,12 +334,13 @@
 ;; This table grows, so the id space is bounded by the symbols actually created
 ;; (refs #6293).
 ;;
-;; Ids are `compiler-ir-symbol-base + dense-index`, placed in the free window
-;; [4*capacity, capacity^2): above `compiler-cfg-key-id`'s [capacity,
-;; 2*capacity) and far below every structural symbol family, so each
-;; `(< id (intern-capacity))` pool-id test and each hygiene/composite predicate
-;; reads false for these ids -- which is the answer those tests want, since a
-;; derived symbol is not a pool id and carries no structural decoding.
+;; Ids are `compiler-ir-symbol-base + dense-index`, placed in the fixed positive
+;; domain [2*2^32, 3*2^32). This stays disjoint from the complete compact
+;; `InternId(u32)` space rather than merely today's intern capacity, from the
+;; cfg-key domain reserved by compiler_intern, from negative sentinels, and from
+;; session structural records beginning at 2^62. The dense 32-bit payload
+;; remains a single word, is independent of every pool resize, and leaves
+;; headroom for optimizer-local small-field packing of a symbol identity.
 ;;
 ;; Two invariants this table owns:
 ;;
@@ -358,7 +361,24 @@
 ;; spelled the same has to *be* that id. `compiler-ir-symbol-lookup` therefore
 ;; defers to an existing canonical generated id before minting one of its own.
 (define (compiler-ir-symbol-base) : i64
-  (* 4 (ci.intern-capacity)))
+  (ci.intern-ir-symbol-domain-base))
+
+(define (compiler-ir-symbol-domain? [symbol : i64]) : bool
+  (and
+    (>= symbol (compiler-ir-symbol-base))
+    (< symbol (ci.intern-ir-symbol-domain-limit))))
+
+;; Capacity-independent raw encoding used by the table's mint path and by
+;; namespace boundary tests. Encoding an index does not confer table ownership;
+;; only the live dense prefix accepted by `compiler-ir-symbol-owned?` may index
+;; the spelling table.
+(define (compiler-ir-symbol-domain-id-for-index [index : i64]) : i64
+  (if (or (< index 0) (>= index (ci.intern-compiler-identity-domain-width)))
+    (ci.intern-compiler-identity-domain-overflow-abort)
+    (+ (compiler-ir-symbol-base) index)))
+
+(defmacro (compiler-ir-symbol-slot-unchecked [symbol : Expr]) : i64
+  `(- ,symbol (compiler-ir-symbol-base)))
 
 (define compiler-ir-symbol-slots : (__tl_dyn-array String)
   (__tl_make-array String 1024))
@@ -446,7 +466,7 @@
 (define (compiler-ir-symbol-mint! [name : String]) : i64
   (let
     [index : i64 compiler-ir-symbol-count]
-    [id : i64 (+ (compiler-ir-symbol-base) index)]
+    [id : i64 (compiler-ir-symbol-domain-id-for-index index)]
     [previous-arena : i64 (arena.tl_arena_current)]
     (begin
       (unsafe
@@ -472,17 +492,19 @@
 (define (compiler-ir-symbol-count-value) : i64
   compiler-ir-symbol-count)
 
-;: True for the ids this table minted, and only those: the window above it is
-;: unallocated and every id below it belongs to the intern pool or to a
-;: structural family.
+;: True for the ids this table minted, and only those. Domain membership alone
+;: is insufficient: the unallocated payload tail must never index the table.
 (define (compiler-ir-symbol-owned? [symbol : i64]) : bool
   (and
-    (>= symbol (compiler-ir-symbol-base))
-    (< symbol (+ (compiler-ir-symbol-base) compiler-ir-symbol-count))))
+    (compiler-ir-symbol-domain? symbol)
+    (< (compiler-ir-symbol-slot-unchecked symbol) compiler-ir-symbol-count)))
 
-;: Dense index of a symbol this table minted, for callers keeping a side table.
+;: Dense index of a symbol this table minted, for callers keeping a side table;
+;: malformed, foreign-domain and unallocated ids fail closed.
 (define (compiler-ir-symbol-slot [symbol : i64]) : i64
-  (- symbol (compiler-ir-symbol-base)))
+  (if (compiler-ir-symbol-owned? symbol)
+    (compiler-ir-symbol-slot-unchecked symbol)
+    -1))
 
 (defenum CompilerIrValue
   (Var i64)

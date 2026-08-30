@@ -926,24 +926,40 @@
 ;; The derived-symbol table exists because the fixed intern pool ran out of
 ;; generated ids on a whole-program self-compile (refs #6293), so what has to
 ;; hold is: one id per spelling and that spelling back unchanged, growth past
-;; the initial slab without losing earlier entries, ids inside the free window
-;; the interner's own budget self-tests pin, and no cost at all to the intern
-;; lanes -- the budget the table exists to buy back.
+;; the initial slab without losing earlier entries, a capacity-independent
+;; one-word domain that cannot collide with any u32 source handle or neighboring
+;; compiler identity, and no cost at all to the intern lanes -- the budget the
+;; table exists to buy back.
 (define (compiler-ir-smoke-derived-symbol-table-ok?) : bool
   (let
     [pool-id : i64 (ci.intern "ir-smoke-pool-name")]
+    [canonical-id : i64
+      (ci.intern-generated-canonical-name "ir-smoke/canonical")]
     [pool-before : i64 (ci.intern-pool-len)]
     [generated-before : i64 (ci.intern-generated-count)]
     [capacity : i64 (ci.intern-capacity)]
+    [domain-width : i64 (ci.intern-compiler-identity-domain-width)]
+    [compact-limit : i64 (ci.intern-compact-id-domain-limit)]
+    [cfg-base : i64 (ci.intern-cfg-key-domain-base)]
     [base : i64 (compiler_ir_types.compiler-ir-symbol-base)]
+    [domain-limit : i64 (ci.intern-ir-symbol-domain-limit)]
+    [structural-base : i64 (ci.intern-structural-key-base)]
+    [old-collision-base : i64 (* 4 capacity)]
+    [current-cfg-key : i64 (+ capacity (- capacity 1))]
     [count-before : i64 (compiler_ir_types.compiler-ir-symbol-count-value)]
+    [canonical-symbol : i64
+      (compiler_ir_types.compiler-ir-symbol "ir-smoke/canonical")]
     [first : i64 (compiler_ir_types.compiler-ir-symbol "ir-smoke/one")]
     [second : i64 (compiler_ir_types.compiler-ir-symbol "ir-smoke/two")]
     [first-again : i64 (compiler_ir_types.compiler-ir-symbol "ir-smoke/one")]
     [last-grown : i64 0]
     [index : i64 0]
+    [logical-source-handle : i64 0]
     [ok : bool true]
     (begin
+      ;; An existing canonical generated name remains a pooled identity and
+      ;; does not consume an IR-owned slot.
+      (unless (= canonical-symbol canonical-id) (set! ok false))
       ;; Equal spellings are one id; distinct spellings are distinct ids.
       (unless (= first first-again) (set! ok false))
       (unless (not (= first second)) (set! ok false))
@@ -969,35 +985,111 @@
             (compiler_ir_types.compiler-ir-symbol-typed-id second))
           "ir-smoke/two")
         (set! ok false))
-      ;; Ids are dense in the free window [4*capacity, capacity^2) ...
-      (unless (= base (* 4 capacity)) (set! ok false))
+      ;; The full namespace is capacity-independent: compact u32 ids, cfg,
+      ;; IR-owned and session structural identities occupy disjoint domains.
+      (unless (= compact-limit 4294967296) (set! ok false))
+      (unless (= cfg-base domain-width) (set! ok false))
+      (unless (= base (* 2 domain-width)) (set! ok false))
+      (unless (= domain-limit (* 3 domain-width)) (set! ok false))
+      (unless (= structural-base 4611686018427387904) (set! ok false))
+      (unless (= compact-limit cfg-base) (set! ok false))
+      (unless (< cfg-base base) (set! ok false))
+      (unless (< domain-limit structural-base) (set! ok false))
+      ;; Allocated IR ids remain dense inside their fixed tagged domain.
       (unless (= first (+ base count-before)) (set! ok false))
       (unless (= second (+ first 1)) (set! ok false))
-      (unless (< second (* capacity capacity)) (set! ok false))
+      (unless (< second domain-limit) (set! ok false))
       (unless
         (= (compiler_ir_types.compiler-ir-symbol-slot first) (- first base))
         (set! ok false))
       (unless
         (compiler_ir_types.compiler-ir-symbol-owned? first)
         (set! ok false))
-      ;; ... which neither a pool id nor a cfg key id reaches, and which no pool
-      ;; render API claims.
       (unless
-        (not (compiler_ir_types.compiler-ir-symbol-owned? (- capacity 1)))
-        (set! ok false))
-      (unless
-        (not
-          (compiler_ir_types.compiler-ir-symbol-owned?
-            (+ capacity (- capacity 1))))
+        (compiler_ir_types.compiler-ir-symbol-domain? first)
         (set! ok false))
       (unless (not (ci.intern-renderable-id? first)) (set! ok false))
-      ;; Unminted ids in the window, and the negative sentinel, render empty
-      ;; rather than aborting: diagnostics reach this path with whatever the IR
-      ;; is holding.
+      ;; More than today's 131,072 possible source handles -- including the old
+      ;; 4*capacity collision point -- all fail ownership and slot decoding.
+      ;; This deliberately uses raw u32-domain handles because today's fixed
+      ;; pool cannot allocate the future values the namespace must reserve.
+      (while (<= logical-source-handle capacity)
+        (begin
+          (if (compiler_ir_types.compiler-ir-symbol-owned?
+            logical-source-handle)
+            (set! ok false)
+            unit)
+          (unless
+            (=
+              (compiler_ir_types.compiler-ir-symbol-slot logical-source-handle)
+              -1)
+            (set! ok false))
+          (set! logical-source-handle (+ logical-source-handle 1))))
+      (unless (< old-collision-base compact-limit) (set! ok false))
+      (unless
+        (not (compiler_ir_types.compiler-ir-symbol-owned? old-collision-base))
+        (set! ok false))
+      (unless
+        (= (compiler_ir_types.compiler-ir-symbol-slot old-collision-base) -1)
+        (set! ok false))
+      (unless
+        (string.eq
+          (compiler_ir_types.compiler-ir-symbol-text old-collision-base)
+          "")
+        (set! ok false))
+      ;; Tagged IR payloads around that old boundary stay in the IR domain but
+      ;; are not table-owned until actually minted, so they cannot alias or
+      ;; index either the source pool or the side table.
+      (set! index (- old-collision-base 1))
+      (while (<= index (+ old-collision-base 1))
+        (let
+          [unallocated : i64
+            (compiler_ir_types.compiler-ir-symbol-domain-id-for-index index)]
+          (begin
+            (unless
+              (compiler_ir_types.compiler-ir-symbol-domain? unallocated)
+              (set! ok false))
+            (if (compiler_ir_types.compiler-ir-symbol-owned? unallocated)
+              (set! ok false)
+              unit)
+            (unless
+              (= (compiler_ir_types.compiler-ir-symbol-slot unallocated) -1)
+              (set! ok false))
+            (unless
+              (string.eq
+                (compiler_ir_types.compiler-ir-symbol-text unallocated)
+                "")
+              (set! ok false))
+            (set! index (+ index 1)))))
+      ;; Adjacent identity domains, the compact-u32 limit, and sentinels also
+      ;; fail closed rather than indexing or reaching intern-str.
+      (unless
+        (= (compiler_ir_types.compiler-ir-symbol-slot (- compact-limit 1)) -1)
+        (set! ok false))
+      (unless
+        (= (compiler_ir_types.compiler-ir-symbol-slot cfg-base) -1)
+        (set! ok false))
+      (unless
+        (= (compiler_ir_types.compiler-ir-symbol-slot current-cfg-key) -1)
+        (set! ok false))
+      (unless
+        (= (compiler_ir_types.compiler-ir-symbol-slot structural-base) -1)
+        (set! ok false))
+      ;; Unminted ids in the IR domain, other tags, and the negative sentinel
+      ;; render empty rather than aborting: diagnostics reach this path with
+      ;; whatever the IR is holding.
       (unless
         (string.eq
           (compiler_ir_types.compiler-ir-symbol-text
             (+ base (compiler_ir_types.compiler-ir-symbol-count-value)))
+          "")
+        (set! ok false))
+      (unless
+        (string.eq (compiler_ir_types.compiler-ir-symbol-text cfg-base) "")
+        (set! ok false))
+      (unless
+        (string.eq
+          (compiler_ir_types.compiler-ir-symbol-text structural-base)
           "")
         (set! ok false))
       (unless
@@ -1011,6 +1103,7 @@
         (set! ok false))
       ;; Growth: mint past the initial 1024-slot slab, then re-read the first
       ;; spelling, which the doubling copy has to have carried over.
+      (set! index 0)
       (while (< index 2048)
         (begin
           (set!
@@ -1040,6 +1133,20 @@
       ;; The whole batch cost the intern pool nothing in either lane.
       (unless (= (ci.intern-generated-count) generated-before) (set! ok false))
       (unless (= (ci.intern-pool-len) pool-before) (set! ok false))
+      ;; The table is its own spelling authority: resetting and reseeding the
+      ;; front-end pool cannot change an answer it has already returned.
+      (ci.intern-reset!)
+      (cbi.compiler-builtin-reset!)
+      (ci.intern-source-slice "ir-smoke-reset-prefix" 0 21)
+      (cbi.compiler-builtin-initialize-for-parse!)
+      (unless
+        (= (compiler_ir_types.compiler-ir-symbol "ir-smoke/one") first)
+        (set! ok false))
+      (unless
+        (string.eq
+          (compiler_ir_types.compiler-ir-symbol-text first)
+          "ir-smoke/one")
+        (set! ok false))
       ok)))
 
 ;; Build a spans table entirely inside a throwaway arena, escape it into the

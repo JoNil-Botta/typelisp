@@ -507,6 +507,9 @@ vector_into_iterator_second_consume_reject|check-fail|tests/safety/vector_into_i
 vector_cleanup_owner_let_reject|check-fail|tests/safety/vector_cleanup_owner_let_reject.tl|-|ordinary let cannot own cleanup-required resource; use with
 vector_cleanup_into_next_let_reject|check-fail|tests/safety/vector_cleanup_into_next_let_reject.tl|-|ordinary let cannot own cleanup-required resource; use with
 vector_cleanup_slots_mut_reject|check-fail|tests/safety/vector_cleanup_slots_mut_reject.tl|-|typecheck: unbound name tokens.slots-mut
+vector_cleanup_into_iter_vec_projection_reject|check-fail|tests/safety/vector_cleanup_into_iter_vec_projection_reject.tl|-|IntoIter.vec; available fields: state
+vector_cleanup_into_iter_state_projection_reject|check-fail|tests/safety/vector_cleanup_into_iter_state_projection_reject.tl|-|field projection .slots requires struct, got (MutPtr
+vector_cleanup_into_iter_view_alias_reject|check-fail|tests/safety/vector_cleanup_into_iter_view_alias_reject.tl|-|IntoIter.vec; available fields: state
 vector_cleanup_move_before_exit_reject|check-fail|tests/safety/vector_cleanup_move_before_exit_reject.tl|-|cleanup owner `items` moved before with scope exit
 vector_cleanup_borrow_live_reject|check-fail|tests/safety/vector_cleanup_borrow_live_reject.tl|-|cannot mutably borrow borrowed place `items`
 vector_cleanup_escape_reject|check-fail|tests/safety/vector_cleanup_escape_reject.tl|-|cleanup-required resource would escape with scope

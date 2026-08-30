@@ -1736,6 +1736,18 @@ repeated calls. Generated vectors keep an internal live-slot map and extract eac
 item through checked private `__tl_array-take!`, never through `array-ref`,
 `clone`, or a hidden copy. For cleanup-owning element types, backing storage
 contains only constructed elements: capacity never creates spare owners.
+Their consuming iterator does not contain a safely projectable `Vec`, typed
+dynamic buffer, or liveness map. It owns an arena-backed state cell through a
+raw pointer; safe source can neither dereference that pointer nor project a
+`T` slot from it. The generated `into-next`, cleanup, and logical-remaining
+helpers are the audited boundary: they null-check the state, consult the
+trusted liveness map, and update the shared cursor before returning. Thus a
+slot made dead by extraction cannot be read through a field, generated `slots`
+accessor, `view`, alias, or ordinary `array-ref`. Ordinary live `Vec` shared and
+mutable views retain their live-prefix behavior. A future generated observer
+such as `Debug` must traverse only `[index, len)`, check the internal liveness
+entry before borrowing a value, and must not expose the raw state or a borrowed
+`Vec`.
 `IntoNext` is itself cleanup-owning, so an abandoned `Item` cleans its payload,
 while abandoning the `IntoIter` drains exactly the still-live, unvisited slots
 and `Done` is a no-op.
@@ -6589,6 +6601,9 @@ runtime contracts:
 - `__tl_array-take!` is the private three-operand compatibility primitive used
   by generated vector internals: `(__tl_array-take! items live index)` returns
   `(Tuple bool T)` and updates the separate dynamic-array liveness bitmap. The
+  cleanup-owning consuming-vector specialization keeps both operands behind an
+  opaque raw iterator-state pointer, so safe source cannot call `array-ref` on
+  a false-liveness `T` slot or forge the bitmap/cursor used by later steps. The
   public `array-take!` spelling accepts exactly two operands and never exposes
   that storage protocol.
 

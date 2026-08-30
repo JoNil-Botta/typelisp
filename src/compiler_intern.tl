@@ -196,6 +196,40 @@
 (define (intern-capacity) : i64
   131072)
 
+;; Raw compiler identities that share i64-keyed environments use fixed,
+;; capacity-independent domains. The low 32-bit domain is reserved in full for
+;; `InternId(u32)`, including source-handle values a future growable interner
+;; may allocate beyond today's table. Cfg keys and IR-owned derived symbols get
+;; one positive one-word domain apiece. These compact compiler domains stay far
+;; below session structural records at 2^62; negative values remain available
+;; for sentinels. The 32-bit payload also leaves safe high-bit headroom for
+;; existing optimizer analyses that pack a small level or parameter index into
+;; a temporary i64 derived from a symbol id.
+;;
+;; Keep these reservations together: #6941 migrates cfg keys into the first
+;; domain, while compiler_ir_types owns the second one. A producer may use the
+;; low 32 bits only as a domain-local payload and must reject the limit itself.
+(define (intern-compiler-identity-domain-width) : i64
+  4294967296)
+
+(define (intern-compact-id-domain-limit) : i64
+  (intern-compiler-identity-domain-width))
+
+(define (intern-cfg-key-domain-base) : i64
+  (intern-compiler-identity-domain-width))
+
+(define (intern-ir-symbol-domain-base) : i64
+  (* 2 (intern-compiler-identity-domain-width)))
+
+(define (intern-ir-symbol-domain-limit) : i64
+  (* 3 (intern-compiler-identity-domain-width)))
+
+(define (intern-compiler-identity-domain-overflow-abort) : never
+  (cfg
+    stage0-seed-intern-abort
+    (tl_oob_abort)
+    (intern-runtime-abort-string "tl: compiler identity domain exhausted\n")))
+
 (define (intern-pool-capacity-abort) : never
   ;; The published seed predates the backend's fixed `tl_abort_string`
   ;; recognition. Only its one-shot stage1 compile selects the old fallback;

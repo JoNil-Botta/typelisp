@@ -53740,6 +53740,109 @@ b_keep:
   [e : i64]) : (__tl_dyn-array i64)
   (__tl_make-array a b c d e))
 
+;; Derived IR symbols live above the compact and CFG symbol domains. The
+;; placement pass must treat those raw identities as keys, never as array
+;; indices: this four-destination loop should need exactly four stamp slots.
+(define (compiler-backend-placement-high-symbol-blocks
+  [entry-var : i64]
+  [phi-var : i64]
+  [cond-var : i64]
+  [step-var : i64]
+  [bound-var : i64]) : compiler_ir_types.CompilerIrBlockList
+  (compiler_ir_types.CompilerIrBlockList.Array
+    (compiler_ir_types.compiler-ir-block-seq-from-list
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler-backend-placement-test-block
+          "entry"
+          (compiler_ir_types.compiler-ir-instr-seq2
+            (compiler_ir_types.CompilerIrInstr.Mov
+              entry-var
+              (compiler_ir_types.CompilerIrValue.I64 0)
+              (compiler_ast_types.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Jump
+              (compiler_ir_types.compiler-ir-label "header"))))
+        (compiler_ir_types.compiler-ir-block-cons
+          (compiler-backend-placement-test-block
+            "header"
+            (compiler_ir_types.compiler-ir-instr-seq3
+              (compiler_ir_types.CompilerIrInstr.Phi
+                phi-var
+                (compiler_ir_types.compiler-ir-phi-input-cons
+                  (compiler_ir_types.CompilerIrValue.Var entry-var)
+                  (compiler_ir_types.compiler-ir-label "entry")
+                  (compiler_ir_types.compiler-ir-phi-input-cons
+                    (compiler_ir_types.CompilerIrValue.Var step-var)
+                    (compiler_ir_types.compiler-ir-label "latch")
+                    compiler_ir_types.CompilerIrPhiInputList.Nil))
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.CompilerIrInstr.BinOp
+                cond-var
+                (compiler_ir_types.CompilerIrBinOp.Lt)
+                (compiler_ir_types.CompilerIrValue.Var phi-var)
+                (compiler_ir_types.CompilerIrValue.Var bound-var)
+                (compiler_ast_types.AstType.I64))
+              (compiler_ir_types.CompilerIrInstr.Branch
+                (compiler_ir_types.CompilerIrValue.Var cond-var)
+                (compiler_ir_types.compiler-ir-label "latch")
+                (compiler_ir_types.compiler-ir-label "exit"))))
+          (compiler_ir_types.compiler-ir-block-cons
+            (compiler-backend-placement-test-block
+              "latch"
+              (compiler_ir_types.compiler-ir-instr-seq2
+                (compiler_ir_types.CompilerIrInstr.BinOp
+                  step-var
+                  (compiler_ir_types.CompilerIrBinOp.Add)
+                  (compiler_ir_types.CompilerIrValue.Var phi-var)
+                  (compiler_ir_types.CompilerIrValue.I64 1)
+                  (compiler_ast_types.AstType.I64))
+                (compiler_ir_types.CompilerIrInstr.Jump
+                  (compiler_ir_types.compiler-ir-label "header"))))
+            (compiler_ir_types.compiler-ir-block-cons
+              (compiler-backend-placement-test-block
+                "exit"
+                (compiler_ir_types.compiler-ir-instr-seq1
+                  (compiler_ir_types.CompilerIrInstr.Return
+                    (compiler_ir_types.CompilerIrMaybeValue.Some
+                      (compiler_ir_types.CompilerIrValue.Var phi-var)))))
+              compiler_ir_types.CompilerIrBlockList.Nil)))))))
+
+(define (compiler-backend-placement-high-symbol-slots-ok?) : bool
+  (let
+    [entry-var : i64
+      (compiler_ir_types.compiler-ir-symbol "placement/high/entry")]
+    [phi-var : i64 (compiler_ir_types.compiler-ir-symbol "placement/high/phi")]
+    [cond-var : i64
+      (compiler_ir_types.compiler-ir-symbol "placement/high/condition")]
+    [step-var : i64
+      (compiler_ir_types.compiler-ir-symbol "placement/high/step")]
+    [bound-var : i64
+      (compiler_ir_types.compiler-ir-symbol "placement/high/bound")]
+    [blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler-backend-placement-high-symbol-blocks
+        entry-var
+        phi-var
+        cond-var
+        step-var
+        bound-var)]
+    [order : (__tl_dyn-array i64)
+      (compiler_backend.compiler-backend-placement-order-for-blocks
+        (compiler_backend.compiler-backend-global-shared-view blocks))]
+    (and
+      (compiler_ir_types.compiler-ir-symbol-owned? entry-var)
+      (compiler_ir_types.compiler-ir-symbol-owned? phi-var)
+      (compiler_ir_types.compiler-ir-symbol-owned? cond-var)
+      (compiler_ir_types.compiler-ir-symbol-owned? step-var)
+      (compiler_ir_types.compiler-ir-symbol-owned? bound-var)
+      (=
+        (compiler_backend.compiler-backend-placement-variable-slot-count-for-blocks
+          (compiler_backend.compiler-backend-global-shared-view blocks))
+        4)
+      (= (array-length order) 4)
+      (= (array-ref order 0) 0)
+      (= (array-ref order 1) 2)
+      (= (array-ref order 2) 1)
+      (= (array-ref order 3) 3))))
+
 ;; `%1 = phi [%0 from entry], [%3 from latch]` in the loop header.
 (define (compiler-backend-placement-test-carry-phi) : compiler_ir_types.CompilerIrInstr
   (compiler_ir_types.CompilerIrInstr.Phi
@@ -54186,6 +54289,7 @@ b_keep:
 
 (define (compiler-backend-placement-ok?) : bool
   (and
+    (compiler-backend-placement-high-symbol-slots-ok?)
     (compiler-backend-placement-rotation-ok?)
     (compiler-backend-placement-search-loop-declines-ok?)
     (compiler-backend-placement-open-block-declines-ok?)

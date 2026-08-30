@@ -2873,13 +2873,13 @@
               (compiler-reg-test-instr-seq-prepend
                 (ir.CompilerIrInstr.Phi
                   3
-                  (ir.compiler-ir-phi-input-cons
+                  (ir.compiler-ir-phi-input-seq-prepend
                     (ir.CompilerIrValue.Var 8)
                     (ir.compiler-ir-label "preheader")
-                    (ir.compiler-ir-phi-input-cons
+                    (ir.compiler-ir-phi-input-seq-prepend
                       (ir.CompilerIrValue.Var 6)
                       (ir.compiler-ir-label "latch")
-                      ir.CompilerIrPhiInputList.Nil))
+                      (ir.compiler-ir-phi-input-seq-empty)))
                   (compiler-reg-i64-ty))
                 (compiler-reg-test-instr-seq-prepend
                   (ir.CompilerIrInstr.BinOp
@@ -2996,13 +2996,13 @@
                 (compiler-reg-test-instr-seq-prepend
                   (ir.CompilerIrInstr.Phi
                     3
-                    (ir.compiler-ir-phi-input-cons
+                    (ir.compiler-ir-phi-input-seq-prepend
                       (ir.CompilerIrValue.I64 0)
                       (ir.compiler-ir-label "preheader")
-                      (ir.compiler-ir-phi-input-cons
+                      (ir.compiler-ir-phi-input-seq-prepend
                         (ir.CompilerIrValue.Var 6)
                         (ir.compiler-ir-label "latch")
-                        ir.CompilerIrPhiInputList.Nil))
+                        (ir.compiler-ir-phi-input-seq-empty)))
                     (compiler-reg-i64-ty))
                   (compiler-reg-test-instr-seq-prepend
                     (ir.CompilerIrInstr.BinOp
@@ -3060,13 +3060,13 @@
                         (compiler-reg-test-instr-seq-prepend
                           (ir.CompilerIrInstr.Phi
                             7
-                            (ir.compiler-ir-phi-input-cons
+                            (ir.compiler-ir-phi-input-seq-prepend
                               (ir.CompilerIrValue.Var 3)
                               (ir.compiler-ir-label "header")
-                              (ir.compiler-ir-phi-input-cons
+                              (ir.compiler-ir-phi-input-seq-prepend
                                 (ir.CompilerIrValue.Var 8)
                                 (ir.compiler-ir-label "other")
-                                ir.CompilerIrPhiInputList.Nil))
+                                (ir.compiler-ir-phi-input-seq-empty)))
                             (compiler-reg-i64-ty))
                           (compiler-reg-test-instr-seq-prepend
                             (ir.CompilerIrInstr.BinOp
@@ -3941,13 +3941,13 @@
       (compiler-reg-test-instr-seq-prepend
         (ir.CompilerIrInstr.Phi
           (compiler-reg-park-nest-ctr level)
-          (ir.compiler-ir-phi-input-cons
+          (ir.compiler-ir-phi-input-seq-prepend
             (ir.CompilerIrValue.I64 0)
             (compiler-reg-park-nest-label "pre." level)
-            (ir.compiler-ir-phi-input-cons
+            (ir.compiler-ir-phi-input-seq-prepend
               (ir.CompilerIrValue.Var (compiler-reg-park-nest-next level))
               (compiler-reg-park-nest-label "lat." level)
-              ir.CompilerIrPhiInputList.Nil))
+              (ir.compiler-ir-phi-input-seq-empty)))
           (compiler-reg-i64-ty))
         (compiler-reg-test-instr-seq-prepend
           (compiler-reg-park-nest-binop
@@ -4086,13 +4086,13 @@
       (compiler-reg-test-instr-seq-prepend
         (ir.CompilerIrInstr.Phi
           60
-          (ir.compiler-ir-phi-input-cons
+          (ir.compiler-ir-phi-input-seq-prepend
             (ir.CompilerIrValue.I64 0)
             (ir.compiler-ir-label "land")
-            (ir.compiler-ir-phi-input-cons
+            (ir.compiler-ir-phi-input-seq-prepend
               (ir.CompilerIrValue.Var 64)
               (ir.compiler-ir-label "imerge")
-              ir.CompilerIrPhiInputList.Nil))
+              (ir.compiler-ir-phi-input-seq-empty)))
           (compiler-reg-i64-ty))
         (compiler-reg-test-instr-seq-prepend
           (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "ibody"))
@@ -4160,13 +4160,13 @@
       (compiler-reg-test-instr-seq-prepend
         (ir.CompilerIrInstr.Phi
           66
-          (ir.compiler-ir-phi-input-cons
+          (ir.compiler-ir-phi-input-seq-prepend
             (ir.CompilerIrValue.I64 0)
             (ir.compiler-ir-label "ibody")
-            (ir.compiler-ir-phi-input-cons
+            (ir.compiler-ir-phi-input-seq-prepend
               (ir.CompilerIrValue.I64 1)
               (ir.compiler-ir-label "imerge")
-              ir.CompilerIrPhiInputList.Nil))
+              (ir.compiler-ir-phi-input-seq-empty)))
           (compiler-reg-i64-ty))
         (compiler-reg-test-instr-seq-prepend
           (ir.CompilerIrInstr.Jump
@@ -10930,10 +10930,10 @@
               (compiler-reg-test-instr-seq-prepend
                 (ir.CompilerIrInstr.Phi
                   1
-                  (ir.compiler-ir-phi-input-cons
+                  (ir.compiler-ir-phi-input-seq-prepend
                     (ir.CompilerIrValue.Var 0)
                     (ir.compiler-ir-label "loop")
-                    ir.CompilerIrPhiInputList.Nil)
+                    (ir.compiler-ir-phi-input-seq-empty))
                   (compiler-reg-i64-ty))
                 (compiler-reg-test-instr-seq-prepend
                   (ir.CompilerIrInstr.Store
@@ -12034,14 +12034,13 @@
             (compiler-reg-test-instr-seq-prepend
               (ir.CompilerIrInstr.Phi
                 1
-                (ir.CompilerIrPhiInputList.Cons
+                (ir.compiler-ir-phi-input-seq-prepend
                   (ir.CompilerIrValue.Var 0)
                   (ir.compiler-ir-label "entry")
-                  (box
-                    (ir.CompilerIrPhiInputList.Cons
-                      (ir.CompilerIrValue.Var 1)
-                      (ir.compiler-ir-label "loop")
-                      (box ir.CompilerIrPhiInputList.Nil))))
+                  (ir.compiler-ir-phi-input-seq-prepend
+                    (ir.CompilerIrValue.Var 1)
+                    (ir.compiler-ir-label "loop")
+                    (ir.compiler-ir-phi-input-seq-empty)))
                 (compiler-reg-i64-ty))
               (compiler-reg-test-instr-seq-prepend
                 (ir.CompilerIrInstr.Return
@@ -12344,7 +12343,7 @@
               (live.compiler-live-set-empty)
               (ir.CompilerIrInstr.Phi
                 0
-                ir.CompilerIrPhiInputList.Nil
+                (ir.compiler-ir-phi-input-seq-empty)
                 (ast.AstType.Struct (ci.intern "Pair")))
               (live.compiler-live-set1 0))]
           [call-caller-unsafe : live.CompilerLiveI64Set
@@ -12983,10 +12982,10 @@
           (compiler-reg-test-instr-seq-prepend
             (ir.CompilerIrInstr.Phi
               0
-              (ir.compiler-ir-phi-input-cons
+              (ir.compiler-ir-phi-input-seq-prepend
                 (ir.CompilerIrValue.Var 1)
                 (ir.compiler-ir-label "entry")
-                ir.CompilerIrPhiInputList.Nil)
+                (ir.compiler-ir-phi-input-seq-empty))
               (compiler-reg-i64-ty))
             (compiler-reg-test-instr-seq-prepend
               (ir.CompilerIrInstr.Return
@@ -13079,13 +13078,13 @@
           (compiler-reg-test-instr-seq-prepend
             (ir.CompilerIrInstr.Phi
               0
-              (ir.compiler-ir-phi-input-cons
+              (ir.compiler-ir-phi-input-seq-prepend
                 (ir.CompilerIrValue.Var 2)
                 (ir.compiler-ir-label "latch")
-                (ir.compiler-ir-phi-input-cons
+                (ir.compiler-ir-phi-input-seq-prepend
                   (ir.CompilerIrValue.Var 3)
                   (ir.compiler-ir-label "entry")
-                  ir.CompilerIrPhiInputList.Nil))
+                  (ir.compiler-ir-phi-input-seq-empty)))
               (compiler-reg-i64-ty))
             (compiler-reg-test-instr-seq-prepend
               (ir.CompilerIrInstr.Branch
@@ -13105,10 +13104,10 @@
               (compiler-reg-test-instr-seq-prepend
                 (ir.CompilerIrInstr.Phi
                   1
-                  (ir.compiler-ir-phi-input-cons
+                  (ir.compiler-ir-phi-input-seq-prepend
                     (ir.CompilerIrValue.Var 0)
                     (ir.compiler-ir-label "body")
-                    ir.CompilerIrPhiInputList.Nil)
+                    (ir.compiler-ir-phi-input-seq-empty))
                   (compiler-reg-i64-ty))
                 (compiler-reg-test-instr-seq-prepend
                   (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "latch"))
@@ -13119,10 +13118,10 @@
                 (compiler-reg-test-instr-seq-prepend
                   (ir.CompilerIrInstr.Phi
                     2
-                    (ir.compiler-ir-phi-input-cons
+                    (ir.compiler-ir-phi-input-seq-prepend
                       (ir.CompilerIrValue.Var 1)
                       (ir.compiler-ir-label "merge")
-                      ir.CompilerIrPhiInputList.Nil)
+                      (ir.compiler-ir-phi-input-seq-empty))
                     (compiler-reg-i64-ty))
                   (compiler-reg-test-instr-seq-prepend
                     (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "header"))
@@ -13226,13 +13225,13 @@
           (compiler-reg-test-instr-seq-prepend
             (ir.CompilerIrInstr.Phi
               0
-              (ir.compiler-ir-phi-input-cons
+              (ir.compiler-ir-phi-input-seq-prepend
                 (ir.CompilerIrValue.Var 1)
                 (ir.compiler-ir-label "latch")
-                (ir.compiler-ir-phi-input-cons
+                (ir.compiler-ir-phi-input-seq-prepend
                   (ir.CompilerIrValue.Var 2)
                   (ir.compiler-ir-label "entry")
-                  ir.CompilerIrPhiInputList.Nil))
+                  (ir.compiler-ir-phi-input-seq-empty)))
               (compiler-reg-i64-ty))
             (compiler-reg-test-instr-seq-prepend
               (ir.CompilerIrInstr.Branch
@@ -13360,13 +13359,13 @@
           (compiler-reg-test-instr-seq-prepend
             (ir.CompilerIrInstr.Phi
               0
-              (ir.compiler-ir-phi-input-cons
+              (ir.compiler-ir-phi-input-seq-prepend
                 (ir.CompilerIrValue.Var 3)
                 (ir.compiler-ir-label "latch")
-                (ir.compiler-ir-phi-input-cons
+                (ir.compiler-ir-phi-input-seq-prepend
                   (ir.CompilerIrValue.Var 4)
                   (ir.compiler-ir-label "entry")
-                  ir.CompilerIrPhiInputList.Nil))
+                  (ir.compiler-ir-phi-input-seq-empty)))
               (compiler-reg-i64-ty))
             (compiler-reg-test-instr-seq-prepend
               (ir.CompilerIrInstr.Branch
@@ -13505,13 +13504,13 @@
           (compiler-reg-test-instr-seq-prepend
             (ir.CompilerIrInstr.Phi
               0
-              (ir.compiler-ir-phi-input-cons
+              (ir.compiler-ir-phi-input-seq-prepend
                 (ir.CompilerIrValue.Var 3)
                 (ir.compiler-ir-label "latch")
-                (ir.compiler-ir-phi-input-cons
+                (ir.compiler-ir-phi-input-seq-prepend
                   (ir.CompilerIrValue.Var 4)
                   (ir.compiler-ir-label "entry")
-                  ir.CompilerIrPhiInputList.Nil))
+                  (ir.compiler-ir-phi-input-seq-empty)))
               (compiler-reg-i64-ty))
             (compiler-reg-test-instr-seq-prepend
               (ir.CompilerIrInstr.Branch
@@ -13542,13 +13541,13 @@
                 (compiler-reg-test-instr-seq-prepend
                   (ir.CompilerIrInstr.Phi
                     2
-                    (ir.compiler-ir-phi-input-cons
+                    (ir.compiler-ir-phi-input-seq-prepend
                       (ir.CompilerIrValue.Var 1)
                       (ir.compiler-ir-label "left")
-                      (ir.compiler-ir-phi-input-cons
+                      (ir.compiler-ir-phi-input-seq-prepend
                         (ir.CompilerIrValue.Var 0)
                         (ir.compiler-ir-label "right")
-                        ir.CompilerIrPhiInputList.Nil))
+                        (ir.compiler-ir-phi-input-seq-empty)))
                     (compiler-reg-i64-ty))
                   (compiler-reg-test-instr-seq-prepend
                     (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "latch"))
@@ -13559,10 +13558,10 @@
                   (compiler-reg-test-instr-seq-prepend
                     (ir.CompilerIrInstr.Phi
                       3
-                      (ir.compiler-ir-phi-input-cons
+                      (ir.compiler-ir-phi-input-seq-prepend
                         (ir.CompilerIrValue.Var 2)
                         (ir.compiler-ir-label "merge")
-                        ir.CompilerIrPhiInputList.Nil)
+                        (ir.compiler-ir-phi-input-seq-empty))
                       (compiler-reg-i64-ty))
                     (compiler-reg-test-instr-seq-prepend
                       (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "header"))
@@ -15723,10 +15722,10 @@
           (compiler-reg-test-instr-seq-prepend
             (ir.CompilerIrInstr.Phi
               1
-              (ir.compiler-ir-phi-input-cons
+              (ir.compiler-ir-phi-input-seq-prepend
                 (ir.CompilerIrValue.Var 0)
                 (ir.compiler-ir-label "entry")
-                ir.CompilerIrPhiInputList.Nil)
+                (ir.compiler-ir-phi-input-seq-empty))
               (compiler-reg-i64-ty))
             (compiler-reg-test-instr-seq-prepend
               (ir.CompilerIrInstr.Return
@@ -15757,13 +15756,13 @@
           (compiler-reg-test-instr-seq-prepend
             (ir.CompilerIrInstr.Phi
               1
-              (ir.compiler-ir-phi-input-cons
+              (ir.compiler-ir-phi-input-seq-prepend
                 (ir.CompilerIrValue.Var 0)
                 (ir.compiler-ir-label "entry")
-                (ir.compiler-ir-phi-input-cons
+                (ir.compiler-ir-phi-input-seq-prepend
                   (ir.CompilerIrValue.Var 2)
                   (ir.compiler-ir-label "body")
-                  ir.CompilerIrPhiInputList.Nil))
+                  (ir.compiler-ir-phi-input-seq-empty)))
               (compiler-reg-i64-ty))
             (compiler-reg-test-instr-seq-prepend
               (ir.CompilerIrInstr.Mov
@@ -15817,24 +15816,24 @@
           (compiler-reg-test-instr-seq-prepend
             (ir.CompilerIrInstr.Phi
               0
-              (ir.compiler-ir-phi-input-cons
+              (ir.compiler-ir-phi-input-seq-prepend
                 (ir.CompilerIrValue.I64 0)
                 (ir.compiler-ir-label "entry")
-                (ir.compiler-ir-phi-input-cons
+                (ir.compiler-ir-phi-input-seq-prepend
                   (ir.CompilerIrValue.Var 3)
                   (ir.compiler-ir-label "loop")
-                  ir.CompilerIrPhiInputList.Nil))
+                  (ir.compiler-ir-phi-input-seq-empty)))
               (compiler-reg-i64-ty))
             (compiler-reg-test-instr-seq-prepend
               (ir.CompilerIrInstr.Phi
                 1
-                (ir.compiler-ir-phi-input-cons
+                (ir.compiler-ir-phi-input-seq-prepend
                   (ir.CompilerIrValue.I64 0)
                   (ir.compiler-ir-label "entry")
-                  (ir.compiler-ir-phi-input-cons
+                  (ir.compiler-ir-phi-input-seq-prepend
                     (ir.CompilerIrValue.Var 4)
                     (ir.compiler-ir-label "loop")
-                    ir.CompilerIrPhiInputList.Nil))
+                    (ir.compiler-ir-phi-input-seq-empty)))
                 (compiler-reg-i64-ty))
               (compiler-reg-test-instr-seq-prepend
                 (ir.CompilerIrInstr.BinOp
@@ -15910,13 +15909,13 @@
           (compiler-reg-test-instr-seq-prepend
             (ir.CompilerIrInstr.Phi
               0
-              (ir.compiler-ir-phi-input-cons
+              (ir.compiler-ir-phi-input-seq-prepend
                 (ir.CompilerIrValue.I64 0)
                 (ir.compiler-ir-label "entry")
-                (ir.compiler-ir-phi-input-cons
+                (ir.compiler-ir-phi-input-seq-prepend
                   (ir.CompilerIrValue.Var 1)
                   (ir.compiler-ir-label "loop")
-                  ir.CompilerIrPhiInputList.Nil))
+                  (ir.compiler-ir-phi-input-seq-empty)))
               (compiler-reg-i64-ty))
             (compiler-reg-test-instr-seq-prepend
               (ir.CompilerIrInstr.BinOp
@@ -15968,13 +15967,13 @@
           (compiler-reg-test-instr-seq-prepend
             (ir.CompilerIrInstr.Phi
               0
-              (ir.compiler-ir-phi-input-cons
+              (ir.compiler-ir-phi-input-seq-prepend
                 (ir.CompilerIrValue.I64 0)
                 (ir.compiler-ir-label "entry")
-                (ir.compiler-ir-phi-input-cons
+                (ir.compiler-ir-phi-input-seq-prepend
                   (ir.CompilerIrValue.Var 1)
                   (ir.compiler-ir-label "loop")
-                  ir.CompilerIrPhiInputList.Nil))
+                  (ir.compiler-ir-phi-input-seq-empty)))
               (compiler-reg-i64-ty))
             (compiler-reg-test-instr-seq-prepend
               (ir.CompilerIrInstr.BinOp

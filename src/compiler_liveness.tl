@@ -1151,15 +1151,25 @@
     [(ir.CompilerIrMaybeValue.No) (compiler-live-set-empty)]
     [(ir.CompilerIrMaybeValue.Some inner) (compiler-live-value-vars inner)]))
 
-(define (compiler-live-phi-input-vars [inputs : ir.CompilerIrPhiInputList]) : CompilerLiveI64Set
-  (match (ir.compiler-ir-phi-input-list-force-cons inputs)
-    [(ir.CompilerIrPhiInputList.Nil) (compiler-live-set-empty)]
-    [(ir.CompilerIrPhiInputList.Array seq)
-      (compiler-live-phi-input-vars (ir.compiler-ir-phi-input-seq-to-list seq))]
-    [(ir.CompilerIrPhiInputList.Cons value _ rest)
-      (compiler-live-value-vars-into
-        (compiler-live-phi-input-vars (compiler-live-box-shared-view rest))
-        value)]))
+(define (compiler-live-phi-input-vars [inputs : ir.CompilerIrPhiInputSeq]) : CompilerLiveI64Set
+  (let
+    [phi-inputs-at-1155-3 : ir.CompilerIrPhiInputSeq inputs]
+    (if (<= phi-inputs-at-1155-3.len 0)
+      (compiler-live-set-empty)
+      (let
+        [phi-input-at-1155-3 : ir.CompilerIrPhiInput
+          (ir.compiler-ir-phi-input-seq-ref
+            (ir.compiler-ir-global-shared-view phi-inputs-at-1155-3)
+            0)]
+        [value : ir.CompilerIrValue phi-input-at-1155-3.value]
+        [rest : ir.CompilerIrPhiInputSeq
+          (ir.CompilerIrPhiInputSeq
+            (ir.compiler-ir-global-shared-view phi-inputs-at-1155-3.slots)
+            (+ phi-inputs-at-1155-3.start 1)
+            (- phi-inputs-at-1155-3.len 1))]
+        (compiler-live-value-vars-into
+          (compiler-live-phi-input-vars (compiler-live-shared-view rest))
+          value)))))
 
 (define (compiler-live-switch-case-successors
   [set : CompilerLiveLabelSet]
@@ -1494,38 +1504,24 @@
   [values : ir.CompilerIrValueSeq]) : i64
   (compiler-live-use-ids-add-value-seq-from! out n values 0))
 
-(define (compiler-live-use-ids-add-phi-input-seq!
-  [out : (__tl_dyn-array i64)]
-  [n : i64]
-  [seq : ir.CompilerIrPhiInputSeq]
-  [index : i64]) : i64
-  (if (>= index seq.len)
-    n
-    (let
-      [input : ir.CompilerIrPhiInput
-        (compiler-live-array-element-shared-view seq.slots index)]
-      (compiler-live-use-ids-add-phi-input-seq!
-        (compiler-live-shared-view out)
-        (compiler-live-use-ids-add-value!
-          out
-          n
-          (compiler-live-shared-view input.value))
-        seq
-        (+ index 1)))))
-
 (define (compiler-live-use-ids-add-phi-inputs!
   [out : (__tl_dyn-array i64)]
   [n : i64]
-  [inputs : ir.CompilerIrPhiInputList]) : i64
-  (match inputs
-    [(ir.CompilerIrPhiInputList.Nil) n]
-    [(ir.CompilerIrPhiInputList.Array seq)
-      (compiler-live-use-ids-add-phi-input-seq! out n seq 0)]
-    [(ir.CompilerIrPhiInputList.Cons value _ rest)
+  [inputs : ir.CompilerIrPhiInputSeq]) : i64
+  (if (<= inputs.len 0)
+    n
+    (let
+      [input : ir.CompilerIrPhiInput
+        (ir.compiler-ir-phi-input-seq-ref (compiler-live-shared-view inputs) 0)]
+      [rest : ir.CompilerIrPhiInputSeq
+        (ir.CompilerIrPhiInputSeq
+          (compiler-live-shared-view inputs.slots)
+          (+ inputs.start 1)
+          (- inputs.len 1))]
       (compiler-live-use-ids-add-phi-inputs!
         (compiler-live-shared-view out)
-        (compiler-live-use-ids-add-value! out n value)
-        (compiler-live-box-shared-view rest))]))
+        (compiler-live-use-ids-add-value! out n input.value)
+        (compiler-live-shared-view rest)))))
 
 (define (compiler-live-use-ids-add-spmd-args-seq!
   [out : (__tl_dyn-array i64)]
@@ -2543,36 +2539,44 @@
 
 ;; Accumulate every phi input (V, predLabel) of one phi into phi-out[ids[predLabel]].
 (define (compiler-live-phi-out-add-inputs!
-  [inputs : ir.CompilerIrPhiInputList]
+  [inputs : ir.CompilerIrPhiInputSeq]
   [ids : (& ids live_label_map.Map)]
   [phi-out : (__tl_dyn-array CompilerLiveI64Set)]) : unit
-  (match (ir.compiler-ir-phi-input-list-force-cons inputs)
-    [(ir.CompilerIrPhiInputList.Nil) unit]
-    [(ir.CompilerIrPhiInputList.Array seq)
-      (compiler-live-phi-out-add-inputs!
-        (ir.compiler-ir-phi-input-seq-to-list seq)
-        ids
-        phi-out)]
-    [(ir.CompilerIrPhiInputList.Cons value label rest)
-      (begin
-        (match value
-          [(ir.CompilerIrValue.Var v)
-            (let
-              [slot : i64 (compiler-live-label-id-map-get ids label)]
-              (if (>= slot 0)
-                (if (and (>= slot 0) (< slot (array-length phi-out)))
-                  (set!
-                    (array-ref phi-out slot)
-                    (compiler-live-set-insert
-                      (compiler-live-array-element-shared-view phi-out slot)
-                      v))
-                  unit)
-                unit))]
-          [_ unit])
-        (compiler-live-phi-out-add-inputs!
-          (compiler-live-box-shared-view rest)
-          ids
-          phi-out))]))
+  (let
+    [phi-inputs-at-2533-3 : ir.CompilerIrPhiInputSeq inputs]
+    (if (<= phi-inputs-at-2533-3.len 0)
+      unit
+      (let
+        [phi-input-at-2533-3 : ir.CompilerIrPhiInput
+          (ir.compiler-ir-phi-input-seq-ref
+            (ir.compiler-ir-global-shared-view phi-inputs-at-2533-3)
+            0)]
+        [value : ir.CompilerIrValue phi-input-at-2533-3.value]
+        [label : i64 phi-input-at-2533-3.label]
+        [rest : ir.CompilerIrPhiInputSeq
+          (ir.CompilerIrPhiInputSeq
+            (ir.compiler-ir-global-shared-view phi-inputs-at-2533-3.slots)
+            (+ phi-inputs-at-2533-3.start 1)
+            (- phi-inputs-at-2533-3.len 1))]
+        (begin
+          (match value
+            [(ir.CompilerIrValue.Var v)
+              (let
+                [slot : i64 (compiler-live-label-id-map-get ids label)]
+                (if (>= slot 0)
+                  (if (and (>= slot 0) (< slot (array-length phi-out)))
+                    (set!
+                      (array-ref phi-out slot)
+                      (compiler-live-set-insert
+                        (compiler-live-array-element-shared-view phi-out slot)
+                        v))
+                    unit)
+                  unit))]
+            [_ unit])
+          (compiler-live-phi-out-add-inputs!
+            (compiler-live-shared-view rest)
+            ids
+            phi-out))))))
 
 (define (compiler-live-phi-out-add-seq!
   [instrs : ir.CompilerIrInstrSeq]

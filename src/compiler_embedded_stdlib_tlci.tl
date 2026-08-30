@@ -1346,14 +1346,19 @@
       compiler-comptime-host-stack
       (- compiler-comptime-host-stack-len 1))
       [(ctfe_support.CompilerCtfeValue.Type ty)
-        (match (ctfe_support.ctfe-reflect-info-for-type-with-pools
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-pools
-            0)
-          (compiler-comptime-host-array-element-shared-view
-            compiler-comptime-host-reflections
-            0)
-          ty)
+        (match (let
+          [host-pools : ast.AstNodePoolContext
+            (compiler-comptime-host-array-element-shared-view
+              compiler-comptime-host-pools
+              0)]
+          [host-reflections : ctfe_support.CtfeReflectInfoList
+            (compiler-comptime-host-array-element-shared-view
+              compiler-comptime-host-reflections
+              0)]
+          (ctfe_support.ctfe-reflect-info-for-type-with-pools
+            host-pools
+            host-reflections
+            ty))
           [(ctfe_support.CtfeMaybeReflectInfo.Some info)
             (match info
               [(ctfe_support.CtfeReflectInfo.Struct _ _ _ _ _ fields)
@@ -1491,7 +1496,7 @@
             [(= kind 0)
               (match (ctfe_support.ctfe-reflect-info-for-type-with-pools
                 (owned_view.compiler-owned-shared-view pools)
-                (owned_view.compiler-owned-shared-view infos)
+                infos
                 ty)
                 [(ctfe_support.CtfeMaybeReflectInfo.Some
                     (ctfe_support.CtfeReflectInfo.Struct _ _ _ _ _ fields))
@@ -1513,7 +1518,7 @@
             [(= kind 1)
               (match (ctfe_support.ctfe-reflect-info-for-type-with-pools
                 (owned_view.compiler-owned-shared-view pools)
-                (owned_view.compiler-owned-shared-view infos)
+                infos
                 ty)
                 [(ctfe_support.CtfeMaybeReflectInfo.Some
                     (ctfe_support.CtfeReflectInfo.Enum _ _ _ _ _ variants))
@@ -1541,7 +1546,7 @@
             [else
               (match (ctfe_support.ctfe-reflect-resolve-type-with-pools
                 (owned_view.compiler-owned-shared-view pools)
-                (owned_view.compiler-owned-shared-view infos)
+                infos
                 ty)
                 [(ast.AstType.Tuple elems)
                   (match (ctfe_support.ctfe-type-list-ref-with-pools
@@ -2832,14 +2837,19 @@
           arg-a)
           [(ctfe_support.CompilerCtfeValue.Type ty)
             (if (string.eq
-              (ctfe_support.ctfe-type-kind-with-reflections-and-pools
-                (compiler-comptime-host-array-element-shared-view
-                  compiler-comptime-host-pools
-                  0)
-                (compiler-comptime-host-array-element-shared-view
-                  compiler-comptime-host-reflections
-                  0)
-                ty)
+              (let
+                [host-pools : ast.AstNodePoolContext
+                  (compiler-comptime-host-array-element-shared-view
+                    compiler-comptime-host-pools
+                    0)]
+                [host-reflections : ctfe_support.CtfeReflectInfoList
+                  (compiler-comptime-host-array-element-shared-view
+                    compiler-comptime-host-reflections
+                    0)]
+                (ctfe_support.ctfe-type-kind-with-reflections-and-pools
+                  host-pools
+                  host-reflections
+                  ty))
               (unsafe
                 (string-from-bytes (int->ptr arg-b : (Ptr u8)) _arg-c)))
               1
@@ -2888,17 +2898,18 @@
               (if (ctfe_support.ctfe-untyped-expr-type? actual-ty)
                 -3
                 (if (string.eq
-                  (ctfe_support.ctfe-type-kind-with-reflections-and-pools
-                    (owned_view.compiler-owned-shared-view pools)
-                    (compiler-comptime-host-array-element-shared-view
-                      compiler-comptime-host-reflections
-                      0)
-                    (ctfe_support.ctfe-reflect-resolve-type-with-pools
-                      pools
+                  (let
+                    [host-reflections : ctfe_support.CtfeReflectInfoList
                       (compiler-comptime-host-array-element-shared-view
                         compiler-comptime-host-reflections
-                        0)
-                      actual-ty))
+                        0)]
+                    (ctfe_support.ctfe-type-kind-with-reflections-and-pools
+                      (owned_view.compiler-owned-shared-view pools)
+                      host-reflections
+                      (ctfe_support.ctfe-reflect-resolve-type-with-pools
+                        pools
+                        host-reflections
+                        actual-ty)))
                   (unsafe
                     (string-from-bytes (int->ptr arg-b : (Ptr u8)) _arg-c)))
                   1
@@ -2933,14 +2944,19 @@
           arg-a)
           [(ctfe_support.CompilerCtfeValue.Type ty)
             (if (string.eq
-              (ctfe_support.ctfe-type-key-with-reflections-and-pools
-                (compiler-comptime-host-array-element-shared-view
-                  compiler-comptime-host-pools
-                  0)
-                (compiler-comptime-host-array-element-shared-view
-                  compiler-comptime-host-reflections
-                  0)
-                ty)
+              (let
+                [host-pools : ast.AstNodePoolContext
+                  (compiler-comptime-host-array-element-shared-view
+                    compiler-comptime-host-pools
+                    0)]
+                [host-reflections : ctfe_support.CtfeReflectInfoList
+                  (compiler-comptime-host-array-element-shared-view
+                    compiler-comptime-host-reflections
+                    0)]
+                (ctfe_support.ctfe-type-key-with-reflections-and-pools
+                  host-pools
+                  host-reflections
+                  ty))
               (unsafe
                 (string-from-bytes (int->ptr arg-b : (Ptr u8)) _arg-c)))
               1
@@ -2993,12 +3009,15 @@
                         (- compiler-comptime-host-stack-len 1))
                       (compiler-comptime-host-push!
                         (ctfe_support.CompilerCtfeValue.Type
-                          (ctfe_support.ctfe-reflect-resolve-type-with-pools
-                            pools
-                            (compiler-comptime-host-array-element-shared-view
-                              compiler-comptime-host-reflections
-                              0)
-                            actual-ty))))))]
+                          (let
+                            [host-reflections : ctfe_support.CtfeReflectInfoList
+                              (compiler-comptime-host-array-element-shared-view
+                                compiler-comptime-host-reflections
+                                0)]
+                            (ctfe_support.ctfe-reflect-resolve-type-with-pools
+                              pools
+                              host-reflections
+                              actual-ty)))))))]
               [_ tlci.tlci-host-callback-status-bad-request]))]
         (begin
           (when
@@ -4308,23 +4327,33 @@
                         (- compiler-comptime-host-stack-len 1))
                       (compiler-comptime-host-push!
                         (ctfe_support.ctfe-generated-string-value
-                          (ctfe_support.ctfe-type-key-with-reflections-and-pools
-                            (compiler-comptime-host-array-element-shared-view
-                              compiler-comptime-host-pools
-                              0)
-                            (compiler-comptime-host-array-element-shared-view
-                              compiler-comptime-host-reflections
-                              0)
-                            ty))))]
+                          (let
+                            [host-pools : ast.AstNodePoolContext
+                              (compiler-comptime-host-array-element-shared-view
+                                compiler-comptime-host-pools
+                                0)]
+                            [host-reflections : ctfe_support.CtfeReflectInfoList
+                              (compiler-comptime-host-array-element-shared-view
+                                compiler-comptime-host-reflections
+                                0)]
+                            (ctfe_support.ctfe-type-key-with-reflections-and-pools
+                              host-pools
+                              host-reflections
+                              ty)))))]
                   [(or (= arg-a 1) (= arg-a 2))
-                    (match (ctfe_support.ctfe-reflect-info-for-type-with-pools
-                      (compiler-comptime-host-array-element-shared-view
-                        compiler-comptime-host-pools
-                        0)
-                      (compiler-comptime-host-array-element-shared-view
-                        compiler-comptime-host-reflections
-                        0)
-                      ty)
+                    (match (let
+                      [host-pools : ast.AstNodePoolContext
+                        (compiler-comptime-host-array-element-shared-view
+                          compiler-comptime-host-pools
+                          0)]
+                      [host-reflections : ctfe_support.CtfeReflectInfoList
+                        (compiler-comptime-host-array-element-shared-view
+                          compiler-comptime-host-reflections
+                          0)]
+                      (ctfe_support.ctfe-reflect-info-for-type-with-pools
+                        host-pools
+                        host-reflections
+                        ty))
                       [(ctfe_support.CtfeMaybeReflectInfo.Some info)
                         (begin
                           (set!
@@ -6969,14 +6998,19 @@
           [(ctfe_support.CompilerCtfeValue.Type ty)
             (let
               [owning : bool
-                (match (ctfe_support.ctfe-reflect-info-for-type-with-pools
-                  (compiler-comptime-host-array-element-shared-view
-                    compiler-comptime-host-pools
-                    0)
-                  (compiler-comptime-host-array-element-shared-view
-                    compiler-comptime-host-reflections
-                    0)
-                  ty)
+                (match (let
+                  [host-pools : ast.AstNodePoolContext
+                    (compiler-comptime-host-array-element-shared-view
+                      compiler-comptime-host-pools
+                      0)]
+                  [host-reflections : ctfe_support.CtfeReflectInfoList
+                    (compiler-comptime-host-array-element-shared-view
+                      compiler-comptime-host-reflections
+                      0)]
+                  (ctfe_support.ctfe-reflect-info-for-type-with-pools
+                    host-pools
+                    host-reflections
+                    ty))
                   [(ctfe_support.CtfeMaybeReflectInfo.Some info)
                     (match info
                       [(ctfe_support.CtfeReflectInfo.Struct _ _ _ _ cleanup _)
@@ -7019,14 +7053,19 @@
               compiler-comptime-host-stack
               (- compiler-comptime-host-stack-len 1))
               [(ctfe_support.CompilerCtfeValue.Type ty)
-                (match (ctfe_support.ctfe-reflect-info-for-type-with-pools
-                  (compiler-comptime-host-array-element-shared-view
-                    compiler-comptime-host-pools
-                    0)
-                  (compiler-comptime-host-array-element-shared-view
-                    compiler-comptime-host-reflections
-                    0)
-                  ty)
+                (match (let
+                  [host-pools : ast.AstNodePoolContext
+                    (compiler-comptime-host-array-element-shared-view
+                      compiler-comptime-host-pools
+                      0)]
+                  [host-reflections : ctfe_support.CtfeReflectInfoList
+                    (compiler-comptime-host-array-element-shared-view
+                      compiler-comptime-host-reflections
+                      0)]
+                  (ctfe_support.ctfe-reflect-info-for-type-with-pools
+                    host-pools
+                    host-reflections
+                    ty))
                   [(ctfe_support.CtfeMaybeReflectInfo.Some info)
                     (let
                       [cleanup : ctfe_support.CtfeReflectCleanup
@@ -8988,14 +9027,19 @@
                     (- compiler-comptime-host-stack-len 1))
                   (compiler-comptime-host-push!
                     (ctfe_support.ctfe-generated-string-value
-                      (ctfe_support.ctfe-type-kind-with-reflections-and-pools
-                        (compiler-comptime-host-array-element-shared-view
-                          compiler-comptime-host-pools
-                          0)
-                        (compiler-comptime-host-array-element-shared-view
-                          compiler-comptime-host-reflections
-                          0)
-                        ty))))]
+                      (let
+                        [host-pools : ast.AstNodePoolContext
+                          (compiler-comptime-host-array-element-shared-view
+                            compiler-comptime-host-pools
+                            0)]
+                        [host-reflections : ctfe_support.CtfeReflectInfoList
+                          (compiler-comptime-host-array-element-shared-view
+                            compiler-comptime-host-reflections
+                            0)]
+                        (ctfe_support.ctfe-type-kind-with-reflections-and-pools
+                          host-pools
+                          host-reflections
+                          ty)))))]
               [_ tlci.tlci-host-callback-status-bad-request]))]
         (begin
           (when

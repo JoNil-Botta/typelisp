@@ -176,6 +176,13 @@ remain compatibility boundaries for synthetic callers until those callers have
 an explicit owner-state ID; parser-only and ID-first constructors should not
 recover an ID from String storage.
 
+Instruction source-span keys classify their function component as a one-word
+`CompilerIrSymbolId`. Their destination variable, stored-name, and bounds-label
+components remain function-local `i64` indexes. Producers and consumers that
+still carry `CompilerIrFunction.name` as a raw compatibility value must wrap it
+at the source-span API boundary; a raw integer must not enter that key as the
+function identity.
+
 `compiler_intern.tl` self-tests own source-name reset cases, the registered
 `compiler-typecheck-structural-intern-session-isolation` test owns explicit
 structural-session isolation/reset/growth, and `compiler_backend_smoke.tl`

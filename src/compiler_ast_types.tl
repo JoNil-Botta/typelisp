@@ -3246,6 +3246,9 @@
   131072)
 (define ty-node-dedup-slots : (__tl_dyn-array i64)
   (__tl_make-array i64 131072))
+(define ty-node-dedup-slots-data-address : u64
+  (unsafe
+    (ptr->int (__tl_array-data ty-node-dedup-slots))))
 (define ty-node-dedup-count : i64
   0)
 
@@ -3622,6 +3625,13 @@
                   (set! (array-ref new-slots idx) slot))))
             (set! i (+ i 1)))))
       (set! ty-node-dedup-slots new-slots)
+      ;; The probe keeps only this raw backing address. The replacement table
+      ;; lives in the pool's stable base arena and never grows in place; publish
+      ;; its new address before any following probe can run.
+      (set!
+        ty-node-dedup-slots-data-address
+        (unsafe
+          (ptr->int (__tl_array-data ty-node-dedup-slots))))
       (set! ty-node-dedup-capacity new-capacity)
       ;; The pool state carries the slots array by reference, so the context
       ;; cell has to learn about the replacement here: the push that follows may
@@ -3634,6 +3644,13 @@
 (define (ty-node-dedup-probe-push [node : AstType]) : i64
   (let
     [mask : i64 (- ty-node-dedup-capacity 1)]
+    ;; Stable for the whole probe: this function cannot replace the table;
+    ;; grow/install boundaries republish it, while reset only clears in place.
+    ;; Using the pointer also removes a descriptor reload and a redundant
+    ;; bounds check for every collision step; `idx` is masked by capacity - 1.
+    [slots : (MutPtr i64)
+      (unsafe
+        (int->ptr ty-node-dedup-slots-data-address : (MutPtr i64)))]
     [idx : i64
       (ty-node-dedup-slot-index
         (ty-node-hash-value (ast-global-shared-view node))
@@ -3642,12 +3659,15 @@
     (begin
       (while (< result 0)
         (let
-          [slot : i64 (array-ref ty-node-dedup-slots idx)]
+          [slot : i64
+            (unsafe
+              (ptr-read (ptr-offset slots idx)))]
           (if (= slot 0)
             (let
               [id : i64 (ty-node-push-raw (ast-global-shared-view node))]
               (begin
-                (set! (array-ref ty-node-dedup-slots idx) (+ id 1))
+                (unsafe
+                  (ptr-write! (ptr-offset slots idx) (+ id 1)))
                 (set! ty-node-dedup-count (+ ty-node-dedup-count 1))
                 (set! result id)))
             (if (ty-node-shallow-eq? (- slot 1) (ast-global-shared-view node))
@@ -3814,6 +3834,13 @@
       (__tl-compiler-owned-shared-view-dyn-ref-as
         type-pool.dedup-slots
         (__tl_dyn-array i64)))
+    ;; A context install is the only generation boundary that can replace the
+    ;; table outside `ty-node-dedup-grow!`; derive the hot pointer from the
+    ;; newly installed descriptor while its base arena is still owned here.
+    (set!
+      ty-node-dedup-slots-data-address
+      (unsafe
+        (ptr->int (__tl_array-data ty-node-dedup-slots))))
     (set! ty-node-dedup-count type-pool.dedup-count)
     ;; Driver-created states allocate both pools in one persistent arena. Keep
     ;; the shared compatibility grow/persist target there after both installs.
@@ -4875,6 +4902,10 @@
         (set! ty-node-pool-exhausted state.exhausted)
         (set! ty-node-dedup-capacity (array-length state.dedup-slots))
         (set! ty-node-dedup-slots (ast-global-shared-view state.dedup-slots))
+        (set!
+          ty-node-dedup-slots-data-address
+          (unsafe
+            (ptr->int (__tl_array-data ty-node-dedup-slots))))
         (set! ty-node-dedup-count state.dedup-count)
         (set! node-pool-base-arena state.base-arena)
         (set! node-pool-owner-arena pools.owner-arena)))))
@@ -9067,6 +9098,11 @@
   (shared-type-base i64)
   (persist-in-place bool))
 
+;; Return the backing address, not the address of the dynamic-array descriptor.
+;; Compaction maps are allocated at their final length, never grow, and remain
+;; owned by the caller's map/generation arena until the copy walk returns. That
+;; makes this pointer stable for exactly the remap lifetime and saves a
+;; descriptor load on every expression/type map probe.
 (defstruct AstI32ArrayRef
   (:lifetimes items)
   (value (& items (__tl_dyn-array i32))))
@@ -9074,8 +9110,11 @@
 (define (ast-i32-array-address-of [items : (& items (__tl_dyn-array i32))]) : u64
   (let
     [cell : (AstI32ArrayRef items) (AstI32ArrayRef items)]
+    [descriptor-address : u64
+      (unsafe
+        (ptr-read (ptr-cast (ptr-addr-of cell) : (Ptr u64))))]
     (unsafe
-      (ptr-read (ptr-cast (ptr-addr-of cell) : (Ptr u64))))))
+      (ptr-read (int->ptr descriptor-address : (Ptr u64))))))
 
 (defmacro (ast-i32-array-address [items : Expr]) : Expr
   `(ast-i32-array-address-of (& ,items)))
@@ -9086,8 +9125,7 @@
 
 ;; Borrowed aggregate field projection can be lowered as a projected descriptor
 ;; field by the previous compiler generation. Resolve the aggregate address via
-;; a borrow cell, load the scalar descriptor address at the known word offset,
-;; then reconstruct the dynamic-array descriptor from that address.
+;; a borrow cell and load the scalar backing address at the known word offset.
 (define (ast-compaction-remap-map-address
   [remap : (& remap AstProgramCompactionRemap)]
   [word-offset : i64]) : u64
@@ -9103,22 +9141,12 @@
     map-address))
 
 (define (ast-compaction-map-ref [address : u64] [index : i64]) : i32
-  (let
-    [data-address : u64
-      (unsafe
-        (ptr-read (int->ptr address : (Ptr u64))))]
-    (unsafe
-      (ptr-read (ptr-offset (int->ptr data-address : (Ptr i32)) index)))))
+  (unsafe
+    (ptr-read (ptr-offset (int->ptr address : (Ptr i32)) index))))
 
 (define (ast-compaction-map-set! [address : u64] [index : i64] [value : i32]) : unit
-  (let
-    [data-address : u64
-      (unsafe
-        (ptr-read (int->ptr address : (Ptr u64))))]
-    (unsafe
-      (ptr-write!
-        (ptr-offset (int->ptr data-address : (MutPtr i32)) index)
-        value))))
+  (unsafe
+    (ptr-write! (ptr-offset (int->ptr address : (MutPtr i32)) index) value)))
 
 ;; Compile-profile-only reachability census for the per-declaration macro
 ;; generation copy-out.  The copy walk is the ownership authority: ids below
@@ -10689,6 +10717,8 @@
 ;: macro generation) allocates them there and saves the reserve/release syscall
 ;: pair a private map arena costs -- 9,061 of them on a self-compile.
 ;: The maps must be zero-filled: zero is the "unseen"/"unvisited" sentinel.
+;: Their addresses point directly at fixed-length backing storage and must stay
+;: valid until this copy and every escape-persistence walk using the maps ends.
 ;:
 ;: With `persist-in-place`, expression rows at or above `shared-expr-base` are
 ;: rewritten in place instead of appended, so `dest-pools` does not grow and

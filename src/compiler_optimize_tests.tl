@@ -1924,7 +1924,7 @@
   [col : i64]) : bool
   (match (compiler_ir_types.compiler-source-spans-lookup-instr
     (compiler_ir_types.compiler-ir-global-shared-view spans)
-    function
+    (compiler_ir_types.compiler-ir-symbol-typed-id function)
     instr)
     [(compiler_ir_types.CompilerMaybeSourceSpan.Some span)
       (opt-source-span-line-col-ok? span line col)]
@@ -1936,7 +1936,7 @@
   [instr : compiler_ir_types.CompilerIrInstr]) : bool
   (match (compiler_ir_types.compiler-source-spans-lookup-instr
     (compiler_ir_types.compiler-ir-global-shared-view spans)
-    function
+    (compiler_ir_types.compiler-ir-symbol-typed-id function)
     instr)
     [(compiler_ir_types.CompilerMaybeSourceSpan.Some _) false]
     [(compiler_ir_types.CompilerMaybeSourceSpan.No) true]))
@@ -1950,7 +1950,7 @@
   [col : i64]) : bool
   (match (compiler_ir_types.compiler-source-spans-lookup-instr-location
     (compiler_ir_types.compiler-ir-global-shared-view spans)
-    function
+    (compiler_ir_types.compiler-ir-symbol-typed-id function)
     instr)
     [(compiler_ir_types.CompilerMaybeSourceLocation.Some
         (compiler_ir_types.CompilerSourceLocation found-path-id span))
@@ -1963,6 +1963,9 @@
   (begin
     (cbi.compiler-builtin-initialize-for-parse!)
     (compiler_ir_types.compiler-ir-test-symbol name)))
+
+(define (opt-test-span-symbol [name : String]) : compiler_ir_types.CompilerIrSymbolId
+  (compiler_ir_types.compiler-ir-symbol-typed-id (opt-test-symbol name)))
 
 (define (opt-test-global-builder-push!
   [builder : (&mut builder compiler_ir_types.CompilerIrGlobalBuilder)]
@@ -2147,10 +2150,10 @@
       (compiler_ir_types.compiler-source-spans-insert-instr
         (compiler_ir_types.compiler-source-spans-insert-instr
           (opt-spans-base)
-          (opt-test-symbol "main")
+          (opt-test-span-symbol "main")
           (compiler_optimize.compiler-opt-global-shared-view dead)
           (opt-test-span 21 3))
-        (opt-test-symbol "main")
+        (opt-test-span-symbol "main")
         (compiler_optimize.compiler-opt-global-shared-view live)
         (opt-test-span 31 5))]
     (match (compiler_optimize.optimize-program-with-spans-and-level
@@ -2199,7 +2202,7 @@
     [spans : compiler_ir_types.CompilerSourceSpans
       (compiler_ir_types.compiler-source-spans-insert-instr
         (opt-spans-base)
-        (opt-test-symbol "main")
+        (opt-test-span-symbol "main")
         folded
         (opt-test-span 41 7))]
     (match (compiler_optimize.optimize-program-with-spans-and-level
@@ -2247,10 +2250,10 @@
       (compiler_ir_types.compiler-source-spans-insert-instr
         (compiler_ir_types.compiler-source-spans-insert-instr
           (opt-spans-base)
-          (opt-test-symbol "main")
+          (opt-test-span-symbol "main")
           (compiler_optimize.compiler-opt-global-shared-view first)
           (opt-test-span 51 9))
-        (opt-test-symbol "main")
+        (opt-test-span-symbol "main")
         second
         (opt-test-span 61 11))]
     (match (compiler_optimize.optimize-program-with-spans-and-level
@@ -2401,11 +2404,11 @@
       (compiler_ir_types.compiler-source-spans-insert-instr-located
         (compiler_ir_types.compiler-source-spans-insert-instr-located
           (opt-spans-base)
-          (opt-test-symbol "inline_span")
+          (opt-test-span-symbol "inline_span")
           (opt-inline-span-callee-call symbols)
           701
           (opt-test-span 71 13))
-        (opt-test-symbol "main")
+        (opt-test-span-symbol "main")
         (opt-inline-span-caller-call symbols)
         801
         (opt-test-span 81 15))]
@@ -2452,7 +2455,7 @@
     [spans : compiler_ir_types.CompilerSourceSpans
       (compiler_ir_types.compiler-source-spans-insert-instr
         (opt-spans-base)
-        (opt-test-symbol "main")
+        (opt-test-span-symbol "main")
         (opt-inline-span-caller-call symbols)
         (opt-test-span 91 17))]
     [cloned-call : compiler_ir_types.CompilerIrInstr
@@ -2474,14 +2477,14 @@
           91
           17)])))
 
-(define (opt-inline-span-branch-phi-inputs) : compiler_ir_types.CompilerIrPhiInputList
-  (compiler_ir_types.compiler-ir-phi-input-cons
+(define (opt-inline-span-branch-phi-inputs) : compiler_ir_types.CompilerIrPhiInputSeq
+  (compiler_ir_types.compiler-ir-phi-input-seq-prepend
     (compiler_ir_types.CompilerIrValue.Var 1)
     (compiler_ir_types.compiler-ir-label "inl.entry.0.then")
-    (compiler_ir_types.compiler-ir-phi-input-cons
+    (compiler_ir_types.compiler-ir-phi-input-seq-prepend
       (compiler_ir_types.CompilerIrValue.I64 42)
       (compiler_ir_types.compiler-ir-label "inl.entry.0.else")
-      compiler_ir_types.CompilerIrPhiInputList.Nil)))
+      (compiler_ir_types.compiler-ir-phi-input-seq-empty))))
 
 (define (compiler-optimize-spans-inline-multiblock-ok?) : bool
   (let
@@ -2490,10 +2493,10 @@
       (compiler_ir_types.compiler-source-spans-insert-instr
         (compiler_ir_types.compiler-source-spans-insert-instr
           (opt-spans-base)
-          (opt-test-symbol "inline_branch")
+          (opt-test-span-symbol "inline_branch")
           (opt-inline-branch-callee-mov)
           (opt-test-span 141 27))
-        (opt-test-symbol "main")
+        (opt-test-span-symbol "main")
         (opt-inline-branch-caller-call symbols)
         (opt-test-span 151 29))]
     [phi : compiler_ir_types.CompilerIrInstr
@@ -2552,7 +2555,7 @@
     [spans : compiler_ir_types.CompilerSourceSpans
       (compiler_ir_types.compiler-source-spans-insert-instr
         (opt-spans-base)
-        (opt-test-symbol "main")
+        (opt-test-span-symbol "main")
         (compiler_optimize.compiler-opt-global-shared-view call)
         (opt-test-span 101 19))]
     (match (compiler_optimize.optimize-program-with-spans-and-level
@@ -2603,13 +2606,13 @@
         (compiler_ir_types.compiler-source-spans-insert-instr
           (compiler_ir_types.compiler-source-spans-insert-instr
             (opt-spans-base)
-            (opt-test-symbol "main")
+            (opt-test-span-symbol "main")
             (compiler_optimize.compiler-opt-global-shared-view pack)
             (opt-test-span 111 21))
-          (opt-test-symbol "main")
+          (opt-test-span-symbol "main")
           (compiler_optimize.compiler-opt-global-shared-view word)
           (opt-test-span 121 23))
-        (opt-test-symbol "main")
+        (opt-test-span-symbol "main")
         (compiler_optimize.compiler-opt-global-shared-view tail)
         (opt-test-span 131 25))]
     (match (compiler_optimize.optimize-program-with-spans-and-level
@@ -2682,21 +2685,31 @@
         (compiler_ir_types.CompilerIrValue.I64 2)
         19)]
     [previous-debug : bool (compiler_ir_types.compiler-debug-info-enabled?)]
+    [function : compiler_ir_types.CompilerIrSymbolId
+      (compiler_ir_types.compiler-ir-symbol-typed-id 7)]
     [ok : bool
       (begin
         (compiler_ir_types.compiler-debug-info-set-enabled! false)
         (and
-          (match (compiler_optimize.opt-remap-spans-instr-key 7 div)
+          (match (compiler_optimize.opt-remap-spans-instr-key function div)
             [(compiler_optimize.OptRemapSpanKey.SomeKey
-                (compiler_ir_types.CompilerSourceSpansInstrKey.Value 7 1))
-              true]
+                (compiler_ir_types.CompilerSourceSpansInstrKey.Value
+                  found-function
+                  1))
+              (compiler_ir_types.compiler-ir-symbol-id-eq?
+                found-function
+                function)]
             [_ false])
-          (match (compiler_optimize.opt-remap-spans-instr-key 7 bounds)
+          (match (compiler_optimize.opt-remap-spans-instr-key function bounds)
             [(compiler_optimize.OptRemapSpanKey.SomeKey
-                (compiler_ir_types.CompilerSourceSpansInstrKey.Bounds 7 19))
-              true]
+                (compiler_ir_types.CompilerSourceSpansInstrKey.Bounds
+                  found-function
+                  19))
+              (compiler_ir_types.compiler-ir-symbol-id-eq?
+                found-function
+                function)]
             [_ false])
-          (match (compiler_optimize.opt-remap-spans-instr-key 7 add)
+          (match (compiler_optimize.opt-remap-spans-instr-key function add)
             [(compiler_optimize.OptRemapSpanKey.NoKey) true]
             [_ false])))]
     (begin
@@ -2723,7 +2736,7 @@
     [spans : compiler_ir_types.CompilerSourceSpans
       (compiler_ir_types.compiler-source-spans-insert-instr-located
         (opt-spans-base)
-        checked
+        (compiler_ir_types.compiler-ir-symbol-typed-id checked)
         (opt-bounds-span-check "bce_span_probe_body")
         907
         (opt-test-span 44 12))]
@@ -3025,10 +3038,10 @@
         (opt-test-instrs
           (compiler_ir_types.CompilerIrInstr.Phi
             2
-            (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
               (compiler_ir_types.CompilerIrValue.Var 1)
               (compiler_ir_types.compiler-ir-label "entry")
-              (compiler_ir_types.CompilerIrPhiInputList.Nil))
+              (compiler_ir_types.compiler-ir-phi-input-seq-empty))
             (compiler_ast_types.AstType.U64))
           (compiler_ir_types.CompilerIrInstr.Return
             (compiler_ir_types.CompilerIrMaybeValue.Some
@@ -9297,10 +9310,10 @@
                 (compiler_ast_types.AstType.Bool)))
             (compiler_ir_types.CompilerIrInstr.Phi
               6
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.Var 5)
                 (compiler_ir_types.compiler-ir-label "entry")
-                (compiler_ir_types.CompilerIrPhiInputList.Nil))
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty))
               (compiler_ast_types.AstType.Bool)))
           (compiler_ir_types.CompilerIrValue.Var 0)
           false)
@@ -9530,24 +9543,22 @@
             1)
           0)
           [(compiler_ir_types.CompilerIrInstr.Phi _ inputs _)
-            (match inputs
-              [(compiler_ir_types.CompilerIrPhiInputList.Cons value _ _)
-                (compiler_optimize.opt-value-is-var?
-                  (compiler_optimize.compiler-opt-global-shared-view value)
-                  5)]
-              [(compiler_ir_types.CompilerIrPhiInputList.Array seq)
+            (let
+              [phi-inputs-at-9533-13 : compiler_ir_types.CompilerIrPhiInputSeq
+                inputs]
+              (if (<= phi-inputs-at-9533-13.len 0)
+                false
                 (let
-                  [input : compiler_ir_types.CompilerIrPhiInput
-                    (compiler_optimize.compiler-opt-global-array-element-shared-view
-                      seq.slots
+                  [phi-input-at-9533-13 : compiler_ir_types.CompilerIrPhiInput
+                    (compiler_ir_types.compiler-ir-phi-input-seq-ref
+                      (compiler_ir_types.compiler-ir-global-shared-view
+                        phi-inputs-at-9533-13)
                       0)]
-                  (and
-                    (= seq.len 1)
-                    (compiler_optimize.opt-value-is-var?
-                      (compiler_optimize.compiler-opt-global-shared-view
-                        input.value)
-                      5)))]
-              [_ false])]
+                  [value : compiler_ir_types.CompilerIrValue
+                    phi-input-at-9533-13.value]
+                  (compiler_optimize.opt-value-is-var?
+                    (compiler_optimize.compiler-opt-global-shared-view value)
+                    5))))]
           [_ false])
         (return 16))
       ;; The remote branch took its own copy of the comparison, and the copy is
@@ -10046,23 +10057,23 @@
         (opt-test-instrs
           (compiler_ir_types.CompilerIrInstr.Phi
             12
-            (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
               (compiler_ir_types.CompilerIrValue.Var 11)
               (compiler_ir_types.compiler-ir-label "preheader")
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.Var 13)
                 (compiler_ir_types.compiler-ir-label "merge")
-                compiler_ir_types.CompilerIrPhiInputList.Nil))
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
             (compiler_ast_types.AstType.I64))
           (compiler_ir_types.CompilerIrInstr.Phi
             2
-            (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
               (compiler_ir_types.CompilerIrValue.I64 0)
               (compiler_ir_types.compiler-ir-label "preheader")
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.Var 3)
                 (compiler_ir_types.compiler-ir-label "merge")
-                compiler_ir_types.CompilerIrPhiInputList.Nil))
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
             (compiler_ast_types.AstType.I64))
           (compiler_ir_types.CompilerIrInstr.BinOp
             4
@@ -10786,10 +10797,10 @@
       (compiler_ast_types.AstType.I64))
     (compiler_ir_types.CompilerIrInstr.Phi
       2
-      (compiler_ir_types.compiler-ir-phi-input-cons
+      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
         (compiler_ir_types.CompilerIrValue.Var 1)
         (compiler_ir_types.compiler-ir-label "left")
-        compiler_ir_types.CompilerIrPhiInputList.Nil)
+        (compiler_ir_types.compiler-ir-phi-input-seq-empty))
       (compiler_ast_types.AstType.I64))))
 
 (define (opt-copy-pack-words
@@ -10906,18 +10917,22 @@
   (opt-copy-word-src-var-from instrs 0 dst fallback))
 
 (define (opt-phi-first-input-var
-  [inputs : compiler_ir_types.CompilerIrPhiInputList]
+  [inputs : compiler_ir_types.CompilerIrPhiInputSeq]
   [fallback : i64]) : i64
-  (match (compiler_ir_types.compiler-ir-phi-input-list-force-cons inputs)
-    [(compiler_ir_types.CompilerIrPhiInputList.Nil) fallback]
-    [(compiler_ir_types.CompilerIrPhiInputList.Array seq)
-      (opt-phi-first-input-var
-        (compiler_ir_types.compiler-ir-phi-input-seq-to-list seq)
-        fallback)]
-    [(compiler_ir_types.CompilerIrPhiInputList.Cons value _ _)
-      (match value
-        [(compiler_ir_types.CompilerIrValue.Var id) id]
-        [_ fallback])]))
+  (let
+    [phi-inputs-at-10899-3 : compiler_ir_types.CompilerIrPhiInputSeq inputs]
+    (if (<= phi-inputs-at-10899-3.len 0)
+      fallback
+      (let
+        [phi-input-at-10899-3 : compiler_ir_types.CompilerIrPhiInput
+          (compiler_ir_types.compiler-ir-phi-input-seq-ref
+            (compiler_ir_types.compiler-ir-global-shared-view
+              phi-inputs-at-10899-3)
+            0)]
+        [value : compiler_ir_types.CompilerIrValue phi-input-at-10899-3.value]
+        (match value
+          [(compiler_ir_types.CompilerIrValue.Var id) id]
+          [_ fallback])))))
 
 (define (opt-phi-dst-first-input-var-from
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
@@ -14046,13 +14061,13 @@
           (opt-test-instrs
             (compiler_ir_types.CompilerIrInstr.Phi
               3
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.Var 0)
                 (compiler_ir_types.compiler-ir-label "land")
-                (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                   (compiler_ir_types.CompilerIrValue.Var 5)
                   (compiler_ir_types.compiler-ir-label "latch")
-                  (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                  (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
               (compiler_ast_types.AstType.I64))
             (compiler_ir_types.CompilerIrInstr.BinOp
               6
@@ -14472,16 +14487,16 @@
                 (opt-test-instrs
                   (compiler_ir_types.CompilerIrInstr.Phi
                     7
-                    (compiler_ir_types.compiler-ir-phi-input-cons
+                    (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                       (compiler_ir_types.CompilerIrValue.Var 4)
                       (compiler_ir_types.compiler-ir-label "inner")
-                      (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                         (compiler_ir_types.CompilerIrValue.Var 5)
                         (compiler_ir_types.compiler-ir-label "alt")
-                        (compiler_ir_types.compiler-ir-phi-input-cons
+                        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                           (compiler_ir_types.CompilerIrValue.Var 6)
                           (compiler_ir_types.compiler-ir-label "miss")
-                          (compiler_ir_types.CompilerIrPhiInputList.Nil))))
+                          (compiler_ir_types.compiler-ir-phi-input-seq-empty))))
                     (compiler_ast_types.AstType.I64))
                   (compiler_ir_types.CompilerIrInstr.Return
                     (compiler_ir_types.CompilerIrMaybeValue.Some
@@ -14539,7 +14554,7 @@
       [next-acc : i64
         (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
           [(compiler_ir_types.CompilerIrInstr.Phi _ inputs _)
-            (+ acc (compiler_ir_types.compiler-ir-phi-input-list-count inputs))]
+            (+ acc (compiler_ir_types.compiler-ir-phi-input-seq-count inputs))]
           [_ acc])]
       (opt-branch-fold-phi-inputs-seq instrs (+ index 1) next-acc))))
 
@@ -18552,13 +18567,13 @@
 (define (opt-inline-switch-loop-phi-instr) : compiler_ir_types.CompilerIrInstr
   (compiler_ir_types.CompilerIrInstr.Phi
     3
-    (compiler_ir_types.compiler-ir-phi-input-cons
+    (compiler_ir_types.compiler-ir-phi-input-seq-prepend
       (compiler_ir_types.CompilerIrValue.I64 10)
       (compiler_ir_types.compiler-ir-label "zero")
-      (compiler_ir_types.compiler-ir-phi-input-cons
+      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
         (compiler_ir_types.CompilerIrValue.I64 20)
         (compiler_ir_types.compiler-ir-label "one")
-        compiler_ir_types.CompilerIrPhiInputList.Nil))
+        (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
     (compiler_ast_types.AstType.I64)))
 
 ;; A cyclic bounds-carrying Switch callee remains behind the acyclic gate even
@@ -18661,16 +18676,16 @@
                 (opt-test-instrs
                   (compiler_ir_types.CompilerIrInstr.Phi
                     3
-                    (compiler_ir_types.compiler-ir-phi-input-cons
+                    (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                       (compiler_ir_types.CompilerIrValue.I64 10)
                       (compiler_ir_types.compiler-ir-label "zero")
-                      (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                         (compiler_ir_types.CompilerIrValue.I64 20)
                         (compiler_ir_types.compiler-ir-label "one")
-                        (compiler_ir_types.compiler-ir-phi-input-cons
+                        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                           (compiler_ir_types.CompilerIrValue.I64 30)
                           (compiler_ir_types.compiler-ir-label "other")
-                          compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                          (compiler_ir_types.compiler-ir-phi-input-seq-empty))))
                     (compiler_ast_types.AstType.I64))
                   (compiler_ir_types.CompilerIrInstr.Return
                     (compiler_ir_types.CompilerIrMaybeValue.Some
@@ -18796,7 +18811,7 @@
               [(compiler_ir_types.CompilerIrInstr.Phi _ inputs _)
                 (and
                   (=
-                    (compiler_ir_types.compiler-ir-phi-input-list-count
+                    (compiler_ir_types.compiler-ir-phi-input-seq-count
                       (compiler_optimize.compiler-opt-global-shared-view inputs))
                     3)
                   (compiler_optimize.opt-inline-phi-input-label?
@@ -19010,13 +19025,13 @@
         (opt-test-instrs
           (compiler_ir_types.CompilerIrInstr.Phi
             4
-            (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
               (compiler_ir_types.CompilerIrValue.Var 3)
               (compiler_ir_types.compiler-ir-label "entry")
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.Var 5)
                 (compiler_ir_types.compiler-ir-label "latch")
-                compiler_ir_types.CompilerIrPhiInputList.Nil))
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
             (compiler_ast_types.AstType.I64))
           (compiler_ir_types.CompilerIrInstr.Branch
             (compiler_ir_types.CompilerIrValue.Var 0)
@@ -19723,13 +19738,13 @@
         (opt-test-instrs
           (compiler_ir_types.CompilerIrInstr.Phi
             6
-            (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
               (compiler_ir_types.CompilerIrValue.Var 3)
               (compiler_ir_types.compiler-ir-label "entry")
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.Var 4)
                 (compiler_ir_types.compiler-ir-label "outer_latch")
-                compiler_ir_types.CompilerIrPhiInputList.Nil))
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
             (compiler_ast_types.AstType.I64))
           (compiler_ir_types.CompilerIrInstr.Branch
             (compiler_ir_types.CompilerIrValue.Var 1)
@@ -19741,13 +19756,13 @@
           (opt-test-instrs
             (compiler_ir_types.CompilerIrInstr.Phi
               4
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.Var 6)
                 (compiler_ir_types.compiler-ir-label "outer")
-                (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                   (compiler_ir_types.CompilerIrValue.Var 5)
                   (compiler_ir_types.compiler-ir-label "latch")
-                  compiler_ir_types.CompilerIrPhiInputList.Nil))
+                  (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
               (compiler_ast_types.AstType.I64))
             (compiler_ir_types.CompilerIrInstr.Branch
               (compiler_ir_types.CompilerIrValue.Var 0)
@@ -20202,13 +20217,13 @@
 (define (opt-inline-wide-loop-phi-instr [params : i64]) : compiler_ir_types.CompilerIrInstr
   (compiler_ir_types.CompilerIrInstr.Phi
     (opt-inline-wide-phi-var params)
-    (compiler_ir_types.compiler-ir-phi-input-cons
+    (compiler_ir_types.compiler-ir-phi-input-seq-prepend
       (compiler_ir_types.CompilerIrValue.I64 10)
       (compiler_ir_types.compiler-ir-label "zero")
-      (compiler_ir_types.compiler-ir-phi-input-cons
+      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
         (compiler_ir_types.CompilerIrValue.I64 20)
         (compiler_ir_types.compiler-ir-label "one")
-        compiler_ir_types.CompilerIrPhiInputList.Nil))
+        (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
     (compiler_ast_types.AstType.I64)))
 
 ;; entry -> loop -> {zero, one} -> join, with the loop's default edge back to
@@ -20388,13 +20403,13 @@
         (opt-test-instrs
           (compiler_ir_types.CompilerIrInstr.Phi
             4
-            (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
               (compiler_ir_types.CompilerIrValue.Var 3)
               (compiler_ir_types.compiler-ir-label "entry")
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.Var 5)
                 (compiler_ir_types.compiler-ir-label "latch")
-                compiler_ir_types.CompilerIrPhiInputList.Nil))
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
             (compiler_ast_types.AstType.I64))
           (compiler_ir_types.CompilerIrInstr.Branch
             (compiler_ir_types.CompilerIrValue.Var 0)
@@ -20755,13 +20770,13 @@
           (opt-test-instr-seq-prepend
             (compiler_ir_types.CompilerIrInstr.Phi
               4
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.Var 3)
                 (compiler_ir_types.compiler-ir-label "entry")
-                (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                   (compiler_ir_types.CompilerIrValue.Var 5)
                   (compiler_ir_types.compiler-ir-label "latch")
-                  compiler_ir_types.CompilerIrPhiInputList.Nil))
+                  (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
               (compiler_ast_types.AstType.I64))
             (opt-test-instr-seq-prepend
               (compiler_ir_types.CompilerIrInstr.Branch
@@ -21256,16 +21271,16 @@
                 (opt-test-instrs
                   (compiler_ir_types.CompilerIrInstr.Phi
                     3
-                    (compiler_ir_types.compiler-ir-phi-input-cons
+                    (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                       (compiler_ir_types.CompilerIrValue.I64 10)
                       (compiler_ir_types.compiler-ir-label "zero")
-                      (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                         (compiler_ir_types.CompilerIrValue.I64 20)
                         (compiler_ir_types.compiler-ir-label "one")
-                        (compiler_ir_types.compiler-ir-phi-input-cons
+                        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                           (compiler_ir_types.CompilerIrValue.I64 30)
                           (compiler_ir_types.compiler-ir-label "other")
-                          compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                          (compiler_ir_types.compiler-ir-phi-input-seq-empty))))
                     (compiler_ast_types.AstType.I64))
                   (compiler_ir_types.CompilerIrInstr.Return
                     (compiler_ir_types.CompilerIrMaybeValue.Some
@@ -21651,16 +21666,16 @@
       (opt-test-instrs
         (compiler_ir_types.CompilerIrInstr.Phi
           3
-          (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
             (compiler_ir_types.CompilerIrValue.I64 10)
             (compiler_ir_types.compiler-ir-label "zero")
-            (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
               (compiler_ir_types.CompilerIrValue.I64 20)
               (compiler_ir_types.compiler-ir-label "one")
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.I64 30)
                 (opt-inline-depth-relay-label (- relays 1))
-                compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty))))
           (compiler_ast_types.AstType.I64))
         (compiler_ir_types.CompilerIrInstr.Return
           (compiler_ir_types.CompilerIrMaybeValue.Some
@@ -21765,13 +21780,13 @@
         (opt-test-instrs
           (compiler_ir_types.CompilerIrInstr.Phi
             4
-            (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
               (compiler_ir_types.CompilerIrValue.Var 3)
               (compiler_ir_types.compiler-ir-label "entry")
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.Var 5)
                 (compiler_ir_types.compiler-ir-label "outer_latch")
-                compiler_ir_types.CompilerIrPhiInputList.Nil))
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
             (compiler_ast_types.AstType.I64))
           (compiler_ir_types.CompilerIrInstr.Branch
             (compiler_ir_types.CompilerIrValue.Var 0)
@@ -21989,13 +22004,13 @@
 
 ;; hit_i and the miss block all reach `join`, so the phi carries one input per
 ;; arm. Built newest-first from the miss edge inward.
-(define (opt-inline-chain-phi-inputs [index : i64] [arms : i64]) : compiler_ir_types.CompilerIrPhiInputList
+(define (opt-inline-chain-phi-inputs [index : i64] [arms : i64]) : compiler_ir_types.CompilerIrPhiInputSeq
   (if (< index 0)
-    (compiler_ir_types.compiler-ir-phi-input-cons
+    (compiler_ir_types.compiler-ir-phi-input-seq-prepend
       (compiler_ir_types.CompilerIrValue.I64 0)
       (compiler_ir_types.compiler-ir-label "miss")
-      compiler_ir_types.CompilerIrPhiInputList.Nil)
-    (compiler_ir_types.compiler-ir-phi-input-cons
+      (compiler_ir_types.compiler-ir-phi-input-seq-empty))
+    (compiler_ir_types.compiler-ir-phi-input-seq-prepend
       (compiler_ir_types.CompilerIrValue.I64 1)
       (opt-inline-chain-hit-label index)
       (opt-inline-chain-phi-inputs (- index 1) arms))))
@@ -22354,13 +22369,13 @@
             (opt-test-instrs
               (compiler_ir_types.CompilerIrInstr.Phi
                 4
-                (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                   (compiler_ir_types.CompilerIrValue.Var 3)
                   (opt-inline-hot-loop-pad-label 11)
-                  (compiler_ir_types.compiler-ir-phi-input-cons
+                  (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                     (compiler_ir_types.CompilerIrValue.Var 5)
                     (compiler_ir_types.compiler-ir-label "latch")
-                    compiler_ir_types.CompilerIrPhiInputList.Nil))
+                    (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                 (compiler_ast_types.AstType.I64))
               (compiler_ir_types.CompilerIrInstr.Branch
                 (compiler_ir_types.CompilerIrValue.Var 0)
@@ -22476,13 +22491,13 @@
           (opt-test-instrs
             (compiler_ir_types.CompilerIrInstr.Phi
               4
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.Var 3)
                 (compiler_ir_types.compiler-ir-label "entry")
-                (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                   (compiler_ir_types.CompilerIrValue.Var 5)
                   (compiler_ir_types.compiler-ir-label "latch")
-                  compiler_ir_types.CompilerIrPhiInputList.Nil))
+                  (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
               (compiler_ast_types.AstType.I64))
             (compiler_ir_types.CompilerIrInstr.Branch
               (compiler_ir_types.CompilerIrValue.Var 0)
@@ -22817,10 +22832,10 @@
       (compiler_ir_types.compiler-source-spans-insert-instr
         (compiler_ir_types.compiler-source-spans-insert-instr
           (opt-spans-base)
-          callee-name
+          (compiler_ir_types.compiler-ir-symbol-typed-id callee-name)
           callee-phi
           (opt-test-span 171 33))
-        caller-name
+        (compiler_ir_types.compiler-ir-symbol-typed-id caller-name)
         (compiler_optimize.compiler-opt-global-shared-view caller-call)
         (opt-test-span 181 35))]
     [previous-debug : bool (compiler_ir_types.compiler-debug-info-enabled?)]
@@ -22941,16 +22956,16 @@
                 (opt-test-instrs
                   (compiler_ir_types.CompilerIrInstr.Phi
                     1
-                    (compiler_ir_types.compiler-ir-phi-input-cons
+                    (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                       (compiler_ir_types.CompilerIrValue.I64 10)
                       (compiler_ir_types.compiler-ir-label "zero")
-                      (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                         (compiler_ir_types.CompilerIrValue.I64 20)
                         (compiler_ir_types.compiler-ir-label "one")
-                        (compiler_ir_types.compiler-ir-phi-input-cons
+                        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                           (compiler_ir_types.CompilerIrValue.I64 30)
                           (compiler_ir_types.compiler-ir-label "other")
-                          compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                          (compiler_ir_types.compiler-ir-phi-input-seq-empty))))
                     (compiler_ast_types.AstType.I64))
                   (compiler_ir_types.CompilerIrInstr.Return
                     (compiler_ir_types.CompilerIrMaybeValue.Some
@@ -23159,13 +23174,13 @@
               (opt-test-instrs
                 (compiler_ir_types.CompilerIrInstr.Phi
                   1
-                  (compiler_ir_types.compiler-ir-phi-input-cons
+                  (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                     (compiler_ir_types.CompilerIrValue.I64 7)
                     (compiler_ir_types.compiler-ir-label "left")
-                    (compiler_ir_types.compiler-ir-phi-input-cons
+                    (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                       (compiler_ir_types.CompilerIrValue.I64 9)
                       (compiler_ir_types.compiler-ir-label "right")
-                      compiler_ir_types.CompilerIrPhiInputList.Nil))
+                      (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                   (compiler_ast_types.AstType.I64))
                 (compiler_ir_types.CompilerIrInstr.Return
                   (compiler_ir_types.CompilerIrMaybeValue.Some
@@ -23321,11 +23336,11 @@
       (compiler_ir_types.compiler-source-spans-insert-instr-located
         (compiler_ir_types.compiler-source-spans-insert-instr-located
           (opt-spans-base)
-          (opt-test-symbol "inline_nonleaf")
+          (opt-test-span-symbol "inline_nonleaf")
           (opt-inline-nonleaf-inner-call symbols.external-helper)
           703
           (opt-test-span 73 11))
-        (opt-test-symbol "main")
+        (opt-test-span-symbol "main")
         (opt-inline-nonleaf-caller-call symbols)
         803
         (opt-test-span 83 17))]
@@ -23417,10 +23432,10 @@
       (compiler_ir_types.compiler-source-spans-insert-instr
         (compiler_ir_types.compiler-source-spans-insert-instr
           (opt-spans-base)
-          (opt-test-symbol "inline_nonleaf")
+          (opt-test-span-symbol "inline_nonleaf")
           (opt-inline-nonleaf-inner-call panic-name)
           (opt-test-span 61 9))
-        (opt-test-symbol "main")
+        (opt-test-span-symbol "main")
         (opt-inline-nonleaf-caller-call symbols)
         (opt-test-span 62 3))]
     [cloned-call : compiler_ir_types.CompilerIrInstr
@@ -26701,13 +26716,13 @@
             (opt-test-instrs
               (compiler_ir_types.CompilerIrInstr.Phi
                 6
-                (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                   (compiler_ir_types.CompilerIrValue.Var 4)
                   (compiler_ir_types.compiler-ir-label "then")
-                  (compiler_ir_types.compiler-ir-phi-input-cons
+                  (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                     (compiler_ir_types.CompilerIrValue.Var 5)
                     (compiler_ir_types.compiler-ir-label "else")
-                    (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                    (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                 (compiler_ast_types.AstType.I64))
               (compiler_ir_types.CompilerIrInstr.Return
                 (compiler_ir_types.CompilerIrMaybeValue.Some
@@ -26764,13 +26779,13 @@
         (opt-test-instrs
           (compiler_ir_types.CompilerIrInstr.Phi
             5
-            (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
               (compiler_ir_types.CompilerIrValue.Var 1)
               (compiler_ir_types.compiler-ir-label "entry")
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.Var 4)
                 (compiler_ir_types.compiler-ir-label "body")
-                (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
             (compiler_ast_types.AstType.I64))
           (compiler_ir_types.CompilerIrInstr.BinOp
             3
@@ -27735,13 +27750,13 @@
             (opt-test-instrs
               (compiler_ir_types.CompilerIrInstr.Phi
                 5
-                (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                   (compiler_ir_types.CompilerIrValue.Var 4)
                   (compiler_ir_types.compiler-ir-label "then")
-                  (compiler_ir_types.compiler-ir-phi-input-cons
+                  (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                     (compiler_ir_types.CompilerIrValue.Var 3)
                     (compiler_ir_types.compiler-ir-label "else")
-                    (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                    (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                 (compiler_ast_types.AstType.I64))
               (opt-load-subst-return 5)))
           (compiler_ir_types.CompilerIrBlockList.Nil))))))
@@ -28830,13 +28845,13 @@
             (opt-test-instrs
               (compiler_ir_types.CompilerIrInstr.Phi
                 3
-                (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                   (compiler_ir_types.CompilerIrValue.Var 1)
                   (compiler_ir_types.compiler-ir-label "then")
-                  (compiler_ir_types.compiler-ir-phi-input-cons
+                  (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                     (compiler_ir_types.CompilerIrValue.Var 2)
                     (compiler_ir_types.compiler-ir-label "else")
-                    (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                    (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                 (compiler_ast_types.AstType.I64))
               (compiler_ir_types.CompilerIrInstr.Return
                 (compiler_ir_types.CompilerIrMaybeValue.Some
@@ -28889,13 +28904,13 @@
         (opt-test-instrs
           (compiler_ir_types.CompilerIrInstr.Phi
             1
-            (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
               (compiler_ir_types.CompilerIrValue.Var 0)
               (compiler_ir_types.compiler-ir-label "entry")
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.Var 2)
                 (compiler_ir_types.compiler-ir-label "body")
-                (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
             (compiler_ast_types.AstType.I64))
           (compiler_ir_types.CompilerIrInstr.Branch
             (compiler_ir_types.CompilerIrValue.Var 4)
@@ -29430,13 +29445,13 @@
             (opt-test-instrs
               (compiler_ir_types.CompilerIrInstr.Phi
                 3
-                (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                   (compiler_ir_types.CompilerIrValue.Var 1)
                   (compiler_ir_types.compiler-ir-label "then")
-                  (compiler_ir_types.compiler-ir-phi-input-cons
+                  (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                     (compiler_ir_types.CompilerIrValue.Var 2)
                     (compiler_ir_types.compiler-ir-label "else")
-                    (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                    (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                 (compiler_ast_types.AstType.I64))
               (compiler_ir_types.CompilerIrInstr.Return
                 (compiler_ir_types.CompilerIrMaybeValue.Some
@@ -29467,13 +29482,13 @@
           (opt-test-instrs
             (compiler_ir_types.CompilerIrInstr.Phi
               1
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.I64 10)
                 (compiler_ir_types.compiler-ir-label "entry")
-                (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                   (compiler_ir_types.CompilerIrValue.I64 20)
                   (compiler_ir_types.compiler-ir-label "header")
-                  (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                  (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
               (compiler_ast_types.AstType.I64))
             (compiler_ir_types.CompilerIrInstr.Return
               (compiler_ir_types.CompilerIrMaybeValue.Some
@@ -29515,13 +29530,13 @@
             (opt-test-instrs
               (compiler_ir_types.CompilerIrInstr.Phi
                 1
-                (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                   left
                   (compiler_ir_types.compiler-ir-label "then")
-                  (compiler_ir_types.compiler-ir-phi-input-cons
+                  (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                     right
                     (compiler_ir_types.compiler-ir-label "else")
-                    (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                    (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                 ty)
               (compiler_ir_types.CompilerIrInstr.Return
                 (compiler_ir_types.CompilerIrMaybeValue.Some
@@ -29545,13 +29560,13 @@
         (opt-test-instrs
           (compiler_ir_types.CompilerIrInstr.Phi
             1
-            (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
               (compiler_ir_types.CompilerIrValue.I64 5)
               (compiler_ir_types.compiler-ir-label "entry")
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 carried
                 (compiler_ir_types.compiler-ir-label "latch")
-                (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
             (compiler_ast_types.AstType.I64))
           (compiler_ir_types.CompilerIrInstr.Branch
             (compiler_ir_types.CompilerIrValue.Var 0)
@@ -29608,13 +29623,13 @@
             (opt-test-instrs
               (compiler_ir_types.CompilerIrInstr.Phi
                 2
-                (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                   (compiler_ir_types.CompilerIrValue.Var 1)
                   (compiler_ir_types.compiler-ir-label "then")
-                  (compiler_ir_types.compiler-ir-phi-input-cons
+                  (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                     (compiler_ir_types.CompilerIrValue.Var 1)
                     (compiler_ir_types.compiler-ir-label "else")
-                    (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                    (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                 (compiler_ast_types.AstType.I64))
               (compiler_ir_types.CompilerIrInstr.Branch
                 (compiler_ir_types.CompilerIrValue.Var 0)
@@ -29638,13 +29653,13 @@
                   (opt-test-instrs
                     (compiler_ir_types.CompilerIrInstr.Phi
                       3
-                      (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                         (compiler_ir_types.CompilerIrValue.Var 2)
                         (compiler_ir_types.compiler-ir-label "then2")
-                        (compiler_ir_types.compiler-ir-phi-input-cons
+                        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                           (compiler_ir_types.CompilerIrValue.Var 2)
                           (compiler_ir_types.compiler-ir-label "else2")
-                          (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                          (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                       (compiler_ast_types.AstType.I64))
                     (compiler_ir_types.CompilerIrInstr.Return
                       (compiler_ir_types.CompilerIrMaybeValue.Some
@@ -29682,23 +29697,23 @@
             (opt-test-instrs
               (compiler_ir_types.CompilerIrInstr.Phi
                 1
-                (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                   (compiler_ir_types.CompilerIrValue.I64 7)
                   (compiler_ir_types.compiler-ir-label "then")
-                  (compiler_ir_types.compiler-ir-phi-input-cons
+                  (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                     (compiler_ir_types.CompilerIrValue.I64 7)
                     (compiler_ir_types.compiler-ir-label "else")
-                    (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                    (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                 (compiler_ast_types.AstType.I64))
               (compiler_ir_types.CompilerIrInstr.Phi
                 2
-                (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                   (compiler_ir_types.CompilerIrValue.I64 1)
                   (compiler_ir_types.compiler-ir-label "then")
-                  (compiler_ir_types.compiler-ir-phi-input-cons
+                  (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                     (compiler_ir_types.CompilerIrValue.I64 2)
                     (compiler_ir_types.compiler-ir-label "else")
-                    (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                    (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                 (compiler_ast_types.AstType.I64))
               (compiler_ir_types.CompilerIrInstr.BinOp
                 3
@@ -29751,23 +29766,23 @@
         (opt-test-instrs
           (compiler_ir_types.CompilerIrInstr.Phi
             6
-            (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
               (compiler_ir_types.CompilerIrValue.Var 7)
               (compiler_ir_types.compiler-ir-label "cont")
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.Var 1)
                 (compiler_ir_types.compiler-ir-label "entry")
-                (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
             (compiler_ast_types.AstType.I64))
           (compiler_ir_types.CompilerIrInstr.Phi
             8
-            (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
               (compiler_ir_types.CompilerIrValue.Bool false)
               (compiler_ir_types.compiler-ir-label "cont")
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.Bool false)
                 (compiler_ir_types.compiler-ir-label "entry")
-                (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
             (compiler_ast_types.AstType.Bool))
           (compiler_ir_types.CompilerIrInstr.BinOp
             9
@@ -29817,23 +29832,23 @@
                 (opt-test-instrs
                   (compiler_ir_types.CompilerIrInstr.Phi
                     11
-                    (compiler_ir_types.compiler-ir-phi-input-cons
+                    (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                       (compiler_ir_types.CompilerIrValue.Var 3)
                       (compiler_ir_types.compiler-ir-label "hit")
-                      (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                         (compiler_ir_types.CompilerIrValue.Var 8)
                         (compiler_ir_types.compiler-ir-label "header")
-                        (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                        (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                     (compiler_ast_types.AstType.Bool))
                   (compiler_ir_types.CompilerIrInstr.Phi
                     12
-                    (compiler_ir_types.compiler-ir-phi-input-cons
+                    (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                       (compiler_ir_types.CompilerIrValue.Var 4)
                       (compiler_ir_types.compiler-ir-label "hit")
-                      (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                         (compiler_ir_types.CompilerIrValue.Var 5)
                         (compiler_ir_types.compiler-ir-label "header")
-                        (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                        (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                     (compiler_ast_types.AstType.I64))
                   (compiler_ir_types.CompilerIrInstr.Call
                     13
@@ -30057,13 +30072,13 @@
             (opt-test-instrs
               (compiler_ir_types.CompilerIrInstr.Phi
                 4
-                (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                   (compiler_ir_types.CompilerIrValue.Var 1)
                   (compiler_ir_types.compiler-ir-label "compare")
-                  (compiler_ir_types.compiler-ir-phi-input-cons
+                  (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                     (compiler_ir_types.CompilerIrValue.Bool false)
                     (compiler_ir_types.compiler-ir-label "constant")
-                    (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                    (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                 (compiler_ast_types.AstType.Bool))
               (compiler_ir_types.CompilerIrInstr.Branch
                 (compiler_ir_types.CompilerIrValue.Var 4)
@@ -30157,16 +30172,16 @@
                 (opt-test-instrs
                   (compiler_ir_types.CompilerIrInstr.Phi
                     4
-                    (compiler_ir_types.compiler-ir-phi-input-cons
+                    (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                       (compiler_ir_types.CompilerIrValue.Bool true)
                       (compiler_ir_types.compiler-ir-label "true-left")
-                      (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                         (compiler_ir_types.CompilerIrValue.Bool false)
                         (compiler_ir_types.compiler-ir-label "false-middle")
-                        (compiler_ir_types.compiler-ir-phi-input-cons
+                        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                           (compiler_ir_types.CompilerIrValue.Bool true)
                           (compiler_ir_types.compiler-ir-label "true-right")
-                          (compiler_ir_types.CompilerIrPhiInputList.Nil))))
+                          (compiler_ir_types.compiler-ir-phi-input-seq-empty))))
                     (compiler_ast_types.AstType.Bool))
                   (compiler_ir_types.CompilerIrInstr.Branch
                     (compiler_ir_types.CompilerIrValue.Var 4)
@@ -30178,10 +30193,10 @@
                   (opt-test-instrs
                     (compiler_ir_types.CompilerIrInstr.Phi
                       5
-                      (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                         (compiler_ir_types.CompilerIrValue.I64 11)
                         (compiler_ir_types.compiler-ir-label "merge")
-                        (compiler_ir_types.CompilerIrPhiInputList.Nil))
+                        (compiler_ir_types.compiler-ir-phi-input-seq-empty))
                       (compiler_ast_types.AstType.I64))
                     (compiler_ir_types.CompilerIrInstr.Return
                       (compiler_ir_types.CompilerIrMaybeValue.Some
@@ -30192,10 +30207,10 @@
                     (opt-test-instrs
                       (compiler_ir_types.CompilerIrInstr.Phi
                         6
-                        (compiler_ir_types.compiler-ir-phi-input-cons
+                        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                           (compiler_ir_types.CompilerIrValue.I64 22)
                           (compiler_ir_types.compiler-ir-label "merge")
-                          (compiler_ir_types.CompilerIrPhiInputList.Nil))
+                          (compiler_ir_types.compiler-ir-phi-input-seq-empty))
                         (compiler_ast_types.AstType.I64))
                       (compiler_ir_types.CompilerIrInstr.Return
                         (compiler_ir_types.CompilerIrMaybeValue.Some
@@ -30229,13 +30244,13 @@
             (opt-test-instrs
               (compiler_ir_types.CompilerIrInstr.Phi
                 4
-                (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                   (compiler_ir_types.CompilerIrValue.Var 0)
                   (compiler_ir_types.compiler-ir-label "left")
-                  (compiler_ir_types.compiler-ir-phi-input-cons
+                  (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                     (compiler_ir_types.CompilerIrValue.Var 1)
                     (compiler_ir_types.compiler-ir-label "right")
-                    (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                    (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                 (compiler_ast_types.AstType.Bool))
               (compiler_ir_types.CompilerIrInstr.Branch
                 (compiler_ir_types.CompilerIrValue.Var 4)
@@ -30284,23 +30299,23 @@
             (opt-test-instrs
               (compiler_ir_types.CompilerIrInstr.Phi
                 3
-                (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                   (compiler_ir_types.CompilerIrValue.I64 11)
                   (compiler_ir_types.compiler-ir-label "left")
-                  (compiler_ir_types.compiler-ir-phi-input-cons
+                  (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                     (compiler_ir_types.CompilerIrValue.I64 22)
                     (compiler_ir_types.compiler-ir-label "right")
-                    (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                    (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                 (compiler_ast_types.AstType.I64))
               (compiler_ir_types.CompilerIrInstr.Phi
                 4
-                (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                   (compiler_ir_types.CompilerIrValue.Bool true)
                   (compiler_ir_types.compiler-ir-label "left")
-                  (compiler_ir_types.compiler-ir-phi-input-cons
+                  (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                     (compiler_ir_types.CompilerIrValue.Bool false)
                     (compiler_ir_types.compiler-ir-label "right")
-                    (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                    (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                 (compiler_ast_types.AstType.Bool))
               (compiler_ir_types.CompilerIrInstr.Branch
                 (compiler_ir_types.CompilerIrValue.Var 4)
@@ -30370,16 +30385,16 @@
             (opt-test-instrs
               (compiler_ir_types.CompilerIrInstr.Phi
                 4
-                (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                   (compiler_ir_types.CompilerIrValue.Bool true)
                   (compiler_ir_types.compiler-ir-label "true-left")
-                  (compiler_ir_types.compiler-ir-phi-input-cons
+                  (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                     (compiler_ir_types.CompilerIrValue.Bool false)
                     (compiler_ir_types.compiler-ir-label "false-middle")
-                    (compiler_ir_types.compiler-ir-phi-input-cons
+                    (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                       (compiler_ir_types.CompilerIrValue.Bool true)
                       (compiler_ir_types.compiler-ir-label "true-right")
-                      (compiler_ir_types.CompilerIrPhiInputList.Nil))))
+                      (compiler_ir_types.compiler-ir-phi-input-seq-empty))))
                 (compiler_ast_types.AstType.Bool))
               (compiler_ir_types.CompilerIrInstr.Jump
                 (compiler_ir_types.compiler-ir-label "gap"))))
@@ -30401,10 +30416,10 @@
                   (opt-test-instrs
                     (compiler_ir_types.CompilerIrInstr.Phi
                       5
-                      (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                         (compiler_ir_types.CompilerIrValue.I64 11)
                         (compiler_ir_types.compiler-ir-label "branch-site")
-                        (compiler_ir_types.CompilerIrPhiInputList.Nil))
+                        (compiler_ir_types.compiler-ir-phi-input-seq-empty))
                       (compiler_ast_types.AstType.I64))
                     (compiler_ir_types.CompilerIrInstr.Return
                       (compiler_ir_types.CompilerIrMaybeValue.Some
@@ -30415,10 +30430,10 @@
                     (opt-test-instrs
                       (compiler_ir_types.CompilerIrInstr.Phi
                         6
-                        (compiler_ir_types.compiler-ir-phi-input-cons
+                        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                           (compiler_ir_types.CompilerIrValue.I64 22)
                           (compiler_ir_types.compiler-ir-label "branch-site")
-                          (compiler_ir_types.CompilerIrPhiInputList.Nil))
+                          (compiler_ir_types.compiler-ir-phi-input-seq-empty))
                         (compiler_ast_types.AstType.I64))
                       (compiler_ir_types.CompilerIrInstr.Return
                         (compiler_ir_types.CompilerIrMaybeValue.Some
@@ -30550,16 +30565,16 @@
             (opt-test-instrs
               (compiler_ir_types.CompilerIrInstr.Phi
                 4
-                (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                   (compiler_ir_types.CompilerIrValue.Bool true)
                   (compiler_ir_types.compiler-ir-label "true-left")
-                  (compiler_ir_types.compiler-ir-phi-input-cons
+                  (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                     (compiler_ir_types.CompilerIrValue.Bool false)
                     (compiler_ir_types.compiler-ir-label "false-middle")
-                    (compiler_ir_types.compiler-ir-phi-input-cons
+                    (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                       (compiler_ir_types.CompilerIrValue.Bool true)
                       (compiler_ir_types.compiler-ir-label "true-right")
-                      (compiler_ir_types.CompilerIrPhiInputList.Nil))))
+                      (compiler_ir_types.compiler-ir-phi-input-seq-empty))))
                 (compiler_ast_types.AstType.Bool))
               (compiler_ir_types.CompilerIrInstr.Jump
                 (compiler_ir_types.compiler-ir-label "gap"))))
@@ -30583,10 +30598,10 @@
                   (opt-test-instrs
                     (compiler_ir_types.CompilerIrInstr.Phi
                       5
-                      (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                         (compiler_ir_types.CompilerIrValue.I64 11)
                         (compiler_ir_types.compiler-ir-label "branch-site")
-                        (compiler_ir_types.CompilerIrPhiInputList.Nil))
+                        (compiler_ir_types.compiler-ir-phi-input-seq-empty))
                       (compiler_ast_types.AstType.I64))
                     (compiler_ir_types.CompilerIrInstr.Jump
                       (compiler_ir_types.compiler-ir-label "join"))))
@@ -30596,10 +30611,10 @@
                     (opt-test-instrs
                       (compiler_ir_types.CompilerIrInstr.Phi
                         6
-                        (compiler_ir_types.compiler-ir-phi-input-cons
+                        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                           (compiler_ir_types.CompilerIrValue.I64 22)
                           (compiler_ir_types.compiler-ir-label "branch-site")
-                          (compiler_ir_types.CompilerIrPhiInputList.Nil))
+                          (compiler_ir_types.compiler-ir-phi-input-seq-empty))
                         (compiler_ast_types.AstType.I64))
                       (compiler_ir_types.CompilerIrInstr.Jump
                         (compiler_ir_types.compiler-ir-label "join"))))
@@ -30609,16 +30624,16 @@
                       (opt-test-instrs
                         (compiler_ir_types.CompilerIrInstr.Phi
                           7
-                          (compiler_ir_types.compiler-ir-phi-input-cons
+                          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                             (compiler_ir_types.CompilerIrValue.I64 0)
                             (compiler_ir_types.compiler-ir-label "entry")
-                            (compiler_ir_types.compiler-ir-phi-input-cons
+                            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                               (compiler_ir_types.CompilerIrValue.Var 5)
                               (compiler_ir_types.compiler-ir-label "yes")
-                              (compiler_ir_types.compiler-ir-phi-input-cons
+                              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                                 (compiler_ir_types.CompilerIrValue.Var 6)
                                 (compiler_ir_types.compiler-ir-label "no")
-                                (compiler_ir_types.CompilerIrPhiInputList.Nil))))
+                                (compiler_ir_types.compiler-ir-phi-input-seq-empty))))
                           (compiler_ast_types.AstType.I64))
                         (compiler_ir_types.CompilerIrInstr.Return
                           (compiler_ir_types.CompilerIrMaybeValue.Some
@@ -30733,10 +30748,10 @@
           (opt-test-instrs
             (compiler_ir_types.CompilerIrInstr.Phi
               9
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.I64 11)
                 (compiler_ir_types.compiler-ir-label "entry")
-                (compiler_ir_types.CompilerIrPhiInputList.Nil))
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty))
               (compiler_ast_types.AstType.I64))
             (compiler_ir_types.CompilerIrInstr.Return
               (compiler_ir_types.CompilerIrMaybeValue.Some
@@ -30747,10 +30762,10 @@
             (opt-test-instrs
               (compiler_ir_types.CompilerIrInstr.Phi
                 10
-                (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                   (compiler_ir_types.CompilerIrValue.I64 22)
                   (compiler_ir_types.compiler-ir-label "entry")
-                  (compiler_ir_types.CompilerIrPhiInputList.Nil))
+                  (compiler_ir_types.compiler-ir-phi-input-seq-empty))
                 (compiler_ast_types.AstType.I64))
               (compiler_ir_types.CompilerIrInstr.Return
                 (compiler_ir_types.CompilerIrMaybeValue.Some
@@ -30881,13 +30896,13 @@
                 (opt-test-instrs
                   (compiler_ir_types.CompilerIrInstr.Phi
                     3
-                    (compiler_ir_types.compiler-ir-phi-input-cons
+                    (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                       (compiler_ir_types.CompilerIrValue.Bool true)
                       (compiler_ir_types.compiler-ir-label "tc-inner-then")
-                      (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                         (compiler_ir_types.CompilerIrValue.Bool false)
                         (compiler_ir_types.compiler-ir-label "tc-inner-else")
-                        (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                        (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                     (compiler_ast_types.AstType.Bool))
                   (compiler_ir_types.CompilerIrInstr.Jump
                     (compiler_ir_types.compiler-ir-label "tc-merge"))))
@@ -30913,13 +30928,13 @@
                           (compiler_ir_types.compiler-ir-label "tc-no"))))
                     (compiler_ir_types.CompilerIrInstr.Phi
                       4
-                      (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                         (compiler_ir_types.CompilerIrValue.Bool true)
                         (compiler_ir_types.compiler-ir-label "tc-then")
-                        (compiler_ir_types.compiler-ir-phi-input-cons
+                        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                           (compiler_ir_types.CompilerIrValue.Var 3)
                           (compiler_ir_types.compiler-ir-label "tc-inner-merge")
-                          (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                          (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                       (compiler_ast_types.AstType.Bool))))
                 (compiler_ir_types.compiler-ir-block-cons
                   (compiler_ir_types.CompilerIrBlock.Block
@@ -30994,14 +31009,14 @@
                     (opt-test-instrs
                       (compiler_ir_types.CompilerIrInstr.Phi
                         4
-                        (compiler_ir_types.compiler-ir-phi-input-cons
+                        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                           (compiler_ir_types.CompilerIrValue.Bool true)
                           (compiler_ir_types.compiler-ir-label "ts-inner-then")
-                          (compiler_ir_types.compiler-ir-phi-input-cons
+                          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                             (compiler_ir_types.CompilerIrValue.Bool false)
                             (compiler_ir_types.compiler-ir-label
                               "ts-inner-else")
-                            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                            (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                         (compiler_ast_types.AstType.Bool))
                       (compiler_ir_types.CompilerIrInstr.Jump
                         (compiler_ir_types.compiler-ir-label "ts-merge"))))
@@ -31011,14 +31026,14 @@
                       (opt-test-instrs
                         (compiler_ir_types.CompilerIrInstr.Phi
                           5
-                          (compiler_ir_types.compiler-ir-phi-input-cons
+                          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                             (compiler_ir_types.CompilerIrValue.Bool true)
                             (compiler_ir_types.compiler-ir-label "ts-then")
-                            (compiler_ir_types.compiler-ir-phi-input-cons
+                            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                               (compiler_ir_types.CompilerIrValue.Var 4)
                               (compiler_ir_types.compiler-ir-label
                                 "ts-inner-merge")
-                              (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                              (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                           (compiler_ast_types.AstType.Bool))
                         (compiler_ir_types.CompilerIrInstr.Branch
                           (compiler_ir_types.CompilerIrValue.Var 5)
@@ -31030,13 +31045,13 @@
                         (opt-test-instrs
                           (compiler_ir_types.CompilerIrInstr.Phi
                             6
-                            (compiler_ir_types.compiler-ir-phi-input-cons
+                            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                               (compiler_ir_types.CompilerIrValue.I64 10)
                               (compiler_ir_types.compiler-ir-label "ts-merge")
-                              (compiler_ir_types.compiler-ir-phi-input-cons
+                              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                                 (compiler_ir_types.CompilerIrValue.I64 20)
                                 (compiler_ir_types.compiler-ir-label "ts-alt")
-                                (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                             (compiler_ast_types.AstType.I64))
                           (compiler_ir_types.CompilerIrInstr.Return
                             (compiler_ir_types.CompilerIrMaybeValue.Some
@@ -31201,33 +31216,33 @@
                 (opt-test-instrs
                   (compiler_ir_types.CompilerIrInstr.Phi
                     4
-                    (compiler_ir_types.compiler-ir-phi-input-cons
+                    (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                       (compiler_ir_types.CompilerIrValue.I64 10)
                       (compiler_ir_types.compiler-ir-label "tp-a")
-                      (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                         (compiler_ir_types.CompilerIrValue.I64 20)
                         (compiler_ir_types.compiler-ir-label "tp-b")
-                        (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                        (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                     (compiler_ast_types.AstType.I64))
                   (compiler_ir_types.CompilerIrInstr.Phi
                     5
-                    (compiler_ir_types.compiler-ir-phi-input-cons
+                    (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                       (compiler_ir_types.CompilerIrValue.I64 11)
                       (compiler_ir_types.compiler-ir-label "tp-a")
-                      (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                         (compiler_ir_types.CompilerIrValue.I64 21)
                         (compiler_ir_types.compiler-ir-label "tp-b")
-                        (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                        (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                     (compiler_ast_types.AstType.I64))
                   (compiler_ir_types.CompilerIrInstr.Phi
                     6
-                    (compiler_ir_types.compiler-ir-phi-input-cons
+                    (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                       (compiler_ir_types.CompilerIrValue.Bool true)
                       (compiler_ir_types.compiler-ir-label "tp-a")
-                      (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                         (compiler_ir_types.CompilerIrValue.Bool false)
                         (compiler_ir_types.compiler-ir-label "tp-b")
-                        (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                        (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                     (compiler_ast_types.AstType.Bool))
                   (compiler_ir_types.CompilerIrInstr.Branch
                     (compiler_ir_types.CompilerIrValue.Var 6)
@@ -31239,13 +31254,13 @@
                   (opt-test-instrs
                     (compiler_ir_types.CompilerIrInstr.Phi
                       7
-                      (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                         (compiler_ir_types.CompilerIrValue.Var 4)
                         (compiler_ir_types.compiler-ir-label "tp-merge")
-                        (compiler_ir_types.compiler-ir-phi-input-cons
+                        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                           (compiler_ir_types.CompilerIrValue.I64 30)
                           (compiler_ir_types.compiler-ir-label "tp-alt")
-                          (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                          (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                       (compiler_ast_types.AstType.I64))
                     (compiler_ir_types.CompilerIrInstr.Return
                       (compiler_ir_types.CompilerIrMaybeValue.Some
@@ -31256,13 +31271,13 @@
                     (opt-test-instrs
                       (compiler_ir_types.CompilerIrInstr.Phi
                         8
-                        (compiler_ir_types.compiler-ir-phi-input-cons
+                        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                           (compiler_ir_types.CompilerIrValue.Var 5)
                           (compiler_ir_types.compiler-ir-label "tp-merge")
-                          (compiler_ir_types.compiler-ir-phi-input-cons
+                          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                             (compiler_ir_types.CompilerIrValue.I64 31)
                             (compiler_ir_types.compiler-ir-label "tp-alt")
-                            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                            (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                         (compiler_ast_types.AstType.I64))
                       (compiler_ir_types.CompilerIrInstr.Return
                         (compiler_ir_types.CompilerIrMaybeValue.Some
@@ -31313,23 +31328,23 @@
                 (opt-test-instrs
                   (compiler_ir_types.CompilerIrInstr.Phi
                     4
-                    (compiler_ir_types.compiler-ir-phi-input-cons
+                    (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                       (compiler_ir_types.CompilerIrValue.I64 10)
                       (compiler_ir_types.compiler-ir-label "tv-a")
-                      (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                         (compiler_ir_types.CompilerIrValue.I64 20)
                         (compiler_ir_types.compiler-ir-label "tv-b")
-                        (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                        (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                     (compiler_ast_types.AstType.I64))
                   (compiler_ir_types.CompilerIrInstr.Phi
                     5
-                    (compiler_ir_types.compiler-ir-phi-input-cons
+                    (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                       (compiler_ir_types.CompilerIrValue.Bool true)
                       (compiler_ir_types.compiler-ir-label "tv-a")
-                      (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                         (compiler_ir_types.CompilerIrValue.Bool false)
                         (compiler_ir_types.compiler-ir-label "tv-b")
-                        (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                        (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                     (compiler_ast_types.AstType.Bool))
                   (compiler_ir_types.CompilerIrInstr.Branch
                     (compiler_ir_types.CompilerIrValue.Var 5)
@@ -31402,23 +31417,23 @@
                 (opt-test-instrs
                   (compiler_ir_types.CompilerIrInstr.Phi
                     4
-                    (compiler_ir_types.compiler-ir-phi-input-cons
+                    (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                       (compiler_ir_types.CompilerIrValue.I64 10)
                       (compiler_ir_types.compiler-ir-label "tx-a")
-                      (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                         (compiler_ir_types.CompilerIrValue.I64 20)
                         (compiler_ir_types.compiler-ir-label "tx-b")
-                        (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                        (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                     (compiler_ast_types.AstType.I64))
                   (compiler_ir_types.CompilerIrInstr.Phi
                     5
-                    (compiler_ir_types.compiler-ir-phi-input-cons
+                    (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                       (compiler_ir_types.CompilerIrValue.Bool true)
                       (compiler_ir_types.compiler-ir-label "tx-a")
-                      (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                         (compiler_ir_types.CompilerIrValue.Var 2)
                         (compiler_ir_types.compiler-ir-label "tx-b")
-                        (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                        (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                     (compiler_ast_types.AstType.Bool))
                   (compiler_ir_types.CompilerIrInstr.Branch
                     (compiler_ir_types.CompilerIrValue.Var 5)
@@ -31430,13 +31445,13 @@
                   (opt-test-instrs
                     (compiler_ir_types.CompilerIrInstr.Phi
                       6
-                      (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                         (compiler_ir_types.CompilerIrValue.Var 4)
                         (compiler_ir_types.compiler-ir-label "tx-merge")
-                        (compiler_ir_types.compiler-ir-phi-input-cons
+                        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                           (compiler_ir_types.CompilerIrValue.I64 30)
                           (compiler_ir_types.compiler-ir-label "tx-alt")
-                          (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                          (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                       (compiler_ast_types.AstType.I64))
                     (compiler_ir_types.CompilerIrInstr.Return
                       (compiler_ir_types.CompilerIrMaybeValue.Some
@@ -31568,19 +31583,19 @@
                         (opt-test-instrs
                           (compiler_ir_types.CompilerIrInstr.Phi
                             5
-                            (compiler_ir_types.compiler-ir-phi-input-cons
+                            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                               (compiler_ir_types.CompilerIrValue.I64 5)
                               (compiler_ir_types.compiler-ir-label "tq-a")
-                              (compiler_ir_types.compiler-ir-phi-input-cons
+                              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                                 (compiler_ir_types.CompilerIrValue.I64 (- 0 1))
                                 (compiler_ir_types.compiler-ir-label "tq-b")
-                                (compiler_ir_types.compiler-ir-phi-input-cons
+                                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                                   (compiler_ir_types.CompilerIrValue.Var 3)
                                   (compiler_ir_types.compiler-ir-label "tq-c")
-                                  (compiler_ir_types.compiler-ir-phi-input-cons
+                                  (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                                     (compiler_ir_types.CompilerIrValue.Var 3)
                                     (compiler_ir_types.compiler-ir-label "tq-d")
-                                    (compiler_ir_types.CompilerIrPhiInputList.Nil)))))
+                                    (compiler_ir_types.compiler-ir-phi-input-seq-empty)))))
                             (compiler_ast_types.AstType.I64))
                           (compiler_ir_types.CompilerIrInstr.BinOp
                             6
@@ -31598,13 +31613,13 @@
                           (opt-test-instrs
                             (compiler_ir_types.CompilerIrInstr.Phi
                               7
-                              (compiler_ir_types.compiler-ir-phi-input-cons
+                              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                                 (compiler_ir_types.CompilerIrValue.Var 5)
                                 (compiler_ir_types.compiler-ir-label "tq-merge")
-                                (compiler_ir_types.compiler-ir-phi-input-cons
+                                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                                   (compiler_ir_types.CompilerIrValue.I64 30)
                                   (compiler_ir_types.compiler-ir-label "tq-alt")
-                                  (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                                  (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                               (compiler_ast_types.AstType.I64))
                             (compiler_ir_types.CompilerIrInstr.Return
                               (compiler_ir_types.CompilerIrMaybeValue.Some
@@ -31615,15 +31630,15 @@
                             (opt-test-instrs
                               (compiler_ir_types.CompilerIrInstr.Phi
                                 8
-                                (compiler_ir_types.compiler-ir-phi-input-cons
+                                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                                   (compiler_ir_types.CompilerIrValue.I64 41)
                                   (compiler_ir_types.compiler-ir-label
                                     "tq-merge")
-                                  (compiler_ir_types.compiler-ir-phi-input-cons
+                                  (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                                     (compiler_ir_types.CompilerIrValue.I64 31)
                                     (compiler_ir_types.compiler-ir-label
                                       "tq-alt")
-                                    (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                                    (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                                 (compiler_ast_types.AstType.I64))
                               (compiler_ir_types.CompilerIrInstr.Return
                                 (compiler_ir_types.CompilerIrMaybeValue.Some
@@ -31676,13 +31691,13 @@
                 (opt-test-instrs
                   (compiler_ir_types.CompilerIrInstr.Phi
                     5
-                    (compiler_ir_types.compiler-ir-phi-input-cons
+                    (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                       (compiler_ir_types.CompilerIrValue.I64 5)
                       (compiler_ir_types.compiler-ir-label "tr-a")
-                      (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                         (compiler_ir_types.CompilerIrValue.Var 3)
                         (compiler_ir_types.compiler-ir-label "tr-b")
-                        (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                        (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                     (compiler_ast_types.AstType.I64))
                   (compiler_ir_types.CompilerIrInstr.BinOp
                     6
@@ -31700,13 +31715,13 @@
                   (opt-test-instrs
                     (compiler_ir_types.CompilerIrInstr.Phi
                       7
-                      (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                         (compiler_ir_types.CompilerIrValue.I64 40)
                         (compiler_ir_types.compiler-ir-label "tr-merge")
-                        (compiler_ir_types.compiler-ir-phi-input-cons
+                        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                           (compiler_ir_types.CompilerIrValue.I64 30)
                           (compiler_ir_types.compiler-ir-label "tr-alt")
-                          (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                          (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                       (compiler_ast_types.AstType.I64))
                     (compiler_ir_types.CompilerIrInstr.Return
                       (compiler_ir_types.CompilerIrMaybeValue.Some
@@ -31717,13 +31732,13 @@
                     (opt-test-instrs
                       (compiler_ir_types.CompilerIrInstr.Phi
                         8
-                        (compiler_ir_types.compiler-ir-phi-input-cons
+                        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                           (compiler_ir_types.CompilerIrValue.I64 41)
                           (compiler_ir_types.compiler-ir-label "tr-merge")
-                          (compiler_ir_types.compiler-ir-phi-input-cons
+                          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                             (compiler_ir_types.CompilerIrValue.I64 31)
                             (compiler_ir_types.compiler-ir-label "tr-alt")
-                            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                            (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                         (compiler_ast_types.AstType.I64))
                       (compiler_ir_types.CompilerIrInstr.Return
                         (compiler_ir_types.CompilerIrMaybeValue.Some
@@ -31777,13 +31792,13 @@
                 (opt-test-instrs
                   (compiler_ir_types.CompilerIrInstr.Phi
                     4
-                    (compiler_ir_types.compiler-ir-phi-input-cons
+                    (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                       (compiler_ir_types.CompilerIrValue.Bool true)
                       (compiler_ir_types.compiler-ir-label "td-a")
-                      (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                         (compiler_ir_types.CompilerIrValue.Bool false)
                         (compiler_ir_types.compiler-ir-label "td-b")
-                        (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                        (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                     (compiler_ast_types.AstType.Bool))
                   (compiler_ir_types.CompilerIrInstr.Branch
                     (compiler_ir_types.CompilerIrValue.Var 4)
@@ -31795,13 +31810,13 @@
                   (opt-test-instrs
                     (compiler_ir_types.CompilerIrInstr.Phi
                       5
-                      (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                         (compiler_ir_types.CompilerIrValue.Var 4)
                         (compiler_ir_types.compiler-ir-label "td-merge")
-                        (compiler_ir_types.compiler-ir-phi-input-cons
+                        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                           (compiler_ir_types.CompilerIrValue.Bool false)
                           (compiler_ir_types.compiler-ir-label "td-alt")
-                          (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                          (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                       (compiler_ast_types.AstType.Bool))
                     (compiler_ir_types.CompilerIrInstr.Branch
                       (compiler_ir_types.CompilerIrValue.Var 5)
@@ -31917,35 +31932,35 @@
                             (opt-test-instrs
                               (compiler_ir_types.CompilerIrInstr.Phi
                                 4
-                                (compiler_ir_types.compiler-ir-phi-input-cons
+                                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                                   (compiler_ir_types.CompilerIrValue.Bool true)
                                   (compiler_ir_types.compiler-ir-label "tk-p0")
-                                  (compiler_ir_types.compiler-ir-phi-input-cons
+                                  (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                                     (compiler_ir_types.CompilerIrValue.Bool
                                       false)
                                     (compiler_ir_types.compiler-ir-label
                                       "tk-p1")
-                                    (compiler_ir_types.compiler-ir-phi-input-cons
+                                    (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                                       (compiler_ir_types.CompilerIrValue.Bool
                                         true)
                                       (compiler_ir_types.compiler-ir-label
                                         "tk-p2")
-                                      (compiler_ir_types.compiler-ir-phi-input-cons
+                                      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                                         (compiler_ir_types.CompilerIrValue.Bool
                                           false)
                                         (compiler_ir_types.compiler-ir-label
                                           "tk-p3")
-                                        (compiler_ir_types.compiler-ir-phi-input-cons
+                                        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                                           (compiler_ir_types.CompilerIrValue.Bool
                                             true)
                                           (compiler_ir_types.compiler-ir-label
                                             "tk-p4")
-                                          (compiler_ir_types.compiler-ir-phi-input-cons
+                                          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                                             (compiler_ir_types.CompilerIrValue.Bool
                                               false)
                                             (compiler_ir_types.compiler-ir-label
                                               "tk-p5")
-                                            (compiler_ir_types.CompilerIrPhiInputList.Nil)))))))
+                                            (compiler_ir_types.compiler-ir-phi-input-seq-empty)))))))
                                 (compiler_ast_types.AstType.Bool))
                               (compiler_ir_types.CompilerIrInstr.Branch
                                 (compiler_ir_types.CompilerIrValue.Var 4)
@@ -32085,13 +32100,13 @@
             (opt-test-instrs
               (compiler_ir_types.CompilerIrInstr.Phi
                 2
-                (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                   (compiler_ir_types.CompilerIrValue.I64 1)
                   (compiler_ir_types.compiler-ir-label "sp-then")
-                  (compiler_ir_types.compiler-ir-phi-input-cons
+                  (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                     (compiler_ir_types.CompilerIrValue.Var 1)
                     (compiler_ir_types.compiler-ir-label "sp-else")
-                    (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                    (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                 (compiler_ast_types.AstType.I64))
               (compiler_ir_types.CompilerIrInstr.Return
                 (compiler_ir_types.CompilerIrMaybeValue.Some
@@ -32138,13 +32153,13 @@
               (opt-test-instrs
                 (compiler_ir_types.CompilerIrInstr.Phi
                   1
-                  (compiler_ir_types.compiler-ir-phi-input-cons
+                  (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                     (compiler_ir_types.CompilerIrValue.I64 1)
                     (compiler_ir_types.compiler-ir-label "sd-then")
-                    (compiler_ir_types.compiler-ir-phi-input-cons
+                    (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                       (compiler_ir_types.CompilerIrValue.I64 0)
                       (compiler_ir_types.compiler-ir-label "sd-else")
-                      (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                      (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                   (compiler_ast_types.AstType.I64))
                 (compiler_ir_types.CompilerIrInstr.Return
                   (compiler_ir_types.CompilerIrMaybeValue.Some
@@ -32429,13 +32444,13 @@
             (opt-test-instrs
               (compiler_ir_types.CompilerIrInstr.Phi
                 3
-                (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                   (compiler_ir_types.CompilerIrValue.Var 1)
                   (compiler_ir_types.compiler-ir-label "then")
-                  (compiler_ir_types.compiler-ir-phi-input-cons
+                  (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                     (compiler_ir_types.CompilerIrValue.Var 2)
                     (compiler_ir_types.compiler-ir-label "else")
-                    (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                    (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                 (compiler_ast_types.AstType.I64))
               (compiler_ir_types.CompilerIrInstr.Return
                 (compiler_ir_types.CompilerIrMaybeValue.Some
@@ -32463,13 +32478,13 @@
         (opt-test-instrs
           (compiler_ir_types.CompilerIrInstr.Phi
             1
-            (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
               (compiler_ir_types.CompilerIrValue.Var 0)
               (compiler_ir_types.compiler-ir-label "entry")
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.Var 2)
                 (compiler_ir_types.compiler-ir-label "body")
-                (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
             (compiler_ast_types.AstType.I64))
           (compiler_ir_types.CompilerIrInstr.Branch
             (compiler_ir_types.CompilerIrValue.Var 4)
@@ -33897,13 +33912,13 @@
         (opt-test-instrs
           (compiler_ir_types.CompilerIrInstr.Phi
             4
-            (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
               (compiler_ir_types.CompilerIrValue.Var 3)
               (compiler_ir_types.compiler-ir-label "entry")
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.Var 5)
                 (compiler_ir_types.compiler-ir-label "body")
-                compiler_ir_types.CompilerIrPhiInputList.Nil))
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
             (compiler_ast_types.AstType.I64))
           (compiler_ir_types.CompilerIrInstr.BinOp
             10
@@ -34441,13 +34456,13 @@
         (opt-test-instrs
           (compiler_ir_types.CompilerIrInstr.Phi
             3
-            (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
               (compiler_ir_types.CompilerIrValue.I64 0)
               (compiler_ir_types.compiler-ir-label "entry")
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.Var 4)
                 (compiler_ir_types.compiler-ir-label "loop")
-                (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
             (compiler_ast_types.AstType.I64))
           (compiler_ir_types.CompilerIrInstr.Splat
             5
@@ -35008,13 +35023,13 @@
         (opt-test-instrs
           (compiler_ir_types.CompilerIrInstr.Phi
             4
-            (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
               (compiler_ir_types.CompilerIrValue.Var 3)
               (compiler_ir_types.compiler-ir-label "entry")
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.Var 5)
                 (compiler_ir_types.compiler-ir-label "body")
-                compiler_ir_types.CompilerIrPhiInputList.Nil))
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
             (compiler_ast_types.AstType.I64))
           (compiler_ir_types.CompilerIrInstr.Gep
             7
@@ -35074,13 +35089,13 @@
         (opt-test-instrs
           (compiler_ir_types.CompilerIrInstr.Phi
             4
-            (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
               (compiler_ir_types.CompilerIrValue.Var 3)
               (compiler_ir_types.compiler-ir-label "entry")
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.Var 5)
                 (compiler_ir_types.compiler-ir-label "body")
-                compiler_ir_types.CompilerIrPhiInputList.Nil))
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
             (compiler_ast_types.AstType.I64))
           (compiler_ir_types.CompilerIrInstr.Gep
             7
@@ -35144,13 +35159,13 @@
         (opt-test-instrs
           (compiler_ir_types.CompilerIrInstr.Phi
             4
-            (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
               (compiler_ir_types.CompilerIrValue.Var 3)
               (compiler_ir_types.compiler-ir-label "entry")
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.Var 5)
                 (compiler_ir_types.compiler-ir-label "body")
-                compiler_ir_types.CompilerIrPhiInputList.Nil))
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
             (compiler_ast_types.AstType.I64))
           (compiler_ir_types.CompilerIrInstr.Gep
             7
@@ -35215,13 +35230,13 @@
         (opt-test-instrs
           (compiler_ir_types.CompilerIrInstr.Phi
             4
-            (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
               (compiler_ir_types.CompilerIrValue.Var 3)
               (compiler_ir_types.compiler-ir-label "entry")
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.Var 5)
                 (compiler_ir_types.compiler-ir-label "body")
-                compiler_ir_types.CompilerIrPhiInputList.Nil))
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
             (compiler_ast_types.AstType.I64))
           (compiler_ir_types.CompilerIrInstr.Gep
             7
@@ -35277,13 +35292,13 @@
           body
           (compiler_ir_types.CompilerIrInstr.Phi
             4
-            (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
               (compiler_ir_types.CompilerIrValue.Var 3)
               (compiler_ir_types.compiler-ir-label "entry")
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.Var 5)
                 (compiler_ir_types.compiler-ir-label "body")
-                compiler_ir_types.CompilerIrPhiInputList.Nil))
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
             (compiler_ast_types.AstType.I64))))
       (compiler_ir_types.compiler-ir-block-cons
         (compiler_ir_types.CompilerIrBlock.Block
@@ -35819,13 +35834,13 @@
               (opt-licm-checked-root-loop-tail))
             (compiler_ir_types.CompilerIrInstr.Phi
               6
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.Var 5)
                 (compiler_ir_types.compiler-ir-label "entry")
-                (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                   (compiler_ir_types.CompilerIrValue.Var 7)
                   (compiler_ir_types.compiler-ir-label "body")
-                  (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                  (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
               (compiler_ast_types.AstType.I64))
             (compiler_ir_types.CompilerIrInstr.Gep
               8
@@ -35885,13 +35900,13 @@
             (opt-licm-checked-root-loop-tail)
             (compiler_ir_types.CompilerIrInstr.Phi
               6
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.Var 5)
                 (compiler_ir_types.compiler-ir-label "entry")
-                (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                   (compiler_ir_types.CompilerIrValue.Var 7)
                   (compiler_ir_types.compiler-ir-label "body")
-                  (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                  (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
               (compiler_ast_types.AstType.I64))
             (compiler_ir_types.CompilerIrInstr.Gep
               8
@@ -35952,13 +35967,13 @@
             (opt-licm-checked-root-loop-tail)
             (compiler_ir_types.CompilerIrInstr.Phi
               6
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.Var 5)
                 (compiler_ir_types.compiler-ir-label "entry")
-                (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                   (compiler_ir_types.CompilerIrValue.Var 7)
                   (compiler_ir_types.compiler-ir-label "body")
-                  (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                  (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
               (compiler_ast_types.AstType.I64))
             (compiler_ir_types.CompilerIrInstr.Gep
               8
@@ -36045,13 +36060,13 @@
                 (opt-test-instrs
                   (compiler_ir_types.CompilerIrInstr.Phi
                     7
-                    (compiler_ir_types.compiler-ir-phi-input-cons
+                    (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                       (compiler_ir_types.CompilerIrValue.Var 5)
                       (compiler_ir_types.compiler-ir-label "left")
-                      (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                         (compiler_ir_types.CompilerIrValue.Var 6)
                         (compiler_ir_types.compiler-ir-label "right")
-                        (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                        (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                     (owned_view.compiler-owned-shared-view ref-ty))
                   (compiler_ir_types.CompilerIrInstr.Mov
                     8
@@ -36065,13 +36080,13 @@
                   (opt-test-instrs
                     (compiler_ir_types.CompilerIrInstr.Phi
                       9
-                      (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                         (compiler_ir_types.CompilerIrValue.Var 8)
                         (compiler_ir_types.compiler-ir-label "join")
-                        (compiler_ir_types.compiler-ir-phi-input-cons
+                        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                           (compiler_ir_types.CompilerIrValue.Var 10)
                           (compiler_ir_types.compiler-ir-label "body")
-                          (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                          (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                       (compiler_ast_types.AstType.I64))
                     (compiler_ir_types.CompilerIrInstr.Gep
                       11
@@ -36546,13 +36561,13 @@
         (opt-test-instrs
           (compiler_ir_types.CompilerIrInstr.Phi
             3
-            (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
               (compiler_ir_types.CompilerIrValue.Var 2)
               (compiler_ir_types.compiler-ir-label "entry")
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.Var 4)
                 (compiler_ir_types.compiler-ir-label "loop")
-                (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
             (compiler_ast_types.AstType.I64))
           (compiler_ir_types.CompilerIrInstr.Word
             5
@@ -37672,13 +37687,13 @@
         (opt-test-instr-seq-prepend
           (compiler_ir_types.CompilerIrInstr.Phi
             4
-            (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
               (compiler_ir_types.CompilerIrValue.Var 3)
               (compiler_ir_types.compiler-ir-label "entry")
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.Var 5)
                 (compiler_ir_types.compiler-ir-label "body")
-                compiler_ir_types.CompilerIrPhiInputList.Nil))
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
             (compiler_ast_types.AstType.I64))
           body))
       (compiler_ir_types.compiler-ir-block-cons
@@ -38807,13 +38822,13 @@
         (opt-test-instrs
           (compiler_ir_types.CompilerIrInstr.Phi
             3
-            (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
               (compiler_ir_types.CompilerIrValue.Var 1)
               (compiler_ir_types.compiler-ir-label "entry")
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.Var 5)
                 (compiler_ir_types.compiler-ir-label "body")
-                (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
             (compiler_ast_types.AstType.I64))
           (compiler_ir_types.CompilerIrInstr.Branch
             (compiler_ir_types.CompilerIrValue.Var 0)
@@ -38865,13 +38880,13 @@
         (opt-test-instrs
           (compiler_ir_types.CompilerIrInstr.Phi
             3
-            (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
               (compiler_ir_types.CompilerIrValue.Var 1)
               (compiler_ir_types.compiler-ir-label "entry")
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.Var 5)
                 (compiler_ir_types.compiler-ir-label "body")
-                (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
             (compiler_ast_types.AstType.I64))
           (compiler_ir_types.CompilerIrInstr.Branch
             (compiler_ir_types.CompilerIrValue.Var 0)
@@ -38924,13 +38939,13 @@
         (opt-test-instrs
           (compiler_ir_types.CompilerIrInstr.Phi
             3
-            (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
               (compiler_ir_types.CompilerIrValue.Var 1)
               (compiler_ir_types.compiler-ir-label "entry")
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.Var 5)
                 (compiler_ir_types.compiler-ir-label "body")
-                (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
             (compiler_ast_types.AstType.I64))
           (compiler_ir_types.CompilerIrInstr.Branch
             (compiler_ir_types.CompilerIrValue.Var 0)
@@ -38991,13 +39006,13 @@
         (opt-test-instrs
           (compiler_ir_types.CompilerIrInstr.Phi
             3
-            (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
               (compiler_ir_types.CompilerIrValue.Var 1)
               (compiler_ir_types.compiler-ir-label "entry")
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.Var 5)
                 (compiler_ir_types.compiler-ir-label "body")
-                (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
             (compiler_ast_types.AstType.I64))
           (compiler_ir_types.CompilerIrInstr.Branch
             (compiler_ir_types.CompilerIrValue.Var 0)
@@ -39057,13 +39072,13 @@
           (opt-test-instrs
             (compiler_ir_types.CompilerIrInstr.Phi
               3
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.Var 1)
                 (compiler_ir_types.compiler-ir-label "entry")
-                (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                   (compiler_ir_types.CompilerIrValue.Var 5)
                   (compiler_ir_types.compiler-ir-label "body")
-                  (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                  (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
               (compiler_ast_types.AstType.I64))
             (compiler_ir_types.CompilerIrInstr.Branch
               (compiler_ir_types.CompilerIrValue.Var 0)
@@ -39127,13 +39142,13 @@
         (opt-test-instrs
           (compiler_ir_types.CompilerIrInstr.Phi
             3
-            (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
               (compiler_ir_types.CompilerIrValue.Var 1)
               (compiler_ir_types.compiler-ir-label "entry")
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.Var 5)
                 (compiler_ir_types.compiler-ir-label "body")
-                (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
             (compiler_ast_types.AstType.I64))
           (compiler_ir_types.CompilerIrInstr.Branch
             (compiler_ir_types.CompilerIrValue.Var 0)
@@ -39192,13 +39207,13 @@
         (opt-test-instrs
           (compiler_ir_types.CompilerIrInstr.Phi
             3
-            (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
               (compiler_ir_types.CompilerIrValue.Var 1)
               (compiler_ir_types.compiler-ir-label "entry")
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.Var 5)
                 (compiler_ir_types.compiler-ir-label "body")
-                (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
             (compiler_ast_types.AstType.I64))
           (compiler_ir_types.CompilerIrInstr.Branch
             (compiler_ir_types.CompilerIrValue.Var 0)
@@ -39250,13 +39265,13 @@
         (opt-test-instrs
           (compiler_ir_types.CompilerIrInstr.Phi
             3
-            (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
               (compiler_ir_types.CompilerIrValue.Var 1)
               (compiler_ir_types.compiler-ir-label "entry")
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.Var 5)
                 (compiler_ir_types.compiler-ir-label "body")
-                (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
             (compiler_ast_types.AstType.I64))
           (compiler_ir_types.CompilerIrInstr.Branch
             (compiler_ir_types.CompilerIrValue.Var 0)
@@ -39316,13 +39331,13 @@
         (opt-test-instrs
           (compiler_ir_types.CompilerIrInstr.Phi
             3
-            (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
               (compiler_ir_types.CompilerIrValue.Var 1)
               (compiler_ir_types.compiler-ir-label "entry")
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.Var 7)
                 (compiler_ir_types.compiler-ir-label "body")
-                (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
             (compiler_ast_types.AstType.I64))
           (compiler_ir_types.CompilerIrInstr.Branch
             (compiler_ir_types.CompilerIrValue.Var 0)
@@ -39381,13 +39396,13 @@
         (opt-test-instrs
           (compiler_ir_types.CompilerIrInstr.Phi
             3
-            (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
               (compiler_ir_types.CompilerIrValue.Var 1)
               (compiler_ir_types.compiler-ir-label "entry")
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.Var 5)
                 (compiler_ir_types.compiler-ir-label "body")
-                (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
             (compiler_ast_types.AstType.I64))
           (compiler_ir_types.CompilerIrInstr.Branch
             (compiler_ir_types.CompilerIrValue.Var 0)
@@ -39437,13 +39452,13 @@
         (opt-test-instrs
           (compiler_ir_types.CompilerIrInstr.Phi
             3
-            (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
               (compiler_ir_types.CompilerIrValue.Var 1)
               (compiler_ir_types.compiler-ir-label "entry")
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.Var 5)
                 (compiler_ir_types.compiler-ir-label "body")
-                (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
             (compiler_ast_types.AstType.I64))
           (compiler_ir_types.CompilerIrInstr.Branch
             (compiler_ir_types.CompilerIrValue.Var 0)
@@ -39510,16 +39525,16 @@
             (opt-test-instrs
               (compiler_ir_types.CompilerIrInstr.Phi
                 3
-                (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                   (compiler_ir_types.CompilerIrValue.Var 1)
                   (compiler_ir_types.compiler-ir-label "pre-one")
-                  (compiler_ir_types.compiler-ir-phi-input-cons
+                  (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                     (compiler_ir_types.CompilerIrValue.Var 1)
                     (compiler_ir_types.compiler-ir-label "pre-two")
-                    (compiler_ir_types.compiler-ir-phi-input-cons
+                    (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                       (compiler_ir_types.CompilerIrValue.Var 5)
                       (compiler_ir_types.compiler-ir-label "body")
-                      (compiler_ir_types.CompilerIrPhiInputList.Nil))))
+                      (compiler_ir_types.compiler-ir-phi-input-seq-empty))))
                 (compiler_ast_types.AstType.I64))
               (compiler_ir_types.CompilerIrInstr.Branch
                 (compiler_ir_types.CompilerIrValue.Var 0)
@@ -40195,23 +40210,23 @@
     (opt-test-instrs
       (compiler_ir_types.CompilerIrInstr.Phi
         9
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.Var 4)
           (compiler_ir_types.compiler-ir-label "entry")
-          (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
             (compiler_ir_types.CompilerIrValue.Var 8)
             (compiler_ir_types.compiler-ir-label "body")
-            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+            (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
         (compiler_ast_types.AstType.I64))
       (compiler_ir_types.CompilerIrInstr.Phi
         3
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.I64 0)
           (compiler_ir_types.compiler-ir-label "entry")
-          (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
             (compiler_ir_types.CompilerIrValue.Var 7)
             (compiler_ir_types.compiler-ir-label "body")
-            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+            (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
         (compiler_ast_types.AstType.I64))
       (compiler_ir_types.CompilerIrInstr.Load
         10
@@ -40683,23 +40698,23 @@
         (opt-test-instrs
           (compiler_ir_types.CompilerIrInstr.Phi
             2
-            (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
               (compiler_ir_types.CompilerIrValue.I64 0)
               (compiler_ir_types.compiler-ir-label "entry")
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.Var 5)
                 (compiler_ir_types.compiler-ir-label "body")
-                (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
             (compiler_ast_types.AstType.I64))
           (compiler_ir_types.CompilerIrInstr.Phi
             3
-            (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
               (compiler_ir_types.CompilerIrValue.I64 0)
               (compiler_ir_types.compiler-ir-label "entry")
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.Var 4)
                 (compiler_ir_types.compiler-ir-label "body")
-                (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
             (compiler_ast_types.AstType.I64))
           (compiler_ir_types.CompilerIrInstr.BinOp
             4
@@ -40761,23 +40776,23 @@
         (opt-test-instrs
           (compiler_ir_types.CompilerIrInstr.Phi
             2
-            (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
               (compiler_ir_types.CompilerIrValue.I64 0)
               (compiler_ir_types.compiler-ir-label "entry")
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.Var 13)
                 (compiler_ir_types.compiler-ir-label "body")
-                (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
             (compiler_ast_types.AstType.I64))
           (compiler_ir_types.CompilerIrInstr.Phi
             3
-            (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
               (compiler_ir_types.CompilerIrValue.I64 0)
               (compiler_ir_types.compiler-ir-label "entry")
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.Var 12)
                 (compiler_ir_types.compiler-ir-label "body")
-                (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
             (compiler_ast_types.AstType.I64))
           (compiler_ir_types.CompilerIrInstr.LaneId
             4
@@ -41324,13 +41339,13 @@
           (compiler_ast_types.AstType.I64))))
     (compiler_ir_types.CompilerIrInstr.Phi
       3
-      (compiler_ir_types.compiler-ir-phi-input-cons
+      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
         (compiler_ir_types.CompilerIrValue.I64 0)
         (compiler_ir_types.compiler-ir-label "entry")
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.Var 9)
           (compiler_ir_types.compiler-ir-label "body")
-          (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+          (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
       (compiler_ast_types.AstType.I64))))
 
 (define (opt-unroll-load-store-test-latch) : compiler_ir_types.CompilerIrInstrSeq
@@ -42494,13 +42509,13 @@
                 (opt-bce-version-test-check-tail variant)
                 (compiler_ir_types.CompilerIrInstr.Phi
                   9
-                  (compiler_ir_types.compiler-ir-phi-input-cons
+                  (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                     (compiler_ir_types.CompilerIrValue.I64 1)
                     (compiler_ir_types.compiler-ir-label "entry")
-                    (compiler_ir_types.compiler-ir-phi-input-cons
+                    (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                       (compiler_ir_types.CompilerIrValue.Var 10)
                       (compiler_ir_types.compiler-ir-label "loop")
-                      (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                      (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                   (compiler_ast_types.AstType.I64))
                 (compiler_ir_types.CompilerIrInstr.BinOp
                   5
@@ -42513,13 +42528,13 @@
                 (opt-bce-version-test-check-tail variant)
                 (compiler_ir_types.CompilerIrInstr.Phi
                   12
-                  (compiler_ir_types.compiler-ir-phi-input-cons
+                  (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                     (compiler_ir_types.CompilerIrValue.I64 0)
                     (compiler_ir_types.compiler-ir-label "entry")
-                    (compiler_ir_types.compiler-ir-phi-input-cons
+                    (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                       (compiler_ir_types.CompilerIrValue.Var 13)
                       (compiler_ir_types.compiler-ir-label "loop")
-                      (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                      (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                   (compiler_ast_types.AstType.I64))
                 (compiler_ir_types.CompilerIrInstr.BinOp
                   5
@@ -42538,7 +42553,7 @@
                   (compiler_ast_types.AstType.I64)))])
           (compiler_ir_types.CompilerIrInstr.Phi
             3
-            (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
               (if (or (= variant 32) (= variant 33))
                 (compiler_ir_types.CompilerIrValue.Var 2)
                 (compiler_ir_types.CompilerIrValue.I64
@@ -42546,20 +42561,20 @@
                     2
                     0)))
               (compiler_ir_types.compiler-ir-label "entry")
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.Var 6)
                 (compiler_ir_types.compiler-ir-label "loop")
-                (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
             (compiler_ast_types.AstType.I64))
           (compiler_ir_types.CompilerIrInstr.Phi
             4
-            (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
               (compiler_ir_types.CompilerIrValue.I64 0)
               (compiler_ir_types.compiler-ir-label "entry")
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.Var 5)
                 (compiler_ir_types.compiler-ir-label "loop")
-                (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
             (compiler_ast_types.AstType.I64))))
       (compiler_ir_types.compiler-ir-block-cons
         (compiler_ir_types.CompilerIrBlock.Block
@@ -42567,10 +42582,10 @@
           (opt-test-instrs
             (compiler_ir_types.CompilerIrInstr.Phi
               8
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.Var 5)
                 (compiler_ir_types.compiler-ir-label "loop")
-                (compiler_ir_types.CompilerIrPhiInputList.Nil))
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty))
               (compiler_ast_types.AstType.I64))
             (compiler_ir_types.CompilerIrInstr.Return
               (compiler_ir_types.CompilerIrMaybeValue.Some
@@ -42839,13 +42854,13 @@
         (opt-test-instr-seq-prepend
           (compiler_ir_types.CompilerIrInstr.Phi
             3
-            (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
               (compiler_ir_types.CompilerIrValue.I64 0)
               (compiler_ir_types.compiler-ir-label "entry")
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.Var 6)
                 (compiler_ir_types.compiler-ir-label "loop")
-                (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
             (compiler_ast_types.AstType.I64))
           (opt-test-instr-seq-prepend
             (opt-bce-mask-test-i64
@@ -42894,10 +42909,10 @@
           (opt-test-instr-seq-prepend
             (compiler_ir_types.CompilerIrInstr.Phi
               10
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.Var 3)
                 (compiler_ir_types.compiler-ir-label "loop")
-                (compiler_ir_types.CompilerIrPhiInputList.Nil))
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty))
               (compiler_ast_types.AstType.I64))
             (opt-test-instr-seq-prepend
               (compiler_ir_types.CompilerIrInstr.Return
@@ -42928,17 +42943,17 @@
         (opt-test-instr-seq-prepend
           (compiler_ir_types.CompilerIrInstr.Phi
             5
-            (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
               ;; variant 4 seeds with the bare `n`, so the phi carries TWO
               ;; distinct bounds for one removed check.
               (if (= variant 4)
                 (compiler_ir_types.CompilerIrValue.Var 0)
                 (compiler_ir_types.CompilerIrValue.Var 4))
               (compiler_ir_types.compiler-ir-label "entry")
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.Var 7)
                 (compiler_ir_types.compiler-ir-label "latch")
-                (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
             (compiler_ast_types.AstType.I64))
           (opt-test-instr-seq-prepend
             (opt-bce-mask-test-check 5 "mask_probe_ok")
@@ -42989,10 +43004,10 @@
             (opt-test-instr-seq-prepend
               (compiler_ir_types.CompilerIrInstr.Phi
                 10
-                (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                   (compiler_ir_types.CompilerIrValue.Var 5)
                   (compiler_ir_types.compiler-ir-label "header")
-                  (compiler_ir_types.CompilerIrPhiInputList.Nil))
+                  (compiler_ir_types.compiler-ir-phi-input-seq-empty))
                 (compiler_ast_types.AstType.I64))
               (opt-test-instr-seq-prepend
                 (compiler_ir_types.CompilerIrInstr.Return
@@ -44769,25 +44784,25 @@
     (opt-test-instrs
       (compiler_ir_types.CompilerIrInstr.Phi
         3
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (if (opt-bce-mb-test-descending-variant? variant)
             (compiler_ir_types.CompilerIrValue.Var 0)
             (compiler_ir_types.CompilerIrValue.I64 0))
           (compiler_ir_types.compiler-ir-label "entry")
-          (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
             (compiler_ir_types.CompilerIrValue.Var 8)
             (compiler_ir_types.compiler-ir-label "merge")
-            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+            (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
         (compiler_ast_types.AstType.I64))
       (compiler_ir_types.CompilerIrInstr.Phi
         4
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.I64 0)
           (compiler_ir_types.compiler-ir-label "entry")
-          (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
             (compiler_ir_types.CompilerIrValue.Var 7)
             (compiler_ir_types.compiler-ir-label "merge")
-            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+            (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
         (compiler_ast_types.AstType.I64))
       (cond
         [(= variant 13)
@@ -45062,16 +45077,16 @@
     (opt-test-instrs
       (compiler_ir_types.CompilerIrInstr.Phi
         7
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.Var
             (if (= variant 10)
               13
               6))
           (compiler_ir_types.compiler-ir-label "then")
-          (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
             (compiler_ir_types.CompilerIrValue.Var 4)
             (compiler_ir_types.compiler-ir-label "else")
-            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+            (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
         (compiler_ast_types.AstType.I64))
       (compiler_ir_types.CompilerIrInstr.BinOp
         8
@@ -45105,10 +45120,10 @@
     (opt-test-instrs
       (compiler_ir_types.CompilerIrInstr.Phi
         10
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.Var 7)
           (compiler_ir_types.compiler-ir-label "merge")
-          (compiler_ir_types.CompilerIrPhiInputList.Nil))
+          (compiler_ir_types.compiler-ir-phi-input-seq-empty))
         (compiler_ast_types.AstType.I64))
       (compiler_ir_types.CompilerIrInstr.Return
         (compiler_ir_types.CompilerIrMaybeValue.Some
@@ -45222,13 +45237,13 @@
         (opt-test-instrs
           (compiler_ir_types.CompilerIrInstr.Phi
             3
-            (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
               (compiler_ir_types.CompilerIrValue.I64 0)
               (compiler_ir_types.compiler-ir-label "entry")
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.Var 8)
                 (compiler_ir_types.compiler-ir-label "latch")
-                (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
             (compiler_ast_types.AstType.I64))
           (compiler_ir_types.CompilerIrInstr.BoundsCheck
             (compiler_ir_types.CompilerIrValue.Var 3)
@@ -45793,23 +45808,23 @@
     (opt-test-instrs
       (compiler_ir_types.CompilerIrInstr.Phi
         3
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.I64 0)
           (compiler_ir_types.compiler-ir-label "entry")
-          (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
             (compiler_ir_types.CompilerIrValue.Var 8)
             (compiler_ir_types.compiler-ir-label "merge")
-            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+            (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
         (compiler_ast_types.AstType.I64))
       (compiler_ir_types.CompilerIrInstr.Phi
         4
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.Bool false)
           (compiler_ir_types.compiler-ir-label "entry")
-          (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
             (compiler_ir_types.CompilerIrValue.Var 9)
             (compiler_ir_types.compiler-ir-label "merge")
-            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+            (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
         (compiler_ast_types.AstType.Bool))
       (compiler_ir_types.CompilerIrInstr.Branch
         (compiler_ir_types.CompilerIrValue.Var 4)
@@ -46242,23 +46257,23 @@
     (opt-test-instrs
       (compiler_ir_types.CompilerIrInstr.Phi
         3
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.I64 0)
           (compiler_ir_types.compiler-ir-label "pre")
-          (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
             (compiler_ir_types.CompilerIrValue.Var 8)
             (compiler_ir_types.compiler-ir-label "merge")
-            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+            (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
         (compiler_ast_types.AstType.I64))
       (compiler_ir_types.CompilerIrInstr.Phi
         4
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.Bool true)
           (compiler_ir_types.compiler-ir-label "pre")
-          (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
             (compiler_ir_types.CompilerIrValue.Var 9)
             (compiler_ir_types.compiler-ir-label "merge")
-            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+            (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
         (compiler_ast_types.AstType.Bool))
       (compiler_ir_types.CompilerIrInstr.BinOp
         5
@@ -46355,13 +46370,13 @@
     (opt-test-instrs
       (compiler_ir_types.CompilerIrInstr.Phi
         11
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.Var 4)
           (compiler_ir_types.compiler-ir-label "cjoin")
-          (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
             (compiler_ir_types.CompilerIrValue.Bool false)
             (compiler_ir_types.compiler-ir-label "calt")
-            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+            (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
         (compiler_ast_types.AstType.Bool))
       (compiler_ir_types.CompilerIrInstr.Branch
         (compiler_ir_types.CompilerIrValue.Var 11)
@@ -46594,13 +46609,13 @@
     (opt-test-instrs
       (compiler_ir_types.CompilerIrInstr.Phi
         5
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.I64 0)
           (compiler_ir_types.compiler-ir-label "entry")
-          (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
             (compiler_ir_types.CompilerIrValue.Var 17)
             (compiler_ir_types.compiler-ir-label "latch")
-            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+            (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
         (compiler_ast_types.AstType.I64))
       (compiler_ir_types.CompilerIrInstr.BoundsCheck
         (compiler_ir_types.CompilerIrValue.Var 5)
@@ -47501,13 +47516,13 @@
       (opt-bce-fold-test-header-tail variant)
       (compiler_ir_types.CompilerIrInstr.Phi
         3
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.Var 2)
           (compiler_ir_types.compiler-ir-label "entry")
-          (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
             (compiler_ir_types.CompilerIrValue.Var 8)
             (compiler_ir_types.compiler-ir-label "merge")
-            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+            (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
         (compiler_ast_types.AstType.I64)))))
 
 (define (opt-bce-fold-test-header-tail [variant : i64]) : compiler_ir_types.CompilerIrInstrSeq
@@ -47542,13 +47557,13 @@
         core
         (compiler_ir_types.CompilerIrInstr.Phi
           12
-          (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
             (compiler_ir_types.CompilerIrValue.Var 2)
             (compiler_ir_types.compiler-ir-label "entry")
-            (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
               (compiler_ir_types.CompilerIrValue.Var 13)
               (compiler_ir_types.compiler-ir-label "merge")
-              (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+              (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
           (compiler_ast_types.AstType.I64)))
       core)))
 
@@ -47572,10 +47587,10 @@
           tail
           (compiler_ir_types.CompilerIrInstr.Phi
             11
-            (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
               (compiler_ir_types.CompilerIrValue.Var 3)
               (compiler_ir_types.compiler-ir-label "body")
-              (compiler_ir_types.CompilerIrPhiInputList.Nil))
+              (compiler_ir_types.compiler-ir-phi-input-seq-empty))
             (compiler_ast_types.AstType.I64)))
         tail))))
 
@@ -47618,10 +47633,10 @@
     (opt-test-instrs
       (compiler_ir_types.CompilerIrInstr.Phi
         10
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.Var 3)
           (compiler_ir_types.compiler-ir-label "merge")
-          (compiler_ir_types.CompilerIrPhiInputList.Nil))
+          (compiler_ir_types.compiler-ir-phi-input-seq-empty))
         (compiler_ast_types.AstType.I64))
       (compiler_ir_types.CompilerIrInstr.Return
         (compiler_ir_types.CompilerIrMaybeValue.Some
@@ -47848,23 +47863,23 @@
     (opt-test-instrs
       (compiler_ir_types.CompilerIrInstr.Phi
         3
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.I64 0)
           (compiler_ir_types.compiler-ir-label "entry")
-          (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
             (compiler_ir_types.CompilerIrValue.Var 8)
             (compiler_ir_types.compiler-ir-label "merge")
-            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+            (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
         (compiler_ast_types.AstType.I64))
       (compiler_ir_types.CompilerIrInstr.Phi
         4
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.I64 0)
           (compiler_ir_types.compiler-ir-label "entry")
-          (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
             (compiler_ir_types.CompilerIrValue.Var 7)
             (compiler_ir_types.compiler-ir-label "merge")
-            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+            (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
         (compiler_ast_types.AstType.I64))
       (compiler_ir_types.CompilerIrInstr.BoundsCheck
         (compiler_ir_types.CompilerIrValue.Var 3)
@@ -47904,13 +47919,13 @@
     (opt-test-instrs
       (compiler_ir_types.CompilerIrInstr.Phi
         11
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.I64 0)
           (opt-bce-mb-test-nest-inner-pred mode)
-          (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
             (compiler_ir_types.CompilerIrValue.Var 13)
             (compiler_ir_types.compiler-ir-label "inner_body")
-            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+            (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
         (compiler_ast_types.AstType.I64))
       (compiler_ir_types.CompilerIrInstr.BinOp
         12
@@ -47964,13 +47979,13 @@
     (opt-test-instrs
       (compiler_ir_types.CompilerIrInstr.Phi
         7
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.Var 6)
           (compiler_ir_types.compiler-ir-label "then")
-          (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
             (compiler_ir_types.CompilerIrValue.Var 4)
             (compiler_ir_types.compiler-ir-label "inner_header")
-            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+            (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
         (compiler_ast_types.AstType.I64))
       (compiler_ir_types.CompilerIrInstr.BinOp
         8
@@ -47995,10 +48010,10 @@
     (opt-test-instrs
       (compiler_ir_types.CompilerIrInstr.Phi
         10
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.Var 7)
           (compiler_ir_types.compiler-ir-label "merge")
-          (compiler_ir_types.CompilerIrPhiInputList.Nil))
+          (compiler_ir_types.compiler-ir-phi-input-seq-empty))
         (compiler_ast_types.AstType.I64))
       (compiler_ir_types.CompilerIrInstr.Return
         (compiler_ir_types.CompilerIrMaybeValue.Some
@@ -48218,23 +48233,23 @@
     (opt-test-instrs
       (compiler_ir_types.CompilerIrInstr.Phi
         counter
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.I64 0)
           pred-label
-          (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
             (compiler_ir_types.CompilerIrValue.Var next)
             label
-            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+            (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
         (compiler_ast_types.AstType.I64))
       (compiler_ir_types.CompilerIrInstr.Phi
         acc
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           seed
           pred-label
-          (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
             (compiler_ir_types.CompilerIrValue.Var sum)
             label
-            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+            (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
         (compiler_ast_types.AstType.I64))
       (compiler_ir_types.CompilerIrInstr.BinOp
         sum
@@ -48290,10 +48305,10 @@
           (opt-test-instrs
             (compiler_ir_types.CompilerIrInstr.Phi
               8
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.Var 5)
                 (compiler_ir_types.compiler-ir-label "reject_loop_a")
-                (compiler_ir_types.CompilerIrPhiInputList.Nil))
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty))
               (compiler_ast_types.AstType.I64))
             (compiler_ir_types.CompilerIrInstr.Jump
               (compiler_ir_types.compiler-ir-label "reject_loop_b"))))
@@ -48314,10 +48329,10 @@
               (opt-test-instrs
                 (compiler_ir_types.CompilerIrInstr.Phi
                   14
-                  (compiler_ir_types.compiler-ir-phi-input-cons
+                  (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                     (compiler_ir_types.CompilerIrValue.Var 11)
                     (compiler_ir_types.compiler-ir-label "reject_loop_b")
-                    (compiler_ir_types.CompilerIrPhiInputList.Nil))
+                    (compiler_ir_types.compiler-ir-phi-input-seq-empty))
                   (compiler_ast_types.AstType.I64))
                 (compiler_ir_types.CompilerIrInstr.Return
                   (compiler_ir_types.CompilerIrMaybeValue.Some
@@ -48695,13 +48710,13 @@
             (compiler_ir_types.compiler-ir-label "exit"))))
       (compiler_ir_types.CompilerIrInstr.Phi
         3
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.I64 0)
           (opt-bce-p5a-test-preheader variant)
-          (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
             (compiler_ir_types.CompilerIrValue.Var 7)
             (compiler_ir_types.compiler-ir-label "latch")
-            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+            (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
         (compiler_ast_types.AstType.I64)))))
 
 (define (opt-bce-p5a-test-work-block [variant : i64]) : compiler_ir_types.CompilerIrBlock
@@ -49101,13 +49116,13 @@
           (opt-test-instrs
             (compiler_ir_types.CompilerIrInstr.Phi
               2
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.I64 0)
                 (compiler_ir_types.compiler-ir-label "entry")
-                (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                   (compiler_ir_types.CompilerIrValue.Var 10)
                   (compiler_ir_types.compiler-ir-label "other")
-                  (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                  (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
               (compiler_ast_types.AstType.I64))
             (compiler_ir_types.CompilerIrInstr.BinOp
               12
@@ -49125,23 +49140,23 @@
             (opt-test-instrs
               (compiler_ir_types.CompilerIrInstr.Phi
                 3
-                (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                   (compiler_ir_types.CompilerIrValue.Var 2)
                   (compiler_ir_types.compiler-ir-label "join")
-                  (compiler_ir_types.compiler-ir-phi-input-cons
+                  (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                     (compiler_ir_types.CompilerIrValue.Var 6)
                     (compiler_ir_types.compiler-ir-label "body")
-                    (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                    (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                 (compiler_ast_types.AstType.I64))
               (compiler_ir_types.CompilerIrInstr.Phi
                 4
-                (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                   (compiler_ir_types.CompilerIrValue.I64 0)
                   (compiler_ir_types.compiler-ir-label "join")
-                  (compiler_ir_types.compiler-ir-phi-input-cons
+                  (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                     (compiler_ir_types.CompilerIrValue.Var 5)
                     (compiler_ir_types.compiler-ir-label "body")
-                    (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                    (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                 (compiler_ast_types.AstType.I64))
               (compiler_ir_types.CompilerIrInstr.BinOp
                 5
@@ -49394,13 +49409,13 @@
   (opt-test-instrs
     (compiler_ir_types.CompilerIrInstr.Phi
       10
-      (compiler_ir_types.compiler-ir-phi-input-cons
+      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
         (compiler_ir_types.CompilerIrValue.I64 0)
         (compiler_ir_types.compiler-ir-label "entry")
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.Var 15)
           (compiler_ir_types.compiler-ir-label "body")
-          (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+          (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
       (compiler_ast_types.AstType.I64))
     (compiler_ir_types.CompilerIrInstr.BinOp
       11
@@ -49888,13 +49903,13 @@
     (opt-test-instr-seq-prepend
       (compiler_ir_types.CompilerIrInstr.Phi
         20
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.I64 0)
           (compiler_ir_types.compiler-ir-label "iguard")
-          (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
             (compiler_ir_types.CompilerIrValue.Var 30)
             (compiler_ir_types.compiler-ir-label "inner")
-            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+            (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
         (compiler_ast_types.AstType.I64))
       (opt-test-instr-seq-prepend
         (compiler_ir_types.CompilerIrInstr.BinOp
@@ -49953,13 +49968,13 @@
   (opt-test-instr-seq-prepend
     (compiler_ir_types.CompilerIrInstr.Phi
       10
-      (compiler_ir_types.compiler-ir-phi-input-cons
+      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
         (compiler_ir_types.CompilerIrValue.I64 0)
         (compiler_ir_types.compiler-ir-label "entry")
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.Var 40)
           (compiler_ir_types.compiler-ir-label "latch")
-          (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+          (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
       (compiler_ast_types.AstType.I64))
     (opt-test-instr-seq-prepend
       (compiler_ir_types.CompilerIrInstr.BinOp
@@ -50262,16 +50277,16 @@
   (opt-test-instr-seq-prepend
     (compiler_ir_types.CompilerIrInstr.Phi
       10
-      (compiler_ir_types.compiler-ir-phi-input-cons
+      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
         (compiler_ir_types.CompilerIrValue.I64 0)
         (compiler_ir_types.compiler-ir-label "apre1")
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.Var 2)
           (compiler_ir_types.compiler-ir-label "apre2")
-          (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
             (compiler_ir_types.CompilerIrValue.Var 13)
             (compiler_ir_types.compiler-ir-label "rem")
-            (compiler_ir_types.CompilerIrPhiInputList.Nil))))
+            (compiler_ir_types.compiler-ir-phi-input-seq-empty))))
       (compiler_ast_types.AstType.I64))
     (opt-test-instr-seq-prepend
       (compiler_ir_types.CompilerIrInstr.BinOp
@@ -50316,13 +50331,13 @@
   (opt-test-instr-seq-prepend
     (compiler_ir_types.CompilerIrInstr.Phi
       20
-      (compiler_ir_types.compiler-ir-phi-input-cons
+      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
         (compiler_ir_types.CompilerIrValue.I64 0)
         (compiler_ir_types.compiler-ir-label "bguard")
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.Var 23)
           (compiler_ir_types.compiler-ir-label "loopb")
-          (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+          (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
       (compiler_ast_types.AstType.I64))
     (opt-test-instr-seq-prepend
       (compiler_ir_types.CompilerIrInstr.BinOp
@@ -50560,23 +50575,23 @@
   (opt-test-instrs
     (compiler_ir_types.CompilerIrInstr.Phi
       10
-      (compiler_ir_types.compiler-ir-phi-input-cons
+      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
         (compiler_ir_types.CompilerIrValue.I64 0)
         (compiler_ir_types.compiler-ir-label "entry")
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.Var 14)
           (compiler_ir_types.compiler-ir-label "latch")
-          (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+          (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
       (compiler_ast_types.AstType.I64))
     (compiler_ir_types.CompilerIrInstr.Phi
       11
-      (compiler_ir_types.compiler-ir-phi-input-cons
+      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
         (opt-flag-exit-test-seed variant)
         (compiler_ir_types.compiler-ir-label "entry")
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.Var 13)
           (compiler_ir_types.compiler-ir-label "latch")
-          (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+          (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
       (compiler_ast_types.AstType.Bool))
     (compiler_ir_types.CompilerIrInstr.BinOp
       12
@@ -50681,13 +50696,13 @@
       (opt-flag-exit-test-latch-tail variant)
       (compiler_ir_types.CompilerIrInstr.Phi
         18
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.Bool true)
           (compiler_ir_types.compiler-ir-label "mismatch")
-          (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
             (compiler_ir_types.CompilerIrValue.Var 11)
             (compiler_ir_types.compiler-ir-label "match")
-            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+            (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
         (compiler_ast_types.AstType.Bool))
       (compiler_ir_types.CompilerIrInstr.Mov
         13
@@ -50697,13 +50712,13 @@
       (opt-flag-exit-test-latch-tail variant)
       (compiler_ir_types.CompilerIrInstr.Phi
         13
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.Bool false)
           (compiler_ir_types.compiler-ir-label "mismatch")
-          (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
             (compiler_ir_types.CompilerIrValue.Var 11)
             (compiler_ir_types.compiler-ir-label "match")
-            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+            (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
         (compiler_ast_types.AstType.Bool)))))
 
 ;; Variant 5 sends the counter-exhausted exit through the gate's arm instead of
@@ -50719,19 +50734,19 @@
   (compiler_ir_types.CompilerIrInstr.Phi
     20
     (if (= variant 7)
-      (compiler_ir_types.compiler-ir-phi-input-cons
+      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
         (compiler_ir_types.CompilerIrValue.Var 11)
         (compiler_ir_types.compiler-ir-label "done_full")
-        (compiler_ir_types.CompilerIrPhiInputList.Nil))
-      (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-empty))
+      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
         (compiler_ir_types.CompilerIrValue.Var 11)
         (compiler_ir_types.compiler-ir-label "done_early")
         (if (= variant 5)
-          (compiler_ir_types.CompilerIrPhiInputList.Nil)
-          (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.compiler-ir-phi-input-seq-empty)
+          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
             (compiler_ir_types.CompilerIrValue.Var 11)
             (compiler_ir_types.compiler-ir-label "done_full")
-            (compiler_ir_types.CompilerIrPhiInputList.Nil)))))
+            (compiler_ir_types.compiler-ir-phi-input-seq-empty)))))
     (compiler_ast_types.AstType.Bool)))
 
 ;; Variant 2 reads the loop counter after the loop; variant 3 returns the flag
@@ -50893,12 +50908,12 @@
 (define (opt-flag-exit-test-phi-in-instrs
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [pos : i64]
-  [dst : i64]) : compiler_ir_types.CompilerIrPhiInputList
+  [dst : i64]) : compiler_ir_types.CompilerIrPhiInputSeq
   (if (>=
     pos
     (compiler_ir_types.compiler-ir-instr-seq-count
       (compiler_ir_types.compiler-ir-global-shared-view instrs)))
-    (compiler_ir_types.CompilerIrPhiInputList.Nil)
+    (compiler_ir_types.compiler-ir-phi-input-seq-empty)
     (match (compiler_ir_types.compiler-ir-instr-seq-ref
       (compiler_ir_types.compiler-ir-global-shared-view instrs)
       pos)
@@ -50911,12 +50926,12 @@
 (define (opt-flag-exit-test-phi-inputs
   [blocks : compiler_ir_types.CompilerIrBlockList]
   [label : String]
-  [dst : i64]) : compiler_ir_types.CompilerIrPhiInputList
+  [dst : i64]) : compiler_ir_types.CompilerIrPhiInputSeq
   (match (compiler_optimize.opt-cfg-find-block
     blocks
     (compiler_ir_types.compiler-ir-label label))
     [(compiler_optimize.OptMaybeBlock.No)
-      (compiler_ir_types.CompilerIrPhiInputList.Nil)]
+      (compiler_ir_types.compiler-ir-phi-input-seq-empty)]
     [(compiler_optimize.OptMaybeBlock.Some block)
       (match block
         [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
@@ -50948,7 +50963,7 @@
   [blocks : compiler_ir_types.CompilerIrBlockList]
   [label : String]
   [dst : i64]) : i64
-  (compiler_ir_types.compiler-ir-phi-input-list-count
+  (compiler_ir_types.compiler-ir-phi-input-seq-count
     (opt-flag-exit-test-phi-inputs
       (compiler_ir_types.compiler-ir-global-shared-view blocks)
       label
@@ -51426,33 +51441,33 @@
   (opt-test-instrs
     (compiler_ir_types.CompilerIrInstr.Phi
       10
-      (compiler_ir_types.compiler-ir-phi-input-cons
+      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
         (compiler_ir_types.CompilerIrValue.I64 0)
         (compiler_ir_types.compiler-ir-label "entry")
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.Var 14)
           (compiler_ir_types.compiler-ir-label "latch")
-          (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+          (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
       (compiler_ast_types.AstType.I64))
     (compiler_ir_types.CompilerIrInstr.Phi
       11
-      (compiler_ir_types.compiler-ir-phi-input-cons
+      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
         (compiler_ir_types.CompilerIrValue.Bool true)
         (compiler_ir_types.compiler-ir-label "entry")
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.Var 13)
           (compiler_ir_types.compiler-ir-label "latch")
-          (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+          (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
       (compiler_ast_types.AstType.Bool))
     (compiler_ir_types.CompilerIrInstr.Phi
       19
-      (compiler_ir_types.compiler-ir-phi-input-cons
+      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
         (compiler_ir_types.CompilerIrValue.I64 0)
         (compiler_ir_types.compiler-ir-label "entry")
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.Var 23)
           (compiler_ir_types.compiler-ir-label "latch")
-          (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+          (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
       (compiler_ast_types.AstType.I64))
     (compiler_ir_types.CompilerIrInstr.BinOp
       12
@@ -51554,14 +51569,14 @@
   (opt-test-instrs
     (compiler_ir_types.CompilerIrInstr.Phi
       13
-      (compiler_ir_types.compiler-ir-phi-input-cons
+      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
         (compiler_ir_types.CompilerIrValue.Bool false)
         (compiler_ir_types.compiler-ir-label
           (opt-flag-exit-gen-clear-pred variant))
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.Var 11)
           (compiler_ir_types.compiler-ir-label "match")
-          (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+          (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
       (compiler_ast_types.AstType.Bool))
     (if (= variant 3)
       (compiler_ir_types.CompilerIrInstr.BinOp
@@ -51572,14 +51587,14 @@
         (compiler_ast_types.AstType.I64))
       (compiler_ir_types.CompilerIrInstr.Phi
         23
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.Var 16)
           (compiler_ir_types.compiler-ir-label
             (opt-flag-exit-gen-clear-pred variant))
-          (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
             (compiler_ir_types.CompilerIrValue.Var 19)
             (compiler_ir_types.compiler-ir-label "match")
-            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+            (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
         (compiler_ast_types.AstType.I64)))
     (compiler_ir_types.CompilerIrInstr.BinOp
       14
@@ -51598,13 +51613,13 @@
     (opt-test-instrs
       (compiler_ir_types.CompilerIrInstr.Phi
         20
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.Var 19)
           (compiler_ir_types.compiler-ir-label "gate")
-          (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
             (compiler_ir_types.CompilerIrValue.Var 19)
             (compiler_ir_types.compiler-ir-label "loop")
-            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+            (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
         (compiler_ast_types.AstType.I64))
       (compiler_ir_types.CompilerIrInstr.BinOp
         25
@@ -51618,14 +51633,14 @@
     (opt-test-instrs
       (compiler_ir_types.CompilerIrInstr.Phi
         20
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.Var 11)
           (compiler_ir_types.compiler-ir-label
             (opt-flag-exit-gen-out-pred variant))
-          (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
             (compiler_ir_types.CompilerIrValue.Var 11)
             (compiler_ir_types.compiler-ir-label "loop")
-            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+            (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
         (compiler_ast_types.AstType.Bool))
       (compiler_ir_types.CompilerIrInstr.BinOp
         24
@@ -52123,10 +52138,10 @@
     (opt-test-instrs
       (compiler_ir_types.CompilerIrInstr.Phi
         18
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.Var 11)
           (compiler_ir_types.compiler-ir-label "outer")
-          (compiler_ir_types.CompilerIrPhiInputList.Nil))
+          (compiler_ir_types.compiler-ir-phi-input-seq-empty))
         (compiler_ast_types.AstType.I64))
       (compiler_ir_types.CompilerIrInstr.Return
         (compiler_ir_types.CompilerIrMaybeValue.Some
@@ -52142,23 +52157,23 @@
   (opt-test-instrs
     (compiler_ir_types.CompilerIrInstr.Phi
       10
-      (compiler_ir_types.compiler-ir-phi-input-cons
+      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
         (compiler_ir_types.CompilerIrValue.I64 0)
         (compiler_ir_types.compiler-ir-label "entry")
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.Var 14)
           (compiler_ir_types.compiler-ir-label "merge")
-          (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+          (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
       (compiler_ast_types.AstType.I64))
     (compiler_ir_types.CompilerIrInstr.Phi
       11
-      (compiler_ir_types.compiler-ir-phi-input-cons
+      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
         (compiler_ir_types.CompilerIrValue.I64 0)
         (compiler_ir_types.compiler-ir-label "entry")
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.Var 12)
           (compiler_ir_types.compiler-ir-label "merge")
-          (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+          (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
       (compiler_ast_types.AstType.I64))
     (compiler_ir_types.CompilerIrInstr.BinOp
       15
@@ -52175,13 +52190,13 @@
   (opt-test-instrs
     (compiler_ir_types.CompilerIrInstr.Phi
       20
-      (compiler_ir_types.compiler-ir-phi-input-cons
+      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
         (compiler_ir_types.CompilerIrValue.I64 0)
         (compiler_ir_types.compiler-ir-label "inner_pre")
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.Var 21)
           (compiler_ir_types.compiler-ir-label "inner")
-          (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+          (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
       (compiler_ast_types.AstType.I64))
     (compiler_ir_types.CompilerIrInstr.BinOp
       21
@@ -52204,13 +52219,13 @@
   (opt-test-instrs
     (compiler_ir_types.CompilerIrInstr.Phi
       12
-      (compiler_ir_types.compiler-ir-phi-input-cons
+      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
         (compiler_ir_types.CompilerIrValue.Var 20)
         (compiler_ir_types.compiler-ir-label "inner_exit")
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.Var 11)
           (compiler_ir_types.compiler-ir-label "skip")
-          (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+          (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
       (compiler_ast_types.AstType.I64))
     (compiler_ir_types.CompilerIrInstr.BinOp
       14
@@ -53041,23 +53056,23 @@
     (opt-test-instrs
       (compiler_ir_types.CompilerIrInstr.Phi
         5
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.I64 0)
           (compiler_ir_types.compiler-ir-label "entry")
-          (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
             (compiler_ir_types.CompilerIrValue.Var 13)
             (compiler_ir_types.compiler-ir-label "latch")
-            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+            (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
         (compiler_ast_types.AstType.I64))
       (compiler_ir_types.CompilerIrInstr.Phi
         6
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.Bool true)
           (compiler_ir_types.compiler-ir-label "entry")
-          (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
             (compiler_ir_types.CompilerIrValue.Var 14)
             (compiler_ir_types.compiler-ir-label "latch")
-            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+            (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
         (compiler_ast_types.AstType.Bool))
       (compiler_ir_types.CompilerIrInstr.BinOp
         7
@@ -53248,13 +53263,13 @@
                   (opt-test-instrs
                     (compiler_ir_types.CompilerIrInstr.Phi
                       14
-                      (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                         (compiler_ir_types.CompilerIrValue.Var 6)
                         (compiler_ir_types.compiler-ir-label "then")
-                        (compiler_ir_types.compiler-ir-phi-input-cons
+                        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                           (compiler_ir_types.CompilerIrValue.Bool false)
                           (compiler_ir_types.compiler-ir-label "else")
-                          (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                          (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                       (compiler_ast_types.AstType.Bool))
                     (compiler_ir_types.CompilerIrInstr.BinOp
                       13
@@ -53702,13 +53717,13 @@
               (compiler_ir_types.compiler-ir-label "else")))))
       (compiler_ir_types.CompilerIrInstr.Phi
         3
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.I64 0)
           (compiler_ir_types.compiler-ir-label "entry")
-          (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
             (compiler_ir_types.CompilerIrValue.Var 30)
             (compiler_ir_types.compiler-ir-label "merge")
-            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+            (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
         (compiler_ast_types.AstType.I64))
       (compiler_ir_types.CompilerIrInstr.Cast
         7
@@ -54755,13 +54770,13 @@
             (opt-test-instrs
               (compiler_ir_types.CompilerIrInstr.Phi
                 4
-                (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                   (compiler_ir_types.CompilerIrValue.Var 3)
                   (compiler_ir_types.compiler-ir-label "then")
-                  (compiler_ir_types.compiler-ir-phi-input-cons
+                  (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                     (compiler_ir_types.CompilerIrValue.Var 3)
                     (compiler_ir_types.compiler-ir-label "else")
-                    (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                    (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                 (compiler_ast_types.AstType.I64))
               (compiler_ir_types.CompilerIrInstr.Mov
                 2
@@ -54797,13 +54812,37 @@
       (compiler_ir_types.compiler-ir-global-shared-view instrs)
       index)
       [(compiler_ir_types.CompilerIrInstr.Phi _ inputs _)
-        (match (compiler_ir_types.compiler-ir-phi-input-list-force-cons inputs)
-          [(compiler_ir_types.CompilerIrPhiInputList.Cons a _ rest)
-            (match (compiler_ir_types.compiler-ir-box-shared-view rest)
-              [(compiler_ir_types.CompilerIrPhiInputList.Cons b _ _)
-                (compiler_ir_types.compiler-ir-value-seq2 a b)]
-              [_ (compiler_ir_types.compiler-ir-value-seq-empty)])]
-          [_ (compiler_ir_types.compiler-ir-value-seq-empty)])]
+        (let
+          [phi-inputs-at-54784-9 : compiler_ir_types.CompilerIrPhiInputSeq
+            inputs]
+          (if (<= phi-inputs-at-54784-9.len 0)
+            (compiler_ir_types.compiler-ir-value-seq-empty)
+            (let
+              [phi-input-at-54784-9 : compiler_ir_types.CompilerIrPhiInput
+                (compiler_ir_types.compiler-ir-phi-input-seq-ref
+                  (compiler_ir_types.compiler-ir-global-shared-view
+                    phi-inputs-at-54784-9)
+                  0)]
+              [a : compiler_ir_types.CompilerIrValue phi-input-at-54784-9.value]
+              [rest : compiler_ir_types.CompilerIrPhiInputSeq
+                (compiler_ir_types.CompilerIrPhiInputSeq
+                  (compiler_ir_types.compiler-ir-global-shared-view
+                    phi-inputs-at-54784-9.slots)
+                  (+ phi-inputs-at-54784-9.start 1)
+                  (- phi-inputs-at-54784-9.len 1))]
+              [phi-inputs-at-54786-13 : compiler_ir_types.CompilerIrPhiInputSeq
+                (compiler_ir_types.compiler-ir-global-shared-view rest)]
+              (if (<= phi-inputs-at-54786-13.len 0)
+                (compiler_ir_types.compiler-ir-value-seq-empty)
+                (let
+                  [phi-input-at-54786-13 : compiler_ir_types.CompilerIrPhiInput
+                    (compiler_ir_types.compiler-ir-phi-input-seq-ref
+                      (compiler_ir_types.compiler-ir-global-shared-view
+                        phi-inputs-at-54786-13)
+                      0)]
+                  [b : compiler_ir_types.CompilerIrValue
+                    phi-input-at-54786-13.value]
+                  (compiler_ir_types.compiler-ir-value-seq2 a b))))))]
       [_ (opt-ssa-preexisting-test-first-phi-inputs instrs (+ index 1) count)])))
 
 ;; The join block's first phi's two inputs; Nil when missing.
@@ -54896,23 +54935,23 @@
     (opt-test-instrs
       (compiler_ir_types.CompilerIrInstr.Phi
         3
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.I64 0)
           (compiler_ir_types.compiler-ir-label "entry")
-          (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
             (compiler_ir_types.CompilerIrValue.Var 10)
             (compiler_ir_types.compiler-ir-label "next")
-            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+            (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
         (compiler_ast_types.AstType.I64))
       (compiler_ir_types.CompilerIrInstr.Phi
         4
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.I64 0)
           (compiler_ir_types.compiler-ir-label "entry")
-          (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
             (compiler_ir_types.CompilerIrValue.Var 11)
             (compiler_ir_types.compiler-ir-label "next")
-            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+            (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
         (compiler_ast_types.AstType.I64))
       (compiler_ir_types.CompilerIrInstr.BinOp
         5
@@ -55244,24 +55283,24 @@
     (opt-test-instrs
       (compiler_ir_types.CompilerIrInstr.Phi
         3
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.I64 0)
           (compiler_ir_types.compiler-ir-label "entry")
-          (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
             (compiler_ir_types.CompilerIrValue.Var 10)
             (compiler_ir_types.compiler-ir-label "next")
-            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+            (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
         (compiler_ast_types.AstType.I64))
       (if variant-base?
         (compiler_ir_types.CompilerIrInstr.Phi
           16
-          (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
             (compiler_ir_types.CompilerIrValue.Var 0)
             (compiler_ir_types.compiler-ir-label "entry")
-            (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
               (compiler_ir_types.CompilerIrValue.Var 0)
               (compiler_ir_types.compiler-ir-label "next")
-              (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+              (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
           (compiler_ast_types.AstType.DynArray 0))
         (compiler_ir_types.CompilerIrInstr.Mov
           16
@@ -55932,23 +55971,23 @@
         (opt-test-instrs
           (compiler_ir_types.CompilerIrInstr.Phi
             2
-            (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
               (compiler_ir_types.CompilerIrValue.I64 0)
               (compiler_ir_types.compiler-ir-label "entry")
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.Var 5)
                 (compiler_ir_types.compiler-ir-label "body")
-                (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
             (compiler_ast_types.AstType.I64))
           (compiler_ir_types.CompilerIrInstr.Phi
             3
-            (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
               (compiler_ir_types.CompilerIrValue.I64 1)
               (compiler_ir_types.compiler-ir-label "entry")
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.Var 7)
                 (compiler_ir_types.compiler-ir-label "body")
-                (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
             (compiler_ast_types.AstType.I64))
           (compiler_ir_types.CompilerIrInstr.BinOp
             6
@@ -56322,13 +56361,13 @@
               (opt-test-instrs
                 (compiler_ir_types.CompilerIrInstr.Phi
                   3
-                  (compiler_ir_types.compiler-ir-phi-input-cons
+                  (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                     (compiler_ir_types.CompilerIrValue.Var 1)
                     (compiler_ir_types.compiler-ir-label "then")
-                    (compiler_ir_types.compiler-ir-phi-input-cons
+                    (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                       (compiler_ir_types.CompilerIrValue.Var 2)
                       (compiler_ir_types.compiler-ir-label "ghost")
-                      (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                      (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                   (compiler_ast_types.AstType.I64))
                 (compiler_ir_types.CompilerIrInstr.Return
                   (compiler_ir_types.CompilerIrMaybeValue.Some
@@ -57226,13 +57265,13 @@
         (opt-test-instrs
           (compiler_ir_types.CompilerIrInstr.Phi
             1
-            (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
               (compiler_ir_types.CompilerIrValue.I64 0)
               (compiler_ir_types.compiler-ir-label "entry")
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.Var 2)
                 (compiler_ir_types.compiler-ir-label "latch")
-                (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
             (compiler_ast_types.AstType.I64))
           (compiler_ir_types.CompilerIrInstr.BinOp
             3
@@ -57366,14 +57405,14 @@
       (opt-test-instrs
         (compiler_ir_types.CompilerIrInstr.Phi
           phi
-          (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
             (compiler_ir_types.CompilerIrValue.I64 0)
             (compiler_ir_types.compiler-ir-label land)
-            (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
               (compiler_ir_types.CompilerIrValue.Var step)
               (compiler_ir_types.compiler-ir-label
                 (compiler_optimize.compiler-opt-global-shared-view latch))
-              (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+              (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
           (compiler_ast_types.AstType.I64))
         (compiler_ir_types.CompilerIrInstr.BinOp
           cond-var
@@ -57477,13 +57516,13 @@
         (opt-test-instrs
           (compiler_ir_types.CompilerIrInstr.Phi
             1
-            (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
               (compiler_ir_types.CompilerIrValue.I64 0)
               (compiler_ir_types.compiler-ir-label "entry")
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.Var 2)
                 (compiler_ir_types.compiler-ir-label "latch")
-                (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
             (compiler_ast_types.AstType.I64))
           (compiler_ir_types.CompilerIrInstr.BinOp
             3
@@ -57534,13 +57573,13 @@
                       (opt-test-instrs
                         (compiler_ir_types.CompilerIrInstr.Phi
                           5
-                          (compiler_ir_types.compiler-ir-phi-input-cons
+                          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                             (compiler_ir_types.CompilerIrValue.Var 1)
                             (compiler_ir_types.compiler-ir-label "exit")
-                            (compiler_ir_types.compiler-ir-phi-input-cons
+                            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                               (compiler_ir_types.CompilerIrValue.Var 1)
                               (compiler_ir_types.compiler-ir-label "escape")
-                              (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                              (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                           (compiler_ast_types.AstType.I64))
                         (compiler_ir_types.CompilerIrInstr.Return
                           (compiler_ir_types.CompilerIrMaybeValue.Some
@@ -57631,23 +57670,23 @@
         (opt-test-instrs
           (compiler_ir_types.CompilerIrInstr.Phi
             1
-            (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
               (compiler_ir_types.CompilerIrValue.I64 0)
               (compiler_ir_types.compiler-ir-label "entry")
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.Var 2)
                 (compiler_ir_types.compiler-ir-label "latch")
-                (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
             (compiler_ast_types.AstType.I64))
           (compiler_ir_types.CompilerIrInstr.Phi
             3
-            (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
               (compiler_ir_types.CompilerIrValue.Bool true)
               (compiler_ir_types.compiler-ir-label "entry")
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.Var 4)
                 (compiler_ir_types.compiler-ir-label "latch")
-                (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
             (compiler_ast_types.AstType.Bool))
           (compiler_ir_types.CompilerIrInstr.BinOp
             5
@@ -57691,13 +57730,13 @@
                   (opt-test-instrs
                     (compiler_ir_types.CompilerIrInstr.Phi
                       4
-                      (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                         (compiler_ir_types.CompilerIrValue.Bool false)
                         (compiler_ir_types.compiler-ir-label "mismatch")
-                        (compiler_ir_types.compiler-ir-phi-input-cons
+                        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                           (compiler_ir_types.CompilerIrValue.Var 3)
                           (compiler_ir_types.compiler-ir-label "match")
-                          (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                          (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                       (compiler_ast_types.AstType.Bool))
                     (compiler_ir_types.CompilerIrInstr.BinOp
                       2
@@ -57717,13 +57756,13 @@
                         (opt-test-instrs
                           (compiler_ir_types.CompilerIrInstr.Phi
                             7
-                            (compiler_ir_types.compiler-ir-phi-input-cons
+                            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                               (compiler_ir_types.CompilerIrValue.Var 3)
                               (compiler_ir_types.compiler-ir-label "exit")
-                              (compiler_ir_types.compiler-ir-phi-input-cons
+                              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                                 (compiler_ir_types.CompilerIrValue.Var 3)
                                 (compiler_ir_types.compiler-ir-label "escape")
-                                (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                             (compiler_ast_types.AstType.Bool))
                           (compiler_ir_types.CompilerIrInstr.Return
                             (compiler_ir_types.CompilerIrMaybeValue.Some
@@ -57845,26 +57884,37 @@
 ;; 0 for the literal `0` the preheader edge carries, the var id for a Var input,
 ;; -1 when the edge is missing or carries anything else.
 (define (opt-rotate-ssa-test-phi-input-value
-  [inputs : compiler_ir_types.CompilerIrPhiInputList]
+  [inputs : compiler_ir_types.CompilerIrPhiInputSeq]
   [label : String]) : i64
-  (match (compiler_ir_types.compiler-ir-phi-input-list-force-cons inputs)
-    [(compiler_ir_types.CompilerIrPhiInputList.Nil) (- 0 1)]
-    [(compiler_ir_types.CompilerIrPhiInputList.Array seq)
-      (opt-rotate-ssa-test-phi-input-value
-        (compiler_ir_types.compiler-ir-phi-input-seq-to-list seq)
-        label)]
-    [(compiler_ir_types.CompilerIrPhiInputList.Cons value input-label rest)
-      (if (=
-        input-label
-        (compiler_ir_types.compiler-ir-label
-          (compiler_optimize.compiler-opt-global-shared-view label)))
-        (match value
-          [(compiler_ir_types.CompilerIrValue.Var var) var]
-          [(compiler_ir_types.CompilerIrValue.I64 literal) literal]
-          [_ (- 0 1)])
-        (opt-rotate-ssa-test-phi-input-value
-          (compiler_ir_types.compiler-ir-box-shared-view rest)
-          label))]))
+  (let
+    [phi-inputs-at-57835-3 : compiler_ir_types.CompilerIrPhiInputSeq inputs]
+    (if (<= phi-inputs-at-57835-3.len 0)
+      (- 0 1)
+      (let
+        [phi-input-at-57835-3 : compiler_ir_types.CompilerIrPhiInput
+          (compiler_ir_types.compiler-ir-phi-input-seq-ref
+            (compiler_ir_types.compiler-ir-global-shared-view
+              phi-inputs-at-57835-3)
+            0)]
+        [value : compiler_ir_types.CompilerIrValue phi-input-at-57835-3.value]
+        [input-label : i64 phi-input-at-57835-3.label]
+        [rest : compiler_ir_types.CompilerIrPhiInputSeq
+          (compiler_ir_types.CompilerIrPhiInputSeq
+            (compiler_ir_types.compiler-ir-global-shared-view
+              phi-inputs-at-57835-3.slots)
+            (+ phi-inputs-at-57835-3.start 1)
+            (- phi-inputs-at-57835-3.len 1))]
+        (if (=
+          input-label
+          (compiler_ir_types.compiler-ir-label
+            (compiler_optimize.compiler-opt-global-shared-view label)))
+          (match value
+            [(compiler_ir_types.CompilerIrValue.Var var) var]
+            [(compiler_ir_types.CompilerIrValue.I64 literal) literal]
+            [_ (- 0 1)])
+          (opt-rotate-ssa-test-phi-input-value
+            (compiler_optimize.compiler-opt-global-shared-view rest)
+            label))))))
 
 ;; `bce_version`'s output shape: a guard picks between two clones of one counted
 ;; loop and BOTH clones leave through the SAME exit block. The exit block's
@@ -57924,13 +57974,13 @@
                   (opt-test-instrs
                     (compiler_ir_types.CompilerIrInstr.Phi
                       7
-                      (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                         (compiler_ir_types.CompilerIrValue.Var 1)
                         (compiler_ir_types.compiler-ir-label "h1")
-                        (compiler_ir_types.compiler-ir-phi-input-cons
+                        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                           (compiler_ir_types.CompilerIrValue.Var 4)
                           (compiler_ir_types.compiler-ir-label "h2")
-                          (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                          (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                       (compiler_ast_types.AstType.I64))
                     (compiler_ir_types.CompilerIrInstr.Return
                       (compiler_ir_types.CompilerIrMaybeValue.Some
@@ -57986,13 +58036,13 @@
         (opt-test-instrs
           (compiler_ir_types.CompilerIrInstr.Phi
             1
-            (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
               (compiler_ir_types.CompilerIrValue.I64 0)
               (compiler_ir_types.compiler-ir-label "entry")
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.Var 2)
                 (compiler_ir_types.compiler-ir-label "latch")
-                (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
             (compiler_ast_types.AstType.I64))
           (compiler_ir_types.CompilerIrInstr.BinOp
             3
@@ -65084,23 +65134,23 @@
   (opt-test-instrs
     (compiler_ir_types.CompilerIrInstr.Phi
       30
-      (compiler_ir_types.compiler-ir-phi-input-cons
+      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
         (compiler_ir_types.CompilerIrValue.I64 0)
         (compiler_ir_types.compiler-ir-label "lc_entry")
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.Var 36)
           (compiler_ir_types.compiler-ir-label "lc_body")
-          (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+          (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
       (compiler_ast_types.AstType.I64))
     (compiler_ir_types.CompilerIrInstr.Phi
       28
-      (compiler_ir_types.compiler-ir-phi-input-cons
+      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
         seed
         (compiler_ir_types.compiler-ir-label "lc_entry")
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.Var 37)
           (compiler_ir_types.compiler-ir-label "lc_body")
-          (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+          (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
       (compiler_ast_types.AstType.I64))
     (compiler_ir_types.CompilerIrInstr.BinOp
       9
@@ -65203,23 +65253,23 @@
   (opt-test-instrs
     (compiler_ir_types.CompilerIrInstr.Phi
       30
-      (compiler_ir_types.compiler-ir-phi-input-cons
+      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
         (compiler_ir_types.CompilerIrValue.I64 0)
         (compiler_ir_types.compiler-ir-label "lc_entry")
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.Var 36)
           (compiler_ir_types.compiler-ir-label "lc_body")
-          (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+          (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
       (compiler_ast_types.AstType.I64))
     (compiler_ir_types.CompilerIrInstr.Phi
       28
-      (compiler_ir_types.compiler-ir-phi-input-cons
+      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
         (compiler_ir_types.CompilerIrValue.I64 0)
         (compiler_ir_types.compiler-ir-label "lc_entry")
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.Var 37)
           (compiler_ir_types.compiler-ir-label "lc_body")
-          (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+          (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
       (compiler_ast_types.AstType.I64))
     (compiler_ir_types.CompilerIrInstr.BinOp
       9
@@ -65297,23 +65347,23 @@
           (opt-test-instrs
             (compiler_ir_types.CompilerIrInstr.Phi
               30
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.I64 0)
                 (compiler_ir_types.compiler-ir-label "lc_entry")
-                (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                   (compiler_ir_types.CompilerIrValue.Var 36)
                   (compiler_ir_types.compiler-ir-label "lc_body")
-                  (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                  (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
               (compiler_ast_types.AstType.I64))
             (compiler_ir_types.CompilerIrInstr.Phi
               28
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.I64 7)
                 (compiler_ir_types.compiler-ir-label "lc_entry")
-                (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                   (compiler_ir_types.CompilerIrValue.Var 37)
                   (compiler_ir_types.compiler-ir-label "lc_body")
-                  (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                  (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
               (compiler_ast_types.AstType.I64))
             (compiler_ir_types.CompilerIrInstr.BinOp
               10
@@ -66610,23 +66660,23 @@
   (opt-test-instrs
     (compiler_ir_types.CompilerIrInstr.Phi
       30
-      (compiler_ir_types.compiler-ir-phi-input-cons
+      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
         (compiler_ir_types.CompilerIrValue.I64 0)
         (compiler_ir_types.compiler-ir-label "lc_entry")
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.Var 36)
           (compiler_ir_types.compiler-ir-label "lc_body")
-          (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+          (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
       (compiler_ast_types.AstType.I64))
     (compiler_ir_types.CompilerIrInstr.Phi
       28
-      (compiler_ir_types.compiler-ir-phi-input-cons
+      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
         (compiler_ir_types.CompilerIrValue.I64 7)
         (compiler_ir_types.compiler-ir-label "lc_entry")
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.Var 37)
           (compiler_ir_types.compiler-ir-label "lc_body")
-          (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+          (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
       (compiler_ast_types.AstType.I64))
     (compiler_ir_types.CompilerIrInstr.BinOp
       9
@@ -68869,13 +68919,13 @@
         (opt-fc-test-loop-tail loop exit value step bound local-bound?))
       (compiler_ir_types.CompilerIrInstr.Phi
         3
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.I64 0)
           pred
-          (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
             (compiler_ir_types.CompilerIrValue.Var 5)
             loop
-            compiler_ir_types.CompilerIrPhiInputList.Nil))
+            (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
         (opt-fc-test-i64)))))
 
 (define (opt-fc-test-exit-block [exit : i64]) : compiler_ir_types.CompilerIrBlock
@@ -68997,23 +69047,23 @@
               (opt-fc-test-i64)))))
       (compiler_ir_types.CompilerIrInstr.Phi
         3
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.I64 0)
           pred
-          (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
             (compiler_ir_types.CompilerIrValue.Var 5)
             loop
-            compiler_ir_types.CompilerIrPhiInputList.Nil))
+            (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
         (opt-fc-test-i64))
       (compiler_ir_types.CompilerIrInstr.Phi
         8
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.Var 2)
           pred
-          (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
             (compiler_ir_types.CompilerIrValue.Var 6)
             loop
-            compiler_ir_types.CompilerIrPhiInputList.Nil))
+            (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
         (compiler_ast_types.AstType.Bool)))))
 
 (define (opt-fc-test-real-function) : compiler_ir_types.CompilerIrFunction
@@ -69447,13 +69497,13 @@
       (opt-test-instrs
         (compiler_ir_types.CompilerIrInstr.Phi
           12
-          (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
             (compiler_ir_types.CompilerIrValue.I64 0)
             pred
-            (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
               (compiler_ir_types.CompilerIrValue.Var 6)
               loop
-              compiler_ir_types.CompilerIrPhiInputList.Nil))
+              (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
           (opt-cc-test-i64))
         (compiler_ir_types.CompilerIrInstr.Return
           (compiler_ir_types.CompilerIrMaybeValue.Some
@@ -69540,13 +69590,13 @@
           second-store?))
       (compiler_ir_types.CompilerIrInstr.Phi
         4
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.I64 0)
           pred
-          (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
             (compiler_ir_types.CompilerIrValue.Var 8)
             loop
-            compiler_ir_types.CompilerIrPhiInputList.Nil))
+            (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
         (opt-cc-test-i64)))))
 
 (define (opt-cc-test-loop-tail
@@ -70990,13 +71040,13 @@
           (opt-test-instrs
             (compiler_ir_types.CompilerIrInstr.Phi
               4
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.Var 3)
                 (compiler_ir_types.compiler-ir-label "pre")
-                (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                   (compiler_ir_types.CompilerIrValue.Var 5)
                   (compiler_ir_types.compiler-ir-label "body")
-                  compiler_ir_types.CompilerIrPhiInputList.Nil))
+                  (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
               (compiler_ast_types.AstType.I64))
             (compiler_ir_types.CompilerIrInstr.BinOp
               8
@@ -71056,13 +71106,13 @@
         (opt-test-instrs
           (compiler_ir_types.CompilerIrInstr.Phi
             4
-            (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
               (compiler_ir_types.CompilerIrValue.Var 3)
               (compiler_ir_types.compiler-ir-label "entry")
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.Var 5)
                 (compiler_ir_types.compiler-ir-label "body")
-                compiler_ir_types.CompilerIrPhiInputList.Nil))
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
             (compiler_ast_types.AstType.I64))
           (compiler_ir_types.CompilerIrInstr.BinOp
             8
@@ -71357,13 +71407,13 @@
                 (compiler_ast_types.AstType.I64))))
           (compiler_ir_types.CompilerIrInstr.Phi
             4
-            (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
               (compiler_ir_types.CompilerIrValue.Var 3)
               (compiler_ir_types.compiler-ir-label "entry")
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.Var 5)
                 (compiler_ir_types.compiler-ir-label "body")
-                compiler_ir_types.CompilerIrPhiInputList.Nil))
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
             (compiler_ast_types.AstType.I64))))
       (compiler_ir_types.compiler-ir-block-cons
         (compiler_ir_types.CompilerIrBlock.Block
@@ -73663,14 +73713,14 @@
           (set! var (+ var 1))))
       map)))
 
-(define (opt-pe-phi-inputs [back : compiler_ir_types.CompilerIrValue]) : compiler_ir_types.CompilerIrPhiInputList
-  (compiler_ir_types.compiler-ir-phi-input-cons
+(define (opt-pe-phi-inputs [back : compiler_ir_types.CompilerIrValue]) : compiler_ir_types.CompilerIrPhiInputSeq
+  (compiler_ir_types.compiler-ir-phi-input-seq-prepend
     back
     (compiler_ir_types.compiler-ir-label "latch")
-    (compiler_ir_types.compiler-ir-phi-input-cons
+    (compiler_ir_types.compiler-ir-phi-input-seq-prepend
       (compiler_ir_types.CompilerIrValue.Var 9)
       (compiler_ir_types.compiler-ir-label "preheader")
-      compiler_ir_types.CompilerIrPhiInputList.Nil)))
+      (compiler_ir_types.compiler-ir-phi-input-seq-empty))))
 
 ;; `header` defines the phi as var 1; `latch` defines the value the back edge
 ;; carries as var 2.
@@ -73920,14 +73970,13 @@
   (opt-test-instr-seq-prepend
     (compiler_ir_types.CompilerIrInstr.Phi
       dst
-      (compiler_ir_types.CompilerIrPhiInputList.Cons
+      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
         (compiler_ir_types.CompilerIrValue.I64 0)
         seed-label
-        (box
-          (compiler_ir_types.CompilerIrPhiInputList.Cons
-            (compiler_ir_types.CompilerIrValue.Var next-var)
-            latch-label
-            (box (compiler_ir_types.CompilerIrPhiInputList.Nil)))))
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
+          (compiler_ir_types.CompilerIrValue.Var next-var)
+          latch-label
+          (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
       (compiler_ast_types.AstType.I64))
     tail))
 
@@ -75207,7 +75256,7 @@
       (compiler_ir_types.compiler-ir-instr-seq1
         (compiler_ir_types.CompilerIrInstr.Phi
           30
-          compiler_ir_types.CompilerIrPhiInputList.Nil
+          (compiler_ir_types.compiler-ir-phi-input-seq-empty)
           (compiler_ast_types.AstType.I64)))]
     [next-instrs : compiler_ir_types.CompilerIrInstrSeq
       (compiler_ir_types.compiler-ir-instr-seq1
@@ -75538,23 +75587,23 @@
       (opt-test-instrs
         (compiler_ir_types.CompilerIrInstr.Phi
           c
-          (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
             (compiler_ir_types.CompilerIrValue.I64 0)
             pred
-            (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
               (compiler_ir_types.CompilerIrValue.Var n)
               self
-              (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+              (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
           (compiler_ast_types.AstType.I64))
         (compiler_ir_types.CompilerIrInstr.Phi
           a
-          (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
             (compiler_ir_types.CompilerIrValue.I64 0)
             pred
-            (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
               (compiler_ir_types.CompilerIrValue.Var s)
               self
-              (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+              (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
           (compiler_ast_types.AstType.I64))
         (compiler_ir_types.CompilerIrInstr.BinOp
           s
@@ -75661,23 +75710,23 @@
       (opt-test-instrs
         (compiler_ir_types.CompilerIrInstr.Phi
           c
-          (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
             (compiler_ir_types.CompilerIrValue.I64 0)
             pred
-            (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
               (compiler_ir_types.CompilerIrValue.Var n)
               self
-              (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+              (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
           (compiler_ast_types.AstType.I64))
         (compiler_ir_types.CompilerIrInstr.Phi
           a
-          (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
             (compiler_ir_types.CompilerIrValue.I64 0)
             pred
-            (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
               (compiler_ir_types.CompilerIrValue.Var s)
               self
-              (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+              (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
           (compiler_ast_types.AstType.I64))
         (compiler_ir_types.CompilerIrInstr.BinOp
           s
@@ -75712,10 +75761,10 @@
     (opt-test-instrs
       (compiler_ir_types.CompilerIrInstr.Phi
         (+ 8 (* 6 k))
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.Var (+ 5 (* 6 k)))
           (opt-loop-budget-label "loop" k)
-          (compiler_ir_types.CompilerIrPhiInputList.Nil))
+          (compiler_ir_types.compiler-ir-phi-input-seq-empty))
         (compiler_ast_types.AstType.I64))
       (compiler_ir_types.CompilerIrInstr.Jump
         (opt-loop-budget-label "loop" (+ k 1))))))
@@ -75726,10 +75775,10 @@
     (opt-test-instrs
       (compiler_ir_types.CompilerIrInstr.Phi
         (+ 8 (* 6 (- n 1)))
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.Var (+ 5 (* 6 (- n 1))))
           (opt-loop-budget-label "loop" (- n 1))
-          (compiler_ir_types.CompilerIrPhiInputList.Nil))
+          (compiler_ir_types.compiler-ir-phi-input-seq-empty))
         (compiler_ast_types.AstType.I64))
       (compiler_ir_types.CompilerIrInstr.Return
         (compiler_ir_types.CompilerIrMaybeValue.Some
@@ -75778,13 +75827,13 @@
       (opt-test-instrs
         (compiler_ir_types.CompilerIrInstr.Phi
           c
-          (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
             (compiler_ir_types.CompilerIrValue.I64 0)
             pred
-            (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
               (compiler_ir_types.CompilerIrValue.Var n)
               (opt-loop-budget-label "latch" k)
-              (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+              (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
           (compiler_ast_types.AstType.I64))
         (compiler_ir_types.CompilerIrInstr.BoundsCheck
           (compiler_ir_types.CompilerIrValue.Var c)
@@ -77068,31 +77117,31 @@
           (opt-xchk-jump-block (opt-xchk-exit-label) (opt-xchk-exit-label))
           compiler_ir_types.CompilerIrBlockList.Nil)))))
 
-(define (opt-xchk-inputs-single) : compiler_ir_types.CompilerIrPhiInputList
-  (compiler_ir_types.compiler-ir-phi-input-cons
+(define (opt-xchk-inputs-single) : compiler_ir_types.CompilerIrPhiInputSeq
+  (compiler_ir_types.compiler-ir-phi-input-seq-prepend
     (compiler_ir_types.CompilerIrValue.Var 1)
     (opt-xchk-pred-label)
-    compiler_ir_types.CompilerIrPhiInputList.Nil))
+    (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
 
 ;; One predecessor, two edges: a branch whose arms both land on the exit gives
 ;; the exit phi two inputs under the same label.
-(define (opt-xchk-inputs-duplicate) : compiler_ir_types.CompilerIrPhiInputList
-  (compiler_ir_types.compiler-ir-phi-input-cons
+(define (opt-xchk-inputs-duplicate) : compiler_ir_types.CompilerIrPhiInputSeq
+  (compiler_ir_types.compiler-ir-phi-input-seq-prepend
     (compiler_ir_types.CompilerIrValue.Var 1)
     (opt-xchk-pred-label)
-    (compiler_ir_types.compiler-ir-phi-input-cons
+    (compiler_ir_types.compiler-ir-phi-input-seq-prepend
       (compiler_ir_types.CompilerIrValue.Var 2)
       (opt-xchk-pred-label)
-      compiler_ir_types.CompilerIrPhiInputList.Nil)))
+      (compiler_ir_types.compiler-ir-phi-input-seq-empty))))
 
-(define (opt-xchk-inputs-distinct) : compiler_ir_types.CompilerIrPhiInputList
-  (compiler_ir_types.compiler-ir-phi-input-cons
+(define (opt-xchk-inputs-distinct) : compiler_ir_types.CompilerIrPhiInputSeq
+  (compiler_ir_types.compiler-ir-phi-input-seq-prepend
     (compiler_ir_types.CompilerIrValue.Var 1)
     (opt-xchk-pred-label)
-    (compiler_ir_types.compiler-ir-phi-input-cons
+    (compiler_ir_types.compiler-ir-phi-input-seq-prepend
       (compiler_ir_types.CompilerIrValue.Var 2)
       (opt-xchk-other-pred-label)
-      compiler_ir_types.CompilerIrPhiInputList.Nil)))
+      (compiler_ir_types.compiler-ir-phi-input-seq-empty))))
 
 (define (opt-xchk-block-count [blocks : compiler_ir_types.CompilerIrBlockList]) : i64
   (match blocks
@@ -77107,7 +77156,7 @@
         (compiler_ir_types.compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-xchk-gen-for
-  [inputs : compiler_ir_types.CompilerIrPhiInputList]
+  [inputs : compiler_ir_types.CompilerIrPhiInputSeq]
   [taken : i64]
   [occupied? : bool]) : i64
   (compiler_optimize.opt-bce-mb-sink-fresh-gen
@@ -77118,7 +77167,7 @@
     0))
 
 (define (opt-xchk-check-blocks
-  [inputs : compiler_ir_types.CompilerIrPhiInputList]
+  [inputs : compiler_ir_types.CompilerIrPhiInputSeq]
   [gen : i64]) : compiler_ir_types.CompilerIrBlockList
   (let
     [cell : (__tl_dyn-array i64) (__tl_make-array i64 1)]
@@ -77309,13 +77358,13 @@
       (opt-ubound-head-tail seed first?)
       (compiler_ir_types.CompilerIrInstr.Phi
         5
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.I64 seed)
           (opt-ubound-label "pre")
-          (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
             (compiler_ir_types.CompilerIrValue.Var 9)
             (opt-ubound-label "latch")
-            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+            (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
         (compiler_ast_types.AstType.I64)))))
 
 (define (opt-ubound-head-tail [seed : i64] [first? : bool]) : compiler_ir_types.CompilerIrInstrSeq
@@ -77381,13 +77430,13 @@
             (opt-ubound-label "exit"))))
       (compiler_ir_types.CompilerIrInstr.Phi
         9
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.Var 7)
           (opt-ubound-label "arm_a")
-          (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
             (compiler_ir_types.CompilerIrValue.Var 8)
             (opt-ubound-label "arm_b")
-            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+            (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
         (compiler_ast_types.AstType.I64))
       (compiler_ir_types.CompilerIrInstr.BinOp
         10
@@ -77402,13 +77451,13 @@
     (opt-test-instrs
       (compiler_ir_types.CompilerIrInstr.Phi
         12
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.I64 0)
           (opt-ubound-label "entry")
-          (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
             (compiler_ir_types.CompilerIrValue.Var 9)
             (opt-ubound-label "latch")
-            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+            (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
         (compiler_ast_types.AstType.I64))
       (compiler_ir_types.CompilerIrInstr.Return
         (compiler_ir_types.CompilerIrMaybeValue.Some
@@ -77720,23 +77769,23 @@
       (opt-ubound-head-tail 0 true)
       (compiler_ir_types.CompilerIrInstr.Phi
         5
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.Var 11)
           (opt-ubound-label "pre")
-          (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
             (compiler_ir_types.CompilerIrValue.Var 9)
             (opt-ubound-label "latch")
-            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+            (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
         (compiler_ast_types.AstType.I64))
       (compiler_ir_types.CompilerIrInstr.Phi
         11
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.Var 5)
           (opt-ubound-label "pre")
-          (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
             (compiler_ir_types.CompilerIrValue.Var 5)
             (opt-ubound-label "latch")
-            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+            (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
         (compiler_ast_types.AstType.I64)))))
 
 (define (opt-ubound-wide-head-block) : compiler_ir_types.CompilerIrBlock
@@ -77746,16 +77795,16 @@
       (opt-ubound-head-tail 0 true)
       (compiler_ir_types.CompilerIrInstr.Phi
         5
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.I64 0)
           (opt-ubound-label "pre")
-          (compiler_ir_types.compiler-ir-phi-input-cons
+          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
             (compiler_ir_types.CompilerIrValue.Var 9)
             (opt-ubound-label "latch")
-            (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
               (compiler_ir_types.CompilerIrValue.I64 0)
               (opt-ubound-label "arm_a")
-              (compiler_ir_types.CompilerIrPhiInputList.Nil))))
+              (compiler_ir_types.compiler-ir-phi-input-seq-empty))))
         (compiler_ast_types.AstType.I64)))))
 
 (define (opt-ubound-with-head [head : compiler_ir_types.CompilerIrBlock]) : compiler_ir_types.CompilerIrBlockList
@@ -77941,19 +77990,19 @@
           (opt-bg-head-phi-inputs loop?)
           (compiler_ast_types.AstType.I64))))))
 
-(define (opt-bg-head-phi-inputs [loop? : bool]) : compiler_ir_types.CompilerIrPhiInputList
+(define (opt-bg-head-phi-inputs [loop? : bool]) : compiler_ir_types.CompilerIrPhiInputSeq
   (if loop?
-    (compiler_ir_types.compiler-ir-phi-input-cons
+    (compiler_ir_types.compiler-ir-phi-input-seq-prepend
       (compiler_ir_types.CompilerIrValue.I64 0)
       (opt-bg-label "pre")
-      (compiler_ir_types.compiler-ir-phi-input-cons
+      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
         (compiler_ir_types.CompilerIrValue.Var 9)
         (opt-bg-label "head")
-        (compiler_ir_types.CompilerIrPhiInputList.Nil)))
-    (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
+    (compiler_ir_types.compiler-ir-phi-input-seq-prepend
       (compiler_ir_types.CompilerIrValue.I64 0)
       (opt-bg-label "pre")
-      (compiler_ir_types.CompilerIrPhiInputList.Nil))))
+      (compiler_ir_types.compiler-ir-phi-input-seq-empty))))
 
 (define (opt-bg-exit-block) : compiler_ir_types.CompilerIrBlock
   (compiler_ir_types.CompilerIrBlock.Block
@@ -78570,21 +78619,21 @@
 
 (define (opt-pcf-sentinel-input
   [label : String]
-  [rest : compiler_ir_types.CompilerIrPhiInputList]) : compiler_ir_types.CompilerIrPhiInputList
-  (compiler_ir_types.compiler-ir-phi-input-cons
+  [rest : compiler_ir_types.CompilerIrPhiInputSeq]) : compiler_ir_types.CompilerIrPhiInputSeq
+  (compiler_ir_types.compiler-ir-phi-input-seq-prepend
     (compiler_ir_types.CompilerIrValue.I64 (- 0 1))
     (compiler_ir_types.compiler-ir-label label)
     rest))
 
 (define (opt-pcf-var-input
   [label : String]
-  [rest : compiler_ir_types.CompilerIrPhiInputList]) : compiler_ir_types.CompilerIrPhiInputList
-  (compiler_ir_types.compiler-ir-phi-input-cons
+  [rest : compiler_ir_types.CompilerIrPhiInputSeq]) : compiler_ir_types.CompilerIrPhiInputSeq
+  (compiler_ir_types.compiler-ir-phi-input-seq-prepend
     (compiler_ir_types.CompilerIrValue.Var 3)
     (compiler_ir_types.compiler-ir-label label)
     rest))
 
-(define (opt-pcf-phi [inputs : compiler_ir_types.CompilerIrPhiInputList]) : compiler_ir_types.CompilerIrInstr
+(define (opt-pcf-phi [inputs : compiler_ir_types.CompilerIrPhiInputSeq]) : compiler_ir_types.CompilerIrInstr
   (compiler_ir_types.CompilerIrInstr.Phi
     4
     inputs
@@ -78638,7 +78687,7 @@
                   "arm"
                   (opt-pcf-sentinel-input
                     "sent"
-                    (compiler_ir_types.CompilerIrPhiInputList.Nil))))
+                    (compiler_ir_types.compiler-ir-phi-input-seq-empty))))
               (opt-pcf-compare op literal)
               (opt-pcf-merge-branch)))
           (compiler_ir_types.compiler-ir-block-cons
@@ -78689,12 +78738,12 @@
                   (opt-pcf-phi
                     (opt-pcf-var-input
                       "arm"
-                      (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                         (compiler_ir_types.CompilerIrValue.I64 37)
                         (compiler_ir_types.compiler-ir-label "hit")
                         (opt-pcf-sentinel-input
                           "miss"
-                          (compiler_ir_types.CompilerIrPhiInputList.Nil)))))
+                          (compiler_ir_types.compiler-ir-phi-input-seq-empty)))))
                   (opt-pcf-compare (compiler_ir_types.CompilerIrBinOp.Eq) 37)
                   (opt-pcf-merge-branch)))
               (compiler_ir_types.compiler-ir-block-cons
@@ -78717,7 +78766,7 @@
               "entry"
               (opt-pcf-var-input
                 "latch"
-                (compiler_ir_types.CompilerIrPhiInputList.Nil))))
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty))))
           (opt-pcf-compare (compiler_ir_types.CompilerIrBinOp.Eq) 37)
           (compiler_ir_types.CompilerIrInstr.Branch
             (compiler_ir_types.CompilerIrValue.Var 5)
@@ -78750,10 +78799,10 @@
               (opt-pcf-phi
                 (opt-pcf-var-input
                   "arm"
-                  (compiler_ir_types.compiler-ir-phi-input-cons
+                  (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                     (compiler_ir_types.CompilerIrValue.I64 37)
                     (compiler_ir_types.compiler-ir-label "sent")
-                    (compiler_ir_types.CompilerIrPhiInputList.Nil))))
+                    (compiler_ir_types.compiler-ir-phi-input-seq-empty))))
               (opt-pcf-compare (compiler_ir_types.CompilerIrBinOp.Eq) 37)
               (opt-pcf-merge-branch)))
           (compiler_ir_types.compiler-ir-block-cons
@@ -78762,10 +78811,10 @@
               (opt-test-instrs
                 (compiler_ir_types.CompilerIrInstr.Phi
                   6
-                  (compiler_ir_types.compiler-ir-phi-input-cons
+                  (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                     (compiler_ir_types.CompilerIrValue.I64 11)
                     (compiler_ir_types.compiler-ir-label "merge")
-                    (compiler_ir_types.CompilerIrPhiInputList.Nil))
+                    (compiler_ir_types.compiler-ir-phi-input-seq-empty))
                   (compiler_ast_types.AstType.I64))
                 (compiler_ir_types.CompilerIrInstr.Return
                   (compiler_ir_types.CompilerIrMaybeValue.Some
@@ -78876,17 +78925,17 @@
 (define (opt-pcf-phi-inputs
   [blocks : compiler_ir_types.CompilerIrBlockList]
   [label : String]
-  [index : i64]) : compiler_ir_types.CompilerIrPhiInputList
+  [index : i64]) : compiler_ir_types.CompilerIrPhiInputSeq
   (let
     [block : compiler_ir_types.CompilerIrBlock (opt-pcf-block-of blocks label)]
     (if (<=
       (opt-block-instr-count
         (compiler_optimize.compiler-opt-global-shared-view block))
       index)
-      (compiler_ir_types.CompilerIrPhiInputList.Nil)
+      (compiler_ir_types.compiler-ir-phi-input-seq-empty)
       (match (opt-block-instr-at block index)
         [(compiler_ir_types.CompilerIrInstr.Phi _ inputs _) inputs]
-        [_ (compiler_ir_types.CompilerIrPhiInputList.Nil)]))))
+        [_ (compiler_ir_types.compiler-ir-phi-input-seq-empty)]))))
 
 (define (opt-pcf-phi-bool?
   [blocks : compiler_ir_types.CompilerIrBlockList]
@@ -78910,22 +78959,26 @@
               (compiler_ast_types.AstType.Bool)))]
         [_ false]))))
 
-(define (opt-pcf-input-count
-  [inputs : compiler_ir_types.CompilerIrPhiInputList]) : i64
-  (match (compiler_ir_types.compiler-ir-phi-input-list-force-cons
-    (compiler_ir_types.compiler-ir-global-shared-view inputs))
-    [(compiler_ir_types.CompilerIrPhiInputList.Nil) 0]
-    [(compiler_ir_types.CompilerIrPhiInputList.Array seq)
-      (opt-pcf-input-count
-        (compiler_ir_types.compiler-ir-phi-input-seq-to-list seq))]
-    [(compiler_ir_types.CompilerIrPhiInputList.Cons _ _ rest)
-      (+
-        1
-        (opt-pcf-input-count
-          (compiler_ir_types.compiler-ir-box-shared-view rest)))]))
+(define (opt-pcf-input-count [inputs : compiler_ir_types.CompilerIrPhiInputSeq]) : i64
+  (let
+    [phi-inputs-at-78894-3 : compiler_ir_types.CompilerIrPhiInputSeq
+      (compiler_ir_types.compiler-ir-global-shared-view inputs)]
+    (if (<= phi-inputs-at-78894-3.len 0)
+      0
+      (let
+        [rest : compiler_ir_types.CompilerIrPhiInputSeq
+          (compiler_ir_types.CompilerIrPhiInputSeq
+            (compiler_ir_types.compiler-ir-global-shared-view
+              phi-inputs-at-78894-3.slots)
+            (+ phi-inputs-at-78894-3.start 1)
+            (- phi-inputs-at-78894-3.len 1))]
+        (+
+          1
+          (opt-pcf-input-count
+            (compiler_optimize.compiler-opt-global-shared-view rest)))))))
 
 (define (opt-pcf-input-is-var?
-  [inputs : compiler_ir_types.CompilerIrPhiInputList]
+  [inputs : compiler_ir_types.CompilerIrPhiInputSeq]
   [label : String]
   [var : i64]) : bool
   (match (compiler_optimize.opt-thread-phi-input-value
@@ -78938,7 +78991,7 @@
     [(compiler_ir_types.CompilerIrMaybeValue.No) false]))
 
 (define (opt-pcf-input-is-i64?
-  [inputs : compiler_ir_types.CompilerIrPhiInputList]
+  [inputs : compiler_ir_types.CompilerIrPhiInputSeq]
   [label : String]
   [literal : i64]) : bool
   (match (compiler_optimize.opt-thread-phi-input-value
@@ -79169,8 +79222,8 @@
 (define (opt-pcc-literal-input
   [literal : i64]
   [label : String]
-  [rest : compiler_ir_types.CompilerIrPhiInputList]) : compiler_ir_types.CompilerIrPhiInputList
-  (compiler_ir_types.compiler-ir-phi-input-cons
+  [rest : compiler_ir_types.CompilerIrPhiInputSeq]) : compiler_ir_types.CompilerIrPhiInputSeq
+  (compiler_ir_types.compiler-ir-phi-input-seq-prepend
     (compiler_ir_types.CompilerIrValue.I64 literal)
     (compiler_ir_types.compiler-ir-label label)
     rest))
@@ -79201,7 +79254,7 @@
                   "arm"
                   (opt-pcf-sentinel-input
                     "sent"
-                    (compiler_ir_types.CompilerIrPhiInputList.Nil))))
+                    (compiler_ir_types.compiler-ir-phi-input-seq-empty))))
               (opt-pcf-jump "c1")))
           (compiler_ir_types.compiler-ir-block-cons
             (opt-pcf-block
@@ -79245,7 +79298,7 @@
                         (opt-pcc-literal-input
                           50
                           "fifty"
-                          (compiler_ir_types.CompilerIrPhiInputList.Nil)))))
+                          (compiler_ir_types.compiler-ir-phi-input-seq-empty)))))
                   (opt-pcf-jump "c1")))
               (compiler_ir_types.compiler-ir-block-cons
                 (opt-pcf-block
@@ -79287,7 +79340,7 @@
               "entry"
               (opt-pcf-var-input
                 "latch"
-                (compiler_ir_types.CompilerIrPhiInputList.Nil))))
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty))))
           (opt-pcf-jump "c1")))
       (compiler_ir_types.compiler-ir-block-cons
         (opt-pcf-block
@@ -79343,7 +79396,7 @@
                     (opt-pcc-literal-input
                       22
                       "other"
-                      (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                      (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                   (compiler_ast_types.AstType.I64))
                 (opt-pcf-return true)))
             (compiler_ir_types.compiler-ir-block-cons
@@ -79366,7 +79419,7 @@
             (opt-pcf-phi
               (opt-pcf-var-input
                 "a"
-                (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
             (opt-pcf-jump "n")))
         (compiler_ir_types.compiler-ir-block-cons
           (opt-pcf-block
@@ -79428,10 +79481,10 @@
               (opt-pcf-phi
                 (opt-pcf-var-input
                   "p"
-                  (compiler_ir_types.compiler-ir-phi-input-cons
+                  (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                     (compiler_ir_types.CompilerIrValue.Var 1)
                     (compiler_ir_types.compiler-ir-label "other")
-                    (compiler_ir_types.CompilerIrPhiInputList.Nil))))
+                    (compiler_ir_types.compiler-ir-phi-input-seq-empty))))
               (opt-pcc-compare 5 (compiler_ir_types.CompilerIrBinOp.Eq) 37)
               (opt-pcc-branch 5 "yes" "no")))
           (compiler_ir_types.compiler-ir-block-cons
@@ -79767,8 +79820,8 @@
 (define (opt-nn-phi-input
   [value : compiler_ir_types.CompilerIrValue]
   [label : String]
-  [rest : compiler_ir_types.CompilerIrPhiInputList]) : compiler_ir_types.CompilerIrPhiInputList
-  (compiler_ir_types.compiler-ir-phi-input-cons
+  [rest : compiler_ir_types.CompilerIrPhiInputSeq]) : compiler_ir_types.CompilerIrPhiInputSeq
+  (compiler_ir_types.compiler-ir-phi-input-seq-prepend
     value
     (compiler_ir_types.compiler-ir-label label)
     rest))
@@ -79872,7 +79925,7 @@
                 (opt-nn-phi-input
                   (compiler_ir_types.CompilerIrValue.Var 13)
                   "back_b"
-                  (compiler_ir_types.CompilerIrPhiInputList.Nil))))
+                  (compiler_ir_types.compiler-ir-phi-input-seq-empty))))
             (compiler_ast_types.AstType.I64))
           (opt-nn-cmp-var 11 (compiler_ir_types.CompilerIrBinOp.Lt) 10 1)
           (opt-nn-branch 11 "outer_body" "exit")))
@@ -79900,7 +79953,7 @@
                     (opt-nn-phi-input
                       (compiler_ir_types.CompilerIrValue.Var 15)
                       "inner_body"
-                      (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                      (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                   (compiler_ast_types.AstType.I64))
                 (opt-nn-cmp-var 14 inner-op 13 1)
                 (opt-nn-branch 14 "inner_body" "back_b")))
@@ -80057,7 +80110,7 @@
                   (opt-nn-phi-input
                     other
                     "seed_b"
-                    (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                    (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                 (compiler_ast_types.AstType.I64))
               (opt-nn-cmp-lit 51 (compiler_ir_types.CompilerIrBinOp.Ge) 50 0)
               (opt-nn-branch 51 "done" "done2")))
@@ -80215,23 +80268,23 @@
   (opt-test-instrs
     (compiler_ir_types.CompilerIrInstr.Phi
       1
-      (compiler_ir_types.compiler-ir-phi-input-cons
+      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
         (compiler_ir_types.CompilerIrValue.I64 0)
         (compiler_ir_types.compiler-ir-label "entry")
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.Var 2)
           (compiler_ir_types.compiler-ir-label "latch")
-          (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+          (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
       (compiler_ast_types.AstType.I64))
     (compiler_ir_types.CompilerIrInstr.Phi
       3
-      (compiler_ir_types.compiler-ir-phi-input-cons
+      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
         (opt-flag-exit-sent-seed variant)
         (compiler_ir_types.compiler-ir-label "entry")
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.Var 4)
           (compiler_ir_types.compiler-ir-label "latch")
-          (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+          (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
       (compiler_ast_types.AstType.I64))
     (compiler_ir_types.CompilerIrInstr.BinOp
       5
@@ -80320,21 +80373,21 @@
       (compiler_ir_types.compiler-ir-label "latch")
       (compiler_ir_types.compiler-ir-label "done"))))
 
-(define (opt-flag-exit-sent-latch-extra-inputs [variant : i64]) : compiler_ir_types.CompilerIrPhiInputList
+(define (opt-flag-exit-sent-latch-extra-inputs [variant : i64]) : compiler_ir_types.CompilerIrPhiInputSeq
   (let
-    [tail : compiler_ir_types.CompilerIrPhiInputList
-      (compiler_ir_types.compiler-ir-phi-input-cons
+    [tail : compiler_ir_types.CompilerIrPhiInputSeq
+      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
         (compiler_ir_types.CompilerIrValue.Var 3)
         (compiler_ir_types.compiler-ir-label "match")
-        (compiler_ir_types.CompilerIrPhiInputList.Nil))]
+        (compiler_ir_types.compiler-ir-phi-input-seq-empty))]
     (cond
       [(= variant 2)
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.Var 11)
           (compiler_ir_types.compiler-ir-label "probe")
           tail)]
       [(= variant 4)
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.I64 (- 0 2))
           (compiler_ir_types.compiler-ir-label "hit")
           tail)]
@@ -80344,7 +80397,7 @@
   (opt-test-instrs
     (compiler_ir_types.CompilerIrInstr.Phi
       4
-      (compiler_ir_types.compiler-ir-phi-input-cons
+      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
         (compiler_ir_types.CompilerIrValue.Var 9)
         (compiler_ir_types.compiler-ir-label "mismatch")
         (opt-flag-exit-sent-latch-extra-inputs variant))
@@ -80366,18 +80419,18 @@
   (opt-test-instrs
     (compiler_ir_types.CompilerIrInstr.Phi
       7
-      (compiler_ir_types.compiler-ir-phi-input-cons
+      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
         (compiler_ir_types.CompilerIrValue.Var 3)
         (compiler_ir_types.compiler-ir-label "exit")
-        (compiler_ir_types.compiler-ir-phi-input-cons
+        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
           (compiler_ir_types.CompilerIrValue.Var 3)
           (compiler_ir_types.compiler-ir-label "escape")
           (if (= variant 2)
-            (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
               (compiler_ir_types.CompilerIrValue.Var 3)
               (compiler_ir_types.compiler-ir-label "probe")
-              (compiler_ir_types.CompilerIrPhiInputList.Nil))
-            (compiler_ir_types.CompilerIrPhiInputList.Nil))))
+              (compiler_ir_types.compiler-ir-phi-input-seq-empty))
+            (compiler_ir_types.compiler-ir-phi-input-seq-empty))))
       (compiler_ast_types.AstType.I64))
     (compiler_ir_types.CompilerIrInstr.Return
       (compiler_ir_types.CompilerIrMaybeValue.Some
@@ -80878,7 +80931,7 @@
 ;; `opt-bounds-dom-blocks-with-context` end to end over one loop shape.
 (define (opt-abcd-phi
   [dst : i64]
-  [inputs : compiler_ir_types.CompilerIrPhiInputList]) : compiler_ir_types.CompilerIrInstr
+  [inputs : compiler_ir_types.CompilerIrPhiInputSeq]) : compiler_ir_types.CompilerIrInstr
   (compiler_ir_types.CompilerIrInstr.Phi
     dst
     inputs
@@ -80918,7 +80971,7 @@
               (opt-nn-phi-input
                 (opt-abcd-var 13)
                 "merge"
-                (compiler_ir_types.CompilerIrPhiInputList.Nil))))
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty))))
           (opt-nn-check 10 1 "ok_header")
           (opt-nn-branch 0 "push" "pop")))
       (compiler_ir_types.compiler-ir-block-cons
@@ -80946,7 +80999,7 @@
                     (opt-nn-phi-input
                       (opt-abcd-var 12)
                       "pop"
-                      (compiler_ir_types.CompilerIrPhiInputList.Nil))))
+                      (compiler_ir_types.compiler-ir-phi-input-seq-empty))))
                 (opt-nn-cmp-lit 14 (compiler_ir_types.CompilerIrBinOp.Ge) 13 0)
                 (opt-nn-branch 14 "header" "exit")))
             (compiler_ir_types.compiler-ir-block-cons
@@ -80975,7 +81028,7 @@
               (opt-nn-phi-input
                 (opt-abcd-var 13)
                 "merge"
-                (compiler_ir_types.CompilerIrPhiInputList.Nil))))
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty))))
           (opt-nn-check 10 1 "ok_header")
           (opt-nn-branch 0 "push" "pop")))
       (compiler_ir_types.compiler-ir-block-cons
@@ -81017,7 +81070,7 @@
                           (opt-nn-phi-input
                             (opt-abcd-var 12)
                             "pop"
-                            (compiler_ir_types.CompilerIrPhiInputList.Nil)))))
+                            (compiler_ir_types.compiler-ir-phi-input-seq-empty)))))
                     (opt-nn-cmp-lit
                       14
                       (compiler_ir_types.CompilerIrBinOp.Ge)
@@ -81049,7 +81102,7 @@
               (opt-nn-phi-input
                 (opt-abcd-var 21)
                 "fill_body"
-                (compiler_ir_types.CompilerIrPhiInputList.Nil))))
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty))))
           (opt-nn-branch 0 "fill_body" "after")))
       (compiler_ir_types.compiler-ir-block-cons
         (opt-nn-block
@@ -81076,7 +81129,7 @@
                     (opt-nn-phi-input
                       (opt-abcd-var 27)
                       "copy_body"
-                      (compiler_ir_types.CompilerIrPhiInputList.Nil))))
+                      (compiler_ir_types.compiler-ir-phi-input-seq-empty))))
                 (opt-nn-cmp-var 25 (compiler_ir_types.CompilerIrBinOp.Lt) 24 20)
                 (opt-nn-branch 25 "copy_body" "exit")))
             (compiler_ir_types.compiler-ir-block-cons
@@ -81120,7 +81173,7 @@
               (opt-nn-phi-input
                 (opt-abcd-var 33)
                 "latch"
-                (compiler_ir_types.CompilerIrPhiInputList.Nil))))
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty))))
           (opt-nn-cmp-lit 31 guard 30 1)
           (opt-nn-branch 31 "take" "skip")))
       (compiler_ir_types.compiler-ir-block-cons
@@ -81144,7 +81197,7 @@
                     (opt-nn-phi-input
                       (opt-abcd-var 30)
                       "skip"
-                      (compiler_ir_types.CompilerIrPhiInputList.Nil))))
+                      (compiler_ir_types.compiler-ir-phi-input-seq-empty))))
                 (opt-nn-branch 0 "header" "exit")))
             (compiler_ir_types.compiler-ir-block-cons
               (opt-nn-block "exit" (opt-test-instrs (opt-nn-return 2)))
@@ -81170,7 +81223,7 @@
               (opt-nn-phi-input
                 (opt-abcd-var 41)
                 "outer_latch"
-                (compiler_ir_types.CompilerIrPhiInputList.Nil))))
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty))))
           (opt-nn-cmp-var 42 (compiler_ir_types.CompilerIrBinOp.Lt) 40 1)
           (opt-nn-branch 42 "mid_header" "exit")))
       (compiler_ir_types.compiler-ir-block-cons
@@ -81185,7 +81238,7 @@
                 (opt-nn-phi-input
                   (opt-abcd-var 44)
                   "mid_latch"
-                  (compiler_ir_types.CompilerIrPhiInputList.Nil))))
+                  (compiler_ir_types.compiler-ir-phi-input-seq-empty))))
             (opt-nn-cmp-var 45 (compiler_ir_types.CompilerIrBinOp.Lt) 43 1)
             (opt-nn-branch 45 "inner_header" "outer_latch")))
         (compiler_ir_types.compiler-ir-block-cons
@@ -81200,7 +81253,7 @@
                   (opt-nn-phi-input
                     (opt-abcd-var 47)
                     "inner_latch"
-                    (compiler_ir_types.CompilerIrPhiInputList.Nil))))
+                    (compiler_ir_types.compiler-ir-phi-input-seq-empty))))
               (opt-nn-cmp-var 48 inner-guard 46 1)
               (opt-nn-branch 48 "inner_body" "mid_latch")))
           (compiler_ir_types.compiler-ir-block-cons
@@ -81446,7 +81499,7 @@
       (opt-nn-phi-input
         second
         second-label
-        (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+        (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
     (compiler_ast_types.AstType.I64)))
 
 (define (opt-ifc-lit [value : i64]) : compiler_ir_types.CompilerIrValue
@@ -82567,23 +82620,23 @@
                 (opt-test-instrs
                   (compiler_ir_types.CompilerIrInstr.Phi
                     4
-                    (compiler_ir_types.compiler-ir-phi-input-cons
+                    (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                       (compiler_ir_types.CompilerIrValue.I64 10)
                       (compiler_ir_types.compiler-ir-label "tm-a")
-                      (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                         (compiler_ir_types.CompilerIrValue.I64 20)
                         (compiler_ir_types.compiler-ir-label "tm-b")
-                        (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                        (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                     (compiler_ast_types.AstType.I64))
                   (compiler_ir_types.CompilerIrInstr.Phi
                     5
-                    (compiler_ir_types.compiler-ir-phi-input-cons
+                    (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                       (compiler_ir_types.CompilerIrValue.Bool true)
                       (compiler_ir_types.compiler-ir-label "tm-a")
-                      (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                         (compiler_ir_types.CompilerIrValue.Bool false)
                         (compiler_ir_types.compiler-ir-label "tm-b")
-                        (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                        (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                     (compiler_ast_types.AstType.Bool))
                   (compiler_ir_types.CompilerIrInstr.Mov
                     6
@@ -82599,13 +82652,13 @@
                   (opt-test-instrs
                     (compiler_ir_types.CompilerIrInstr.Phi
                       7
-                      (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                         (compiler_ir_types.CompilerIrValue.Var 6)
                         (compiler_ir_types.compiler-ir-label "tm-merge")
-                        (compiler_ir_types.compiler-ir-phi-input-cons
+                        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                           (compiler_ir_types.CompilerIrValue.I64 1)
                           (compiler_ir_types.compiler-ir-label "tm-alt")
-                          (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                          (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                       (compiler_ast_types.AstType.I64))
                     (compiler_ir_types.CompilerIrInstr.Return
                       (compiler_ir_types.CompilerIrMaybeValue.Some
@@ -82616,13 +82669,13 @@
                     (opt-test-instrs
                       (compiler_ir_types.CompilerIrInstr.Phi
                         8
-                        (compiler_ir_types.compiler-ir-phi-input-cons
+                        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                           (compiler_ir_types.CompilerIrValue.Var 4)
                           (compiler_ir_types.compiler-ir-label "tm-merge")
-                          (compiler_ir_types.compiler-ir-phi-input-cons
+                          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                             (compiler_ir_types.CompilerIrValue.I64 2)
                             (compiler_ir_types.compiler-ir-label "tm-alt")
-                            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                            (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                         (compiler_ast_types.AstType.I64))
                       (compiler_ir_types.CompilerIrInstr.Return
                         (compiler_ir_types.CompilerIrMaybeValue.Some
@@ -82656,23 +82709,23 @@
             (opt-test-instrs
               (compiler_ir_types.CompilerIrInstr.Phi
                 4
-                (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                   (compiler_ir_types.CompilerIrValue.I64 10)
                   (compiler_ir_types.compiler-ir-label "tn-a")
-                  (compiler_ir_types.compiler-ir-phi-input-cons
+                  (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                     (compiler_ir_types.CompilerIrValue.I64 20)
                     (compiler_ir_types.compiler-ir-label "tn-b")
-                    (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                    (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                 (compiler_ast_types.AstType.I64))
               (compiler_ir_types.CompilerIrInstr.Phi
                 5
-                (compiler_ir_types.compiler-ir-phi-input-cons
+                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                   (compiler_ir_types.CompilerIrValue.Bool true)
                   (compiler_ir_types.compiler-ir-label "tn-a")
-                  (compiler_ir_types.compiler-ir-phi-input-cons
+                  (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                     (compiler_ir_types.CompilerIrValue.Bool false)
                     (compiler_ir_types.compiler-ir-label "tn-b")
-                    (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                    (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                 (compiler_ast_types.AstType.Bool))
               (compiler_ir_types.CompilerIrInstr.Branch
                 (compiler_ir_types.CompilerIrValue.Var 5)
@@ -82748,23 +82801,23 @@
                 (opt-test-instrs
                   (compiler_ir_types.CompilerIrInstr.Phi
                     4
-                    (compiler_ir_types.compiler-ir-phi-input-cons
+                    (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                       (compiler_ir_types.CompilerIrValue.I64 10)
                       (compiler_ir_types.compiler-ir-label "tz-a")
-                      (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                         (compiler_ir_types.CompilerIrValue.I64 20)
                         (compiler_ir_types.compiler-ir-label "tz-b")
-                        (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                        (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                     (compiler_ast_types.AstType.I64))
                   (compiler_ir_types.CompilerIrInstr.Phi
                     5
-                    (compiler_ir_types.compiler-ir-phi-input-cons
+                    (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                       (compiler_ir_types.CompilerIrValue.Bool true)
                       (compiler_ir_types.compiler-ir-label "tz-a")
-                      (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                         (compiler_ir_types.CompilerIrValue.Bool false)
                         (compiler_ir_types.compiler-ir-label "tz-b")
-                        (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                        (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                     (compiler_ast_types.AstType.Bool))
                   (compiler_ir_types.CompilerIrInstr.Mov
                     6
@@ -82816,13 +82869,13 @@
                   (opt-test-instrs
                     (compiler_ir_types.CompilerIrInstr.Phi
                       30
-                      (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                         (compiler_ir_types.CompilerIrValue.Var 15)
                         (compiler_ir_types.compiler-ir-label "tz-merge")
-                        (compiler_ir_types.compiler-ir-phi-input-cons
+                        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                           (compiler_ir_types.CompilerIrValue.I64 1)
                           (compiler_ir_types.compiler-ir-label "tz-alt")
-                          (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                          (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                       (compiler_ast_types.AstType.I64))
                     (compiler_ir_types.CompilerIrInstr.Return
                       (compiler_ir_types.CompilerIrMaybeValue.Some
@@ -82833,13 +82886,13 @@
                     (opt-test-instrs
                       (compiler_ir_types.CompilerIrInstr.Phi
                         31
-                        (compiler_ir_types.compiler-ir-phi-input-cons
+                        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                           (compiler_ir_types.CompilerIrValue.Var 4)
                           (compiler_ir_types.compiler-ir-label "tz-merge")
-                          (compiler_ir_types.compiler-ir-phi-input-cons
+                          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                             (compiler_ir_types.CompilerIrValue.I64 2)
                             (compiler_ir_types.compiler-ir-label "tz-alt")
-                            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                            (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                         (compiler_ast_types.AstType.I64))
                       (compiler_ir_types.CompilerIrInstr.Return
                         (compiler_ir_types.CompilerIrMaybeValue.Some
@@ -82889,23 +82942,23 @@
                 (opt-test-instrs
                   (compiler_ir_types.CompilerIrInstr.Phi
                     4
-                    (compiler_ir_types.compiler-ir-phi-input-cons
+                    (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                       (compiler_ir_types.CompilerIrValue.I64 10)
                       (compiler_ir_types.compiler-ir-label "tz-a")
-                      (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                         (compiler_ir_types.CompilerIrValue.I64 20)
                         (compiler_ir_types.compiler-ir-label "tz-b")
-                        (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                        (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                     (compiler_ast_types.AstType.I64))
                   (compiler_ir_types.CompilerIrInstr.Phi
                     5
-                    (compiler_ir_types.compiler-ir-phi-input-cons
+                    (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                       (compiler_ir_types.CompilerIrValue.Bool true)
                       (compiler_ir_types.compiler-ir-label "tz-a")
-                      (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                         (compiler_ir_types.CompilerIrValue.Bool false)
                         (compiler_ir_types.compiler-ir-label "tz-b")
-                        (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                        (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                     (compiler_ast_types.AstType.Bool))
                   (compiler_ir_types.CompilerIrInstr.Mov
                     6
@@ -82965,13 +83018,13 @@
                   (opt-test-instrs
                     (compiler_ir_types.CompilerIrInstr.Phi
                       30
-                      (compiler_ir_types.compiler-ir-phi-input-cons
+                      (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                         (compiler_ir_types.CompilerIrValue.Var 17)
                         (compiler_ir_types.compiler-ir-label "tz-merge")
-                        (compiler_ir_types.compiler-ir-phi-input-cons
+                        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                           (compiler_ir_types.CompilerIrValue.I64 1)
                           (compiler_ir_types.compiler-ir-label "tz-alt")
-                          (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                          (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                       (compiler_ast_types.AstType.I64))
                     (compiler_ir_types.CompilerIrInstr.Return
                       (compiler_ir_types.CompilerIrMaybeValue.Some
@@ -82982,13 +83035,13 @@
                     (opt-test-instrs
                       (compiler_ir_types.CompilerIrInstr.Phi
                         31
-                        (compiler_ir_types.compiler-ir-phi-input-cons
+                        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                           (compiler_ir_types.CompilerIrValue.Var 4)
                           (compiler_ir_types.compiler-ir-label "tz-merge")
-                          (compiler_ir_types.compiler-ir-phi-input-cons
+                          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                             (compiler_ir_types.CompilerIrValue.I64 2)
                             (compiler_ir_types.compiler-ir-label "tz-alt")
-                            (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                            (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                         (compiler_ast_types.AstType.I64))
                       (compiler_ir_types.CompilerIrInstr.Return
                         (compiler_ir_types.CompilerIrMaybeValue.Some
@@ -83050,10 +83103,10 @@
                     (opt-test-instrs
                       (compiler_ir_types.CompilerIrInstr.Phi
                         4
-                        (compiler_ir_types.compiler-ir-phi-input-cons
+                        (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                           (compiler_ir_types.CompilerIrValue.Bool true)
                           (compiler_ir_types.compiler-ir-label "tc3-d3")
-                          (compiler_ir_types.CompilerIrPhiInputList.Nil))
+                          (compiler_ir_types.compiler-ir-phi-input-seq-empty))
                         (compiler_ast_types.AstType.Bool))
                       (compiler_ir_types.CompilerIrInstr.Jump
                         (compiler_ir_types.compiler-ir-label "tc3-f2"))))
@@ -83063,13 +83116,13 @@
                       (opt-test-instrs
                         (compiler_ir_types.CompilerIrInstr.Phi
                           5
-                          (compiler_ir_types.compiler-ir-phi-input-cons
+                          (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                             (compiler_ir_types.CompilerIrValue.Bool false)
                             (compiler_ir_types.compiler-ir-label "tc3-d2")
-                            (compiler_ir_types.compiler-ir-phi-input-cons
+                            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                               (compiler_ir_types.CompilerIrValue.Var 4)
                               (compiler_ir_types.compiler-ir-label "tc3-f3")
-                              (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                              (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                           (compiler_ast_types.AstType.Bool))
                         (compiler_ir_types.CompilerIrInstr.Jump
                           (compiler_ir_types.compiler-ir-label "tc3-f1"))))
@@ -83079,13 +83132,13 @@
                         (opt-test-instrs
                           (compiler_ir_types.CompilerIrInstr.Phi
                             6
-                            (compiler_ir_types.compiler-ir-phi-input-cons
+                            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                               (compiler_ir_types.CompilerIrValue.Bool true)
                               (compiler_ir_types.compiler-ir-label "tc3-d1")
-                              (compiler_ir_types.compiler-ir-phi-input-cons
+                              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                                 (compiler_ir_types.CompilerIrValue.Var 5)
                                 (compiler_ir_types.compiler-ir-label "tc3-f2")
-                                (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                             (compiler_ast_types.AstType.Bool))
                           (compiler_ir_types.CompilerIrInstr.Jump
                             (compiler_ir_types.compiler-ir-label "tc3-merge"))))
@@ -83095,13 +83148,13 @@
                           (opt-test-instrs
                             (compiler_ir_types.CompilerIrInstr.Phi
                               7
-                              (compiler_ir_types.compiler-ir-phi-input-cons
+                              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                                 (compiler_ir_types.CompilerIrValue.Bool true)
                                 (compiler_ir_types.compiler-ir-label "tc3-d0")
-                                (compiler_ir_types.compiler-ir-phi-input-cons
+                                (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                                   (compiler_ir_types.CompilerIrValue.Var 6)
                                   (compiler_ir_types.compiler-ir-label "tc3-f1")
-                                  (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                                  (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
                               (compiler_ast_types.AstType.Bool))
                             (compiler_ir_types.CompilerIrInstr.Branch
                               (compiler_ir_types.CompilerIrValue.Var 7)
@@ -83285,23 +83338,23 @@
         (opt-test-instrs
           (compiler_ir_types.CompilerIrInstr.Phi
             3
-            (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
               (compiler_ir_types.CompilerIrValue.I64 0)
               (compiler_ir_types.compiler-ir-label "entry")
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.Var 8)
                 (compiler_ir_types.compiler-ir-label "loop")
-                (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
             (compiler_ast_types.AstType.I64))
           (compiler_ir_types.CompilerIrInstr.Phi
             4
-            (compiler_ir_types.compiler-ir-phi-input-cons
+            (compiler_ir_types.compiler-ir-phi-input-seq-prepend
               (compiler_ir_types.CompilerIrValue.Var 2)
               (compiler_ir_types.compiler-ir-label "entry")
-              (compiler_ir_types.compiler-ir-phi-input-cons
+              (compiler_ir_types.compiler-ir-phi-input-seq-prepend
                 (compiler_ir_types.CompilerIrValue.Var 9)
                 (compiler_ir_types.compiler-ir-label "loop")
-                (compiler_ir_types.CompilerIrPhiInputList.Nil)))
+                (compiler_ir_types.compiler-ir-phi-input-seq-empty)))
             (compiler_ast_types.AstType.I64))
           (compiler_ir_types.CompilerIrInstr.BinOp
             6

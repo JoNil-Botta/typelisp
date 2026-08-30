@@ -586,10 +586,10 @@
                     (compiler_optimize_tests.opt-test-instrs
                       (ir.CompilerIrInstr.Phi
                         12
-                        (ir.compiler-ir-phi-input-cons
+                        (ir.compiler-ir-phi-input-seq-prepend
                           (ir.CompilerIrValue.I64 12)
                           (ir.compiler-ir-label "forward")
-                          (ir.CompilerIrPhiInputList.Nil))
+                          (ir.compiler-ir-phi-input-seq-empty))
                         (ast.AstType.I64))
                       (ir.CompilerIrInstr.Return
                         (ir.CompilerIrMaybeValue.Some
@@ -2390,13 +2390,13 @@
     (compiler_optimize_tests.opt-test-instrs
       (ir.CompilerIrInstr.Phi
         0
-        (ir.compiler-ir-phi-input-cons
+        (ir.compiler-ir-phi-input-seq-prepend
           start
           (ir.compiler-ir-label "entry")
-          (ir.compiler-ir-phi-input-cons
+          (ir.compiler-ir-phi-input-seq-prepend
             (ir.CompilerIrValue.Var next-var)
             (ir.compiler-ir-label "body")
-            (ir.CompilerIrPhiInputList.Nil)))
+            (ir.compiler-ir-phi-input-seq-empty)))
         (ast.AstType.I64))
       (ir.CompilerIrInstr.BinOp
         4
@@ -2633,13 +2633,13 @@
     (compiler_optimize_tests.opt-test-instrs
       (ir.CompilerIrInstr.Phi
         0
-        (ir.compiler-ir-phi-input-cons
+        (ir.compiler-ir-phi-input-seq-prepend
           start
           (ir.compiler-ir-label "entry")
-          (ir.compiler-ir-phi-input-cons
+          (ir.compiler-ir-phi-input-seq-prepend
             (ir.CompilerIrValue.Var 2)
             (ir.compiler-ir-label "latch")
-            (ir.CompilerIrPhiInputList.Nil)))
+            (ir.compiler-ir-phi-input-seq-empty)))
         (ast.AstType.I64))
       (ir.CompilerIrInstr.BoundsCheck
         (ir.CompilerIrValue.Var 0)
@@ -3540,25 +3540,25 @@
 (define (smoke-inline-phi-header [latch-label : i64]) : ir.CompilerIrInstr
   (ir.CompilerIrInstr.Phi
     1
-    (ir.compiler-ir-phi-input-cons
+    (ir.compiler-ir-phi-input-seq-prepend
       (ir.CompilerIrValue.I64 0)
       (ir.compiler-ir-label "entry")
-      (ir.compiler-ir-phi-input-cons
+      (ir.compiler-ir-phi-input-seq-prepend
         (ir.CompilerIrValue.Var 0)
         latch-label
-        ir.CompilerIrPhiInputList.Nil))
+        (ir.compiler-ir-phi-input-seq-empty)))
     (ast.AstType.I64)))
 
 (define (smoke-inline-phi-exit [latch-label : i64]) : ir.CompilerIrInstr
   (ir.CompilerIrInstr.Phi
     2
-    (ir.compiler-ir-phi-input-cons
+    (ir.compiler-ir-phi-input-seq-prepend
       (ir.CompilerIrValue.Var 1)
       (ir.compiler-ir-label "header")
-      (ir.compiler-ir-phi-input-cons
+      (ir.compiler-ir-phi-input-seq-prepend
         (ir.CompilerIrValue.Var 0)
         latch-label
-        ir.CompilerIrPhiInputList.Nil))
+        (ir.compiler-ir-phi-input-seq-empty)))
     (ast.AstType.I64)))
 
 (define (smoke-inline-phi-caller-with-call
@@ -3674,12 +3674,12 @@
         [(ir.CompilerIrBlock.Block _ instrs)
           (match (ir.compiler-ir-instr-seq-ref instrs 0)
             [(ir.CompilerIrInstr.Phi _ inputs _)
-              (if (opt.opt-phi-input-list-eq
+              (if (opt.opt-phi-input-seq-eq
                 inputs
                 (match (smoke-inline-phi-header
                   (ir.compiler-ir-label "inl.latch.0.cont"))
                   [(ir.CompilerIrInstr.Phi _ expected _) expected]
-                  [_ ir.CompilerIrPhiInputList.Nil]))
+                  [_ (ir.compiler-ir-phi-input-seq-empty)]))
                 (match (opt.opt-cfg-find-block
                   blocks
                   (ir.compiler-ir-label "exit"))
@@ -3689,12 +3689,12 @@
                       [(ir.CompilerIrBlock.Block _ exit-instrs)
                         (match (ir.compiler-ir-instr-seq-ref exit-instrs 0)
                           [(ir.CompilerIrInstr.Phi _ exit-inputs _)
-                            (opt.opt-phi-input-list-eq
+                            (opt.opt-phi-input-seq-eq
                               exit-inputs
                               (match (smoke-inline-phi-exit
                                 (ir.compiler-ir-label "inl.latch.0.cont"))
                                 [(ir.CompilerIrInstr.Phi _ expected _) expected]
-                                [_ ir.CompilerIrPhiInputList.Nil]))]
+                                [_ (ir.compiler-ir-phi-input-seq-empty)]))]
                           [_ false])])])
                 false)]
             [_ false])])]))
@@ -3749,18 +3749,21 @@
       (smoke-inline-phi-header (ir.compiler-ir-label "latch"))]
     [exit-phi : ir.CompilerIrInstr
       (smoke-inline-phi-exit (ir.compiler-ir-label "latch"))]
+    [main-symbol : ir.CompilerIrSymbolId
+      (ir.compiler-ir-symbol-typed-id
+        (compiler_optimize_tests.opt-test-symbol "main"))]
     [spans : ir.CompilerSourceSpans
       (ir.compiler-source-spans-insert-instr
         (ir.compiler-source-spans-insert-instr
           (ir.compiler-source-spans-insert-instr
             (compiler_optimize_tests.opt-spans-base)
-            (compiler_optimize_tests.opt-test-symbol "main")
+            main-symbol
             call
             (compiler_optimize_tests.opt-test-span 161 31))
-          (compiler_optimize_tests.opt-test-symbol "main")
+          main-symbol
           header-phi
           (compiler_optimize_tests.opt-test-span 162 33))
-        (compiler_optimize_tests.opt-test-symbol "main")
+        main-symbol
         exit-phi
         (compiler_optimize_tests.opt-test-span 163 35))]
     [result-mov : ir.CompilerIrInstr
@@ -3895,13 +3898,13 @@
           (compiler_optimize_tests.opt-test-instrs
             (ir.CompilerIrInstr.Phi
               2
-              (ir.compiler-ir-phi-input-cons
+              (ir.compiler-ir-phi-input-seq-prepend
                 (ir.CompilerIrValue.I64 0)
                 (ir.compiler-ir-label "entry")
-                (ir.compiler-ir-phi-input-cons
+                (ir.compiler-ir-phi-input-seq-prepend
                   (ir.CompilerIrValue.Var 6)
                   (ir.compiler-ir-label "merge")
-                  (ir.CompilerIrPhiInputList.Nil)))
+                  (ir.compiler-ir-phi-input-seq-empty)))
               (ast.AstType.I64))
             (ir.CompilerIrInstr.BinOp
               5
@@ -3938,15 +3941,15 @@
                 (compiler_optimize_tests.opt-test-instrs
                   (ir.CompilerIrInstr.Phi
                     4
-                    (ir.compiler-ir-phi-input-cons
+                    (ir.compiler-ir-phi-input-seq-prepend
                       (if computed-arm?
                         (ir.CompilerIrValue.Var 3)
                         (ir.CompilerIrValue.Var 1))
                       (ir.compiler-ir-label "then")
-                      (ir.compiler-ir-phi-input-cons
+                      (ir.compiler-ir-phi-input-seq-prepend
                         (ir.CompilerIrValue.Var 1)
                         (ir.compiler-ir-label "else")
-                        (ir.CompilerIrPhiInputList.Nil)))
+                        (ir.compiler-ir-phi-input-seq-empty)))
                     (ast.AstType.I64))
                   (ir.CompilerIrInstr.BinOp
                     6

@@ -573,12 +573,8 @@
 
 (defstruct CompilerIrPhiInputSeq
   (slots (__tl_dyn-array CompilerIrPhiInput))
+  (start i64)
   (len i64))
-
-(defenum CompilerIrPhiInputList
-  (Nil)
-  (Cons CompilerIrValue i64 (Box CompilerIrPhiInputList))
-  (Array CompilerIrPhiInputSeq))
 
 (defenum CompilerIrSwitchCase
   (Case i64 i64))
@@ -772,7 +768,7 @@
   ;; former without recovering semantics from a label spelling.
   (TotalEnumBranch CompilerIrValue i64 i64)
   (Return CompilerIrMaybeValue)
-  (Phi i64 CompilerIrPhiInputList ast.AstType)
+  (Phi i64 CompilerIrPhiInputSeq ast.AstType)
   ;; Multi-word register groups. A small (<=16 B) inline struct/enum whose fields
   ;; are all word-class can live in N general-purpose registers (N =
   ;; ceil(size/8)). The internal descriptor-pair capability above also uses a
@@ -1181,9 +1177,6 @@
 (defmacro (compiler-ir-spmd-call-arg-list-box-shared-view [value : Expr]) : Expr
   `(compiler-ir-typed-box-shared-view ,value CompilerIrSpmdCallArgList))
 
-(defmacro (compiler-ir-phi-input-list-box-shared-view [value : Expr]) : Expr
-  `(compiler-ir-typed-box-shared-view ,value CompilerIrPhiInputList))
-
 (defmacro (compiler-ir-switch-case-list-box-shared-view [value : Expr]) : Expr
   `(compiler-ir-typed-box-shared-view ,value CompilerIrSwitchCaseList))
 
@@ -1256,117 +1249,37 @@
 (define (compiler-ir-value-seq-ref [values : CompilerIrValueSeq] [index : i64]) : CompilerIrValue
   (compiler-ir-array-shared-view values.slots index))
 
-(define (compiler-ir-phi-input-cons-linked
-  [value : CompilerIrValue]
-  [label : i64]
-  [rest : CompilerIrPhiInputList]) : CompilerIrPhiInputList
-  (CompilerIrPhiInputList.Cons value label (box rest)))
+(define (compiler-ir-phi-input-seq-empty) : CompilerIrPhiInputSeq
+  (CompilerIrPhiInputSeq (__tl_make-array CompilerIrPhiInput 0) 0 0))
 
-(define (compiler-ir-phi-input-cons
+(define (compiler-ir-phi-input-seq-prepend
   [value : CompilerIrValue]
   [label : i64]
-  [rest : CompilerIrPhiInputList]) : CompilerIrPhiInputList
+  [rest : CompilerIrPhiInputSeq]) : CompilerIrPhiInputSeq
   (let
-    [count : i64
-      (+
-        1
-        (compiler-ir-phi-input-list-count (compiler-ir-global-shared-view rest)))]
+    [count : i64 (+ rest.len 1)]
     [slots : (__tl_dyn-array CompilerIrPhiInput)
       (__tl_make-array CompilerIrPhiInput count)]
+    [index : i64 0]
     (begin
       (set! (array-ref slots 0) (CompilerIrPhiInput value label))
-      (compiler-ir-phi-input-list-fill-array
-        (compiler-ir-global-shared-view rest)
-        (compiler-ir-global-shared-view slots)
-        1)
-      (CompilerIrPhiInputList.Array (CompilerIrPhiInputSeq slots count)))))
+      (while (< index rest.len)
+        (begin
+          (set!
+            (array-ref slots (+ index 1))
+            (compiler-ir-phi-input-seq-ref
+              (compiler-ir-global-shared-view rest)
+              index))
+          (set! index (+ index 1))))
+      (CompilerIrPhiInputSeq slots 0 count))))
 
-(define (compiler-ir-phi-input-list-count [inputs : CompilerIrPhiInputList]) : i64
-  (match (compiler-ir-global-shared-view inputs)
-    [(CompilerIrPhiInputList.Nil) 0]
-    [(CompilerIrPhiInputList.Cons _ _ rest)
-      (+
-        1
-        (compiler-ir-phi-input-list-count
-          (compiler-ir-phi-input-list-box-shared-view rest)))]
-    [(CompilerIrPhiInputList.Array seq) seq.len]))
+(define (compiler-ir-phi-input-seq-count [inputs : CompilerIrPhiInputSeq]) : i64
+  inputs.len)
 
-(define (compiler-ir-phi-input-list-fill-array
-  [inputs : CompilerIrPhiInputList]
-  [slots : (__tl_dyn-array CompilerIrPhiInput)]
-  [index : i64]) : unit
-  (match (compiler-ir-global-shared-view inputs)
-    [(CompilerIrPhiInputList.Nil) unit]
-    [(CompilerIrPhiInputList.Cons value label rest)
-      (begin
-        (set! (array-ref slots index) (CompilerIrPhiInput value label))
-        (compiler-ir-phi-input-list-fill-array
-          (compiler-ir-phi-input-list-box-shared-view rest)
-          slots
-          (+ index 1)))]
-    [(CompilerIrPhiInputList.Array seq)
-      (let
-        [read : i64 0]
-        [count : i64 seq.len]
-        [source : (__tl_dyn-array CompilerIrPhiInput) seq.slots]
-        (while (< read count)
-          (begin
-            (set!
-              (array-ref slots (+ index read))
-              (compiler-ir-array-shared-view source read))
-            (set! read (+ read 1)))))]))
-
-(define (compiler-ir-phi-input-seq-from-list [inputs : CompilerIrPhiInputList]) : CompilerIrPhiInputSeq
-  (let
-    [count : i64
-      (compiler-ir-phi-input-list-count (compiler-ir-global-shared-view inputs))]
-    [slots : (__tl_dyn-array CompilerIrPhiInput)
-      (__tl_make-array CompilerIrPhiInput count)]
-    (begin
-      (compiler-ir-phi-input-list-fill-array
-        (compiler-ir-global-shared-view inputs)
-        (compiler-ir-global-shared-view slots)
-        0)
-      (CompilerIrPhiInputSeq slots count))))
-
-(define (compiler-ir-phi-input-seq-to-list-rev
-  [slots : (__tl_dyn-array CompilerIrPhiInput)]
-  [index : i64]
-  [acc : CompilerIrPhiInputList]) : CompilerIrPhiInputList
-  (let
-    [cursor : i64 index]
-    [out : CompilerIrPhiInputList acc]
-    (begin
-      (while (>= cursor 0)
-        (let
-          [input : CompilerIrPhiInput
-            (compiler-ir-array-shared-view slots cursor)]
-          (begin
-            (set!
-              out
-              (compiler-ir-phi-input-cons-linked input.value input.label out))
-            (set! cursor (- cursor 1)))))
-      out)))
-
-(define (compiler-ir-phi-input-seq-to-list [seq : CompilerIrPhiInputSeq]) : CompilerIrPhiInputList
-  (compiler-ir-phi-input-seq-to-list-rev
-    (compiler-ir-global-shared-view seq.slots)
-    (- seq.len 1)
-    CompilerIrPhiInputList.Nil))
-
-(define (compiler-ir-phi-input-list-force-cons
-  [inputs : CompilerIrPhiInputList]) : CompilerIrPhiInputList
-  (match (compiler-ir-global-shared-view inputs)
-    [(CompilerIrPhiInputList.Array seq) (compiler-ir-phi-input-seq-to-list seq)]
-    [_ (compiler-ir-global-shared-view inputs)]))
-
-(define (compiler-ir-phi-input-list-compact [inputs : CompilerIrPhiInputList]) : CompilerIrPhiInputList
-  (match (compiler-ir-global-shared-view inputs)
-    [(CompilerIrPhiInputList.Array _) (compiler-ir-global-shared-view inputs)]
-    [_
-      (CompilerIrPhiInputList.Array
-        (compiler-ir-phi-input-seq-from-list
-          (compiler-ir-global-shared-view inputs)))]))
+(define (compiler-ir-phi-input-seq-ref
+  [inputs : CompilerIrPhiInputSeq]
+  [index : i64]) : CompilerIrPhiInput
+  (compiler-ir-array-shared-view inputs.slots (+ inputs.start index)))
 
 (define (compiler-ir-switch-case-seq-empty) : CompilerIrSwitchCaseSeq
   (CompilerIrSwitchCaseSeq (__tl_make-array CompilerIrSwitchCase 0) 0))
@@ -1622,7 +1535,7 @@
   (BinOp i64 CompilerIrBinOp CompilerIrValue CompilerIrValue ast.AstType)
   (Jump i64)
   (Branch CompilerIrValue i64 i64)
-  (Phi i64 CompilerIrPhiInputList ast.AstType))
+  (Phi i64 CompilerIrPhiInputSeq ast.AstType))
 
 (define (compiler-ir-instr-scalar-fact [instr : CompilerIrInstr]) : CompilerIrInstrScalarFact
   (match (compiler-ir-global-shared-view instr)
@@ -1908,6 +1821,10 @@
   (slots (__tl_dyn-array CompilerIrValue))
   (len i64))
 
+(defstruct CompilerIrPhiInputBuilder
+  (slots (__tl_dyn-array CompilerIrPhiInput))
+  (len i64))
+
 (defstruct CompilerIrBlockBuilder
   (slots (__tl_dyn-array CompilerIrBlock))
   (len i64))
@@ -2053,6 +1970,83 @@
       (compiler-ir-value-builder-append-seq! (&mut builder) head)
       (compiler-ir-value-builder-append-seq! (&mut builder) tail)
       (compiler-ir-value-builder-to-seq builder))))
+
+(define (compiler-ir-phi-input-builder-with-capacity [capacity : i64]) : CompilerIrPhiInputBuilder
+  (CompilerIrPhiInputBuilder
+    (__tl_make-array CompilerIrPhiInput (compiler-ir-builder-capacity capacity))
+    0))
+
+(define (compiler-ir-phi-input-builder-new) : CompilerIrPhiInputBuilder
+  (compiler-ir-phi-input-builder-with-capacity 4))
+
+(define (compiler-ir-phi-input-builder-copy-range!
+  [dst : (&mut dst (__tl_dyn-array CompilerIrPhiInput))]
+  [src : (& src (__tl_dyn-array CompilerIrPhiInput))]
+  [count : i64]) : unit
+  (let
+    [index : i64 0]
+    (while (< index count)
+      (begin
+        (set! (array-ref dst index) (array-ref src index))
+        (set! index (+ index 1))))))
+
+(define (compiler-ir-phi-input-builder-grow!
+  [builder : (&mut builder CompilerIrPhiInputBuilder)]) : unit
+  (let
+    [old-cap : i64 (array-length builder.slots)]
+    [new-cap : i64
+      (if (< old-cap 1)
+        1
+        (* old-cap 2))]
+    [bigger : (__tl_dyn-array CompilerIrPhiInput)
+      (__tl_make-array CompilerIrPhiInput new-cap)]
+    (begin
+      (compiler-ir-phi-input-builder-copy-range!
+        (&mut bigger)
+        (& builder.slots)
+        builder.len)
+      (set! builder.slots bigger))))
+
+(define (compiler-ir-phi-input-builder-push!
+  [builder : (&mut builder CompilerIrPhiInputBuilder)]
+  [input : CompilerIrPhiInput]) : unit
+  (begin
+    (if (< builder.len (array-length builder.slots))
+      unit
+      (compiler-ir-phi-input-builder-grow! builder))
+    (let
+      [index : i64 builder.len]
+      (begin
+        (set! (array-ref builder.slots index) input)
+        (set! builder.len (+ index 1))))))
+
+(define (compiler-ir-phi-input-builder-append-seq!
+  [builder : (&mut builder CompilerIrPhiInputBuilder)]
+  [inputs : CompilerIrPhiInputSeq]) : unit
+  (let
+    [index : i64 0]
+    (while (< index inputs.len)
+      (begin
+        (compiler-ir-phi-input-builder-push!
+          builder
+          (compiler-ir-phi-input-seq-ref
+            (compiler-ir-global-shared-view inputs)
+            index))
+        (set! index (+ index 1))))))
+
+(define (compiler-ir-phi-input-builder-to-seq
+  [builder : CompilerIrPhiInputBuilder]) : CompilerIrPhiInputSeq
+  (if (= builder.len (array-length builder.slots))
+    (CompilerIrPhiInputSeq builder.slots 0 builder.len)
+    (let
+      [slots : (__tl_dyn-array CompilerIrPhiInput)
+        (__tl_make-array CompilerIrPhiInput builder.len)]
+      (begin
+        (compiler-ir-phi-input-builder-copy-range!
+          (&mut slots)
+          (& builder.slots)
+          builder.len)
+        (CompilerIrPhiInputSeq slots 0 builder.len)))))
 
 (define (compiler-ir-instr-builder-with-capacity [capacity : i64]) : CompilerIrInstrBuilder
   (let
@@ -2771,49 +2765,47 @@
         count)
       (CompilerIrCAbiReturnSlotSeq dst count))))
 
-(define (compiler-ir-clone-phi-input-list-acc
-  [inputs : CompilerIrPhiInputList]
-  [acc : CompilerIrPhiInputList]) : CompilerIrPhiInputList
-  (match (compiler-ir-phi-input-list-force-cons
-    (compiler-ir-global-shared-view inputs))
-    [(CompilerIrPhiInputList.Nil) acc]
-    [(CompilerIrPhiInputList.Array seq)
-      (compiler-ir-clone-phi-input-list-acc
-        (compiler-ir-phi-input-seq-to-list seq)
-        acc)]
-    [(CompilerIrPhiInputList.Cons value label rest)
-      (compiler-ir-clone-phi-input-list-acc
-        (compiler-ir-phi-input-list-box-shared-view rest)
-        (compiler-ir-phi-input-cons
-          (compiler-ir-clone-value value)
-          (clone label)
-          acc))]))
+(define (compiler-ir-clone-phi-input-seq [inputs : CompilerIrPhiInputSeq]) : CompilerIrPhiInputSeq
+  (let
+    [builder : CompilerIrPhiInputBuilder
+      (compiler-ir-phi-input-builder-with-capacity inputs.len)]
+    [index : i64 0]
+    (begin
+      (while (< index inputs.len)
+        (let
+          [input : CompilerIrPhiInput
+            (compiler-ir-phi-input-seq-ref
+              (compiler-ir-global-shared-view inputs)
+              index)]
+          (begin
+            (compiler-ir-phi-input-builder-push!
+              (&mut builder)
+              (CompilerIrPhiInput
+                (compiler-ir-clone-value input.value)
+                (clone input.label)))
+            (set! index (+ index 1)))))
+      (compiler-ir-phi-input-builder-to-seq builder))))
 
-(define (compiler-ir-phi-input-list-reverse-onto-acc
-  [inputs : CompilerIrPhiInputList]
-  [acc : CompilerIrPhiInputList]) : CompilerIrPhiInputList
-  (match (compiler-ir-phi-input-list-force-cons
-    (compiler-ir-global-shared-view inputs))
-    [(CompilerIrPhiInputList.Nil) acc]
-    [(CompilerIrPhiInputList.Array seq)
-      (compiler-ir-phi-input-list-reverse-onto-acc
-        (compiler-ir-phi-input-seq-to-list seq)
-        acc)]
-    [(CompilerIrPhiInputList.Cons value label rest)
-      (compiler-ir-phi-input-list-reverse-onto-acc
-        (compiler-ir-phi-input-list-box-shared-view rest)
-        (compiler-ir-phi-input-cons value label acc))]))
-
-(define (compiler-ir-phi-input-list-reverse-onto
-  [inputs : CompilerIrPhiInputList]
-  [acc : CompilerIrPhiInputList]) : CompilerIrPhiInputList
-  (compiler-ir-phi-input-list-compact
-    (compiler-ir-phi-input-list-reverse-onto-acc inputs acc)))
-
-(define (compiler-ir-clone-phi-input-list [inputs : CompilerIrPhiInputList]) : CompilerIrPhiInputList
-  (compiler-ir-phi-input-list-reverse-onto
-    (compiler-ir-clone-phi-input-list-acc inputs CompilerIrPhiInputList.Nil)
-    CompilerIrPhiInputList.Nil))
+(define (compiler-ir-phi-input-seq-reverse-onto
+  [inputs : CompilerIrPhiInputSeq]
+  [acc : CompilerIrPhiInputSeq]) : CompilerIrPhiInputSeq
+  (let
+    [builder : CompilerIrPhiInputBuilder
+      (compiler-ir-phi-input-builder-with-capacity (+ inputs.len acc.len))]
+    [index : i64 (- inputs.len 1)]
+    (begin
+      (while (>= index 0)
+        (begin
+          (compiler-ir-phi-input-builder-push!
+            (&mut builder)
+            (compiler-ir-phi-input-seq-ref
+              (compiler-ir-global-shared-view inputs)
+              index))
+          (set! index (- index 1))))
+      (compiler-ir-phi-input-builder-append-seq!
+        (&mut builder)
+        (compiler-ir-global-shared-view acc))
+      (compiler-ir-phi-input-builder-to-seq builder))))
 
 (define (compiler-ir-clone-switch-case [case : CompilerIrSwitchCase]) : CompilerIrSwitchCase
   (match case
@@ -3316,7 +3308,7 @@
     [(CompilerIrInstr.Phi dst inputs ty)
       (CompilerIrInstr.Phi
         dst
-        (compiler-ir-clone-phi-input-list inputs)
+        (compiler-ir-clone-phi-input-seq inputs)
         (compiler-ir-clone-type (compiler-ir-global-shared-view pools) ty))]
     [(CompilerIrInstr.Pack dst words ty)
       (CompilerIrInstr.Pack
@@ -4162,28 +4154,31 @@
     [(CompilerIrMaybeValue.No) ""]
     [(CompilerIrMaybeValue.Some inner) (compiler-ir-value-render inner)]))
 
-(define (compiler-ir-phi-input-list-render [inputs : CompilerIrPhiInputList]) : String
-  (match (compiler-ir-phi-input-list-force-cons
-    (compiler-ir-global-shared-view inputs))
-    [(CompilerIrPhiInputList.Nil) ""]
-    [(CompilerIrPhiInputList.Array seq)
-      (compiler-ir-phi-input-list-render
-        (compiler-ir-phi-input-seq-to-list seq))]
-    [(CompilerIrPhiInputList.Cons value label rest)
+(define (compiler-ir-phi-input-seq-render-from
+  [inputs : CompilerIrPhiInputSeq]
+  [index : i64]) : String
+  (if (>= index inputs.len)
+    ""
+    (let
+      [input : CompilerIrPhiInput
+        (compiler-ir-phi-input-seq-ref
+          (compiler-ir-global-shared-view inputs)
+          index)]
       (str_cat.str-cat
+        (if (= index 0)
+          ""
+          ", ")
         "["
-        (compiler-ir-value-render value)
+        (compiler-ir-value-render input.value)
         ", "
-        (compiler-ir-label-text label)
+        (compiler-ir-label-text input.label)
         "]"
-        (match (compiler-ir-phi-input-list-force-cons
-          (compiler-ir-phi-input-list-box-shared-view rest))
-          [(CompilerIrPhiInputList.Nil) ""]
-          [_
-            (str_cat.str-cat
-              ", "
-              (compiler-ir-phi-input-list-render
-                (compiler-ir-phi-input-list-box-shared-view rest)))]))]))
+        (compiler-ir-phi-input-seq-render-from
+          (compiler-ir-global-shared-view inputs)
+          (+ index 1))))))
+
+(define (compiler-ir-phi-input-seq-render [inputs : CompilerIrPhiInputSeq]) : String
+  (compiler-ir-phi-input-seq-render-from inputs 0))
 
 (define (compiler-ir-c-abi-return-slot-seq-render-from
   [structural-session : cis.InternStructuralSessionHandle]
@@ -4754,7 +4749,7 @@
       (str_cat.str-cat
         (compiler-ir-dst-render dst)
         "phi "
-        (compiler-ir-phi-input-list-render inputs)
+        (compiler-ir-phi-input-seq-render inputs)
         " : "
         (compiler-ir-type-render structural-session type-segment-bases ty))]
     [(CompilerIrInstr.Pack dst values ty)
@@ -5335,18 +5330,24 @@
   (slots (__tl_dyn-array CompilerSourceSpansEntry))
   (len i64))
 
-;; Instruction spans are keyed by typed ids instead of rendered strings: a
-;; value entry is (function symbol id, destination var id) and a store entry
-;; is (function symbol id, stored-name symbol id). Building and comparing
-;; these keys costs a couple of integer moves where the string keys cost an
-;; int->string, three appends, an allocation, and byte-wise equality per
-;; probed entry. Refs #5142.
+;; Instruction spans are keyed by typed function symbols instead of rendered
+;; strings: a value entry is (function symbol id, function-local destination
+;; var id), and a store entry is (function symbol id, function-local stored
+;; name id). Bounds success labels are likewise function-local. The wrapper
+;; keeps the function identity out of the raw structural/sentinel lane while
+;; preserving the three-word enum layout. Building and comparing these keys
+;; costs a couple of integer moves where the string keys cost an int->string,
+;; three appends, an allocation, and byte-wise equality per probed entry.
+;; Refs #5142 and #5139.
 (defenum CompilerSourceSpansInstrKey
-  (Value i64 i64)
-  (Store i64 i64)
+  (Value CompilerIrSymbolId i64)
+  (Store CompilerIrSymbolId i64)
   ;; Bounds checks have no destination value; their fresh success label is
   ;; unique within the function and remains stable through optimization.
-  (Bounds i64 i64))
+  (Bounds CompilerIrSymbolId i64))
+
+(define (compiler-source-spans-instr-key-size) : i64
+  (comptime (size-of (type CompilerSourceSpansInstrKey))))
 
 (defenum CompilerSourceSpansInstrEntry
   (Entry CompilerSourceSpansInstrKey i64 ast.AstSourceSpan))
@@ -5451,17 +5452,23 @@
     [(CompilerSourceSpansInstrKey.Value left-function left-var)
       (match right
         [(CompilerSourceSpansInstrKey.Value right-function right-var)
-          (and (= left-var right-var) (= left-function right-function))]
+          (and
+            (= left-var right-var)
+            (compiler-ir-symbol-id-eq? left-function right-function))]
         [_ false])]
     [(CompilerSourceSpansInstrKey.Store left-function left-name)
       (match right
         [(CompilerSourceSpansInstrKey.Store right-function right-name)
-          (and (= left-name right-name) (= left-function right-function))]
+          (and
+            (= left-name right-name)
+            (compiler-ir-symbol-id-eq? left-function right-function))]
         [_ false])]
     [(CompilerSourceSpansInstrKey.Bounds left-function left-label)
       (match right
         [(CompilerSourceSpansInstrKey.Bounds right-function right-label)
-          (and (= left-label right-label) (= left-function right-function))]
+          (and
+            (= left-label right-label)
+            (compiler-ir-symbol-id-eq? left-function right-function))]
         [_ false])]))
 
 (define (compiler-source-spans-instr-entry-list-copy-array-range!
@@ -5705,14 +5712,14 @@
 
 (define (compiler-source-spans-insert-instr
   [spans : CompilerSourceSpans]
-  [function : i64]
+  [function : CompilerIrSymbolId]
   [instr : CompilerIrInstr]
   [span : ast.AstSourceSpan]) : CompilerSourceSpans
   (compiler-source-spans-insert-instr-unlocated spans function instr span))
 
 (define (compiler-source-spans-insert-instr-unlocated
   [spans : CompilerSourceSpans]
-  [function : i64]
+  [function : CompilerIrSymbolId]
   [instr : CompilerIrInstr]
   [span : ast.AstSourceSpan]) : CompilerSourceSpans
   (match (compiler-ir-global-shared-view instr)
@@ -5938,7 +5945,7 @@
 
 (define (compiler-source-spans-insert-instr-located
   [spans : CompilerSourceSpans]
-  [function : i64]
+  [function : CompilerIrSymbolId]
   [instr : CompilerIrInstr]
   [path-id : i64]
   [span : ast.AstSourceSpan]) : CompilerSourceSpans
@@ -6035,7 +6042,7 @@
 
 (define (compiler-source-spans-lookup-bounds-with-fuel
   [instr-entries : CompilerSourceSpansInstrEntryList]
-  [function : i64]
+  [function : CompilerIrSymbolId]
   [ok-label : i64]
   [fuel : i64]) : CompilerMaybeSourceLocation
   (match (compiler-source-spans-instr-entry-list-lookup
@@ -6070,7 +6077,7 @@
 
 (define (compiler-source-spans-lookup-bounds
   [instr-entries : CompilerSourceSpansInstrEntryList]
-  [function : i64]
+  [function : CompilerIrSymbolId]
   [ok-label : i64]) : CompilerMaybeSourceLocation
   ;; An empty table can never answer, and the abort-site probe runs on every
   ;; bounds check of a self-build whose instruction spans were dropped
@@ -6086,7 +6093,7 @@
 
 (define (compiler-source-spans-lookup-instr-location
   [spans : CompilerSourceSpans]
-  [function : i64]
+  [function : CompilerIrSymbolId]
   [instr : CompilerIrInstr]) : CompilerMaybeSourceLocation
   (match spans
     [(CompilerSourceSpans.Spans _ instr-entries _)
@@ -6275,7 +6282,7 @@
 
 (define (compiler-source-spans-lookup-instr
   [spans : CompilerSourceSpans]
-  [function : i64]
+  [function : CompilerIrSymbolId]
   [instr : CompilerIrInstr]) : CompilerMaybeSourceSpan
   (compiler-maybe-source-location-span
     (compiler-source-spans-lookup-instr-location spans function instr)))
@@ -6451,7 +6458,7 @@
 
 (define (compiler-ir-instr-phi-input-count [instr : CompilerIrInstr]) : i64
   (match (compiler-ir-global-shared-view instr)
-    [(CompilerIrInstr.Phi _ inputs _) (compiler-ir-phi-input-list-count inputs)]
+    [(CompilerIrInstr.Phi _ inputs _) (compiler-ir-phi-input-seq-count inputs)]
     [_ 0]))
 
 (define (compiler-ir-instr-seq-call-arg-count-from
@@ -7477,10 +7484,10 @@
     (compiler-ir-effect-is?
       (CompilerIrInstr.Phi
         6
-        (compiler-ir-phi-input-cons
+        (compiler-ir-phi-input-seq-prepend
           (CompilerIrValue.I64 1)
           (compiler-ir-label "entry")
-          (CompilerIrPhiInputList.Nil))
+          (compiler-ir-phi-input-seq-empty))
         (ast.AstType.I64))
       CompilerIrEffect.Pure)
     (compiler-ir-effect-is?
@@ -8959,16 +8966,27 @@
         span2)]
     [instr : CompilerIrInstr
       (CompilerIrInstr.Mov 9 (CompilerIrValue.I64 1) (ast.AstType.I64))]
+    [instr-function : CompilerIrSymbolId one]
     [instr-spans : CompilerSourceSpans
       (compiler-source-spans-insert-instr
         (compiler-source-spans-insert-instr
           (compiler-source-spans-empty)
-          7
+          instr-function
           (compiler-ir-global-shared-view instr)
           span1)
-        7
+        instr-function
         (compiler-ir-global-shared-view instr)
         span3)]
+    [provenance-instr-spans : CompilerSourceSpans
+      (compiler-source-spans-insert-instr
+        (compiler-source-spans-insert-instr
+          (compiler-source-spans-empty)
+          source-provenance
+          (compiler-ir-global-shared-view instr)
+          span1)
+        generated-provenance
+        (compiler-ir-global-shared-view instr)
+        span2)]
     [grown-entries : CompilerSourceSpansEntryList
       (compiler-source-spans-entry-list-empty)]
     [grown-instr-spans : CompilerSourceSpans (compiler-source-spans-empty)]
@@ -8990,7 +9008,7 @@
             grown-instr-spans
             (compiler-source-spans-insert-instr
               grown-instr-spans
-              7
+              instr-function
               (compiler-ir-global-shared-view instr)
               (if (= i 5)
                 span3
@@ -9053,7 +9071,7 @@
           [(CompilerMaybeSourceSpan.No) false])
         (match (compiler-source-spans-lookup-instr
           instr-spans
-          7
+          instr-function
           (compiler-ir-global-shared-view instr))
           [(CompilerMaybeSourceSpan.Some found)
             (and
@@ -9062,12 +9080,26 @@
           [(CompilerMaybeSourceSpan.No) false])
         (match (compiler-source-spans-lookup-instr
           grown-instr-spans
-          7
+          instr-function
           (compiler-ir-global-shared-view instr))
           [(CompilerMaybeSourceSpan.Some found)
             (and
               (= (ast.ast-source-span-start-line found) 7)
               (= (ast.ast-source-span-end-col found) 12))]
+          [(CompilerMaybeSourceSpan.No) false])
+        (match (compiler-source-spans-lookup-instr
+          (compiler-ir-global-shared-view provenance-instr-spans)
+          source-provenance
+          (compiler-ir-global-shared-view instr))
+          [(CompilerMaybeSourceSpan.Some found)
+            (= (ast.ast-source-span-start-line found) 1)]
+          [(CompilerMaybeSourceSpan.No) false])
+        (match (compiler-source-spans-lookup-instr
+          provenance-instr-spans
+          generated-provenance
+          (compiler-ir-global-shared-view instr))
+          [(CompilerMaybeSourceSpan.Some found)
+            (= (ast.ast-source-span-start-line found) 4)]
           [(CompilerMaybeSourceSpan.No) false])))))
 
 (define (compiler-ir-instr-seq-mov-dst?
@@ -9635,7 +9667,9 @@
     false
     (let
       [input : CompilerIrPhiInput
-        (compiler-ir-array-shared-view seq.slots index)]
+        (compiler-ir-phi-input-seq-ref
+          (compiler-ir-global-shared-view seq)
+          index)]
       (and
         (string.eq (compiler-ir-label-text input.label) want-label)
         (match input.value
@@ -9644,59 +9678,59 @@
 
 (define (compiler-ir-phi-input-dense-order-ok?) : bool
   (let
-    [inputs : CompilerIrPhiInputList
-      (compiler-ir-phi-input-list-compact
-        (compiler-ir-phi-input-cons
-          (CompilerIrValue.Var 10)
-          (compiler-ir-label "entry")
-          (compiler-ir-phi-input-cons
-            (CompilerIrValue.Var 20)
-            (compiler-ir-label "loop")
-            CompilerIrPhiInputList.Nil)))]
-    [cloned : CompilerIrPhiInputList
-      (compiler-ir-clone-phi-input-list (compiler-ir-global-shared-view inputs))]
-    [reversed : CompilerIrPhiInputList
-      (compiler-ir-phi-input-list-reverse-onto
+    [inputs : CompilerIrPhiInputSeq
+      (compiler-ir-phi-input-seq-prepend
+        (CompilerIrValue.Var 10)
+        (compiler-ir-label "entry")
+        (compiler-ir-phi-input-seq-prepend
+          (CompilerIrValue.Var 20)
+          (compiler-ir-label "loop")
+          (compiler-ir-phi-input-seq-empty)))]
+    [cloned : CompilerIrPhiInputSeq
+      (compiler-ir-clone-phi-input-seq (compiler-ir-global-shared-view inputs))]
+    [tail : CompilerIrPhiInputSeq
+      (let
+        [phi-inputs-at-9678-7 : CompilerIrPhiInputSeq
+          (compiler-ir-global-shared-view inputs)]
+        (if (<= phi-inputs-at-9678-7.len 0)
+          (compiler-ir-phi-input-seq-empty)
+          (let
+            [rest : CompilerIrPhiInputSeq
+              (CompilerIrPhiInputSeq
+                (compiler-ir-global-shared-view phi-inputs-at-9678-7.slots)
+                (+ phi-inputs-at-9678-7.start 1)
+                (- phi-inputs-at-9678-7.len 1))]
+            rest)))]
+    [reversed : CompilerIrPhiInputSeq
+      (compiler-ir-phi-input-seq-reverse-onto
         (compiler-ir-global-shared-view inputs)
-        CompilerIrPhiInputList.Nil)]
+        (compiler-ir-phi-input-seq-empty))]
     (and
       (=
-        (compiler-ir-phi-input-list-count
+        (compiler-ir-phi-input-seq-count
           (compiler-ir-global-shared-view inputs))
         2)
-      (match (compiler-ir-global-shared-view inputs)
-        [(CompilerIrPhiInputList.Array seq)
-          (and
-            (= seq.len 2)
-            (compiler-ir-phi-input-seq-entry-var-label?
-              (compiler-ir-global-shared-view seq)
-              0
-              10
-              "entry")
-            (compiler-ir-phi-input-seq-entry-var-label? seq 1 20 "loop"))]
-        [_ false])
-      (match cloned
-        [(CompilerIrPhiInputList.Array seq)
-          (and
-            (= seq.len 2)
-            (compiler-ir-phi-input-seq-entry-var-label?
-              (compiler-ir-global-shared-view seq)
-              0
-              10
-              "entry")
-            (compiler-ir-phi-input-seq-entry-var-label? seq 1 20 "loop"))]
-        [_ false])
-      (match reversed
-        [(CompilerIrPhiInputList.Array seq)
-          (and
-            (= seq.len 2)
-            (compiler-ir-phi-input-seq-entry-var-label?
-              (compiler-ir-global-shared-view seq)
-              0
-              20
-              "loop")
-            (compiler-ir-phi-input-seq-entry-var-label? seq 1 10 "entry"))]
-        [_ false]))))
+      (compiler-ir-phi-input-seq-entry-var-label?
+        (compiler-ir-global-shared-view inputs)
+        0
+        10
+        "entry")
+      (compiler-ir-phi-input-seq-entry-var-label?
+        (compiler-ir-global-shared-view inputs)
+        1
+        20
+        "loop")
+      (compiler-ir-phi-input-seq-entry-var-label? cloned 0 10 "entry")
+      (=
+        (compiler-ir-phi-input-seq-count (compiler-ir-global-shared-view tail))
+        1)
+      (compiler-ir-phi-input-seq-entry-var-label? tail 0 20 "loop")
+      (compiler-ir-phi-input-seq-entry-var-label?
+        (compiler-ir-global-shared-view reversed)
+        0
+        20
+        "loop")
+      (compiler-ir-phi-input-seq-entry-var-label? reversed 1 10 "entry"))))
 
 (define (compiler-ir-switch-case-seq-entry-tag-label?
   [seq : CompilerIrSwitchCaseSeq]

@@ -12566,7 +12566,7 @@
       (tc_core.macro-generated-decls-memo-reset! macro-state)
       (tc_core.macro-generated-module-memo-reset! macro-state)
       (tc_core.tc-macro-helper-env-cache-reset! macro-state)
-      (tc_core.tc-nominal-owner-cache-reset!)
+      (tc_core.tc-nominal-owner-cache-reset-for-job! job-state)
       (tc_core.macro-alias-derived-cache-reset-for-state! macro-state)
       (tc_core.tc-job-state-reset-file-state! job-state)
       (ctfe.ctfe-module-macro-export-reset-for-state!
@@ -18297,7 +18297,8 @@
               [(ir.CompilerMaybeSourceSpan.Some span)
                 (ir.compiler-source-spans-insert-instr-located
                   (lower-boxed-box-field-shared-view data spans)
-                  (lower-box-field-shared-view data function)
+                  (ir.compiler-ir-symbol-typed-id
+                    (lower-box-field-shared-view data function))
                   (lower-global-shared-view instr)
                   (lower-state-current-source-path-id
                     (lower-global-shared-view state))
@@ -18346,7 +18347,8 @@
                 [next-spans : ir.CompilerSourceSpans
                   (ir.compiler-source-spans-insert-instr-located
                     (lower-boxed-box-field-shared-view data spans)
-                    (lower-box-field-shared-view data function)
+                    (ir.compiler-ir-symbol-typed-id
+                      (lower-box-field-shared-view data function))
                     (ir.CompilerIrInstr.BoundsCheck
                       ir.CompilerIrValue.Unit
                       ir.CompilerIrValue.Unit
@@ -38769,10 +38771,12 @@
 (define (lower-internal-aggregate-key
   [ctx : tc_core.TcContext]
   [ty : ast.AstType]) : String
-  (ctfe.ctfe-type-key-with-reflections-and-pools
-    (tc_core.tc-context-pools (lower-global-shared-view ctx))
-    (ctfe.ctfe-reflect-info-list-empty)
-    (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))))
+  (let
+    [empty-infos : ctfe.CtfeReflectInfoList (ctfe.ctfe-reflect-info-list-empty)]
+    (ctfe.ctfe-type-key-with-reflections-and-pools
+      (tc_core.tc-context-pools (lower-global-shared-view ctx))
+      empty-infos
+      (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty)))))
 
 (define (lower-internal-group-mask-from-slots [slots : LowerCAbiSlotList]) : i64
   (if (= (lower-c-abi-slot-list-count (lower-global-shared-view slots)) 2)
@@ -49509,13 +49513,13 @@
               allocated
               (ir.CompilerIrInstr.Phi
                 var-id
-                (ir.compiler-ir-phi-input-cons
+                (ir.compiler-ir-phi-input-seq-prepend
                   then-value
                   then-end-label
-                  (ir.compiler-ir-phi-input-cons
+                  (ir.compiler-ir-phi-input-seq-prepend
                     else-value
                     else-end-label
-                    ir.CompilerIrPhiInputList.Nil))
+                    (ir.compiler-ir-phi-input-seq-empty)))
                 expr-ir-ty))
             (ir.CompilerIrValue.Var var-id)
             expr-ty))])))
@@ -69442,7 +69446,7 @@
                               arms
                               merge-label
                               expr-ty
-                              ir.CompilerIrPhiInputList.Nil)]))]
+                              (ir.compiler-ir-phi-input-seq-empty))]))]
                     [(ast.AstType.VarArgs _ _)
                       (lower-match-enum
                         ctx
@@ -69467,7 +69471,7 @@
                         arms
                         merge-label
                         expr-ty
-                        ir.CompilerIrPhiInputList.Nil)])])])])]
+                        (ir.compiler-ir-phi-input-seq-empty))])])])])]
     [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))
 
 (define (lower-match-borrowed-enum
@@ -69667,7 +69671,7 @@
                   merge-label
                   expr-ty
                   borrow-lifetime
-                  ir.CompilerIrPhiInputList.Nil
+                  (ir.compiler-ir-phi-input-seq-empty)
                   true
                   false)]
               [_
@@ -69686,7 +69690,7 @@
           merge-label
           expr-ty
           borrow-lifetime
-          ir.CompilerIrPhiInputList.Nil
+          (ir.compiler-ir-phi-input-seq-empty)
           false
           false))
       (match (lower-load-at-offset
@@ -69709,7 +69713,7 @@
                 merge-label
                 expr-ty
                 borrow-lifetime
-                ir.CompilerIrPhiInputList.Nil
+                (ir.compiler-ir-phi-input-seq-empty)
                 false
                 false)]
             [_
@@ -70901,7 +70905,7 @@
   [arms : ast.AstMatchArmList]
   [merge-label : i64]
   [expr-ty : ast.AstType]
-  [phi-inputs : ir.CompilerIrPhiInputList]) : ResultLowerExpr
+  [phi-inputs : ir.CompilerIrPhiInputSeq]) : ResultLowerExpr
   (if (ast.ast-match-arm-list-empty? (& arms))
     (ResultLowerExpr.Err (box (lower-diagnostic "lower: match with no arms")))
     (let
@@ -71043,7 +71047,7 @@
   [merge-label : i64]
   [expr-ty : ast.AstType]
   [borrow-lifetime : tc_core.TcMaybeNameId]
-  [phi-inputs : ir.CompilerIrPhiInputList]
+  [phi-inputs : ir.CompilerIrPhiInputSeq]
   [scrut-reg-group? : bool]) : ResultLowerExpr
   (match pat
     [(ast.AstPattern.Wildcard)
@@ -71111,7 +71115,7 @@
   [merge-label : i64]
   [expr-ty : ast.AstType]
   [borrow-lifetime : tc_core.TcMaybeNameId]
-  [phi-inputs : ir.CompilerIrPhiInputList]
+  [phi-inputs : ir.CompilerIrPhiInputSeq]
   [scrut-reg-group? : bool]
   [total-enum-switch? : bool]) : ResultLowerExpr
   (match pat
@@ -71183,7 +71187,7 @@
   [merge-label : i64]
   [expr-ty : ast.AstType]
   [borrow-lifetime : tc_core.TcMaybeNameId]
-  [phi-inputs : ir.CompilerIrPhiInputList]
+  [phi-inputs : ir.CompilerIrPhiInputSeq]
   [scrut-reg-group? : bool]
   [total-enum-switch? : bool]) : ResultLowerExpr
   (if (ast.ast-match-arm-list-empty? (& arms))
@@ -71245,7 +71249,7 @@
   [merge-label : i64]
   [expr-ty : ast.AstType]
   [borrow-lifetime : tc_core.TcMaybeNameId]
-  [phi-inputs : ir.CompilerIrPhiInputList]
+  [phi-inputs : ir.CompilerIrPhiInputSeq]
   [scrut-reg-group? : bool]) : ResultLowerExpr
   (match (lower-global-shared-view ctx)
     [(tc_core.TcContext _ symbols registries _ _ _ _ _ _)
@@ -71337,7 +71341,7 @@
                                       (ir.CompilerIrInstr.Jump merge-label))
                                     merge-label
                                     expr-ty
-                                    (ir.compiler-ir-phi-input-cons
+                                    (ir.compiler-ir-phi-input-seq-prepend
                                       body-value
                                       body-end-label
                                       phi-inputs))))])]
@@ -71369,7 +71373,7 @@
   [merge-label : i64]
   [expr-ty : ast.AstType]
   [borrow-lifetime : tc_core.TcMaybeNameId]
-  [phi-inputs : ir.CompilerIrPhiInputList]
+  [phi-inputs : ir.CompilerIrPhiInputSeq]
   [scrut-reg-group? : bool]
   [total-enum-switch? : bool]) : ResultLowerExpr
   (match (lower-bind-match-variant-payloads
@@ -71427,7 +71431,7 @@
                   borrow-lifetime
                   (if (tc_core.tc-never-type? body-ty)
                     phi-inputs
-                    (ir.compiler-ir-phi-input-cons
+                    (ir.compiler-ir-phi-input-seq-prepend
                       body-value
                       body-end-label
                       phi-inputs))
@@ -71497,7 +71501,7 @@
   [merge-label : i64]
   [expr-ty : ast.AstType]
   [borrow-lifetime : tc_core.TcMaybeNameId]
-  [phi-inputs : ir.CompilerIrPhiInputList]
+  [phi-inputs : ir.CompilerIrPhiInputSeq]
   [scrut-reg-group? : bool]
   [total-enum-switch? : bool]) : ResultLowerExpr
   (match (lower-global-shared-view ctx)
@@ -71609,7 +71613,7 @@
   [rest : ast.AstMatchArmList]
   [merge-label : i64]
   [expr-ty : ast.AstType]
-  [phi-inputs : ir.CompilerIrPhiInputList]) : ResultLowerExpr
+  [phi-inputs : ir.CompilerIrPhiInputSeq]) : ResultLowerExpr
   (match (lower-state-alloc-var state)
     [(LowerAlloc.Alloc eq-alloc eq-var)
       (let
@@ -71673,7 +71677,7 @@
                               expr-ty
                               (if (tc_core.tc-never-type? body-ty)
                                 phi-inputs
-                                (ir.compiler-ir-phi-input-cons
+                                (ir.compiler-ir-phi-input-seq-prepend
                                   body-value
                                   body-end-label
                                   phi-inputs))))])]
@@ -71690,7 +71694,7 @@
   [arm : ast.AstMatchArm]
   [merge-label : i64]
   [expr-ty : ast.AstType]
-  [phi-inputs : ir.CompilerIrPhiInputList]) : ResultLowerExpr
+  [phi-inputs : ir.CompilerIrPhiInputSeq]) : ResultLowerExpr
   (match arm
     [(ast.AstMatchArm.Arm pat body-box)
       (let
@@ -71734,31 +71738,33 @@
                             (ir.CompilerIrInstr.Jump merge-label))
                           merge-label
                           expr-ty
-                          (ir.compiler-ir-phi-input-cons
+                          (ir.compiler-ir-phi-input-seq-prepend
                             body-value
                             body-end-label
                             phi-inputs))))])]
               [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])]
           [(ResultLowerEnv.Err message) (ResultLowerExpr.Err message)]))]))
 
-(define (lower-phi-input-list-empty? [phi-inputs : ir.CompilerIrPhiInputList]) : bool
-  (match (ir.compiler-ir-phi-input-list-force-cons phi-inputs)
-    [(ir.CompilerIrPhiInputList.Nil) true]
-    [_ false]))
+(define (lower-phi-input-seq-empty? [phi-inputs : ir.CompilerIrPhiInputSeq]) : bool
+  (let
+    [phi-inputs-at-71745-3 : ir.CompilerIrPhiInputSeq phi-inputs]
+    (if (<= phi-inputs-at-71745-3.len 0)
+      true
+      false)))
 
 (define (lower-match-finish
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [merge-label : i64]
   [expr-ty : ast.AstType]
-  [phi-inputs : ir.CompilerIrPhiInputList]) : ResultLowerExpr
+  [phi-inputs : ir.CompilerIrPhiInputSeq]) : ResultLowerExpr
   (let
     [merge-start : LowerState (lower-state-finish-block state merge-label)]
     [expr-ir-ty : ast.AstType
       (lower-one-word-register-storage-type
         ctx
         (lower-global-shared-view expr-ty))]
-    (if (lower-phi-input-list-empty? (lower-global-shared-view phi-inputs))
+    (if (lower-phi-input-seq-empty? (lower-global-shared-view phi-inputs))
       (ResultLowerExpr.Ok
         (LowerExpr.Expr merge-start ir.CompilerIrValue.Unit (ast.AstType.Never)))
       (match (lower-global-shared-view expr-ty)
@@ -75401,11 +75407,13 @@
   (let
     [enclosing : i64 (arena.tl_arena_current)]
     [scratch : i64 (lower-scratch-arena-get)]
+    [job-state : tc_core.TcJobState
+      (tc_core.tc-context-job-state (lower-global-shared-view ctx))]
     (begin
       ;; Type-name/owner caches may contain keys allocated by earlier
       ;; typecheck or lower scratch scopes. Keep them scoped to this lowering
       ;; pass and invalidate them before rewinding this function's scratch arena.
-      (tc_core.tc-nominal-owner-cache-reset!)
+      (tc_core.tc-nominal-owner-cache-reset-for-job! job-state)
       (unsafe
         (arena.tl_arena_set scratch))
       (let
@@ -75446,7 +75454,7 @@
                       (arena.tl_arena_set scratch)
                       (arena.tl_region_reset mark)
                       (arena.tl_arena_set enclosing))
-                    (tc_core.tc-nominal-owner-cache-reset!)
+                    (tc_core.tc-nominal-owner-cache-reset-for-job! job-state)
                     (ResultLowerFunction.Ok escaped-fns escaped-spans)))))]
           [(ResultLowerFunction.Err message)
             (begin
@@ -75460,7 +75468,7 @@
                     (arena.tl_arena_set scratch)
                     (arena.tl_region_reset mark)
                     (arena.tl_arena_set enclosing))
-                  (tc_core.tc-nominal-owner-cache-reset!)
+                  (tc_core.tc-nominal-owner-cache-reset-for-job! job-state)
                   (ResultLowerFunction.Err escaped-message))))])))))
 
 (define (lower-struct-cleanup-param-id [lower-state : CompilerLowerState]) : i64
@@ -78335,7 +78343,8 @@
     ;; internally consistent layout view for all functions in this pass.
     (tc_core.tc-agg-caches-reset-for-job!
       (tc_core.tc-context-job-state (lower-global-shared-view ctx)))
-    (tc_core.tc-nominal-owner-cache-reset!)
+    (tc_core.tc-nominal-owner-cache-reset-for-job!
+      (tc_core.tc-context-job-state (lower-global-shared-view ctx)))
     (match program
       [(ast.AstProgram.Program decls-box)
         (let
@@ -78407,6 +78416,7 @@
                 false)])]
         (begin
           (tc_core.tc-clone-root-collection-use!
+            (tc_core.tc-serial-job-state)
             (lower-global-shared-view specialized))
           (lower-typecheck-clone-and-lower
             lower-state
@@ -78738,7 +78748,7 @@
                     (ResultCompilerLower.Err (box (lower-diagnostic message))))])))]
         [(tc_core.ResultCompilerTypecheckChecked.Partial diag _ _ _)
           (begin
-            (tc_core.tc-clone-root-collection-abort!)
+            (tc_core.tc-clone-root-collection-abort! job-state)
             (cfg
               (any
                 compiler-surface-producer
@@ -78754,7 +78764,7 @@
               (box (cdiag.compiler-diagnostic-list-first (deref diag)))))]
         [(tc_core.ResultCompilerTypecheckChecked.Err diag)
           (begin
-            (tc_core.tc-clone-root-collection-abort!)
+            (tc_core.tc-clone-root-collection-abort! job-state)
             (cfg
               (any
                 compiler-surface-producer
@@ -78973,7 +78983,9 @@
                         (compiler-lower-profile-start lower-state))
                       ;; Capture stable retained declaration keys before optional
                       ;; pool compaction releases the reach-program AST.
-                      (tc_core.tc-clone-root-collection-use! reach-program)
+                      (tc_core.tc-clone-root-collection-use!
+                        job-state
+                        reach-program)
                       (let
                         [detach-source? : bool
                           (compiler-lower-checked-dest-pools-active?

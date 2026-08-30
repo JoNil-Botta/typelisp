@@ -348,16 +348,40 @@
           (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 32)))]
         [type-a : i64 (ast.ty-node-push (ast.AstType.I64))]
         [type-b : i64 (ast.ty-node-push (ast.AstType.Char))]
+        ;; Var hashes differ by their name ids, so this 131,072 delta collides
+        ;; in the initial power-of-two table after the odd slot multiplier.
+        [type-collision-a : i64 (ast.ty-node-push (ast.AstType.Var 0))]
+        [type-collision-b : i64 (ast.ty-node-push (ast.AstType.Var 131072))]
+        [type-collision-a-again : i64 (ast.ty-node-push (ast.AstType.Var 0))]
         (begin
           (unless (= expr-a 0) (set! ok false))
           (unless (= expr-b 1) (set! ok false))
           (unless (= type-a 0) (set! ok false))
           (unless (= type-b 1) (set! ok false))
+          (unless (= type-collision-a 2) (set! ok false))
+          (unless (= type-collision-b 3) (set! ok false))
+          (unless (= type-collision-a-again type-collision-a) (set! ok false))
+          ;; Force replacement of the installed context's dedup table. The hot
+          ;; raw backing pointer must follow the new descriptor and continue to
+          ;; return the existing ids rather than appending duplicates.
+          (ast.ty-node-dedup-grow!)
+          (unless
+            (= (ast.ty-node-push (ast.AstType.I64)) type-a)
+            (set! ok false))
+          (unless
+            (= (ast.ty-node-push (ast.AstType.Char)) type-b)
+            (set! ok false))
+          (unless
+            (= (ast.ty-node-push (ast.AstType.Var 0)) type-collision-a)
+            (set! ok false))
+          (unless
+            (= (ast.ty-node-push (ast.AstType.Var 131072)) type-collision-b)
+            (set! ok false))
           (unless
             (= (ast.ast-node-pool-context-expr-len pools) 2)
             (set! ok false))
           (unless
-            (= (ast.ast-node-pool-context-type-len pools) 2)
+            (= (ast.ast-node-pool-context-type-len pools) 4)
             (set! ok false))
           (unless
             (compiler-ast-context-expr-int-lit? pools expr-a 31)

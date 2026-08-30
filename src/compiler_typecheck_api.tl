@@ -725,7 +725,7 @@
     [program : ast.AstProgram
       (ast.ast-program (owned_view.compiler-owned-shared-view decls))]
     (begin
-      (tc_core.tc-clone-able-cache-reset!)
+      (tc_core.tc-clone-able-cache-reset-for-job! (tc_core.tc-serial-job-state))
       (tc_core.macro-alias-cache-reset!)
       (match (csym.build-compiler-symbols program)
         [(csym.ResultCompilerSymbols.Ok symbols)

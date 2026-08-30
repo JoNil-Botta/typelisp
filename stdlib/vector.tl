@@ -45,9 +45,11 @@
 ;#
 ;# Consuming traversal uses `into-iterator` / `into-next`. Constructing the
 ;# iterator moves the vector exactly once, and each `IntoNext.Item` owns its
-;# element. An internal live-slot bitmap lets `into-next` extract through
-;# private `__tl_array-take!` without copying or cloning; repeated exhaustion
-;# is stable.
+;# element. Cleanup-owning iterators keep the typed backing arrays and their
+;# live-slot bitmap behind one raw state pointer, so public aggregate projection
+;# cannot form a safe reference to a slot after extraction. Audited generated
+;# helpers null-check that state and extract through private
+;# `__tl_array-take!` without copying or cloning; repeated exhaustion is stable.
 ;# Cleanup-owning element types select an ownership-safe specialization whose
 ;# backing arrays contain only constructed elements. `set!` cleans replacements,
 ;# `push-owned` supports consuming expression-style construction, yielded items
@@ -162,10 +164,37 @@
             (:lifetimes source)
             (Done)
             (Item (&mut source ,T)))
+          ;; Consuming cleanup storage is intentionally reachable only through
+          ;; a raw state pointer. All declared fields are source-visible, so a
+          ;; typed Vec/dynamic-array field here would let safe callers project a
+          ;; slot whose liveness bit `into-next` has cleared. The state cell is
+          ;; arena-backed; its cleanup field makes every wrapper alias converge
+          ;; on the same idempotent liveness map.
+          (defstruct IntoIterState
+            (slots (__tl_dyn-array ,T))
+            (live (__tl_dyn-array bool))
+            (len i64)
+            (index i64))
+          (define (into-iter-state-null? [state-ptr : (MutPtr IntoIterState)]) : bool
+            (=
+              (unsafe
+                (ptr->int state-ptr))
+              (cast 0 : u64)))
+          (define (cleanup-into-iter-state [state-ptr : (MutPtr IntoIterState)]) : unit
+            (if (into-iter-state-null? state-ptr)
+              unit
+              (let
+                [state : IntoIterState
+                  (unsafe
+                    (ptr-read state-ptr))]
+                (begin
+                  (cleanup-slot-state (SlotState state.slots state.live))
+                  (set! state.index state.len)
+                  (unsafe
+                    (ptr-write! state-ptr state))))))
           (defstruct IntoIter
             (:cleanup cleanup-into-iter)
-            (vec Vec (:owned))
-            (index i64))
+            (state (MutPtr IntoIterState) (:cleanup cleanup-into-iter-state)))
           (defenum IntoNext
             (:cleanup cleanup-into-next)
             (Done)
@@ -194,23 +223,59 @@
                   (set! iter.index (+ index 1))
                   (IterMutNext.Item (&mut (array-ref iter.slots index)))))))
           (define (into-iterator [v : Vec]) : IntoIter
-            (IntoIter v 0))
-          (define (into-next [iter : (&mut state IntoIter)]) : IntoNext
             (let
-              [index : i64 iter.index]
-              (if (>= index iter.vec.len)
-                (IntoNext.Done)
-                (let
-                  [taken : (Tuple bool ,T)
-                    (__tl_array-take!
-                      iter.vec.state.slots
-                      iter.vec.state.live
-                      index)]
-                  (begin
-                    (set! iter.index (+ index 1))
-                    (if (tuple-ref taken 0)
-                      (IntoNext.Item (tuple-ref taken 1))
-                      (IntoNext.Done))))))))
+              [state-cell : (__tl_dyn-array IntoIterState)
+                (__tl_make-array IntoIterState 1)]
+              [state-ptr : (MutPtr IntoIterState)
+                (unsafe
+                  (__tl_array-data state-cell))]
+              (begin
+                (unsafe
+                  (ptr-write!
+                    state-ptr
+                    (IntoIterState v.state.slots v.state.live v.len 0)))
+                ;; The raw state cell now owns the live elements. Empty the
+                ;; moved Vec's cleanup map before consuming its shell so it
+                ;; cannot drain the transferred storage.
+                (set! v.state.slots (__tl_make-array ,T 0))
+                (set! v.state.live (__tl_make-array bool 0))
+                (cleanup-vec v)
+                (IntoIter state-ptr))))
+          ;; Logical state for future generated observers such as Debug. The
+          ;; count exposes no T storage; an observer that is generated inside
+          ;; this module must still read the opaque state and check `live`
+          ;; before touching a remaining slot.
+          (define (into-remaining-len [iter : (& iter IntoIter)]) : i64
+            (if (into-iter-state-null? iter.state)
+              0
+              (let
+                [state : IntoIterState
+                  (unsafe
+                    (ptr-read iter.state))]
+                (- state.len state.index))))
+          (define (into-next [iter : (&mut state IntoIter)]) : IntoNext
+            (if (into-iter-state-null? iter.state)
+              (IntoNext.Done)
+              (let
+                [owned-state : IntoIterState
+                  (unsafe
+                    (ptr-read iter.state))]
+                [index : i64 owned-state.index]
+                (if (>= index owned-state.len)
+                  (IntoNext.Done)
+                  (let
+                    [taken : (Tuple bool ,T)
+                      (__tl_array-take!
+                        owned-state.slots
+                        owned-state.live
+                        index)]
+                    (begin
+                      (set! owned-state.index (+ index 1))
+                      (unsafe
+                        (ptr-write! iter.state owned-state))
+                      (if (tuple-ref taken 0)
+                        (IntoNext.Item (tuple-ref taken 1))
+                        (IntoNext.Done)))))))))
           [(Expr.Begin decls) decls]
           [_ (expr-list-empty)]))]
     [cleanup-module-decls : Expr

@@ -49180,6 +49180,340 @@ g:
               "__shrinkwrap"))))]
     [(compiler_backend.ResultCompilerBackend.Err _) false]))
 
+;; ---------------------------------------------------------------------------
+;; SW-1: general shrink-wrapping.  The placement is decided on the FINAL emitted
+;; text, so every one of these reads the emitted function body.
+;;
+;; "Sunk" is spelled as a structural property of that body rather than as a line
+;; match: an entry-placed prologue is the first thing after the function symbol,
+;; so the body starts with `pushq`/`subq`; a shrink-wrapped one starts with the
+;; entry BLOCK label and the prologue appears later, after at least one `ret`.
+(define (compiler-backend-swb-find [body : String] [needle : String]) : i64
+  (compiler_backend.compiler-backend-string-find-from
+    (owned_view.compiler-owned-shared-view body)
+    (owned_view.compiler-owned-shared-view needle)
+    0))
+
+;; The first prologue instruction: a callee-saved push, or the frame's own
+;; `%rsp` adjust.  Any later `, %rsp` line is the matching epilogue, so the
+;; minimum of the two is the prologue.
+(define (compiler-backend-swb-prologue-index [body : String]) : i64
+  (let
+    [push : i64
+      (compiler-backend-swb-find
+        (owned_view.compiler-owned-shared-view body)
+        "    pushq %")]
+    [rsp : i64
+      (compiler-backend-swb-find
+        (owned_view.compiler-owned-shared-view body)
+        ", %rsp\n")]
+    (cond [(< push 0) rsp] [(< rsp 0) push] [(< push rsp) push] [else rsp])))
+
+(define (compiler-backend-swb-count-ret-before [body : String] [limit : i64]) : i64
+  (let
+    [i : i64 0]
+    [seen : i64 0]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (let
+          [at : i64
+            (compiler_backend.compiler-backend-string-find-from
+              (owned_view.compiler-owned-shared-view body)
+              "    ret\n"
+              i)]
+          (if (or (< at 0) (>= at limit))
+            (set! done true)
+            (begin
+              (set! seen (+ seen 1))
+              (set! i (+ at 1))))))
+      seen)))
+
+;; The prologue sank: the body opens with a block label (not the prologue) and
+;; at least one `ret` is reached before the first prologue instruction.
+(define (compiler-backend-swb-sunk? [body : String]) : bool
+  (let
+    [prologue : i64
+      (compiler-backend-swb-prologue-index
+        (owned_view.compiler-owned-shared-view body))]
+    (and
+      (not (string.eq (owned_view.compiler-owned-shared-view body) ""))
+      (compiler_backend.compiler-backend-string-prefix-at?
+        (owned_view.compiler-owned-shared-view body)
+        ".L"
+        0)
+      (>= prologue 0)
+      (>
+        (compiler-backend-swb-count-ret-before
+          (owned_view.compiler-owned-shared-view body)
+          prologue)
+        0))))
+
+(define (compiler-backend-swb-entry-placed? [body : String]) : bool
+  (and
+    (not (string.eq (owned_view.compiler-owned-shared-view body) ""))
+    (not
+      (compiler_backend.compiler-backend-string-prefix-at?
+        (owned_view.compiler-owned-shared-view body)
+        ".L"
+        0))))
+
+(define (compiler-backend-swb-body-for
+  [source : String]
+  [target : compiler_backend.CompilerBackendTarget]
+  [symbol : String]) : String
+  (match (compiler-backend-emit-source-opt2-for-target source target)
+    [(compiler_backend.ResultCompilerBackend.Ok asm)
+      (compiler-backend-asm-function-body asm symbol)]
+    [(compiler_backend.ResultCompilerBackend.Err _) ""]))
+
+;; (1) The `table_invalidate_var` shape: the early exit is guarded by a GLOBAL
+;; load, so form (a) -- which admits only compares on parameters and constants --
+;; cannot fire.  The general placement must: the entry block returns bare and
+;; the prologue sits in the calling block.
+(define compiler-backend-swb-global-guard-source : String
+  "(extern (opaque [value : i64]) : i64 (:symbol \"opaque\"))
+(define swb-table-len : i64 0)
+(define (swb-invalidate [var : i64]) : i64
+  (if (= swb-table-len 0)
+    0
+    (+ (opaque 1) (opaque 2))))
+(define keep-invalidate : (-> i64 i64) swb-invalidate)
+(define (main) : i64
+  (begin
+    (set! swb-table-len (opaque 7))
+    (swb-invalidate 3)))")
+
+(define (compiler-backend-swb-global-guard-ok?) : bool
+  (let
+    [body : String
+      (compiler-backend-swb-body-for
+        (string.copy (& compiler-backend-swb-global-guard-source))
+        (compiler_backend.CompilerBackendTarget.Linux)
+        "_tl_swb_invalidate")]
+    (and
+      (compiler-backend-swb-sunk? (owned_view.compiler-owned-shared-view body))
+      ;; Form (a) is not what fired: its rewrite renames the bypass blocks.
+      (not
+        (compiler_backend.compiler-backend-string-contains?
+          (owned_view.compiler-owned-shared-view body)
+          "__shrinkwrap")))))
+
+;; (2) The `kinds_remove` shape: a parameter compare (form (a)'s only shape)
+;; followed by a second early exit that compares against a loaded global.  Form
+;; (a) fires on the first exit; the general form must sink the prologue past the
+;; second, so two returns precede it.
+(define compiler-backend-swb-two-exit-source : String
+  "(extern (opaque [value : i64]) : i64 (:symbol \"opaque\"))
+(define swb-limit : i64 0)
+(define (swb-remove [k : i64]) : i64
+  (if (< k 0)
+    0
+    (if (>= k swb-limit)
+      0
+      (+ (opaque 1) (opaque 2)))))
+(define keep-remove : (-> i64 i64) swb-remove)
+(define (main) : i64
+  (begin
+    (set! swb-limit (opaque 7))
+    (swb-remove 3)))")
+
+(define (compiler-backend-swb-two-exit-ok?) : bool
+  (let
+    [body : String
+      (compiler-backend-swb-body-for
+        (string.copy (& compiler-backend-swb-two-exit-source))
+        (compiler_backend.CompilerBackendTarget.Linux)
+        "_tl_swb_remove")]
+    [prologue : i64
+      (compiler-backend-swb-prologue-index
+        (owned_view.compiler-owned-shared-view body))]
+    (and
+      (compiler-backend-swb-sunk? (owned_view.compiler-owned-shared-view body))
+      (>=
+        (compiler-backend-swb-count-ret-before
+          (owned_view.compiler-owned-shared-view body)
+          prologue)
+        2))))
+
+;; (3) The `dispatch` shape: two tail-call arms that need no frame and one arm
+;; that calls.  The arms are SIBLINGS, so the nearest common dominator of the
+;; frame's uses is the entry itself and no single Save/Restore pair can serve
+;; them (the same limitation LLVM's ShrinkWrap has: one pair per function).
+;; Entry placement is the correct, documented answer -- the alternative is a
+;; region split, which is not this packet.
+(define compiler-backend-swb-dispatch-source : String
+  "(extern (opaque [value : i64]) : i64 (:symbol \"opaque\"))
+(define (swb-step-a [x : i64]) : i64 (opaque (+ x 1)))
+(define (swb-step-b [x : i64]) : i64 (opaque (+ x 2)))
+(define keep-a : (-> i64 i64) swb-step-a)
+(define keep-b : (-> i64 i64) swb-step-b)
+(define (swb-dispatch [k : i64] [x : i64]) : i64
+  (if (= k 0)
+    (swb-step-a x)
+    (if (= k 1)
+      (swb-step-b x)
+      (+ (opaque x) (opaque 9)))))
+(define keep-dispatch : (-> i64 i64 i64) swb-dispatch)
+(define (main) : i64 (swb-dispatch (opaque 0) 1))")
+
+(define (compiler-backend-swb-dispatch-ok?) : bool
+  (compiler-backend-swb-entry-placed?
+    (compiler-backend-swb-body-for
+      (string.copy (& compiler-backend-swb-dispatch-source))
+      (compiler_backend.CompilerBackendTarget.Linux)
+      "_tl_swb_dispatch")))
+
+;; (4) A frame slot referenced in the entry block. The fourteen entry-computed
+;; values outlive the calls in the second arm, so the allocator spills several
+;; and the entry block STORES them. Those stores are frame references, the entry
+;; is in U, and the placement must stay at entry.
+(define compiler-backend-swb-entry-slot-source : String
+  "(extern (opaque [value : i64]) : i64 (:symbol \"opaque\"))
+(define swb-flag : i64 0)
+(define (swb-entry-slot [x : i64]) : i64
+  (let
+    [t0 : i64 (* x 3)]
+    [t1 : i64 (* x 5)]
+    [t2 : i64 (* x 7)]
+    [t3 : i64 (* x 11)]
+    [t4 : i64 (* x 13)]
+    [t5 : i64 (* x 17)]
+    [t6 : i64 (* x 19)]
+    [t7 : i64 (* x 23)]
+    [t8 : i64 (* x 29)]
+    [t9 : i64 (* x 31)]
+    [ta : i64 (* x 37)]
+    [tb : i64 (* x 41)]
+    [tc : i64 (* x 43)]
+    [td : i64 (* x 47)]
+    (if (= swb-flag 0)
+      (+ t0 (+ t1 (+ t2 (+ t3 (+ t4 (+ t5 (+ t6 t7)))))))
+      (+
+        (opaque t0)
+        (+
+          (opaque t1)
+          (+
+            (opaque t2)
+            (+
+              (opaque t3)
+              (+
+                (opaque t4)
+                (+
+                  (opaque t5)
+                  (+
+                    (opaque t6)
+                    (+
+                      (opaque t7)
+                      (+
+                        (opaque t8)
+                        (+
+                          (opaque t9)
+                          (+
+                            (opaque ta)
+                            (+ (opaque tb) (+ (opaque tc) (opaque td)))))))))))))))))
+(define keep-entry-slot : (-> i64 i64) swb-entry-slot)
+(define (main) : i64
+  (begin
+    (set! swb-flag (opaque 7))
+    (swb-entry-slot 3)))")
+
+(define (compiler-backend-swb-entry-slot-ok?) : bool
+  (let
+    [body : String
+      (compiler-backend-swb-body-for
+        (string.copy (& compiler-backend-swb-entry-slot-source))
+        (compiler_backend.CompilerBackendTarget.Linux)
+        "_tl_swb_entry_slot")]
+    (and
+      (compiler-backend-swb-entry-placed?
+        (owned_view.compiler-owned-shared-view body))
+      ;; The premise of the test: the entry really does name the frame.
+      (compiler_backend.compiler-backend-string-contains?
+        (owned_view.compiler-owned-shared-view body)
+        "(%rsp)"))))
+
+;; (5) The only call is inside a loop. Save must land on the loop's depth-0
+;; dominator -- the preheader the guard branches to -- and never on the loop
+;; header, which would re-run the prologue on every iteration.
+(define compiler-backend-swb-loop-call-source : String
+  "(extern (opaque [value : i64]) : i64 (:symbol \"opaque\"))
+(define swb-n : i64 0)
+(define (swb-loop [x : i64]) : i64
+  (if (= swb-n 0)
+    0
+    (let
+      [i : i64 0]
+      [acc : i64 0]
+      (begin
+        (while (< i 4)
+          (begin
+            (set! acc (+ acc (opaque i)))
+            (set! i (+ i 1))))
+        acc))))
+(define keep-loop : (-> i64 i64) swb-loop)
+(define (main) : i64
+  (begin
+    (set! swb-n (opaque 7))
+    (swb-loop 3)))")
+
+(define (compiler-backend-swb-loop-call-ok?) : bool
+  (let
+    [body : String
+      (compiler-backend-swb-body-for
+        (string.copy (& compiler-backend-swb-loop-call-source))
+        (compiler_backend.CompilerBackendTarget.Linux)
+        "_tl_swb_loop")]
+    [prologue : i64
+      (compiler-backend-swb-prologue-index
+        (owned_view.compiler-owned-shared-view body))]
+    [loop-label : i64
+      (compiler-backend-swb-find
+        (owned_view.compiler-owned-shared-view body)
+        "_while_")]
+    (and
+      (compiler-backend-swb-sunk? (owned_view.compiler-owned-shared-view body))
+      (>= loop-label 0)
+      (< prologue loop-label))))
+
+;; (6) A bypass path and a framed path MERGE before the return. The block that
+;; uses the frame does not dominate that merge, so no well-formed pair exists
+;; and the placement must fall back to entry.
+(define compiler-backend-swb-merge-source : String
+  "(extern (opaque [value : i64]) : i64 (:symbol \"opaque\"))
+(define swb-m : i64 0)
+(define (swb-merge [x : i64]) : i64
+  (let
+    [r : i64 0]
+    (begin
+      (if (= swb-m 0)
+        (set! r 1)
+        (set! r (+ (opaque 1) (opaque 2))))
+      (+ r 5))))
+(define keep-merge : (-> i64 i64) swb-merge)
+(define (main) : i64
+  (begin
+    (set! swb-m (opaque 7))
+    (swb-merge 3)))")
+
+(define (compiler-backend-swb-merge-ok?) : bool
+  (compiler-backend-swb-entry-placed?
+    (compiler-backend-swb-body-for
+      (string.copy (& compiler-backend-swb-merge-source))
+      (compiler_backend.CompilerBackendTarget.Linux)
+      "_tl_swb_merge")))
+
+;; (7) Windows is unchanged. Its unwind program describes a prologue at the
+;; function symbol and the `.seh_*` opcodes may not follow an interior label, so
+;; the same source that shrink-wraps on Linux keeps entry placement here. The
+;; target-parity gate accepts that divergence explicitly.
+(define (compiler-backend-swb-windows-unchanged-ok?) : bool
+  (compiler-backend-swb-entry-placed?
+    (compiler-backend-swb-body-for
+      (string.copy (& compiler-backend-swb-global-guard-source))
+      (compiler_backend.CompilerBackendTarget.Windows)
+      "_tl_swb_invalidate")))
+
 (define (compiler-backend-scavenge-occupancy-cache-ok?) : bool
   (let
     [starts : (__tl_dyn-array i64) (__tl_make-array i64 5)]
@@ -54843,6 +55177,13 @@ b_keep:
         (compiler-backend-callful-preheader-wide-literal-ok?)
         (compiler-backend-shrinkwrap-admission-state-ok?)
         (compiler-backend-shrinkwrap-large-guard-win64-ok?)
+        (compiler-backend-swb-global-guard-ok?)
+        (compiler-backend-swb-two-exit-ok?)
+        (compiler-backend-swb-dispatch-ok?)
+        (compiler-backend-swb-entry-slot-ok?)
+        (compiler-backend-swb-loop-call-ok?)
+        (compiler-backend-swb-merge-ok?)
+        (compiler-backend-swb-windows-unchanged-ok?)
         (compiler-backend-scavenge-occupancy-cache-ok?)
         (compiler-backend-scavenge-segment-occupancy-ok?)
         (compiler-backend-scavenge-segment-pick-ok?)

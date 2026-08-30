@@ -12,6 +12,7 @@ inline_aggregate_global_nested|tests/integration/inline_aggregate_global_nested.
 cli_common_option|tests/integration/cli_common_option.tl|42|-|-|cli_option_core.tl stdlib/io.tl stdlib/string.tl
 arg_global_len_eq_pair|tests/integration/arg_global_len_eq_pair.tl|42|711\n|8|stdlib/io.tl stdlib/string.tl stdlib/vector.tl
 arg_global_len_eq_split|tests/integration/arg_global_len_eq_split.tl|134|-|8|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: target/integration-verify/linux/arg_global_len_eq_split/arg_global_len_eq_split.tl:32:64: array index out of bounds: index=7 length=7\n
+shrink_wrap_general|tests/integration/shrink_wrap_general.tl|42|7100\n7048\n14\n|-|stdlib/io.tl stdlib/string.tl
 global_header_hoist_loop|tests/integration/global_header_hoist_loop.tl|42|885\n|12|stdlib/io.tl stdlib/string.tl stdlib/vector.tl
 global_header_hoist_grow|tests/integration/global_header_hoist_grow.tl|42|397\n|12|stdlib/io.tl stdlib/string.tl stdlib/vector.tl
 generated_hashmap_global_mutation|tests/integration/generated_hashmap_global_mutation.tl|42|-|-|stdlib/hashmap.tl

@@ -67852,7 +67852,6 @@
 
 (define (compiler-backend-emit-block
   [type-segment-bases : i64]
-  [target : CompilerBackendTarget]
   [function : String]
   [source-function : i64]
   [blocks : compiler_ir_types.CompilerIrBlockList]
@@ -67999,7 +67998,6 @@
 
 (define (compiler-backend-emit-block-seq-into
   [type-segment-bases : i64]
-  [target : CompilerBackendTarget]
   [function : String]
   [source-function : i64]
   [all-blocks : compiler_ir_types.CompilerIrBlockList]
@@ -68045,7 +68043,6 @@
                   instrs.len)))])
         (match (compiler-backend-emit-block
           type-segment-bases
-          (compiler-backend-global-shared-view target)
           (compiler-backend-global-shared-view function)
           source-function
           (compiler-backend-global-shared-view all-blocks)
@@ -68075,7 +68072,6 @@
                 program-index.backend-state)
               (compiler-backend-emit-block-seq-into
                 type-segment-bases
-                (compiler-backend-global-shared-view target)
                 (compiler-backend-global-shared-view function)
                 source-function
                 (compiler-backend-global-shared-view all-blocks)
@@ -68100,7 +68096,6 @@
 
 (define (compiler-backend-emit-blocks-into
   [type-segment-bases : i64]
-  [target : CompilerBackendTarget]
   [function : String]
   [source-function : i64]
   [all-blocks : compiler_ir_types.CompilerIrBlockList]
@@ -68139,7 +68134,6 @@
                     instrs.len)))])
           (match (compiler-backend-emit-block
             type-segment-bases
-            (compiler-backend-global-shared-view target)
             (compiler-backend-global-shared-view function)
             source-function
             (compiler-backend-global-shared-view all-blocks)
@@ -68168,7 +68162,6 @@
                   program-index.backend-state)
                 (compiler-backend-emit-blocks-into
                   type-segment-bases
-                  (compiler-backend-global-shared-view target)
                   (compiler-backend-global-shared-view function)
                   source-function
                   (compiler-backend-global-shared-view all-blocks)
@@ -68192,7 +68185,6 @@
     [(compiler_ir_types.CompilerIrBlockList.Array seq)
       (compiler-backend-emit-block-seq-into
         type-segment-bases
-        (compiler-backend-global-shared-view target)
         (compiler-backend-global-shared-view function)
         source-function
         (compiler-backend-global-shared-view all-blocks)
@@ -68215,7 +68207,6 @@
 
 (define (compiler-backend-emit-blocks
   [type-segment-bases : i64]
-  [target : CompilerBackendTarget]
   [function : String]
   [source-function : i64]
   [all-blocks : compiler_ir_types.CompilerIrBlockList]
@@ -68247,7 +68238,6 @@
             compiler-backend-asm-bytes-per-instr)))]
     (match (compiler-backend-emit-blocks-into
       type-segment-bases
-      (compiler-backend-global-shared-view target)
       (compiler-backend-global-shared-view function)
       source-function
       (compiler-backend-global-shared-view all-blocks)
@@ -78747,7 +78737,6 @@
                               (compiler-backend-emergency-slot-size))))))]
                   (match (compiler-backend-emit-blocks
                     type-segment-bases
-                    target
                     (compiler-backend-global-shared-view label-scope)
                     (compiler-backend-global-shared-view name)
                     (compiler-backend-global-shared-view emit-blocks-list)

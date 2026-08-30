@@ -1785,52 +1785,52 @@
   [width-kind-expr : comptime.Expr]
   [precision-kind-expr : comptime.Expr]
   [selector-expr : comptime.Expr]) : String
-  (let
-    [selector : String (comptime.expr-string-value selector-expr)]
-    [debug-selector? : bool
-      (match selector
-        ["?" true]
-        ["x?" true]
-        ["X?" true]
-        [_ false])]
-    [source-kind : String (type-kind value-source)]
-    [source-reference? : bool
-      (if (string.eq source-kind "ref")
-        true
-        (string.eq source-kind "mut-ref"))]
-    [element-type : comptime.Expr
-      (if source-reference?
-        (comptime.reference-element-type value-source)
-        value-source)]
-    [element-kind : String (type-kind element-type)]
-    [nested-debug-reference? : bool
-      (if debug-selector?
-        (if source-reference?
-          (if (string.eq element-kind "ref")
+  (match prefix
+    [(comptime.Expr.Call _ prefix-items)
+      (let
+        [selector : String (comptime.expr-string-value selector-expr)]
+        [debug-selector? : bool
+          (match selector
+            ["?" true]
+            ["x?" true]
+            ["X?" true]
+            [_ false])]
+        [source-kind : String (type-kind value-source)]
+        [source-reference? : bool
+          (if (string.eq source-kind "ref")
             true
-            (string.eq element-kind "mut-ref"))
-          false)
-        false)]
-    (if nested-debug-reference?
-      `(stdlib.format.format-classified-call
-        ,terminal
-        ,prefix
-        ,(comptime.type-expr element-type)
-        (deref ,value-runtime)
-        ,(comptime.type-expr width-source)
-        ,width-runtime
-        ,(comptime.type-expr precision-source)
-        ,precision-runtime
-        ,fill-expr
-        ,alignment-expr
-        ,sign-expr
-        ,alternate-expr
-        ,zero-expr
-        ,width-kind-expr
-        ,precision-kind-expr
-        ,selector-expr)
-      (match prefix
-        [(comptime.Expr.Call _ prefix-items)
+            (string.eq source-kind "mut-ref"))]
+        [element-type : comptime.Expr
+          (if source-reference?
+            (comptime.reference-element-type value-source)
+            value-source)]
+        [element-kind : String (type-kind element-type)]
+        [nested-debug-reference? : bool
+          (if debug-selector?
+            (if source-reference?
+              (if (string.eq element-kind "ref")
+                true
+                (string.eq element-kind "mut-ref"))
+              false)
+            false)]
+        (if nested-debug-reference?
+          `(stdlib.format.format-classified-call
+            ,terminal
+            ,prefix
+            ,(comptime.type-expr element-type)
+            (deref ,value-runtime)
+            ,(comptime.type-expr width-source)
+            ,width-runtime
+            ,(comptime.type-expr precision-source)
+            ,precision-runtime
+            ,fill-expr
+            ,alignment-expr
+            ,sign-expr
+            ,alternate-expr
+            ,zero-expr
+            ,width-kind-expr
+            ,precision-kind-expr
+            ,selector-expr)
           `(,terminal
             ,(comptime.type-expr value-source)
             ,@prefix-items
@@ -1846,10 +1846,9 @@
             ,precision-kind-expr
             ,(comptime.type-expr precision-source)
             ,precision-runtime
-            ,selector-expr)]
-        [_
-          (comptime.comptime-error
-            "format: internal terminal prefix is malformed")]))))
+            ,selector-expr)))]
+    [_
+      (comptime.comptime-error "format: internal terminal prefix is malformed")]))
 
 ;: Preserve the reflected type of a dynamic precision argument for dispatch.
 (defmacro (format-classify-precision

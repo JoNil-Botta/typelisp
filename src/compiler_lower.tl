@@ -38771,10 +38771,12 @@
 (define (lower-internal-aggregate-key
   [ctx : tc_core.TcContext]
   [ty : ast.AstType]) : String
-  (ctfe.ctfe-type-key-with-reflections-and-pools
-    (tc_core.tc-context-pools (lower-global-shared-view ctx))
-    (ctfe.ctfe-reflect-info-list-empty)
-    (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))))
+  (let
+    [empty-infos : ctfe.CtfeReflectInfoList (ctfe.ctfe-reflect-info-list-empty)]
+    (ctfe.ctfe-type-key-with-reflections-and-pools
+      (tc_core.tc-context-pools (lower-global-shared-view ctx))
+      empty-infos
+      (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty)))))
 
 (define (lower-internal-group-mask-from-slots [slots : LowerCAbiSlotList]) : i64
   (if (= (lower-c-abi-slot-list-count (lower-global-shared-view slots)) 2)

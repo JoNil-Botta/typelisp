@@ -1780,8 +1780,10 @@
   [key-id : i64]) : bool
   (ctfe_key_map.contains? (& items.index) key-id))
 
-(define (ctfe-reflect-info-list-ref [items : CtfeReflectInfoList] [index : i64]) : CtfeReflectInfo
-  (array-ref items.slots index))
+(define (ctfe-reflect-info-list-ref
+  [items : (& items CtfeReflectInfoList)]
+  [index : i64]) : CtfeReflectInfo
+  (clone (array-ref items.slots index)))
 
 (define (ctfe-reflect-info-list-push-id
   [items : CtfeReflectInfoList]
@@ -2554,7 +2556,7 @@
     (ctfe-reflect-info-list-push-id infos info key-id)))
 
 (define (ctfe-reflect-info-lookup-id-from
-  [infos : CtfeReflectInfoList]
+  [infos : (& infos CtfeReflectInfoList)]
   [key-id : i64]
   [_index : i64]) : CtfeMaybeReflectInfo
   (match (ctfe_key_map.get (& infos.index) key-id)
@@ -2563,7 +2565,7 @@
     [(ctfe_key_map.LookupMissing) (CtfeMaybeReflectInfo.None)]))
 
 (define (ctfe-reflect-info-lookup-name-id
-  [infos : CtfeReflectInfoList]
+  [infos : (& infos CtfeReflectInfoList)]
   [name-id : i64]) : CtfeMaybeReflectInfo
   (ctfe-reflect-info-lookup-id-from infos (ctfe-name-id-key name-id) 0))
 
@@ -3792,13 +3794,15 @@
   [maybe-ty : ast.AstMaybeType]
   [fallback : ast.AstType]
   [env : (& env CtfeEnv)]) : ast.AstType
-  (match maybe-ty
-    [(ast.AstMaybeType.Some ty)
-      (ctfe-reflect-resolve-type-with-pools
-        (ctfe-env-pools env)
-        (ctfe-env-reflections env)
-        ty)]
-    [(ast.AstMaybeType.No) fallback]))
+  (let
+    [reflections : CtfeReflectInfoList (ctfe-env-reflections env)]
+    (match maybe-ty
+      [(ast.AstMaybeType.Some ty)
+        (ctfe-reflect-resolve-type-with-pools
+          (ctfe-env-pools env)
+          reflections
+          ty)]
+      [(ast.AstMaybeType.No) fallback])))
 
 (define (ctfe-finite-cast-input [value : CompilerCtfeValue]) : cfloat.CompilerFiniteCastInput
   (match value
@@ -3935,7 +3939,7 @@
 
 (define (ctfe-reflect-resolve-type-list-with-pools
   [pools : ast.AstNodePoolContext]
-  [infos : CtfeReflectInfoList]
+  [infos : (& infos CtfeReflectInfoList)]
   [types : ast.AstTypeList]) : ast.AstTypeList
   (let
     [out : ast.AstTypeList
@@ -3951,7 +3955,7 @@
 
 (define (ctfe-reflect-resolve-type-list-with-pools-into
   [pools : ast.AstNodePoolContext]
-  [infos : CtfeReflectInfoList]
+  [infos : (& infos CtfeReflectInfoList)]
   [types : (& types ast.AstTypeList)]
   [out : (&mut out ast.AstTypeList)]
   [index : i64]) : unit
@@ -3964,7 +3968,7 @@
           (ast.ast-place-shared-view pools)
           (ctfe-reflect-resolve-type-with-pools
             (ast.ast-place-shared-view pools)
-            (clone infos)
+            infos
             (ast.ast-node-pool-context-type-get
               pools
               (ast.ast-type-list-get types index (ast.ast-type-id-fallback))))))
@@ -3977,7 +3981,7 @@
 
 (define (ctfe-reflect-resolve-type-with-pools
   [pools : ast.AstNodePoolContext]
-  [infos : CtfeReflectInfoList]
+  [infos : (& infos CtfeReflectInfoList)]
   [ty : ast.AstType]) : ast.AstType
   (match (clone ty)
     [(ast.AstType.Func args ret)
@@ -3985,7 +3989,7 @@
         (ast.ast-place-shared-view pools)
         (ctfe-reflect-resolve-type-list-with-pools
           (ast.ast-place-shared-view pools)
-          (clone infos)
+          infos
           (ast.ast-type-list-box-shared-view args))
         (ctfe-reflect-resolve-type-with-pools
           (ast.ast-place-shared-view pools)
@@ -4065,25 +4069,42 @@
           infos
           (ast.ast-node-pool-context-type-get pools inner)))]
     [(ast.AstType.Struct name)
-      (match (ctfe-reflect-info-lookup-name-id infos name)
-        [(CtfeMaybeReflectInfo.Some info)
-          (ctfe-reflect-info-canonical-type info)]
-        [(CtfeMaybeReflectInfo.None) ty])]
+      (match (ctfe-reflect-info-canonical-type-lookup infos name)
+        [(ast.AstMaybeType.Some canonical) canonical]
+        [(ast.AstMaybeType.No) ty])]
     [(ast.AstType.Enum name)
-      (match (ctfe-reflect-info-lookup-name-id infos name)
-        [(CtfeMaybeReflectInfo.Some info)
-          (ctfe-reflect-info-canonical-type info)]
-        [(CtfeMaybeReflectInfo.None) ty])]
+      (match (ctfe-reflect-info-canonical-type-lookup infos name)
+        [(ast.AstMaybeType.Some canonical) canonical]
+        [(ast.AstMaybeType.No) ty])]
     [(ast.AstType.Var name)
-      (match (ctfe-reflect-info-lookup-name-id infos name)
-        [(CtfeMaybeReflectInfo.Some info)
-          (ctfe-reflect-info-canonical-type info)]
-        [(CtfeMaybeReflectInfo.None) ty])]
+      (match (ctfe-reflect-info-canonical-type-lookup infos name)
+        [(ast.AstMaybeType.Some canonical) canonical]
+        [(ast.AstMaybeType.No) ty])]
     [_ ty]))
+
+;; Nominal resolution without a whole-list clone: the map lookup and the
+;; canonical-id field read both work through shared views, so a nested type-key
+;; walk no longer deep-copies the reflection list per recursion level. Only the
+;; small canonical `AstType` is returned.
+(define (ctfe-reflect-info-canonical-type-lookup
+  [infos : (& infos CtfeReflectInfoList)]
+  [name-id : i64]) : ast.AstMaybeType
+  (match (ctfe_key_map.get infos.index (ctfe-name-id-key name-id))
+    [(ctfe_key_map.LookupFound slot)
+      (let
+        [info : CtfeReflectInfo
+          (unsafe
+            (ptr-read (ptr-offset (__tl_array-data infos.slots) slot)))]
+        (match info
+          [(CtfeReflectInfo.Struct _ _ _ canonical-id _ _)
+            (ast.AstMaybeType.Some (ast.AstType.Struct canonical-id))]
+          [(CtfeReflectInfo.Enum _ _ _ canonical-id _ _)
+            (ast.AstMaybeType.Some (ast.AstType.Enum canonical-id))]))]
+    [(ctfe_key_map.LookupMissing) (ast.AstMaybeType.No)]))
 
 (define (ctfe-reflect-info-for-type-with-pools
   [pools : ast.AstNodePoolContext]
-  [infos : CtfeReflectInfoList]
+  [infos : (& infos CtfeReflectInfoList)]
   [ty : ast.AstType]) : CtfeMaybeReflectInfo
   (match ty
     [(ast.AstType.Struct name) (ctfe-reflect-info-lookup-name-id infos name)]
@@ -4108,13 +4129,13 @@
 
 (define (ctfe-type-list-key-with-pools
   [pools : ast.AstNodePoolContext]
-  [infos : CtfeReflectInfoList]
+  [infos : (& infos CtfeReflectInfoList)]
   [types : ast.AstTypeList]) : String
   (ctfe-type-list-key-with-pools-at pools infos (& types) 0))
 
 (define (ctfe-type-list-key-with-pools-at
   [pools : ast.AstNodePoolContext]
-  [infos : CtfeReflectInfoList]
+  [infos : (& infos CtfeReflectInfoList)]
   [types : (& types ast.AstTypeList)]
   [index : i64]) : String
   (if (>= index (ast.ast-type-list-len types))
@@ -4122,7 +4143,7 @@
     (str_cat.str-cat
       (ctfe-type-key-with-reflections-and-pools
         (ast.ast-place-shared-view pools)
-        (clone infos)
+        infos
         (ast.ast-node-pool-context-type-get
           pools
           (ast.ast-type-list-get types index (ast.ast-type-id-fallback))))
@@ -4164,11 +4185,11 @@
 
 (define (ctfe-type-key-with-reflections-and-pools
   [pools : ast.AstNodePoolContext]
-  [infos : CtfeReflectInfoList]
+  [infos : (& infos CtfeReflectInfoList)]
   [ty : ast.AstType]) : String
   (match (ctfe-reflect-resolve-type-with-pools
     (ast.ast-place-shared-view pools)
-    (clone infos)
+    infos
     ty)
     [(ast.AstType.I64) "i64"]
     [(ast.AstType.I32) "i32"]
@@ -4194,7 +4215,7 @@
         "fn_"
         (ctfe-type-list-key-with-pools
           (ast.ast-place-shared-view pools)
-          (clone infos)
+          infos
           (ast.ast-type-list-box-shared-view args))
         "_to_"
         (ctfe-type-key-with-reflections-and-pools
@@ -4319,7 +4340,7 @@
 
 (define (ctfe-type-kind-with-reflections-and-pools
   [pools : ast.AstNodePoolContext]
-  [infos : CtfeReflectInfoList]
+  [infos : (& infos CtfeReflectInfoList)]
   [ty : ast.AstType]) : String
   (match (ctfe-reflect-resolve-type-with-pools pools infos ty)
     [(ast.AstType.I64) "i64"]
@@ -4379,12 +4400,14 @@
     [(ResultCtfe.Ok value arg-fuel)
       (match value
         [(CompilerCtfeValue.Type ty)
-          (ResultCtfeTypeArg.Ok
-            (ctfe-reflect-resolve-type-with-pools
-              (ctfe-env-pools env)
-              (ctfe-env-reflections env)
-              ty)
-            arg-fuel)]
+          (let
+            [reflections : CtfeReflectInfoList (ctfe-env-reflections env)]
+            (ResultCtfeTypeArg.Ok
+              (ctfe-reflect-resolve-type-with-pools
+                (ctfe-env-pools env)
+                reflections
+                ty)
+              arg-fuel))]
         [_
           (ResultCtfeTypeArg.Err
             (box
@@ -4591,10 +4614,12 @@
     [else (string.eq kind "never")]))
 
 (define (ctfe-type-info-key-in-env [env : (& env CtfeEnv)] [ty : ast.AstType]) : String
-  (ctfe-type-key-with-reflections-and-pools
-    (ctfe-env-pools env)
-    (ctfe-env-reflections env)
-    ty))
+  (let
+    [reflections : CtfeReflectInfoList (ctfe-env-reflections env)]
+    (ctfe-type-key-with-reflections-and-pools
+      (ctfe-env-pools env)
+      reflections
+      ty)))
 
 (define (ctfe-match-type-info-opaque
   [variant : i64]
@@ -4619,7 +4644,7 @@
     [infos : CtfeReflectInfoList (ctfe-env-reflections env)]
     (match (ctfe-reflect-info-for-type-with-pools
       (ctfe-env-pools env)
-      (clone infos)
+      infos
       (clone ty))
       [(CtfeMaybeReflectInfo.Some info)
         (match info
@@ -4661,7 +4686,7 @@
     [resolved : ast.AstType
       (ctfe-reflect-resolve-type-with-pools
         (ast.ast-place-shared-view pools)
-        (clone infos)
+        infos
         ty)]
     [kind : String
       (ctfe-type-kind-with-reflections-and-pools
@@ -4771,13 +4796,15 @@
         [inner : ast.AstExpr (ctfe-ast-get env inner-box)]
         (ctfe-eval-cast inner (ctfe-ty-get env ty-id) expr env fuel))]
     [(ast.AstExpr.TypeLiteral ty-id)
-      (ResultCtfe.Ok
-        (CompilerCtfeValue.Type
-          (ctfe-reflect-resolve-type-with-pools
-            (ctfe-env-pools env)
-            (ctfe-env-reflections env)
-            (ctfe-ty-get env ty-id)))
-        fuel)]
+      (let
+        [reflections : CtfeReflectInfoList (ctfe-env-reflections env)]
+        (ResultCtfe.Ok
+          (CompilerCtfeValue.Type
+            (ctfe-reflect-resolve-type-with-pools
+              (ctfe-env-pools env)
+              reflections
+              (ctfe-ty-get env ty-id)))
+          fuel))]
     [(ast.AstExpr.Init _)
       (ResultCtfe.Err
         (box
@@ -5250,7 +5277,7 @@
                   (CompilerCtfeValue.TypeInfo
                     (ctfe-reflect-resolve-type-with-pools
                       (ctfe-env-pools env)
-                      (clone infos)
+                      infos
                       (clone ty)))
                   arg-fuel)]
               [(string.eq name "type-kind")
@@ -5258,7 +5285,7 @@
                   (ctfe-generated-string-value
                     (ctfe-type-kind-with-reflections-and-pools
                       (ctfe-env-pools env)
-                      (clone infos)
+                      infos
                       (clone ty)))
                   arg-fuel)]
               [(string.eq name "type-key")
@@ -5266,13 +5293,13 @@
                   (ctfe-generated-string-value
                     (ctfe-type-key-with-reflections-and-pools
                       (ctfe-env-pools env)
-                      (clone infos)
+                      infos
                       (clone ty)))
                   arg-fuel)]
               [(string.eq name "type-cleanup-owning?")
                 (match (ctfe-reflect-info-for-type-with-pools
                   (ctfe-env-pools env)
-                  (clone infos)
+                  infos
                   (clone ty))
                   [(CtfeMaybeReflectInfo.Some info)
                     (match info
@@ -5301,7 +5328,7 @@
               [(string.eq name "type-cleanup-function")
                 (match (ctfe-reflect-info-for-type-with-pools
                   (ctfe-env-pools env)
-                  (clone infos)
+                  infos
                   (clone ty))
                   [(CtfeMaybeReflectInfo.Some info)
                     (let
@@ -5331,7 +5358,7 @@
               [(string.eq name "type-nominal-module")
                 (match (ctfe-reflect-info-for-type-with-pools
                   (ctfe-env-pools env)
-                  (clone infos)
+                  infos
                   (clone ty))
                   [(CtfeMaybeReflectInfo.Some info)
                     (ResultCtfe.Ok
@@ -5348,7 +5375,7 @@
               [(string.eq name "type-nominal-name")
                 (match (ctfe-reflect-info-for-type-with-pools
                   (ctfe-env-pools env)
-                  (clone infos)
+                  infos
                   (clone ty))
                   [(CtfeMaybeReflectInfo.Some info)
                     (ResultCtfe.Ok
@@ -5365,7 +5392,7 @@
               [(string.eq name "struct-field-count")
                 (match (ctfe-reflect-info-for-type-with-pools
                   (ctfe-env-pools env)
-                  (clone infos)
+                  infos
                   (clone ty))
                   [(CtfeMaybeReflectInfo.Some info)
                     (match info
@@ -5389,7 +5416,7 @@
               [(string.eq name "enum-variant-count")
                 (match (ctfe-reflect-info-for-type-with-pools
                   (ctfe-env-pools env)
-                  (clone infos)
+                  infos
                   (clone ty))
                   [(CtfeMaybeReflectInfo.Some info)
                     (match info
@@ -5483,7 +5510,7 @@
               [(string.eq name "tuple-element-count")
                 (match (ctfe-reflect-resolve-type-with-pools
                   (ctfe-env-pools env)
-                  (clone infos)
+                  infos
                   (clone ty))
                   [(ast.AstType.Tuple elems)
                     (ResultCtfe.Ok
@@ -5580,10 +5607,7 @@
   [fuel : i64]) : ResultCtfe
   (let
     [infos : CtfeReflectInfoList (ctfe-env-reflections env)]
-    (match (ctfe-reflect-info-for-type-with-pools
-      (ctfe-env-pools env)
-      (clone infos)
-      ty)
+    (match (ctfe-reflect-info-for-type-with-pools (ctfe-env-pools env) infos ty)
       [(CtfeMaybeReflectInfo.Some info)
         (match info
           [(CtfeReflectInfo.Struct _ _ _ _ _ fields)
@@ -5762,10 +5786,7 @@
   [fuel : i64]) : ResultCtfe
   (let
     [infos : CtfeReflectInfoList (ctfe-env-reflections env)]
-    (match (ctfe-reflect-info-for-type-with-pools
-      (ctfe-env-pools env)
-      (clone infos)
-      ty)
+    (match (ctfe-reflect-info-for-type-with-pools (ctfe-env-pools env) infos ty)
       [(CtfeMaybeReflectInfo.Some info)
         (match info
           [(CtfeReflectInfo.Enum _ _ _ _ _ variants)
@@ -5890,25 +5911,24 @@
   [expr : ast.AstExpr]
   [env : CtfeEnv]
   [fuel : i64]) : ResultCtfe
-  (match (ctfe-reflect-resolve-type-with-pools
-    (ctfe-env-pools env)
-    (ctfe-env-reflections env)
-    ty)
-    [(ast.AstType.Tuple elems)
-      (match (ctfe-type-list-ref-with-pools
-        (ast.ast-type-list-box-shared-view elems)
-        (ctfe-env-pools env)
-        (ctfe-env-reflections env)
-        index)
-        [(ResultCtfeTypeLookup.Ok element-ty)
-          (ResultCtfe.Ok (CompilerCtfeValue.Type element-ty) fuel)]
-        [(ResultCtfeTypeLookup.Err message)
-          (ResultCtfe.Err
-            (box
-              (ctfe-diagnostic-at-expr
-                expr
-                (str_cat.str-cat "tuple-element-type " message))))])]
-    [_ (ctfe-tuple-element-type-kind-error expr)]))
+  (let
+    [infos : CtfeReflectInfoList (ctfe-env-reflections env)]
+    (match (ctfe-reflect-resolve-type-with-pools (ctfe-env-pools env) infos ty)
+      [(ast.AstType.Tuple elems)
+        (match (ctfe-type-list-ref-with-pools
+          (ast.ast-type-list-box-shared-view elems)
+          (ctfe-env-pools env)
+          infos
+          index)
+          [(ResultCtfeTypeLookup.Ok element-ty)
+            (ResultCtfe.Ok (CompilerCtfeValue.Type element-ty) fuel)]
+          [(ResultCtfeTypeLookup.Err message)
+            (ResultCtfe.Err
+              (box
+                (ctfe-diagnostic-at-expr
+                  expr
+                  (str_cat.str-cat "tuple-element-type " message))))])]
+      [_ (ctfe-tuple-element-type-kind-error expr)])))
 
 (define (ctfe-eval-tuple-element-type-reflection
   [args : ast.AstExprList]
@@ -7863,13 +7883,16 @@
                       (ctfe-diagnostic-at-expr
                         expr
                         "expr-type requires a typechecked Expr")))
-                  (ResultCtfe.Ok
-                    (CompilerCtfeValue.Type
-                      (ctfe-reflect-resolve-type-with-pools
-                        (ctfe-env-pools env)
-                        (ctfe-env-reflections env)
-                        actual-ty))
-                    arg-fuel)))]
+                  (let
+                    [reflections : CtfeReflectInfoList
+                      (ctfe-env-reflections env)]
+                    (ResultCtfe.Ok
+                      (CompilerCtfeValue.Type
+                        (ctfe-reflect-resolve-type-with-pools
+                          (ctfe-env-pools env)
+                          reflections
+                          actual-ty))
+                      arg-fuel))))]
             [(CompilerCtfeValue.CapturedExpr _ ty pools)
               (let
                 [actual-ty : ast.AstType
@@ -7882,13 +7905,16 @@
                       (ctfe-diagnostic-at-expr
                         expr
                         "expr-type requires a typechecked Expr")))
-                  (ResultCtfe.Ok
-                    (CompilerCtfeValue.Type
-                      (ctfe-reflect-resolve-type-with-pools
-                        pools
-                        (ctfe-env-reflections env)
-                        actual-ty))
-                    arg-fuel)))]
+                  (let
+                    [reflections : CtfeReflectInfoList
+                      (ctfe-env-reflections env)]
+                    (ResultCtfe.Ok
+                      (CompilerCtfeValue.Type
+                        (ctfe-reflect-resolve-type-with-pools
+                          pools
+                          reflections
+                          actual-ty))
+                      arg-fuel))))]
             [_
               (ResultCtfe.Err
                 (box (ctfe-diagnostic-at-expr expr "expr-type expects Expr")))])]
@@ -10964,14 +10990,16 @@
         (ctfe-comptime-array-index-error expr)
         (match (ctfe-reflect-field-list-ref fields index)
           [(CtfeReflectField.Field name ty)
-            (ResultCtfe.Ok
-              (CompilerCtfeValue.TypeField
-                (ci.intern-str name)
-                (ctfe-reflect-resolve-type-with-pools
-                  (ctfe-env-pools env)
-                  (ctfe-env-reflections env)
-                  ty))
-              fuel)]))]
+            (let
+              [reflections : CtfeReflectInfoList (ctfe-env-reflections env)]
+              (ResultCtfe.Ok
+                (CompilerCtfeValue.TypeField
+                  (ci.intern-str name)
+                  (ctfe-reflect-resolve-type-with-pools
+                    (ctfe-env-pools env)
+                    reflections
+                    ty))
+                fuel))]))]
     [(CompilerCtfeValue.TypeVariantPayloadList payloads)
       (match (ctfe-type-list-ref-with-pools
         payloads
@@ -17440,10 +17468,11 @@
   [ty : ast.AstType]) : bool
   (let
     [pools : ast.AstNodePoolContext (ctfe-env-pools env)]
+    [infos : CtfeReflectInfoList (ctfe-env-reflections env)]
     [resolved : ast.AstType
       (ctfe-reflect-resolve-type-with-pools
         (ast.ast-place-shared-view pools)
-        (ctfe-env-reflections env)
+        infos
         (clone ty))]
     [arg : i64
       (ast.ast-expr-type-literal-with-pools
@@ -19761,6 +19790,7 @@
       (ctfe-env-rebase-pools
         (ctfe-env-shared-view (& captured-child))
         (ast.ast-place-shared-view rebased-pools))]
+    [rebased-reflections : CtfeReflectInfoList (ctfe-env-reflections rebased)]
     (and
       (compiler-ctfe-env-i64-value-ok? rebased binding-id 7)
       (ctfe-node-pools-share-storage?
@@ -19791,7 +19821,7 @@
         [(CtfeMaybeLayoutInfo.Some _) true]
         [(CtfeMaybeLayoutInfo.None) false])
       (match (ctfe-reflect-info-lookup-name-id
-        (ctfe-env-reflections rebased)
+        rebased-reflections
         cbi.compiler-builtin-id-fix-Point)
         [(CtfeMaybeReflectInfo.Some _) true]
         [(CtfeMaybeReflectInfo.None) false]))))

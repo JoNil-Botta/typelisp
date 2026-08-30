@@ -59,6 +59,14 @@ reject_diag() {
             printf "format: bare '_' is not a captured identifier" ;;
         stdlib/tests/format_duplicate_named_reject.tl)
             printf 'format: duplicate named argument name' ;;
+        stdlib/tests/format_debug_nominal_reject.tl)
+            printf 'format: Debug is not implemented for nominal type' ;;
+        stdlib/tests/format_debug_pointer_safe_reject.tl)
+            printf 'requires unsafe context' ;;
+        stdlib/tests/format_debug_tuple_reject.tl)
+            printf 'format: Debug is not implemented for type tuple_' ;;
+        stdlib/tests/format_debug_box_reject.tl)
+            printf 'format: Debug is not implemented for type box_' ;;
         stdlib/tests/format_exponent_bool_reject.tl)
             printf "format: 'e' selector requires an integer or float argument; got bool" ;;
         stdlib/tests/format_exponent_char_reject.tl)
@@ -130,8 +138,6 @@ reject_diag() {
             printf "format: Rust raw identifiers use the TypeLisp spelling without 'r#'" ;;
         stdlib/tests/format_specifier_order_reject.tl)
             printf 'format: malformed, duplicated, or out-of-order format specifier' ;;
-        stdlib/tests/format_specifier_reject.tl)
-            printf 'format: type selector is parsed but not supported yet: ?' ;;
         stdlib/tests/format_star_precision_too_few_reject.tl)
             printf 'format: not enough arguments for placeholders' ;;
         stdlib/tests/format_too_few_args_reject.tl)

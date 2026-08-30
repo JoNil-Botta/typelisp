@@ -1,7 +1,8 @@
 # name|source|exit|stdout|args|deps[|extra[|suite-members]]
 # Windows omits documented Linux-only or host-gap fixtures; the runner validates
 # that missing integration sources are listed in verify-integration.sh.
-# extra may be expected-stderr:<printf escapes>, stage-stdlib, or
+# extra may be expected-stderr:<printf escapes>, stage-stdlib,
+# stage-stdlib+expected-stderr:<printf escapes>, or
 # suite-members:<space-separated smoke drivers> uses the eighth field.
 aggregate_globals|tests/integration/aggregate_globals.tl|42|-|-|stdlib/string.tl
 cli_common_option|tests/integration/cli_common_option.tl|42|-|-|cli_option_core.tl stdlib/io.tl stdlib/string.tl
@@ -295,7 +296,8 @@ print|tests/integration/print.tl|0|42\nfalse\n|-|-
 format_precision_counts|tests/integration/format_precision_counts.tl|42|-|-|stdlib/format.tl stdlib/profile.tl stdlib/string.tl
 format_writer_sinks|tests/integration/format_writer_sinks.tl|42|-|-|format_owner_point.tl stdlib/byte_buf.tl stdlib/format.tl stdlib/profile.tl stdlib/string.tl stdlib/text_buf.tl|stage-stdlib
 format_file_writer|tests/integration/format_file_writer.tl|42|-|-|stdlib/byte_buf.tl stdlib/format.tl stdlib/fs.tl stdlib/io.tl stdlib/string.tl|stage-stdlib
-format_stdio_family|tests/integration/format_stdio_family.tl|42|print=7 line=8\n|-|stdlib/io.tl|stage-stdlib
+format_stdio_family|tests/integration/format_stdio_family.tl|42|print=7 line=8\nprint="o\\n" hex=0xff\n retained=value=0xff\n|-|stdlib/io.tl|stage-stdlib
+format_stdio_family_stderr|tests/integration/format_stdio_family.tl|42|-|debug|stdlib/io.tl|stage-stdlib+expected-stderr:error=9 line=10\nerror="e\\n" hex=0xFF\n retained=value=0xff\n
 format_writer_error|tests/integration/format_writer_error.tl|42|-|-|stdlib/byte_buf.tl stdlib/format.tl stdlib/string.tl|stage-stdlib
 format_arguments|tests/integration/format_arguments.tl|42|-|-|stdlib/byte_buf.tl stdlib/format.tl stdlib/profile.tl stdlib/string.tl stdlib/text_buf.tl|stage-stdlib
 format_arguments_stdio|tests/integration/format_arguments_stdio.tl|42|value=direct\n|-|format_arguments_owner.tl stdlib/format.tl stdlib/io.tl stdlib/string.tl|expected-stderr:value=direct\n

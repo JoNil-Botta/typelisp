@@ -95,4 +95,10 @@ awk -v root="$ROOT" -v catalog="$CATALOG" -v known_out="$KNOWN" \
     -f "$VALIDATOR" "$CATALOG" "$MANIFEST"
 grep -Fx good "$KNOWN" >/dev/null
 
+printf '%s\n' 'staged_stderr|tests/integration/good.tl|0|-|-|stdlib/string.tl|stage-stdlib+expected-stderr:debug\\n' > "$MANIFEST"
+: > "$KNOWN"
+awk -v root="$ROOT" -v catalog="$CATALOG" -v known_out="$KNOWN" \
+    -f "$VALIDATOR" "$CATALOG" "$MANIFEST"
+grep -Fx good "$KNOWN" >/dev/null
+
 echo "integration manifest validator self-tests passed"

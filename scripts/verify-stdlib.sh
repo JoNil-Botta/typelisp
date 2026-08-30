@@ -269,6 +269,7 @@ stdlib/tests/byte_buf_core_api.tl|42|-|-
 stdlib/tests/format_api.tl|42|-|-|-
 stdlib/tests/format_debug_bytes.tl|42|-|-|-
 stdlib/tests/format_debug_length_overflow.tl|134|-|literal:format: Debug output length overflow|-
+stdlib/tests/format_primitive_debug.tl|42|-|-|-
 stdlib/tests/format_exponent.tl|42|-|-|-
 stdlib/tests/format_exponent_io.tl|42|printf:1.234e4\n|literal:1E-45|-
 stdlib/tests/format_exponent_length_overflow.tl|134|-|literal:format: exponent output length overflow|-
@@ -313,6 +314,10 @@ stdlib/tests/env_api.tl|pass|-
 stdlib/tests/format_nonliteral_template_reject.tl|fail|format: template must be a string literal
 stdlib/tests/format_bare_capture_reject.tl|fail|format: bare '_' is not a captured identifier
 stdlib/tests/format_duplicate_named_reject.tl|fail|format: duplicate named argument name
+stdlib/tests/format_debug_nominal_reject.tl|fail|format: Debug is not implemented for nominal type
+stdlib/tests/format_debug_pointer_safe_reject.tl|fail|requires unsafe context
+stdlib/tests/format_debug_tuple_reject.tl|fail|format: Debug is not implemented for type tuple_
+stdlib/tests/format_debug_box_reject.tl|fail|format: Debug is not implemented for type box_
 stdlib/tests/format_exponent_bool_reject.tl|fail|format: 'e' selector requires an integer or float argument; got bool
 stdlib/tests/format_exponent_char_reject.tl|fail|format: 'E' selector requires an integer or float argument; got char
 stdlib/tests/format_exponent_nominal_reject.tl|fail|format: 'e' selector requires an integer or float argument
@@ -353,7 +358,6 @@ stdlib/tests/format_radix_reference_reject.tl|fail|requires a fixed-width intege
 stdlib/tests/format_radix_string_reject.tl|fail|requires a fixed-width integer argument; got
 stdlib/tests/format_raw_capture_reject.tl|fail|format: Rust raw identifiers use the TypeLisp spelling without 'r#'
 stdlib/tests/format_specifier_order_reject.tl|fail|format: malformed, duplicated, or out-of-order format specifier
-stdlib/tests/format_specifier_reject.tl|fail|format: type selector is parsed but not supported yet: ?
 stdlib/tests/format_star_precision_too_few_reject.tl|fail|format: not enough arguments for placeholders
 stdlib/tests/format_too_few_args_reject.tl|fail|format: not enough arguments for placeholders
 stdlib/tests/format_too_many_args_reject.tl|fail|format: not enough placeholders for arguments

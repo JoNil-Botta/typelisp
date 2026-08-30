@@ -1791,6 +1791,28 @@ run_linux_backend_fixtures() {
         42 \
         2 \
         '98\n'
+    # IAG-1: preserve the pre-IAG behavior of the deliberately invalidated
+    # borrow at every optimization level. Current main materializes the borrow
+    # before the rebind at opt0/1 and after inlining the rebind at opt2, so the
+    # established baseline is 4/4/9 rather than one value at all three levels.
+    run_linux_program_fixture \
+        inline-aggregate-global-escape-opt0 \
+        tests/integration/inline_aggregate_global_escape.tl \
+        42 \
+        0 \
+        '4\n'
+    run_linux_program_fixture \
+        inline-aggregate-global-escape-opt1 \
+        tests/integration/inline_aggregate_global_escape.tl \
+        42 \
+        1 \
+        '4\n'
+    run_linux_program_fixture \
+        inline-aggregate-global-escape-opt2 \
+        tests/integration/inline_aggregate_global_escape.tl \
+        42 \
+        2 \
+        '9\n'
     run_linux_program_fixture \
         integer-literal-boundary-matrix-opt0 \
         tests/integration/integer_literal_boundary_matrix.tl \

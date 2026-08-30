@@ -15473,32 +15473,27 @@
     [data : TcUnusedUnsafeStateData (tc-unused-unsafe-state-data state)]
     [old-cap : i64 (array-length data.block-spans)]
     [new-cap : i64 (* old-cap 2)]
-    [previous : i64 (arena.tl_arena_current)]
-    [owner : i64 data.fixed-storage-arena]
-    [_set-owner : unit
-      (unsafe
-        (arena.tl_arena_set owner))]
-    [new-spans : (__tl_dyn-array ast.AstSourceSpan)
-      (__tl_make-array ast.AstSourceSpan new-cap)]
-    [new-paths : (__tl_dyn-array String) (__tl_make-array String new-cap)]
-    [new-used : (__tl_dyn-array bool) (__tl_make-array bool new-cap)]
-    (begin
-      (tc-unused-unsafe-grow-copy
-        data
-        (&mut new-spans)
-        (&mut new-paths)
-        (&mut new-used)
-        0)
-      (set! data.block-spans new-spans)
-      (set! data.block-paths new-paths)
-      (set! data.block-used new-used)
-      (set! data.fixed-storage-arena (arena.tl_arena_current))
-      (tc-unused-unsafe-state-data-set! state data)
-      (unsafe
-        (arena.tl_arena_set
-          (if (= previous owner)
-            owner
-            previous))))))
+    ;; The job-owned fixed-storage arena outlives every tracking pass. Publish
+    ;; all replacement arrays into state before the lexical extent restores.
+    [owner : arena.Arena (arena.Arena data.fixed-storage-arena)]
+    (in-arena
+      owner
+      (let
+        [new-spans : (__tl_dyn-array ast.AstSourceSpan)
+          (__tl_make-array ast.AstSourceSpan new-cap)]
+        [new-paths : (__tl_dyn-array String) (__tl_make-array String new-cap)]
+        [new-used : (__tl_dyn-array bool) (__tl_make-array bool new-cap)]
+        (begin
+          (tc-unused-unsafe-grow-copy
+            data
+            (&mut new-spans)
+            (&mut new-paths)
+            (&mut new-used)
+            0)
+          (set! data.block-spans new-spans)
+          (set! data.block-paths new-paths)
+          (set! data.block-used new-used)
+          (tc-unused-unsafe-state-data-set! state data))))))
 
 (define (tc-unused-unsafe-push
   [state : TcUnusedUnsafeState]
@@ -46816,17 +46811,17 @@
     [data : TcCloneStateData (tc-clone-state-data state)]
     [pools : ast.AstNodePoolContext
       (tc-context-pools (tc-global-shared-view ctx))]
-    [cache-arena : i64
-      (ast.ast-node-pool-context-base-arena (tc-global-shared-view pools))]
-    [previous-arena : i64 (arena.tl_arena_current)]
+    ;; The pool base owns the cached fixpoint for the context lifetime; the
+    ;; lexical extent restores the caller only after the cache is complete.
+    [cache-arena : arena.Arena
+      (arena.Arena
+        (ast.ast-node-pool-context-base-arena (tc-global-shared-view pools)))]
+    [able-cache : clone_support.CloneNameSet
+      (in-arena
+        cache-arena
+        (tc-clone-able-set-build (tc-global-shared-view ctx)))]
     (begin
-      (unsafe
-        (arena.tl_arena_set cache-arena))
-      (set!
-        data.able-cache
-        (tc-clone-able-set-build (tc-global-shared-view ctx)))
-      (unsafe
-        (arena.tl_arena_set previous-arena))
+      (set! data.able-cache able-cache)
       (set! data.able-ready true)
       (tc-clone-state-data-set! state data))))
 
@@ -99013,26 +99008,20 @@
         (tc-job-state-macro-call-sites (tc-context-job-state ctx))]
       [data : TcMacroCallSiteStateData (tc-macro-call-site-state-data state)]
       [display : String (macro-decl-name-display macro-name-id module-id)]
-      [previous : i64 (arena.tl_arena_current)]
-      [owner : i64 data.fixed-storage-arena]
-      [_set-owner : unit
-        (unsafe
-          (arena.tl_arena_set owner))]
-      (begin
-        (tc_i64_i64_map.insert-ref!
-          (&mut data.definition-paths)
-          (ci.intern display)
-          (ci.intern path))
-        ;; Hash-table growth must remain owned by the job state. Indexing also
-        ;; runs inside per-declaration generations, which are destroyed after
-        ;; each splice; retaining their current arena would leave stale slots.
-        (set! data.fixed-storage-arena (arena.tl_arena_current))
-        (tc-macro-call-site-state-data-set! state (tc-global-shared-view data))
-        (unsafe
-          (arena.tl_arena_set
-            (if (= previous owner)
-              data.fixed-storage-arena
-              previous)))))))
+      [owner : arena.Arena (arena.Arena data.fixed-storage-arena)]
+      (in-arena
+        owner
+        (begin
+          (tc_i64_i64_map.insert-ref!
+            (&mut data.definition-paths)
+            (ci.intern display)
+            (ci.intern path))
+          ;; Hash-table growth must remain owned by the job state. Indexing also
+          ;; runs inside per-declaration generations, which are destroyed after
+          ;; each splice; retaining their current arena would leave stale slots.
+          (tc-macro-call-site-state-data-set!
+            state
+            (tc-global-shared-view data)))))))
 
 (define (macro-definition-path-id
   [ctx : TcContext]

@@ -513,6 +513,25 @@
   (target-id i64)
   (result bool))
 
+(define tc-unbound-near-miss-memo-capacity : i64
+  256)
+
+;; A near-miss memo belongs to one compiler job. Array descriptors are retained
+;; in one typed cell in the scoped-state arena; scalar mutation also uses a
+;; one-element lane so reading this carrier by value never loses the next-slot
+;; update.
+(defstruct TcUnboundNearMissMemoState
+  (next-cell (__tl_dyn-array i64))
+  (stamps (__tl_dyn-array i64))
+  (valids (__tl_dyn-array u8))
+  (pool-lens (__tl_dyn-array i64))
+  (qualifieds (__tl_dyn-array i64))
+  (module-ids (__tl_dyn-array i64))
+  (name-ids (__tl_dyn-array i64))
+  (env-stores (__tl_dyn-array i64))
+  (env-heads (__tl_dyn-array i64))
+  (best-ids (__tl_dyn-array i64)))
+
 (defstruct TcTypeEnvScopedStateData
   (owner-arena i64)
   (runtime-active bool)
@@ -524,7 +543,8 @@
   (next-lookup-epoch i64)
   (visible-cache-address i64)
   (outlives-binding-cache-address i64)
-  (outlives-lifetime-cache-address i64))
+  (outlives-lifetime-cache-address i64)
+  (unbound-near-miss-memo-address i64))
 
 (defenum TcTypeEnvScopedLookup
   (Missing)
@@ -1093,6 +1113,8 @@
       [outlives-lifetime-cache : (__tl_dyn-array
         TcTypeEnvScopedOutlivesLifetimeCache)
         (__tl_make-array TcTypeEnvScopedOutlivesLifetimeCache 1)]
+      [unbound-near-miss-memo : (__tl_dyn-array TcUnboundNearMissMemoState)
+        (__tl_make-array TcUnboundNearMissMemoState 1)]
       [dummy-stack : TcTypeEnvScopedStack
         (TcTypeEnvScopedStack
           state.address
@@ -1114,6 +1136,19 @@
         (set!
           (array-ref outlives-lifetime-cache 0)
           (TcTypeEnvScopedOutlivesLifetimeCache false -1 -1 -1 -1 -1 -1 false))
+        (set!
+          (array-ref unbound-near-miss-memo 0)
+          (TcUnboundNearMissMemoState
+            (__tl_make-array i64 1)
+            (__tl_make-array i64 tc-unbound-near-miss-memo-capacity)
+            (__tl_make-array u8 tc-unbound-near-miss-memo-capacity)
+            (__tl_make-array i64 tc-unbound-near-miss-memo-capacity)
+            (__tl_make-array i64 tc-unbound-near-miss-memo-capacity)
+            (__tl_make-array i64 tc-unbound-near-miss-memo-capacity)
+            (__tl_make-array i64 tc-unbound-near-miss-memo-capacity)
+            (__tl_make-array i64 tc-unbound-near-miss-memo-capacity)
+            (__tl_make-array i64 tc-unbound-near-miss-memo-capacity)
+            (__tl_make-array i64 tc-unbound-near-miss-memo-capacity)))
         (set!
           (array-ref carrier-cell 0)
           (TcTypeEnvScopedCarrier
@@ -1140,6 +1175,10 @@
             (cast
               (unsafe
                 (ptr->int (__tl_array-data outlives-lifetime-cache)))
+              : i64)
+            (cast
+              (unsafe
+                (ptr->int (__tl_array-data unbound-near-miss-memo)))
               : i64)))
         state))))
 
@@ -8111,6 +8150,30 @@
     0))
 (cfg
   compile-profile
+  (define compiler-tc-env-profile-unbound-finalizers : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-env-profile-unbound-scans : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-env-profile-unbound-candidate-slots : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-env-profile-unbound-visible-candidates : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-env-profile-unbound-length-survivors : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-env-profile-unbound-edit-evaluations : i64
+    0))
+(cfg
+  compile-profile
   (define compiler-tc-macro-generated-module-materializations : i64
     0))
 (cfg
@@ -8340,6 +8403,59 @@
 
 (cfg
   compile-profile
+  (define (compiler-tc-env-profile-note-unbound-finalizer) : unit
+    (set!
+      compiler-tc-env-profile-unbound-finalizers
+      (+ compiler-tc-env-profile-unbound-finalizers 1))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-env-profile-note-unbound-scan) : unit
+    (set!
+      compiler-tc-env-profile-unbound-scans
+      (+ compiler-tc-env-profile-unbound-scans 1))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-env-profile-note-unbound-candidate-slot) : unit
+    (set!
+      compiler-tc-env-profile-unbound-candidate-slots
+      (+ compiler-tc-env-profile-unbound-candidate-slots 1))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-env-profile-note-unbound-visible-candidate) : unit
+    (set!
+      compiler-tc-env-profile-unbound-visible-candidates
+      (+ compiler-tc-env-profile-unbound-visible-candidates 1))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-env-profile-note-unbound-length-survivor) : unit
+    (set!
+      compiler-tc-env-profile-unbound-length-survivors
+      (+ compiler-tc-env-profile-unbound-length-survivors 1))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-env-profile-note-unbound-edit-evaluation) : unit
+    (set!
+      compiler-tc-env-profile-unbound-edit-evaluations
+      (+ compiler-tc-env-profile-unbound-edit-evaluations 1))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-unbound-profile-reset) : unit
+    (begin
+      (set! compiler-tc-env-profile-unbound-finalizers 0)
+      (set! compiler-tc-env-profile-unbound-scans 0)
+      (set! compiler-tc-env-profile-unbound-candidate-slots 0)
+      (set! compiler-tc-env-profile-unbound-visible-candidates 0)
+      (set! compiler-tc-env-profile-unbound-length-survivors 0)
+      (set! compiler-tc-env-profile-unbound-edit-evaluations 0))))
+
+(cfg
+  compile-profile
   (define (compiler-tc-env-profile-reset) : unit
     (begin
       (set! compiler-tc-env-profile-binds 0)
@@ -8377,6 +8493,7 @@
   compile-profile
   (define (compiler-tc-macro-profile-reset-program-counters) : unit
     (begin
+      (compiler-tc-unbound-profile-reset)
       (set! compiler-tc-macro-generated-module-materializations 0)
       (set! compiler-tc-macro-generated-decl-checks 0)
       (set! compiler-tc-macro-generated-decl-checks-invariant-eligible 0)
@@ -9068,6 +9185,24 @@
       (compiler-tc-env-profile-line
         "borrow_lifetime_scan_max"
         compiler-tc-env-profile-borrow-lifetime-scan-max)
+      (compiler-tc-env-profile-line
+        "unbound_finalizers"
+        compiler-tc-env-profile-unbound-finalizers)
+      (compiler-tc-env-profile-line
+        "unbound_scans"
+        compiler-tc-env-profile-unbound-scans)
+      (compiler-tc-env-profile-line
+        "unbound_candidate_slots"
+        compiler-tc-env-profile-unbound-candidate-slots)
+      (compiler-tc-env-profile-line
+        "unbound_visible_candidates"
+        compiler-tc-env-profile-unbound-visible-candidates)
+      (compiler-tc-env-profile-line
+        "unbound_length_survivors"
+        compiler-tc-env-profile-unbound-length-survivors)
+      (compiler-tc-env-profile-line
+        "unbound_edit_evaluations"
+        compiler-tc-env-profile-unbound-edit-evaluations)
       (compiler-tc-macro-counter-profile-line
         "generated_module_materializations"
         compiler-tc-macro-generated-module-materializations)
@@ -39958,29 +40093,243 @@
             0))
         (io.panic "typecheck: adjacent-transposition distance failed")))))
 
-(define (tc-unbound-candidate-visible-id?
+(defstruct TcUnboundVisibleNames
+  (seen tc_i64_i64_map.Map)
+  (ids (__tl_dyn-array i64))
+  (len i64)
+  (slots i64))
+
+(define (tc-unbound-visible-names-new) : TcUnboundVisibleNames
+  (TcUnboundVisibleNames
+    (tc_i64_i64_map.with-capacity 128)
+    (__tl_make-array i64 64)
+    0
+    0))
+
+(define (tc-unbound-visible-names-copy-prefix!
+  [src : (& src (__tl_dyn-array i64))]
+  [dst : (&mut dst (__tl_dyn-array i64))]
+  [len : i64]) : unit
+  (let
+    [index : i64 0]
+    (while (< index len)
+      (begin
+        (set! (array-ref dst index) (array-ref src index))
+        (set! index (+ index 1))))))
+
+(define (tc-unbound-visible-names-ensure-capacity!
+  [names : (&mut names TcUnboundVisibleNames)]) : unit
+  (if (< names.len (array-length names.ids))
+    unit
+    (let
+      [old-capacity : i64 (array-length names.ids)]
+      [next-capacity : i64
+        (if (< old-capacity 1)
+          64
+          (* old-capacity 2))]
+      [next : (__tl_dyn-array i64) (__tl_make-array i64 next-capacity)]
+      (begin
+        (tc-unbound-visible-names-copy-prefix!
+          (& names.ids)
+          (&mut next)
+          names.len)
+        (set! names.ids next)))))
+
+(define (tc-unbound-visible-names-add!
+  [names : (&mut names TcUnboundVisibleNames)]
+  [candidate-id : i64]) : unit
+  (if (and
+    (>= candidate-id 0)
+    (tc_i64_i64_map.insert-if-absent-ref! (&mut names.seen) candidate-id 1))
+    (begin
+      (tc-unbound-visible-names-ensure-capacity! names)
+      (set! (array-ref names.ids names.len) candidate-id)
+      (set! names.len (+ names.len 1))
+      (cfg
+        compile-profile
+        (compiler-tc-env-profile-note-unbound-visible-candidate))
+      unit)
+    unit))
+
+(define (tc-unbound-key-module-id
+  [session : cis.InternStructuralSessionHandle]
+  [key-id : i64]) : i64
+  (cond
+    [(and (tc-env-key-has-name-id? key-id) (ci.intern-qualified? key-id))
+      (ci.intern-qualified-module-id key-id)]
+    [(csym.compiler-composite-pair-key-id? key-id)
+      (csym.compiler-composite-pair-left-id key-id)]
+    [(>= key-id (ci.intern-structural-key-base))
+      (match (cis.intern-structural-session-record-for-raw session key-id)
+        [(cis.InternMaybeStructuralRecord.Some record)
+          (if (= record.kind (ci.intern-structural-kind-pair))
+            record.left-id
+            -1)]
+        [(cis.InternMaybeStructuralRecord.No) -1])]
+    [else -1]))
+
+(define (tc-unbound-key-base-id
+  [session : cis.InternStructuralSessionHandle]
+  [key-id : i64]) : i64
+  (cond
+    [(and (tc-env-key-has-name-id? key-id) (ci.intern-qualified? key-id))
+      (ci.intern-qualified-base-id key-id)]
+    [(csym.compiler-composite-pair-key-id? key-id)
+      (csym.compiler-composite-pair-right-id key-id)]
+    [(>= key-id (ci.intern-structural-key-base))
+      (match (cis.intern-structural-session-record-for-raw session key-id)
+        [(cis.InternMaybeStructuralRecord.Some record)
+          (if (= record.kind (ci.intern-structural-kind-pair))
+            record.right-id
+            -1)]
+        [(cis.InternMaybeStructuralRecord.No) -1])]
+    [else key-id]))
+
+;; Environment keys already encode the namespace in which a spelling is
+;; visible. Invert that encoding once per live binding/cache entry instead of
+;; scanning every intern spelling and reproving visibility with a chain lookup
+;; for each candidate. Normalizing first also turns qualified renderable names
+;; and hygienic globals into the same module/base key shape used by lookup.
+(define (tc-unbound-visible-names-note-key!
+  [names : (&mut names TcUnboundVisibleNames)]
+  [session : cis.InternStructuralSessionHandle]
+  [wanted-qualified : bool]
   [module-qualified : bool]
-  [module-id : i64]
-  [wanted-qualifier-id : i64]
-  [env : TcTypeEnv]
-  [candidate-id : i64]) : bool
+  [target-module-id : i64]
+  [raw-key-id : i64]) : unit
+  (let
+    [key-id : i64 (tc-env-name-key-id session raw-key-id)]
+    [key-module-id : i64 (tc-unbound-key-module-id session key-id)]
+    [source-id : i64
+      (cond
+        [(>= key-module-id 0)
+          (if (= key-module-id target-module-id)
+            (tc-env-key-source-id-or-neg
+              session
+              (tc-unbound-key-base-id session key-id))
+            -1)]
+        [wanted-qualified
+          (if (and
+            (>= target-module-id 0)
+            (csym.compiler-symbol-root-module-id? target-module-id))
+            (tc-env-key-source-id-or-neg session key-id)
+            -1)]
+        [else (tc-env-key-source-id-or-neg session key-id)])]
+    (begin
+      (set! names.slots (+ names.slots 1))
+      (cfg
+        compile-profile
+        (compiler-tc-env-profile-note-unbound-candidate-slot))
+      (if (and
+        (>= source-id 0)
+        (or wanted-qualified (< key-module-id 0) module-qualified))
+        (tc-unbound-visible-names-add! names source-id)
+        unit))))
+
+(define (tc-unbound-visible-names-persistent!
+  [names : (&mut names TcUnboundVisibleNames)]
+  [session : cis.InternStructuralSessionHandle]
+  [wanted-qualified : bool]
+  [module-qualified : bool]
+  [target-module-id : i64]
+  [env : TcTypeEnv]) : unit
+  (let
+    [store-handle : i64 env.store]
+    [head : i64 env.head]
+    [done : bool false]
+    (while (not done)
+      (cond
+        [(>= head 0)
+          (let
+            [binding-ptr : (Ptr TcTypeEnvBinding)
+              (tc-type-env-binding-ptr store-handle head)]
+            (begin
+              (tc-unbound-visible-names-note-key!
+                names
+                session
+                wanted-qualified
+                module-qualified
+                target-module-id
+                (tc-type-env-binding-name-at binding-ptr))
+              (set! head (tc-type-env-binding-parent-at binding-ptr))))]
+        [(< head -1)
+          (let
+            [cache : TcTypeEnvCache
+              (tc-type-env-cache-at
+                (tc-type-env-cache-ptr
+                  store-handle
+                  (tc-type-env-cache-index head)))]
+            [ids : tc_i64_i64_map.Map cache.ids]
+            [remaining : i64 (tc_i64_i64_map.len (& ids))]
+            [cursor : i64 0]
+            (begin
+              (while (> remaining 0)
+                (begin
+                  (set! cursor (tc_i64_i64_map.next-occupied (& ids) cursor))
+                  (match (tc_i64_i64_map.entry-at (& ids) cursor)
+                    [(tc_i64_i64_map.EntrySome key-id _)
+                      (tc-unbound-visible-names-note-key!
+                        names
+                        session
+                        wanted-qualified
+                        module-qualified
+                        target-module-id
+                        key-id)]
+                    [(tc_i64_i64_map.EntryNone) unit])
+                  (set! cursor (+ cursor 1))
+                  (set! remaining (- remaining 1))))
+              (if cache.partial
+                (set! head cache.below)
+                (set! done true))))]
+        [else (set! done true)]))))
+
+(define (tc-unbound-visible-names
+  [module-qualified : bool]
+  [target-module-id : i64]
+  [wanted-qualified : bool]
+  [env : TcTypeEnv]) : TcUnboundVisibleNames
   (let
     [session : cis.InternStructuralSessionHandle
       (tc-type-env-structural-session env)]
-    (if (>= wanted-qualifier-id 0)
-      (tc-name-bound-id?
-        env
-        (tc-module-name-id-by-id-for-session
+    [names : TcUnboundVisibleNames (tc-unbound-visible-names-new)]
+    (begin
+      (if (tc-type-env-scoped-runtime-active? env)
+        (let
+          [carrier : TcTypeEnvScopedCarrier
+            (tc-type-env-scoped-runtime-current env)]
+          [sidecar : TcTypeEnvScopedSidecar
+            (tc-global-shared-view carrier.sidecar)]
+          [stack : TcTypeEnvScopedStack (tc-global-shared-view sidecar.stack)]
+          [index : i64 (- stack.slot-count 1)]
+          (begin
+            (while (>= index sidecar.materialize-start)
+              (let
+                [slot : TcTypeEnvScopedSlot
+                  (tc-global-array-element-shared-view stack.slots index)]
+                (begin
+                  (tc-unbound-visible-names-note-key!
+                    (&mut names)
+                    session
+                    wanted-qualified
+                    module-qualified
+                    target-module-id
+                    slot.name-id)
+                  (set! index (- index 1)))))
+            (tc-unbound-visible-names-persistent!
+              (&mut names)
+              session
+              wanted-qualified
+              module-qualified
+              target-module-id
+              sidecar.persistent)))
+        (tc-unbound-visible-names-persistent!
+          (&mut names)
           session
-          wanted-qualifier-id
-          candidate-id))
-      (or
-        (tc-name-bound-id? env candidate-id)
-        (and
+          wanted-qualified
           module-qualified
-          (tc-name-bound-id?
-            env
-            (tc-module-name-id-by-id-for-session session module-id candidate-id)))))))
+          target-module-id
+          env))
+      names)))
 
 (define (tc-unbound-better-candidate?
   [distance : i64]
@@ -39993,68 +40342,29 @@
       (= distance best-distance)
       (or (string.eq best "") (tc-unbound-string-less? candidate best)))))
 
-;; Suggestion scan memo. Each speculative unbound event rescans and re-renders
-;; every pool spelling; macro-heavy compiles fire hundreds of recovered events
-;; over a pool that reaches six-figure entry counts. Class and byte length are
-;; pure functions of each spelling, so they are memoized: every entry carries
-;; a stamp packing the intern owner's active table id and reset generation,
-;; and an entry only validates when the stamp still matches the current owner,
-;; so installs, resets, and reset-to-mark all invalidate naturally without
-;; ever reallocating the storage. The arrays are allocated once at startup in
-;; the root arena -- never inside a scratch that can rewind under a declaration
-;; check -- and ids beyond the fixed capacity take the uncached path. Empty
-;; spellings stay uncached because generated handles materialize their text
-;; after creation. Both owner counters stay far below 2^31, so the packed
-;; stamp is exact.
-(define tc-unbound-suggest-cache-capacity : i64
-  262144)
-(define tc-unbound-suggest-cache-stamps : (__tl_dyn-array i64)
-  (__tl_make-array i64 tc-unbound-suggest-cache-capacity))
-(define tc-unbound-suggest-cache-classes : (__tl_dyn-array u8)
-  (__tl_make-array u8 tc-unbound-suggest-cache-capacity))
-(define tc-unbound-suggest-cache-lengths : (__tl_dyn-array i32)
-  (__tl_make-array i32 tc-unbound-suggest-cache-capacity))
-(define tc-unbound-near-miss-scan-best-id : i64
-  -1)
+;; Speculative macro-expansion misses often repeat the exact same lookup. The
+;; result memo is owned by the environment's compiler job. Its key remains the
+;; intern owner/generation, pool length, persistent environment identity, and
+;; requested scope. Active scoped carriers bypass it because their mutable
+;; stack contents are not fully represented by `env.store` and `env.head`.
+(define (tc-unbound-near-miss-memo-for-env [env : TcTypeEnv]) : TcUnboundNearMissMemoState
+  (unsafe
+    (ptr-read
+      (int->ptr
+        (cast
+          (tc-type-env-scoped-state-field
+            (tc-type-env-scoped-state env)
+            unbound-near-miss-memo-address
+            i64)
+          : u64)
+        : (Ptr TcUnboundNearMissMemoState)))))
 
-;; The near-miss scan is a pure function of the intern-pool content, the
-;; suggestion scope, and the wanted name: every candidate's class and length
-;; come from the stamp-keyed spelling cache and its visibility from the scope
-;; environment. Speculative macro-expansion misses re-fire the same (scope,
-;; wanted) pairs while the pool is stable -- macro-heavy compiles fire
-;; hundreds of recovered events over a six-figure pool -- so the scan result
-;; is memoized behind the exact scan inputs: owner stamp, pool length,
-;; qualification flag, module scope, wanted id, and the environment identity
-;; (store, head). A hit re-renders the stored best candidate's intern-pool
-;; spelling instead of retaining a rendered display string, because the
-;; display text allocates in the caller's scratch while candidate ids stay
-;; stable for the owner generation. Entries evict in insertion order once the
-;; fixed table wraps; the stamp makes any intern reset or generation change
-;; a miss without a scan.
-(define tc-unbound-near-miss-memo-capacity : i64
-  256)
-(define tc-unbound-near-miss-memo-next : i64
-  0)
-(define tc-unbound-near-miss-memo-stamps : (__tl_dyn-array i64)
-  (__tl_make-array i64 tc-unbound-near-miss-memo-capacity))
-(define tc-unbound-near-miss-memo-valids : (__tl_dyn-array u8)
-  (__tl_make-array u8 tc-unbound-near-miss-memo-capacity))
-(define tc-unbound-near-miss-memo-pool-lens : (__tl_dyn-array i64)
-  (__tl_make-array i64 tc-unbound-near-miss-memo-capacity))
-(define tc-unbound-near-miss-memo-qualifieds : (__tl_dyn-array i64)
-  (__tl_make-array i64 tc-unbound-near-miss-memo-capacity))
-(define tc-unbound-near-miss-memo-module-ids : (__tl_dyn-array i64)
-  (__tl_make-array i64 tc-unbound-near-miss-memo-capacity))
-(define tc-unbound-near-miss-memo-name-ids : (__tl_dyn-array i64)
-  (__tl_make-array i64 tc-unbound-near-miss-memo-capacity))
-(define tc-unbound-near-miss-memo-env-stores : (__tl_dyn-array i64)
-  (__tl_make-array i64 tc-unbound-near-miss-memo-capacity))
-(define tc-unbound-near-miss-memo-env-heads : (__tl_dyn-array i64)
-  (__tl_make-array i64 tc-unbound-near-miss-memo-capacity))
-(define tc-unbound-near-miss-memo-best-ids : (__tl_dyn-array i64)
-  (__tl_make-array i64 tc-unbound-near-miss-memo-capacity))
+(defstruct TcUnboundNearMissScanResult
+  (text String)
+  (best-id i64))
 
 (define (tc-unbound-near-miss-memo-lookup
+  [memo : (& memo TcUnboundNearMissMemoState)]
   [owner-stamp : i64]
   [pool-len : i64]
   [module-qualified : bool]
@@ -40067,24 +40377,20 @@
     [found : i64 -1]
     (begin
       (while (< index tc-unbound-near-miss-memo-capacity)
-        (if (= (array-ref tc-unbound-near-miss-memo-valids index) 0)
+        (if (= (array-ref memo.valids index) 0)
           (set! index tc-unbound-near-miss-memo-capacity)
-          (if (= (array-ref tc-unbound-near-miss-memo-stamps index) owner-stamp)
+          (if (= (array-ref memo.stamps index) owner-stamp)
             (if (and
-              (= (array-ref tc-unbound-near-miss-memo-pool-lens index) pool-len)
+              (= (array-ref memo.pool-lens index) pool-len)
               (=
-                (array-ref tc-unbound-near-miss-memo-qualifieds index)
+                (array-ref memo.qualifieds index)
                 (if module-qualified
                   1
                   0))
-              (=
-                (array-ref tc-unbound-near-miss-memo-module-ids index)
-                module-id)
-              (= (array-ref tc-unbound-near-miss-memo-name-ids index) wanted-id)
-              (=
-                (array-ref tc-unbound-near-miss-memo-env-stores index)
-                env-store)
-              (= (array-ref tc-unbound-near-miss-memo-env-heads index) env-head))
+              (= (array-ref memo.module-ids index) module-id)
+              (= (array-ref memo.name-ids index) wanted-id)
+              (= (array-ref memo.env-stores index) env-store)
+              (= (array-ref memo.env-heads index) env-head))
               (begin
                 (set! found index)
                 (set! index tc-unbound-near-miss-memo-capacity))
@@ -40093,33 +40399,33 @@
       found)))
 
 (define (tc-unbound-near-miss-memo-store
+  [memo : (& memo TcUnboundNearMissMemoState)]
   [owner-stamp : i64]
   [pool-len : i64]
   [module-qualified : bool]
   [module-id : i64]
   [wanted-id : i64]
   [env-store : i64]
-  [env-head : i64]) : unit
+  [env-head : i64]
+  [best-id : i64]) : unit
   (let
-    [slot : i64 tc-unbound-near-miss-memo-next]
+    [slot : i64 (array-ref memo.next-cell 0)]
     (begin
-      (set! (array-ref tc-unbound-near-miss-memo-valids slot) 1)
-      (set! (array-ref tc-unbound-near-miss-memo-stamps slot) owner-stamp)
-      (set! (array-ref tc-unbound-near-miss-memo-pool-lens slot) pool-len)
+      (set! (array-ref memo.valids slot) 1)
+      (set! (array-ref memo.stamps slot) owner-stamp)
+      (set! (array-ref memo.pool-lens slot) pool-len)
       (set!
-        (array-ref tc-unbound-near-miss-memo-qualifieds slot)
+        (array-ref memo.qualifieds slot)
         (if module-qualified
           1
           0))
-      (set! (array-ref tc-unbound-near-miss-memo-module-ids slot) module-id)
-      (set! (array-ref tc-unbound-near-miss-memo-name-ids slot) wanted-id)
-      (set! (array-ref tc-unbound-near-miss-memo-env-stores slot) env-store)
-      (set! (array-ref tc-unbound-near-miss-memo-env-heads slot) env-head)
+      (set! (array-ref memo.module-ids slot) module-id)
+      (set! (array-ref memo.name-ids slot) wanted-id)
+      (set! (array-ref memo.env-stores slot) env-store)
+      (set! (array-ref memo.env-heads slot) env-head)
+      (set! (array-ref memo.best-ids slot) best-id)
       (set!
-        (array-ref tc-unbound-near-miss-memo-best-ids slot)
-        tc-unbound-near-miss-scan-best-id)
-      (set!
-        tc-unbound-near-miss-memo-next
+        (array-ref memo.next-cell 0)
         (% (+ slot 1) tc-unbound-near-miss-memo-capacity)))))
 
 (define (tc-unbound-near-miss-render [best-id : i64] [wanted : String]) : String
@@ -40145,51 +40451,66 @@
   [env : TcTypeEnv]
   [wanted : String]
   [wanted-id : i64]) : String
-  (let
-    [owner-stamp : i64
-      (bit-or
-        (shl (ci.intern-active-table-id) 32)
-        (bit-and (ci.intern-generation) 4294967295))]
-    [pool-len : i64 (ci.intern-pool-len)]
-    [env-store : i64 env.store]
-    [env-head : i64 env.head]
-    [memo-slot : i64
-      (tc-unbound-near-miss-memo-lookup
-        owner-stamp
-        pool-len
+  (if (tc-type-env-scoped-runtime-active? env)
+    (__tl-project-field
+      (tc-unbound-near-miss-scan
         module-qualified
         module-id
-        wanted-id
-        env-store
-        env-head)]
-    (if (>= memo-slot 0)
-      (let
-        [best-id : i64 (array-ref tc-unbound-near-miss-memo-best-ids memo-slot)]
-        (tc-unbound-near-miss-render best-id wanted))
-      (let
-        [result : String
-          (tc-unbound-near-miss-scan
-            module-qualified
-            module-id
-            env
-            wanted
-            wanted-id)]
-        (tc-unbound-near-miss-memo-store
+        env
+        wanted
+        wanted-id)
+      text)
+    (let
+      [owner-stamp : i64
+        (bit-or
+          (shl (ci.intern-active-table-id) 32)
+          (bit-and (ci.intern-generation) 4294967295))]
+      [pool-len : i64 (ci.intern-pool-len)]
+      [env-store : i64 env.store]
+      [env-head : i64 env.head]
+      [memo : TcUnboundNearMissMemoState
+        (tc-unbound-near-miss-memo-for-env env)]
+      [memo-slot : i64
+        (tc-unbound-near-miss-memo-lookup
+          (& memo)
           owner-stamp
           pool-len
           module-qualified
           module-id
           wanted-id
           env-store
-          env-head)
-        result))))
+          env-head)]
+      (if (>= memo-slot 0)
+        (let
+          [best-id : i64 (array-ref memo.best-ids memo-slot)]
+          (tc-unbound-near-miss-render best-id wanted))
+        (let
+          [result : TcUnboundNearMissScanResult
+            (tc-unbound-near-miss-scan
+              module-qualified
+              module-id
+              env
+              wanted
+              wanted-id)]
+          (begin
+            (tc-unbound-near-miss-memo-store
+              (& memo)
+              owner-stamp
+              pool-len
+              module-qualified
+              module-id
+              wanted-id
+              env-store
+              env-head
+              result.best-id)
+            result.text))))))
 
 (define (tc-unbound-near-miss-scan
   [module-qualified : bool]
   [module-id : i64]
   [env : TcTypeEnv]
   [wanted : String]
-  [wanted-id : i64]) : String
+  [wanted-id : i64]) : TcUnboundNearMissScanResult
   (let
     [wanted-separator : i64
       (tc-name-first-char (tc-global-shared-view wanted) '.')]
@@ -40214,201 +40535,137 @@
     [wanted-len : i64
       (string.string-length (tc-global-shared-view wanted-text))]
     [max-distance : i64 (tc-unbound-suggestion-max-distance wanted-len)]
+    [visible : TcUnboundVisibleNames
+      (tc-unbound-visible-names
+        module-qualified
+        (if wanted-qualified
+          wanted-qualifier-id
+          module-id)
+        wanted-qualified
+        env)]
     [previous-previous-row : (__tl_dyn-array i64)
       (__tl_make-array i64 (+ wanted-len 1))]
     [previous-row : (__tl_dyn-array i64) (__tl_make-array i64 (+ wanted-len 1))]
     [current-row : (__tl_dyn-array i64) (__tl_make-array i64 (+ wanted-len 1))]
-    [candidate-id : i64 0]
-    [candidate-limit : i64 (ci.intern-pool-len)]
-    [owner-stamp : i64
-      (bit-or
-        (shl (ci.intern-active-table-id) 32)
-        (bit-and (ci.intern-generation) 4294967295))]
-    [cache-cap : i64 tc-unbound-suggest-cache-capacity]
+    [candidate-index : i64 0]
     [best-distance : i64 (+ max-distance 1)]
+    [best-id : i64 -1]
     [best : String ""]
     (begin
-      (set! tc-unbound-near-miss-scan-best-id -1)
-      (while (< candidate-id candidate-limit)
-        (if (= candidate-id wanted-id)
-          (set! candidate-id (+ candidate-id 1))
-          (let
-            [cached-class : u8
-              (if (< candidate-id cache-cap)
-                (if (=
-                  (array-ref tc-unbound-suggest-cache-stamps candidate-id)
-                  owner-stamp)
-                  (array-ref tc-unbound-suggest-cache-classes candidate-id)
-                  0)
-                0)]
-            (if (= cached-class 2)
-              (set! candidate-id (+ candidate-id 1))
+      (cfg compile-profile (compiler-tc-env-profile-note-unbound-scan))
+      (while (< candidate-index visible.len)
+        (let
+          [candidate-id : i64 (array-ref visible.ids candidate-index)]
+          [candidate : String (ci.intern-str candidate-id)]
+          [candidate-len : i64
+            (string.string-length (tc-global-shared-view candidate))]
+          [suggestable : bool
+            (tc-unbound-suggestion-candidate-name?
+              (tc-global-shared-view candidate))]
+          (begin
+            (if (and
+              (not (= candidate-id wanted-id))
+              suggestable
+              (or
+                (not wanted-qualified)
+                (not (ci.intern-qualified? candidate-id)))
+              (<=
+                (if (> candidate-len wanted-len)
+                  (- candidate-len wanted-len)
+                  (- wanted-len candidate-len))
+                max-distance))
               (begin
-                (if (> cached-class 0)
-                  ;; Known-suggestable spelling: the memo supplies its byte
-                  ;; length, so only candidates surviving the same prefix of
-                  ;; the original conjunction reach a render.
-                  (let
-                    [cached-length : i64
-                      (cast
-                        (array-ref
-                          tc-unbound-suggest-cache-lengths
-                          candidate-id)
-                        : i64)]
-                    (if (and
-                      (or
-                        (not wanted-qualified)
-                        (not (ci.intern-qualified? candidate-id)))
-                      (<=
-                        (if (> cached-length wanted-len)
-                          (- cached-length wanted-len)
-                          (- wanted-len cached-length))
-                        max-distance)
-                      (tc-unbound-candidate-visible-id?
-                        module-qualified
-                        module-id
-                        wanted-qualifier-id
-                        env
-                        candidate-id))
-                      (let
-                        [candidate : String (ci.intern-str candidate-id)]
-                        [distance : i64
-                          (tc-unbound-edit-distance
-                            (tc-global-shared-view wanted-text)
-                            (tc-global-shared-view candidate)
-                            (&mut previous-previous-row)
-                            (&mut previous-row)
-                            (&mut current-row))]
-                        [better : bool
-                          (and
-                            (<= distance max-distance)
-                            (tc-unbound-better-candidate?
-                              distance
-                              best-distance
-                              (tc-global-shared-view candidate)
-                              (tc-global-shared-view best)))]
-                        (if better
-                          (begin
-                            (set! best-distance distance)
-                            (set!
-                              tc-unbound-near-miss-scan-best-id
-                              candidate-id)
-                            (set!
-                              best
-                              (if wanted-qualified
-                                (tc-name-slashes-to-dots
-                                  (csym.compiler-symbol-module-key
-                                    (tc-global-shared-view wanted-qualifier)
-                                    candidate))
-                                (clone candidate))))
-                          unit))
-                      unit))
-                  ;; Unclassified spelling: render once, classify through the
-                  ;; original predicate, and record both facts unless the
-                  ;; generated handle has not materialized yet.
-                  (let
-                    [candidate : String (ci.intern-str candidate-id)]
-                    [candidate-len : i64
-                      (string.string-length (tc-global-shared-view candidate))]
-                    [suggestable : bool
-                      (tc-unbound-suggestion-candidate-name?
-                        (tc-global-shared-view candidate))]
+                (cfg
+                  compile-profile
+                  (compiler-tc-env-profile-note-unbound-length-survivor))
+                (let
+                  [_note-edit : unit
+                    (cfg
+                      compile-profile
+                      (compiler-tc-env-profile-note-unbound-edit-evaluation))]
+                  [distance : i64
+                    (tc-unbound-edit-distance
+                      (tc-global-shared-view wanted-text)
+                      (tc-global-shared-view candidate)
+                      (&mut previous-previous-row)
+                      (&mut previous-row)
+                      (&mut current-row))]
+                  [better : bool
+                    (and
+                      (<= distance max-distance)
+                      (tc-unbound-better-candidate?
+                        distance
+                        best-distance
+                        (tc-global-shared-view candidate)
+                        (tc-global-shared-view best)))]
+                  (if better
                     (begin
-                      (if (and (< candidate-id cache-cap) (> candidate-len 0))
-                        (begin
-                          (set!
-                            (array-ref
-                              tc-unbound-suggest-cache-classes
-                              candidate-id)
-                            (if suggestable
-                              1
-                              2))
-                          (set!
-                            (array-ref
-                              tc-unbound-suggest-cache-lengths
-                              candidate-id)
-                            (cast candidate-len : i32))
-                          (set!
-                            (array-ref
-                              tc-unbound-suggest-cache-stamps
-                              candidate-id)
-                            owner-stamp))
-                        unit)
-                      (if (and
-                        suggestable
-                        (or
-                          (not wanted-qualified)
-                          (not (ci.intern-qualified? candidate-id)))
-                        (<=
-                          (if (> candidate-len wanted-len)
-                            (- candidate-len wanted-len)
-                            (- wanted-len candidate-len))
-                          max-distance)
-                        (tc-unbound-candidate-visible-id?
-                          module-qualified
-                          module-id
-                          wanted-qualifier-id
-                          env
-                          candidate-id))
-                        (let
-                          [distance : i64
-                            (tc-unbound-edit-distance
-                              (tc-global-shared-view wanted-text)
-                              (tc-global-shared-view candidate)
-                              (&mut previous-previous-row)
-                              (&mut previous-row)
-                              (&mut current-row))]
-                          [better : bool
-                            (and
-                              (<= distance max-distance)
-                              (tc-unbound-better-candidate?
-                                distance
-                                best-distance
-                                (tc-global-shared-view candidate)
-                                (tc-global-shared-view best)))]
-                          (if better
-                            (begin
-                              (set! best-distance distance)
-                              (set!
-                                tc-unbound-near-miss-scan-best-id
-                                candidate-id)
-                              (set!
-                                best
-                                (if wanted-qualified
-                                  (tc-name-slashes-to-dots
-                                    (csym.compiler-symbol-module-key
-                                      (tc-global-shared-view wanted-qualifier)
-                                      candidate))
-                                  (clone candidate))))
-                            unit))
-                        unit))))
-                (set! candidate-id (+ candidate-id 1)))))))
-      best)))
+                      (set! best-distance distance)
+                      (set! best-id candidate-id)
+                      (set!
+                        best
+                        (if wanted-qualified
+                          (tc-name-slashes-to-dots
+                            (csym.compiler-symbol-module-key
+                              (tc-global-shared-view wanted-qualifier)
+                              candidate))
+                          (clone candidate))))
+                    unit)))
+              unit)
+            (set! candidate-index (+ candidate-index 1)))))
+      (TcUnboundNearMissScanResult best best-id))))
 
 (cfg
   test
   (test
-    tc-unbound-suggest-cache-reset-invalidation
+    tc-unbound-visible-name-persistent-and-qualified
     (begin
       (ci.intern-reset!)
       (let
-        [candidate-id : i64 (ci.intern "alpha")]
-        [wanted-id : i64 (ci.intern "alphi")]
+        [module-id : i64 (ci.intern "suggest-module")]
+        [other-module-id : i64 (ci.intern "suggest-other")]
+        [candidate-id : i64 (ci.intern "render-value")]
+        [wanted-id : i64 (ci.intern "render-valuf")]
+        [base : TcTypeEnv (tc-empty-env)]
+        [session : cis.InternStructuralSessionHandle
+          (tc-type-env-structural-session base)]
+        [candidate-key : i64
+          (tc-module-name-id-by-id-for-session session module-id candidate-id)]
+        [other-key : i64
+          (tc-module-name-id-by-id-for-session
+            session
+            other-module-id
+            (ci.intern "render-valve"))]
+        ;; Repeated bindings collapse to one cache entry and must produce one
+        ;; source candidate, independent of hash-table iteration order.
         [env : TcTypeEnv
-          (tc-bind-id (tc-empty-env) candidate-id (ast.AstType.I64))]
-        [first : String (tc-unbound-near-miss false -1 env "alphi" wanted-id)]
-        [first-stamp : i64
-          (array-ref tc-unbound-suggest-cache-stamps candidate-id)]
-        [second : String (tc-unbound-near-miss false -1 env "alphi" wanted-id)]
+          (tc-env-with-cache
+            (tc-bind-id
+              (tc-bind-id
+                (tc-bind-id base candidate-key (ast.AstType.I64))
+                candidate-key
+                (ast.AstType.Bool))
+              other-key
+              (ast.AstType.String)))]
+        [visible : TcUnboundVisibleNames
+          (tc-unbound-visible-names true module-id false env)]
+        [unqualified : String
+          (tc-unbound-near-miss true module-id env "render-valuf" wanted-id)]
+        [qualified : String
+          (tc-unbound-near-miss
+            true
+            module-id
+            env
+            "alias.render-valuf"
+            (ci.intern "alias.render-valuf"))]
         (begin
           (unless
             (and
-              (string.eq first "alpha")
-              (string.eq second "alpha")
-              (> first-stamp 0)
-              (= (array-ref tc-unbound-suggest-cache-classes candidate-id) 1)
-              (= (array-ref tc-unbound-suggest-cache-lengths candidate-id) 5))
-            (io.panic "typecheck: unbound suggestion cache fill/reuse failed"))
+              (= visible.len 1)
+              (string.eq unqualified "render-value")
+              (string.eq qualified "alias.render-value"))
+            (io.panic
+              "typecheck: persistent/qualified visible-name enumeration failed"))
           (ci.intern-reset!)
           (let
             [hidden-id : i64 (ci.intern "__alpha")]
@@ -40424,16 +40681,159 @@
                 hidden-wanted-id)]
             (begin
               (unless
-                (and
-                  (= hidden-id candidate-id)
-                  (string.eq hidden-result "")
-                  (not
-                    (=
-                      (array-ref tc-unbound-suggest-cache-stamps hidden-id)
-                      first-stamp))
-                  (= (array-ref tc-unbound-suggest-cache-classes hidden-id) 2))
-                (io.panic "typecheck: unbound suggestion cache reset leaked"))
+                (string.eq hidden-result "")
+                (io.panic "typecheck: visible-name reset isolation failed"))
               (ci.intern-reset!))))))))
+
+(cfg
+  test
+  (test
+    tc-unbound-visible-name-structural-and-scoped-reset
+    (begin
+      (ci.intern-reset!)
+      (let
+        [module-id : i64 (ci.intern "macro-module")]
+        [macro-source-id : i64 (ci.intern "macro-value")]
+        [structural-source-id : i64 (ci.intern "structural-name")]
+        [base : TcTypeEnv (tc-empty-env)]
+        [session : cis.InternStructuralSessionHandle
+          (tc-type-env-structural-session base)]
+        [macro-id : i64
+          (macro-hygiene-global-id session module-id macro-source-id false)]
+        [structural-id : i64
+          (cis.intern-fresh-local-identity-raw
+            (cis.intern-structural-session-fresh-local-identity
+              session
+              7
+              structural-source-id))]
+        [persistent : TcTypeEnv
+          (tc-env-with-cache
+            (tc-bind-id
+              (tc-bind-id base macro-id (ast.AstType.I64))
+              structural-id
+              (ast.AstType.Bool)))]
+        [macro-result : String
+          (tc-unbound-near-miss
+            true
+            module-id
+            persistent
+            "m.macro-valuf"
+            (ci.intern "m.macro-valuf"))]
+        [structural-result : String
+          (tc-unbound-near-miss
+            false
+            -1
+            persistent
+            "structural-namf"
+            (ci.intern "structural-namf"))]
+        [carrier-before : TcTypeEnvScopedCarrier
+          (tc-type-env-scoped-carrier-from-env persistent)]
+        [mark : TcTypeEnvScopedCarrierMark
+          (tc-type-env-scoped-carrier-snapshot-mark
+            (tc-global-shared-view carrier-before))]
+        [scoped-id : i64 (ci.intern "scoped-value")]
+        [scoped-wanted-id : i64 (ci.intern "scoped-valuf")]
+        [inactive-scoped-result : String
+          (tc-unbound-near-miss
+            false
+            -1
+            persistent
+            "scoped-valuf"
+            scoped-wanted-id)]
+        [carrier-after : TcTypeEnvScopedCarrier
+          (tc-type-env-scoped-carrier-bind-id
+            carrier-before
+            scoped-id
+            (ast.AstType.String))]
+        [active-save : TcTypeEnvScopedRuntimeSave
+          (tc-type-env-scoped-runtime-enter!
+            (tc-global-shared-view carrier-after))]
+        [scoped-result : String
+          (tc-unbound-near-miss
+            false
+            -1
+            persistent
+            "scoped-valuf"
+            scoped-wanted-id)]
+        (begin
+          (tc-type-env-scoped-runtime-restore! active-save)
+          (let
+            [restored : TcTypeEnvScopedCarrier
+              (tc-type-env-scoped-carrier-restore
+                (tc-global-shared-view carrier-after)
+                mark)]
+            [restored-save : TcTypeEnvScopedRuntimeSave
+              (tc-type-env-scoped-runtime-enter! restored)]
+            [restored-result : String
+              (tc-unbound-near-miss
+                false
+                -1
+                persistent
+                "scoped-valuf"
+                scoped-wanted-id)]
+            (begin
+              (tc-type-env-scoped-runtime-restore! restored-save)
+              (unless
+                (and
+                  (string.eq macro-result "m.macro-value")
+                  (string.eq structural-result "structural-name")
+                  (string.eq inactive-scoped-result "")
+                  (string.eq scoped-result "scoped-value")
+                  (string.eq restored-result ""))
+                (io.panic
+                  "typecheck: structural/scoped visible-name enumeration failed"))
+              (ci.intern-reset!))))))))
+
+(cfg
+  test
+  (test
+    tc-unbound-visible-name-two-job-isolation
+    (begin
+      (ci.intern-reset!)
+      (let
+        [job-a : TcJobState (tc-job-state-new)]
+        [job-b : TcJobState (tc-job-state-new)]
+        [env-a : TcTypeEnv (tc-empty-env-with-job-state job-a)]
+        [env-b : TcTypeEnv (tc-empty-env-with-job-state job-b)]
+        [name-a : i64 (ci.intern "job-alpha")]
+        [name-b : i64 (ci.intern "job-bravo")]
+        [carrier-a : TcTypeEnvScopedCarrier
+          (tc-type-env-scoped-carrier-bind-id
+            (tc-type-env-scoped-carrier-from-env env-a)
+            name-a
+            (ast.AstType.I64))]
+        [carrier-b : TcTypeEnvScopedCarrier
+          (tc-type-env-scoped-carrier-bind-id
+            (tc-type-env-scoped-carrier-from-env env-b)
+            name-b
+            (ast.AstType.Bool))]
+        [save-a : TcTypeEnvScopedRuntimeSave
+          (tc-type-env-scoped-runtime-enter! carrier-a)]
+        [save-b : TcTypeEnvScopedRuntimeSave
+          (tc-type-env-scoped-runtime-enter! carrier-b)]
+        [result-a : String
+          (tc-unbound-near-miss
+            false
+            -1
+            env-a
+            "job-alphb"
+            (ci.intern "job-alphb"))]
+        [result-b : String
+          (tc-unbound-near-miss
+            false
+            -1
+            env-b
+            "job-bravp"
+            (ci.intern "job-bravp"))]
+        (begin
+          (tc-type-env-scoped-runtime-restore! save-b)
+          (tc-type-env-scoped-runtime-restore! save-a)
+          (unless
+            (and
+              (string.eq result-a "job-alpha")
+              (string.eq result-b "job-bravo"))
+            (io.panic "typecheck: visible-name job isolation failed"))
+          (ci.intern-reset!))))))
 
 (cfg
   test
@@ -40513,93 +40913,96 @@
               (TcUnboundSuggestion.No))))))))
 
 (define (tc-unbound-finalize-located-error [message : String]) : String
-  (if (and (tc-located-error? message) (not (tc-rich-error? message)))
-    (let
-      [prefix-len : i64 (string.string-length (tc-located-error-prefix))]
-      [line-end : i64 (tc-located-error-field-end message prefix-len)]
-      [col-start : i64 (+ line-end 1)]
-      [col-end : i64 (tc-located-error-field-end message col-start)]
-      [end-line-start : i64 (+ col-end 1)]
-      [end-line-end : i64 (tc-located-error-field-end message end-line-start)]
-      [end-col-start : i64 (+ end-line-end 1)]
-      [end-col-end : i64 (tc-located-error-field-end message end-col-start)]
-      [clean-start : i64 (+ end-col-end 1)]
-      [clean-message : String
-        (string.substring
-          message
-          clean-start
-          (- (string.string-length message) clean-start))]
-      (if (tc-unbound-name-message? (tc-global-shared-view clean-message))
-        (match tc-unbound-suggestion-snapshot
-          [(TcUnboundSuggestionSnapshot.Some
-              module-qualified
-              module-id
-              env
-              name-id)
-            (let
-              [name : String
-                (tc-name-slashes-to-dots
-                  (tc-hygiene-name-text-id-for-session
-                    (tc-type-env-structural-session env)
-                    name-id))]
-              [clean-name : String
-                (string.substring
-                  (tc-global-shared-view clean-message)
-                  (string.string-length (tc-unbound-name-message-prefix))
-                  (-
-                    (string.string-length clean-message)
-                    (string.string-length (tc-unbound-name-message-prefix))))]
-              [display-message : String
-                (str_cat.str-cat
-                  (tc-unbound-name-message-prefix)
-                  (tc-global-shared-view name))]
-              (if (string.eq
-                (tc-name-slashes-to-dots clean-name)
-                (tc-global-shared-view name))
-                (let
-                  [span : ast.AstSourceSpan
-                    (ast.ast-source-span
-                      (string.>int
-                        (tc-located-error-field message prefix-len line-end))
-                      (string.>int
-                        (tc-located-error-field message col-start col-end))
-                      (string.>int
-                        (tc-located-error-field
-                          message
-                          end-line-start
-                          end-line-end))
-                      (string.>int
-                        (tc-located-error-field
-                          message
-                          end-col-start
-                          end-col-end)))]
-                  (match (tc-unbound-suggestion
-                    module-qualified
-                    module-id
-                    env
-                    (tc-global-shared-view name)
-                    name-id)
-                    [(TcUnboundSuggestion.Help help)
-                      (tc-rich-error-with-help span display-message help)]
-                    [(TcUnboundSuggestion.Replace help replacement)
-                      (tc-rich-error-with-machine-fix
-                        span
-                        (ast.ast-source-span
-                          (ast.ast-source-span-start-line span)
-                          (ast.ast-source-span-start-col span)
-                          (ast.ast-source-span-start-line span)
-                          (+
+  (begin
+    (cfg compile-profile (compiler-tc-env-profile-note-unbound-finalizer))
+    (if (and (tc-located-error? message) (not (tc-rich-error? message)))
+      (let
+        [prefix-len : i64 (string.string-length (tc-located-error-prefix))]
+        [line-end : i64 (tc-located-error-field-end message prefix-len)]
+        [col-start : i64 (+ line-end 1)]
+        [col-end : i64 (tc-located-error-field-end message col-start)]
+        [end-line-start : i64 (+ col-end 1)]
+        [end-line-end : i64 (tc-located-error-field-end message end-line-start)]
+        [end-col-start : i64 (+ end-line-end 1)]
+        [end-col-end : i64 (tc-located-error-field-end message end-col-start)]
+        [clean-start : i64 (+ end-col-end 1)]
+        [clean-message : String
+          (string.substring
+            message
+            clean-start
+            (- (string.string-length message) clean-start))]
+        (if (tc-unbound-name-message? (tc-global-shared-view clean-message))
+          (match tc-unbound-suggestion-snapshot
+            [(TcUnboundSuggestionSnapshot.Some
+                module-qualified
+                module-id
+                env
+                name-id)
+              (let
+                [name : String
+                  (tc-name-slashes-to-dots
+                    (tc-hygiene-name-text-id-for-session
+                      (tc-type-env-structural-session env)
+                      name-id))]
+                [clean-name : String
+                  (string.substring
+                    (tc-global-shared-view clean-message)
+                    (string.string-length (tc-unbound-name-message-prefix))
+                    (-
+                      (string.string-length clean-message)
+                      (string.string-length (tc-unbound-name-message-prefix))))]
+                [display-message : String
+                  (str_cat.str-cat
+                    (tc-unbound-name-message-prefix)
+                    (tc-global-shared-view name))]
+                (if (string.eq
+                  (tc-name-slashes-to-dots clean-name)
+                  (tc-global-shared-view name))
+                  (let
+                    [span : ast.AstSourceSpan
+                      (ast.ast-source-span
+                        (string.>int
+                          (tc-located-error-field message prefix-len line-end))
+                        (string.>int
+                          (tc-located-error-field message col-start col-end))
+                        (string.>int
+                          (tc-located-error-field
+                            message
+                            end-line-start
+                            end-line-end))
+                        (string.>int
+                          (tc-located-error-field
+                            message
+                            end-col-start
+                            end-col-end)))]
+                    (match (tc-unbound-suggestion
+                      module-qualified
+                      module-id
+                      env
+                      (tc-global-shared-view name)
+                      name-id)
+                      [(TcUnboundSuggestion.Help help)
+                        (tc-rich-error-with-help span display-message help)]
+                      [(TcUnboundSuggestion.Replace help replacement)
+                        (tc-rich-error-with-machine-fix
+                          span
+                          (ast.ast-source-span
+                            (ast.ast-source-span-start-line span)
                             (ast.ast-source-span-start-col span)
-                            (string.string-length (tc-global-shared-view name))))
-                        display-message
-                        help
-                        replacement)]
-                    [(TcUnboundSuggestion.No)
-                      (tc-located-error span display-message)]))
-                message))]
-          [(TcUnboundSuggestionSnapshot.No) message])
-        message))
-    message))
+                            (ast.ast-source-span-start-line span)
+                            (+
+                              (ast.ast-source-span-start-col span)
+                              (string.string-length
+                                (tc-global-shared-view name))))
+                          display-message
+                          help
+                          replacement)]
+                      [(TcUnboundSuggestion.No)
+                        (tc-located-error span display-message)]))
+                  message))]
+            [(TcUnboundSuggestionSnapshot.No) message])
+          message))
+      message)))
 
 (define (tc-locate-integer-binop-error
   [ctx : TcContext]

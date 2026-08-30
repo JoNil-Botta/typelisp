@@ -1771,6 +1771,26 @@ run_linux_backend_fixtures() {
         tests/integration/gep_fold_ordinal_store_pair_clone.tl \
         42 \
         2
+    # IAG-1: the inline shape at every level, so a fold or copy that is only
+    # reachable at one optimization level cannot regress unnoticed.
+    run_linux_program_fixture \
+        inline-aggregate-global-opt0 \
+        tests/integration/inline_aggregate_global.tl \
+        42 \
+        0 \
+        '98\n'
+    run_linux_program_fixture \
+        inline-aggregate-global-opt1 \
+        tests/integration/inline_aggregate_global.tl \
+        42 \
+        1 \
+        '98\n'
+    run_linux_program_fixture \
+        inline-aggregate-global-opt2 \
+        tests/integration/inline_aggregate_global.tl \
+        42 \
+        2 \
+        '98\n'
     run_linux_program_fixture \
         integer-literal-boundary-matrix-opt0 \
         tests/integration/integer_literal_boundary_matrix.tl \

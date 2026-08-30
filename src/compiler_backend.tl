@@ -1,5 +1,6 @@
 ;; compiler_backend.tl - Selfhost CompilerIrProgram -> x86_64 .s emitter.
 (import stdlib.io)
+(import stdlib.env)
 (cfg compile-profile (import stdlib.profile))
 (cfg compile-profile-summary (import compiler_profile_summary as cps))
 (import sym_i64_env)
@@ -1025,7 +1026,13 @@
   (representation-mark i64)
   ;; One-word view into the exact CompilerProfileState owned by this job.
   ;; It is installed at the explicit profile/backend emission boundary.
-  (metrics profile_state.CompilerProfileMetrics))
+  (metrics profile_state.CompilerProfileMetrics)
+  ;; IAG-1: symbol id -> inline byte size for every runtime-initialised memory
+  ;; aggregate global this program stores INLINE at its own symbol rather than
+  ;; behind an arena box pointer. Empty until the whole-program classification
+  ;; below publishes it, so any path that reaches emission without it keeps the
+  ;; boxed-cell behaviour.
+  (inline-aggregate-globals backend_i64_i64_map.Map))
 
 (defstruct CompilerBackendState
   (address i64))
@@ -1088,7 +1095,8 @@
           false
           0
           0
-          metrics))
+          metrics
+          (backend_i64_i64_map.with-capacity 1)))
       (CompilerBackendState
         (cast
           (unsafe
@@ -1188,6 +1196,49 @@
     (begin
       (set! data.metrics metrics)
       (compiler-backend-state-data-set! state data))))
+
+(define (compiler-backend-state-inline-aggregate-globals
+  [state : CompilerBackendState]) : backend_i64_i64_map.Map
+  (__tl-project-field
+    (compiler-backend-state-data state)
+    inline-aggregate-globals))
+
+(define (compiler-backend-state-set-inline-aggregate-globals!
+  [state : CompilerBackendState]
+  [globals : backend_i64_i64_map.Map]) : unit
+  (let
+    [data : CompilerBackendStateData (compiler-backend-state-data state)]
+    (begin
+      (set! data.inline-aggregate-globals globals)
+      (compiler-backend-state-data-set! state data))))
+
+;; IAG-1: the inline byte size of `name`'s cell, or 0 when the global keeps the
+;; boxed 8-byte pointer cell. This is the ONE predicate every emission site
+;; consults; a 0 answer is the pre-IAG behaviour everywhere.
+(define (compiler-backend-inline-aggregate-global-size
+  [state : CompilerBackendState]
+  [name : i64]) : i64
+  (let
+    [table : backend_i64_i64_map.Map
+      (compiler-backend-state-inline-aggregate-globals state)]
+    (match (backend_i64_i64_map.get
+      (& table)
+      (compiler_ir_types.compiler-ir-symbol-id name))
+      [(backend_i64_i64_map.LookupFound size) size]
+      [(backend_i64_i64_map.LookupMissing) 0])))
+
+(define (compiler-backend-inline-aggregate-global?
+  [state : CompilerBackendState]
+  [name : i64]) : bool
+  (> (compiler-backend-inline-aggregate-global-size state name) 0))
+
+;; The rip-relative operand of an inline aggregate global's cell at `disp`.
+(define (compiler-backend-inline-aggregate-symbol-operand
+  [symbol : String]
+  [disp : i64]) : String
+  (if (= disp 0)
+    (str_cat.str-cat symbol "(%rip)" "" "")
+    (str_cat.str-cat symbol "+" (string.int->string disp) "(%rip)")))
 
 (cfg
   (any regalloc-census scavenge-census test)
@@ -4022,7 +4073,14 @@
   (uses-avx2-i64-lane-id bool)
   (uses-avx512-i64-lane-id bool)
   (uses-f64-neg bool)
-  (uses-f32-neg bool))
+  (uses-f32-neg bool)
+  ;; IAG-1 rides this walk. The census is held as a ONE-CELL array, not by
+  ;; value: this struct is copied at every operand of every instruction, so an
+  ;; inline census would triple the copy the whole walk pays (measured: +147M
+  ;; on self-compile). Every mutable row it fills is a dyn-array or a two-cell
+  ;; cursor, so the cell is all the identity the hooks need. A census with
+  ;; `count` 0 is the disabled form: every note below is then a single compare.
+  (iag CompilerBackendIagCensusCell))
 
 (defenum CompilerBackendCollectState
   (Collections CompilerBackendProgramCollections))
@@ -4122,6 +4180,11 @@
         (BackendFloatSet seen items)))))
 
 (define (compiler-backend-program-collections-new) : CompilerBackendProgramCollections
+  (compiler-backend-program-collections-new-with-iag
+    (compiler-backend-iag-census-disabled)))
+
+(define (compiler-backend-program-collections-new-with-iag
+  [iag : CompilerBackendIagCensusCell]) : CompilerBackendProgramCollections
   (CompilerBackendProgramCollections
     (compiler-backend-symbol-set-new 256)
     (compiler-backend-symbol-set-new 256)
@@ -4131,7 +4194,8 @@
     false
     false
     false
-    false))
+    false
+    iag))
 
 (define (compiler-backend-program-collections-add-function
   [collections : CompilerBackendProgramCollections]
@@ -4145,7 +4209,8 @@
     collections.uses-avx2-i64-lane-id
     collections.uses-avx512-i64-lane-id
     collections.uses-f64-neg
-    collections.uses-f32-neg))
+    collections.uses-f32-neg
+    collections.iag))
 
 (define (compiler-backend-program-collections-add-reference
   [collections : CompilerBackendProgramCollections]
@@ -4159,7 +4224,8 @@
     collections.uses-avx2-i64-lane-id
     collections.uses-avx512-i64-lane-id
     collections.uses-f64-neg
-    collections.uses-f32-neg))
+    collections.uses-f32-neg
+    collections.iag))
 
 (define (compiler-backend-program-collections-add-string
   [collections : CompilerBackendProgramCollections]
@@ -4173,7 +4239,8 @@
     collections.uses-avx2-i64-lane-id
     collections.uses-avx512-i64-lane-id
     collections.uses-f64-neg
-    collections.uses-f32-neg))
+    collections.uses-f32-neg
+    collections.iag))
 
 (define (compiler-backend-program-collections-add-float
   [collections : CompilerBackendProgramCollections]
@@ -4188,7 +4255,8 @@
     collections.uses-avx2-i64-lane-id
     collections.uses-avx512-i64-lane-id
     collections.uses-f64-neg
-    collections.uses-f32-neg))
+    collections.uses-f32-neg
+    collections.iag))
 
 (define (compiler-backend-program-collections-add-bytes
   [collections : CompilerBackendProgramCollections]
@@ -4202,7 +4270,8 @@
     collections.uses-avx2-i64-lane-id
     collections.uses-avx512-i64-lane-id
     collections.uses-f64-neg
-    collections.uses-f32-neg))
+    collections.uses-f32-neg
+    collections.iag))
 
 (define (compiler-backend-program-collections-mark-avx2-i64-lane-id
   [collections : CompilerBackendProgramCollections]) : CompilerBackendProgramCollections
@@ -4215,7 +4284,8 @@
     true
     collections.uses-avx512-i64-lane-id
     collections.uses-f64-neg
-    collections.uses-f32-neg))
+    collections.uses-f32-neg
+    collections.iag))
 
 (define (compiler-backend-program-collections-mark-avx512-i64-lane-id
   [collections : CompilerBackendProgramCollections]) : CompilerBackendProgramCollections
@@ -4228,7 +4298,8 @@
     collections.uses-avx2-i64-lane-id
     true
     collections.uses-f64-neg
-    collections.uses-f32-neg))
+    collections.uses-f32-neg
+    collections.iag))
 
 (define (compiler-backend-program-collections-mark-f64-neg
   [collections : CompilerBackendProgramCollections]) : CompilerBackendProgramCollections
@@ -4241,7 +4312,8 @@
     collections.uses-avx2-i64-lane-id
     collections.uses-avx512-i64-lane-id
     true
-    false))
+    false
+    collections.iag))
 
 (define (compiler-backend-program-collections-mark-f32-neg
   [collections : CompilerBackendProgramCollections]) : CompilerBackendProgramCollections
@@ -4254,7 +4326,8 @@
     collections.uses-avx2-i64-lane-id
     collections.uses-avx512-i64-lane-id
     false
-    true))
+    true
+    collections.iag))
 
 (define (backend-and4 [a : bool] [b : bool] [c : bool] [d : bool]) : bool
   (and a b c d))
@@ -20197,7 +20270,14 @@
       (begin
         (compiler-backend-asm-append5
           out
-          "    movq "
+          ;; IAG-1: an inline aggregate global's cell IS the aggregate, so the
+          ;; value of `Global g` -- "the address of the struct" -- is the
+          ;; symbol's own link-time constant address, not a load of the cell.
+          (if (compiler-backend-inline-aggregate-global?
+            (compiler-backend-global-shared-view backend-state)
+            name)
+            "    leaq "
+            "    movq ")
           (compiler-backend-state-user-symbol-id backend-state name)
           "(%rip), "
           reg
@@ -23234,14 +23314,23 @@
             "%rax"
             backend-state))]
       [(compiler_ir_types.CompilerIrValue.Global name)
-        (ResultCompilerBackend.Ok
-          (compiler-backend-emit-load-memory
-            type-segment-bases
+        (if (compiler-backend-inline-aggregate-global?
+          (compiler-backend-global-shared-view program-index.backend-state)
+          name)
+          (ResultCompilerBackend.Ok
             (str_cat.str-cat
+              "    leaq "
               (compiler-backend-global-symbol-index program-index name)
-              "(%rip)"
-              "")
-            ty))]
+              "(%rip), %rax\n"
+              ""))
+          (ResultCompilerBackend.Ok
+            (compiler-backend-emit-load-memory
+              type-segment-bases
+              (str_cat.str-cat
+                (compiler-backend-global-symbol-index program-index name)
+                "(%rip)"
+                "")
+              ty)))]
       [(compiler_ir_types.CompilerIrValue.GlobalAddr name)
         (ResultCompilerBackend.Ok
           (str_cat.str-cat
@@ -23294,15 +23383,25 @@
             reg
             program-index.backend-state))]
       [(compiler_ir_types.CompilerIrValue.Global name)
-        (ResultCompilerBackend.Ok
-          (compiler-backend-emit-load-memory-to-reg
-            type-segment-bases
+        (if (compiler-backend-inline-aggregate-global?
+          (compiler-backend-global-shared-view program-index.backend-state)
+          name)
+          (ResultCompilerBackend.Ok
             (str_cat.str-cat
+              "    leaq "
               (compiler-backend-global-symbol-index program-index name)
-              "(%rip)"
-              "")
-            ty
-            reg))]
+              "(%rip), "
+              reg
+              "\n"))
+          (ResultCompilerBackend.Ok
+            (compiler-backend-emit-load-memory-to-reg
+              type-segment-bases
+              (str_cat.str-cat
+                (compiler-backend-global-symbol-index program-index name)
+                "(%rip)"
+                "")
+              ty
+              reg)))]
       [(compiler_ir_types.CompilerIrValue.GlobalAddr name)
         (ResultCompilerBackend.Ok
           (str_cat.str-cat
@@ -29547,10 +29646,17 @@
           (match location
             [(compiler_regalloc.CompilerRegLocation.Remat remat)
               (match remat
+                ;; IAG-1: an inline aggregate global's cell no longer holds the
+                ;; value a read produces, so `sym(%rip)` is not that read's
+                ;; memory operand.
                 [(compiler_ir_types.CompilerIrValue.Global name)
-                  (str_cat.str-cat
-                    (compiler-backend-state-user-symbol-id backend-state name)
-                    "(%rip)")]
+                  (if (compiler-backend-inline-aggregate-global?
+                    (compiler-backend-global-shared-view backend-state)
+                    name)
+                    ""
+                    (str_cat.str-cat
+                      (compiler-backend-state-user-symbol-id backend-state name)
+                      "(%rip)"))]
                 [_ ""])]
             [_
               (compiler-backend-value-stack-address
@@ -29560,9 +29666,13 @@
         [(compiler_regalloc.CompilerRegMaybeLocation.No)
           (compiler-backend-value-stack-address assignments value backend-state)])]
     [(compiler_ir_types.CompilerIrValue.Global name)
-      (str_cat.str-cat
-        (compiler-backend-state-user-symbol-id backend-state name)
-        "(%rip)")]
+      (if (compiler-backend-inline-aggregate-global?
+        (compiler-backend-global-shared-view backend-state)
+        name)
+        ""
+        (str_cat.str-cat
+          (compiler-backend-state-user-symbol-id backend-state name)
+          "(%rip)"))]
     [_ (compiler-backend-value-stack-address assignments value backend-state)]))
 
 ;; M6-I: the rip-relative memory operand of a scalar GLOBAL read.
@@ -29587,7 +29697,12 @@
     [(compiler_ir_types.CompilerIrValue.Global name)
       (if (or
         (compiler-backend-float-type? (compiler-backend-global-shared-view ty))
-        (not (= (compiler-backend-type-size type-segment-bases ty) 8)))
+        (not (= (compiler-backend-type-size type-segment-bases ty) 8))
+        ;; IAG-1: the cell of an inline aggregate global holds the aggregate,
+        ;; not a word-sized value a compare may read.
+        (compiler-backend-inline-aggregate-global?
+          (compiler-backend-global-shared-view backend-state)
+          name))
         ""
         (let
           [symbol : String
@@ -29628,12 +29743,17 @@
   [value : compiler_ir_types.CompilerIrValue]) : String
   (match value
     [(compiler_ir_types.CompilerIrValue.Global name)
-      (let
-        [symbol : String
-          (compiler-backend-state-user-symbol-id backend-state name)]
-        (if (string.eq symbol "")
-          ""
-          (str_cat.str-cat symbol "(%rip)")))]
+      (if (compiler-backend-inline-aggregate-global?
+        (compiler-backend-global-shared-view backend-state)
+        name)
+        ;; IAG-1: an inline aggregate read is not a cell read at all.
+        ""
+        (let
+          [symbol : String
+            (compiler-backend-state-user-symbol-id backend-state name)]
+          (if (string.eq symbol "")
+            ""
+            (str_cat.str-cat symbol "(%rip)"))))]
     [_ ""]))
 
 ;; W3(c): the memory operand a READ of `value` may spell -- this function's own
@@ -34397,30 +34517,50 @@
             ;; M-C2: a register-homed base needs neither the scavenge nor the
             ;; staging copy -- the compare only READS the addressing base, so the
             ;; home register is used directly (the load below self-elides).
+            ;; IAG-1: an inline aggregate global's field is a complete
+            ;; rip-relative compare operand; no base is materialised.
+            [rip : String
+              (compiler-backend-inline-aggregate-gep-operand
+                (compiler-backend-global-shared-view backend-state)
+                type-segment-bases
+                (compiler-backend-global-shared-view base)
+                (compiler-backend-global-shared-view offset)
+                (compiler-backend-global-shared-view elem-ty)
+                0)]
             [base-home : String
-              (compiler-backend-address-base-filter-direct
-                (compiler-backend-value-scalar-register
-                  (compiler-backend-global-shared-view backend-state)
-                  (compiler-backend-global-shared-view assignments)
-                  (compiler-backend-global-shared-view base)))]
+              (if (string.eq (compiler-backend-global-shared-view rip) "")
+                (compiler-backend-address-base-filter-direct
+                  (compiler-backend-value-scalar-register
+                    (compiler-backend-global-shared-view backend-state)
+                    (compiler-backend-global-shared-view assignments)
+                    (compiler-backend-global-shared-view base)))
+                "")]
             [scav-base : String
-              (if (string.eq (compiler-backend-global-shared-view base-home) "")
-                (compiler-backend-planned-or-scavenge-reg-here
-                  (compiler-backend-global-shared-view planned-base)
-                  (compiler-backend-addr-scavenge-exclude)
-                  0
-                  "%r10"
-                  (compiler-backend-global-shared-view backend-state))
-                (compiler-backend-global-shared-view base-home))]
+              (if (not (string.eq (compiler-backend-global-shared-view rip) ""))
+                ""
+                (if (string.eq
+                  (compiler-backend-global-shared-view base-home)
+                  "")
+                  (compiler-backend-planned-or-scavenge-reg-here
+                    (compiler-backend-global-shared-view planned-base)
+                    (compiler-backend-addr-scavenge-exclude)
+                    0
+                    "%r10"
+                    (compiler-backend-global-shared-view backend-state))
+                  (compiler-backend-global-shared-view base-home)))]
             [addr : String
-              (compiler-backend-base-address
-                disp
-                (compiler-backend-global-shared-view scav-base))]
-            (match (compiler-backend-emit-load-value-with-plan
-              (compiler-backend-global-shared-view assignments)
-              (compiler-backend-global-shared-view base)
-              (compiler-backend-global-shared-view scav-base)
-              (compiler-backend-global-shared-view backend-state))
+              (if (not (string.eq (compiler-backend-global-shared-view rip) ""))
+                (compiler-backend-global-shared-view rip)
+                (compiler-backend-base-address
+                  disp
+                  (compiler-backend-global-shared-view scav-base)))]
+            (match (if (string.eq (compiler-backend-global-shared-view rip) "")
+              (compiler-backend-emit-load-value-with-plan
+                (compiler-backend-global-shared-view assignments)
+                (compiler-backend-global-shared-view base)
+                (compiler-backend-global-shared-view scav-base)
+                (compiler-backend-global-shared-view backend-state))
+              (ResultCompilerBackend.Ok ""))
               [(ResultCompilerBackend.Ok base-asm)
                 (match (compiler-backend-immediate-operand
                   (compiler-backend-global-shared-view backend-state)
@@ -35298,6 +35438,16 @@
         backend-state
         (compiler-backend-global-shared-view assignments)
         dst)]
+    ;; IAG-1: `gep @g, k` on an inline aggregate global is a link-time constant
+    ;; address; a register-homed result takes it in one `leaq`.
+    [rip : String
+      (compiler-backend-inline-aggregate-gep-operand
+        (compiler-backend-global-shared-view backend-state)
+        type-segment-bases
+        (compiler-backend-global-shared-view base)
+        (compiler-backend-global-shared-view offset)
+        (compiler-backend-global-shared-view elem-ty)
+        gep-disp)]
     ;; GAP7: a %rbp base is admitted for the CONST-offset leaq (spelled as the
     ;; SIB scale-1 form via compiler-backend-copy-address); the variable-index
     ;; branch below re-excludes it (the SIB index slot is taken by the gep index).
@@ -35307,83 +35457,93 @@
           backend-state
           (compiler-backend-global-shared-view assignments)
           (compiler-backend-global-shared-view base)))]
-    (if (if (string.eq dst-home "")
-      false
-      (not (string.eq base-reg "")))
-      (match (compiler-backend-value-as-i64
-        (compiler-backend-global-shared-view offset))
-        [(option_i64.Some n)
-          (let
-            [disp : i64
-              (* n (compiler-backend-type-size type-segment-bases elem-ty))]
-            (if (if (= disp 0)
-              (string.eq base-reg dst-home)
-              false)
-              (ResultCompilerBackend.Ok "")
-              (ResultCompilerBackend.Ok
-                (str_cat.str-cat
-                  "    leaq "
-                  (compiler-backend-copy-address disp base-reg)
-                  ", "
-                  dst-home
-                  "\n"))))]
-        [(option_i64.None)
-          ;; GAP6b: variable index, both base and index register-homed with a
-          ;; valid SIB scale -> compute the address in ONE leaq off the homes,
-          ;; no `movq base,%r; movq idx,%r2; leaq (%r,%r2,s)` staging copies.
-          ;; leaq only READS its operands, so dst-home may alias base-reg or the
-          ;; index. #rbp-base: base-reg is already filtered (never %rbp); a
-          ;; %rbp-homed INDEX in the SIB index slot is legal.
-          (let
-            [offset-home : String
-              (compiler-backend-value-scalar-register
-                backend-state
-                (compiler-backend-global-shared-view assignments)
-                (compiler-backend-global-shared-view offset))]
-            [scale : i64
-              (compiler-backend-type-size
-                type-segment-bases
-                (compiler-backend-global-shared-view elem-ty))]
-            (if (and
-              (not (string.eq offset-home ""))
-              (compiler-backend-gep-sib-scale? scale)
-              ;; GAP7 #rbp-base: a %rbp base cannot occupy the SIB BASE slot
-              ;; alongside the gep index (`(%rbp,idx,s)` would read as a frame
-              ;; ref); route it to the staged path instead.
-              (not (string.eq base-reg "%rbp")))
-              (ResultCompilerBackend.Ok
-                (str_cat.str-cat
-                  "    leaq "
-                  (compiler-backend-gep-index-address-disp
-                    gep-disp
-                    base-reg
-                    scale
-                    offset-home)
-                  ", "
-                  dst-home
-                  "\n"))
-              (compiler-backend-emit-gep-staged
-                type-segment-bases
-                assignments
-                dst
-                base
-                offset
-                elem-ty
-                gep-disp
-                planned-address
-                planned-index
-                backend-state)))])
-      (compiler-backend-emit-gep-staged
-        type-segment-bases
-        assignments
-        dst
-        base
-        offset
-        elem-ty
-        gep-disp
-        planned-address
-        planned-index
-        backend-state))))
+    (if (and
+      (not (string.eq (compiler-backend-global-shared-view rip) ""))
+      (not (string.eq (compiler-backend-global-shared-view dst-home) "")))
+      (ResultCompilerBackend.Ok
+        (str_cat.str-cat
+          "    leaq "
+          (compiler-backend-global-shared-view rip)
+          ", "
+          (compiler-backend-global-shared-view dst-home)
+          "\n"))
+      (if (if (string.eq dst-home "")
+        false
+        (not (string.eq base-reg "")))
+        (match (compiler-backend-value-as-i64
+          (compiler-backend-global-shared-view offset))
+          [(option_i64.Some n)
+            (let
+              [disp : i64
+                (* n (compiler-backend-type-size type-segment-bases elem-ty))]
+              (if (if (= disp 0)
+                (string.eq base-reg dst-home)
+                false)
+                (ResultCompilerBackend.Ok "")
+                (ResultCompilerBackend.Ok
+                  (str_cat.str-cat
+                    "    leaq "
+                    (compiler-backend-copy-address disp base-reg)
+                    ", "
+                    dst-home
+                    "\n"))))]
+          [(option_i64.None)
+            ;; GAP6b: variable index, both base and index register-homed with a
+            ;; valid SIB scale -> compute the address in ONE leaq off the homes,
+            ;; no `movq base,%r; movq idx,%r2; leaq (%r,%r2,s)` staging copies.
+            ;; leaq only READS its operands, so dst-home may alias base-reg or the
+            ;; index. #rbp-base: base-reg is already filtered (never %rbp); a
+            ;; %rbp-homed INDEX in the SIB index slot is legal.
+            (let
+              [offset-home : String
+                (compiler-backend-value-scalar-register
+                  backend-state
+                  (compiler-backend-global-shared-view assignments)
+                  (compiler-backend-global-shared-view offset))]
+              [scale : i64
+                (compiler-backend-type-size
+                  type-segment-bases
+                  (compiler-backend-global-shared-view elem-ty))]
+              (if (and
+                (not (string.eq offset-home ""))
+                (compiler-backend-gep-sib-scale? scale)
+                ;; GAP7 #rbp-base: a %rbp base cannot occupy the SIB BASE slot
+                ;; alongside the gep index (`(%rbp,idx,s)` would read as a frame
+                ;; ref); route it to the staged path instead.
+                (not (string.eq base-reg "%rbp")))
+                (ResultCompilerBackend.Ok
+                  (str_cat.str-cat
+                    "    leaq "
+                    (compiler-backend-gep-index-address-disp
+                      gep-disp
+                      base-reg
+                      scale
+                      offset-home)
+                    ", "
+                    dst-home
+                    "\n"))
+                (compiler-backend-emit-gep-staged
+                  type-segment-bases
+                  assignments
+                  dst
+                  base
+                  offset
+                  elem-ty
+                  gep-disp
+                  planned-address
+                  planned-index
+                  backend-state)))])
+        (compiler-backend-emit-gep-staged
+          type-segment-bases
+          assignments
+          dst
+          base
+          offset
+          elem-ty
+          gep-disp
+          planned-address
+          planned-index
+          backend-state)))))
 
 (define (compiler-backend-emit-gep-staged-avoid
   [type-segment-bases : i64]
@@ -35767,6 +35927,47 @@
           ty
           backend-state)
         ""))))
+
+;; IAG-1: the rip-relative memory operand `gep @g, k` denotes for an inline
+;; aggregate global at a CONSTANT offset. It is the whole of the base
+;; materialisation plus the addressing displacement in one operand, which is
+;; what turns the two-instruction `movq g(%rip), %r ; movq (%r), %x` chain link
+;; into a single `movq g+k(%rip), %x`. "" declines: a non-inline base, a
+;; non-constant offset, or a displacement outside the cell (defensive -- an
+;; in-bounds field access is all lowering produces for these).
+(define (compiler-backend-inline-aggregate-gep-operand
+  [backend-state : CompilerBackendState]
+  [type-segment-bases : i64]
+  [base : compiler_ir_types.CompilerIrValue]
+  [offset : compiler_ir_types.CompilerIrValue]
+  [elem-ty : compiler_ast_types.AstType]
+  [gep-disp : i64]) : String
+  (match (compiler-backend-global-shared-view base)
+    [(compiler_ir_types.CompilerIrValue.Global name)
+      (let
+        [size : i64
+          (compiler-backend-inline-aggregate-global-size
+            (compiler-backend-global-shared-view backend-state)
+            name)]
+        (if (= size 0)
+          ""
+          (match (compiler-backend-value-as-i64
+            (compiler-backend-global-shared-view offset))
+            [(option_i64.Some n)
+              (let
+                [disp : i64
+                  (+
+                    (*
+                      n
+                      (compiler-backend-type-size type-segment-bases elem-ty))
+                    gep-disp)]
+                (if (and (>= disp 0) (< disp size))
+                  (compiler-backend-inline-aggregate-symbol-operand
+                    (compiler-backend-state-user-symbol-id backend-state name)
+                    disp)
+                  ""))]
+            [(option_i64.None) ""])))]
+    [_ ""]))
 
 (define (compiler-backend-emit-load-scalar-address-to-var
   [type-segment-bases : i64]
@@ -37536,6 +37737,17 @@
     (compiler-backend-global-shared-view offset))
     [(option_i64.Some n)
       (let
+        ;; IAG-1: an inline aggregate global's field read is a single
+        ;; `movq g+k(%rip), %r` -- no base register is materialised at all.
+        ;; Probed BEFORE the base scavenge below so a hit costs no pick.
+        [rip : String
+          (compiler-backend-inline-aggregate-gep-operand
+            (compiler-backend-global-shared-view backend-state)
+            type-segment-bases
+            (compiler-backend-global-shared-view base)
+            (compiler-backend-global-shared-view offset)
+            (compiler-backend-global-shared-view elem-ty)
+            gep-disp)]
         ;; gep-disp is 0 here in practice (only Var-index geps carry a folded
         ;; displacement); merged for totality.
         [disp : i64
@@ -37556,32 +37768,40 @@
         ;; address before writing, and home equality means the allocator proved
         ;; the base value dead after this load.
         [base-home : String
-          (compiler-backend-address-base-filter-direct
-            (compiler-backend-value-scalar-register
-              (compiler-backend-global-shared-view backend-state)
-              (compiler-backend-global-shared-view assignments)
-              (compiler-backend-global-shared-view base)))]
+          (if (string.eq (compiler-backend-global-shared-view rip) "")
+            (compiler-backend-address-base-filter-direct
+              (compiler-backend-value-scalar-register
+                (compiler-backend-global-shared-view backend-state)
+                (compiler-backend-global-shared-view assignments)
+                (compiler-backend-global-shared-view base)))
+            "")]
         [base-reg : String
-          (if (string.eq (compiler-backend-global-shared-view base-reg-in) "")
-            (if (string.eq (compiler-backend-global-shared-view base-home) "")
-              (compiler-backend-planned-or-scavenge-reg
-                (compiler-backend-global-shared-view planned-address)
-                dst
-                (compiler-backend-addr-scavenge-exclude)
-                0
-                "%r10"
-                (compiler-backend-global-shared-view backend-state))
-              (compiler-backend-global-shared-view base-home))
-            (compiler-backend-global-shared-view base-reg-in))]
+          (if (not (string.eq (compiler-backend-global-shared-view rip) ""))
+            ""
+            (if (string.eq (compiler-backend-global-shared-view base-reg-in) "")
+              (if (string.eq (compiler-backend-global-shared-view base-home) "")
+                (compiler-backend-planned-or-scavenge-reg
+                  (compiler-backend-global-shared-view planned-address)
+                  dst
+                  (compiler-backend-addr-scavenge-exclude)
+                  0
+                  "%r10"
+                  (compiler-backend-global-shared-view backend-state))
+                (compiler-backend-global-shared-view base-home))
+              (compiler-backend-global-shared-view base-reg-in)))]
         [addr : String
-          (compiler-backend-base-address
-            disp
-            (compiler-backend-global-shared-view base-reg))]
-        (match (compiler-backend-emit-load-value-with-plan
-          (compiler-backend-global-shared-view assignments)
-          (compiler-backend-global-shared-view base)
-          (compiler-backend-global-shared-view base-reg)
-          backend-state)
+          (if (not (string.eq (compiler-backend-global-shared-view rip) ""))
+            (compiler-backend-global-shared-view rip)
+            (compiler-backend-base-address
+              disp
+              (compiler-backend-global-shared-view base-reg)))]
+        (match (if (string.eq (compiler-backend-global-shared-view rip) "")
+          (compiler-backend-emit-load-value-with-plan
+            (compiler-backend-global-shared-view assignments)
+            (compiler-backend-global-shared-view base)
+            (compiler-backend-global-shared-view base-reg)
+            backend-state)
+          (ResultCompilerBackend.Ok ""))
           [(ResultCompilerBackend.Ok base-asm)
             (ResultCompilerBackend.Ok
               (if (compiler-backend-float-type?
@@ -37605,7 +37825,9 @@
                     (compiler-backend-global-shared-view load-ty)
                     (compiler-backend-one-exclude
                       (compiler-backend-global-shared-view base-reg))
-                    1
+                    (if (string.eq (compiler-backend-global-shared-view rip) "")
+                      1
+                      0)
                     (compiler-backend-global-shared-view planned-value)
                     (compiler-backend-global-shared-view backend-state)))))]
           [(ResultCompilerBackend.Err message)
@@ -40557,10 +40779,24 @@
     state
     (compiler-backend-collect-function-seq-shared
       (compiler-backend-collect-function-shared
-        state
+        (compiler-backend-collect-state-enter-function! state index)
         (compiler-backend-global-array-element-shared-view seq.slots index))
       seq
       (+ index 1))))
+
+;; IAG-1: the function slot the shared walk is inside. `index` is the position
+;; in the SAME sequence the program index was built from, so it is that
+;; function's program-index slot.
+(define (compiler-backend-collect-state-enter-function!
+  [state : CompilerBackendCollectState]
+  [slot : i64]) : CompilerBackendCollectState
+  (match state
+    [(CompilerBackendCollectState.Collections collections)
+      (begin
+        (compiler-backend-iag-enter-function!
+          (compiler-backend-global-shared-view collections.iag)
+          slot)
+        (CompilerBackendCollectState.Collections collections))]))
 
 (define (compiler-backend-collect-functions-shared
   [state : CompilerBackendCollectState]
@@ -54849,99 +55085,132 @@
                   (compiler-backend-global-shared-view instr-diag))))])]
       [(compiler_ir_types.CompilerIrInstr.Store name value ty)
         (let
+          [symbol : String
+            (compiler-backend-state-user-symbol-id
+              (compiler-backend-global-shared-view ctx.backend-state)
+              name)]
           [addr : String
             (str_cat.str-cat
-              (compiler-backend-state-user-symbol-id ctx.backend-state name)
+              (compiler-backend-global-shared-view symbol)
               "(%rip)"
               "")]
-          (if (compiler-backend-group-type?
-            ctx.type-segment-bases
-            (compiler-backend-global-shared-view ctx.program-index)
-            (compiler-backend-global-shared-view ty))
-            ;; Storing a register-group into a global writes both words
-            ;; inline (word0 at sym, word1 at sym+8).
-            (let
-              [reg0 : String
-                (compiler-backend-group-return-reg
+          [inline-size : i64
+            (compiler-backend-inline-aggregate-global-size
+              (compiler-backend-global-shared-view ctx.backend-state)
+              name)]
+          (if (> inline-size 0)
+            ;; IAG-1: the rebind's IR shape is unchanged -- `value` is a
+            ;; pointer to the freshly built aggregate -- so the cell takes the
+            ;; bytes rather than the pointer.
+            (match (compiler-backend-emit-inline-aggregate-store
+              (compiler-backend-global-shared-view ctx.assignments)
+              (compiler-backend-global-shared-view symbol)
+              inline-size
+              value
+              planned-scratch0
+              ctx.backend-state)
+              [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
+              [(ResultCompilerBackend.Err message)
+                (ResultCompilerBackend.Err
+                  (box
+                    (compiler-backend-apply-instr-diagnostic
+                      (compiler_ir_types.compiler-ir-box-shared-view message)
+                      (compiler-backend-global-shared-view instr-diag))))])
+            (if (compiler-backend-group-type?
+              ctx.type-segment-bases
+              (compiler-backend-global-shared-view ctx.program-index)
+              (compiler-backend-global-shared-view ty))
+              ;; Storing a register-group into a global writes both words
+              ;; inline (word0 at sym, word1 at sym+8).
+              (let
+                [reg0 : String
+                  (compiler-backend-group-return-reg
+                    ctx.type-segment-bases
+                    (compiler-backend-global-shared-view ctx.program-index)
+                    (compiler-backend-global-shared-view ty)
+                    0)]
+                [reg1 : String
+                  (compiler-backend-group-return-reg
+                    ctx.type-segment-bases
+                    (compiler-backend-global-shared-view ctx.program-index)
+                    (compiler-backend-global-shared-view ty)
+                    1)]
+                [sym0 : String
+                  (str_cat.str-cat
+                    (compiler-backend-state-user-symbol-id
+                      ctx.backend-state
+                      name)
+                    "(%rip)"
+                    "")]
+                [sym1 : String
+                  (str_cat.str-cat
+                    (compiler-backend-state-user-symbol-id
+                      ctx.backend-state
+                      name)
+                    "+8(%rip)"
+                    "")]
+                (match (compiler-backend-emit-group-load
                   ctx.type-segment-bases
-                  (compiler-backend-global-shared-view ctx.program-index)
+                  (compiler-backend-global-shared-view ctx.assignments)
+                  value
+                  (compiler-backend-global-shared-view reg0)
+                  (compiler-backend-global-shared-view reg1)
+                  ctx.vars
                   (compiler-backend-global-shared-view ty)
-                  0)]
-              [reg1 : String
-                (compiler-backend-group-return-reg
+                  (compiler-backend-global-shared-view ctx.program-index)
+                  ctx.backend-state)
+                  [(ResultCompilerBackend.Ok load)
+                    (ResultCompilerBackend.Ok
+                      (str_cat.str-cat
+                        load
+                        (compiler-backend-emit-group-word-move
+                          (compiler-backend-global-shared-view reg0)
+                          sym0
+                          (compiler-backend-group-word-sse?
+                            ctx.type-segment-bases
+                            (compiler-backend-global-shared-view
+                              ctx.program-index)
+                            (compiler-backend-global-shared-view ty)
+                            0))
+                        (compiler-backend-emit-group-word-move
+                          (compiler-backend-global-shared-view reg1)
+                          sym1
+                          (compiler-backend-group-word-sse?
+                            ctx.type-segment-bases
+                            (compiler-backend-global-shared-view
+                              ctx.program-index)
+                            (compiler-backend-global-shared-view ty)
+                            1))))]
+                  [(ResultCompilerBackend.Err message)
+                    (ResultCompilerBackend.Err
+                      (box
+                        (compiler-backend-apply-instr-diagnostic
+                          (compiler_ir_types.compiler-ir-box-shared-view
+                            message)
+                          (compiler-backend-global-shared-view instr-diag))))]))
+              (let
+                [no-exclude : (__tl_dyn-array String)
+                  (__tl_make-array String 0)]
+                (match (compiler-backend-emit-store-value-to-address
                   ctx.type-segment-bases
-                  (compiler-backend-global-shared-view ctx.program-index)
+                  (compiler-backend-global-shared-view ctx.assignments)
+                  value
                   (compiler-backend-global-shared-view ty)
-                  1)]
-              [sym0 : String
-                (str_cat.str-cat
-                  (compiler-backend-state-user-symbol-id ctx.backend-state name)
-                  "(%rip)"
-                  "")]
-              [sym1 : String
-                (str_cat.str-cat
-                  (compiler-backend-state-user-symbol-id ctx.backend-state name)
-                  "+8(%rip)"
-                  "")]
-              (match (compiler-backend-emit-group-load
-                ctx.type-segment-bases
-                (compiler-backend-global-shared-view ctx.assignments)
-                value
-                (compiler-backend-global-shared-view reg0)
-                (compiler-backend-global-shared-view reg1)
-                ctx.vars
-                (compiler-backend-global-shared-view ty)
-                (compiler-backend-global-shared-view ctx.program-index)
-                ctx.backend-state)
-                [(ResultCompilerBackend.Ok load)
-                  (ResultCompilerBackend.Ok
-                    (str_cat.str-cat
-                      load
-                      (compiler-backend-emit-group-word-move
-                        (compiler-backend-global-shared-view reg0)
-                        sym0
-                        (compiler-backend-group-word-sse?
-                          ctx.type-segment-bases
-                          (compiler-backend-global-shared-view
-                            ctx.program-index)
-                          (compiler-backend-global-shared-view ty)
-                          0))
-                      (compiler-backend-emit-group-word-move
-                        (compiler-backend-global-shared-view reg1)
-                        sym1
-                        (compiler-backend-group-word-sse?
-                          ctx.type-segment-bases
-                          (compiler-backend-global-shared-view
-                            ctx.program-index)
-                          (compiler-backend-global-shared-view ty)
-                          1))))]
-                [(ResultCompilerBackend.Err message)
-                  (ResultCompilerBackend.Err
-                    (box
-                      (compiler-backend-apply-instr-diagnostic
-                        (compiler_ir_types.compiler-ir-box-shared-view message)
-                        (compiler-backend-global-shared-view instr-diag))))]))
-            (let
-              [no-exclude : (__tl_dyn-array String) (__tl_make-array String 0)]
-              (match (compiler-backend-emit-store-value-to-address
-                ctx.type-segment-bases
-                (compiler-backend-global-shared-view ctx.assignments)
-                value
-                (compiler-backend-global-shared-view ty)
-                addr
-                (compiler-backend-global-shared-view ctx.program-index)
-                no-exclude
-                0
-                planned-scratch0
-                ctx.backend-state)
-                [(ResultCompilerBackend.Ok store-asm)
-                  (ResultCompilerBackend.Ok store-asm)]
-                [(ResultCompilerBackend.Err message)
-                  (ResultCompilerBackend.Err
-                    (box
-                      (compiler-backend-apply-instr-diagnostic
-                        (compiler_ir_types.compiler-ir-box-shared-view message)
-                        (compiler-backend-global-shared-view instr-diag))))]))))]
+                  addr
+                  (compiler-backend-global-shared-view ctx.program-index)
+                  no-exclude
+                  0
+                  planned-scratch0
+                  ctx.backend-state)
+                  [(ResultCompilerBackend.Ok store-asm)
+                    (ResultCompilerBackend.Ok store-asm)]
+                  [(ResultCompilerBackend.Err message)
+                    (ResultCompilerBackend.Err
+                      (box
+                        (compiler-backend-apply-instr-diagnostic
+                          (compiler_ir_types.compiler-ir-box-shared-view
+                            message)
+                          (compiler-backend-global-shared-view instr-diag))))])))))]
       [(compiler_ir_types.CompilerIrInstr.Jump target)
         (match (compiler-backend-emit-trivial-phi-return-edge
           ctx.type-segment-bases
@@ -58460,45 +58729,59 @@
   ;; arm would otherwise use is re-read by the bounds-abort tail after a `pushq`
   ;; has moved %rsp, and it is the exact shape the FPO rsp-rebase pass rewrites.
   (let
+    ;; IAG-1: an inline aggregate global's field is already a complete
+    ;; rip-relative operand -- no base register is needed or possible.
+    [rip : String
+      (compiler-backend-inline-aggregate-gep-operand
+        (compiler-backend-global-shared-view backend-state)
+        type-segment-bases
+        (compiler-backend-global-shared-view base)
+        (compiler-backend-global-shared-view offset)
+        (compiler-backend-global-shared-view elem-ty)
+        gep-disp)]
     [base-home : String
-      (compiler-backend-address-base-filter
-        (compiler-backend-value-scalar-register
-          backend-state
-          (compiler-backend-global-shared-view assignments)
-          base))]
-    (if (string.eq base-home "")
-      ""
-      (match (compiler-backend-value-as-i64
-        (compiler-backend-global-shared-view offset))
-        [(option_i64.Some n)
-          (let
-            [disp : i64
-              (+
-                (* n (compiler-backend-type-size type-segment-bases elem-ty))
-                gep-disp)]
-            (if (compiler-backend-imm32? disp)
-              (compiler-backend-base-address disp base-home)
-              ""))]
-        [(option_i64.None)
-          (let
-            [scale : i64
-              (compiler-backend-type-size type-segment-bases elem-ty)]
-            [index-home : String
-              (compiler-backend-value-scalar-register
-                backend-state
-                assignments
-                offset)]
-            (if (and
-              (compiler-backend-gep-sib-scale? scale)
-              (not (string.eq index-home ""))
-              (not (string.eq index-home "%rbp"))
-              (compiler-backend-imm32? gep-disp))
-              (compiler-backend-gep-index-address-disp
-                gep-disp
-                base-home
-                scale
-                index-home)
-              ""))]))))
+      (if (string.eq rip "")
+        (compiler-backend-address-base-filter
+          (compiler-backend-value-scalar-register
+            backend-state
+            (compiler-backend-global-shared-view assignments)
+            base))
+        "")]
+    (if (not (string.eq rip ""))
+      rip
+      (if (string.eq base-home "")
+        ""
+        (match (compiler-backend-value-as-i64
+          (compiler-backend-global-shared-view offset))
+          [(option_i64.Some n)
+            (let
+              [disp : i64
+                (+
+                  (* n (compiler-backend-type-size type-segment-bases elem-ty))
+                  gep-disp)]
+              (if (compiler-backend-imm32? disp)
+                (compiler-backend-base-address disp base-home)
+                ""))]
+          [(option_i64.None)
+            (let
+              [scale : i64
+                (compiler-backend-type-size type-segment-bases elem-ty)]
+              [index-home : String
+                (compiler-backend-value-scalar-register
+                  backend-state
+                  assignments
+                  offset)]
+              (if (and
+                (compiler-backend-gep-sib-scale? scale)
+                (not (string.eq index-home ""))
+                (not (string.eq index-home "%rbp"))
+                (compiler-backend-imm32? gep-disp))
+                (compiler-backend-gep-index-address-disp
+                  gep-disp
+                  base-home
+                  scale
+                  index-home)
+                ""))])))))
 
 ;; M6-D. Every address above is spelled straight out of the homes the allocator
 ;; chose, so a gep whose BASE was spilled (or homed in %rbp, which the dynamic
@@ -80460,7 +80743,14 @@
     [(compiler_ir_types.CompilerIrValue.Function name)
       (compiler-backend-program-collections-add-function collections name)]
     [(compiler_ir_types.CompilerIrValue.Global name)
-      (compiler-backend-program-collections-add-reference collections name)]
+      ;; IAG-1: this operand is a READ of the cell by the function being
+      ;; walked. Same argument as W3(c) below: record it here rather than
+      ;; paying a second traversal for the same answer.
+      (begin
+        (compiler-backend-iag-note-mention!
+          (compiler-backend-global-shared-view collections.iag)
+          name)
+        (compiler-backend-program-collections-add-reference collections name))]
     [(compiler_ir_types.CompilerIrValue.GlobalAddr name)
       ;; W3(c): `(& g)` exists, so a `StorePtr` could reach cell(g). Record it
       ;; on the walk that already visits every operand of every instruction
@@ -80468,6 +80758,9 @@
       (begin
         (compiler_regalloc.compiler-reg-add-nonfrozen-global!
           (compiler_ir_types.compiler-ir-symbol-id name))
+        (compiler-backend-iag-note-mention!
+          (compiler-backend-global-shared-view collections.iag)
+          name)
         (compiler-backend-program-collections-add-reference collections name))]
     [(compiler_ir_types.CompilerIrValue.String text)
       (compiler-backend-program-collections-add-string collections text)]
@@ -80588,48 +80881,82 @@
                 (compiler-backend-program-collections-mark-f32-neg with-src)
                 with-src))]
           [_ with-src]))]
-    [(compiler_ir_types.CompilerIrInstr.Call _ _ args _)
-      (compiler-backend-collect-call-args-collections collections args)]
+    [(compiler_ir_types.CompilerIrInstr.Call _ name args _)
+      ;; IAG-1: one direct call-graph edge.
+      (begin
+        (compiler-backend-iag-note-callee!
+          (compiler-backend-global-shared-view collections.iag)
+          name)
+        (compiler-backend-collect-call-args-collections collections args))]
     [(compiler_ir_types.CompilerIrInstr.CallIndirect _ func args _)
-      (compiler-backend-collect-call-args-collections
-        (compiler-backend-collect-value-collections collections func)
-        args)]
+      ;; IAG-1: a call through a value; this function's callee set is not
+      ;; enumerable, so it can reach any rebind.
+      (begin
+        (compiler-backend-iag-note-indirect!
+          (compiler-backend-global-shared-view collections.iag))
+        (compiler-backend-collect-call-args-collections
+          (compiler-backend-collect-value-collections collections func)
+          args))]
     [(compiler_ir_types.CompilerIrInstr.CallIndirectC _ func args _)
-      (compiler-backend-collect-call-args-collections
-        (compiler-backend-collect-value-collections collections func)
-        args)]
+      (begin
+        (compiler-backend-iag-note-indirect!
+          (compiler-backend-global-shared-view collections.iag))
+        (compiler-backend-collect-call-args-collections
+          (compiler-backend-collect-value-collections collections func)
+          args))]
     [(compiler_ir_types.CompilerIrInstr.CallCAbiStoreResult payload-box)
       (let
         [base (compiler-backend-box-field-shared-view payload-box base)]
         [args (compiler-backend-box-field-shared-view payload-box args)]
-        (compiler-backend-collect-call-args-collections
-          (compiler-backend-collect-value-collections collections base)
-          args))]
+        [name (compiler-backend-box-field-shared-view payload-box name)]
+        (begin
+          (compiler-backend-iag-note-callee!
+            (compiler-backend-global-shared-view collections.iag)
+            name)
+          (compiler-backend-collect-call-args-collections
+            (compiler-backend-collect-value-collections collections base)
+            args)))]
     [(compiler_ir_types.CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
       (let
         [base (compiler-backend-box-field-shared-view payload-box base)]
         [func (compiler-backend-box-field-shared-view payload-box callee)]
         [args (compiler-backend-box-field-shared-view payload-box args)]
-        (compiler-backend-collect-call-args-collections
-          (compiler-backend-collect-value-collections
-            (compiler-backend-collect-value-collections collections base)
-            func)
-          args))]
+        (begin
+          (compiler-backend-iag-note-indirect!
+            (compiler-backend-global-shared-view collections.iag))
+          (compiler-backend-collect-call-args-collections
+            (compiler-backend-collect-value-collections
+              (compiler-backend-collect-value-collections collections base)
+              func)
+            args)))]
     [(compiler_ir_types.CompilerIrInstr.SpmdCall payload-box)
       (let
         [active-mask
           (compiler-backend-box-field-shared-view payload-box active-mask)]
         [args (compiler-backend-box-field-shared-view payload-box args)]
-        (compiler-backend-collect-spmd-call-args-collections
-          (compiler-backend-collect-value-collections collections active-mask)
-          args))]
-    [(compiler_ir_types.CompilerIrInstr.TailCall _ args _)
-      (compiler-backend-collect-call-args-collections collections args)]
+        [callee (compiler-backend-box-field-shared-view payload-box callee)]
+        (begin
+          (compiler-backend-iag-note-callee!
+            (compiler-backend-global-shared-view collections.iag)
+            callee)
+          (compiler-backend-collect-spmd-call-args-collections
+            (compiler-backend-collect-value-collections collections active-mask)
+            args)))]
+    [(compiler_ir_types.CompilerIrInstr.TailCall name args _)
+      (begin
+        (compiler-backend-iag-note-callee!
+          (compiler-backend-global-shared-view collections.iag)
+          name)
+        (compiler-backend-collect-call-args-collections collections args))]
     [(compiler_ir_types.CompilerIrInstr.Store name value _)
       ;; W3(c): the lowering of `(set! g ...)`, the one direct cell writer.
+      ;; IAG-1 keys its R(g) on the same instruction.
       (begin
         (compiler_regalloc.compiler-reg-add-nonfrozen-global!
           (compiler_ir_types.compiler-ir-symbol-id name))
+        (compiler-backend-iag-note-write!
+          (compiler-backend-global-shared-view collections.iag)
+          name)
         (compiler-backend-collect-value-collections collections value))]
     [(compiler_ir_types.CompilerIrInstr.Branch cond _ _)
       (compiler-backend-collect-value-collections collections cond)]
@@ -80801,9 +81128,12 @@
     [(compiler_ir_types.CompilerIrInstr.Word _ src _ _)
       (compiler-backend-collect-value-collections collections src)]
     [(compiler_ir_types.CompilerIrInstr.TailCallIndirect func args _)
-      (compiler-backend-collect-call-args-collections
-        (compiler-backend-collect-value-collections collections func)
-        args)]
+      (begin
+        (compiler-backend-iag-note-indirect!
+          (compiler-backend-global-shared-view collections.iag))
+        (compiler-backend-collect-call-args-collections
+          (compiler-backend-collect-value-collections collections func)
+          args))]
     [(compiler_ir_types.CompilerIrInstr.Alloc _ _) collections]
     [(compiler_ir_types.CompilerIrInstr.AddrOf _ _) collections]
     [(compiler_ir_types.CompilerIrInstr.LaneId _ lanes elem-ty)
@@ -80870,11 +81200,30 @@
   [program : compiler_ir_types.CompilerIrProgram]) : CompilerBackendProgramCollections
   (match program
     [(compiler_ir_types.CompilerIrProgram.Program globals functions _)
-      (compiler-backend-collect-function-collections
-        (compiler-backend-collect-global-collections
-          (compiler-backend-program-collections-new)
-          globals)
-        functions)]))
+      (compiler-backend-collect-program-collections-with-iag
+        globals
+        functions
+        (compiler-backend-iag-census-disabled))]))
+
+;; The one whole-program walk. `functions` must be the sequence the program
+;; index was built from (the entry list), so a census row index is that
+;; function's program-index slot; the global-initializer part runs with the
+;; census "outside any function" so a constant that names a global cannot be
+;; mistaken for a read by function 0.
+(define (compiler-backend-collect-program-collections-with-iag
+  [globals : compiler_ir_types.CompilerIrGlobalSeq]
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
+  [iag : CompilerBackendIagCensusCell]) : CompilerBackendProgramCollections
+  (let
+    [_outside : unit
+      (compiler-backend-iag-enter-function!
+        (compiler-backend-global-shared-view iag)
+        -1)]
+    [seeded : CompilerBackendProgramCollections
+      (compiler-backend-collect-global-collections
+        (compiler-backend-program-collections-new-with-iag iag)
+        globals)]
+    (compiler-backend-collect-function-collections seeded functions)))
 
 (define (compiler-backend-collect-source-path-strings
   [backend-state : CompilerBackendState]
@@ -81145,6 +81494,1098 @@
       ":\n    .quad 0x80000000\n    .quad 0\n")
     buf))
 
+;; ============================================================================
+;; IAG-1: inline storage for runtime-initialised aggregate globals.
+;;
+;; A module-level global whose type is a MEMORY aggregate is stored as an
+;; 8-byte cell holding a POINTER to an arena box, so every field read pays two
+;; dependent loads (`movq g(%rip), %r ; movq (%r), %x`). Where the
+;; classification below proves no accepted program can observe the box
+;; identity, the cell IS the aggregate: `.comm g, <size>, 8`,
+;; `CompilerIrValue.Global g` materialises as `leaq g(%rip)` (a link-time
+;; constant address) instead of a load, a constant-offset field read folds to
+;; one `movq g+k(%rip), %r`, and the startup initializer plus every `(set! g v)`
+;; rebind copy <size> bytes into the cell.
+;;
+;; SAFETY. The only way a program can observe box identity is a borrow of `g`
+;; that stays live across a rebind of `g`. Let R(g) be the set of functions
+;; containing `CompilerIrInstr.Store g _ _` -- the one direct cell writer (the
+;; same instruction the W3(c) frozen-global scan keys on). If R(g) is empty
+;; nothing can rebind and the inline form is unconditionally equivalent.
+;; Otherwise EVERY function F that mentions `Global g` or `GlobalAddr g` must
+;; satisfy all three of
+;;
+;;   * F does not itself write the cell -- once inlining folds a setter into a
+;;     reader, a materialisation of `Global g` can straddle that write, and the
+;;     box form would keep reading the OLD box where the inline form reads the
+;;     new bytes;
+;;   * F contains no indirect call, so its callee set is enumerable at all; and
+;;   * no DIRECT callee of F transitively reaches a member of R(g).
+;;
+;; The third obligation is discharged by a bitset dataflow over the direct call
+;; graph: reach[F] carries every candidate whose cell F -- or anything F can
+;; call -- writes, and a function with an indirect call reads as "every
+;; candidate that is rebound anywhere".
+;; ============================================================================
+;; Largest inline cell the startup/rebind copy will unroll, in bytes.
+(define compiler-backend-iag-max-size : i64
+  64)
+(define compiler-backend-iag-reason-ok : i64
+  0)
+(define compiler-backend-iag-reason-no-size : i64
+  1)
+(define compiler-backend-iag-reason-too-large : i64
+  2)
+(define compiler-backend-iag-reason-self-rebind : i64
+  3)
+(define compiler-backend-iag-reason-indirect-call : i64
+  4)
+(define compiler-backend-iag-reason-callee-rebind : i64
+  5)
+
+(define (compiler-backend-iag-reason-text [reason : i64]) : String
+  (cond
+    [(= reason compiler-backend-iag-reason-no-size)
+      "no static aggregate size in its initializer"]
+    [(= reason compiler-backend-iag-reason-too-large)
+      "aggregate larger than the inline cell cap"]
+    [(= reason compiler-backend-iag-reason-self-rebind)
+      "a function that reads it also rebinds it"]
+    [(= reason compiler-backend-iag-reason-indirect-call)
+      "a function that reads it makes an indirect call"]
+    [(= reason compiler-backend-iag-reason-callee-rebind)
+      "a callee of a function that reads it can rebind it"]
+    [else "included"]))
+
+(defstruct CompilerBackendIagCensus
+  ;; Candidate globals, indexed 0..count-1 in `globals` order.
+  (count i64)
+  (words i64)
+  (ids (__tl_dyn-array i64))
+  (sizes (__tl_dyn-array i64))
+  (reasons (__tl_dyn-array i64))
+  (slots backend_i64_i64_map.Map)
+  ;; Per-function facts, indexed by program-index function slot. Each of the
+  ;; three bitset rows is `words` cells wide.
+  (function-count i64)
+  (mentions (__tl_dyn-array i64))
+  (writes (__tl_dyn-array i64))
+  (reach (__tl_dyn-array i64))
+  (callee-reach (__tl_dyn-array i64))
+  (indirect (__tl_dyn-array bool))
+  ;; Union of every writes[] row: the candidates some function rebinds.
+  (written (__tl_dyn-array i64))
+  ;; Direct call edges, appended in function order by the shared walk. The
+  ;; arrays double on demand rather than being pre-sized at one edge per
+  ;; instruction: the conservative bound zero-fills tens of megabytes on a
+  ;; program the size of the compiler, which costs more than the walk it saves.
+  (edge-capacity i64)
+  (edge-src (__tl_dyn-array i64))
+  (edge-dst (__tl_dyn-array i64))
+  ;; [0] the function slot being walked (-1 outside a function body),
+  ;; [1] the edge cursor. Shared, so the census travels by value.
+  (state (__tl_dyn-array i64))
+  ;; Function name -> program-index slot, snapshotted so the shared walk needs
+  ;; no program index of its own.
+  (functions backend_i64_i64_map.Map))
+
+;; One-word handle on a census. The shared collections struct carries this, not
+;; the census itself; `note-*` below reads element 0 as a shared view, so a hook
+;; costs a compare rather than a struct copy.
+(defstruct CompilerBackendIagCensusCell
+  (slots (__tl_dyn-array CompilerBackendIagCensus)))
+
+(define (compiler-backend-iag-bit-word [bit : i64]) : i64
+  (shr bit 6))
+
+(define (compiler-backend-iag-bit-mask [bit : i64]) : i64
+  (shl 1 (bit-and bit 63)))
+
+(define (compiler-backend-iag-bit?
+  [words : (__tl_dyn-array i64)]
+  [base : i64]
+  [bit : i64]) : bool
+  (not
+    (=
+      (bit-and
+        (array-ref words (+ base (compiler-backend-iag-bit-word bit)))
+        (compiler-backend-iag-bit-mask bit))
+      0)))
+
+(define (compiler-backend-iag-bit-set!
+  [words : (__tl_dyn-array i64)]
+  [base : i64]
+  [bit : i64]) : unit
+  (let
+    [slot : i64 (+ base (compiler-backend-iag-bit-word bit))]
+    (set!
+      (array-ref words slot)
+      (bit-or (array-ref words slot) (compiler-backend-iag-bit-mask bit)))))
+
+;; `dst[dst-base .. ] |= src[src-base .. ]`; true when a bit was added.
+(define (compiler-backend-iag-bits-merge!
+  [dst : (__tl_dyn-array i64)]
+  [dst-base : i64]
+  [src : (__tl_dyn-array i64)]
+  [src-base : i64]
+  [words : i64]) : bool
+  (let
+    [index : i64 0]
+    [changed : bool false]
+    (begin
+      (while (< index words)
+        (let
+          [old : i64 (array-ref dst (+ dst-base index))]
+          [merged : i64 (bit-or old (array-ref src (+ src-base index)))]
+          (begin
+            (when
+              (not (= merged old))
+              (begin
+                (set! (array-ref dst (+ dst-base index)) merged)
+                (set! changed true)))
+            (set! index (+ index 1)))))
+      changed)))
+
+(define (compiler-backend-iag-bits-empty?
+  [words : (__tl_dyn-array i64)]
+  [base : i64]
+  [count : i64]) : bool
+  (let
+    [index : i64 0]
+    [empty : bool true]
+    (begin
+      (while (< index count)
+        (begin
+          (when (not (= (array-ref words (+ base index)) 0)) (set! empty false))
+          (set! index (+ index 1))))
+      empty)))
+
+;; ---------------------------------------------------------------------------
+;; Candidate discovery.
+;;
+;; The escape copy lowering emits for a global initializer's memory-aggregate
+;; result is `%r = call tl_alloc(N) ; copy_bytes %r, %src, N ; return %r`
+;; (src/compiler_lower.tl `lower-return-abi-value` ->
+;; `lower-copy-inline-aggregate-to-heap`). N is the only STATIC record of the
+;; aggregate's byte size that reaches the backend at all --
+;; `compiler-backend-type-size` answers 8 for every nominal struct handle,
+;; because the handle is a pointer -- so the size is recovered from that copy.
+;; A global whose initializer does not carry it is simply not a candidate.
+;; ---------------------------------------------------------------------------
+;; kind 0 -> the returned var id, or -1.
+;; kind 1 -> the byte size of the `copy_bytes` writing var `arg`, or 0.
+(define (compiler-backend-iag-scan-instrs
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [kind : i64]
+  [arg : i64]
+  [index : i64]) : i64
+  (if (>= index instrs.len)
+    (if (= kind 0)
+      -1
+      0)
+    (let
+      [instr : compiler_ir_types.CompilerIrInstr
+        (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
+      [found : i64
+        (if (= kind 0)
+          (match instr
+            [(compiler_ir_types.CompilerIrInstr.Return maybe)
+              (match maybe
+                [(compiler_ir_types.CompilerIrMaybeValue.Some value)
+                  (match value
+                    [(compiler_ir_types.CompilerIrValue.Var id) id]
+                    [_ -1])]
+                [(compiler_ir_types.CompilerIrMaybeValue.No) -1])]
+            [_ -1])
+          (match instr
+            [(compiler_ir_types.CompilerIrInstr.CopyBytes dst _ size)
+              (if (compiler-backend-branch-uses-var? dst arg)
+                size
+                0)]
+            [_ 0]))]
+      (if (if (= kind 0)
+        (>= found 0)
+        (> found 0))
+        found
+        (compiler-backend-iag-scan-instrs instrs kind arg (+ index 1))))))
+
+(define (compiler-backend-iag-scan-block-seq
+  [blocks : compiler_ir_types.CompilerIrBlockSeq]
+  [kind : i64]
+  [arg : i64]
+  [index : i64]) : i64
+  (if (>= index (compiler_ir_types.compiler-ir-block-seq-count blocks))
+    (if (= kind 0)
+      -1
+      0)
+    (let
+      [found : i64
+        (match (compiler_ir_types.compiler-ir-block-seq-ref blocks index)
+          [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+            (compiler-backend-iag-scan-instrs instrs kind arg 0)])]
+      (if (if (= kind 0)
+        (>= found 0)
+        (> found 0))
+        found
+        (compiler-backend-iag-scan-block-seq blocks kind arg (+ index 1))))))
+
+(define (compiler-backend-iag-scan-blocks
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [kind : i64]
+  [arg : i64]) : i64
+  (match (compiler-backend-global-shared-view blocks)
+    [(compiler_ir_types.CompilerIrBlockList.Nil)
+      (if (= kind 0)
+        -1
+        0)]
+    [(compiler_ir_types.CompilerIrBlockList.Cons block rest)
+      (let
+        [found : i64
+          (match block
+            [(compiler_ir_types.CompilerIrBlock.Block _ instrs)
+              (compiler-backend-iag-scan-instrs instrs kind arg 0)])]
+        (if (if (= kind 0)
+          (>= found 0)
+          (> found 0))
+          found
+          (compiler-backend-iag-scan-blocks
+            (compiler_ir_types.compiler-ir-box-shared-view rest)
+            kind
+            arg)))]
+    [(compiler_ir_types.CompilerIrBlockList.Array seq)
+      (compiler-backend-iag-scan-block-seq seq kind arg 0)]))
+
+;; The inline byte size the initializer named by `init` proves, or 0.
+(define (compiler-backend-iag-initializer-size
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
+  [program-index : CompilerBackendProgramIndex]
+  [init : i64]) : i64
+  (match (compiler-backend-index-function-slot
+    (compiler-backend-global-shared-view program-index)
+    init)
+    [(backend_i64_i64_map.LookupMissing) 0]
+    [(backend_i64_i64_map.LookupFound slot)
+      (match (compiler-backend-global-array-element-shared-view
+        functions.slots
+        slot)
+        [(compiler_ir_types.CompilerIrFunction.Function _ _ _ _ blocks)
+          (let
+            [ret-var : i64
+              (compiler-backend-iag-scan-blocks
+                (compiler-backend-global-shared-view blocks)
+                0
+                0)]
+            (if (< ret-var 0)
+              0
+              (compiler-backend-iag-scan-blocks blocks 1 ret-var)))])]))
+
+;; True when the global's declared type is a nominal aggregate handle. Only
+;; these are reported as EXCLUDED aggregates by the trace below; a dynamic
+;; array or string handle is a one-word value, never a boxed aggregate.
+(define (compiler-backend-iag-nominal-aggregate-type?
+  [ty : compiler_ast_types.AstType]) : bool
+  (match (compiler-backend-global-shared-view ty)
+    [(compiler_ast_types.AstType.Struct _) true]
+    [(compiler_ast_types.AstType.StructArgs _ _) true]
+    [(compiler_ast_types.AstType.Enum _) true]
+    [(compiler_ast_types.AstType.EnumArgs _ _) true]
+    [(compiler_ast_types.AstType.Tuple _) true]
+    [_ false]))
+
+;; A global takes the 8-byte boxed pointer cell today exactly when it is
+;; runtime-initialised, is not a register group, and is not a float.
+(define (compiler-backend-iag-boxed-cell?
+  [type-segment-bases : i64]
+  [program-index : CompilerBackendProgramIndex]
+  [ty : compiler_ast_types.AstType]
+  [value : compiler_ir_types.CompilerIrValue]) : bool
+  (and
+    (match (compiler-backend-global-shared-view value)
+      [(compiler_ir_types.CompilerIrValue.RuntimeGlobal _) true]
+      [_ false])
+    (not
+      (compiler-backend-group-type?
+        type-segment-bases
+        (compiler-backend-global-shared-view program-index)
+        (compiler-backend-global-shared-view ty)))
+    (not
+      (compiler-backend-float-type? (compiler-backend-global-shared-view ty)))
+    (= (compiler-backend-type-size type-segment-bases ty) 8)))
+
+(define (compiler-backend-iag-candidate-size
+  [type-segment-bases : i64]
+  [program-index : CompilerBackendProgramIndex]
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
+  [ty : compiler_ast_types.AstType]
+  [value : compiler_ir_types.CompilerIrValue]) : i64
+  (if (compiler-backend-iag-boxed-cell?
+    type-segment-bases
+    (compiler-backend-global-shared-view program-index)
+    (compiler-backend-global-shared-view ty)
+    (compiler-backend-global-shared-view value))
+    (match (compiler-backend-global-shared-view value)
+      [(compiler_ir_types.CompilerIrValue.RuntimeGlobal init)
+        (compiler-backend-iag-initializer-size
+          (compiler-backend-global-shared-view functions)
+          (compiler-backend-global-shared-view program-index)
+          init)]
+      [_ 0])
+    0))
+
+;; ---------------------------------------------------------------------------
+;; Census recording.
+;;
+;; These are the hooks the shared whole-program collections walk
+;; (`compiler-backend-collect-instr-collections` /
+;; `-value-collections`) calls as it already visits every operand of every
+;; instruction of every function -- the same walk that seeds the W3(c)
+;; nonfrozen-global answer. IAG-1 therefore adds no traversal of its own: it
+;; adds one predictable compare per operand and a map probe only on the
+;; `Global`/`GlobalAddr`/`Store`/call shapes it actually records.
+;;
+;; `state` carries the only two threaded scalars -- [0] the function slot being
+;; walked (-1 while the walk is in global initializers) and [1] the edge
+;; cursor -- in a shared two-cell array, so the census travels by value.
+;; ---------------------------------------------------------------------------
+(define compiler-backend-iag-state-function : i64
+  0)
+(define compiler-backend-iag-state-cursor : i64
+  1)
+
+(define (compiler-backend-iag-active? [census : CompilerBackendIagCensus]) : bool
+  (> census.count 0))
+
+;; The disabled census: no candidate, so every hook below leaves immediately.
+(define (compiler-backend-iag-census-disabled) : CompilerBackendIagCensusCell
+  (compiler-backend-iag-census-cell
+    (CompilerBackendIagCensus
+      0
+      1
+      (__tl_make-array i64 1)
+      (__tl_make-array i64 1)
+      (__tl_make-array i64 1)
+      (backend_i64_i64_map.with-capacity 1)
+      0
+      (__tl_make-array i64 1)
+      (__tl_make-array i64 1)
+      (__tl_make-array i64 1)
+      (__tl_make-array i64 1)
+      (__tl_make-array bool 1)
+      (__tl_make-array i64 1)
+      0
+      (__tl_make-array i64 1)
+      (__tl_make-array i64 1)
+      (__tl_make-array i64 2)
+      (backend_i64_i64_map.with-capacity 1))))
+
+(define (compiler-backend-iag-census-cell [census : CompilerBackendIagCensus]) : CompilerBackendIagCensusCell
+  (let
+    [slots : (__tl_dyn-array CompilerBackendIagCensus)
+      (__tl_make-array CompilerBackendIagCensus 1)]
+    (begin
+      (set! (array-ref slots 0) census)
+      (CompilerBackendIagCensusCell slots))))
+
+;; A borrowed view of the held census: no copy, so the hooks stay a compare.
+(defmacro (compiler-backend-iag-census-of [cell : Expr]) : Expr
+  `(compiler-backend-global-array-element-shared-view
+    (__tl-project-field-name ,cell "slots")
+    0))
+
+(define (compiler-backend-iag-cell-active?
+  [cell : CompilerBackendIagCensusCell]) : bool
+  (compiler-backend-iag-active? (compiler-backend-iag-census-of cell)))
+
+;; The walk enters a function body; -1 restores the "outside any function"
+;; state the global-initializer part of the walk runs in.
+(define (compiler-backend-iag-enter-function!
+  [cell : CompilerBackendIagCensusCell]
+  [slot : i64]) : unit
+  (if (compiler-backend-iag-cell-active?
+    (compiler-backend-global-shared-view cell))
+    (let
+      [census : CompilerBackendIagCensus (compiler-backend-iag-census-of cell)]
+      (set! (array-ref census.state compiler-backend-iag-state-function) slot))
+    unit))
+
+(define (compiler-backend-iag-current-function
+  [census : CompilerBackendIagCensus]) : i64
+  (array-ref census.state compiler-backend-iag-state-function))
+
+(define (compiler-backend-iag-candidate-slot
+  [census : CompilerBackendIagCensus]
+  [name : i64]) : i64
+  (backend_i64_i64_map.get-value-or
+    (& census.slots)
+    (compiler_ir_types.compiler-ir-symbol-id name)
+    -1))
+
+;; `Global g` / `GlobalAddr g` appeared as an operand of the function being
+;; walked: that function READS the cell.
+(define (compiler-backend-iag-note-mention!
+  [cell : CompilerBackendIagCensusCell]
+  [name : i64]) : unit
+  (if (not
+    (compiler-backend-iag-cell-active?
+      (compiler-backend-global-shared-view cell)))
+    unit
+    (let
+      [census : CompilerBackendIagCensus (compiler-backend-iag-census-of cell)]
+      [func : i64
+        (compiler-backend-iag-current-function
+          (compiler-backend-global-shared-view census))]
+      (if (< func 0)
+        unit
+        (let
+          [candidate : i64
+            (compiler-backend-iag-candidate-slot
+              (compiler-backend-global-shared-view census)
+              name)]
+          (if (< candidate 0)
+            unit
+            (compiler-backend-iag-bit-set!
+              census.mentions
+              (* func census.words)
+              candidate)))))))
+
+;; `CompilerIrInstr.Store g _ _`: the one direct cell writer.
+(define (compiler-backend-iag-note-write!
+  [cell : CompilerBackendIagCensusCell]
+  [name : i64]) : unit
+  (if (not
+    (compiler-backend-iag-cell-active?
+      (compiler-backend-global-shared-view cell)))
+    unit
+    (let
+      [census : CompilerBackendIagCensus (compiler-backend-iag-census-of cell)]
+      [func : i64
+        (compiler-backend-iag-current-function
+          (compiler-backend-global-shared-view census))]
+      (if (< func 0)
+        unit
+        (let
+          [candidate : i64
+            (compiler-backend-iag-candidate-slot
+              (compiler-backend-global-shared-view census)
+              name)]
+          (if (< candidate 0)
+            unit
+            (begin
+              (compiler-backend-iag-bit-set!
+                (compiler-backend-global-shared-view census.writes)
+                (* func census.words)
+                candidate)
+              (compiler-backend-iag-bit-set! census.written 0 candidate))))))))
+
+;; Double the edge arrays in place in the cell. Amortized O(1) per edge, and
+;; the peak allocation follows the real call count rather than the
+;; instruction count.
+(define (compiler-backend-iag-grow-edges!
+  [cell : CompilerBackendIagCensusCell]
+  [census : CompilerBackendIagCensus]) : CompilerBackendIagCensus
+  (let
+    [capacity : i64 (* census.edge-capacity 2)]
+    [src : (__tl_dyn-array i64) (__tl_make-array i64 capacity)]
+    [dst : (__tl_dyn-array i64) (__tl_make-array i64 capacity)]
+    [index : i64 0]
+    [grown : CompilerBackendIagCensus
+      (CompilerBackendIagCensus
+        census.count
+        census.words
+        (compiler-backend-global-shared-view census.ids)
+        (compiler-backend-global-shared-view census.sizes)
+        (compiler-backend-global-shared-view census.reasons)
+        (compiler-backend-global-shared-view census.slots)
+        census.function-count
+        (compiler-backend-global-shared-view census.mentions)
+        (compiler-backend-global-shared-view census.writes)
+        (compiler-backend-global-shared-view census.reach)
+        (compiler-backend-global-shared-view census.callee-reach)
+        (compiler-backend-global-shared-view census.indirect)
+        (compiler-backend-global-shared-view census.written)
+        capacity
+        (compiler-backend-global-shared-view src)
+        (compiler-backend-global-shared-view dst)
+        (compiler-backend-global-shared-view census.state)
+        (compiler-backend-global-shared-view census.functions))]
+    (begin
+      (while (< index census.edge-capacity)
+        (begin
+          (set! (array-ref src index) (array-ref census.edge-src index))
+          (set! (array-ref dst index) (array-ref census.edge-dst index))
+          (set! index (+ index 1))))
+      (set! (array-ref cell.slots 0) grown)
+      (compiler-backend-iag-census-of cell))))
+
+;; A direct call: one call-graph edge.
+(define (compiler-backend-iag-note-callee!
+  [cell : CompilerBackendIagCensusCell]
+  [name : i64]) : unit
+  (if (not
+    (compiler-backend-iag-cell-active?
+      (compiler-backend-global-shared-view cell)))
+    unit
+    (let
+      [probe : CompilerBackendIagCensus (compiler-backend-iag-census-of cell)]
+      [func : i64
+        (compiler-backend-iag-current-function
+          (compiler-backend-global-shared-view probe))]
+      (if (< func 0)
+        unit
+        (let
+          [slot : i64
+            (backend_i64_i64_map.get-value-or
+              (& probe.functions)
+              (compiler_ir_types.compiler-ir-symbol-id name)
+              -1)]
+          (if (< slot 0)
+            unit
+            (let
+              [cursor : i64
+                (array-ref probe.state compiler-backend-iag-state-cursor)]
+              [census : CompilerBackendIagCensus
+                (if (< cursor probe.edge-capacity)
+                  (compiler-backend-global-shared-view probe)
+                  (compiler-backend-iag-grow-edges!
+                    (compiler-backend-global-shared-view cell)
+                    (compiler-backend-global-shared-view probe)))]
+              (begin
+                (set! (array-ref census.edge-src cursor) func)
+                (set! (array-ref census.edge-dst cursor) slot)
+                (set!
+                  (array-ref census.state compiler-backend-iag-state-cursor)
+                  (+ cursor 1))))))))))
+
+;; A call through a value: this function's callee set is not enumerable.
+(define (compiler-backend-iag-note-indirect!
+  [cell : CompilerBackendIagCensusCell]) : unit
+  (if (not
+    (compiler-backend-iag-cell-active?
+      (compiler-backend-global-shared-view cell)))
+    unit
+    (let
+      [census : CompilerBackendIagCensus (compiler-backend-iag-census-of cell)]
+      [func : i64
+        (compiler-backend-iag-current-function
+          (compiler-backend-global-shared-view census))]
+      (if (< func 0)
+        unit
+        (set! (array-ref census.indirect func) true)))))
+
+;; ---------------------------------------------------------------------------
+;; Dataflow, decision and publication.
+;; ---------------------------------------------------------------------------
+(define (compiler-backend-iag-seed-reach! [census : CompilerBackendIagCensus]) : unit
+  (let
+    [f : i64 0]
+    (while (< f census.function-count)
+      (let
+        [base : i64 (* f census.words)]
+        [w : i64 0]
+        (begin
+          (while (< w census.words)
+            (begin
+              (set!
+                (array-ref census.reach (+ base w))
+                (bit-or
+                  (array-ref census.writes (+ base w))
+                  (if (array-ref census.indirect f)
+                    (array-ref census.written w)
+                    0)))
+              (set! w (+ w 1))))
+          (set! f (+ f 1)))))))
+
+;; Transitive closure over the direct call edges. Monotone in a finite lattice,
+;; so the round loop terminates; the edge list is walked forwards and then
+;; backwards each round so both call directions collapse in one pass pair.
+;; Transitive closure over the direct call edges, as a reverse-CSR worklist
+;; rather than repeated sweeps of the edge list. A sweep-to-fixpoint costs
+;; rounds x edges; here a function is re-examined only when its own row GREW,
+;; so the total work is bounded by the number of (function, candidate) bits
+;; that ever turn on times that function's in-degree. On a self-compile that is
+;; the difference between ~85M and ~5M instructions.
+(define (compiler-backend-iag-fixpoint!
+  [census : CompilerBackendIagCensus]
+  [edge-count : i64]) : unit
+  (let
+    [functions : i64 census.function-count]
+    ;; Reverse adjacency in CSR form: `starts[f] .. starts[f+1]` indexes the
+    ;; CALLERS of `f` in `callers`.
+    [starts : (__tl_dyn-array i64) (__tl_make-array i64 (+ functions 2))]
+    [callers : (__tl_dyn-array i64) (__tl_make-array i64 (+ edge-count 1))]
+    [cursor : (__tl_dyn-array i64) (__tl_make-array i64 (+ functions 2))]
+    ;; Explicit stack plus a membership flag, so a function is queued once.
+    [stack : (__tl_dyn-array i64) (__tl_make-array i64 (+ functions 1))]
+    [queued : (__tl_dyn-array bool) (__tl_make-array bool (+ functions 1))]
+    [top : i64 0]
+    [e : i64 0]
+    [f : i64 0]
+    (begin
+      (while (< e edge-count)
+        (let
+          [dst : i64 (array-ref census.edge-dst e)]
+          (begin
+            (set!
+              (array-ref starts (+ dst 1))
+              (+ (array-ref starts (+ dst 1)) 1))
+            (set! e (+ e 1)))))
+      (set! f 0)
+      (while (< f functions)
+        (begin
+          (set!
+            (array-ref starts (+ f 1))
+            (+ (array-ref starts (+ f 1)) (array-ref starts f)))
+          (set! f (+ f 1))))
+      (set! f 0)
+      (while (< f functions)
+        (begin
+          (set! (array-ref cursor f) (array-ref starts f))
+          (set! f (+ f 1))))
+      (set! e 0)
+      (while (< e edge-count)
+        (let
+          [dst : i64 (array-ref census.edge-dst e)]
+          [at : i64 (array-ref cursor dst)]
+          (begin
+            (set! (array-ref callers at) (array-ref census.edge-src e))
+            (set! (array-ref cursor dst) (+ at 1))
+            (set! e (+ e 1)))))
+      ;; Seed: every function whose own row already carries a candidate.
+      (set! f 0)
+      (while (< f functions)
+        (begin
+          (when
+            (not
+              (compiler-backend-iag-bits-empty?
+                (compiler-backend-global-shared-view census.reach)
+                (* f census.words)
+                census.words))
+            (begin
+              (set! (array-ref stack top) f)
+              (set! (array-ref queued f) true)
+              (set! top (+ top 1))))
+          (set! f (+ f 1))))
+      (while (> top 0)
+        (let
+          [node : i64 (array-ref stack (- top 1))]
+          [index : i64 (array-ref starts node)]
+          [limit : i64 (array-ref starts (+ node 1))]
+          (begin
+            (set! top (- top 1))
+            (set! (array-ref queued node) false)
+            (while (< index limit)
+              (let
+                [caller : i64 (array-ref callers index)]
+                (begin
+                  (when
+                    (compiler-backend-iag-bits-merge!
+                      (compiler-backend-global-shared-view census.reach)
+                      (* caller census.words)
+                      census.reach
+                      (* node census.words)
+                      census.words)
+                    (when
+                      (not (array-ref queued caller))
+                      (begin
+                        (set! (array-ref stack top) caller)
+                        (set! (array-ref queued caller) true)
+                        (set! top (+ top 1)))))
+                  (set! index (+ index 1)))))))))))
+
+(define (compiler-backend-iag-callee-reach!
+  [census : CompilerBackendIagCensus]
+  [edge-count : i64]) : unit
+  (let
+    [e : i64 0]
+    (while (< e edge-count)
+      (begin
+        (compiler-backend-iag-bits-merge!
+          (compiler-backend-global-shared-view census.callee-reach)
+          (* (array-ref census.edge-src e) census.words)
+          census.reach
+          (* (array-ref census.edge-dst e) census.words)
+          census.words)
+        (set! e (+ e 1))))))
+
+;; The safety rule, applied to the recorded rows: a candidate that some
+;; function rebinds must not be MENTIONED by a function that rebinds it, that
+;; makes an indirect call, or whose direct callees can reach a rebind.
+(define (compiler-backend-iag-decide! [census : CompilerBackendIagCensus]) : unit
+  (let
+    [f : i64 0]
+    (while (< f census.function-count)
+      (let
+        [base : i64 (* f census.words)]
+        (begin
+          (when
+            (not
+              (compiler-backend-iag-bits-empty?
+                (compiler-backend-global-shared-view census.mentions)
+                base
+                census.words))
+            (let
+              [c : i64 0]
+              (while (< c census.count)
+                (begin
+                  (when
+                    (and
+                      (=
+                        (array-ref census.reasons c)
+                        compiler-backend-iag-reason-ok)
+                      (compiler-backend-iag-bit? census.mentions base c)
+                      (compiler-backend-iag-bit? census.written 0 c))
+                    (cond
+                      [(array-ref census.indirect f)
+                        (set!
+                          (array-ref census.reasons c)
+                          compiler-backend-iag-reason-indirect-call)]
+                      [(compiler-backend-iag-bit? census.writes base c)
+                        (set!
+                          (array-ref census.reasons c)
+                          compiler-backend-iag-reason-self-rebind)]
+                      [(compiler-backend-iag-bit? census.callee-reach base c)
+                        (set!
+                          (array-ref census.reasons c)
+                          compiler-backend-iag-reason-callee-rebind)]
+                      [else unit]))
+                  (set! c (+ c 1))))))
+          (set! f (+ f 1)))))))
+
+(define (compiler-backend-iag-publish [census : CompilerBackendIagCensus]) : backend_i64_i64_map.Map
+  (let
+    [table : backend_i64_i64_map.Map
+      (backend_i64_i64_map.with-capacity (+ (* census.count 2) 1))]
+    [c : i64 0]
+    (begin
+      (while (< c census.count)
+        (begin
+          (when
+            (= (array-ref census.reasons c) compiler-backend-iag-reason-ok)
+            (backend_i64_i64_map.insert-ref!
+              (&mut table)
+              (array-ref census.ids c)
+              (array-ref census.sizes c)))
+          (set! c (+ c 1))))
+      table)))
+
+;; `TYPELISP_TRACE_INLINE_AGGREGATE_GLOBALS=1` reports the classification, so a
+;; caller can see which aggregate globals the safety rule refused and why.
+(define (compiler-backend-iag-trace?) : bool
+  (string.eq (env.var-value "TYPELISP_TRACE_INLINE_AGGREGATE_GLOBALS") "1"))
+
+(define (compiler-backend-iag-trace!
+  [census : CompilerBackendIagCensus]
+  [program-index : CompilerBackendProgramIndex]) : unit
+  (let
+    [c : i64 0]
+    (while (< c census.count)
+      (begin
+        (io.print-error
+          (str_cat.str-cat
+            (if (= (array-ref census.reasons c) compiler-backend-iag-reason-ok)
+              "inline-aggregate-global: "
+              "inline-aggregate-global excluded: ")
+            (compiler-backend-symbol-text-index
+              (compiler-backend-global-shared-view program-index)
+              (array-ref census.ids c))
+            " size="
+            (string.int->string (array-ref census.sizes c))
+            (str_cat.str-cat
+              " reason="
+              (compiler-backend-iag-reason-text (array-ref census.reasons c))
+              "\n"
+              "")))
+        (set! c (+ c 1))))))
+
+;; ---------------------------------------------------------------------------
+;; Classification: prepare (before the shared walk) and finish (after it).
+;;
+;; `prepare` finds the candidates and allocates the census rows; the shared
+;; whole-program collections walk then fills them as it goes; `finish!` runs
+;; the small bitset dataflow over the collected rows and publishes the answer.
+;; No IR traversal of IAG-1's own remains.
+;; ---------------------------------------------------------------------------
+(define (compiler-backend-iag-prepare
+  [type-segment-bases : i64]
+  [program-index : CompilerBackendProgramIndex]
+  [globals : compiler_ir_types.CompilerIrGlobalSeq]
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]) : CompilerBackendIagCensusCell
+  (let
+    [global-count : i64 globals.len]
+    [ids : (__tl_dyn-array i64) (__tl_make-array i64 (+ global-count 1))]
+    [sizes : (__tl_dyn-array i64) (__tl_make-array i64 (+ global-count 1))]
+    [reasons : (__tl_dyn-array i64) (__tl_make-array i64 (+ global-count 1))]
+    [slots : backend_i64_i64_map.Map
+      (backend_i64_i64_map.with-capacity (+ (* global-count 2) 1))]
+    [count : i64 0]
+    [gi : i64 0]
+    (begin
+      (while (< gi global-count)
+        (begin
+          (match (compiler_ir_types.compiler-ir-global-seq-ref
+            (compiler-backend-global-shared-view globals)
+            gi)
+            [(compiler_ir_types.CompilerIrGlobal.Global name ty value)
+              (when
+                (compiler-backend-iag-boxed-cell?
+                  type-segment-bases
+                  (compiler-backend-global-shared-view program-index)
+                  (compiler-backend-global-shared-view ty)
+                  (compiler-backend-global-shared-view value))
+                (let
+                  [size : i64
+                    (compiler-backend-iag-candidate-size
+                      type-segment-bases
+                      (compiler-backend-global-shared-view program-index)
+                      (compiler-backend-global-shared-view functions)
+                      (compiler-backend-global-shared-view ty)
+                      (compiler-backend-global-shared-view value))]
+                  [reason : i64
+                    (cond
+                      [(or (< size 16) (not (= (bit-and size 7) 0)))
+                        compiler-backend-iag-reason-no-size]
+                      [(> size compiler-backend-iag-max-size)
+                        compiler-backend-iag-reason-too-large]
+                      [else compiler-backend-iag-reason-ok])]
+                  (when
+                    (or
+                      (= reason compiler-backend-iag-reason-ok)
+                      (compiler-backend-iag-nominal-aggregate-type?
+                        (compiler-backend-global-shared-view ty)))
+                    (begin
+                      (set!
+                        (array-ref ids count)
+                        (compiler_ir_types.compiler-ir-symbol-id name))
+                      (set! (array-ref sizes count) size)
+                      (set! (array-ref reasons count) reason)
+                      (backend_i64_i64_map.insert-ref!
+                        (&mut slots)
+                        (compiler_ir_types.compiler-ir-symbol-id name)
+                        count)
+                      (set! count (+ count 1))))))])
+          (set! gi (+ gi 1))))
+      (if (= count 0)
+        (compiler-backend-iag-census-disabled)
+        (let
+          [words : i64 (shr (+ count 63) 6)]
+          [function-count : i64 functions.len]
+          [row-cells : i64 (+ (* function-count words) 1)]
+          ;; Seed the edge arrays at about one edge per function and let them
+          ;; double from there.
+          [edge-capacity : i64 (+ function-count 16)]
+          [state : (__tl_dyn-array i64) (__tl_make-array i64 2)]
+          (begin
+            (set! (array-ref state compiler-backend-iag-state-function) -1)
+            (set! (array-ref state compiler-backend-iag-state-cursor) 0)
+            (compiler-backend-iag-census-cell
+              (CompilerBackendIagCensus
+                count
+                words
+                ids
+                sizes
+                reasons
+                slots
+                function-count
+                (__tl_make-array i64 row-cells)
+                (__tl_make-array i64 row-cells)
+                (__tl_make-array i64 row-cells)
+                (__tl_make-array i64 row-cells)
+                (__tl_make-array bool (+ function-count 1))
+                (__tl_make-array i64 words)
+                edge-capacity
+                (__tl_make-array i64 edge-capacity)
+                (__tl_make-array i64 edge-capacity)
+                state
+                (compiler-backend-global-shared-view program-index.functions)))))))))
+
+;; Runs on the rows the shared walk filled: seed, close over the call graph,
+;; apply the safety rule and publish. Also the ONLY publisher, so a program
+;; with no candidate still clears any answer a previous batch entry left.
+(define (compiler-backend-iag-finish!
+  [backend-state : CompilerBackendState]
+  [cell : CompilerBackendIagCensusCell]
+  [program-index : CompilerBackendProgramIndex]) : unit
+  (if (not
+    (compiler-backend-iag-cell-active?
+      (compiler-backend-global-shared-view cell)))
+    (compiler-backend-state-set-inline-aggregate-globals!
+      backend-state
+      (backend_i64_i64_map.with-capacity 1))
+    (let
+      [census : CompilerBackendIagCensus (compiler-backend-iag-census-of cell)]
+      [edge-count : i64
+        (array-ref census.state compiler-backend-iag-state-cursor)]
+      [_seed : unit
+        (compiler-backend-iag-seed-reach!
+          (compiler-backend-global-shared-view census))]
+      [_closure : unit
+        (compiler-backend-iag-fixpoint!
+          (compiler-backend-global-shared-view census)
+          edge-count)]
+      [_callee : unit
+        (compiler-backend-iag-callee-reach!
+          (compiler-backend-global-shared-view census)
+          edge-count)]
+      [_decide : unit
+        (compiler-backend-iag-decide!
+          (compiler-backend-global-shared-view census))]
+      (begin
+        (compiler-backend-state-set-inline-aggregate-globals!
+          backend-state
+          (compiler-backend-iag-publish
+            (compiler-backend-global-shared-view census)))
+        (when
+          (compiler-backend-iag-trace?)
+          (compiler-backend-iag-trace!
+            (compiler-backend-global-shared-view census)
+            (compiler-backend-global-shared-view program-index)))))))
+
+;; ---------------------------------------------------------------------------
+;; Inline aggregate cell emission (text backend).
+;; ---------------------------------------------------------------------------
+;; Copy `remaining` bytes from `offset(src-reg)` into the inline cell at
+;; `symbol`. Sizes are small compile-time multiples of eight, so the run is
+;; fully unrolled; `xmm` (when non-empty) takes 16 bytes at a time and `gp`
+;; shuttles the rest one word at a time.
+(define (compiler-backend-emit-inline-aggregate-copy-chunks
+  [symbol : String]
+  [src-reg : String]
+  [gp : String]
+  [xmm : String]
+  [offset : i64]
+  [remaining : i64]) : String
+  (if (<= remaining 0)
+    ""
+    (if (and (>= remaining 16) (> (string.string-length xmm) 0))
+      (str_cat.str-cat
+        (str_cat.str-cat
+          "    movups "
+          (compiler-backend-copy-address
+            offset
+            (compiler-backend-global-shared-view src-reg))
+          ", "
+          (compiler-backend-global-shared-view xmm)
+          "\n")
+        (str_cat.str-cat
+          "    movups "
+          (compiler-backend-global-shared-view xmm)
+          ", "
+          (compiler-backend-inline-aggregate-symbol-operand
+            (compiler-backend-global-shared-view symbol)
+            offset)
+          "\n")
+        (compiler-backend-emit-inline-aggregate-copy-chunks
+          symbol
+          src-reg
+          gp
+          xmm
+          (+ offset 16)
+          (- remaining 16))
+        "")
+      (str_cat.str-cat
+        (str_cat.str-cat
+          "    movq "
+          (compiler-backend-copy-address
+            offset
+            (compiler-backend-global-shared-view src-reg))
+          ", "
+          (compiler-backend-global-shared-view gp)
+          "\n")
+        (str_cat.str-cat
+          "    movq "
+          (compiler-backend-global-shared-view gp)
+          ", "
+          (compiler-backend-inline-aggregate-symbol-operand
+            (compiler-backend-global-shared-view symbol)
+            offset)
+          "\n")
+        (compiler-backend-emit-inline-aggregate-copy-chunks
+          symbol
+          src-reg
+          gp
+          xmm
+          (+ offset 8)
+          (- remaining 8))
+        ""))))
+
+;; The whole of a `(set! g v)` rebind for an inline aggregate global: `v` is a
+;; pointer to the new aggregate, so the cell takes a byte copy rather than a
+;; pointer store. `planned-src` is the Store instruction's own modeled memory
+;; value scratch (the register the pointer store used to land in); the single
+;; extra shuttle register is scavenged at this point, excluding it.
+(define (compiler-backend-emit-inline-aggregate-store
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [symbol : String]
+  [size : i64]
+  [value : compiler_ir_types.CompilerIrValue]
+  [planned-src : String]
+  [backend-state : CompilerBackendState]) : ResultCompilerBackend
+  (let
+    [src-home : String
+      (compiler-backend-address-base-filter-direct
+        (compiler-backend-value-register-home
+          (compiler-backend-global-shared-view backend-state)
+          (compiler-backend-global-shared-view assignments)
+          (compiler-backend-global-shared-view value)))]
+    [src-reg : String
+      (if (string.eq src-home "")
+        (compiler-backend-planned-or-scavenge-reg-here
+          (compiler-backend-global-shared-view planned-src)
+          (compiler-backend-addr-scavenge-exclude)
+          0
+          "%r10"
+          (compiler-backend-global-shared-view backend-state))
+        src-home)]
+    [shuttle : String
+      (compiler-backend-scavenge-reg-here
+        (compiler-backend-one-exclude
+          (compiler-backend-global-shared-view src-reg))
+        1
+        "%r11"
+        (compiler-backend-global-shared-view backend-state))]
+    (match (if (string.eq src-home "")
+      (compiler-backend-emit-load-value-with-plan
+        (compiler-backend-global-shared-view assignments)
+        (compiler-backend-global-shared-view value)
+        (compiler-backend-global-shared-view src-reg)
+        (compiler-backend-global-shared-view backend-state))
+      (ResultCompilerBackend.Ok ""))
+      [(ResultCompilerBackend.Ok src-asm)
+        (ResultCompilerBackend.Ok
+          (str_cat.str-cat
+            src-asm
+            (compiler-backend-emit-inline-aggregate-copy-chunks
+              symbol
+              src-reg
+              shuttle
+              ""
+              0
+              size)
+            ""
+            ""))]
+      [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
+
+;; The reserved cell size of a runtime-initialised global: the aggregate itself
+;; for an inline aggregate, two words for a register group, one word otherwise.
+(define (compiler-backend-runtime-global-cell-size
+  [type-segment-bases : i64]
+  [program-index : CompilerBackendProgramIndex]
+  [name : i64]
+  [ty : compiler_ast_types.AstType]) : i64
+  (let
+    [inline-size : i64
+      (compiler-backend-inline-aggregate-global-size
+        (compiler-backend-global-shared-view program-index.backend-state)
+        name)]
+    (if (> inline-size 0)
+      inline-size
+      (if (compiler-backend-group-type?
+        type-segment-bases
+        (compiler-backend-global-shared-view program-index)
+        (compiler-backend-global-shared-view ty))
+        16
+        8))))
+
 (define (compiler-backend-global-value-asm
   [type-segment-bases : i64]
   [ty : compiler_ast_types.AstType]
@@ -81268,12 +82709,11 @@
               (compiler-backend-emit-runtime-global
                 target
                 symbol
-                (if (compiler-backend-group-type?
+                (compiler-backend-runtime-global-cell-size
                   type-segment-bases
                   program-index
-                  ty)
-                  16
-                  8))
+                  name
+                  ty))
               ""))
           (match (compiler-backend-global-value-asm
             type-segment-bases
@@ -81345,36 +82785,53 @@
       (compiler-backend-state-user-symbol-id program-index.backend-state name)]
     [init-symbol : String
       (compiler-backend-state-user-symbol-id program-index.backend-state init)]
+    [inline-size : i64
+      (compiler-backend-inline-aggregate-global-size
+        (compiler-backend-global-shared-view program-index.backend-state)
+        name)]
     (str_cat.str-cat
       "    call "
       init-symbol
       "\n"
-      (if (compiler-backend-group-type?
-        type-segment-bases
-        program-index
-        (compiler-backend-global-shared-view ty))
+      (cond
+        ;; IAG-1: the initializer still returns a pointer to an arena-resident
+        ;; aggregate (src/compiler_lower.tl's global-init sret rule). The
+        ;; startup sequence copies it into the inline cell. Nothing else is
+        ;; live between the `__global_init_*` calls, so %r10/%xmm0 are free.
+        [(> inline-size 0)
+          (compiler-backend-emit-inline-aggregate-copy-chunks
+            (compiler-backend-global-shared-view symbol)
+            "%rax"
+            "%r10"
+            "%xmm0"
+            0
+            inline-size)]
         ;; A register-group init returns word0:word1 in %rax:%rdx; store
         ;; both into the inline 16-byte global slot.
-        (str_cat.str-cat
-          "    movq %rax, "
-          (compiler-backend-global-shared-view symbol)
-          "(%rip)\n    movq %rdx, "
-          (compiler-backend-global-shared-view symbol)
-          "+8(%rip)\n"
-          "")
-        (if (compiler-backend-float-type?
-          (compiler-backend-global-shared-view ty))
+        [(compiler-backend-group-type?
+            type-segment-bases
+            program-index
+            (compiler-backend-global-shared-view ty))
+          (str_cat.str-cat
+            "    movq %rax, "
+            (compiler-backend-global-shared-view symbol)
+            "(%rip)\n    movq %rdx, "
+            (compiler-backend-global-shared-view symbol)
+            "+8(%rip)\n"
+            "")]
+        [(compiler-backend-float-type? (compiler-backend-global-shared-view ty))
           (str_cat.str-cat
             "    "
             (compiler-backend-float-move
               (compiler-backend-global-shared-view ty))
             " %xmm0, "
             (compiler-backend-global-shared-view symbol)
-            "(%rip)\n")
+            "(%rip)\n")]
+        [else
           (str_cat.str-cat
             "    movq %rax, "
             (compiler-backend-global-shared-view symbol)
-            "(%rip)\n")))
+            "(%rip)\n")])
       "")))
 
 (define (compiler-backend-global-initializers-from
@@ -82836,9 +84293,68 @@
                                       "compose.entry_text"))
                                   prefix-buf)))))))))))))))))
 
+(defenum ResultCompilerBackendGlobalsAndCollections
+  (Ok text_buf.TextBuf CompilerBackendProgramCollections)
+  (Err (Box compiler_diagnostic.CompilerDiagnostic)))
+
+;; IAG-1 ordering. The `.comm` size, the `Global` materialisation form and
+;; every fold read one already-published classification, so the whole-program
+;; walk has to precede global emission. That walk is the one the backend
+;; already made -- `compiler-backend-collect-program-collections` -- so it is
+;; MOVED here rather than duplicated: prepare the census, run the single walk
+;; (which fills the census rows as a side effect of visiting operands it was
+;; visiting anyway), finish the classification, then spell the globals.
+;;
+;; The walk runs over the ENTRY function list, the sequence the program index
+;; was built from, so a census row index is that function's program-index slot.
+;; The only function that list can add is the synthesized implicit `main`
+;; (`return 0`), which contributes nothing to any collection.
+(define (compiler-backend-emit-globals-and-collections
+  [type-segment-bases : i64]
+  [target : CompilerBackendTarget]
+  [globals : compiler_ir_types.CompilerIrGlobalSeq]
+  [entry-functions : compiler_ir_types.CompilerIrFunctionSeq]
+  [spans : compiler_ir_types.CompilerSourceSpans]
+  [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackendGlobalsAndCollections
+  (let
+    [census : CompilerBackendIagCensusCell
+      (compiler-backend-iag-prepare
+        type-segment-bases
+        (compiler-backend-global-shared-view program-index)
+        (compiler-backend-global-shared-view globals)
+        (compiler-backend-global-shared-view entry-functions))]
+    [collections : CompilerBackendProgramCollections
+      (compiler-backend-collect-source-path-strings
+        (compiler-backend-global-shared-view program-index.backend-state)
+        (compiler-backend-collect-program-collections-with-iag
+          (compiler-backend-global-shared-view globals)
+          (compiler-backend-global-shared-view entry-functions)
+          (compiler-backend-global-shared-view census))
+        (compiler-backend-global-shared-view spans))]
+    ;; W3(c): the walk above is the whole-program cell-writer scan. Publishing
+    ;; here -- before any function is planned -- is what makes a frozen global's
+    ;; read rematerialisable in the allocator.
+    [_frozen-globals-known : unit
+      (compiler_regalloc.compiler-reg-frozen-globals-finish!)]
+    [_inline-aggregates : unit
+      (compiler-backend-iag-finish!
+        program-index.backend-state
+        (compiler-backend-global-shared-view census)
+        (compiler-backend-global-shared-view program-index))]
+    (match (compiler-backend-emit-globals-buffer-into
+      type-segment-bases
+      target
+      (compiler-backend-global-shared-view globals)
+      (text_buf.append (text_buf.empty) ".data\n")
+      (compiler-backend-global-shared-view program-index))
+      [(ResultCompilerBackendBuffer.Ok globals-buf)
+        (ResultCompilerBackendGlobalsAndCollections.Ok globals-buf collections)]
+      [(ResultCompilerBackendBuffer.Err message)
+        (ResultCompilerBackendGlobalsAndCollections.Err message)])))
+
 (define (compiler-backend-emit-program-buffer-after-index
   [type-segment-bases : i64]
-  [program : compiler_ir_types.CompilerIrProgram]
+  [_program : compiler_ir_types.CompilerIrProgram]
   [target : CompilerBackendTarget]
   [mode : CompilerBackendMode]
   [entry-functions : compiler_ir_types.CompilerIrFunctionSeq]
@@ -82849,20 +84365,10 @@
   [program-index : CompilerBackendProgramIndex]
   [spans : compiler_ir_types.CompilerSourceSpans]
   [globals-buf : text_buf.TextBuf]
+  [collections : CompilerBackendProgramCollections]
   [emit-entry : bool]
   [crt-entry : bool]) : ResultCompilerBackendBuffer
   (let
-    [collections : CompilerBackendProgramCollections
-      (compiler-backend-collect-source-path-strings
-        (compiler-backend-global-shared-view program-index.backend-state)
-        (compiler-backend-collect-program-collections
-          (compiler-backend-global-shared-view program))
-        (compiler-backend-global-shared-view spans))]
-    ;; W3(c): the walk above is the whole-program cell-writer scan. Publishing
-    ;; here -- before any function is planned -- is what makes a frozen global's
-    ;; read rematerialisable in the allocator.
-    [_frozen-globals-known : unit
-      (compiler_regalloc.compiler-reg-frozen-globals-finish!)]
     [closure-names : BackendSymbolSeq
       (compiler-backend-program-collections-functions
         (compiler-backend-global-shared-view collections))]
@@ -83325,13 +84831,16 @@
                       (compiler-backend-profile-start
                         (profile_state.compiler-profile-state-shared-view
                           profile-state)))
-                    (match (compiler-backend-emit-globals-buffer-into
+                    (match (compiler-backend-emit-globals-and-collections
                       type-segment-bases
                       target
                       (compiler-backend-global-shared-view globals)
-                      (text_buf.append (text_buf.empty) ".data\n")
+                      (compiler-backend-global-shared-view entry-functions)
+                      (compiler-backend-global-shared-view spans)
                       (compiler-backend-global-shared-view program-index))
-                      [(ResultCompilerBackendBuffer.Ok globals-buf)
+                      [(ResultCompilerBackendGlobalsAndCollections.Ok
+                          globals-buf
+                          collections)
                         (begin
                           (cfg
                             compile-profile
@@ -83367,11 +84876,12 @@
                                   program-index)
                                 spans
                                 globals-buf
+                                collections
                                 emit-entry
                                 crt-entry)]
                             [(ResultCompilerBackendSymbolValidation.Err message)
                               (ResultCompilerBackendBuffer.Err message)]))]
-                      [(ResultCompilerBackendBuffer.Err message)
+                      [(ResultCompilerBackendGlobalsAndCollections.Err message)
                         (begin
                           (cfg
                             compile-profile
@@ -83434,13 +84944,22 @@
           (compiler-backend-state-user-symbol-id
             program-index.backend-state
             name)]
+        ;; IAG-1: an inline aggregate global's value is its own address.
+        [inline? : bool
+          (compiler-backend-inline-aggregate-global?
+            (compiler-backend-global-shared-view program-index.backend-state)
+            name)]
         (object_target.compiler-backend-object-add-text
           (object_target.compiler-backend-object-add-text-relocation
             parts
             site
-            (cobj.CompilerObjectRelocationKind.RipValue)
+            (if inline?
+              (cobj.CompilerObjectRelocationKind.RipAddress)
+              (cobj.CompilerObjectRelocationKind.RipValue))
             (compiler-backend-global-shared-view symbol))
-          (cobj.CompilerObjectX64Instr.LoadRip symbol)))]
+          (if inline?
+            (cobj.CompilerObjectX64Instr.LoadRipAddress symbol)
+            (cobj.CompilerObjectX64Instr.LoadRip symbol))))]
     [(compiler_ir_types.CompilerIrValue.GlobalAddr name)
       (let
         [symbol : String
@@ -83997,6 +85516,30 @@
           (object_target.compiler-backend-object-bytes-from-hex "480fbe00")
           (object_target.compiler-backend-object-bytes-from-hex "0fb600"))]
       [else (object_target.compiler-backend-object-bytes-from-hex "488b00")])))
+
+;; IAG-1 (object mirror): copy `size` bytes from `(%rax)` into `(%r11)` with an
+;; unrolled `movq d(%rax), %r10 ; movq %r10, d(%r11)` run. The caller puts the
+;; source pointer in %rax and the cell address in %r11 (LoadRipAddressR11, which
+;; carries the relocation), so this blob needs none of its own.
+(define (compiler-backend-object-inline-aggregate-copy-bytes [size : i64]) : String
+  (let
+    [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
+    [offset : i64 0]
+    (begin
+      (while (< offset size)
+        (begin
+          ;; movq offset(%rax), %r10
+          (compiler-backend-object-push-u8! (&mut out) 0x4c)
+          (compiler-backend-object-push-u8! (&mut out) 0x8b)
+          (compiler-backend-object-push-u8! (&mut out) 0x50)
+          (compiler-backend-object-push-u8! (&mut out) offset)
+          ;; movq %r10, offset(%r11)
+          (compiler-backend-object-push-u8! (&mut out) 0x4d)
+          (compiler-backend-object-push-u8! (&mut out) 0x89)
+          (compiler-backend-object-push-u8! (&mut out) 0x53)
+          (compiler-backend-object-push-u8! (&mut out) offset)
+          (set! offset (+ offset 8))))
+      (compiler-backend-object-bytes-finish (& out)))))
 
 (define (compiler-backend-object-leave-bytes) : String
   (object_target.compiler-backend-object-bytes-from-hex "c9"))
@@ -85330,20 +86873,42 @@
           (compiler-backend-state-user-symbol-id
             program-index.backend-state
             (compiler-backend-global-shared-view name))]
-        (object_target.compiler-backend-object-add-text
-          (object_target.compiler-backend-object-add-text-relocation
-            (compiler-backend-object-load-value-to-reg-with-type
-              parts
+        [inline-size : i64
+          (compiler-backend-inline-aggregate-global-size
+            (compiler-backend-global-shared-view program-index.backend-state)
+            (compiler-backend-global-shared-view name))]
+        (if (> inline-size 0)
+          ;; IAG-1: the cell holds the aggregate, so the rebind copies bytes.
+          (compiler-backend-object-add-nonempty-bytes
+            (object_target.compiler-backend-object-add-text
+              (object_target.compiler-backend-object-add-text-relocation
+                (compiler-backend-object-load-value-to-reg-with-type
+                  parts
+                  (compiler-backend-global-shared-view function)
+                  (compiler-backend-global-shared-view value)
+                  (compiler-backend-global-shared-view ty)
+                  "%rax"
+                  (compiler-backend-global-shared-view program-index))
+                (compiler-backend-global-shared-view function)
+                (cobj.CompilerObjectRelocationKind.RipAddress)
+                (compiler-backend-global-shared-view symbol))
+              (cobj.CompilerObjectX64Instr.LoadRipAddressR11
+                (compiler-backend-global-shared-view symbol)))
+            (compiler-backend-object-inline-aggregate-copy-bytes inline-size))
+          (object_target.compiler-backend-object-add-text
+            (object_target.compiler-backend-object-add-text-relocation
+              (compiler-backend-object-load-value-to-reg-with-type
+                parts
+                (compiler-backend-global-shared-view function)
+                (compiler-backend-global-shared-view value)
+                (compiler-backend-global-shared-view ty)
+                "%rax"
+                (compiler-backend-global-shared-view program-index))
               (compiler-backend-global-shared-view function)
-              (compiler-backend-global-shared-view value)
-              (compiler-backend-global-shared-view ty)
-              "%rax"
-              (compiler-backend-global-shared-view program-index))
-            (compiler-backend-global-shared-view function)
-            (cobj.CompilerObjectRelocationKind.RipAddress)
-            (compiler-backend-global-shared-view symbol))
-          (cobj.CompilerObjectX64Instr.StoreRip
-            (compiler-backend-global-shared-view symbol))))]
+              (cobj.CompilerObjectRelocationKind.RipAddress)
+              (compiler-backend-global-shared-view symbol))
+            (cobj.CompilerObjectX64Instr.StoreRip
+              (compiler-backend-global-shared-view symbol)))))]
     [(compiler_ir_types.CompilerIrInstr.Jump target)
       (let
         [symbol : String (compiler-backend-asm-label label-scope target)]
@@ -86345,7 +87910,17 @@
                     (cobj.CompilerObjectSymbolKind.Data))
                   (cobj.CompilerObjectDataRecord.Label
                     (compiler-backend-global-shared-view symbol)))
-                (cobj.CompilerObjectDataRecord.Zero 8))
+                ;; IAG-1: an inline aggregate global reserves the aggregate.
+                (cobj.CompilerObjectDataRecord.Zero
+                  (let
+                    [inline-size : i64
+                      (compiler-backend-inline-aggregate-global-size
+                        (compiler-backend-global-shared-view
+                          program-index.backend-state)
+                        name)]
+                    (if (> inline-size 0)
+                      inline-size
+                      8))))
               (compiler-backend-object-global-value
                 (object_target.compiler-backend-object-add-data
                   (object_target.compiler-backend-object-symbol-export-section
@@ -86835,7 +88410,7 @@
 
 (define (compiler-backend-object-image-after-index
   [type-segment-bases : i64]
-  [program : compiler_ir_types.CompilerIrProgram]
+  [_program : compiler_ir_types.CompilerIrProgram]
   [target : CompilerBackendTarget]
   [_mode : CompilerBackendMode]
   [entry-functions : compiler_ir_types.CompilerIrFunctionSeq]
@@ -86846,10 +88421,27 @@
   [emit-entry : bool]
   [crt-entry : bool]) : cobj.CompilerObjectImage
   (let
+    ;; IAG-1: the object image mirrors the text emitter's inline aggregate
+    ;; cells, and classifies on the same single whole-program walk, before the
+    ;; `.bss` reservations below are sized.
+    [census : CompilerBackendIagCensusCell
+      (compiler-backend-iag-prepare
+        type-segment-bases
+        (compiler-backend-global-shared-view program-index)
+        (compiler-backend-global-shared-view globals)
+        (compiler-backend-global-shared-view entry-functions))]
     [collections : CompilerBackendProgramCollections
-      (compiler-backend-collect-program-collections program)]
+      (compiler-backend-collect-program-collections-with-iag
+        (compiler-backend-global-shared-view globals)
+        (compiler-backend-global-shared-view entry-functions)
+        (compiler-backend-global-shared-view census))]
     [_frozen-globals-known : unit
       (compiler_regalloc.compiler-reg-frozen-globals-finish!)]
+    [_inline-aggregates : unit
+      (compiler-backend-iag-finish!
+        program-index.backend-state
+        (compiler-backend-global-shared-view census)
+        (compiler-backend-global-shared-view program-index))]
     [closure-names : BackendSymbolSeq
       (compiler-backend-program-collections-functions
         (compiler-backend-global-shared-view collections))]

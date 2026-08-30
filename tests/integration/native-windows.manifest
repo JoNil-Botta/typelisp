@@ -4,6 +4,10 @@
 # extra may be expected-stderr:<printf escapes>, stage-stdlib, or
 # suite-members:<space-separated smoke drivers> uses the eighth field.
 aggregate_globals|tests/integration/aggregate_globals.tl|42|-|-|stdlib/string.tl
+inline_aggregate_global|tests/integration/inline_aggregate_global.tl|42|98\n|-|stdlib/io.tl stdlib/string.tl
+inline_aggregate_global_escape|tests/integration/inline_aggregate_global_escape.tl|42|4\n|-|stdlib/io.tl stdlib/string.tl
+inline_aggregate_global_three_field|tests/integration/inline_aggregate_global_three_field.tl|42|327\n669\n|-|stdlib/io.tl stdlib/string.tl
+inline_aggregate_global_nested|tests/integration/inline_aggregate_global_nested.tl|42|555\n897\n|-|stdlib/io.tl stdlib/string.tl
 cli_common_option|tests/integration/cli_common_option.tl|42|-|-|cli_option_core.tl stdlib/io.tl stdlib/string.tl
 generated_hashmap_global_mutation|tests/integration/generated_hashmap_global_mutation.tl|42|-|-|stdlib/hashmap.tl
 hashmap_slot_update_shape|tests/integration/hashmap_slot_update_shape.tl|42|-|-|stdlib/hashmap.tl

@@ -75914,10 +75914,18 @@
   ;; one loop's blocks, header first, copied out of the nest's shared member
   ;; buffer before the next stamped walk overwrites it
   (members (__tl_dyn-array i64))
+  ;; Function-local dense slots for raw IR variable identities. Derived
+  ;; symbols occupy a fixed high domain, so their raw values must never size or
+  ;; index the stamp arrays below.
+  (vars backend_label_i64_map.Map)
   ;; per-variable stamps for the trip-count admission
   (variant (__tl_dyn-array i64))
   (iv (__tl_dyn-array i64))
   (phis (__tl_dyn-array i64)))
+
+(defstruct CompilerBackendPlacementVars
+  (slots backend_label_i64_map.Map)
+  (count i64))
 
 (defenum CompilerBackendMaybePlacement
   (No)
@@ -76391,17 +76399,24 @@
     [(compiler_ir_types.CompilerIrInstr.TotalEnumSwitch _ _ _ _ _) (- 0 1)]
     [_ (- 0 2)]))
 
-;; One past the highest destination this pass can name, which sizes the stamp
-;; tables. A destination beyond it reads as neither invariant nor induction, so
-;; an unnamed variable can only make a loop decline.
-(define (compiler-backend-placement-var-cap
-  [seq : compiler_ir_types.CompilerIrBlockSeq]) : i64
+;; Assign every destination this pass can name a function-local dense slot.
+;; Raw variables used to index the stamp arrays directly, which made an
+;; IR-owned symbol in the fixed high namespace reserve tens of GiB despite a
+;; function containing only a handful of variables. A value absent here is a
+;; parameter (or otherwise has no defining instruction), preserving the old
+;; invariant classification without depending on the numeric identity range.
+(define (compiler-backend-placement-vars
+  [seq : compiler_ir_types.CompilerIrBlockSeq]) : CompilerBackendPlacementVars
   (let
     [n : i64
       (compiler_ir_types.compiler-ir-block-seq-count
         (compiler-backend-global-shared-view seq))]
     [i : i64 0]
-    [cap : i64 0]
+    [out : CompilerBackendPlacementVars
+      (CompilerBackendPlacementVars
+        (backend_label_i64_map.with-capacity
+          (compiler_regalloc.compiler-reg-bits-map-capacity n))
+        0)]
     (begin
       (while (< i n)
         (begin
@@ -76419,63 +76434,87 @@
                           (compiler-backend-global-array-element-shared-view
                             instrs.slots
                             k))]
-                      (if (>= dst cap)
-                        (set! cap (+ dst 1))
-                        unit))
+                      (when
+                        (>= dst 0)
+                        (match (backend_label_i64_map.get (& out.slots) dst)
+                          [(backend_label_i64_map.LookupFound _) unit]
+                          [(backend_label_i64_map.LookupMissing)
+                            (begin
+                              (backend_label_i64_map.insert-ref!
+                                (&mut out.slots)
+                                dst
+                                out.count)
+                              (set! out.count (+ out.count 1)))])))
                     (set! k (+ k 1)))))])
           (set! i (+ i 1))))
-      cap)))
+      out)))
+
+(define (compiler-backend-placement-var-slot
+  [st : CompilerBackendPlacement]
+  [variable : i64]) : i64
+  (match (backend_label_i64_map.get (& st.vars) variable)
+    [(backend_label_i64_map.LookupFound slot) slot]
+    [(backend_label_i64_map.LookupMissing) (- 0 1)]))
 
 (define (compiler-backend-placement-stamped?
+  [st : CompilerBackendPlacement]
   [table : (__tl_dyn-array i64)]
-  [index : i64]
+  [variable : i64]
   [generation : i64]) : bool
-  (and
-    (>= index 0)
-    (< index (array-length table))
-    (= (array-ref table index) generation)))
+  (let
+    [slot : i64 (compiler-backend-placement-var-slot st variable)]
+    (and
+      (>= slot 0)
+      (< slot (array-length table))
+      (= (array-ref table slot) generation))))
 
 (define (compiler-backend-placement-stamp!
+  [st : CompilerBackendPlacement]
   [table : (__tl_dyn-array i64)]
-  [index : i64]
+  [variable : i64]
   [generation : i64]) : unit
-  (if (and (>= index 0) (< index (array-length table)))
-    (set! (array-ref table index) generation)
-    unit))
+  (let
+    [slot : i64 (compiler-backend-placement-var-slot st variable)]
+    (if (and (>= slot 0) (< slot (array-length table)))
+      (set! (array-ref table slot) generation)
+      unit)))
 
 (define (compiler-backend-placement-stamp-value!
+  [st : CompilerBackendPlacement]
   [table : (__tl_dyn-array i64)]
   [value : compiler_ir_types.CompilerIrValue]
   [generation : i64]) : unit
   (match value
     [(compiler_ir_types.CompilerIrValue.Var v)
-      (compiler-backend-placement-stamp! table v generation)]
+      (compiler-backend-placement-stamp! st table v generation)]
     [_ unit]))
 
 ;; A value nothing inside the loop writes. Constants qualify; a variable this
 ;; pass could not name does not.
 (define (compiler-backend-placement-invariant?
+  [st : CompilerBackendPlacement]
   [variant : (__tl_dyn-array i64)]
   [generation : i64]
   [value : compiler_ir_types.CompilerIrValue]) : bool
   (match value
     [(compiler_ir_types.CompilerIrValue.Var v)
-      (if (and (>= v 0) (< v (array-length variant)))
-        (not (= (array-ref variant v) generation))
-        ;; Past the highest destination in the whole function, so no
-        ;; instruction defines it and nothing in the loop can write it: a
-        ;; PARAMETER, which is the usual spelling of a counting loop's bound and
-        ;; the one value that is never anybody's `dst`.
-        true)]
+      (let
+        [slot : i64 (compiler-backend-placement-var-slot st v)]
+        (if (and (>= slot 0) (< slot (array-length variant)))
+          (not (= (array-ref variant slot) generation))
+          ;; No instruction in the function defines it: a PARAMETER, which is
+          ;; the usual spelling of a counting loop's bound.
+          true))]
     [_ true]))
 
 (define (compiler-backend-placement-marked?
+  [st : CompilerBackendPlacement]
   [table : (__tl_dyn-array i64)]
   [generation : i64]
   [value : compiler_ir_types.CompilerIrValue]) : bool
   (match value
     [(compiler_ir_types.CompilerIrValue.Var v)
-      (compiler-backend-placement-stamped? table v generation)]
+      (compiler-backend-placement-stamped? st table v generation)]
     [_ false]))
 
 (define (compiler-backend-placement-affine-op?
@@ -76521,6 +76560,7 @@
                       (if (= dst (- 0 2))
                         (set! ok false)
                         (compiler-backend-placement-stamp!
+                          (compiler-backend-global-shared-view st)
                           st.variant
                           dst
                           generation)))
@@ -76548,19 +76588,23 @@
       (begin
         (if (and
           (compiler-backend-placement-marked?
+            (compiler-backend-global-shared-view st)
             (compiler-backend-global-shared-view st.phis)
             generation
             (compiler-backend-global-shared-view lhs))
           (compiler-backend-placement-invariant?
+            (compiler-backend-global-shared-view st)
             (compiler-backend-global-shared-view st.variant)
             generation
             (compiler-backend-global-shared-view rhs)))
           (begin
             (compiler-backend-placement-stamp-value!
+              (compiler-backend-global-shared-view st)
               (compiler-backend-global-shared-view st.iv)
               (compiler-backend-global-shared-view lhs)
               generation)
             (compiler-backend-placement-stamp!
+              (compiler-backend-global-shared-view st)
               (compiler-backend-global-shared-view st.iv)
               dst
               generation))
@@ -76568,33 +76612,40 @@
         (if (and
           swap?
           (compiler-backend-placement-marked?
+            (compiler-backend-global-shared-view st)
             (compiler-backend-global-shared-view st.phis)
             generation
             (compiler-backend-global-shared-view rhs))
           (compiler-backend-placement-invariant?
+            (compiler-backend-global-shared-view st)
             (compiler-backend-global-shared-view st.variant)
             generation
             (compiler-backend-global-shared-view lhs)))
           (begin
             (compiler-backend-placement-stamp-value!
+              (compiler-backend-global-shared-view st)
               (compiler-backend-global-shared-view st.iv)
               (compiler-backend-global-shared-view rhs)
               generation)
             (compiler-backend-placement-stamp!
+              (compiler-backend-global-shared-view st)
               (compiler-backend-global-shared-view st.iv)
               dst
               generation))
           unit)
         (if (and
           (compiler-backend-placement-marked?
+            (compiler-backend-global-shared-view st)
             (compiler-backend-global-shared-view st.iv)
             generation
             (compiler-backend-global-shared-view lhs))
           (compiler-backend-placement-invariant?
+            (compiler-backend-global-shared-view st)
             (compiler-backend-global-shared-view st.variant)
             generation
             (compiler-backend-global-shared-view rhs)))
           (compiler-backend-placement-stamp!
+            (compiler-backend-global-shared-view st)
             (compiler-backend-global-shared-view st.iv)
             dst
             generation)
@@ -76602,14 +76653,17 @@
         (if (and
           swap?
           (compiler-backend-placement-marked?
+            (compiler-backend-global-shared-view st)
             (compiler-backend-global-shared-view st.iv)
             generation
             (compiler-backend-global-shared-view rhs))
           (compiler-backend-placement-invariant?
+            (compiler-backend-global-shared-view st)
             (compiler-backend-global-shared-view st.variant)
             generation
             (compiler-backend-global-shared-view lhs)))
           (compiler-backend-placement-stamp!
+            (compiler-backend-global-shared-view st)
             (compiler-backend-global-shared-view st.iv)
             dst
             generation)
@@ -76639,7 +76693,11 @@
                   instrs.slots
                   k)
                   [(compiler_ir_types.CompilerIrInstr.Phi dst _ _)
-                    (compiler-backend-placement-stamp! st.phis dst generation)]
+                    (compiler-backend-placement-stamp!
+                      (compiler-backend-global-shared-view st)
+                      st.phis
+                      dst
+                      generation)]
                   [_ unit])
                 (set! k (+ k 1)))))])
       (while (< round 2)
@@ -76705,19 +76763,23 @@
                           (or
                             (and
                               (compiler-backend-placement-marked?
+                                (compiler-backend-global-shared-view st)
                                 (compiler-backend-global-shared-view st.iv)
                                 generation
                                 (compiler-backend-global-shared-view lhs))
                               (compiler-backend-placement-invariant?
+                                (compiler-backend-global-shared-view st)
                                 (compiler-backend-global-shared-view st.variant)
                                 generation
                                 (compiler-backend-global-shared-view rhs)))
                             (and
                               (compiler-backend-placement-marked?
+                                (compiler-backend-global-shared-view st)
                                 (compiler-backend-global-shared-view st.iv)
                                 generation
                                 (compiler-backend-global-shared-view rhs))
                               (compiler-backend-placement-invariant?
+                                (compiler-backend-global-shared-view st)
                                 (compiler-backend-global-shared-view st.variant)
                                 generation
                                 (compiler-backend-global-shared-view lhs))))))
@@ -77133,7 +77195,7 @@
   [term-kind : (__tl_dyn-array i64)]
   [succ-off : (__tl_dyn-array i64)]
   [succ-buf : (__tl_dyn-array i64)]
-  [var-cap : i64]) : CompilerBackendPlacement
+  [vars : CompilerBackendPlacementVars]) : CompilerBackendPlacement
   (let
     [st : CompilerBackendPlacement
       (CompilerBackendPlacement
@@ -77146,9 +77208,10 @@
         (__tl_make-array i64 n)
         (__tl_make-array i64 n)
         (__tl_make-array i64 (+ n 1))
-        (__tl_make-array i64 var-cap)
-        (__tl_make-array i64 var-cap)
-        (__tl_make-array i64 var-cap))]
+        (compiler-backend-global-shared-view vars.slots)
+        (__tl_make-array i64 vars.count)
+        (__tl_make-array i64 vars.count)
+        (__tl_make-array i64 vars.count))]
     [i : i64 0]
     (begin
       (compiler-backend-placement-fill! st.inner (- 0 1))
@@ -77237,7 +77300,7 @@
                     (compiler-backend-global-shared-view term-kind)
                     (compiler-backend-global-shared-view succ-off)
                     (compiler-backend-global-shared-view succ-buf)
-                    (compiler-backend-placement-var-cap
+                    (compiler-backend-placement-vars
                       (compiler-backend-global-shared-view seq)))]
                 (begin
                   (compiler-backend-placement-plan!
@@ -77261,6 +77324,19 @@
           [(CompilerBackendMaybePlacement.Some st) st.order]
           [(CompilerBackendMaybePlacement.No) (__tl_make-array i64 0)])]
       [_ (__tl_make-array i64 0)])))
+
+;; Test observation: storage cardinality for the placement pass is the number
+;; of destinations in the function, independent of their raw symbol values.
+(define (compiler-backend-placement-variable-slot-count-for-blocks
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : i64
+  (match (compiler_ir_types.compiler-ir-block-list-compact blocks)
+    [(compiler_ir_types.CompilerIrBlockList.Array seq)
+      (let
+        [vars : CompilerBackendPlacementVars
+          (compiler-backend-placement-vars
+            (compiler-backend-global-shared-view seq))]
+        vars.count)]
+    [_ 0]))
 
 ;; The pass entry. Returns the input list untouched whenever the layout is the
 ;; identity or the function declines, so a compile that gains nothing allocates

@@ -97187,6 +97187,10 @@
   (macro-active-decl-owner-id i64)
   (macro-active-decl-provenance-id i64)
   (macro-dependency-catalog-handle cload.CompilerLoadDependencyCatalogHandle)
+  ;; Source-name provenance IDs repeat across every use of a dependency macro.
+  ;; Cache their catalog slot in this compile-job-owned walk state so the hot
+  ;; dispatch path does not canonicalize the same source path per invocation.
+  (macro-dependency-catalog-slot-cache tc_i64_i64_map.Map)
   ;; Canonical dependency-catalog route metrics. The fixed cell belongs to the
   ;; TcJobState's lazy macro-walk storage, so interleaved jobs and resets never
   ;; observe or erase one another's verification counters.
@@ -97253,6 +97257,7 @@
     cbi.compiler-builtin-id-fix-empty
     (cload.compiler-load-session-state-dependency-catalog-handle
       (cload.compiler-load-serial-test-session-state))
+    (tc_i64_i64_map.with-capacity 64)
     (__tl_make-array i64 13)
     false
     (sym_i64_env.sym-i64-empty)
@@ -97456,6 +97461,8 @@
       [left-macro : TcMacroState (tc-job-state-macro-state left)]
       [right-macro : TcMacroState (tc-job-state-macro-state right)]
       (begin
+        (macro-dependency-catalog-slot-cache-store! left-macro 5 11)
+        (macro-dependency-catalog-slot-cache-store! right-macro 5 22)
         (tc-dependency-tlci-route-counter-add!
           left-macro
           tc-dependency-tlci-native-dispatches
@@ -97468,7 +97475,16 @@
           left-macro
           tc-dependency-tlci-parameter-name-lookups
           3)
+        (macro-dependency-catalog-slot-cache-reset! right-macro)
         (tc-dependency-tlci-route-counters-reset! right-macro)
+        (test.assert-i64-eq
+          (macro-dependency-catalog-slot-cache-value-or left-macro 5 -2)
+          11
+          "right reset preserves left provenance catalog slot")
+        (test.assert-i64-eq
+          (macro-dependency-catalog-slot-cache-value-or right-macro 5 -2)
+          -2
+          "provenance catalog slot reset is job-local")
         (test.assert-i64-eq
           (tc-dependency-tlci-route-counter-value-for-job
             left
@@ -116257,6 +116273,40 @@
     slot
     identity))
 
+(define (macro-dependency-catalog-slot-cache-reset! [state : TcMacroState]) : unit
+  (let
+    [cache : tc_i64_i64_map.Map
+      (tc-macro-walk-field state macro-dependency-catalog-slot-cache)]
+    (begin
+      (tc_i64_i64_map.clear-ref! (&mut cache))
+      (tc-macro-walk-set! state macro-dependency-catalog-slot-cache cache))))
+
+(define (macro-dependency-catalog-slot-cache-value-or
+  [state : TcMacroState]
+  [provenance-id : i64]
+  [fallback : i64]) : i64
+  (let
+    [cache : tc_i64_i64_map.Map
+      (tc-macro-walk-field state macro-dependency-catalog-slot-cache)]
+    (tc_i64_i64_map.get-value-or (& cache) provenance-id fallback)))
+
+(define (macro-dependency-catalog-slot-cache-store!
+  [state : TcMacroState]
+  [provenance-id : i64]
+  [slot : i64]) : i64
+  (let
+    [cache : tc_i64_i64_map.Map
+      (tc-macro-walk-field state macro-dependency-catalog-slot-cache)]
+    (begin
+      (if (tc_i64_i64_map.needs-grow? (&mut cache))
+        (in-arena
+          (arena.Arena (tc-macro-state-owner-arena state))
+          (tc_i64_i64_map.grow! (&mut cache)))
+        unit)
+      (tc_i64_i64_map.insert-ref! (&mut cache) provenance-id slot)
+      (tc-macro-walk-set! state macro-dependency-catalog-slot-cache cache)
+      slot)))
+
 (define (macro-dependency-tlci-catalog-slot-for-declaration
   [ctx : TcContext]
   [declaration-id : i64]) : i64
@@ -116271,18 +116321,32 @@
       [source-names : ci.InternSourceNameSession
         (ci.intern-source-name-session-handle-session
           (tc-context-source-names (tc-global-shared-view ctx)))]
+      [state : TcMacroState
+        (tc-context-macro-state (tc-global-shared-view ctx))]
       (if (or
         (< provenance-id 0)
         (>= provenance-id source-names.source-count)
         (>= provenance-id (array-length source-names.pool-slots)))
         -1
-        (cload.compiler-load-dependency-catalog-handle-slot-for-provenance-path
-          (tc-macro-walk-field
-            (tc-context-macro-state (tc-global-shared-view ctx))
-            macro-dependency-catalog-handle)
-          (owned_view.compiler-owned-array-element-shared-view
-            source-names.pool-slots
-            provenance-id))))))
+        (let
+          [missing : i64 -2]
+          [cached : i64
+            (macro-dependency-catalog-slot-cache-value-or
+              (tc-global-shared-view state)
+              provenance-id
+              missing)]
+          (if (not (= cached missing))
+            cached
+            (macro-dependency-catalog-slot-cache-store!
+              state
+              provenance-id
+              (cload.compiler-load-dependency-catalog-handle-slot-for-provenance-path
+                (tc-macro-walk-field
+                  (tc-global-shared-view state)
+                  macro-dependency-catalog-handle)
+                (owned_view.compiler-owned-array-element-shared-view
+                  source-names.pool-slots
+                  provenance-id)))))))))
 
 (define (macro-expand-stdlib-tlci-module-id?
   [state : TcMacroState]
@@ -126590,83 +126654,80 @@
           expected
           (tc-global-shared-view stdlib-roots))
           [(cload.ResultPkgResolve.Ok resolved)
-            (match (cload.compiler-load-file-with-paths-and-roots-expect-cfg-root-import-with-state-and-pools
-              (tc-global-shared-view load-state)
-              (tc-global-shared-view resolved)
-              (cload.compiler-load-resolved-path-id-for-generated-import-with-state
+            (let
+              [resolved-path-id : i64
+                (cload.compiler-load-resolved-path-id-for-generated-import-with-state
+                  (tc-global-shared-view load-state)
+                  (tc-global-shared-view resolved)
+                  expected)]
+              (match (cload.compiler-load-file-with-paths-and-roots-expect-cfg-root-import-with-state-and-pools
                 (tc-global-shared-view load-state)
                 (tc-global-shared-view resolved)
-                expected)
-              seen
-              stdlib-roots
-              kind
-              import-path
-              expected
-              import-root
-              cfgs
-              pools
-              (tc-global-shared-view module)
-              module-id)
-              [(cload.ResultCompilerLoadWithPaths.Ok
-                  imported-decls
-                  imported-paths
-                  _
-                  next-seen)
-                (let
-                  [after-import-expected : ast.AstMaybeModuleName
-                    (cload.compiler-load-after-import-expected-module
-                      (tc-global-shared-view load-state)
-                      (cload.compiler-load-resolved-path-id-for-generated-import-with-state
+                resolved-path-id
+                seen
+                stdlib-roots
+                kind
+                import-path
+                expected
+                import-root
+                cfgs
+                pools
+                (tc-global-shared-view module)
+                module-id)
+                [(cload.ResultCompilerLoadWithPaths.Ok
+                    imported-decls
+                    imported-paths
+                    _
+                    next-seen)
+                  (let
+                    [after-import-expected : ast.AstMaybeModuleName
+                      (cload.compiler-load-after-import-expected-module
                         (tc-global-shared-view load-state)
-                        (tc-global-shared-view resolved)
-                        expected)
-                      kind
-                      expected
-                      alias
-                      (tc-global-shared-view imported-decls))]
-                  [after-import-alias : ast.AstMaybeImportAlias
-                    (cload.compiler-load-after-import-alias
-                      (tc-global-shared-view load-state)
-                      (cload.compiler-load-resolved-path-id-for-generated-import-with-state
-                        load-state
-                        (tc-global-shared-view resolved)
-                        expected)
-                      kind
-                      expected
-                      alias
-                      (tc-global-shared-view imported-decls))]
-                  [source-import : ast.AstDeclList
-                    (ast.ast-decl-cons decl (ast.ast-decl-list-new))]
-                  [tail-decls : ast.AstDeclList
-                    (cload.compiler-load-decls-after-import
-                      kind
-                      resolved
-                      after-import-expected
-                      after-import-alias
-                      span
-                      module
-                      module-id
-                      source-import
-                      (tc-global-shared-view imported-decls)
-                      (ast.ast-decl-list-new))]
-                  [tail-paths : ast.AstDeclPathList
-                    (cload.compiler-load-paths-after-import
-                      decl-path
-                      decl-provenance-id
-                      decl-owner-id
-                      after-import-alias
-                      (tc-global-shared-view imported-decls)
-                      (ast.ast-decl-path-list-new))]
-                  [materialized-decls : ast.AstDeclList
-                    (macro-decl-list-append imported-decls tail-decls)]
-                  [materialized-paths : ast.AstDeclPathList
-                    (macro-decl-path-list-append imported-paths tail-paths)]
-                  (ResultMacroMaterializeImport.Ok
-                    materialized-decls
-                    materialized-paths
-                    next-seen))]
-              [(cload.ResultCompilerLoadWithPaths.Err diag)
-                (ResultMacroMaterializeImport.Err diag)])]
+                        resolved-path-id
+                        kind
+                        expected
+                        alias
+                        (tc-global-shared-view imported-decls))]
+                    [after-import-alias : ast.AstMaybeImportAlias
+                      (cload.compiler-load-after-import-alias
+                        (tc-global-shared-view load-state)
+                        resolved-path-id
+                        kind
+                        expected
+                        alias
+                        (tc-global-shared-view imported-decls))]
+                    [source-import : ast.AstDeclList
+                      (ast.ast-decl-cons decl (ast.ast-decl-list-new))]
+                    [tail-decls : ast.AstDeclList
+                      (cload.compiler-load-decls-after-import
+                        kind
+                        resolved
+                        after-import-expected
+                        after-import-alias
+                        span
+                        module
+                        module-id
+                        source-import
+                        (tc-global-shared-view imported-decls)
+                        (ast.ast-decl-list-new))]
+                    [tail-paths : ast.AstDeclPathList
+                      (cload.compiler-load-paths-after-import
+                        decl-path
+                        decl-provenance-id
+                        decl-owner-id
+                        after-import-alias
+                        (tc-global-shared-view imported-decls)
+                        (ast.ast-decl-path-list-new))]
+                    [materialized-decls : ast.AstDeclList
+                      (macro-decl-list-append imported-decls tail-decls)]
+                    [materialized-paths : ast.AstDeclPathList
+                      (macro-decl-path-list-append imported-paths tail-paths)]
+                    (ResultMacroMaterializeImport.Ok
+                      materialized-decls
+                      materialized-paths
+                      next-seen))]
+                [(cload.ResultCompilerLoadWithPaths.Err diag)
+                  (ResultMacroMaterializeImport.Err diag)]))]
           [(cload.ResultPkgResolve.Err message)
             (ResultMacroMaterializeImport.Err
               (box (macro-materialize-import-diagnostic decl-path span message)))]))]))
@@ -126719,6 +126780,11 @@
         macro-dependency-catalog-handle
         (cload.compiler-load-session-state-dependency-catalog-handle
           (tc-global-shared-view load-state)))
+      ;; The cache key is a source-name provenance index and the cached value
+      ;; belongs to this exact catalog snapshot. Reset at the phase boundary so
+      ;; job reuse cannot observe a prior source table or catalog generation.
+      (macro-dependency-catalog-slot-cache-reset!
+        (tc-job-state-macro-state (tc-global-shared-view job-state)))
       ;; Snapshot this load session's exact intern-owned module trust set before
       ;; macro dispatch. Another job may reset or replace its own provenance
       ;; carrier without changing this walk's routing decisions.

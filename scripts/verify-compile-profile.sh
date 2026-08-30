@@ -1739,6 +1739,8 @@ if [ "$NL_HOST_OS" = windows ]; then
     # cross the ownership-composed macro-expand boundary from 73 to 74 segments:
     # the authoritative Windows CI probe measured 4,802,959 used nodes,
     # 4,849,664 capacity, and 155,189,248 physical payload bytes.
+    # #6996 (inline aggregate globals, ~2,400 backend lines): Windows CI probe
+    # 74 macro_expand / 58 typecheck expr-pool segments.
     assert_selfhost_pool_family \
         "$SELFHOST_STDERR" ast_expr_pool macro_expand 74 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
@@ -1804,7 +1806,7 @@ if [ "$NL_HOST_OS" = windows ]; then
     # authoritative Windows probes measured 2,507,253 and 2,491,282 used nodes
     # respectively, with 2,555,904 capacity and 81,788,928 physical bytes.
     assert_selfhost_pool_family \
-        "$SELFHOST_STDERR" ast_expr_pool typecheck 57 65536 32 \
+        "$SELFHOST_STDERR" ast_expr_pool typecheck 58 65536 32 \
         "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
     # This is the tightest of the four and the one to check first when a series
     # adds compiler source: the copy-call / unsigned-bound-narrowing / chain

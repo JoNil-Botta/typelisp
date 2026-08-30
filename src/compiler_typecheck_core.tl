@@ -75141,15 +75141,17 @@
                 true)]
             [false
               (let
+                [empty-infos : ctfe_support.CtfeReflectInfoList
+                  (ctfe_support.ctfe-reflect-info-list-empty)]
                 [key : String
                   (ctfe_support.ctfe-type-key-with-reflections-and-pools
                     (tc-context-pools (tc-global-shared-view ctx))
-                    (ctfe_support.ctfe-reflect-info-list-empty)
+                    empty-infos
                     (tc-global-shared-view left))]
                 [value : String
                   (ctfe_support.ctfe-type-key-with-reflections-and-pools
                     (tc-context-pools (tc-global-shared-view ctx))
-                    (ctfe_support.ctfe-reflect-info-list-empty)
+                    empty-infos
                     (tc-global-shared-view right))]
                 (match (string.eq key value)
                   [true
@@ -101949,16 +101951,19 @@
               (begin
                 (if (ast.ast-macro-type-kind-list-empty? (& type-kinds))
                   unit
-                  (scratch-plan-result-for-state
-                    (tc-context-macro-state (tc-global-shared-view ctx))
-                    (ctfe_support.ctfe-type-key-with-reflections-and-pools
-                      (tc-context-pools (tc-global-shared-view ctx))
-                      (ctfe_support.ctfe-reflect-info-list-empty)
-                      (tc-global-shared-view resolved-ty))
-                    (ctfe_support.ctfe-type-kind-with-reflections-and-pools
-                      (tc-context-pools ctx)
-                      (ctfe_support.ctfe-reflect-info-list-empty)
-                      (tc-global-shared-view resolved-ty))))
+                  (let
+                    [empty-infos : ctfe_support.CtfeReflectInfoList
+                      (ctfe_support.ctfe-reflect-info-list-empty)]
+                    (scratch-plan-result-for-state
+                      (tc-context-macro-state (tc-global-shared-view ctx))
+                      (ctfe_support.ctfe-type-key-with-reflections-and-pools
+                        (tc-context-pools (tc-global-shared-view ctx))
+                        empty-infos
+                        (tc-global-shared-view resolved-ty))
+                      (ctfe_support.ctfe-type-kind-with-reflections-and-pools
+                        (tc-context-pools ctx)
+                        empty-infos
+                        (tc-global-shared-view resolved-ty)))))
                 (spec.ResultGenKey.Ok
                   (str_cat.str-cat
                     "type_"
@@ -114785,7 +114790,7 @@
     [reflected : ast.AstType
       (ctfe_support.ctfe-reflect-resolve-type-with-pools
         (tc-context-pools (tc-global-shared-view ctx))
-        (tc-global-shared-view infos)
+        infos
         ty)]
     (if (tc-type-needs-resolution-for-context?
       (tc-global-shared-view ctx)
@@ -114794,7 +114799,7 @@
         [qualified-reflected : ast.AstType
           (ctfe_support.ctfe-reflect-resolve-type-with-pools
             (tc-context-pools (tc-global-shared-view ctx))
-            (tc-global-shared-view infos)
+            infos
             (macro-type-arg-module-qualify
               (tc-global-shared-view ctx)
               (tc-global-shared-view reflected)))]
@@ -114944,10 +114949,12 @@
   (if (ast.ast-macro-type-kind-list-empty? type-kinds)
     ResultMacroCheck.Ok
     (let
+      [empty-infos : ctfe_support.CtfeReflectInfoList
+        (ctfe_support.ctfe-reflect-info-list-empty)]
       [actual-kind : String
         (ctfe_support.ctfe-type-kind-with-reflections-and-pools
           (tc-context-pools ctx)
-          (ctfe_support.ctfe-reflect-info-list-empty)
+          empty-infos
           (tc-global-shared-view resolved-ty))]
       (if (macro-type-kind-list-contains-text? type-kinds actual-kind)
         ResultMacroCheck.Ok

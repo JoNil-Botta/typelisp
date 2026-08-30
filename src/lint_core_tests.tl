@@ -588,6 +588,156 @@
           "lint: branch-local return should not make following code unreachable"))
       unit)))
 
+;; Keep cascading boolean-call and transitional core-qualifier fixtures beside
+;; their assertions. They share call-shape construction but are independent of
+;; the ladder, let, no-effect, and reachability families in the entry smoke.
+(define (lint-operator-smoke [vx : i64] [vy : i64] [vz : i64]) : unit
+  (let
+    [and-callee : i64 (lint-test-var "and")]
+    [or-callee : i64 (lint-test-var "or")]
+    [core-and-callee : i64 (lint-test-var "core/and")]
+    [core-cond-dotted-callee : i64 (lint-test-var "core.cond")]
+    [and-yz : i64 (ast.ast-expr-call and-callee (lint-test-expr-list2 vy vz))]
+    [and-xy : i64 (ast.ast-expr-call and-callee (lint-test-expr-list2 vx vy))]
+    [or-yz : i64 (ast.ast-expr-call or-callee (lint-test-expr-list2 vy vz))]
+    [or-xy : i64 (ast.ast-expr-call or-callee (lint-test-expr-list2 vx vy))]
+    [and-cascade : i64
+      (ast.ast-expr-call and-callee (lint-test-expr-list2 vx and-yz))]
+    [or-cascade : i64
+      (ast.ast-expr-call or-callee (lint-test-expr-list2 or-xy vz))]
+    [flat-and : i64
+      (ast.ast-expr-call and-callee (lint-test-expr-list3 vx vy vz))]
+    [mixed-and-or : i64
+      (ast.ast-expr-call and-callee (lint-test-expr-list2 vx or-yz))]
+    [core-and-cascade : i64
+      (ast.ast-expr-call core-and-callee (lint-test-expr-list2 vx and-yz))]
+    [core-cond-dotted-call : i64
+      (ast.ast-expr-call core-cond-dotted-callee (ast.ast-expr-list-new))]
+    [spanned-core-cond-dotted-call : i64
+      (lint-test-source-view
+        core-cond-dotted-call
+        (ast.ast-source-span 22 7 22 18))]
+    [double-and-cascade : i64
+      (ast.ast-expr-call and-callee (lint-test-expr-list2 and-xy and-yz))]
+    [spanned-and-cascade : i64
+      (lint-test-source-view and-cascade (ast.ast-source-span 21 7 21 30))]
+    (begin
+      (if (=
+        (lint_core.lint-findings-count
+          (lint-test-walk
+            and-cascade
+            (lint_core.lint-default-ladder-threshold)
+            (lint_core.lint-findings-empty)))
+        1)
+        unit
+        (io.panic "lint: nested and should be flagged once"))
+      (if (=
+        (lint_core.lint-findings-count
+          (lint-test-walk
+            or-cascade
+            (lint_core.lint-default-ladder-threshold)
+            (lint_core.lint-findings-empty)))
+        1)
+        unit
+        (io.panic "lint: nested or should be flagged once"))
+      (if (=
+        (lint_core.lint-findings-count
+          (lint-test-walk
+            flat-and
+            (lint_core.lint-default-ladder-threshold)
+            (lint_core.lint-findings-empty)))
+        0)
+        unit
+        (io.panic "lint: flat and should not be flagged"))
+      (if (=
+        (lint_core.lint-findings-count
+          (lint-test-walk
+            mixed-and-or
+            (lint_core.lint-default-ladder-threshold)
+            (lint_core.lint-findings-empty)))
+        0)
+        unit
+        (io.panic "lint: mixed and/or should not be flagged"))
+      (if (=
+        (lint_core.lint-findings-count
+          (lint-test-walk
+            double-and-cascade
+            (lint_core.lint-default-ladder-threshold)
+            (lint_core.lint-findings-empty)))
+        1)
+        unit
+        (io.panic "lint: one maximal and cascade should produce one finding"))
+      (match (lint_core.lint-findings-get
+        (lint-test-walk
+          spanned-and-cascade
+          (lint_core.lint-default-ladder-threshold)
+          (lint_core.lint-findings-empty))
+        0)
+        [(lint_core.LintMaybeFinding.Some finding)
+          (let
+            [fspan : ast.AstSourceSpan finding.span]
+            (if (and
+              (= (ast.ast-source-span-start-line fspan) 21)
+              (= finding.depth 3)
+              (string.eq
+                finding.rule-id
+                (lint_core.lint-rule-cascading-and-or-id))
+              (string.eq
+                finding.message
+                "cascading and: prefer flat n-ary form (and x y z)"))
+              unit
+              (io.panic "lint: cascading-and-or finding metadata mismatch")))]
+        [(lint_core.LintMaybeFinding.No)
+          (io.panic "lint: spanned and cascade should produce a finding")])
+      (match (lint_core.lint-findings-get
+        (lint-test-walk
+          core-and-cascade
+          (lint_core.lint-default-ladder-threshold)
+          (lint_core.lint-findings-empty))
+        0)
+        [(lint_core.LintMaybeFinding.Some finding)
+          (if (string.eq
+            finding.message
+            (str_cat.str-cat
+              "cascading and: prefer flat n-ary form ("
+              "core/and"
+              " x y z)"))
+            unit
+            (io.panic "lint: core/and cascade should preserve callee spelling"))]
+        [(lint_core.LintMaybeFinding.No)
+          (io.panic "lint: core/and cascade should produce a finding")])
+      (match (lint_core.lint-findings-get
+        (lint-test-walk
+          spanned-core-cond-dotted-call
+          (lint_core.lint-default-ladder-threshold)
+          (lint_core.lint-findings-empty))
+        0)
+        [(lint_core.LintMaybeFinding.Some finding)
+          (let
+            [fspan : ast.AstSourceSpan finding.span]
+            (if (and
+              (=
+                (lint_core.lint-findings-count
+                  (lint-test-walk
+                    spanned-core-cond-dotted-call
+                    (lint_core.lint-default-ladder-threshold)
+                    (lint_core.lint-findings-empty)))
+                1)
+              (= (ast.ast-source-span-start-line fspan) 22)
+              (string.eq
+                finding.rule-id
+                (lint_core.lint-rule-transitional-core-macro-qualifier-id))
+              (string.eq
+                finding.message
+                "transitional core macro qualifier: use cond instead of core.cond"))
+              unit
+              (io.panic
+                "lint: transitional core macro finding metadata mismatch")))]
+        [(lint_core.LintMaybeFinding.No)
+          (io.panic
+            "lint: core.cond call should produce transitional qualifier finding")])
+      unit)))
+
 (define (compiler-lint-self-test) : i64
   (let
     [vx : i64 (lint-test-var "x")]
@@ -709,34 +859,6 @@
       (lint-test-source-view ladder3 (ast.ast-source-span 7 3 9 4))]
     [spanned-nested-let : i64
       (lint-test-source-view nested-let (ast.ast-source-span 11 5 15 6))]
-    [and-callee : i64 (lint-test-var "and")]
-    [or-callee : i64 (lint-test-var "or")]
-    [core-and-callee : i64 (lint-test-var "core/and")]
-    [core-cond-dotted-callee : i64 (lint-test-var "core.cond")]
-    [and-yz : i64 (ast.ast-expr-call and-callee (lint-test-expr-list2 vy vz))]
-    [and-xy : i64 (ast.ast-expr-call and-callee (lint-test-expr-list2 vx vy))]
-    [or-yz : i64 (ast.ast-expr-call or-callee (lint-test-expr-list2 vy vz))]
-    [or-xy : i64 (ast.ast-expr-call or-callee (lint-test-expr-list2 vx vy))]
-    [and-cascade : i64
-      (ast.ast-expr-call and-callee (lint-test-expr-list2 vx and-yz))]
-    [or-cascade : i64
-      (ast.ast-expr-call or-callee (lint-test-expr-list2 or-xy vz))]
-    [flat-and : i64
-      (ast.ast-expr-call and-callee (lint-test-expr-list3 vx vy vz))]
-    [mixed-and-or : i64
-      (ast.ast-expr-call and-callee (lint-test-expr-list2 vx or-yz))]
-    [core-and-cascade : i64
-      (ast.ast-expr-call core-and-callee (lint-test-expr-list2 vx and-yz))]
-    [core-cond-dotted-call : i64
-      (ast.ast-expr-call core-cond-dotted-callee (ast.ast-expr-list-new))]
-    [spanned-core-cond-dotted-call : i64
-      (lint-test-source-view
-        core-cond-dotted-call
-        (ast.ast-source-span 22 7 22 18))]
-    [double-and-cascade : i64
-      (ast.ast-expr-call and-callee (lint-test-expr-list2 and-xy and-yz))]
-    [spanned-and-cascade : i64
-      (lint-test-source-view and-cascade (ast.ast-source-span 21 7 21 30))]
     [single-begin : i64
       (ast.ast-node-push
         (ast.AstExpr.Begin (ast.ast-expr-cons vx (ast.ast-expr-list-new))))]
@@ -1071,120 +1193,7 @@
                 "lint: nested-let finding should carry rule id and span")))]
         [(lint_core.LintMaybeFinding.No)
           (io.panic "lint: spanned nested let should produce a finding")])
-      (if (=
-        (lint_core.lint-findings-count
-          (lint-test-walk
-            and-cascade
-            (lint_core.lint-default-ladder-threshold)
-            (lint_core.lint-findings-empty)))
-        1)
-        unit
-        (io.panic "lint: nested and should be flagged once"))
-      (if (=
-        (lint_core.lint-findings-count
-          (lint-test-walk
-            or-cascade
-            (lint_core.lint-default-ladder-threshold)
-            (lint_core.lint-findings-empty)))
-        1)
-        unit
-        (io.panic "lint: nested or should be flagged once"))
-      (if (=
-        (lint_core.lint-findings-count
-          (lint-test-walk
-            flat-and
-            (lint_core.lint-default-ladder-threshold)
-            (lint_core.lint-findings-empty)))
-        0)
-        unit
-        (io.panic "lint: flat and should not be flagged"))
-      (if (=
-        (lint_core.lint-findings-count
-          (lint-test-walk
-            mixed-and-or
-            (lint_core.lint-default-ladder-threshold)
-            (lint_core.lint-findings-empty)))
-        0)
-        unit
-        (io.panic "lint: mixed and/or should not be flagged"))
-      (if (=
-        (lint_core.lint-findings-count
-          (lint-test-walk
-            double-and-cascade
-            (lint_core.lint-default-ladder-threshold)
-            (lint_core.lint-findings-empty)))
-        1)
-        unit
-        (io.panic "lint: one maximal and cascade should produce one finding"))
-      (match (lint_core.lint-findings-get
-        (lint-test-walk
-          spanned-and-cascade
-          (lint_core.lint-default-ladder-threshold)
-          (lint_core.lint-findings-empty))
-        0)
-        [(lint_core.LintMaybeFinding.Some finding)
-          (let
-            [fspan : ast.AstSourceSpan finding.span]
-            (if (and
-              (= (ast.ast-source-span-start-line fspan) 21)
-              (= finding.depth 3)
-              (string.eq
-                finding.rule-id
-                (lint_core.lint-rule-cascading-and-or-id))
-              (string.eq
-                finding.message
-                "cascading and: prefer flat n-ary form (and x y z)"))
-              unit
-              (io.panic "lint: cascading-and-or finding metadata mismatch")))]
-        [(lint_core.LintMaybeFinding.No)
-          (io.panic "lint: spanned and cascade should produce a finding")])
-      (match (lint_core.lint-findings-get
-        (lint-test-walk
-          core-and-cascade
-          (lint_core.lint-default-ladder-threshold)
-          (lint_core.lint-findings-empty))
-        0)
-        [(lint_core.LintMaybeFinding.Some finding)
-          (if (string.eq
-            finding.message
-            (str_cat.str-cat
-              "cascading and: prefer flat n-ary form ("
-              "core/and"
-              " x y z)"))
-            unit
-            (io.panic "lint: core/and cascade should preserve callee spelling"))]
-        [(lint_core.LintMaybeFinding.No)
-          (io.panic "lint: core/and cascade should produce a finding")])
-      (match (lint_core.lint-findings-get
-        (lint-test-walk
-          spanned-core-cond-dotted-call
-          (lint_core.lint-default-ladder-threshold)
-          (lint_core.lint-findings-empty))
-        0)
-        [(lint_core.LintMaybeFinding.Some finding)
-          (let
-            [fspan : ast.AstSourceSpan finding.span]
-            (if (and
-              (=
-                (lint_core.lint-findings-count
-                  (lint-test-walk
-                    spanned-core-cond-dotted-call
-                    (lint_core.lint-default-ladder-threshold)
-                    (lint_core.lint-findings-empty)))
-                1)
-              (= (ast.ast-source-span-start-line fspan) 22)
-              (string.eq
-                finding.rule-id
-                (lint_core.lint-rule-transitional-core-macro-qualifier-id))
-              (string.eq
-                finding.message
-                "transitional core macro qualifier: use cond instead of core.cond"))
-              unit
-              (io.panic
-                "lint: transitional core macro finding metadata mismatch")))]
-        [(lint_core.LintMaybeFinding.No)
-          (io.panic
-            "lint: core.cond call should produce transitional qualifier finding")])
+      (lint-operator-smoke vx vy vz)
       (lint-no-effect-smoke vx one unit-expr set-ok-false)
       (lint-reachability-smoke vx vy one unit-expr return-one)
       (lint-rule-registry-smoke)

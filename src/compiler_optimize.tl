@@ -127796,23 +127796,26 @@
 
 (define (opt-global-obj-phi-owner
   [owners : opt_i64_i64_map.Map]
-  [inputs : ir.CompilerIrPhiInputList]
+  [inputs : ir.CompilerIrPhiInputSeq]
   [acc : i64]) : i64
-  (match (ir.compiler-ir-phi-input-list-force-cons
-    (compiler-opt-global-shared-view inputs))
-    [(ir.CompilerIrPhiInputList.Nil) acc]
-    [(ir.CompilerIrPhiInputList.Array seq)
-      (opt-global-obj-phi-owner
-        owners
-        (ir.compiler-ir-phi-input-seq-to-list seq)
-        acc)]
-    [(ir.CompilerIrPhiInputList.Cons value _ rest)
+  (if (<= inputs.len 0)
+    acc
+    (let
+      [head : ir.CompilerIrPhiInput
+        (ir.compiler-ir-phi-input-seq-ref
+          (ir.compiler-ir-global-shared-view inputs)
+          0)]
+      [rest : ir.CompilerIrPhiInputSeq
+        (ir.CompilerIrPhiInputSeq
+          (ir.compiler-ir-global-shared-view inputs.slots)
+          (+ inputs.start 1)
+          (- inputs.len 1))]
       (opt-global-obj-phi-owner
         (compiler-opt-global-shared-view owners)
-        (compiler-opt-box-shared-view rest)
+        rest
         (opt-global-obj-owner-join
           acc
-          (opt-global-obj-owner-of-value owners value)))]))
+          (opt-global-obj-owner-of-value owners head.value))))))
 
 (define (opt-global-obj-owners-instr
   [owners : OptGlobalObjOwners]
@@ -131057,15 +131060,20 @@
 
 (define (opt-arg-global-scan-phi
   [scan : OptArgGlobalScan]
-  [inputs : ir.CompilerIrPhiInputList]) : OptArgGlobalScan
-  (match (ir.compiler-ir-phi-input-list-force-cons inputs)
-    [(ir.CompilerIrPhiInputList.Nil) scan]
-    [(ir.CompilerIrPhiInputList.Array seq)
-      (opt-arg-global-scan-phi scan (ir.compiler-ir-phi-input-seq-to-list seq))]
-    [(ir.CompilerIrPhiInputList.Cons value _ rest)
-      (opt-arg-global-scan-phi
-        (opt-arg-global-scan-value scan value)
-        (compiler-opt-box-shared-view rest))]))
+  [inputs : ir.CompilerIrPhiInputSeq]) : OptArgGlobalScan
+  (if (<= inputs.len 0)
+    scan
+    (let
+      [head : ir.CompilerIrPhiInput
+        (ir.compiler-ir-phi-input-seq-ref
+          (ir.compiler-ir-global-shared-view inputs)
+          0)]
+      [rest : ir.CompilerIrPhiInputSeq
+        (ir.CompilerIrPhiInputSeq
+          (ir.compiler-ir-global-shared-view inputs.slots)
+          (+ inputs.start 1)
+          (- inputs.len 1))]
+      (opt-arg-global-scan-phi (opt-arg-global-scan-value scan head.value) rest))))
 
 ;; One argument of one direct call site, read positionally: the recorded fact
 ;; is the intersection over every site, and 0 means "no fact" for good.

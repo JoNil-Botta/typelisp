@@ -513,6 +513,25 @@
   (target-id i64)
   (result bool))
 
+(define tc-unbound-near-miss-memo-capacity : i64
+  256)
+
+;; A near-miss memo belongs to one compiler job. Array descriptors are retained
+;; in one typed cell in the scoped-state arena; scalar mutation also uses a
+;; one-element lane so reading this carrier by value never loses the next-slot
+;; update.
+(defstruct TcUnboundNearMissMemoState
+  (next-cell (__tl_dyn-array i64))
+  (stamps (__tl_dyn-array i64))
+  (valids (__tl_dyn-array u8))
+  (pool-lens (__tl_dyn-array i64))
+  (qualifieds (__tl_dyn-array i64))
+  (module-ids (__tl_dyn-array i64))
+  (name-ids (__tl_dyn-array i64))
+  (env-stores (__tl_dyn-array i64))
+  (env-heads (__tl_dyn-array i64))
+  (best-ids (__tl_dyn-array i64)))
+
 (defstruct TcTypeEnvScopedStateData
   (owner-arena i64)
   (runtime-active bool)
@@ -524,7 +543,8 @@
   (next-lookup-epoch i64)
   (visible-cache-address i64)
   (outlives-binding-cache-address i64)
-  (outlives-lifetime-cache-address i64))
+  (outlives-lifetime-cache-address i64)
+  (unbound-near-miss-memo-address i64))
 
 (defenum TcTypeEnvScopedLookup
   (Missing)
@@ -1093,6 +1113,8 @@
       [outlives-lifetime-cache : (__tl_dyn-array
         TcTypeEnvScopedOutlivesLifetimeCache)
         (__tl_make-array TcTypeEnvScopedOutlivesLifetimeCache 1)]
+      [unbound-near-miss-memo : (__tl_dyn-array TcUnboundNearMissMemoState)
+        (__tl_make-array TcUnboundNearMissMemoState 1)]
       [dummy-stack : TcTypeEnvScopedStack
         (TcTypeEnvScopedStack
           state.address
@@ -1114,6 +1136,19 @@
         (set!
           (array-ref outlives-lifetime-cache 0)
           (TcTypeEnvScopedOutlivesLifetimeCache false -1 -1 -1 -1 -1 -1 false))
+        (set!
+          (array-ref unbound-near-miss-memo 0)
+          (TcUnboundNearMissMemoState
+            (__tl_make-array i64 1)
+            (__tl_make-array i64 tc-unbound-near-miss-memo-capacity)
+            (__tl_make-array u8 tc-unbound-near-miss-memo-capacity)
+            (__tl_make-array i64 tc-unbound-near-miss-memo-capacity)
+            (__tl_make-array i64 tc-unbound-near-miss-memo-capacity)
+            (__tl_make-array i64 tc-unbound-near-miss-memo-capacity)
+            (__tl_make-array i64 tc-unbound-near-miss-memo-capacity)
+            (__tl_make-array i64 tc-unbound-near-miss-memo-capacity)
+            (__tl_make-array i64 tc-unbound-near-miss-memo-capacity)
+            (__tl_make-array i64 tc-unbound-near-miss-memo-capacity)))
         (set!
           (array-ref carrier-cell 0)
           (TcTypeEnvScopedCarrier
@@ -1140,6 +1175,10 @@
             (cast
               (unsafe
                 (ptr->int (__tl_array-data outlives-lifetime-cache)))
+              : i64)
+            (cast
+              (unsafe
+                (ptr->int (__tl_array-data unbound-near-miss-memo)))
               : i64)))
         state))))
 
@@ -40303,12 +40342,175 @@
       (= distance best-distance)
       (or (string.eq best "") (tc-unbound-string-less? candidate best)))))
 
+;; Speculative macro-expansion misses often repeat the exact same lookup. The
+;; result memo is owned by the environment's compiler job. Its key remains the
+;; intern owner/generation, pool length, persistent environment identity, and
+;; requested scope. Active scoped carriers bypass it because their mutable
+;; stack contents are not fully represented by `env.store` and `env.head`.
+(define (tc-unbound-near-miss-memo-for-env [env : TcTypeEnv]) : TcUnboundNearMissMemoState
+  (unsafe
+    (ptr-read
+      (int->ptr
+        (cast
+          (tc-type-env-scoped-state-field
+            (tc-type-env-scoped-state env)
+            unbound-near-miss-memo-address
+            i64)
+          : u64)
+        : (Ptr TcUnboundNearMissMemoState)))))
+
+(defstruct TcUnboundNearMissScanResult
+  (text String)
+  (best-id i64))
+
+(define (tc-unbound-near-miss-memo-lookup
+  [memo : (& memo TcUnboundNearMissMemoState)]
+  [owner-stamp : i64]
+  [pool-len : i64]
+  [module-qualified : bool]
+  [module-id : i64]
+  [wanted-id : i64]
+  [env-store : i64]
+  [env-head : i64]) : i64
+  (let
+    [index : i64 0]
+    [found : i64 -1]
+    (begin
+      (while (< index tc-unbound-near-miss-memo-capacity)
+        (if (= (array-ref memo.valids index) 0)
+          (set! index tc-unbound-near-miss-memo-capacity)
+          (if (= (array-ref memo.stamps index) owner-stamp)
+            (if (and
+              (= (array-ref memo.pool-lens index) pool-len)
+              (=
+                (array-ref memo.qualifieds index)
+                (if module-qualified
+                  1
+                  0))
+              (= (array-ref memo.module-ids index) module-id)
+              (= (array-ref memo.name-ids index) wanted-id)
+              (= (array-ref memo.env-stores index) env-store)
+              (= (array-ref memo.env-heads index) env-head))
+              (begin
+                (set! found index)
+                (set! index tc-unbound-near-miss-memo-capacity))
+              (set! index (+ index 1)))
+            (set! index (+ index 1)))))
+      found)))
+
+(define (tc-unbound-near-miss-memo-store
+  [memo : (& memo TcUnboundNearMissMemoState)]
+  [owner-stamp : i64]
+  [pool-len : i64]
+  [module-qualified : bool]
+  [module-id : i64]
+  [wanted-id : i64]
+  [env-store : i64]
+  [env-head : i64]
+  [best-id : i64]) : unit
+  (let
+    [slot : i64 (array-ref memo.next-cell 0)]
+    (begin
+      (set! (array-ref memo.valids slot) 1)
+      (set! (array-ref memo.stamps slot) owner-stamp)
+      (set! (array-ref memo.pool-lens slot) pool-len)
+      (set!
+        (array-ref memo.qualifieds slot)
+        (if module-qualified
+          1
+          0))
+      (set! (array-ref memo.module-ids slot) module-id)
+      (set! (array-ref memo.name-ids slot) wanted-id)
+      (set! (array-ref memo.env-stores slot) env-store)
+      (set! (array-ref memo.env-heads slot) env-head)
+      (set! (array-ref memo.best-ids slot) best-id)
+      (set!
+        (array-ref memo.next-cell 0)
+        (% (+ slot 1) tc-unbound-near-miss-memo-capacity)))))
+
+(define (tc-unbound-near-miss-render [best-id : i64] [wanted : String]) : String
+  (if (< best-id 0)
+    ""
+    (let
+      [candidate : String (ci.intern-str best-id)]
+      [wanted-separator : i64
+        (tc-name-first-char (tc-global-shared-view wanted) '.')]
+      (if (>= wanted-separator 0)
+        (let
+          [wanted-qualifier : String
+            (string.substring wanted 0 wanted-separator)]
+          (tc-name-slashes-to-dots
+            (csym.compiler-symbol-module-key
+              (tc-global-shared-view wanted-qualifier)
+              candidate)))
+        (clone candidate)))))
+
 (define (tc-unbound-near-miss
   [module-qualified : bool]
   [module-id : i64]
   [env : TcTypeEnv]
   [wanted : String]
   [wanted-id : i64]) : String
+  (if (tc-type-env-scoped-runtime-active? env)
+    (__tl-project-field
+      (tc-unbound-near-miss-scan
+        module-qualified
+        module-id
+        env
+        wanted
+        wanted-id)
+      text)
+    (let
+      [owner-stamp : i64
+        (bit-or
+          (shl (ci.intern-active-table-id) 32)
+          (bit-and (ci.intern-generation) 4294967295))]
+      [pool-len : i64 (ci.intern-pool-len)]
+      [env-store : i64 env.store]
+      [env-head : i64 env.head]
+      [memo : TcUnboundNearMissMemoState
+        (tc-unbound-near-miss-memo-for-env env)]
+      [memo-slot : i64
+        (tc-unbound-near-miss-memo-lookup
+          (& memo)
+          owner-stamp
+          pool-len
+          module-qualified
+          module-id
+          wanted-id
+          env-store
+          env-head)]
+      (if (>= memo-slot 0)
+        (let
+          [best-id : i64 (array-ref memo.best-ids memo-slot)]
+          (tc-unbound-near-miss-render best-id wanted))
+        (let
+          [result : TcUnboundNearMissScanResult
+            (tc-unbound-near-miss-scan
+              module-qualified
+              module-id
+              env
+              wanted
+              wanted-id)]
+          (begin
+            (tc-unbound-near-miss-memo-store
+              (& memo)
+              owner-stamp
+              pool-len
+              module-qualified
+              module-id
+              wanted-id
+              env-store
+              env-head
+              result.best-id)
+            result.text))))))
+
+(define (tc-unbound-near-miss-scan
+  [module-qualified : bool]
+  [module-id : i64]
+  [env : TcTypeEnv]
+  [wanted : String]
+  [wanted-id : i64]) : TcUnboundNearMissScanResult
   (let
     [wanted-separator : i64
       (tc-name-first-char (tc-global-shared-view wanted) '.')]
@@ -40347,6 +40549,7 @@
     [current-row : (__tl_dyn-array i64) (__tl_make-array i64 (+ wanted-len 1))]
     [candidate-index : i64 0]
     [best-distance : i64 (+ max-distance 1)]
+    [best-id : i64 -1]
     [best : String ""]
     (begin
       (cfg compile-profile (compiler-tc-env-profile-note-unbound-scan))
@@ -40398,6 +40601,7 @@
                   (if better
                     (begin
                       (set! best-distance distance)
+                      (set! best-id candidate-id)
                       (set!
                         best
                         (if wanted-qualified
@@ -40409,7 +40613,7 @@
                     unit)))
               unit)
             (set! candidate-index (+ candidate-index 1)))))
-      best)))
+      (TcUnboundNearMissScanResult best best-id))))
 
 (cfg
   test
@@ -40529,6 +40733,13 @@
             (tc-global-shared-view carrier-before))]
         [scoped-id : i64 (ci.intern "scoped-value")]
         [scoped-wanted-id : i64 (ci.intern "scoped-valuf")]
+        [inactive-scoped-result : String
+          (tc-unbound-near-miss
+            false
+            -1
+            persistent
+            "scoped-valuf"
+            scoped-wanted-id)]
         [carrier-after : TcTypeEnvScopedCarrier
           (tc-type-env-scoped-carrier-bind-id
             carrier-before
@@ -40566,6 +40777,7 @@
                 (and
                   (string.eq macro-result "m.macro-value")
                   (string.eq structural-result "structural-name")
+                  (string.eq inactive-scoped-result "")
                   (string.eq scoped-result "scoped-value")
                   (string.eq restored-result ""))
                 (io.panic
@@ -40622,6 +40834,49 @@
               (string.eq result-b "job-bravo"))
             (io.panic "typecheck: visible-name job isolation failed"))
           (ci.intern-reset!))))))
+
+(cfg
+  test
+  (test
+    tc-unbound-near-miss-memo-exactness
+    (begin
+      (ci.intern-reset!)
+      (let
+        [alpha-id : i64 (ci.intern "alpha")]
+        [wanted-id : i64 (ci.intern "alphi")]
+        [env : TcTypeEnv (tc-bind-id (tc-empty-env) alpha-id (ast.AstType.I64))]
+        [first : String (tc-unbound-near-miss false -1 env "alphi" wanted-id)]
+        (begin
+          ;; A repeat with the same inputs rides the memo.
+          (unless
+            (string.eq
+              first
+              (tc-unbound-near-miss false -1 env "alphi" wanted-id))
+            (io.panic "typecheck: near-miss memo changed a stable result"))
+          (unless
+            (string.eq first "alpha")
+            (io.panic "typecheck: near-miss memo scan result wrong"))
+          ;; A candidate interned after the memo was filled changes the pool
+          ;; length, so the memo must miss and rescan: the better candidate
+          ;; (same distance, alphabetically smaller) wins now.
+          (let
+            [alph-id : i64 (ci.intern "alph")]
+            [env2 : TcTypeEnv (tc-bind-id env alph-id (ast.AstType.I64))]
+            [after : String
+              (tc-unbound-near-miss false -1 env2 "alphi" wanted-id)]
+            (begin
+              (unless
+                (string.eq after "alph")
+                (io.panic
+                  "typecheck: near-miss memo ignored a newly interned candidate"))
+              ;; and the memo serves the updated result on the next call
+              (unless
+                (string.eq
+                  after
+                  (tc-unbound-near-miss false -1 env2 "alphi" wanted-id))
+                (io.panic
+                  "typecheck: near-miss memo did not serve the updated result"))
+              (ci.intern-reset!))))))))
 
 (defenum TcUnboundSuggestion
   (No)

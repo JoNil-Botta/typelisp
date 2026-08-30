@@ -1727,6 +1727,19 @@ run_linux_program_fixture() {
 }
 
 run_linux_backend_fixtures() {
+    # The opt0 row guards the lowerer's two-phase evaluate-before-write
+    # contract. The opt2 row runs the same destination/argument aliases through
+    # ctor_fwd and the complete optimizer pipeline (refs #6930).
+    run_linux_program_fixture \
+        constructor-alias-two-phase-opt0 \
+        tests/integration/constructor_alias_two_phase.tl \
+        42 \
+        0
+    run_linux_program_fixture \
+        constructor-alias-two-phase-opt2 \
+        tests/integration/constructor_alias_two_phase.tl \
+        42 \
+        2
     run_linux_program_fixture \
         regalloc-loop-split-evicted-region-var-opt2 \
         tests/integration/regalloc_loop_split_evicted_region_var.tl \
@@ -2066,6 +2079,16 @@ run_windows_program_fixture() {
 }
 
 run_windows_backend_fixtures() {
+    run_windows_program_fixture \
+        constructor-alias-two-phase-opt0 \
+        tests/integration/constructor_alias_two_phase.tl \
+        42 \
+        0
+    run_windows_program_fixture \
+        constructor-alias-two-phase-opt2 \
+        tests/integration/constructor_alias_two_phase.tl \
+        42 \
+        2
     run_windows_program_fixture \
         regalloc-loop-split-evicted-region-var-opt2 \
         tests/integration/regalloc_loop_split_evicted_region_var.tl \

@@ -75824,8 +75824,9 @@
 ;; argument never covered. Step 1 cannot wrap (`last <= bound-1` gives
 ;; `last+1 <= bound <= MAX`); a larger step can (`last + step` reaches
 ;; `bound-1+step`). The guard therefore gains one more condition whenever a
-;; counter-bearing derivation fired and the step is greater than 1
-;; (opt-bce-version-guard-finish):
+;; counter-bearing derivation fired and the step is greater than 1, unless a
+;; wide UNIT index family's own extremal conditions already imply the same cap
+;; (opt-bce-version-fan-proves-no-wrap?):
 ;;
 ;;   wrap(bound + step - 1) >= bound     (signed)
 ;;
@@ -77475,6 +77476,70 @@
 
 (define (opt-bce-version-fan-slot-words) : i64
   4)
+
+;; A positive-step counter normally needs the finisher's separate
+;; `bound + step - 1 >= bound` no-wrap conjunct. A UNIT family can already
+;; imply the same cap when all of these hold:
+;;
+;;   * its VARIABLE-base offsets span at least `step - 1`;
+;;   * its check length is a provably non-negative container length.
+;;
+;; The family's accepted guard states `base+kmin >= 0`, `base+kmax >= 0` and
+;; `bound <= length-(base+kmax)`. The fan's range proof makes the two effective
+;; bases mathematical values separated by `width = kmax-kmin`, so the top is
+;; at least `width`. A non-negative length makes the accepted subtraction
+;; exact; together with the once-only `0 <= seed < bound`, its right side must
+;; be positive. Therefore
+;;
+;;   bound <= length-top <= MAX-width <= MAX-step+1,
+;;
+;; exactly the cap the finisher's extra conjunct decides. This is deliberately
+;; limited to a genuinely variable base. A base that folds to a literal takes
+;; the scale-1 range guard instead, where the minimum condition constrains the
+;; counter seed rather than an invariant effective base and the width alone is
+;; not enough to imply the cap.
+(define (opt-bce-version-fan-proves-no-wrap?
+  [type-segment-bases : i64]
+  [blocks : ir.CompilerIrBlockList]
+  [fan : OptBceVersionFan]
+  [step : i64]
+  [index : i64]) : bool
+  (if (or
+    (<= step 1)
+    (>= index (compiler-opt-global-array-element-shared-view fan.slots 0)))
+    false
+    (let
+      [keys : (__tl_dyn-array ir.CompilerIrValue)
+        (compiler-opt-global-shared-view fan.keys)]
+      [slots : (__tl_dyn-array i64) (compiler-opt-global-shared-view fan.slots)]
+      [key-at : i64 (* index (opt-bce-version-fan-key-words))]
+      [slot-at : i64 (+ (* index (opt-bce-version-fan-slot-words)) 1)]
+      [base : ir.CompilerIrValue
+        (opt-bce-version-literal-of
+          (compiler-opt-global-shared-view blocks)
+          (compiler-opt-global-array-element-shared-view keys key-at)
+          8)]
+      [this-entry : bool
+        (and
+          (= (array-ref slots (+ slot-at 3)) (opt-bce-version-fan-kind-unit))
+          (match (compiler-opt-global-shared-view base)
+            [(ir.CompilerIrValue.Var _) true]
+            [_ false])
+          (>=
+            (- (array-ref slots (+ slot-at 1)) (array-ref slots slot-at))
+            (- step 1))
+          (opt-ubound-len-nonneg?
+            type-segment-bases
+            (compiler-opt-global-shared-view blocks)
+            (compiler-opt-global-array-element-shared-view keys (+ key-at 1))))]
+      (or
+        this-entry
+        (opt-bce-version-fan-proves-no-wrap?
+          type-segment-bases
+          blocks
+          fan
+          step
+          (+ index 1))))))
 
 ;; The three index families the table subsumes. The kind is part of the KEY:
 ;; two families over the same (base, length) whose members advance differently
@@ -79479,6 +79544,11 @@
 ;; which is why this is a claim the CALLER has to prove exactly rather than a
 ;; heuristic. The single-block pass passes false for both.
 ;;
+;; `no-wrap-known?` is the corresponding exact claim for the step's overflow
+;; cap. The caller sets it only when a non-negative container length and a
+;; sufficiently wide UNIT family make the family's accepted upper condition
+;; imply `bound <= MAX-step+1`; see opt-bce-version-fan-proves-no-wrap?.
+;;
 ;; MERGING THE PAIR. `seed >= 0 && seed < bound` -- two signed compares, two
 ;; branches in the lowered chain -- is exactly `seed <u bound` WHEN `bound >= 0`:
 ;; an unsigned `seed <u bound` with bound in [0, MAX] forces seed into
@@ -79509,6 +79579,7 @@
   [step : i64]
   [entered-known? : bool]
   [nonneg-known? : bool]
+  [no-wrap-known? : bool]
   [bound-nonneg? : bool]
   [cell : (__tl_dyn-array i64)]
   [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardResult
@@ -79595,7 +79666,7 @@
                     [_ (OptBceVersionGuardAcc.No)])])
               entered))]
         [unwrapped : OptBceVersionGuardAcc
-          (if (and counter-seen (> step 1))
+          (if (and counter-seen (> step 1) (not no-wrap-known?))
             (match seeded
               [(OptBceVersionGuardAcc.No) (OptBceVersionGuardAcc.No)]
               [(OptBceVersionGuardAcc.Some s-instrs s-values _)
@@ -79681,6 +79752,7 @@
 ;; rejected verdict reproduces the pre-gate behaviour instruction for
 ;; instruction.
 (define (opt-bce-version-guard-conds
+  [type-segment-bases : i64]
   [blocks : ir.CompilerIrBlockList]
   [instrs : ir.CompilerIrInstrSeq]
   [phi-count : i64]
@@ -79761,6 +79833,12 @@
         step
         false
         false
+        (opt-bce-version-fan-proves-no-wrap?
+          type-segment-bases
+          (compiler-opt-global-shared-view blocks)
+          (compiler-opt-global-shared-view fan)
+          step
+          0)
         bound-nonneg?
         (compiler-opt-global-shared-view cell)
         ;; The fan's extremal conditions join the accumulator only here, once
@@ -80484,6 +80562,7 @@
             outside))
           (OptUnrollResult.Result original-blocks frame false)
           (match (opt-bce-version-guard-conds
+            type-segment-bases
             (compiler-opt-global-shared-view blocks)
             (compiler-opt-global-shared-view instrs)
             phi-count
@@ -80810,8 +80889,9 @@
 ;; positive step -- so the per-check guards are step-independent, and the
 ;; shared guard finisher (opt-bce-version-guard-finish) adds the one no-wrap
 ;; condition `wrap(bound + step - 1) >= bound` when the step is greater than
-;; 1: without it a counter wrapping past i64 MAX would pass the signed latch
-;; compare again and run trips the range argument never covered.
+;; 1, unless a wide UNIT family already implies it: without either proof a
+;; counter wrapping past i64 MAX would pass the signed latch compare again and
+;; run trips the range argument never covered.
 ;; This pass recognizes such a loop from its natural-loop back edge (header
 ;; dominating latch, a single dedicated preheader whose only successor is the
 ;; header, a clone that fits the growth budget -- <= (opt-bce-mb-instr-max)
@@ -88919,6 +88999,15 @@
             (compiler-opt-global-shared-view first)
             (ir.CompilerIrValue.I64 0)
             8))
+        (and
+          ascending-exact?
+          (opt-bce-version-fan-proves-no-wrap?
+            (opt-bce-mb-descriptor-type-segment-bases
+              (compiler-opt-global-shared-view descriptor))
+            (compiler-opt-global-shared-view all-blocks)
+            (compiler-opt-global-shared-view fan)
+            step
+            0))
         ;; Merging the pair into one unsigned compare needs the limit's sign;
         ;; only the unshifted ascending range presents the loop's own bound
         ;; here, and a shifted one is a computed value with no length-slot
@@ -88926,7 +89015,8 @@
         (and
           ascending-exact?
           (opt-ubound-len-nonneg?
-            (opt-bce-mb-descriptor-type-segment-bases descriptor)
+            (opt-bce-mb-descriptor-type-segment-bases
+              (compiler-opt-global-shared-view descriptor))
             (compiler-opt-global-shared-view all-blocks)
             (compiler-opt-global-shared-view limit)))
         (compiler-opt-global-shared-view cell)
@@ -100150,15 +100240,18 @@
 ;; writes the destination BEFORE the instructions that used to sit between it
 ;; and the copy.
 ;;
-;; SOUNDNESS. Issue #5971 gives internal memory-class by-value parameters a
-;; private callee-entry snapshot, so their body-visible storage cannot alias the
-;; hidden sret slot even though the ABI transports the incoming value by
-;; pointer. That property is deliberately narrower than general `noalias`:
-;; explicit references, dereferences, fields, indexes, and arbitrary destination
-;; places may still alias storage read inside this rewrite window. A
-;; lowering-level version of this transform miscompiled the compiler (it broke
+;; SOUNDNESS. Under the by-value rules in SPEC sections 3.3 and 4.7.2, moving a
+;; non-Copy source invalidates its ownership but supplies no physical `noalias`
+;; fact. Runtime by-value parameters do have private callee-entry
+;; representations (including snapshots of memory-class ABI pointer inputs),
+;; so body-visible parameter storage cannot alias the hidden sret slot. That
+;; property is deliberately narrower than general `noalias`: explicit
+;; references, dereferences, fields, indexes, and arbitrary destination places
+;; may still alias storage read inside this rewrite window. A lowering-level
+;; version of this transform miscompiled the compiler (it broke
 ;; `tc-name-id-list-add`) before the necessary proof was explicit. The guard
-;; below remains the conservative local alias proof:
+;; below therefore makes no inference from ownership or ABI transport and
+;; remains the conservative local alias proof:
 ;;
 ;;   (1) `%t` is a FRESH FRAME ALLOCATION whose address never escapes: the
 ;;       ALLOC var `%t` is used exactly once in the whole function (by the

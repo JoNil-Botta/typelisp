@@ -170,6 +170,7 @@ ssa_nominal_one_word|tests/integration/ssa_nominal_one_word.tl|42|-|-|-
 loop_carried_memory_aggregate_move|tests/integration/loop_carried_memory_aggregate_move.tl|42|-|-|-
 arithmetic|tests/integration/arithmetic.tl|47|-|-|-
 constant_divisor_strength|tests/integration/constant_divisor_strength.tl|42|-|-|-
+constructor_alias_two_phase|tests/integration/constructor_alias_two_phase.tl|42|-|-|stdlib/string.tl
 calc|tests/integration/calc.tl|14|-|-|token.tl
 arena_poison_clone_survives|tests/integration/arena_poison_clone_survives.tl|42|-|-|stdlib/arena.tl stdlib/string.tl
 clone_deep_copy|tests/integration/clone_deep_copy.tl|42|-|-|stdlib/arena.tl stdlib/string.tl

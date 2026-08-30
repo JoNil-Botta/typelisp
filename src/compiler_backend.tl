@@ -4412,7 +4412,7 @@
   [message : String]) : compiler_diagnostic.CompilerDiagnostic
   (match (compiler_ir_types.compiler-source-spans-lookup-instr
     spans
-    function
+    (compiler_ir_types.compiler-ir-symbol-typed-id function)
     instr)
     [(compiler_ir_types.CompilerMaybeSourceSpan.Some span)
       (compiler_diagnostic.compiler-diagnostic-from-ast-span "" span message)]
@@ -19496,7 +19496,7 @@
     ""
     (match (compiler_ir_types.compiler-source-spans-lookup-instr-location
       (compiler-backend-global-shared-view ctx.spans)
-      ctx.source-function
+      (compiler_ir_types.compiler-ir-symbol-typed-id ctx.source-function)
       instr)
       [(compiler_ir_types.CompilerMaybeSourceLocation.Some location)
         (compiler-backend-debug-location-directive
@@ -19665,7 +19665,7 @@
           (compiler-backend-global-shared-view instr))
         (match (compiler_ir_types.compiler-source-spans-lookup-instr-location
           ctx.spans
-          ctx.source-function
+          (compiler_ir_types.compiler-ir-symbol-typed-id ctx.source-function)
           instr)
           [(compiler_ir_types.CompilerMaybeSourceLocation.No) unit]
           [(compiler_ir_types.CompilerMaybeSourceLocation.Some location)
@@ -58853,7 +58853,8 @@
       (compiler-backend-global-shared-view instr))
     (match (compiler_ir_types.compiler-source-spans-lookup-instr-location
       (compiler-backend-global-shared-view ctx.spans)
-      (compiler-backend-global-shared-view ctx.source-function)
+      (compiler_ir_types.compiler-ir-symbol-typed-id
+        (compiler-backend-global-shared-view ctx.source-function))
       instr)
       [(compiler_ir_types.CompilerMaybeSourceLocation.No) false]
       [(compiler_ir_types.CompilerMaybeSourceLocation.Some location)

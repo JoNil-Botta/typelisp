@@ -111056,7 +111056,7 @@
 ;; span so the cloned instruction still points at useful user code.
 (define (opt-source-spans-lookup-instr-span
   [source-spans : ir.CompilerSourceSpans]
-  [function : i64]
+  [function : ir.CompilerIrSymbolId]
   [instr : ir.CompilerIrInstr]) : ir.CompilerMaybeSourceSpan
   (match source-spans
     [(ir.CompilerSourceSpans.Spans _ instr-entries _)
@@ -111070,9 +111070,9 @@
 (define (opt-inline-record-clone-span
   [source-spans : ir.CompilerSourceSpans]
   [out : ir.CompilerSourceSpans]
-  [caller : i64]
+  [caller : ir.CompilerIrSymbolId]
   [call-instr : ir.CompilerIrInstr]
-  [callee : i64]
+  [callee : ir.CompilerIrSymbolId]
   [callee-instr : ir.CompilerIrInstr]
   [cloned : ir.CompilerIrInstr]) : ir.CompilerSourceSpans
   (if (ir.compiler-debug-info-enabled?)
@@ -111158,9 +111158,9 @@
         (opt-inline-record-clone-span
           (compiler-opt-global-shared-view source-spans)
           out-spans
-          caller
+          (ir.compiler-ir-symbol-typed-id caller)
           (compiler-opt-global-shared-view call-instr)
-          callee
+          (ir.compiler-ir-symbol-typed-id callee)
           (compiler-opt-global-shared-view instr)
           (compiler-opt-global-shared-view cloned))]
       (begin
@@ -111298,9 +111298,9 @@
         (opt-inline-record-clone-span
           (compiler-opt-global-shared-view source-spans)
           out-spans
-          caller
+          (ir.compiler-ir-symbol-typed-id caller)
           (compiler-opt-global-shared-view call-instr)
-          callee
+          (ir.compiler-ir-symbol-typed-id callee)
           instr
           (compiler-opt-global-shared-view cloned))]
       (begin
@@ -111788,7 +111788,7 @@
 (define (opt-inline-call-span-to-instr
   [source-spans : ir.CompilerSourceSpans]
   [out-spans : ir.CompilerSourceSpans]
-  [func-name : i64]
+  [func-name : ir.CompilerIrSymbolId]
   [call-instr : ir.CompilerIrInstr]
   [new-instr : ir.CompilerIrInstr]) : ir.CompilerSourceSpans
   (if (ir.compiler-debug-info-enabled?)
@@ -115615,9 +115615,9 @@
                       (opt-inline-record-clone-span
                         (compiler-opt-global-shared-view source-spans)
                         (compiler-opt-global-shared-view next-spans)
-                        caller
+                        (ir.compiler-ir-symbol-typed-id caller)
                         (compiler-opt-global-shared-view call-instr)
-                        callee
+                        (ir.compiler-ir-symbol-typed-id callee)
                         instr
                         converted))
                     (set! done? true)))]
@@ -115639,9 +115639,9 @@
                       (opt-inline-record-clone-span
                         (compiler-opt-global-shared-view source-spans)
                         (compiler-opt-global-shared-view next-spans)
-                        caller
+                        (ir.compiler-ir-symbol-typed-id caller)
                         (compiler-opt-global-shared-view call-instr)
-                        callee
+                        (ir.compiler-ir-symbol-typed-id callee)
                         instr
                         cloned))))]))
           (set! cursor (+ cursor 1))))
@@ -116266,7 +116266,8 @@
                                         (compiler-opt-global-shared-view
                                           source-spans)
                                         spans4
-                                        func-name
+                                        (ir.compiler-ir-symbol-typed-id
+                                          func-name)
                                         call-instr
                                         result-instr)]
                                     [_record-pred-rename : unit
@@ -129501,7 +129502,7 @@
     [_ false]))
 
 (define (opt-remap-spans-instr-key
-  [function : i64]
+  [function : ir.CompilerIrSymbolId]
   [instr : ir.CompilerIrInstr]) : OptRemapSpanKey
   (if (or
     (ir.compiler-debug-info-enabled?)
@@ -129645,7 +129646,7 @@
 (define (opt-remap-spans-instr
   [instr-entries : ir.CompilerSourceSpansInstrEntryList]
   [out : ir.CompilerSourceSpans]
-  [function : i64]
+  [function : ir.CompilerIrSymbolId]
   [instr : ir.CompilerIrInstr]) : ir.CompilerSourceSpans
   (match (opt-remap-spans-instr-key function instr)
     [(OptRemapSpanKey.NoKey) out]
@@ -129663,7 +129664,7 @@
 (define (opt-remap-spans-instr-seq-from
   [instr-entries : ir.CompilerSourceSpansInstrEntryList]
   [out : ir.CompilerSourceSpans]
-  [function : i64]
+  [function : ir.CompilerIrSymbolId]
   [instrs : ir.CompilerIrInstrSeq]
   [index : i64]) : ir.CompilerSourceSpans
   (if (>=
@@ -129684,14 +129685,14 @@
 (define (opt-remap-spans-instr-seq
   [instr-entries : ir.CompilerSourceSpansInstrEntryList]
   [out : ir.CompilerSourceSpans]
-  [function : i64]
+  [function : ir.CompilerIrSymbolId]
   [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerSourceSpans
   (opt-remap-spans-instr-seq-from instr-entries out function instrs 0))
 
 (define (opt-remap-spans-blocks
   [instr-entries : ir.CompilerSourceSpansInstrEntryList]
   [out : ir.CompilerSourceSpans]
-  [function : i64]
+  [function : ir.CompilerIrSymbolId]
   [blocks : ir.CompilerIrBlockList]) : ir.CompilerSourceSpans
   (match blocks
     [(ir.CompilerIrBlockList.Nil) out]
@@ -129734,7 +129735,11 @@
   [func : ir.CompilerIrFunction]) : ir.CompilerSourceSpans
   (match func
     [(ir.CompilerIrFunction.Function name _ _ _ blocks)
-      (opt-remap-spans-blocks instr-entries out name blocks)]))
+      (opt-remap-spans-blocks
+        instr-entries
+        out
+        (ir.compiler-ir-symbol-typed-id name)
+        blocks)]))
 
 (define (opt-remap-spans-functions
   [instr-entries : ir.CompilerSourceSpansInstrEntryList]

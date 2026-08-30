@@ -5335,18 +5335,24 @@
   (slots (__tl_dyn-array CompilerSourceSpansEntry))
   (len i64))
 
-;; Instruction spans are keyed by typed ids instead of rendered strings: a
-;; value entry is (function symbol id, destination var id) and a store entry
-;; is (function symbol id, stored-name symbol id). Building and comparing
-;; these keys costs a couple of integer moves where the string keys cost an
-;; int->string, three appends, an allocation, and byte-wise equality per
-;; probed entry. Refs #5142.
+;; Instruction spans are keyed by typed function symbols instead of rendered
+;; strings: a value entry is (function symbol id, function-local destination
+;; var id), and a store entry is (function symbol id, function-local stored
+;; name id). Bounds success labels are likewise function-local. The wrapper
+;; keeps the function identity out of the raw structural/sentinel lane while
+;; preserving the three-word enum layout. Building and comparing these keys
+;; costs a couple of integer moves where the string keys cost an int->string,
+;; three appends, an allocation, and byte-wise equality per probed entry.
+;; Refs #5142 and #5139.
 (defenum CompilerSourceSpansInstrKey
-  (Value i64 i64)
-  (Store i64 i64)
+  (Value CompilerIrSymbolId i64)
+  (Store CompilerIrSymbolId i64)
   ;; Bounds checks have no destination value; their fresh success label is
   ;; unique within the function and remains stable through optimization.
-  (Bounds i64 i64))
+  (Bounds CompilerIrSymbolId i64))
+
+(define (compiler-source-spans-instr-key-size) : i64
+  (comptime (size-of (type CompilerSourceSpansInstrKey))))
 
 (defenum CompilerSourceSpansInstrEntry
   (Entry CompilerSourceSpansInstrKey i64 ast.AstSourceSpan))
@@ -5451,17 +5457,23 @@
     [(CompilerSourceSpansInstrKey.Value left-function left-var)
       (match right
         [(CompilerSourceSpansInstrKey.Value right-function right-var)
-          (and (= left-var right-var) (= left-function right-function))]
+          (and
+            (= left-var right-var)
+            (compiler-ir-symbol-id-eq? left-function right-function))]
         [_ false])]
     [(CompilerSourceSpansInstrKey.Store left-function left-name)
       (match right
         [(CompilerSourceSpansInstrKey.Store right-function right-name)
-          (and (= left-name right-name) (= left-function right-function))]
+          (and
+            (= left-name right-name)
+            (compiler-ir-symbol-id-eq? left-function right-function))]
         [_ false])]
     [(CompilerSourceSpansInstrKey.Bounds left-function left-label)
       (match right
         [(CompilerSourceSpansInstrKey.Bounds right-function right-label)
-          (and (= left-label right-label) (= left-function right-function))]
+          (and
+            (= left-label right-label)
+            (compiler-ir-symbol-id-eq? left-function right-function))]
         [_ false])]))
 
 (define (compiler-source-spans-instr-entry-list-copy-array-range!
@@ -5705,14 +5717,14 @@
 
 (define (compiler-source-spans-insert-instr
   [spans : CompilerSourceSpans]
-  [function : i64]
+  [function : CompilerIrSymbolId]
   [instr : CompilerIrInstr]
   [span : ast.AstSourceSpan]) : CompilerSourceSpans
   (compiler-source-spans-insert-instr-unlocated spans function instr span))
 
 (define (compiler-source-spans-insert-instr-unlocated
   [spans : CompilerSourceSpans]
-  [function : i64]
+  [function : CompilerIrSymbolId]
   [instr : CompilerIrInstr]
   [span : ast.AstSourceSpan]) : CompilerSourceSpans
   (match (compiler-ir-global-shared-view instr)
@@ -5938,7 +5950,7 @@
 
 (define (compiler-source-spans-insert-instr-located
   [spans : CompilerSourceSpans]
-  [function : i64]
+  [function : CompilerIrSymbolId]
   [instr : CompilerIrInstr]
   [path-id : i64]
   [span : ast.AstSourceSpan]) : CompilerSourceSpans
@@ -6035,7 +6047,7 @@
 
 (define (compiler-source-spans-lookup-bounds-with-fuel
   [instr-entries : CompilerSourceSpansInstrEntryList]
-  [function : i64]
+  [function : CompilerIrSymbolId]
   [ok-label : i64]
   [fuel : i64]) : CompilerMaybeSourceLocation
   (match (compiler-source-spans-instr-entry-list-lookup
@@ -6070,7 +6082,7 @@
 
 (define (compiler-source-spans-lookup-bounds
   [instr-entries : CompilerSourceSpansInstrEntryList]
-  [function : i64]
+  [function : CompilerIrSymbolId]
   [ok-label : i64]) : CompilerMaybeSourceLocation
   ;; An empty table can never answer, and the abort-site probe runs on every
   ;; bounds check of a self-build whose instruction spans were dropped
@@ -6086,7 +6098,7 @@
 
 (define (compiler-source-spans-lookup-instr-location
   [spans : CompilerSourceSpans]
-  [function : i64]
+  [function : CompilerIrSymbolId]
   [instr : CompilerIrInstr]) : CompilerMaybeSourceLocation
   (match spans
     [(CompilerSourceSpans.Spans _ instr-entries _)
@@ -6275,7 +6287,7 @@
 
 (define (compiler-source-spans-lookup-instr
   [spans : CompilerSourceSpans]
-  [function : i64]
+  [function : CompilerIrSymbolId]
   [instr : CompilerIrInstr]) : CompilerMaybeSourceSpan
   (compiler-maybe-source-location-span
     (compiler-source-spans-lookup-instr-location spans function instr)))
@@ -8959,16 +8971,27 @@
         span2)]
     [instr : CompilerIrInstr
       (CompilerIrInstr.Mov 9 (CompilerIrValue.I64 1) (ast.AstType.I64))]
+    [instr-function : CompilerIrSymbolId one]
     [instr-spans : CompilerSourceSpans
       (compiler-source-spans-insert-instr
         (compiler-source-spans-insert-instr
           (compiler-source-spans-empty)
-          7
+          instr-function
           (compiler-ir-global-shared-view instr)
           span1)
-        7
+        instr-function
         (compiler-ir-global-shared-view instr)
         span3)]
+    [provenance-instr-spans : CompilerSourceSpans
+      (compiler-source-spans-insert-instr
+        (compiler-source-spans-insert-instr
+          (compiler-source-spans-empty)
+          source-provenance
+          (compiler-ir-global-shared-view instr)
+          span1)
+        generated-provenance
+        (compiler-ir-global-shared-view instr)
+        span2)]
     [grown-entries : CompilerSourceSpansEntryList
       (compiler-source-spans-entry-list-empty)]
     [grown-instr-spans : CompilerSourceSpans (compiler-source-spans-empty)]
@@ -8990,7 +9013,7 @@
             grown-instr-spans
             (compiler-source-spans-insert-instr
               grown-instr-spans
-              7
+              instr-function
               (compiler-ir-global-shared-view instr)
               (if (= i 5)
                 span3
@@ -9053,7 +9076,7 @@
           [(CompilerMaybeSourceSpan.No) false])
         (match (compiler-source-spans-lookup-instr
           instr-spans
-          7
+          instr-function
           (compiler-ir-global-shared-view instr))
           [(CompilerMaybeSourceSpan.Some found)
             (and
@@ -9062,12 +9085,26 @@
           [(CompilerMaybeSourceSpan.No) false])
         (match (compiler-source-spans-lookup-instr
           grown-instr-spans
-          7
+          instr-function
           (compiler-ir-global-shared-view instr))
           [(CompilerMaybeSourceSpan.Some found)
             (and
               (= (ast.ast-source-span-start-line found) 7)
               (= (ast.ast-source-span-end-col found) 12))]
+          [(CompilerMaybeSourceSpan.No) false])
+        (match (compiler-source-spans-lookup-instr
+          (compiler-ir-global-shared-view provenance-instr-spans)
+          source-provenance
+          (compiler-ir-global-shared-view instr))
+          [(CompilerMaybeSourceSpan.Some found)
+            (= (ast.ast-source-span-start-line found) 1)]
+          [(CompilerMaybeSourceSpan.No) false])
+        (match (compiler-source-spans-lookup-instr
+          provenance-instr-spans
+          generated-provenance
+          (compiler-ir-global-shared-view instr))
+          [(CompilerMaybeSourceSpan.Some found)
+            (= (ast.ast-source-span-start-line found) 4)]
           [(CompilerMaybeSourceSpan.No) false])))))
 
 (define (compiler-ir-instr-seq-mov-dst?

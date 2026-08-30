@@ -640,10 +640,12 @@
           (compiler_ir_types.CompilerIrSpmdValueClass.Varying)
           (ast.AstType.I64)))]
     [span : ast.AstSourceSpan (ast.ast-source-span 3 4 3 9)]
+    [span-function : compiler_ir_types.CompilerIrSymbolId
+      (compiler_ir_types.compiler-ir-symbol-typed-id 7)]
     [spans : compiler_ir_types.CompilerSourceSpans
       (compiler_ir_types.compiler-source-spans-insert-instr
         (compiler_ir_types.compiler-source-spans-empty)
-        7
+        span-function
         (compiler_ir_types.compiler-ir-global-shared-view instr)
         span)]
     (and
@@ -687,7 +689,7 @@
           (compiler_ir_types.compiler-ir-global-shared-view instr)))
       (match (compiler_ir_types.compiler-source-spans-lookup-instr
         (compiler_ir_types.compiler-ir-global-shared-view spans)
-        7
+        span-function
         (compiler_ir_types.compiler-ir-global-shared-view instr))
         [(compiler_ir_types.CompilerMaybeSourceSpan.Some found)
           (and
@@ -1166,9 +1168,9 @@
       (compiler_ir_types.compiler-ir-symbol-typed-id
         (compiler-ir-smoke-symbol-id "spans-escape-second"))]
     [instr-key : compiler_ir_types.CompilerSourceSpansInstrKey
-      (compiler_ir_types.CompilerSourceSpansInstrKey.Value 11 12)]
+      (compiler_ir_types.CompilerSourceSpansInstrKey.Value first 12)]
     [store-key : compiler_ir_types.CompilerSourceSpansInstrKey
-      (compiler_ir_types.CompilerSourceSpansInstrKey.Store 13 14)]
+      (compiler_ir_types.CompilerSourceSpansInstrKey.Store second 14)]
     [_enter : unit
       (unsafe
         (arena.tl_arena_set scratch))]

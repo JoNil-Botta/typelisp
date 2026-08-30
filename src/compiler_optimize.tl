@@ -14060,16 +14060,6 @@
         (opt_i64_i64_map.with-capacity 64)
         (opt-ssa-var-types-new)))))
 
-(define (opt-ssa-facts-from-function
-  [type-segment-bases : i64]
-  [params : ir.CompilerIrParamSeq]
-  [blocks : ir.CompilerIrBlockList]) : OptSsaFacts
-  (opt-ssa-facts-from-function-with-representations
-    type-segment-bases
-    (ir.compiler-ir-representation-index-empty)
-    params
-    blocks))
-
 (define (opt-ssa-candidate? [facts : OptSsaFacts] [var : i64]) : bool
   (match facts
     [(OptSsaFacts.Facts counts bad types)
@@ -16551,18 +16541,6 @@
                   (compiler-opt-global-shared-view blocks)
                   (compiler-opt-global-shared-view facts)
                   (compiler-opt-global-shared-view context))]))))]))
-
-(define (opt-ssa-construct-function-from-context-result
-  [type-segment-bases : i64]
-  [func : ir.CompilerIrFunction]
-  [entry-context : OptCfgContext]
-  [entry-context-valid? : bool]) : OptFunctionCtxResult
-  (opt-ssa-construct-function-from-context-and-representations-result
-    type-segment-bases
-    (ir.compiler-ir-representation-index-empty)
-    func
-    entry-context
-    entry-context-valid?))
 
 ;; --- conservative global value numbering / cross-block copies ---------------
 ;;
@@ -23926,16 +23904,6 @@
     state.global-write?
     state.mem-clean-call?
     state.global-cell-writes))
-
-(define (opt-licm-store-state-bind-root
-  [state-input : OptLicmStoreState]
-  [var : i64]
-  [root : OptLicmRoot]) : OptLicmStoreState
-  (let
-    [state : OptLicmStoreState (compiler-opt-global-shared-view state-input)]
-    (begin
-      (opt-licm-root-env-bind! (&mut state.roots) var root)
-      state)))
 
 (define (opt-licm-store-state-add-rooted-store
   [state : OptLicmStoreState]
@@ -39262,18 +39230,6 @@
                 true-label
                 false-label)))]))))
 
-(define (opt-bool-branch-chain-fresh-blocks
-  [conjs : ir.CompilerIrInstrSeq]
-  [labels : OptLabelSet]
-  [true-label : i64]
-  [false-label : i64]) : ir.CompilerIrBlockList
-  (opt-bool-branch-chain-fresh-blocks-from
-    conjs
-    0
-    labels
-    true-label
-    false-label))
-
 (define (opt-bool-branch-chain-prepend-blocks
   [prefix : ir.CompilerIrBlockList]
   [tail : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
@@ -46882,28 +46838,6 @@
         ;; valid as-is (no branch condition can have folded to a literal).
         (OptBlockCtxResult.Result blocks context true))]))
 
-;; Non-heavy pipeline entry point: identical to opt-sccp-blocks (nested
-;; cfg-simplify included) but sizes the lattice env by the function frame
-;; instead of walking the whole function for max-var.
-(define (opt-sccp-blocks-with-frame
-  [type-segment-bases : i64]
-  [params : ir.CompilerIrParamSeq]
-  [blocks : ir.CompilerIrBlockList]
-  [frame : i64]) : ir.CompilerIrBlockList
-  (let
-    [context : OptCfgContext
-      (opt-cfg-context-build (compiler-opt-global-shared-view blocks))]
-    (match (opt-sccp-analyze-with-frame
-      type-segment-bases
-      context
-      params
-      (compiler-opt-global-shared-view blocks)
-      frame)
-      [(OptSccpState.State _ _ env _ _)
-        (if (opt-sccp-env-any-const? (compiler-opt-global-shared-view env) 0)
-          (opt-cfg-simplify-blocks (opt-sccp-rewrite-blocks env blocks))
-          (opt-cfg-simplify-blocks blocks))])))
-
 (defenum OptSwitchIndexTag
   (No)
   (Some i64 i64))
@@ -49565,13 +49499,6 @@
                   (OptFunctionPassResult.Result next true)]
                 [(ResultCompilerOptimizeVerify.Err _)
                   (OptFunctionPassResult.Result func false)])))))]))
-
-(define (opt-bit-test-function [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
-  (match (opt-bit-test-function-pass (compiler-opt-global-shared-view func))
-    [(OptFunctionPassResult.Result next changed)
-      (if changed
-        next
-        func)]))
 
 (define (optimize-function-max-iterations) : i64
   2)
@@ -72711,14 +72638,6 @@
     [(OptUceExitRecs.Nil) (OptUceExitRec.Rec -1 (ast.AstType.I64))]
     [(OptUceExitRecs.Dense items len) (array-ref items (- (- len 1) index))]))
 
-(define (opt-uce-exit-rec-tail [recs : OptUceExitRecs]) : OptUceExitRecs
-  (match (compiler-opt-global-shared-view recs)
-    [(OptUceExitRecs.Nil) (OptUceExitRecs.Nil)]
-    [(OptUceExitRecs.Dense items len)
-      (if (<= len 1)
-        (OptUceExitRecs.Nil)
-        (OptUceExitRecs.Dense items (- len 1)))]))
-
 (define (opt-uce-exit-rec-cons
   [dst : i64]
   [ty : ast.AstType]
@@ -80993,10 +80912,6 @@
 (defenum OptBceMbMaybeInstr
   (No)
   (Some ir.CompilerIrInstr))
-
-(defenum OptBceMbMaybeSeed
-  (No)
-  (Some ir.CompilerIrValue))
 
 ;; cond-var, exit-label of a latch branch.
 (defenum OptBceMbMaybeLatch
@@ -104312,14 +104227,6 @@
                           [(ResultCompilerOptimizeVerify.Err _)
                             (OptBgFunctionResult.Result func context false)])))])]))])]))
 
-(define (opt-bg-function-with-context-result
-  [context : OptCfgContext]
-  [verified? : bool]
-  [func : ir.CompilerIrFunction]) : OptFunctionCtxResult
-  (match (opt-bg-function-changed-result context verified? func)
-    [(OptBgFunctionResult.Result next next-context _)
-      (OptFunctionCtxResult.Result next next-context)]))
-
 ;; Standalone driver for tests and ad-hoc runs: builds its own CFG context and
 ;; keeps the defensive entry verify.
 (define (opt-bg-function-pass [func : ir.CompilerIrFunction]) : OptFunctionPassResult
@@ -120076,18 +119983,6 @@
         (compiler-opt-global-shared-view blocks))
       (opt-call-memory-root-scan-blocks! sources (&mut roots) blocks)
       roots)))
-
-(define (opt-call-memory-roots
-  [type-segment-bases : i64]
-  [params : ir.CompilerIrParamSeq]
-  [blocks : ir.CompilerIrBlockList]) : OptLicmRootEnv
-  (opt-call-memory-roots-with-sources
-    type-segment-bases
-    (opt-call-memory-sources
-      (compiler-opt-global-shared-view params)
-      (compiler-opt-global-shared-view blocks))
-    params
-    blocks))
 
 ;; --- element-storage pointer classification ---------------------------------
 ;;
@@ -141237,27 +141132,3 @@
                   (compiler-opt-global-shared-view subst)
                   (compiler-opt-global-shared-view materialized))])
             next-frame))))))
-
-;; The frame-free entry, for callers that mint nothing downstream of this pass.
-(define (opt-load-gvn-blocks-with-context
-  [profile-state : profile_state.CompilerProfileMetrics]
-  [type-segment-bases : i64]
-  [context : OptCfgContext]
-  [sources : opt_i64_i64_map.Map]
-  [hs : OptLoadHeaderSet]
-  [params : ir.CompilerIrParamSeq]
-  [call-memory : opt_i64_i64_map.Map]
-  [cells : OptGlobalCellSummary]
-  [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
-  (match (opt-load-gvn-blocks-with-context-result
-    profile-state
-    type-segment-bases
-    context
-    sources
-    hs
-    params
-    call-memory
-    cells
-    0
-    blocks)
-    [(OptLoadGvnResult.Result out-blocks _) out-blocks]))

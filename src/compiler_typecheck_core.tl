@@ -506,10 +506,6 @@
   (sidecar-mark TcTypeEnvScopedSidecarMark)
   (dirty bool))
 
-(defstruct TcTypeEnvScopedCarrierSave
-  (carrier TcTypeEnvScopedCarrier)
-  (mark TcTypeEnvScopedCarrierMark))
-
 (defenum TcTypeEnvScopedRuntimeSave
   (Inactive TcTypeEnvScopedState)
   (Scope TcTypeEnvScopedState TcTypeEnvScopedCarrierMark)
@@ -2547,47 +2543,6 @@
     ci.InternSourceNameSessionHandle
     TcBodyState))
 
-(defstruct TcContextRef
-  (:lifetimes ctx)
-  (value (& ctx TcContext)))
-
-(define (tc-context-seed-address [ctx : (& ctx TcContext)]) : u64
-  (let
-    [cell : (TcContextRef ctx) (TcContextRef ctx)]
-    (unsafe
-      (ptr-read (ptr-cast (ptr-addr-of cell) : (Ptr u64))))))
-
-;; The published seed lowers borrowed inline enum payloads as loads instead of
-;; addresses. For its one-shot stage1 build, recover these two hot TcContext
-;; payload references from the stable native layout: tag + AstProgram is 24
-;; bytes, and CompilerSymbols is the following 128 bytes. Later generations use
-;; the checked borrowed match below and never compile these cfg-only helpers.
-(cfg
-  stage0-borrowed-inline-bootstrap
-  (define (tc-context-seed-symbols-ref [ctx : (& ctx TcContext)]) : (&
-      ctx
-      csym.CompilerSymbols)
-    (let
-      [word : u64 (+ (tc-context-seed-address ctx) 24)]
-      [cell : (Array u64 1) (array word)]
-      (unsafe
-        (ptr-read
-          (ptr-cast (__tl_array-data cell) : (Ptr (& ctx csym.CompilerSymbols))))))))
-
-(cfg
-  stage0-borrowed-inline-bootstrap
-  (define (tc-context-seed-registries-ref [ctx : (& ctx TcContext)]) : (&
-      ctx
-      csym.CompilerRegistries)
-    (let
-      [word : u64 (+ (tc-context-seed-address ctx) 152)]
-      [cell : (Array u64 1) (array word)]
-      (unsafe
-        (ptr-read
-          (ptr-cast
-            (__tl_array-data cell)
-            : (Ptr (& ctx csym.CompilerRegistries))))))))
-
 (define (tc-context-expr-cell-address-live [ctx : TcContext]) : u64
   (match ctx
     [(TcContext _ _ _ _ _ _ pools _ _)
@@ -2605,15 +2560,6 @@
   [type-cell-address : u64]
   [node : ast.AstExpr]) : i64
   (ast.ast-node-pool-context-expr-push-cells
-    expr-cell-address
-    type-cell-address
-    node))
-
-(define (tc-context-type-push-cell-addresses
-  [expr-cell-address : u64]
-  [type-cell-address : u64]
-  [node : ast.AstType]) : i64
-  (ast.ast-node-pool-context-type-push-cells
     expr-cell-address
     type-cell-address
     node))
@@ -3970,9 +3916,6 @@
         0))
     0))
 
-(define (tc-agg-layout-cache-storage-arena-handle-value) : i64
-  (tc-agg-layout-cache-storage-arena-handle-value-for-job (tc-serial-job-state)))
-
 (define (tc-agg-layout-cache-storage-handle-for-state
   [state : TcAggLayoutCacheState]) : arena.Arena
   (let
@@ -4012,17 +3955,6 @@
         (unsafe
           (arena.destroy storage))))))
 
-(define (tc-agg-layout-cache-storage-reset-for-job! [job-state : TcJobState]) : unit
-  (let
-    [address : i64 (tc-job-state-agg-layout-cache-address job-state)]
-    (if (> address 0)
-      (tc-agg-layout-cache-storage-reset-for-state!
-        (TcAggLayoutCacheState address))
-      unit)))
-
-(define (tc-agg-layout-cache-storage-reset!) : unit
-  (tc-agg-layout-cache-storage-reset-for-job! (tc-serial-job-state)))
-
 (define (tc-agg-layout-cache-slot-empty-for-state?
   [state : TcAggLayoutCacheState]
   [index : i64]) : bool
@@ -4035,11 +3967,6 @@
       (match (tc-global-array-element-shared-view slots index)
         [(TcAggLayoutCacheSlot.Empty) true]
         [(TcAggLayoutCacheSlot.Full _ _) false]))))
-
-(define (tc-agg-layout-cache-slot-empty? [index : i64]) : bool
-  (tc-agg-layout-cache-slot-empty-for-state?
-    (tc-job-state-agg-layout-cache (tc-serial-job-state))
-    index))
 
 ;; Builders know the final cardinality from their AST vectors. Allocate one
 ;; right-sized backing array in the retained cache arena, fill it in source
@@ -4069,11 +3996,6 @@
     (tc-agg-layout-cache-storage-handle-for-state state)
     (TcInlineFieldLayoutList (__tl_make-array TcInlineFieldLayout count))))
 
-(define (tc-inline-field-layout-list-with-count [count : i64]) : TcInlineFieldLayoutList
-  (tc-inline-field-layout-list-with-count-for-state
-    (tc-job-state-agg-layout-cache (tc-serial-job-state))
-    count))
-
 (define (tc-inline-field-layout-list-count
   [items : (& items TcInlineFieldLayoutList)]) : i64
   (array-length items.slots))
@@ -4096,11 +4018,6 @@
     (tc-agg-layout-cache-storage-handle-for-state state)
     (TcInlinePayloadLayoutList (__tl_make-array TcInlinePayloadLayout count))))
 
-(define (tc-inline-payload-layout-list-with-count [count : i64]) : TcInlinePayloadLayoutList
-  (tc-inline-payload-layout-list-with-count-for-state
-    (tc-job-state-agg-layout-cache (tc-serial-job-state))
-    count))
-
 (define (tc-inline-payload-layout-list-count
   [items : (& items TcInlinePayloadLayoutList)]) : i64
   (array-length items.slots))
@@ -4122,11 +4039,6 @@
   (in-arena
     (tc-agg-layout-cache-storage-handle-for-state state)
     (TcInlineVariantLayoutList (__tl_make-array TcInlineVariantLayout count))))
-
-(define (tc-inline-variant-layout-list-with-count [count : i64]) : TcInlineVariantLayoutList
-  (tc-inline-variant-layout-list-with-count-for-state
-    (tc-job-state-agg-layout-cache (tc-serial-job-state))
-    count))
 
 (define (tc-inline-variant-layout-list-count
   [items : (& items TcInlineVariantLayoutList)]) : i64
@@ -4733,13 +4645,6 @@
 
 ;; Mutating operations stay inside the match arm so the pool aggregate never
 ;; crosses an owned-value expression boundary before its state cell is used.
-(defmacro (tc-context-expr-push [ctx : Expr] [node : Expr]) : i64
-  `(match ,ctx
-    [(TcContext _ _ _ _ _ _ pools _ _)
-      (ast.ast-node-pool-context-expr-push
-        (ast.ast-node-pool-context-shared-view (& pools))
-        ,node)]))
-
 (defmacro (tc-context-type-push [ctx : Expr] [node : Expr]) : i64
   `(match ,ctx
     [(TcContext _ _ _ _ _ _ pools _ _)
@@ -10182,12 +10087,6 @@
     span
     "this expression produces a temporary value, not a borrowable place"))
 
-(define (tc-assignment-escape-help [target : String]) : String
-  (str_cat.str-cat
-    "store an owned value instead, or keep `"
-    target
-    "` inside the borrowed value's lifetime"))
-
 (define (tc-arena-escape-help [region : String]) : String
   (str_cat.str-cat
     "use with-escape to clone one supported result out of `"
@@ -11762,9 +11661,6 @@
 (define (tc-type-env-scoped-stack-new-for-state [state : TcTypeEnvScopedState]) : TcTypeEnvScopedStack
   (tc-type-env-scoped-stack-with-capacity-for-state state 16 8))
 
-(define (tc-type-env-scoped-stack-new) : TcTypeEnvScopedStack
-  (tc-type-env-scoped-stack-with-capacity 16 8))
-
 (define (tc-type-env-scoped-stack-len [stack : (& stack TcTypeEnvScopedStack)]) : i64
   stack.slot-count)
 
@@ -12510,21 +12406,6 @@
   [carrier : TcTypeEnvScopedCarrier]
   [sidecar : TcTypeEnvScopedSidecar]) : TcTypeEnvScopedCarrier
   (TcTypeEnvScopedCarrier carrier.env sidecar true))
-
-(define (tc-type-env-scoped-carrier-save [carrier : TcTypeEnvScopedCarrier]) : TcTypeEnvScopedCarrierSave
-  (let
-    [sidecar : TcTypeEnvScopedSidecar (tc-global-shared-view carrier.sidecar)]
-    [stack-mark : TcTypeEnvScopedMark
-      (tc-type-env-scoped-sidecar-save! (&mut sidecar))]
-    (TcTypeEnvScopedCarrierSave
-      (TcTypeEnvScopedCarrier
-        carrier.env
-        (tc-global-shared-view sidecar)
-        carrier.dirty)
-      (TcTypeEnvScopedCarrierMark
-        carrier.env
-        (tc-type-env-scoped-sidecar-mark sidecar stack-mark)
-        carrier.dirty))))
 
 (define (tc-type-env-scoped-carrier-snapshot-mark
   [carrier : TcTypeEnvScopedCarrier]) : TcTypeEnvScopedCarrierMark
@@ -22708,22 +22589,6 @@
     (begin
       (tc-type-resolution-cache-bind-active-for-state! state)
       (tc-type-needs-resolution-id-for-state? state ty-id))))
-
-(define (tc-type-needs-resolution? [ty : ast.AstType]) : bool
-  (let
-    [state : TcTypeResolutionCacheState
-      (tc-job-state-type-resolution-cache (tc-serial-job-state))]
-    (begin
-      (tc-type-resolution-cache-bind-active-for-state! state)
-      (tc-type-needs-resolution-for-state? state ty))))
-
-(define (tc-type-list-needs-resolution? [types : ast.AstTypeList]) : bool
-  (let
-    [state : TcTypeResolutionCacheState
-      (tc-job-state-type-resolution-cache (tc-serial-job-state))]
-    (begin
-      (tc-type-resolution-cache-bind-active-for-state! state)
-      (tc-type-list-needs-resolution-for-state? state types))))
 
 ;; Uncached explicit-pool compatibility twin. Production contexts use the
 ;; job-owned memo below; standalone pool-isolation tests retain this raw worker.
@@ -36533,16 +36398,6 @@
 (define (tc-import-alias-summary-index-build [all-decls : ast.AstDeclList]) : TcImportAliasSummaryIndex
   (tc-import-alias-summary-index-build-current all-decls))
 
-(define (tc-import-alias-summary-decls-at
-  [decls : (__tl_dyn-array ast.AstDeclList)]
-  [slot : i64]) : ast.AstDeclList
-  (let
-    [address : u64
-      (unsafe
-        (ptr->int (ptr-offset (__tl_array-data decls) slot)))]
-    (unsafe
-      (ptr-read (int->ptr address : (Ptr ast.AstDeclList))))))
-
 (define (tc-import-alias-summary-index-lookup
   [index : (& index TcImportAliasSummaryIndex)]
   [target-module-id : i64]) : TcImportAliasSummaryLookup
@@ -39386,31 +39241,6 @@
         expr
         expected
         allow-mut-by-value-borrow)]))
-
-(define (tc-spanned-if-with-expected-or-actual
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [inner-id : i64]
-  [span : ast.AstSourceSpan]
-  [cond-id : i64]
-  [then-branch-id : i64]
-  [else-branch-id : i64]
-  [expected : ast.AstType]) : ResultTcType
-  (match (tc-expr-if-with-expected-or-actual
-    (tc-global-shared-view ctx)
-    env
-    cond-id
-    then-branch-id
-    else-branch-id
-    expected)
-    [(ResultTcType.Ok ty) (ResultTcType.Ok ty)]
-    [(ResultTcType.Err message)
-      (tc-locate-spanned-error-with-context
-        ctx
-        env
-        (ast.ast-node-get inner-id)
-        span
-        message)]))
 
 (define (tc-expr-with-expected-or-actual-core-id
   [ctx : TcContext]
@@ -46950,9 +46780,6 @@
 (define (tc-clone-able-cache-reset-for-job! [state : TcJobState]) : unit
   (tc-clone-able-cache-reset-for-state! (tc-job-state-clone state)))
 
-(define (tc-clone-able-cache-reset-for-macro-state! [state : TcMacroState]) : unit
-  (tc-clone-able-cache-reset-for-state! (tc-macro-state-clone state)))
-
 (define (tc-clone-root-collection-active-for-job? [state : TcJobState]) : bool
   (__tl-project-field
     (tc-clone-state-data (tc-job-state-clone state))
@@ -50348,11 +50175,6 @@
 (define (tc-spmd-inline-helper-stack-reset-for-job! [job-state : TcJobState]) : unit
   (tc-spmd-inline-helper-stack-reset-for-state!
     (tc-job-state-spmd-traversal job-state)))
-
-;; Serial/test compatibility adapter. Production entrypoints and walks recover
-;; the explicit traversal owner from their TcJobState or TcContext.
-(define (tc-spmd-inline-helper-stack-reset!) : unit
-  (tc-spmd-inline-helper-stack-reset-for-job! (tc-serial-job-state)))
 
 (define (tc-spmd-traversal-state-isolation-self-test) : bool
   (let
@@ -59081,12 +58903,24 @@
   (match ctx
     [(TcContext program _ _ _ _ _ _ _ _) program]))
 
+;; The published seed lowers borrowed inline enum payloads as values instead of
+;; addresses. Keep its one-shot raw-layout bridge in the live accessors; later
+;; generations use the checked borrowed matches below.
 (cfg
   stage0-borrowed-inline-bootstrap
   (define (tc-context-symbols [ctx : (& ctx TcContext)]) : (&
       ctx
       csym.CompilerSymbols)
-    (tc-context-seed-symbols-ref ctx)))
+    (let
+      [ctx-cell : (Array (& ctx TcContext) 1) (array ctx)]
+      [ctx-address : u64
+        (unsafe
+          (ptr-read (ptr-cast (__tl_array-data ctx-cell) : (Ptr u64))))]
+      [word : u64 (+ ctx-address 24)]
+      [cell : (Array u64 1) (array word)]
+      (unsafe
+        (ptr-read
+          (ptr-cast (__tl_array-data cell) : (Ptr (& ctx csym.CompilerSymbols))))))))
 
 (cfg
   (not stage0-borrowed-inline-bootstrap)
@@ -59096,26 +58930,28 @@
     (match ctx
       [(TcContext _ symbols _ _ _ _ _ _ _) symbols])))
 
-(cfg
-  stage0-borrowed-inline-bootstrap
-  (define (tc-context-symbols-ref [ctx : (& ctx TcContext)]) : (&
-      ctx
-      csym.CompilerSymbols)
-    (tc-context-symbols ctx)))
-
-(cfg
-  (not stage0-borrowed-inline-bootstrap)
-  (define (tc-context-symbols-ref [ctx : (& ctx TcContext)]) : (&
-      ctx
-      csym.CompilerSymbols)
-    (tc-context-symbols ctx)))
+(define (tc-context-symbols-ref [ctx : (& ctx TcContext)]) : (&
+    ctx
+    csym.CompilerSymbols)
+  (tc-context-symbols ctx))
 
 (cfg
   stage0-borrowed-inline-bootstrap
   (define (tc-context-registries [ctx : (& ctx TcContext)]) : (&
       ctx
       csym.CompilerRegistries)
-    (tc-context-seed-registries-ref ctx)))
+    (let
+      [ctx-cell : (Array (& ctx TcContext) 1) (array ctx)]
+      [ctx-address : u64
+        (unsafe
+          (ptr-read (ptr-cast (__tl_array-data ctx-cell) : (Ptr u64))))]
+      [word : u64 (+ ctx-address 152)]
+      [cell : (Array u64 1) (array word)]
+      (unsafe
+        (ptr-read
+          (ptr-cast
+            (__tl_array-data cell)
+            : (Ptr (& ctx csym.CompilerRegistries))))))))
 
 (cfg
   (not stage0-borrowed-inline-bootstrap)
@@ -60605,11 +60441,6 @@
   (tc-agg-layout-cache-table-storage-ensure-for-state!
     (tc-job-state-agg-layout-cache job-state)))
 
-;; Serial/test compatibility adapter. Production prewarming supplies the
-;; CompilerDriverState-owned job explicitly.
-(define (tc-agg-layout-cache-table-storage-ensure!) : unit
-  (tc-agg-layout-cache-table-storage-ensure-for-job! (tc-serial-job-state)))
-
 ;; `make-array` does not produce valid Empty enum slots, so the fill is
 ;; mandatory before the first probe. Validate against the owning source-name
 ;; session rather than whichever compatibility interner is process-active.
@@ -60668,11 +60499,6 @@
                 (set! steps (+ steps 1))))]))
       -1)))
 
-(define (tc-agg-layout-cache-probe-slot [name-id : i64]) : i64
-  (tc-agg-layout-cache-probe-slot-for-state
-    (tc-job-state-agg-layout-cache (tc-serial-job-state))
-    name-id))
-
 ;; Layout arrays are allocated in the persistent program arena at their final
 ;; size, so the completed value can be stored without recursively cloning it.
 ;; Only fully-resolved Ok layouts reach this point, so a cached entry can never
@@ -60689,16 +60515,6 @@
         agg-layout-cache)
       slot)
     (TcAggLayoutCacheSlot.Full name-id layout)))
-
-(define (tc-agg-layout-cache-store!
-  [slot : i64]
-  [name-id : i64]
-  [layout : TcInlineAggregateLayout]) : unit
-  (tc-agg-layout-cache-store-for-state!
-    (tc-job-state-agg-layout-cache (tc-serial-job-state))
-    slot
-    name-id
-    layout))
 
 (define (tc-inline-aggregate-layout-kind-dispatch
   [ctx : TcContext]
@@ -98327,122 +98143,6 @@
         [(csym.ResultCompilerSymbols.Err _) false]))
     false))
 
-;; A direct generated declaration splice is safe to rebase when it has only a
-;; positional registry effect. Imports can add aliases and macro definitions
-;; change the hoisted macro namespace, so both retain the full-rebuild path.
-;; Keep this an explicit whitelist: a future declaration form must opt in only
-;; after proving that registry remapping preserves its semantics.
-(define (macro-decl-registry-incremental-safe? [decl : ast.AstDecl]) : bool
-  (match (tc-global-shared-view decl)
-    [(ast.AstDecl.Def decl-meta _ _ _) true]
-    [(ast.AstDecl.DefFn decl-meta _ _ _ _ _) true]
-    [(ast.AstDecl.Extern decl-meta _ _ _ _) true]
-    [(ast.AstDecl.DefEnum decl-meta _ _ _) true]
-    [(ast.AstDecl.DefEnumLifetimes decl-meta _ _ _ _) true]
-    [(ast.AstDecl.DefStruct decl-meta _ _ _ _) true]
-    [(ast.AstDecl.DefStructLifetimes decl-meta _ _ _ _ _) true]
-    [(ast.AstDecl.DefDispatch decl-meta _ _) true]
-    [(ast.AstDecl.Test _ _ _) true]
-    [(ast.AstDecl.Import decl-meta _) false]
-    [(ast.AstDecl.IncludeStr _ _) false]
-    [(ast.AstDecl.IncludeStrComptime _ _) false]
-    [(ast.AstDecl.IncludeStrLzss _ _) false]
-    [(ast.AstDecl.IncludeBin _ _) false]
-    [(ast.AstDecl.DefMacro decl-meta _ _ _ _) false]
-    [(ast.AstDecl.Unsafe inner-box)
-      (macro-decl-registry-incremental-safe?
-        (ast.ast-decl-box-shared-view inner-box))]
-    [_ false]))
-
-(define (macro-decls-registry-incremental-safe? [decls : ast.AstDeclList]) : bool
-  (match (ast.ast-decl-list-step decls)
-    [(ast.AstDeclListStep.Nil) true]
-    [(ast.AstDeclListStep.Cons decl rest)
-      (and
-        (macro-decl-registry-incremental-safe? decl)
-        (macro-decls-registry-incremental-safe? rest))]))
-
-;; An existing unqualified import aliases every nominal member of its target
-;; module. If a generated splice adds a member to that target, repairing only
-;; direct registry entries would leave the import alias stale, so retain the
-;; established whole-registry rebuild in that case.
-(define (macro-decl-has-unqualified-import-of-module?
-  [decl : ast.AstDecl]
-  [module-id : i64]) : bool
-  (match (tc-global-shared-view decl)
-    [(ast.AstDecl.Import
-        decl-meta
-        (ast.AstImportSpec.Spec
-          _
-          _
-          (ast.AstMaybeModuleName.Some target-module)
-          (ast.AstMaybeImportAlias.Some alias)
-          _))
-      (and
-        (= target-module module-id)
-        (= alias cbi.compiler-builtin-id-fix-empty))]
-    [(ast.AstDecl.Unsafe inner-box)
-      (macro-decl-has-unqualified-import-of-module?
-        (ast.ast-decl-box-shared-view inner-box)
-        module-id)]
-    [(ast.AstDecl.ModuleBody _ body-box)
-      (macro-decls-have-unqualified-import-of-module?
-        (ast.ast-decl-list-box-shared-view body-box)
-        module-id)]
-    [_ false]))
-
-;; Index cursor rather than `ast-decl-list-step`. The list is already a flat
-;; array slice, so the step's 104 B row copy and 144 B result exist only to give
-;; the walk a cons shape; the backing slot is handed to the per-declaration
-;; predicate directly, which costs nothing (aggregate arguments are passed by
-;; reference).
-(define (macro-decls-have-unqualified-import-of-module?
-  [decls : ast.AstDeclList]
-  [module-id : i64]) : bool
-  (let
-    [count : i64 (ast.ast-decl-list-len (& decls))]
-    [decl-slots : (__tl_dyn-array ast.AstDecl) decls.slots]
-    [decl-offset : i64 decls.offset]
-    [index : i64 0]
-    [found : bool false]
-    (begin
-      (while (and (not found) (< index count))
-        (begin
-          (if (macro-decl-has-unqualified-import-of-module?
-            (tc-global-array-element-shared-view
-              decl-slots
-              (+ decl-offset index))
-            module-id)
-            (set! found true)
-            unit)
-          (set! index (+ index 1))))
-      found)))
-
-;; Rebase the cached registry across an additive non-module splice that still
-;; takes the fresh-symbol fallback. Generated modules use the append companion
-;; below so symbol and registry owner handles share one stable index space.
-(define (macro-live-registries-insert-decls!
-  [state : TcMacroState]
-  [decls : ast.AstDeclList]
-  [paths : ast.AstDeclPathList]
-  [insertion-index : i64]
-  [module-id : i64]) : bool
-  (match (csym.compiler-registries-insert-decls
-    (macro-live-registries-shared-view state)
-    decls
-    paths
-    insertion-index
-    module-id)
-    [(csym.ResultCompilerRegistries.Ok registries)
-      (begin
-        (set!
-          (array-ref (tc-macro-walk-field state macro-live-registries-cell) 0)
-          registries)
-        (tc-macro-walk-set! state macro-live-registries-ready true)
-        (tc-macro-walk-set! state macro-live-registries-fallback false)
-        true)]
-    [(csym.ResultCompilerRegistries.Err _) false]))
-
 (define (macro-live-registries-append-decls!
   [state : TcMacroState]
   [decls : ast.AstDeclList]
@@ -103731,16 +103431,6 @@
       (MacroMaybeDeclList.Some
         (macro-collect-module-body-decls decls target-module ""))
       (MacroMaybeDeclList.No))))
-
-(define (macro-find-module-body-decls
-  [decls : ast.AstDeclList]
-  [target-module : String]) : MacroMaybeDeclList
-  (if (macro-module-exists?
-    (tc-global-shared-view decls)
-    (tc-global-shared-view target-module))
-    (MacroMaybeDeclList.Some
-      (macro-collect-module-body-decls decls target-module ""))
-    (MacroMaybeDeclList.No)))
 
 (define (macro-generated-identity-shortcut-safe-params?
   [ctx : TcContext]
@@ -127273,29 +126963,6 @@
   [cfgs : sym_i64_env.SymI64Env]) : ResultMacroExpand
   (macro-expand-program-with-paths-and-pools-roots-cfg-with-load-state
     (cload.compiler-load-serial-test-session-state)
-    program
-    paths
-    pools
-    stdlib-roots
-    cfgs))
-
-;; Expansion + build-once env boundary (plan P2). Runs the single demand-driven
-;; expansion pass (which builds the CTFE base env exactly once and reuses it
-;; across in-pass splice rebuilds) and hands the fully-expanded program to the
-;; caller. The typecheck entry then builds the heavy top-env once over the
-;; expanded program and reuses the CTFE env the expansion left cached, instead
-;; of rebuilding either per pass.
-(define (macro-expand-then-build-envs-with-load-state-and-job-state
-  [load-state : cload.CompilerLoadSessionState]
-  [job-state : TcJobState]
-  [program : ast.AstProgram]
-  [paths : ast.AstDeclPathList]
-  [pools : ast.AstNodePoolContext]
-  [stdlib-roots : svec.Vec]
-  [cfgs : sym_i64_env.SymI64Env]) : ResultMacroExpand
-  (macro-expand-program-with-paths-and-pools-roots-cfg-with-load-state-and-job-state
-    load-state
-    job-state
     program
     paths
     pools

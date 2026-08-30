@@ -70672,6 +70672,7 @@
       (compiler_optimize.opt-build-program-summaries
         type-segment-bases
         (opt-gc-test-globals symbols)
+        (compiler_ir_types.compiler-ir-extern-seq-empty)
         functions
         2)]
     [pools : compiler_ast_types.AstNodePoolContext
@@ -73427,7 +73428,9 @@
       (compiler_optimize.compiler-opt-global-shared-view cells.len-eq-clean)
       name
       64
-      (compiler_optimize.compiler-opt-global-shared-view blocks))
+      (compiler_optimize.compiler-opt-global-shared-view blocks)
+      (compiler_optimize.compiler-opt-global-shared-view cells.arg-global)
+      (opt-le-params 1))
     (compiler_optimize.compiler-opt-global-shared-view blocks))
     [(compiler_optimize.OptBoundsDomResult.Result out _) out]))
 
@@ -73449,9 +73452,10 @@
   (compiler_optimize.opt-function-blocks
     (compiler_optimize.opt-len-eq-late-sweep
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
-      cells.len-eq
-      cells.len-eq-clean
+      (compiler_optimize.compiler-opt-global-shared-view cells.len-eq)
+      (compiler_optimize.compiler-opt-global-shared-view cells.len-eq-clean)
       (opt_i64_i64_map.with-capacity 1)
+      (compiler_optimize.compiler-opt-global-shared-view cells.arg-global)
       (compiler_optimize.opt-cfg-context-build
         (compiler_optimize.compiler-opt-global-shared-view blocks))
       (opt-le-blocks-function
@@ -73510,11 +73514,13 @@
     (compiler_optimize.opt-len-eq-field-guarded?
       (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
       (compiler_optimize.opt-len-eq-use-build
-        cells.len-eq
-        cells.len-eq-clean
+        (compiler_optimize.compiler-opt-global-shared-view cells.len-eq)
+        (compiler_optimize.compiler-opt-global-shared-view cells.len-eq-clean)
         name
         64
-        blocks)
+        blocks
+        (compiler_optimize.compiler-opt-global-shared-view cells.arg-global)
+        (opt-le-params 1))
       (opt_i64_i64_map.with-capacity 1)
       (compiler_optimize.OptDomCmpFacts.Cons
         (compiler_optimize.OptDomCmpFact.Fact
@@ -73692,6 +73698,562 @@
       ;; loop and covers in-loop checks like any others
       [(not (= (opt-le-check-count in-loop-late) 1)) 27]
       [(not (= (opt-le-check-count in-loop-late-unrelated) 2)) 28]
+      [else 42])))
+
+;; --- GAP-1: call-site global-argument identity facts --------------------------
+;;
+;; The class is one question ("does every direct call site of this function pass
+;; the same global at this parameter position, and can the program reach the
+;; function any other way?") and one decision it moves: inside the callee, two
+;; `bounds_check`es of one index against two members of one length-equality
+;; family collapse to one, exactly as they already do when the checks name the
+;; globals directly. Each negative below is one clause of the proof broken.
+(defstruct OptAgTestSymbols
+  ;; one call site, two global Vec arguments: the shape the fact is for
+  (helper i64)
+  (caller i64)
+  ;; a second site passes a local at position 1 and the same global at 2
+  (split i64)
+  (split-caller i64)
+  ;; one site with two globals, but the program also takes its address
+  (taken i64)
+  (taken-caller i64)
+  ;; self-recursive, and the recursive site passes the same globals through
+  (recur i64)
+  (recur-caller i64)
+  ;; self-recursive, and the recursive site passes its own parameter at 1
+  (drift i64)
+  (drift-caller i64)
+  ;; one ordinary site with two globals, plus one C-ABI aggregate-return site,
+  ;; whose argument list this walk does not read positionally
+  (cabi i64)
+  (cabi-caller i64))
+
+(define (opt-ag-test-symbols) : OptAgTestSymbols
+  (OptAgTestSymbols
+    (opt-test-symbol "ag_helper")
+    (opt-test-symbol "ag_caller")
+    (opt-test-symbol "ag_split")
+    (opt-test-symbol "ag_split_caller")
+    (opt-test-symbol "ag_taken")
+    (opt-test-symbol "ag_taken_caller")
+    (opt-test-symbol "ag_recur")
+    (opt-test-symbol "ag_recur_caller")
+    (opt-test-symbol "ag_drift")
+    (opt-test-symbol "ag_drift_caller")
+    (opt-test-symbol "ag_cabi")
+    (opt-test-symbol "ag_cabi_caller")))
+
+(define (opt-ag-cabi-slots) : compiler_ir_types.CompilerIrCAbiReturnSlotSeq
+  (compiler_ir_types.CompilerIrCAbiReturnSlotSeq
+    (__tl_make-array compiler_ir_types.CompilerIrCAbiReturnSlot 0)
+    0))
+
+;; `(i : i64, a : (& Vec), b : (& Vec))` -- one scalar position, which carries
+;; no fact whatever the sites pass, and two reference positions, which do.
+(define (opt-ag-params) : compiler_ir_types.CompilerIrParamSeq
+  (compiler_ir_types.compiler-ir-param-seq-prepend
+    (compiler_ir_types.CompilerIrParam.Param
+      "i"
+      (compiler_ast_types.AstType.I64)
+      0)
+    (compiler_ir_types.compiler-ir-param-seq-prepend
+      (compiler_ir_types.CompilerIrParam.Param
+        "a"
+        (compiler_ast_types.AstType.Ref 0 0)
+        1)
+      (compiler_ir_types.compiler-ir-param-seq-prepend
+        (compiler_ir_types.CompilerIrParam.Param
+          "b"
+          (compiler_ast_types.AstType.MutRef 0 0)
+          2)
+        (compiler_ir_types.compiler-ir-param-seq-empty)))))
+
+(define (opt-ag-call-args
+  [first : compiler_ir_types.CompilerIrValue]
+  [second : compiler_ir_types.CompilerIrValue]) : compiler_ir_types.CompilerIrCallArgs
+  (let
+    [args : (__tl_dyn-array compiler_ir_types.CompilerIrValue)
+      (__tl_make-array compiler_ir_types.CompilerIrValue 3)]
+    (begin
+      (set! (array-ref args 0) (compiler_ir_types.CompilerIrValue.I64 0))
+      (set! (array-ref args 1) first)
+      (set! (array-ref args 2) second)
+      (compiler_ir_types.CompilerIrCallArgs.Array args))))
+
+(define (opt-ag-call-instr
+  [dst : i64]
+  [callee : i64]
+  [first : compiler_ir_types.CompilerIrValue]
+  [second : compiler_ir_types.CompilerIrValue]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.Call
+    dst
+    callee
+    (opt-ag-call-args first second)
+    (compiler_ast_types.AstType.I64)))
+
+(define (opt-ag-function
+  [name : i64]
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    name
+    (opt-ag-params)
+    (compiler_ast_types.AstType.I64)
+    64
+    (compiler_ir_types.compiler-ir-block-cons
+      (compiler_ir_types.CompilerIrBlock.Block
+        (compiler_ir_types.compiler-ir-label "entry")
+        instrs)
+      compiler_ir_types.CompilerIrBlockList.Nil)))
+
+;; Two `bounds_check`es of ONE index against the array lengths reached through
+;; the two reference PARAMETERS: the cfg/dominator helper shape, with no global
+;; named anywhere in the body. A non-negative `reset-cell` prepends
+;; `(set! a other)` in its pre-SSA spelling -- a SECOND definition of the
+;; parameter's own var.
+(define (opt-ag-param-check-instrs [reset-cell : i64]) : compiler_ir_types.CompilerIrInstrSeq
+  (let
+    [body : compiler_ir_types.CompilerIrInstrSeq
+      (opt-fz-chain-instrs
+        (compiler_ir_types.CompilerIrValue.Var 1)
+        3
+        (opt-test-instr-seq-prepend
+          (compiler_ir_types.CompilerIrInstr.BoundsCheck
+            (compiler_ir_types.CompilerIrValue.Var 0)
+            (compiler_ir_types.CompilerIrValue.Var 6)
+            0)
+          (opt-fz-chain-instrs
+            (compiler_ir_types.CompilerIrValue.Var 2)
+            7
+            (opt-test-instr-seq-prepend
+              (compiler_ir_types.CompilerIrInstr.BoundsCheck
+                (compiler_ir_types.CompilerIrValue.Var 0)
+                (compiler_ir_types.CompilerIrValue.Var 10)
+                0)
+              (opt-mr-return-zero)))))]
+    (if (< reset-cell 0)
+      body
+      (opt-test-instr-seq-prepend
+        (compiler_ir_types.CompilerIrInstr.Mov
+          1
+          (compiler_ir_types.CompilerIrValue.Global reset-cell)
+          (compiler_ast_types.AstType.I64))
+        body))))
+
+(define (opt-ag-test-functions
+  [symbols : OptAgTestSymbols]
+  [with-callers? : bool]) : compiler_ir_types.CompilerIrFunctionSeq
+  (let
+    [callees : compiler_ir_types.CompilerIrFunctionSeq
+      (compiler_ir_types.compiler-ir-function-seq-prepend
+        (opt-ag-function symbols.helper (opt-ag-param-check-instrs (- 0 1)))
+        (compiler_ir_types.compiler-ir-function-seq-prepend
+          (opt-ag-function symbols.split (opt-mr-return-zero))
+          (compiler_ir_types.compiler-ir-function-seq-prepend
+            (opt-ag-function symbols.taken (opt-mr-return-zero))
+            (compiler_ir_types.compiler-ir-function-seq-prepend
+              (opt-ag-function
+                symbols.recur
+                (opt-test-instr-seq-prepend
+                  (opt-ag-call-instr
+                    20
+                    symbols.recur
+                    (compiler_ir_types.CompilerIrValue.Global
+                      (opt-test-symbol "le_a"))
+                    (compiler_ir_types.CompilerIrValue.Global
+                      (opt-test-symbol "le_b")))
+                  (opt-mr-return-zero)))
+              (compiler_ir_types.compiler-ir-function-seq-prepend
+                (opt-ag-function
+                  symbols.drift
+                  (opt-test-instr-seq-prepend
+                    (opt-ag-call-instr
+                      20
+                      symbols.drift
+                      (compiler_ir_types.CompilerIrValue.Var 1)
+                      (compiler_ir_types.CompilerIrValue.Global
+                        (opt-test-symbol "le_b")))
+                    (opt-mr-return-zero)))
+                (compiler_ir_types.compiler-ir-function-seq-prepend
+                  (opt-ag-function symbols.cabi (opt-mr-return-zero))
+                  (compiler_ir_types.compiler-ir-function-seq-empty)))))))]
+    (if (not with-callers?)
+      callees
+      (compiler_ir_types.compiler-ir-function-seq-prepend
+        (opt-ag-function
+          symbols.caller
+          (opt-test-instr-seq-prepend
+            (opt-ag-call-instr
+              20
+              symbols.helper
+              (compiler_ir_types.CompilerIrValue.Global
+                (opt-test-symbol "le_a"))
+              (compiler_ir_types.CompilerIrValue.Global
+                (opt-test-symbol "le_b")))
+            (opt-mr-return-zero)))
+        (compiler_ir_types.compiler-ir-function-seq-prepend
+          (opt-ag-function
+            symbols.split-caller
+            (opt-test-instr-seq-prepend
+              (opt-ag-call-instr
+                20
+                symbols.split
+                (compiler_ir_types.CompilerIrValue.Global
+                  (opt-test-symbol "le_a"))
+                (compiler_ir_types.CompilerIrValue.Global
+                  (opt-test-symbol "le_b")))
+              (opt-test-instr-seq-prepend
+                (opt-ag-call-instr
+                  21
+                  symbols.split
+                  (compiler_ir_types.CompilerIrValue.Var 30)
+                  (compiler_ir_types.CompilerIrValue.Global
+                    (opt-test-symbol "le_b")))
+                (opt-mr-return-zero))))
+          (compiler_ir_types.compiler-ir-function-seq-prepend
+            (opt-ag-function
+              symbols.taken-caller
+              (opt-test-instr-seq-prepend
+                (opt-ag-call-instr
+                  20
+                  symbols.taken
+                  (compiler_ir_types.CompilerIrValue.Global
+                    (opt-test-symbol "le_a"))
+                  (compiler_ir_types.CompilerIrValue.Global
+                    (opt-test-symbol "le_b")))
+                (opt-test-instr-seq-prepend
+                  (compiler_ir_types.CompilerIrInstr.Mov
+                    21
+                    (compiler_ir_types.CompilerIrValue.Function symbols.taken)
+                    (compiler_ast_types.AstType.I64))
+                  (opt-mr-return-zero))))
+            (compiler_ir_types.compiler-ir-function-seq-prepend
+              (opt-ag-function
+                symbols.recur-caller
+                (opt-test-instr-seq-prepend
+                  (opt-ag-call-instr
+                    20
+                    symbols.recur
+                    (compiler_ir_types.CompilerIrValue.Global
+                      (opt-test-symbol "le_a"))
+                    (compiler_ir_types.CompilerIrValue.Global
+                      (opt-test-symbol "le_b")))
+                  (opt-mr-return-zero)))
+              (compiler_ir_types.compiler-ir-function-seq-prepend
+                (opt-ag-function
+                  symbols.drift-caller
+                  (opt-test-instr-seq-prepend
+                    (opt-ag-call-instr
+                      20
+                      symbols.drift
+                      (compiler_ir_types.CompilerIrValue.Global
+                        (opt-test-symbol "le_a"))
+                      (compiler_ir_types.CompilerIrValue.Global
+                        (opt-test-symbol "le_b")))
+                    (opt-mr-return-zero)))
+                (compiler_ir_types.compiler-ir-function-seq-prepend
+                  (opt-ag-function
+                    symbols.cabi-caller
+                    (opt-test-instr-seq-prepend
+                      (opt-ag-call-instr
+                        20
+                        symbols.cabi
+                        (compiler_ir_types.CompilerIrValue.Global
+                          (opt-test-symbol "le_a"))
+                        (compiler_ir_types.CompilerIrValue.Global
+                          (opt-test-symbol "le_b")))
+                      (opt-test-instr-seq-prepend
+                        (compiler_ir_types.ir-instr-call-cabi-store-result
+                          (compiler_ir_types.CompilerIrValue.Var 25)
+                          symbols.cabi
+                          (opt-ag-call-args
+                            (compiler_ir_types.CompilerIrValue.Global
+                              (opt-test-symbol "le_a"))
+                            (compiler_ir_types.CompilerIrValue.Global
+                              (opt-test-symbol "le_b")))
+                          (opt-ag-cabi-slots))
+                        (opt-mr-return-zero))))
+                  callees)))))))))
+
+;; The whole-program fact table over that program. `len-eq` is only the gate
+;; ("would anything read these facts?"), so the LE fixture's table serves.
+(define (opt-ag-facts
+  [symbols : OptAgTestSymbols]
+  [cells : compiler_optimize.OptGlobalCellSummary]
+  [with-callers? : bool]) : opt_i64_i64_map.Map
+  (compiler_optimize.opt-arg-global-build
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    (compiler_ir_types.compiler-ir-global-seq-empty)
+    (compiler_ir_types.compiler-ir-extern-seq-empty)
+    (opt-ag-test-functions symbols with-callers?)
+    (compiler_optimize.compiler-opt-global-shared-view cells.len-eq)
+    64))
+
+;; `1 + the global symbol id` proved for this position, or 0.
+(define (opt-ag-fact
+  [facts : opt_i64_i64_map.Map]
+  [name : i64]
+  [position : i64]) : i64
+  (compiler_optimize.opt-arg-global-fact
+    (compiler_optimize.compiler-opt-global-shared-view facts)
+    name
+    position))
+
+;; The consumption side, driven exactly like the LE fixture's late-slot sweep:
+;; a function the LE table calls clean, whose two checks reach their lengths
+;; through PARAMETERS, and a hand-built fact table naming which global each of
+;; those parameters is.
+(define (opt-ag-le-facts [reader : i64] [first : i64] [second : i64]) : opt_i64_i64_map.Map
+  (let
+    [map : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 8)]
+    (begin
+      (opt_i64_i64_map.insert-ref!
+        (&mut map)
+        (compiler_optimize.opt-arg-global-key reader 1)
+        (+ 1 first))
+      (opt_i64_i64_map.insert-ref!
+        (&mut map)
+        (compiler_optimize.opt-arg-global-key reader 2)
+        (+ 1 second))
+      map)))
+
+(define (opt-ag-swept-checks
+  [cells : compiler_optimize.OptGlobalCellSummary]
+  [reader : i64]
+  [facts : opt_i64_i64_map.Map]
+  [reset-cell : i64]) : i64
+  (let
+    [blocks : compiler_ir_types.CompilerIrBlockList
+      (compiler_ir_types.compiler-ir-block-cons
+        (compiler_ir_types.CompilerIrBlock.Block
+          (compiler_ir_types.compiler-ir-label "entry")
+          (opt-ag-param-check-instrs reset-cell))
+        compiler_ir_types.CompilerIrBlockList.Nil)]
+    [func : compiler_ir_types.CompilerIrFunction
+      (compiler_ir_types.CompilerIrFunction.Function
+        reader
+        (opt-ag-params)
+        (compiler_ast_types.AstType.I64)
+        64
+        (compiler_optimize.compiler-opt-global-shared-view blocks))]
+    (compiler_optimize.opt-count-bounds-blocks
+      (compiler_optimize.opt-function-blocks
+        (compiler_optimize.opt-len-eq-late-sweep
+          (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+          (compiler_optimize.compiler-opt-global-shared-view cells.len-eq)
+          (compiler_optimize.compiler-opt-global-shared-view cells.len-eq-clean)
+          (opt_i64_i64_map.with-capacity 1)
+          facts
+          (compiler_optimize.opt-cfg-context-build blocks)
+          func)))))
+
+(define (compiler-optimize-arg-global-facts-self-test) : i64
+  (let
+    [le : OptLeTestSymbols (opt-le-test-symbols)]
+    [cells : compiler_optimize.OptGlobalCellSummary
+      (opt-le-test-cells (compiler_optimize.compiler-opt-global-shared-view le))]
+    [symbols : OptAgTestSymbols (opt-ag-test-symbols)]
+    [facts : opt_i64_i64_map.Map
+      (opt-ag-facts
+        (compiler_optimize.compiler-opt-global-shared-view symbols)
+        (compiler_optimize.compiler-opt-global-shared-view cells)
+        true)]
+    [orphan : opt_i64_i64_map.Map
+      (opt-ag-facts
+        (compiler_optimize.compiler-opt-global-shared-view symbols)
+        (compiler_optimize.compiler-opt-global-shared-view cells)
+        false)]
+    [slots : (__tl_dyn-array i64)
+      (compiler_optimize.opt-arg-global-slots
+        (compiler_optimize.compiler-opt-global-shared-view facts)
+        symbols.helper
+        (opt-ag-params)
+        64)]
+    [retired : i64
+      (opt-ag-swept-checks
+        (compiler_optimize.compiler-opt-global-shared-view cells)
+        le.reader
+        (opt-ag-le-facts le.reader le.a le.b)
+        (- 0 1))]
+    [without : i64
+      (opt-ag-swept-checks
+        (compiler_optimize.compiler-opt-global-shared-view cells)
+        le.reader
+        (opt_i64_i64_map.with-capacity 1)
+        (- 0 1))]
+    [unrelated : i64
+      (opt-ag-swept-checks
+        (compiler_optimize.compiler-opt-global-shared-view cells)
+        le.reader
+        (opt-ag-le-facts le.reader le.a le.f)
+        (- 0 1))]
+    [reset : i64
+      (opt-ag-swept-checks
+        (compiler_optimize.compiler-opt-global-shared-view cells)
+        le.reader
+        (opt-ag-le-facts le.reader le.a le.b)
+        le.f)]
+    (cond
+      ;; --- the fact itself ---
+      ;; one site, two global Vec arguments: both reference positions carry it
+      [(not
+          (=
+            (opt-ag-fact
+              (compiler_optimize.compiler-opt-global-shared-view facts)
+              symbols.helper
+              1)
+            (+ 1 le.a)))
+        1]
+      [(not
+          (=
+            (opt-ag-fact
+              (compiler_optimize.compiler-opt-global-shared-view facts)
+              symbols.helper
+              2)
+            (+ 1 le.b)))
+        2]
+      ;; the scalar position never does, whatever the site passes
+      [(not
+          (=
+            (opt-ag-fact
+              (compiler_optimize.compiler-opt-global-shared-view facts)
+              symbols.helper
+              0)
+            0))
+        3]
+      ;; a function nothing calls has no site to read, so no fact
+      [(not
+          (=
+            (opt-ag-fact
+              (compiler_optimize.compiler-opt-global-shared-view orphan)
+              symbols.helper
+              1)
+            0))
+        4]
+      ;; a second site passing a local kills that POSITION and only that one
+      [(not
+          (=
+            (opt-ag-fact
+              (compiler_optimize.compiler-opt-global-shared-view facts)
+              symbols.split
+              1)
+            0))
+        5]
+      [(not
+          (=
+            (opt-ag-fact
+              (compiler_optimize.compiler-opt-global-shared-view facts)
+              symbols.split
+              2)
+            (+ 1 le.b)))
+        6]
+      ;; an address-taken function can be entered without any site this walk
+      ;; enumerated, so every position of it is refused
+      [(not
+          (=
+            (opt-ag-fact
+              (compiler_optimize.compiler-opt-global-shared-view facts)
+              symbols.taken
+              1)
+            0))
+        7]
+      [(not
+          (=
+            (opt-ag-fact
+              (compiler_optimize.compiler-opt-global-shared-view facts)
+              symbols.taken
+              2)
+            0))
+        8]
+      ;; a self-recursive callee whose recursive site passes the same global
+      ;; through keeps the fact...
+      [(not
+          (=
+            (opt-ag-fact
+              (compiler_optimize.compiler-opt-global-shared-view facts)
+              symbols.recur
+              1)
+            (+ 1 le.a)))
+        9]
+      ;; ...and one whose recursive site passes its own parameter loses it
+      [(not
+          (=
+            (opt-ag-fact
+              (compiler_optimize.compiler-opt-global-shared-view facts)
+              symbols.drift
+              1)
+            0))
+        10]
+      ;; a callee named by a call form whose arguments this walk does not read
+      ;; positionally -- the C-ABI aggregate-return call -- is refused
+      ;; outright, even though its ordinary site passes exactly the globals
+      ;; that would otherwise have carried the fact
+      [(not
+          (=
+            (opt-ag-fact
+              (compiler_optimize.compiler-opt-global-shared-view facts)
+              symbols.cabi
+              1)
+            0))
+        16]
+      [(not
+          (=
+            (opt-ag-fact
+              (compiler_optimize.compiler-opt-global-shared-view facts)
+              symbols.cabi
+              2)
+            0))
+        17]
+      [(not
+          (=
+            (opt-ag-fact
+              (compiler_optimize.compiler-opt-global-shared-view facts)
+              symbols.drift
+              2)
+            (+ 1 le.b)))
+        11]
+      ;; --- the per-var slot table the LE lookups read ---
+      [(not
+          (=
+            (compiler_optimize.opt-arg-global-of-value
+              (compiler_optimize.compiler-opt-global-shared-view slots)
+              (compiler_ir_types.CompilerIrValue.Var 1))
+            le.a))
+        12]
+      [(not
+          (=
+            (compiler_optimize.opt-arg-global-of-value
+              (compiler_optimize.compiler-opt-global-shared-view slots)
+              (compiler_ir_types.CompilerIrValue.Var 2))
+            le.b))
+        13]
+      [(not
+          (=
+            (compiler_optimize.opt-arg-global-of-value
+              (compiler_optimize.compiler-opt-global-shared-view slots)
+              (compiler_ir_types.CompilerIrValue.Var 0))
+            (- 0 1)))
+        14]
+      ;; no var the body defines inherits it
+      [(not
+          (=
+            (compiler_optimize.opt-arg-global-of-value
+              (compiler_optimize.compiler-opt-global-shared-view slots)
+              (compiler_ir_types.CompilerIrValue.Var 6))
+            (- 0 1)))
+        15]
+      ;; --- the decision the class moves ---
+      ;; both checks reach their lengths through parameters; with the facts the
+      ;; second is retired on the first exactly as if the globals were named
+      [(not (= retired 1)) 20]
+      ;; with no facts the callee is opaque and both stay, which is what makes
+      ;; the win attributable to this class alone
+      [(not (= without 2)) 21]
+      ;; facts naming two globals from different families decide nothing
+      [(not (= unrelated 2)) 22]
+      ;; and a body that redefines the parameter's own var is not a body the
+      ;; entry-value fact speaks about
+      [(not (= reset 2)) 23]
       [else 42])))
 
 ;; --- P-E: the header phi an exiting arm leaves alone --------------------------
@@ -74159,6 +74721,7 @@
           (opt_i64_i64_map.with-capacity 1)
           (opt_i64_i64_map.with-capacity 1)
           (opt_i64_i64_map.with-capacity 1)
+          (opt_i64_i64_map.with-capacity 1)
           (compiler_optimize.opt-cfg-context-build blocks)
           func)))))
 
@@ -74374,6 +74937,7 @@
       (compiler_optimize.opt-function-blocks
         (compiler_optimize.opt-len-eq-late-sweep
           (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+          (opt_i64_i64_map.with-capacity 1)
           (opt_i64_i64_map.with-capacity 1)
           (opt_i64_i64_map.with-capacity 1)
           (opt_i64_i64_map.with-capacity 1)
@@ -74909,6 +75473,7 @@
       (compiler_optimize.opt-build-program-summaries
         type-segment-bases
         (opt-lp-test-globals symbols)
+        (compiler_ir_types.compiler-ir-extern-seq-empty)
         version-functions
         2)]
     [pools : compiler_ast_types.AstNodePoolContext
@@ -75413,6 +75978,13 @@
     (compiler-optimize-len-eq-families-self-test)
     42
     "two global Vec cells reset together in one straight-line region with one length are proven length-equal, and a dominating check on one retires the check on the other; a member whose box reaches a parameter-writing callee is dropped, a call that may read a member between the two stores breaks the region, the Vec.len field invariant discharges the unsigned check against the array length, and a constructor whose .len word is not its array length refuses it"))
+
+(test
+  arg-global-call-site-identity-facts
+  (test.assert-i64-eq
+    (compiler-optimize-arg-global-facts-self-test)
+    42
+    "a function whose address is never taken and whose every direct call site passes the same global at a reference parameter position carries that identity as a whole-program fact, so two bounds checks of one index against two members of one length-equality family collapse to one INSIDE the callee, where no global is named at all; a second site passing a local kills that position only, an address-taken callee and a callee nothing calls carry nothing, a self-recursive site passing the parameter back refuses while one passing the global through does not, a callee named by a call form whose arguments are not read positionally is refused outright, and a body that redefines the parameter's own var is refused outright"))
 
 (test
   lp-loop-postcondition-check-memo

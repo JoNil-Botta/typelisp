@@ -55471,6 +55471,129 @@
             max-pos)
           (- fuel 1))])))
 
+;; --- GAP-1: call-site global-argument identity ------------------------------
+;;
+;; P-B's length-equality families are keyed by global CELLS, but every hot
+;; helper of the cfg/dominator shape takes its module-global Vecs as
+;; `(& x Vec)` / `(&mut x Vec)` PARAMETERS. Inside such a helper the families
+;; are invisible, and two checks of ONE index against two members of one family
+;; both survive. This family supplies the missing bridge as a FACT: "in
+;; function F, parameter k is the address of global g in every activation".
+;;
+;; SOUNDNESS. Take a function F whose address is never taken (no
+;; `CompilerIrValue.Function` naming it appears anywhere), which is not the
+;; program's entry, not an extern this program provides, not a global's hidden
+;; initializer and not a runtime-prelude helper the backend may call on its
+;; own. Every activation of F is then a direct `Call`/`TailCall` naming F, and
+;; this walk enumerates all of them -- recursive and tail self-calls included.
+;; If every one of those sites passes the same `CompilerIrValue.Global g` at
+;; position k -- the address of g's storage, a link-time constant -- then the
+;; ENTRY value of parameter k is `@g` in every activation. The consumer
+;; (opt-arg-global-final-sweep) is verifier-gated and the verifier rejects a
+;; function that defines a parameter's var a second time, so the parameter's
+;; var IS its entry value there: a `set!` of the parameter defines a different
+;; var, which carries no fact. The LE relation between g and h is the
+;; program-wide invariant P-B already proved about the cells, so a check
+;; reached through parameter k is a check through g.
+;;
+;; WHERE the facts are read is its own question, and the answer is NOT either
+;; of P-B's two in-pipeline slots -- see opt-arg-global-final-sweep.
+;;
+;; This is a fact channel and NOT an IR rewrite. Rewriting `%k` to `@g` in the
+;; callee body would turn parameter-derived loads into mutable-global reads,
+;; which LICM's chain rule and load-CSE's global-base clearing at calls treat
+;; far more conservatively than an invariant parameter pointer; the descriptor
+;; hoists that pay for these helpers today would be refused. Nothing here
+;; changes any IR, any call site or any arity.
+;; Facts are keyed by `function symbol id * cap + parameter position`. The cap
+;; bounds the position so the packing is injective over non-negative symbol
+;; ids; a function with more parameters than this records none.
+(define (opt-arg-global-param-cap) : i64
+  64)
+
+(define (opt-arg-global-key [name : i64] [position : i64]) : i64
+  (+ (* name (opt-arg-global-param-cap)) position))
+
+;; The per-var slot table the two LE lookups read: `1 + global symbol id` at
+;; each fact-carrying parameter's var, 0 everywhere else. One word when the
+;; program proved nothing, so a program without facts allocates nothing per
+;; function.
+(define (opt-arg-global-slots-empty) : (__tl_dyn-array i64)
+  (__tl_make-array i64 1))
+
+(define (opt-arg-global-fact
+  [arg-global : opt_i64_i64_map.Map]
+  [name : i64]
+  [position : i64]) : i64
+  (if (or (< name 0) (>= position (opt-arg-global-param-cap)))
+    0
+    (match (opt_i64_i64_map.get
+      (& arg-global)
+      (opt-arg-global-key name position))
+      [(opt_i64_i64_map.LookupFound encoded) encoded]
+      [(opt_i64_i64_map.LookupMissing) 0])))
+
+(define (opt-arg-global-slots
+  [arg-global : opt_i64_i64_map.Map]
+  [name : i64]
+  [params : ir.CompilerIrParamSeq]
+  [frame : i64]) : (__tl_dyn-array i64)
+  (if (or (= (opt_i64_i64_map.len (& arg-global)) 0) (< frame 1))
+    (opt-arg-global-slots-empty)
+    (let
+      [slots : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+      [position : i64 0]
+      (begin
+        (while (< position params.len)
+          (begin
+            (match (ir.compiler-ir-param-seq-ref
+              (compiler-opt-global-shared-view params)
+              position)
+              [(ir.CompilerIrParam.Param _ _ var)
+                (if (and (>= var 0) (< var frame))
+                  (set!
+                    (array-ref slots var)
+                    (opt-arg-global-fact
+                      (compiler-opt-global-shared-view arg-global)
+                      name
+                      position))
+                  unit)])
+            (set! position (+ position 1))))
+        slots))))
+
+;; Does any parameter of this function carry a fact? The sweep that reads them
+;; is worth its CFG context only where the answer is yes: with no fact it can
+;; retire nothing the in-pipeline slots did not already have the chance to.
+(define (opt-arg-global-any-fact?
+  [arg-global : opt_i64_i64_map.Map]
+  [name : i64]
+  [params : ir.CompilerIrParamSeq]
+  [position : i64]) : bool
+  (if (>= position params.len)
+    false
+    (if (>
+      (opt-arg-global-fact
+        (compiler-opt-global-shared-view arg-global)
+        name
+        position)
+      0)
+      true
+      (opt-arg-global-any-fact? arg-global name params (+ position 1)))))
+
+;; The global a base value names: `@g` itself, or a parameter of the function
+;; being optimized that this program proved is `@g` in every activation. -1
+;; when it names neither.
+(define (opt-arg-global-of-value
+  [slots : (__tl_dyn-array i64)]
+  [value : ir.CompilerIrValue]) : i64
+  (match value
+    [(ir.CompilerIrValue.Global name) (ir.compiler-ir-symbol-id name)]
+    [(ir.CompilerIrValue.Var var)
+      (if (and (>= var 0) (< var (array-length slots)))
+        (- (array-ref slots var) 1)
+        (- 0 1))]
+    [_ (- 0 1)]))
+
 ;; --- P-B: reading the length-equality table inside bounds_dom ----------------
 ;;
 ;; The table is a fact about global CELLS; a check speaks about IR values. The
@@ -55509,7 +55632,15 @@
   ;; already proved (see opt-lp-memo-build and opt-lp-memo-retires?). It rides
   ;; here because the bounds_dom walk already threads this value down to every
   ;; check it reads.
-  (lp (__tl_dyn-array i64)))
+  (lp (__tl_dyn-array i64))
+  ;; GAP-1's per-var slot table for THIS function: `1 + global symbol id` at
+  ;; the var of every parameter the whole program proved is that global's
+  ;; address in every activation, 0 elsewhere (opt-arg-global-slots). It rides
+  ;; here for the same reason `lp` does -- bounds_dom already threads this
+  ;; value down to every check it reads. Only the below-the-fixpoint slot
+  ;; (opt-arg-global-final-sweep) is handed a non-empty table; every
+  ;; in-pipeline build passes an empty one.
+  (args (__tl_dyn-array i64)))
 
 (define (opt-len-eq-use-empty) : OptLenEqUse
   (OptLenEqUse
@@ -55518,13 +55649,14 @@
     false
     (__tl_make-array bool 1)
     false
-    (opt-lp-memo-empty)))
+    (opt-lp-memo-empty)
+    (opt-arg-global-slots-empty)))
 
 ;; Hand the late slot's bounds_dom run P-C's memo.
 (define (opt-len-eq-use-with-memo
   [use : OptLenEqUse]
   [lp : (__tl_dyn-array i64)]) : OptLenEqUse
-  (OptLenEqUse use.table use.defs use.on? use.loops use.late? lp))
+  (OptLenEqUse use.table use.defs use.on? use.loops use.late? lp use.args))
 
 (define (opt-len-eq-use-def [use : OptLenEqUse] [var : i64]) : OptBoolBranchDef
   (if (and (>= var 0) (< var (array-length use.defs)))
@@ -55578,8 +55710,18 @@
   [clean : opt_i64_i64_map.Map]
   [name : i64]
   [frame : i64]
-  [blocks : ir.CompilerIrBlockList]) : OptLenEqUse
-  (opt-len-eq-use-build-slot table clean name frame blocks false))
+  [blocks : ir.CompilerIrBlockList]
+  [arg-global : opt_i64_i64_map.Map]
+  [params : ir.CompilerIrParamSeq]) : OptLenEqUse
+  (opt-len-eq-use-build-slot
+    table
+    clean
+    name
+    frame
+    blocks
+    false
+    arg-global
+    params))
 
 ;; The late slot's twin: no loop set, so in-loop checks are covered too.
 (define (opt-len-eq-use-build-late
@@ -55587,8 +55729,18 @@
   [clean : opt_i64_i64_map.Map]
   [name : i64]
   [frame : i64]
-  [blocks : ir.CompilerIrBlockList]) : OptLenEqUse
-  (opt-len-eq-use-build-slot table clean name frame blocks true))
+  [blocks : ir.CompilerIrBlockList]
+  [arg-global : opt_i64_i64_map.Map]
+  [params : ir.CompilerIrParamSeq]) : OptLenEqUse
+  (opt-len-eq-use-build-slot
+    table
+    clean
+    name
+    frame
+    blocks
+    true
+    arg-global
+    params))
 
 (define (opt-len-eq-use-build-slot
   [table : opt_i64_i64_map.Map]
@@ -55596,7 +55748,9 @@
   [name : i64]
   [frame : i64]
   [blocks : ir.CompilerIrBlockList]
-  [late? : bool]) : OptLenEqUse
+  [late? : bool]
+  [arg-global : opt_i64_i64_map.Map]
+  [params : ir.CompilerIrParamSeq]) : OptLenEqUse
   (if (or
     (= (opt_i64_i64_map.len (& table)) 0)
     (not (opt_i64_i64_map.contains? (& clean) name)))
@@ -55618,7 +55772,8 @@
           true
           (__tl_make-array bool 1)
           late?
-          (opt-lp-memo-empty))))))
+          (opt-lp-memo-empty)
+          (opt-arg-global-slots arg-global name params frame))))))
 
 ;; The natural-loop body of one back edge `latch -> header`: the header plus
 ;; every block a backward walk from the latch reaches without passing through
@@ -55725,7 +55880,8 @@
       true
       (opt-len-eq-loop-blocks index doms)
       false
-      use.lp)))
+      use.lp
+      use.args)))
 
 ;; May the LE relation be read for a check in this block?
 (define (opt-len-eq-usable-at? [use : OptLenEqUse] [block-id : i64]) : bool
@@ -55781,7 +55937,9 @@
     [(ir.CompilerIrValue.Global name) (ir.compiler-ir-symbol-id name)]
     [_ (- 0 1)]))
 
-;; The global whose `.slots` array this length value measures, or -1.
+;; The global whose `.slots` array this length value measures, or -1. The base
+;; the chain bottoms out in is either `@g` itself or -- GAP-1 -- a parameter of
+;; this function that every call site passes `@g`.
 (define (opt-len-eq-slots-global
   [type-segment-bases : i64]
   [use : OptLenEqUse]
@@ -55789,24 +55947,27 @@
   [value : ir.CompilerIrValue]) : i64
   (if (not use.on?)
     (- 0 1)
-    (match (opt-len-eq-loaded-word
-      type-segment-bases
-      (compiler-opt-global-shared-view use)
-      (compiler-opt-global-shared-view copies)
-      value
-      1)
-      [(OptLenEqBase.Some slots)
-        (match (opt-len-eq-loaded-word
-          type-segment-bases
-          (compiler-opt-global-shared-view use)
-          (compiler-opt-global-shared-view copies)
-          slots
-          0)
-          [(OptLenEqBase.Some cell) (opt-len-eq-global-of cell)]
-          [(OptLenEqBase.No) (- 0 1)])]
-      [(OptLenEqBase.No) (- 0 1)])))
+    (let
+      [args : (__tl_dyn-array i64) (compiler-opt-global-shared-view use.args)]
+      (match (opt-len-eq-loaded-word
+        type-segment-bases
+        (compiler-opt-global-shared-view use)
+        (compiler-opt-global-shared-view copies)
+        value
+        1)
+        [(OptLenEqBase.Some slots)
+          (match (opt-len-eq-loaded-word
+            type-segment-bases
+            (compiler-opt-global-shared-view use)
+            (compiler-opt-global-shared-view copies)
+            slots
+            0)
+            [(OptLenEqBase.Some cell) (opt-arg-global-of-value args cell)]
+            [(OptLenEqBase.No) (- 0 1)])]
+        [(OptLenEqBase.No) (- 0 1)]))))
 
-;; The global whose Vec `.len` FIELD this value reads, or -1.
+;; The global whose Vec `.len` FIELD this value reads, or -1. Same two bases as
+;; opt-len-eq-slots-global.
 (define (opt-len-eq-field-global
   [type-segment-bases : i64]
   [use : OptLenEqUse]
@@ -55814,9 +55975,11 @@
   [value : ir.CompilerIrValue]) : i64
   (if (not use.on?)
     (- 0 1)
-    (match (opt-len-eq-loaded-word type-segment-bases use copies value 1)
-      [(OptLenEqBase.Some cell) (opt-len-eq-global-of cell)]
-      [(OptLenEqBase.No) (- 0 1)])))
+    (let
+      [args : (__tl_dyn-array i64) (compiler-opt-global-shared-view use.args)]
+      (match (opt-len-eq-loaded-word type-segment-bases use copies value 1)
+        [(OptLenEqBase.Some cell) (opt-arg-global-of-value args cell)]
+        [(OptLenEqBase.No) (- 0 1)]))))
 
 ;; Does a dominating check of the SAME index against a length-equal member's
 ;; array retire this one? The fusion rule loop versioning applies at runtime
@@ -60687,6 +60850,7 @@
   [table : opt_i64_i64_map.Map]
   [clean : opt_i64_i64_map.Map]
   [nonneg : opt_i64_i64_map.Map]
+  [arg-global : opt_i64_i64_map.Map]
   [context : OptCfgContext]
   [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
   (match (compiler-opt-global-shared-view func)
@@ -60698,7 +60862,9 @@
             (compiler-opt-global-shared-view clean)
             (ir.compiler-ir-symbol-id name)
             frame
-            (compiler-opt-global-shared-view blocks))]
+            (compiler-opt-global-shared-view blocks)
+            (compiler-opt-global-shared-view arg-global)
+            (compiler-opt-global-shared-view params))]
         ;; P-C rides the same slot. Its memo is a property of THIS function's
         ;; CFG and of nothing the whole-program tables say, so it is computed
         ;; here and it also decides, on its own, whether the sweep is worth
@@ -61854,7 +62020,15 @@
   ;; The functions in which that relation may be READ (opt-len-eq-clean-build):
   ;; those no execution of which writes a member's cell. Outside them two
   ;; lengths loaded at different times can come from different resets.
-  (len-eq-clean opt_i64_i64_map.Map))
+  (len-eq-clean opt_i64_i64_map.Map)
+  ;; GAP-1's call-site global-argument identity facts (opt-arg-global-build):
+  ;; `opt-arg-global-key` of (function symbol id, parameter position) ->
+  ;; `1 + the global symbol id` every direct call site passes there. It lives
+  ;; beside the length-equality table because it exists only to let that table
+  ;; be read through a `& Vec` parameter, and the sweep that reads it already
+  ;; reaches this struct. Empty below level 2 and in every program without a
+  ;; family.
+  (arg-global opt_i64_i64_map.Map))
 
 (define (opt-global-cell-summary-empty) : OptGlobalCellSummary
   (OptGlobalCellSummary
@@ -61866,7 +62040,23 @@
     (opt_i64_i64_map.with-capacity 1)
     (opt_i64_i64_map.with-capacity 1)
     (opt_i64_i64_map.with-capacity 1)
+    (opt_i64_i64_map.with-capacity 1)
     (opt_i64_i64_map.with-capacity 1)))
+
+(define (opt-global-cell-summary-with-arg-global
+  [cell : OptGlobalCellSummary]
+  [arg-global : opt_i64_i64_map.Map]) : OptGlobalCellSummary
+  (OptGlobalCellSummary
+    cell.addr-taken
+    cell.type-index
+    cell.types
+    cell.word-cell
+    cell.mod-ref
+    cell.frozen
+    cell.nonneg
+    cell.len-eq
+    cell.len-eq-clean
+    arg-global))
 
 (defstruct OptLoopBceSummaries
   (enabled bool)
@@ -105521,7 +105711,12 @@
                                 summaries.global-cell.len-eq-clean)
                               (ir.compiler-ir-symbol-id name)
                               gvn-frame
-                              (compiler-opt-global-shared-view gvn))
+                              (compiler-opt-global-shared-view gvn)
+                              ;; GAP-1's facts are NOT read here; see
+                              ;; opt-arg-global-final-sweep for why they belong
+                              ;; below the fixpoint.
+                              (opt_i64_i64_map.with-capacity 1)
+                              (compiler-opt-global-shared-view params))
                             (compiler-opt-global-shared-view gvn))
                           (OptBoundsDomResult.Result
                             (compiler-opt-global-shared-view gvn)
@@ -106204,6 +106399,10 @@
                               summaries.global-cell.len-eq-clean)
                             (compiler-opt-global-shared-view
                               summaries.global-cell.nonneg)
+                            ;; GAP-1's facts are NOT read here either: this
+                            ;; slot is late within ONE round, and another round
+                            ;; may still version a loop.
+                            (opt_i64_i64_map.with-capacity 1)
                             (compiler-opt-global-shared-view
                               bce-version-context)
                             (compiler-opt-global-shared-view bce-version)))]
@@ -107103,6 +107302,58 @@
         func)
       changed)))
 
+;; GAP-1's slot: ONE length-equality sweep with the call-site
+;; global-argument facts in hand, below the whole level-2 fixpoint.
+;;
+;; The facts have to be read in a late slot for exactly the reason P-B's own
+;; late slot gives: the multi-block versioner must have had every loop first,
+;; because a check the versioner would have DERIVED is worth more inside the
+;; clone it justifies than retiring the check is worth. P-B's late slot
+;; satisfies that within ONE pipeline round. It does not satisfy it ACROSS
+;; rounds, and the level-2 pipeline runs up to `optimize-function-max-iterations`
+;; of them, so facts read anywhere inside the pipeline starve the NEXT round's
+;; bce_version. Measured on cfg_domloops: reading them in either in-pipeline
+;; slot costs cfg-idom-iterate its versioned outer-loop clone, +11,078,760 Ir,
+;; against -5,306,710 of checks retired everywhere else -- the row goes UP.
+;; Below the fixpoint there is no next round to starve: the same retires land
+;; (cfg-stamp-euler -3.44M, cfg-build-csr -1.43M, cfg-scan-ints -0.55M,
+;; cfg-build-euler-tree -0.32M) and every clone is kept.
+;;
+;; The sweep is the same pass the in-pipeline late slot runs, so its own
+;; invariants are unchanged: it only deletes mid-block `BoundsCheck`es,
+;; reorders a constant-offset run inside one block, and replaces a decided
+;; branch CONDITION with a literal while keeping both successors. It is placed
+;; above the final if-conversion/unswitch/straighten passes so each of those
+;; still sees an ordinary function.
+;;
+;; A program with no facts pays one map-length test per function, and a
+;; function none of whose parameters carries one pays one lookup per parameter:
+;; the CFG context and the sweep itself are built only where a fact can
+;; actually decide something.
+(define (opt-arg-global-final-sweep
+  [type-segment-bases : i64]
+  [summaries : OptLoopBceSummaries]
+  [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
+  (if (= (opt_i64_i64_map.len (& summaries.global-cell.arg-global)) 0)
+    func
+    (match (compiler-opt-global-shared-view func)
+      [(ir.CompilerIrFunction.Function name params _ _ blocks)
+        (if (not
+          (opt-arg-global-any-fact?
+            (compiler-opt-global-shared-view summaries.global-cell.arg-global)
+            (ir.compiler-ir-symbol-id name)
+            (compiler-opt-global-shared-view params)
+            0))
+          func
+          (opt-len-eq-late-sweep
+            type-segment-bases
+            (compiler-opt-global-shared-view summaries.global-cell.len-eq)
+            (compiler-opt-global-shared-view summaries.global-cell.len-eq-clean)
+            (compiler-opt-global-shared-view summaries.global-cell.nonneg)
+            (compiler-opt-global-shared-view summaries.global-cell.arg-global)
+            (opt-cfg-context-build (compiler-opt-global-shared-view blocks))
+            func))])))
+
 (define (optimize-function-fixed-pass-with-summaries
   [pools : ast.AstNodePoolContext]
   [type-segment-bases : i64]
@@ -107330,9 +107581,14 @@
         type-segment-bases
         func
         (optimize-function-max-iterations)
-        summaries)
+        (compiler-opt-global-shared-view summaries))
         [(OptFunctionPassResult.Result fixed fixed-changed)
-          (match (opt-if-convert-final-pass type-segment-bases fixed)
+          (match (opt-if-convert-final-pass
+            type-segment-bases
+            (opt-arg-global-final-sweep
+              type-segment-bases
+              (compiler-opt-global-shared-view summaries)
+              fixed))
             [(OptFunctionPassResult.Result final if-convert-changed)
               (let
                 [unswitched : ir.CompilerIrFunction
@@ -122665,9 +122921,14 @@
 (define (opt-build-program-summaries
   [type-segment-bases : i64]
   [globals : ir.CompilerIrGlobalSeq]
+  [externs : ir.CompilerIrExternSeq]
   [reachable-functions : ir.CompilerIrFunctionSeq]
   [level : i64]) : OptLoopBceSummaries
   (let
+    [capacity : i64
+      (opt-function-index-capacity
+        (opt-function-seq-count
+          (compiler-opt-global-shared-view reachable-functions)))]
     [base : OptLoopBceSummaries
       (opt-loop-bce-summaries-set-const-divisors
         (if (<=
@@ -122688,11 +122949,21 @@
     (opt-loop-bce-summaries-set-global-cell
       (compiler-opt-global-shared-view base)
       (if (>= level 2)
-        (opt-global-cell-summary-build-with-call-memory
+        ;; GAP-1's facts are attached on the same final function seq the rest
+        ;; of the level-2 summaries are built from -- the post-inline, pruned
+        ;; program every function is then optimized from, which is the only
+        ;; seq whose call sites are the ones that survive.
+        (opt-arg-global-attach
           type-segment-bases
-          globals
-          reachable-functions
-          (compiler-opt-global-shared-view base.call-memory))
+          (compiler-opt-global-shared-view globals)
+          externs
+          (compiler-opt-global-shared-view reachable-functions)
+          capacity
+          (opt-global-cell-summary-build-with-call-memory
+            type-segment-bases
+            globals
+            reachable-functions
+            (compiler-opt-global-shared-view base.call-memory)))
         (opt-global-cell-summary-empty)))))
 
 ;; Substitute a proven constant global with its literal value in
@@ -127884,6 +128155,824 @@
         (opt_i64_i64_map.with-capacity capacity))
       capacity)))
 
+;; --- GAP-1: proving a parameter is a global ----------------------------------
+;;
+;; One walk of the whole program collects both halves of the proof: the set of
+;; functions an activation can reach WITHOUT a `Call`/`TailCall` site this walk
+;; reads positionally, and, per (callee, argument position), the single
+;; `Global` every such site passes there. See the family header above
+;; opt-arg-global-param-cap for the soundness argument.
+(defstruct OptArgGlobalScan
+  ;; Function symbol ids no fact may be recorded for: those whose address is
+  ;; taken and those the program can enter without a call site in the IR. An id
+  ;; in here is refused outright by the emit pass.
+  (opaque opt_i64_i64_map.Map)
+  ;; Function symbol id -> 1 + its parameter count, for the functions whose
+  ;; call sites are worth reading positionally. A callee absent here -- an
+  ;; extern, or a function with no parameters or more than the key packing
+  ;; admits -- has its arguments scanned for function addresses only.
+  (arity opt_i64_i64_map.Map)
+  ;; opt-arg-global-key -> 0 (two sites disagreed, or one passed something that
+  ;; is not a global) or 1 + the global symbol id every site so far passed.
+  (sites opt_i64_i64_map.Map))
+
+(define (opt-arg-global-scan-opaque [scan : OptArgGlobalScan] [name : i64]) : OptArgGlobalScan
+  (match (compiler-opt-global-shared-view scan)
+    [(OptArgGlobalScan opaque arity sites)
+      (begin
+        (opt_i64_i64_map.insert-ref! (&mut opaque) name 1)
+        (OptArgGlobalScan opaque arity sites))]))
+
+;; The only value form that names a function's ADDRESS. Every operand position
+;; of every instruction goes through here, so a function whose address escapes
+;; anywhere in the program is refused everywhere.
+(define (opt-arg-global-scan-value
+  [scan : OptArgGlobalScan]
+  [value : ir.CompilerIrValue]) : OptArgGlobalScan
+  (match value
+    [(ir.CompilerIrValue.Function name)
+      (opt-arg-global-scan-opaque scan (ir.compiler-ir-symbol-id name))]
+    [_ scan]))
+
+(define (opt-arg-global-scan-values-array
+  [scan : OptArgGlobalScan]
+  [values : (__tl_dyn-array ir.CompilerIrValue)]
+  [index : i64]) : OptArgGlobalScan
+  (if (>= index (array-length values))
+    scan
+    (opt-arg-global-scan-values-array
+      (opt-arg-global-scan-value
+        scan
+        (compiler-opt-global-array-element-shared-view values index))
+      values
+      (+ index 1))))
+
+(define (opt-arg-global-scan-args
+  [scan : OptArgGlobalScan]
+  [args : ir.CompilerIrCallArgs]) : OptArgGlobalScan
+  (match args
+    [(ir.CompilerIrCallArgs.Nil) scan]
+    [(ir.CompilerIrCallArgs.One value) (opt-arg-global-scan-value scan value)]
+    [(ir.CompilerIrCallArgs.Two a b)
+      (opt-arg-global-scan-value (opt-arg-global-scan-value scan a) b)]
+    [(ir.CompilerIrCallArgs.Array values)
+      (opt-arg-global-scan-values-array scan values 0)]))
+
+(define (opt-arg-global-scan-spmd-args
+  [scan : OptArgGlobalScan]
+  [args : ir.CompilerIrSpmdCallArgSeq]) : OptArgGlobalScan
+  (let
+    [out : OptArgGlobalScan scan]
+    [i : i64 0]
+    (begin
+      (while (< i args.len)
+        (begin
+          (match (array-ref args.slots i)
+            [(ir.CompilerIrSpmdCallArg.Arg _ value _)
+              (set! out (opt-arg-global-scan-value out value))])
+          (set! i (+ i 1))))
+      out)))
+
+(define (opt-arg-global-scan-value-seq
+  [scan : OptArgGlobalScan]
+  [values : ir.CompilerIrValueSeq]) : OptArgGlobalScan
+  (let
+    [out : OptArgGlobalScan scan]
+    [i : i64 0]
+    (begin
+      (while (< i values.len)
+        (begin
+          (set!
+            out
+            (opt-arg-global-scan-value
+              out
+              (compiler-opt-global-array-element-shared-view values.slots i)))
+          (set! i (+ i 1))))
+      out)))
+
+(define (opt-arg-global-scan-maybe
+  [scan : OptArgGlobalScan]
+  [maybe : ir.CompilerIrMaybeValue]) : OptArgGlobalScan
+  (match maybe
+    [(ir.CompilerIrMaybeValue.No) scan]
+    [(ir.CompilerIrMaybeValue.Some value)
+      (opt-arg-global-scan-value scan value)]))
+
+(define (opt-arg-global-scan-phi
+  [scan : OptArgGlobalScan]
+  [inputs : ir.CompilerIrPhiInputList]) : OptArgGlobalScan
+  (match (ir.compiler-ir-phi-input-list-force-cons inputs)
+    [(ir.CompilerIrPhiInputList.Nil) scan]
+    [(ir.CompilerIrPhiInputList.Array seq)
+      (opt-arg-global-scan-phi scan (ir.compiler-ir-phi-input-seq-to-list seq))]
+    [(ir.CompilerIrPhiInputList.Cons value _ rest)
+      (opt-arg-global-scan-phi
+        (opt-arg-global-scan-value scan value)
+        (compiler-opt-box-shared-view rest))]))
+
+;; One argument of one direct call site, read positionally: the recorded fact
+;; is the intersection over every site, and 0 means "no fact" for good.
+(define (opt-arg-global-scan-site
+  [scan : OptArgGlobalScan]
+  [name : i64]
+  [position : i64]
+  [value : ir.CompilerIrValue]) : OptArgGlobalScan
+  (let
+    [want : i64
+      (match (compiler-opt-global-shared-view value)
+        [(ir.CompilerIrValue.Global cell) (+ 1 (ir.compiler-ir-symbol-id cell))]
+        [_ 0])]
+    (match (opt-arg-global-scan-value scan value)
+      [(OptArgGlobalScan opaque arity sites)
+        (let
+          [key : i64 (opt-arg-global-key name position)]
+          (begin
+            (match (opt_i64_i64_map.get (& sites) key)
+              [(opt_i64_i64_map.LookupFound seen)
+                (if (= seen want)
+                  unit
+                  (opt_i64_i64_map.insert-ref! (&mut sites) key 0))]
+              [(opt_i64_i64_map.LookupMissing)
+                (opt_i64_i64_map.insert-ref! (&mut sites) key want)])
+            (OptArgGlobalScan opaque arity sites)))])))
+
+(define (opt-arg-global-scan-site-array
+  [scan : OptArgGlobalScan]
+  [name : i64]
+  [values : (__tl_dyn-array ir.CompilerIrValue)]
+  [index : i64]) : OptArgGlobalScan
+  (if (>= index (array-length values))
+    scan
+    (opt-arg-global-scan-site-array
+      (opt-arg-global-scan-site
+        scan
+        name
+        index
+        (compiler-opt-global-array-element-shared-view values index))
+      name
+      values
+      (+ index 1))))
+
+(define (opt-arg-global-scan-site-args
+  [scan : OptArgGlobalScan]
+  [name : i64]
+  [args : ir.CompilerIrCallArgs]) : OptArgGlobalScan
+  (match args
+    [(ir.CompilerIrCallArgs.Nil) scan]
+    [(ir.CompilerIrCallArgs.One value)
+      (opt-arg-global-scan-site scan name 0 value)]
+    [(ir.CompilerIrCallArgs.Two a b)
+      (opt-arg-global-scan-site
+        (opt-arg-global-scan-site
+          (compiler-opt-global-shared-view scan)
+          (compiler-opt-global-shared-view name)
+          0
+          a)
+        name
+        1
+        b)]
+    [(ir.CompilerIrCallArgs.Array values)
+      (opt-arg-global-scan-site-array scan name values 0)]))
+
+(define (opt-arg-global-args-count [args : ir.CompilerIrCallArgs]) : i64
+  (match args
+    [(ir.CompilerIrCallArgs.Nil) 0]
+    [(ir.CompilerIrCallArgs.One _) 1]
+    [(ir.CompilerIrCallArgs.Two _ _) 2]
+    [(ir.CompilerIrCallArgs.Array values) (array-length values)]))
+
+;; A site whose argument count does not match the callee's parameter list
+;; cannot be read positionally, so it refuses every position of that callee.
+(define (opt-arg-global-scan-refuse
+  [scan : OptArgGlobalScan]
+  [name : i64]
+  [position : i64]
+  [count : i64]) : OptArgGlobalScan
+  (if (>= position count)
+    scan
+    (opt-arg-global-scan-refuse
+      (match (compiler-opt-global-shared-view scan)
+        [(OptArgGlobalScan opaque arity sites)
+          (begin
+            (opt_i64_i64_map.insert-ref!
+              (&mut sites)
+              (opt-arg-global-key name position)
+              0)
+            (OptArgGlobalScan opaque arity sites))])
+      name
+      (+ position 1)
+      count)))
+
+(define (opt-arg-global-arity-of [scan : OptArgGlobalScan] [name : i64]) : i64
+  (match (opt_i64_i64_map.get (& scan.arity) name)
+    [(opt_i64_i64_map.LookupFound encoded) (- encoded 1)]
+    [(opt_i64_i64_map.LookupMissing) (- 0 1)]))
+
+(define (opt-arg-global-scan-direct
+  [scan : OptArgGlobalScan]
+  [callee : i64]
+  [args : ir.CompilerIrCallArgs]) : OptArgGlobalScan
+  (let
+    [name : i64 (ir.compiler-ir-symbol-id callee)]
+    [count : i64
+      (opt-arg-global-arity-of (compiler-opt-global-shared-view scan) name)]
+    (if (< count 0)
+      (opt-arg-global-scan-args scan (compiler-opt-global-shared-view args))
+      (if (=
+        count
+        (opt-arg-global-args-count (compiler-opt-global-shared-view args)))
+        (opt-arg-global-scan-site-args
+          scan
+          name
+          (compiler-opt-global-shared-view args))
+        (opt-arg-global-scan-refuse
+          (opt-arg-global-scan-args scan (compiler-opt-global-shared-view args))
+          name
+          0
+          count)))))
+
+;; Mirrors opt-global-cell-scan-instr arm-for-arm and, like it, carries no
+;; wildcard: a new IR instruction fails to compile until an operand position is
+;; classified here, so a function address can never silently escape the scan.
+(define (opt-arg-global-scan-instr
+  [scan : OptArgGlobalScan]
+  [instr : ir.CompilerIrInstr]) : OptArgGlobalScan
+  (match instr
+    [(ir.CompilerIrInstr.Mov _ src _)
+      (opt-arg-global-scan-value scan (compiler-opt-global-shared-view src))]
+    [(ir.CompilerIrInstr.Alloc _ _) scan]
+    [(ir.CompilerIrInstr.AddrOf _ _) scan]
+    [(ir.CompilerIrInstr.Gep _ base offset _)
+      (opt-arg-global-scan-value
+        (opt-arg-global-scan-value scan (compiler-opt-global-shared-view base))
+        (compiler-opt-global-shared-view offset))]
+    [(ir.CompilerIrInstr.Load _ src _)
+      (opt-arg-global-scan-value scan (compiler-opt-global-shared-view src))]
+    [(ir.CompilerIrInstr.StorePtr dst src _)
+      (opt-arg-global-scan-value
+        (opt-arg-global-scan-value scan (compiler-opt-global-shared-view dst))
+        (compiler-opt-global-shared-view src))]
+    [(ir.CompilerIrInstr.CopyBytes dst src _)
+      (opt-arg-global-scan-value
+        (opt-arg-global-scan-value scan (compiler-opt-global-shared-view dst))
+        (compiler-opt-global-shared-view src))]
+    [(ir.CompilerIrInstr.BoundsCheck idx length _)
+      (opt-arg-global-scan-value
+        (opt-arg-global-scan-value scan (compiler-opt-global-shared-view idx))
+        (compiler-opt-global-shared-view length))]
+    [(ir.CompilerIrInstr.Cast _ src _ _)
+      (opt-arg-global-scan-value scan (compiler-opt-global-shared-view src))]
+    [(ir.CompilerIrInstr.Bitcast _ src _ _)
+      (opt-arg-global-scan-value scan (compiler-opt-global-shared-view src))]
+    [(ir.CompilerIrInstr.BinOp _ _ lhs rhs _)
+      (opt-arg-global-scan-value
+        (opt-arg-global-scan-value scan (compiler-opt-global-shared-view lhs))
+        (compiler-opt-global-shared-view rhs))]
+    [(ir.CompilerIrInstr.UnOp _ _ src _)
+      (opt-arg-global-scan-value scan (compiler-opt-global-shared-view src))]
+    [(ir.CompilerIrInstr.LaneId _ _ _) scan]
+    [(ir.CompilerIrInstr.Splat _ value _ _)
+      (opt-arg-global-scan-value scan (compiler-opt-global-shared-view value))]
+    [(ir.CompilerIrInstr.VectorBinOp payload-box)
+      (let
+        [lhs (compiler-opt-box-field-shared-view payload-box lhs)]
+        [rhs (compiler-opt-box-field-shared-view payload-box rhs)]
+        (opt-arg-global-scan-value (opt-arg-global-scan-value scan lhs) rhs))]
+    [(ir.CompilerIrInstr.VectorPrefix payload-box)
+      (let
+        [src (compiler-opt-box-field-shared-view payload-box src)]
+        [carry (compiler-opt-box-field-shared-view payload-box carry)]
+        (opt-arg-global-scan-value (opt-arg-global-scan-value scan src) carry))]
+    [(ir.CompilerIrInstr.VectorReduce _ _ src _ _)
+      (opt-arg-global-scan-value scan (compiler-opt-global-shared-view src))]
+    [(ir.CompilerIrInstr.VectorCompare payload-box)
+      (let
+        [lhs (compiler-opt-box-field-shared-view payload-box lhs)]
+        [rhs (compiler-opt-box-field-shared-view payload-box rhs)]
+        (opt-arg-global-scan-value (opt-arg-global-scan-value scan lhs) rhs))]
+    [(ir.CompilerIrInstr.MaskBinOp _ _ lhs rhs _)
+      (opt-arg-global-scan-value
+        (opt-arg-global-scan-value scan (compiler-opt-global-shared-view lhs))
+        (compiler-opt-global-shared-view rhs))]
+    [(ir.CompilerIrInstr.MaskNot _ src _)
+      (opt-arg-global-scan-value scan (compiler-opt-global-shared-view src))]
+    [(ir.CompilerIrInstr.MaskReduce _ _ src _)
+      (opt-arg-global-scan-value scan (compiler-opt-global-shared-view src))]
+    [(ir.CompilerIrInstr.Select payload-box)
+      (let
+        [mask (compiler-opt-box-field-shared-view payload-box mask)]
+        [on-true (compiler-opt-box-field-shared-view payload-box on-true)]
+        [on-false (compiler-opt-box-field-shared-view payload-box on-false)]
+        (opt-arg-global-scan-value
+          (opt-arg-global-scan-value
+            (opt-arg-global-scan-value scan mask)
+            on-true)
+          on-false))]
+    [(ir.CompilerIrInstr.VectorLoad _ base idx _ _)
+      (opt-arg-global-scan-value
+        (opt-arg-global-scan-value scan (compiler-opt-global-shared-view base))
+        (compiler-opt-global-shared-view idx))]
+    [(ir.CompilerIrInstr.VectorStore payload-box)
+      (let
+        [base (compiler-opt-box-field-shared-view payload-box base)]
+        [idx (compiler-opt-box-field-shared-view payload-box index)]
+        [value (compiler-opt-box-field-shared-view payload-box value)]
+        (opt-arg-global-scan-value
+          (opt-arg-global-scan-value (opt-arg-global-scan-value scan base) idx)
+          value))]
+    [(ir.CompilerIrInstr.PredicatedStore payload-box)
+      (let
+        [base (compiler-opt-box-field-shared-view payload-box base)]
+        [idx (compiler-opt-box-field-shared-view payload-box index)]
+        [value (compiler-opt-box-field-shared-view payload-box value)]
+        [mask (compiler-opt-box-field-shared-view payload-box mask)]
+        (opt-arg-global-scan-value
+          (opt-arg-global-scan-value
+            (opt-arg-global-scan-value
+              (opt-arg-global-scan-value scan base)
+              idx)
+            value)
+          mask))]
+    [(ir.CompilerIrInstr.PredicatedLoad payload-box)
+      (let
+        [base (compiler-opt-box-field-shared-view payload-box base)]
+        [idx (compiler-opt-box-field-shared-view payload-box index)]
+        [mask (compiler-opt-box-field-shared-view payload-box mask)]
+        (opt-arg-global-scan-value
+          (opt-arg-global-scan-value (opt-arg-global-scan-value scan base) idx)
+          mask))]
+    [(ir.CompilerIrInstr.GatherLoad payload-box)
+      (let
+        [base (compiler-opt-box-field-shared-view payload-box base)]
+        [index-base (compiler-opt-box-field-shared-view payload-box index-base)]
+        [idx (compiler-opt-box-field-shared-view payload-box index)]
+        (opt-arg-global-scan-value
+          (opt-arg-global-scan-value
+            (opt-arg-global-scan-value scan base)
+            index-base)
+          idx))]
+    [(ir.CompilerIrInstr.VectorShuffle payload-box)
+      (let
+        [source (compiler-opt-box-field-shared-view payload-box source)]
+        [selector-low
+          (compiler-opt-box-field-shared-view payload-box selector-low)]
+        [selector-high
+          (compiler-opt-box-field-shared-view payload-box selector-high)]
+        [active-lanes
+          (compiler-opt-box-field-shared-view payload-box active-lanes)]
+        (opt-arg-global-scan-value
+          (opt-arg-global-scan-maybe
+            (opt-arg-global-scan-value
+              (opt-arg-global-scan-value scan source)
+              selector-low)
+            selector-high)
+          active-lanes))]
+    [(ir.CompilerIrInstr.TailMask _ idx length _)
+      (opt-arg-global-scan-value
+        (opt-arg-global-scan-value scan (compiler-opt-global-shared-view idx))
+        (compiler-opt-global-shared-view length))]
+    [(ir.CompilerIrInstr.EntryArgc _) scan]
+    [(ir.CompilerIrInstr.EntryArgv _) scan]
+    [(ir.CompilerIrInstr.EntryEnvp _) scan]
+    [(ir.CompilerIrInstr.CpuId _ leaf subleaf _)
+      (opt-arg-global-scan-value
+        (opt-arg-global-scan-value scan (compiler-opt-global-shared-view leaf))
+        (compiler-opt-global-shared-view subleaf))]
+    [(ir.CompilerIrInstr.Xgetbv _ idx)
+      (opt-arg-global-scan-value scan (compiler-opt-global-shared-view idx))]
+    [(ir.CompilerIrInstr.Syscall _ args)
+      (opt-arg-global-scan-args scan (compiler-opt-global-shared-view args))]
+    [(ir.CompilerIrInstr.Call _ name args _)
+      (opt-arg-global-scan-direct
+        scan
+        name
+        (compiler-opt-global-shared-view args))]
+    ;; The other two forms that name a callee DIRECTLY. Their argument lists do
+    ;; not line up with the callee's parameter list position for position -- the
+    ;; C-ABI form carries an extra aggregate-return buffer, the SPMD form
+    ;; carries lane-classified arguments -- so rather than read them
+    ;; positionally this refuses the callee outright. Missing an activation is
+    ;; the one thing the proof cannot survive.
+    [(ir.CompilerIrInstr.CallCAbiStoreResult payload-box)
+      (let
+        [name (compiler-opt-box-field-shared-view payload-box name)]
+        [base (compiler-opt-box-field-shared-view payload-box base)]
+        [args (compiler-opt-box-field-shared-view payload-box args)]
+        (opt-arg-global-scan-args
+          (opt-arg-global-scan-value
+            (opt-arg-global-scan-opaque scan (ir.compiler-ir-symbol-id name))
+            base)
+          args))]
+    [(ir.CompilerIrInstr.SpmdCall payload-box)
+      (let
+        [callee (compiler-opt-box-field-shared-view payload-box callee)]
+        [active-mask
+          (compiler-opt-box-field-shared-view payload-box active-mask)]
+        [args (compiler-opt-box-field-shared-view payload-box args)]
+        (opt-arg-global-scan-spmd-args
+          (opt-arg-global-scan-value
+            (opt-arg-global-scan-opaque scan (ir.compiler-ir-symbol-id callee))
+            active-mask)
+          args))]
+    [(ir.CompilerIrInstr.CallIndirect _ func args _)
+      (opt-arg-global-scan-args
+        (opt-arg-global-scan-value scan (compiler-opt-global-shared-view func))
+        (compiler-opt-global-shared-view args))]
+    [(ir.CompilerIrInstr.CallIndirectC _ func args _)
+      (opt-arg-global-scan-args
+        (opt-arg-global-scan-value scan (compiler-opt-global-shared-view func))
+        (compiler-opt-global-shared-view args))]
+    [(ir.CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
+      (let
+        [base (compiler-opt-box-field-shared-view payload-box base)]
+        [func (compiler-opt-box-field-shared-view payload-box callee)]
+        [args (compiler-opt-box-field-shared-view payload-box args)]
+        (opt-arg-global-scan-args
+          (opt-arg-global-scan-value (opt-arg-global-scan-value scan base) func)
+          args))]
+    [(ir.CompilerIrInstr.TailCall name args _)
+      (opt-arg-global-scan-direct
+        scan
+        name
+        (compiler-opt-global-shared-view args))]
+    [(ir.CompilerIrInstr.Store _ value _)
+      (opt-arg-global-scan-value scan (compiler-opt-global-shared-view value))]
+    [(ir.CompilerIrInstr.Jump _) scan]
+    [(ir.CompilerIrInstr.Branch cond _ _)
+      (opt-arg-global-scan-value scan (compiler-opt-global-shared-view cond))]
+    [(ir.CompilerIrInstr.TotalEnumBranch cond _ _)
+      (opt-arg-global-scan-value scan (compiler-opt-global-shared-view cond))]
+    [(ir.CompilerIrInstr.Return maybe)
+      (opt-arg-global-scan-maybe scan (compiler-opt-global-shared-view maybe))]
+    [(ir.CompilerIrInstr.Phi _ inputs _)
+      (opt-arg-global-scan-phi scan (compiler-opt-global-shared-view inputs))]
+    [(ir.CompilerIrInstr.Pack _ values _)
+      (opt-arg-global-scan-value-seq
+        scan
+        (compiler-opt-global-shared-view values))]
+    [(ir.CompilerIrInstr.Word _ src _ _)
+      (opt-arg-global-scan-value scan (compiler-opt-global-shared-view src))]
+    [(ir.CompilerIrInstr.TailCallIndirect func args _)
+      (opt-arg-global-scan-args
+        (opt-arg-global-scan-value scan (compiler-opt-global-shared-view func))
+        (compiler-opt-global-shared-view args))]
+    [(ir.CompilerIrInstr.Switch idx _ _ _)
+      (opt-arg-global-scan-value scan (compiler-opt-global-shared-view idx))]
+    [(ir.CompilerIrInstr.TotalEnumSwitch idx _ _ _ _)
+      (opt-arg-global-scan-value scan (compiler-opt-global-shared-view idx))]))
+
+(define (opt-arg-global-scan-seq-from
+  [scan : OptArgGlobalScan]
+  [instrs : ir.CompilerIrInstrSeq]
+  [index : i64]
+  [count : i64]) : OptArgGlobalScan
+  (if (>= index count)
+    scan
+    (opt-arg-global-scan-seq-from
+      (opt-arg-global-scan-instr
+        scan
+        (ir.compiler-ir-instr-seq-ref instrs index))
+      instrs
+      (+ index 1)
+      count)))
+
+(define (opt-arg-global-scan-blocks
+  [scan : OptArgGlobalScan]
+  [blocks : ir.CompilerIrBlockList]) : OptArgGlobalScan
+  (match blocks
+    [(ir.CompilerIrBlockList.Nil) scan]
+    [(ir.CompilerIrBlockList.Cons block rest)
+      (match block
+        [(ir.CompilerIrBlock.Block _ instrs)
+          (opt-arg-global-scan-blocks
+            (opt-arg-global-scan-seq-from
+              scan
+              (compiler-opt-global-shared-view instrs)
+              0
+              (ir.compiler-ir-instr-seq-count instrs))
+            (compiler-opt-box-shared-view rest))])]
+    [(ir.CompilerIrBlockList.Array seq)
+      (let
+        [count : i64
+          (ir.compiler-ir-block-seq-count (compiler-opt-global-shared-view seq))]
+        [acc : OptArgGlobalScan scan]
+        [i : i64 0]
+        (begin
+          (while (< i count)
+            (begin
+              (match (ir.compiler-ir-block-seq-ref
+                (compiler-opt-global-shared-view seq)
+                i)
+                [(ir.CompilerIrBlock.Block _ instrs)
+                  (set!
+                    acc
+                    (opt-arg-global-scan-seq-from
+                      acc
+                      (compiler-opt-global-shared-view instrs)
+                      0
+                      (ir.compiler-ir-instr-seq-count instrs)))])
+              (set! i (+ i 1))))
+          acc))]))
+
+(define (opt-arg-global-scan-functions
+  [scan : OptArgGlobalScan]
+  [functions : ir.CompilerIrFunctionSeq]) : OptArgGlobalScan
+  (let
+    [out : OptArgGlobalScan scan]
+    [index : i64 0]
+    (begin
+      (while (< index functions.len)
+        (begin
+          (match (compiler-opt-global-array-element-shared-view
+            functions.slots
+            index)
+            [(ir.CompilerIrFunction.Function _ _ _ _ blocks)
+              (set!
+                out
+                (opt-arg-global-scan-blocks
+                  out
+                  (compiler-opt-global-shared-view blocks)))])
+          (set! index (+ index 1))))
+      out)))
+
+;; The roots the reachability walk seeds that are NOT direct call sites, so an
+;; activation of one of them is an activation this walk cannot account for:
+;; the entry (matched on the name LEAF, exactly as opt-prune-unreachable-program
+;; seeds it) and the runtime-prelude string helpers the backend may call on its
+;; own (opt-reach-add-runtime-prelude-string-helper).
+(define (opt-arg-global-root-leaf? [name : String]) : bool
+  (let
+    [start : i64 (opt-symbol-leaf-start (compiler-opt-global-shared-view name))]
+    (cond
+      [(opt-symbol-leaf-matches-from?
+          (compiler-opt-global-shared-view name)
+          start
+          "main")
+        true]
+      [(opt-symbol-leaf-matches-from?
+          (compiler-opt-global-shared-view name)
+          start
+          "int-to-string")
+        true]
+      [(opt-symbol-leaf-matches-from?
+          (compiler-opt-global-shared-view name)
+          start
+          "substring")
+        true]
+      [(opt-symbol-leaf-matches-from?
+          (compiler-opt-global-shared-view name)
+          start
+          "str-view")
+        true]
+      [(opt-symbol-leaf-matches-from?
+          (compiler-opt-global-shared-view name)
+          start
+          "string-concat")
+        true]
+      [(opt-symbol-leaf-matches-from?
+          (compiler-opt-global-shared-view name)
+          start
+          "string-concat3")
+        true]
+      [(opt-symbol-leaf-matches-from?
+          (compiler-opt-global-shared-view name)
+          start
+          "string-concat4")
+        true]
+      [(opt-symbol-leaf-matches-from? name start "string-concat5") true]
+      [else false])))
+
+;; Every function's parameter count, plus the roots no IR call site names.
+(define (opt-arg-global-seed-functions
+  [scan : OptArgGlobalScan]
+  [functions : ir.CompilerIrFunctionSeq]
+  [index : i64]) : OptArgGlobalScan
+  (if (>= index functions.len)
+    scan
+    (opt-arg-global-seed-functions
+      (match (compiler-opt-global-array-element-shared-view
+        functions.slots
+        index)
+        [(ir.CompilerIrFunction.Function name params _ _ _)
+          (let
+            [id : i64 (ir.compiler-ir-symbol-id name)]
+            [rooted? : bool
+              (opt-arg-global-root-leaf? (ir.compiler-ir-symbol-text name))]
+            (match (if rooted?
+              (opt-arg-global-scan-opaque
+                (compiler-opt-global-shared-view scan)
+                id)
+              (compiler-opt-global-shared-view scan))
+              [(OptArgGlobalScan opaque arity sites)
+                (begin
+                  (if (and
+                    (>= id 0)
+                    (> params.len 0)
+                    (<= params.len (opt-arg-global-param-cap)))
+                    (opt_i64_i64_map.insert-ref!
+                      (&mut arity)
+                      id
+                      (+ params.len 1))
+                    unit)
+                  (OptArgGlobalScan opaque arity sites))]))])
+      functions
+      (+ index 1))))
+
+;; An extern this program PROVIDES is called from outside the IR.
+(define (opt-arg-global-seed-externs
+  [scan : OptArgGlobalScan]
+  [externs : ir.CompilerIrExternSeq]
+  [index : i64]) : OptArgGlobalScan
+  (if (>=
+    index
+    (ir.compiler-ir-extern-seq-count (compiler-opt-global-shared-view externs)))
+    scan
+    (opt-arg-global-seed-externs
+      (match (ir.compiler-ir-extern-seq-ref
+        (compiler-opt-global-shared-view externs)
+        index)
+        [(ir.CompilerIrExtern.Extern name-id _ _ _ _ _ _ provided)
+          (if provided
+            (opt-arg-global-scan-opaque scan (ir.compiler-ir-symbol-id name-id))
+            scan)])
+      externs
+      (+ index 1))))
+
+;; A global's initializer names its hidden `__global_init_*` setup function,
+;; which the startup sequence calls: the same value form opt-reach-global
+;; treats as a root, refused here for the same reason.
+(define (opt-arg-global-seed-globals
+  [scan : OptArgGlobalScan]
+  [globals : ir.CompilerIrGlobalSeq]
+  [index : i64]) : OptArgGlobalScan
+  (if (>=
+    index
+    (ir.compiler-ir-global-seq-count (compiler-opt-global-shared-view globals)))
+    scan
+    (opt-arg-global-seed-globals
+      (match (ir.compiler-ir-global-seq-ref
+        (compiler-opt-global-shared-view globals)
+        index)
+        [(ir.CompilerIrGlobal.Global _ _ value)
+          (match (compiler-opt-global-shared-view value)
+            [(ir.CompilerIrValue.RuntimeGlobal init)
+              (opt-arg-global-scan-opaque scan (ir.compiler-ir-symbol-id init))]
+            [(ir.CompilerIrValue.Function init)
+              (opt-arg-global-scan-opaque scan (ir.compiler-ir-symbol-id init))]
+            [_ scan])])
+      globals
+      (+ index 1))))
+
+;; Is this parameter a reference to a memory aggregate -- the `(& x Vec)` /
+;; `(&mut x Vec)` shape whose descriptor chain the LE lookups walk? Mirrors
+;; opt-lp-param-kind-of, including its `Region` unwrap.
+(define (opt-arg-global-ref-param?
+  [type-segment-bases : i64]
+  [ty : ast.AstType]) : bool
+  (match ty
+    [(ast.AstType.Ref _ _) true]
+    [(ast.AstType.MutRef _ _) true]
+    [(ast.AstType.Region _ inner)
+      (opt-arg-global-ref-param?
+        type-segment-bases
+        (ast.ast-type-segment-bases-get type-segment-bases inner))]
+    [_ false]))
+
+(define (opt-arg-global-emit-params
+  [type-segment-bases : i64]
+  [scan : OptArgGlobalScan]
+  [out : opt_i64_i64_map.Map]
+  [name : i64]
+  [params : ir.CompilerIrParamSeq]
+  [position : i64]) : opt_i64_i64_map.Map
+  (if (>= position params.len)
+    out
+    (let
+      [emitted : opt_i64_i64_map.Map
+        (match (ir.compiler-ir-param-seq-ref
+          (compiler-opt-global-shared-view params)
+          position)
+          [(ir.CompilerIrParam.Param _ ty _)
+            (let
+              [seen : i64
+                (opt-arg-global-fact
+                  (compiler-opt-global-shared-view scan.sites)
+                  name
+                  position)]
+              (begin
+                (if (and
+                  (> seen 0)
+                  (opt-arg-global-ref-param? type-segment-bases ty))
+                  (opt_i64_i64_map.insert-ref!
+                    (&mut out)
+                    (opt-arg-global-key name position)
+                    seen)
+                  unit)
+                out))])]
+      (opt-arg-global-emit-params
+        type-segment-bases
+        (compiler-opt-global-shared-view scan)
+        emitted
+        name
+        params
+        (+ position 1)))))
+
+(define (opt-arg-global-emit
+  [type-segment-bases : i64]
+  [scan : OptArgGlobalScan]
+  [functions : ir.CompilerIrFunctionSeq]
+  [out : opt_i64_i64_map.Map]
+  [index : i64]) : opt_i64_i64_map.Map
+  (if (>= index functions.len)
+    out
+    (opt-arg-global-emit
+      type-segment-bases
+      (compiler-opt-global-shared-view scan)
+      (compiler-opt-global-shared-view functions)
+      (match (compiler-opt-global-array-element-shared-view
+        functions.slots
+        index)
+        [(ir.CompilerIrFunction.Function name params _ _ _)
+          (let
+            [id : i64 (ir.compiler-ir-symbol-id name)]
+            (if (or
+              (< id 0)
+              (opt_i64_i64_map.contains? (& scan.opaque) id)
+              (<
+                (opt-arg-global-arity-of
+                  (compiler-opt-global-shared-view scan)
+                  id)
+                0))
+              out
+              (opt-arg-global-emit-params
+                type-segment-bases
+                (compiler-opt-global-shared-view scan)
+                out
+                id
+                (compiler-opt-global-shared-view params)
+                0)))])
+      (+ index 1))))
+
+;; Build the call-site global-argument identity table, or decline. The
+;; function-count gate is the one every other whole-program summary applies,
+;; and an empty length-equality table means nothing would read the facts, so
+;; the whole walk is skipped there.
+(define (opt-arg-global-build
+  [type-segment-bases : i64]
+  [globals : ir.CompilerIrGlobalSeq]
+  [externs : ir.CompilerIrExternSeq]
+  [functions : ir.CompilerIrFunctionSeq]
+  [len-eq : opt_i64_i64_map.Map]
+  [capacity : i64]) : opt_i64_i64_map.Map
+  (if (or
+    (= (opt_i64_i64_map.len (& len-eq)) 0)
+    (>
+      (opt-function-seq-count (compiler-opt-global-shared-view functions))
+      (opt-loop-bce-summary-function-limit)))
+    (opt_i64_i64_map.with-capacity 1)
+    (opt-arg-global-emit
+      type-segment-bases
+      (opt-arg-global-scan-functions
+        (opt-arg-global-seed-globals
+          (opt-arg-global-seed-externs
+            (opt-arg-global-seed-functions
+              (OptArgGlobalScan
+                (opt_i64_i64_map.with-capacity capacity)
+                (opt_i64_i64_map.with-capacity capacity)
+                (opt_i64_i64_map.with-capacity capacity))
+              (compiler-opt-global-shared-view functions)
+              0)
+            (compiler-opt-global-shared-view externs)
+            0)
+          (compiler-opt-global-shared-view globals)
+          0)
+        (compiler-opt-global-shared-view functions))
+      functions
+      (opt_i64_i64_map.with-capacity capacity)
+      0)))
+
+;; GAP-1's facts ride the global-cell summary beside P-B's families, but are
+;; computed here rather than inside opt-global-cell-summary-build-with-call-
+;; memory because the root set they must exclude is spelled by the program
+;; SHELL -- the externs it provides and every global's hidden initializer --
+;; which that entry point does not receive.
+(define (opt-arg-global-attach
+  [type-segment-bases : i64]
+  [globals : ir.CompilerIrGlobalSeq]
+  [externs : ir.CompilerIrExternSeq]
+  [functions : ir.CompilerIrFunctionSeq]
+  [capacity : i64]
+  [cell : OptGlobalCellSummary]) : OptGlobalCellSummary
+  (opt-global-cell-summary-with-arg-global
+    (compiler-opt-global-shared-view cell)
+    (opt-arg-global-build
+      type-segment-bases
+      globals
+      externs
+      functions
+      (compiler-opt-global-shared-view cell.len-eq)
+      capacity)))
+
 ;; --- whole-program non-negative scalar globals -------------------------------
 ;;
 ;; IPSCCP-style range seeding, restricted to the one fact the range merge needs:
@@ -128585,6 +129674,7 @@
             (opt_i64_i64_map.with-capacity 1)
             (opt_i64_i64_map.with-capacity 1)
             (opt_i64_i64_map.with-capacity 1)
+            (opt_i64_i64_map.with-capacity 1)
             (opt_i64_i64_map.with-capacity 1))]
         [nonneg : opt_i64_i64_map.Map
           (opt-nonneg-globals-build
@@ -128623,7 +129713,13 @@
             capacity)
           nonneg
           (compiler-opt-global-shared-view len-eq)
-          (opt-len-eq-clean-build functions len-eq capacity))))))
+          (opt-len-eq-clean-build functions len-eq capacity)
+          ;; GAP-1's facts are attached by opt-arg-global-attach, which the
+          ;; program-summary builder calls: the root set they must exclude is
+          ;; spelled by the program SHELL (the entry, the externs this program
+          ;; provides, every global's hidden initializer), which this entry
+          ;; point does not receive.
+          (opt_i64_i64_map.with-capacity 1))))))
 
 ;; --- condition (a): stores a later read can OBSERVE ---------------------------
 ;;
@@ -130214,6 +131310,7 @@
                     (opt-build-program-summaries
                       type-segment-bases
                       (compiler-opt-global-shared-view pruned-globals)
+                      (compiler-opt-global-shared-view externs)
                       (compiler-opt-global-shared-view pruned-functions)
                       level)
                     (profile_state.compiler-profile-state-shared-view
@@ -130740,6 +131837,7 @@
                           (opt-build-program-summaries
                             type-segment-bases
                             (compiler-opt-global-shared-view pruned-globals)
+                            (compiler-opt-global-shared-view externs)
                             (compiler-opt-global-shared-view
                               optimizer-functions)
                             level)

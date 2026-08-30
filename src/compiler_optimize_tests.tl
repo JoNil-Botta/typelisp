@@ -1924,7 +1924,7 @@
   [col : i64]) : bool
   (match (compiler_ir_types.compiler-source-spans-lookup-instr
     (compiler_ir_types.compiler-ir-global-shared-view spans)
-    function
+    (compiler_ir_types.compiler-ir-symbol-typed-id function)
     instr)
     [(compiler_ir_types.CompilerMaybeSourceSpan.Some span)
       (opt-source-span-line-col-ok? span line col)]
@@ -1936,7 +1936,7 @@
   [instr : compiler_ir_types.CompilerIrInstr]) : bool
   (match (compiler_ir_types.compiler-source-spans-lookup-instr
     (compiler_ir_types.compiler-ir-global-shared-view spans)
-    function
+    (compiler_ir_types.compiler-ir-symbol-typed-id function)
     instr)
     [(compiler_ir_types.CompilerMaybeSourceSpan.Some _) false]
     [(compiler_ir_types.CompilerMaybeSourceSpan.No) true]))
@@ -1950,7 +1950,7 @@
   [col : i64]) : bool
   (match (compiler_ir_types.compiler-source-spans-lookup-instr-location
     (compiler_ir_types.compiler-ir-global-shared-view spans)
-    function
+    (compiler_ir_types.compiler-ir-symbol-typed-id function)
     instr)
     [(compiler_ir_types.CompilerMaybeSourceLocation.Some
         (compiler_ir_types.CompilerSourceLocation found-path-id span))
@@ -1963,6 +1963,9 @@
   (begin
     (cbi.compiler-builtin-initialize-for-parse!)
     (compiler_ir_types.compiler-ir-test-symbol name)))
+
+(define (opt-test-span-symbol [name : String]) : compiler_ir_types.CompilerIrSymbolId
+  (compiler_ir_types.compiler-ir-symbol-typed-id (opt-test-symbol name)))
 
 (define (opt-test-global-builder-push!
   [builder : (&mut builder compiler_ir_types.CompilerIrGlobalBuilder)]
@@ -2147,10 +2150,10 @@
       (compiler_ir_types.compiler-source-spans-insert-instr
         (compiler_ir_types.compiler-source-spans-insert-instr
           (opt-spans-base)
-          (opt-test-symbol "main")
+          (opt-test-span-symbol "main")
           (compiler_optimize.compiler-opt-global-shared-view dead)
           (opt-test-span 21 3))
-        (opt-test-symbol "main")
+        (opt-test-span-symbol "main")
         (compiler_optimize.compiler-opt-global-shared-view live)
         (opt-test-span 31 5))]
     (match (compiler_optimize.optimize-program-with-spans-and-level
@@ -2199,7 +2202,7 @@
     [spans : compiler_ir_types.CompilerSourceSpans
       (compiler_ir_types.compiler-source-spans-insert-instr
         (opt-spans-base)
-        (opt-test-symbol "main")
+        (opt-test-span-symbol "main")
         folded
         (opt-test-span 41 7))]
     (match (compiler_optimize.optimize-program-with-spans-and-level
@@ -2247,10 +2250,10 @@
       (compiler_ir_types.compiler-source-spans-insert-instr
         (compiler_ir_types.compiler-source-spans-insert-instr
           (opt-spans-base)
-          (opt-test-symbol "main")
+          (opt-test-span-symbol "main")
           (compiler_optimize.compiler-opt-global-shared-view first)
           (opt-test-span 51 9))
-        (opt-test-symbol "main")
+        (opt-test-span-symbol "main")
         second
         (opt-test-span 61 11))]
     (match (compiler_optimize.optimize-program-with-spans-and-level
@@ -2401,11 +2404,11 @@
       (compiler_ir_types.compiler-source-spans-insert-instr-located
         (compiler_ir_types.compiler-source-spans-insert-instr-located
           (opt-spans-base)
-          (opt-test-symbol "inline_span")
+          (opt-test-span-symbol "inline_span")
           (opt-inline-span-callee-call symbols)
           701
           (opt-test-span 71 13))
-        (opt-test-symbol "main")
+        (opt-test-span-symbol "main")
         (opt-inline-span-caller-call symbols)
         801
         (opt-test-span 81 15))]
@@ -2452,7 +2455,7 @@
     [spans : compiler_ir_types.CompilerSourceSpans
       (compiler_ir_types.compiler-source-spans-insert-instr
         (opt-spans-base)
-        (opt-test-symbol "main")
+        (opt-test-span-symbol "main")
         (opt-inline-span-caller-call symbols)
         (opt-test-span 91 17))]
     [cloned-call : compiler_ir_types.CompilerIrInstr
@@ -2490,10 +2493,10 @@
       (compiler_ir_types.compiler-source-spans-insert-instr
         (compiler_ir_types.compiler-source-spans-insert-instr
           (opt-spans-base)
-          (opt-test-symbol "inline_branch")
+          (opt-test-span-symbol "inline_branch")
           (opt-inline-branch-callee-mov)
           (opt-test-span 141 27))
-        (opt-test-symbol "main")
+        (opt-test-span-symbol "main")
         (opt-inline-branch-caller-call symbols)
         (opt-test-span 151 29))]
     [phi : compiler_ir_types.CompilerIrInstr
@@ -2552,7 +2555,7 @@
     [spans : compiler_ir_types.CompilerSourceSpans
       (compiler_ir_types.compiler-source-spans-insert-instr
         (opt-spans-base)
-        (opt-test-symbol "main")
+        (opt-test-span-symbol "main")
         (compiler_optimize.compiler-opt-global-shared-view call)
         (opt-test-span 101 19))]
     (match (compiler_optimize.optimize-program-with-spans-and-level
@@ -2603,13 +2606,13 @@
         (compiler_ir_types.compiler-source-spans-insert-instr
           (compiler_ir_types.compiler-source-spans-insert-instr
             (opt-spans-base)
-            (opt-test-symbol "main")
+            (opt-test-span-symbol "main")
             (compiler_optimize.compiler-opt-global-shared-view pack)
             (opt-test-span 111 21))
-          (opt-test-symbol "main")
+          (opt-test-span-symbol "main")
           (compiler_optimize.compiler-opt-global-shared-view word)
           (opt-test-span 121 23))
-        (opt-test-symbol "main")
+        (opt-test-span-symbol "main")
         (compiler_optimize.compiler-opt-global-shared-view tail)
         (opt-test-span 131 25))]
     (match (compiler_optimize.optimize-program-with-spans-and-level
@@ -2682,21 +2685,31 @@
         (compiler_ir_types.CompilerIrValue.I64 2)
         19)]
     [previous-debug : bool (compiler_ir_types.compiler-debug-info-enabled?)]
+    [function : compiler_ir_types.CompilerIrSymbolId
+      (compiler_ir_types.compiler-ir-symbol-typed-id 7)]
     [ok : bool
       (begin
         (compiler_ir_types.compiler-debug-info-set-enabled! false)
         (and
-          (match (compiler_optimize.opt-remap-spans-instr-key 7 div)
+          (match (compiler_optimize.opt-remap-spans-instr-key function div)
             [(compiler_optimize.OptRemapSpanKey.SomeKey
-                (compiler_ir_types.CompilerSourceSpansInstrKey.Value 7 1))
-              true]
+                (compiler_ir_types.CompilerSourceSpansInstrKey.Value
+                  found-function
+                  1))
+              (compiler_ir_types.compiler-ir-symbol-id-eq?
+                found-function
+                function)]
             [_ false])
-          (match (compiler_optimize.opt-remap-spans-instr-key 7 bounds)
+          (match (compiler_optimize.opt-remap-spans-instr-key function bounds)
             [(compiler_optimize.OptRemapSpanKey.SomeKey
-                (compiler_ir_types.CompilerSourceSpansInstrKey.Bounds 7 19))
-              true]
+                (compiler_ir_types.CompilerSourceSpansInstrKey.Bounds
+                  found-function
+                  19))
+              (compiler_ir_types.compiler-ir-symbol-id-eq?
+                found-function
+                function)]
             [_ false])
-          (match (compiler_optimize.opt-remap-spans-instr-key 7 add)
+          (match (compiler_optimize.opt-remap-spans-instr-key function add)
             [(compiler_optimize.OptRemapSpanKey.NoKey) true]
             [_ false])))]
     (begin
@@ -2723,7 +2736,7 @@
     [spans : compiler_ir_types.CompilerSourceSpans
       (compiler_ir_types.compiler-source-spans-insert-instr-located
         (opt-spans-base)
-        checked
+        (compiler_ir_types.compiler-ir-symbol-typed-id checked)
         (opt-bounds-span-check "bce_span_probe_body")
         907
         (opt-test-span 44 12))]
@@ -22817,10 +22830,10 @@
       (compiler_ir_types.compiler-source-spans-insert-instr
         (compiler_ir_types.compiler-source-spans-insert-instr
           (opt-spans-base)
-          callee-name
+          (compiler_ir_types.compiler-ir-symbol-typed-id callee-name)
           callee-phi
           (opt-test-span 171 33))
-        caller-name
+        (compiler_ir_types.compiler-ir-symbol-typed-id caller-name)
         (compiler_optimize.compiler-opt-global-shared-view caller-call)
         (opt-test-span 181 35))]
     [previous-debug : bool (compiler_ir_types.compiler-debug-info-enabled?)]
@@ -23321,11 +23334,11 @@
       (compiler_ir_types.compiler-source-spans-insert-instr-located
         (compiler_ir_types.compiler-source-spans-insert-instr-located
           (opt-spans-base)
-          (opt-test-symbol "inline_nonleaf")
+          (opt-test-span-symbol "inline_nonleaf")
           (opt-inline-nonleaf-inner-call symbols.external-helper)
           703
           (opt-test-span 73 11))
-        (opt-test-symbol "main")
+        (opt-test-span-symbol "main")
         (opt-inline-nonleaf-caller-call symbols)
         803
         (opt-test-span 83 17))]
@@ -23417,10 +23430,10 @@
       (compiler_ir_types.compiler-source-spans-insert-instr
         (compiler_ir_types.compiler-source-spans-insert-instr
           (opt-spans-base)
-          (opt-test-symbol "inline_nonleaf")
+          (opt-test-span-symbol "inline_nonleaf")
           (opt-inline-nonleaf-inner-call panic-name)
           (opt-test-span 61 9))
-        (opt-test-symbol "main")
+        (opt-test-span-symbol "main")
         (opt-inline-nonleaf-caller-call symbols)
         (opt-test-span 62 3))]
     [cloned-call : compiler_ir_types.CompilerIrInstr

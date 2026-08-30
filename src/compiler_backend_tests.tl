@@ -17173,16 +17173,18 @@ g:
 (define (compiler-backend-test-span [line : i64] [col : i64]) : compiler_ast_types.AstSourceSpan
   (compiler_ast_types.ast-source-span line col line col))
 
-;; Span keys are a one-word handle, and identical spellings from different
-;; provenance stay distinct. The `size-of` check lives here rather than beside
-;; `CompilerIrSymbolId` because `size-of` needs a `(type T)` literal, and a
-;; literal anywhere in a compiled program forces the tens-of-MB CTFE
-;; reflection/layout metadata build for that compile (#5872, #5875). This
-;; module is outside `main.tl`'s closure, so the assertion costs the
-;; self-compile nothing.
+;; Span symbols are one-word handles, the instruction key remains three words,
+;; and identical spellings from different provenance stay distinct. The
+;; `size-of` checks live here rather than beside `CompilerIrSymbolId` because
+;; `size-of` needs a `(type T)` literal, and a literal anywhere in a compiled
+;; program forces the tens-of-MB CTFE reflection/layout metadata build for that
+;; compile (#5872, #5875). This module is outside `main.tl`'s closure, so the
+;; assertions cost the self-compile nothing.
 (define (compiler-backend-source-span-symbol-provenance-ok?) : bool
   (let
     [symbol-id-bytes : i64 (compiler_ir_types.compiler-ir-symbol-id-size)]
+    [instr-key-bytes : i64
+      (compiler_ir_types.compiler-source-spans-instr-key-size)]
     [source-name : compiler_ir_types.CompilerIrSymbolId
       (compiler_ir_types.compiler-ir-symbol-typed-id
         (ci.intern "same-span-name"))]
@@ -17201,6 +17203,7 @@ g:
       (compiler_backend.compiler-backend-source-span-index-build spans)]
     (and
       (= symbol-id-bytes 8)
+      (= instr-key-bytes 24)
       (not
         (compiler_ir_types.compiler-ir-symbol-id-eq? source-name generated-name))
       (string.eq
@@ -18258,7 +18261,7 @@ g:
           (compiler_ir_types.compiler-source-spans-empty)
           (compiler_ir_types.compiler-ir-symbol-typed-id (ci.intern "main"))
           (compiler-backend-test-span 10 2))
-        (ci.intern "main")
+        (compiler_ir_types.compiler-ir-symbol-typed-id (ci.intern "main"))
         (owned_view.compiler-owned-shared-view instr)
         (compiler-backend-test-span want-line want-col))]
     [program : compiler_ir_types.CompilerIrProgram
@@ -24647,7 +24650,7 @@ g:
           (compiler_ir_types.compiler-source-spans-empty)
           (compiler_ir_types.compiler-ir-symbol-typed-id (ci.intern "main"))
           (compiler-backend-test-span 10 2))
-        (ci.intern "main")
+        (compiler_ir_types.compiler-ir-symbol-typed-id (ci.intern "main"))
         phi
         (compiler-backend-test-span 55 13))]
     [previous-debug : bool (compiler_ir_types.compiler-debug-info-enabled?)]

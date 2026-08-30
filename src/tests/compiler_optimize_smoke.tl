@@ -3749,18 +3749,21 @@
       (smoke-inline-phi-header (ir.compiler-ir-label "latch"))]
     [exit-phi : ir.CompilerIrInstr
       (smoke-inline-phi-exit (ir.compiler-ir-label "latch"))]
+    [main-symbol : ir.CompilerIrSymbolId
+      (ir.compiler-ir-symbol-typed-id
+        (compiler_optimize_tests.opt-test-symbol "main"))]
     [spans : ir.CompilerSourceSpans
       (ir.compiler-source-spans-insert-instr
         (ir.compiler-source-spans-insert-instr
           (ir.compiler-source-spans-insert-instr
             (compiler_optimize_tests.opt-spans-base)
-            (compiler_optimize_tests.opt-test-symbol "main")
+            main-symbol
             call
             (compiler_optimize_tests.opt-test-span 161 31))
-          (compiler_optimize_tests.opt-test-symbol "main")
+          main-symbol
           header-phi
           (compiler_optimize_tests.opt-test-span 162 33))
-        (compiler_optimize_tests.opt-test-symbol "main")
+        main-symbol
         exit-phi
         (compiler_optimize_tests.opt-test-span 163 35))]
     [result-mov : ir.CompilerIrInstr

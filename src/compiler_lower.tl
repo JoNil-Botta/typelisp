@@ -18297,7 +18297,8 @@
               [(ir.CompilerMaybeSourceSpan.Some span)
                 (ir.compiler-source-spans-insert-instr-located
                   (lower-boxed-box-field-shared-view data spans)
-                  (lower-box-field-shared-view data function)
+                  (ir.compiler-ir-symbol-typed-id
+                    (lower-box-field-shared-view data function))
                   (lower-global-shared-view instr)
                   (lower-state-current-source-path-id
                     (lower-global-shared-view state))
@@ -18346,7 +18347,8 @@
                 [next-spans : ir.CompilerSourceSpans
                   (ir.compiler-source-spans-insert-instr-located
                     (lower-boxed-box-field-shared-view data spans)
-                    (lower-box-field-shared-view data function)
+                    (ir.compiler-ir-symbol-typed-id
+                      (lower-box-field-shared-view data function))
                     (ir.CompilerIrInstr.BoundsCheck
                       ir.CompilerIrValue.Unit
                       ir.CompilerIrValue.Unit

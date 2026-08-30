@@ -34,6 +34,18 @@
 (define (lint-test-var [name : String]) : i64
   (ast.ast-node-push (ast.AstExpr.Var (ci.intern-generated-name name))))
 
+(define (lint-test-source-view [inner : i64] [span : ast.AstSourceSpan]) : i64
+  (let
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-active-live)]
+    [view : i64
+      (ast.ast-expr-source-view-with-pools
+        (owned_view.compiler-owned-shared-view pools)
+        inner
+        span)]
+    (begin
+      (ast.ast-node-pool-context-expr-sync-installed! pools)
+      view)))
+
 (define (lint-test-expr-list2 [a : i64] [b : i64]) : ast.AstExprList
   (ast.ast-expr-cons a (ast.ast-expr-cons b (ast.ast-expr-list-new))))
 
@@ -320,7 +332,7 @@
       (ast.ast-node-push
         (ast.AstExpr.Begin
           (ast.ast-expr-cons
-            (ast.ast-expr-spanned vx (ast.ast-source-span 31 9 31 10))
+            (lint-test-source-view vx (ast.ast-source-span 31 9 31 10))
             (ast.ast-expr-cons one (ast.ast-expr-list-new)))))]
     (begin
       (if (=
@@ -424,7 +436,7 @@
   [return-one : i64]) : unit
   (let
     [spanned-unreachable-var : i64
-      (ast.ast-expr-spanned vx (ast.ast-source-span 41 9 41 10))]
+      (lint-test-source-view vx (ast.ast-source-span 41 9 41 10))]
     [unreachable-return-begin : i64
       (ast.ast-node-push
         (ast.AstExpr.Begin
@@ -438,13 +450,13 @@
         (lint-test-var "panic")
         (ast.ast-expr-cons one (ast.ast-expr-list-new)))]
     [spanned-panic-call : i64
-      (ast.ast-expr-spanned panic-call (ast.ast-source-span 43 9 43 24))]
+      (lint-test-source-view panic-call (ast.ast-source-span 43 9 43 24))]
     [qualified-panic-call : i64
       (ast.ast-expr-call
         (lint-test-var "io.panic")
         (ast.ast-expr-cons one (ast.ast-expr-list-new)))]
     [spanned-qualified-panic-call : i64
-      (ast.ast-expr-spanned
+      (lint-test-source-view
         qualified-panic-call
         (ast.ast-source-span 44 9 44 27))]
     [redundant-padding-begin : i64
@@ -693,9 +705,10 @@
                 (ast.ast-global-shared-view inner-let-bindings)
                 vx)
               (ast.ast-expr-cons vx (ast.ast-expr-list-new))))))]
-    [spanned : i64 (ast.ast-expr-spanned ladder3 (ast.ast-source-span 7 3 9 4))]
+    [spanned : i64
+      (lint-test-source-view ladder3 (ast.ast-source-span 7 3 9 4))]
     [spanned-nested-let : i64
-      (ast.ast-expr-spanned nested-let (ast.ast-source-span 11 5 15 6))]
+      (lint-test-source-view nested-let (ast.ast-source-span 11 5 15 6))]
     [and-callee : i64 (lint-test-var "and")]
     [or-callee : i64 (lint-test-var "or")]
     [core-and-callee : i64 (lint-test-var "core/and")]
@@ -717,18 +730,18 @@
     [core-cond-dotted-call : i64
       (ast.ast-expr-call core-cond-dotted-callee (ast.ast-expr-list-new))]
     [spanned-core-cond-dotted-call : i64
-      (ast.ast-expr-spanned
+      (lint-test-source-view
         core-cond-dotted-call
         (ast.ast-source-span 22 7 22 18))]
     [double-and-cascade : i64
       (ast.ast-expr-call and-callee (lint-test-expr-list2 and-xy and-yz))]
     [spanned-and-cascade : i64
-      (ast.ast-expr-spanned and-cascade (ast.ast-source-span 21 7 21 30))]
+      (lint-test-source-view and-cascade (ast.ast-source-span 21 7 21 30))]
     [single-begin : i64
       (ast.ast-node-push
         (ast.AstExpr.Begin (ast.ast-expr-cons vx (ast.ast-expr-list-new))))]
     [spanned-single-begin : i64
-      (ast.ast-expr-spanned single-begin (ast.ast-source-span 51 3 51 13))]
+      (lint-test-source-view single-begin (ast.ast-source-span 51 3 51 13))]
     [empty-begin : i64
       (ast.ast-node-push (ast.AstExpr.Begin (ast.ast-expr-list-new)))]
     (begin

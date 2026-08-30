@@ -116,7 +116,9 @@
         str-cat-callee
         (lint_core_tests.lint-test-expr-list3 vx vy vz))]
     [spanned-str-cat : i64
-      (ast.ast-expr-spanned nested-str-cat (ast.ast-source-span 23 4 23 36))]
+      (lint_core_tests.lint-test-source-view
+        nested-str-cat
+        (ast.ast-source-span 23 4 23 36))]
     (begin
       (if (=
         (lint_core.lint-findings-count
@@ -162,6 +164,10 @@
   (begin
     (cbi.compiler-builtin-initialize-for-parse!)
     (let
+      [pools : ast.AstNodePoolContext
+        (ast.ast-node-pool-context-capture-active)]
+      [_install : unit
+        (ast.ast-node-pool-context-install! (ast.ast-global-shared-view pools))]
       [core-result : i64 (lint_core_tests.compiler-lint-self-test)]
       (if (= core-result 42)
         (if (= (lint-smoke-deprecated-string-concat-self-test) 42)

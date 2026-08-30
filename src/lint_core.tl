@@ -1447,10 +1447,10 @@
     (lint-name-case-upper-camel-suggestion name)
     span))
 
-(define (lint-no-effect-span [expr : ast.AstExpr]) : ast.AstSourceSpan
-  (match expr
-    [(ast.AstExpr.Spanned _ span) span]
-    [_ (lint-no-span)]))
+(define (lint-no-effect-span-id [id : i64]) : ast.AstSourceSpan
+  (match (ast.ast-expr-view-span id)
+    [(ast.AstMaybeSourceSpan.No) (lint-no-span)]
+    [(ast.AstMaybeSourceSpan.Some span) span]))
 
 (define (lint-terminal-callee-name? [text : String]) : bool
   (or
@@ -1517,16 +1517,20 @@
     [_ false]))
 
 (define (lint-add-redundant-divergence-padding
-  [head : ast.AstExpr]
+  [head-id : i64]
   [rest : ast.AstExprList]
   [acc : LintFindings]) : LintFindings
-  (if (= rest.len 0)
-    acc
-    (if (lint-diverging-call-expr? (owned_view.compiler-owned-shared-view head))
-      (lint-findings-add
-        (lint-redundant-divergence-padding-finding (lint-no-effect-span head))
-        acc)
-      acc)))
+  (let
+    [head : ast.AstExpr (ast.ast-node-get head-id)]
+    (if (= rest.len 0)
+      acc
+      (if (lint-diverging-call-expr?
+        (owned_view.compiler-owned-shared-view head))
+        (lint-findings-add
+          (lint-redundant-divergence-padding-finding
+            (lint-no-effect-span-id head-id))
+          acc)
+        acc))))
 
 (define (lint-no-effect-pure-binop? [op : ast.AstBinOp]) : bool
   (match op
@@ -5498,7 +5502,7 @@
             (lint-copy-on-update-expr
               (ast.ast-node-get init)
               state
-              (lint-no-effect-span (ast.ast-node-get init)))]
+              (lint-no-effect-span-id init))]
           [type-name : String
             (lint-copy-on-update-local-type-from-binding
               (owned_view.compiler-owned-shared-view after-init)
@@ -5576,8 +5580,8 @@
             (lint-copy-on-update-expr
               (ast.ast-node-get init)
               state
-              (lint-no-effect-span (ast.ast-node-get init)))
-            (lint-no-effect-span (ast.ast-node-get cleanup)))
+              (lint-no-effect-span-id init))
+            (lint-no-effect-span-id cleanup))
           (+ index 1))])))
 
 (define (lint-copy-on-update-expr
@@ -5585,8 +5589,11 @@
   [state : LintCopyOnUpdateState]
   [span : ast.AstSourceSpan]) : LintCopyOnUpdateState
   (match expr
-    [(ast.AstExpr.Spanned inner inner-span)
-      (lint-copy-on-update-expr (ast.ast-node-get inner) state inner-span)]
+    [(ast.AstExpr.Spanned inner _)
+      (lint-copy-on-update-expr
+        (ast.ast-node-get inner)
+        state
+        (lint-no-effect-span-id inner))]
     [(ast.AstExpr.Binary _ left right)
       (lint-copy-on-update-expr
         (ast.ast-node-get right)
@@ -6248,7 +6255,7 @@
       (lint-single-element-array-make-array-one? (ast.ast-node-get init)))))
 
 (define (lint-single-element-array-binding-span [init : i64]) : ast.AstSourceSpan
-  (lint-no-effect-span (ast.ast-node-get init)))
+  (lint-no-effect-span-id init))
 
 (define (lint-single-element-array-add-local-if-candidate
   [name-id : i64]
@@ -6775,7 +6782,7 @@
                 (lint-findings-add
                   (lint-prefer-dynamic-array-literal-finding
                     (owned_view.compiler-owned-shared-view name)
-                    (lint-no-effect-span (ast.ast-node-get init)))
+                    (lint-no-effect-span-id init))
                   (owned_view.compiler-owned-shared-view state.findings)))
               (owned_view.compiler-owned-shared-view state))]
           (lint-prefer-dynamic-array-literals-in-let-bindings-at
@@ -7127,8 +7134,7 @@
             acc)))]
     [(ast.AstDecl.DefFn decl-meta _ params _ body _)
       (let
-        [body-span : ast.AstSourceSpan
-          (lint-no-effect-span (ast.ast-node-get body))]
+        [body-span : ast.AstSourceSpan (lint-no-effect-span-id body)]
         [param-candidates : LintSingleElementArrayCandidateList
           (lint-single-element-array-param-candidates
             params
@@ -7682,7 +7688,7 @@
       (lint-unused-assignment-note-reads-list args state)]))
 
 (define (lint-unused-assignment-binding-span [init : i64]) : ast.AstSourceSpan
-  (lint-no-effect-span (ast.ast-node-get init)))
+  (lint-no-effect-span-id init))
 
 (define (lint-unused-assignment-expr-list
   [exprs : ast.AstExprList]
@@ -8729,7 +8735,7 @@
     [end : i64
       (lint-source-span-end-index
         (owned_view.compiler-owned-shared-view state.source)
-        (lint-no-effect-span (ast.ast-node-get body)))]
+        (lint-no-effect-span-id body))]
     (if (> end state.cursor)
       (LintNameCaseDeclState state.source end state.findings)
       state)))
@@ -9144,14 +9150,14 @@
       (lint-redundant-function-name-add
         state
         (ci.intern-qualified-base name)
-        (lint-no-effect-span (ast.ast-node-get body)))]
+        (lint-no-effect-span-id body))]
     [(ast.AstDecl.DefMacro decl-meta name _ _ body)
       (lint-redundant-function-name-macro-expr
         (ast.ast-node-get body)
         (lint-redundant-function-name-add
           state
           (ci.intern-qualified-base name)
-          (lint-no-effect-span (ast.ast-node-get body))))]
+          (lint-no-effect-span-id body)))]
     [(ast.AstDecl.Unsafe inner)
       (lint-redundant-function-name-decl
         (owned_view.compiler-owned-box-shared-view inner)
@@ -9957,12 +9963,12 @@
       (lint-unused-variable-expr
         (ast.ast-node-get inner)
         state
-        (lint-no-effect-span (ast.ast-node-get inner)))]
+        (lint-no-effect-span-id inner))]
     [(ast.AstExpr.UnquoteSplicing inner)
       (lint-unused-variable-expr
         (ast.ast-node-get inner)
         state
-        (lint-no-effect-span (ast.ast-node-get inner)))]
+        (lint-no-effect-span-id inner))]
     [(ast.AstExpr.Binary _ left right)
       (lint-unused-variable-quasiquote-expr
         (ast.ast-node-get right)
@@ -10223,14 +10229,14 @@
             (lint-unused-variable-expr
               (ast.ast-node-get init)
               after-ty
-              (lint-no-effect-span (ast.ast-node-get init)))]
+              (lint-no-effect-span-id init))]
           [text : String (ci.intern-str name)]
           [found : LintSourceNameSpan
             (lint-source-name-span-from
               state.source
               (owned_view.compiler-owned-shared-view text)
               cursor
-              (lint-no-effect-span (ast.ast-node-get init)))]
+              (lint-no-effect-span-id init))]
           [with-case : LintUnusedVariableState
             (lint-unused-variable-add-local-name-case
               after-init
@@ -10301,12 +10307,8 @@
           [text : String (ci.intern-str name)]
           [init-expr : ast.AstExpr (ast.ast-node-get init)]
           [cleanup-expr : ast.AstExpr (ast.ast-node-get cleanup)]
-          [init-span : ast.AstSourceSpan
-            (lint-no-effect-span
-              (owned_view.compiler-owned-shared-view init-expr))]
-          [cleanup-span : ast.AstSourceSpan
-            (lint-no-effect-span
-              (owned_view.compiler-owned-shared-view cleanup-expr))]
+          [init-span : ast.AstSourceSpan (lint-no-effect-span-id init)]
+          [cleanup-span : ast.AstSourceSpan (lint-no-effect-span-id cleanup)]
           [init-start : i64
             (lint-source-span-start-index
               (owned_view.compiler-owned-shared-view state.source)
@@ -10360,14 +10362,12 @@
         start)
       0)))
 
-(define (lint-match-body-source-expr [body : ast.AstExpr]) : ast.AstExpr
-  (match (owned_view.compiler-owned-shared-view body)
+(define (lint-match-body-source-id [body : i64]) : i64
+  (match (ast.ast-node-get body)
     [(ast.AstExpr.Spanned inner-box _)
-      (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
-        (match (owned_view.compiler-owned-shared-view inner)
-          [(ast.AstExpr.Spanned _ _) inner]
-          [_ body]))]
+      (match (ast.ast-node-get inner-box)
+        [(ast.AstExpr.Spanned _ _) inner-box]
+        [_ body])]
     [_ body]))
 
 (define (lint-unused-variable-match-arms-at
@@ -10380,11 +10380,10 @@
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
       [(ast.AstMatchArm.Arm pattern body)
         (let
-          [body-expr : ast.AstExpr
-            (lint-match-body-source-expr (ast.ast-node-get body))]
+          [body-source-id : i64 (lint-match-body-source-id body)]
+          [body-expr : ast.AstExpr (ast.ast-node-get body-source-id)]
           [body-span : ast.AstSourceSpan
-            (lint-no-effect-span
-              (owned_view.compiler-owned-shared-view body-expr))]
+            (lint-no-effect-span-id body-source-id)]
           [body-start : i64
             (lint-source-span-start-index
               (owned_view.compiler-owned-shared-view state.source)
@@ -11016,8 +11015,7 @@
   [name-case : bool]
   [report-unused : bool]) : LintFindings
   (let
-    [body-span : ast.AstSourceSpan
-      (lint-no-effect-span (ast.ast-node-get body))]
+    [body-span : ast.AstSourceSpan (lint-no-effect-span-id body)]
     [cursor : i64
       (lint-unused-variable-decl-param-cursor
         (owned_view.compiler-owned-shared-view source)
@@ -11068,8 +11066,7 @@
   [name-case : bool]
   [report-unused : bool]) : LintFindings
   (let
-    [body-span : ast.AstSourceSpan
-      (lint-no-effect-span (ast.ast-node-get body))]
+    [body-span : ast.AstSourceSpan (lint-no-effect-span-id body)]
     [cursor : i64
       (lint-unused-variable-decl-param-cursor
         (owned_view.compiler-owned-shared-view source)
@@ -11128,7 +11125,7 @@
               acc
               name-case
               report-unused))
-          (lint-no-effect-span (ast.ast-node-get body)))
+          (lint-no-effect-span-id body))
         findings)]
     [(ast.AstDecl.DefFn decl-meta name params ret body _)
       (lint-unused-variable-decl-with-param-frame
@@ -11162,7 +11159,7 @@
             acc
             name-case
             report-unused)
-          (lint-no-effect-span (ast.ast-node-get body)))
+          (lint-no-effect-span-id body))
         findings)]
     [(ast.AstDecl.Unsafe inner)
       (lint-unused-variables-in-decl
@@ -11248,13 +11245,13 @@
   (if (>= index exprs.len)
     acc
     (let
-      [head : ast.AstExpr
-        (ast.ast-node-get (ast.ast-expr-list-get exprs index 0))]
+      [head-id : i64 (ast.ast-expr-list-get exprs index 0)]
+      [head : ast.AstExpr (ast.ast-node-get head-id)]
       [rest : ast.AstExprList
         (ast.ast-expr-list-tail-from-ref exprs (+ index 1))]
       (if after-terminal
         (lint-findings-add
-          (lint-unreachable-code-finding (lint-no-effect-span head))
+          (lint-unreachable-code-finding (lint-no-effect-span-id head-id))
           acc)
         (lint-walk-plain-sequence-expr-list-after-terminal-at
           exprs
@@ -11262,18 +11259,16 @@
           (lint-walk-expr
             (owned_view.compiler-owned-shared-view head)
             threshold
-            (lint-add-redundant-divergence-padding
-              (owned_view.compiler-owned-shared-view head)
-              rest
-              acc))
+            (lint-add-redundant-divergence-padding head-id rest acc))
           (lint-terminal-expr? head)
           (+ index 1))))))
 
 (define (lint-walk-discarded-nonsequence-expr
-  [expr : ast.AstExpr]
+  [expr-id : i64]
   [threshold : i64]
   [acc : LintFindings]) : LintFindings
   (let
+    [expr : ast.AstExpr (ast.ast-node-get expr-id)]
     [walked : LintFindings
       (lint-walk-expr
         (owned_view.compiler-owned-shared-view expr)
@@ -11281,33 +11276,35 @@
         acc)]
     (if (lint-no-effect-pure-expr? (owned_view.compiler-owned-shared-view expr))
       (lint-findings-add
-        (lint-no-effect-finding (lint-no-effect-span expr))
+        (lint-no-effect-finding (lint-no-effect-span-id expr-id))
         walked)
       walked)))
 
 (define (lint-walk-discarded-expr
-  [expr : ast.AstExpr]
+  [expr-id : i64]
   [threshold : i64]
   [acc : LintFindings]) : LintFindings
-  (match (owned_view.compiler-owned-shared-view expr)
-    [(ast.AstExpr.Spanned inner-box _)
-      (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
-        (match inner
-          [(ast.AstExpr.Begin _) (lint-walk-expr expr threshold acc)]
-          [(ast.AstExpr.WithRegion _ _) (lint-walk-expr expr threshold acc)]
-          [(ast.AstExpr.WithEscape _ _) (lint-walk-expr expr threshold acc)]
-          [(ast.AstExpr.WithScratch _) (lint-walk-expr expr threshold acc)]
-          [(ast.AstExpr.InArena _ _) (lint-walk-expr expr threshold acc)]
-          [(ast.AstExpr.WithResource _) (lint-walk-expr expr threshold acc)]
-          [_ (lint-walk-discarded-nonsequence-expr expr threshold acc)]))]
-    [(ast.AstExpr.Begin _) (lint-walk-expr expr threshold acc)]
-    [(ast.AstExpr.WithRegion _ _) (lint-walk-expr expr threshold acc)]
-    [(ast.AstExpr.WithEscape _ _) (lint-walk-expr expr threshold acc)]
-    [(ast.AstExpr.WithScratch _) (lint-walk-expr expr threshold acc)]
-    [(ast.AstExpr.InArena _ _) (lint-walk-expr expr threshold acc)]
-    [(ast.AstExpr.WithResource _) (lint-walk-expr expr threshold acc)]
-    [_ (lint-walk-discarded-nonsequence-expr expr threshold acc)]))
+  (let
+    [expr : ast.AstExpr (ast.ast-node-get expr-id)]
+    (match (owned_view.compiler-owned-shared-view expr)
+      [(ast.AstExpr.Spanned inner-box _)
+        (let
+          [inner : ast.AstExpr (ast.ast-node-get inner-box)]
+          (match inner
+            [(ast.AstExpr.Begin _) (lint-walk-expr expr threshold acc)]
+            [(ast.AstExpr.WithRegion _ _) (lint-walk-expr expr threshold acc)]
+            [(ast.AstExpr.WithEscape _ _) (lint-walk-expr expr threshold acc)]
+            [(ast.AstExpr.WithScratch _) (lint-walk-expr expr threshold acc)]
+            [(ast.AstExpr.InArena _ _) (lint-walk-expr expr threshold acc)]
+            [(ast.AstExpr.WithResource _) (lint-walk-expr expr threshold acc)]
+            [_ (lint-walk-discarded-nonsequence-expr expr-id threshold acc)]))]
+      [(ast.AstExpr.Begin _) (lint-walk-expr expr threshold acc)]
+      [(ast.AstExpr.WithRegion _ _) (lint-walk-expr expr threshold acc)]
+      [(ast.AstExpr.WithEscape _ _) (lint-walk-expr expr threshold acc)]
+      [(ast.AstExpr.WithScratch _) (lint-walk-expr expr threshold acc)]
+      [(ast.AstExpr.InArena _ _) (lint-walk-expr expr threshold acc)]
+      [(ast.AstExpr.WithResource _) (lint-walk-expr expr threshold acc)]
+      [_ (lint-walk-discarded-nonsequence-expr expr-id threshold acc)])))
 
 (define (lint-walk-value-sequence-expr-list
   [exprs : ast.AstExprList]
@@ -11336,18 +11333,18 @@
   (if (>= index exprs.len)
     acc
     (let
-      [head : ast.AstExpr
-        (ast.ast-node-get (ast.ast-expr-list-get exprs index 0))]
+      [head-id : i64 (ast.ast-expr-list-get exprs index 0)]
+      [head : ast.AstExpr (ast.ast-node-get head-id)]
       [rest : ast.AstExprList
         (ast.ast-expr-list-tail-from-ref exprs (+ index 1))]
       (if after-terminal
         (lint-findings-add
-          (lint-unreachable-code-finding (lint-no-effect-span head))
+          (lint-unreachable-code-finding (lint-no-effect-span-id head-id))
           acc)
         (let
           [with-padding : LintFindings
             (lint-add-redundant-divergence-padding
-              (owned_view.compiler-owned-shared-view head)
+              head-id
               (owned_view.compiler-owned-shared-view rest)
               acc)]
           [walked : LintFindings
@@ -11356,10 +11353,7 @@
                 (owned_view.compiler-owned-shared-view head)
                 threshold
                 with-padding)
-              (lint-walk-discarded-expr
-                (owned_view.compiler-owned-shared-view head)
-                threshold
-                with-padding))]
+              (lint-walk-discarded-expr head-id threshold with-padding))]
           (lint-walk-value-sequence-expr-list-after-terminal-at
             exprs
             threshold
@@ -11405,18 +11399,18 @@
   (if (>= index exprs.len)
     acc
     (let
-      [head : ast.AstExpr
-        (ast.ast-node-get (ast.ast-expr-list-get exprs index 0))]
+      [head-id : i64 (ast.ast-expr-list-get exprs index 0)]
+      [head : ast.AstExpr (ast.ast-node-get head-id)]
       [rest : ast.AstExprList
         (ast.ast-expr-list-tail-from-ref exprs (+ index 1))]
       (if after-terminal
         (lint-findings-add
-          (lint-unreachable-code-finding (lint-no-effect-span head))
+          (lint-unreachable-code-finding (lint-no-effect-span-id head-id))
           acc)
         (let
           [with-padding : LintFindings
             (lint-add-redundant-divergence-padding
-              (owned_view.compiler-owned-shared-view head)
+              head-id
               (owned_view.compiler-owned-shared-view rest)
               acc)]
           [walked : LintFindings
@@ -11425,10 +11419,7 @@
                 (owned_view.compiler-owned-shared-view head)
                 threshold
                 with-padding)
-              (lint-walk-discarded-expr
-                (owned_view.compiler-owned-shared-view head)
-                threshold
-                with-padding))]
+              (lint-walk-discarded-expr head-id threshold with-padding))]
           (lint-walk-tail-sequence-expr-list-after-terminal-at
             exprs
             threshold
@@ -11830,18 +11821,18 @@
   (if (>= index exprs.len)
     acc
     (let
-      [head : ast.AstExpr
-        (ast.ast-node-get (ast.ast-expr-list-get exprs index 0))]
+      [head-id : i64 (ast.ast-expr-list-get exprs index 0)]
+      [head : ast.AstExpr (ast.ast-node-get head-id)]
       [rest : ast.AstExprList
         (ast.ast-expr-list-tail-from-ref exprs (+ index 1))]
       (if after-terminal
         (lint-findings-add
-          (lint-unreachable-code-finding (lint-no-effect-span head))
+          (lint-unreachable-code-finding (lint-no-effect-span-id head-id))
           acc)
         (let
           [with-padding : LintFindings
             (lint-add-redundant-divergence-padding
-              (owned_view.compiler-owned-shared-view head)
+              head-id
               (owned_view.compiler-owned-shared-view rest)
               acc)]
           [walked : LintFindings

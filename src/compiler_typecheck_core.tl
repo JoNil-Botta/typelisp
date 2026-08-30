@@ -885,18 +885,26 @@
                 : (Ptr TcAggScalarCacheStateData))))
           : i64)))))
 
-(define (tc-job-state-new) : TcJobState
-  (let
+(defmacro (tc-job-state-new-from-profile-metrics-address
+  [profile-metrics-address : Expr]) : Expr
+  `(let
     [cell : (__tl_dyn-array TcJobStateData) (__tl_make-array TcJobStateData 1)]
     [owner : i64 (arena.tl_arena_current)]
-    [macro-state-addresses : (__tl_dyn-array i64) (__tl_make-array i64 17)]
+    [macro-state-addresses : (__tl_dyn-array i64)
+      (__tl_make-array i64 (cfg (any compile-profile test) 18 17))]
     (begin
       ;; The directory never grows, so TcMacroState may carry its data pointer
       ;; directly. Slot 12 keeps the owner beside the lazy addresses, while
       ;; slot 13 carries the combined source-name/structural-intern session,
       ;; slot 14 lazily owns the non-macro lazy-import table, and slots 15-16
-      ;; own the nominal/type-name and clone families.
+      ;; own the nominal/type-name and clone families. Profile/test builds use
+      ;; slot 17 for the job-owned typecheck metrics view.
       (set! (array-ref macro-state-addresses 12) owner)
+      (cfg
+        (any compile-profile test)
+        (set!
+          (array-ref macro-state-addresses 17)
+          (cast ,profile-metrics-address : i64)))
       (set!
         (array-ref cell 0)
         (TcJobStateData
@@ -922,6 +930,32 @@
           (unsafe
             (ptr->int (ptr-cast (__tl_array-data cell) : (Ptr TcJobStateData))))
           : i64)))))
+
+(cfg
+  (any compile-profile test)
+  (define (tc-job-state-new-with-profile-metrics-address
+    [profile-metrics-address : u64]) : TcJobState
+    (tc-job-state-new-from-profile-metrics-address profile-metrics-address)))
+
+;; Preserve the exact ordinary constructor after cfg erasure. Profile builds
+;; give serial compatibility callers a private view; production driver jobs
+;; pass their CompilerProfileState-backed view through the explicit constructor.
+(cfg
+  (not (any compile-profile test))
+  (define (tc-job-state-new) : TcJobState
+    (tc-job-state-new-from-profile-metrics-address (cast 0 : u64))))
+
+(cfg
+  (any compile-profile test)
+  (define (tc-job-state-new) : TcJobState
+    (cfg
+      compile-profile
+      (let
+        [metrics : (__tl_dyn-array i64) (__tl_make-array i64 108)]
+        (tc-job-state-new-with-profile-metrics-address
+          (unsafe
+            (ptr->int (ptr-cast (__tl_array-data metrics) : (Ptr i64))))))
+      (tc-job-state-new-with-profile-metrics-address (cast 0 : u64)))))
 
 (define (tc-job-state-data [state : TcJobState]) : TcJobStateData
   (unsafe
@@ -998,6 +1032,10 @@
   15)
 (define tc-macro-state-slot-clone : i64
   16)
+(cfg
+  (any compile-profile test)
+  (define tc-macro-state-slot-profile-metrics : i64
+    17))
 
 (define (tc-macro-state-slot-address [state : TcMacroState] [slot : i64]) : i64
   (unsafe
@@ -7642,37 +7680,88 @@
         (& compiler-tc-macro-profile-entries))
       (set! compiler-tc-macro-profile-active false))))
 
+;; Packed job-owned view (CompilerProfileState slots 242-349): four 18-site
+;; reinference columns followed by the 18-site body-fact hit/miss columns.
+;; Keeping the six equal-width families contiguous makes reset/render order
+;; deterministic without reintroducing array owners in this leaf module.
 (cfg
-  compile-profile
+  (any compile-profile test)
   (define compiler-tc-reinfer-profile-site-count : i64
     18))
 (cfg
-  compile-profile
-  (define compiler-tc-reinfer-profile-calls : (__tl_dyn-array i64)
-    (__tl_make-array i64 18)))
+  (any compile-profile test)
+  (define compiler-tc-reinfer-profile-calls-start : i64
+    0))
 (cfg
-  compile-profile
-  (define compiler-tc-reinfer-profile-ms : (__tl_dyn-array i64)
-    (__tl_make-array i64 18)))
+  (any compile-profile test)
+  (define compiler-tc-reinfer-profile-ms-start : i64
+    18))
 (cfg
-  compile-profile
-  (define compiler-tc-reinfer-profile-alloc : (__tl_dyn-array i64)
-    (__tl_make-array i64 18)))
+  (any compile-profile test)
+  (define compiler-tc-reinfer-profile-alloc-start : i64
+    36))
 (cfg
-  compile-profile
-  (define compiler-tc-reinfer-profile-live : (__tl_dyn-array i64)
-    (__tl_make-array i64 18)))
+  (any compile-profile test)
+  (define compiler-tc-reinfer-profile-live-start : i64
+    54))
 (cfg
-  compile-profile
-  (define compiler-tc-body-fact-profile-hits : (__tl_dyn-array i64)
-    (__tl_make-array i64 18)))
+  (any compile-profile test)
+  (define compiler-tc-body-fact-profile-hits-start : i64
+    72))
 (cfg
-  compile-profile
-  (define compiler-tc-body-fact-profile-misses : (__tl_dyn-array i64)
-    (__tl_make-array i64 18)))
+  (any compile-profile test)
+  (define compiler-tc-body-fact-profile-misses-start : i64
+    90))
+(cfg
+  (any compile-profile test)
+  (define compiler-tc-profile-metric-count : i64
+    108))
 
 (cfg
-  compile-profile
+  (any compile-profile test)
+  (define (compiler-tc-profile-metrics-address [state : TcJobState]) : u64
+    (cast
+      (tc-macro-state-slot-address
+        (tc-job-state-macro-state state)
+        tc-macro-state-slot-profile-metrics)
+      : u64)))
+
+(cfg
+  (any compile-profile test)
+  (define (compiler-tc-profile-metric-value
+    [metrics-address : u64]
+    [metric : i64]) : i64
+    (if (= metrics-address (cast 0 : u64))
+      0
+      (unsafe
+        (ptr-read (ptr-offset (int->ptr metrics-address : (Ptr i64)) metric))))))
+
+(cfg
+  (any compile-profile test)
+  (define (compiler-tc-profile-metric-set!
+    [metrics-address : u64]
+    [metric : i64]
+    [value : i64]) : unit
+    (if (= metrics-address (cast 0 : u64))
+      unit
+      (unsafe
+        (ptr-write!
+          (ptr-offset (int->ptr metrics-address : (MutPtr i64)) metric)
+          value)))))
+
+(cfg
+  (any compile-profile test)
+  (define (compiler-tc-profile-metric-add!
+    [metrics-address : u64]
+    [metric : i64]
+    [value : i64]) : unit
+    (compiler-tc-profile-metric-set!
+      metrics-address
+      metric
+      (+ (compiler-tc-profile-metric-value metrics-address metric) value))))
+
+(cfg
+  (any compile-profile test)
   (define (compiler-tc-reinfer-profile-site-index [site : String]) : i64
     (cond
       [(string.eq site "move.call_func") 0]
@@ -7696,7 +7785,7 @@
       [else -1])))
 
 (cfg
-  compile-profile
+  (any compile-profile test)
   (define (compiler-tc-reinfer-profile-site-name [index : i64]) : String
     (cond
       [(= index 0) "move.call_func"]
@@ -7720,89 +7809,211 @@
       [else "unknown"])))
 
 (cfg
-  compile-profile
-  (define (compiler-tc-reinfer-profile-reset-at [index : i64]) : unit
+  (any compile-profile test)
+  (define (compiler-tc-reinfer-profile-reset-at
+    [metrics-address : u64]
+    [index : i64]) : unit
     (if (< index compiler-tc-reinfer-profile-site-count)
       (begin
-        (set! (array-ref compiler-tc-reinfer-profile-calls index) 0)
-        (set! (array-ref compiler-tc-reinfer-profile-ms index) 0)
-        (set! (array-ref compiler-tc-reinfer-profile-alloc index) 0)
-        (set! (array-ref compiler-tc-reinfer-profile-live index) 0)
-        (compiler-tc-reinfer-profile-reset-at (+ index 1)))
+        (compiler-tc-profile-metric-set!
+          metrics-address
+          (+ compiler-tc-reinfer-profile-calls-start index)
+          0)
+        (compiler-tc-profile-metric-set!
+          metrics-address
+          (+ compiler-tc-reinfer-profile-ms-start index)
+          0)
+        (compiler-tc-profile-metric-set!
+          metrics-address
+          (+ compiler-tc-reinfer-profile-alloc-start index)
+          0)
+        (compiler-tc-profile-metric-set!
+          metrics-address
+          (+ compiler-tc-reinfer-profile-live-start index)
+          0)
+        (compiler-tc-reinfer-profile-reset-at metrics-address (+ index 1)))
       unit)))
 
 (cfg
-  compile-profile
-  (define (compiler-tc-reinfer-profile-reset) : unit
-    (compiler-tc-reinfer-profile-reset-at 0)))
+  (any compile-profile test)
+  (define (compiler-tc-reinfer-profile-reset [state : TcJobState]) : unit
+    (compiler-tc-reinfer-profile-reset-at
+      (compiler-tc-profile-metrics-address state)
+      0)))
 
 (cfg
-  compile-profile
-  (define (compiler-tc-body-fact-profile-reset-at [index : i64]) : unit
+  (any compile-profile test)
+  (define (compiler-tc-body-fact-profile-reset-at
+    [metrics-address : u64]
+    [index : i64]) : unit
     (if (< index compiler-tc-reinfer-profile-site-count)
       (begin
-        (set! (array-ref compiler-tc-body-fact-profile-hits index) 0)
-        (set! (array-ref compiler-tc-body-fact-profile-misses index) 0)
-        (compiler-tc-body-fact-profile-reset-at (+ index 1)))
+        (compiler-tc-profile-metric-set!
+          metrics-address
+          (+ compiler-tc-body-fact-profile-hits-start index)
+          0)
+        (compiler-tc-profile-metric-set!
+          metrics-address
+          (+ compiler-tc-body-fact-profile-misses-start index)
+          0)
+        (compiler-tc-body-fact-profile-reset-at metrics-address (+ index 1)))
       unit)))
 
 (cfg
-  compile-profile
-  (define (compiler-tc-body-fact-profile-reset) : unit
-    (compiler-tc-body-fact-profile-reset-at 0)))
+  (any compile-profile test)
+  (define (compiler-tc-body-fact-profile-reset [state : TcJobState]) : unit
+    (compiler-tc-body-fact-profile-reset-at
+      (compiler-tc-profile-metrics-address state)
+      0)))
 
 (cfg
-  compile-profile
-  (define (compiler-tc-body-fact-profile-hit [site : String]) : unit
+  (any compile-profile test)
+  (define (compiler-tc-body-fact-profile-hit
+    [state : TcJobState]
+    [site : String]) : unit
     (let
       [index : i64 (compiler-tc-reinfer-profile-site-index site)]
       (if (< index 0)
         unit
-        (set!
-          (array-ref compiler-tc-body-fact-profile-hits index)
-          (+ (array-ref compiler-tc-body-fact-profile-hits index) 1))))))
+        (compiler-tc-profile-metric-add!
+          (compiler-tc-profile-metrics-address state)
+          (+ compiler-tc-body-fact-profile-hits-start index)
+          1)))))
 
 (cfg
-  compile-profile
-  (define (compiler-tc-body-fact-profile-miss [site : String]) : unit
+  (any compile-profile test)
+  (define (compiler-tc-body-fact-profile-miss
+    [state : TcJobState]
+    [site : String]) : unit
     (let
       [index : i64 (compiler-tc-reinfer-profile-site-index site)]
       (if (< index 0)
         unit
-        (set!
-          (array-ref compiler-tc-body-fact-profile-misses index)
-          (+ (array-ref compiler-tc-body-fact-profile-misses index) 1))))))
+        (compiler-tc-profile-metric-add!
+          (compiler-tc-profile-metrics-address state)
+          (+ compiler-tc-body-fact-profile-misses-start index)
+          1)))))
+
+(cfg
+  (any compile-profile test)
+  (define (compiler-tc-reinfer-profile-note
+    [state : TcJobState]
+    [site : String]
+    [elapsed-ms : i64]
+    [alloc-delta : i64]
+    [live-delta : i64]) : unit
+    (let
+      [index : i64 (compiler-tc-reinfer-profile-site-index site)]
+      [metrics-address : u64 (compiler-tc-profile-metrics-address state)]
+      (if (or (< index 0) (>= index compiler-tc-reinfer-profile-site-count))
+        unit
+        (begin
+          (compiler-tc-profile-metric-add!
+            metrics-address
+            (+ compiler-tc-reinfer-profile-calls-start index)
+            1)
+          (compiler-tc-profile-metric-add!
+            metrics-address
+            (+ compiler-tc-reinfer-profile-ms-start index)
+            elapsed-ms)
+          (compiler-tc-profile-metric-add!
+            metrics-address
+            (+ compiler-tc-reinfer-profile-alloc-start index)
+            alloc-delta)
+          (compiler-tc-profile-metric-add!
+            metrics-address
+            (+ compiler-tc-reinfer-profile-live-start index)
+            live-delta))))))
+
+(cfg
+  test
+  (test
+    compiler-tc-reinfer-body-fact-profile-job-isolation
+    (let
+      [left-metrics : (__tl_dyn-array i64)
+        (__tl_make-array i64 compiler-tc-profile-metric-count)]
+      [right-metrics : (__tl_dyn-array i64)
+        (__tl_make-array i64 compiler-tc-profile-metric-count)]
+      [left : TcJobState
+        (tc-job-state-new-with-profile-metrics-address
+          (unsafe
+            (ptr->int (ptr-cast (__tl_array-data left-metrics) : (Ptr i64)))))]
+      [right : TcJobState
+        (tc-job-state-new-with-profile-metrics-address
+          (unsafe
+            (ptr->int (ptr-cast (__tl_array-data right-metrics) : (Ptr i64)))))]
+      [left-address : u64 (compiler-tc-profile-metrics-address left)]
+      [right-address : u64 (compiler-tc-profile-metrics-address right)]
+      [site : String "move.call_func"]
+      [index : i64 (compiler-tc-reinfer-profile-site-index (clone site))]
+      (begin
+        (compiler-tc-reinfer-profile-reset left)
+        (compiler-tc-reinfer-profile-reset right)
+        (compiler-tc-body-fact-profile-reset left)
+        (compiler-tc-body-fact-profile-reset right)
+        (compiler-tc-reinfer-profile-note left (clone site) 7 11 13)
+        (compiler-tc-body-fact-profile-hit left (clone site))
+        (compiler-tc-reinfer-profile-note right (clone site) 17 19 23)
+        (compiler-tc-body-fact-profile-miss right (clone site))
+        (compiler-tc-reinfer-profile-reset right)
+        (compiler-tc-body-fact-profile-reset right)
+        (test.assert-i64-eq
+          (compiler-tc-profile-metric-value
+            left-address
+            (+ compiler-tc-reinfer-profile-calls-start index))
+          1
+          "left reinference count survives right reset")
+        (test.assert-i64-eq
+          (compiler-tc-profile-metric-value
+            left-address
+            (+ compiler-tc-reinfer-profile-ms-start index))
+          7
+          "left reinference timing uses its owner")
+        (test.assert-i64-eq
+          (compiler-tc-profile-metric-value
+            left-address
+            (+ compiler-tc-reinfer-profile-alloc-start index))
+          11
+          "left reinference allocation delta uses its owner")
+        (test.assert-i64-eq
+          (compiler-tc-profile-metric-value
+            left-address
+            (+ compiler-tc-reinfer-profile-live-start index))
+          13
+          "left reinference live delta uses its owner")
+        (test.assert-i64-eq
+          (compiler-tc-profile-metric-value
+            left-address
+            (+ compiler-tc-body-fact-profile-hits-start index))
+          1
+          "left body-fact hit survives right reset")
+        (test.assert-i64-eq
+          (compiler-tc-profile-metric-value
+            right-address
+            (+ compiler-tc-reinfer-profile-calls-start index))
+          0
+          "right reinference count resets independently")
+        (test.assert-i64-eq
+          (compiler-tc-profile-metric-value
+            right-address
+            (+ compiler-tc-body-fact-profile-misses-start index))
+          0
+          "right body-fact miss resets independently")))))
 
 (cfg
   compile-profile
   (define (compiler-tc-reinfer-profile-record
+    [state : TcJobState]
     [site : String]
     [start-ms : i64]
     [start-total : i64]
     [start-live : i64]) : unit
-    (let
-      [index : i64 (compiler-tc-reinfer-profile-site-index site)]
-      (if (or (< index 0) (>= index compiler-tc-reinfer-profile-site-count))
-        unit
-        (begin
-          (set!
-            (array-ref compiler-tc-reinfer-profile-calls index)
-            (+ (array-ref compiler-tc-reinfer-profile-calls index) 1))
-          (set!
-            (array-ref compiler-tc-reinfer-profile-ms index)
-            (+
-              (array-ref compiler-tc-reinfer-profile-ms index)
-              (- (profile.now-ms) start-ms)))
-          (set!
-            (array-ref compiler-tc-reinfer-profile-alloc index)
-            (+
-              (array-ref compiler-tc-reinfer-profile-alloc index)
-              (- (profile.alloc-total) start-total)))
-          (set!
-            (array-ref compiler-tc-reinfer-profile-live index)
-            (+
-              (array-ref compiler-tc-reinfer-profile-live index)
-              (- (profile.alloc-live) start-live))))))))
+    (compiler-tc-reinfer-profile-note
+      state
+      site
+      (- (profile.now-ms) start-ms)
+      (- (profile.alloc-total) start-total)
+      (- (profile.alloc-live) start-live))))
 
 (cfg
   compile-profile
@@ -7818,6 +8029,7 @@
       [result : ResultTcType (tc-expr (tc-global-shared-view ctx) env expr)]
       (begin
         (compiler-tc-reinfer-profile-record
+          (tc-context-job-state (tc-global-shared-view ctx))
           site
           start-ms
           start-total
@@ -7839,6 +8051,7 @@
         (tc-expr-id (tc-global-shared-view ctx) env expr-id)]
       (begin
         (compiler-tc-reinfer-profile-record
+          (tc-context-job-state (tc-global-shared-view ctx))
           site
           start-ms
           start-total
@@ -7856,9 +8069,11 @@
       [start-ms : i64 (profile.now-ms)]
       [start-total : i64 (profile.alloc-total)]
       [start-live : i64 (profile.alloc-live)]
-      [result : ResultTcTypeList (tc-expr-list-types ctx env exprs)]
+      [result : ResultTcTypeList
+        (tc-expr-list-types (tc-global-shared-view ctx) env exprs)]
       (begin
         (compiler-tc-reinfer-profile-record
+          (tc-context-job-state (tc-global-shared-view ctx))
           site
           start-ms
           start-total
@@ -7877,9 +8092,11 @@
       [start-ms : i64 (profile.now-ms)]
       [start-total : i64 (profile.alloc-total)]
       [start-live : i64 (profile.alloc-live)]
-      [result : ResultTcExpr (tc-call-effective-arg-expr ctx env arg want)]
+      [result : ResultTcExpr
+        (tc-call-effective-arg-expr (tc-global-shared-view ctx) env arg want)]
       (begin
         (compiler-tc-reinfer-profile-record
+          (tc-context-job-state (tc-global-shared-view ctx))
           site
           start-ms
           start-total
@@ -7898,9 +8115,13 @@
       [start-total : i64 (profile.alloc-total)]
       [start-live : i64 (profile.alloc-live)]
       [result : ResultTcTypeList
-        (tc-move-call-param-types-id-raw ctx env func-id)]
+        (tc-move-call-param-types-id-raw
+          (tc-global-shared-view ctx)
+          env
+          func-id)]
       (begin
         (compiler-tc-reinfer-profile-record
+          (tc-context-job-state (tc-global-shared-view ctx))
           site
           start-ms
           start-total
@@ -7921,9 +8142,15 @@
       [start-total : i64 (profile.alloc-total)]
       [start-live : i64 (profile.alloc-live)]
       [result : ResultTcBorrowCallInfo
-        (tc-borrow-call-info-id-raw ctx expr-bases env func-id args)]
+        (tc-borrow-call-info-id-raw
+          (tc-global-shared-view ctx)
+          expr-bases
+          env
+          func-id
+          args)]
       (begin
         (compiler-tc-reinfer-profile-record
+          (tc-context-job-state (tc-global-shared-view ctx))
           site
           start-ms
           start-total
@@ -7948,32 +8175,46 @@
 
 (cfg
   compile-profile
-  (define (compiler-tc-reinfer-profile-emit-entry [index : i64]) : unit
+  (define (compiler-tc-reinfer-profile-emit-entry
+    [metrics-address : u64]
+    [index : i64]) : unit
     (begin
       (compiler-tc-reinfer-profile-line
         (compiler-tc-reinfer-profile-site-name index)
-        (array-ref compiler-tc-reinfer-profile-ms index)
-        (array-ref compiler-tc-reinfer-profile-alloc index)
-        (array-ref compiler-tc-reinfer-profile-live index))
+        (compiler-tc-profile-metric-value
+          metrics-address
+          (+ compiler-tc-reinfer-profile-ms-start index))
+        (compiler-tc-profile-metric-value
+          metrics-address
+          (+ compiler-tc-reinfer-profile-alloc-start index))
+        (compiler-tc-profile-metric-value
+          metrics-address
+          (+ compiler-tc-reinfer-profile-live-start index)))
       (compiler-tc-reinfer-profile-line
         (str_cat.str-cat (compiler-tc-reinfer-profile-site-name index) ".calls")
-        (array-ref compiler-tc-reinfer-profile-calls index)
+        (compiler-tc-profile-metric-value
+          metrics-address
+          (+ compiler-tc-reinfer-profile-calls-start index))
         0
         0))))
 
 (cfg
   compile-profile
-  (define (compiler-tc-reinfer-profile-emit-at [index : i64]) : unit
+  (define (compiler-tc-reinfer-profile-emit-at
+    [metrics-address : u64]
+    [index : i64]) : unit
     (if (< index compiler-tc-reinfer-profile-site-count)
       (begin
-        (compiler-tc-reinfer-profile-emit-entry index)
-        (compiler-tc-reinfer-profile-emit-at (+ index 1)))
+        (compiler-tc-reinfer-profile-emit-entry metrics-address index)
+        (compiler-tc-reinfer-profile-emit-at metrics-address (+ index 1)))
       unit)))
 
 (cfg
   compile-profile
-  (define (compiler-tc-reinfer-profile-emit) : unit
-    (compiler-tc-reinfer-profile-emit-at 0)))
+  (define (compiler-tc-reinfer-profile-emit [state : TcJobState]) : unit
+    (compiler-tc-reinfer-profile-emit-at
+      (compiler-tc-profile-metrics-address state)
+      0)))
 
 (cfg
   compile-profile
@@ -7992,32 +8233,42 @@
 
 (cfg
   compile-profile
-  (define (compiler-tc-body-fact-profile-emit-entry [index : i64]) : unit
+  (define (compiler-tc-body-fact-profile-emit-entry
+    [metrics-address : u64]
+    [index : i64]) : unit
     (let
       [site : String (compiler-tc-reinfer-profile-site-name index)]
       (begin
         (compiler-tc-body-fact-profile-line
           (clone site)
           "hits"
-          (array-ref compiler-tc-body-fact-profile-hits index))
+          (compiler-tc-profile-metric-value
+            metrics-address
+            (+ compiler-tc-body-fact-profile-hits-start index)))
         (compiler-tc-body-fact-profile-line
           site
           "misses"
-          (array-ref compiler-tc-body-fact-profile-misses index))))))
+          (compiler-tc-profile-metric-value
+            metrics-address
+            (+ compiler-tc-body-fact-profile-misses-start index)))))))
 
 (cfg
   compile-profile
-  (define (compiler-tc-body-fact-profile-emit-at [index : i64]) : unit
+  (define (compiler-tc-body-fact-profile-emit-at
+    [metrics-address : u64]
+    [index : i64]) : unit
     (if (< index compiler-tc-reinfer-profile-site-count)
       (begin
-        (compiler-tc-body-fact-profile-emit-entry index)
-        (compiler-tc-body-fact-profile-emit-at (+ index 1)))
+        (compiler-tc-body-fact-profile-emit-entry metrics-address index)
+        (compiler-tc-body-fact-profile-emit-at metrics-address (+ index 1)))
       unit)))
 
 (cfg
   compile-profile
-  (define (compiler-tc-body-fact-profile-emit) : unit
-    (compiler-tc-body-fact-profile-emit-at 0)))
+  (define (compiler-tc-body-fact-profile-emit [state : TcJobState]) : unit
+    (compiler-tc-body-fact-profile-emit-at
+      (compiler-tc-profile-metrics-address state)
+      0)))
 
 (cfg
   compile-profile
@@ -8732,7 +8983,7 @@
 
 (cfg
   compile-profile
-  (define (compiler-tc-decl-profile-reset) : unit
+  (define (compiler-tc-decl-profile-reset [state : TcJobState]) : unit
     (begin
       (set! compiler-tc-decl-profile-start-ms 0)
       (set! compiler-tc-decl-profile-section-start-alloc 0)
@@ -8765,8 +9016,8 @@
       (set! compiler-tc-decl-profile-extern-count 0)
       (set! compiler-tc-decl-profile-other-count 0)
       (compiler-tc-env-profile-reset)
-      (compiler-tc-reinfer-profile-reset)
-      (compiler-tc-body-fact-profile-reset)
+      (compiler-tc-reinfer-profile-reset state)
+      (compiler-tc-body-fact-profile-reset state)
       (tc-lp-reset 0))))
 
 (cfg
@@ -9145,7 +9396,7 @@
 
 (cfg
   compile-profile
-  (define (compiler-tc-decl-profile-finish) : unit
+  (define (compiler-tc-decl-profile-finish [state : TcJobState]) : unit
     (begin
       (compiler-tc-decl-profile-line-mem
         "local_env"
@@ -9900,8 +10151,8 @@
       (compiler-tc-macro-counter-profile-line
         "walk_sp_reresolve_calls"
         (array-ref compiler-tc-walk-sp-probe-calls 4))
-      (compiler-tc-reinfer-profile-emit)
-      (compiler-tc-body-fact-profile-emit)
+      (compiler-tc-reinfer-profile-emit state)
+      (compiler-tc-body-fact-profile-emit state)
       (tc-lp-line "repr_c_field_builds" 0)
       (tc-lp-line "repr_c_field_visits" 1)
       (tc-lp-line "inline_field_builds" 2)
@@ -39087,18 +39338,24 @@
   [_site : String]
   [ctx : TcContext]
   [expr-id : i64]) : TcBodyTypeFact
-  (match (tc-body-type-fact-lookup (tc-context-body-state ctx) expr-id)
+  (match (tc-body-type-fact-lookup
+    (tc-context-body-state (tc-global-shared-view ctx))
+    expr-id)
     [(TcBodyTypeFact.Hit ty)
       (begin
         (cfg
           compile-profile
-          (compiler-tc-body-fact-profile-hit (tc-global-shared-view _site)))
+          (compiler-tc-body-fact-profile-hit
+            (tc-context-job-state (tc-global-shared-view ctx))
+            (tc-global-shared-view _site)))
         (TcBodyTypeFact.Hit ty))]
     [(TcBodyTypeFact.Miss)
       (begin
         (cfg
           compile-profile
-          (compiler-tc-body-fact-profile-miss (tc-global-shared-view _site)))
+          (compiler-tc-body-fact-profile-miss
+            (tc-context-job-state (tc-global-shared-view ctx))
+            (tc-global-shared-view _site)))
         (TcBodyTypeFact.Miss))]))
 
 (define (tc-body-type-fact-expr-id
@@ -39158,13 +39415,17 @@
       (begin
         (cfg
           compile-profile
-          (compiler-tc-body-fact-profile-hit (tc-global-shared-view _site)))
+          (compiler-tc-body-fact-profile-hit
+            (tc-context-job-state (tc-global-shared-view ctx))
+            (tc-global-shared-view _site)))
         (ResultTcTypeList.Ok types))]
     [(ResultTcTypeList.Err _)
       (begin
         (cfg
           compile-profile
-          (compiler-tc-body-fact-profile-miss (tc-global-shared-view _site)))
+          (compiler-tc-body-fact-profile-miss
+            (tc-context-job-state (tc-global-shared-view ctx))
+            (tc-global-shared-view _site)))
         (cfg
           compile-profile
           (compiler-tc-reinfer-profile-expr-list-types
@@ -129076,7 +129337,10 @@
   [paths : ast.AstDeclPathList]
   [summary : CompilerTypecheckSummary]) : ResultCompilerTypecheck
   (begin
-    (cfg compile-profile (compiler-tc-decl-profile-reset))
+    (cfg
+      compile-profile
+      (compiler-tc-decl-profile-reset
+        (tc-context-job-state (tc-global-shared-view ctx))))
     (tc-check-decls-with-paths-in-module
       ctx
       top-env
@@ -129099,7 +129363,10 @@
   [summary : CompilerTypecheckSummary]) : ResultCompilerTypecheck
   (begin
     (tc-prefix-snapshot-cache-note-hit-for-state! prefix-cache)
-    (cfg compile-profile (compiler-tc-decl-profile-reset))
+    (cfg
+      compile-profile
+      (compiler-tc-decl-profile-reset
+        (tc-context-job-state (tc-global-shared-view ctx))))
     (tc-check-decls-with-paths-in-module
       ctx
       top-env
@@ -129122,7 +129389,10 @@
   [module-id : i64]) : ResultCompilerTypecheck
   (begin
     (tc-prefix-snapshot-cache-note-miss-for-state! prefix-cache)
-    (cfg compile-profile (compiler-tc-decl-profile-reset))
+    (cfg
+      compile-profile
+      (compiler-tc-decl-profile-reset
+        (tc-context-job-state (tc-global-shared-view ctx))))
     (match (tc-check-decls-with-paths-in-module
       (tc-global-shared-view ctx)
       top-env
@@ -129141,7 +129411,10 @@
             (tc-global-shared-view module)
             module-id
             prefix-summary)
-          (cfg compile-profile (compiler-tc-decl-profile-reset))
+          (cfg
+            compile-profile
+            (compiler-tc-decl-profile-reset
+              (tc-context-job-state (tc-global-shared-view ctx))))
           (tc-check-decls-with-paths-in-module
             ctx
             top-env
@@ -129189,7 +129462,10 @@
   (begin
     (tc-clone-root-collection-apply-surface-facts! (tc-global-shared-view ctx))
     (cfg compile-profile (tc-profile-surface-prefix-hit count))
-    (cfg compile-profile (compiler-tc-decl-profile-reset))
+    (cfg
+      compile-profile
+      (compiler-tc-decl-profile-reset
+        (tc-context-job-state (tc-global-shared-view ctx))))
     (tc-check-decls-with-paths-in-module
       ctx
       top-env
@@ -129598,7 +129874,10 @@
                 compile-profile
                 (compiler-tc-dependency-tlci-route-profile-finish
                   (tc-context-macro-state (tc-global-shared-view ctx))))
-              (cfg compile-profile (compiler-tc-decl-profile-finish))
+              (cfg
+                compile-profile
+                (compiler-tc-decl-profile-finish
+                  (tc-context-job-state (tc-global-shared-view ctx))))
               (set!
                 result
                 (if (=

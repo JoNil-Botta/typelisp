@@ -11,7 +11,7 @@
 (define compiler-profile-state-metric-capacity : i64
   (cfg
     (any compile-profile test)
-    242
+    350
     (cfg
       regalloc-census
       223
@@ -205,6 +205,24 @@
               (array-ref ,(comptime.expr-struct-get _state "storage") 0)
               metrics))
           : (Ptr i64))))
+    `(cast 0 : u64)))
+
+;; Typecheck owns slots 242-349 as one raw metrics view. Keeping the offset
+;; here makes the driver the only layer that knows how leaf-owned metric
+;; families are packed into CompilerProfileState.
+(defmacro (compiler-profile-state-typecheck-metrics-address [_state : Expr]) : Expr
+  (cfg
+    (any compile-profile test)
+    `(unsafe
+      (ptr->int
+        (ptr-offset
+          (ptr-cast
+            (__tl_array-data
+              (__tl-project-field
+                (array-ref ,(comptime.expr-struct-get _state "storage") 0)
+                metrics))
+            : (Ptr i64))
+          242)))
     `(cast 0 : u64)))
 
 (cfg
@@ -472,6 +490,16 @@
           (compiler-profile-state-shared-view right)
           222
           61)
+        ;; Exercise the first and final typecheck slots so the central owner
+        ;; test pins the complete metrics-view reservation.
+        (compiler-profile-state-metric-set!
+          (compiler-profile-state-shared-view left)
+          242
+          67)
+        (compiler-profile-state-metric-set!
+          (compiler-profile-state-shared-view right)
+          349
+          71)
         (compiler-profile-state-metric-reset-range!
           (compiler-profile-state-shared-view right)
           3
@@ -527,4 +555,16 @@
             (compiler-profile-state-shared-view right)
             222)
           61
-          "left census reset leaves right owner intact")))))
+          "left census reset leaves right owner intact")
+        (test.assert-i64-eq
+          (compiler-profile-state-metric-value
+            (compiler-profile-state-shared-view left)
+            242)
+          67
+          "first typecheck metric belongs to left owner")
+        (test.assert-i64-eq
+          (compiler-profile-state-metric-value
+            (compiler-profile-state-shared-view right)
+            349)
+          71
+          "final typecheck metric belongs to right owner")))))

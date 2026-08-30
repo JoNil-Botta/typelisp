@@ -12566,7 +12566,7 @@
       (tc_core.macro-generated-decls-memo-reset! macro-state)
       (tc_core.macro-generated-module-memo-reset! macro-state)
       (tc_core.tc-macro-helper-env-cache-reset! macro-state)
-      (tc_core.tc-nominal-owner-cache-reset!)
+      (tc_core.tc-nominal-owner-cache-reset-for-job! job-state)
       (tc_core.macro-alias-derived-cache-reset-for-state! macro-state)
       (tc_core.tc-job-state-reset-file-state! job-state)
       (ctfe.ctfe-module-macro-export-reset-for-state!
@@ -75401,11 +75401,13 @@
   (let
     [enclosing : i64 (arena.tl_arena_current)]
     [scratch : i64 (lower-scratch-arena-get)]
+    [job-state : tc_core.TcJobState
+      (tc_core.tc-context-job-state (lower-global-shared-view ctx))]
     (begin
       ;; Type-name/owner caches may contain keys allocated by earlier
       ;; typecheck or lower scratch scopes. Keep them scoped to this lowering
       ;; pass and invalidate them before rewinding this function's scratch arena.
-      (tc_core.tc-nominal-owner-cache-reset!)
+      (tc_core.tc-nominal-owner-cache-reset-for-job! job-state)
       (unsafe
         (arena.tl_arena_set scratch))
       (let
@@ -75446,7 +75448,7 @@
                       (arena.tl_arena_set scratch)
                       (arena.tl_region_reset mark)
                       (arena.tl_arena_set enclosing))
-                    (tc_core.tc-nominal-owner-cache-reset!)
+                    (tc_core.tc-nominal-owner-cache-reset-for-job! job-state)
                     (ResultLowerFunction.Ok escaped-fns escaped-spans)))))]
           [(ResultLowerFunction.Err message)
             (begin
@@ -75460,7 +75462,7 @@
                     (arena.tl_arena_set scratch)
                     (arena.tl_region_reset mark)
                     (arena.tl_arena_set enclosing))
-                  (tc_core.tc-nominal-owner-cache-reset!)
+                  (tc_core.tc-nominal-owner-cache-reset-for-job! job-state)
                   (ResultLowerFunction.Err escaped-message))))])))))
 
 (define (lower-struct-cleanup-param-id [lower-state : CompilerLowerState]) : i64
@@ -78335,7 +78337,8 @@
     ;; internally consistent layout view for all functions in this pass.
     (tc_core.tc-agg-caches-reset-for-job!
       (tc_core.tc-context-job-state (lower-global-shared-view ctx)))
-    (tc_core.tc-nominal-owner-cache-reset!)
+    (tc_core.tc-nominal-owner-cache-reset-for-job!
+      (tc_core.tc-context-job-state (lower-global-shared-view ctx)))
     (match program
       [(ast.AstProgram.Program decls-box)
         (let
@@ -78407,6 +78410,7 @@
                 false)])]
         (begin
           (tc_core.tc-clone-root-collection-use!
+            (tc_core.tc-serial-job-state)
             (lower-global-shared-view specialized))
           (lower-typecheck-clone-and-lower
             lower-state
@@ -78738,7 +78742,7 @@
                     (ResultCompilerLower.Err (box (lower-diagnostic message))))])))]
         [(tc_core.ResultCompilerTypecheckChecked.Partial diag _ _ _)
           (begin
-            (tc_core.tc-clone-root-collection-abort!)
+            (tc_core.tc-clone-root-collection-abort! job-state)
             (cfg
               (any
                 compiler-surface-producer
@@ -78754,7 +78758,7 @@
               (box (cdiag.compiler-diagnostic-list-first (deref diag)))))]
         [(tc_core.ResultCompilerTypecheckChecked.Err diag)
           (begin
-            (tc_core.tc-clone-root-collection-abort!)
+            (tc_core.tc-clone-root-collection-abort! job-state)
             (cfg
               (any
                 compiler-surface-producer
@@ -78973,7 +78977,9 @@
                         (compiler-lower-profile-start lower-state))
                       ;; Capture stable retained declaration keys before optional
                       ;; pool compaction releases the reach-program AST.
-                      (tc_core.tc-clone-root-collection-use! reach-program)
+                      (tc_core.tc-clone-root-collection-use!
+                        job-state
+                        reach-program)
                       (let
                         [detach-source? : bool
                           (compiler-lower-checked-dest-pools-active?

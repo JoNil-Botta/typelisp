@@ -323,6 +323,37 @@
 (defstruct TcAggScalarCacheState
   (address i64))
 
+;; Nominal owner names and the one-entry type-name lookup memo can retain
+;; scratch-owned strings and negative answers. Keep their compact storage in
+;; one compiler job so another job's declaration or scratch reset cannot clear
+;; or expose those entries.
+(defstruct TcNominalCacheStateData
+  (owner-handles (__tl_dyn-array i64))
+  (owner-names (__tl_dyn-array String))
+  (type-name-valid bool)
+  (type-name-found bool)
+  (type-name-key i64)
+  (type-name-handle i64))
+
+(defstruct TcNominalCacheState
+  (address i64))
+
+;; Cloneability and clone-root collection share the whole-program declaration
+;; view and reset boundary. The able-set lives in the stable AST-pool arena;
+;; the selected declaration map and resolved root closure use a separately
+;; destroyable arena owned only by this job.
+(defstruct TcCloneStateData
+  (able-ready bool)
+  (able-cache clone_support.CloneNameSet)
+  (root-active bool)
+  (root-current-decl bool)
+  (root-selected tc_i64_i64_map.Map)
+  (root-roots clone_support.CloneRootEntries)
+  (root-arena i64))
+
+(defstruct TcCloneState
+  (address i64))
+
 (defstruct TcMacroCallSiteActiveDecl
   (path-id i64)
   (editable bool)
@@ -862,12 +893,13 @@
   (let
     [cell : (__tl_dyn-array TcJobStateData) (__tl_make-array TcJobStateData 1)]
     [owner : i64 (arena.tl_arena_current)]
-    [macro-state-addresses : (__tl_dyn-array i64) (__tl_make-array i64 15)]
+    [macro-state-addresses : (__tl_dyn-array i64) (__tl_make-array i64 17)]
     (begin
       ;; The directory never grows, so TcMacroState may carry its data pointer
       ;; directly. Slot 12 keeps the owner beside the lazy addresses, while
       ;; slot 13 carries the combined source-name/structural-intern session,
-      ;; and slot 14 lazily owns the non-macro lazy-import table.
+      ;; slot 14 lazily owns the non-macro lazy-import table, and slots 15-16
+      ;; own the nominal/type-name and clone families.
       (set! (array-ref macro-state-addresses 12) owner)
       (set!
         (array-ref cell 0)
@@ -966,6 +998,10 @@
   11)
 (define tc-macro-state-slot-lazy-import : i64
   14)
+(define tc-macro-state-slot-nominal-cache : i64
+  15)
+(define tc-macro-state-slot-clone : i64
+  16)
 
 (define (tc-macro-state-slot-address [state : TcMacroState] [slot : i64]) : i64
   (unsafe
@@ -993,6 +1029,124 @@
     (if (> address 0)
       address
       (,initialize ,state))))
+
+(define (tc-nominal-cache-state-data [state : TcNominalCacheState]) : TcNominalCacheStateData
+  (unsafe
+    (ptr-read
+      (int->ptr (cast state.address : u64) : (Ptr TcNominalCacheStateData)))))
+
+(define (tc-nominal-cache-state-data-set!
+  [state : TcNominalCacheState]
+  [data : TcNominalCacheStateData]) : unit
+  (unsafe
+    (ptr-write!
+      (int->ptr (cast state.address : u64) : (MutPtr TcNominalCacheStateData))
+      data)))
+
+(define (tc-clone-state-data [state : TcCloneState]) : TcCloneStateData
+  (unsafe
+    (ptr-read (int->ptr (cast state.address : u64) : (Ptr TcCloneStateData)))))
+
+(define (tc-clone-state-data-set!
+  [state : TcCloneState]
+  [data : TcCloneStateData]) : unit
+  (unsafe
+    (ptr-write!
+      (int->ptr (cast state.address : u64) : (MutPtr TcCloneStateData))
+      data)))
+
+(define (tc-nominal-cache-state-new [owner : i64]) : TcNominalCacheState
+  (in-arena
+    (arena.Arena owner)
+    (let
+      [cell : (__tl_dyn-array TcNominalCacheStateData)
+        (__tl_make-array TcNominalCacheStateData 1)]
+      [handles : (__tl_dyn-array i64) (__tl_make-array i64 8)]
+      [names : (__tl_dyn-array String) (__tl_make-array String 8)]
+      [index : i64 0]
+      (begin
+        (while (< index 8)
+          (begin
+            (set! (array-ref handles index) -1)
+            (set! (array-ref names index) "")
+            (set! index (+ index 1))))
+        (set!
+          (array-ref cell 0)
+          (TcNominalCacheStateData handles names false false -1 0))
+        (TcNominalCacheState
+          (cast
+            (unsafe
+              (ptr->int
+                (ptr-cast
+                  (__tl_array-data cell)
+                  : (Ptr TcNominalCacheStateData))))
+            : i64))))))
+
+(define (tc-clone-state-new [owner : i64]) : TcCloneState
+  (in-arena
+    (arena.Arena owner)
+    (let
+      [cell : (__tl_dyn-array TcCloneStateData)
+        (__tl_make-array TcCloneStateData 1)]
+      (begin
+        (set!
+          (array-ref cell 0)
+          (TcCloneStateData
+            false
+            (clone_support.clone-name-set-empty)
+            false
+            false
+            (tc_i64_i64_map.with-capacity 8)
+            (clone_support.CloneRootEntries.Empty)
+            0))
+        (TcCloneState
+          (cast
+            (unsafe
+              (ptr->int
+                (ptr-cast (__tl_array-data cell) : (Ptr TcCloneStateData))))
+            : i64))))))
+
+(define (tc-macro-state-nominal-cache-address-initialize [state : TcMacroState]) : i64
+  (let
+    [cache : TcNominalCacheState
+      (tc-nominal-cache-state-new (tc-macro-state-owner-arena state))]
+    (begin
+      (tc-macro-state-slot-address-set!
+        state
+        tc-macro-state-slot-nominal-cache
+        cache.address)
+      cache.address)))
+
+(define (tc-macro-state-clone-address-initialize [state : TcMacroState]) : i64
+  (let
+    [clone-state : TcCloneState
+      (tc-clone-state-new (tc-macro-state-owner-arena state))]
+    (begin
+      (tc-macro-state-slot-address-set!
+        state
+        tc-macro-state-slot-clone
+        clone-state.address)
+      clone-state.address)))
+
+(define (tc-macro-state-nominal-cache [state : TcMacroState]) : TcNominalCacheState
+  (TcNominalCacheState
+    (tc-macro-state-address-fast
+      state
+      tc-macro-state-slot-nominal-cache
+      tc-macro-state-nominal-cache-address-initialize)))
+
+(define (tc-macro-state-clone [state : TcMacroState]) : TcCloneState
+  (TcCloneState
+    (tc-macro-state-address-fast
+      state
+      tc-macro-state-slot-clone
+      tc-macro-state-clone-address-initialize)))
+
+(define (tc-job-state-nominal-cache [state : TcJobState]) : TcNominalCacheState
+  (tc-macro-state-nominal-cache (tc-job-state-macro-state state)))
+
+(define (tc-job-state-clone [state : TcJobState]) : TcCloneState
+  (tc-macro-state-clone (tc-job-state-macro-state state)))
 
 (define (tc-job-state-source-key-cache [state : TcJobState]) : TcSourceKeyCacheState
   (tc-job-state-field state source-key-cache TcSourceKeyCacheState))
@@ -26458,99 +26612,69 @@
     lookup-id
     owner-id))
 
-(define tc-nominal-owner-cache-handle : i64
-  -1)
-(define tc-nominal-owner-cache-name : String
-  "")
-(define tc-nominal-owner-cache-handle1 : i64
-  -1)
-(define tc-nominal-owner-cache-name1 : String
-  "")
-(define tc-nominal-owner-cache-handle2 : i64
-  -1)
-(define tc-nominal-owner-cache-name2 : String
-  "")
-(define tc-nominal-owner-cache-handle3 : i64
-  -1)
-(define tc-nominal-owner-cache-name3 : String
-  "")
-(define tc-nominal-owner-cache-handle4 : i64
-  -1)
-(define tc-nominal-owner-cache-name4 : String
-  "")
-(define tc-nominal-owner-cache-handle5 : i64
-  -1)
-(define tc-nominal-owner-cache-name5 : String
-  "")
-(define tc-nominal-owner-cache-handle6 : i64
-  -1)
-(define tc-nominal-owner-cache-name6 : String
-  "")
-(define tc-nominal-owner-cache-handle7 : i64
-  -1)
-(define tc-nominal-owner-cache-name7 : String
-  "")
-(define tc-resolve-type-name-cache-valid : bool
-  false)
-(define tc-resolve-type-name-cache-found : bool
-  false)
-(define tc-resolve-type-name-cache-key : i64
-  -1)
-(define tc-resolve-type-name-cache-handle : i64
-  0)
-
 ;; The cached name strings are caller-provided and may live in a transient
 ;; scratch arena (per-function typecheck arenas): clear them to the
 ;; static empty string as well, so no slot can compare against freed memory
 ;; after the owning arena is destroyed.
-(define (tc-resolve-type-name-cache-reset!) : unit
-  (begin
-    (set! tc-resolve-type-name-cache-valid false)
-    (set! tc-resolve-type-name-cache-key -1)))
+(define (tc-resolve-type-name-cache-reset-for-state!
+  [state : TcNominalCacheState]) : unit
+  (let
+    [data : TcNominalCacheStateData (tc-nominal-cache-state-data state)]
+    (begin
+      (set! data.type-name-valid false)
+      (set! data.type-name-key -1)
+      (tc-nominal-cache-state-data-set! state data))))
 
-(define (tc-nominal-owner-cache-reset!) : unit
-  (begin
-    (set! tc-nominal-owner-cache-handle -1)
-    (set! tc-nominal-owner-cache-name "")
-    (set! tc-nominal-owner-cache-handle1 -1)
-    (set! tc-nominal-owner-cache-name1 "")
-    (set! tc-nominal-owner-cache-handle2 -1)
-    (set! tc-nominal-owner-cache-name2 "")
-    (set! tc-nominal-owner-cache-handle3 -1)
-    (set! tc-nominal-owner-cache-name3 "")
-    (set! tc-nominal-owner-cache-handle4 -1)
-    (set! tc-nominal-owner-cache-name4 "")
-    (set! tc-nominal-owner-cache-handle5 -1)
-    (set! tc-nominal-owner-cache-name5 "")
-    (set! tc-nominal-owner-cache-handle6 -1)
-    (set! tc-nominal-owner-cache-name6 "")
-    (set! tc-nominal-owner-cache-handle7 -1)
-    (set! tc-nominal-owner-cache-name7 "")
-    (tc-resolve-type-name-cache-reset!)))
+(define (tc-nominal-owner-cache-reset-for-state! [state : TcNominalCacheState]) : unit
+  (let
+    [data : TcNominalCacheStateData (tc-nominal-cache-state-data state)]
+    [index : i64 0]
+    (begin
+      (while (< index 8)
+        (begin
+          (set! (array-ref data.owner-handles index) -1)
+          (set! (array-ref data.owner-names index) "")
+          (set! index (+ index 1))))
+      (set! data.type-name-valid false)
+      (set! data.type-name-key -1)
+      (tc-nominal-cache-state-data-set! state data))))
 
-(define (tc-resolve-type-name-cache-lookup [lookup-id : i64]) : TcTypeNameLookupCache
-  (if (and
-    tc-resolve-type-name-cache-valid
-    (= tc-resolve-type-name-cache-key lookup-id))
-    (if tc-resolve-type-name-cache-found
-      (TcTypeNameLookupCache.Found tc-resolve-type-name-cache-handle)
-      (TcTypeNameLookupCache.Missing))
-    (TcTypeNameLookupCache.Miss)))
+(define (tc-nominal-owner-cache-reset-for-job! [state : TcJobState]) : unit
+  (tc-nominal-owner-cache-reset-for-state! (tc-job-state-nominal-cache state)))
+
+(define (tc-nominal-owner-cache-reset-for-macro-state! [state : TcMacroState]) : unit
+  (tc-nominal-owner-cache-reset-for-state! (tc-macro-state-nominal-cache state)))
+
+(define (tc-resolve-type-name-cache-lookup
+  [state : TcNominalCacheState]
+  [lookup-id : i64]) : TcTypeNameLookupCache
+  (let
+    [data : TcNominalCacheStateData (tc-nominal-cache-state-data state)]
+    (if (and data.type-name-valid (= data.type-name-key lookup-id))
+      (if data.type-name-found
+        (TcTypeNameLookupCache.Found data.type-name-handle)
+        (TcTypeNameLookupCache.Missing))
+      (TcTypeNameLookupCache.Miss))))
 
 (define (tc-resolve-type-name-cache-store!
+  [state : TcNominalCacheState]
   [lookup-id : i64]
   [found : bool]
   [handle : i64]) : unit
-  (begin
-    (set! tc-resolve-type-name-cache-key lookup-id)
-    (set! tc-resolve-type-name-cache-found found)
-    (set! tc-resolve-type-name-cache-handle handle)
-    (set! tc-resolve-type-name-cache-valid true)))
+  (let
+    [data : TcNominalCacheStateData (tc-nominal-cache-state-data state)]
+    (begin
+      (set! data.type-name-key lookup-id)
+      (set! data.type-name-found found)
+      (set! data.type-name-handle handle)
+      (set! data.type-name-valid true)
+      (tc-nominal-cache-state-data-set! state data))))
 
 (define (tc-resolve-type-name-symbol-lookup-id
+  [state : TcNominalCacheState]
   [symbols : csym.CompilerSymbols]
   [lookup-id : i64]) : i64
-  (match (tc-resolve-type-name-cache-lookup lookup-id)
+  (match (tc-resolve-type-name-cache-lookup state lookup-id)
     [(TcTypeNameLookupCache.Found handle) handle]
     [(TcTypeNameLookupCache.Missing) (csym.compiler-symbols-missing-handle)]
     [(TcTypeNameLookupCache.Miss)
@@ -26562,6 +26686,7 @@
             (csym.compiler-symbols-missing-handle))]
         (begin
           (tc-resolve-type-name-cache-store!
+            state
             lookup-id
             (csym.compiler-symbols-handle-found? handle)
             (if (csym.compiler-symbols-handle-found? handle)
@@ -26573,7 +26698,6 @@
   (% (csym.compiler-symbol-handle-index handle) 8))
 
 (define (tc-nominal-owner-cache-entry-lookup
-  [_ctx : TcContext]
   [handle : i64]
   [cached-handle : i64]
   [cached-name : String]) : ResultTcString
@@ -26583,95 +26707,28 @@
 
 (define (tc-nominal-owner-cache-lookup [ctx : TcContext] [handle : i64]) : ResultTcString
   (let
+    [data : TcNominalCacheStateData
+      (tc-nominal-cache-state-data
+        (tc-job-state-nominal-cache
+          (tc-context-job-state (tc-global-shared-view ctx))))]
     [slot : i64 (tc-nominal-owner-cache-slot handle)]
-    (cond
-      [(= slot 0)
-        (tc-nominal-owner-cache-entry-lookup
-          ctx
-          handle
-          tc-nominal-owner-cache-handle
-          (tc-global-shared-view tc-nominal-owner-cache-name))]
-      [(= slot 1)
-        (tc-nominal-owner-cache-entry-lookup
-          ctx
-          handle
-          tc-nominal-owner-cache-handle1
-          (tc-global-shared-view tc-nominal-owner-cache-name1))]
-      [(= slot 2)
-        (tc-nominal-owner-cache-entry-lookup
-          ctx
-          handle
-          tc-nominal-owner-cache-handle2
-          (tc-global-shared-view tc-nominal-owner-cache-name2))]
-      [(= slot 3)
-        (tc-nominal-owner-cache-entry-lookup
-          ctx
-          handle
-          tc-nominal-owner-cache-handle3
-          (tc-global-shared-view tc-nominal-owner-cache-name3))]
-      [(= slot 4)
-        (tc-nominal-owner-cache-entry-lookup
-          ctx
-          handle
-          tc-nominal-owner-cache-handle4
-          (tc-global-shared-view tc-nominal-owner-cache-name4))]
-      [(= slot 5)
-        (tc-nominal-owner-cache-entry-lookup
-          ctx
-          handle
-          tc-nominal-owner-cache-handle5
-          (tc-global-shared-view tc-nominal-owner-cache-name5))]
-      [(= slot 6)
-        (tc-nominal-owner-cache-entry-lookup
-          ctx
-          handle
-          tc-nominal-owner-cache-handle6
-          (tc-global-shared-view tc-nominal-owner-cache-name6))]
-      [else
-        (tc-nominal-owner-cache-entry-lookup
-          ctx
-          handle
-          tc-nominal-owner-cache-handle7
-          (tc-global-shared-view tc-nominal-owner-cache-name7))])))
+    (tc-nominal-owner-cache-entry-lookup
+      handle
+      (array-ref data.owner-handles slot)
+      (tc-global-array-element-shared-view data.owner-names slot))))
 
-(define (tc-nominal-owner-cache-store-if-safe! [handle : i64] [name : String]) : unit
+(define (tc-nominal-owner-cache-store-if-safe!
+  [state : TcNominalCacheState]
+  [handle : i64]
+  [name : String]) : unit
   (if (tc-name-qualified? name)
     unit
     (let
+      [data : TcNominalCacheStateData (tc-nominal-cache-state-data state)]
       [slot : i64 (tc-nominal-owner-cache-slot handle)]
-      (cond
-        [(= slot 0)
-          (begin
-            (set! tc-nominal-owner-cache-handle handle)
-            (set! tc-nominal-owner-cache-name name))]
-        [(= slot 1)
-          (begin
-            (set! tc-nominal-owner-cache-handle1 handle)
-            (set! tc-nominal-owner-cache-name1 name))]
-        [(= slot 2)
-          (begin
-            (set! tc-nominal-owner-cache-handle2 handle)
-            (set! tc-nominal-owner-cache-name2 name))]
-        [(= slot 3)
-          (begin
-            (set! tc-nominal-owner-cache-handle3 handle)
-            (set! tc-nominal-owner-cache-name3 name))]
-        [(= slot 4)
-          (begin
-            (set! tc-nominal-owner-cache-handle4 handle)
-            (set! tc-nominal-owner-cache-name4 name))]
-        [(= slot 5)
-          (begin
-            (set! tc-nominal-owner-cache-handle5 handle)
-            (set! tc-nominal-owner-cache-name5 name))]
-        [(= slot 6)
-          (begin
-            (set! tc-nominal-owner-cache-handle6 handle)
-            (set! tc-nominal-owner-cache-name6 name))]
-        [else
-          (begin
-            (set! tc-nominal-owner-cache-handle7 handle)
-            (set! tc-nominal-owner-cache-name7 name))]))))
+      (begin
+        (set! (array-ref data.owner-handles slot) handle)
+        (set! (array-ref data.owner-names slot) name)))))
 
 (define (tc-nominal-owner-name-list
   [decls : ast.AstDeclList]
@@ -26752,6 +26809,7 @@
           [_ (tc-nominal-owner-name-list rest target (+ index 1) module)]))]))
 
 (define (tc-nominal-owner-name-scan
+  [state : TcNominalCacheState]
   [program : ast.AstProgram]
   [handle : i64]
   [index : i64]) : ResultTcString
@@ -26763,31 +26821,38 @@
           [(ResultTcString.Ok name)
             (begin
               (tc-nominal-owner-cache-store-if-safe!
+                state
                 handle
                 (string.copy (& name)))
               (ResultTcString.Ok name))]
           [(ResultTcString.Err message) (ResultTcString.Err message)]))]))
 
 (define (tc-nominal-owner-name [ctx : TcContext] [handle : i64]) : ResultTcString
-  (match (tc-nominal-owner-cache-lookup (tc-global-shared-view ctx) handle)
-    [(ResultTcString.Ok cached) (ResultTcString.Ok cached)]
-    [(ResultTcString.Err _)
-      (match ctx
-        [(TcContext program symbols _ _ _ _ _ _ _)
-          (match (csym.compiler-symbols-owner-name-at-index
-            symbols
-            (csym.compiler-symbol-handle-index handle))
-            [(CompilerSomeString name)
-              (begin
-                (tc-nominal-owner-cache-store-if-safe!
+  (let
+    [state : TcNominalCacheState
+      (tc-job-state-nominal-cache
+        (tc-context-job-state (tc-global-shared-view ctx)))]
+    (match (tc-nominal-owner-cache-lookup (tc-global-shared-view ctx) handle)
+      [(ResultTcString.Ok cached) (ResultTcString.Ok cached)]
+      [(ResultTcString.Err _)
+        (match ctx
+          [(TcContext program symbols _ _ _ _ _ _ _)
+            (match (csym.compiler-symbols-owner-name-at-index
+              symbols
+              (csym.compiler-symbol-handle-index handle))
+              [(CompilerSomeString name)
+                (begin
+                  (tc-nominal-owner-cache-store-if-safe!
+                    state
+                    handle
+                    (string.copy (& name)))
+                  (ResultTcString.Ok name))]
+              [(CompilerNoString)
+                (tc-nominal-owner-name-scan
+                  state
+                  program
                   handle
-                  (string.copy (& name)))
-                (ResultTcString.Ok name))]
-            [(CompilerNoString)
-              (tc-nominal-owner-name-scan
-                program
-                handle
-                (csym.compiler-symbol-handle-index handle))])])]))
+                  (csym.compiler-symbol-handle-index handle))])])])))
 
 (define (tc-context-with-owner-name-module [ctx : TcContext] [owner-id : i64]) : TcContext
   (if (tc-name-qualified-id? (tc-context-structural-session ctx) owner-id)
@@ -27033,7 +27098,11 @@
             source-id)]
         [handle : i64
           (if (>= lookup-id 0)
-            (tc-resolve-type-name-symbol-lookup-id symbols lookup-id)
+            (tc-resolve-type-name-symbol-lookup-id
+              (tc-job-state-nominal-cache
+                (tc-context-job-state (tc-global-shared-view ctx)))
+              symbols
+              lookup-id)
             (csym.compiler-symbols-missing-handle))]
         (if (csym.compiler-symbols-handle-found? handle)
           (if (and
@@ -27605,7 +27674,11 @@
             source-id)]
         [handle : i64
           (if (>= lookup-id 0)
-            (tc-resolve-type-name-symbol-lookup-id symbols lookup-id)
+            (tc-resolve-type-name-symbol-lookup-id
+              (tc-job-state-nominal-cache
+                (tc-context-job-state (tc-global-shared-view ctx)))
+              symbols
+              lookup-id)
             (csym.compiler-symbols-missing-handle))]
         (if (csym.compiler-symbols-handle-found? handle)
           (if (and
@@ -30102,7 +30175,8 @@
   [program : ast.AstProgram]
   [paths : ast.AstDeclPathList]) : ResultTcSourcePolicyDiagnostic
   (begin
-    (tc-nominal-owner-cache-reset!)
+    (tc-nominal-owner-cache-reset-for-job!
+      (tc-context-job-state (tc-global-shared-view ctx)))
     (match program
       [(ast.AstProgram.Program decls-box)
         (let
@@ -37083,7 +37157,8 @@
 
 (define (tc-build-top-env [ctx : TcContext] [program : ast.AstProgram]) : ResultTcEnv
   (begin
-    (tc-nominal-owner-cache-reset!)
+    (tc-nominal-owner-cache-reset-for-job!
+      (tc-context-job-state (tc-global-shared-view ctx)))
     (tc-unqualified-import-ambiguity-reset!)
     ;; A whole-program rebuild replaces the active declaration view. Rebuild
     ;; the compact value-signature index from that same view so declarations
@@ -46585,11 +46660,6 @@
 ;; declarations changed. Function-body expression expansion can therefore reuse
 ;; the whole-program fixpoint without retaining scratch-arena storage or hiding a
 ;; generated nominal declaration.
-(define tc-clone-able-cache-ready : bool
-  false)
-(define tc-clone-able-cache : clone_support.CloneNameSet
-  (clone_support.clone-name-set-empty))
-
 ;; Clone helper discovery is a semantic observation of the real declaration
 ;; typecheck, not a reason to run a second partial typechecker. Lowering installs
 ;; the reachability pass's retained value/function names before checking the
@@ -46598,17 +46668,6 @@
 ;; retained declaration is checked, clone/with-scratch forms fold their resolved
 ;; result type directly into the nominal root closure. The root list and name set
 ;; live in a dedicated arena because function bodies use rewindable scratch.
-(define tc-clone-root-collection-active : bool
-  false)
-(define tc-clone-root-collection-current-decl : bool
-  false)
-(define tc-clone-root-collection-selected : tc_i64_i64_map.Map
-  (tc_i64_i64_map.with-capacity 8))
-(define tc-clone-root-collection-roots : clone_support.CloneRootEntries
-  (clone_support.CloneRootEntries.Empty))
-(define tc-clone-root-collection-arena : i64
-  0)
-
 (define (tc-clone-root-collection-decl-key
   [module-id : i64]
   [decl : ast.AstDecl]) : i64
@@ -46665,42 +46724,49 @@
                 (set! index (+ index 1)))))
           selected))]))
 
-(define (tc-clone-root-collection-use! [retained : ast.AstProgram]) : unit
+(define (tc-clone-root-collection-use!
+  [job-state : TcJobState]
+  [retained : ast.AstProgram]) : unit
   (let
+    [state : TcCloneState (tc-job-state-clone job-state)]
+    [data : TcCloneStateData (tc-clone-state-data state)]
     [arena-handle : i64 (arena.tl_arena_make)]
     (begin
       (in-arena
         (arena.Arena arena-handle)
         (set!
-          tc-clone-root-collection-selected
+          data.root-selected
           (tc-clone-root-collection-selected-from-program retained)))
-      (set!
-        tc-clone-root-collection-roots
-        (clone_support.CloneRootEntries.Empty))
-      (set! tc-clone-root-collection-current-decl false)
-      (set! tc-clone-root-collection-arena arena-handle)
-      (set! tc-clone-root-collection-active true))))
+      (set! data.root-roots (clone_support.CloneRootEntries.Empty))
+      (set! data.root-current-decl false)
+      (set! data.root-arena arena-handle)
+      (set! data.root-active true)
+      (tc-clone-state-data-set! state data))))
 
 (define (tc-clone-root-collection-select-decl!
+  [ctx : TcContext]
   [decl : ast.AstDecl]
   [module-id : i64]) : unit
-  (if tc-clone-root-collection-active
-    (let
-      [key : i64 (tc-clone-root-collection-decl-key module-id decl)]
-      [selected : bool
-        (and
-          (>= key 0)
-          (tc_i64_i64_map.contains? (& tc-clone-root-collection-selected) key))]
-      (begin
-        (set! tc-clone-root-collection-current-decl selected)
-        (cfg
-          (any
-            compiler-surface-producer
-            compiler-build-identity
-            embedded-stdlib-tlci)
-          (surface_facts.surface-typecheck-facts-recording-select-decl! key)
-          unit)))
-    unit))
+  (let
+    [state : TcCloneState
+      (tc-job-state-clone (tc-context-job-state (tc-global-shared-view ctx)))]
+    [data : TcCloneStateData (tc-clone-state-data state)]
+    (if data.root-active
+      (let
+        [key : i64 (tc-clone-root-collection-decl-key module-id decl)]
+        [selected : bool
+          (and (>= key 0) (tc_i64_i64_map.contains? (& data.root-selected) key))]
+        (begin
+          (set! data.root-current-decl selected)
+          (tc-clone-state-data-set! state data)
+          (cfg
+            (any
+              compiler-surface-producer
+              compiler-build-identity
+              embedded-stdlib-tlci)
+            (surface_facts.surface-typecheck-facts-recording-select-decl! key)
+            unit)))
+      unit)))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
@@ -46723,145 +46789,179 @@
             (set! index (+ index 1))))))))
 
 (define (tc-clone-root-collection-note! [ctx : TcContext] [ty : ast.AstType]) : unit
-  (if (and
-    tc-clone-root-collection-active
-    tc-clone-root-collection-current-decl)
-    (match (tc-context-program (tc-global-shared-view ctx))
-      [(ast.AstProgram.Program decls-box)
-        (let
-          [decls : ast.AstDeclList
-            (ast.ast-decl-list-box-shared-view decls-box)]
-          [pools : ast.AstNodePoolContext
-            (tc-context-pools (tc-global-shared-view ctx))]
-          [able-set : clone_support.CloneNameSet
-            (tc-clone-able-set (tc-global-shared-view ctx))]
-          [prev-arena : i64 (arena.tl_arena_current)]
-          [_switch : unit
-            (unsafe
-              (arena.tl_arena_set tc-clone-root-collection-arena))]
-          [resolved : ast.AstType
-            (tc-type-without-regions
-              (tc-resolve-type (tc-global-shared-view ctx) ty))]
-          (begin
-            (cfg
-              compiler-surface-producer
-              (tc-clone-root-collection-record-surface-roots!
-                (if (surface_facts.surface-typecheck-facts-recording?)
-                  (clone_support.clone-root-add-type
-                    (& pools)
-                    (& decls)
-                    (& able-set)
-                    (clone_support.CloneRootEntries.Empty)
-                    (tc-global-shared-view resolved)
-                    cbi.compiler-builtin-id-fix-empty)
-                  (clone_support.CloneRootEntries.Empty)))
-              unit)
-            ;; Resolve the nominal closure while `ty` and all nested type-pool
-            ;; ids are still live in this function's semantic scratch scope.
-            ;; Retaining the shallow AstType until the declaration walk ends
-            ;; would leave those nested ids pointing past a pool rewind.
-            (set!
-              tc-clone-root-collection-roots
-              (clone_support.clone-root-add-type
-                (& pools)
-                (& decls)
-                (& able-set)
-                (tc-global-shared-view tc-clone-root-collection-roots)
-                resolved
-                cbi.compiler-builtin-id-fix-empty))
-            (set! tc-clone-root-collection-arena (arena.tl_arena_current))
-            (unsafe
-              (arena.tl_arena_set prev-arena))))])
-    unit))
+  (let
+    [state : TcCloneState
+      (tc-job-state-clone (tc-context-job-state (tc-global-shared-view ctx)))]
+    [initial : TcCloneStateData (tc-clone-state-data state)]
+    (if (and initial.root-active initial.root-current-decl)
+      (match (tc-context-program (tc-global-shared-view ctx))
+        [(ast.AstProgram.Program decls-box)
+          (let
+            [decls : ast.AstDeclList
+              (ast.ast-decl-list-box-shared-view decls-box)]
+            [pools : ast.AstNodePoolContext
+              (tc-context-pools (tc-global-shared-view ctx))]
+            [able-set : clone_support.CloneNameSet
+              (tc-clone-able-set (tc-global-shared-view ctx))]
+            ;; Building the able set may have updated this same job-owned cell.
+            [data : TcCloneStateData (tc-clone-state-data state)]
+            [prev-arena : i64 (arena.tl_arena_current)]
+            [_switch : unit
+              (unsafe
+                (arena.tl_arena_set data.root-arena))]
+            [resolved : ast.AstType
+              (tc-type-without-regions
+                (tc-resolve-type (tc-global-shared-view ctx) ty))]
+            (begin
+              (cfg
+                compiler-surface-producer
+                (tc-clone-root-collection-record-surface-roots!
+                  (if (surface_facts.surface-typecheck-facts-recording?)
+                    (clone_support.clone-root-add-type
+                      (& pools)
+                      (& decls)
+                      (& able-set)
+                      (clone_support.CloneRootEntries.Empty)
+                      (tc-global-shared-view resolved)
+                      cbi.compiler-builtin-id-fix-empty)
+                    (clone_support.CloneRootEntries.Empty)))
+                unit)
+              ;; Resolve the nominal closure while `ty` and all nested type-pool
+              ;; ids are still live in this function's semantic scratch scope.
+              ;; Retaining the shallow AstType until the declaration walk ends
+              ;; would leave those nested ids pointing past a pool rewind.
+              (set!
+                data.root-roots
+                (clone_support.clone-root-add-type
+                  (& pools)
+                  (& decls)
+                  (& able-set)
+                  (tc-global-shared-view data.root-roots)
+                  resolved
+                  cbi.compiler-builtin-id-fix-empty))
+              (set! data.root-arena (arena.tl_arena_current))
+              (tc-clone-state-data-set! state data)
+              (unsafe
+                (arena.tl_arena_set prev-arena))))])
+      unit)))
 
 (define (tc-clone-root-collection-copy-roots
   [roots : clone_support.CloneRootEntries]) : clone_support.CloneRootEntries
   (clone_support.clone-root-entries-copy roots))
 
-(define (tc-clone-root-collection-clear-state!) : unit
-  (begin
-    (set! tc-clone-root-collection-active false)
-    (set! tc-clone-root-collection-current-decl false)
-    (set! tc-clone-root-collection-roots (clone_support.CloneRootEntries.Empty))))
+(define (tc-clone-root-collection-clear-state! [state : TcCloneState]) : unit
+  (let
+    [data : TcCloneStateData (tc-clone-state-data state)]
+    (begin
+      (set! data.root-active false)
+      (set! data.root-current-decl false)
+      (set! data.root-roots (clone_support.CloneRootEntries.Empty))
+      (set! data.root-arena 0)
+      (tc-clone-state-data-set! state data))))
 
-(define (tc-clone-root-collection-finish! [_ctx : TcContext]) : clone_support.CloneRootEntries
-  (if tc-clone-root-collection-active
-    (let
-      [roots : clone_support.CloneRootEntries
-        (tc-clone-root-collection-copy-roots
-          (tc-global-shared-view tc-clone-root-collection-roots))]
-      [arena-handle : i64 tc-clone-root-collection-arena]
-      (begin
-        (tc-clone-root-collection-clear-state!)
-        (set! tc-clone-root-collection-arena 0)
-        (unsafe
-          (arena.tl_arena_destroy arena-handle))
-        roots))
-    (clone_support.CloneRootEntries.Empty)))
+(define (tc-clone-root-collection-finish! [ctx : TcContext]) : clone_support.CloneRootEntries
+  (let
+    [state : TcCloneState
+      (tc-job-state-clone (tc-context-job-state (tc-global-shared-view ctx)))]
+    [data : TcCloneStateData (tc-clone-state-data state)]
+    (if data.root-active
+      (let
+        [roots : clone_support.CloneRootEntries
+          (tc-clone-root-collection-copy-roots
+            (tc-global-shared-view data.root-roots))]
+        [arena-handle : i64 data.root-arena]
+        (begin
+          (tc-clone-root-collection-clear-state! state)
+          (unsafe
+            (arena.tl_arena_destroy arena-handle))
+          roots))
+      (clone_support.CloneRootEntries.Empty))))
 
-(define (tc-clone-root-collection-abort!) : unit
-  (if tc-clone-root-collection-active
-    (let
-      [arena-handle : i64 tc-clone-root-collection-arena]
-      (begin
-        (tc-clone-root-collection-clear-state!)
-        (set! tc-clone-root-collection-arena 0)
-        (unsafe
-          (arena.tl_arena_destroy arena-handle))))
-    unit))
+(define (tc-clone-root-collection-abort! [job-state : TcJobState]) : unit
+  (let
+    [state : TcCloneState (tc-job-state-clone job-state)]
+    [data : TcCloneStateData (tc-clone-state-data state)]
+    (if data.root-active
+      (let
+        [arena-handle : i64 data.root-arena]
+        (begin
+          (tc-clone-root-collection-clear-state! state)
+          (unsafe
+            (arena.tl_arena_destroy arena-handle))))
+      unit)))
 
-(define (tc-clone-root-collection-apply-surface-facts!) : unit
-  (if (and
-    tc-clone-root-collection-active
-    (surface_facts.surface-typecheck-facts-active?))
-    (let
-      [facts : surface_facts.SurfaceTypecheckFacts
-        (surface_facts.surface-typecheck-facts-current)]
-      [decl-keys : (__tl_dyn-array i64) facts.clone-decl-keys]
-      [root-keys : (__tl_dyn-array i64) facts.clone-root-keys]
-      [call-indices : (__tl_dyn-array i64) facts.clone-call-indices]
-      [count : i64 (array-length decl-keys)]
-      [index : i64 0]
-      (in-arena
-        (arena.Arena tc-clone-root-collection-arena)
-        (while (< index count)
-          (let
-            [call-index : i64 (array-ref call-indices index)]
-            [decl-key : i64 (array-ref decl-keys index)]
-            [end : i64 (+ index 1)]
-            (begin
-              (while (and
-                (< end count)
-                (= (array-ref call-indices end) call-index))
-                (set! end (+ end 1)))
-              (if (tc_i64_i64_map.contains?
-                (& tc-clone-root-collection-selected)
-                decl-key)
-                (let
-                  [cursor : i64 (- end 1)]
-                  (while (>= cursor index)
+(define (tc-clone-root-collection-apply-surface-facts! [ctx : TcContext]) : unit
+  (let
+    [state : TcCloneState
+      (tc-job-state-clone (tc-context-job-state (tc-global-shared-view ctx)))]
+    [data : TcCloneStateData (tc-clone-state-data state)]
+    (if (and data.root-active (surface_facts.surface-typecheck-facts-active?))
+      (let
+        [facts : surface_facts.SurfaceTypecheckFacts
+          (surface_facts.surface-typecheck-facts-current)]
+        [decl-keys : (__tl_dyn-array i64) facts.clone-decl-keys]
+        [root-keys : (__tl_dyn-array i64) facts.clone-root-keys]
+        [call-indices : (__tl_dyn-array i64) facts.clone-call-indices]
+        [count : i64 (array-length decl-keys)]
+        [index : i64 0]
+        (begin
+          (in-arena
+            (arena.Arena data.root-arena)
+            (while (< index count)
+              (let
+                [call-index : i64 (array-ref call-indices index)]
+                [decl-key : i64 (array-ref decl-keys index)]
+                [end : i64 (+ index 1)]
+                (begin
+                  (while (and
+                    (< end count)
+                    (= (array-ref call-indices end) call-index))
+                    (set! end (+ end 1)))
+                  (if (tc_i64_i64_map.contains? (& data.root-selected) decl-key)
                     (let
-                      [root-key : i64 (array-ref root-keys cursor)]
-                      (begin
-                        (if (clone_support.clone-root-entries-contains-id?
-                          (tc-global-shared-view tc-clone-root-collection-roots)
-                          root-key)
-                          unit
-                          (set!
-                            tc-clone-root-collection-roots
-                            (clone_support.clone-root-entries-add-id
-                              (tc-global-shared-view
-                                tc-clone-root-collection-roots)
-                              root-key)))
-                        (set! cursor (- cursor 1))))))
-                unit)
-              (set! index end))))))
-    unit))
+                      [cursor : i64 (- end 1)]
+                      (while (>= cursor index)
+                        (let
+                          [root-key : i64 (array-ref root-keys cursor)]
+                          (begin
+                            (if (clone_support.clone-root-entries-contains-id?
+                              (tc-global-shared-view data.root-roots)
+                              root-key)
+                              unit
+                              (set!
+                                data.root-roots
+                                (clone_support.clone-root-entries-add-id
+                                  (tc-global-shared-view data.root-roots)
+                                  root-key)))
+                            (set! cursor (- cursor 1))))))
+                    unit)
+                  (set! index end)))))
+          (tc-clone-state-data-set! state data)))
+      unit)))
 
-(define (tc-clone-able-cache-reset!) : unit
-  (begin
-    (set! tc-clone-able-cache-ready false)
-    (set! tc-clone-able-cache (clone_support.clone-name-set-empty))))
+(define (tc-clone-able-cache-reset-for-state! [state : TcCloneState]) : unit
+  (let
+    [data : TcCloneStateData (tc-clone-state-data state)]
+    (begin
+      (set! data.able-ready false)
+      (set! data.able-cache (clone_support.clone-name-set-empty))
+      (tc-clone-state-data-set! state data))))
+
+(define (tc-clone-able-cache-reset-for-job! [state : TcJobState]) : unit
+  (tc-clone-able-cache-reset-for-state! (tc-job-state-clone state)))
+
+(define (tc-clone-able-cache-reset-for-macro-state! [state : TcMacroState]) : unit
+  (tc-clone-able-cache-reset-for-state! (tc-macro-state-clone state)))
+
+(define (tc-clone-root-collection-active-for-job? [state : TcJobState]) : bool
+  (__tl-project-field
+    (tc-clone-state-data (tc-job-state-clone state))
+    root-active))
+
+(define (tc-clone-root-collection-arena-for-macro-state [state : TcMacroState]) : i64
+  (__tl-project-field
+    (tc-clone-state-data (tc-macro-state-clone state))
+    root-arena))
 
 (define (tc-clone-able-set-build [ctx : TcContext]) : clone_support.CloneNameSet
   (if (macro-segmented-program-active?
@@ -46884,6 +46984,9 @@
 
 (define (tc-clone-able-cache-populate! [ctx : TcContext]) : unit
   (let
+    [state : TcCloneState
+      (tc-job-state-clone (tc-context-job-state (tc-global-shared-view ctx)))]
+    [data : TcCloneStateData (tc-clone-state-data state)]
     [pools : ast.AstNodePoolContext
       (tc-context-pools (tc-global-shared-view ctx))]
     [cache-arena : i64
@@ -46893,18 +46996,137 @@
       (unsafe
         (arena.tl_arena_set cache-arena))
       (set!
-        tc-clone-able-cache
+        data.able-cache
         (tc-clone-able-set-build (tc-global-shared-view ctx)))
       (unsafe
         (arena.tl_arena_set previous-arena))
-      (set! tc-clone-able-cache-ready true))))
+      (set! data.able-ready true)
+      (tc-clone-state-data-set! state data))))
 
 (define (tc-clone-able-set [ctx : TcContext]) : clone_support.CloneNameSet
-  (if tc-clone-able-cache-ready
-    (tc-global-shared-view tc-clone-able-cache)
+  (let
+    [state : TcCloneState
+      (tc-job-state-clone (tc-context-job-state (tc-global-shared-view ctx)))]
+    [data : TcCloneStateData (tc-clone-state-data state)]
+    (if data.able-ready
+      (tc-global-shared-view data.able-cache)
+      (begin
+        (tc-clone-able-cache-populate! (tc-global-shared-view ctx))
+        (let
+          [ready : TcCloneStateData (tc-clone-state-data state)]
+          (tc-global-shared-view ready.able-cache))))))
+
+(define (tc-nominal-clone-state-isolation-self-test) : bool
+  (let
+    [job-a : TcJobState (tc-job-state-new)]
+    [job-b : TcJobState (tc-job-state-new)]
+    [nominal-a : TcNominalCacheState (tc-job-state-nominal-cache job-a)]
+    [nominal-b : TcNominalCacheState (tc-job-state-nominal-cache job-b)]
+    [clone-a : TcCloneState (tc-job-state-clone job-a)]
+    [clone-b : TcCloneState (tc-job-state-clone job-b)]
+    [owner-handle : i64 73]
+    [owner-slot : i64 (tc-nominal-owner-cache-slot owner-handle)]
+    [program : ast.AstProgram (ast.ast-program (ast.ast-decl-list-new))]
     (begin
-      (tc-clone-able-cache-populate! (tc-global-shared-view ctx))
-      (tc-global-shared-view tc-clone-able-cache))))
+      ;; The same numeric lookup key and symbol handle deliberately carry
+      ;; different answers in the two jobs.
+      (tc-resolve-type-name-cache-store! nominal-a 41 true 101)
+      (tc-resolve-type-name-cache-store! nominal-b 41 false 0)
+      (tc-nominal-owner-cache-store-if-safe! nominal-a owner-handle "owner-a")
+      (tc-nominal-owner-cache-store-if-safe! nominal-b owner-handle "owner-b")
+      (let
+        [data-a : TcCloneStateData (tc-clone-state-data clone-a)]
+        [data-b : TcCloneStateData (tc-clone-state-data clone-b)]
+        (begin
+          (set!
+            data-a.able-cache
+            (clone_support.clone-name-set-insert-id data-a.able-cache 111))
+          (set! data-a.able-ready true)
+          (tc-clone-state-data-set! clone-a data-a)
+          (set!
+            data-b.able-cache
+            (clone_support.clone-name-set-insert-id data-b.able-cache 222))
+          (set! data-b.able-ready true)
+          (tc-clone-state-data-set! clone-b data-b)))
+      ;; Each active traversal owns an independent arena even when both jobs
+      ;; were constructed in the same driver lifetime arena.
+      (tc-clone-root-collection-use! job-a (tc-global-shared-view program))
+      (tc-clone-root-collection-use! job-b (tc-global-shared-view program))
+      (let
+        [root-a-before : TcCloneStateData (tc-clone-state-data clone-a)]
+        [root-b-before : TcCloneStateData (tc-clone-state-data clone-b)]
+        [root-b-arena : i64 root-b-before.root-arena]
+        (begin
+          (tc-nominal-owner-cache-reset-for-job! job-a)
+          (tc-clone-able-cache-reset-for-job! job-a)
+          (let
+            [nominal-a-after : TcNominalCacheStateData
+              (tc-nominal-cache-state-data nominal-a)]
+            [nominal-b-after : TcNominalCacheStateData
+              (tc-nominal-cache-state-data nominal-b)]
+            [clone-a-after : TcCloneStateData (tc-clone-state-data clone-a)]
+            [clone-b-after : TcCloneStateData (tc-clone-state-data clone-b)]
+            [isolated : bool
+              (and
+                root-a-before.root-active
+                root-b-before.root-active
+                (> root-a-before.root-arena 0)
+                (> root-b-arena 0)
+                (not (= root-a-before.root-arena root-b-arena))
+                (match (tc-resolve-type-name-cache-lookup nominal-a 41)
+                  [(TcTypeNameLookupCache.Miss) true]
+                  [_ false])
+                (match (tc-resolve-type-name-cache-lookup nominal-b 41)
+                  [(TcTypeNameLookupCache.Missing) true]
+                  [_ false])
+                (= (array-ref nominal-a-after.owner-handles owner-slot) -1)
+                (string.eq
+                  (tc-global-array-element-shared-view
+                    nominal-a-after.owner-names
+                    owner-slot)
+                  "")
+                (=
+                  (array-ref nominal-b-after.owner-handles owner-slot)
+                  owner-handle)
+                (string.eq
+                  (tc-global-array-element-shared-view
+                    nominal-b-after.owner-names
+                    owner-slot)
+                  "owner-b")
+                (not clone-a-after.able-ready)
+                clone-b-after.able-ready
+                (clone_support.clone-name-set-contains-id?
+                  (& clone-b-after.able-cache)
+                  222))]
+            (begin
+              (tc-clone-root-collection-abort! job-a)
+              (let
+                [root-a-after : TcCloneStateData (tc-clone-state-data clone-a)]
+                [root-b-after : TcCloneStateData (tc-clone-state-data clone-b)]
+                [root-isolated : bool
+                  (and
+                    (not root-a-after.root-active)
+                    (= root-a-after.root-arena 0)
+                    root-b-after.root-active
+                    (= root-b-after.root-arena root-b-arena)
+                    root-b-after.able-ready
+                    (clone_support.clone-name-set-contains-id?
+                      (& root-b-after.able-cache)
+                      222))]
+                (begin
+                  (tc-clone-root-collection-abort! job-b)
+                  (and
+                    isolated
+                    root-isolated
+                    (not (tc-clone-root-collection-active-for-job? job-b))))))))))))
+
+(cfg
+  test
+  (test
+    tc-nominal-clone-job-owned-reset-isolation
+    (if (tc-nominal-clone-state-isolation-self-test)
+      unit
+      (io.panic "typecheck: job-owned nominal/clone state isolation failed"))))
 
 (define (tc-clone-unsupported-path-type
   [pools : (& pools ast.AstNodePoolContext)]
@@ -98665,10 +98887,9 @@
 ;; Every splice arm resets the whole per-splice cache family before it hands the
 ;; walk on -- `macro-alias-derived-cache-reset!` (module/enum index, alias,
 ;; unqualified-import, flat-import targets, surface call-decl, the three source
-;; key caches, imported-module identity), plus `tc-nominal-owner-cache-reset!`,
-;; `tc-resolve-type-name-cache-reset!` and `tc-job-state-reset-derived-caches!`.
-;; So
-;; anything splice N's expansion left in one of those caches is unreachable
+;; key caches, imported-module identity), plus the job-owned nominal/type-name
+;; cache reset and `tc-job-state-reset-derived-caches!`. So anything splice
+;; N's expansion left in one of those caches is unreachable
 ;; from splice N+1 onwards BY CONSTRUCTION. Retiring one splice behind puts the
 ;; destroy at splice N+2 -- a full reset past the last instant any of it can be
 ;; read.
@@ -98951,7 +99172,7 @@
         2
         "typecheck.macro.peak"
         "typecheck-clone-roots"
-        tc-clone-root-collection-arena)
+        (tc-clone-root-collection-arena-for-macro-state state))
       (allocation_profile.compiler-allocation-profile-control!
         2
         "typecheck.macro.peak"
@@ -98982,7 +99203,7 @@
     (macro-generated-decls-memo-reset! state)
     (tc-macro-helper-env-cache-reset! state)
     (tc-macro-module-env-cache-clear! state)
-    (tc-nominal-owner-cache-reset!)
+    (tc-nominal-owner-cache-reset-for-macro-state! state)
     (macro-alias-derived-cache-reset-for-state! state)
     (tc-hygiene-module-env-cache-release! state)))
 
@@ -100405,7 +100626,7 @@
         suffix-head)]
     (begin
       (if clone-set-changed
-        (tc-clone-able-cache-reset!)
+        (tc-clone-able-cache-reset-for-job! state)
         unit)
       (cfg compile-profile (compiler-tc-walk-segment-split-note! middle-count))
       (set! data.head next-head)
@@ -124964,7 +125185,9 @@
       ;; missing result, so additions invalidate that entry alone. Cloneability
       ;; is reset at expansion entry and populated only after expansion; a
       ;; per-splice reset cannot change its state.
-      (tc-resolve-type-name-cache-reset!)
+      (tc-resolve-type-name-cache-reset-for-state!
+        (tc-job-state-nominal-cache
+          (tc-context-job-state (tc-global-shared-view cur-ctx))))
       ;; Program-position and import-derived alias indexes can contain negative
       ;; answers and refer to the replaced flat program view. Keep their shared
       ;; invalidation until they gain an insert API of their own.
@@ -125285,7 +125508,10 @@
                                             extend-result))
                                           [(ResultTcEnv.Ok next-top-env)
                                             (begin
-                                              (tc-nominal-owner-cache-reset!)
+                                              (tc-nominal-owner-cache-reset-for-job!
+                                                (tc-context-job-state
+                                                  (tc-global-shared-view
+                                                    cur-ctx)))
                                               (macro-alias-derived-cache-reset-for-state!
                                                 macro-state)
                                               (tc-job-state-reset-derived-caches!
@@ -126342,12 +126568,12 @@
             (cfg compile-profile (compiler-tc-macro-profile-reset))
             (cfg compile-profile (compiler-tc-env-profile-reset))
             ;; Same per-compile reset for the clone-able type set cache.
-            (tc-clone-able-cache-reset!)
+            (tc-clone-able-cache-reset-for-job! job-state)
             ;; Type-name misses are keyed only by lookup text; in-pass splice
             ;; rebuilds swap in a different expanded program, so a miss recorded
             ;; against an earlier view must not hide generated module-local
             ;; types introduced since.
-            (tc-nominal-owner-cache-reset!)
+            (tc-nominal-owner-cache-reset-for-job! job-state)
             ;; Same per-compile reset for the qualified-alias resolution cache:
             ;; the (module, qualifier) -> target mapping is derived from this
             ;; program's declarations.
@@ -127974,7 +128200,8 @@
               ;; Single-entry name caches may hold strings allocated in the
               ;; scratch that was just rewound; invalidate them before
               ;; anything can compare against freed memory.
-              (tc-nominal-owner-cache-reset!)
+              (tc-nominal-owner-cache-reset-for-job!
+                (tc-context-job-state (tc-global-shared-view ctx)))
               escaped)))))))
 
 ;; Reusable scratch arena for per-declaration checks that are not function
@@ -128097,7 +128324,8 @@
                   ;; Single-entry name caches may hold strings allocated in the
                   ;; scratch that was just rewound; invalidate them before
                   ;; anything can compare against freed memory.
-                  (tc-nominal-owner-cache-reset!)
+                  (tc-nominal-owner-cache-reset-for-job!
+                    (tc-context-job-state (tc-global-shared-view ctx)))
                   ;; The macro helper env cache persists across declarations, but
                   ;; its spine is extended with per-check partial cache layers
                   ;; while a DefMacro body is checked; those layers (and any
@@ -128200,7 +128428,8 @@
     ;; Type-name and owner caches are keyed by text/handle only. Helper passes
     ;; may typecheck with short-lived symbol tables before the final declaration
     ;; walk, so keep cache entries scoped to one checked declaration.
-    (tc-nominal-owner-cache-reset!)
+    (tc-nominal-owner-cache-reset-for-job!
+      (tc-context-job-state (tc-global-shared-view ctx)))
     (match (tc-global-shared-view decl)
       [(ast.AstDecl.DefFn decl-meta name params ret body-box _)
         (match (tc-elide-function-signature
@@ -129229,7 +129458,7 @@
   [module-id : i64]
   [facts : surface_facts.SurfaceTypecheckFacts]) : ResultCompilerTypecheck
   (begin
-    (tc-clone-root-collection-apply-surface-facts!)
+    (tc-clone-root-collection-apply-surface-facts! (tc-global-shared-view ctx))
     (cfg compile-profile (tc-profile-surface-prefix-hit count))
     (cfg compile-profile (compiler-tc-decl-profile-reset))
     (tc-check-decls-with-paths-in-module
@@ -129335,7 +129564,11 @@
           (begin
             (surface_facts.surface-typecheck-facts-clear!)
             (tc-check-decls-with-paths-cold ctx top-env decls paths summary))])]
-    [(and prefix-cache-active (not tc-clone-root-collection-active))
+    [(and
+        prefix-cache-active
+        (not
+          (tc-clone-root-collection-active-for-job?
+            (tc-context-job-state (tc-global-shared-view ctx)))))
       (match (tc-prefix-candidate
         (tc-global-shared-view decls)
         (tc-global-shared-view paths)
@@ -129666,6 +129899,7 @@
                   [(ast.AstDeclPathListStep.Nil) (ast.ast-decl-path-list-new)])]
               [_select-clone-root-decl : unit
                 (tc-clone-root-collection-select-decl!
+                  (tc-global-shared-view ctx)
                   (tc-global-shared-view decl)
                   cur-module-id)]
               [_select-checked-let-declaration : unit
@@ -129954,7 +130188,7 @@
         (tc-global-shared-view load-state)
         (tc-global-shared-view pools)
         (tc-global-shared-view source-names)))
-    (tc-nominal-owner-cache-reset!)
+    (tc-nominal-owner-cache-reset-for-job! body-state.job-state)
     (tc-install-pools! (tc-global-shared-view pools))
     (match (csym.build-compiler-symbols-diagnostic-with-paths
       (tc-global-shared-view program)
@@ -130169,12 +130403,12 @@
       ;; into the id-only stub table while the summary strings are alive.
       (tc-lazy-import-surface-stubs-record-for-job! job-state)
       (tc-unbound-suggestion-snapshot-reset!)
-      (tc-clone-able-cache-reset!)
+      (tc-clone-able-cache-reset-for-job! job-state)
       (tc-macro-helper-env-cache-reset! macro-state)
       (tc-macro-module-env-cache-clear! macro-state)
       (tc-spmd-inline-helper-stack-reset-for-job! job-state)
       (tc-agg-caches-reset-for-job! job-state)
-      (tc-nominal-owner-cache-reset!)
+      (tc-nominal-owner-cache-reset-for-job! job-state)
       (tc-stdlib-comptime-macro-surface-ok-reset! macro-state)
       (tc-unqualified-import-ambiguity-reset!)
       (macro-alias-derived-cache-reset-for-state! macro-state)
@@ -130220,12 +130454,12 @@
       (tc-job-state-release-type-env-scoped-state! job-state)
       (ctfe_support.ctfe-builtin-reset!)
       (set! tc-stdlib-comptime-syntax-type-cache-generation -1)
-      (tc-clone-able-cache-reset!)
+      (tc-clone-able-cache-reset-for-job! job-state)
       (tc-macro-helper-env-cache-reset! macro-state)
       (tc-macro-module-env-cache-clear! macro-state)
       (tc-spmd-inline-helper-stack-reset-for-job! job-state)
       (tc-agg-caches-reset-for-job! job-state)
-      (tc-nominal-owner-cache-reset!)
+      (tc-nominal-owner-cache-reset-for-job! job-state)
       (tc-stdlib-comptime-macro-surface-ok-reset! macro-state)
       (tc-unqualified-import-ambiguity-reset!)
       (macro-alias-derived-cache-reset-for-state! macro-state)

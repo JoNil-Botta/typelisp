@@ -304,6 +304,58 @@ assert_intern_storage_schema_in() {
     fi
 }
 
+# The lifetime ledger is deliberately machine-readable and deterministic: one
+# schema row, a fixed owner order at each boundary, and exact reconciliation of
+# exclusive owners plus the explicit remainder. Input bytes are payload detail
+# inside frontend-read-parse, so they never participate in the exclusive sum.
+assert_lifetime_ledger_in() {
+    _lll_file=$1
+    _lll_stdout=$2
+    _lll_stderr=$3
+    if ! awk -F'|' '
+        BEGIN {
+            expected_text = "load.complete|total|boundary-total load.complete|input-bytes|payload-detail load.complete|frontend-read-parse|transfer load.complete|token-storage|scan-scratch load.complete|reader-sexpr-storage|scan-scratch load.complete|reader-origin-storage|transfer load.complete|parsed-source-base|transfer load.complete|parsed-expr-pool|transfer load.complete|parsed-type-pool|transfer load.complete|loader-session-surface|session load.complete|intern-storage|session load.complete|remainder|unattributed load.handoff|total|boundary-total load.handoff|input-bytes|payload-detail load.handoff|frontend-read-parse|transfer load.handoff|token-storage|scan-scratch load.handoff|reader-sexpr-storage|scan-scratch load.handoff|reader-origin-storage|transfer load.handoff|parsed-source-base|transfer load.handoff|parsed-expr-pool|transfer load.handoff|parsed-type-pool|transfer load.handoff|loader-session-surface|session load.handoff|intern-storage|session load.handoff|remainder|unattributed macro.pre-detach|total|boundary-total macro.pre-detach|macro-enclosing|session macro.pre-detach|macro-job-registry-cache|session macro.pre-detach|scoped-env-index|cache macro.pre-detach|output-pool-base|lower-handoff macro.pre-detach|output-expr-pool|lower-handoff macro.pre-detach|output-type-pool|lower-handoff macro.pre-detach|live-symbols-registry|macro-live macro.pre-detach|retired-symbols-registry|retired macro.pre-detach|expansion-pool|scratch macro.pre-detach|active-generation-pools|scratch macro.pre-detach|retired-generation-pools|retired macro.pre-detach|remainder|unattributed macro.lower-handoff|total|boundary-total macro.lower-handoff|macro-enclosing|session macro.lower-handoff|macro-job-registry-cache|session macro.lower-handoff|scoped-env-index|cache macro.lower-handoff|output-pool-base|lower-handoff macro.lower-handoff|output-expr-pool|lower-handoff macro.lower-handoff|output-type-pool|lower-handoff macro.lower-handoff|live-symbols-registry|macro-live macro.lower-handoff|retired-symbols-registry|retired macro.lower-handoff|expansion-pool|scratch macro.lower-handoff|active-generation-pools|scratch macro.lower-handoff|retired-generation-pools|retired macro.lower-handoff|remainder|unattributed"
+            expected_count = split(expected_text, expected, " ")
+        }
+        $1 == "compile-profile-lifetime" && $2 == "boundary" {
+            header++
+            if ($0 != "compile-profile-lifetime|boundary|owner|lifetime|cumulative_alloc_bytes|retained_live_bytes|peak_delta_bytes") bad = 1
+            next
+        }
+        $1 == "compile-profile-lifetime" {
+            row++
+            key = $2 "|" $3 "|" $4
+            if (row > expected_count || key != expected[row] || NF != 7) bad = 1
+            if ($5 !~ /^[0-9]+$/ || $6 !~ /^-?[0-9]+$/ || $7 !~ /^[0-9]+$/) bad = 1
+            boundary = $2
+            if (!(boundary in cumulative)) {
+                cumulative[boundary] = $5
+                peak[boundary] = $7
+            } else if ($5 != cumulative[boundary] || $7 != peak[boundary]) {
+                bad = 1
+            }
+            if ($3 == "total") total[boundary] = $6 + 0
+            else if ($3 == "remainder") remainder[boundary] = $6 + 0
+            else if ($4 != "payload-detail") owners[boundary] += $6
+            value[boundary "|" $3] = $6 + 0
+        }
+        END {
+            if (header != 1 || row != expected_count || bad) exit 1
+            count = split("load.complete load.handoff macro.pre-detach macro.lower-handoff", boundaries, " ")
+            for (i = 1; i <= count; i++) {
+                boundary = boundaries[i]
+                if (total[boundary] <= 0 || owners[boundary] + remainder[boundary] != total[boundary]) exit 1
+                if (owners[boundary] * 100 < total[boundary] * 90) exit 1
+            }
+            if (value["load.handoff|token-storage"] != 0 || value["load.handoff|reader-sexpr-storage"] != 0) exit 1
+            if (value["macro.lower-handoff|live-symbols-registry"] != 0 || value["macro.lower-handoff|retired-symbols-registry"] != 0 || value["macro.lower-handoff|expansion-pool"] != 0 || value["macro.lower-handoff|active-generation-pools"] != 0 || value["macro.lower-handoff|retired-generation-pools"] != 0) exit 1
+        }
+    ' "$_lll_file"; then
+        show_failure_logs "$_lll_stdout" "$_lll_stderr"
+        fail "compile lifetime ledger schema/order/accounting mismatch"
+    fi
+}
+
 # Every intermediate segmented-program flatten must name one of the two
 # documented conservative reasons. Successful expansion then publishes the
 # ordinary flat program exactly once at the walk boundary.
@@ -1155,6 +1207,10 @@ assert_profile_live_counter_at_least_in \
     "$DETACH_CHANGED_STDERR" \
     "lower.macro_detach.change_reasons" \
     1 \
+    "$DETACH_CHANGED_STDOUT" \
+    "$DETACH_CHANGED_STDERR"
+assert_lifetime_ledger_in \
+    "$DETACH_CHANGED_STDERR" \
     "$DETACH_CHANGED_STDOUT" \
     "$DETACH_CHANGED_STDERR"
 

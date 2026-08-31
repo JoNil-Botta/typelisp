@@ -7,7 +7,8 @@ set -eu
 # compiles src/main.tl at its own level so every shipped level keeps its
 # byte-identical stage2.s == stage3.s fixpoint. The headline path uses the opt2
 # stage2 at opt1; one opt2-built profile driver records phase timing, allocator
-# peak-live counters, and optimizer detail for that exact workload.
+# peak-live counters, lifetime-owner rows, and optimizer detail for fixed-source
+# opt1 and opt2 workloads.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -96,12 +97,14 @@ TIMINGS="$WORKDIR/timings.tsv"
 PROFILE_TSV="$WORKDIR/profile.tsv"
 PROFILE_DETAIL_TSV="$WORKDIR/profile-detail.tsv"
 PROFILE_DETAIL_TOP_TSV="$WORKDIR/profile-detail-top.tsv"
+PROFILE_LIFETIME_TSV="$WORKDIR/profile-lifetime.tsv"
 SUMMARY_TSV="$WORKDIR/summary.tsv"
 COMMANDS_TSV="$WORKDIR/commands.tsv"
 printf 'opt_level\tphase\telapsed_ms\n' > "$TIMINGS"
 printf 'build_opt_level\tworkload_opt_level\tphase\telapsed_ms\talloc_delta_bytes\tlive_delta_bytes\tpeak_live_delta_bytes\n' > "$PROFILE_TSV"
 printf 'build_opt_level\tworkload_opt_level\tphase\telapsed_ms\tname\n' > "$PROFILE_DETAIL_TSV"
 printf 'build_opt_level\tworkload_opt_level\tphase\telapsed_ms\tname\n' > "$PROFILE_DETAIL_TOP_TSV"
+printf 'build_opt_level\tworkload_opt_level\tboundary\towner\tlifetime\tcumulative_alloc_bytes\tretained_live_bytes\tpeak_delta_bytes\n' > "$PROFILE_LIFETIME_TSV"
 printf 'build_opt_level\tworkload_opt_level\tcompile_ms\tprofile_total_ms\tprofile_peak_live_delta_bytes\n' > "$SUMMARY_TSV"
 printf 'stage_label\tstart_epoch_ms\tend_epoch_ms\tcompiler\tcompiler_sha256\texit_code\tstdout\tstderr\targv\n' > "$COMMANDS_TSV"
 
@@ -317,6 +320,20 @@ append_profile_detail_rows() {
         >> "$PROFILE_DETAIL_TSV" || true
 }
 
+append_profile_lifetime_rows() {
+    build_opt_level=$1
+    workload_opt_level=$2
+    stderr=$3
+    if ! grep '^compile-profile-lifetime|' "$stderr" >/dev/null 2>&1; then
+        fail "profiled compile did not emit lifetime rows: $stderr"
+    fi
+    grep '^compile-profile-lifetime|' "$stderr" \
+        | awk -F'|' -v build="$build_opt_level" -v workload="$workload_opt_level" '$2 != "boundary" {
+              printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", build, workload, $2, $3, $4, $5, $6, $7
+          }' \
+        >> "$PROFILE_LIFETIME_TSV"
+}
+
 write_profile_detail_top_rows() {
     tab=$(printf '\t')
     {
@@ -463,6 +480,7 @@ run_profile_workload() {
     record_timing "$build_opt_level@$workload_opt_level" "profile-run" "$((end - start))"
     append_profile_rows "$build_opt_level" "$workload_opt_level" "$profile_run_stderr"
     append_profile_detail_rows "$build_opt_level" "$workload_opt_level" "$profile_run_stderr"
+    append_profile_lifetime_rows "$build_opt_level" "$workload_opt_level" "$profile_run_stderr"
     compare_text \
         "opt$build_opt_level-built profiled @opt$workload_opt_level vs opt$workload_opt_level stage3.s" \
         "$reference_asm" \
@@ -490,6 +508,31 @@ summary_value() {
                 exit 1
             }
         }' "$SUMMARY_TSV"
+}
+
+update_summary_profile() {
+    build_opt_level=$1
+    workload_opt_level=$2
+    profile_total=$3
+    profile_peak=$4
+    summary_next="$SUMMARY_TSV.next"
+    awk -F'\t' -v OFS='\t' \
+        -v build="$build_opt_level" \
+        -v workload="$workload_opt_level" \
+        -v total="$profile_total" \
+        -v peak="$profile_peak" '
+        NR > 1 && $1 == build && $2 == workload {
+            $4 = total
+            $5 = peak
+            found = 1
+        }
+        { print }
+        END { if (!found) exit 1 }
+    ' "$SUMMARY_TSV" > "$summary_next" || {
+        rm -f "$summary_next"
+        fail "missing summary row for profile opt$build_opt_level@opt$workload_opt_level"
+    }
+    mv "$summary_next" "$SUMMARY_TSV"
 }
 
 check_ratio() {
@@ -530,6 +573,14 @@ run_cross_level() {
     printf '%s\t%s\t%s\t%s\t%s\n' \
         "$quality" "$cheap" "$CROSS_MAIN_MS" "$CROSS_PROFILE_TOTAL" "$CROSS_PROFILE_PEAK" \
         >> "$SUMMARY_TSV"
+    run_profile_workload "$quality" "$quality"
+    QUALITY_PROFILE_TOTAL=$LAST_PROFILE_TOTAL
+    QUALITY_PROFILE_PEAK=$LAST_PROFILE_PEAK
+    update_summary_profile \
+        "$quality" \
+        "$quality" \
+        "$QUALITY_PROFILE_TOTAL" \
+        "$QUALITY_PROFILE_PEAK"
     echo "[compile-bench] ============================================================"
     echo "[compile-bench] MAIN METRIC opt$quality-built stage2 @opt$cheap: ${CROSS_MAIN_MS}ms, peak ${CROSS_PROFILE_PEAK} bytes"
     echo "[compile-bench] ============================================================"
@@ -546,11 +597,9 @@ run_cross_level
 if [ "${TYPELISP_COMPILE_BENCH_CHECK:-}" = 1 ]; then
     opt1_compile=$(summary_value 1 1 3 || true)
     opt2_compile=$(summary_value 2 2 3 || true)
-    if [ -n "$opt1_compile" ] && [ -n "$opt2_compile" ] && [ -n "${CROSS_PROFILE_PEAK:-}" ]; then
-        run_profile_workload 2 2
-        opt2_peak=$LAST_PROFILE_PEAK
+    if [ -n "$opt1_compile" ] && [ -n "$opt2_compile" ] && [ -n "${CROSS_PROFILE_PEAK:-}" ] && [ -n "${QUALITY_PROFILE_PEAK:-}" ]; then
         check_ratio "compile_ms" "$opt1_compile" "$opt2_compile"
-        check_ratio "profile_peak_live_delta_bytes" "$CROSS_PROFILE_PEAK" "$opt2_peak"
+        check_ratio "profile_peak_live_delta_bytes" "$CROSS_PROFILE_PEAK" "$QUALITY_PROFILE_PEAK"
     else
         fail "check mode requires opt1 and opt2 builds plus the cross profile"
     fi
@@ -566,5 +615,7 @@ write_profile_detail_top_rows
 echo "[compile-bench] profile detail: $PROFILE_DETAIL_TSV"
 echo "[compile-bench] profile detail top rows: $PROFILE_DETAIL_TOP_TSV"
 cat "$PROFILE_DETAIL_TOP_TSV"
+echo "[compile-bench] profile lifetime: $PROFILE_LIFETIME_TSV"
+cat "$PROFILE_LIFETIME_TSV"
 echo "[compile-bench] commands: $COMMANDS_TSV"
 echo "[compile-bench] artifacts: $WORKDIR"

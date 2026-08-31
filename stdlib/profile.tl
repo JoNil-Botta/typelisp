@@ -74,6 +74,17 @@
       (set! compile-wide-peak-active false)
       compile-wide-peak-best)))
 
+;; Absolute compile-wide allocator high-water mark observed so far. Lifetime
+;; ledgers snapshot this value at nested boundaries because the runtime exposes
+;; one resettable process counter and inner phase timers legitimately reset it.
+;; Simultaneous per-job attribution remains the responsibility of #4959.
+(cfg
+  compile-profile
+  (define (compile-wide-peak-current) : i64
+    (begin
+      (compile-wide-peak-note!)
+      (+ compile-wide-peak-start-live compile-wide-peak-best))))
+
 ;: Return a pointer to one slot in the shared timestamp scratch buffer.
 (define (scratch-ptr [slot : i64]) : (MutPtr i64)
   (unsafe

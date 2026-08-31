@@ -11,7 +11,7 @@
 (define compiler-profile-state-metric-capacity : i64
   (cfg
     (any compile-profile test)
-    350
+    374
     (cfg
       regalloc-census
       223
@@ -207,7 +207,10 @@
           : (Ptr i64))))
     `(cast 0 : u64)))
 
-;; Typecheck owns slots 242-349 as one raw metrics view. Keeping the offset
+;; Typecheck owns slots 242-373 as one raw metrics view. Slots 350-361 and
+;; 368-369 are also
+;; addressed by the driver/loader lifetime ledger, while typecheck owns the
+;; macro boundary starts in 362-367 and 370-373. Keeping the offset
 ;; here makes the driver the only layer that knows how leaf-owned metric
 ;; families are packed into CompilerProfileState.
 (defmacro (compiler-profile-state-typecheck-metrics-address [_state : Expr]) : Expr
@@ -490,16 +493,29 @@
           (compiler-profile-state-shared-view right)
           222
           61)
-        ;; Exercise the first and final typecheck slots so the central owner
-        ;; test pins the complete metrics-view reservation.
+        ;; Exercise the first load-lifetime slot and both ends of the packed
+        ;; typecheck/lifetime view so the central owner test pins the complete
+        ;; reservation and a reset of one job cannot erase another ledger.
         (compiler-profile-state-metric-set!
           (compiler-profile-state-shared-view left)
           242
           67)
         (compiler-profile-state-metric-set!
-          (compiler-profile-state-shared-view right)
-          349
+          (compiler-profile-state-shared-view left)
+          350
           71)
+        (compiler-profile-state-metric-set!
+          (compiler-profile-state-shared-view right)
+          350
+          73)
+        (compiler-profile-state-metric-set!
+          (compiler-profile-state-shared-view left)
+          373
+          79)
+        (compiler-profile-state-metric-set!
+          (compiler-profile-state-shared-view right)
+          373
+          83)
         (compiler-profile-state-metric-reset-range!
           (compiler-profile-state-shared-view right)
           3
@@ -562,9 +578,31 @@
             242)
           67
           "first typecheck metric belongs to left owner")
+        (compiler-profile-state-metric-reset-range!
+          (compiler-profile-state-shared-view right)
+          350
+          374)
+        (test.assert-i64-eq
+          (compiler-profile-state-metric-value
+            (compiler-profile-state-shared-view left)
+            350)
+          71
+          "right lifetime reset leaves left load metric intact")
         (test.assert-i64-eq
           (compiler-profile-state-metric-value
             (compiler-profile-state-shared-view right)
-            349)
-          71
-          "final typecheck metric belongs to right owner")))))
+            350)
+          0
+          "right lifetime reset clears its load metric")
+        (test.assert-i64-eq
+          (compiler-profile-state-metric-value
+            (compiler-profile-state-shared-view left)
+            373)
+          79
+          "right lifetime reset leaves left final macro metric intact")
+        (test.assert-i64-eq
+          (compiler-profile-state-metric-value
+            (compiler-profile-state-shared-view right)
+            373)
+          0
+          "right lifetime reset reaches its final macro metric")))))

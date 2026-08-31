@@ -997,7 +997,8 @@
     (cfg
       compile-profile
       (let
-        [metrics : (__tl_dyn-array i64) (__tl_make-array i64 108)]
+        [metrics : (__tl_dyn-array i64)
+          (__tl_make-array i64 compiler-tc-profile-metric-count)]
         (tc-job-state-new-with-profile-metrics-address
           (unsafe
             (ptr->int (ptr-cast (__tl_array-data metrics) : (Ptr i64))))))
@@ -7776,8 +7777,10 @@
         (& compiler-tc-macro-profile-entries))
       (set! compiler-tc-macro-profile-active false))))
 
-;; Packed job-owned view (CompilerProfileState slots 242-349): four 18-site
+;; Packed job-owned view (CompilerProfileState slots 242-371): four 18-site
 ;; reinference columns followed by the 18-site body-fact hit/miss columns.
+;; Relative slots 108-119 and 126-127 map to the driver/loader lifetime ledger;
+;; relative slots 120-125 and 128-131 retain macro lifetime boundary starts.
 ;; Keeping the six equal-width families contiguous makes reset/render order
 ;; deterministic without reintroducing array owners in this leaf module.
 (cfg
@@ -7811,7 +7814,47 @@
 (cfg
   (any compile-profile test)
   (define compiler-tc-profile-metric-count : i64
-    108))
+    132))
+(cfg
+  (any compile-profile test)
+  (define compiler-tc-macro-lifetime-start-total-metric : i64
+    120))
+(cfg
+  (any compile-profile test)
+  (define compiler-tc-macro-lifetime-start-live-metric : i64
+    121))
+(cfg
+  (any compile-profile test)
+  (define compiler-tc-macro-lifetime-start-peak-metric : i64
+    122))
+(cfg
+  (any compile-profile test)
+  (define compiler-tc-macro-lifetime-start-pool-base-metric : i64
+    123))
+(cfg
+  (any compile-profile test)
+  (define compiler-tc-macro-lifetime-start-expr-pool-metric : i64
+    124))
+(cfg
+  (any compile-profile test)
+  (define compiler-tc-macro-lifetime-start-type-pool-metric : i64
+    125))
+(cfg
+  (any compile-profile test)
+  (define compiler-tc-macro-lifetime-start-enclosing-handle-metric : i64
+    128))
+(cfg
+  (any compile-profile test)
+  (define compiler-tc-macro-lifetime-start-enclosing-bytes-metric : i64
+    129))
+(cfg
+  (any compile-profile test)
+  (define compiler-tc-macro-lifetime-start-job-owner-bytes-metric : i64
+    130))
+(cfg
+  (any compile-profile test)
+  (define compiler-tc-macro-lifetime-start-scoped-env-bytes-metric : i64
+    131))
 
 (cfg
   (any compile-profile test)
@@ -100205,6 +100248,389 @@
         scratch))
     (tc-macro-walk-field state macro-expand-scratch-arena)))
 
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-lifetime-nonnegative [value : i64]) : i64
+    (if (< value 0)
+      0
+      value)))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-lifetime-arena-bytes [owner : i64]) : i64
+    (allocation_profile.compiler-allocation-profile-arena-bump-bytes owner)))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-lifetime-owner-delta [owner : i64] [start : i64]) : i64
+    (compiler-tc-macro-lifetime-nonnegative
+      (- (compiler-tc-macro-lifetime-arena-bytes owner) start))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-lifetime-row
+    [boundary : String]
+    [owner : String]
+    [lifetime : String]
+    [cumulative-alloc : i64]
+    [retained-live : i64]
+    [peak-delta : i64]) : String
+    (str_cat.str-cat
+      "compile-profile-lifetime|"
+      boundary
+      "|"
+      owner
+      "|"
+      lifetime
+      (compiler-tc-profile-field cumulative-alloc)
+      (compiler-tc-profile-field retained-live)
+      (compiler-tc-profile-field peak-delta)
+      "\n")))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-lifetime-emit-row!
+    [boundary : String]
+    [owner : String]
+    [lifetime : String]
+    [cumulative-alloc : i64]
+    [retained-live : i64]
+    [peak-delta : i64]) : unit
+    (with-scratch
+      (io.print-error
+        (compiler-tc-macro-lifetime-row
+          boundary
+          owner
+          lifetime
+          cumulative-alloc
+          retained-live
+          peak-delta)))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-lifetime-start!
+    [job-state : TcJobState]
+    [pools : ast.AstNodePoolContext]) : unit
+    (let
+      [metrics-address : u64 (compiler-tc-profile-metrics-address job-state)]
+      [enclosing-handle : i64 (arena.tl_arena_current)]
+      (begin
+        (compiler-tc-profile-metric-set!
+          metrics-address
+          compiler-tc-macro-lifetime-start-total-metric
+          (profile.alloc-total))
+        (compiler-tc-profile-metric-set!
+          metrics-address
+          compiler-tc-macro-lifetime-start-live-metric
+          (profile.alloc-live))
+        (compiler-tc-profile-metric-set!
+          metrics-address
+          compiler-tc-macro-lifetime-start-peak-metric
+          (profile.compile-wide-peak-current))
+        (compiler-tc-profile-metric-set!
+          metrics-address
+          compiler-tc-macro-lifetime-start-pool-base-metric
+          (compiler-tc-macro-lifetime-arena-bytes
+            (ast.ast-node-pool-context-base-arena pools)))
+        (compiler-tc-profile-metric-set!
+          metrics-address
+          compiler-tc-macro-lifetime-start-expr-pool-metric
+          (compiler-tc-macro-lifetime-arena-bytes
+            (ast.ast-node-pool-context-expr-storage-arena pools)))
+        (compiler-tc-profile-metric-set!
+          metrics-address
+          compiler-tc-macro-lifetime-start-type-pool-metric
+          (compiler-tc-macro-lifetime-arena-bytes
+            (ast.ast-node-pool-context-type-storage-arena pools)))
+        (compiler-tc-profile-metric-set!
+          metrics-address
+          compiler-tc-macro-lifetime-start-enclosing-handle-metric
+          enclosing-handle)
+        (compiler-tc-profile-metric-set!
+          metrics-address
+          compiler-tc-macro-lifetime-start-enclosing-bytes-metric
+          (compiler-tc-macro-lifetime-arena-bytes enclosing-handle))
+        (compiler-tc-profile-metric-set!
+          metrics-address
+          compiler-tc-macro-lifetime-start-job-owner-bytes-metric
+          (compiler-tc-macro-lifetime-arena-bytes
+            (tc-macro-state-owner-arena (tc-job-state-macro-state job-state))))
+        (compiler-tc-profile-metric-set!
+          metrics-address
+          compiler-tc-macro-lifetime-start-scoped-env-bytes-metric
+          (compiler-tc-macro-lifetime-arena-bytes
+            (tc-job-state-type-env-scoped-state-arena job-state)))))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-lifetime-emit!
+    [job-state : TcJobState]
+    [pools : ast.AstNodePoolContext]
+    [boundary : String]) : unit
+    (let
+      [metrics-address : u64 (compiler-tc-profile-metrics-address job-state)]
+      [state : TcMacroState (tc-job-state-macro-state job-state)]
+      [cumulative-alloc : i64
+        (-
+          (profile.alloc-total)
+          (compiler-tc-profile-metric-value
+            metrics-address
+            compiler-tc-macro-lifetime-start-total-metric))]
+      [live-delta : i64
+        (compiler-tc-macro-lifetime-nonnegative
+          (-
+            (profile.alloc-live)
+            (compiler-tc-profile-metric-value
+              metrics-address
+              compiler-tc-macro-lifetime-start-live-metric)))]
+      [peak-delta : i64
+        (compiler-tc-macro-lifetime-nonnegative
+          (-
+            (profile.compile-wide-peak-current)
+            (compiler-tc-profile-metric-value
+              metrics-address
+              compiler-tc-macro-lifetime-start-peak-metric)))]
+      [pool-base : i64
+        (compiler-tc-macro-lifetime-owner-delta
+          (ast.ast-node-pool-context-base-arena pools)
+          (compiler-tc-profile-metric-value
+            metrics-address
+            compiler-tc-macro-lifetime-start-pool-base-metric))]
+      [expr-pool : i64
+        (compiler-tc-macro-lifetime-owner-delta
+          (ast.ast-node-pool-context-expr-storage-arena pools)
+          (compiler-tc-profile-metric-value
+            metrics-address
+            compiler-tc-macro-lifetime-start-expr-pool-metric))]
+      [type-pool : i64
+        (compiler-tc-macro-lifetime-owner-delta
+          (ast.ast-node-pool-context-type-storage-arena pools)
+          (compiler-tc-profile-metric-value
+            metrics-address
+            compiler-tc-macro-lifetime-start-type-pool-metric))]
+      [symbols-current : i64
+        (compiler-tc-macro-lifetime-arena-bytes
+          (tc-macro-walk-field state macro-live-symbols-arena))]
+      [symbols-retired : i64
+        (compiler-tc-macro-lifetime-arena-bytes
+          (tc-macro-walk-field state macro-live-symbols-retired-arena))]
+      [expansion-pool : i64
+        (compiler-tc-macro-lifetime-arena-bytes
+          (tc-macro-walk-field state macro-expand-scratch-arena))]
+      [active-generations : i64
+        (+
+          (compiler-tc-macro-lifetime-arena-bytes
+            (tc-macro-walk-field state macro-decl-generation-arena))
+          (compiler-tc-macro-lifetime-arena-bytes
+            (tc-macro-walk-field state macro-splice-generation-arena)))]
+      [retired-generations : i64
+        (+
+          (compiler-tc-macro-lifetime-arena-bytes
+            (tc-macro-walk-field state macro-decl-generation-retired-arena))
+          (compiler-tc-macro-lifetime-arena-bytes
+            (tc-macro-walk-field state macro-splice-generation-retired-arena)))]
+      [job-owner-handle : i64 (tc-macro-state-owner-arena state)]
+      [scoped-env-handle : i64
+        (tc-job-state-type-env-scoped-state-arena job-state)]
+      [scoped-env : i64
+        (compiler-tc-macro-lifetime-owner-delta
+          scoped-env-handle
+          (compiler-tc-profile-metric-value
+            metrics-address
+            compiler-tc-macro-lifetime-start-scoped-env-bytes-metric))]
+      [job-owner : i64
+        (if (or
+          (= job-owner-handle (ast.ast-node-pool-context-base-arena pools))
+          (=
+            job-owner-handle
+            (ast.ast-node-pool-context-expr-storage-arena pools))
+          (=
+            job-owner-handle
+            (ast.ast-node-pool-context-type-storage-arena pools))
+          (=
+            job-owner-handle
+            (tc-macro-walk-field state macro-live-symbols-arena))
+          (=
+            job-owner-handle
+            (tc-macro-walk-field state macro-live-symbols-retired-arena))
+          (=
+            job-owner-handle
+            (tc-macro-walk-field state macro-expand-scratch-arena))
+          (=
+            job-owner-handle
+            (tc-macro-walk-field state macro-decl-generation-arena))
+          (=
+            job-owner-handle
+            (tc-macro-walk-field state macro-decl-generation-retired-arena))
+          (=
+            job-owner-handle
+            (tc-macro-walk-field state macro-splice-generation-arena))
+          (=
+            job-owner-handle
+            (tc-macro-walk-field state macro-splice-generation-retired-arena))
+          (= job-owner-handle scoped-env-handle))
+          0
+          (compiler-tc-macro-lifetime-owner-delta
+            job-owner-handle
+            (compiler-tc-profile-metric-value
+              metrics-address
+              compiler-tc-macro-lifetime-start-job-owner-bytes-metric)))]
+      [enclosing-handle : i64
+        (compiler-tc-profile-metric-value
+          metrics-address
+          compiler-tc-macro-lifetime-start-enclosing-handle-metric)]
+      [enclosing : i64
+        (if (or
+          (= enclosing-handle job-owner-handle)
+          (= enclosing-handle (ast.ast-node-pool-context-base-arena pools))
+          (=
+            enclosing-handle
+            (ast.ast-node-pool-context-expr-storage-arena pools))
+          (=
+            enclosing-handle
+            (ast.ast-node-pool-context-type-storage-arena pools))
+          (=
+            enclosing-handle
+            (tc-macro-walk-field state macro-live-symbols-arena))
+          (=
+            enclosing-handle
+            (tc-macro-walk-field state macro-live-symbols-retired-arena))
+          (=
+            enclosing-handle
+            (tc-macro-walk-field state macro-expand-scratch-arena))
+          (=
+            enclosing-handle
+            (tc-macro-walk-field state macro-decl-generation-arena))
+          (=
+            enclosing-handle
+            (tc-macro-walk-field state macro-decl-generation-retired-arena))
+          (=
+            enclosing-handle
+            (tc-macro-walk-field state macro-splice-generation-arena))
+          (=
+            enclosing-handle
+            (tc-macro-walk-field state macro-splice-generation-retired-arena))
+          (= enclosing-handle scoped-env-handle))
+          0
+          (compiler-tc-macro-lifetime-owner-delta
+            enclosing-handle
+            (compiler-tc-profile-metric-value
+              metrics-address
+              compiler-tc-macro-lifetime-start-enclosing-bytes-metric)))]
+      [named : i64
+        (+
+          scoped-env
+          (+
+            job-owner
+            (+
+              enclosing
+              (+
+                pool-base
+                (+
+                  expr-pool
+                  (+
+                    type-pool
+                    (+
+                      symbols-current
+                      (+
+                        symbols-retired
+                        (+
+                          expansion-pool
+                          (+ active-generations retired-generations))))))))))]
+      [remainder : i64 (- live-delta named)]
+      (begin
+        (compiler-tc-macro-lifetime-emit-row!
+          (tc-global-shared-view boundary)
+          "total"
+          "boundary-total"
+          cumulative-alloc
+          live-delta
+          peak-delta)
+        (compiler-tc-macro-lifetime-emit-row!
+          (tc-global-shared-view boundary)
+          "macro-enclosing"
+          "session"
+          cumulative-alloc
+          enclosing
+          peak-delta)
+        (compiler-tc-macro-lifetime-emit-row!
+          (tc-global-shared-view boundary)
+          "macro-job-registry-cache"
+          "session"
+          cumulative-alloc
+          job-owner
+          peak-delta)
+        (compiler-tc-macro-lifetime-emit-row!
+          (tc-global-shared-view boundary)
+          "scoped-env-index"
+          "cache"
+          cumulative-alloc
+          scoped-env
+          peak-delta)
+        (compiler-tc-macro-lifetime-emit-row!
+          (tc-global-shared-view boundary)
+          "output-pool-base"
+          "lower-handoff"
+          cumulative-alloc
+          pool-base
+          peak-delta)
+        (compiler-tc-macro-lifetime-emit-row!
+          (tc-global-shared-view boundary)
+          "output-expr-pool"
+          "lower-handoff"
+          cumulative-alloc
+          expr-pool
+          peak-delta)
+        (compiler-tc-macro-lifetime-emit-row!
+          (tc-global-shared-view boundary)
+          "output-type-pool"
+          "lower-handoff"
+          cumulative-alloc
+          type-pool
+          peak-delta)
+        (compiler-tc-macro-lifetime-emit-row!
+          (tc-global-shared-view boundary)
+          "live-symbols-registry"
+          "macro-live"
+          cumulative-alloc
+          symbols-current
+          peak-delta)
+        (compiler-tc-macro-lifetime-emit-row!
+          (tc-global-shared-view boundary)
+          "retired-symbols-registry"
+          "retired"
+          cumulative-alloc
+          symbols-retired
+          peak-delta)
+        (compiler-tc-macro-lifetime-emit-row!
+          (tc-global-shared-view boundary)
+          "expansion-pool"
+          "scratch"
+          cumulative-alloc
+          expansion-pool
+          peak-delta)
+        (compiler-tc-macro-lifetime-emit-row!
+          (tc-global-shared-view boundary)
+          "active-generation-pools"
+          "scratch"
+          cumulative-alloc
+          active-generations
+          peak-delta)
+        (compiler-tc-macro-lifetime-emit-row!
+          (tc-global-shared-view boundary)
+          "retired-generation-pools"
+          "retired"
+          cumulative-alloc
+          retired-generations
+          peak-delta)
+        (compiler-tc-macro-lifetime-emit-row!
+          (tc-global-shared-view boundary)
+          "remainder"
+          "unattributed"
+          cumulative-alloc
+          remainder
+          peak-delta)))))
+
 ;; Emit the dominant macro-expansion owners at the last boundary where all of
 ;; them are simultaneously live. The control query makes this a single cold
 ;; branch when profiling is disabled; allocator hot paths remain untouched.
@@ -128384,6 +128810,11 @@
     [intern-state : ci.InternCompatState
       (tc-global-shared-view intern-state-input)]
     (begin
+      (cfg
+        compile-profile
+        (compiler-tc-macro-lifetime-start!
+          (tc-global-shared-view job-state)
+          (ast.ast-place-shared-view pools)))
       (tc-macro-state-bind-source-names!
         (tc-job-state-macro-state (tc-global-shared-view job-state))
         (tc-global-shared-view source-names))
@@ -128495,6 +128926,14 @@
                     (ast.ast-place-shared-view pools)
                     0))
                 (let
+                  [_profile-lifetime-pre-detach : unit
+                    (cfg
+                      compile-profile
+                      (compiler-tc-macro-lifetime-emit!
+                        (tc-global-shared-view job-state)
+                        (ast.ast-place-shared-view pools)
+                        "macro.pre-detach")
+                      unit)]
                   [_profile-owners : unit
                     (macro-expand-allocation-profile-snapshot!
                       (tc-job-state-macro-state job-state)
@@ -128504,6 +128943,14 @@
                       (macro-expand-scratch-release!
                         (tc-job-state-macro-state job-state))
                       (tc-job-state-reset-derived-caches! job-state))]
+                  [_profile-lower-handoff : unit
+                    (cfg
+                      compile-profile
+                      (compiler-tc-macro-lifetime-emit!
+                        (tc-global-shared-view job-state)
+                        (ast.ast-place-shared-view pools)
+                        "macro.lower-handoff")
+                      unit)]
                   (if (spec.compiler-specialize-needed-with-pools
                     (tc-global-shared-view expanded)
                     (ast.ast-place-shared-view pools))
@@ -128549,12 +128996,24 @@
                   (compiler-tc-tlci-native-stress-pass-finish!
                     (ast.ast-place-shared-view pools)
                     1))
+                (cfg
+                  compile-profile
+                  (compiler-tc-macro-lifetime-emit!
+                    (tc-global-shared-view job-state)
+                    (ast.ast-place-shared-view pools)
+                    "macro.pre-detach"))
                 (macro-expand-allocation-profile-snapshot!
                   (tc-job-state-macro-state job-state)
                   0)
                 (macro-expand-scratch-release!
                   (tc-job-state-macro-state job-state))
                 (tc-job-state-reset-derived-caches! job-state)
+                (cfg
+                  compile-profile
+                  (compiler-tc-macro-lifetime-emit!
+                    (tc-global-shared-view job-state)
+                    (ast.ast-place-shared-view pools)
+                    "macro.lower-handoff"))
                 (ResultMacroExpand.Err diag))]))))))
 
 (define (macro-expand-program-with-paths-and-pools-roots-cfg-and-source-names-and-job-state

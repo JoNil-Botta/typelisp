@@ -49,6 +49,8 @@ src/compiler_backend.tl	compiler-backend-emit-windows-seh-prologue-tail	object-f
 src/compiler_backend.tl	compiler-backend-emit-windows-seh-endproc	object-format	compiler-backend-target-windows[?]	1	Windows assembly needs SEH procedure terminators.
 src/compiler_backend.tl	compiler-backend-emit-function-type-directive	object-format	compiler-backend-target-linux[?]	1	ELF marks code symbols STT_FUNC through `.type NAME,@function`; COFF has no GNU-as equivalent.
 src/compiler_backend.tl	compiler-backend-emit-function-size-directive	object-format	compiler-backend-target-linux[?]	1	ELF gives code symbols a nonzero st_size through `.size NAME, . - NAME`; COFF has no GNU-as equivalent.
+src/compiler_backend.tl	compiler-backend-backtrace-map-section	object-format	compiler-backend-target-windows[?]	1	Fatal backtrace map rows use an ordered COFF subsection on Windows and a dedicated ELF section on Linux.
+src/compiler_backend.tl	compiler-backend-backtrace-string-section	object-format	compiler-backend-target-windows[?]	1	Fatal backtrace names and paths use an ordered COFF subsection on Windows and a dedicated ELF read-only section on Linux.
 src/compiler_backend.tl	compiler-backend-debug-file-directives	object-format	compiler-backend-target-(linux|windows)[?]	2	Debug builds select DWARF file directives on Linux and CodeView file checksums on Windows.
 src/compiler_backend.tl	compiler-backend-debug-prefix	object-format	compiler-backend-target-windows[?]	1	Windows debug assembly requires the CodeView section signature.
 src/compiler_backend.tl	compiler-backend-debug-location-directive	object-format	compiler-backend-target-windows[?]	1	Per-instruction source locations use CodeView syntax on Windows and DWARF syntax otherwise.

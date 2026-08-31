@@ -88168,6 +88168,579 @@
     42
     "CB-2 admits an array whose element store writes an affine induction variable governed by a loop condition bounded by a family length -- literal seed with the length as the bound, and checked seed with a checked bound -- and refuses the bottom-tested do-while shape, a step that can overshoot before the store, a bound tied to no family length, and an array carrying a second unrelated unchecked store"))
 
+;; --- CB-3: widening what counts as a recorded check --------------------------
+;;
+;; The same harness again, with one writer per widening and one per way each
+;; widening can fail. `cb3_f` is the shape that refused `cfg-stack-node`: a
+;; checked store plus a zero fill the lowering hid behind a `mov`. `cb3_m` is
+;; the CHECKED class reached by a multiply-assigned value. `cb3_p` and `cb3_q`
+;; are the composition and its two-step chain, which only the fixpoint can
+;; settle, and `cb3_s` is the circular derivation the LEAST fixpoint must
+;; refuse. `cb3_x` is `cb3_m` with its `bounds_check` deleted: the pair pins
+;; that the facts follow the check set in the IR the walk is HANDED, which is
+;; the pre-optimization function sequence and never a retired one.
+(defstruct OptCb3TestSymbols
+  (b i64)
+  (c i64)
+  (f i64)
+  (g i64)
+  (m i64)
+  (r i64)
+  (u i64)
+  (a i64)
+  (p i64)
+  (q i64)
+  (s i64)
+  (x i64)
+  (init-b i64)
+  (init-c i64)
+  (init-f i64)
+  (init-g i64)
+  (init-m i64)
+  (init-r i64)
+  (init-u i64)
+  (init-a i64)
+  (init-p i64)
+  (init-q i64)
+  (init-s i64)
+  (init-x i64)
+  (ctor i64)
+  (reset i64)
+  (w-f i64)
+  (w-g i64)
+  (w-m i64)
+  (w-r i64)
+  (w-u i64)
+  (w-a i64)
+  (w-p i64)
+  (w-q i64)
+  (w-s i64)
+  (w-x i64))
+
+(define (opt-cb3-test-symbols) : OptCb3TestSymbols
+  (OptCb3TestSymbols
+    (opt-test-symbol "cb3_b")
+    (opt-test-symbol "cb3_c")
+    (opt-test-symbol "cb3_f")
+    (opt-test-symbol "cb3_g")
+    (opt-test-symbol "cb3_m")
+    (opt-test-symbol "cb3_r")
+    (opt-test-symbol "cb3_u")
+    (opt-test-symbol "cb3_a")
+    (opt-test-symbol "cb3_p")
+    (opt-test-symbol "cb3_q")
+    (opt-test-symbol "cb3_s")
+    (opt-test-symbol "cb3_x")
+    (opt-test-symbol "cb3_init_b")
+    (opt-test-symbol "cb3_init_c")
+    (opt-test-symbol "cb3_init_f")
+    (opt-test-symbol "cb3_init_g")
+    (opt-test-symbol "cb3_init_m")
+    (opt-test-symbol "cb3_init_r")
+    (opt-test-symbol "cb3_init_u")
+    (opt-test-symbol "cb3_init_a")
+    (opt-test-symbol "cb3_init_p")
+    (opt-test-symbol "cb3_init_q")
+    (opt-test-symbol "cb3_init_s")
+    (opt-test-symbol "cb3_init_x")
+    (opt-test-symbol "cb3_ctor")
+    (opt-test-symbol "cb3_reset")
+    (opt-test-symbol "cb3_w_f")
+    (opt-test-symbol "cb3_w_g")
+    (opt-test-symbol "cb3_w_m")
+    (opt-test-symbol "cb3_w_r")
+    (opt-test-symbol "cb3_w_u")
+    (opt-test-symbol "cb3_w_a")
+    (opt-test-symbol "cb3_w_p")
+    (opt-test-symbol "cb3_w_q")
+    (opt-test-symbol "cb3_w_s")
+    (opt-test-symbol "cb3_w_x")))
+
+(define (opt-cb3-branch [cond-var : i64] [yes : String] [no : String]) : compiler_ir_types.CompilerIrInstr
+  (compiler_ir_types.CompilerIrInstr.Branch
+    (compiler_ir_types.CompilerIrValue.Var cond-var)
+    (compiler_ir_types.compiler-ir-label yes)
+    (compiler_ir_types.compiler-ir-label no)))
+
+;; CLAUSE (a), ADMITTED. One store passes a dominating check against the
+;; family; the other writes the literal 0 through the `mov` the lowering emits
+;; for `(set! (array-ref cell 1) 0)`. Before CB-3 the second store fell into the
+;; CHECKED class, found no check on a literal, and refused the whole array --
+;; which is exactly what refused `cfg-stack-node`.
+(define (opt-cb3-writer-copy-fill
+  [name : i64]
+  [cell : i64]
+  [len-cell : i64]
+  [literal : i64]) : compiler_ir_types.CompilerIrFunction
+  (opt-cb-function
+    name
+    (opt-le-params 1)
+    64
+    (opt-fz-chain-instrs
+      (compiler_ir_types.CompilerIrValue.Global len-cell)
+      1
+      (opt-test-instr-seq-prepend
+        (opt-cb-check-instr 0 4)
+        (opt-cb-elem-instrs
+          (compiler_ir_types.CompilerIrValue.Global cell)
+          5
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (opt-test-instr-seq-prepend
+            (opt-cb-elem-store 9 (compiler_ir_types.CompilerIrValue.Var 0))
+            (opt-test-instr-seq-prepend
+              (opt-cb2-mov 20 (compiler_ir_types.CompilerIrValue.I64 literal))
+              (opt-cb-elem-instrs
+                (compiler_ir_types.CompilerIrValue.Global cell)
+                10
+                (compiler_ir_types.CompilerIrValue.I64 1)
+                (opt-test-instr-seq-prepend
+                  (opt-cb-elem-store
+                    14
+                    (compiler_ir_types.CompilerIrValue.Var 20))
+                  (opt-mr-return-zero))))))))))
+
+;; CLAUSE (b), ADMITTED. `%20` is assigned twice, so CB-1's one-definition rule
+;; refuses it and CB-2's induction class finds no governing loop; the recorded
+;; `bounds_check %20, len(cb3_b)` earlier in the same straight-line run admits
+;; it. The second assignment stands AFTER the store, which is what the
+;; no-redefinition-between rule allows.
+(define (opt-cb3-writer-multi-checked
+  [name : i64]
+  [cell : i64]
+  [len-cell : i64]) : compiler_ir_types.CompilerIrFunction
+  (opt-cb-function
+    name
+    (opt-le-params 1)
+    64
+    (opt-fz-chain-instrs
+      (compiler_ir_types.CompilerIrValue.Global len-cell)
+      1
+      (opt-test-instr-seq-prepend
+        (opt-cb2-mov 20 (compiler_ir_types.CompilerIrValue.I64 0))
+        (opt-test-instr-seq-prepend
+          (opt-cb-check-instr 20 4)
+          (opt-cb-elem-instrs
+            (compiler_ir_types.CompilerIrValue.Global cell)
+            5
+            (compiler_ir_types.CompilerIrValue.I64 0)
+            (opt-test-instr-seq-prepend
+              (opt-cb-elem-store 9 (compiler_ir_types.CompilerIrValue.Var 20))
+              (opt-test-instr-seq-prepend
+                (opt-cb2-mov 20 (compiler_ir_types.CompilerIrValue.Var 0))
+                (opt-mr-return-zero)))))))))
+
+;; CLAUSE (b), REFUSED: the value is reassigned BETWEEN the check and the store,
+;; so the check did not see what the store writes.
+(define (opt-cb3-writer-multi-redefined
+  [name : i64]
+  [cell : i64]
+  [len-cell : i64]) : compiler_ir_types.CompilerIrFunction
+  (opt-cb-function
+    name
+    (opt-le-params 1)
+    64
+    (opt-fz-chain-instrs
+      (compiler_ir_types.CompilerIrValue.Global len-cell)
+      1
+      (opt-test-instr-seq-prepend
+        (opt-cb2-mov 20 (compiler_ir_types.CompilerIrValue.I64 0))
+        (opt-test-instr-seq-prepend
+          (opt-cb-check-instr 20 4)
+          (opt-test-instr-seq-prepend
+            (opt-cb2-mov 20 (compiler_ir_types.CompilerIrValue.Var 0))
+            (opt-cb-elem-instrs
+              (compiler_ir_types.CompilerIrValue.Global cell)
+              5
+              (compiler_ir_types.CompilerIrValue.I64 0)
+              (opt-test-instr-seq-prepend
+                (opt-cb-elem-store 9 (compiler_ir_types.CompilerIrValue.Var 20))
+                (opt-mr-return-zero)))))))))
+
+;; CLAUSE (b), REFUSED: the check sits on one arm of a diamond, so its block
+;; does NOT dominate the store's and an execution can reach the store without
+;; having run it.
+(define (opt-cb3-writer-multi-branch [name : i64] [cell : i64] [len-cell : i64]) : compiler_ir_types.CompilerIrFunction
+  (compiler_ir_types.CompilerIrFunction.Function
+    name
+    (opt-le-params 1)
+    (compiler_ast_types.AstType.I64)
+    64
+    (opt-cb2-block
+      "entry"
+      (opt-fz-chain-instrs
+        (compiler_ir_types.CompilerIrValue.Global len-cell)
+        1
+        (opt-test-instr-seq-prepend
+          (opt-cb2-mov 20 (compiler_ir_types.CompilerIrValue.I64 0))
+          (opt-test-instr-seq-prepend
+            (opt-cb3-branch 0 "guard" "join")
+            (compiler_ir_types.compiler-ir-instr-seq-empty))))
+      (opt-cb2-block
+        "guard"
+        (opt-test-instr-seq-prepend
+          (opt-cb-check-instr 20 4)
+          (opt-test-instr-seq-prepend
+            (opt-cb2-jump "join")
+            (compiler_ir_types.compiler-ir-instr-seq-empty)))
+        (opt-cb2-block
+          "join"
+          (opt-cb-elem-instrs
+            (compiler_ir_types.CompilerIrValue.Global cell)
+            5
+            (compiler_ir_types.CompilerIrValue.I64 0)
+            (opt-test-instr-seq-prepend
+              (opt-cb-elem-store 9 (compiler_ir_types.CompilerIrValue.Var 20))
+              (opt-test-instr-seq-prepend
+                (opt-cb2-mov 20 (compiler_ir_types.CompilerIrValue.Var 0))
+                (opt-mr-return-zero))))
+          compiler_ir_types.CompilerIrBlockList.Nil)))))
+
+;; CLAUSE (b), REFUSED: something takes the ADDRESS of the value's frame slot,
+;; so the assignments the walk can see are not all of them.
+(define (opt-cb3-writer-multi-addr [name : i64] [cell : i64] [len-cell : i64]) : compiler_ir_types.CompilerIrFunction
+  (opt-cb-function
+    name
+    (opt-le-params 1)
+    64
+    (opt-fz-chain-instrs
+      (compiler_ir_types.CompilerIrValue.Global len-cell)
+      1
+      (opt-test-instr-seq-prepend
+        (opt-cb2-mov 20 (compiler_ir_types.CompilerIrValue.I64 0))
+        (opt-test-instr-seq-prepend
+          (opt-cb-check-instr 20 4)
+          (opt-cb-elem-instrs
+            (compiler_ir_types.CompilerIrValue.Global cell)
+            5
+            (compiler_ir_types.CompilerIrValue.I64 0)
+            (opt-test-instr-seq-prepend
+              (opt-cb-elem-store 9 (compiler_ir_types.CompilerIrValue.Var 20))
+              (opt-test-instr-seq-prepend
+                (compiler_ir_types.CompilerIrInstr.AddrOf 23 20)
+                (opt-test-instr-seq-prepend
+                  (opt-cb2-mov 20 (compiler_ir_types.CompilerIrValue.Var 0))
+                  (opt-mr-return-zero))))))))))
+
+;; CLAUSE (b), REFUSED: `cb3_m`'s writer with the `bounds_check` DELETED. The
+;; pair pins that the fact follows the check set present in the IR this walk is
+;; handed -- so a check a later pass retires cannot withdraw it, because the
+;; walk never sees the optimized function at all.
+(define (opt-cb3-writer-unchecked [name : i64] [cell : i64] [len-cell : i64]) : compiler_ir_types.CompilerIrFunction
+  (opt-cb-function
+    name
+    (opt-le-params 1)
+    64
+    (opt-fz-chain-instrs
+      (compiler_ir_types.CompilerIrValue.Global len-cell)
+      1
+      (opt-test-instr-seq-prepend
+        (opt-cb2-mov 20 (compiler_ir_types.CompilerIrValue.I64 0))
+        (opt-cb-elem-instrs
+          (compiler_ir_types.CompilerIrValue.Global cell)
+          5
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (opt-test-instr-seq-prepend
+            (opt-cb-elem-store 9 (compiler_ir_types.CompilerIrValue.Var 20))
+            (opt-test-instr-seq-prepend
+              (opt-cb2-mov 20 (compiler_ir_types.CompilerIrValue.Var 0))
+              (opt-mr-return-zero))))))))
+
+;; CLAUSE (c). The stored value is an element LOAD out of `source-cell` and NO
+;; check on it exists anywhere in the program: the only thing that can admit it
+;; is `source-cell`'s own content fact, which a strictly earlier round of the
+;; fixpoint had to establish.
+(define (opt-cb3-writer-composed [name : i64] [cell : i64] [source-cell : i64]) : compiler_ir_types.CompilerIrFunction
+  (opt-cb-function
+    name
+    (opt-le-params 1)
+    64
+    (opt-cb-elem-instrs
+      (compiler_ir_types.CompilerIrValue.Global source-cell)
+      5
+      (compiler_ir_types.CompilerIrValue.I64 0)
+      (opt-test-instr-seq-prepend
+        (compiler_ir_types.CompilerIrInstr.Load
+          30
+          (compiler_ir_types.CompilerIrValue.Var 9)
+          (compiler_ast_types.AstType.I64))
+        (opt-cb-elem-instrs
+          (compiler_ir_types.CompilerIrValue.Global cell)
+          10
+          (compiler_ir_types.CompilerIrValue.I64 0)
+          (opt-test-instr-seq-prepend
+            (opt-cb-elem-store 14 (compiler_ir_types.CompilerIrValue.Var 30))
+            (opt-mr-return-zero)))))))
+
+(define (opt-cb3-reset-function [symbols : OptCb3TestSymbols]) : compiler_ir_types.CompilerIrFunction
+  (opt-cb-function
+    symbols.reset
+    (opt-le-params 2)
+    512
+    (opt-cb-reset-step
+      symbols.ctor
+      10
+      symbols.b
+      (compiler_ir_types.CompilerIrValue.Var 0)
+      (opt-cb-reset-step
+        symbols.ctor
+        20
+        symbols.c
+        (compiler_ir_types.CompilerIrValue.Var 0)
+        (opt-cb-reset-step
+          symbols.ctor
+          30
+          symbols.f
+          (compiler_ir_types.CompilerIrValue.Var 1)
+          (opt-cb-reset-step
+            symbols.ctor
+            40
+            symbols.g
+            (compiler_ir_types.CompilerIrValue.Var 1)
+            (opt-cb-reset-step
+              symbols.ctor
+              50
+              symbols.m
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              (opt-cb-reset-step
+                symbols.ctor
+                60
+                symbols.r
+                (compiler_ir_types.CompilerIrValue.Var 1)
+                (opt-cb-reset-step
+                  symbols.ctor
+                  70
+                  symbols.u
+                  (compiler_ir_types.CompilerIrValue.Var 1)
+                  (opt-cb-reset-step
+                    symbols.ctor
+                    80
+                    symbols.a
+                    (compiler_ir_types.CompilerIrValue.Var 1)
+                    (opt-cb-reset-step
+                      symbols.ctor
+                      90
+                      symbols.p
+                      (compiler_ir_types.CompilerIrValue.Var 1)
+                      (opt-cb-reset-step
+                        symbols.ctor
+                        100
+                        symbols.q
+                        (compiler_ir_types.CompilerIrValue.Var 1)
+                        (opt-cb-reset-step
+                          symbols.ctor
+                          110
+                          symbols.s
+                          (compiler_ir_types.CompilerIrValue.Var 1)
+                          (opt-cb-reset-step
+                            symbols.ctor
+                            120
+                            symbols.x
+                            (compiler_ir_types.CompilerIrValue.Var 1)
+                            (opt-mr-return-zero)))))))))))))))
+
+(define (opt-cb3-test-globals [symbols : OptCb3TestSymbols]) : compiler_ir_types.CompilerIrGlobalSeq
+  (let
+    [builder : compiler_ir_types.CompilerIrGlobalBuilder
+      (compiler_ir_types.compiler-ir-global-builder-with-capacity 16)]
+    (begin
+      (opt-le-runtime-global (&mut builder) symbols.b symbols.init-b)
+      (opt-le-runtime-global (&mut builder) symbols.c symbols.init-c)
+      (opt-le-runtime-global (&mut builder) symbols.f symbols.init-f)
+      (opt-le-runtime-global (&mut builder) symbols.g symbols.init-g)
+      (opt-le-runtime-global (&mut builder) symbols.m symbols.init-m)
+      (opt-le-runtime-global (&mut builder) symbols.r symbols.init-r)
+      (opt-le-runtime-global (&mut builder) symbols.u symbols.init-u)
+      (opt-le-runtime-global (&mut builder) symbols.a symbols.init-a)
+      (opt-le-runtime-global (&mut builder) symbols.p symbols.init-p)
+      (opt-le-runtime-global (&mut builder) symbols.q symbols.init-q)
+      (opt-le-runtime-global (&mut builder) symbols.s symbols.init-s)
+      (opt-le-runtime-global (&mut builder) symbols.x symbols.init-x)
+      (compiler_ir_types.compiler-ir-global-builder-to-seq builder))))
+
+(define (opt-cb3-test-writers [symbols : OptCb3TestSymbols]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
+    (opt-cb3-reset-function
+      (compiler_optimize.compiler-opt-global-shared-view symbols))
+    (compiler_ir_types.compiler-ir-function-seq-prepend
+      (opt-cb3-writer-copy-fill symbols.w-f symbols.f symbols.b 0)
+      (compiler_ir_types.compiler-ir-function-seq-prepend
+        (opt-cb3-writer-copy-fill symbols.w-g symbols.g symbols.b 7)
+        (compiler_ir_types.compiler-ir-function-seq-prepend
+          (opt-cb3-writer-multi-checked symbols.w-m symbols.m symbols.b)
+          (compiler_ir_types.compiler-ir-function-seq-prepend
+            (opt-cb3-writer-multi-redefined symbols.w-r symbols.r symbols.b)
+            (compiler_ir_types.compiler-ir-function-seq-prepend
+              (opt-cb3-writer-multi-branch symbols.w-u symbols.u symbols.b)
+              (compiler_ir_types.compiler-ir-function-seq-prepend
+                (opt-cb3-writer-multi-addr symbols.w-a symbols.a symbols.b)
+                (compiler_ir_types.compiler-ir-function-seq-prepend
+                  (opt-cb3-writer-composed symbols.w-p symbols.p symbols.f)
+                  (compiler_ir_types.compiler-ir-function-seq-prepend
+                    (opt-cb3-writer-composed symbols.w-q symbols.q symbols.p)
+                    (compiler_ir_types.compiler-ir-function-seq-prepend
+                      (opt-cb3-writer-composed symbols.w-s symbols.s symbols.s)
+                      (compiler_ir_types.compiler-ir-function-seq-prepend
+                        (opt-cb3-writer-unchecked
+                          symbols.w-x
+                          symbols.x
+                          symbols.b)
+                        (compiler_ir_types.compiler-ir-function-seq-empty)))))))))))))
+
+(define (opt-cb3-test-inits [symbols : OptCb3TestSymbols]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
+    (opt-le-init-function symbols.init-b symbols.ctor)
+    (compiler_ir_types.compiler-ir-function-seq-prepend
+      (opt-le-init-function symbols.init-c symbols.ctor)
+      (compiler_ir_types.compiler-ir-function-seq-prepend
+        (opt-le-init-function symbols.init-f symbols.ctor)
+        (compiler_ir_types.compiler-ir-function-seq-prepend
+          (opt-le-init-function symbols.init-g symbols.ctor)
+          (compiler_ir_types.compiler-ir-function-seq-prepend
+            (opt-le-init-function symbols.init-m symbols.ctor)
+            (compiler_ir_types.compiler-ir-function-seq-prepend
+              (opt-le-init-function symbols.init-r symbols.ctor)
+              (compiler_ir_types.compiler-ir-function-seq-prepend
+                (opt-le-init-function symbols.init-u symbols.ctor)
+                (compiler_ir_types.compiler-ir-function-seq-prepend
+                  (opt-le-init-function symbols.init-a symbols.ctor)
+                  (compiler_ir_types.compiler-ir-function-seq-prepend
+                    (opt-le-init-function symbols.init-p symbols.ctor)
+                    (compiler_ir_types.compiler-ir-function-seq-prepend
+                      (opt-le-init-function symbols.init-q symbols.ctor)
+                      (compiler_ir_types.compiler-ir-function-seq-prepend
+                        (opt-le-init-function symbols.init-s symbols.ctor)
+                        (compiler_ir_types.compiler-ir-function-seq-prepend
+                          (opt-le-init-function symbols.init-x symbols.ctor)
+                          (opt-cb3-test-writers symbols))))))))))))))
+
+(define (opt-cb3-test-functions [symbols : OptCb3TestSymbols]) : compiler_ir_types.CompilerIrFunctionSeq
+  (compiler_ir_types.compiler-ir-function-seq-prepend
+    (opt-cb-ctor-function symbols.ctor)
+    (opt-cb3-test-inits symbols)))
+
+(define (opt-cb3-test-cells [symbols : OptCb3TestSymbols]) : compiler_optimize.OptGlobalCellSummary
+  (compiler_optimize.opt-cb-attach
+    (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+    (opt-cb3-test-globals symbols)
+    (opt-cb3-test-functions symbols)
+    64
+    (compiler_optimize.opt-global-cell-summary-build-with-call-memory
+      (compiler_ast_types.ast-node-pool-reader-type-segment-bases)
+      (opt-cb3-test-globals symbols)
+      (opt-cb3-test-functions symbols)
+      (opt_i64_i64_map.with-capacity 1))))
+
+(define (compiler-optimize-checked-content-self-test) : i64
+  (let
+    [symbols : OptCb3TestSymbols (opt-cb3-test-symbols)]
+    [cells : compiler_optimize.OptGlobalCellSummary
+      (opt-cb3-test-cells
+        (compiler_optimize.compiler-opt-global-shared-view symbols))]
+    [family-b : i64
+      (opt-len-eq-family-of
+        (compiler_optimize.compiler-opt-global-shared-view cells)
+        symbols.b)]
+    (cond
+      ;; the family the content facts must name
+      [(= family-b 0) 1]
+      [(not
+          (=
+            family-b
+            (opt-len-eq-family-of
+              (compiler_optimize.compiler-opt-global-shared-view cells)
+              symbols.c)))
+        2]
+      ;; (a) a zero fill the lowering hid behind a `mov`, beside a checked store
+      [(not
+          (=
+            (opt-cb-content
+              (compiler_optimize.compiler-opt-global-shared-view cells)
+              symbols.f)
+            (+ family-b 1)))
+        3]
+      ;; (a) and a NON-ZERO literal behind the same copy still refuses
+      [(not
+          (=
+            (opt-cb-content
+              (compiler_optimize.compiler-opt-global-shared-view cells)
+              symbols.g)
+            0))
+        4]
+      ;; (b) a multiply-assigned stored value a recorded check governs
+      [(not
+          (=
+            (opt-cb-content
+              (compiler_optimize.compiler-opt-global-shared-view cells)
+              symbols.m)
+            (+ family-b 1)))
+        5]
+      ;; (b) refused when the value is reassigned between check and store
+      [(not
+          (=
+            (opt-cb-content
+              (compiler_optimize.compiler-opt-global-shared-view cells)
+              symbols.r)
+            0))
+        6]
+      ;; (b) refused when the check's block does not dominate the store's
+      [(not
+          (=
+            (opt-cb-content
+              (compiler_optimize.compiler-opt-global-shared-view cells)
+              symbols.u)
+            0))
+        7]
+      ;; (b) refused when the address of the value's frame slot is taken
+      [(not
+          (=
+            (opt-cb-content
+              (compiler_optimize.compiler-opt-global-shared-view cells)
+              symbols.a)
+            0))
+        8]
+      ;; (c) a store whose value is loaded out of a content-proven array
+      [(not
+          (=
+            (opt-cb-content
+              (compiler_optimize.compiler-opt-global-shared-view cells)
+              symbols.p)
+            (+ family-b 1)))
+        9]
+      ;; (c) and the two-step chain, which only a further round can settle
+      [(not
+          (=
+            (opt-cb-content
+              (compiler_optimize.compiler-opt-global-shared-view cells)
+              symbols.q)
+            (+ family-b 1)))
+        10]
+      ;; (c) the LEAST fixpoint refuses the circular derivation: an array whose
+      ;; only store reads ITSELF has no round that can establish it
+      [(not
+          (=
+            (opt-cb-content
+              (compiler_optimize.compiler-opt-global-shared-view cells)
+              symbols.s)
+            0))
+        11]
+      ;; the same writer as `cb3_m` with its check deleted carries no fact, so
+      ;; the facts follow the check set in the IR the walk is handed
+      [(not
+          (=
+            (opt-cb-content
+              (compiler_optimize.compiler-opt-global-shared-view cells)
+              symbols.x)
+            0))
+        12]
+      [else 42])))
+
+(test
+  content-bounds-checked-recording
+  (test.assert-i64-eq
+    (compiler-optimize-checked-content-self-test)
+    42
+    "CB-3 admits an array whose zero fill the lowering hid behind a copy, one whose multiply-assigned stored value a recorded dominating check governs, and one -- and its two-step chain -- whose stored value is loaded out of an already content-proven array, while refusing a non-zero literal behind the same copy, a value reassigned between the check and the store, a check that does not dominate the store, a value whose frame slot address is taken, the circular self-composition the least fixpoint must not believe, and the same writer with its check deleted"))
+
 ;; --- IT-2: below-the-fixpoint guard dedup ------------------------------------
 ;;
 ;; Three params: a branch condition, an array handle (so the descriptor words

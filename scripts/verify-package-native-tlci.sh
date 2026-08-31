@@ -19,10 +19,11 @@ native_link_detect_host
 # hydrated dependency surface bypasses. Removing stdlib.array removes ten
 # declarations from the consumer prefix on both hosts; the by-value ownership
 # cutover's explicit compiler-owned-view import adds one back. Explicit clone
-# generation adds seven public declaration macros to the loaded prefix.
+# generation adds seven public declaration macros to the loaded prefix. The
+# shared fatal-exit hook adds one declaration for backtrace-capable runtimes.
 case "$NL_HOST_OS" in
-    windows) TRUSTED_PREFIX_SKIPPED=222 ;;
-    *) TRUSTED_PREFIX_SKIPPED=217 ;;
+    windows) TRUSTED_PREFIX_SKIPPED=223 ;;
+    *) TRUSTED_PREFIX_SKIPPED=218 ;;
 esac
 
 COMPILER=${1:-${TYPELISP_BIN:-}}

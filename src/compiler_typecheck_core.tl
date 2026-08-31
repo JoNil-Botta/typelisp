@@ -40582,7 +40582,6 @@
     ;; freshly built list directly.
     [iter-ids : (__tl_dyn-array i64) memo-state.names-ids]
     [iter-offset : i64 0]
-    [iter-len : i64 0]
     [built-len : i64
       (if cache-hit
         (begin
@@ -40595,25 +40594,23 @@
               target-module-id
               wanted-qualified
               env)]
-          (let
-            [fresh-len : i64 names.len]
-            (begin
-              (if cacheable
-                (tc-unbound-visible-names-cache-store!
-                  memo-state
-                  cache-slot
-                  owner-stamp
-                  pool-len
-                  module-qualified
-                  target-module-id
-                  env-store
-                  env-head
-                  (& names.ids)
-                  fresh-len)
-                unit)
-              (set! iter-ids names.ids)
-              (set! iter-len fresh-len)
-              fresh-len))))]
+          [fresh-len : i64 names.len]
+          (begin
+            (if cacheable
+              (tc-unbound-visible-names-cache-store!
+                memo-state
+                cache-slot
+                owner-stamp
+                pool-len
+                module-qualified
+                target-module-id
+                env-store
+                env-head
+                (& names.ids)
+                fresh-len)
+              unit)
+            (set! iter-ids names.ids)
+            fresh-len)))]
     [previous-previous-row : (__tl_dyn-array i64)
       (__tl_make-array i64 (+ wanted-len 1))]
     [previous-row : (__tl_dyn-array i64) (__tl_make-array i64 (+ wanted-len 1))]

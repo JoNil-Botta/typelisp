@@ -55528,7 +55528,25 @@
                             taken
                             fallthrough)
                             ""
+                            ;; SCAV2. An emergency scavenge that is still
+                            ;; pending here borrowed an occupied register for
+                            ;; the phi edge copies above. The enclosing
+                            ;; emergency-wrap appends its restore AFTER this
+                            ;; whole string -- which, once a `jmp` ends it, is
+                            ;; unreachable: the borrowed occupant stays
+                            ;; clobbered on the taken edge. Emit the restores
+                            ;; before the transfer instead (and suppress the
+                            ;; wrap's trailing pair), exactly as the
+                            ;; conditional-branch jumps
+                            ;; (compiler-backend-branch-jumps-asm) and the
+                            ;; switch dispatch already do. `movq` sets no
+                            ;; flags and the copies are complete at this
+                            ;; point, so the placement is sound; the
+                            ;; FALLTHROUGH arm above needs nothing, its
+                            ;; trailing restore is on the executed path.
                             (str_cat.str-cat
+                              (compiler-backend-emergency-restore-before-jumps
+                                ctx.backend-state)
                               "    jmp "
                               (compiler-backend-asm-label ctx.function taken)
                               "\n"

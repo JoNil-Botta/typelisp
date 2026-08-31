@@ -4694,6 +4694,28 @@
       (ptr-read
         (int->ptr (+ biased-base (* id (ast-expr-node-bytes))) : (Ptr AstExpr))))))
 
+;; Immediate representation-level view of one row in the current pool
+;; generation. Segments never relocate, so appending or rewriting other rows
+;; cannot invalidate the address; reset/generation handoff and rewriting this
+;; exact row still end the view's lifetime. Keeping this as a macro lets
+;; aggregate call lowering hand the stable row directly to the callee instead
+;; of returning it through a second 32-byte value slot.
+(defmacro (ast-expr-segment-bases-shared-view
+  [segment-bases : Expr]
+  [id : Expr]) : Expr
+  `(let
+    [bases-address : i64 ,segment-bases]
+    [row-id : i64 ,id]
+    [biased-base : i64
+      (unsafe
+        (ptr-read
+          (ptr-offset (int->ptr bases-address : (Ptr i64)) (shr row-id 16))))]
+    (unsafe
+      (ptr-read
+        (int->ptr
+          (+ biased-base (* row-id (ast-expr-node-bytes)))
+          : (Ptr AstExpr))))))
+
 ;; Segment-bases pointer of the context's live expr-pool cell. A grow appends to
 ;; this table in place and never moves it, and a push rewrites the cell without
 ;; changing the pointer, so a walk may cache it across reads; only installing a
@@ -10443,9 +10465,12 @@
           (if persist?
             ;; Mark BEFORE descending: a shared subgraph reached twice must
             ;; return its id on the second visit rather than rebuild, and a
-            ;; re-entrant edge must not recurse forever. The row is read into a
-            ;; local first, so writing it back after the children are done can
-            ;; never race the read.
+            ;; re-entrant edge must not recurse forever. The direct source-row
+            ;; view remains valid while descendants rewrite other rows because
+            ;; segments never relocate. A re-entrant edge observes this mark
+            ;; and returns without rewriting its ancestor; only after the
+            ;; exhaustive walk has produced `owned-expr` do we rewrite this
+            ;; exact row and end the view.
             (let
               [_mark : unit
                 (begin
@@ -10453,17 +10478,22 @@
                   (cfg
                     compile-profile
                     (ast-compaction-profile-note-survivor-expr!)))]
-              [source-expr : AstExpr
-                (ast-expr-segment-bases-get remap.source-expr-bases id)]
               [owned-expr : AstExpr
-                (ast-compaction-remap-expr remap source-expr)]
+                (ast-compaction-remap-expr
+                  remap
+                  (ast-expr-segment-bases-shared-view
+                    remap.source-expr-bases
+                    id))]
               (begin
                 (ast-compaction-remap-dest-expr-set! remap id owned-expr)
                 id))
             (let
-              [source-expr : AstExpr
-                (ast-expr-segment-bases-get remap.source-expr-bases id)]
-              [new-expr : AstExpr (ast-compaction-remap-expr remap source-expr)]
+              [new-expr : AstExpr
+                (ast-compaction-remap-expr
+                  remap
+                  (ast-expr-segment-bases-shared-view
+                    remap.source-expr-bases
+                    id))]
               [new-id : i64
                 (ast-compaction-remap-dest-expr-push remap new-expr)]
               (begin

@@ -3595,6 +3595,244 @@
 (define (main [flag : bool]) : result_i64_string.Result
   (if flag (io.panic \"stop\") (result_i64_string.ok 1)))"))
 
+(define (compiler-typecheck-try-query-source) : String
+  "(module try_query_left)
+(defstruct Error (code i64))
+(defenum InputResult (OkInput i64) (ErrInput Error))
+(defenum OuterResult (OkOuter bool) (ErrOuter Error))
+(defenum InputOption (SomeInput i64) (NoneInput))
+(module try_query_right)
+(defstruct Error (code i64))
+(defenum OtherResult (OkOther i64) (ErrOther Error))
+(defenum OuterOption (SomeOuter bool) (NoneOuter))")
+
+(define (compiler-typecheck-try-query-result-info-ok?
+  [operand-info : tc_core.TcResultInfo]
+  [return-info : tc_core.TcResultInfo]
+  [operand-id : i64]
+  [return-id : i64]) : bool
+  (and
+    (match (tc_core.tc-result-info-kind
+      (tc_core.tc-global-shared-view operand-info))
+      [(tc_core.TcTryResult) true]
+      [(tc_core.TcTryOption) false])
+    (match (tc_core.tc-result-info-kind
+      (tc_core.tc-global-shared-view return-info))
+      [(tc_core.TcTryResult) true]
+      [(tc_core.TcTryOption) false])
+    (=
+      (tc_core.tc-result-info-enum-id
+        (tc_core.tc-global-shared-view operand-info))
+      operand-id)
+    (=
+      (tc_core.tc-result-info-enum-id
+        (tc_core.tc-global-shared-view return-info))
+      return-id)
+    (not (= operand-id return-id))
+    (not
+      (=
+        (tc_core.tc-result-info-ok-id
+          (tc_core.tc-global-shared-view operand-info))
+        (tc_core.tc-result-info-ok-id
+          (tc_core.tc-global-shared-view return-info))))
+    (not
+      (=
+        (tc_core.tc-result-info-err-id
+          (tc_core.tc-global-shared-view operand-info))
+        (tc_core.tc-result-info-err-id
+          (tc_core.tc-global-shared-view return-info))))
+    (tc_core.tc-type-eq
+      (tc_core.tc-result-info-ok-type
+        (tc_core.tc-global-shared-view operand-info))
+      (ast.AstType.I64))
+    (tc_core.tc-type-eq
+      (tc_core.tc-result-info-ok-type
+        (tc_core.tc-global-shared-view return-info))
+      (ast.AstType.Bool))
+    (tc_core.tc-type-eq
+      (tc_core.tc-result-info-err-type operand-info)
+      (tc_core.tc-result-info-err-type return-info))))
+
+(define (compiler-typecheck-try-query-option-info-ok?
+  [operand-info : tc_core.TcResultInfo]
+  [return-info : tc_core.TcResultInfo]
+  [operand-id : i64]
+  [return-id : i64]) : bool
+  (and
+    (match (tc_core.tc-result-info-kind
+      (tc_core.tc-global-shared-view operand-info))
+      [(tc_core.TcTryResult) false]
+      [(tc_core.TcTryOption) true])
+    (match (tc_core.tc-result-info-kind
+      (tc_core.tc-global-shared-view return-info))
+      [(tc_core.TcTryResult) false]
+      [(tc_core.TcTryOption) true])
+    (=
+      (tc_core.tc-result-info-enum-id
+        (tc_core.tc-global-shared-view operand-info))
+      operand-id)
+    (=
+      (tc_core.tc-result-info-enum-id
+        (tc_core.tc-global-shared-view return-info))
+      return-id)
+    (not (= operand-id return-id))
+    (tc_core.tc-type-eq
+      (tc_core.tc-result-info-ok-type
+        (tc_core.tc-global-shared-view operand-info))
+      (ast.AstType.I64))
+    (tc_core.tc-type-eq
+      (tc_core.tc-result-info-ok-type
+        (tc_core.tc-global-shared-view return-info))
+      (ast.AstType.Bool))
+    (tc_core.tc-type-eq
+      (tc_core.tc-result-info-err-type operand-info)
+      (ast.AstType.Unit))
+    (tc_core.tc-type-eq
+      (tc_core.tc-result-info-err-type return-info)
+      (ast.AstType.Unit))))
+
+(define (compiler-typecheck-try-query-residual-mismatch-ok?
+  [result : tc_core.TcTryQueryResult]
+  [operand-id : i64]
+  [return-id : i64]) : bool
+  (match result
+    [(tc_core.TcTryQueryCompatible _ _)
+      (io.panic "typecheck: residual mismatch query was compatible")]
+    [(tc_core.TcTryQueryIncompatible
+        (tc_core.TcTryCarrier operand-info)
+        (tc_core.TcTryCarrier return-info)
+        (tc_core.TcTryResidualTypeMismatch operand-residual return-residual))
+      (and
+        (=
+          (tc_core.tc-result-info-enum-id
+            (tc_core.tc-global-shared-view operand-info))
+          operand-id)
+        (= (tc_core.tc-result-info-enum-id return-info) return-id)
+        (match (tc_core.tc-global-shared-view operand-residual)
+          [(ast.AstType.Struct operand-error-id)
+            (match (tc_core.tc-global-shared-view return-residual)
+              [(ast.AstType.Struct return-error-id)
+                ;; Both declarations were spelled `Error` in source, but the
+                ;; resolved nominal identities belong to different modules.
+                (if (= operand-error-id return-error-id)
+                  (io.panic "typecheck: residual Error identities matched")
+                  true)]
+              [_
+                (io.panic
+                  (str_cat.str-cat
+                    "typecheck: return residual was "
+                    (tc_core.tc-type-render return-residual)))])]
+          [_
+            (io.panic
+              (str_cat.str-cat
+                "typecheck: operand residual was "
+                (tc_core.tc-type-render operand-residual)))]))]
+    [(tc_core.TcTryQueryIncompatible _ _ reason)
+      (io.panic (tc_core.tc-try-incompatibility-message reason))]))
+
+(define (compiler-typecheck-try-query-forbidden-ok?
+  [result : tc_core.TcTryQueryResult]) : bool
+  (match result
+    [(tc_core.TcTryQueryCompatible _ _) false]
+    [(tc_core.TcTryQueryIncompatible
+        (tc_core.TcTryCarrier _)
+        (tc_core.TcTryCarrier _)
+        (tc_core.TcTryEarlyExitForbidden tc_core.TcTryEarlyExitForbiddenSpmd))
+      true]
+    [(tc_core.TcTryQueryIncompatible _ _ _) false]))
+
+(define (compiler-typecheck-try-query-context-ok? [ctx : tc_core.TcContext]) : bool
+  (let
+    [program : ast.AstProgram
+      (tc_api.compiler-typecheck-context-program
+        (tc_core.tc-global-shared-view ctx))]
+    [input-result-id : i64
+      (compiler-typecheck-fixture-nominal-id
+        (ast.ast-global-shared-view program)
+        "InputResult")]
+    [outer-result-id : i64
+      (compiler-typecheck-fixture-nominal-id
+        (ast.ast-global-shared-view program)
+        "OuterResult")]
+    [other-result-id : i64
+      (compiler-typecheck-fixture-nominal-id
+        (ast.ast-global-shared-view program)
+        "OtherResult")]
+    [input-option-id : i64
+      (compiler-typecheck-fixture-nominal-id
+        (ast.ast-global-shared-view program)
+        "InputOption")]
+    [outer-option-id : i64
+      (compiler-typecheck-fixture-nominal-id program "OuterOption")]
+    (begin
+      (unless
+        (and
+          (>= input-result-id 0)
+          (>= outer-result-id 0)
+          (>= other-result-id 0)
+          (>= input-option-id 0)
+          (>= outer-option-id 0))
+        (io.panic "typecheck: try query fixture identity lookup failed"))
+      (unless
+        (match (tc_core.tc-try-query
+          (tc_core.tc-global-shared-view ctx)
+          (ast.AstType.Enum input-result-id)
+          (ast.AstType.Enum outer-result-id)
+          tc_core.TcTryEarlyExitAllowed)
+          [(tc_core.TcTryQueryCompatible operand-info return-info)
+            (compiler-typecheck-try-query-result-info-ok?
+              operand-info
+              return-info
+              input-result-id
+              outer-result-id)]
+          [(tc_core.TcTryQueryIncompatible _ _ _) false])
+        (io.panic "typecheck: compatible Result try query failed"))
+      (unless
+        (match (tc_core.tc-try-query
+          (tc_core.tc-global-shared-view ctx)
+          (ast.AstType.Enum input-option-id)
+          (ast.AstType.Enum outer-option-id)
+          tc_core.TcTryEarlyExitAllowed)
+          [(tc_core.TcTryQueryCompatible operand-info return-info)
+            (compiler-typecheck-try-query-option-info-ok?
+              operand-info
+              return-info
+              input-option-id
+              outer-option-id)]
+          [(tc_core.TcTryQueryIncompatible _ _ _) false])
+        (io.panic "typecheck: compatible Option try query failed"))
+      (unless
+        (compiler-typecheck-try-query-residual-mismatch-ok?
+          (tc_core.tc-try-query
+            (tc_core.tc-global-shared-view ctx)
+            (ast.AstType.Enum input-result-id)
+            (ast.AstType.Enum other-result-id)
+            tc_core.TcTryEarlyExitAllowed)
+          input-result-id
+          other-result-id)
+        (io.panic "typecheck: residual mismatch try query failed"))
+      (unless
+        (compiler-typecheck-try-query-forbidden-ok?
+          (tc_core.tc-try-query
+            ctx
+            (ast.AstType.Enum input-result-id)
+            (ast.AstType.Enum outer-result-id)
+            tc_core.TcTryEarlyExitForbiddenSpmd))
+        (io.panic "typecheck: forbidden-context try query failed"))
+      true)))
+
+(define (compiler-typecheck-try-query-tests-ok?) : bool
+  (match (parser.parse-ast-source (compiler-typecheck-try-query-source))
+    [(parser.ResultAstProgram.Ok program)
+      (match (tc_api.typecheck-compiler-program-with-paths-checked
+        program
+        (ast.ast-decl-path-list-new))
+        [(tc_core.ResultCompilerTypecheckChecked.Ok _ ctx _ _)
+          (compiler-typecheck-try-query-context-ok? ctx)]
+        [(tc_core.ResultCompilerTypecheckChecked.Partial _ _ _ _) false]
+        [(tc_core.ResultCompilerTypecheckChecked.Err _) false])]
+    [(parser.ResultAstProgram.Err _) false]))
+
 (define (compiler-typecheck-resource-with-source) : String
   "(define (close [h : i64]) : unit unit)
 (define (main) : i64
@@ -4010,7 +4248,8 @@
     (compiler-typecheck-error-ok?
       (compiler-typecheck-option-try-payloaded-none-source)
       "typecheck: try operand must be Result-like enum")
-    (compiler-typecheck-ok? (compiler-typecheck-result-try-panic-source))))
+    (compiler-typecheck-ok? (compiler-typecheck-result-try-panic-source))
+    (compiler-typecheck-try-query-tests-ok?)))
 
 (define (compiler-typecheck-move-kind-fixture-source) : String
   "(defstruct Scalar (value i64))

@@ -3609,6 +3609,39 @@
   (Ok TcResultInfo)
   (Err String))
 
+;; Whether a propagation-style early exit is legal at the queried source
+;; position. The scalar checker uses Allowed; semantic tooling can pass the
+;; SPMD fact it recorded without pretending that an otherwise compatible
+;; carrier makes `(try ...)` legal inside foreach.
+(defenum TcTryEarlyExitContext
+  (TcTryEarlyExitAllowed)
+  (TcTryEarlyExitForbiddenSpmd))
+
+;; Classification is kept in the incompatible result as well as the reason.
+;; A tooling consumer can therefore inspect every carrier identity and payload
+;; that was successfully resolved without repeating the language convention.
+(defenum TcTryCarrierClassification
+  (TcTryCarrier TcResultInfo)
+  (TcTryNotCarrier String))
+
+(defenum TcTryIncompatibility
+  (TcTryOperandNotCarrier String)
+  (TcTryEnclosingReturnNotCarrier String)
+  (TcTryCarrierKindMismatch TcTryKind TcTryKind)
+  (TcTryResidualTypeMismatch ast.AstType ast.AstType)
+  (TcTryEarlyExitForbidden TcTryEarlyExitContext))
+
+(defenum TcTryCompatibility
+  (TcTryCompatible)
+  (TcTryIncompatible TcTryIncompatibility))
+
+(defenum TcTryQueryResult
+  (TcTryQueryCompatible TcResultInfo TcResultInfo)
+  (TcTryQueryIncompatible
+    TcTryCarrierClassification
+    TcTryCarrierClassification
+    TcTryIncompatibility))
+
 (defenum TcMaybeString
   (No)
   (Some String))
@@ -63391,70 +63424,164 @@
     [(ast.AstType.Enum enum-name)
       (let
         [enum-name-str : String (tc-nominal-name-id-display enum-name)]
+        [enum-ctx : TcContext
+          (tc-context-with-nominal-owner-module-id
+            (tc-global-shared-view ctx)
+            enum-name)]
         (match (tc-context-enum-variants-id
           (tc-global-shared-view ctx)
           enum-name
           enum-name-str)
           [(parser.ResultAstVariantDefList.Ok variants)
-            (tc-result-info-from-variants
-              (tc-global-shared-view ctx)
-              enum-name
-              variants)]
+            (tc-result-info-from-variants enum-ctx enum-name variants)]
           [(parser.ResultAstVariantDefList.Err message)
             (ResultTcResultInfo.Err message)]))]
     [(ast.AstType.EnumArgs enum-name _)
       (let
         [enum-name-str : String (tc-nominal-name-id-display enum-name)]
+        [enum-ctx : TcContext
+          (tc-context-with-nominal-owner-module-id
+            (tc-global-shared-view ctx)
+            enum-name)]
         (match (tc-context-enum-variants-id
           (tc-global-shared-view ctx)
           enum-name
           enum-name-str)
           [(parser.ResultAstVariantDefList.Ok variants)
-            (tc-result-info-from-variants ctx enum-name variants)]
+            (tc-result-info-from-variants enum-ctx enum-name variants)]
           [(parser.ResultAstVariantDefList.Err message)
             (ResultTcResultInfo.Err message)]))]
     [_ (ResultTcResultInfo.Err "typecheck: try requires Result-like enum")]))
 
-(define (tc-try-infos-compatible
+(define (tc-try-classify-carrier [ctx : TcContext] [ty : ast.AstType]) : TcTryCarrierClassification
+  (match (tc-result-info ctx ty)
+    [(ResultTcResultInfo.Ok info) (TcTryCarrier info)]
+    [(ResultTcResultInfo.Err message) (TcTryNotCarrier message)]))
+
+(define (tc-try-compatibility-for-infos
   [operand-info : TcResultInfo]
-  [return-info : TcResultInfo]) : ResultTcUnit
-  (match (tc-result-info-kind (tc-global-shared-view operand-info))
-    [(TcTryResult)
-      (match (tc-result-info-kind (tc-global-shared-view return-info))
-        [(TcTryResult)
-          (tc-expect
-            (tc-result-info-err-type operand-info)
-            (tc-result-info-err-type return-info)
-            "typecheck: try error type mismatch")]
-        [(TcTryOption) (ResultTcUnit.Err "typecheck: try carrier mismatch")])]
-    [(TcTryOption)
-      (match (tc-result-info-kind return-info)
-        [(TcTryOption) ResultTcUnit.Ok]
-        [(TcTryResult) (ResultTcUnit.Err "typecheck: try carrier mismatch")])]))
+  [return-info : TcResultInfo]) : TcTryCompatibility
+  (let
+    [operand-kind : TcTryKind
+      (tc-result-info-kind (tc-global-shared-view operand-info))]
+    [return-kind : TcTryKind
+      (tc-result-info-kind (tc-global-shared-view return-info))]
+    (match operand-kind
+      [(TcTryResult)
+        (match return-kind
+          [(TcTryResult)
+            (let
+              [operand-residual : ast.AstType
+                (tc-result-info-err-type (tc-global-shared-view operand-info))]
+              [return-residual : ast.AstType
+                (tc-result-info-err-type return-info)]
+              (if (tc-type-compatible?
+                (tc-global-shared-view return-residual)
+                (tc-global-shared-view operand-residual))
+                TcTryCompatible
+                (TcTryIncompatible
+                  (TcTryResidualTypeMismatch operand-residual return-residual))))]
+          [(TcTryOption)
+            (TcTryIncompatible
+              (TcTryCarrierKindMismatch operand-kind return-kind))])]
+      [(TcTryOption)
+        (match return-kind
+          [(TcTryOption) TcTryCompatible]
+          [(TcTryResult)
+            (TcTryIncompatible
+              (TcTryCarrierKindMismatch operand-kind return-kind))])])))
+
+(define (tc-try-compatibility-for-classifications
+  [operand : TcTryCarrierClassification]
+  [enclosing-return : TcTryCarrierClassification]
+  [early-exit : TcTryEarlyExitContext]) : TcTryCompatibility
+  (match early-exit
+    [(TcTryEarlyExitForbiddenSpmd)
+      (TcTryIncompatible (TcTryEarlyExitForbidden early-exit))]
+    [(TcTryEarlyExitAllowed)
+      (match (tc-global-shared-view operand)
+        [(TcTryNotCarrier message)
+          (TcTryIncompatible (TcTryOperandNotCarrier message))]
+        [(TcTryCarrier operand-info)
+          (match enclosing-return
+            [(TcTryNotCarrier message)
+              (TcTryIncompatible (TcTryEnclosingReturnNotCarrier message))]
+            [(TcTryCarrier return-info)
+              (tc-try-compatibility-for-infos operand-info return-info)])])]))
+
+;; Read-only semantic query over already-resolved operand/return types. It
+;; performs no expression checking and retains no TcTypeEnv or phase state.
+;; Both successful and unsuccessful results preserve every carrier fact that
+;; could be classified, including exact enum/variant ids and payload types.
+(define (tc-try-query
+  [ctx : TcContext]
+  [operand-ty : ast.AstType]
+  [return-ty : ast.AstType]
+  [early-exit : TcTryEarlyExitContext]) : TcTryQueryResult
+  (let
+    [operand : TcTryCarrierClassification
+      (tc-try-classify-carrier
+        (tc-global-shared-view ctx)
+        (tc-global-shared-view operand-ty))]
+    [enclosing-return : TcTryCarrierClassification
+      (tc-try-classify-carrier
+        (tc-global-shared-view ctx)
+        (tc-global-shared-view return-ty))]
+    (match (tc-try-compatibility-for-classifications
+      (tc-global-shared-view operand)
+      (tc-global-shared-view enclosing-return)
+      (tc-global-shared-view early-exit))
+      [(TcTryCompatible)
+        (match operand
+          [(TcTryCarrier operand-info)
+            (match enclosing-return
+              [(TcTryCarrier return-info)
+                (TcTryQueryCompatible operand-info return-info)]
+              [(TcTryNotCarrier message)
+                (TcTryQueryIncompatible
+                  (TcTryCarrier operand-info)
+                  (TcTryNotCarrier (clone message))
+                  (TcTryEnclosingReturnNotCarrier message))])]
+          [(TcTryNotCarrier message)
+            (TcTryQueryIncompatible
+              (TcTryNotCarrier (clone message))
+              enclosing-return
+              (TcTryOperandNotCarrier message))])]
+      [(TcTryIncompatible reason)
+        (TcTryQueryIncompatible operand enclosing-return reason)])))
+
+(define (tc-try-incompatibility-message [reason : TcTryIncompatibility]) : String
+  (match reason
+    [(TcTryOperandNotCarrier _)
+      "typecheck: try operand must be Result-like enum"]
+    [(TcTryEnclosingReturnNotCarrier _)
+      "typecheck: try requires enclosing Result-like function"]
+    [(TcTryCarrierKindMismatch _ _) "typecheck: try carrier mismatch"]
+    [(TcTryResidualTypeMismatch operand-residual return-residual)
+      (tc-type-mismatch-message
+        operand-residual
+        return-residual
+        "typecheck: try error type mismatch")]
+    [(TcTryEarlyExitForbidden _)
+      "typecheck: try inside foreach is not supported"]))
 
 (define (tc-try-expr [ctx : TcContext] [env : TcTypeEnv] [inner : ast.AstExpr]) : ResultTcType
   (match (tc-expr (tc-global-shared-view ctx) env inner)
     [(ResultTcType.Ok operand-ty)
-      (match (tc-result-info (tc-global-shared-view ctx) operand-ty)
-        [(ResultTcResultInfo.Ok operand-info)
-          (match (tc-current-return-type env)
-            [(ResultTcType.Ok return-ty)
-              (match (tc-result-info (tc-global-shared-view ctx) return-ty)
-                [(ResultTcResultInfo.Ok return-info)
-                  (match (tc-try-infos-compatible
-                    (tc-global-shared-view operand-info)
-                    return-info)
-                    [(ResultTcUnit.Ok)
-                      (ResultTcType.Ok (tc-result-info-ok-type operand-info))]
-                    [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
-                [(ResultTcResultInfo.Err _)
-                  (ResultTcType.Err
-                    "typecheck: try requires enclosing Result-like function")])]
-            [(ResultTcType.Err _)
-              (ResultTcType.Err
-                "typecheck: try requires enclosing Result-like function")])]
-        [(ResultTcResultInfo.Err _)
-          (ResultTcType.Err "typecheck: try operand must be Result-like enum")])]
+      (match (tc-current-return-type env)
+        [(ResultTcType.Ok return-ty)
+          (match (tc-try-query
+            (tc-global-shared-view ctx)
+            operand-ty
+            return-ty
+            TcTryEarlyExitAllowed)
+            [(TcTryQueryCompatible operand-info _)
+              (ResultTcType.Ok (tc-result-info-ok-type operand-info))]
+            [(TcTryQueryIncompatible _ _ reason)
+              (ResultTcType.Err (tc-try-incompatibility-message reason))])]
+        [(ResultTcType.Err _)
+          (ResultTcType.Err
+            "typecheck: try requires enclosing Result-like function")])]
     [(ResultTcType.Err message) (ResultTcType.Err message)]))
 
 (define (tc-return-expr
